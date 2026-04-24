@@ -14,7 +14,7 @@
 #   worktree-helper.sh <command> [options]
 #
 # Commands:
-#   add <branch> [path] [--issue NNN]  Create worktree for branch (auto-names path)
+#   add <branch> [path] [--issue NNN] [--base REF]  Create worktree for branch (auto-names path)
 #   list                   List all worktrees with status
 #   remove <path|branch>   Remove a worktree
 #   status                 Show current worktree info
@@ -824,13 +824,16 @@ _cmd_add_assert_path_outside_repo() {
 	return 1
 }
 
-# Parse cmd_add arguments: positional (branch, path) + optional --issue NNN.
-# Sets global _ADD_BRANCH, _ADD_PATH, _ADD_ISSUE. Returns 1 on parse error.
+# Parse cmd_add arguments: positional (branch, path) + optional flags.
+# Sets global _ADD_BRANCH, _ADD_PATH, _ADD_ISSUE, _ADD_BASE. Returns 1 on parse error.
 # Extracted from cmd_add (t2260) to keep function bodies under 100 lines.
+# --base <ref> (t2802): explicit base for new branch creation. Default is
+# origin/<default_branch> — prevents scope-leak PRs when canonical HEAD is stale.
 _parse_cmd_add_args() {
 	_ADD_BRANCH=""
 	_ADD_PATH=""
 	_ADD_ISSUE=""
+	_ADD_BASE=""
 	local _arg=""
 	while [[ $# -gt 0 ]]; do
 		_arg="$1"
@@ -848,9 +851,22 @@ _parse_cmd_add_args() {
 				_ADD_ISSUE="${_arg#--issue=}"
 				shift
 				;;
+			--base)
+				local _next_base="${2:-}"
+				if [[ -z "$_next_base" ]]; then
+					echo -e "${RED}Error: --base requires a ref (e.g. origin/main, develop, <sha>)${NC}"
+					return 1
+				fi
+				_ADD_BASE="$_next_base"
+				shift 2
+				;;
+			--base=*)
+				_ADD_BASE="${_arg#--base=}"
+				shift
+				;;
 			-*)
 				echo -e "${RED}Error: Unknown option: $_arg${NC}"
-				echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN]"
+				echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN] [--base REF]"
 				return 1
 				;;
 			*)
@@ -865,9 +881,62 @@ _parse_cmd_add_args() {
 	done
 	if [[ -z "$_ADD_BRANCH" ]]; then
 		echo -e "${RED}Error: Branch name required${NC}"
-		echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN]"
+		echo "Usage: worktree-helper.sh add <branch> [path] [--issue NNN] [--base REF]"
 		return 1
 	fi
+	return 0
+}
+
+# Resolve the base ref for a new worktree branch (t2802).
+# Precedence:
+#   1. Explicit --base <ref> (or AIDEVOPS_WORKTREE_BASE env var) — caller intent wins.
+#   2. origin/<default_branch> — safe, matches what the server will merge into.
+#   3. Local <default_branch> — fallback when remote-tracking ref missing.
+#   4. Empty string — fall through to git's default (HEAD). Caller logs a warning.
+#
+# Rationale: the pulse calls `worktree-helper.sh add <branch>` from the canonical
+# repo's cwd. If the canonical's HEAD is stale (long-lived feature branch,
+# unsynced main, post-checkout leftover), `git worktree add -b` inherits that
+# state and the resulting PR shows a diff proportional to the canonical's drift.
+# Canonical failure: awardsapp#2716 (PR #2733, 100 files for a 2-line fix)
+# caused by canonical being on stale `main` while PR target was `develop`.
+#
+# Args:
+#   $1 - explicit_base: value of --base (may be empty)
+# Outputs:
+#   Resolved ref on stdout, empty string if no safe base could be resolved.
+# Returns: always 0.
+_resolve_worktree_base_ref() {
+	local explicit_base="$1"
+	local env_base="${AIDEVOPS_WORKTREE_BASE:-}"
+
+	# 1. Explicit override (flag preferred, env as fallback).
+	if [[ -n "$explicit_base" ]]; then
+		printf '%s' "$explicit_base"
+		return 0
+	fi
+	if [[ -n "$env_base" ]]; then
+		printf '%s' "$env_base"
+		return 0
+	fi
+
+	# 2. origin/<default>
+	local default_branch
+	default_branch=$(get_default_branch 2>/dev/null) || default_branch=""
+	if [[ -n "$default_branch" ]]; then
+		if git rev-parse --verify --quiet "refs/remotes/origin/${default_branch}" >/dev/null 2>&1; then
+			printf 'origin/%s' "$default_branch"
+			return 0
+		fi
+		# 3. Local default (no origin tracking — e.g. first push pending, local-only repo).
+		if git rev-parse --verify --quiet "refs/heads/${default_branch}" >/dev/null 2>&1; then
+			printf '%s' "$default_branch"
+			return 0
+		fi
+	fi
+
+	# 4. No safe base resolved — caller falls back to HEAD and warns.
+	printf ''
 	return 0
 }
 
@@ -876,6 +945,7 @@ cmd_add() {
 	local branch="$_ADD_BRANCH"
 	local path="$_ADD_PATH"
 	local explicit_issue="$_ADD_ISSUE"  # t2260: --issue NNN for unambiguous claim
+	local explicit_base="$_ADD_BASE"    # t2802: --base REF for explicit base
 
 	# t2235: Detect self-invented task ID variants (e.g. t2213b, t2213-2, t2213.fix)
 	# Task IDs come ONLY from claim-task-id.sh. For follow-ups, claim a fresh ID.
@@ -933,9 +1003,25 @@ cmd_add() {
 		# Branch doesn't exist locally — check for stale remote ref (t1060)
 		handle_stale_remote_branch "$branch" || return 1
 
-		# Create new branch
-		echo -e "${BLUE}Creating worktree with new branch '$branch'...${NC}"
-		git worktree add -b "$branch" "$path"
+		# t2802: explicitly base new branches on origin/<default> (or --base REF)
+		# to prevent scope-leak PRs when canonical HEAD is stale. See
+		# _resolve_worktree_base_ref for precedence. Canonical failure:
+		# awardsapp#2716 (PR #2733, 100-file diff for a 2-line fix).
+		local _base_ref
+		_base_ref=$(_resolve_worktree_base_ref "$explicit_base")
+		if [[ -n "$_base_ref" ]]; then
+			echo -e "${BLUE}Creating worktree with new branch '$branch' based on '$_base_ref'...${NC}"
+			git worktree add -b "$branch" "$path" "$_base_ref"
+		else
+			# No remote default and no local default resolved. Surface the
+			# degradation loudly — the resulting branch will be based on the
+			# canonical's current HEAD which may be stale or unrelated.
+			echo -e "${YELLOW}Warning: could not resolve origin/<default> or a local default branch.${NC}" >&2
+			echo -e "${YELLOW}  Falling back to canonical HEAD. If this creates an oversized PR,${NC}" >&2
+			echo -e "${YELLOW}  re-create the worktree with '--base <ref>' or set AIDEVOPS_WORKTREE_BASE.${NC}" >&2
+			echo -e "${BLUE}Creating worktree with new branch '$branch' (base: HEAD)...${NC}"
+			git worktree add -b "$branch" "$path"
+		fi
 	fi
 
 	# Register ownership (t189)
@@ -1843,10 +1929,13 @@ OVERVIEW
   - Quick context switching without stashing
 
 COMMANDS
-  add <branch> [path] [--issue NNN]
+  add <branch> [path] [--issue NNN] [--base REF]
                          Create worktree for branch
                          Path auto-generated as ~/Git/{repo}-{branch-slug}
                          --issue NNN: explicit issue number for auto-claim (t2260)
+                         --base REF:  explicit base for new branch. Default is
+                                      origin/<default-branch> (t2802). Also honours
+                                      AIDEVOPS_WORKTREE_BASE env var.
 
   list                   List all worktrees with status
 

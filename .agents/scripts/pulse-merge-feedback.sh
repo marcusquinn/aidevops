@@ -335,12 +335,21 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 # Produces the "## Merge Conflict Feedback" block appended to the linked
 # issue body. Leads with cherry-pick-first guidance (t2426) — the prior
 # worker's commit is usually correct-but-stale, so cherry-picking onto a
-# fresh branch off current `main` is ~10x cheaper than rewriting.
+# fresh branch off current default branch is ~10x cheaper than rewriting.
+#
+# Scope-leak heuristic (t2802): if the prior PR touched more files than a
+# focused fix should, that's a signal the BRANCH BASE was wrong, not that
+# the semantic conflict is real. Rebuilding from the issue body is then
+# cheaper than cherry-picking a scope-leaked branch. Canonical failure:
+# awardsapp#2716 / PR #2733 (100 files for a 2-line fix). Successive
+# workers burned opus tokens trying to cherry-pick the monster.
 #
 # Extracted from _dispatch_conflict_fix_worker to keep that function under
 # the 100-line threshold (function-complexity gate).
 #
-# Args: $1=pr_number, $2=pr_title, $3=pr_files, $4=pr_head_sha
+# Args: $1=pr_number, $2=pr_title, $3=pr_files, $4=pr_head_sha,
+#       $5=default_branch (e.g. "main", "develop"),
+#       $6=pr_file_count (integer, may be empty)
 # Stdout: the rendered section
 #######################################
 _build_conflict_feedback_section() {
@@ -348,14 +357,45 @@ _build_conflict_feedback_section() {
 	local pr_title="$2"
 	local pr_files="$3"
 	local pr_head_sha="$4"
+	local default_branch="${5:-main}"
+	local pr_file_count="${6:-}"
+
+	# Scope-leak detection (t2802). If prior PR touched >20 files, the
+	# base was probably wrong (canonical HEAD stale). Cherry-picking a
+	# scope-leaked branch is expensive and usually fails the same way
+	# the first attempt did. Surface the signal upfront so the worker
+	# rebuilds from the issue body instead of chasing a ghost diff.
+	local scope_leak_warning=""
+	if [[ -n "$pr_file_count" ]] && [[ "$pr_file_count" =~ ^[0-9]+$ ]] && ((pr_file_count > 20)); then
+		scope_leak_warning=$(cat <<-WARN
+			> ⚠ **Scope-leak signal**: the prior PR touched **${pr_file_count} files**. For most
+			> conflict-feedback loops the touch-count should be 1-5. A high count usually means
+			> the prior worker's branch was created off a stale canonical HEAD (not \`origin/${default_branch}\`),
+			> so the diff = "everything ${default_branch} has that the stale base doesn't" + the actual fix.
+			>
+			> **If the file list below looks unrelated to the original issue scope, skip the
+			> cherry-pick entirely** and rebuild from the issue body onto a fresh branch explicitly
+			> based on \`origin/${default_branch}\`. Cherry-picking a scope-leaked branch will fail
+			> the same way — that is why the prior attempt was closed.
+			>
+			> Framework fix in-flight: t2802 makes \`worktree-helper.sh add\` base new branches
+			> on \`origin/<default>\` explicitly instead of inheriting canonical HEAD.
+		WARN
+		)
+	fi
+
+	# Build scope-warning block separately to avoid interpolating empty lines.
+	local scope_block=""
+	if [[ -n "$scope_leak_warning" ]]; then
+		scope_block=$'\n'"${scope_leak_warning}"$'\n'
+	fi
 
 	cat <<-EOF
 		## Merge Conflict Feedback (from PR #${pr_number})
 
 		The previous worker's PR #${pr_number} (\`${pr_title}\`) developed merge conflicts with
-		\`main\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
-		The conflicts are semantic — the same files were modified on both branches.
-
+		\`${default_branch}\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
+		The conflicts are semantic — the same files were modified on both branches${pr_file_count:+ (${pr_file_count} files touched)}.${scope_block}
 		### Files in the conflicting PR
 
 		\`\`\`
@@ -364,22 +404,26 @@ _build_conflict_feedback_section() {
 
 		### Worker guidance
 
-		The prior PR's head commit is \`${pr_head_sha:-<lookup via gh pr view ${pr_number} --json headRefOid>}\`. Before re-implementing, **try cherry-pick first** — it's ~10x cheaper than rewriting and usually works because the prior implementation was correct, just stale:
+		The prior PR's head commit is \`${pr_head_sha:-<lookup via gh pr view ${pr_number} --json headRefOid>}\`. Choose the cheapest path that works:
 
-		1. **Cherry-pick onto a fresh branch off current \`main\`**:
+		1. **Cherry-pick onto a fresh branch off current \`origin/${default_branch}\`** (~10x cheaper than rewriting, works when the prior implementation was correct-but-stale):
 
 		   \`\`\`bash
 		   git fetch origin pull/${pr_number}/head:recovered-${pr_number}
-		   git checkout -b fresh-branch origin/main
+		   # Explicit base on origin/${default_branch} — NOT canonical HEAD (t2802).
+		   git worktree add -b fresh-branch ../fresh-worktree origin/${default_branch}
+		   cd ../fresh-worktree
 		   git cherry-pick ${pr_head_sha:-<head-sha>}
 		   # run tests — if clean, proceed to PR
 		   \`\`\`
 
 		2. **If cherry-pick surfaces conflicts**, resolve them. The conflict surface IS the semantic overlap between the two branches — resolve those specific hunks rather than rewriting untouched logic.
 
-		3. **Only rewrite from scratch** if the prior approach was rejected in review. Check PR #${pr_number}'s review comments for \`CHANGES_REQUESTED\` or rejection keywords before assuming the approach was wrong.
+		3. **If the scope-leak warning above fired** (prior PR >20 files but the issue describes a focused fix), **skip cherry-pick entirely** and rebuild from scratch using the issue body as the spec. Do NOT try to cherry-pick-then-drop-files — too error-prone. A clean rewrite from the 2-line spec is cheaper than surgery on a 100-file branch.
 
-		Do NOT reuse the old PR's branch directly — always cherry-pick onto a fresh branch off current \`main\`.
+		4. **Only rewrite from scratch (scope-OK case)** if the prior approach was rejected in review. Check PR #${pr_number}'s review comments for \`CHANGES_REQUESTED\` or rejection keywords before assuming the approach was wrong.
+
+		Do NOT reuse the old PR's branch directly — always cherry-pick onto a fresh branch off current \`origin/${default_branch}\`.
 
 		_Routed by deterministic merge pass (pulse-merge.sh)._
 	EOF
@@ -419,14 +463,32 @@ _dispatch_conflict_fix_worker() {
 	pr_files=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json files --jq '[.files[].path] | join("\n")' 2>/dev/null) || pr_files="(could not fetch)"
 
+	# File count for scope-leak heuristic (t2802). Rely on the already-fetched
+	# file list rather than a second API call — a line count of the joined
+	# output matches the files array length when pr_files fetched cleanly.
+	local pr_file_count=""
+	if [[ -n "$pr_files" ]] && [[ "$pr_files" != "(could not fetch)" ]]; then
+		pr_file_count=$(printf '%s\n' "$pr_files" | grep -c '^.' || true)
+	fi
+
 	# Get the closed PR's head commit SHA (t2426) — reachable for >=30 days after close
 	# and lets the next worker cherry-pick instead of rewriting from scratch.
 	local pr_head_sha
 	pr_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_head_sha=""
 
+	# Default branch for the repo. Use gh for the authoritative answer (the
+	# pulse may run from a repo path that differs from repo_slug). Fall back
+	# to "main" if detection fails — matches pre-t2802 behaviour.
+	local default_branch
+	default_branch=$(gh repo view "$repo_slug" \
+		--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null) || default_branch=""
+	[[ -n "$default_branch" ]] || default_branch="main"
+
 	local feedback_section
-	feedback_section=$(_build_conflict_feedback_section "$pr_number" "$pr_title" "$pr_files" "$pr_head_sha")
+	feedback_section=$(_build_conflict_feedback_section \
+		"$pr_number" "$pr_title" "$pr_files" "$pr_head_sha" \
+		"$default_branch" "$pr_file_count")
 
 	# Append to issue body (marker-guarded, t2383 fail-safe)
 	local marker="<!-- conflict-feedback:PR${pr_number} -->"
@@ -440,7 +502,7 @@ _dispatch_conflict_fix_worker() {
 	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
 		"## Merge conflict feedback routed to issue #${linked_issue}
 
-This worker PR had semantic merge conflicts with \`main\` that \`update-branch\` could not resolve. The conflict context and file list have been appended to the linked issue body so the next worker can re-implement on top of current \`main\`.
+This worker PR had semantic merge conflicts with \`${default_branch}\` that \`update-branch\` could not resolve. The conflict context and file list have been appended to the linked issue body so the next worker can re-implement on top of current \`${default_branch}\`.
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \
 		"conflict-feedback-routed"
