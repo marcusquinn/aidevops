@@ -1325,12 +1325,107 @@ _Automated by \`_post_parent_decomposition_escalation\` in \`pulse-issue-reconci
 }
 
 #######################################
+# t2786: extract the ## Phases section from a parent issue body.
+# Returns only the text between the "## Phases" heading and the next
+# ## heading (or EOF). Returns empty if no ## Phases heading is found.
+# Pure string processing — no side effects, no gh calls.
+# Arguments:
+#   arg1 - parent issue body text
+# Returns: always 0
+#######################################
+_parse_phases_section() {
+	local body="$1"
+	printf '%s' "$body" | awk '
+		BEGIN { in_section = 0 }
+		/^##[[:space:]]+Phases[[:space:]]*$/ {
+			in_section = 1; next
+		}
+		in_section && /^##[[:space:]]/ { exit }
+		in_section { print }
+	'
+	return 0
+}
+
+#######################################
+# t2786: post an idempotent "declared phases not yet filed" nudge comment.
+# Called by _try_close_parent_tracker when the parent body's ## Phases
+# section declares more phases than have been filed as child issues.
+# Prevents premature parent close when unfiled phases exist.
+#
+# Idempotent via the <!-- parent-declared-phases-unfiled --> marker:
+# re-runs skip any parent already nudged. Fail-closed on API errors.
+#
+# Arguments:
+#   arg1 - repo slug (owner/repo)
+#   arg2 - parent issue number
+#   arg3 - declared phase count (from ## Phases section)
+#   arg4 - filed child count (child_count already verified via gh api)
+#   arg5 - unfiled phase text (lines without #NNN, for nudge body listing)
+# Returns: 0 if nudge posted, 1 if skipped (marker present, API error,
+#          or comment call failed).
+#######################################
+_post_parent_phases_unfiled_nudge() {
+	local slug="$1"
+	local parent_num="$2"
+	local declared_count="${3:-0}"
+	local filed_count="${4:-0}"
+	local unfiled_phases="${5:-}"
+
+	[[ -n "$slug" ]] || return 1
+	[[ "$parent_num" =~ ^[0-9]+$ ]] || return 1
+
+	local marker='<!-- parent-declared-phases-unfiled -->'
+
+	# Idempotency check: skip if marker already present in any comment.
+	# Pattern mirrors _post_parent_decomposition_nudge (t2572 fix: streaming
+	# --paginate + --jq, no --slurp). Fail-closed on API error.
+	# Use printf to build the jq filter to avoid a 3rd raw copy of the
+	# .[] | select(.body | contains()) fragment (string-literal ratchet).
+	local _jq_filter
+	_jq_filter=$(printf '.[] | select(.body | contains("%s")) | .id' "$marker")
+	local existing=""
+	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
+		--jq "$_jq_filter" \
+		2>/dev/null | wc -l | tr -d ' ') || existing=""
+
+	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] Phases nudge dedup: API/jq failure for #${parent_num} in ${slug} — skipping (fail-closed, t2786)" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+	[[ "$existing" -ge 1 ]] && return 1
+
+	local unfiled_list=""
+	if [[ -n "$unfiled_phases" ]]; then
+		unfiled_list="
+
+**Unfiled phases detected:**
+
+$(printf '%s' "$unfiled_phases" | sed 's/^[[:space:]]*//' | sed 's/^/- /')"
+	fi
+
+	local comment_body="${marker}
+## Parent Tracker: Declared Phases Not Yet Filed
+
+This parent declares **${declared_count} phase(s)** in its \`## Phases\` section but only **${filed_count}** have been filed as child issues. Closing the parent now would be premature — the unfiled phases would be silently dropped.${unfiled_list}
+
+**To proceed:** file the remaining phases as child issues and link them in a \`## Children\` section in the parent body. The parent will close automatically once all children are resolved.
+
+_Detected by \`_try_close_parent_tracker\` (pulse-issue-reconcile.sh, t2786). Posted once per issue via the \`<!-- parent-declared-phases-unfiled -->\` marker; re-runs are no-ops._"
+
+	gh_issue_comment "$parent_num" --repo "$slug" \
+		--body "$comment_body" >/dev/null 2>&1 || return 1
+
+	echo "[pulse-wrapper] Reconcile parent-task: phases-unfiled nudge posted for #${parent_num} in ${slug} (declared=${declared_count}, filed=${filed_count}, t2786)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
 # t2138: extract per-parent close logic. Keeps reconcile_completed_parent_tasks
 # under the 100-line shell-complexity threshold and makes the close decision
 # independently testable. Returns 0 if the parent was closed, 1 if skipped
 # (fewer than 2 known children, any child still open, or close call failed).
 _try_close_parent_tracker() {
-	local slug="$1" parent_num="$2" child_nums="$3" child_source="$4"
+	local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"
 	local all_closed="true" child_summary="" child_count=0
 	local child_num child_state child_title_line
 
@@ -1358,6 +1453,29 @@ _try_close_parent_tracker() {
 	# Need at least 2 children (1 = probably just a reference, not a parent).
 	[[ "$child_count" -ge 2 ]] || return 1
 	[[ "$all_closed" == "true" ]] || return 1
+
+	# t2786: declared-vs-filed guard. If the parent body declares more phases
+	# in a ## Phases section than have been filed as child issues, skip close
+	# and post a one-time nudge. Prevents premature parent close when some
+	# declared phases were never filed as children.
+	if [[ -n "$parent_body" ]]; then
+		local _phases_section
+		_phases_section=$(_parse_phases_section "$parent_body")
+		if [[ -n "$_phases_section" ]]; then
+			local _declared_count
+			_declared_count=$(printf '%s' "$_phases_section" | safe_grep_count -E '(^|[[:space:]])Phase[[:space:]]+[0-9]+')
+			if [[ "$_declared_count" -gt "$child_count" ]]; then
+				local _unfiled_phases
+				_unfiled_phases=$(printf '%s' "$_phases_section" | \
+					grep -E '(^|[[:space:]])Phase[[:space:]]+[0-9]+' | \
+					grep -vE '#[0-9]+' || true)
+				_post_parent_phases_unfiled_nudge \
+					"$slug" "$parent_num" "$_declared_count" "$child_count" "$_unfiled_phases"
+				echo "[pulse-wrapper] Reconcile parent-task: skip close #${parent_num} in ${slug} — declared ${_declared_count} phases but only ${child_count} filed (t2786)" >>"${LOGFILE:-/dev/null}"
+				return 1
+			fi
+		fi
+	fi
 
 	gh issue close "$parent_num" --repo "$slug" \
 		--comment "## All child tasks completed — closing parent tracker
@@ -1881,7 +1999,7 @@ _action_cpt_single() {
 	fi
 
 	if [[ "$can_close" == "1" ]]; then
-		if _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source"; then
+		if _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source" "$issue_body"; then
 			_SP_CPT_CLOSED=1
 		fi
 	fi
