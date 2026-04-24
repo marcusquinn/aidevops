@@ -87,6 +87,52 @@ opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-202505
 
 **When to pin**: Set `OPENCODE_PINNED_VERSION` in `.agents/scripts/shared-constants.sh` to a specific version when a known-broken release exists. Set to `"latest"` when no pin is needed.
 
+## `launch_recovery:no_worker_process` Failure Mode (t2804)
+
+**Signature**: Worker process never appears within the grace period after dispatch. The pulse posts `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on the issue and returns the issue to `status:available`. No worker log at `/tmp/pulse-*-<issue>.log`.
+
+**Log message**:
+```
+[pulse-wrapper] Launch validation failed for issue #N (slug) — no active worker process within Xs
+```
+
+**GitHub audit trail**:
+```
+CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<login> ts=<ISO>
+```
+
+**Observed pattern (2026-04-20 to 2026-04-24 data, t2812)**:
+- Occurs in **time-correlated clusters**, not random transients. A single runner experiences 30+ failures across many issues within a 2–4 hour window, then recovers.
+- **Self-heals**: cascade tier escalation (tier:standard → tier:thinking after 2 consecutive failures) resolves the issue at the next dispatch cycle. 63/65 affected issues in the observed window resolved within the same day.
+- **Runner-specific**: 82% of events attributed to one runner (`alex-solovyev`), 17% to the other (`marcusquinn`). Likely reflects resource constraints on the failing runner at time of cluster.
+- **Cross-repo**: affects all pulse-enabled repos simultaneously (observed in `marcusquinn/aidevops` ~112 events, `awardsapp/awardsapp` ~130 events in 5-day window).
+
+**Mitigation already in place**:
+- After 3 consecutive `no_worker_process` failures in a round, the canary cache is invalidated — next dispatch re-runs the canary to detect broken runtimes.
+- After 2 consecutive failures per issue, cascade escalation to `tier:thinking` triggers automatically.
+- `fast_fail_record` increments the per-issue failure counter for backoff.
+
+**Diagnostic**:
+
+```bash
+# Check if this is happening right now
+grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log | tail -20
+
+# Count failures in last hour
+grep "$(date -u +%Y-%m-%dT%H)" ~/.aidevops/logs/pulse-wrapper.log | grep -c "no active worker process" || true
+
+# Check canary cache freshness (stale cache may mask broken runtime)
+cat ~/.aidevops/.agent-workspace/headless-runtime/canary-last-pass
+
+# Is the CLI itself broken? Test outside of pulse:
+opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-20250514 --dir "$HOME"
+
+# Check system load at failure time
+uptime
+```
+
+**When to escalate to Phase 2 analysis**: If clusters recur with the same runner >3 times per day, or if the cascade escalation to `tier:thinking` fails to resolve the issue, investigate runtime-level causes (resource exhaustion, auth token expiry, network drop) on the failing runner.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |
@@ -98,6 +144,7 @@ opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-202505
 | PRs created but not merged | `review-bot-gate-helper.sh check <PR>` | Review bot rate-limited (passes immediately since v3.6.136) |
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
 | Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
+| `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — self-heals via cascade escalation; check system load |
 
 ## Proving Workers Are Doing Real Work
 
