@@ -170,16 +170,6 @@ Recommended changes: add a null check before line 42."
 	return 0
 }
 
-test_backwards_compat_alias() {
-	# is_rate_limit_comment must still work as alias.
-	if is_rate_limit_comment "rate limit exceeded"; then
-		print_result "is_rate_limit_comment alias still functions" 0
-	else
-		print_result "is_rate_limit_comment alias still functions" 1
-	fi
-	return 0
-}
-
 # ---------- Unit tests: settled-check ----------
 
 test_settled_recent_unedited_placeholder_rejected() {
@@ -407,7 +397,6 @@ main() {
 	test_is_non_review_comment_matches_review_skipped
 	test_is_non_review_comment_matches_closed_during_review
 	test_is_non_review_comment_rejects_real_review
-	test_backwards_compat_alias
 
 	echo ""
 	echo "=== Settled check ==="

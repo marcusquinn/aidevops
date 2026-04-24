@@ -360,11 +360,6 @@ is_non_review_comment() {
 	return 1
 }
 
-# Backwards-compat alias for any callers/tests still using the old name.
-is_rate_limit_comment() {
-	is_non_review_comment "$@"
-}
-
 bot_has_real_review() {
 	# t2139 (GH#19251): Check if a bot has posted at least one comment that
 	# is BOTH (a) not a known non-review notice AND (b) "settled" — meaning
