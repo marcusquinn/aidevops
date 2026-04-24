@@ -443,6 +443,21 @@ create_github_issue() {
 	fi
 	gh_args+=(--body "$body")
 
+	# t2789: Ensure new issues are immediately dispatchable by applying
+	# status:available when the caller did not specify any status:* label.
+	# Without this default, new issues have no status label, and the pulse
+	# dispatcher's candidate filter (which requires status:available) skips
+	# them entirely until a human or downstream process labels them.
+	# Callers that pass an explicit status:* (e.g. status:queued, status:blocked,
+	# status:in-review) are respected verbatim — this only fills the gap.
+	if [[ ",${labels}," != *",status:"* ]]; then
+		if [[ -n "$labels" ]]; then
+			labels="${labels},status:available"
+		else
+			labels="status:available"
+		fi
+	fi
+
 	# Append session origin label (origin:worker or origin:interactive)
 	local origin_label
 	origin_label=$(session_origin_label)
