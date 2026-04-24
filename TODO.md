@@ -3036,3 +3036,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2804 pulse: diagnose launch_recovery:no_worker_process dispatch stalls (#20702 evidence) #parent ref:GH#20740
 
 - [ ] t2805 pulse-merge: rebase MERGEABLE PRs with CI failures before routing to fix-worker #auto-dispatch #bug #framework #pulse ref:GH#20743
+
+- [ ] t2806 security-posture-helper Phase 7 SYNC_PAT check misses rulesets-based branch protection #auto-dispatch #bug #framework #security ref:GH#20745
