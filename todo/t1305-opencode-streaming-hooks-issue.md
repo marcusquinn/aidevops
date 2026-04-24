@@ -5,14 +5,21 @@
 
 ## Status
 
-- **Original issue:** [#14691](https://github.com/anomalyco/opencode/issues/14691) -- CLOSED (superseded)
-- **Active issue:** [#14740](https://github.com/anomalyco/opencode/issues/14740) -- OPEN (cleaner description)
-- **Active PR:** [#14741](https://github.com/anomalyco/opencode/pull/14741) -- OPEN, MERGEABLE
+**Live tracking surface:** PR [#14741](https://github.com/anomalyco/opencode/pull/14741). Both issues are closed; the PR is the only remaining upstream artifact.
+
+- **Original issue:** [#14691](https://github.com/anomalyco/opencode/issues/14691) -- CLOSED 2026-02-23 (superseded, consolidated at #14740)
+- **Consolidation issue:** [#14740](https://github.com/anomalyco/opencode/issues/14740) -- CLOSED-STALE 2026-04-24 (auto-closed by stale bot after 60d inactivity; not rejected by maintainer)
+- **Active PR:** [#14741](https://github.com/anomalyco/opencode/pull/14741) -- **OPEN, MERGEABLE, 9/9 CI green**
   - Branch: `feature/stream-hooks-v2`
-  - CI: 6/8 pass (2 failures are unrelated Windows Playwright flake)
-  - Includes unit tests
-  - Awaiting maintainer review/merge
+  - CI: 9/9 pass (earlier 6/8 Windows flake resolved in v1.2.11 — path normalization, EBUSY cleanup, Bun 1.3.10 upgrade)
+  - Includes unit tests (11 stream-hooks tests + 120 session tests)
+  - External interest: @ualtinok (2026-03-05, proposes converging with related `assistant.message.delta` transform hook), @tspython (2026-04-04, "What's the status?")
+  - Last maintainer engagement: none on PR thread
+  - Awaiting maintainer review/merge from @adamdotdevin
+- **Superseded PR:** [#14727](https://github.com/anomalyco/opencode/pull/14727) -- CLOSED (replaced by #14741)
 - **Internal PR:** [#2152](https://github.com/marcusquinn/aidevops/pull/2152) -- MERGED (issue draft)
+
+**Re-file decision (2026-04-24):** Not re-filing a new upstream issue. PR #14741 is the active tracking surface; a new issue would create a fourth tracking node on one topic (#14691 → #14740 → new → PR #14741) — exactly what the #14691→#14740 consolidation was designed to prevent. Next action, if/when we re-engage: comment on PR #14741 to respond to ualtinok's converge proposal and re-ping @adamdotdevin. Would reconsider re-filing only if PR #14741 itself gets closed, the maintainer explicitly requests a fresh issue, or CONTRIBUTING policy requires an open issue per PR.
 
 ### Timeline
 
@@ -20,7 +27,8 @@
 2. PR #14727 submitted (2026-02-22) with initial implementation
 3. Issue #14740 created (2026-02-23) as cleaner re-submission
 4. PR #14741 submitted (2026-02-23) with unit tests, superseding #14727
-5. Issue #14691 closed to consolidate discussion at #14740
+5. Issue #14691 closed (2026-02-23) to consolidate discussion at #14740
+6. Issue #14740 auto-closed by stale bot (2026-04-24, 60d inactivity); PR #14741 remains open. Triaged in interactive session — see "Re-file decision" above.
 
 ## Target Repository
 
