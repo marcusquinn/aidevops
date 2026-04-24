@@ -1122,6 +1122,7 @@ _pulse_execute_self_check() {
 		run_canonical_maintenance
 		dirty_pr_sweep_all_repos
 		_pulse_refresh_repo
+		check_dispatch_backoff
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
 		if ! declare -F "$_sc_fn" >/dev/null 2>&1; then

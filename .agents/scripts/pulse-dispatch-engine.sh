@@ -44,6 +44,13 @@ if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rat
 	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh"
 fi
 
+# t2781: Source per-issue rate_limit backoff helper (graduated cooldown by failure count).
+# shellcheck source=dispatch-backoff-helper.sh
+if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh" ]]; then
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/dispatch-backoff-helper.sh"
+fi
+
 # t1959: Module-level variable to communicate launch failure reason to callers.
 # Set by check_worker_launch before each return 1; read by dispatch loop for
 # per-round no_worker_process tracking and canary cache invalidation.
@@ -345,6 +352,32 @@ _dff_should_skip_candidate() {
 	if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
 		return 0
+	fi
+
+	# t2781: Per-issue rate_limit backoff — graduated cooldown based on recent
+	# rate_limit exits in headless-runtime-metrics.jsonl. Prevents repeated dispatch
+	# of issues where every account in the pool rate-limits (the existing fast_fail
+	# rate_limit path does an immediate retry when other accounts are available,
+	# producing 0s cooldown. This gate adds a per-issue floor independent of pool state).
+	if declare -F check_dispatch_backoff >/dev/null 2>&1; then
+		local _backoff_output="" _backoff_rc=0
+		_backoff_output=$(check_dispatch_backoff "$issue_number" "$repo_slug" 2>&1 >/dev/null) || _backoff_rc=$?
+		if [[ "$_backoff_rc" -eq 1 ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — ${_backoff_output}" >>"$LOGFILE"
+			# Apply NMR when the backoff helper signals 4th+ failure threshold.
+			if printf '%s' "$_backoff_output" | grep -q 'NMR_REQUIRED'; then
+				local _backoff_count=""
+				_backoff_count=$(printf '%s' "$_backoff_output" | grep -oE 'count=[0-9]+' | head -1 | cut -d= -f2)
+				[[ "$_backoff_count" =~ ^[0-9]+$ ]] || _backoff_count="${DISPATCH_BACKOFF_NMR_THRESHOLD:-4}"
+				declare -F _db_apply_nmr_if_needed >/dev/null 2>&1 && \
+					_db_apply_nmr_if_needed "$issue_number" "$repo_slug" "$_backoff_count" || true
+			fi
+			return 0
+		fi
+		# rc=2 → error; fail-open (log warning, continue to dispatch)
+		if [[ "$_backoff_rc" -eq 2 ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: backoff check error for #${issue_number} — proceeding (fail-open)" >>"$LOGFILE"
+		fi
 	fi
 
 	# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
