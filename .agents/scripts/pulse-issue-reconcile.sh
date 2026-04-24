@@ -1477,7 +1477,22 @@ reconcile_completed_parent_tasks() {
 			# idempotency marker means it returns 1 after the first cycle;
 			# we need the separate escalation path so the maintainer
 			# actually sees the issue in their review queue.
+			#
+			# t2771: before nudging/escalating, try the deterministic
+			# phase-extractor. When the parent body follows the well-formed
+			# phase template (### Phase N: headings with all required
+			# sub-sections), the extractor files children verbatim without
+			# an LLM pass. If the extractor fires (exit 0), skip
+			# nudge/escalation — children are now in flight.
 			if [[ -z "$child_nums" ]]; then
+				local _phase_extractor="${_PIR_SCRIPT_DIR}/parent-task-phase-extractor.sh"
+				if [[ -x "$_phase_extractor" ]]; then
+					if PHASE_EXTRACTOR_DRY_RUN="${PHASE_EXTRACTOR_DRY_RUN:-0}" \
+						"$_phase_extractor" run "$issue_num" "$slug" >>"${LOGFILE:-/dev/null}" 2>&1; then
+						echo "[pulse-wrapper] Reconcile parent-task: phase-extractor filed children for #${issue_num} in ${slug} (t2771)" >>"${LOGFILE:-/dev/null}"
+						continue
+					fi
+				fi
 				if [[ "$total_nudged" -lt "$max_nudges" ]]; then
 					if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
 						total_nudged=$((total_nudged + 1))
