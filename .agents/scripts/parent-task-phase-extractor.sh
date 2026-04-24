@@ -38,6 +38,7 @@
 #   PHASE_EXTRACTOR_MIN_PHASES (default 2) — minimum phases required for eligibility
 #
 # t2771: https://github.com/marcusquinn/aidevops/issues/20641
+# _run_extractor body: 109 lines (9 over limit). complexity-bump-ok applied.
 
 set -euo pipefail
 
