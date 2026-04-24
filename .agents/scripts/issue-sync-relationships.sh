@@ -103,7 +103,7 @@ _cached_node_id() {
 	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
 	if _gh_should_fallback_to_rest; then
 		local rest_nid
-		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' || echo "")
+		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' 2>/dev/null || echo "")
 		if [[ -n "$rest_nid" ]]; then
 			echo "${num}=${rest_nid}" >>"$_NODE_ID_CACHE_FILE"
 			echo "$rest_nid"
@@ -947,6 +947,11 @@ _backfill_process_loop() {
 	# Without this, each _cached_node_id() subshell creates its own temp file and
 	# cache hits between issues are lost.
 	_init_node_id_cache
+	# Clear cache to prevent cross-repo poisoning in long-lived processes.
+	# Cache key is just the issue number (e.g. "123=node_id") — without repo
+	# qualification, stale entries from a prior repo would be returned for
+	# same-numbered issues in a different repo.
+	: >"$_NODE_ID_CACHE_FILE"
 
 	local linked
 	local skipped
