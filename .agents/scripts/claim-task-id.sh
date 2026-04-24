@@ -24,6 +24,8 @@
 #                              or value from .aidevops.json "remote" key)
 #   --counter-branch BRANCH    Branch holding .task-counter (default: main,
 #                              or value from .aidevops.json "counter_branch" key)
+#   --skip-label-validation    Skip pre-flight label existence check (useful for
+#                              bulk --count N allocation or when gh is rate-limited)
 #
 # Project-level config (.aidevops.json in repo root):
 #   {
@@ -41,6 +43,7 @@
 #   0  - Success (outputs: task_id=tNNN ref=GH#NNN or GL#NNN)
 #   1  - Error (network failure, git error, etc.)
 #   2  - Offline fallback used (outputs: task_id=tNNN ref=offline)
+#   3  - Invalid --labels argument(s): counter NOT advanced (t2800)
 #   10 - User declined claim after duplicate warning (interactive TTY only, t2180)
 #
 # Algorithm (CAS loop — compare-and-swap via git push):
@@ -119,6 +122,7 @@ set -euo pipefail
 OFFLINE_MODE=false
 DRY_RUN=false
 NO_ISSUE=false
+SKIP_LABEL_VALIDATION=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
@@ -234,6 +238,10 @@ parse_args() {
 			;;
 		--no-issue)
 			NO_ISSUE=true
+			shift
+			;;
+		--skip-label-validation)
+			SKIP_LABEL_VALIDATION=true
 			shift
 			;;
 		--dry-run)
@@ -571,6 +579,95 @@ check_framework_routing() {
 		log_warn "  Use instead: framework-issue-helper.sh log --title \"$title\""
 		log_warn "  To suppress this warning: SKIP_FRAMEWORK_ROUTING_CHECK=true claim-task-id.sh ..."
 		log_warn "  Proceeding with allocation in current repo (override if intentional)."
+	fi
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Pre-flight label validation (t2800)
+#
+# Validates that every label in TASK_LABELS exists in the target repo before
+# the CAS counter is advanced. An invalid label currently causes issue creation
+# to fail AFTER the counter has been incremented, stranding the task ID.
+#
+# Approach (A) — validate first, abort early:
+#   1. Fetch the repo's label list once via `gh label list`, cache in a session
+#      temp file ($AIDEVOPS_LABEL_CACHE_FILE or auto-created).
+#   2. Split TASK_LABELS on comma, trim whitespace, grep-check each against cache.
+#   3. Any missing label → log which labels are invalid + lookup command → return 1.
+#   4. API failure during list → fail-open (skip validation, let issue creation
+#      fail naturally; the caller can then recover using approach B — label-after-create).
+#
+# Exit codes (for _validate_labels_exist):
+#   0  - All labels exist (or validation skipped / fail-open).
+#   1  - One or more labels are invalid.
+#
+# Call site exits with code 3 (invalid-labels) if this returns 1.
+# Skipped when: --skip-label-validation, --offline, --dry-run, --no-issue,
+#               no labels provided, platform != github, or gh not available.
+# ---------------------------------------------------------------------------
+
+# _validate_labels_exist — check that every label in $2 exists in repo $1.
+# Args: $1 repo_slug (owner/repo), $2 comma-separated label names.
+# Returns: 0 = all valid (or fail-open), 1 = invalid labels found.
+_validate_labels_exist() {
+	local repo_slug="$1"
+	local labels_csv="$2"
+
+	[[ -z "$repo_slug" || -z "$labels_csv" ]] && return 0
+
+	# Require gh CLI and authentication
+	command -v gh >/dev/null 2>&1 || return 0
+	gh auth status >/dev/null 2>&1 || return 0
+
+	# Populate label cache once per session (or reuse if already set)
+	local cache_file="${AIDEVOPS_LABEL_CACHE_FILE:-}"
+	if [[ -z "$cache_file" ]]; then
+		cache_file=$(mktemp /tmp/aidevops-label-cache-XXXXXX 2>/dev/null) || return 0
+		export AIDEVOPS_LABEL_CACHE_FILE="$cache_file"
+		# shellcheck disable=SC2064
+		trap "rm -f '${cache_file}' 2>/dev/null || true" EXIT
+	fi
+
+	# Fetch label list if cache is empty or stale (> 0 bytes = populated)
+	if [[ ! -s "$cache_file" ]]; then
+		if ! gh label list --repo "$repo_slug" --limit 1000 \
+			--json name --jq '.[].name' >"$cache_file" 2>/dev/null; then
+			# API failure → fail-open: skip validation, proceed with claim
+			log_warn "Label list query failed (rate limit or network) — skipping label validation (fail-open)"
+			return 0
+		fi
+	fi
+
+	# Check each label against the cache
+	local invalid_labels=""
+	local label
+	# Split on comma, trim whitespace
+	local IFS_SAVE="$IFS"
+	IFS=','
+	local -a label_arr
+	read -ra label_arr <<<"$labels_csv"
+	IFS="$IFS_SAVE"
+
+	for label in "${label_arr[@]}"; do
+		label="${label#"${label%%[![:space:]]*}"}"  # trim leading whitespace
+		label="${label%"${label##*[![:space:]]}"}"  # trim trailing whitespace
+		[[ -z "$label" ]] && continue
+		if ! grep -Fxq "$label" "$cache_file" 2>/dev/null; then
+			if [[ -n "$invalid_labels" ]]; then
+				invalid_labels="${invalid_labels}, '${label}'"
+			else
+				invalid_labels="'${label}'"
+			fi
+		fi
+	done
+
+	if [[ -n "$invalid_labels" ]]; then
+		log_error "Pre-flight label validation failed — invalid label(s): ${invalid_labels}"
+		log_error "  Run: gh label list --repo ${repo_slug} | grep -i '<name>'"
+		log_error "  Claim aborted — counter NOT advanced."
+		return 1
 	fi
 
 	return 0
@@ -960,6 +1057,25 @@ main() {
 	local platform
 	platform=$(detect_platform)
 	log_info "Detected platform: $platform"
+
+	# --- t2800: Pre-flight label validation (before counter is advanced) ---
+	# Only validate when issuing to GitHub, labels are provided, and not skipped.
+	# Fail-open (validation function returns 0) on any API error.
+	if [[ "$SKIP_LABEL_VALIDATION" == "false" ]] \
+		&& [[ "$OFFLINE_MODE" == "false" ]] \
+		&& [[ "$DRY_RUN" == "false" ]] \
+		&& [[ "$NO_ISSUE" == "false" ]] \
+		&& [[ "$platform" == "github" ]] \
+		&& [[ -n "$TASK_LABELS" ]]; then
+		local _val_slug=""
+		_val_slug=$(git -C "$REPO_PATH" remote get-url "$REMOTE_NAME" 2>/dev/null \
+			| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+		if [[ -n "$_val_slug" ]]; then
+			if ! _validate_labels_exist "$_val_slug" "$TASK_LABELS"; then
+				return 3
+			fi
+		fi
+	fi
 
 	# --- Allocate the ID(s) first (the critical atomic step) ---
 
