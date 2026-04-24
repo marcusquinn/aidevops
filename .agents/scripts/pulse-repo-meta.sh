@@ -198,11 +198,11 @@ list_dispatchable_issue_candidates_json() {
 	local issue_json issue_dispatch_err gh_exit_code
 	issue_dispatch_err=$(mktemp)
 	gh_exit_code=0
-	issue_json=$(gh issue list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
+	issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
 	if [[ "$gh_exit_code" -ne 0 ]] || [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 		local _issue_dispatch_err_msg
 		_issue_dispatch_err_msg=$(cat "$issue_dispatch_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh issue list FAILED for ${repo_slug} (exit ${gh_exit_code}): ${_issue_dispatch_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list FAILED for ${repo_slug} (exit ${gh_exit_code}): ${_issue_dispatch_err_msg}" >>"$LOGFILE"
 		issue_json="[]"
 	fi
 	rm -f "$issue_dispatch_err"

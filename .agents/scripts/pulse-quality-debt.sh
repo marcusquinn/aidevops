@@ -88,7 +88,7 @@ close_stale_quality_debt_prs() {
 	cutoff_epoch=$(date -v-24H +%s 2>/dev/null || date -d '24 hours ago' +%s 2>/dev/null || echo 0)
 
 	local pr_json
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number,title,labels,mergeable,updatedAt \
 		--jq '[.[] | select(.mergeable == "CONFLICTING") | select(.labels[]?.name == "quality-debt" or (.title | test("quality.debt|fix:.*batch|fix:.*harden"; "i")))]' \
 		2>/dev/null) || pr_json="[]"

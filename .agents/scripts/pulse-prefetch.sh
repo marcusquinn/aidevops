@@ -160,7 +160,7 @@ _prefetch_repo_issues() {
 
 		# Full fetch: either requested directly or delta fell back
 		if [[ "$sweep_mode" == "full" ]]; then
-		issue_json=$(gh issue list --repo "$slug" --state open \
+		issue_json=$(gh_issue_list --repo "$slug" --state open \
 			--json number,title,labels,updatedAt,assignees,body \
 			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
 
@@ -171,7 +171,7 @@ _prefetch_repo_issues() {
 				if _pulse_gh_err_is_rate_limit "$issue_err"; then
 					_pulse_mark_rate_limited "_prefetch_repo_issues:${slug}"
 				fi
-				echo "[pulse-wrapper] _prefetch_repo_issues: gh issue list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
+				echo "[pulse-wrapper] _prefetch_repo_issues: gh_issue_list FAILED for ${slug}: ${issue_err_msg}" >>"$LOGFILE"
 				issue_json="[]"
 			fi
 		fi
@@ -592,7 +592,7 @@ prefetch_triage_review_status() {
 		# Get needs-maintainer-review issues for this repo
 		local nmr_json nmr_err
 		nmr_err=$(mktemp)
-		nmr_json=$(gh issue list --repo "$slug" --label "needs-maintainer-review" \
+		nmr_json=$(gh_issue_list --repo "$slug" --label "needs-maintainer-review" \
 			--state open --json number,title,createdAt,updatedAt \
 			--limit 50 2>"$nmr_err") || nmr_json="[]"
 		if [[ -z "$nmr_json" || "$nmr_json" == "null" ]]; then
@@ -602,7 +602,7 @@ prefetch_triage_review_status() {
 			if _pulse_gh_err_is_rate_limit "$nmr_err"; then
 				_pulse_mark_rate_limited "prefetch_triage_review_status:${slug}"
 			fi
-			echo "[pulse-wrapper] prefetch_triage_review_status: gh issue list FAILED for ${slug}: ${_nmr_err_msg}" >>"$LOGFILE"
+			echo "[pulse-wrapper] prefetch_triage_review_status: gh_issue_list FAILED for ${slug}: ${_nmr_err_msg}" >>"$LOGFILE"
 			nmr_json="[]"
 		fi
 		rm -f "$nmr_err"

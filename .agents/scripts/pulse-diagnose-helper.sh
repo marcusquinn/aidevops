@@ -105,7 +105,7 @@ pw-workflow-guard-skip|pulse-wrapper.sh|515|check_workflow_merge_guard: PR #.*al
 pw-merge-pass-complete|pulse-wrapper.sh|574|Deterministic merge pass complete:|Deterministic merge pass completed (summary)
 pw-merge-pass-skipped-stop|pulse-wrapper.sh|542|Deterministic merge pass skipped: stop flag|Merge pass skipped — stop flag present
 pw-merge-pass-skipped-repos|pulse-wrapper.sh|547|Deterministic merge pass skipped: repos.json not found|Merge pass skipped — repos.json not found
-pw-pr-list-failed|pulse-wrapper.sh|617|_process_merge_batch: gh pr list FAILED|gh pr list failed for repo during merge pass
+pw-pr-list-failed|pulse-wrapper.sh|617|_process_merge_batch: gh_pr_list FAILED|gh_pr_list failed for repo during merge pass
 pw-route-ci-fix|pulse-merge-feedback.sh|328|_dispatch_ci_fix_worker: routed CI failure feedback|Routed CI failure feedback from PR to linked issue for worker fix
 pw-route-ci-fix-skip|pulse-merge-feedback.sh|299|_dispatch_ci_fix_worker: PR #.*could not collect details|CI fix routing skipped — could not collect failure details
 pw-route-conflict-fix|pulse-merge-feedback.sh|448|_dispatch_conflict_fix_worker: routed conflict feedback|Routed conflict feedback from PR to linked issue for worker fix

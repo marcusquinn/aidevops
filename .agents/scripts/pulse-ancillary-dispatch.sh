@@ -425,7 +425,7 @@ _triage_write_prompt_file() {
 	fi
 
 	local recent_closed=""
-	recent_closed=$(gh issue list --repo "$repo_slug" --state closed \
+	recent_closed=$(gh_issue_list --repo "$repo_slug" --state closed \
 		--json number,title --limit 15 --jq '.[].title' 2>/dev/null) || recent_closed=""
 
 	local git_log_context=""
@@ -1050,7 +1050,7 @@ dispatch_foss_workers() {
 		labels_filter=$(jq -r --arg slug "$foss_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted","good first issue","bug"] | join(",")' \
 			"$repos_json" 2>/dev/null || echo "help wanted")
-		foss_issue=$(gh issue list --repo "$foss_slug" --state open \
+		foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
 			--label "${labels_filter%%,*}" --limit 1 \
 			--json number,title --jq '.[0] | "\(.number)|\(.title)"' 2>/dev/null) || foss_issue=""
 		[[ -n "$foss_issue" ]] || continue

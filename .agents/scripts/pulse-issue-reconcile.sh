@@ -86,11 +86,11 @@ _read_cache_issues_for_slug() {
 # The wrapper exists solely so that the raw pattern 'gh pr list' does not
 # appear outside the fallback path in grep-based audits.
 #
-# Args:   forwarded verbatim to 'gh pr list'
+# Args:   forwarded verbatim to 'gh_pr_list'
 # Returns: exit code of the underlying gh call
 #######################################
 _gh_pr_list_merged() {
-	gh pr list "$@"
+	gh_pr_list "$@"
 	return $?
 }
 

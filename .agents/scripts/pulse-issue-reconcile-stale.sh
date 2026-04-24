@@ -282,7 +282,7 @@ _normalize_unassign_stale() {
 
 		# Find issues assigned to runner_user with active-dispatch labels
 		local stale_json
-		stale_json=$(gh issue list --repo "$slug" --assignee "$runner_user" --state open \
+		stale_json=$(gh_issue_list --repo "$slug" --assignee "$runner_user" --state open \
 			--json number,labels,updatedAt --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || stale_json=""
 		[[ -n "$stale_json" && "$stale_json" != "null" ]] || continue
 

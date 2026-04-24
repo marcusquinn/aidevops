@@ -69,11 +69,11 @@ count_runnable_candidates() {
 
 		local pr_json pr_rc_err
 		pr_rc_err=$(mktemp)
-		pr_json=$(gh pr list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_rc_err") || pr_json="[]"
+		pr_json=$(gh_pr_list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_rc_err") || pr_json="[]"
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local _pr_rc_err_msg
 			_pr_rc_err_msg=$(cat "$pr_rc_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] count_runnable_candidates: gh pr list FAILED for ${slug}: ${_pr_rc_err_msg}" >>"$LOGFILE"
+			echo "[pulse-wrapper] count_runnable_candidates: gh_pr_list FAILED for ${slug}: ${_pr_rc_err_msg}" >>"$LOGFILE"
 			pr_json="[]"
 		fi
 		rm -f "$pr_rc_err"
@@ -110,11 +110,11 @@ count_queued_without_worker() {
 		[[ -n "$slug" ]] || continue
 		local queued_json queued_err
 		queued_err=$(mktemp)
-		queued_json=$(gh issue list --repo "$slug" --state open --label "status:queued" --json number,assignees --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$queued_err") || queued_json="[]"
+		queued_json=$(gh_issue_list --repo "$slug" --state open --label "status:queued" --json number,assignees --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>"$queued_err") || queued_json="[]"
 		if [[ -z "$queued_json" || "$queued_json" == "null" ]]; then
 			local _queued_err_msg
 			_queued_err_msg=$(cat "$queued_err" 2>/dev/null || echo "unknown error")
-			echo "[pulse-wrapper] count_queued_without_worker: gh issue list FAILED for ${slug}: ${_queued_err_msg}" >>"$LOGFILE"
+			echo "[pulse-wrapper] count_queued_without_worker: gh_issue_list FAILED for ${slug}: ${_queued_err_msg}" >>"$LOGFILE"
 			queued_json="[]"
 		fi
 		rm -f "$queued_err"

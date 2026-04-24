@@ -385,7 +385,7 @@ _large_file_gate_find_existing_debt_issue() {
 	local lf_basename="$2"
 
 	local _open
-	_open=$(gh issue list --repo "$repo_slug" --state open \
+	_open=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label "file-size-debt" --search "$lf_basename" \
 		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open=""
 	if [[ -n "$_open" ]]; then
@@ -402,7 +402,7 @@ _large_file_gate_find_existing_debt_issue() {
 	fi
 
 	local _closed
-	_closed=$(gh issue list --repo "$repo_slug" \
+	_closed=$(gh_issue_list --repo "$repo_slug" \
 		--state closed --label "file-size-debt" \
 		--search "$lf_basename closed:>$_recent_date" \
 		--json number --jq '.[0].number // empty' \

@@ -482,7 +482,7 @@ auto_approve_maintainer_issues() {
 
 		# Get all open needs-maintainer-review issues
 		local nmr_json
-		nmr_json=$(gh issue list --repo "$slug" --label "needs-maintainer-review" \
+		nmr_json=$(gh_issue_list --repo "$slug" --label "needs-maintainer-review" \
 			--state open --json number,author --limit 100 2>/dev/null) || nmr_json="[]"
 		[[ -n "$nmr_json" && "$nmr_json" != "null" ]] || continue
 

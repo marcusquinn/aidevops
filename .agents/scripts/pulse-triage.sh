@@ -406,7 +406,7 @@ _reevaluate_consolidation_labels() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		local issues_json
-		issues_json=$(gh issue list --repo "$slug" --state open \
+		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-consolidation" \
 			--json number --limit 50 2>/dev/null) || issues_json="[]"
 
@@ -614,7 +614,7 @@ _reevaluate_simplification_labels() {
 		_pulse_refresh_repo "$rpath"
 
 		local issues_json
-		issues_json=$(gh issue list --repo "$slug" --state open \
+		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-simplification" \
 			--json number --limit 50 2>/dev/null) || issues_json="[]"
 
@@ -699,7 +699,7 @@ _consolidation_child_exists() {
 
 	# Fast path: any open child immediately owns the parent.
 	local open_count
-	open_count=$(gh issue list --repo "$repo_slug" --state open \
+	open_count=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label "consolidation-task" \
 		--search "in:body \"Consolidation target: #${parent_num}\"" \
 		--json number --jq 'length' --limit 5 2>/dev/null) || open_count=0
@@ -734,7 +734,7 @@ _consolidation_child_exists() {
 	[[ -n "$cutoff_iso" ]] || return 1
 
 	local recent_closed_count
-	recent_closed_count=$(gh issue list --repo "$repo_slug" --state closed \
+	recent_closed_count=$(gh_issue_list --repo "$repo_slug" --state closed \
 		--label "consolidation-task" \
 		--search "in:body \"Consolidation target: #${parent_num}\" closed:>${cutoff_iso}" \
 		--json number --jq 'length' --limit 5 2>/dev/null) || recent_closed_count=0
@@ -792,7 +792,7 @@ _consolidation_resolving_pr_exists() {
 	# anywhere in body. Cheap (one search hit, capped at 10 results) and
 	# scopes the regex match below to the small candidate set.
 	local prs_json
-	prs_json=$(gh pr list --repo "$repo_slug" --state open \
+	prs_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--search "in:body #${parent_num}" \
 		--json number,body --limit 10 2>/dev/null) || prs_json="[]"
 	[[ -n "$prs_json" ]] || prs_json="[]"
@@ -1562,7 +1562,7 @@ _backfill_stale_consolidation_labels() {
 		# needs-consolidation was applied) or only the lock (acquire path
 		# where child creation failed after lock but before flag-parent).
 		local locked_issues_json
-		locked_issues_json=$(gh issue list --repo "$slug" --state open \
+		locked_issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "consolidation-in-progress" \
 			--json number --limit 50 2>/dev/null) || locked_issues_json='[]'
 		local locked_num
@@ -1574,7 +1574,7 @@ _backfill_stale_consolidation_labels() {
 		done < <(printf '%s' "$locked_issues_json" | jq -r '.[]?.number // ""' 2>/dev/null)
 
 		local issues_json
-		issues_json=$(gh issue list --repo "$slug" --state open \
+		issues_json=$(gh_issue_list --repo "$slug" --state open \
 			--label "needs-consolidation" \
 			--json number,labels --limit 50 2>/dev/null) || issues_json='[]'
 

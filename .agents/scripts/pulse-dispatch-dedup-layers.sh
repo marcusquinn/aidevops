@@ -61,7 +61,7 @@ _classify_stale_recovery_crash_type() {
 	# Fast path: open PR exists referencing the issue. Worker got far
 	# enough to produce a PR — definitely "partial".
 	local _open_pr_count
-	_open_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+	_open_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
 		--json number --jq 'length' 2>/dev/null) || _open_pr_count=0
 	[[ "$_open_pr_count" =~ ^[0-9]+$ ]] || _open_pr_count=0

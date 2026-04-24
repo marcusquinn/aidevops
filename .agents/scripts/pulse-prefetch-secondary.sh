@@ -298,7 +298,7 @@ _prefetch_ni_fetch_issues() {
 	local slug="$1"
 	local ni_err ni_json
 	ni_err=$(mktemp)
-	ni_json=$(gh issue list --repo "$slug" --label "status:needs-info" \
+	ni_json=$(gh_issue_list --repo "$slug" --label "status:needs-info" \
 		--state open --json number,title,author,createdAt,updatedAt \
 		--limit 50 2>"$ni_err") || ni_json=""
 	if [[ -z "$ni_json" || "$ni_json" == "null" ]]; then
@@ -308,7 +308,7 @@ _prefetch_ni_fetch_issues() {
 		if _pulse_gh_err_is_rate_limit "$ni_err"; then
 			_pulse_mark_rate_limited "prefetch_needs_info_replies:${slug}"
 		fi
-		echo "[pulse-wrapper] prefetch_needs_info_replies: gh issue list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] prefetch_needs_info_replies: gh_issue_list FAILED for ${slug}: ${_ni_err_msg}" >>"$LOGFILE"
 		ni_json="[]"
 	fi
 	rm -f "$ni_err"

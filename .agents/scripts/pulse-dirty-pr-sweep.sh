@@ -862,7 +862,7 @@ _dirty_pr_sweep_for_repo() {
 
 	local list_json err_file
 	err_file=$(mktemp) || err_file=/dev/null
-	list_json=$(gh pr list --repo "$repo_slug" --state open \
+	list_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName,body \
 		--limit "$DIRTY_PR_SWEEP_BATCH_LIMIT" 2>"$err_file") || list_json="[]"
 	[[ -z "$list_json" || "$list_json" == "null" ]] && list_json="[]"

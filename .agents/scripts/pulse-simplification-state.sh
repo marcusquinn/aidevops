@@ -624,7 +624,7 @@ _simplification_state_backfill_closed() {
 
 	# Fetch recently closed function-complexity-debt issues (last 7 days, max 50).
 	local closed_issues
-	closed_issues=$(gh issue list --repo "$aidevops_slug" \
+	closed_issues=$(gh_issue_list --repo "$aidevops_slug" \
 		--label "function-complexity-debt" --state closed \
 		--limit 50 --json number,title,closedAt 2>/dev/null) || {
 		echo "0"
@@ -744,7 +744,7 @@ _simplification_close_spurious_requeue_issues() {
 	# side. The list is bounded by SIMPLIFICATION_OPEN_CAP (~50 typical),
 	# so the cost is O(N) gh API calls in the worst case but typically 0.
 	local issues_json
-	issues_json=$(gh issue list --repo "$aidevops_slug" \
+	issues_json=$(gh_issue_list --repo "$aidevops_slug" \
 		--label "function-complexity-debt" --state open \
 		--limit 100 --json number,title 2>/dev/null) || {
 		echo "0"
