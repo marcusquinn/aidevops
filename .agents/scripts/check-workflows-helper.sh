@@ -118,7 +118,7 @@ _die() {
 }
 
 _usage() {
-	sed -n '4,55p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,56s/^# \{0,1\}//p' "$0"
 	return 0
 }
 
@@ -139,20 +139,21 @@ _normalize_wf_for_compare() {
 	return 0
 }
 
-# _classify_workflow <workflow-file> <canonical-template> <reusable-name> [<canon-norm>]
+# _classify_workflow <workflow-file> <canonical-template> <reusable-escaped> [<canon-norm>]
 # Prints the classification string on stdout.
 # Returns 0 always; status is carried via the emitted string.
 #
 # Parameters:
-#   _wf            — path to the workflow file to classify
-#   _canon         — path to the canonical caller template
-#   _reusable_name — filename of the reusable workflow (e.g. "issue-sync-reusable.yml")
-#   _canon_norm_pre — optional pre-computed normalised form of the canonical template
-#                    (loop-invariant optimisation; skip the inner sed call when provided)
+#   _wf               — path to the workflow file to classify
+#   _canon            — path to the canonical caller template
+#   _reusable_escaped — dot-escaped filename of the reusable workflow (e.g. "issue-sync-reusable\.yml")
+#                       pre-computed by caller to avoid redundant subshell per repo
+#   _canon_norm_pre   — optional pre-computed normalised form of the canonical template
+#                       (loop-invariant optimisation; skip the inner sed call when provided)
 _classify_workflow() {
 	local _wf="$1"
 	local _canon="$2"
-	local _reusable_name="$3"
+	local _reusable_escaped="$3"
 	local _canon_norm_pre="${4:-}"
 
 	if [[ ! -f "$_wf" ]]; then
@@ -165,7 +166,7 @@ _classify_workflow() {
 	# as drift. The self-caller is functionally equivalent to the downstream
 	# pattern; it just skips the cross-repo checkout.
 	local _self_caller_pattern
-	_self_caller_pattern="uses:[[:space:]]*\./\.github/workflows/${_reusable_name}"
+	_self_caller_pattern="uses:[[:space:]]*\./\.github/workflows/${_reusable_escaped}"
 	if grep -qE "$_self_caller_pattern" "$_wf"; then
 		printf 'CURRENT/SELF-CALLER\n'
 		return 0
@@ -174,16 +175,15 @@ _classify_workflow() {
 	# Detect caller pattern: any `uses:` line pointing at the reusable workflow.
 	# Accept any `@<ref>` variant (main, v3.9.0, a commit SHA, etc).
 	local _downstream_pattern
-	_downstream_pattern="uses:[[:space:]]*marcusquinn/aidevops/\.github/workflows/${_reusable_name}@"
+	_downstream_pattern="uses:[[:space:]]*marcusquinn/aidevops/\.github/workflows/${_reusable_escaped}@"
 	if grep -qE "$_downstream_pattern" "$_wf"; then
 		# It's a caller. Compare against canonical, normalising the @ref so that
 		# `@main` vs `@v3.9.0` doesn't count as drift (intentional pinning is OK).
 		# Also normalise the push-trigger branch filter so a repo with
 		# `branches: [develop]` installed by sync-workflows is not flagged as
 		# drift — the branch name reflects the downstream default, not the template.
-		local _reusable_escaped _wf_norm _canon_norm
-		# Escape dots for use in sed BRE/ERE pattern
-		_reusable_escaped=$(printf '%s' "$_reusable_name" | sed 's/\./\\./g')
+		local _wf_norm _canon_norm
+		# _reusable_escaped is pre-computed by caller — no subshell needed here.
 		_wf_norm=$(_normalize_wf_for_compare "$_wf" "$_reusable_escaped")
 		# Use pre-computed canon_norm when available (caller hoist); fall back to
 		# computing it here so the function remains usable in isolation.
@@ -356,12 +356,12 @@ _parse_args() {
 # Side-effects: prints a classification line; caller updates counters.
 #
 # Emits: class\tnote
-# _classify_row <path> <local_only_flag> <canonical> <reusable_name> <workflow_file> [<canon_norm>]
+# _classify_row <path> <local_only_flag> <canonical> <reusable_escaped> <workflow_file> [<canon_norm>]
 _classify_row() {
 	local _path="$1"
 	local _local_only_flag="$2"
 	local _canonical="$3"
-	local _reusable_name="$4"
+	local _reusable_escaped="$4"
 	local _workflow_file="$5"
 	local _canon_norm="${6:-}"
 
@@ -386,7 +386,7 @@ _classify_row() {
 	fi
 
 	local _class
-	_class=$(_classify_workflow "$_wf" "$_canonical" "$_reusable_name" "$_canon_norm")
+	_class=$(_classify_workflow "$_wf" "$_canonical" "$_reusable_escaped" "$_canon_norm")
 	local _note=""
 	case "$_class" in
 	NEEDS-MIGRATION)
@@ -449,6 +449,9 @@ _process_rows() {
 
 		local _canonical _canon_norm
 		IFS=$'\t' read -r _canonical _canon_norm < <(_resolve_wf_canonical "$_template_file" "$_reusable_file")
+		# Pre-compute once per workflow (loop-invariant); avoids a subshell per repo.
+		local _reusable_escaped
+		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
 
 		local _path _local_only_flag _slug
 		while IFS=$'\t' read -r _path _local_only_flag _slug; do
@@ -462,7 +465,7 @@ _process_rows() {
 			local _class _note
 			IFS=$'\t' read -r _class _note < <(_classify_row \
 				"$_path" "$_local_only_flag" "$_canonical" \
-				"$_reusable_file" "$_workflow_file" "$_canon_norm")
+				"$_reusable_escaped" "$_workflow_file" "$_canon_norm")
 
 			case "$_class" in
 			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;

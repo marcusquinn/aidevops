@@ -3056,3 +3056,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2814 Phase 3: fix no_worker_process root cause and add regression tests #bug #pulse blocked-by:t2813 ref:GH#20765
 
 - [ ] t2815 Phase 4: prevent cascade tier escalation on infra failures #auto-dispatch #enhancement #pulse blocked-by:t2814 ref:GH#20766
+
+- [ ] t2816 /setup-git slash command — guided per-repo platform secret setup with toast surfacing (Phase 1) #enhancement #framework #security ref:GH#20812

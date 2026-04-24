@@ -79,6 +79,14 @@ release_interactive_claim_on_merge() {
 	local pr_labels="${4:-}"
 	local _log="${LOGFILE:-/dev/null}"
 
+	# Pre-Guard: if the caller already provided labels and the PR is NOT
+	# origin:interactive, skip the expensive gh pr view body fetch — Guard 3
+	# would return 0 at that point anyway. Only skip when labels are non-empty
+	# so callers that omit the arg still fall through to the full path. (GH#20791)
+	if [[ -n "$pr_labels" ]] && [[ ",${pr_labels}," != *",origin:interactive,"* ]]; then
+		return 0
+	fi
+
 	# Guard 1: no linked issue from strict caller extraction → try permissive
 	# fallback for planning-only PRs that use "Ref #NNN" / "For #NNN".
 	# Strict _extract_linked_issue (callers) only matches closing keywords and
@@ -91,7 +99,7 @@ release_interactive_claim_on_merge() {
 		_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" \
 			--json body --jq '.body // empty' 2>/dev/null) || _pr_body=""
 		linked_issue=$(printf '%s' "$_pr_body" \
-			| grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|ref(s|erences?)?|for)\s+#[0-9]+' \
+			| grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?|ref(s|erences?)?|for)\b[[:space:]]+#[0-9]+' \
 			| head -1 | grep -oE '[0-9]+')
 	fi
 	[[ -z "$linked_issue" ]] && return 0
