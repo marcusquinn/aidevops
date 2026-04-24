@@ -3022,3 +3022,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2796 worker_complete emitted on zero-output exit — classify as worker_noop to trigger cascade #auto-dispatch #bug #framework ref:GH#20721
 
 - [ ] t2797 backfill status:available on auto-dispatch issues missing status labels (pre-t2789 heal) #auto-dispatch #bug #framework ref:GH#20728
+
+- [ ] t2798 catch status:available default leak on bypass-path issue creation (defence-in-depth for t2789) #auto-dispatch #bug #framework ref:GH#20730
