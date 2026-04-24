@@ -403,8 +403,10 @@ _dlw_exec_detached() {
 		worker_pid="$!"
 		# Log the detached PGID for diagnostics (should differ from pulse PGID)
 		local worker_pgid pulse_pgid
-		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ') || worker_pgid="unknown"
-		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ') || pulse_pgid="unknown"
+		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ')
+		[[ -n "$worker_pgid" ]] || worker_pgid="unknown"
+		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
+		[[ -n "$pulse_pgid" ]] || pulse_pgid="unknown"
 		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid)" >>"$LOGFILE"
 	else
 		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
