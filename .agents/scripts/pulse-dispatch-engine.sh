@@ -1249,27 +1249,12 @@ _preflight_ownership_reconcile() {
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
 
-	# Close issues whose linked PRs already merged (GH#16851).
-	# The dedup guard blocks re-dispatch for these but they stay open forever.
-	run_stage_with_timeout "close_issues_with_merged_prs" "$PRE_RUN_STAGE_TIMEOUT" close_issues_with_merged_prs || true
-
-	# Reconcile status:done issues: close if merged PR exists, reset to
-	# status:available if not (needs re-evaluation by a worker).
-	run_stage_with_timeout "reconcile_stale_done_issues" "$PRE_RUN_STAGE_TIMEOUT" reconcile_stale_done_issues || true
-
-	# Close open issues whose linked PR has already merged (any merge path).
-	# Catches issues left open after --admin merges, GitHub merge button, etc.
-	run_stage_with_timeout "reconcile_merged_pr_close" "$PRE_RUN_STAGE_TIMEOUT" reconcile_open_issues_with_merged_prs || true
-
-	# Close parent-task issues when all children are resolved.
-	run_stage_with_timeout "reconcile_parent_tasks" "$PRE_RUN_STAGE_TIMEOUT" reconcile_completed_parent_tasks || true
-
-	# Backfill labelless aidevops-shaped issues (t2112). Heals issues that
-	# were created via bare `gh issue create` outside the `gh_create_issue`
-	# wrapper — applies origin/tier defaults + body-tag labels + sub-issue
-	# parent links + posts an idempotent mentorship comment. Invoked once
-	# per cycle, capped at 10 issues per repo.
-	run_stage_with_timeout "reconcile_labelless_aidevops_issues" "$PRE_RUN_STAGE_TIMEOUT" reconcile_labelless_aidevops_issues || true
+	# t2776: single-pass reconcile — iterates the issue list ONCE per repo and
+	# applies all five reconcile checks in sub-stage order (close-merged-PR,
+	# stale-done, open-with-merged-PR, parent-task, labelless backfill).
+	# Replaces the five sequential stage calls that each had their own per-repo
+	# fetch loop; now 5N → N iterations per cycle.
+	run_stage_with_timeout "reconcile_issues_single_pass" "$PRE_RUN_STAGE_TIMEOUT" reconcile_issues_single_pass || true
 
 	# Auto-approve maintainer issues: remove needs-maintainer-review when
 	# the maintainer created or commented on the issue (GH#16842).

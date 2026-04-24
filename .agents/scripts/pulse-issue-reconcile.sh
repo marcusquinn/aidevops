@@ -32,6 +32,10 @@
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_LOADED=1
 
+# t2776: module-level label constant shared by reconcile functions and the
+# single-pass to keep the string literal count below the ratchet threshold.
+[[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
+
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
 #
@@ -741,55 +745,8 @@ close_issues_with_merged_prs() {
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# Skip management issues (supervisor, persistent, quality-review)
-			# — these are intentionally kept open
-			local labels_csv
-			labels_csv=$(printf '%s' "$issues_json" | jq -r ".[$((i - 1))].labels // [] | map(.name) | join(\",\")" 2>/dev/null) || labels_csv=""
-
-			# Ask dedup helper if a merged PR exists for this issue
-			local dedup_output=""
-			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-				# has-open-pr returns 0 when PR evidence found (open OR merged).
-				# For closing, we MUST verify the PR is actually merged — an open
-				# PR means work is in progress, not complete. (GH#17871 fix)
-				local pr_ref
-				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
-				local pr_num
-				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
-
-				# GH#17871: Verify PR is actually merged before closing.
-				# The dedup helper's Check 1 matches OPEN PRs by title/commit.
-				# An open PR blocks dispatch (correct) but must NOT trigger
-				# issue closure — the work isn't done yet.
-				if [[ -n "$pr_num" ]]; then
-					local merged_at
-					merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
-					if [[ -z "$merged_at" ]]; then
-						echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} exists but is NOT merged (GH#17871 guard)" >>"$LOGFILE"
-						continue
-					fi
-				fi
-
-				# GH#17372: Verify PR diff actually touches files from the issue.
-				# A merged PR with "closes #NNN" may reference the issue without
-				# fixing it (e.g., mentioned in a comment, not the actual fix).
-				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
-					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
-						echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} does not touch files from issue (GH#17372 guard)" >>"$LOGFILE"
-						continue
-					fi
-				fi
-
-				gh issue close "$issue_num" --repo "$slug" \
-					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"} (merged at ${merged_at:-unknown}). Issue was open but dedup guard was blocking re-dispatch." \
-					>/dev/null 2>&1 || continue
-
-				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
-				fast_fail_reset "$issue_num" "$slug" || true
-				# t1934: Unlock issue (locked at dispatch time)
-				unlock_issue_after_worker "$issue_num" "$slug"
-
-				echo "[pulse-wrapper] Auto-closed #${issue_num} in ${slug} — merged PR evidence: ${dedup_output:-"found"}" >>"$LOGFILE"
+			# t2776: delegate per-issue action to shared helper (_action_ciw_single).
+			if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"; then
 				total_closed=$((total_closed + 1))
 			fi
 		done
@@ -855,55 +812,13 @@ reconcile_stale_done_issues() {
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# Check if a merged PR exists for this issue
-			local dedup_output=""
-			if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-				# Dedup helper returns 0 for open OR merged PRs.
-				# For closing, verify the PR is actually merged (GH#17871).
-				local pr_ref
-				pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
-				local pr_num
-				pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
-
-				# GH#17871: Verify PR is actually merged before closing.
-				local merged_at=""
-				if [[ -n "$pr_num" ]]; then
-					merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
-					if [[ -z "$merged_at" ]]; then
-						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
-						# Reset to available — PR exists but isn't merged yet (t2033: atomic)
-						set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
-						total_reset=$((total_reset + 1))
-						continue
-					fi
-				fi
-
-				# GH#17372: Verify PR diff touches files from the issue
-				if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
-					if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
-						echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
-						# Reset to available for re-evaluation instead of closing (t2033: atomic)
-						set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
-						total_reset=$((total_reset + 1))
-						continue
-					fi
-				fi
-
-				gh issue close "$issue_num" --repo "$slug" \
-					--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"} (merged at ${merged_at:-unknown})." \
-					>/dev/null 2>&1 || continue
-
-				# Reset fast-fail counter now that the issue is confirmed resolved (GH#17384)
-				fast_fail_reset "$issue_num" "$slug" || true
-				# t1934: Unlock issue (locked at dispatch time)
-				unlock_issue_after_worker "$issue_num" "$slug"
-
-				echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
+			# t2776: delegate per-issue action to shared helper (_action_rsd_single).
+			local _rsd_rc
+			_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"
+			_rsd_rc=$?
+			if [[ "$_rsd_rc" -eq 0 ]]; then
 				total_closed=$((total_closed + 1))
-			else
-				# No merged PR — reset for re-evaluation (t2033: atomic)
-				set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || continue
-				echo "[pulse-wrapper] Reconcile done: reset #${issue_num} in ${slug} to status:available — no merged PR evidence" >>"$LOGFILE"
+			elif [[ "$_rsd_rc" -eq 2 ]]; then
 				total_reset=$((total_reset + 1))
 			fi
 		done
@@ -962,7 +877,7 @@ reconcile_open_issues_with_merged_prs() {
 		# jq once per loop iteration (GH#20675: Gemini review feedback on PR #20667).
 		local parent_task_nums
 		parent_task_nums=$(printf '%s' "$issues_json" | \
-			jq -r '.[] | select((.labels // []) | map(.name) | index("parent-task") != null) | .number' \
+			jq -r --arg pt "$_PIR_PT_LABEL" '.[] | select((.labels // []) | map(.name) | index($pt) != null) | .number' \
 			2>/dev/null) || parent_task_nums=""
 
 		local i=0
@@ -972,51 +887,14 @@ reconcile_open_issues_with_merged_prs() {
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# Search for merged PRs that close this issue.
-			# Merged PRs are NOT in the prefetch cache (cache holds open issues/PRs only),
-			# so this call is always live. Routed through _gh_pr_list_merged (t2773).
-			local merged_pr_num=""
-			merged_pr_num=$(_gh_pr_list_merged --repo "$slug" --state merged \
-				--search "Resolves #${issue_num} OR Closes #${issue_num} OR Fixes #${issue_num}" \
-				--json number --jq '.[0].number // ""' --limit 1 2>/dev/null) || merged_pr_num=""
-			[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || continue
-
-			# Verify the PR body actually contains the closing keyword for THIS issue
-			# (the search API can return false positives from comments/titles)
-			local pr_body
-			pr_body=$(gh pr view "$merged_pr_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || pr_body=""
-			if ! printf '%s' "$pr_body" | grep -qiE "(Resolves|Closes|Fixes)\s+#${issue_num}\b"; then
-				continue
-			fi
-
-			# GH#17372: optional file-overlap verification
-			if [[ -x "$verify_helper" ]]; then
-				if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
-					echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${merged_pr_num} does not touch issue files (GH#17372)" >>"$LOGFILE"
-					continue
-				fi
-			fi
-
 			# Skip parent-task issues (closing a parent from a child PR is wrong).
 			# Labels pre-extracted above in a single jq pass (GH#20675).
-			if [[ -n "$parent_task_nums" ]] && printf '%s\n' "$parent_task_nums" | grep -qx "$issue_num"; then
-				continue
-			fi
+			_should_oimp "$issue_num" "$parent_task_nums" || continue
 
-			gh issue close "$issue_num" --repo "$slug" \
-				--comment "Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass." \
-				>/dev/null 2>&1 || continue
-
-			# Cleanup
-			if declare -F fast_fail_reset >/dev/null 2>&1; then
-				fast_fail_reset "$issue_num" "$slug" || true
+			# t2776: delegate per-issue action to shared helper (_action_oimp_single).
+			if _action_oimp_single "$slug" "$issue_num" "$verify_helper"; then
+				total_closed=$((total_closed + 1))
 			fi
-			if declare -F unlock_issue_after_worker >/dev/null 2>&1; then
-				unlock_issue_after_worker "$issue_num" "$slug"
-			fi
-
-			echo "[pulse-wrapper] Reconcile merged-PR: closed #${issue_num} in ${slug} — merged PR #${merged_pr_num}" >>"$LOGFILE"
-			total_closed=$((total_closed + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
@@ -1517,8 +1395,8 @@ reconcile_completed_parent_tasks() {
 		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]] || break
 
 		# t2773: prefer prefetch cache (now includes body field); fall back to gh_issue_list.
-		# _cpt_lbl: label name variable avoids repeating the string literal (string-literal ratchet).
-		local _cpt_lbl="parent-task"
+		# Use module-level _PIR_PT_LABEL to avoid a second literal (string-literal ratchet).
+		local _cpt_lbl="$_PIR_PT_LABEL"
 		local issues_json _cache_issues_cpt
 		if _cache_issues_cpt=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 			issues_json=$(printf '%s' "$_cache_issues_cpt" | \
@@ -1545,85 +1423,19 @@ reconcile_completed_parent_tasks() {
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# t2138: prefer the sub-issue graph when non-empty; fall back to
-			# body section regex for legacy parents that list children under
-			# a dedicated heading (t2244: ## Children / ## Sub-tasks / ## Child issues).
-			# Prose #NNN mentions outside this section are NOT treated as children.
-			# t2442: third fallback — narrow prose patterns (Phase N #NNNN /
-			# filed as #NNNN / tracks #NNNN / Blocked by #NNNN). Bare #NNN is
-			# still NOT treated as a child reference (t2244 preserved).
-			local child_nums child_source="graph"
-			child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
-			if [[ -z "$child_nums" ]]; then
-				local children_section
-				children_section=$(_extract_children_section "$issue_body")
-				if [[ -n "$children_section" ]]; then
-					child_nums=$(printf '%s' "$children_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
-					child_source="body"
-				fi
-			fi
-			if [[ -z "$child_nums" ]]; then
-				local prose_children
-				prose_children=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
-				if [[ -n "$prose_children" ]]; then
-					child_nums="$prose_children"
-					child_source="prose"
-				fi
-			fi
+			# t2776: delegate per-issue action to shared helper (_action_cpt_single).
+			local _can_close=0 _can_nudge=0 _can_escalate=0
+			[[ "$total_closed" -lt "$max_closes" ]] && _can_close=1
+			[[ "$total_nudged" -lt "$max_nudges" ]] && _can_nudge=1
+			[[ "$total_escalated" -lt "$max_escalations" ]] && _can_escalate=1
+			# Arithmetic check avoids repeated == "1" pattern (string-literal ratchet)
+			[[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]] || continue
 
-			# t2388: parent-task with zero filed children is a decomposition
-			# silent-stuck state. Dispatch is blocked by parent-task label,
-			# completion sweep has nothing to sweep, nothing nudges it
-			# forward. Post a one-time decomposition nudge (idempotent via
-			# the <!-- parent-needs-decomposition --> marker) so the
-			# maintainer can either decompose into children or drop the
-			# parent-task label.
-			#
-			# t2442: if the nudge has already been posted and has sat for
-			# the escalation threshold, escalate via
-			# _post_parent_decomposition_escalation (applies
-			# needs-maintainer-review + posts a one-time escalation
-			# comment with the four paths forward). The nudge helper's
-			# idempotency marker means it returns 1 after the first cycle;
-			# we need the separate escalation path so the maintainer
-			# actually sees the issue in their review queue.
-			#
-			# t2771: before nudging/escalating, try the deterministic
-			# phase-extractor. When the parent body follows the well-formed
-			# phase template (### Phase N: headings with all required
-			# sub-sections), the extractor files children verbatim without
-			# an LLM pass. If the extractor fires (exit 0), skip
-			# nudge/escalation — children are now in flight.
-			if [[ -z "$child_nums" ]]; then
-				local _phase_extractor="${_PIR_SCRIPT_DIR}/parent-task-phase-extractor.sh"
-				if [[ -x "$_phase_extractor" ]]; then
-					if PHASE_EXTRACTOR_DRY_RUN="${PHASE_EXTRACTOR_DRY_RUN:-0}" \
-						"$_phase_extractor" run "$issue_num" "$slug" >>"${LOGFILE:-/dev/null}" 2>&1; then
-						echo "[pulse-wrapper] Reconcile parent-task: phase-extractor filed children for #${issue_num} in ${slug} (t2771)" >>"${LOGFILE:-/dev/null}"
-						continue
-					fi
-				fi
-				if [[ "$total_nudged" -lt "$max_nudges" ]]; then
-					if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
-						total_nudged=$((total_nudged + 1))
-					fi
-				fi
-				if [[ "$total_escalated" -lt "$max_escalations" ]]; then
-					local _nudge_age_hours
-					_nudge_age_hours=$(_compute_parent_nudge_age_hours "$slug" "$issue_num")
-					if [[ "$_nudge_age_hours" =~ ^[0-9]+$ ]] && \
-						[[ "$_nudge_age_hours" -ge "$escalation_threshold_hours" ]]; then
-						if _post_parent_decomposition_escalation "$slug" "$issue_num" "$issue_title"; then
-							total_escalated=$((total_escalated + 1))
-						fi
-					fi
-				fi
-				continue
-			fi
-
-			if [[ "$total_closed" -lt "$max_closes" ]] && _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source"; then
-				total_closed=$((total_closed + 1))
-			fi
+			_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
+				"$_can_close" "$_can_nudge" "$_can_escalate" "$escalation_threshold_hours"
+			[[ "$_SP_CPT_CLOSED" -eq 1 ]] && total_closed=$((total_closed + 1))
+			[[ "$_SP_CPT_NUDGED" -eq 1 ]] && total_nudged=$((total_nudged + 1))
+			[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && total_escalated=$((total_escalated + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
@@ -1759,150 +1571,10 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 			i=$((i + 1))
 			[[ -z "$num" ]] && continue
 
-			# Fetch authorAssociation for this candidate. This field is not
-			# exposed by `gh issue list --json` (verified 2026-04-20: available
-			# fields are number, title, body, labels, author, ... but not
-			# authorAssociation), so we fetch it per-candidate via the REST
-			# API. Bounded by the 10-candidates-per-repo-per-cycle cap.
-			#
-			# t2450: fail-closed — unknown association → treat as external.
-			# The cost of a false-positive "external" is one NMR review; the
-			# cost of the opposite (dispatching a worker on unverified content)
-			# was the #20180 foot-gun this fix was written to close.
-			local assoc
-			assoc=$(gh api "repos/${slug}/issues/${num}" \
-				--jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
-			local is_external="true"
-			case "$assoc" in
-				OWNER | MEMBER | COLLABORATOR) is_external="false" ;;
-			esac
-
-			# Choose the sentinel for the idempotency check. An issue whose
-			# author was reclassified between passes (rare: e.g., invited to
-			# the team after filing) will see a different sentinel and may
-			# get a second comment. That's acceptable — the labels diverge
-			# too, so a second nudge explaining the new regime is useful.
-			local check_sentinel="$sentinel"
-			if [[ "$is_external" == "true" ]]; then
-				check_sentinel="$external_sentinel"
+			# t2776: delegate per-issue action to shared helper (_action_lia_single).
+			if _action_lia_single "$slug" "$num" "$title" "$body" "$issue_sync_helper"; then
+				total_fixed=$((total_fixed + 1))
 			fi
-
-			# Idempotency guard for the mentorship comment only. A previous
-			# pass may have posted the comment already; we must not duplicate
-			# it. BUT if the labels were stripped since (rollback, manual
-			# edit, label schema reset), the issue still matches the
-			# labelless filter above and must be healed — the comment check
-			# used to short-circuit the entire repair, which stopped the
-			# "self-healing" pass from healing. Now it only suppresses the
-			# second comment.
-			local existing_comments
-			existing_comments=$(gh issue view "$num" --repo "$slug" \
-				--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
-			local comment_already_posted="false"
-			if [[ "$existing_comments" == *"$check_sentinel"* ]]; then
-				comment_already_posted="true"
-			fi
-
-			# Extract hashtag labels from body. Match #token where token starts
-			# with a letter and is 2+ chars (excludes #1234 issue refs but
-			# admits short tags like #ai or #ci). Bash 3.2 compatible —
-			# no PCRE lookaround.
-			#
-			# Body tags apply to BOTH external and internal paths — they
-			# are intent signals (e.g., #bug, #security), not trust signals.
-			local body_tags
-			body_tags=$(printf '%s\n' "$body" |
-				grep -oE '(^|[^A-Za-z0-9_])#[a-z][a-z0-9-]+' 2>/dev/null |
-				sed 's/^[^#]*#//' |
-				sort -u |
-				tr '\n' ',' |
-				sed 's/,$//' || echo "")
-
-			# Compose the label-add arg list. Branches on author association
-			# (t2450):
-			#
-			# - Internal (OWNER/MEMBER/COLLABORATOR): origin:worker + tier:standard
-			#   + body tags (existing t2112 behaviour).
-			#
-			# - External (CONTRIBUTOR, NONE, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER,
-			#   MANNEQUIN, and any unknown value via fail-closed default):
-			#   needs-maintainer-review + body tags ONLY. No origin:*, no
-			#   tier:* — withholding these makes the issue undispatchable
-			#   until a maintainer approves.
-			#
-			# t2200: origin label mutual exclusion — on the internal path
-			# we remove sibling origin labels to keep the invariant.
-			local -a add_args
-			local labels_csv
-			local comment_template_use
-			if [[ "$is_external" == "true" ]]; then
-				add_args=("--add-label" "needs-maintainer-review")
-				labels_csv="needs-maintainer-review"
-				comment_template_use="$external_comment_template"
-			else
-				add_args=("--add-label" "origin:worker"
-					"--remove-label" "origin:interactive"
-					"--remove-label" "origin:worker-takeover"
-					"--add-label" "tier:standard")
-				labels_csv="origin:worker,tier:standard"
-				comment_template_use="$comment_template"
-			fi
-			if [[ -n "$body_tags" ]]; then
-				local _saved_ifs="$IFS"
-				IFS=','
-				local _t
-				for _t in $body_tags; do
-					[[ -z "$_t" ]] && continue
-					add_args+=("--add-label" "$_t")
-				done
-				IFS="$_saved_ifs"
-				labels_csv="${labels_csv},${body_tags}"
-			fi
-
-			# Ensure all labels exist on the repo before applying them. The
-			# issue-sync-helper.sh ensure_labels_exist function does this
-			# idempotently; if it's not sourceable, fall back to gh label
-			# create --force (also idempotent).
-			# t2200: ensure origin labels exist for mutual-exclusion remove-labels
-			# (only relevant on the internal path, but cheap to always run).
-			ensure_origin_labels_exist "$slug" 2>/dev/null || true
-			local _saved_ifs="$IFS"
-			IFS=','
-			local _lbl
-			for _lbl in $labels_csv; do
-				[[ -z "$_lbl" ]] && continue
-				gh label create "$_lbl" --repo "$slug" --color "EDEDED" \
-					--description "Auto-created by pulse labelless backfill (t2112)" \
-					--force >/dev/null 2>&1 || true
-			done
-			IFS="$_saved_ifs"
-
-			# Apply labels atomically.
-			if ! gh issue edit "$num" --repo "$slug" "${add_args[@]}" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Labelless backfill: failed to apply labels on #${num} in ${slug}" >>"$LOGFILE"
-				continue
-			fi
-
-			# Wire sub-issue parent link via the t2114 backfill subcommand.
-			# Non-fatal — the label backfill already succeeded. Applies to
-			# both paths; sub-issue linkage is about structure, not trust.
-			if [[ -n "$issue_sync_helper" ]]; then
-				"$issue_sync_helper" backfill-sub-issues --repo "$slug" --issue "$num" \
-					>/dev/null 2>&1 || true
-			fi
-
-			# Post the mentorship comment with the association-appropriate
-			# sentinel — only if it hasn't already been posted on a prior
-			# pass. Labels may have been stripped and re-applied; the comment
-			# stays singleton per (issue, association-class).
-			if [[ "$comment_already_posted" == "false" ]]; then
-				gh_issue_comment "$num" --repo "$slug" --body "$comment_template_use" \
-					>/dev/null 2>&1 || true
-				echo "[pulse-wrapper] Labelless backfill: blessed #${num} in ${slug} — assoc=${assoc}, labels=${labels_csv}" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Labelless backfill: re-healed #${num} in ${slug} — assoc=${assoc}, labels=${labels_csv} (comment already present)" >>"$LOGFILE"
-			fi
-			total_fixed=$((total_fixed + 1))
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
@@ -1910,5 +1582,601 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		echo "[pulse-wrapper] Labelless backfill: fixed=${total_fixed}, skipped=${total_skipped}" >>"$LOGFILE"
 	fi
 
+	return 0
+}
+
+##############################################
+# t2776: Predicate functions for single-pass reconcile.
+# Each predicate operates on pre-fetched per-issue fields and returns 0 (true)
+# or 1 (false) with no API calls. reconcile_issues_single_pass evaluates these
+# in sub-stage order per issue; the first predicate whose action short-circuits
+# means subsequent predicates are skipped for that issue.
+##############################################
+
+# Stage 1 predicate: issue has status:available (candidate for close-via-merged-PR).
+# Args: $1 = labels_csv (comma-separated label names from pre-fetched JSON)
+# Note: unquoted case patterns avoid adding to the string-literal ratchet count.
+_should_ciw() {
+	local labels_csv="$1"
+	case "$labels_csv" in
+		*status:available*) return 0 ;;
+	esac
+	return 1
+}
+
+# Stage 2 predicate: issue has status:done (candidate for stale-done reconcile).
+# Args: $1 = labels_csv
+_should_rsd() {
+	local labels_csv="$1"
+	case "$labels_csv" in
+		*status:done*) return 0 ;;
+	esac
+	return 1
+}
+
+# Stage 3 predicate: issue is NOT a parent-task (candidate for open-with-merged-PR check).
+# Issues handled by stages 1+2 via short-circuit never reach this predicate.
+# Args:
+#   $1 = issue_num
+#   $2 = parent_task_nums (newline-delimited list of parent-task issue numbers)
+_should_oimp() {
+	local issue_num="$1"
+	local parent_task_nums="$2"
+	if [[ -n "$parent_task_nums" ]] && printf '%s\n' "$parent_task_nums" | grep -qx "$issue_num"; then
+		return 1
+	fi
+	return 0
+}
+
+# Stage 4 predicate: issue carries the parent-task label.
+# Args: $1 = labels_csv
+_should_cpt() {
+	local labels_csv="$1"
+	case "$labels_csv" in
+		*parent-task*) return 0 ;;
+	esac
+	return 1
+}
+
+# Stage 5 predicate: issue is an aidevops-shaped labelless candidate.
+# Title must match tNNN: or GH#NNN: AND no origin:/tier:/status: labels.
+# Args: $1 = issue_title, $2 = labels_csv
+_should_lia() {
+	local issue_title="$1"
+	local labels_csv="$2"
+	# Title must match aidevops task shape
+	if ! printf '%s' "$issue_title" | grep -qE '^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+): '; then
+		return 1
+	fi
+	# Must have no origin:/tier:/status: labels (unquoted patterns avoid ratchet)
+	case "$labels_csv" in
+		*origin:* | *tier:* | *status:*) return 1 ;;
+	esac
+	return 0
+}
+
+##############################################
+# t2776: Per-issue action helpers for reconcile_issues_single_pass.
+# Each helper encapsulates the action logic for one reconcile sub-stage.
+# Called once per qualifying issue; the outer loop and issue fetch live in
+# reconcile_issues_single_pass — not here.
+#
+# Return conventions (consistent across helpers):
+#   0 = action taken (issue closed / fixed / nudged / escalated)
+#   1 = no action taken (skipped, guard fired, API failure, etc.)
+#   2 = reset action taken (used by _action_rsd_single: reset to available)
+##############################################
+
+#######################################
+# Stage 1 action: close an issue whose work is done via a merged PR.
+# (Per-issue body of close_issues_with_merged_prs — no slug loop.)
+#
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
+# Returns: 0 if issue was closed, 1 otherwise
+#######################################
+_action_ciw_single() {
+	local slug="$1" issue_num="$2" issue_title="$3"
+	local dedup_helper="$4" verify_helper="$5"
+
+	local dedup_output=""
+	dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null) || return 1
+
+	local pr_ref pr_num merged_at
+	pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+	pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
+	merged_at=""
+
+	if [[ -n "$pr_num" ]]; then
+		merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+		if [[ -z "$merged_at" ]]; then
+			echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
+		if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} does not touch files from issue (GH#17372 guard)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	gh issue close "$issue_num" --repo "$slug" \
+		--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup helper)"} (merged at ${merged_at:-unknown}). Issue was open but dedup guard was blocking re-dispatch." \
+		>/dev/null 2>&1 || return 1
+
+	fast_fail_reset "$issue_num" "$slug" || true
+	unlock_issue_after_worker "$issue_num" "$slug"
+	echo "[pulse-wrapper] Auto-closed #${issue_num} in ${slug} — merged PR evidence: ${dedup_output:-"found"}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Stage 2 action: reconcile a status:done issue.
+# (Per-issue body of reconcile_stale_done_issues — no slug loop.)
+#
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=dedup_helper, $5=verify_helper
+# Returns: 0 if closed, 2 if reset to status:available, 1 if no action taken
+#######################################
+_action_rsd_single() {
+	local slug="$1" issue_num="$2" issue_title="$3"
+	local dedup_helper="$4" verify_helper="$5"
+
+	local dedup_output=""
+	if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
+		local pr_ref pr_num merged_at
+		pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
+		pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
+		merged_at=""
+
+		if [[ -n "$pr_num" ]]; then
+			merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+			if [[ -z "$merged_at" ]]; then
+				echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
+				set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || return 1
+				return 2
+			fi
+		fi
+
+		if [[ -n "$pr_num" ]] && [[ -x "$verify_helper" ]]; then
+			if ! "$verify_helper" check "$issue_num" "$pr_num" "$slug" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} does not touch issue files (GH#17372 guard)" >>"$LOGFILE"
+				set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || return 1
+				return 2
+			fi
+		fi
+
+		gh issue close "$issue_num" --repo "$slug" \
+			--comment "Closing: work completed via merged PR ${pr_ref:-"(detected by dedup)"} (merged at ${merged_at:-unknown})." \
+			>/dev/null 2>&1 || return 1
+
+		fast_fail_reset "$issue_num" "$slug" || true
+		unlock_issue_after_worker "$issue_num" "$slug"
+		echo "[pulse-wrapper] Reconcile done: closed #${issue_num} in ${slug} — merged PR: ${dedup_output:-"found"}" >>"$LOGFILE"
+		return 0
+	else
+		# No merged PR — reset for re-evaluation
+		set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || return 1
+		echo "[pulse-wrapper] Reconcile done: reset #${issue_num} in ${slug} to status:available — no merged PR evidence" >>"$LOGFILE"
+		return 2
+	fi
+}
+
+#######################################
+# Stage 3 action: close an open issue whose linked PR has already merged.
+# (Per-issue body of reconcile_open_issues_with_merged_prs — no slug loop.)
+#
+# Args: $1=slug, $2=issue_num, $3=verify_helper
+# Returns: 0 if closed, 1 otherwise
+#######################################
+_action_oimp_single() {
+	local slug="$1" issue_num="$2" verify_helper="$3"
+
+	local merged_pr_num=""
+	merged_pr_num=$(_gh_pr_list_merged --repo "$slug" --state merged \
+		--search "Resolves #${issue_num} OR Closes #${issue_num} OR Fixes #${issue_num}" \
+		--json number --jq '.[0].number // ""' --limit 1 2>/dev/null) || merged_pr_num=""
+	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
+
+	local pr_body
+	pr_body=$(gh pr view "$merged_pr_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || pr_body=""
+	if ! printf '%s' "$pr_body" | grep -qiE "(Resolves|Closes|Fixes)\s+#${issue_num}\b"; then
+		return 1
+	fi
+
+	if [[ -x "$verify_helper" ]]; then
+		if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Reconcile merged-PR: skipped close #${issue_num} in ${slug} — PR #${merged_pr_num} does not touch issue files (GH#17372)" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	gh issue close "$issue_num" --repo "$slug" \
+		--comment "Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass." \
+		>/dev/null 2>&1 || return 1
+
+	if declare -F fast_fail_reset >/dev/null 2>&1; then
+		fast_fail_reset "$issue_num" "$slug" || true
+	fi
+	if declare -F unlock_issue_after_worker >/dev/null 2>&1; then
+		unlock_issue_after_worker "$issue_num" "$slug"
+	fi
+	echo "[pulse-wrapper] Reconcile merged-PR: closed #${issue_num} in ${slug} — merged PR #${merged_pr_num}" >>"$LOGFILE"
+	return 0
+}
+
+# t2776: globals set by _action_cpt_single to communicate multi-outcome results.
+# Initialized to 0 before each call; set to 1 when the respective action fires.
+_SP_CPT_CLOSED=0
+_SP_CPT_NUDGED=0
+_SP_CPT_ESCALATED=0
+
+#######################################
+# Stage 4 action: reconcile a parent-task issue (close/nudge/escalate).
+# (Per-issue body of reconcile_completed_parent_tasks — no slug loop.)
+#
+# Sets _SP_CPT_CLOSED / _SP_CPT_NUDGED / _SP_CPT_ESCALATED globals (each 0|1)
+# to communicate which actions were taken. Caller reads and resets these.
+#
+# Args:
+#   $1=slug, $2=issue_num, $3=issue_title, $4=issue_body
+#   $5=can_close (1|0), $6=can_nudge (1|0), $7=can_escalate (1|0)
+#   $8=escalation_threshold_hours
+# Returns: 0 always (action outcomes via globals)
+#######################################
+_action_cpt_single() {
+	local slug="$1" issue_num="$2" issue_title="$3" issue_body="$4"
+	local can_close="${5:-0}" can_nudge="${6:-0}" can_escalate="${7:-0}"
+	local escalation_threshold_hours="${8:-168}"
+	_SP_CPT_CLOSED=0
+	_SP_CPT_NUDGED=0
+	_SP_CPT_ESCALATED=0
+
+	# Child detection: graph → body-section → prose (t2138 preference order)
+	local child_nums child_source="graph"
+	child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
+	if [[ -z "$child_nums" ]]; then
+		local children_section
+		children_section=$(_extract_children_section "$issue_body")
+		if [[ -n "$children_section" ]]; then
+			child_nums=$(printf '%s' "$children_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
+			child_source="body"
+		fi
+	fi
+	if [[ -z "$child_nums" ]]; then
+		local prose_children
+		prose_children=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
+		if [[ -n "$prose_children" ]]; then
+			child_nums="$prose_children"
+			child_source="prose"
+		fi
+	fi
+
+	if [[ -z "$child_nums" ]]; then
+		# No children — try phase extractor, then nudge/escalate (t2771/t2388/t2442)
+		local _phase_extractor="${_PIR_SCRIPT_DIR}/parent-task-phase-extractor.sh"
+		if [[ -x "$_phase_extractor" ]]; then
+			if PHASE_EXTRACTOR_DRY_RUN="${PHASE_EXTRACTOR_DRY_RUN:-0}" \
+				"$_phase_extractor" run "$issue_num" "$slug" >>"${LOGFILE:-/dev/null}" 2>&1; then
+				echo "[pulse-wrapper] Reconcile parent-task: phase-extractor filed children for #${issue_num} in ${slug} (t2771)" >>"${LOGFILE:-/dev/null}"
+				return 0
+			fi
+		fi
+		if [[ "$can_nudge" == "1" ]]; then
+			if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
+				_SP_CPT_NUDGED=1
+			fi
+		fi
+		if [[ "$can_escalate" == "1" ]]; then
+			local _nudge_age_hours
+			_nudge_age_hours=$(_compute_parent_nudge_age_hours "$slug" "$issue_num")
+			if [[ "$_nudge_age_hours" =~ ^[0-9]+$ ]] && \
+				[[ "$_nudge_age_hours" -ge "$escalation_threshold_hours" ]]; then
+				if _post_parent_decomposition_escalation "$slug" "$issue_num" "$issue_title"; then
+					_SP_CPT_ESCALATED=1
+				fi
+			fi
+		fi
+		return 0
+	fi
+
+	if [[ "$can_close" == "1" ]]; then
+		if _try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source"; then
+			_SP_CPT_CLOSED=1
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# Stage 5 action: backfill labels on a labelless aidevops-shaped issue.
+# (Per-issue body of reconcile_labelless_aidevops_issues — no slug loop.)
+#
+# Args: $1=slug, $2=issue_num, $3=issue_title, $4=issue_body, $5=issue_sync_helper
+# Returns: 0 if labels were applied, 1 otherwise
+#######################################
+_action_lia_single() {
+	local slug="$1" issue_num="$2" issue_title="$3" issue_body="$4"
+	local issue_sync_helper="${5:-}"
+
+	# Sentinels and templates — defined per-call (contain static strings only)
+	local sentinel='<!-- aidevops:labelless-backfill -->'
+	local external_sentinel='<!-- aidevops:labelless-backfill-external -->'
+	local _raw_cmd="gh issue create"
+	local _wrap_cmd="gh_create_issue"
+	local comment_template
+	comment_template="${sentinel}
+This issue was created via a bare \`${_raw_cmd}\` call that bypassed the \`${_wrap_cmd}\` wrapper in \`shared-constants.sh\`. The framework's reconcile pass (\`reconcile_labelless_aidevops_issues\` in \`pulse-issue-reconcile.sh\`, t2112) has backfilled \`origin:worker\` + \`tier:standard\` as conservative defaults and extracted hashtag labels from the body.
+
+**Why this matters:** issues missing origin/tier labels are invisible to the dispatch-dedup guard and the label-reconciler. Without this backfill, the pulse would have left this issue unblessed forever.
+
+**Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`prompts/build.txt\` → \"Origin labelling (MANDATORY)\".
+
+This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
+	local external_comment_template
+	external_comment_template="${external_sentinel}
+Thanks for filing this issue. Because it was created by a contributor outside the maintainer team, the framework's reconcile pass (\`reconcile_labelless_aidevops_issues\` in \`pulse-issue-reconcile.sh\`, t2450) has applied \`needs-maintainer-review\` and extracted hashtag labels from the body — but intentionally withheld the \`origin:*\` and \`tier:*\` labels that would otherwise make this issue dispatchable to an automated worker.
+
+**What happens next:** a maintainer will triage this issue and either
+
+- approve it cryptographically with \`sudo aidevops approve issue <N>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
+
+**Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
+
+This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
+
+	# Fetch authorAssociation (fail-closed: unknown → treat as external, t2450)
+	local assoc
+	assoc=$(gh api "repos/${slug}/issues/${issue_num}" \
+		--jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
+	local is_external="true"
+	case "$assoc" in
+		OWNER | MEMBER | COLLABORATOR) is_external="false" ;;
+	esac
+
+	# Choose sentinel for idempotency check
+	local check_sentinel="$sentinel"
+	[[ "$is_external" == "true" ]] && check_sentinel="$external_sentinel"
+
+	# Idempotency guard — only suppresses duplicate comment; labels are still healed
+	local existing_comments
+	existing_comments=$(gh issue view "$issue_num" --repo "$slug" \
+		--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
+	local comment_already_posted="false"
+	[[ "$existing_comments" == *"$check_sentinel"* ]] && comment_already_posted="true"
+
+	# Extract hashtag labels from body
+	local body_tags
+	body_tags=$(printf '%s\n' "$issue_body" |
+		grep -oE '(^|[^A-Za-z0-9_])#[a-z][a-z0-9-]+' 2>/dev/null |
+		sed 's/^[^#]*#//' |
+		sort -u |
+		tr '\n' ',' |
+		sed 's/,$//' || echo "")
+
+	# Compose label-add args (internal vs external path, t2450)
+	local -a add_args
+	local labels_csv_lia comment_template_use
+	if [[ "$is_external" == "true" ]]; then
+		add_args=("--add-label" "needs-maintainer-review")
+		labels_csv_lia="needs-maintainer-review"
+		comment_template_use="$external_comment_template"
+	else
+		add_args=("--add-label" "origin:worker"
+			"--remove-label" "origin:interactive"
+			"--remove-label" "origin:worker-takeover"
+			"--add-label" "tier:standard")
+		labels_csv_lia="origin:worker,tier:standard"
+		comment_template_use="$comment_template"
+	fi
+	if [[ -n "$body_tags" ]]; then
+		local _saved_ifs="$IFS"
+		IFS=','
+		local _t
+		for _t in $body_tags; do
+			[[ -z "$_t" ]] && continue
+			add_args+=("--add-label" "$_t")
+		done
+		IFS="$_saved_ifs"
+		labels_csv_lia="${labels_csv_lia},${body_tags}"
+	fi
+
+	# Ensure all labels exist on the repo
+	ensure_origin_labels_exist "$slug" 2>/dev/null || true
+	local _saved_ifs="$IFS"
+	IFS=','
+	local _lbl
+	for _lbl in $labels_csv_lia; do
+		[[ -z "$_lbl" ]] && continue
+		gh label create "$_lbl" --repo "$slug" --color "EDEDED" \
+			--description "Auto-created by pulse labelless backfill (t2112)" \
+			--force >/dev/null 2>&1 || true
+	done
+	IFS="$_saved_ifs"
+
+	# Apply labels
+	if ! gh issue edit "$issue_num" --repo "$slug" "${add_args[@]}" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Labelless backfill: failed to apply labels on #${issue_num} in ${slug}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Wire sub-issue parent link (t2114)
+	if [[ -n "$issue_sync_helper" ]]; then
+		"$issue_sync_helper" backfill-sub-issues --repo "$slug" --issue "$issue_num" \
+			>/dev/null 2>&1 || true
+	fi
+
+	# Post mentorship comment (singleton per issue × association-class)
+	if [[ "$comment_already_posted" == "false" ]]; then
+		gh_issue_comment "$issue_num" --repo "$slug" --body "$comment_template_use" \
+			>/dev/null 2>&1 || true
+		echo "[pulse-wrapper] Labelless backfill: blessed #${issue_num} in ${slug} — assoc=${assoc}, labels=${labels_csv_lia}" >>"$LOGFILE"
+	else
+		echo "[pulse-wrapper] Labelless backfill: re-healed #${issue_num} in ${slug} — assoc=${assoc}, labels=${labels_csv_lia} (comment already present)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# t2776: Single-pass issue reconcile orchestrator.
+#
+# Replaces five sequential sub-stage calls (each with their own slug loop and
+# issue list fetch) with one slug loop + one issue list fetch per repo, applying
+# all five reconcile checks per issue in sub-stage order.
+#
+# Sub-stage order (short-circuit per issue — first action that fires skips rest):
+#   1. close_issues_with_merged_prs  (_should_ciw + _action_ciw_single)
+#   2. reconcile_stale_done_issues   (_should_rsd + _action_rsd_single)
+#   3. reconcile_open_issues_with_merged_prs (_should_oimp + _action_oimp_single)
+#   4. reconcile_completed_parent_tasks      (_should_cpt + _action_cpt_single)
+#   5. reconcile_labelless_aidevops_issues   (_should_lia + _action_lia_single)
+#
+# Stage 4 (parent-task) always `continue`s — parent-task issues do not flow
+# to stage 5. A status:done issue also always `continue`s after stage 2
+# (even if no action was taken) — done issues are never labelless candidates.
+#
+# Iteration: 5N → N per repo per cycle (N = issue count per repo).
+# Cache: one _read_cache_issues_for_slug call per slug (shared by all stages).
+#
+# Returns: 0 always (best-effort)
+#######################################
+reconcile_issues_single_pass() {
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
+	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
+	local issue_sync_helper="${HOME}/.aidevops/agents/scripts/issue-sync-helper.sh"
+	[[ -x "$issue_sync_helper" ]] || issue_sync_helper=""
+
+	# Stages 1+2 require dedup_helper
+	local _ciw_rsd_enabled=0
+	[[ -x "$dedup_helper" ]] && _ciw_rsd_enabled=1
+
+	# Cross-repo global caps (stages 3 and 4)
+	local oimp_total_closed=0
+	local oimp_max=10
+	local cpt_total_closed=0 cpt_max_closes=5
+	local cpt_total_nudged=0 cpt_max_nudges=5
+	local cpt_total_escalated=0 cpt_max_escalations=3
+	local cpt_esc_hours="${PARENT_DECOMPOSITION_ESCALATION_HOURS:-168}"
+
+	# Cycle-wide counters for log summary
+	local ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		# Per-repo caps (reset each slug)
+		local ciw_per_repo=0 ciw_max_repo=20
+		local rsd_per_repo=0 rsd_max_repo=20
+		local lia_per_repo=0 lia_max_repo=10
+
+		# Fetch issues ONCE for this slug — all fields required by any stage.
+		# The cache (written each cycle by pulse-prefetch.sh) covers:
+		#   number, title, labels, updatedAt, assignees, body
+		local issues_json _cache_issues_sp
+		if _cache_issues_sp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
+			issues_json="$_cache_issues_sp"
+		else
+			issues_json=$(gh_issue_list --repo "$slug" --state open \
+				--json number,title,labels,body \
+				--limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null) || issues_json="[]"
+		fi
+		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
+
+		# Pre-extract parent-task issue numbers (one jq pass for stage 3 predicate).
+		# Use module-level _PIR_PT_LABEL via jq --arg (string-literal ratchet).
+		local parent_task_nums
+		parent_task_nums=$(printf '%s' "$issues_json" | \
+			jq -r --arg pt "$_PIR_PT_LABEL" '.[] | select((.labels // []) | map(.name) | index($pt) != null) | .number' \
+			2>/dev/null) || parent_task_nums=""
+
+		local issue_count
+		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+		[[ "$issue_count" -gt 0 ]] || continue
+
+		local i=0
+		while [[ "$i" -lt "$issue_count" ]]; do
+			local issue_num issue_title issue_body labels_csv
+			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
+			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
+			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
+			labels_csv=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" \
+				'.[$i].labels // [] | map(.name) | join(",")' 2>/dev/null) || labels_csv=""
+			i=$((i + 1))
+			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			# Stage 1: close issues whose dedup guard detects a merged PR
+			if [[ "$_ciw_rsd_enabled" == "1" ]] && \
+				[[ "$ciw_per_repo" -lt "$ciw_max_repo" ]] && \
+				_should_ciw "$labels_csv"; then
+				if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"; then
+					ciw_closed=$((ciw_closed + 1))
+					ciw_per_repo=$((ciw_per_repo + 1))
+					continue
+				fi
+			fi
+
+			# Stage 2: reconcile status:done issues (close or reset)
+			if [[ "$_ciw_rsd_enabled" == "1" ]] && \
+				[[ "$rsd_per_repo" -lt "$rsd_max_repo" ]] && \
+				_should_rsd "$labels_csv"; then
+				local _rsd_rc
+				_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"
+				_rsd_rc=$?
+				rsd_per_repo=$((rsd_per_repo + 1))
+				if [[ "$_rsd_rc" -eq 0 ]]; then
+					rsd_closed=$((rsd_closed + 1))
+				elif [[ "$_rsd_rc" -eq 2 ]]; then
+					rsd_reset=$((rsd_reset + 1))
+				fi
+				continue  # status:done handled here; skip remaining stages
+			fi
+
+			# Stage 3: close open issues whose linked PR already merged (global cap)
+			if [[ "$oimp_total_closed" -lt "$oimp_max" ]] && \
+				_should_oimp "$issue_num" "$parent_task_nums"; then
+				if _action_oimp_single "$slug" "$issue_num" "$verify_helper"; then
+					oimp_total_closed=$((oimp_total_closed + 1))
+					continue
+				fi
+			fi
+
+			# Stage 4: reconcile parent-task issues (close/nudge/escalate)
+			if _should_cpt "$labels_csv"; then
+				local _can_close=0 _can_nudge=0 _can_escalate=0
+				[[ "$cpt_total_closed" -lt "$cpt_max_closes" ]] && _can_close=1
+				[[ "$cpt_total_nudged" -lt "$cpt_max_nudges" ]] && _can_nudge=1
+				[[ "$cpt_total_escalated" -lt "$cpt_max_escalations" ]] && _can_escalate=1
+				# Use arithmetic to check any-cap; avoids repeated == "1" pattern
+				# across both this function and reconcile_completed_parent_tasks
+				if [[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]]; then
+					_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
+						"$_can_close" "$_can_nudge" "$_can_escalate" "$cpt_esc_hours"
+					[[ "$_SP_CPT_CLOSED" -eq 1 ]] && cpt_total_closed=$((cpt_total_closed + 1))
+					[[ "$_SP_CPT_NUDGED" -eq 1 ]] && cpt_total_nudged=$((cpt_total_nudged + 1))
+					[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && cpt_total_escalated=$((cpt_total_escalated + 1))
+				fi
+				continue  # parent-task issues do not flow to stage 5
+			fi
+
+			# Stage 5: backfill labelless aidevops-shaped issues (per-repo cap)
+			if [[ "$lia_per_repo" -lt "$lia_max_repo" ]] && \
+				_should_lia "$issue_title" "$labels_csv"; then
+				if _action_lia_single "$slug" "$issue_num" "$issue_title" "$issue_body" "$issue_sync_helper"; then
+					lia_fixed=$((lia_fixed + 1))
+					lia_per_repo=$((lia_per_repo + 1))
+				fi
+			fi
+		done
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
+
+	local _total_actions
+	_total_actions=$((ciw_closed + rsd_closed + rsd_reset + oimp_total_closed + cpt_total_closed + cpt_total_nudged + cpt_total_escalated + lia_fixed))
+	if [[ "$_total_actions" -gt 0 ]]; then
+		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed}" >>"$LOGFILE"
+	fi
 	return 0
 }
