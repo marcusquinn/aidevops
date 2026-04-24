@@ -158,44 +158,59 @@ _handle_stale_llm_lock() {
 		lock_pid=$(cat "${lockdir}/pid" 2>/dev/null || echo "")
 	fi
 
+	# Tier 1: No valid PID → corrupt/stale, clear immediately
 	if [[ -z "$lock_pid" ]] || [[ ! "$lock_pid" =~ ^[0-9]+$ ]]; then
-		echo "[pulse-wrapper] Stale LLM lockdir detected (no valid PID) — clearing (GH#20613)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stale LLM lockdir detected (no valid PID) — clearing (GH#20613)" >>"$WRAPPER_LOGFILE"
 		rm -rf "$lockdir" 2>/dev/null || true
 		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
-		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$LOGFILE"
+		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$WRAPPER_LOGFILE"
 		return 1
 	fi
 
+	# Tier 2: Owner PID dead → stale from SIGKILL/OOM, clear
 	if ! ps -p "$lock_pid" >/dev/null 2>&1; then
-		echo "[pulse-wrapper] Stale LLM lockdir detected (owner PID ${lock_pid} is dead) — clearing (GH#20613)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stale LLM lockdir detected (owner PID ${lock_pid} is dead) — clearing (GH#20613)" >>"$WRAPPER_LOGFILE"
 		rm -rf "$lockdir" 2>/dev/null || true
 		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
-		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$LOGFILE"
+		echo "[pulse-wrapper] Lost LLM lock race after stale-lock clear — skipping" >>"$WRAPPER_LOGFILE"
 		return 1
 	fi
 
-	# Owner is alive — check age-based ceiling
-	local lock_age=0
-	local lock_mtime
-	lock_mtime=$(stat -c '%Y' "$lockdir" 2>/dev/null || echo "0")
-	if [[ "$lock_mtime" -gt 0 ]]; then
-		lock_age=$(( $(date +%s) - lock_mtime ))
+	# Tier 3: Owner alive — check PID reuse + age-based ceiling
+	# Use _get_process_age (portable ps-etime) instead of stat -c '%Y' (GNU-only)
+	local lock_age
+	lock_age=$(_get_process_age "$lock_pid")
+	local owner_cmd=""
+	owner_cmd=$(ps -p "$lock_pid" -o command= 2>/dev/null || echo "")
+
+	# PID reuse guard: if the process is NOT a pulse-wrapper, the original
+	# owner died and the PID was recycled by an unrelated process (GH#20025).
+	# Reclaim immediately without killing the unrelated process.
+	if [[ "$owner_cmd" != *"pulse-wrapper"* ]]; then
+		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir from PID ${lock_pid} (age ${lock_age}s, owner_cmd='${owner_cmd%%' '*}') — PID reused by non-pulse process (GH#20626)" >>"$WRAPPER_LOGFILE"
+		rm -rf "$lockdir" 2>/dev/null || true
+		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
+		echo "[pulse-wrapper] Lost LLM lock race after PID-reuse reclaim — skipping" >>"$WRAPPER_LOGFILE"
+		return 1
 	fi
+
+	# Age-based force-reclaim: if a genuine pulse-wrapper has been holding
+	# the LLM lock for longer than PULSE_LOCK_MAX_AGE_S, it is hung.
 	local max_age="${PULSE_LOCK_MAX_AGE_S:-1800}"
 	if [[ "$lock_age" -gt "$max_age" ]]; then
-		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir (owner PID ${lock_pid}, age ${lock_age}s > ceiling ${max_age}s) — killing hung owner (GH#20613)" >>"$LOGFILE"
-		kill "$lock_pid" 2>/dev/null || true
+		echo "[pulse-wrapper] FORCE-RECLAIMED stale LLM lockdir (owner PID ${lock_pid}, age ${lock_age}s > ceiling ${max_age}s, owner_cmd='${owner_cmd%%' '*}') — killing hung owner (GH#20613)" >>"$WRAPPER_LOGFILE"
+		_kill_tree "$lock_pid" || true
 		sleep 2
 		if kill -0 "$lock_pid" 2>/dev/null; then
-			kill -9 "$lock_pid" 2>/dev/null || true
+			_force_kill_tree "$lock_pid" || true
 		fi
 		rm -rf "$lockdir" 2>/dev/null || true
 		if mkdir "$lockdir" 2>/dev/null; then return 0; fi
-		echo "[pulse-wrapper] Lost LLM lock race after force-reclaim — skipping" >>"$LOGFILE"
+		echo "[pulse-wrapper] Lost LLM lock race after force-reclaim — skipping" >>"$WRAPPER_LOGFILE"
 		return 1
 	fi
 
-	echo "[pulse-wrapper] LLM session already running (lock held by PID ${lock_pid}, age ${lock_age}s) — skipping" >>"$LOGFILE"
+	echo "[pulse-wrapper] LLM session already running (lock held by PID ${lock_pid}, age ${lock_age}s) — skipping" >>"$WRAPPER_LOGFILE"
 	return 1
 }
 

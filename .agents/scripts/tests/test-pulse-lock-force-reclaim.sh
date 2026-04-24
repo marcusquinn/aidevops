@@ -378,13 +378,167 @@ test_self_release_removes_own_lock() {
 }
 
 #######################################
+# Test 8: LLM lock — no valid PID → reclaim (tier 1)
+#######################################
+test_llm_lock_no_valid_pid() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+	mkdir -p "$llm_lockdir"
+	# Write garbage PID
+	echo "not-a-pid" >"${llm_lockdir}/pid"
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM no-valid-PID: returns 0 (reclaimed)" "0" "$result"
+
+	if grep -q "Stale LLM lockdir detected (no valid PID)" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "LLM no-valid-PID: stale-lock logged" 0
+	else
+		print_result "LLM no-valid-PID: stale-lock logged" 1 "no stale-lock log line found"
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Test 9: LLM lock — dead PID owner → reclaim (tier 2)
+#######################################
+test_llm_lock_dead_pid() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+	mkdir -p "$llm_lockdir"
+	# Use a PID guaranteed to be dead
+	local dead_pid=999987
+	while ps -p "$dead_pid" >/dev/null 2>&1; do
+		dead_pid=$((dead_pid + 1))
+	done
+	echo "$dead_pid" >"${llm_lockdir}/pid"
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM dead-PID: returns 0 (reclaimed)" "0" "$result"
+
+	if grep -q "Stale LLM lockdir detected (owner PID ${dead_pid} is dead)" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "LLM dead-PID: dead-owner logged" 0
+	else
+		print_result "LLM dead-PID: dead-owner logged" 1 "no dead-owner log line found"
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Test 10: LLM lock — PID reuse by non-pulse process → reclaim without kill
+#######################################
+test_llm_lock_pid_reuse() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+
+	# Launch a plain sleep (NOT pulse-wrapper)
+	sleep 60 &
+	local non_pulse_pid=$!
+	BG_PIDS="$BG_PIDS $non_pulse_pid"
+
+	mkdir -p "$llm_lockdir"
+	echo "$non_pulse_pid" >"${llm_lockdir}/pid"
+
+	STUB_PROCESS_AGE=100
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM PID-reuse: returns 0 (reclaimed)" "0" "$result"
+	assert_equals "LLM PID-reuse: _kill_tree NOT called" "0" "$KILL_TREE_CALLED"
+
+	if grep -q "FORCE-RECLAIMED stale LLM lockdir from PID.*PID reused by non-pulse" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "LLM PID-reuse: force-reclaim logged" 0
+	else
+		print_result "LLM PID-reuse: force-reclaim logged" 1 "no PID-reuse FORCE-RECLAIMED line"
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Test 11: LLM lock — alive pulse-wrapper within ceiling → blocked
+#######################################
+test_llm_lock_alive_within_ceiling() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+
+	"${TEST_ROOT}/pulse-wrapper.sh" &
+	local fake_pid=$!
+	BG_PIDS="$BG_PIDS $fake_pid"
+
+	mkdir -p "$llm_lockdir"
+	echo "$fake_pid" >"${llm_lockdir}/pid"
+
+	STUB_PROCESS_AGE=120
+	PULSE_LOCK_MAX_AGE_S=1800
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM alive-within-ceiling: returns 1 (blocked)" "1" "$result"
+	assert_equals "LLM alive-within-ceiling: _kill_tree NOT called" "0" "$KILL_TREE_CALLED"
+
+	if grep -q "LLM session already running" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "LLM alive-within-ceiling: blocking logged" 0
+	else
+		print_result "LLM alive-within-ceiling: blocking logged" 1 "no blocking log line found"
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Test 12: LLM lock — alive pulse-wrapper above ceiling → kill + reclaim
+#######################################
+test_llm_lock_alive_above_ceiling() {
+	reset_state
+
+	local llm_lockdir="${LOCKDIR}.llm"
+
+	"${TEST_ROOT}/pulse-wrapper.sh" &
+	local fake_pid=$!
+	BG_PIDS="$BG_PIDS $fake_pid"
+
+	mkdir -p "$llm_lockdir"
+	echo "$fake_pid" >"${llm_lockdir}/pid"
+
+	STUB_PROCESS_AGE=2000
+	PULSE_LOCK_MAX_AGE_S=1800
+
+	local result=0
+	_handle_stale_llm_lock "$llm_lockdir" || result=$?
+
+	assert_equals "LLM alive-above-ceiling: returns 0 (reclaimed)" "0" "$result"
+	assert_equals "LLM alive-above-ceiling: _kill_tree called" "1" "$KILL_TREE_CALLED"
+	assert_equals "LLM alive-above-ceiling: _kill_tree target PID" "$fake_pid" "$KILL_TREE_PID"
+
+	if grep -q "FORCE-RECLAIMED stale LLM lockdir.*killing hung owner" "$WRAPPER_LOGFILE" 2>/dev/null; then
+		print_result "LLM alive-above-ceiling: force-reclaim logged" 0
+	else
+		print_result "LLM alive-above-ceiling: force-reclaim logged" 1 "no force-reclaim log line found"
+	fi
+	rm -rf "$llm_lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
 	setup_sandbox
 
 	echo ""
-	echo "=== Pulse Lock Force-Reclaim Tests (GH#20025 + GH#20260) ==="
+	echo "=== Pulse Lock Force-Reclaim Tests (GH#20025 + GH#20260 + GH#20626) ==="
 	echo ""
 
 	test_live_owner_within_ceiling
@@ -394,6 +548,16 @@ main() {
 	test_env_override_adjusts_ceiling
 	test_double_release_preserves_new_owner
 	test_self_release_removes_own_lock
+
+	echo ""
+	echo "=== LLM Lock Stale Detection Tests (GH#20626) ==="
+	echo ""
+
+	test_llm_lock_no_valid_pid
+	test_llm_lock_dead_pid
+	test_llm_lock_pid_reuse
+	test_llm_lock_alive_within_ceiling
+	test_llm_lock_alive_above_ceiling
 
 	teardown_sandbox
 
