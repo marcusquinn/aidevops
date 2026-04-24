@@ -170,6 +170,54 @@ Recommended changes: add a null check before line 42."
 	return 0
 }
 
+# t2799: is_rate_limit_only_comment matches the narrow 6-entry rate-limit set
+# only — NOT the broader non-review patterns ("Review failed", "Review
+# skipped", etc.). Used by grace-period logic where the semantic distinction
+# matters: a rate-limited bot may recover, a "Review skipped" bot will not.
+test_is_rate_limit_only_matches_rate_limit() {
+	if is_rate_limit_only_comment "Review skipped due to rate limit exceeded for this hour"; then
+		print_result "is_rate_limit_only_comment matches 'rate limit exceeded'" 0
+	else
+		print_result "is_rate_limit_only_comment matches 'rate limit exceeded'" 1
+	fi
+	return 0
+}
+
+test_is_rate_limit_only_rejects_review_failed() {
+	# "Review failed" is in NON_REVIEW_PATTERNS but NOT RATE_LIMIT_PATTERNS —
+	# this is the whole point of the t2799 split.
+	if ! is_rate_limit_only_comment "Review failed — Pull request was closed or merged during review."; then
+		print_result "is_rate_limit_only_comment rejects 'Review failed'" 0
+	else
+		print_result "is_rate_limit_only_comment rejects 'Review failed'" 1
+	fi
+	return 0
+}
+
+test_is_rate_limit_only_rejects_review_skipped() {
+	# Same: "Review skipped" / "Auto reviews are limited" are non-review but
+	# not rate-limit. Misclassifying these as rate-limited would trigger the
+	# grace-period retry path inappropriately.
+	if ! is_rate_limit_only_comment "Review skipped — Auto reviews are limited based on label configuration."; then
+		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 0
+	else
+		print_result "is_rate_limit_only_comment rejects 'Review skipped'" 1
+	fi
+	return 0
+}
+
+test_is_rate_limit_only_rejects_real_review() {
+	local body="## Walkthrough
+
+This PR refactors the foo() function to handle the bar edge case."
+	if ! is_rate_limit_only_comment "$body"; then
+		print_result "is_rate_limit_only_comment rejects real review body" 0
+	else
+		print_result "is_rate_limit_only_comment rejects real review body" 1
+	fi
+	return 0
+}
+
 # ---------- Unit tests: settled-check ----------
 
 test_settled_recent_unedited_placeholder_rejected() {
@@ -397,6 +445,10 @@ main() {
 	test_is_non_review_comment_matches_review_skipped
 	test_is_non_review_comment_matches_closed_during_review
 	test_is_non_review_comment_rejects_real_review
+	test_is_rate_limit_only_matches_rate_limit
+	test_is_rate_limit_only_rejects_review_failed
+	test_is_rate_limit_only_rejects_review_skipped
+	test_is_rate_limit_only_rejects_real_review
 
 	echo ""
 	echo "=== Settled check ==="
