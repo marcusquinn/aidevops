@@ -397,6 +397,23 @@ _classify_row() {
 	return 0
 }
 
+# _resolve_wf_canonical <template_file> <reusable_file>
+# Emits tab-separated: canonical_path\tcanon_norm (canon_norm may be empty)
+_resolve_wf_canonical() {
+	local _template_file="$1"
+	local _reusable_file="$2"
+	local _canonical=""
+	_canonical=$(_resolve_canonical_template "$_template_file") || _canonical=""
+	local _canon_norm=""
+	if [[ -n "$_canonical" ]]; then
+		local _reusable_escaped
+		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
+		_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
+	fi
+	printf '%s\t%s\n' "$_canonical" "$_canon_norm"
+	return 0
+}
+
 # Process all rows: for each known workflow, classify each repo, render output,
 # tally. Returns exit status (1 if any drifted/needs-migration, 0 otherwise).
 # _process_rows <mode> <verbose> <filter_slug> <filter_workflow>
@@ -417,35 +434,21 @@ _process_rows() {
 	local _rows
 	_rows=$(_iterate_repos) || exit $?
 
-	# Outer loop: known workflows. Inner loop: repos.
-	# This produces one classification row per (repo × workflow).
 	local _wf_tuple
 	for _wf_tuple in "${_KNOWN_WORKFLOWS[@]}"; do
-		# Parse the colon-separated tuple: workflow_file:reusable_file:template_file
 		local _workflow_file _reusable_file _template_file
 		_workflow_file="${_wf_tuple%%:*}"
-		_reusable_file="${_wf_tuple#*:}"
-		_reusable_file="${_reusable_file%%:*}"
+		_reusable_file="${_wf_tuple#*:}"; _reusable_file="${_reusable_file%%:*}"
 		_template_file="${_wf_tuple##*:}"
 
-		# Apply --workflow filter if set (match against workflow_file without .yml)
 		local _workflow_name="${_workflow_file%.yml}"
 		if [[ -n "$_filter_workflow" ]]; then
 			local _fw_norm="${_filter_workflow%.yml}"
 			[[ "$_workflow_name" != "$_fw_norm" ]] && continue
 		fi
 
-		# Resolve canonical template for this workflow.
-		local _canonical=""
-		_canonical=$(_resolve_canonical_template "$_template_file") || _canonical=""
-
-		# Pre-compute the loop-invariant normalisation of the canonical template.
-		local _canon_norm=""
-		if [[ -n "$_canonical" ]]; then
-			local _reusable_escaped
-			_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
-			_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
-		fi
+		local _canonical _canon_norm
+		IFS=$'\t' read -r _canonical _canon_norm < <(_resolve_wf_canonical "$_template_file" "$_reusable_file")
 
 		local _path _local_only_flag _slug
 		while IFS=$'\t' read -r _path _local_only_flag _slug; do
@@ -467,16 +470,11 @@ _process_rows() {
 			NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
 			CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
 			DRIFTED/CALLER)
-				_drifted=$((_drifted + 1))
-				_any_failure=1
-				if ((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-					_note="see diff below"
-				fi
+				_drifted=$((_drifted + 1)); _any_failure=1
+				((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]] && _note="see diff below"
 				;;
 			NEEDS-MIGRATION)
-				_needs_mig=$((_needs_mig + 1))
-				_any_failure=1
-				;;
+				_needs_mig=$((_needs_mig + 1)); _any_failure=1 ;;
 			esac
 
 			if [[ "$_mode" == "$_MODE_JSON" ]]; then
@@ -484,9 +482,7 @@ _process_rows() {
 			else
 				_render_row_human "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
 				if ((_verbose == 1)) && [[ "$_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
-					echo ""
-					_diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"
-					echo ""
+					echo ""; _diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"; echo ""
 				fi
 			fi
 		done <<<"$_rows"
@@ -495,9 +491,7 @@ _process_rows() {
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  Summary: %d entries — %d current, %d drifted, %d needs-migration, %d no-workflow, %d local-only, %d no-template\n\n' \
 			"$_total" "$_current" "$_drifted" "$_needs_mig" "$_no_wf" "$_local_only" "$_no_template"
-		if ((_any_failure == 1)); then
-			printf '  Exit code 1 — see DRIFTED/CALLER or NEEDS-MIGRATION entries above.\n\n'
-		fi
+		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED/CALLER or NEEDS-MIGRATION entries above.\n\n'
 	fi
 
 	return "$_any_failure"
