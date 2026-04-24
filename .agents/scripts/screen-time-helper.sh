@@ -469,7 +469,7 @@ _linux_last_hours() {
 	# Count "still logged in" sessions
 	local still_logged
 	still_logged=$(last -s "-${days}days" "$current_user" 2>/dev/null |
-		grep -c "still logged in" || echo "0")
+		grep -c "still logged in" 2>/dev/null || true)
 	if [[ "$still_logged" -gt 0 ]]; then
 		# Estimate current session duration from loginctl
 		local current_session_secs=0

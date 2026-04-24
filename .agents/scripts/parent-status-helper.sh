@@ -449,7 +449,7 @@ _count_child_states() {
 	local all_child_nums="$2"
 
 	local phases_filed phases_merged phases_inflight in_flight_pr_num
-	phases_filed=$(printf '%s\n' "$all_child_nums" | grep -c '^[0-9]' 2>/dev/null || echo 0)
+	phases_filed=$(printf '%s\n' "$all_child_nums" | safe_grep_count '^[0-9]')
 	[[ -z "$all_child_nums" ]] && phases_filed=0
 	phases_merged=0
 	phases_inflight=0

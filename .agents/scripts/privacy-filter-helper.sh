@@ -496,7 +496,7 @@ check_status() {
 
 	if [[ -f "$PATTERNS_FILE" ]]; then
 		local count
-		count=$(grep -c -v '^#' "$PATTERNS_FILE" 2>/dev/null || echo 0)
+		count=$(safe_grep_count -v '^#' "$PATTERNS_FILE")
 		print_info "Global custom patterns: $count ($PATTERNS_FILE)"
 	else
 		print_info "Global custom patterns: none"
@@ -504,7 +504,7 @@ check_status() {
 
 	if [[ -f "$PROJECT_PATTERNS" ]]; then
 		local count
-		count=$(grep -c -v '^#' "$PROJECT_PATTERNS" 2>/dev/null || echo 0)
+		count=$(safe_grep_count -v '^#' "$PROJECT_PATTERNS")
 		print_info "Project patterns: $count ($PROJECT_PATTERNS)"
 	else
 		print_info "Project patterns: none"

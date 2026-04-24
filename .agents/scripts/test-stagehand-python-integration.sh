@@ -232,11 +232,11 @@ $(cat "$TEST_LOG")
 
 ## Summary
 
-- **Python Helper Script**: $(grep -c "PASS.*Python.*helper" "$TEST_LOG" || echo 0) tests passed
-- **Documentation**: $(grep -c "PASS.*Documentation" "$TEST_LOG" || echo 0) tests passed  
+- **Python Helper Script**: $(safe_grep_count "PASS.*Python.*helper" "$TEST_LOG") tests passed
+- **Documentation**: $(safe_grep_count "PASS.*Documentation" "$TEST_LOG") tests passed  
 - **Python Requirements**: $(grep -c "PASS.*Python\|PASS.*pip" "$TEST_LOG" || echo 0) tests passed
-- **MCP Integration**: $(grep -c "PASS.*MCP" "$TEST_LOG" || echo 0) tests passed
-- **Commands**: $(grep -c "PASS.*command" "$TEST_LOG" || echo 0) tests passed
+- **MCP Integration**: $(safe_grep_count "PASS.*MCP" "$TEST_LOG") tests passed
+- **Commands**: $(safe_grep_count "PASS.*command" "$TEST_LOG") tests passed
 
 ## Next Steps
 

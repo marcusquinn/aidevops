@@ -2378,7 +2378,7 @@ _cmd_status_localwp() {
 	fi
 
 	local hosts_count
-	hosts_count="$(grep -c '#Local Site' /etc/hosts 2>/dev/null || echo "0")"
+	hosts_count="$(safe_grep_count '#Local Site' /etc/hosts)"
 	if [[ "$hosts_count" -gt 0 ]]; then
 		print_info "LocalWP /etc/hosts entries: $hosts_count"
 	fi

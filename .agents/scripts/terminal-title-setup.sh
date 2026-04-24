@@ -87,7 +87,7 @@ tabby_count_disabled_profiles() {
 		echo "0"
 		return 0
 	fi
-	grep -c "disableDynamicTitle: true" "$TABBY_CONFIG_FILE" 2>/dev/null || echo "0"
+	safe_grep_count "disableDynamicTitle: true" "$TABBY_CONFIG_FILE"
 	return 0
 }
 
@@ -110,7 +110,7 @@ tabby_enable_dynamic_titles() {
 	sed 's/disableDynamicTitle: true/disableDynamicTitle: false/g' "$TABBY_CONFIG_FILE" >"$temp_file" && mv "$temp_file" "$TABBY_CONFIG_FILE"
 
 	local count
-	count=$(grep -c "disableDynamicTitle: false" "$TABBY_CONFIG_FILE" 2>/dev/null || echo "0")
+	count=$(safe_grep_count "disableDynamicTitle: false" "$TABBY_CONFIG_FILE")
 	log_success "Updated $count Tabby profile(s) to allow dynamic titles"
 	log_info "Backup saved to: ${TABBY_CONFIG_FILE}.aidevops-backup"
 	log_info "Restart Tabby for changes to take effect"

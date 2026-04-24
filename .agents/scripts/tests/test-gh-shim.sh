@@ -148,7 +148,7 @@ prior sig"
 "$SHIM_RUN" issue comment 123 --repo owner/repo --body "$signed_body" 2>/dev/null
 argv=$(_read_argv)
 # Count marker occurrences — should be exactly 1 (not doubled)
-marker_count=$(grep -c "<!-- aidevops:sig -->" "$STUB_GH_LOG" 2>/dev/null || echo 0)
+marker_count=$(grep -c "<!-- aidevops:sig -->" "$STUB_GH_LOG" 2>/dev/null || true)
 if [[ "$marker_count" -eq 1 ]]; then
 	_pass "signed --body not double-injected"
 else

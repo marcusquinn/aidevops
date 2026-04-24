@@ -448,7 +448,7 @@ run_tool_analysis() {
 		if [[ -f "$result_file" ]]; then
 			print_info "Results saved to: $result_file"
 			local issues
-			issues=$(grep -c '"ruleId"' "$result_file" 2>/dev/null || echo "0")
+			issues=$(safe_grep_count '"ruleId"' "$result_file")
 			print_info "Issues found: $issues"
 		fi
 		return 0

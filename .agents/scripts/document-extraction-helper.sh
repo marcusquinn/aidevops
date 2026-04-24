@@ -209,7 +209,7 @@ do_status() {
 	echo "LLM Backends:"
 	if command -v ollama &>/dev/null; then
 		local ollama_models
-		ollama_models="$(ollama list 2>/dev/null | grep -c "." || echo "0")"
+		ollama_models="$(ollama list 2>/dev/null | safe_grep_count ".")"
 		echo "  ollama:         installed (${ollama_models} models)"
 	else
 		echo "  ollama:         not installed"

@@ -323,7 +323,7 @@ _stale_worktree_sweep_single_repo() {
 
 	if [[ "$dry_run" == "1" ]]; then
 		local wt_count=0
-		wt_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+		wt_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | safe_grep_count "$_wt_prefix")
 		[[ "$wt_count" -gt 0 ]] && wt_count=$((wt_count - 1))
 		echo "[DRY_RUN] Would sweep worktrees for ${repo_path} (${wt_count} linked worktrees)"
 		printf '0'
@@ -331,7 +331,7 @@ _stale_worktree_sweep_single_repo() {
 	fi
 
 	local before_count=0
-	before_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+	before_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | safe_grep_count "$_wt_prefix")
 
 	# t2559: redirect worktree-helper.sh clean stdout to the logfile. Previously
 	# the colored "Checking for worktrees..." banner and "Removing ..." table
@@ -347,7 +347,7 @@ _stale_worktree_sweep_single_repo() {
 	fi
 
 	local after_count=0
-	after_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | grep -c "$_wt_prefix" || echo "0")
+	after_count=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | safe_grep_count "$_wt_prefix")
 	# Sanitise both sides of the arithmetic — either git output or grep -c can
 	# return unexpected strings under hostile conditions; without this guard a
 	# malformed count would crash the pulse with set -e.

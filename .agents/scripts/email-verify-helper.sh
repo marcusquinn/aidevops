@@ -860,7 +860,7 @@ bulk_verify() {
 	fi
 
 	local total
-	total=$(grep -cE '\S' "$input_file" || echo "0")
+	total=$(safe_grep_count -E '\S' "$input_file")
 	local count=0
 	local deliverable=0
 	local risky=0
@@ -950,7 +950,7 @@ update_domains() {
 	fi
 
 	local new_count
-	new_count=$(grep -cE '\S' "$tmp_file" || echo "0")
+	new_count=$(safe_grep_count -E '\S' "$tmp_file")
 
 	if [[ "$new_count" -lt 100 ]]; then
 		print_error "Downloaded list seems too small (${new_count} domains) - aborting"

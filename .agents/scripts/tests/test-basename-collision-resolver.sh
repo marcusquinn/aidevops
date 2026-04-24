@@ -164,7 +164,7 @@ else
 fi
 
 # 4. Exactly one warning: the sandboxed-vs-permissive architecture case.
-warn_count=$(grep -cE '^\[WARN\] basename collision' "$stderr_log" || echo 0)
+warn_count=$(safe_grep_count -E '^\[WARN\] basename collision' "$stderr_log")
 # Strip any whitespace/newlines from wc output
 warn_count=$(printf '%s' "$warn_count" | tr -d '[:space:]')
 if [[ "$warn_count" == "1" ]]; then

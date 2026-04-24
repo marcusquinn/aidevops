@@ -160,7 +160,7 @@ migrate_legacy() {
 	if [[ -f "$default_env" ]]; then
 		# Already migrated - check if legacy has keys not in default
 		local legacy_keys
-		legacy_keys=$(grep -c "^export " "$CREDENTIALS_FILE" 2>/dev/null || echo "0")
+		legacy_keys=$(safe_grep_count "^export " "$CREDENTIALS_FILE")
 		if [[ "$legacy_keys" -eq 0 ]]; then
 			return 0
 		fi
@@ -306,7 +306,7 @@ cmd_list() {
 		local key_count=0
 
 		if [[ -f "$env_file" ]]; then
-			key_count=$(grep -c "^export " "$env_file" 2>/dev/null || echo "0")
+			key_count=$(safe_grep_count "^export " "$env_file")
 		fi
 
 		local marker=""
@@ -784,7 +784,7 @@ cmd_status() {
 			local key_count=0
 
 			if [[ -f "$env_file" ]]; then
-				key_count=$(grep -c "^export " "$env_file" 2>/dev/null || echo "0")
+				key_count=$(safe_grep_count "^export " "$env_file")
 			fi
 
 			local marker=""

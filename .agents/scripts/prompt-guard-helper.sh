@@ -1127,9 +1127,9 @@ cmd_stats() {
 
 	if command -v jq &>/dev/null; then
 		local blocks warns sanitizes
-		blocks=$(grep -c '"action":"BLOCK"' "$log_file" 2>/dev/null || echo "0")
-		warns=$(grep -c '"action":"WARN"' "$log_file" 2>/dev/null || echo "0")
-		sanitizes=$(grep -c '"action":"SANITIZE"' "$log_file" 2>/dev/null || echo "0")
+		blocks=$(safe_grep_count '"action":"BLOCK"' "$log_file")
+		warns=$(safe_grep_count '"action":"WARN"' "$log_file")
+		sanitizes=$(safe_grep_count '"action":"SANITIZE"' "$log_file")
 
 		echo "  Blocked:    $blocks"
 		echo "  Warned:     $warns"
@@ -1603,7 +1603,7 @@ _cmd_test_yaml_loading() {
 	total=$((total + 1))
 	# Test that inline patterns work when no YAML is configured
 	local inline_count
-	inline_count=$(_pg_get_inline_patterns | grep -c '^[A-Z]' 2>/dev/null || echo "0")
+	inline_count=$(_pg_get_inline_patterns | safe_grep_count '^[A-Z]')
 	if [[ "$inline_count" -gt 40 ]]; then
 		echo -e "  ${GREEN}PASS${NC} Inline patterns available ($inline_count patterns)"
 		passed=$((passed + 1))

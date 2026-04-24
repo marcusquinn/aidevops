@@ -304,7 +304,7 @@ if [[ ! -f "$HEADLESS_HELPER" ]]; then
 	printf '  SKIP: %s not found\n' "$HEADLESS_HELPER"
 else
 	# Structural assertion: log call is present at both bypass sites
-	count=$(grep -c "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 —" "$HEADLESS_HELPER" 2>/dev/null || echo 0)
+	count=$(grep -c "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 —" "$HEADLESS_HELPER" 2>/dev/null || true)
 	if [[ "$count" -ge 2 ]]; then
 		pass "AIDEVOPS_HEADLESS_SANDBOX_DISABLED has info_log at both bypass sites (count=$count)"
 	elif [[ "$count" -eq 1 ]]; then

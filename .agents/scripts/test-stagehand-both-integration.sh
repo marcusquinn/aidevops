@@ -197,11 +197,11 @@ $(if [[ -f "${TEST_RESULTS_DIR}/python-test.log" ]]; then echo "See: python-test
 
 ## Summary Statistics
 
-- **JavaScript Tests**: $(grep -c "PASS.*JavaScript" "$TEST_LOG" || echo 0) passed, $(grep -c "FAIL.*JavaScript" "$TEST_LOG" || echo 0) failed
-- **Python Tests**: $(grep -c "PASS.*Python" "$TEST_LOG" || echo 0) passed, $(grep -c "FAIL.*Python" "$TEST_LOG" || echo 0) failed
-- **MCP Integration**: $(grep -c "PASS.*MCP" "$TEST_LOG" || echo 0) passed, $(grep -c "FAIL.*MCP" "$TEST_LOG" || echo 0) failed
-- **Documentation**: $(grep -c "PASS.*Documentation" "$TEST_LOG" || echo 0) passed, $(grep -c "FAIL.*Documentation" "$TEST_LOG" || echo 0) failed
-- **Helper Consistency**: $(grep -c "PASS.*Command" "$TEST_LOG" || echo 0) passed, $(grep -c "FAIL.*Command" "$TEST_LOG" || echo 0) failed
+- **JavaScript Tests**: $(safe_grep_count "PASS.*JavaScript" "$TEST_LOG") passed, $(safe_grep_count "FAIL.*JavaScript" "$TEST_LOG") failed
+- **Python Tests**: $(safe_grep_count "PASS.*Python" "$TEST_LOG") passed, $(safe_grep_count "FAIL.*Python" "$TEST_LOG") failed
+- **MCP Integration**: $(safe_grep_count "PASS.*MCP" "$TEST_LOG") passed, $(safe_grep_count "FAIL.*MCP" "$TEST_LOG") failed
+- **Documentation**: $(safe_grep_count "PASS.*Documentation" "$TEST_LOG") passed, $(safe_grep_count "FAIL.*Documentation" "$TEST_LOG") failed
+- **Helper Consistency**: $(safe_grep_count "PASS.*Command" "$TEST_LOG") passed, $(safe_grep_count "FAIL.*Command" "$TEST_LOG") failed
 
 ## Next Steps
 

@@ -345,9 +345,9 @@ _security_prompt_guard() {
 	total_entries=$(wc -l <"$PG_ATTEMPTS_LOG" | tr -d ' ')
 
 	local blocks=0 warns=0 sanitizes=0
-	blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-	warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-	sanitizes=$(grep -c '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+	blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+	warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
+	sanitizes=$(safe_grep_count '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG")
 
 	printf "$FMT_SUMMARY_ROW" "Action" "Count"
 	printf "$FMT_SUMMARY_ROW" "---" "---"
@@ -460,8 +460,8 @@ _security_posture() {
 	denied_count="${denied_count:-0}"
 
 	if [[ -z "$blocks" || -z "$warns" ]] && [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		[[ -z "$blocks" ]] && blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		[[ -z "$warns" ]] && warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+		[[ -z "$blocks" ]] && blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		[[ -z "$warns" ]] && warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 	fi
 	blocks="${blocks:-0}"
 	warns="${warns:-0}"
@@ -531,8 +531,8 @@ output_security_summary() {
 	[[ -f "$NET_DENIED_LOG" ]] && _denied=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
 	[[ -f "$NET_FLAGGED_LOG" ]] && _flagged=$(wc -l <"$NET_FLAGGED_LOG" | tr -d ' ')
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		_blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		_warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+		_blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		_warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
 	fi
 	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
 	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
@@ -609,9 +609,9 @@ _security_json_collect_counts() {
 	[[ -f "$NET_DENIED_LOG" ]] && net_denied=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
 		pg_total=$(wc -l <"$PG_ATTEMPTS_LOG" | tr -d ' ')
-		pg_blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		pg_warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		pg_sanitizes=$(grep -c '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+		pg_blocks=$(safe_grep_count '"action":"BLOCK"' "$PG_ATTEMPTS_LOG")
+		pg_warns=$(safe_grep_count '"action":"WARN"' "$PG_ATTEMPTS_LOG")
+		pg_sanitizes=$(safe_grep_count '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG")
 	fi
 
 	printf 'audit_count=%s\nnet_access=%s\nnet_flagged=%s\nnet_denied=%s\n' \
@@ -970,7 +970,7 @@ check_workflow_adherence() {
 	local issue_sync_script="${SCRIPT_DIR}/issue-sync-helper.sh"
 	if [[ -f "$issue_sync_script" && -f "$project_root/TODO.md" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
 		local completed_no_close
-		completed_no_close=$(grep -cE '^- \[x\] t[0-9]+' "$project_root/TODO.md" 2>/dev/null || echo "0")
+		completed_no_close=$(safe_grep_count -E '^- \[x\] t[0-9]+' "$project_root/TODO.md")
 		if [[ "$completed_no_close" -gt 0 ]]; then
 			passed+="issue-sync-available,"
 		fi

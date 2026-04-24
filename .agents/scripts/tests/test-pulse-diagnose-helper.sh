@@ -158,7 +158,7 @@ assert_contains "rules shows pm-auto-merge-interactive" "pm-auto-merge-interacti
 assert_contains "rules shows dps-classify" "dps-classify" "$output"
 
 # Count rules (≥30 required)
-rule_count=$(echo "$output" | grep -c '^[a-z]' || echo 0)
+rule_count=$(echo "$output" | grep -c '^[a-z]' 2>/dev/null || true)
 TOTAL=$((TOTAL + 1))
 if [[ "$rule_count" -ge 30 ]]; then
 	PASS=$((PASS + 1))

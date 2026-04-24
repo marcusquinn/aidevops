@@ -1394,7 +1394,7 @@ loop_show_status() {
 
 	# Show receipts
 	local receipt_count
-	receipt_count=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f 2>/dev/null | grep -c . || echo "0")
+	receipt_count=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f 2>/dev/null | safe_grep_count .)
 	echo "Receipts: $receipt_count"
 
 	# Show blocked tasks

@@ -461,7 +461,7 @@ check_dane() {
 
 	# Check DNSSEC
 	local dnssec_check
-	dnssec_check=$(dig +dnssec "$primary_mx" A 2>/dev/null | grep -c "RRSIG" || echo "0")
+	dnssec_check=$(dig +dnssec "$primary_mx" A 2>/dev/null | safe_grep_count "RRSIG")
 	if [[ "$dnssec_check" -gt 0 ]]; then
 		print_success "DNSSEC signatures present"
 	else

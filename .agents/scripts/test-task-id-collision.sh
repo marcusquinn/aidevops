@@ -561,8 +561,7 @@ EOF
 	fi
 
 	local dup_count
-	dup_count=$(echo "$duplicates" | grep -c "." || echo "0")
-
+	dup_count=$(echo "$duplicates" | grep -c "." 2>/dev/null || true)
 	if [[ "$dup_count" -gt 0 ]]; then
 		pass "Pre-commit hook would reject commit ($dup_count duplicate(s) found)"
 	else
