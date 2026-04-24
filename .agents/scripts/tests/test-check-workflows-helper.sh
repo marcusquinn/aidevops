@@ -312,6 +312,27 @@ else
 fi
 rm -rf "$TMPDIR_11"
 
+# Test 12: downstream caller with branches: [develop] → CURRENT/CALLER
+# Verifies the branch-filter normalisation: a repo whose default branch is `develop`
+# (installed by sync-workflows with branches: [develop]) is not flagged as DRIFTED.
+TMPDIR_12="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_12"
+_make_repo_with_workflow "$TMPDIR_12/repos/downstream-develop"
+# Take canonical and replace `branches: [main]` with `branches: [develop]`.
+sed 's/branches: \[main\]/branches: [develop]/' \
+	"$CANONICAL_TEMPLATE" > "$TMPDIR_12/repos/downstream-develop/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_12" \
+	"$(jq -n --arg path "$TMPDIR_12/repos/downstream-develop" \
+		'{initialized_repos: [{slug: "x/develop-repo", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_12")
+if [[ "$result" == "CURRENT/CALLER" ]]; then
+	_pass "canonical caller with branches: [develop] → CURRENT/CALLER (normalised branch filter)"
+else
+	_fail "canonical caller with branches: [develop] → CURRENT/CALLER (normalised branch filter)" \
+		"got: $result"
+fi
+rm -rf "$TMPDIR_12"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo
