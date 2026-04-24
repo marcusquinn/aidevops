@@ -171,8 +171,11 @@ _extract_ref_pin() {
 _render_template_with_ref() {
 	local _template="$1"
 	local _ref="$2"
+	# Escape sed replacement special chars (&, |) before interpolation.
+	local _ref_escaped
+	_ref_escaped=$(printf '%s' "$_ref" | sed 's/[&|]/\\&/g')
 	# Template ships with `@main` by default; rewrite to target ref.
-	sed -E 's|(uses:[[:space:]]*marcusquinn/aidevops/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_ref"'|' "$_template"
+	sed -E 's|(uses:[[:space:]]*marcusquinn/aidevops/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_ref_escaped"'|' "$_template"
 	return 0
 }
 
@@ -330,11 +333,9 @@ _sync_write_commit_push() {
 	if ! git -C "$_path" pull --ff-only origin "$_default_branch" >/dev/null 2>&1; then
 		_warn "$_slug: pull --ff-only failed, attempting without"
 	fi
-	if ! git -C "$_path" checkout -b "$_branch_name" >/dev/null 2>&1; then
-		if ! git -C "$_path" checkout "$_branch_name" >/dev/null 2>&1; then
-			printf '%s\t%s\t%s\tbranch create/checkout failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
-			return 1
-		fi
+	if ! git -C "$_path" checkout -q -B "$_branch_name" "$_default_branch"; then
+		printf '%s\t%s\t%s\tbranch create/reset failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
+		return 1
 	fi
 	mkdir -p "$_path/.github/workflows"
 	printf '%s\n' "$_target_content" >"$_workflow"
@@ -342,10 +343,13 @@ _sync_write_commit_push() {
 	local _commit_subject="chore: resync framework workflow ($_status → CURRENT/CALLER)"
 	local _commit_body
 	_commit_body=$(_format_commit_body "$_status" "$_effective_ref")
-	if ! git -C "$_path" commit -m "$_commit_subject" -m "$_commit_body" >/dev/null 2>&1; then
-		printf '%s\t%s\t%s\tgit commit failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
-		git -C "$_path" checkout "$_default_branch" >/dev/null 2>&1 || true
-		return 1
+	if ! git -C "$_path" diff --cached --quiet; then
+		if ! git -C "$_path" commit -q -m "$_commit_subject" -m "$_commit_body"; then
+			printf '%s\t%s\t%s\tgit commit failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
+			# Return to default branch on failure so subsequent runs are clean.
+			git -C "$_path" checkout -q "$_default_branch" || true
+			return 1
+		fi
 	fi
 	if ! git -C "$_path" push -u origin "$_branch_name" >/dev/null 2>&1; then
 		printf '%s\t%s\t%s\tgit push failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
