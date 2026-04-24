@@ -145,10 +145,18 @@ _parse_phases_section() {
 			# Extract phase number
 			phase_num=$(printf '%s' "$line" | grep -oE '[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
 
-			# Extract description: text after "Phase N" separator (- or :) up to
-			# known marker brackets. Only strip [auto-fire:...] and [requires-decision]
-			# so descriptions containing brackets (e.g. "Fix [bug] in X") are preserved.
-			description=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+[[:space:]]*[-:][[:space:]]*//' | sed -E 's/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\].*//' | sed -E 's/[[:space:]]*#[0-9]+[[:space:]]*$//')
+			# Extract description: text after "Phase N" separator (- or :).
+			# Order matters: strip trailing child ref (#NNN) first, then strip
+			# trailing known marker brackets anchored to end-of-line. This avoids
+			# the marker's greedy .* consuming the child ref and exposing a
+			# description-internal #NNN that the trailing strip then incorrectly
+			# removes. Only strips [auto-fire:...] and [requires-decision] so
+			# descriptions containing other brackets (e.g. "Fix [bug] in X") are
+			# preserved.
+			description=$(printf '%s' "$line" | sed -E \
+				-e 's/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+[0-9]+[[:space:]]*[-:][[:space:]]*//' \
+				-e 's/[[:space:]]*#[0-9]+[[:space:]]*$//' \
+				-e 's/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\][[:space:]]*$//')
 
 			# Determine marker
 			if printf '%s' "$line" | grep -qiF '[auto-fire:on-prior-merge]'; then
@@ -159,10 +167,12 @@ _parse_phases_section() {
 				marker="none"
 			fi
 
-			# Extract child issue reference: the last #NNNN on the line.
-			# Child refs appear after marker brackets so tail -1 selects correctly
-			# even when the description also contains issue references.
-			child_ref=$(printf '%s' "$line" | grep -oE '#[0-9]+' | tail -1 | grep -oE '[0-9]+')
+			# Extract child issue reference: a trailing bare #NNNN at end of line.
+			# Anchoring to line-end (rather than tail -1 on all matches) prevents
+			# false positives where the description contains a #NNN reference but
+			# no child ref is actually present. Child refs are stored as " #NNN"
+			# at end of line by _update_parent_phases_section.
+			child_ref=$(printf '%s' "$line" | sed -nE 's/.*#([0-9]+)[[:space:]]*$/\1/p')
 
 			printf '%s\t%s\t%s\t%s\n' "$phase_num" "$description" "$marker" "$child_ref"
 		fi
