@@ -172,6 +172,7 @@ On exit, run best-effort cleanup:
 ```bash
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh record-success
 ~/.aidevops/agents/scripts/session-miner-pulse.sh 2>&1 || true
+~/.aidevops/agents/scripts/backfill-status-available.sh --apply 2>&1 || true
 ```
 
 Output a brief summary of total actions taken across all cycles (past tense).
