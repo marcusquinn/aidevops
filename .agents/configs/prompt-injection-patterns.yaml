@@ -230,7 +230,7 @@ role_play:
 
   - severity: HIGH
     description: "Evil twin persona attempt"
-    pattern: '(?i)\b(evil|shadow|dark|unrestricted|uncensored)\s+(twin|version|mode|side|alter\s*ego)\b'
+    pattern: '(?i)\b(evil|shadow|dark|unrestricted|uncensored)\s+(twin|version|side|alter\s*ego)\b'
 
   - severity: HIGH
     description: "Dark side persona request"
