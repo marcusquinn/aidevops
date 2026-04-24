@@ -65,7 +65,9 @@ function _stripHeredocBodies(cmd) {
       continue;
     }
     // Detect a heredoc opener: <<[-] with optional quotes around the tag
-    const m = line.match(/<<-?\s*['"]?(\w+)['"]?/);
+    // Use [\w-]+ (not \w+) because bash allows hyphens in heredoc tags
+    // e.g. <<EOF-TAG, which \w+ would not match.
+    const m = line.match(/<<-?\s*['"]?([\w-]+)['"]?/);
     if (m) {
       terminator = m[1];
     }
@@ -103,7 +105,9 @@ function _stripQuotedStrings(line) {
  *      unrelated tools like `rg "gh issue create"` (Failures 2 & 3).
  *   3. Command-boundary anchor — requires `gh` to be at a shell command
  *      start: beginning of the trimmed line, or immediately after one of
- *      ; & | ( ` $( — preventing matches mid-argument after plain whitespace.
+ *      ; & | ( ` $( ! — preventing matches mid-argument after plain whitespace.
+ *      Also allows optional prefixes (sudo, time, env VAR=val) between the
+ *      boundary and `gh` to avoid false negatives on prefixed invocations.
  *
  * @param {string} cmd - Raw bash command string (may be multi-line)
  * @returns {boolean}
@@ -112,8 +116,12 @@ export function isGhWriteCommand(cmd) {
   // Layer 3 pattern: gh must start a command segment.
   // Boundaries: start-of-trimmed-line (^), semicolon, ampersand (covers &&),
   // pipe (covers ||), open-paren (subshell / command-sub), backtick, literal $(.
+  // Also: ! (bash negation operator — gh still executes, needs sig).
+  // After a boundary, allow optional common command prefixes (sudo, time,
+  // env with optional VAR=val assignments) before gh to avoid false negatives
+  // for patterns like `sudo gh issue create` or `env GH_TOKEN=xxx gh pr create`.
   const ghWritePattern =
-    /(^|[;&|(`]|\$\()\s*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
+    /(^|[;&|(`!]|\$\()\s*(?:(?:sudo|time|env(?:\s+\w+=\S+)*)\s+)*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
 
   // Layer 1: strip heredoc bodies from the full command string first
   const noHeredoc = _stripHeredocBodies(cmd);
