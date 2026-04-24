@@ -12,6 +12,7 @@
 #   4. Parallel pid wait
 #   5. State assembly and sub-helper runner
 #   6. Per-repo pulse schedule checking
+#   7. Per-repo pulse interval throttle (GH#20660)
 #
 # Usage: source "${SCRIPT_DIR}/pulse-prefetch-fetch.sh"
 #
@@ -746,6 +747,121 @@ _append_prefetch_sub_helpers() {
 #   0 - repo is in schedule window (include in this pulse)
 #   1 - repo is outside window or expired (skip this pulse)
 ########################################
+########################################
+# Per-repo pulse interval throttle (GH#20660)
+# State file path used by check_repo_pulse_interval and update_repo_pulse_timestamp.
+########################################
+PULSE_LAST_PER_REPO_FILE="${PULSE_LAST_PER_REPO_FILE:-${HOME}/.aidevops/logs/pulse-last-per-repo.json}"
+
+########################################
+# Check whether a per-repo pulse_interval has elapsed since the last poll.
+#
+# Mirrors the shape of check_repo_pulse_schedule: returns 0 to include the
+# repo this cycle, 1 to skip. Backwards compatible: when pulse_interval is
+# absent the repo is always included (no throttle).
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - pulse_interval (integer seconds from repos.json, or "" if not set)
+#   $3 - state_file (optional; defaults to PULSE_LAST_PER_REPO_FILE)
+#
+# Exit codes:
+#   0 - include this repo (interval elapsed or no interval set)
+#   1 - skip this repo (interval not yet elapsed)
+########################################
+check_repo_pulse_interval() {
+	local slug="$1"
+	local interval="$2"
+	local state_file="${3:-$PULSE_LAST_PER_REPO_FILE}"
+
+	# No interval set: always include (backwards compatible)
+	if [[ -z "$interval" ]]; then
+		return 0
+	fi
+
+	# Must be a positive integer
+	if [[ ! "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -eq 0 ]]; then
+		echo "[pulse-wrapper] WARNING: pulse_interval for ${slug} is not a valid positive integer (got: '${interval}') — falling back to no throttle" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Enforce minimum 60s
+	if [[ "$interval" -lt 60 ]]; then
+		echo "[pulse-wrapper] WARNING: pulse_interval for ${slug} is below minimum 60s (got: ${interval}) — clamping to 60s" >>"$LOGFILE"
+		interval=60
+	fi
+
+	# Read last-polled timestamp from state file
+	local last_polled=0
+	if [[ -f "$state_file" ]] && command -v jq &>/dev/null; then
+		local val
+		val=$(jq -r --arg slug "$slug" '.last_pulsed[$slug] // 0' "$state_file" 2>/dev/null)
+		[[ "$val" =~ ^[0-9]+$ ]] && last_polled="$val"
+	fi
+
+	local now elapsed
+	now=$(date +%s)
+	elapsed=$((now - last_polled))
+
+	if [[ "$elapsed" -lt "$interval" ]]; then
+		echo "[pulse-wrapper] pulse_interval_skip repo=${slug} interval=${interval}s elapsed=${elapsed}s last_polled=${last_polled}" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+########################################
+# Write the current epoch timestamp as the last-polled time for a repo.
+#
+# Uses atomic mktemp+mv so concurrent pulse runners cannot produce a torn
+# read. Last-writer-wins is acceptable since timestamps are monotone.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - state_file (optional; defaults to PULSE_LAST_PER_REPO_FILE)
+#
+# Returns: 0 always (non-fatal; failures are logged and silently ignored)
+########################################
+update_repo_pulse_timestamp() {
+	local slug="$1"
+	local state_file="${2:-$PULSE_LAST_PER_REPO_FILE}"
+
+	command -v jq &>/dev/null || return 0
+
+	local now
+	now=$(date +%s)
+
+	# Read existing state or start with an empty object
+	local existing='{}'
+	if [[ -f "$state_file" ]]; then
+		existing=$(jq '.' "$state_file" 2>/dev/null) || existing='{}'
+		[[ -n "$existing" ]] || existing='{}'
+	fi
+
+	# Ensure the logs directory exists
+	local state_dir
+	state_dir="${state_file%/*}"
+	[[ -d "$state_dir" ]] || mkdir -p "$state_dir" 2>/dev/null || true
+
+	local tmp_state
+	tmp_state=$(mktemp "${state_dir}/.pulse-last-per-repo-XXXXXX.json") || {
+		echo "[pulse-wrapper] update_repo_pulse_timestamp: mktemp failed for ${slug} — skipping write" >>"$LOGFILE"
+		return 0
+	}
+
+	if printf '%s' "$existing" | jq --arg slug "$slug" --argjson ts "$now" '
+		if .last_pulsed then .last_pulsed[$slug] = $ts
+		else .last_pulsed = {($slug): $ts} end
+	' >"$tmp_state" 2>/dev/null && jq empty "$tmp_state" 2>/dev/null; then
+		mv "$tmp_state" "$state_file"
+	else
+		rm -f "$tmp_state"
+		echo "[pulse-wrapper] WARNING: update_repo_pulse_timestamp: jq produced invalid JSON for ${slug} — aborting write" >>"$LOGFILE"
+	fi
+	return 0
+}
+
 check_repo_pulse_schedule() {
 	local slug="$1"
 	local ph_start="$2"

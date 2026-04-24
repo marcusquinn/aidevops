@@ -36,6 +36,7 @@ Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `sta
 | Field | Type | Example | Description |
 |-------|------|---------|-------------|
 | `pulse_hours` | object | `{"start": 17, "end": 5}` | Limits dispatch to window (24h local time). Overnight supported. Omit for 24/7. |
+| `pulse_interval` | integer | `600` | Minimum seconds between dispatch polls for this repo. Default: omit (poll every cycle). Min: 60. Useful for contributor-role repos with low activity — e.g. 600 polls every 5 cycles instead of every cycle, reducing GraphQL budget consumption ~5×. State: `~/.aidevops/logs/pulse-last-per-repo.json`. |
 | `pulse_expires` | string | `"2026-05-01"` | Past this date, pulse auto-sets `pulse: false`. Useful for temporary windows. |
 
 ## Contribution and FOSS Fields

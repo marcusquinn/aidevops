@@ -139,11 +139,17 @@ build_ranked_dispatch_candidates_json() {
 	tmp_candidates=$(mktemp 2>/dev/null || echo "/tmp/aidevops-pulse-candidates.$$")
 	: >"$tmp_candidates"
 
-	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires; do
+	while IFS='|' read -r repo_slug repo_path repo_priority ph_start ph_end expires repo_interval; do
 		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
 		if ! check_repo_pulse_schedule "$repo_slug" "$ph_start" "$ph_end" "$expires" "$REPOS_JSON"; then
 			continue
 		fi
+		# Per-repo interval throttle (GH#20660): skip if polled too recently
+		if ! check_repo_pulse_interval "$repo_slug" "$repo_interval"; then
+			continue
+		fi
+		# Record that we are polling this repo now (atomic write, non-fatal)
+		update_repo_pulse_timestamp "$repo_slug"
 		local repo_candidates_json
 		repo_candidates_json=$(list_dispatchable_issue_candidates_json "$repo_slug" "$per_repo_limit") || repo_candidates_json='[]'
 		if [[ -z "$repo_candidates_json" || "$repo_candidates_json" == "[]" ]]; then
@@ -168,7 +174,7 @@ build_ranked_dispatch_candidates_json() {
 				)
 			}
 		' >>"$tmp_candidates" 2>/dev/null || true
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [(.slug), (.path), (.priority // "tooling"), (if .pulse_hours then (.pulse_hours.start | tostring) else "" end), (if .pulse_hours then (.pulse_hours.end | tostring) else "" end), (.pulse_expires // "")] | join("|")' "$REPOS_JSON" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [(.slug), (.path), (.priority // "tooling"), (if .pulse_hours then (.pulse_hours.start | tostring) else "" end), (if .pulse_hours then (.pulse_hours.end | tostring) else "" end), (.pulse_expires // ""), (.pulse_interval // "")] | join("|")' "$REPOS_JSON" 2>/dev/null)
 
 	if [[ ! -s "$tmp_candidates" ]]; then
 		rm -f "$tmp_candidates"

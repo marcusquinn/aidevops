@@ -166,7 +166,7 @@ Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.
 
 **repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
 
-Set fields based on the repo's purpose. Full field reference — `pulse`, `pulse_hours`, `pulse_expires`, `contributed`, `foss`, `foss_config`, `review_gate`, `platform`, `role`, `init_scope`, `priority`, `maintainer`, `local_only`: `reference/repos-json-fields.md`.
+Set fields based on the repo's purpose. Full field reference — `pulse`, `pulse_hours`, `pulse_interval`, `pulse_expires`, `contributed`, `foss`, `foss_config`, `review_gate`, `platform`, `role`, `init_scope`, `priority`, `maintainer`, `local_only`: `reference/repos-json-fields.md`.
 
 **Cross-repo task creation**: When creating a task in a *different* repo, follow the full workflow — not just the TODO edit:
 
