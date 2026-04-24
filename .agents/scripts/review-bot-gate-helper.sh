@@ -64,27 +64,37 @@ KNOWN_BOTS=(
 	"copilot"
 )
 
-# Patterns that indicate a comment is NOT a real review. Includes rate-limit
-# / quota notices AND non-quota bot status messages ("Review failed", "Review
-# skipped", placeholder edits after the PR was closed). Case-insensitive grep
-# patterns — one per line.
-# t2139 (GH#19251): expanded from rate-limit-only to all known non-review
-# notices, after CodeRabbit "Review failed/skipped/closed-during-review"
-# messages were observed false-positive-classifying as real reviews.
-NON_REVIEW_PATTERNS=(
+# Rate-limit / quota notice patterns — entries that indicate the bot tried to
+# review but was capacity-constrained. Used by grace-period logic
+# (RATE_LIMIT_GRACE_SECONDS, _should_pass_rate_limited) where the semantic
+# distinction matters: a rate-limited bot may recover and review later, while
+# a "Review skipped" bot will not.
+# t2799: restored to original rate-limit-only semantics after t2139 expansion.
+RATE_LIMIT_PATTERNS=(
 	"rate limit exceeded"
 	"rate limited by coderabbit"
 	"daily quota limit"
 	"reached your daily quota"
 	"Please wait up to 24 hours"
 	"has exceeded the limit for the number of"
+)
+
+# Broader set: all patterns that indicate a comment is NOT a real review.
+# Includes rate-limit notices (above) AND non-quota bot status messages
+# ("Review failed", "Review skipped", placeholder edits after the PR was
+# closed). Case-insensitive grep patterns — one per line.
+# t2139 (GH#19251): expanded from rate-limit-only to include non-review
+# notices, after CodeRabbit "Review failed/skipped/closed-during-review"
+# messages were observed false-positive-classifying as real reviews.
+# t2799: split from RATE_LIMIT_PATTERNS; built as union so the two stay
+# consistent.
+NON_REVIEW_PATTERNS=(
+	"${RATE_LIMIT_PATTERNS[@]}"
 	"Review failed"
 	"Review skipped"
 	"closed or merged during review"
 	"Auto reviews are limited"
 )
-# Backwards-compat alias for any callers/tests still referencing the old name.
-RATE_LIMIT_PATTERNS=("${NON_REVIEW_PATTERNS[@]}")
 
 # Bots that post a Phase 1 placeholder and later edit it with real review
 # content. For these, age-derived settlement is unreliable — require
@@ -360,8 +370,30 @@ is_non_review_comment() {
 	return 1
 }
 
-# Backwards-compat alias for any callers/tests still using the old name.
+# t2799: Check if a comment body matches a rate-limit-specific pattern only
+# (not the broader non-review set). Use when the caller cares specifically
+# about capacity-constrained bots that may retry later.
+is_rate_limit_only_comment() {
+	local body="$1"
+
+	for pattern in "${RATE_LIMIT_PATTERNS[@]}"; do
+		if echo "$body" | grep -qi "$pattern"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# DEPRECATED (t2799): Backwards-compat alias for callers/tests using the old
+# name. Delegates to is_non_review_comment (broad set) — the pre-t2799
+# behaviour. Will be removed in the next minor version.
+# Migrate to: is_non_review_comment (broad) or is_rate_limit_only_comment
+# (rate-limit-only).
 is_rate_limit_comment() {
+	if [[ -z "${_RATE_LIMIT_COMMENT_DEPRECATION_WARNED:-}" ]]; then
+		echo "DEPRECATED: is_rate_limit_comment() — use is_non_review_comment() or is_rate_limit_only_comment() (t2799)" >&2
+		_RATE_LIMIT_COMMENT_DEPRECATION_WARNED=1
+	fi
 	is_non_review_comment "$@"
 }
 
@@ -531,12 +563,17 @@ do_check() {
 	local rate_limited_bots=""
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
-			# Bot commented — but is it a real review or a rate-limit notice?
+			# Bot commented — but is it a real review or a non-review notice?
+			# t2799: "rate_limited_bots" is a legacy variable name — it covers
+			# all bots without a real review (rate-limited, "Review failed",
+			# "Review skipped", etc.). The grace-period / pass behaviour is the
+			# same for all non-review states; the semantic split lives in the
+			# pattern arrays (RATE_LIMIT_PATTERNS vs NON_REVIEW_PATTERNS).
 			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				found_bots="${found_bots}${bot} "
 			else
 				rate_limited_bots="${rate_limited_bots}${bot} "
-				echo "rate-limited (not a real review): ${bot}" >&2
+				echo "non-review notice (not a real review): ${bot}" >&2
 			fi
 		fi
 	done
@@ -761,8 +798,11 @@ has_retry_comment() {
 }
 
 find_rate_limited_bots() {
-	# Return space-separated list of bots that posted only rate-limit notices.
-	# Empty string if no rate-limited bots found.
+	# Return space-separated list of bots that posted only non-review notices
+	# (rate-limit, "Review failed", "Review skipped", etc.).
+	# t2799: name is a legacy holdover — covers all non-review states, not
+	# just rate-limited. Kept for backwards compat with callers and the
+	# request-retry flow.
 	local pr_number="$1"
 	local repo="$2"
 
