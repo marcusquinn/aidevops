@@ -336,7 +336,7 @@ _prefetch_issues_try_delta() {
 
 	local delta_json=""
 	delta_json=$(gh issue list --repo "$slug" --state open \
-		--json number,title,labels,updatedAt,assignees \
+		--json number,title,labels,updatedAt,assignees,body \
 		--search "updated:>=${last_prefetch}" \
 		--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || delta_json=""
 

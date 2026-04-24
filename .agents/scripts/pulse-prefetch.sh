@@ -160,9 +160,9 @@ _prefetch_repo_issues() {
 
 		# Full fetch: either requested directly or delta fell back
 		if [[ "$sweep_mode" == "full" ]]; then
-			issue_json=$(gh issue list --repo "$slug" --state open \
-				--json number,title,labels,updatedAt,assignees \
-				--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
+		issue_json=$(gh issue list --repo "$slug" --state open \
+			--json number,title,labels,updatedAt,assignees,body \
+			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
 
 			if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 				local issue_err_msg
