@@ -3047,4 +3047,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2810 upstream-watch: file GitHub issues on detected updates ref:GH#20755
 
-- [ ] t2811 Release interactive claim on Ref/For-keyword planning PR merges (claim-stamp leak) #auto-dispatch #bug #chore #framework ref:GH#20757
+- [x] t2811 Release interactive claim on Ref/For-keyword planning PR merges (claim-stamp leak) #auto-dispatch #bug #chore #framework ref:GH#20757 pr:#20760 completed:2026-04-24
