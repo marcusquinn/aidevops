@@ -1534,7 +1534,7 @@ cmd_batch() {
 	local clean=0
 	local flagged=0
 
-	total=$(grep -cE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' "$file" || echo 0)
+	total=$(safe_grep_count -E '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' "$file")
 	log_info "Processing ${total} IPs from ${file} (rate limit: ${rate_limit} req/s per provider)"
 
 	local batch_results="[]"

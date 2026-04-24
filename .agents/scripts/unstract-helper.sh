@@ -168,7 +168,7 @@ do_status() {
 
 	cd "$UNSTRACT_DIR" || exit
 	local running
-	running=$(docker compose ps --format json 2>/dev/null | grep -c '"running"' 2>/dev/null || echo "0")
+	running=$(docker compose ps --format json 2>/dev/null | safe_grep_count '"running"')
 
 	if [[ "$running" -gt 0 ]]; then
 		print_success "Unstract: Running (${running} containers)"

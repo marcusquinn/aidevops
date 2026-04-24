@@ -308,7 +308,7 @@ cmd_pull() {
 
 	# Count issues
 	local issue_count
-	issue_count=$(echo "$beads_export" | grep -c '"id"' || echo "0")
+	issue_count=$(echo "$beads_export" | safe_grep_count '"id"')
 
 	# TODO: Implement actual TODO.md update logic
 	# This would parse the JSON and update TOON blocks
@@ -422,7 +422,7 @@ cmd_status() {
 		local todo_checksum
 		todo_checksum=$(checksum_todo "$project_root")
 		local todo_tasks
-		todo_tasks=$(grep -c '^\- \[' "$project_root/TODO.md" 2>/dev/null || echo "0")
+		todo_tasks=$(safe_grep_count '^\- \[' "$project_root/TODO.md")
 		echo "TODO.md: $todo_tasks tasks (checksum: ${todo_checksum:0:8}...)"
 	else
 		echo "TODO.md: Not found"
@@ -434,7 +434,7 @@ cmd_status() {
 		beads_checksum=$(checksum_beads "$project_root")
 		local beads_issues="0"
 		if command -v bd &>/dev/null; then
-			beads_issues=$(cd "$project_root" && bd list --json 2>/dev/null | grep -c '"id"' || echo "0")
+			beads_issues=$(cd "$project_root" && bd list --json 2>/dev/null | safe_grep_count '"id"')
 		fi
 		echo "Beads: $beads_issues issues (checksum: ${beads_checksum:0:8}...)"
 	else

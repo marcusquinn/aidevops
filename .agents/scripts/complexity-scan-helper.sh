@@ -180,7 +180,7 @@ _compute_js_metrics() {
 _compute_markdown_metrics() {
 	local file_path="$1"
 	local func_count max_nesting
-	func_count=$(grep -c '^#' "$file_path" 2>/dev/null || echo "0")
+	func_count=$(grep -c '^#' "$file_path" 2>/dev/null || true)
 	max_nesting=$(awk '/^#{1,6} / { n=0; for(i=1;i<=length($1);i++) if(substr($1,i,1)=="#") n++; if(n>max) max=n } END { print max+0 }' "$file_path" 2>/dev/null) || max_nesting=0
 	printf '%s|0|%s' "$func_count" "$max_nesting"
 	return 0
@@ -623,7 +623,7 @@ cmd_scan() {
 
 	# Count results from output (counters don't propagate from subshells)
 	local changed_files=0
-	[[ -n "$results" ]] && changed_files=$(printf '%s\n' "$results" | grep -c '.' || echo "0")
+	[[ -n "$results" ]] && changed_files=$(printf '%s\n' "$results" | grep -c '.' 2>/dev/null || true)
 
 	local elapsed=$(($(date +%s) - start_time))
 	_log "INFO" "Scan complete in ${elapsed}s: ${changed_files} files with violations found"
@@ -866,7 +866,7 @@ cmd_ratchet_check() {
 		' "$full_path" 2>/dev/null) || result=""
 		if [[ -n "$result" ]]; then
 			local count
-			count=$(printf '%s\n' "$result" | grep -c '.' || echo "0")
+			count=$(printf '%s\n' "$result" | grep -c '.' 2>/dev/null || true)
 			actual_func=$((actual_func + count))
 		fi
 	done <<<"$sh_files"
@@ -922,7 +922,7 @@ cmd_ratchet_check() {
 			true)
 		if [[ -n "$matches" ]]; then
 			local cnt
-			cnt=$(printf '%s\n' "$matches" | grep -c '.' || echo "0")
+			cnt=$(printf '%s\n' "$matches" | grep -c '.' 2>/dev/null || true)
 			actual_bash32=$((actual_bash32 + cnt))
 		fi
 
@@ -932,7 +932,7 @@ cmd_ratchet_check() {
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		if [[ -n "$assoc" ]]; then
 			local cnt2
-			cnt2=$(printf '%s\n' "$assoc" | grep -c '.' || echo "0")
+			cnt2=$(printf '%s\n' "$assoc" | grep -c '.' 2>/dev/null || true)
 			actual_bash32=$((actual_bash32 + cnt2))
 		fi
 
@@ -942,7 +942,7 @@ cmd_ratchet_check() {
 			grep -vE '^[0-9]+:[[:space:]]*#' || true)
 		if [[ -n "$nameref" ]]; then
 			local cnt3
-			cnt3=$(printf '%s\n' "$nameref" | grep -c '.' || echo "0")
+			cnt3=$(printf '%s\n' "$nameref" | grep -c '.' 2>/dev/null || true)
 			actual_bash32=$((actual_bash32 + cnt3))
 		fi
 	done <<<"$sh_files"

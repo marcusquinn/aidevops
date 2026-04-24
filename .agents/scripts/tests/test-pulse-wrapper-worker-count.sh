@@ -166,7 +166,7 @@ test_prefetch_active_workers_consistent_with_count() {
 
 	local count_out prefetch_worker_count
 	count_out=$(count_active_workers)
-	prefetch_worker_count=$(prefetch_active_workers 2>/dev/null | grep -c '^- PID' || echo "0")
+	prefetch_worker_count=$(prefetch_active_workers 2>/dev/null | grep -c '^- PID' 2>/dev/null || true)
 
 	if [[ "$count_out" == "$prefetch_worker_count" ]]; then
 		print_result "prefetch_active_workers count matches count_active_workers" 0

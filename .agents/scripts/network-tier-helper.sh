@@ -179,7 +179,7 @@ _tier_count() {
 		return 0
 	fi
 
-	grep -c "^${type_prefix}:" "$_TIER_LOOKUP_FILE" || echo "0"
+	safe_grep_count "^${type_prefix}:" "$_TIER_LOOKUP_FILE"
 	return 0
 }
 

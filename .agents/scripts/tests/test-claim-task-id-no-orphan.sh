@@ -175,7 +175,8 @@ EOF
 	_ensure_todo_entry_written "t2548" "20180" "fix orphan bug" "" "$tmpdir"
 
 	local count
-	count=$(grep -c 't2548' "${tmpdir}/TODO.md" 2>/dev/null || echo 0)
+	count=$(grep -c 't2548' "${tmpdir}/TODO.md" 2>/dev/null || true)
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	if [[ "$count" -eq 1 ]]; then
 		pass "$name"
 	else

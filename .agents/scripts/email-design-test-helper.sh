@@ -828,8 +828,8 @@ eoa_poll() {
 			processing_count=$(echo "$response" | jq -r '.processing | length' 2>/dev/null || echo "0")
 		else
 			# Rough count without jq
-			completed_count=$(echo "$response" | grep -c '"completed"' 2>/dev/null || echo "0")
-			processing_count=$(echo "$response" | grep -c '"processing"' 2>/dev/null || echo "0")
+			completed_count=$(echo "$response" | safe_grep_count '"completed"')
+			processing_count=$(echo "$response" | safe_grep_count '"processing"')
 		fi
 
 		echo -e "  [${attempt}/${EOA_POLL_MAX_ATTEMPTS}] Completed: ${completed_count}, Processing: ${processing_count}"

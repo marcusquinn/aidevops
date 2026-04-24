@@ -440,7 +440,7 @@ cmd_status() {
 	# GPG backend
 	if command -v gpg &>/dev/null; then
 		local gpg_keys
-		gpg_keys=$(gpg --list-secret-keys 2>/dev/null | grep -c "^sec" || echo "0")
+		gpg_keys=$(gpg --list-secret-keys 2>/dev/null | safe_grep_count "^sec")
 		echo -e "  GPG:          ${GREEN}installed${NC} ($gpg_keys secret key(s))"
 	else
 		echo -e "  GPG:          ${DIM}not installed${NC}"

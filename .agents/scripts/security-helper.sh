@@ -287,7 +287,7 @@ cmd_analyze() {
 	esac
 
 	local file_count
-	file_count=$(echo "$files_to_scan" | grep -c . || echo "0")
+	file_count=$(echo "$files_to_scan" | safe_grep_count .)
 
 	echo -e "Scan: ${scan_description}"
 	echo -e "Files: ${file_count}"

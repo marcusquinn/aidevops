@@ -61,7 +61,8 @@ jobs:
           echo "changed_count=$CHANGED_COUNT" >> "$GITHUB_OUTPUT"
 
           # Check if scripts specifically changed
-          SCRIPTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/scripts/' || echo "0")
+          SCRIPTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/scripts/' || true)
+          [[ "$SCRIPTS_CHANGED" =~ ^[0-9]+$ ]] || SCRIPTS_CHANGED=0
           if [[ "$SCRIPTS_CHANGED" -gt 0 ]]; then
             echo "scripts_changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -69,7 +70,8 @@ jobs:
           fi
 
           # Check if any agent files changed
-          AGENTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/' || echo "0")
+          AGENTS_CHANGED=$(echo "$CHANGED" | grep -c '^\.agents/' || true)
+          [[ "$AGENTS_CHANGED" =~ ^[0-9]+$ ]] || AGENTS_CHANGED=0
           if [[ "$AGENTS_CHANGED" -gt 0 ]]; then
             echo "agents_changed=true" >> "$GITHUB_OUTPUT"
           else

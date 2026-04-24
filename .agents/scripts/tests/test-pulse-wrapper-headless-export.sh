@@ -102,7 +102,7 @@ test_export_is_inside_main_not_top_level() {
 	# the script. There should be exactly one, and it should be inside
 	# the main() function (between `main() {` and the corresponding `}`).
 	local count line_num
-	count=$(grep -cE '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT" || echo "0")
+	count=$(safe_grep_count -E '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT")
 	if [[ "$count" -ne 1 ]]; then
 		print_result "export is inside main(), not top-level" 1 \
 			"Expected exactly 1 export line, found $count"

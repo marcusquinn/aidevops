@@ -329,7 +329,7 @@ run_returns() {
 		((++files_checked))
 
 		local functions_count return_statements exit_statements total_returns
-		functions_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file" 2>/dev/null || echo "0")
+		functions_count=$(safe_grep_count "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file")
 		return_statements=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
 		exit_statements=$(grep -cE "^exit [0-9]+|^exit \\\$" "$file" 2>/dev/null || echo "0")
 

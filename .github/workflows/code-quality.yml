@@ -733,7 +733,8 @@ jobs:
         lizard_output=$(echo "$LINT_PY_FILES" | xargs lizard --CCN 8 --warnings_only 2>/dev/null || true)
         if [ -n "$lizard_output" ]; then
           echo "$lizard_output"
-          violations=$(echo "$lizard_output" | grep -c "warning:" || echo "0")
+           violations=$(echo "$lizard_output" | grep -c "warning:" || true)
+           [[ "$violations" =~ ^[0-9]+$ ]] || violations=0
           echo ""
           echo "Python complexity violations: $violations"
           # Advisory — Codacy is the hard gate for Python
@@ -756,7 +757,8 @@ jobs:
         pyflakes_output=$(echo "$LINT_PY_FILES" | xargs pyflakes 2>/dev/null || true)
         if [ -n "$pyflakes_output" ]; then
           echo "$pyflakes_output"
-          violations=$(echo "$pyflakes_output" | grep -c . || echo "0")
+           violations=$(echo "$pyflakes_output" | grep -c . || true)
+           [[ "$violations" =~ ^[0-9]+$ ]] || violations=0
           echo ""
           echo "Pyflakes issues: $violations"
           echo "::warning::$violations Python import/usage issues found"
@@ -789,7 +791,8 @@ jobs:
       run: |
         echo "Checking for new code smells vs origin/main..."
         if qlty smells 2>&1 | tee /tmp/qlty-smells-output.txt | grep -q '^[^ ]'; then
-          smell_count=$(grep -c '^[^ ]' /tmp/qlty-smells-output.txt || echo "0")
+          smell_count=$(grep -c '^[^ ]' /tmp/qlty-smells-output.txt || true)
+          [[ "$smell_count" =~ ^[0-9]+$ ]] || smell_count=0
           echo ""
           echo "::error::This PR introduces ${smell_count} new code smell(s). Fix before merging."
           echo "Run 'qlty smells' locally to see details."

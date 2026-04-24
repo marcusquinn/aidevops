@@ -133,7 +133,7 @@ fi
 [[ "$second_ret" -eq 1 ]] && ok=1 || ok=0
 check "$ok" "(c) duplicate-run returns 1 (skip signal)" "ret=$second_ret"
 
-line_count=$(grep -c '^\- \[ \] t2750 ' "$todo_c" || echo "0")
+line_count=$(grep -c '^\- \[ \] t2750 ' "$todo_c" 2>/dev/null || true)
 [[ "$line_count" -eq 1 ]] && ok=1 || ok=0
 check "$ok" "(c) duplicate-run — exactly one entry in TODO.md" "count=$line_count"
 

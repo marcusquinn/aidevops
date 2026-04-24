@@ -467,7 +467,7 @@ phase_consolidate() {
 	fi
 
 	local uncons_count
-	uncons_count=$(printf '%s\n' "$unconsolidated" | grep -c '.' || echo "0")
+	uncons_count=$(printf '%s\n' "$unconsolidated" | safe_grep_count '.')
 
 	if [[ "$uncons_count" -lt 3 ]]; then
 		[[ "$quiet" != "true" ]] && log_success "Consolidate: only $uncons_count unconsolidated memories (need 3+)"

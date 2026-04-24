@@ -234,7 +234,7 @@ check_return_statements() {
 		# Count multi-line functions (exclude one-liners like: func() { echo "x"; })
 		# One-liners don't need explicit return statements
 		local functions_count
-		functions_count=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file" 2>/dev/null || echo "0")
+		functions_count=$(safe_grep_count "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file")
 
 		# Count all return patterns: return 0, return 1, return $var, return $((expr))
 		local return_statements
@@ -904,8 +904,8 @@ check_function_complexity() {
 	done
 
 	if [[ -s "$tmp_file" ]]; then
-		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
-		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")
+		warn_violations=$(safe_grep_count '^WARN' "$tmp_file")
 		block_violations=${block_violations//[^0-9]/}
 		warn_violations=${warn_violations//[^0-9]/}
 		block_violations=${block_violations:-0}
@@ -980,8 +980,8 @@ check_nesting_depth() {
 	done
 
 	if [[ -s "$tmp_file" ]]; then
-		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
-		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")
+		warn_violations=$(safe_grep_count '^WARN' "$tmp_file")
 		block_violations=${block_violations//[^0-9]/}
 		warn_violations=${warn_violations//[^0-9]/}
 		block_violations=${block_violations:-0}
@@ -1058,8 +1058,8 @@ check_file_size() {
 	done
 
 	if [[ -s "$tmp_file" ]]; then
-		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
-		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")
+		warn_violations=$(safe_grep_count '^WARN' "$tmp_file")
 		block_violations=${block_violations//[^0-9]/}
 		warn_violations=${warn_violations//[^0-9]/}
 		block_violations=${block_violations:-0}
@@ -1115,7 +1115,7 @@ check_python_complexity() {
 		lizard_out=$(lizard --CCN 8 --warnings_only "${py_files[@]}" 2>/dev/null || true)
 		if [[ -n "$lizard_out" ]]; then
 			local lizard_count
-			lizard_count=$(echo "$lizard_out" | grep -c "warning:" 2>/dev/null || echo "0")
+			lizard_count=$(echo "$lizard_out" | safe_grep_count "warning:")
 			lizard_count=${lizard_count//[^0-9]/}
 			lizard_count=${lizard_count:-0}
 			violations=$((violations + lizard_count))
@@ -1138,7 +1138,7 @@ check_python_complexity() {
 		pyflakes_out=$(pyflakes "${py_files[@]}" 2>/dev/null || true)
 		if [[ -n "$pyflakes_out" ]]; then
 			local pyflakes_count
-			pyflakes_count=$(echo "$pyflakes_out" | grep -c . 2>/dev/null || echo "0")
+			pyflakes_count=$(echo "$pyflakes_out" | safe_grep_count .)
 			pyflakes_count=${pyflakes_count//[^0-9]/}
 			pyflakes_count=${pyflakes_count:-0}
 			warnings=$((warnings + pyflakes_count))
@@ -1546,7 +1546,7 @@ _ratchet_count_missing_return() {
 	local file funcs returns
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
-		funcs=$(grep -c "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file" 2>/dev/null || echo "0")
+		funcs=$(safe_grep_count "^[a-zA-Z_][a-zA-Z0-9_]*() {$" "$file")
 		returns=$(grep -cE "return [0-9]+|return \\\$" "$file" 2>/dev/null || echo "0")
 		funcs=$(echo "$funcs" | tr -d '[:space:]')
 		returns=$(echo "$returns" | tr -d '[:space:]')

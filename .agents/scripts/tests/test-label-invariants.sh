@@ -158,7 +158,7 @@ export PATH="${STUB_DIR}:${PATH}"
 # Call _mark_issue_done — should produce exactly ONE `issue edit` call
 : >"$GH_CALLS"
 _mark_issue_done "owner/repo" "12345" >/dev/null 2>&1
-edit_calls=$(grep -c '^issue edit' "$GH_CALLS" 2>/dev/null || echo 0)
+edit_calls=$(safe_grep_count '^issue edit' "$GH_CALLS")
 # Trim whitespace and ensure numeric
 edit_calls="${edit_calls//[^0-9]/}"
 edit_calls="${edit_calls:-0}"
@@ -282,7 +282,7 @@ _normalize_label_invariants "test-user" "$REPOS_JSON_FILE" >/dev/null 2>&1
 count_edits_for() {
 	local num="$1"
 	local count
-	count=$(grep -c "^issue edit ${num} " "$GH_CALLS" 2>/dev/null || echo 0)
+	count=$(safe_grep_count "^issue edit ${num} " "$GH_CALLS")
 	count="${count//[^0-9]/}"
 	echo "${count:-0}"
 }
@@ -415,7 +415,7 @@ else
 		# implementation has exactly ONE (the status:done mutation). Any more
 		# means the loop-of-remove-calls fossil has been reintroduced.
 		# Note: the multi-line `gh issue edit ... \` counts as one invocation.
-		edit_count=$(echo "$hygiene_block" | grep -cE '^[[:space:]]+gh issue edit[[:space:]]' || echo 0)
+		edit_count=$(echo "$hygiene_block" | safe_grep_count -E '^[[:space:]]+gh issue edit[[:space:]]')
 		edit_count="${edit_count//[^0-9]/}"
 		edit_count="${edit_count:-0}"
 		if [[ "$edit_count" -eq 1 ]]; then
