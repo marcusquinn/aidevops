@@ -407,8 +407,7 @@ create_github_issue() {
 	# and the bare-fallback path for the parent-task warn call. Must run
 	# BEFORE delegation because the delegation branch returns early.
 	local _slug_for_warn=""
-	_slug_for_warn=$(git -C "$repo_path" remote get-url "${REMOTE_NAME:-origin}" 2>/dev/null \
-		| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+	_slug_for_warn=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}")
 
 	# Try rich delegation first (t1324)
 	local issue_num
@@ -608,6 +607,17 @@ check_framework_routing() {
 #               no labels provided, platform != github, or gh not available.
 # ---------------------------------------------------------------------------
 
+# _extract_github_slug — extract owner/repo slug from a git remote URL.
+# Args: $1 repo_path, $2 remote_name (default: origin).
+# Prints the slug (owner/repo) on stdout; prints nothing on failure.
+_extract_github_slug() {
+	local repo_path="$1"
+	local remote_name="${2:-origin}"
+	git -C "$repo_path" remote get-url "$remote_name" 2>/dev/null \
+		| sed 's|.*github\.com[:/]||;s|\.git$||' || true
+	return 0
+}
+
 # _validate_labels_exist — check that every label in $2 exists in repo $1.
 # Args: $1 repo_slug (owner/repo), $2 comma-separated label names.
 # Returns: 0 = all valid (or fail-open), 1 = invalid labels found.
@@ -665,7 +675,7 @@ _validate_labels_exist() {
 
 	if [[ -n "$invalid_labels" ]]; then
 		log_error "Pre-flight label validation failed — invalid label(s): ${invalid_labels}"
-		log_error "  Run: gh label list --repo ${repo_slug} | grep -i '<name>'"
+		log_error "  Run: gh label list --repo \"${repo_slug}\" | grep -i '<name>'"
 		log_error "  Claim aborted — counter NOT advanced."
 		return 1
 	fi
@@ -1041,8 +1051,7 @@ main() {
 	# offline, dry-run, or when no title is supplied.
 	if [[ "$NO_ISSUE" == "false" && "$OFFLINE_MODE" == "false" && "$DRY_RUN" == "false" && -n "$TASK_TITLE" ]]; then
 		local _disc_slug=""
-		_disc_slug=$(git -C "$REPO_PATH" remote get-url "$REMOTE_NAME" 2>/dev/null \
-			| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+		_disc_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
 		if [[ -n "$_disc_slug" ]]; then
 			local _disc_rc=0
 			_pre_claim_discovery_pass "$TASK_TITLE" "$_disc_slug" || _disc_rc=$?
@@ -1068,8 +1077,7 @@ main() {
 		&& [[ "$platform" == "github" ]] \
 		&& [[ -n "$TASK_LABELS" ]]; then
 		local _val_slug=""
-		_val_slug=$(git -C "$REPO_PATH" remote get-url "$REMOTE_NAME" 2>/dev/null \
-			| sed 's|.*github\.com[:/]||;s|\.git$||' || true)
+		_val_slug=$(_extract_github_slug "$REPO_PATH" "$REMOTE_NAME")
 		if [[ -n "$_val_slug" ]]; then
 			if ! _validate_labels_exist "$_val_slug" "$TASK_LABELS"; then
 				return 3
