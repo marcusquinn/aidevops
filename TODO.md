@@ -2991,7 +2991,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2780 sync-workflows-helper: rewrite on.push.branches filter to match downstream default branch #auto-dispatch #framework ref:GH#20674
 
-- [ ] t2781 pulse: worker retry-with-backoff on repeated rate_limit failures #auto-dispatch #bug #framework #pulse ref:GH#20680
+- [x] t2781 pulse: worker retry-with-backoff on repeated rate_limit failures #auto-dispatch #bug #framework #pulse ref:GH#20680 pr:#20691 completed:2026-04-24
 
 - [ ] t2782 worker: cap watchdog_stall_continue duration and count per session #auto-dispatch #bug #framework ref:GH#20681
 
