@@ -2981,7 +2981,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2773 pulse: route reconcile sub-stages through pulse-prefetch-cache (Phase 2 of #20622) #auto-dispatch #bug #framework #pulse ref:GH#20658 pr:#20667 completed:2026-04-24
 
-- [ ] t2775 pulse: per-repo pulse_interval throttle for contributor-role repos (Phase 3 of #20622) #auto-dispatch #framework #pulse ref:GH#20660
+- [x] t2775 pulse: per-repo pulse_interval throttle for contributor-role repos (Phase 3 of #20622) #auto-dispatch #framework #pulse ref:GH#20660 pr:#20709 completed:2026-04-24
 
 - [ ] t2776 pulse: consolidate reconcile sub-stages into single-pass iterator (Phase 4 of #20622) #auto-dispatch #framework #pulse ref:GH#20661
 - [x] t2777 refactor framework workflows to reusable-workflow pattern (Phase 3 of workflow drift elimination) #interactive #framework ref:GH#20662 pr:#20664 completed:2026-04-24
