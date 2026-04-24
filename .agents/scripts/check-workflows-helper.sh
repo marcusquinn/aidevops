@@ -252,7 +252,9 @@ _diff_summary() {
 readonly _MODE_HUMAN="human"
 readonly _MODE_JSON="json"
 
-main() {
+# Parse command-line flags. Emits TSV: mode\tverbose\tfilter_slug.
+# Exits 0 on --help. Exits 2 via _die on unknown option.
+_parse_args() {
 	local _filter_slug=""
 	local _mode="$_MODE_HUMAN"
 	local _verbose=0
@@ -282,25 +284,60 @@ main() {
 		esac
 	done
 
-	# Fail fast on missing repos.json — otherwise _die fires inside a command
-	# substitution (subshell) and doesn't propagate to the parent process.
-	if [[ ! -f "$REPOS_JSON" ]]; then
-		_die "repos.json not found at $REPOS_JSON — aidevops may not be initialised"
-	fi
-	if ! command -v jq >/dev/null 2>&1; then
-		_die "jq required — install via Homebrew/apt or equivalent"
+	printf '%s\t%d\t%s\n' "$_mode" "$_verbose" "$_filter_slug"
+	return 0
+}
+
+# Classify a single repo row and update counters via namerefs.
+# Side-effects: updates _counters_* via indirect-assignment (pass counter vars
+# by reference is bash 4+; instead we print a classification line and let the
+# caller update counters).
+#
+# Emits: class\tnote
+_classify_row() {
+	local _path="$1"
+	local _local_only_flag="$2"
+	local _canonical="$3"
+
+	if [[ "$_local_only_flag" == "true" ]]; then
+		printf 'LOCAL-ONLY\t\n'
+		return 0
 	fi
 
-	local _canonical
-	if ! _canonical=$(_resolve_canonical_template); then
-		if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-			_log "canonical template not found — install aidevops to resolve templates/workflows/issue-sync-caller.yml"
-		fi
-		# Still iterate so we can classify NO-WORKFLOW / NEEDS-MIGRATION cases
-		# that don't require the canonical. But CURRENT/CALLER vs DRIFTED/CALLER
-		# can't be distinguished — mark all as NO-TEMPLATE.
-		_canonical=""
+	if [[ ! -d "$_path" ]]; then
+		printf 'NO-WORKFLOW\tpath not present: %s\n' "$_path"
+		return 0
 	fi
+
+	local _wf="$_path/.github/workflows/issue-sync.yml"
+	if [[ -z "$_canonical" ]]; then
+		if [[ -f "$_wf" ]]; then
+			printf 'NO-TEMPLATE\tcanonical template missing — classification deferred\n'
+		else
+			printf 'NO-WORKFLOW\t\n'
+		fi
+		return 0
+	fi
+
+	local _class
+	_class=$(_classify_workflow "$_wf" "$_canonical")
+	local _note=""
+	case "$_class" in
+	NEEDS-MIGRATION)
+		_note="legacy full-copy; run: aidevops sync-workflows --apply (Phase 2)"
+		;;
+	esac
+	printf '%s\t%s\n' "$_class" "$_note"
+	return 0
+}
+
+# Process all rows: classify each, render output, tally. Returns exit status
+# (1 if any drifted/needs-migration, 0 otherwise).
+_process_rows() {
+	local _mode="$1"
+	local _verbose="$2"
+	local _filter_slug="$3"
+	local _canonical="$4"
 
 	local _any_failure=0
 	local _total=0 _current=0 _drifted=0 _needs_mig=0 _no_wf=0 _local_only=0 _no_template=0
@@ -310,62 +347,40 @@ main() {
 		printf '  %s\n' "$(printf '%.0s─' {1..78})"
 	fi
 
-	# Read all rows first so jq isn't forced to stream while we process
 	local _rows
 	_rows=$(_iterate_repos)
 
+	local _path _local_only_flag _slug
 	while IFS=$'\t' read -r _path _local_only_flag _slug; do
 		[[ -z "$_slug" && -z "$_path" ]] && continue
-		# For local_only repos without a slug, show the path basename as label
 		local _label="${_slug:-$(basename "$_path")}"
 		[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
 
 		_total=$((_total + 1))
-
-		# Expand ~ in path
 		_path="${_path/#\~/$HOME}"
 
-		local _class _note=""
-		if [[ "$_local_only_flag" == "true" ]]; then
-			_class="LOCAL-ONLY"
-			_local_only=$((_local_only + 1))
-		elif [[ ! -d "$_path" ]]; then
-			_class="NO-WORKFLOW"
-			_note="path not present: $_path"
-			_no_wf=$((_no_wf + 1))
-		else
-			local _wf="$_path/.github/workflows/issue-sync.yml"
-			if [[ -z "$_canonical" ]]; then
-				if [[ -f "$_wf" ]]; then
-					_class="NO-TEMPLATE"
-					_note="canonical template missing — classification deferred"
-					_no_template=$((_no_template + 1))
-				else
-					_class="NO-WORKFLOW"
-					_no_wf=$((_no_wf + 1))
-				fi
-			else
-				_class=$(_classify_workflow "$_wf" "$_canonical")
-				case "$_class" in
-				CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
-				DRIFTED/CALLER)
-					_drifted=$((_drifted + 1))
-					_any_failure=1
-					if ((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-						_note="see diff below"
-					fi
-					;;
-				NEEDS-MIGRATION)
-					_needs_mig=$((_needs_mig + 1))
-					_any_failure=1
-					_note="legacy full-copy; run: aidevops sync-workflows --apply (Phase 2)"
-					;;
-				NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
-				esac
-			fi
-		fi
+		local _class _note
+		IFS=$'\t' read -r _class _note < <(_classify_row "$_path" "$_local_only_flag" "$_canonical")
 
-		if [[ "$_mode" == "json" ]]; then
+		case "$_class" in
+		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
+		NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
+		NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
+		CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
+		DRIFTED/CALLER)
+			_drifted=$((_drifted + 1))
+			_any_failure=1
+			if ((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]]; then
+				_note="see diff below"
+			fi
+			;;
+		NEEDS-MIGRATION)
+			_needs_mig=$((_needs_mig + 1))
+			_any_failure=1
+			;;
+		esac
+
+		if [[ "$_mode" == "$_MODE_JSON" ]]; then
 			_render_row_json "$_label" "$_path" "$_class" "$_note"
 		else
 			_render_row_human "$_label" "$_path" "$_class" "$_note"
@@ -385,10 +400,35 @@ main() {
 		fi
 	fi
 
-	if ((_any_failure == 1)); then
+	return "$_any_failure"
+}
+
+main() {
+	# Fail fast on missing repos.json — _die inside command substitution only
+	# exits the subshell, not the parent.
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		_die "repos.json not found at $REPOS_JSON — aidevops may not be initialised"
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		_die "jq required — install via Homebrew/apt or equivalent"
+	fi
+
+	local _mode _verbose _filter_slug
+	IFS=$'\t' read -r _mode _verbose _filter_slug < <(_parse_args "$@")
+
+	local _canonical
+	if ! _canonical=$(_resolve_canonical_template); then
+		if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
+			_log "canonical template not found — install aidevops to resolve templates/workflows/issue-sync-caller.yml"
+		fi
+		_canonical=""
+	fi
+
+	if _process_rows "$_mode" "$_verbose" "$_filter_slug" "$_canonical"; then
+		exit 0
+	else
 		exit 1
 	fi
-	exit 0
 }
 
 main "$@"
