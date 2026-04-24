@@ -176,18 +176,18 @@ npx @google/design.md export --format dtcg DESIGN.md > tokens.json
 npx @google/design.md spec --rules
 ```
 
-**Linter rules (seven):**
+**Linter rules (eight, verified against `@google/design.md` v0.1.1):**
 
 | Rule | Severity | What it checks |
 |------|----------|---------------|
-| `broken-ref` | error | Token references that don't resolve |
-| `missing-primary` | warning | No `primary` color — agents will auto-generate one |
-| `contrast-ratio` | warning | Component bg/text pairs below WCAG AA (4.5:1) |
-| `orphaned-tokens` | warning | Color tokens defined but never referenced |
-| `missing-typography` | warning | Colors defined but no typography — agents use defaults |
+| `broken-ref` | error | Broken/circular token references and unknown component sub-tokens |
+| `missing-primary` | warning | No `primary` color when other colors are defined |
+| `contrast-ratio` | warning | Component `backgroundColor`/`textColor` pairs below WCAG AA (4.5:1) |
+| `orphaned-tokens` | warning | Tokens defined but never referenced by any component |
+| `missing-typography` | warning | Colors defined but no typography tokens exist |
 | `section-order` | warning | Sections out of canonical order |
-| `missing-sections` | info | Optional sections absent when other tokens exist |
-| `token-summary` | info | Count summary per section |
+| `missing-sections` | info | Optional sections (spacing, rounded) absent when others exist |
+| `token-summary` | info | Count summary per token group |
 
 **aidevops convention**: zero errors mandatory; warnings reviewed before committing. The aidevops library examples may carry orphaned-token and missing-section warnings while migration is in progress — see the library migration task.
 
