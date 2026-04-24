@@ -3004,3 +3004,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2786 Add phase-declaration-aware guard to _try_close_parent_tracker (Phase 2 of #20559) #auto-dispatch ref:GH#20703
 
 - [ ] t2787 Flip AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE default to 1 + docs sweep (Phase 3 of #20559) #auto-dispatch ref:GH#20704
+
+- [ ] t2788 Extend _parse_phases_section to accept narrative bold-heading form (Phase 1 of #20559) #auto-dispatch ref:GH#20702
