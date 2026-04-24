@@ -395,6 +395,7 @@ _build_conflict_feedback_section() {
 		The previous worker's PR #${pr_number} (\`${pr_title}\`) developed merge conflicts with
 		\`${default_branch}\` that could not be resolved by \`gh pr update-branch\` (server-side fast-forward).
 		The conflicts are semantic — the same files were modified on both branches${pr_file_count:+ (${pr_file_count} files touched)}.${scope_block}
+
 		### Files in the conflicting PR
 
 		\`\`\`
