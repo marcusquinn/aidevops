@@ -802,8 +802,20 @@ recover_failed_launch_state() {
 
 	# Record the launch failure in the fast-fail counter (t1888)
 	# Pass crash_type through to fast_fail_record → escalate_issue_tier
-	# for crash-type-aware escalation (overwhelmed = immediate, no_work = default)
-	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" "anthropic" "$crash_type" || true
+	# for crash-type-aware escalation (overwhelmed = immediate, no_work = default).
+	#
+	# t2815: no_worker_process is an infrastructure failure — the worker process
+	# never spawned (canary failure, auth race, session lock collision, FD exhaustion).
+	# Map to crash_type=no_work so escalate_issue_tier short-circuits at the t2387
+	# infra-failure guard and skips tier escalation. A more expensive model cannot
+	# fix a problem the worker never reached. Same-tier retry applies; after
+	# NO_WORK_NMR_THRESHOLD consecutive failures the per-issue circuit breaker
+	# (t2769) applies needs-maintainer-review.
+	local effective_crash_type="$crash_type"
+	if [[ "$failure_reason" == "no_worker_process" && -z "$effective_crash_type" ]]; then
+		effective_crash_type="no_work"
+	fi
+	fast_fail_record "$issue_number" "$repo_slug" "$failure_reason" "anthropic" "$effective_crash_type" || true
 
 	# t1959: Wire global circuit breaker for launch-class failures only.
 	# Stale timeouts and in-execution failures have their own per-issue backoff
@@ -819,7 +831,7 @@ recover_failed_launch_state() {
 		;;
 	esac
 
-	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${crash_type:-unclassified}: removed self assignee + status:queued" >>"$LOGFILE"
+	echo "[pulse-wrapper] Launch recovery reset #${issue_number} (${repo_slug}) after ${failure_reason} crash_type=${effective_crash_type:-unclassified}: removed self assignee + status:queued" >>"$LOGFILE"
 	return 0
 }
 
