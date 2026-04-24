@@ -1,23 +1,22 @@
 name: Review Bot Gate
 
-# Blocks merge until AI code review bots have posted a real, settled review.
-# All gate logic delegates to the vendored review-bot-gate-helper.sh, which
-# includes the t2139 settlement check that defeats CodeRabbit's two-phase
-# placeholder-then-edit posting pattern.
+# Self-caller for the aidevops repo.
+# Upstream logic: .github/workflows/review-bot-gate-reusable.yml
+# Downstream template: .agents/templates/workflows/review-bot-gate-caller.yml
+# See: .agents/reference/reusable-workflows.md
+#
+# GH#20727: migrated to reusable-workflow pattern. The helper script is now
+# fetched at runtime from marcusquinn/aidevops@main rather than being pinned
+# to a hard-coded SHA that silently drifts after helper changes.
 #
 # To enforce: add "review-bot-gate" as a required status check in
 # GitHub branch protection settings for each repo.
 #
-# Rate-limit behaviour is controlled by `review_gate.rate_limit_behavior` in
-# ~/.config/aidevops/repos.json. Default: "pass" (merge proceeds when bots
-# are rate-limited — rely on daily code audit for coverage). Users who want
-# to block merge until bots come off rate-limit can set:
-#   "review_gate": { "rate_limit_behavior": "wait" }
-# Per-tool overrides are also supported. See:
+# Rate-limit behaviour: controlled by `review_gate.rate_limit_behavior` in
+# ~/.config/aidevops/repos.json. Default: "pass". See:
 # .agents/reference/repos-json-fields.md "review_gate" field.
 #
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
-# GH#20493: Migrate from inline gate logic to helper (t2139 settlement fix)
 
 on:
   pull_request:
@@ -41,178 +40,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  review-bot-gate:
-    runs-on: ubuntu-latest
-    # Only run on PRs (issue_comment fires for PR comments too).
-    # GH#4002: Skip pull_request_review events from known review bots.
-    # GitHub requires manual approval for workflow runs triggered by bot
-    # accounts on pull_request_review and pull_request_review_comment events,
-    # causing permanent action_required status on PRs. The issue_comment
-    # event from bots does NOT require approval, so we allow it — this is
-    # the primary re-trigger path when a bot posts its review as a comment.
-    if: >
-      (
-        github.event_name == 'pull_request' ||
-        github.event_name == 'pull_request_review' ||
-        (github.event_name == 'issue_comment' && github.event.issue.pull_request)
-      ) && !(
-        github.event_name == 'pull_request_review' && (
-          github.actor == 'coderabbitai' ||
-          github.actor == 'gemini-code-assist[bot]' ||
-          github.actor == 'augment-code[bot]' ||
-          github.actor == 'augmentcode[bot]' ||
-          github.actor == 'copilot[bot]' ||
-          github.actor == 'github-actions[bot]' ||
-          github.actor == 'dependabot[bot]'
-        )
-      )
-
-    permissions:
-      pull-requests: read
-      contents: read
-      statuses: read
-
-    steps:
-      - name: Checkout aidevops helper
-        # Vendor the helper from the framework repo so GitHub-hosted runners
-        # (which don't have ~/.aidevops/) can call review-bot-gate-helper.sh.
-        # Pinned to a SHA that includes the t2139 settlement fix (PR #19309).
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: marcusquinn/aidevops
-          ref: 73b664a8d7417e0da4a076eb80ef72609188399e
-          path: .aidevops-helper
-
-      - name: Check for AI review bot activity
-        id: check
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
-
-          # Check if this is an external contributor PR.
-          # GH#17671: external-contributor PRs require real bot reviews;
-          # rate-limit grace is disabled — they cannot merge on rate-limit-only.
-          IS_EXTERNAL_PR=false
-          PR_LABELS=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
-            --json labels --jq '.labels[].name' 2>/dev/null || true)
-          if echo "${PR_LABELS}" | grep -q 'external-contributor'; then
-            IS_EXTERNAL_PR=true
-            echo "External contributor PR detected — rate-limit grace DISABLED"
-            # Override to 'wait': prevents the default PASS_RATE_LIMITED shortcut.
-            export REVIEW_GATE_RATE_LIMIT_BEHAVIOR=wait
-          fi
-          echo "is_external_pr=${IS_EXTERNAL_PR}" >> "${GITHUB_OUTPUT}"
-
-          # Invoke the vendored helper. All gate logic lives in the helper:
-          #   - t2139 settlement check (defeats CodeRabbit two-phase placeholder)
-          #   - KNOWN_BOTS and NON_REVIEW_PATTERNS (including "Review failed/skipped")
-          #   - any_bot_has_success_status (status check fallback, GH#3005)
-          #   - rate-limit behaviour (configurable via repos.json or env var)
-          # Output values: PASS / PASS_RATE_LIMITED / WAITING / SKIP
-          # Exit codes:    0 = PASS/PASS_RATE_LIMITED/SKIP  1 = WAITING  2 = error
-          HELPER="${GITHUB_WORKSPACE}/.aidevops-helper/.agents/scripts/review-bot-gate-helper.sh"
-          RESULT=""
-          HELPER_EXIT=0
-          RESULT=$(bash "${HELPER}" check "${PR_NUMBER}" "${REPO}") || HELPER_EXIT=$?
-
-          echo ""
-          echo "Helper result: ${RESULT:-<empty>} (exit: ${HELPER_EXIT})"
-
-          # GH#17671 post-mortem: external-contributor PRs cannot use the
-          # skip-review-gate label. The helper honours SKIP without knowing
-          # about external-contributor — override here at the workflow layer.
-          if [[ "${RESULT}" == "SKIP" && "${IS_EXTERNAL_PR}" == "true" ]]; then
-            echo "SKIP overridden: external-contributor PRs cannot use skip-review-gate."
-            RESULT="WAITING"
-            HELPER_EXIT=1
-          fi
-
-          if [[ "${HELPER_EXIT}" -eq 0 ]]; then
-            echo "gate_passed=true" >> "${GITHUB_OUTPUT}"
-          else
-            echo "gate_passed=false" >> "${GITHUB_OUTPUT}"
-          fi
-          echo "result=${RESULT}" >> "${GITHUB_OUTPUT}"
-
-      - name: Check for skip label
-        id: skip
-        if: steps.check.outputs.gate_passed != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
-          REPO: ${{ github.repository }}
-          IS_EXTERNAL_PR: ${{ steps.check.outputs.is_external_pr }}
-        run: |
-          LABELS=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
-            --json labels -q '.labels[].name' 2>/dev/null || echo "")
-
-          # GH#17671 post-mortem: external-contributor PRs cannot skip the
-          # review gate. The skip label is only for internal PRs where bots
-          # are genuinely not configured.
-          if [[ "${IS_EXTERNAL_PR}" == "true" ]]; then
-            echo "skip=false" >> "${GITHUB_OUTPUT}"
-            echo "DENY: external-contributor PR cannot use skip-review-gate label."
-          elif echo "${LABELS}" | grep -q "skip-review-gate"; then
-            echo "skip=true" >> "${GITHUB_OUTPUT}"
-            echo "SKIP: 'skip-review-gate' label found — bypassing review bot gate."
-          else
-            echo "skip=false" >> "${GITHUB_OUTPUT}"
-          fi
-
-      - name: Gate result
-        if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
-        env:
-          RESULT: ${{ steps.check.outputs.result }}
-        run: |
-          if [[ "${RESULT}" == "WAITING" || -z "${RESULT}" ]]; then
-            echo "::error::No AI review bots have posted a real, settled review on this PR yet."
-          else
-            echo "::error::Review bot gate blocked (helper result: ${RESULT})."
-          fi
-          echo ""
-          echo "This PR cannot be merged until at least one AI code review bot"
-          echo "(CodeRabbit, Gemini Code Assist, etc.) has posted a real review."
-          echo ""
-          echo "What to do:"
-          echo "  1. Wait a few minutes for bots to complete their analysis"
-          echo "  2. This check re-runs automatically when a bot posts or edits a comment"
-          echo "  3. If no bots are configured, add 'skip-review-gate' label"
-          exit 1
-
-      - name: Summary
-        if: always()
-        env:
-          GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
-          RESULT: ${{ steps.check.outputs.result }}
-          SKIP_GATE: ${{ steps.skip.outputs.skip }}
-        run: |
-          {
-            echo "## Review Bot Gate"
-            echo ""
-            if [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "PASS_RATE_LIMITED" ]]; then
-              echo "**Status**: PASSED (rate-limit grace)"
-              echo ""
-              echo "Bots are rate-limited (tried but capacity-constrained). Passing"
-              echo "gate — configured to pass on rate limit (rate_limit_behavior=pass)."
-              echo ""
-              echo "Bot reviews will be addressed post-merge if needed."
-            elif [[ "${GATE_PASSED}" == "true" && "${RESULT}" == "SKIP" ]]; then
-              echo "**Status**: SKIPPED (skip-review-gate label)"
-            elif [[ "${GATE_PASSED}" == "true" ]]; then
-              echo "**Status**: PASSED"
-              echo ""
-              echo "At least one AI review bot has posted a real, settled review."
-            elif [[ "${SKIP_GATE}" == "true" ]]; then
-              echo "**Status**: SKIPPED (skip-review-gate label)"
-            else
-              echo "**Status**: WAITING"
-              echo ""
-              echo "No real AI review bot feedback yet. This check will re-run"
-              echo "automatically when a bot posts or edits a review or comment."
-              echo ""
-              echo "If no bots are configured, add 'skip-review-gate' label to bypass."
-            fi
-          } >> "${GITHUB_STEP_SUMMARY}"
+  gate:
+    uses: ./.github/workflows/review-bot-gate-reusable.yml
+    secrets: inherit

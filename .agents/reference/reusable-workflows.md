@@ -21,26 +21,39 @@ The reusable pattern solves all three at once:
 - Framework scripts fetched at runtime via `actions/checkout` — downstream repos need **zero** `.agents/scripts/` files
 - Caller YAMLs are ~45 lines each, mostly event-trigger declarations — the surface area for drift is minimal and declarative
 
+## Migrated workflows
+
+| Workflow file | Reusable | Downstream template | Migrated |
+|---|---|---|---|
+| `issue-sync.yml` | `issue-sync-reusable.yml` | `issue-sync-caller.yml` | t2770 (PR #20662) |
+| `review-bot-gate.yml` | `review-bot-gate-reusable.yml` | `review-bot-gate-caller.yml` | GH#20727 |
+
 ## Architecture
 
 ```
 aidevops repo (source of truth):
-  .github/workflows/issue-sync-reusable.yml  ← on: workflow_call:
-                                                All jobs. All logic. 1300+ lines.
-  .github/workflows/issue-sync.yml           ← thin caller for aidevops's own CI
-                                                (uses: ./.github/workflows/issue-sync-reusable.yml)
+  .github/workflows/issue-sync-reusable.yml       ← on: workflow_call:
+                                                     All jobs. All logic. 1300+ lines.
+  .github/workflows/issue-sync.yml                ← thin caller for aidevops's own CI
+                                                     (uses: ./.github/workflows/issue-sync-reusable.yml)
+  .github/workflows/review-bot-gate-reusable.yml  ← on: workflow_call: (GH#20727)
+                                                     All gate logic. Helper runtime-fetched.
+  .github/workflows/review-bot-gate.yml           ← thin caller for aidevops's own CI
+                                                     (uses: ./.github/workflows/review-bot-gate-reusable.yml)
   .agents/templates/workflows/
-    issue-sync-caller.yml                    ← canonical downstream template
-  .agents/scripts/issue-sync-helper.sh       ← framework shell (source of truth)
+    issue-sync-caller.yml                         ← canonical downstream template (issue-sync)
+    review-bot-gate-caller.yml                    ← canonical downstream template (review-bot-gate)
+  .agents/scripts/issue-sync-helper.sh            ← framework shell (source of truth)
+  .agents/scripts/review-bot-gate-helper.sh       ← gate helper (source of truth, GH#20727)
   .agents/scripts/shared-constants.sh
   .agents/scripts/issue-sync-lib.sh
 
-downstream repo (thin caller):
-  .github/workflows/issue-sync.yml           ← ~45 lines, declares triggers,
-                                                calls the reusable workflow
-                                                via:
-                                                uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>
-  (no .agents/scripts/ needed)
+downstream repo (thin callers):
+  .github/workflows/issue-sync.yml                ← ~45 lines, declares triggers,
+                                                     uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>
+  .github/workflows/review-bot-gate.yml           ← ~50 lines, declares triggers + concurrency,
+                                                     uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@<ref>
+  (no .agents/scripts/ needed — fetched at runtime via __aidevops/)
 ```
 
 ### How a run flows
@@ -132,8 +145,9 @@ To make a new aidevops workflow reusable by downstream repos:
 
 ## References
 
-- PR [#20662](https://github.com/marcusquinn/aidevops/pull/20662) — Phase 3 implementation (this)
+- PR [#20662](https://github.com/marcusquinn/aidevops/pull/20662) — Phase 3 implementation (issue-sync migration)
 - Issue [#20637](https://github.com/marcusquinn/aidevops/issues/20637) — the symptom report that surfaced the drift class
 - Issue [#20648](https://github.com/marcusquinn/aidevops/issues/20648) — Phase 1 drift detector
 - Issue [#20649](https://github.com/marcusquinn/aidevops/issues/20649) — Phase 2 opt-in resync
+- Issue [#20727](https://github.com/marcusquinn/aidevops/issues/20727) — review-bot-gate migration (SHA-pin stale drift)
 - GitHub docs: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)

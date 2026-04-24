@@ -4,25 +4,30 @@
 #
 # check-workflows-helper.sh — detect framework workflow drift across registered repos (t2778, GH#20648)
 #
-# Compares each registered repo's `.github/workflows/issue-sync.yml` against the
-# canonical caller template at `.agents/templates/workflows/issue-sync-caller.yml`.
-# Classifies each repo as:
+# Compares each registered repo's managed framework workflows against the
+# canonical caller templates in `.agents/templates/workflows/`. Currently
+# managed workflows:
+#   - issue-sync.yml         (template: issue-sync-caller.yml)
+#   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
+#
+# Classifies each (repo × workflow) as:
 #
 #   CURRENT/CALLER      — byte-identical to canonical (up to @ref pin variance)
 #   CURRENT/SELF-CALLER — aidevops itself: uses `./.github/workflows/...` instead of remote ref
 #   DRIFTED/CALLER      — uses the reusable workflow but caller YAML has diverged
 #   NEEDS-MIGRATION     — legacy full-copy workflow, no `uses:` → should adopt caller pattern
-#   NO-WORKFLOW         — no `issue-sync.yml` present (repo doesn't sync TODO ↔ issues)
+#   NO-WORKFLOW         — workflow file not present (repo hasn't adopted this workflow)
 #   LOCAL-ONLY          — repo has `local_only: true`, no remote to check
 #   NO-TEMPLATE         — canonical template missing; helper cannot classify
 #
 # Usage:
-#   check-workflows-helper.sh [--repo OWNER/REPO] [--json] [--verbose]
+#   check-workflows-helper.sh [--repo OWNER/REPO] [--workflow NAME] [--json] [--verbose]
 #   check-workflows-helper.sh --help
 #
 # Options:
 #   --repo OWNER/REPO   Check only the named slug (default: all registered)
-#   --json              Machine-readable output (one JSON object per repo)
+#   --workflow NAME     Check only the named workflow (issue-sync or review-bot-gate)
+#   --json              Machine-readable output (one JSON object per repo × workflow)
 #   --verbose           Show diff summary for DRIFTED/CALLER entries
 #   -h, --help          Show usage and exit 0
 #
@@ -42,6 +47,11 @@
 #   legacy full-copy pattern (NEEDS-MIGRATION) and which caller YAMLs have
 #   diverged from the canonical template (DRIFTED/CALLER).
 #
+#   GH#20727 extended the known-workflow set to include review-bot-gate.yml,
+#   which had a SHA-pinned helper checkout that silently drifted after helper
+#   changes (the Option A' settlement fix in PR #20572 never reached downstream
+#   repos pinned to 73b664a).
+#
 #   Phase 2 (`aidevops sync-workflows --apply`) will migrate or refresh callers
 #   based on this helper's classification.
 
@@ -49,14 +59,35 @@ set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 
+# ─── Known managed workflows ────────────────────────────────────────────────
+#
+# Each entry is a colon-separated tuple:
+#   workflow_file:reusable_file:template_file
+#
+# workflow_file   — the filename under .github/workflows/ in each repo
+# reusable_file  — the reusable workflow filename in marcusquinn/aidevops
+# template_file  — the canonical caller template filename under .agents/templates/workflows/
+#
+# Add new reusable-workflow migrations here. The helper loops over this list
+# for every repo and classifies each (repo × workflow) independently.
+#
+# GH#20727: review-bot-gate added.
+readonly _KNOWN_WORKFLOWS=(
+	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
+	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
+)
+
 # ─── Path resolution ────────────────────────────────────────────────────────
 
-# Canonical template — prefer deployed copy, fall back to the repo checkout
+# Canonical template — prefer deployed copy, fall back to the repo checkout.
+# _resolve_canonical_template <template_filename>
+# e.g. _resolve_canonical_template "issue-sync-caller.yml"
 _resolve_canonical_template() {
-	local _deployed="$HOME/.aidevops/agents/templates/workflows/issue-sync-caller.yml"
+	local _template_filename="$1"
+	local _deployed="$HOME/.aidevops/agents/templates/workflows/${_template_filename}"
 	local _self_dir
 	_self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null) || _self_dir=""
-	local _repo_local="$_self_dir/../templates/workflows/issue-sync-caller.yml"
+	local _repo_local="$_self_dir/../templates/workflows/${_template_filename}"
 
 	if [[ -f "$_deployed" ]]; then
 		printf '%s\n' "$_deployed"
@@ -87,55 +118,79 @@ _die() {
 }
 
 _usage() {
-	sed -n '4,38p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,55p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
 # ─── Classification ─────────────────────────────────────────────────────────
 
-# _classify_workflow <workflow-file> <canonical-template> [<canon-norm>]
+# _normalize_wf_for_compare <file> <reusable_escaped>
+# Normalise a workflow file for byte-comparison:
+#   - Replaces the @<ref> suffix on reusable `uses:` lines with @REF so that
+#     `@main` vs `@v3.9.0` doesn't count as drift.
+#   - Replaces `branches: [<name>]` with `branches: [BRANCH]` so repos that
+#     default to `develop` aren't flagged as drifted from a main-defaulting template.
+# Emits normalised content on stdout.
+_normalize_wf_for_compare() {
+	local _file="$1"
+	local _reusable_escaped="$2"
+	sed -E "s|(marcusquinn/aidevops/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
+		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|'
+	return 0
+}
+
+# _classify_workflow <workflow-file> <canonical-template> <reusable-name> [<canon-norm>]
 # Prints the classification string on stdout.
 # Returns 0 always; status is carried via the emitted string.
-# The optional third argument is a pre-computed normalised form of the
-# canonical template (loop-invariant); when provided, the inner sed call is
-# skipped, avoiding redundant work for each repo in the iteration loop.
+#
+# Parameters:
+#   _wf            — path to the workflow file to classify
+#   _canon         — path to the canonical caller template
+#   _reusable_name — filename of the reusable workflow (e.g. "issue-sync-reusable.yml")
+#   _canon_norm_pre — optional pre-computed normalised form of the canonical template
+#                    (loop-invariant optimisation; skip the inner sed call when provided)
 _classify_workflow() {
 	local _wf="$1"
 	local _canon="$2"
-	local _canon_norm_pre="${3:-}"
+	local _reusable_name="$3"
+	local _canon_norm_pre="${4:-}"
 
 	if [[ ! -f "$_wf" ]]; then
 		printf 'NO-WORKFLOW\n'
 		return 0
 	fi
 
-	# Detect self-caller (aidevops itself) — uses: ./.github/workflows/...
+	# Detect self-caller (aidevops itself) — uses: ./.github/workflows/<reusable-name>
 	# This is the intended pattern for the aidevops repo and must not be flagged
 	# as drift. The self-caller is functionally equivalent to the downstream
 	# pattern; it just skips the cross-repo checkout.
-	if grep -qE "uses:\s*\./\.github/workflows/issue-sync-reusable\.yml" "$_wf"; then
+	local _self_caller_pattern
+	_self_caller_pattern="uses:[[:space:]]*\./\.github/workflows/${_reusable_name}"
+	if grep -qE "$_self_caller_pattern" "$_wf"; then
 		printf 'CURRENT/SELF-CALLER\n'
 		return 0
 	fi
 
 	# Detect caller pattern: any `uses:` line pointing at the reusable workflow.
 	# Accept any `@<ref>` variant (main, v3.9.0, a commit SHA, etc).
-	if grep -qE "uses:\s*marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml@" "$_wf"; then
+	local _downstream_pattern
+	_downstream_pattern="uses:[[:space:]]*marcusquinn/aidevops/\.github/workflows/${_reusable_name}@"
+	if grep -qE "$_downstream_pattern" "$_wf"; then
 		# It's a caller. Compare against canonical, normalising the @ref so that
 		# `@main` vs `@v3.9.0` doesn't count as drift (intentional pinning is OK).
 		# Also normalise the push-trigger branch filter so a repo with
 		# `branches: [develop]` installed by sync-workflows is not flagged as
 		# drift — the branch name reflects the downstream default, not the template.
-		local _wf_norm _canon_norm
-		_wf_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_wf" \
-			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+		local _reusable_escaped _wf_norm _canon_norm
+		# Escape dots for use in sed BRE/ERE pattern
+		_reusable_escaped=$(printf '%s' "$_reusable_name" | sed 's/\./\\./g')
+		_wf_norm=$(_normalize_wf_for_compare "$_wf" "$_reusable_escaped")
 		# Use pre-computed canon_norm when available (caller hoist); fall back to
 		# computing it here so the function remains usable in isolation.
 		if [[ -n "$_canon_norm_pre" ]]; then
 			_canon_norm="$_canon_norm_pre"
 		else
-			_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canon" \
-				| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
+			_canon_norm=$(_normalize_wf_for_compare "$_canon" "$_reusable_escaped")
 		fi
 
 		if [[ "$_wf_norm" == "$_canon_norm" ]]; then
@@ -146,13 +201,13 @@ _classify_workflow() {
 		return 0
 	fi
 
-	# Not a caller. If the filename is `issue-sync.yml`, it's presumed to be
-	# an aidevops issue-sync workflow and the legacy pattern needs migration
-	# to the caller model. This catches:
-	#   - Modern full-copies that invoke `issue-sync-helper.sh` directly
-	#   - Older full-copies that inline the TODO.md parsing logic
-	#   - Any variant of either that has drifted over time
-	# All three are equivalently "legacy patterns to be replaced by a caller".
+	# Not a caller. The workflow exists but does not delegate to the reusable
+	# pattern — it's a legacy full-copy that needs migration to the caller model.
+	# This catches:
+	#   - Modern full-copies that invoke the helper script directly
+	#   - Older full-copies that inline the gate logic
+	#   - SHA-pinned helper checkouts (the GH#20727 pattern)
+	# All variants are equivalently "legacy patterns to be replaced by a caller".
 	printf 'NEEDS-MIGRATION\n'
 	return 0
 }
@@ -187,12 +242,13 @@ _iterate_repos() {
 
 # ─── Output formats ─────────────────────────────────────────────────────────
 
-# _render_row <slug> <path> <classification> <note>
+# _render_row_human <slug> <path> <classification> <note> [<workflow>]
 _render_row_human() {
 	local _slug="$1"
 	local _path="$2"
 	local _class="$3"
 	local _note="${4:-}"
+	local _workflow="${5:-}"
 
 	# Colour-code for terminals
 	local _colour_reset _colour=''
@@ -209,8 +265,14 @@ _render_row_human() {
 		_colour_reset=''
 	fi
 
-	printf '  %-40s %s%-16s%s %s\n' \
-		"$_slug" "$_colour" "$_class" "$_colour_reset" "$_note"
+	# When multiple workflows are checked, prefix slug with [workflow] for context.
+	local _label="$_slug"
+	if [[ -n "$_workflow" ]]; then
+		_label="[${_workflow}] ${_slug}"
+	fi
+
+	printf '  %-50s %s%-16s%s %s\n' \
+		"$_label" "$_colour" "$_class" "$_colour_reset" "$_note"
 	return 0
 }
 
@@ -219,13 +281,15 @@ _render_row_json() {
 	local _path="$2"
 	local _class="$3"
 	local _note="${4:-}"
+	local _workflow="${5:-}"
 
 	jq -cn \
 		--arg slug "$_slug" \
 		--arg path "$_path" \
 		--arg class "$_class" \
 		--arg note "$_note" \
-		'{slug: $slug, path: $path, classification: $class, note: $note}'
+		--arg workflow "$_workflow" \
+		'{slug: $slug, path: $path, workflow: $workflow, classification: $class, note: $note}'
 	return 0
 }
 
@@ -247,10 +311,11 @@ _diff_summary() {
 readonly _MODE_HUMAN="human"
 readonly _MODE_JSON="json"
 
-# Parse command-line flags. Emits TSV: mode\tverbose\tfilter_slug.
+# Parse command-line flags. Emits TSV: mode\tverbose\tfilter_slug\tfilter_workflow.
 # Exits 0 on --help. Exits 2 via _die on unknown option.
 _parse_args() {
 	local _filter_slug=""
+	local _filter_workflow=""
 	local _mode="$_MODE_HUMAN"
 	local _verbose=0
 
@@ -260,6 +325,10 @@ _parse_args() {
 		--repo)
 			_filter_slug="${2:-}"
 			shift 2 || _die "--repo requires an argument"
+			;;
+		--workflow)
+			_filter_workflow="${2:-}"
+			shift 2 || _die "--workflow requires an argument"
 			;;
 		--json)
 			_mode="$_MODE_JSON"
@@ -279,21 +348,22 @@ _parse_args() {
 		esac
 	done
 
-	printf '%s\t%d\t%s\n' "$_mode" "$_verbose" "$_filter_slug"
+	printf '%s\t%d\t%s\t%s\n' "$_mode" "$_verbose" "$_filter_slug" "$_filter_workflow"
 	return 0
 }
 
-# Classify a single repo row and update counters via namerefs.
-# Side-effects: updates _counters_* via indirect-assignment (pass counter vars
-# by reference is bash 4+; instead we print a classification line and let the
-# caller update counters).
+# Classify a single (repo × workflow) combination.
+# Side-effects: prints a classification line; caller updates counters.
 #
 # Emits: class\tnote
+# _classify_row <path> <local_only_flag> <canonical> <reusable_name> <workflow_file> [<canon_norm>]
 _classify_row() {
 	local _path="$1"
 	local _local_only_flag="$2"
 	local _canonical="$3"
-	local _canon_norm="${4:-}"
+	local _reusable_name="$4"
+	local _workflow_file="$5"
+	local _canon_norm="${6:-}"
 
 	if [[ "$_local_only_flag" == "true" ]]; then
 		printf 'LOCAL-ONLY\t\n'
@@ -305,7 +375,7 @@ _classify_row() {
 		return 0
 	fi
 
-	local _wf="$_path/.github/workflows/issue-sync.yml"
+	local _wf="$_path/.github/workflows/${_workflow_file}"
 	if [[ -z "$_canonical" ]]; then
 		if [[ -f "$_wf" ]]; then
 			printf 'NO-TEMPLATE\tcanonical template missing — classification deferred\n'
@@ -316,88 +386,114 @@ _classify_row() {
 	fi
 
 	local _class
-	_class=$(_classify_workflow "$_wf" "$_canonical" "$_canon_norm")
+	_class=$(_classify_workflow "$_wf" "$_canonical" "$_reusable_name" "$_canon_norm")
 	local _note=""
 	case "$_class" in
 	NEEDS-MIGRATION)
-		_note="legacy full-copy; run: aidevops sync-workflows --apply (Phase 2)"
+		_note="legacy full-copy; run: aidevops sync-workflows --apply"
 		;;
 	esac
 	printf '%s\t%s\n' "$_class" "$_note"
 	return 0
 }
 
-# Process all rows: classify each, render output, tally. Returns exit status
-# (1 if any drifted/needs-migration, 0 otherwise).
+# Process all rows: for each known workflow, classify each repo, render output,
+# tally. Returns exit status (1 if any drifted/needs-migration, 0 otherwise).
+# _process_rows <mode> <verbose> <filter_slug> <filter_workflow>
 _process_rows() {
 	local _mode="$1"
 	local _verbose="$2"
 	local _filter_slug="$3"
-	local _canonical="$4"
+	local _filter_workflow="${4:-}"
 
 	local _any_failure=0
 	local _total=0 _current=0 _drifted=0 _needs_mig=0 _no_wf=0 _local_only=0 _no_template=0
 
-	# Pre-compute the loop-invariant normalisation of the canonical template
-	# once here rather than inside _classify_workflow on every repo iteration.
-	local _canon_norm=""
-	if [[ -n "$_canonical" ]]; then
-		_canon_norm=$(sed -E 's|(marcusquinn/aidevops/\.github/workflows/issue-sync-reusable\.yml)@[^[:space:]]+|\1@REF|g' "$_canonical" \
-			| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|')
-	fi
-
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  %-40s %-16s %s\n' "REPO" "STATUS" "NOTE"
-		printf '  %s\n' "$(printf '%.0s─' {1..78})"
+		printf '\n  %-50s %-16s %s\n' "REPO [WORKFLOW]" "STATUS" "NOTE"
+		printf '  %s\n' "$(printf '%.0s─' {1..88})"
 	fi
 
 	local _rows
 	_rows=$(_iterate_repos) || exit $?
 
-	local _path _local_only_flag _slug
-	while IFS=$'\t' read -r _path _local_only_flag _slug; do
-		[[ -z "$_slug" && -z "$_path" ]] && continue
-		local _label="${_slug:-$(basename "$_path")}"
-		[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
+	# Outer loop: known workflows. Inner loop: repos.
+	# This produces one classification row per (repo × workflow).
+	local _wf_tuple
+	for _wf_tuple in "${_KNOWN_WORKFLOWS[@]}"; do
+		# Parse the colon-separated tuple: workflow_file:reusable_file:template_file
+		local _workflow_file _reusable_file _template_file
+		_workflow_file="${_wf_tuple%%:*}"
+		_reusable_file="${_wf_tuple#*:}"
+		_reusable_file="${_reusable_file%%:*}"
+		_template_file="${_wf_tuple##*:}"
 
-		_total=$((_total + 1))
-		_path="${_path/#\~/$HOME}"
-
-		local _class _note
-		IFS=$'\t' read -r _class _note < <(_classify_row "$_path" "$_local_only_flag" "$_canonical" "$_canon_norm")
-
-		case "$_class" in
-		LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
-		NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
-		NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
-		CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
-		DRIFTED/CALLER)
-			_drifted=$((_drifted + 1))
-			_any_failure=1
-			if ((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-				_note="see diff below"
-			fi
-			;;
-		NEEDS-MIGRATION)
-			_needs_mig=$((_needs_mig + 1))
-			_any_failure=1
-			;;
-		esac
-
-		if [[ "$_mode" == "$_MODE_JSON" ]]; then
-			_render_row_json "$_label" "$_path" "$_class" "$_note"
-		else
-			_render_row_human "$_label" "$_path" "$_class" "$_note"
-			if ((_verbose == 1)) && [[ "$_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
-				echo ""
-				_diff_summary "$_path/.github/workflows/issue-sync.yml" "$_canonical"
-				echo ""
-			fi
+		# Apply --workflow filter if set (match against workflow_file without .yml)
+		local _workflow_name="${_workflow_file%.yml}"
+		if [[ -n "$_filter_workflow" ]]; then
+			local _fw_norm="${_filter_workflow%.yml}"
+			[[ "$_workflow_name" != "$_fw_norm" ]] && continue
 		fi
-	done <<<"$_rows"
+
+		# Resolve canonical template for this workflow.
+		local _canonical=""
+		_canonical=$(_resolve_canonical_template "$_template_file") || _canonical=""
+
+		# Pre-compute the loop-invariant normalisation of the canonical template.
+		local _canon_norm=""
+		if [[ -n "$_canonical" ]]; then
+			local _reusable_escaped
+			_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
+			_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
+		fi
+
+		local _path _local_only_flag _slug
+		while IFS=$'\t' read -r _path _local_only_flag _slug; do
+			[[ -z "$_slug" && -z "$_path" ]] && continue
+			local _label="${_slug:-$(basename "$_path")}"
+			[[ -n "$_filter_slug" && "$_slug" != "$_filter_slug" ]] && continue
+
+			_total=$((_total + 1))
+			_path="${_path/#\~/$HOME}"
+
+			local _class _note
+			IFS=$'\t' read -r _class _note < <(_classify_row \
+				"$_path" "$_local_only_flag" "$_canonical" \
+				"$_reusable_file" "$_workflow_file" "$_canon_norm")
+
+			case "$_class" in
+			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
+			NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
+			NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
+			CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
+			DRIFTED/CALLER)
+				_drifted=$((_drifted + 1))
+				_any_failure=1
+				if ((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]]; then
+					_note="see diff below"
+				fi
+				;;
+			NEEDS-MIGRATION)
+				_needs_mig=$((_needs_mig + 1))
+				_any_failure=1
+				;;
+			esac
+
+			if [[ "$_mode" == "$_MODE_JSON" ]]; then
+				_render_row_json "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
+			else
+				_render_row_human "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
+				if ((_verbose == 1)) && [[ "$_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
+					echo ""
+					_diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"
+					echo ""
+				fi
+			fi
+		done <<<"$_rows"
+	done
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  Summary: %d repos — %d current, %d drifted, %d needs-migration, %d no-workflow, %d local-only, %d no-template\n\n' \
+		printf '\n  Summary: %d entries — %d current, %d drifted, %d needs-migration, %d no-workflow, %d local-only, %d no-template\n\n' \
 			"$_total" "$_current" "$_drifted" "$_needs_mig" "$_no_wf" "$_local_only" "$_no_template"
 		if ((_any_failure == 1)); then
 			printf '  Exit code 1 — see DRIFTED/CALLER or NEEDS-MIGRATION entries above.\n\n'
@@ -417,18 +513,10 @@ main() {
 		_die "jq required — install via Homebrew/apt or equivalent"
 	fi
 
-	local _mode _verbose _filter_slug
-	IFS=$'\t' read -r _mode _verbose _filter_slug < <(_parse_args "$@")
+	local _mode _verbose _filter_slug _filter_workflow
+	IFS=$'\t' read -r _mode _verbose _filter_slug _filter_workflow < <(_parse_args "$@")
 
-	local _canonical
-	if ! _canonical=$(_resolve_canonical_template); then
-		if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-			_log "canonical template not found — install aidevops to resolve templates/workflows/issue-sync-caller.yml"
-		fi
-		_canonical=""
-	fi
-
-	if _process_rows "$_mode" "$_verbose" "$_filter_slug" "$_canonical"; then
+	if _process_rows "$_mode" "$_verbose" "$_filter_slug" "$_filter_workflow"; then
 		exit 0
 	else
 		exit 1
