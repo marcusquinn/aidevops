@@ -939,6 +939,39 @@ _derive_pr_title_prefix() {
 	return 0
 }
 
+# _compose_pr_title: idempotently compose the auto-derived PR title.
+#
+# Why (t2825/RC3): when commit_message already starts with a task-ID prefix
+# (tNNN: or GH#NNN:), return it verbatim instead of prepending another one.
+# Canonical failure: PR #20817 was created with title
+# "t2799: t2799: split RATE_LIMIT_PATTERNS..." because an interactive
+# `commit-and-pr --message "t2799: ..."` call unconditionally prepended
+# another tNNN: via _derive_pr_title_prefix. This guard makes the
+# auto-derive path idempotent so callers can safely include a prefix in
+# the commit message without producing a doubled title.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - commit_message
+#   $3 - todo_file (optional; passed through to _derive_pr_title_prefix)
+# Outputs:
+#   commit_message (verbatim) when it already has a tNNN: or GH#NNN: prefix
+#   <derived_prefix>: <commit_message> otherwise
+# Returns: 0 always.
+_compose_pr_title() {
+	local issue_number="${1:-}"
+	local commit_message="${2:-}"
+	local todo_file="${3:-}"
+
+	if [[ "$commit_message" =~ ^(t[0-9]+|GH#[0-9]+): ]]; then
+		printf '%s\n' "$commit_message"
+		return 0
+	fi
+
+	printf '%s: %s\n' "$(_derive_pr_title_prefix "$issue_number" "$todo_file")" "$commit_message"
+	return 0
+}
+
 # Create the PR and print the PR number to stdout.
 # Arguments: repo, pr_title, pr_body, origin_label; extra_labels passed as remaining args.
 # Returns 1 on failure.
@@ -1074,9 +1107,11 @@ cmd_commit_and_pr() {
 	_rebase_and_push "$branch" "$skip_hooks" || return 1
 
 	# Build PR metadata (t2720: prefer tNNN from TODO.md so issue-sync's
-	# PR-merge auto-completion regex can extract a task_id and flip [ ] → [x])
+	# PR-merge auto-completion regex can extract a task_id and flip [ ] → [x]).
+	# t2825/RC3: use _compose_pr_title so a commit_message that already begins
+	# with tNNN: or GH#NNN: is not double-prefixed (canonical failure: PR #20817).
 	if [[ -z "$pr_title" ]]; then
-		pr_title="$(_derive_pr_title_prefix "$issue_number"): ${commit_message}"
+		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
 	fi
 
 	local origin_label="origin:interactive"
