@@ -1987,7 +1987,11 @@ _action_cpt_single() {
 	# Source label remains informative: dash-joined list of contributing
 	# sources (e.g. `graph+body`, `body`, `graph+body+prose`) so the log line
 	# in `_try_close_parent_tracker` records which extractors found children.
-	local _g_nums _b_nums _p_nums child_nums
+	# t2841: explicit init — under set -u, _b_nums is referenced at the
+	# union step (line ~2007) regardless of whether children_section is
+	# non-empty. Without init, an issue body with no children-section
+	# triggers `_b_nums: unbound variable` and aborts the function.
+	local _g_nums="" _b_nums="" _p_nums="" child_nums=""
 	local _src_parts=""
 	_g_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
 	[[ -n "$_g_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}graph"
