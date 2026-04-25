@@ -807,6 +807,24 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2843 P0b: knowledge CLI surface (add/list/search) + platform abstraction #framework #parent:t2840 ref:GH#20895
 
+- [ ] t2844 P0a: knowledge plane directory contract + provisioning #framework parent:t2840 #feat #framework ref:GH#20896
+
+- [ ] t2845 P0c: knowledge review gate routine + NMR integration #framework parent:t2840 #feat #framework ref:GH#20897
+
+- [ ] t2846 P0.5a: sensitivity classification schema + detector #framework parent:t2840 #feat #framework ref:GH#20899
+
+- [ ] t2847 P0.5b: LLM routing helper + audit log #framework parent:t2840 #feat #framework ref:GH#20900
+
+- [ ] t2848 P0.5c: Ollama integration + local LLM substrate #framework parent:t2840 #feat #framework ref:GH#20901
+
+- [ ] t2849 P1a: kind-aware enrichment + structured field extraction #framework parent:t2840 #feat #framework ref:GH#20902
+
+- [ ] t2850 P1c: PageIndex tree generation across corpus #framework parent:t2840 #feat #framework ref:GH#20903
+
+- [ ] t2851 P4a: case dossier contract + aidevops case open #framework parent:t2840 #feat #framework ref:GH#20904
+
+- [ ] t2852 P4b: case CLI surface (attach/status/close/archive/list) #framework parent:t2840 #feat #framework ref:GH#20905
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
