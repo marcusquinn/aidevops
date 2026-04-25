@@ -1467,8 +1467,27 @@ main() {
 			local _ir_pid
 			_ir_pid=$(cat "${LOCKDIR}/pid" 2>/dev/null || true)
 			if [[ "$_ir_pid" =~ ^[0-9]+$ ]] && [[ "$_ir_pid" != "$$" ]] && kill -0 "$_ir_pid" 2>/dev/null; then
-				echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}), skipping" >>"$WRAPPER_LOGFILE"
-				return 0
+				# t2829: Age check — without this, a wedged-but-alive pulse (no log
+				# progress, kill -0 returns true) bypasses _handle_existing_lock's
+				# 30-min stale-lock reclaim entirely. The short-circuit was designed
+				# to be biased toward false negatives (defer to acquire_instance_lock
+				# when uncertain), but the alive-but-stale case was missed: kill -0
+				# alone cannot distinguish a healthy mid-cycle pulse from one that
+				# died-internally-but-the-bash-shell-is-still-alive. Real-world
+				# wedge: PID held lock 80+min with no log activity, 100+ launchd
+				# ticks all returned 0 here without ever attempting reclaim.
+				# Fix: enforce PULSE_LOCK_MAX_AGE_S as a fall-through trigger so
+				# stale-but-alive locks reach the proper reclaim path below.
+				local _ir_age _ir_max
+				_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || echo 0)
+				_ir_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
+				if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then
+					echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}, age ${_ir_age}s), skipping" >>"$WRAPPER_LOGFILE"
+					return 0
+				fi
+				echo "[pulse-wrapper] Lock holder PID ${_ir_pid} age ${_ir_age}s > ceiling ${_ir_max}s — deferring to acquire_instance_lock for reclaim (t2829)" >>"$WRAPPER_LOGFILE"
+				# Fall through (no return) — acquire_instance_lock will detect the
+				# stale lock via _handle_existing_lock and force-reclaim with kill.
 			fi
 		fi
 	fi
