@@ -3023,7 +3023,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2798 catch status:available default leak on bypass-path issue creation (defence-in-depth for t2789) #auto-dispatch #bug #framework ref:GH#20730 pr:#20759 completed:2026-04-24
 
-- [ ] t2799 review-bot-gate-helper: rename RATE_LIMIT_PATTERNS alias and split rate-limit vs non-review pattern sets #refactor ref:GH#20732
+- [x] t2799 review-bot-gate-helper: rename RATE_LIMIT_PATTERNS alias and split rate-limit vs non-review pattern sets #refactor ref:GH#20732 pr:#20817 completed:2026-04-25
 
 - [x] t2800 claim-task-id: pre-flight validate --labels to prevent claimed-ID orphans when issue creation fails #auto-dispatch #bug ref:GH#20734 pr:#20744 completed:2026-04-24
 
