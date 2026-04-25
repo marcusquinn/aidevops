@@ -1975,25 +1975,37 @@ _action_cpt_single() {
 	_SP_CPT_NUDGED=0
 	_SP_CPT_ESCALATED=0
 
-	# Child detection: graph → body-section → prose (t2138 preference order)
-	local child_nums child_source="graph"
-	child_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
-	if [[ -z "$child_nums" ]]; then
-		local children_section
-		children_section=$(_extract_children_section "$issue_body")
-		if [[ -n "$children_section" ]]; then
-			child_nums=$(printf '%s' "$children_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$") || child_nums=""
-			child_source="body"
-		fi
+	# Child detection (GH#20872): UNION of (graph, body, prose) sources, not
+	# first-non-empty-wins (the pre-GH#20872 behaviour). Real-world parent
+	# bodies frequently have a partially-populated sub-issue graph where some
+	# children are wired via GraphQL `sub_issues` and others only listed in
+	# the body's `## Children` section or referenced in prose. First-wins made
+	# the smaller graph result silently mask the larger body listing — the
+	# child_count guard then blocked auto-close on parents whose children were
+	# all closed (canonical: #20559, #20581 during v3.11.1 deploy verification).
+	#
+	# Source label remains informative: dash-joined list of contributing
+	# sources (e.g. `graph+body`, `body`, `graph+body+prose`) so the log line
+	# in `_try_close_parent_tracker` records which extractors found children.
+	local _g_nums _b_nums _p_nums child_nums
+	local _src_parts=""
+	_g_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
+	[[ -n "$_g_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}graph"
+
+	local children_section
+	children_section=$(_extract_children_section "$issue_body")
+	if [[ -n "$children_section" ]]; then
+		_b_nums=$(printf '%s' "$children_section" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | sort -un | grep -v "^${issue_num}$" || true)
+		[[ -n "$_b_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}body"
 	fi
-	if [[ -z "$child_nums" ]]; then
-		local prose_children
-		prose_children=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
-		if [[ -n "$prose_children" ]]; then
-			child_nums="$prose_children"
-			child_source="prose"
-		fi
-	fi
+
+	_p_nums=$(_extract_children_from_prose "$issue_body" | grep -v "^${issue_num}$" || true)
+	[[ -n "$_p_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}prose"
+
+	# Union: concatenate, keep numeric lines, dedupe, drop self-reference
+	child_nums=$(printf '%s\n%s\n%s\n' "$_g_nums" "$_b_nums" "$_p_nums" \
+		| grep -E '^[0-9]+$' | sort -un | grep -v "^${issue_num}$" || true)
+	local child_source="${_src_parts:-none}"
 
 	if [[ -z "$child_nums" ]]; then
 		# No children — try phase extractor, then nudge/escalate (t2771/t2388/t2442)
