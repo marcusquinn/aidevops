@@ -3132,3 +3132,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2838 periodic parent-task sub-issue backfill in pulse + --parent-issue flag on claim-task-id #auto-dispatch #enhancement #tooling ref:GH#20888
 
 - [ ] t2839 dispatch-issue CLI follow-ups: status PID liveness + model inference scope alignment #auto-dispatch #framework ref:GH#20889
+
+- [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #interactive #framework #bugfix ref:GH#20917
+
+- [ ] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #interactive #framework #bugfix ref:GH#20918
