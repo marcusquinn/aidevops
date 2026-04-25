@@ -107,10 +107,20 @@ mode: subagent
 
 ## Phase progress log
 
-- [ ] P0 (P0a, P0b, P0c) — 3 children
-- [ ] P0.5 (P0.5a, P0.5b, P0.5c) — 3 children
-- [ ] P1 (P1a, P1c) — 2 children
-- [ ] P4 (P4a, P4b, P4c) — 3 children
-- [ ] P5 (P5a, P5b, P5c) — 3 children
-- [ ] P6 (P6a, P6b) — 2 children
-- [ ] Parent body update + planning PR
+- [x] P0 (P0a, P0b, P0c) — 3 children filed (t2843/GH#20895, t2844/GH#20896, t2845/GH#20897)
+- [x] P0.5 (P0.5a, P0.5b, P0.5c) — 3 children filed (t2846/GH#20898, t2847/GH#20899, t2848/GH#20900)
+- [x] P1 (P1a, P1c) — 2 children filed (t2849/GH#20901, t2850/GH#20902)
+- [x] P4 (P4a, P4b, P4c) — 3 children filed (t2851/GH#20903, t2852/GH#20904, t2853/GH#20905)
+- [x] P5 (P5a, P5b, P5c) — 3 children filed (t2854/GH#20906, t2855/GH#20907, t2856/GH#20908)
+- [x] P6 (P6a, P6b) — 2 children filed (t2857/GH#20911, t2858/GH#20912)
+- [x] Parent body update + planning PR (#20913 opened with `For #20892`)
+
+## Follow-up framework bugs surfaced during this session
+
+| Task | Issue | Severity | Notes |
+|---|---|---|---|
+| t2859 | GH#20914 / PR#20915 | high | unbound `ORPHAN_WORKTREE_GRACE_SECS` in pulse-cleanup.sh — destroyed 49 worktrees in 1h. Fix landed in PR. |
+| t2860 | GH#20917 | medium | `_cleanup_single_worktree` doesn't call `unregister_worktree` after destroying — 815 stale registry entries. |
+| t2861 | GH#20918 | medium | gh PATH shim mutates `--body-file` source on disk. Filed using the workaround we documented. |
+
+All three: `no-auto-dispatch` + `origin:interactive` (dispatch-path adjacent) — maintainer review before any worker takes them.
