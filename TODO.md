@@ -3151,7 +3151,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919
 
-- [ ] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922
+- [x] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922 pr:#20928 completed:2026-04-25
 
 - [ ] t2870 _campaigns/ plane — marketing assets, intel, inspiration for ads + organic campaigns #enhancement #framework #parent ref:GH#20929
 
