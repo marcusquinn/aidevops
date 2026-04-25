@@ -973,6 +973,20 @@ _check_regression() {
 		| grep -E '\.(sh|py)$' || true)
 	if [ -z "$_changed_source" ]; then
 		log "[$_metric] no .sh/.py changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
+		# Write a clean "no applicable changes" report so any previously-posted
+		# stale report (from a prior run with .sh/.py changes that were later
+		# reverted back to doc-only) is replaced via the CI upsert path.
+		if [ -n "$_output_md" ]; then
+			local _title_str
+			_title_str=$(metric_title "$_metric")
+			{
+				printf '## %s Regression Gate\n\n' "$_title_str"
+				# shellcheck disable=SC2016
+				printf '✅ **No applicable changes** — no `.sh`/`.py` files changed in this PR.\n\n'
+				printf '<!-- complexity-regression-gate:%s -->\n' "$_metric"
+			} >"$_output_md"
+			log "[$_metric] wrote no-changes report to $_output_md"
+		fi
 		exit 0
 	fi
 	local _changed_count
