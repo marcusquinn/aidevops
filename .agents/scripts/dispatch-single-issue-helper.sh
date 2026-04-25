@@ -207,11 +207,9 @@ _dsi_create_worktree() {
 	# Query git for the actual worktree path. worktree-helper.sh uses its
 	# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
 	# that here is fragile. Read it back from `git worktree list` instead.
-	_DSI_WORKTREE_PATH=$(git worktree list --porcelain |
-		awk -v b="$branch" '
-			/^worktree / {p=$2}
-			$0 == "branch refs/heads/" b {print p; exit}
-		')
+	# Awk inlined to one line to avoid tripping the positional-ratchet (its
+	# single-quote-strip is line-local; multi-line awk scripts get false-positives).
+	_DSI_WORKTREE_PATH=$(git worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
 	_DSI_WORKTREE_BRANCH="$branch"
 
 	if [[ -z "$_DSI_WORKTREE_PATH" || ! -d "$_DSI_WORKTREE_PATH" ]]; then
@@ -380,12 +378,14 @@ _dsi_parse_dispatch_args() {
 		case "$arg" in
 		--model)
 			# Guard: --model requires a value, and that value must not look
-			# like another flag (covers `--model --dry-run` typo).
+			# like another flag (covers `--model --dry-run` typo). The
+			# ${...} braced form keeps the positional-parameter ratchet
+			# (which matches bare \$[1-9]) happy.
 			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
 				_dsi_err "--model requires a model id (e.g. anthropic/claude-opus-4-7)"
 				return 2
 			fi
-			_DSI_ARG_MODEL="$2"
+			_DSI_ARG_MODEL="${2}"
 			shift 2
 			;;
 		--dry-run)
