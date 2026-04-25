@@ -327,39 +327,39 @@ _dsi_launch_worker() {
 }
 
 #######################################
-# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
+# Parse + validate dispatch args. Sets globals:
+#   _DSI_ARG_ISSUE, _DSI_ARG_REPO, _DSI_ARG_MODEL, _DSI_ARG_DRYRUN
+# Returns: 0 ok, 2 invalid usage (caller should propagate)
 #######################################
-cmd_dispatch() {
-	local issue_number=""
-	local repo_slug=""
-	local model_override=""
-	local dry_run=0
-
-	# Positional args first, then flags
+_dsi_parse_dispatch_args() {
+	_DSI_ARG_ISSUE=""
+	_DSI_ARG_REPO=""
+	_DSI_ARG_MODEL=""
+	_DSI_ARG_DRYRUN=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--model)
-			model_override="${2:-}"
+			_DSI_ARG_MODEL="${2:-}"
 			shift 2
 			;;
 		--dry-run)
-			dry_run=1
+			_DSI_ARG_DRYRUN=1
 			shift
 			;;
 		-h | --help)
 			_dispatch_usage
-			return 0
+			return 100 # special: caller exits 0
 			;;
 		--*)
 			_dsi_err "Unknown flag for dispatch: $arg"
 			return 2
 			;;
 		*)
-			if [[ -z "$issue_number" ]]; then
-				issue_number="$arg"
-			elif [[ -z "$repo_slug" ]]; then
-				repo_slug="$arg"
+			if [[ -z "$_DSI_ARG_ISSUE" ]]; then
+				_DSI_ARG_ISSUE="$arg"
+			elif [[ -z "$_DSI_ARG_REPO" ]]; then
+				_DSI_ARG_REPO="$arg"
 			else
 				_dsi_err "Unexpected positional arg: $arg"
 				return 2
@@ -368,60 +368,83 @@ cmd_dispatch() {
 			;;
 		esac
 	done
-
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+	if [[ -z "$_DSI_ARG_ISSUE" || -z "$_DSI_ARG_REPO" ]]; then
 		_dsi_err "dispatch requires <issue_number> and <owner/repo>"
 		_dispatch_usage
 		return 2
 	fi
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
-		_dsi_err "Issue number must be numeric: ${issue_number}"
+	if [[ ! "$_DSI_ARG_ISSUE" =~ ^[0-9]+$ ]]; then
+		_dsi_err "Issue number must be numeric: ${_DSI_ARG_ISSUE}"
 		return 2
 	fi
-	if [[ ! "$repo_slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
-		_dsi_err "Repo slug must be owner/repo format: ${repo_slug}"
+	if [[ ! "$_DSI_ARG_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_dsi_err "Repo slug must be owner/repo format: ${_DSI_ARG_REPO}"
 		return 2
 	fi
+	return 0
+}
 
-	# Step 1: validate issue + load metadata
+#######################################
+# Print dry-run plan. Caller has already loaded metadata + resolved model.
+# Args: $1 issue_number, $2 repo_slug, $3 session_key, $4 dedup_rc, $5 dedup_result
+#######################################
+_dsi_print_dryrun() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+	local dedup_rc="$4"
+	local dedup_result="$5"
+	_dsi_info "DRY RUN — would dispatch:"
+	_dsi_info "  Issue:        #${issue_number} (${repo_slug})"
+	_dsi_info "  Title:        ${_DSI_ISSUE_TITLE}"
+	_dsi_info "  Labels:       ${_DSI_ISSUE_LABELS}"
+	_dsi_info "  Tier:         ${_DSI_TIER}"
+	_dsi_info "  Model:        ${_DSI_SELECTED_MODEL:-<auto>}"
+	_dsi_info "  Session key:  ${session_key}"
+	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
+	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	if [[ "$dedup_rc" -eq 0 ]]; then
+		_dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}"
+	else
+		_dsi_info "  Dedup:        clear (no active claim)"
+	fi
+	_dsi_ok "Dry-run complete (no worker launched)"
+	return 0
+}
+
+#######################################
+# Subcommand: dispatch <issue> <slug> [--model M] [--dry-run]
+#######################################
+cmd_dispatch() {
+	local rc=0
+	_dsi_parse_dispatch_args "$@" || rc=$?
+	case "$rc" in
+	0) ;;
+	100) return 0 ;;
+	*) return "$rc" ;;
+	esac
+	local issue_number="$_DSI_ARG_ISSUE"
+	local repo_slug="$_DSI_ARG_REPO"
+
+	# Step 1-2: validate + load + parent-task gate
 	_dsi_load_issue_meta "$issue_number" "$repo_slug" || return 1
-
-	# Step 2: parent-task gate
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
-	# Step 3: dedup check via dispatch-dedup-helper.sh is-assigned.
-	# Capture the result; under --dry-run we surface it as info but still
-	# show the planned dispatch. Under real dispatch we return early on block.
+	# Step 3: dedup check (informational under --dry-run, blocking otherwise)
 	local self_login
 	self_login=$(gh api user --jq .login 2>/dev/null || echo "")
 	local dedup_result dedup_rc=0
-	# is-assigned exits 0 = blocked (already claimed), 1 = free to dispatch
 	ISSUE_META_JSON="$_DSI_ISSUE_META_JSON" \
 		dedup_result=$("$_DSI_DEDUP_HELPER" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>&1) || dedup_rc=$?
 
 	# Step 4: resolve model
-	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$model_override"
-
+	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$_DSI_ARG_MODEL"
 	local session_key
 	session_key="manual-cli-${issue_number}-$(date +%s)"
 
-	# Step 5: dry-run path — print plan (incl. dedup status) and exit
-	if [[ "$dry_run" -eq 1 ]]; then
-		_dsi_info "DRY RUN — would dispatch:"
-		_dsi_info "  Issue:        #${issue_number} (${repo_slug})"
-		_dsi_info "  Title:        ${_DSI_ISSUE_TITLE}"
-		_dsi_info "  Labels:       ${_DSI_ISSUE_LABELS}"
-		_dsi_info "  Tier:         ${_DSI_TIER}"
-		_dsi_info "  Model:        ${_DSI_SELECTED_MODEL:-<auto>}"
-		_dsi_info "  Session key:  ${session_key}"
-		_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
-		_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
-		if [[ "$dedup_rc" -eq 0 ]]; then
-			_dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}"
-		else
-			_dsi_info "  Dedup:        clear (no active claim)"
-		fi
-		_dsi_ok "Dry-run complete (no worker launched)"
+	# Step 5: dry-run short-circuit
+	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
+		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_rc" "$dedup_result"
 		return 0
 	fi
 
@@ -433,18 +456,12 @@ cmd_dispatch() {
 		return 0
 	fi
 
-	# Step 6: pre-create worktree
+	# Step 6-9: worktree + ledger + launch
 	_dsi_create_worktree "$issue_number" || return 1
-
-	# Step 7: register in ledger
 	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key"
-
-	# Step 8: build prompt + log path
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
-
-	# Step 9: launch
 	local pid
 	pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
