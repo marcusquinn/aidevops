@@ -28,6 +28,13 @@
 #                              bulk --count N allocation or when gh is rate-limited)
 #   --no-blocked-by            Suppress auto-detection of predecessor references
 #                              and blocked-by tag emission (GH#20834)
+#   --parent-issue N           Declare a parent issue for this task (t2838).
+#                              Injects a `Parent: #N` line at the end of the
+#                              composed body and links the new issue as a
+#                              sub-issue of #N via GitHub's addSubIssue API.
+#                              Idempotent — duplicate-relationship errors are
+#                              suppressed. Use for decomposition children
+#                              filed outside shared-phase-filing.sh.
 #
 # Project-level config (.aidevops.json in repo root):
 #   {
@@ -129,6 +136,10 @@ NO_BLOCKED_BY=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
+# t2838: populated by --parent-issue N; read by _compose_issue_body for body
+# injection and create_github_issue / _try_issue_sync_delegation for explicit
+# addSubIssue mutation after issue creation.
+PARENT_ISSUE_NUM=""
 # GH#20834: populated by _detect_predecessor_refs; read by _ensure_todo_entry_written
 _CLAIM_BLOCKED_BY_REFS=""
 REPO_PATH="$PWD"
@@ -253,6 +264,10 @@ parse_args() {
 			NO_BLOCKED_BY=true
 			shift
 			;;
+		--parent-issue)
+			PARENT_ISSUE_NUM="$2"
+			shift 2
+			;;
 		--dry-run)
 			DRY_RUN=true
 			shift
@@ -285,6 +300,12 @@ parse_args() {
 	# Validate batch size
 	if [[ "$ALLOC_COUNT" -lt 1 ]]; then
 		log_error "Allocation count must be >= 1"
+		exit 1
+	fi
+
+	# t2838: validate --parent-issue if supplied
+	if [[ -n "$PARENT_ISSUE_NUM" ]] && ! [[ "$PARENT_ISSUE_NUM" =~ ^[0-9]+$ ]]; then
+		log_error "--parent-issue requires a positive integer issue number (got: $PARENT_ISSUE_NUM)"
 		exit 1
 	fi
 
@@ -424,6 +445,12 @@ create_github_issue() {
 		_auto_assign_issue "$issue_num" "$repo_path"
 		_interactive_session_auto_claim_new_task "$issue_num" "$repo_path"
 		_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
+		# t2838: explicit sub-issue link when --parent-issue N was supplied.
+		# Delegation path goes through gh_create_issue → _gh_auto_link_sub_issue
+		# wrapper which DOES detect the Parent: line, but we re-run the helper
+		# defensively in case the wrapper's detector misses (different body
+		# composition path). Idempotent: addSubIssue swallows duplicates.
+		_link_parent_issue_post_create "$issue_num" "$repo_path"
 		# t2548: ensure TODO.md has the entry. On the delegation path
 		# issue-sync-helper.sh _push_process_task silently returns SKIPPED
 		# when the task line is absent from TODO.md — issue is created but
@@ -505,6 +532,13 @@ create_github_issue() {
 	# are implementation targets, not discussion threads. External
 	# contributor issues are left unlocked for community interaction.
 	_lock_maintainer_issue_at_creation "$issue_num" "$repo_path"
+
+	# t2838: explicit sub-issue link when --parent-issue N was supplied.
+	# Bare path uses raw `gh issue create` which BYPASSES gh_create_issue
+	# and therefore the _gh_auto_link_sub_issue wrapper — without this
+	# call, the Parent: body line stays prose-only and the GitHub
+	# sub-issue relationship field is never populated. Idempotent.
+	_link_parent_issue_post_create "$issue_num" "$repo_path"
 
 	# Sync parent-child and blocked-by relationships (GH#18735)
 	# The rich delegation path (issue-sync-helper.sh push) handles this

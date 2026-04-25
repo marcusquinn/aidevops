@@ -84,6 +84,64 @@ _auto_assign_issue() {
 	return 0
 }
 
+# t2838: Wire a sub-issue parent link after issue creation. Bypasses body
+# parsing — uses GraphQL node IDs directly. Idempotent: GitHub returns
+# "duplicate sub-issues" or "only have one parent" on retry, both swallowed.
+#
+# Reads the global PARENT_ISSUE_NUM (set by --parent-issue N option). Returns
+# 0 always (non-blocking); failures are logged via log_warn.
+#
+# Mirrors _gh_add_sub_issue from issue-sync-relationships.sh:153 so that
+# claim-task-id.sh's bare-fallback path (which uses raw `gh` and bypasses
+# the _gh_auto_link_sub_issue wrapper) still produces a consistent
+# parent-child relationship at creation time.
+_link_parent_issue_post_create() {
+	local child_num="$1"
+	local repo_path="$2"
+
+	[[ -n "${PARENT_ISSUE_NUM:-}" ]] || return 0
+	[[ -n "$child_num" ]] || return 0
+
+	local slug
+	slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null |
+		sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	[[ -n "$slug" ]] || return 0
+
+	local owner="${slug%%/*}" name="${slug##*/}"
+	local parent_node child_node
+	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$num are GraphQL vars, not bash
+	parent_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$PARENT_ISSUE_NUM" \
+		--jq '.data.repository.issue.id' 2>/dev/null) || parent_node=""
+	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$num are GraphQL vars, not bash
+	child_node=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
+		-f o="$owner" -f n="$name" -F num="$child_num" \
+		--jq '.data.repository.issue.id' 2>/dev/null) || child_node=""
+
+	if [[ -z "$parent_node" || -z "$child_node" ]]; then
+		log_warn "t2838: could not resolve node IDs for parent #${PARENT_ISSUE_NUM} or child #${child_num}; skipping sub-issue link"
+		return 0
+	fi
+
+	local result
+	# shellcheck disable=SC2016  # GraphQL mutation literal — $p/$c are GraphQL vars, not bash
+	result=$(gh api graphql \
+		-f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
+		-f p="$parent_node" -f c="$child_node" 2>&1) || true
+	if echo "$result" | grep -qi 'duplicate sub-issues\|only have one parent'; then
+		log_info "t2838: sub-issue relationship #${child_num} → #${PARENT_ISSUE_NUM} already exists"
+		return 0
+	fi
+	if echo "$result" | grep -q 'errors'; then
+		log_warn "t2838: addSubIssue failed for #${child_num} → #${PARENT_ISSUE_NUM}: ${result:0:200}"
+		return 0
+	fi
+	log_info "t2838: linked #${child_num} as sub-issue of #${PARENT_ISSUE_NUM}"
+	return 0
+}
+
 # Lock maintainer/worker-created issues at creation to prevent comment
 # prompt-injection. The approval marker (<!-- aidevops-signed-approval -->)
 # and other trusted sentinels are checked by CI workflows — if an attacker
@@ -363,6 +421,12 @@ _compose_issue_body() {
 		body=$(_compose_issue_worker_guidance "$body" "$brief_file")
 		body=$(_compose_issue_brief "$body" "$brief_file")
 
+		# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
+		# and human readers can resolve the parent. Placed before the footer.
+		if [[ -n "${PARENT_ISSUE_NUM:-}" ]]; then
+			body="${body}"$'\n\n'"Parent: #${PARENT_ISSUE_NUM}"
+		fi
+
 		# Append the sentinel footer (via shared composer) so _enrich_update_issue
 		# recognises this body as framework-generated and refreshes it on future
 		# sync passes. The empty second argument skips HTML implementation notes.
@@ -389,6 +453,12 @@ _compose_issue_body() {
 		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\"" # aidevops-allow: raw-gh-wrapper
 		echo ""
 		return 1
+	fi
+
+	# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
+	# and human readers can resolve the parent. Placed before the footer.
+	if [[ -n "${PARENT_ISSUE_NUM:-}" ]]; then
+		body="${body}"$'\n\n'"Parent: #${PARENT_ISSUE_NUM}"
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)
