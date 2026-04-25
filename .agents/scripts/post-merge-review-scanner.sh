@@ -107,10 +107,18 @@ ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 # containing "refactors" (matches ACT_RE "refactor"), then concludes with "I have
 # no feedback to provide." — the entire body is a description + LGTM, not an
 # actionable suggestion. NOOP_RE is applied as a deny-list in
-# fetch_review_summaries_md BEFORE the ACT_RE check. The phrases are specific
-# enough that false positives (a real review that also contains "no feedback to
-# provide" in a sub-clause) are rare in practice.
-NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make))[[:space:][:punct:]]*$"
+# fetch_review_summaries_md BEFORE the ACT_RE check.
+#
+# Tradeoff (updated to cite #20792 incident, 2026-04-24): the end-anchor was
+# dropped deliberately. Gemini's exact phrasing on PR #20759 was "I have no
+# feedback to provide as there were no review comments." — the mid-sentence
+# continuation defeated the original end-anchored regex, causing a spurious
+# followup issue (#20792). We now prefer the occasional false negative (a real
+# review whose prose happens to include a noop substring mid-sentence loses its
+# issue creation) over the more frequent false positive (an empty LGTM fires a
+# dispatch cycle). Gemini's deterministic empty-review sentence makes the saving
+# repeatable; losing a genuine finding to an incidental phrase match is rare.
+NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)|no review comments)"
 
 log() { echo "[scanner] $*" >&2; }
 
@@ -543,7 +551,11 @@ build_pr_followup_body() {
 		return 2
 	fi
 
+	# Belt-and-braces zero-findings gate: even if NOOP_RE misses a new bot
+	# phrasing, an empty inline+review pair will never create an issue.
+	# Logging the skip makes the decision traceable in scanner output.
 	if [[ -z "$inline" && -z "$review" ]]; then
+		log "build_pr_followup_body: skip ${repo}#${pr} — zero findings (inline and review summaries both empty)"
 		return 1
 	fi
 
