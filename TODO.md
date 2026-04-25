@@ -3068,3 +3068,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2820 pulse: extend no_work reclassification to worker_failed using Phase 3 log-tail data ref:GH#20826
 
 - [ ] t2819 pulse: pre-dispatch tier override for self-hosting dispatch-path tasks #auto-dispatch ref:GH#20825
+
+- [ ] t2823 auto-emit blocked-by from predecessor references in claim-task-id.sh #auto-dispatch #bug ref:GH#20834
