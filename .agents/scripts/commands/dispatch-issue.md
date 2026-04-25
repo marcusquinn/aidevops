@@ -34,18 +34,27 @@ helper deliberately does not.
    - Issue must exist + be `OPEN`.
    - Reject `parent-task` issues with a clear "use a phase child" message.
 3. Dedup pre-check via `dispatch-dedup-helper.sh is-assigned`.
-   - Real dispatch: block on existing claim, exit 0 with explanation.
-   - Dry-run: surface dedup status as info, still print the planned dispatch.
+   - Exit 0 (active claim) → real dispatch blocks, exit 0 with explanation.
+   - Exit 1 (free) → dispatch proceeds.
+   - Other exit code (helper missing, network error, etc.) → fail closed,
+     refuse to dispatch, exit 1.
+   - Dry-run: surface all three states as info, still print the planned dispatch.
 4. Resolve tier/model:
    - `--model <id>` wins.
    - Else infer from `tier:thinking|standard|simple` and `model:<id>` labels.
    - Default tier = `standard`, default model family = `sonnet`.
 5. Dispatch (real path):
-   - Pre-create worktree via `worktree-helper.sh add` (`auto-<ts>-gh<N>`).
-   - Register dispatch in ledger (`launched_by=manual-cli-<user>`).
+   - Pre-create worktree via `worktree-helper.sh add` (`auto-<ts>-gh<N>`),
+     resolve actual path back from `git worktree list` (worktree-helper has
+     its own slug logic — recomputing it is fragile).
    - Launch detached worker with prompt
      `/full-loop Implement issue #<N> (<url>)` — `headless-runtime-lib`
      auto-appends `HEADLESS_CONTINUATION_CONTRACT_V6`.
+   - Poll worker log for the `Dispatched PID:` line printed by
+     `headless-runtime-helper.sh::_detach_worker` (timeout 3s) to extract
+     the real worker PID, not the short-lived launch wrapper.
+   - Register dispatch in ledger with the real worker PID so subsequent
+     `status` and pulse dedup-layer-1 checks see a live process.
    - Print PID, log path, session key.
 6. Status check (anytime): `dispatch-issue status <N> <slug>` reports the
    active dispatch ledger entry, including PID liveness.

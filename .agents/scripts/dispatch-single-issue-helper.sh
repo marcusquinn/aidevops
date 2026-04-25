@@ -204,16 +204,19 @@ _dsi_create_worktree() {
 		return 1
 	fi
 
-	# Resolve worktree path (worktree-helper.sh uses ~/Git/<repo>-<branch>)
-	local repo_name
-	repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")
-	# Worktree paths use slashes-replaced-with-dashes
-	local safe_branch="${branch//\//-}"
-	_DSI_WORKTREE_PATH="${HOME}/Git/${repo_name}-${safe_branch}"
+	# Query git for the actual worktree path. worktree-helper.sh uses its
+	# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
+	# that here is fragile. Read it back from `git worktree list` instead.
+	_DSI_WORKTREE_PATH=$(git worktree list --porcelain |
+		awk -v b="$branch" '
+			/^worktree / {p=$2}
+			$0 == "branch refs/heads/" b {print p; exit}
+		')
 	_DSI_WORKTREE_BRANCH="$branch"
 
-	if [[ ! -d "$_DSI_WORKTREE_PATH" ]]; then
-		_dsi_err "Worktree was created but expected path does not exist: ${_DSI_WORKTREE_PATH}"
+	if [[ -z "$_DSI_WORKTREE_PATH" || ! -d "$_DSI_WORKTREE_PATH" ]]; then
+		_dsi_err "Worktree created but path could not be resolved (branch=${branch})"
+		_dsi_info "  Inspect: git worktree list --porcelain | grep -A1 ${branch}"
 		return 1
 	fi
 	return 0
@@ -230,21 +233,57 @@ _dsi_default_branch() {
 }
 
 #######################################
-# Register the dispatch in the ledger. Best-effort — non-fatal if it fails.
+# Register the dispatch in the ledger with the real worker PID.
+# Best-effort — non-fatal if it fails. Note: dispatch-ledger-helper.sh
+# register accepts --session-key, --issue, --repo, --pid only — there is
+# no --launched-by flag (the field is informational, not part of the
+# helper's interface).
 # Args:
-#   $1 - issue_number, $2 - repo_slug, $3 - session_key
+#   $1 - issue_number, $2 - repo_slug, $3 - session_key, $4 - worker_pid
 #######################################
 _dsi_register_ledger() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local session_key="$3"
+	local worker_pid="$4"
 
 	"$_DSI_LEDGER_HELPER" register \
 		--session-key "$session_key" \
 		--issue "$issue_number" \
 		--repo "$repo_slug" \
-		--launched-by "manual-cli" \
+		--pid "$worker_pid" \
 		>/dev/null 2>&1 || _dsi_warn "Dispatch ledger registration failed (non-fatal)"
+	return 0
+}
+
+#######################################
+# Resolve the real worker PID from the worker_log file.
+# headless-runtime-helper.sh _detach_worker prints "Dispatched PID: <pid>"
+# right before forking the actual worker subshell (see headless-runtime-helper.sh:1483).
+# We poll the log briefly waiting for that line; if it never appears,
+# fall back to the launch wrapper PID (degraded — ledger may show dead PID).
+# Args: $1 - worker_log path, $2 - launch_pid (fallback)
+# Stdout: PID (single integer)
+#######################################
+_dsi_resolve_worker_pid() {
+	local worker_log="$1"
+	local launch_pid="$2"
+	local attempts=0
+	while [[ $attempts -lt 30 ]]; do
+		if [[ -s "$worker_log" ]]; then
+			local pid
+			pid=$(grep -oE 'Dispatched PID: [0-9]+' "$worker_log" 2>/dev/null | awk '{print $3}' | head -1)
+			if [[ -n "$pid" ]]; then
+				echo "$pid"
+				return 0
+			fi
+		fi
+		sleep 0.1
+		attempts=$((attempts + 1))
+	done
+	# Fallback: caller can decide what to do with degraded state
+	_dsi_warn "Could not extract worker PID from log within 3s — using launch wrapper PID (ledger may go stale)"
+	echo "$launch_pid"
 	return 0
 }
 
@@ -340,7 +379,13 @@ _dsi_parse_dispatch_args() {
 		local arg="$1"
 		case "$arg" in
 		--model)
-			_DSI_ARG_MODEL="${2:-}"
+			# Guard: --model requires a value, and that value must not look
+			# like another flag (covers `--model --dry-run` typo).
+			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+				_dsi_err "--model requires a model id (e.g. anthropic/claude-opus-4-7)"
+				return 2
+			fi
+			_DSI_ARG_MODEL="$2"
 			shift 2
 			;;
 		--dry-run)
@@ -386,14 +431,17 @@ _dsi_parse_dispatch_args() {
 
 #######################################
 # Print dry-run plan. Caller has already loaded metadata + resolved model.
-# Args: $1 issue_number, $2 repo_slug, $3 session_key, $4 dedup_rc, $5 dedup_result
+# Args:
+#   $1 issue_number, $2 repo_slug, $3 session_key
+#   $4 dedup_state (blocked|clear|error), $5 dedup_rc, $6 dedup_result
 #######################################
 _dsi_print_dryrun() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local session_key="$3"
-	local dedup_rc="$4"
-	local dedup_result="$5"
+	local dedup_state="$4"
+	local dedup_rc="$5"
+	local dedup_result="$6"
 	_dsi_info "DRY RUN — would dispatch:"
 	_dsi_info "  Issue:        #${issue_number} (${repo_slug})"
 	_dsi_info "  Title:        ${_DSI_ISSUE_TITLE}"
@@ -403,11 +451,11 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
-	if [[ "$dedup_rc" -eq 0 ]]; then
-		_dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}"
-	else
-		_dsi_info "  Dedup:        clear (no active claim)"
-	fi
+	case "$dedup_state" in
+	blocked) _dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}" ;;
+	clear) _dsi_info "  Dedup:        clear (no active claim)" ;;
+	error) _dsi_err "  Dedup:        ERROR (exit ${dedup_rc}) — would refuse to dispatch: ${dedup_result}" ;;
+	esac
 	_dsi_ok "Dry-run complete (no worker launched)"
 	return 0
 }
@@ -430,12 +478,24 @@ cmd_dispatch() {
 	_dsi_load_issue_meta "$issue_number" "$repo_slug" || return 1
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
-	# Step 3: dedup check (informational under --dry-run, blocking otherwise)
+	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
+	# Helper exit codes (per dispatch-dedup-helper.sh::is-assigned):
+	#   0 = blocked (active claim exists)
+	#   1 = free to dispatch (no claim)
+	#   * = error (helper missing, network failure, malformed response, etc.)
+	# Treat anything other than 0 or 1 as "fail closed" — refuse to dispatch
+	# when we can't be sure of the state. The pulse has its own retry layers.
 	local self_login
 	self_login=$(gh api user --jq .login 2>/dev/null || echo "")
 	local dedup_result dedup_rc=0
 	ISSUE_META_JSON="$_DSI_ISSUE_META_JSON" \
 		dedup_result=$("$_DSI_DEDUP_HELPER" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>&1) || dedup_rc=$?
+	local dedup_state
+	case "$dedup_rc" in
+	0) dedup_state="blocked" ;;
+	1) dedup_state="clear" ;;
+	*) dedup_state="error" ;;
+	esac
 
 	# Step 4: resolve model
 	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$_DSI_ARG_MODEL"
@@ -444,32 +504,50 @@ cmd_dispatch() {
 
 	# Step 5: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
-		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_rc" "$dedup_result"
+		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result"
 		return 0
 	fi
 
-	# Real dispatch: honour dedup block
-	if [[ "$dedup_rc" -eq 0 ]]; then
+	# Real dispatch: honour dedup block + fail-closed on errors
+	case "$dedup_state" in
+	blocked)
 		_dsi_warn "Skipped: dispatch dedup check blocked"
 		_dsi_info "  Reason: ${dedup_result}"
 		_dsi_info "  Use a separate test issue, or release the existing claim first."
 		return 0
-	fi
+		;;
+	error)
+		_dsi_err "Dedup check failed (exit ${dedup_rc}) — failing closed, refusing to dispatch"
+		_dsi_info "  Output: ${dedup_result}"
+		_dsi_info "  Diagnose with: $_DSI_DEDUP_HELPER is-assigned $issue_number $repo_slug $self_login"
+		return 1
+		;;
+	esac
 
-	# Step 6-9: worktree + ledger + launch
+	# Step 6: pre-create worktree
 	_dsi_create_worktree "$issue_number" || return 1
-	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key"
+
+	# Step 7: launch (gets back the LAUNCH wrapper PID — short-lived)
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
-	local pid
-	pid=$(_dsi_launch_worker \
+	local launch_pid
+	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
 		"$worker_log" "$issue_number") || return 1
 
+	# Step 8: resolve REAL worker PID from log (headless-runtime-helper
+	# prints "Dispatched PID: <pid>" before its subshell takes over).
+	local worker_pid
+	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")
+
+	# Step 9: register in ledger with the real PID (so check-issue PID
+	# liveness checks reflect the actual worker, not the dead wrapper).
+	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key" "$worker_pid"
+
 	_dsi_ok "Worker launched"
-	_dsi_info "  PID:        ${pid}"
+	_dsi_info "  Worker PID: ${worker_pid}"
 	_dsi_info "  Issue:      #${issue_number} (${repo_slug})"
 	_dsi_info "  Tier/model: ${_DSI_TIER} / ${_DSI_SELECTED_MODEL:-<auto>}"
 	_dsi_info "  Worktree:   ${_DSI_WORKTREE_PATH}"

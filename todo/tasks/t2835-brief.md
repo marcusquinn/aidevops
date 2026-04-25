@@ -28,10 +28,13 @@ duplicating it here would create two sources of truth.
 See issue body. Verified locally (interactive session):
 
 - `shellcheck` clean.
-- `--dry-run` prints planned dispatch including dedup status.
-- `--model <id>` overrides label-inferred model.
+- `--dry-run` prints planned dispatch including 3-state dedup status (blocked/clear/error).
+- `--model <id>` overrides label-inferred model; missing-value path errors with helpful message.
 - Closed/missing issues rejected with clear error messages.
 - `status` reads `dispatch-ledger-helper.sh check-issue` correctly.
+- Dedup check fails closed on unexpected exit codes (exit 1 only = free; anything else = refuse).
+- Worktree path resolved by querying `git worktree list` (not by recomputing `worktree-helper.sh`'s slug logic).
+- Real worker PID extracted from worker log (not the short-lived launch wrapper) before ledger registration.
 
 ## Notes
 
