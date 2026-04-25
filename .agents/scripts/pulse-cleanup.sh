@@ -735,30 +735,28 @@ _post_launch_recovery_claim_released() {
 	# diagnosable from the audit trail alone (no log-file forensics needed).
 	# Bounded to last 20 lines and 4KB to keep comments readable and avoid
 	# accidental credential leakage from verbose stack traces.
-	local safe_slug log_file log_tail
-	safe_slug=$(echo "$repo_slug" | tr '/:' '--')
-	local -a log_candidates=(
-		"/tmp/pulse-${safe_slug}-${issue_number}.log"
-		"/tmp/pulse-${issue_number}.log"
-	)
-	for log_file in "${log_candidates[@]}"; do
-		if [[ -f "$log_file" ]] && [[ -s "$log_file" ]]; then
-			log_tail=$(tail -20 "$log_file" 2>/dev/null | head -c 4096 || true)
-			if [[ -n "$log_tail" ]]; then
-				body="${body}
+	#
+	# t2820: extracted to `_read_worker_log_tail_classified` in
+	# shared-claim-lifecycle.sh — same bounds + path enumeration. The
+	# classification side-output is unused here (the comment just embeds
+	# the raw tail); escalate_issue_tier consumes the classification for
+	# its no_work reclassification path. Keeping a single reader prevents
+	# the two consumers from drifting on log-path conventions.
+	if declare -F _read_worker_log_tail_classified >/dev/null 2>&1; then
+		_read_worker_log_tail_classified "$issue_number" "$repo_slug"
+		if [[ -n "${_WORKER_LOG_TAIL_FILE:-}" && -n "${_WORKER_LOG_TAIL_CONTENT:-}" ]]; then
+			body="${body}
 
 <details>
-<summary>worker log tail (last 20 lines, source: ${log_file})</summary>
+<summary>worker log tail (last 20 lines, source: ${_WORKER_LOG_TAIL_FILE})</summary>
 
 \`\`\`text
-${log_tail}
+${_WORKER_LOG_TAIL_CONTENT}
 \`\`\`
 
 </details>"
-			fi
-			break
 		fi
-	done
+	fi
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \

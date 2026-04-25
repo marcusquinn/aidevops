@@ -947,6 +947,135 @@ _Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle
 ESCALATION_FAILURE_THRESHOLD="${ESCALATION_FAILURE_THRESHOLD:-2}"
 ESCALATION_OVERWHELMED_THRESHOLD="${ESCALATION_OVERWHELMED_THRESHOLD:-1}"
 NO_WORK_NMR_THRESHOLD="${NO_WORK_NMR_THRESHOLD:-3}"
+# t2820: maximum log-file age (seconds) under which a `worker_failed` event
+# with no tool-call markers in the log tail will be reclassified as `no_work`.
+# Workers that ran for longer are likely real coding failures (worker engaged,
+# read files, attempted edits) where escalation IS appropriate. The default
+# (180s) is conservative — most real coding work produces tool-call frames in
+# the first minute. Override via env when investigating specific incidents.
+NO_WORK_RECLASS_ELAPSED_MAX="${NO_WORK_RECLASS_ELAPSED_MAX:-180}"
+
+#######################################
+# _maybe_reclassify_worker_failed_as_no_work — Phase 5 reclassification (t2820)
+#
+# When `escalate_issue_tier` is called with `crash_type == ""` and a
+# `worker_failed`-class reason, inspect the worker log tail to decide whether
+# this is a genuine coding failure (escalate) or a late infra failure that the
+# pulse currently mis-classifies (`worker_failed` is the catch-all bucket — see
+# issue body for the false-merge background).
+#
+# Reclassification rules (in order of precedence):
+#
+#   1. Log tail contains canary diagnostics OR `[t2814:early_exit]` marker
+#      → reclassify as `no_work` with subtype `canary_post_spawn_failure`.
+#      The worker spawned but died before any real work — opus cannot help.
+#
+#   2. Log file age <= NO_WORK_RECLASS_ELAPSED_MAX AND log tail contains no
+#      tool-use markers → reclassify as `no_work` with subtype
+#      `no_tool_calls_in_log`. The worker was alive long enough to run, but
+#      never reached implementation. Same opus-cannot-help reasoning.
+#
+#   3. Otherwise (real_coding signals, log too old, or log missing) → no
+#      reclassification. Caller's existing escalation logic runs unchanged.
+#
+# When a rule fires, the helper invokes `_log_no_work_skip_escalation` with
+# the subtype embedded in the `reason` arg so the diagnostic comment explains
+# which rule fired. Returns 0 to signal "reclassified, skip cascade"; returns
+# 1 to signal "fall through to normal escalation".
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - failure_count
+#   $4 - original reason (e.g. worker_failed, premature_exit)
+#
+# Returns: 0 on reclassification (caller MUST short-circuit), 1 otherwise.
+#######################################
+_maybe_reclassify_worker_failed_as_no_work() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local original_reason="$4"
+
+	# Only reclassify worker_failed-class reasons. Rate-limit and explicit
+	# crash_type cases are handled elsewhere; we should not touch them.
+	#
+	# Reasons that map to "spawned but produced no useful output":
+	#   - worker_failed             (catch-all from headless-runtime-helper)
+	#   - premature_exit            (watchdog-detected early exit)
+	#   - worker_noop_zero_output   (post-completion zero-output check)
+	case "$original_reason" in
+	worker_failed | premature_exit | worker_noop_zero_output) ;;
+	*) return 1 ;;
+	esac
+
+	# Need the shared log-tail reader. If not loaded, fall through — better
+	# to escalate normally than to mis-classify on missing tooling.
+	if ! declare -F _read_worker_log_tail_classified >/dev/null 2>&1; then
+		return 1
+	fi
+
+	# Reset caller-scope vars (the reader resets them too, but be explicit).
+	_WORKER_LOG_TAIL_FILE=""
+	_WORKER_LOG_TAIL_CONTENT=""
+	_WORKER_LOG_TAIL_CLASS="unknown"
+	_WORKER_LOG_TAIL_AGE_SECS=""
+
+	_read_worker_log_tail_classified "$issue_number" "$repo_slug"
+
+	# Design constraint (per issue body): if Phase 3's log-tail data is
+	# absent (older dispatch records, log file rotated away), fall through
+	# to existing worker_failed → escalation behaviour unchanged. No
+	# regression on pre-Phase 3 records.
+	[[ -n "${_WORKER_LOG_TAIL_FILE:-}" ]] || return 1
+	[[ "${_WORKER_LOG_TAIL_CLASS:-unknown}" != "unknown" ]] || return 1
+
+	local subtype=""
+	case "$_WORKER_LOG_TAIL_CLASS" in
+	canary_post_spawn)
+		# Highest-precedence rule: explicit infra-failure markers in the
+		# log tail. Fire regardless of runtime — a canary-failure tail
+		# 10 minutes after spawn is still a canary failure.
+		subtype="canary_post_spawn_failure"
+		;;
+	no_tool_calls)
+		# Runtime-bounded rule: only reclassify when the log file is
+		# young enough that "no tool calls" credibly means "didn't get
+		# to coding". For longer runtimes, the worker may have legitimately
+		# coded and only the tail visible (a 20-line tail at 30 minutes
+		# of runtime can easily miss the implementation phase).
+		local age="${_WORKER_LOG_TAIL_AGE_SECS:-}"
+		if [[ -n "$age" && "$age" =~ ^[0-9]+$ \
+			&& "$age" -le "$NO_WORK_RECLASS_ELAPSED_MAX" ]]; then
+			subtype="no_tool_calls_in_log"
+		fi
+		;;
+	real_coding)
+		# Worker did real implementation work. Original escalation is
+		# the right response.
+		return 1
+		;;
+	esac
+
+	# No subtype assigned → no reclassification (e.g. no_tool_calls but
+	# log too old). Fall through to normal escalation.
+	[[ -n "$subtype" ]] || return 1
+
+	# Compose the reason that will appear in the skip-escalation comment.
+	# Prefix with the subtype so operators can grep for the specific rule
+	# that fired (auditable per the issue's verification example).
+	local reclass_reason="no_work:${subtype} (reclassified from ${original_reason} via log-tail at ${_WORKER_LOG_TAIL_FILE})"
+
+	# Single-line audit log for log tailers — keeps the reclassification
+	# observable even when the GH comment fails to post.
+	printf '[worker-lifecycle][t2820] reclassified worker_failed→no_work for #%s (%s) subtype=%s age=%ss class=%s\n' \
+		"$issue_number" "$repo_slug" "$subtype" \
+		"${_WORKER_LOG_TAIL_AGE_SECS:-?}" "${_WORKER_LOG_TAIL_CLASS}" >&2 || true
+
+	_log_no_work_skip_escalation "$issue_number" "$repo_slug" \
+		"$failure_count" "$reclass_reason"
+	return 0
+}
 
 escalate_issue_tier() {
 	local issue_number="$1"
@@ -960,6 +1089,26 @@ escalate_issue_tier() {
 
 	# Validate failure_count is numeric (CodeRabbit review)
 	[[ "$failure_count" =~ ^[0-9]+$ ]] || return 0
+
+	# t2820 (Phase 5): when crash_type is empty AND reason looks like a
+	# generic worker-failure bucket, try to reclassify as no_work using the
+	# Phase 3 log-tail signal. The reclassification rule fires only when the
+	# log tail provides positive evidence of an infra-class failure (canary
+	# diagnostics, t2814:early_exit marker) OR no implementation evidence
+	# combined with short runtime. Otherwise the reason is treated as a real
+	# coding failure and falls through to the normal cascade.
+	#
+	# This must run BEFORE the existing no_work short-circuit so that the
+	# reclassification path can call the skip-escalation helper with a
+	# descriptive subtype-aware reason instead of the original generic
+	# bucket name. (See _maybe_reclassify_worker_failed_as_no_work above
+	# for the full rule list and reference-pattern fixture coverage.)
+	if [[ -z "$crash_type" ]]; then
+		if _maybe_reclassify_worker_failed_as_no_work \
+			"$issue_number" "$repo_slug" "$failure_count" "$reason"; then
+			return 0
+		fi
+	fi
 
 	# Select threshold based on crash type:
 	# - "overwhelmed" = model attempted real work but couldn't complete.

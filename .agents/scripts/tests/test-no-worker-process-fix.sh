@@ -68,30 +68,45 @@ print_result() {
 # ---------------------------------------------------------------------------
 
 # Static check: the helper reads the worker log path candidates.
+#
+# t2820 update: log-path enumeration was extracted from
+# `_post_launch_recovery_claim_released` (pulse-cleanup.sh) into
+# `_read_worker_log_tail_classified` (shared-claim-lifecycle.sh) so that the
+# pulse-cleanup CLAIM_RELEASED comment AND the worker-lifecycle no_work
+# reclassification (Phase 5) share one parser. Assert both: pulse-cleanup
+# delegates to the shared helper, and the shared helper enumerates the
+# canonical log paths.
 test_claim_released_reads_log() {
+	local shared_lifecycle="${AGENT_SCRIPT_DIR}/shared-claim-lifecycle.sh"
 	# shellcheck disable=SC2016  # literal text in source — no expansion intended
-	if grep -q '/tmp/pulse-\${safe_slug}-\${issue_number}.log' "$PULSE_CLEANUP" \
-		&& grep -q 'log_candidates=' "$PULSE_CLEANUP"; then
+	if grep -q '/tmp/pulse-\${safe_slug}-\${issue_number}.log' "$shared_lifecycle" \
+		&& grep -q 'log_candidates=' "$shared_lifecycle" \
+		&& grep -q '_read_worker_log_tail_classified' "$PULSE_CLEANUP"; then
 		print_result "fix #1: _post_launch_recovery_claim_released enumerates worker-log paths" 0
 		return 0
 	fi
 	print_result "fix #1: _post_launch_recovery_claim_released enumerates worker-log paths" 1 \
-		"Expected log_candidates with /tmp/pulse-...log paths in $PULSE_CLEANUP"
+		"Expected shared helper in $shared_lifecycle and delegation from $PULSE_CLEANUP (t2820 extraction)"
 	return 0
 }
 
 # Static check: tail is bounded so we cannot accidentally embed a 10MB
 # stack trace into a GitHub comment.
+#
+# t2820 update: same extraction note — bounds now live in the shared helper.
 test_claim_released_bounds_tail() {
-	# tail -20 lines, head -c 4096 byte cap
-	if grep -q 'tail -20.*head -c 4096' "$PULSE_CLEANUP"; then
+	local shared_lifecycle="${AGENT_SCRIPT_DIR}/shared-claim-lifecycle.sh"
+	# tail -20 lines AND head -c 4096 byte cap (may be on adjacent lines
+	# joined with `|`, so use a windowed grep instead of a single-line regex).
+	if grep -q 'tail -20' "$shared_lifecycle" \
+		&& grep -q 'head -c 4096' "$shared_lifecycle"; then
 		print_result "fix #1: log tail bounded to 20 lines / 4KB" 0
 		return 0
 	fi
 	print_result "fix #1: log tail bounded to 20 lines / 4KB" 1 \
-		"Expected 'tail -20 ... head -c 4096' in $PULSE_CLEANUP — without this, \
-giant logs could be embedded in CLAIM_RELEASED comments and leak credentials \
-or blow the GitHub 65535-byte body limit."
+		"Expected 'tail -20' AND 'head -c 4096' in $shared_lifecycle (t2820 extraction) — \
+without this, giant logs could be embedded in CLAIM_RELEASED comments and leak \
+credentials or blow the GitHub 65535-byte body limit."
 	return 0
 }
 

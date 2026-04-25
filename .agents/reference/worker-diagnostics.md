@@ -372,6 +372,70 @@ escalation entirely. Observable change:
 | `premature_exit` | caller-supplied (explicit crash type from watchdog) | Depends on crash_type | Worker exited during execution |
 | `stale_timeout` | caller-supplied (from stale-recovery) | Depends on crash_type | Worker was stalled |
 
+#### Phase 5 — `worker_failed` reclassification via log tail (t2820)
+
+**Problem.** Phases 3-4 fixed the `no_worker_process` slice — the worker
+never spawned. The remaining `worker_failed` bucket conflates two distinct
+modes that demand opposite responses:
+
+- **Real coding failure** — worker spawned, loaded context, executed tool
+  calls, produced bad code. Escalation to opus-4-7 is correct.
+- **Late infra failure** — worker spawned, ran canary OK, hit a mid-session
+  blip (auth refresh timeout, plugin hook deadlock, provider rate limit)
+  BEFORE producing tool calls. Escalation wastes opus tokens.
+
+**Fix.** `escalate_issue_tier` (worker-lifecycle-common.sh) now consults
+the worker-log tail (Phase 3 t2814 collection) BEFORE deciding between
+escalation and skip. When `crash_type` is empty AND `reason` matches a
+generic worker-failure bucket (`worker_failed`, `premature_exit`,
+`worker_noop_zero_output`), the helper `_maybe_reclassify_worker_failed_as_no_work`
+inspects the log tail and applies one of these rules:
+
+| Log tail signal | Subtype assigned | Cascade fires? | Skip-comment marker |
+|-----------------|------------------|----------------|---------------------|
+| `[t2814:early_exit]` marker OR `canary` keyword | `canary_post_spawn_failure` | No (skip via t2387 path) | `<!-- no-work-escalation-skip -->` |
+| No tool-use markers AND log age ≤ `NO_WORK_RECLASS_ELAPSED_MAX` (default 180s) | `no_tool_calls_in_log` | No | `<!-- no-work-escalation-skip -->` |
+| Tool-use / Edit / Write / Bash / `git commit` markers present | `real_coding` (no reclassification) | Yes (normal cascade) | n/a |
+| Log file missing OR tail empty | `unknown` (no reclassification) | Yes (existing behaviour) | n/a |
+
+**DRY architecture.** The log-tail reader is now a shared helper —
+`_read_worker_log_tail_classified` in `shared-claim-lifecycle.sh` — used by
+both consumers:
+
+1. `_post_launch_recovery_claim_released` (pulse-cleanup.sh) — embeds the
+   tail in the `CLAIM_RELEASED` comment for diagnosability.
+2. `_maybe_reclassify_worker_failed_as_no_work` (worker-lifecycle-common.sh)
+   — uses the classification for the reclassification decision above.
+
+This keeps log-path conventions and bounds (last 20 lines, 4KB cap) in one
+place. A future refactor that touches one consumer cannot drift the other.
+
+**Tunables.**
+
+- `NO_WORK_RECLASS_ELAPSED_MAX` (default `180` seconds) — the runtime cap
+  under which a `no_tool_calls` tail triggers reclassification. The
+  `canary_post_spawn` rule fires regardless of runtime (explicit infra
+  marker is decisive). Override via env when investigating long-running
+  incidents that should not reclassify.
+
+**Backward compatibility.** When the log file is missing (e.g., older
+dispatch records pre-Phase 3, or rotated-away logs), the reclassification
+helper returns 1 and the existing `worker_failed` → escalation behaviour
+fires unchanged. No regression on pre-Phase 3 records.
+
+**Verification.**
+
+```bash
+shellcheck .agents/scripts/worker-lifecycle-common.sh \
+           .agents/scripts/shared-claim-lifecycle.sh
+bash .agents/scripts/tests/test-no-work-reclassification.sh
+# After deploy: audit the reclassification subtypes that fired
+gh api repos/marcusquinn/aidevops/issues/<N>/comments --jq \
+  '.[] | select(.body | test("no_work.*(no_tool_calls_in_log|canary_post_spawn_failure)")) | .body' | head -20
+# Tail-side audit (operator log)
+grep -E '\[worker-lifecycle\]\[t2820\]' /tmp/pulse-*.log | head
+```
+
 #### Self-hosting tier override — t2819
 
 **Pre-dispatch short-circuit for dispatch-path tasks.**

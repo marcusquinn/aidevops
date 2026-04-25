@@ -225,3 +225,130 @@ _attempt_orphan_recovery_pr() {
 		>/dev/null 2>&1
 	return $?
 }
+
+#######################################
+# _read_worker_log_tail_classified — locate worker log + classify the tail (t2820)
+#
+# Shared helper extracted from `_post_launch_recovery_claim_released` (Phase 3,
+# t2814) so that two consumers can share parsing logic:
+#   1. pulse-cleanup.sh — embeds the tail in CLAIM_RELEASED comments.
+#   2. worker-lifecycle-common.sh::escalate_issue_tier — uses the classification
+#      to reclassify `worker_failed` events as `no_work` when the log shows the
+#      worker never produced tool calls (Phase 5 / t2820).
+#
+# Locates the worker log by enumerating the same candidate paths
+# `_post_launch_recovery_claim_released` uses:
+#     /tmp/pulse-${safe_slug}-${issue_number}.log
+#     /tmp/pulse-${issue_number}.log
+#
+# Reads the last 20 lines (capped at 4KB to match Phase 3's bounds — keeps
+# comments readable and limits credential-leak surface). Classifies the tail
+# into one of four shapes:
+#
+#   real_coding          — tail contains tool-use / edit / commit markers
+#                          → worker reached implementation; escalate normally
+#   no_tool_calls        — tail is non-empty but lacks any tool-use markers
+#                          → worker spawned but stalled before implementation
+#   canary_post_spawn    — tail contains canary diagnostics or t2814 early-exit
+#                          marker → infra failure post-spawn, opus cannot help
+#   unknown              — log file missing or empty → no signal available
+#
+# Side-effects (on success):
+#   sets the following variables in the *caller's* scope (no subshell):
+#     _WORKER_LOG_TAIL_FILE         path to the log file that was read
+#     _WORKER_LOG_TAIL_CONTENT      log tail content (may be empty)
+#     _WORKER_LOG_TAIL_CLASS        one of: real_coding|no_tool_calls|
+#                                            canary_post_spawn|unknown
+#     _WORKER_LOG_TAIL_AGE_SECS     log file age in seconds (now - mtime), or
+#                                   empty when no log file exists
+#
+# Why caller-scope vars: callers need both the raw content (for embedding in
+# comments) AND the classification (for branching). Returning a single string
+# would force one or the other; setting two named vars is the cheapest way to
+# share both without subshell overhead. Tests can `unset` the vars between runs.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo) — used to derive safe_slug for the log path
+#
+# Returns: 0 always (best-effort; missing log → unknown classification)
+#######################################
+_read_worker_log_tail_classified() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Reset caller-scope vars on every call.
+	_WORKER_LOG_TAIL_FILE=""
+	_WORKER_LOG_TAIL_CONTENT=""
+	_WORKER_LOG_TAIL_CLASS="unknown"
+	_WORKER_LOG_TAIL_AGE_SECS=""
+
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+
+	local safe_slug
+	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
+	local -a log_candidates=(
+		"/tmp/pulse-${safe_slug}-${issue_number}.log"
+		"/tmp/pulse-${issue_number}.log"
+	)
+
+	local log_file=""
+	for log_file in "${log_candidates[@]}"; do
+		if [[ -f "$log_file" ]] && [[ -s "$log_file" ]]; then
+			_WORKER_LOG_TAIL_FILE="$log_file"
+			# Bounded read: last 20 lines, capped at 4KB. Same bounds as
+			# Phase 3 to keep comments readable + limit credential-leak.
+			_WORKER_LOG_TAIL_CONTENT=$(tail -20 "$log_file" 2>/dev/null \
+				| head -c 4096 || true)
+			# File age = now - mtime. Approximates worker runtime well
+			# enough for the reclassification threshold check (the log is
+			# created at spawn and written-to throughout execution).
+			local now mtime
+			now=$(date +%s 2>/dev/null) || now=""
+			mtime=$(stat -c '%Y' "$log_file" 2>/dev/null \
+				|| stat -f '%m' "$log_file" 2>/dev/null \
+				|| echo "")
+			if [[ -n "$now" && -n "$mtime" && "$mtime" =~ ^[0-9]+$ ]]; then
+				_WORKER_LOG_TAIL_AGE_SECS=$((now - mtime))
+				# Defensive: clamp negatives to 0 (clock skew / FS race)
+				[[ "$_WORKER_LOG_TAIL_AGE_SECS" -lt 0 ]] && _WORKER_LOG_TAIL_AGE_SECS=0
+			fi
+			break
+		fi
+	done
+
+	# No log found → unknown (caller should fall through to default behaviour).
+	if [[ -z "$_WORKER_LOG_TAIL_FILE" ]]; then
+		return 0
+	fi
+
+	# Empty content (rare: file existed at -s check but emptied between calls)
+	if [[ -z "$_WORKER_LOG_TAIL_CONTENT" ]]; then
+		return 0
+	fi
+
+	# Classification — order matters: canary signals are most specific, check
+	# them first. Tool-call markers next (positive signal of real work). The
+	# absence-of-tool-calls case is the catch-all when the log has *something*
+	# but no implementation evidence.
+	#
+	# Markers chosen for stability (not session-format details):
+	#   - `[t2814:early_exit]` — explicit marker emitted by Phase 3 Fix 2
+	#   - `canary` (case-insensitive) — appears in canary diagnostic output
+	#   - `tool_use|tool-use|"tool":` — OpenCode tool-call frames in JSON
+	#   - `edit|Edit|Write|Bash` — tool names that imply real implementation
+	#   - `git commit|git push` — strongest evidence of implementation
+	if printf '%s' "$_WORKER_LOG_TAIL_CONTENT" \
+		| grep -qE '\[t2814:early_exit\]|[Cc]anary'; then
+		_WORKER_LOG_TAIL_CLASS="canary_post_spawn"
+	elif printf '%s' "$_WORKER_LOG_TAIL_CONTENT" \
+		| grep -qE 'tool_use|tool-use|"tool":|"name":\s*"(Edit|Write|Bash|Read)"|git\s+(commit|push)'; then
+		_WORKER_LOG_TAIL_CLASS="real_coding"
+	else
+		# Log has content but no implementation markers → worker stalled
+		# before reaching tool-call execution.
+		_WORKER_LOG_TAIL_CLASS="no_tool_calls"
+	fi
+
+	return 0
+}
