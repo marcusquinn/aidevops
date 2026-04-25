@@ -309,6 +309,24 @@ escalation entirely. Observable change:
 | `premature_exit` | caller-supplied (explicit crash type from watchdog) | Depends on crash_type | Worker exited during execution |
 | `stale_timeout` | caller-supplied (from stale-recovery) | Depends on crash_type | Worker was stalled |
 
+#### Self-hosting tier override — t2819
+
+**Pre-dispatch short-circuit for dispatch-path tasks.**
+
+Issues that modify the worker dispatch path (`pulse-wrapper.sh`, `pulse-dispatch-*.sh`, `headless-runtime-helper.sh`, `worker-lifecycle-common.sh`, etc.) have a self-referential property: workers dispatched to fix them run through the code being fixed. When `tier:thinking` starts at opus-4-6, the cascade wastes 1-2 attempts before reaching opus-4-7, which these task sizes require.
+
+The self-hosting detector in `pre-dispatch-validator-helper.sh` runs BEFORE generator-marker validators. It scans the issue body for dispatch-path file patterns and, when found on a `tier:thinking` issue without `model:opus-4-7`, applies the label pre-dispatch. This eliminates wasted cascade attempts.
+
+- **Trigger:** issue body references any of the canonical dispatch-path files (array in `_SELF_HOSTING_PATTERNS`)
+- **Precondition:** issue has `tier:thinking` label, lacks `model:opus-4-7`
+- **Action:** applies `model:opus-4-7` label + posts provenance-wrapped audit comment
+- **Non-blocking:** always exits 0 (advisory, not a dispatch gate)
+- **Idempotent:** marker comment `<!-- self-hosting-tier-override -->` prevents duplicate posts
+- **Bypass:** `AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1`
+- **Dry-run:** `AIDEVOPS_SELF_HOSTING_DETECTOR_DRY_RUN=1`
+
+Observed on GH#20765 (t2814): 2 opus-4-6 attempts (~40K wasted tokens) before cascade reached opus-4-7. This short-circuit eliminates that waste for the self-hosting task class.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |
