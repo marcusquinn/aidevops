@@ -796,6 +796,15 @@ source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
 CANARY_CACHE_TTL_SECONDS="${CANARY_CACHE_TTL_SECONDS:-1800}"
 CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-60}"
+# t2814 (Phase 3, fix #4): Short-lived negative cache. When the canary
+# fails, subsequent dispatch attempts within this window short-circuit to
+# fail-fast instead of each spending up to CANARY_TIMEOUT_SECONDS on a
+# canary that will fail for the same reason (auth token expired, rate
+# limit, provider outage). Default 90s — long enough to absorb a typical
+# auth/rate-limit blip, short enough to recover quickly when the
+# underlying issue clears. The positive cache (1800s default) is
+# unaffected; success always wins and clears the negative cache.
+CANARY_NEGATIVE_TTL_SECONDS="${CANARY_NEGATIVE_TTL_SECONDS:-90}"
 
 #######################################
 # Version guard -- enforce OPENCODE_PINNED_VERSION before worker launch.
@@ -833,6 +842,7 @@ _enforce_opencode_version_pin() {
 _run_canary_test() {
 	local requested_model="${1:-}"
 	local cache_file="${STATE_DIR}/canary-last-pass"
+	local fail_cache_file="${STATE_DIR}/canary-last-fail"
 
 	# Check cache -- skip if last canary passed recently
 	if [[ -f "$cache_file" ]]; then
@@ -843,6 +853,22 @@ _run_canary_test() {
 		local age=$((now - last_pass))
 		if [[ "$age" -lt "$CANARY_CACHE_TTL_SECONDS" ]]; then
 			return 0
+		fi
+	fi
+
+	# t2814 (Phase 3, fix #4): Negative cache short-circuit. If the canary
+	# failed within CANARY_NEGATIVE_TTL_SECONDS, fail-fast instead of
+	# re-running. Without this, every dispatch attempt during a 90s auth
+	# blip spends up to CANARY_TIMEOUT_SECONDS (default 60s) running a
+	# canary that will fail identically. Bypass: AIDEVOPS_SKIP_CANARY_NEG_CACHE=1.
+	if [[ "${AIDEVOPS_SKIP_CANARY_NEG_CACHE:-0}" != "1" ]] && [[ -f "$fail_cache_file" ]]; then
+		local last_fail neg_now neg_age
+		last_fail=$(cat "$fail_cache_file" 2>/dev/null || echo "0")
+		neg_now=$(date +%s)
+		neg_age=$((neg_now - last_fail))
+		if [[ "$last_fail" =~ ^[0-9]+$ ]] && [[ "$neg_age" -ge 0 ]] && [[ "$neg_age" -lt "$CANARY_NEGATIVE_TTL_SECONDS" ]]; then
+			print_warning "Canary negative cache active (age=${neg_age}s, ttl=${CANARY_NEGATIVE_TTL_SECONDS}s) — failing fast (t2814)"
+			return 1
 		fi
 	fi
 
@@ -936,6 +962,9 @@ _run_canary_test() {
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
 		date +%s >"$cache_file"
+		# t2814: success clears the negative cache so the next failure
+		# starts a fresh TTL window instead of inheriting a stale one.
+		rm -f "$fail_cache_file" 2>/dev/null || true
 		rm -f "$canary_output"
 		return 0
 	fi
@@ -946,6 +975,10 @@ _run_canary_test() {
 	oc_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "unknown")
 	print_warning "Canary test FAILED (exit=$canary_exit, model=$canary_model, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
 	print_warning "Output (last 20 lines): $(tail -20 "$canary_output" 2>/dev/null || echo '<empty>')"
+	# t2814 (Phase 3, fix #4): Stamp the negative cache so subsequent
+	# dispatches within CANARY_NEGATIVE_TTL_SECONDS short-circuit.
+	mkdir -p "${STATE_DIR}" 2>/dev/null || true
+	date +%s >"$fail_cache_file" 2>/dev/null || true
 	rm -f "$canary_output"
 	return 1
 }
