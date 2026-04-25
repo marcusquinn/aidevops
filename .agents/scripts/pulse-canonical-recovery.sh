@@ -110,11 +110,14 @@ _pcr_is_dry_run() {
 _pcr_audit() {
 	# Record an audit-log entry. Never throws; audit-log-helper failures are
 	# non-fatal so a missing helper or quota issue doesn't break the pulse.
+	# `_PCR_AUDIT_HELPER` env override exists for test fixtures so they can
+	# stub the helper without overriding SCRIPT_DIR (which would also break
+	# shared-gh-wrappers.sh sourcing). Production callers leave it unset.
 	local op="$1"
 	local repo_path="$2"
 	local outcome="$3"
 
-	local helper="${SCRIPT_DIR}/audit-log-helper.sh"
+	local helper="${_PCR_AUDIT_HELPER:-${SCRIPT_DIR}/audit-log-helper.sh}"
 	[[ -x "$helper" ]] || return 0
 
 	"$helper" log "$_CANONICAL_RECOVERY_AUDIT_EVENT" \
@@ -123,6 +126,23 @@ _pcr_audit() {
 		--detail "repo=${repo_path}" \
 		--detail "outcome=${outcome}" >/dev/null 2>&1 || true
 	return 0
+}
+
+# Returns 0 when jq is available, 1 otherwise. Emits a one-shot warning the
+# first time it returns 1 in the lifetime of this process so missing jq is
+# loud but not log-spammy. Callers that depend on jq for correctness MUST
+# treat a non-zero return as fail-closed (never fail-open) — jq is required
+# for the hot-loop guard's persistence layer; without it we cannot count
+# attempts across pulse cycles.
+_pcr_jq_required() {
+	if command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ -z "${_PCR_JQ_WARN_EMITTED:-}" ]]; then
+		_pcr_log "jq is required for the hot-loop guard but is not installed — recovery will fail-closed (escalate to advisory) on every call. Install jq to restore loop-prevention."
+		_PCR_JQ_WARN_EMITTED=1
+	fi
+	return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -151,12 +171,19 @@ _pcr_detect_state() {
 }
 
 # Count attempts in the hot window for this repo. Echoes integer.
+# When jq is missing, returns MAX_ATTEMPTS so the caller's threshold check
+# trips and we escalate straight to advisory rather than silently looping
+# without a working guard. This is fail-closed by design.
 _pcr_attempts_in_window() {
 	local repo_path="$1"
+	if ! _pcr_jq_required; then
+		printf '%d' "$PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS"
+		return 0
+	fi
 	local now cutoff
 	now=$(date +%s)
 	cutoff=$((now - PULSE_CANONICAL_RECOVERY_HOT_WINDOW))
-	if [[ ! -f "$PULSE_CANONICAL_RECOVERY_STATE" ]] || ! command -v jq >/dev/null 2>&1; then
+	if [[ ! -f "$PULSE_CANONICAL_RECOVERY_STATE" ]]; then
 		printf '0'
 		return 0
 	fi
@@ -167,6 +194,9 @@ _pcr_attempts_in_window() {
 }
 
 # Record one attempt timestamp. Old entries outside the window are pruned.
+# When jq is missing, this is a no-op — the missing-jq path in
+# `_pcr_attempts_in_window` already escalates immediately, so persistence
+# adds no value.
 _pcr_record_attempt() {
 	local repo_path="$1"
 	local now cutoff state_dir
@@ -174,7 +204,7 @@ _pcr_record_attempt() {
 	cutoff=$((now - PULSE_CANONICAL_RECOVERY_HOT_WINDOW))
 	state_dir=$(dirname "$PULSE_CANONICAL_RECOVERY_STATE")
 	mkdir -p "$state_dir" 2>/dev/null || true
-	command -v jq >/dev/null 2>&1 || return 0
+	_pcr_jq_required || return 0
 
 	local existing="{}"
 	if [[ -f "$PULSE_CANONICAL_RECOVERY_STATE" ]]; then

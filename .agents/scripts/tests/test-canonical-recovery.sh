@@ -16,8 +16,10 @@
 #                       Repo ends up at origin HEAD with local changes restored.
 #   4. Unmerged path  — `git merge --abort` clears UU state and the repo
 #                       lands clean without needing a stash.
-#   5. Failure path   — stash-pop conflict triggers advisory; `gh issue
-#                       create` is invoked exactly once per failure mode.
+#   5. Failure path   — pull fails after stash (divergent history);
+#                       advisory is filed via `gh issue create`. The call
+#                       MUST go through the real `gh_create_issue` wrapper
+#                       so the gh-wrapper-guard contract holds.
 #   6. Hot-loop guard — exceeding MAX_ATTEMPTS in the window short-circuits
 #                       to advisory without re-attempting recovery.
 #   7. Dry-run        — DRY_RUN=1 leaves the repo state untouched.
@@ -64,14 +66,33 @@ cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
 # Record the invocation, return empty for issue list (no existing advisory),
 # and succeed for issue create.
+#
+# NOTE: real `gh` with `--jq '.[0].number // empty'` against an empty list
+# emits empty output. Our stub returns empty (NOT '[]') for `issue list` so
+# the helper's idempotency check correctly proceeds to `gh issue create`
+# when no prior advisory exists. Returning '[]' here would make the helper
+# treat the literal '[]' as an existing issue number and short-circuit.
 printf '%s\n' "$*" >>"${GH_CALL_LOG:-/dev/null}"
 case "$1" in
 	issue)
 		case "${2:-}" in
-			list) printf '[]\n' ;;
+			list) ;; # empty stdout — matches gh --jq filter on []
 			create) ;; # silent success
 			*) ;;
 		esac
+		;;
+	label)
+		case "${2:-}" in
+			list) ;; # empty
+			*) ;;  # create / set / etc — no-op
+		esac
+		;;
+	api)
+		# `_gh_wrapper_auto_sig` and others may call `gh api user --jq .login`.
+		# Return a minimal JSON object so callers that consume stdout don't
+		# break. Real gh with --jq applies the filter; here we just emit
+		# `{}` and let the caller handle empty filter results.
+		printf '{}\n'
 		;;
 esac
 exit 0
@@ -93,9 +114,15 @@ chmod +x "$AUDIT_STUB"
 export GH_CALL_LOG AUDIT_CALL_LOG
 export PATH="${GH_STUB_DIR}:${PATH}"
 
-# Override SCRIPT_DIR so the helper finds our audit stub.
-SCRIPT_DIR="${TEST_ROOT}/stubs"
-export SCRIPT_DIR
+# Override the audit-helper resolution via the helper's `_PCR_AUDIT_HELPER`
+# env hook. Leaving SCRIPT_DIR pointing at the real script directory means
+# `shared-gh-wrappers.sh` sources cleanly and `gh_create_issue` is defined,
+# which is what makes the advisory-creation path actually exercisable.
+# Without this hook, the previous test setup overrode SCRIPT_DIR to the
+# stubs/ dir, which broke the wrapper source and short-circuited the test
+# through the "wrapper unavailable" no-op branch — the assertions claimed
+# coverage that wasn't real.
+export _PCR_AUDIT_HELPER="${TEST_ROOT}/stubs/audit-log-helper.sh"
 
 # Source the recovery helper. shellcheck disable=SC1091
 # shellcheck source=../pulse-canonical-recovery.sh
@@ -103,6 +130,15 @@ source "${TEST_SCRIPTS_DIR}/pulse-canonical-recovery.sh" || {
 	echo "FAIL: sourcing pulse-canonical-recovery.sh failed" >&2
 	exit 1
 }
+
+# Sanity-check: gh_create_issue must be defined now that we're sourcing the
+# real shared-gh-wrappers.sh from the real SCRIPT_DIR. If this fails the
+# test is silently exercising the wrapper-unavailable branch and assertions
+# below cannot prove advisory coverage.
+if ! declare -F gh_create_issue >/dev/null 2>&1; then
+	echo "FAIL: gh_create_issue undefined after sourcing helper — test setup broken" >&2
+	exit 1
+fi
 
 # Override state file to point at the sandbox.
 PULSE_CANONICAL_RECOVERY_STATE="${HOME}/.aidevops/.agent-workspace/supervisor/canonical-recovery-state.json"
@@ -325,9 +361,9 @@ else
 	print_result "fail-pull: persistent failure returns 1" 0
 fi
 
-grep -q "issue" "$GH_CALL_LOG" \
-	&& print_result "fail-pull: gh issue invoked for advisory" 0 \
-	|| print_result "fail-pull: gh issue invoked for advisory" 1 "log: $(cat "$GH_CALL_LOG")"
+grep -q "issue create" "$GH_CALL_LOG" \
+	&& print_result "fail-pull: gh issue create invoked for advisory" 0 \
+	|| print_result "fail-pull: gh issue create invoked for advisory" 1 "log: $(cat "$GH_CALL_LOG")"
 
 grep -q "operation.verify" "$AUDIT_CALL_LOG" \
 	&& print_result "fail-pull: audit log records failure entry" 0 \
@@ -353,9 +389,9 @@ else
 	print_result "hot-loop: returns 1 after MAX_ATTEMPTS exhausted" 0
 fi
 
-grep -q "issue" "$GH_CALL_LOG" \
-	&& print_result "hot-loop: advisory filed on escalation" 0 \
-	|| print_result "hot-loop: advisory filed on escalation" 1
+grep -q "issue create" "$GH_CALL_LOG" \
+	&& print_result "hot-loop: advisory issue create invoked on escalation" 0 \
+	|| print_result "hot-loop: advisory issue create invoked on escalation" 1 "log: $(cat "$GH_CALL_LOG")"
 
 # Verify recovery did NOT actually try to stash (escalation short-circuit).
 state=$(_pcr_detect_state "$CANON_DIR")
@@ -423,6 +459,43 @@ rc=$?
 [[ "$rc" -eq 2 ]] \
 	&& print_result "standalone: missing repo-path exits 2" 0 \
 	|| print_result "standalone: missing repo-path exits 2" 1 "rc: $rc"
+
+# =============================================================================
+# Test 9: jq-missing fail-closed escalation
+# =============================================================================
+#
+# When jq is missing, the helper cannot maintain the persistent attempt
+# counter that backs the hot-loop guard. Pre-fix behaviour: silent no-op
+# (could loop forever if a transient pull failure recurred). Post-fix
+# behaviour: fail-closed — every call escalates straight to advisory so
+# the user is alerted instead of silently degrading. We simulate jq-missing
+# by shadowing `_pcr_jq_required` in this scope.
+#
+# This test is at the end of the suite because the override leaks into
+# the surrounding scope; subsequent in-process tests would see the stub.
+
+make_repo_pair "no-jq"
+echo "uncommitted-no-jq" >>"${CANON_DIR}/foo.txt"
+reset_call_logs
+
+# Override the jq-availability gate in this scope.
+_pcr_jq_required() { return 1; }
+
+if pulse_canonical_recover "$CANON_DIR" >/dev/null 2>&1; then
+	print_result "no-jq: fail-closed returns 1 on first call" 1 "expected nonzero"
+else
+	print_result "no-jq: fail-closed returns 1 on first call" 0
+fi
+
+grep -q "issue create" "$GH_CALL_LOG" \
+	&& print_result "no-jq: advisory filed via gh issue create" 0 \
+	|| print_result "no-jq: advisory filed via gh issue create" 1 "log: $(cat "$GH_CALL_LOG")"
+
+# Repo state must be preserved — fail-closed does not stash, pull, or pop.
+state=$(_pcr_detect_state "$CANON_DIR")
+[[ "$state" == "uncommitted" ]] \
+	&& print_result "no-jq: repo state preserved (no stash attempted)" 0 \
+	|| print_result "no-jq: repo state preserved (no stash attempted)" 1 "state: $state"
 
 # =============================================================================
 # Summary
