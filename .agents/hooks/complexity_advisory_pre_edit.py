@@ -49,6 +49,34 @@ def _is_shell_file(file_path: str) -> bool:
     return ext.lower() in SHELL_EXTENSIONS
 
 
+# Regex to detect bash function declaration lines (module-level, compiled once)
+_FUNC_RE = re.compile(
+    r"""
+    ^\s*
+    (?:
+        function\s+(\w+)\s*(?:\(\s*\))?\s*\{   # function name() { or function name {
+        |
+        (\w+)\s*\(\s*\)\s*\{                    # name() {
+    )
+    """,
+    re.VERBOSE,
+)
+
+
+def _find_close_brace(lines: list[str], start: int) -> int:
+    """Return the index of the closing brace for the function starting at `start`.
+
+    Uses a simple brace-depth counter (fast heuristic, sufficient for advisory).
+    Returns -1 if no matching close is found before end-of-input.
+    """
+    depth = 0
+    for j in range(start, len(lines)):
+        depth += lines[j].count("{") - lines[j].count("}")
+        if depth <= 0 and j > start:
+            return j
+    return -1
+
+
 def _iter_function_blocks(text: str) -> Generator[tuple[str, int], None, None]:
     """Yield (function_name, line_count) for each bash function in text.
 
@@ -62,54 +90,23 @@ def _iter_function_blocks(text: str) -> Generator[tuple[str, int], None, None]:
     """
     lines = text.splitlines()
     n = len(lines)
-
-    # Regex to detect function declaration lines
-    func_re = re.compile(
-        r"""
-        ^\s*
-        (?:
-            function\s+(\w+)\s*(?:\(\s*\))?\s*\{   # function name() { or function name {
-            |
-            (\w+)\s*\(\s*\)\s*\{                    # name() {
-        )
-        """,
-        re.VERBOSE,
-    )
-
     i = 0
     while i < n:
-        line = lines[i]
-        m = func_re.match(line)
-        if m:
-            func_name = m.group(1) or m.group(2)
-            # Count lines until the matching closing brace at depth 0
-            depth = 0
-            start = i
-            # Scan from the opening line
-            j = i
-            found_close = False
-            while j < n:
-                current = lines[j]
-                # Count { and } to track brace depth
-                # Ignore content inside strings/comments is too expensive;
-                # a simple brace counter is sufficient for the heuristic.
-                depth += current.count("{") - current.count("}")
-                if depth <= 0 and j > start:
-                    # Closing brace found
-                    func_line_count = j - start + 1
-                    yield (func_name, func_line_count)
-                    i = j + 1
-                    found_close = True
-                    break
-                j += 1
-            if not found_close:
-                # No matching close — treat rest of file as function body (edge case)
-                func_line_count = n - start
-                if func_line_count > 0:
-                    yield (func_name, func_line_count)
-                break
-        else:
+        m = _FUNC_RE.match(lines[i])
+        if not m:
             i += 1
+            continue
+        func_name = m.group(1) or m.group(2)
+        close = _find_close_brace(lines, i)
+        if close >= 0:
+            yield (func_name, close - i + 1)
+            i = close + 1
+        else:
+            # No matching close — treat rest of file as body (edge case)
+            remaining = n - i
+            if remaining > 0:
+                yield (func_name, remaining)
+            break
 
 
 def _build_advisory(warnings: list[tuple[str, int]]) -> str:
