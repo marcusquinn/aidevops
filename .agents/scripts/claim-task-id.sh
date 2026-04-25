@@ -265,7 +265,9 @@ parse_args() {
 			shift
 			;;
 		--parent-issue)
-			PARENT_ISSUE_NUM="$2"
+			# Use ${2:-} so set -u doesn't abort before our validation
+			# block can emit a friendly error for missing values.
+			PARENT_ISSUE_NUM="${2:-}"
 			shift 2
 			;;
 		--dry-run)
@@ -303,9 +305,12 @@ parse_args() {
 		exit 1
 	fi
 
-	# t2838: validate --parent-issue if supplied
-	if [[ -n "$PARENT_ISSUE_NUM" ]] && ! [[ "$PARENT_ISSUE_NUM" =~ ^[0-9]+$ ]]; then
-		log_error "--parent-issue requires a positive integer issue number (got: $PARENT_ISSUE_NUM)"
+	# t2838: validate --parent-issue if supplied. Regex rejects 0 and
+	# leading-zero forms — GitHub issue numbers are always >=1, and #0
+	# resolves to null on the GraphQL side which produces confusing
+	# behaviour downstream.
+	if [[ -n "$PARENT_ISSUE_NUM" ]] && ! [[ "$PARENT_ISSUE_NUM" =~ ^[1-9][0-9]*$ ]]; then
+		log_error "--parent-issue requires a positive integer issue number (got: '$PARENT_ISSUE_NUM')"
 		exit 1
 	fi
 

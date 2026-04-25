@@ -77,8 +77,9 @@ assert_not_contains() {
 	return 0
 }
 
-# Mutable gh-stub state — controls behaviour per test
-GH_STUB_MODE="success"  # success | duplicate | error | empty_node
+# Mutable gh-stub state — controls behaviour per test.
+# MUST be exported so the gh stub subprocess sees the value.
+export GH_STUB_MODE="success"  # success | duplicate | error | empty_node
 
 _setup_stubs() {
 	local stub_dir
@@ -103,24 +104,30 @@ STUB
 
 	cat >"${stub_dir}/gh" <<STUB
 #!/usr/bin/env bash
-# Stub gh that responds based on \$GH_STUB_MODE
+# Stub gh that responds based on \$GH_STUB_MODE.
+# The post-t2838-review consolidation uses a single GraphQL query that
+# returns both parent and child node IDs separated by '|', via the jq
+# fallback expression in --jq. We emit the pre-jq'd output here so the
+# helper sees what gh would return after --jq evaluation.
 mode="\${GH_STUB_MODE:-success}"
 if [[ "\${1:-}" == "auth" && "\${2:-}" == "status" ]]; then exit 0; fi
 if [[ "\${1:-}" == "api" && "\${2:-}" == "graphql" ]]; then
 	args="\$*"
-	# Detect mutation vs query
+	# Detect mutation vs query — mutation contains addSubIssue.
 	if [[ "\$args" == *"addSubIssue"* ]]; then
 		case "\$mode" in
 			duplicate) echo '{"errors":[{"message":"Sub-issues may only have one parent"}]}'; exit 0 ;;
 			error)     echo '{"errors":[{"message":"unexpected"}]}'; exit 0 ;;
-			*)         echo '{"data":{"addSubIssue":{"issue":{"number":1}}}}'; exit 0 ;;
+			*)         echo '{"data":{"addSubIssue":{"issue":{"number":12345}}}}'; exit 0 ;;
 		esac
 	fi
-	# Query for issue node ID
+	# Query for issue node IDs — returns the pipe-joined string the
+	# helper's --jq filter would produce. empty_node returns just the
+	# pipe to simulate both IDs missing.
 	if [[ "\$mode" == "empty_node" ]]; then
-		echo ""
+		echo "|"
 	else
-		echo "I_node_abc123"
+		echo "I_parent_abc|I_child_xyz"
 	fi
 	exit 0
 fi
@@ -128,6 +135,8 @@ exit 0
 STUB
 	chmod +x "${stub_dir}/gh"
 
+	# jq stub that no-ops most calls but isn't used for the addSubIssue
+	# path — gh stub above already emits the pre-jq'd combined string.
 	cat >"${stub_dir}/jq" <<'STUB'
 #!/usr/bin/env bash
 exit 0
@@ -225,7 +234,7 @@ assert_not_contains "link_helper_no_op_silent" "$output" "linked"
 # ---------------------------------------------------------------------------
 _saved_parent="${PARENT_ISSUE_NUM:-}"
 PARENT_ISSUE_NUM="20518"
-GH_STUB_MODE="success"
+export GH_STUB_MODE="success"
 _repo_tmp=$(mktemp -d)
 cd "$_repo_tmp" || exit 1
 git init -q . 2>/dev/null
@@ -237,13 +246,14 @@ PARENT_ISSUE_NUM="$_saved_parent"
 rm -rf "$_repo_tmp"
 
 assert_eq "link_helper_success_returns_0" "$rc" "0"
+assert_contains "link_helper_success_logs_linked" "$output" "linked #12345"
 
 # ---------------------------------------------------------------------------
 # Test 6 — _link_parent_issue_post_create swallows duplicate-relationship error
 # ---------------------------------------------------------------------------
 _saved_parent="${PARENT_ISSUE_NUM:-}"
 PARENT_ISSUE_NUM="20518"
-GH_STUB_MODE="duplicate"
+export GH_STUB_MODE="duplicate"
 _repo_tmp=$(mktemp -d)
 cd "$_repo_tmp" || exit 1
 git init -q . 2>/dev/null
@@ -255,6 +265,64 @@ PARENT_ISSUE_NUM="$_saved_parent"
 rm -rf "$_repo_tmp"
 
 assert_eq "link_helper_duplicate_returns_0" "$rc" "0"
+
+# ---------------------------------------------------------------------------
+# Test 7 — empty_node mode (issue not found) returns 0 without addSubIssue call
+# ---------------------------------------------------------------------------
+_saved_parent="${PARENT_ISSUE_NUM:-}"
+PARENT_ISSUE_NUM="999999"
+export GH_STUB_MODE="empty_node"
+_repo_tmp=$(mktemp -d)
+cd "$_repo_tmp" || exit 1
+git init -q . 2>/dev/null
+git remote add origin git@github.com:test/repo.git 2>/dev/null
+output=$(_link_parent_issue_post_create "12345" "$_repo_tmp" 2>&1)
+rc=$?
+cd - >/dev/null || exit 1
+PARENT_ISSUE_NUM="$_saved_parent"
+rm -rf "$_repo_tmp"
+
+assert_eq "link_helper_empty_node_returns_0" "$rc" "0"
+assert_contains "link_helper_empty_node_logs_warning" "$output" "could not resolve node IDs"
+
+# ---------------------------------------------------------------------------
+# Test 8 — error mode logs warning, returns 0 (does NOT log "linked")
+# Validates the post-review fix that replaced fragile substring matching
+# on the word "errors" with explicit success-shape checking.
+# ---------------------------------------------------------------------------
+_saved_parent="${PARENT_ISSUE_NUM:-}"
+PARENT_ISSUE_NUM="20518"
+export GH_STUB_MODE="error"
+_repo_tmp=$(mktemp -d)
+cd "$_repo_tmp" || exit 1
+git init -q . 2>/dev/null
+git remote add origin git@github.com:test/repo.git 2>/dev/null
+output=$(_link_parent_issue_post_create "12345" "$_repo_tmp" 2>&1)
+rc=$?
+cd - >/dev/null || exit 1
+PARENT_ISSUE_NUM="$_saved_parent"
+rm -rf "$_repo_tmp"
+
+assert_eq "link_helper_error_returns_0" "$rc" "0"
+assert_contains "link_helper_error_logs_failure" "$output" "addSubIssue failed"
+assert_not_contains "link_helper_error_does_not_log_linked" "$output" "linked #"
+
+# ---------------------------------------------------------------------------
+# Test 9 — regex validation: --parent-issue 0 should be rejected
+# Test the regex directly since calling main() with set -euo pipefail and
+# stubbed deps is fragile. Helper proves the post-review fix.
+# ---------------------------------------------------------------------------
+_check_regex() {
+	local v="$1"
+	if [[ "$v" =~ ^[1-9][0-9]*$ ]]; then echo "valid"; else echo "invalid"; fi
+}
+assert_eq "regex_rejects_zero" "$(_check_regex 0)" "invalid"
+assert_eq "regex_rejects_leading_zero" "$(_check_regex 01)" "invalid"
+assert_eq "regex_rejects_negative" "$(_check_regex -5)" "invalid"
+assert_eq "regex_rejects_alpha" "$(_check_regex 12a)" "invalid"
+assert_eq "regex_rejects_empty_when_passed" "$(_check_regex '')" "invalid"
+assert_eq "regex_accepts_one" "$(_check_regex 1)" "valid"
+assert_eq "regex_accepts_large" "$(_check_regex 20518)" "valid"
 
 # ---------------------------------------------------------------------------
 # Summary

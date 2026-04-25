@@ -102,43 +102,63 @@ _link_parent_issue_post_create() {
 	[[ -n "${PARENT_ISSUE_NUM:-}" ]] || return 0
 	[[ -n "$child_num" ]] || return 0
 
+	# Use the canonical helper — handles non-origin remotes via REMOTE_NAME
+	# and matches the slug-extraction style used elsewhere in this script.
 	local slug
-	slug=$(git -C "$repo_path" remote get-url origin 2>/dev/null |
-		sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	slug=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}" 2>/dev/null) || slug=""
 	[[ -n "$slug" ]] || return 0
 
 	local owner="${slug%%/*}" name="${slug##*/}"
-	local parent_node child_node
-	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$num are GraphQL vars, not bash
-	parent_node=$(gh api graphql \
-		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
-		-f o="$owner" -f n="$name" -F num="$PARENT_ISSUE_NUM" \
-		--jq '.data.repository.issue.id' 2>/dev/null) || parent_node=""
-	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$num are GraphQL vars, not bash
-	child_node=$(gh api graphql \
-		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
-		-f o="$owner" -f n="$name" -F num="$child_num" \
-		--jq '.data.repository.issue.id' 2>/dev/null) || child_node=""
+
+	# Single GraphQL query resolves both node IDs at once — half the API
+	# calls and half the rate-limit cost. The `// ""` jq fallback ensures
+	# the literal string "null" never leaks through when an issue is
+	# missing (which would pass the -z check below and cause a confusing
+	# downstream addSubIssue failure).
+	local node_ids parent_node child_node
+	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$p/$c are GraphQL vars
+	node_ids=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$p:Int!,$c:Int!){repository(owner:$o,name:$n){parent:issue(number:$p){id} child:issue(number:$c){id}}}' \
+		-f o="$owner" -f n="$name" -F p="$PARENT_ISSUE_NUM" -F c="$child_num" \
+		--jq '"\(.data.repository.parent.id // "")|\(.data.repository.child.id // "")"' \
+		2>/dev/null) || node_ids="|"
+	parent_node="${node_ids%%|*}"
+	child_node="${node_ids##*|}"
 
 	if [[ -z "$parent_node" || -z "$child_node" ]]; then
 		log_warn "t2838: could not resolve node IDs for parent #${PARENT_ISSUE_NUM} or child #${child_num}; skipping sub-issue link"
 		return 0
 	fi
 
-	local result
-	# shellcheck disable=SC2016  # GraphQL mutation literal — $p/$c are GraphQL vars, not bash
+	# Capture stderr separately from stdout so we can distinguish
+	# (a) GraphQL errors with a JSON body containing .errors[]
+	# (b) network/auth failures that don't return JSON at all
+	local result rc
+	# shellcheck disable=SC2016  # GraphQL mutation literal — $p/$c are GraphQL vars
 	result=$(gh api graphql \
 		-f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
-		-f p="$parent_node" -f c="$child_node" 2>&1) || true
-	if echo "$result" | grep -qi 'duplicate sub-issues\|only have one parent'; then
+		-f p="$parent_node" -f c="$child_node" 2>&1)
+	rc=$?
+
+	# Idempotency: GitHub returns these specific error strings when the
+	# relationship already exists. Suppress and treat as success.
+	if [[ "$result" == *"duplicate sub-issues"* ]] || \
+		[[ "$result" == *"only have one parent"* ]]; then
 		log_info "t2838: sub-issue relationship #${child_num} → #${PARENT_ISSUE_NUM} already exists"
 		return 0
 	fi
-	if echo "$result" | grep -q 'errors'; then
-		log_warn "t2838: addSubIssue failed for #${child_num} → #${PARENT_ISSUE_NUM}: ${result:0:200}"
+
+	# Explicit success: rc=0 AND response contains the expected addSubIssue
+	# success shape (numeric issue.number). Anything else is a failure —
+	# do NOT log "linked" on substring-only matches that may hit prose
+	# error messages or unrelated occurrences of the word "errors".
+	if [[ "$rc" -eq 0 ]] && [[ "$result" == *'"addSubIssue"'* ]] && \
+		[[ "$result" =~ \"number\":[[:space:]]*[0-9]+ ]]; then
+		log_info "t2838: linked #${child_num} as sub-issue of #${PARENT_ISSUE_NUM}"
 		return 0
 	fi
-	log_info "t2838: linked #${child_num} as sub-issue of #${PARENT_ISSUE_NUM}"
+
+	log_warn "t2838: addSubIssue failed for #${child_num} → #${PARENT_ISSUE_NUM} (rc=${rc}): ${result:0:200}"
 	return 0
 }
 

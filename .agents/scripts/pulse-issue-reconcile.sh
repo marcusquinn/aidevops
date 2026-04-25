@@ -2224,6 +2224,10 @@ reconcile_issues_single_pass() {
 	# a cost control, not a correctness requirement.
 	local _pbf_state_file="${HOME}/.aidevops/state/parent-backfill-last-run.epoch"
 	local _pbf_interval="${AIDEVOPS_PARENT_BACKFILL_INTERVAL_SECS:-3600}"
+	# Validate interval is a positive integer — a mis-set env var (empty,
+	# negative, "1h") would error inside [[ ... -ge ... ]] and could abort
+	# the orchestrator under set -e. Fall back to default on any garbage.
+	[[ "$_pbf_interval" =~ ^[1-9][0-9]*$ ]] || _pbf_interval=3600
 	local _pbf_this_cycle=0
 	local _pbf_now _pbf_last_run=0
 	_pbf_now=$(date +%s 2>/dev/null) || _pbf_now=0
@@ -2338,12 +2342,16 @@ reconcile_issues_single_pass() {
 				# t2838: periodic sub-issue backfill — only if cycle-gate fired
 				# AND parent didn't just close (no point linking to closed parent).
 				# Idempotent and silent on no-op (already-linked children).
+				# Counter increments only on success — failed backfills (rate
+				# limit, network error) leave the gate state for next cycle's
+				# retry rather than advancing the clock on broken work.
 				if [[ "$_pbf_this_cycle" -eq 1 ]] && \
 					[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
 					[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]]; then
-					"$issue_sync_helper" backfill-sub-issues --repo "$slug" \
-						--issue "$issue_num" >/dev/null 2>&1 || true
-					pbf_total_run=$((pbf_total_run + 1))
+					if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
+						--issue "$issue_num" >/dev/null 2>&1; then
+						pbf_total_run=$((pbf_total_run + 1))
+					fi
 				fi
 				continue  # parent-task issues do not flow to stage 5
 			fi
