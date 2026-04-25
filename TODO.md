@@ -3058,3 +3058,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2815 Phase 4: prevent cascade tier escalation on infra failures #auto-dispatch #enhancement #pulse blocked-by:t2814 ref:GH#20766
 
 - [ ] t2816 /setup-git slash command — guided per-repo platform secret setup with toast surfacing (Phase 1) #enhancement #framework #security ref:GH#20812
+
+- [ ] t2817 post-merge-review-scanner: extend NOOP_RE to catch Gemini mid-sentence LGTM phrasing + zero-findings gate #auto-dispatch ref:GH#20818
