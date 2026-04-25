@@ -382,21 +382,21 @@ if [[ -f "$COUNTER_FILE" ]]; then
 fi
 
 # =============================================================================
-# Part 4 — issue-sync.yml workflow atomicity guard (t2137)
+# Part 4 — issue-sync-reusable.yml workflow atomicity guard (t2137)
 # =============================================================================
 # The bash helper path (_mark_issue_done) and the GitHub Actions workflow
-# path (.github/workflows/issue-sync.yml `sync-on-pr-merge` job) both mutate
+# path (.github/workflows/issue-sync-reusable.yml `sync-on-pr-merge` job) both mutate
 # status:* labels on PR merge. t2040 fixed atomicity in the bash helper but
 # the workflow carried a duplicated non-atomic implementation (1 add call +
 # 7 remove calls in a loop = 8 sequential API calls = ~5s race window).
 # This guard parses the workflow yaml directly and asserts the status label
 # mutation block uses a single `gh issue edit` call with the full flag set.
-WORKFLOW_FILE="$(cd "${TEST_SCRIPTS_DIR}/../.." && pwd)/.github/workflows/issue-sync.yml"
+WORKFLOW_FILE="$(cd "${TEST_SCRIPTS_DIR}/../.." && pwd)/.github/workflows/issue-sync-reusable.yml"
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
-	print_result "issue-sync.yml exists (for atomicity guard)" 1 "(not found at $WORKFLOW_FILE)"
+	print_result "issue-sync-reusable.yml exists (for atomicity guard)" 1 "(not found at $WORKFLOW_FILE)"
 else
-	print_result "issue-sync.yml exists (for atomicity guard)" 0
+	print_result "issue-sync-reusable.yml exists (for atomicity guard)" 0
 
 	# Extract the `Apply closing hygiene to linked issues` step body — from
 	# the step name to the next `- name:` line. awk handles this cleanly.
