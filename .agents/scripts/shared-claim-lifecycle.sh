@@ -212,17 +212,16 @@ _attempt_orphan_recovery_pr() {
 		"<!-- aidevops:orphan-recovery worker_branch_orphan session=${session_key} -->")
 
 	# Attempt PR creation — non-draft so auto-merge and review gates apply.
-	# Raw gh pr create (not gh_create_pr wrapper) is required here: gh_create_pr
-	# auto-applies origin:worker which would conflict with origin:worker-takeover
-	# (the labels are mutually exclusive per the origin-label policy). The bypass
-	# comment silences the pre-push guard for this intentional exception.
-	gh pr create \
+	# Raw gh pr create (not gh_create_pr wrapper) is intentional: gh_create_pr
+	# auto-applies origin:worker which conflicts with origin:worker-takeover
+	# (mutually exclusive labels). See GH#20819 for rationale.
+	gh pr create \ # aidevops-allow: raw-gh-wrapper
 		--repo "$repo_slug" \
 		--head "$branch_name" \
 		--base "$default_branch" \
 		--title "$pr_title" \
 		--body "$pr_body" \
 		--label "origin:worker-takeover" \
-		>/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
+		>/dev/null 2>&1
 	return $?
 }
