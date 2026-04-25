@@ -299,6 +299,13 @@ parse_args() {
 		esac
 	done
 
+	_validate_and_normalize_args
+}
+
+# Post-parse validation + label normalization. Extracted from parse_args
+# (t2838) to keep that function under the function-complexity gate. Runs
+# after the option-parser loop completes — never invoked directly.
+_validate_and_normalize_args() {
 	# Validate batch size
 	if [[ "$ALLOC_COUNT" -lt 1 ]]; then
 		log_error "Allocation count must be >= 1"
@@ -339,6 +346,7 @@ parse_args() {
 		_normalised_labels=$(map_tags_to_labels "$TASK_LABELS" 2>/dev/null) || true
 		[[ -n "$_normalised_labels" ]] && TASK_LABELS="$_normalised_labels"
 	fi
+	return 0
 }
 
 # t2436: Scan TODO.md for the task entry matching task_id and derive
