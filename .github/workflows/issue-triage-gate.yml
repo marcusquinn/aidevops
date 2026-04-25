@@ -22,17 +22,10 @@ jobs:
             const issue = context.payload.issue;
             const author = issue.user.login;
             const association = issue.author_association;
-            const title = issue.title || '';
 
             // Bot accounts always bypass triage (github-actions[bot], dependabot, etc.)
             if (issue.user.type === 'Bot') {
               console.log(`Author ${author} is a bot — bypassing triage`);
-              return;
-            }
-
-            // Issues with task ID prefix (t1234: ...) are from internal tooling — bypass
-            if (/^t\d+/.test(title)) {
-              console.log(`Issue "${title}" has task ID prefix — bypassing triage`);
               return;
             }
 
