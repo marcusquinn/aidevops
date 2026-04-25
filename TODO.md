@@ -3088,3 +3088,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2830 pulse: L1 events-ETag tickle layer above batch prefetch (skip search calls when nothing changed) #auto-dispatch #framework #pulse ref:GH#20868
 
 - [ ] t2832 fix(dispatch-dedup): honour no-auto-dispatch label as unconditional block (parity with parent-task) #bug #framework #pulse ref:GH#20870
+
+- [ ] t2834 loc badges + readme badges template (reusable workflow + helpers) #auto-dispatch #enhancement ref:GH#20879

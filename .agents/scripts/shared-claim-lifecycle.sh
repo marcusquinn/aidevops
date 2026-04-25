@@ -215,14 +215,23 @@ _attempt_orphan_recovery_pr() {
 	# Raw gh pr create (not gh_create_pr wrapper) is intentional: gh_create_pr
 	# auto-applies origin:worker which conflicts with origin:worker-takeover
 	# (mutually exclusive labels). See GH#20819 for rationale.
-	gh pr create \ # aidevops-allow: raw-gh-wrapper
-		--repo "$repo_slug" \
-		--head "$branch_name" \
-		--base "$default_branch" \
-		--title "$pr_title" \
-		--body "$pr_body" \
-		--label "origin:worker-takeover" \
-		>/dev/null 2>&1
+	#
+	# Args built as an array so the gh-wrapper-guard allowlist marker can stay
+	# on the same line as `gh pr create` (its line-by-line scanner requires
+	# co-location) without needing a line continuation. Previous form used
+	# `gh pr create \ # marker` followed by indented args — but `\<space>#` is
+	# NOT a line continuation in bash (`\` escapes the space, `#` starts a
+	# comment, the line terminates), so the args were silently dropped and
+	# this entire orphan-recovery path never produced a PR. SC2215 caught it.
+	local create_args=(
+		--repo "$repo_slug"
+		--head "$branch_name"
+		--base "$default_branch"
+		--title "$pr_title"
+		--body "$pr_body"
+		--label "origin:worker-takeover"
+	)
+	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
 	return $?
 }
 
