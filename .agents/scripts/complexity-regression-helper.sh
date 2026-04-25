@@ -147,6 +147,53 @@ _collect_files() {
 }
 
 # ---------------------------------------------------------------------------
+# _filter_to_abs_paths <dir> <filter> <exts>
+#
+# Given a newline-separated list of relative paths in <filter> (as produced by
+# `git diff --name-only`), emit the subset whose extension matches one of
+# <exts> (space-separated, e.g. "sh" or "sh py") as absolute paths under
+# <dir>. Paths that do not exist (e.g. new files absent in base worktree) are
+# silently skipped — this is the correct behaviour for regression detection.
+# Mirrors the _archive/ exclusion in _collect_files for CI parity.
+#
+# Used by diff-scoped scanning in _check_regression (t2827).
+# ---------------------------------------------------------------------------
+_filter_to_abs_paths() {
+	local _dir="$1"
+	local _filter="$2"
+	local _exts="$3"
+
+	local _output=""
+	local _rel _abs _ext _match
+	while IFS= read -r _rel; do
+		[ -n "$_rel" ] || continue
+		# Exclude _archive/ paths (parity with _collect_files)
+		case "$_rel" in
+		*/_archive/* | _archive/*) continue ;;
+		esac
+		# Extension check
+		_match=0
+		for _ext in $_exts; do
+			case "$_rel" in
+			*."$_ext") _match=1 ;;
+			esac
+		done
+		[ "$_match" -eq 1 ] || continue
+		# Resolve to absolute path and verify existence
+		_abs="${_dir}/${_rel}"
+		[ -f "$_abs" ] || continue
+		if [ -z "$_output" ]; then
+			_output="$_abs"
+		else
+			_output=$(printf '%s\n%s' "$_output" "$_abs")
+		fi
+	done <<<"$_filter"
+
+	[ -n "$_output" ] && printf '%s\n' "$_output"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _open_result_file <out-file>  — truncate or point to stdout
 # Writes the chosen path to stdout so callers can capture it.
 # ---------------------------------------------------------------------------
@@ -162,19 +209,28 @@ _open_result_file() {
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir_function_complexity <dir> [<out-file>]
+# scan_dir_function_complexity <dir> [<out-file>] [<files-filter>]
 #
 # Shell functions >100 body lines. Output: <file>\t<fname>\t<lines>.
 # Identity key: (file, fname). Originally t2159.
+#
+# Optional <files-filter>: newline-separated relative paths from
+# `git diff --name-only`; when non-empty, only those files are scanned
+# (diff-scoped mode for pre-push speed, t2827). Full scan when omitted.
 # ---------------------------------------------------------------------------
 scan_dir_function_complexity() {
 	local _dir="$1"
 	local _out="${2:-}"
+	local _files_filter="${3:-}"
 
 	local _sh_files
-	_sh_files=$(_collect_files "$_dir" "sh")
+	if [ -n "$_files_filter" ]; then
+		_sh_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "sh")
+	else
+		_sh_files=$(_collect_files "$_dir" "sh")
+	fi
 	if [ -z "$_sh_files" ]; then
-		log "WARN: no .sh files found in $_dir"
+		[ -z "$_files_filter" ] && log "WARN: no .sh files found in $_dir"
 		[ -n "$_out" ] && : >"$_out"
 		return 0
 	fi
@@ -215,7 +271,7 @@ scan_dir_function_complexity() {
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir_nesting_depth <dir> [<out-file>]
+# scan_dir_nesting_depth <dir> [<out-file>] [<files-filter>]
 #
 # Shell files with per-function max nesting depth >8. Output: <file>\tNEST\t<depth>.
 # Identity key: (file, 'NEST'). (t2171, rewritten GH#20105)
@@ -224,13 +280,22 @@ scan_dir_function_complexity() {
 # measurement with per-function reset and no false positives from elif chains,
 # prose keywords, `done <<<`, or heredoc bodies. Falls back to AWK when shfmt
 # is unavailable.
+#
+# Optional <files-filter>: newline-separated relative paths from
+# `git diff --name-only`; when non-empty, only those files are scanned
+# (diff-scoped mode for pre-push speed, t2827). Full scan when omitted.
 # ---------------------------------------------------------------------------
 scan_dir_nesting_depth() {
 	local _dir="$1"
 	local _out="${2:-}"
+	local _files_filter="${3:-}"
 
 	local _sh_files
-	_sh_files=$(_collect_files "$_dir" "sh")
+	if [ -n "$_files_filter" ]; then
+		_sh_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "sh")
+	else
+		_sh_files=$(_collect_files "$_dir" "sh")
+	fi
 	if [ -z "$_sh_files" ]; then
 		[ -n "$_out" ] && : >"$_out"
 		return 0
@@ -299,17 +364,26 @@ scan_dir_nesting_depth() {
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir_file_size <dir> [<out-file>]
+# scan_dir_file_size <dir> [<out-file>] [<files-filter>]
 #
 # .sh and .py files over 1500 lines. Output: <file>\tSIZE\t<lines>.
 # Identity key: (file, 'SIZE'). (t2171)
+#
+# Optional <files-filter>: newline-separated relative paths from
+# `git diff --name-only`; when non-empty, only those files are scanned
+# (diff-scoped mode for pre-push speed, t2827). Full scan when omitted.
 # ---------------------------------------------------------------------------
 scan_dir_file_size() {
 	local _dir="$1"
 	local _out="${2:-}"
+	local _files_filter="${3:-}"
 
 	local _files
-	_files=$(_collect_files "$_dir" "sh py")
+	if [ -n "$_files_filter" ]; then
+		_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "sh py")
+	else
+		_files=$(_collect_files "$_dir" "sh py")
+	fi
 	if [ -z "$_files" ]; then
 		[ -n "$_out" ] && : >"$_out"
 		return 0
@@ -333,7 +407,7 @@ scan_dir_file_size() {
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir_bash32_compat <dir> [<out-file>]
+# scan_dir_bash32_compat <dir> [<out-file>] [<files-filter>]
 #
 # Shell files containing bash 4+ constructs that break on macOS /bin/bash 3.2.
 # Patterns (match code-quality.yml:141-188):
@@ -353,13 +427,22 @@ scan_dir_file_size() {
 # \$\([[:space:]] doesn't line up with the source's escape form) but we skip
 # this file explicitly as belt-and-braces against future edits that reformat
 # the regex strings. See CodeRabbit review on PR #19592.
+#
+# Optional <files-filter>: newline-separated relative paths from
+# `git diff --name-only`; when non-empty, only those files are scanned
+# (diff-scoped mode for pre-push speed, t2827). Full scan when omitted.
 # ---------------------------------------------------------------------------
 scan_dir_bash32_compat() {
 	local _dir="$1"
 	local _out="${2:-}"
+	local _files_filter="${3:-}"
 
 	local _sh_files
-	_sh_files=$(_collect_files "$_dir" "sh")
+	if [ -n "$_files_filter" ]; then
+		_sh_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "sh")
+	else
+		_sh_files=$(_collect_files "$_dir" "sh")
+	fi
 	if [ -z "$_sh_files" ]; then
 		[ -n "$_out" ] && : >"$_out"
 		return 0
@@ -423,21 +506,26 @@ scan_dir_bash32_compat() {
 }
 
 # ---------------------------------------------------------------------------
-# scan_dir <dir> [<output-file>] [<metric>]
+# scan_dir <dir> [<output-file>] [<metric>] [<files-filter>]
 #
 # Dispatcher: routes to the metric-specific scanner. Default metric is
 # function-complexity (back-compat with t2159).
+#
+# Optional <files-filter>: newline-separated relative paths from
+# `git diff --name-only`; when non-empty, passed through to the scanner for
+# diff-scoped scanning (t2827). Full scan when omitted (CI use case).
 # ---------------------------------------------------------------------------
 scan_dir() {
 	local _dir="$1"
 	local _out="${2:-}"
 	local _metric="${3:-function-complexity}"
+	local _files_filter="${4:-}"
 
 	case "$_metric" in
-	function-complexity) scan_dir_function_complexity "$_dir" "$_out" ;;
-	nesting-depth) scan_dir_nesting_depth "$_dir" "$_out" ;;
-	file-size) scan_dir_file_size "$_dir" "$_out" ;;
-	bash32-compat) scan_dir_bash32_compat "$_dir" "$_out" ;;
+	function-complexity) scan_dir_function_complexity "$_dir" "$_out" "$_files_filter" ;;
+	nesting-depth) scan_dir_nesting_depth "$_dir" "$_out" "$_files_filter" ;;
+	file-size) scan_dir_file_size "$_dir" "$_out" "$_files_filter" ;;
+	bash32-compat) scan_dir_bash32_compat "$_dir" "$_out" "$_files_filter" ;;
 	*) die "unknown metric: $_metric (valid: function-complexity, nesting-depth, file-size, bash32-compat)" ;;
 	esac
 	return 0
@@ -862,6 +950,13 @@ _check_dry_run() {
 # _check_regression <base_sha> <head_sha> <output_md> <allow_increase> [<metric>]
 # Scan base+head via worktrees, compute diff, optionally write report.
 # Exits 0 (no regression), 1 (regression), or 2 (error).
+#
+# Diff-scoped optimisation (t2827): computes the list of .sh/.py files that
+# changed between base and head and passes it to scan_dir so each worktree
+# scan covers only those files instead of the full repo. This reduces
+# wall-clock time from ~98s to <10s for a 2-file diff (949 .sh files → 2).
+# If no .sh/.py files changed, exits 0 immediately without creating worktrees.
+# The `scan` subcommand (CI full-repo path) is unaffected.
 # ---------------------------------------------------------------------------
 _check_regression() {
 	local _base_sha="$1"
@@ -869,6 +964,20 @@ _check_regression() {
 	local _output_md="$3"
 	local _allow_increase="$4"
 	local _metric="${5:-function-complexity}"
+
+	# Diff-scoped fast path: compute changed .sh/.py files before creating
+	# worktrees. If none changed, no new violations are possible — exit 0
+	# immediately, saving ~1-3s of worktree creation per metric.
+	local _changed_source
+	_changed_source=$(git diff --name-only "$_base_sha" "$_head_sha" 2>/dev/null \
+		| grep -E '\.(sh|py)$' || true)
+	if [ -z "$_changed_source" ]; then
+		log "[$_metric] no .sh/.py changes between ${_base_sha:0:7}..${_head_sha:0:7} — skipping"
+		exit 0
+	fi
+	local _changed_count
+	_changed_count=$(printf '%s\n' "$_changed_source" | wc -l | tr -d ' ')
+	log "[$_metric] diff-scoped: ${_changed_count} .sh/.py file(s) changed — scanning only those"
 
 	TMP_DIR=$(mktemp -d)
 	local _base_scan="$TMP_DIR/base.tsv"
@@ -881,7 +990,7 @@ _check_regression() {
 		die "failed to create base worktree for $_base_sha"
 	fi
 	log "[$_metric] scanning base (${_base_sha:0:7})"
-	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric"
+	scan_dir "$BASE_WORKTREE" "$_base_scan" "$_metric" "$_changed_source"
 
 	HEAD_WORKTREE="$TMP_DIR/head-worktree"
 	log "[$_metric] creating head worktree at ${_head_sha:0:7}"
@@ -889,7 +998,7 @@ _check_regression() {
 		die "failed to create head worktree for $_head_sha"
 	fi
 	log "[$_metric] scanning head (${_head_sha:0:7})"
-	scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric"
+	scan_dir "$HEAD_WORKTREE" "$_head_scan" "$_metric" "$_changed_source"
 
 	local _new_count _base_total _head_total
 	if [ "$_metric" = "bash32-compat" ]; then

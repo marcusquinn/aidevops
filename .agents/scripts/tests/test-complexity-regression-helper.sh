@@ -513,6 +513,102 @@ test_bash32_stable() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 13: diff-scoped check — 2 changed .sh files detected in <15s (t2827)
+#
+# Creates a real git repo (required for `check` which uses git worktrees),
+# makes a base commit with small functions, a head commit adding a 105-line
+# function (new violation), and verifies that `check` detects the violation
+# AND completes in under 15 seconds wall-clock time.
+# ---------------------------------------------------------------------------
+test_diff_scoped_timing() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@test.local"
+	git -C "$_repo" config user.name "Test"
+	git -C "$_repo" config commit.gpgsign false
+
+	# Base commit: two clean .sh files (no violations)
+	printf '#!/usr/bin/env bash\n' >"$_repo/a.sh"
+	make_sh_function "$_repo/a.sh" "small_func" 50
+	printf '#!/usr/bin/env bash\n' >"$_repo/b.sh"
+	make_sh_function "$_repo/b.sh" "other_func" 30
+	git -C "$_repo" add a.sh b.sh
+	git -C "$_repo" commit -q -m "base: small functions"
+	local _base_sha
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+
+	# Head commit: add a 105-line function to a.sh (new violation)
+	make_sh_function "$_repo/a.sh" "big_func" 105
+	git -C "$_repo" add a.sh
+	git -C "$_repo" commit -q -m "head: add big function"
+
+	# Run check from inside the repo, time the wall-clock duration
+	local _rc=0
+	local _start _end _elapsed
+	_start=$(date +%s)
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity) \
+		>/dev/null 2>&1 || _rc=$?
+	_end=$(date +%s)
+	_elapsed=$((_end - _start))
+
+	if [ "$_rc" -eq 1 ] && [ "$_elapsed" -lt 15 ]; then
+		print_result "diff-scoped check: 2-file diff detects violation in ${_elapsed}s (<15s)" 0
+	elif [ "$_rc" -ne 1 ]; then
+		print_result "diff-scoped check: 2-file diff detects violation in ${_elapsed}s (<15s)" 1 \
+			"expected exit 1 (violation detected), got exit $_rc"
+	else
+		print_result "diff-scoped check: 2-file diff detects violation in ${_elapsed}s (<15s)" 1 \
+			"completed in ${_elapsed}s — exceeds 15s threshold"
+	fi
+	teardown
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 14: diff-scoped skip — doc-only diff (no .sh/.py changes) exits 0 (t2827)
+#
+# When the diff between base and head contains no .sh or .py files, the check
+# subcommand should exit 0 immediately without creating any worktrees.
+# ---------------------------------------------------------------------------
+test_diff_scoped_skip_no_sh_changes() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@test.local"
+	git -C "$_repo" config user.name "Test"
+	git -C "$_repo" config commit.gpgsign false
+
+	# Base commit: one .sh file
+	printf '#!/usr/bin/env bash\n' >"$_repo/a.sh"
+	make_sh_function "$_repo/a.sh" "func" 50
+	git -C "$_repo" add a.sh
+	git -C "$_repo" commit -q -m "base"
+	local _base_sha
+	_base_sha=$(git -C "$_repo" rev-parse HEAD)
+
+	# Head commit: only a doc file changed (no .sh/.py)
+	printf 'hello\n' >"$_repo/README.md"
+	git -C "$_repo" add README.md
+	git -C "$_repo" commit -q -m "head: docs only"
+
+	local _rc=0
+	(cd "$_repo" && "$HELPER" check --base "$_base_sha" --metric function-complexity) \
+		>/dev/null 2>&1 || _rc=$?
+
+	if [ "$_rc" -eq 0 ]; then
+		print_result "diff-scoped skip: doc-only diff exits 0 (no .sh changes)" 0
+	else
+		print_result "diff-scoped skip: doc-only diff exits 0 (no .sh changes)" 1 \
+			"expected exit 0, got exit $_rc"
+	fi
+	teardown
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -533,6 +629,8 @@ test_file_size_clean_to_new
 test_file_size_stable
 test_bash32_clean_to_new
 test_bash32_stable
+test_diff_scoped_timing
+test_diff_scoped_skip_no_sh_changes
 
 printf '\n'
 if [ "$TESTS_FAILED" -eq 0 ]; then
