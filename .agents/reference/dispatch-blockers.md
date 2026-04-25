@@ -16,7 +16,7 @@ Applied to GitHub issues. The pulse checks these before spawning a worker.
 |-------|-------------|-----------|
 | `parent-task` | `dispatch-dedup-helper.sh` `_is_assigned_check_parent_task` | Epics/trackers — children implement, not this issue. Cannot be overridden by NMR clearance (t2211). |
 | `meta` | Same as `parent-task` — treated as an alias | Alternative spelling of `parent-task`. |
-| `no-auto-dispatch` | `issue-sync-lib.sh`, `interactive-session-helper.sh` lockdown | Manual hold by session or user. Blocks enrich path too. Applied by `interactive-session-helper.sh lockdown`. |
+| `no-auto-dispatch` | `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` (t2832), `issue-sync-lib.sh`, `interactive-session-helper.sh` lockdown | Manual hold by session or user. Blocks dispatch path (`NO_AUTO_DISPATCH_BLOCKED` signal), enrich path, and decomposer path. Applied by `interactive-session-helper.sh lockdown`. Pre-fix (before t2832) the label was honoured by enrichment/decomposition only — workers got dispatched anyway. |
 | `needs-maintainer-review` | `pulse-nmr-approval.sh` `auto_approve_maintainer_issues` | Requires maintainer cryptographic approval (`sudo aidevops approve issue <N>`) before dispatch. |
 | `needs-credentials` | `label-sync-helper.sh` SYSTEM_LABELS | Task requires credentials, API keys, or account access — cannot be completed by a headless worker autonomously. Add when the TODO entry has `#no-auto-dispatch` due to credential dependency. |
 | `persistent` | `pulse-issue-reconcile.sh` | Monitoring/tracking issue — must not be dispatched as a code task. |
@@ -54,6 +54,7 @@ These are not labels — they are runtime state signals checked by `dispatch-ded
 | Signal | Exit code | Meaning |
 |--------|-----------|---------|
 | `PARENT_TASK_BLOCKED` | 0 (blocked) | `parent-task` / `meta` label — unconditional block |
+| `NO_AUTO_DISPATCH_BLOCKED` | 0 (blocked) | `no-auto-dispatch` label — unconditional block (t2832) |
 | `ASSIGNED: issue #N in repo` | 0 (blocked) | Active assignee with blocking claim state |
 | `GUARD_UNCERTAIN` | 0 (blocked, fail-closed) | API or jq failure — dispatch refused to avoid collision |
 | No assignees | 1 (allow dispatch) | Safe to dispatch |
