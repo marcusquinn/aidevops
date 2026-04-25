@@ -1,0 +1,176 @@
+name: LOC Badge (reusable) — generate and commit lines-of-code SVGs
+
+# Reusable workflow — call via a thin caller YAML in each repo.
+# See: .agents/templates/workflows/loc-badge-caller.yml
+# See: .agents/aidevops/badges.md
+#
+# Generates two SVG files in .github/badges/:
+#   loc-total.svg     — total lines of code (shields.io-style)
+#   loc-languages.svg — top-N languages stacked bar with legend
+#
+# Commits the SVGs back to the default branch with [skip ci] and a
+# bot-author guard to prevent retrigger loops. Uses SYNC_PAT when
+# available (bypasses branch protection); falls back to GITHUB_TOKEN.
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_ref:
+        description: 'aidevops ref to fetch the badge helper from (main, vX.Y.Z, or sha)'
+        required: false
+        type: string
+        default: 'main'
+      output_dir:
+        description: 'Directory to write SVGs to'
+        required: false
+        type: string
+        default: '.github/badges'
+      top_n:
+        description: 'Top-N languages in the language breakdown SVG'
+        required: false
+        type: number
+        default: 6
+      extra_excludes:
+        description: 'Newline-separated extra path patterns to exclude from tokei'
+        required: false
+        type: string
+        default: ''
+      commit_message:
+        description: 'Commit message subject for badge updates'
+        required: false
+        type: string
+        default: 'chore(badges): refresh LOC badges [skip ci]'
+    secrets:
+      SYNC_PAT:
+        required: false
+        description: 'Fine-grained PAT with Contents:read/write, bypasses branch protection on default-branch push'
+
+jobs:
+  generate:
+    name: Generate LOC badges
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: loc-badge-${{ github.ref }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+
+    steps:
+      - name: Skip if commit was made by GitHub Actions
+        id: check-author
+        env:
+          COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
+        run: |
+          # Loop prevention — the badge update commit must not retrigger this job.
+          # COMMIT_AUTHOR via env to prevent shell injection from untrusted input.
+          if [[ "$COMMIT_AUTHOR" == "GitHub Actions" ]] || [[ "$COMMIT_AUTHOR" == "github-actions[bot]" ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "Skipping: commit was made by GitHub Actions (loop prevention)"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check SYNC_PAT visibility
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
+            echo "::warning::SYNC_PAT is not set — badge commit may be rejected by branch protection (GH006)."
+            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+          else
+            echo "::notice::SYNC_PAT present — badge commit will use PAT"
+          fi
+
+      - name: Checkout repository
+        if: steps.check-author.outputs.skip != 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Checkout aidevops framework scripts
+        if: steps.check-author.outputs.skip != 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Install tokei + jq
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          # tokei lands in Ubuntu repos; jq is preinstalled on ubuntu-latest but kept explicit.
+          sudo apt-get install -y --no-install-recommends tokei jq
+          tokei --version
+          jq --version
+
+      - name: Build extra-excludes args
+        id: excludes
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          EXTRA_EXCLUDES: ${{ inputs.extra_excludes }}
+        run: |
+          # Convert newline-separated input into repeated --exclude flags.
+          # Empty input → no extra args.
+          ARGS=""
+          if [[ -n "${EXTRA_EXCLUDES:-}" ]]; then
+            while IFS= read -r pat; do
+              [[ -z "$pat" ]] && continue
+              ARGS="$ARGS --exclude $pat"
+            done <<< "$EXTRA_EXCLUDES"
+          fi
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+
+      - name: Generate LOC badges
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          OUTPUT_DIR: ${{ inputs.output_dir }}
+          TOP_N: ${{ inputs.top_n }}
+          EXTRA_ARGS: ${{ steps.excludes.outputs.args }}
+        run: |
+          set -euo pipefail
+          chmod +x __aidevops/.agents/scripts/loc-badge-helper.sh
+          # shellcheck disable=SC2086
+          bash __aidevops/.agents/scripts/loc-badge-helper.sh \
+            --output-dir "$OUTPUT_DIR" \
+            --top "$TOP_N" \
+            $EXTRA_ARGS
+
+      - name: Configure Git
+        if: steps.check-author.outputs.skip != 'true'
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Commit and push if badges changed
+        if: steps.check-author.outputs.skip != 'true'
+        env:
+          OUTPUT_DIR: ${{ inputs.output_dir }}
+          COMMIT_SUBJECT: ${{ inputs.commit_message }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- "$OUTPUT_DIR" 2>/dev/null; then
+            echo "No badge changes to commit"
+            exit 0
+          fi
+          git add "$OUTPUT_DIR"
+          git commit -m "$COMMIT_SUBJECT"
+          # Retry loop for concurrent pushes
+          for i in 1 2 3; do
+            echo "Push attempt $i..."
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            if git push; then
+              echo "Push succeeded on attempt $i"
+              exit 0
+            fi
+            sleep $((i * 3))
+          done
+          echo "::warning::Failed to push badge updates after 3 attempts (likely branch protection without SYNC_PAT)"
+          # Don't fail the workflow on push failure — badges will retry on next run.
+          exit 0

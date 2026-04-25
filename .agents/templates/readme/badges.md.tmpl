@@ -1,0 +1,32 @@
+<!-- Build & Quality Status -->
+[![GitHub Actions](https://github.com/{{SLUG}}/workflows/CI/badge.svg)](https://github.com/{{SLUG}}/actions)
+
+<!-- License & Legal -->
+{{?HAS_LICENSE}}[![License](https://img.shields.io/github/license/{{SLUG}})](https://github.com/{{SLUG}}/blob/{{DEFAULT_BRANCH}}/LICENSE)
+
+<!-- GitHub Repository Stats -->
+{{?HAS_LOC_BADGE}}[![Lines of code](https://raw.githubusercontent.com/{{SLUG}}/{{DEFAULT_BRANCH}}/.github/badges/loc-total.svg)](https://github.com/{{SLUG}})
+[![Top language](https://img.shields.io/github/languages/top/{{SLUG}})](https://github.com/{{SLUG}})
+[![Languages](https://img.shields.io/github/languages/count/{{SLUG}})](https://github.com/{{SLUG}})
+[![Code size](https://img.shields.io/github/languages/code-size/{{SLUG}}?color=blue)](https://github.com/{{SLUG}})
+[![Repo size](https://img.shields.io/github/repo-size/{{SLUG}}?color=blue)](https://github.com/{{SLUG}})
+
+<!-- Activity & Contributors -->
+[![Last commit](https://img.shields.io/github/last-commit/{{SLUG}})](https://github.com/{{SLUG}}/commits/{{DEFAULT_BRANCH}})
+[![Commits this month](https://img.shields.io/github/commit-activity/m/{{SLUG}})](https://github.com/{{SLUG}}/graphs/commit-activity)
+[![Contributors](https://img.shields.io/github/contributors/{{SLUG}})](https://github.com/{{SLUG}}/graphs/contributors)
+[![Closed PRs](https://img.shields.io/github/issues-pr-closed/{{SLUG}})](https://github.com/{{SLUG}}/pulls?q=is%3Apr+is%3Aclosed)
+[![Closed issues](https://img.shields.io/github/issues-closed/{{SLUG}})](https://github.com/{{SLUG}}/issues?q=is%3Aissue+is%3Aclosed)
+
+<!-- Releases -->
+{{?HAS_RELEASES}}[![Latest release](https://img.shields.io/github/v/release/{{SLUG}})](https://github.com/{{SLUG}}/releases)
+{{?HAS_RELEASES}}[![Release date](https://img.shields.io/github/release-date/{{SLUG}})](https://github.com/{{SLUG}}/releases)
+{{?HAS_RELEASES}}[![Commits since release](https://img.shields.io/github/commits-since/{{SLUG}}/latest)](https://github.com/{{SLUG}}/commits/{{DEFAULT_BRANCH}})
+
+<!-- Community (FOSS only) -->
+{{?IS_FOSS}}[![Stars](https://img.shields.io/github/stars/{{SLUG}}?style=social)](https://github.com/{{SLUG}}/stargazers)
+{{?IS_FOSS}}[![Forks](https://img.shields.io/github/forks/{{SLUG}}?style=social)](https://github.com/{{SLUG}}/network)
+{{?IS_FOSS}}[![Open issues](https://img.shields.io/github/issues/{{SLUG}})](https://github.com/{{SLUG}}/issues)
+{{?IS_FOSS}}[![Open PRs](https://img.shields.io/github/issues-pr/{{SLUG}})](https://github.com/{{SLUG}}/pulls)
+
+{{?HAS_LOC_BADGE}}[![Languages by lines of code](https://raw.githubusercontent.com/{{SLUG}}/{{DEFAULT_BRANCH}}/.github/badges/loc-languages.svg)](https://github.com/{{SLUG}})

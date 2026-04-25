@@ -1,0 +1,43 @@
+name: LOC Badge — generate lines-of-code SVGs
+
+# Managed by aidevops framework.
+# Upstream logic lives in: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml
+# This caller is tiny on purpose — all the logic is centralised upstream.
+# Update this caller only to change the trigger filters or input overrides below.
+# For logic fixes, run `aidevops update` to get the latest framework version;
+# your caller will pick up the change automatically (if pinned to @main).
+#
+# Pinning options:
+#   @main           ← auto-update; what this template uses by default
+#   @v3.9.0         ← pin to a specific aidevops version for stability
+#   @<sha>          ← pin to an exact commit
+#
+# What it does: runs `tokei` on the repo, generates two SVGs in
+# .github/badges/ (loc-total.svg + loc-languages.svg), commits them back
+# to the default branch with [skip ci]. Reference these SVGs from your
+# README via the badges template (see .agents/templates/readme/badges.md.tmpl).
+
+on:
+  push:
+    branches: [main]
+    # Skip retriggers from the badge commit itself and from doc-only edits
+    # that don't change LOC counts.
+    paths-ignore:
+      - '.github/badges/**'
+      - '**/*.md'
+      - 'docs/**'
+  schedule:
+    # Weekly refresh in case paths-ignore'd content actually shifts the count.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  badges:
+    uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@main
+    secrets: inherit
+    # Optional input overrides — uncomment and edit as needed:
+    # with:
+    #   top_n: 8
+    #   extra_excludes: |
+    #     fixtures/
+    #     test-data/
