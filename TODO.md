@@ -3074,3 +3074,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2825 idempotent task-ID prefix in commit-and-pr (PR title double-prefix fix) #bug ref:GH#20836
 
 - [ ] t2824 diagnose pre-push hook 60s timeout that forces --skip-hooks bypass #auto-dispatch #bug ref:GH#20835
+
+- [ ] t2826 test-label-invariants: retarget WORKFLOW_FILE to issue-sync-reusable.yml after t2770 migration #auto-dispatch #bug #framework ref:GH#20840
