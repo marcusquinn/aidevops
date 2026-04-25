@@ -90,6 +90,50 @@ Without it, the workflow posts a remediation comment containing both the root-ca
 
 **Known false-positive (pending t2252):** the auto-completion path may mis-mark planning-only PRs (those using `Ref #NNN` / `For #NNN` without closing keywords) as `status:done` on merge — tracked as GH#19782.
 
+## Dispatch-Path Default (t2821)
+
+Tasks that modify the worker dispatch/spawn path have a **tautology failure mode**: a worker dispatched to fix broken dispatch runs through the code being fixed. Observed on #20765 (t2814): 3 worker attempts across ~90 minutes, ~90K tokens burned before a successful opus-4-7 run.
+
+### Trigger
+
+The task's brief `## How` section or `### Files Scope` references any file in the canonical self-hosting set. The canonical list is `.agents/configs/self-hosting-files.conf` — shared by `pre-dispatch-validator-helper.sh` (t2819) and the helpers below. Current entries: `pulse-wrapper.sh`, `pulse-dispatch-*`, `pulse-cleanup.sh`, `headless-runtime-helper.sh`, `headless-runtime-lib.sh`, `worker-lifecycle-common.sh`, `shared-dispatch-dedup.sh`, `shared-claim-lifecycle.sh`, `worker-activity-watchdog.sh`.
+
+### Decision tree
+
+1. Brief references a dispatch-path file → recommend `#parent`, `no-auto-dispatch`, `#interactive` in the TODO entry.
+2. Author overrides with `#dispatch-path-ok` → auto-dispatch proceeds with the `dispatch-path-ok` label applied. The t2819 self-hosting pre-dispatch detector remains active as a safety net (`model:opus-4-7` applied before dispatch).
+3. No dispatch-path files in brief → normal dispatch rules apply.
+
+### Tooling
+
+- `task-brief-helper.sh` scans the generated brief after write and appends a `## Dispatch-Path Classification` section when patterns are found.
+- `claim-task-id.sh` emits a **non-blocking** stderr advisory when `--labels auto-dispatch` is used on a dispatch-path task.
+- Both helpers load patterns from `.agents/configs/self-hosting-files.conf`; adding a new file to the conf automatically updates all detection points.
+
+### Why interactive is better for dispatch-path tasks
+
+1. Human context for judgment calls about dispatch-path design trade-offs.
+2. Bypasses the broken dispatch path entirely — interactive sessions don't spawn workers through the pulse.
+3. Unlimited context budget vs ~200K soft-ceiling for workers.
+4. Faster iteration on canary/FD/session-lock logic requiring visibility into the running system.
+
+### Environment overrides
+
+| Variable | Effect |
+|---|---|
+| `AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1` | Disable both the brief notice and claim-task-id warning |
+| `AIDEVOPS_DISPATCH_PATH_FILES_CONF=<path>` | Override the conf file path |
+
+### Labels
+
+| Label | Meaning |
+|---|---|
+| `dispatch-path-ok` | Author explicitly requested auto-dispatch on a dispatch-path task |
+| `parent-task` | Standard dispatch block (used alongside `no-auto-dispatch`) |
+| `no-auto-dispatch` | Prevents pulse from claiming the issue for auto-dispatch |
+
+Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), derived from #20765 dispatch-history analysis.
+
 ## Reusable-Workflow Architecture (t2770)
 
 Since v3.9.0, `issue-sync.yml` is a **reusable workflow** — downstream repos ship a ~45-line caller YAML that `uses:` the reusable workflow from `marcusquinn/aidevops`. This eliminates YAML drift (the canonical cause of GH#20637-class incidents where downstream copies went stale) and removes the need for downstream repos to carry `.agents/scripts/` — framework scripts are fetched at runtime via a secondary `actions/checkout` step.

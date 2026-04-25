@@ -55,29 +55,51 @@ _log() {
 declare -A _VALIDATOR_REGISTRY=()
 
 # ---------------------------------------------------------------------------
-# Self-hosting dispatch-path file patterns (t2819)
+# Self-hosting dispatch-path file patterns (t2819, t2821)
 #
 # When an issue body references any of these files, the issue modifies the
 # worker dispatch/spawn path. Workers dispatched to fix this code run through
 # the code being fixed — a tautology loop that wastes cascade attempts.
 #
-# Maintained as a shell array constant so future additions are one-line edits.
+# Canonical list lives in .agents/configs/self-hosting-files.conf (t2821).
+# Loaded at runtime; falls back to the hardcoded defaults if conf is missing.
 # ---------------------------------------------------------------------------
 # Label applied when self-hosting pattern is detected
 _SELF_HOSTING_TARGET_LABEL="model:opus-4-7"
 _SELF_HOSTING_TIER_REQUIRED="tier:thinking"
 
-_SELF_HOSTING_PATTERNS=(
-	"pulse-wrapper.sh"
-	"pulse-dispatch-"
-	"pulse-cleanup.sh"
-	"headless-runtime-helper.sh"
-	"headless-runtime-lib.sh"
-	"worker-lifecycle-common.sh"
-	"shared-dispatch-dedup.sh"
-	"shared-claim-lifecycle.sh"
-	"worker-activity-watchdog.sh"
-)
+# Load patterns from shared conf file (t2821). Non-blocking if conf missing.
+_load_self_hosting_patterns() {
+	local conf_file="${AIDEVOPS_DISPATCH_PATH_FILES_CONF:-${SCRIPT_DIR}/../configs/self-hosting-files.conf}"
+	local patterns=()
+	if [[ -f "$conf_file" ]]; then
+		while IFS= read -r line; do
+			# Skip blank lines and comments
+			[[ -z "$line" || "$line" == \#* ]] && continue
+			patterns+=("$line")
+		done <"$conf_file"
+	fi
+	# Fallback hardcoded defaults when conf unavailable
+	if [[ ${#patterns[@]} -eq 0 ]]; then
+		patterns=(
+			"pulse-wrapper.sh"
+			"pulse-dispatch-"
+			"pulse-cleanup.sh"
+			"headless-runtime-helper.sh"
+			"headless-runtime-lib.sh"
+			"worker-lifecycle-common.sh"
+			"shared-dispatch-dedup.sh"
+			"shared-claim-lifecycle.sh"
+			"worker-activity-watchdog.sh"
+		)
+	fi
+	# Export via global for callers (bash 3.2: no namerefs)
+	_SELF_HOSTING_PATTERNS=("${patterns[@]}")
+	return 0
+}
+
+_SELF_HOSTING_PATTERNS=()
+_load_self_hosting_patterns
 
 _register_validators() {
 	_VALIDATOR_REGISTRY["ratchet-down"]="_validator_ratchet_down"
