@@ -52,6 +52,10 @@ readonly METRICS_FILE="${METRICS_DIR}/headless-runtime-metrics.jsonl"
 # shellcheck source=./headless-runtime-lib.sh
 source "${SCRIPT_DIR}/headless-runtime-lib.sh"
 
+# Orphan-recovery helpers: _attempt_orphan_recovery_pr used by _handle_worker_branch_orphan
+# shellcheck source=./shared-claim-lifecycle.sh
+source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
+
 # Activity watchdog timeout — used by _invoke_opencode and the inline watchdog fallback.
 HEADLESS_ACTIVITY_TIMEOUT_SECONDS="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
 
@@ -1103,47 +1107,72 @@ cmd_metrics() {
 # detached HEAD, network failure) returns 0 so false-negatives are impossible.
 # Only a confirmed absence of all three signals triggers a noop classification.
 #######################################
+# _worker_produced_output — classify worker output quality (GH#20819)
+#
+# Returns one of three classification strings via stdout:
+#   "pr_exists"     — PR confirmed, or fail-open (cannot evaluate signals)
+#   "branch_orphan" — branch pushed + commits exist BUT no PR found
+#                     (requires DISPATCH_REPO_SLUG + gh to confirm absence)
+#   "noop"          — no commits, no pushed branch, no PR
+#
+# Fail-open semantics are preserved: any condition that prevents confident
+# signal evaluation echoes "pr_exists" so false-negatives (real work
+# misclassified as orphan or noop) are impossible.  Only a confirmed
+# absence of all signals (noop) or a confirmed branch-without-PR
+# (branch_orphan) triggers those classifications.
+#
+# Always returns 0. Callers capture stdout:
+#   local classification
+#   classification=$(_worker_produced_output "$session_key" "$work_dir")
+#######################################
 _worker_produced_output() {
 	local session_key="$1"
 	local work_dir="$2"
 
 	# Only applies to worker sessions (issue-* key pattern)
 	if [[ "$session_key" != issue-* ]]; then
+		printf 'pr_exists'  # fail-open for non-worker sessions
 		return 0
 	fi
 
 	# Bail if work_dir is not a valid git repo — fail-open
 	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
+		printf 'pr_exists'  # fail-open: cannot evaluate signals
 		return 0
 	fi
 
-	# Signal 1a: commits on feature branch beyond origin/main
+	# Signal 1: commits on feature branch beyond origin/main (fallback: master)
+	local has_commits=0
 	local commit_count=0
 	commit_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
 	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
 	if [[ "$commit_count" -gt 0 ]]; then
-		return 0
-	fi
-
-	# Signal 1b: fallback for origin/master default branch
-	commit_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
-	if [[ "$commit_count" -gt 0 ]]; then
-		return 0
+		has_commits=1
+	else
+		# Signal 1b: fallback for origin/master default branch
+		commit_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
+		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
+		[[ "$commit_count" -gt 0 ]] && has_commits=1
 	fi
 
 	# Signal 2: branch pushed to remote
+	local has_pushed_branch=0
 	local branch_name=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
 		local remote_ref=""
 		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
-		if [[ -n "$remote_ref" ]]; then
-			return 0
-		fi
+		[[ -n "$remote_ref" ]] && has_pushed_branch=1
+	fi
+
+	# Early exit: no commits, no pushed branch → definitely noop (no PR check needed)
+	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
+		printf 'noop'
+		return 0
 	fi
 
 	# Signal 3: PR linked to this issue (requires gh and DISPATCH_REPO_SLUG)
+	# Only reachable when Signal 1 or 2 is present — disambiguates pr_exists vs branch_orphan.
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
@@ -1153,20 +1182,108 @@ _worker_produced_output() {
 			--json number --jq 'length' 2>/dev/null || true)
 		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 		if [[ "$pr_count" -gt 0 ]]; then
+			printf 'pr_exists'
 			return 0
 		fi
+		# PR confirmed absent: branch/commits exist but no PR → orphan (GH#20819)
+		printf 'branch_orphan'
+		return 0
 	fi
 
-	# All three signals absent — worker produced no tangible output
-	return 1
+	# Cannot verify PR status (no repo_slug or issue_number) — fail-open.
+	# Treat branch/commits as pr_exists: cannot confirm orphan without PR check.
+	printf 'pr_exists'
+	return 0
+}
+
+#######################################
+# _increment_orphan_count_stat — increment worker_branch_orphan_count in pulse-stats.json
+#
+# Uses pulse_stats_increment if available (pulse-stats-helper.sh is sourced
+# in pulse-wrapper.sh context); otherwise does an inline jq atomic update
+# using the same timestamp-array format for consistency.
+#
+# Non-fatal: any file/jq failure is silently ignored.
+#######################################
+_increment_orphan_count_stat() {
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "worker_branch_orphan_count" 2>/dev/null || true
+		return 0
+	fi
+	# Inline fallback: timestamp-array format (matches pulse-stats-helper.sh schema)
+	local _stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
+	local _stats_dir
+	_stats_dir="$(dirname "$_stats_file")"
+	[[ -d "$_stats_dir" ]] || mkdir -p "$_stats_dir" 2>/dev/null || return 0
+	[[ -f "$_stats_file" ]] || printf '{"counters":{}}\n' >"$_stats_file" 2>/dev/null || return 0
+	local _ts _tmp
+	_ts=$(date +%s 2>/dev/null) || _ts=0
+	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-orphan-XXXXXX.json") || return 0
+	jq --argjson ts "$_ts" \
+		'.counters.worker_branch_orphan_count += [$ts]' \
+		"$_stats_file" >"$_tmp" 2>/dev/null \
+		|| { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$_stats_file" 2>/dev/null || rm -f "$_tmp"
+	return 0
+}
+
+#######################################
+# _handle_worker_branch_orphan — recover from worker_branch_orphan state (GH#20819)
+#
+# Called from _cmd_run_finish when _worker_produced_output returns "branch_orphan":
+# the worker pushed commits/branch but exited before opening a PR.
+#
+# Actions:
+#   1. Increments worker_branch_orphan_count in pulse-stats.json (always)
+#   2. Calls _attempt_orphan_recovery_pr to open a PR (GH#20819)
+#   3. On PR success  → releases claim as "worker_complete" (audit note)
+#   4. On PR failure  → releases claim as "worker_branch_orphan" + posts
+#      structured ops comment on the issue so next dispatch can pick up
+#
+# Args: $1=session_key, $2=work_dir
+#######################################
+_handle_worker_branch_orphan() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>}"
+
+	# Always increment counter — failure or success
+	_increment_orphan_count_stat
+
+	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
+		print_info "[lifecycle] Orphan PR auto-created for session=${session_key}"
+		_release_dispatch_claim "$session_key" "worker_complete"
+	else
+		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
+		_release_dispatch_claim "$session_key" "worker_branch_orphan"
+		# Post structured ops comment so the next dispatch knows what happened
+		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
+			local _ops_comment
+			_ops_comment=$(printf '<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base main --repo %s\n```\n<!-- ops:end -->' \
+				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+				"$branch_name" "$branch_name" "$repo_slug")
+			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+				--method POST \
+				--field body="$_ops_comment" \
+				>/dev/null 2>&1 || true
+		fi
+	fi
+	return 0
 }
 
 _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
 	# work_dir is optional ($3). When present and ledger_status != "fail",
-	# _worker_produced_output() checks for tangible output to distinguish
-	# a genuine success from a silent no-op exit (GH#20721).
+	# _worker_produced_output() classifies tangible output to distinguish
+	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
 	local work_dir="${3:-}"
 
 	# Release the dispatch claim so the issue is immediately available for
@@ -1217,30 +1334,40 @@ _cmd_run_finish() {
 		# loop if available, otherwise defaults to "worker_failed".
 		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
 	else
-		# GH#20721: Distinguish genuine success from silent no-op exit.
-		# A worker that exits 0 with no commits, no pushed branch, and no PR
-		# is NOT a success — it is a silent failure that the audit trail
-		# previously misclassified as worker_complete, suppressing fast-fail
-		# and tier escalation.
+		# GH#20721 + GH#20819: Classify worker output quality.
+		# _worker_produced_output echoes one of three classifications:
+		#   noop          — no commits, no branch, no PR → fast-fail
+		#   branch_orphan — branch pushed but no PR → auto-recover
+		#   pr_exists     — PR confirmed, or fail-open → worker_complete
 		#
-		# When work_dir is provided, check for tangible output. Absent all
-		# three signals: emit worker_noop and increment fast-fail so cascade
-		# dispatch fires on the next pulse cycle.
-		#
-		# _worker_produced_output is fail-open (returns 0) when signals cannot
-		# be evaluated (no git repo, no gh, no remote), so false-negatives
-		# (legit work misclassified as noop) are impossible — only confirmed
-		# absence of output triggers the noop path.
-		if [[ -n "$work_dir" ]] && ! _worker_produced_output "$session_key" "$work_dir"; then
-			print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
-			_release_dispatch_claim "$session_key" "worker_noop"
-			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
-		else
-			# Success path: post CLAIM_RELEASED with reason=worker_complete so
-			# the audit trail on the issue thread shows the full lifecycle
-			# (DISPATCH_CLAIM → CLAIM_RELEASED) even when no PR was created.
-			# Non-fatal if the API call fails — the pulse will eventually GC
-			# the claim via the TTL path.
+		# Fail-open semantics are preserved: when signals cannot be evaluated
+		# (no git repo, no gh, no remote) the classification is "pr_exists",
+		# so false-negatives (legit work misclassified) are impossible.
+		# Classify output and route to the appropriate release path.
+		# _release_needed tracks whether the normal success release is still
+		# required; noop and branch_orphan handlers release the claim themselves.
+		local _release_needed=1
+		if [[ -n "$work_dir" ]]; then
+			local _output_class="pr_exists"
+			_output_class=$(_worker_produced_output "$session_key" "$work_dir")
+			case "$_output_class" in
+			noop)
+				print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
+				_release_dispatch_claim "$session_key" "worker_noop"
+				_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
+				_release_needed=0
+				;;
+			branch_orphan)
+				# Branch pushed but no PR — attempt auto-recovery (GH#20819)
+				_handle_worker_branch_orphan "$session_key" "$work_dir"
+				_release_needed=0
+				;;
+			esac
+		fi
+		if [[ "$_release_needed" -eq 1 ]]; then
+			# pr_exists or fail-open: normal success path.
+			# Post CLAIM_RELEASED with reason=worker_complete so the audit
+			# trail shows the full lifecycle even when no PR was created.
 			_release_dispatch_claim "$session_key" "worker_complete"
 		fi
 	fi

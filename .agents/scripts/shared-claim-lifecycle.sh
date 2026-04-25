@@ -137,3 +137,88 @@ release_interactive_claim_on_merge() {
 _release_interactive_claim_on_merge() {
 	release_interactive_claim_on_merge "$@"
 }
+
+#######################################
+# _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
+#
+# Called when a worker pushed a branch but exited without opening a PR.
+# Attempts to open a non-draft PR against the repo's default branch with
+# origin:worker-takeover label so the normal review/merge pipeline applies.
+#
+# Short-circuits (returns 1) when:
+#   - branch_name or repo_slug are empty (cannot construct PR)
+#   - linked issue is CLOSED (branch is genuinely orphaned, no PR needed)
+#   - gh pr create fails for any reason
+#
+# On success: returns 0 (caller releases as worker_complete)
+# On failure: returns 1 (caller releases as worker_branch_orphan)
+#
+# Args:
+#   $1 = session_key  (e.g. "issue-12345")
+#   $2 = work_dir     (path to git worktree; unused after branch_name extracted)
+#   $3 = branch_name  (feature branch to set as PR head)
+#   $4 = repo_slug    (owner/repo)
+#
+# Non-fatal guard: issues in CLOSED state skip recovery rather than
+# creating a PR nobody will review (edge case: worker closed issue as
+# "premise falsified" per worker-triage rules — GH#20819 §Context).
+#######################################
+_attempt_orphan_recovery_pr() {
+	local session_key="$1"
+	local work_dir="$2"
+	local branch_name="$3"
+	local repo_slug="$4"
+
+	# Cannot build a PR without branch + repo
+	if [[ -z "$branch_name" || -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	# Derive issue number from session key (format: issue-NNNN or pulse-*-NNNN)
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	# Guard: skip recovery for closed issues — worker may have closed it as
+	# "premise falsified" (GH#20819 §Context edge case).
+	if [[ -n "$issue_number" ]]; then
+		local issue_state=""
+		issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json state --jq '.state' 2>/dev/null || true)
+		if [[ "$issue_state" == "CLOSED" ]]; then
+			return 1
+		fi
+	fi
+
+	# Detect repo default branch (fallback: main)
+	local default_branch="main"
+	local detected_default=""
+	detected_default=$(gh repo view "$repo_slug" \
+		--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
+	[[ -n "$detected_default" ]] && default_branch="$detected_default"
+
+	# Build PR metadata
+	local pr_title="auto-recover: orphaned worker branch"
+	local closing_line=""
+	if [[ -n "$issue_number" ]]; then
+		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
+		closing_line="Resolves #${issue_number}"
+	fi
+
+	local pr_body
+	pr_body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
+		"Orphan recovery PR — worker pushed this branch but exited before opening a PR." \
+		"Branch \`${branch_name}\` was pushed by headless worker session \`${session_key}\` which released as \`worker_branch_orphan\`. This PR was auto-created by the orphan-recovery path (GH#20819) so the change can land via the normal review and merge pipeline." \
+		"$closing_line" \
+		"<!-- aidevops:orphan-recovery worker_branch_orphan session=${session_key} -->")
+
+	# Attempt PR creation — non-draft so auto-merge and review gates apply
+	gh pr create \
+		--repo "$repo_slug" \
+		--head "$branch_name" \
+		--base "$default_branch" \
+		--title "$pr_title" \
+		--body "$pr_body" \
+		--label "origin:worker-takeover" \
+		>/dev/null 2>&1
+	return $?
+}
