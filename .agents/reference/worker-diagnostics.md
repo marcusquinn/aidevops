@@ -289,9 +289,72 @@ The pulse has no visibility into WHY a worker exited early. The gaps:
    60 seconds on canary runs that will all fail for the same reason. The batch throttle
    (pulse-dispatch-engine.sh:559) partially addresses this but only after 80% failure ratio.
 
+### Phase 3 — Fixes Landed (t2814)
+
+All four Phase 2 recommended fixes are deployed. Regression coverage:
+`.agents/scripts/tests/test-no-worker-process-fix.sh` (15 assertions).
+
+#### Fix 1 — Worker-log tail in `CLAIM_RELEASED` comment
+
+`_post_launch_recovery_claim_released` (pulse-cleanup.sh) now reads the
+worker log at `/tmp/pulse-${safe_slug}-${issue_number}.log`, takes the
+last 20 lines (capped at 4KB to stay under GitHub's body limit and limit
+credential-leak surface), and embeds them in a `<details>` block on the
+`CLAIM_RELEASED` comment. Closes the diagnostic gap: every
+`no_worker_process` event now ships its own canary diagnostics in the
+audit trail. No log forensics required.
+
+#### Fix 2 — Spawn-time exit monitor
+
+`_dlw_exec_detached` (pulse-dispatch-worker-launch.sh) forks a detached
+`bash -c` watcher (`_dlw_spawn_early_exit_monitor`) that polls the
+nohup'd worker PID for the first `DLW_EARLY_EXIT_WINDOW_SECONDS`
+(default 20s, override via env). On early death, the watcher appends a
+`[t2814:early_exit] worker PID N for issue #M exited within Ks spawn
+window at <ts>` marker to the worker log — which Fix 1 then includes in
+the `CLAIM_RELEASED` comment.
+
+The watcher is itself wrapped in `setsid nohup` so it survives pulse
+exit; it self-terminates after the window regardless of worker outcome.
+Cost: ~5 sleep iterations of 4s each, near-zero CPU.
+
+#### Fix 3 — Close inherited FDs before exec
+
+Both the `setsid nohup` path and the fallback `nohup` path in
+`_dlw_exec_detached` now include explicit `3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-`
+redirections after the standard `</dev/null >>"$worker_log" 2>&1`.
+Closes the suspected FD-leak path that may have caused `EMFILE`
+early-exit clusters on long-running pulse instances. Bash 3.2 compatible
+(no `{fd}>&-` syntax). No-op when the FDs are not open.
+
+#### Fix 4 — Negative canary cache
+
+`_run_canary_test` (headless-runtime-lib.sh) now stamps a
+`canary-last-fail` cache file on failure and short-circuits subsequent
+calls within `CANARY_NEGATIVE_TTL_SECONDS` (default 90s, override via
+env or `AIDEVOPS_SKIP_CANARY_NEG_CACHE=1` to bypass). Success clears the
+file. Cuts the wasted-canary cost during a 90s auth/rate-limit blip from
+N × `CANARY_TIMEOUT_SECONDS` (default 60s each) to a single failure plus
+N short-circuit returns.
+
+#### Verification
+
+```bash
+# Unit + behavioural regression test (15 assertions)
+bash .agents/scripts/tests/test-no-worker-process-fix.sh
+
+# After deploy: confirm subsequent no_worker_process events carry log tails
+gh api repos/<slug>/issues/<num>/comments --jq \
+  '.[] | select(.body | test("CLAIM_RELEASED.*no_worker_process")) | .body' | head -50
+```
+
+If a fresh `no_worker_process` event appears without a `<details>` block
+on the `CLAIM_RELEASED` comment, the worker log was missing at recovery
+time — investigate _dlw_setup_worker_log creation order.
+
 #### Phase 4 fix applied — t2815
 
-**Prevent cascade tier escalation on `no_worker_process` failures** (this issue, shipped):
+**Prevent cascade tier escalation on `no_worker_process` failures** (shipped):
 
 In `recover_failed_launch_state` (pulse-cleanup.sh), when `failure_reason == "no_worker_process"`
 and no explicit `crash_type` was provided, the effective crash type is now forced to `"no_work"`.

@@ -397,9 +397,23 @@ _dlw_exec_detached() {
 	local issue_number="$2"
 	shift 2
 
+	# t2814 (Phase 3, fix #3): Close inherited file descriptors >2 before
+	# exec to prevent FD leak from the pulse parent into the worker. The
+	# pulse accumulates FDs over its lifetime (gh API curl handles, log
+	# files, sqlite handles, temp files) and without explicit closure the
+	# worker inherits all of them. Suspected (but unconfirmed) cause of
+	# `EMFILE` early-exit cluster on long-running pulse instances. Cheap
+	# insurance — `N>&-` is a no-op when FD N is not open.
+	#
+	# Bash 3.2 compatible: explicit numeric FDs (no `{fd}>&-` syntax which
+	# requires bash 4+). Covers FDs 3-9 which is the practical range a
+	# parent shell + sourced helpers would have inherited via redirections,
+	# `exec` re-opens, or `coproc`. Higher FDs (10+) are rare in this
+	# codebase and can be added if measurement justifies it.
+
 	local worker_pid
 	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 &
+		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 		# Log the detached PGID for diagnostics (should differ from pulse PGID)
 		local worker_pgid pulse_pgid
@@ -407,13 +421,108 @@ _dlw_exec_detached() {
 		[[ -n "$worker_pgid" ]] || worker_pgid="unknown"
 		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
 		[[ -n "$pulse_pgid" ]] || pulse_pgid="unknown"
-		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid)" >>"$LOGFILE"
+		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
 	else
 		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
-		nohup "$@" </dev/null >>"$worker_log" 2>&1 &
+		nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 	fi
+
+	# t2814 (Phase 3, fix #2): Spawn-time exit monitoring. Fork a tiny
+	# background watcher that polls the nohup'd PID for the first
+	# DLW_EARLY_EXIT_WINDOW_SECONDS (default 20s) and, on early death,
+	# appends a marker line to the worker log so the recovery path
+	# (pulse-cleanup.sh:_post_launch_recovery_claim_released) can include
+	# it in the CLAIM_RELEASED audit trail.
+	#
+	# The pulse subshell that called us exits long before the worker does
+	# in the success case, so we cannot `wait` on the PID synchronously.
+	# Instead, we fork-and-forget — the watcher itself uses setsid+nohup
+	# so it survives pulse exit and self-terminates after the window
+	# regardless of worker outcome.
+	#
+	# Cheap: 5-iteration polling loop with `sleep 4` (~20s wall, near-zero
+	# CPU). Bounded: never runs longer than the window. Idempotent: just
+	# appends a marker; no global state.
+	_dlw_spawn_early_exit_monitor "$worker_pid" "$worker_log" "$issue_number"
+
 	printf '%s\n' "$worker_pid"
+	return 0
+}
+
+# t2814 (Phase 3, fix #2): Background watcher that detects worker early-exit
+# during the spawn window and writes a diagnostic marker to the worker log.
+#
+# Without this, the only signal that a worker died at startup is the
+# absence of a process when `check_worker_launch` polls 15-20s later — at
+# which point the exit code is reaped by init and lost. The marker bridges
+# the diagnostic gap so the launch-recovery path can attribute the failure.
+#
+# Args:
+#   $1 - worker_pid (PID returned by setsid/nohup launch)
+#   $2 - worker_log (log file path; marker is appended here)
+#   $3 - issue_number (for log message context)
+# Side effects:
+#   - Forks a detached `bash -c` subshell that runs for up to
+#     ${DLW_EARLY_EXIT_WINDOW_SECONDS:-20} seconds.
+#   - On early death, appends a `[t2814:early_exit]` line to worker_log.
+# Returns: 0 always.
+_dlw_spawn_early_exit_monitor() {
+	local worker_pid="$1"
+	local worker_log="$2"
+	local issue_number="$3"
+	local window="${DLW_EARLY_EXIT_WINDOW_SECONDS:-20}"
+	local poll_interval="${DLW_EARLY_EXIT_POLL_SECONDS:-4}"
+
+	# Defensive: skip if PID is not numeric (caller bug or test fixture)
+	if [[ ! "$worker_pid" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+
+	# The monitor runs in its own detached process so it outlives the
+	# pulse dispatch subshell. We pass argv via positional params to
+	# avoid quoting hell with the inner bash -c body.
+	local monitor_script
+	# SC2016: variable expansion is intentional inside the inner `bash -c`
+	# body, not in the outer shell. Single quotes are required so $1..$5
+	# refer to the positional params passed to bash, not to this function.
+	# The inner body wraps the params in `local` declarations inside a
+	# helper function — this satisfies the pre-commit positional-parameter
+	# linter (line 217 of pre-commit-hook.sh skips `local var=$N` lines)
+	# and keeps the body resilient to argv-shift refactors.
+	# shellcheck disable=SC2016
+	monitor_script='
+		_dlw_monitor_body() {
+			local pid="$1" log="$2" issue="$3" window="$4" interval="$5"
+			local elapsed=0 ts=""
+			while [[ "$elapsed" -lt "$window" ]]; do
+				if ! kill -0 "$pid" 2>/dev/null; then
+					ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+					printf "[t2814:early_exit] worker PID %s for issue #%s exited within %ss spawn window at %s\n" "$pid" "$issue" "$elapsed" "$ts" >>"$log" 2>/dev/null || true
+					return 0
+				fi
+				sleep "$interval"
+				elapsed=$((elapsed + interval))
+			done
+			return 0
+		}
+		_dlw_monitor_body "$@"
+	'
+
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup bash -c "$monitor_script" _dlw_monitor \
+			"$worker_pid" "$worker_log" "$issue_number" \
+			"$window" "$poll_interval" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup bash -c "$monitor_script" _dlw_monitor \
+			"$worker_pid" "$worker_log" "$issue_number" \
+			"$window" "$poll_interval" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	fi
+	# Disown so any pulse parent shell EXIT trap that targets backgrounded
+	# jobs cannot reach the monitor. setsid already detaches the PGID.
+	disown 2>/dev/null || true
 	return 0
 }
 
