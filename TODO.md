@@ -3147,6 +3147,8 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2864 pre-write function complexity advisory hook #auto-dispatch #framework #quality ref:GH#20921
 
-- [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #pulse ref:GH#20920
+- [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920
 
-- [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #performance #pulse ref:GH#20919
+- [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919
+
+- [ ] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922
