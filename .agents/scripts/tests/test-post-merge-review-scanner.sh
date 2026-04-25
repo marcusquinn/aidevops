@@ -577,6 +577,56 @@ assert_not_contains "do_scan does NOT flag for creation on fetch error" "Would c
 install_ok_gh
 
 # -----------------------------------------------------------------------------
+# NOOP_RE hardening tests (t2817 / GH#20818)
+#
+# Verify that Gemini's deterministic empty-review phrasing is filtered by the
+# updated NOOP_RE (end-anchor removed, "no review comments" added), and that
+# genuinely actionable prose containing noop substrings is NOT over-filtered.
+# -----------------------------------------------------------------------------
+
+echo ""
+echo "Test: NOOP_RE — Gemini exact phrasing from PR #20759 is filtered (mid-sentence no-review-comments)"
+write_graphql_fixture "$FIX_GRAPHQL"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "This pull request updates the documentation in \`.agents/AGENTS.md\` to include a description of a new server-side safety net workflow. I have no feedback to provide as there were no review comments."
+out=$(fetch_review_summaries_md "stub/repo" "42")
+if [[ -z "$out" ]]; then
+	echo "  PASS: Gemini mid-sentence LGTM is filtered (empty output)"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: Gemini mid-sentence LGTM was NOT filtered"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
+
+echo ""
+echo "Test: NOOP_RE — bare 'no review comments' phrase is filtered"
+write_graphql_fixture "$FIX_GRAPHQL"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "LGTM. no review comments."
+out=$(fetch_review_summaries_md "stub/repo" "42")
+if [[ -z "$out" ]]; then
+	echo "  PASS: bare 'no review comments' is filtered (empty output)"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: bare 'no review comments' was NOT filtered"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
+
+echo ""
+echo "Test: NOOP_RE positive control — actionable prose with 'feedback' keyword is preserved"
+# A real review that contains the word "feedback" in actionable prose should
+# NOT be suppressed by NOOP_RE. Only the exact deny-list phrases should match.
+write_graphql_fixture "$FIX_GRAPHQL"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "## Code Review
+
+Some feedback: the function name should be more descriptive. POSITIVE_CONTROL_MARKER"
+out=$(fetch_review_summaries_md "stub/repo" "42")
+assert_contains "actionable prose with 'feedback' keyword is preserved" "POSITIVE_CONTROL_MARKER" "$out"
+
+# -----------------------------------------------------------------------------
 # Report
 # -----------------------------------------------------------------------------
 
