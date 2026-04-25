@@ -64,11 +64,22 @@ Each phase ships as 2-3 child issues; children within a phase can run in paralle
 - **Phase P0** — knowledge plane skeleton (3 children: directory contract + provisioning, CLI + platform abstraction, review gate routine)
 - **Phase P0.5** — sensitivity + LLM routing layer (3 children: classification schema + detector, LLM routing + audit log, Ollama integration + local LLM substrate)
 - **Phase P1** — kind-aware enrichment (2 children: structured field extraction, PageIndex tree across corpus)
+- **Phase P2** — `_inbox/` capture & triage (4 children: directory contract + provisioning, capture CLI + watch folder + audit log, triage routine with sensitivity-first gating + classification routing, pulse digest of stale items + weekly review)
 - **Phase P4** — cases plane (3 children: case dossier contract + `aidevops case open`, case CLI surface, milestone + deadline alarming)
 - **Phase P5** — email channel (3 children: `.eml` ingestion handler, IMAP polling routine + `mailboxes.json`, thread reconstruction + filter→case-attach)
 - **Phase P6** — AI comms agent (2 children: `aidevops case draft` human-gated, `aidevops case chase` template-only auto-send)
 
-Total: **16 children**.
+Total: **20 children**.
+
+### Future planes (separate parents — NOT in this MVP)
+
+These planes are part of the long-term knowledge architecture but file separately so MVP scope ships first:
+
+- `_campaigns/` — marketing/ads/outreach work (brand assets, competitive intel, swipe files, in-flight creative, post-launch performance + learnings). Filed as **t2870** (peer parent-task). Decomposed into 6 future phases (directory contract, CLI, sensitivity tier, asset binary integration, AI creative agent, performance integration). Children file post-MVP-exit.
+- `_performance/` — KPI tracking, metrics, dashboards. Future parent-task.
+- `_feedback/` — raw user-feedback corpus + capability-gap mining. Future parent-task.
+- `_projects/` — active project work (peer to `_cases/` but proactive not reactive). Future parent-task.
+- `_contacts-index/`, `_accounts-index/` — adapter planes referencing external systems of record. Future parent-tasks.
 
 ## How (Approach)
 
@@ -128,38 +139,44 @@ Detection runs locally only. Routing layer fails hard if no compliant provider; 
 
 ### Child task index
 
-| Phase | Child task ID | Title (tentative) |
+| Phase | Child task ID | Title |
 |---|---|---|
-| P0 | TBD | knowledge plane directory contract + provisioning |
-| P0 | TBD | knowledge CLI surface (`add`, `list`, `search`) + platform abstraction |
-| P0 | TBD | knowledge review gate routine + NMR integration |
-| P0.5 | TBD | sensitivity classification schema + detector helper |
-| P0.5 | TBD | LLM routing helper + audit log |
-| P0.5 | TBD | Ollama integration + local LLM substrate (extends ollama-helper.sh) |
-| P1 | TBD | kind-aware enrichment + structured field extraction (generalises ocr-receipt-helper) |
-| P1 | TBD | PageIndex tree generation across corpus |
-| P4 | TBD | case dossier contract + `aidevops case open` |
-| P4 | TBD | case CLI surface (`attach`, `status`, `close`, `archive`, `list`) |
-| P4 | TBD | case milestone + deadline alarming routine |
-| P5 | TBD | `.eml` ingestion handler (knowledge channel for kind=email) |
-| P5 | TBD | IMAP polling routine + `mailboxes.json` registry |
-| P5 | TBD | email thread reconstruction + filter→case-attach |
-| P6 | TBD | `aidevops case draft` agent (RAG, human-gated, provenance) |
-| P6 | TBD | `aidevops case chase` (template-only auto-send, opt-in per case) |
+| P0 | t2843 / GH#20895 | knowledge plane directory contract + provisioning |
+| P0 | t2844 / GH#20896 | knowledge CLI surface (`add`, `list`, `search`) + platform abstraction |
+| P0 | t2845 / GH#20897 | knowledge review gate routine + NMR integration |
+| P0.5 | t2846 / GH#20898 | sensitivity classification schema + detector helper |
+| P0.5 | t2847 / GH#20899 | LLM routing helper + audit log |
+| P0.5 | t2848 / GH#20900 | Ollama integration + local LLM substrate (extends ollama-helper.sh) |
+| P1 | t2849 / GH#20901 | kind-aware enrichment + structured field extraction (generalises ocr-receipt-helper) |
+| P1 | t2850 / GH#20902 | PageIndex tree generation across corpus |
+| P2 | t2866 / GH#20930 | `_inbox/` directory contract + per-repo provisioning |
+| P2 | t2867 / GH#20931 | inbox capture CLI + watch folder + audit log |
+| P2 | t2868 / GH#20932 | inbox triage routine: sensitivity gate → classification → routing |
+| P2 | t2869 / GH#20933 | pulse digest of stale inbox items + weekly review surface |
+| P4 | t2851 / GH#20903 | case dossier contract + `aidevops case open` |
+| P4 | t2852 / GH#20904 | case CLI surface (`attach`, `status`, `close`, `archive`, `list`) |
+| P4 | t2853 / GH#20905 | case milestone + deadline alarming routine |
+| P5 | t2854 / GH#20906 | `.eml` ingestion handler (knowledge channel for kind=email) |
+| P5 | t2855 / GH#20907 | IMAP polling routine + `mailboxes.json` registry |
+| P5 | t2856 / GH#20908 | email thread reconstruction + filter→case-attach |
+| P6 | t2857 / GH#20911 | `aidevops case draft` agent (RAG, human-gated, provenance) |
+| P6 | t2858 / GH#20912 | `aidevops case chase` (template-only auto-send, opt-in per case) |
 
-Child task IDs claimed via `claim-task-id.sh` after this brief is committed. Each child gets its own brief at `todo/tasks/<task_id>-brief.md`.
+P2 children (t2866-t2869) added 2026-04-25 — `_inbox/` is foundational for capture velocity. Sensitivity-first triage means P2c blocks on P0.5a + P0.5c. P2a/P2b ship in parallel with P0.
+
+Each child has its own brief at `todo/tasks/<task_id>-brief.md`.
 
 ### Files Scope (this parent's planning PR only)
 
 - `todo/tasks/t2840-brief.md`
-- `todo/tasks/t<children>-brief.md` (16 child briefs)
-- `TODO.md` (parent + 16 children entries)
+- `todo/tasks/t<children>-brief.md` (20 child briefs)
+- `TODO.md` (parent + 20 children entries)
 
 ## Acceptance Criteria
 
-- [ ] All 16 children pre-filed as GitHub issues, each with brief at `todo/tasks/<id>-brief.md`
+- [ ] All 20 children pre-filed as GitHub issues, each with brief at `todo/tasks/<id>-brief.md`
 - [ ] Parent issue body updated with child task IDs
-- [ ] TODO.md updated with parent + all 16 children entries (each with `ref:GH#NNN`)
+- [ ] TODO.md updated with parent + all 20 children entries (each with `ref:GH#NNN`)
 - [ ] Planning PR opened with `For #20892` keyword (NEVER `Resolves`/`Closes`)
 - [ ] Child PRs (when implemented later) all use `For #20892` (parent stays open)
 - [ ] Final phase child PR uses `Closes #20892`

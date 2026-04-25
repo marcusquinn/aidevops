@@ -3136,3 +3136,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #interactive #framework #bugfix ref:GH#20917
 
 - [ ] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #interactive #framework #bugfix ref:GH#20918
+
+- [ ] t2866 P2a: `_inbox/` directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
+
+- [ ] t2867 P2b: inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+
+- [ ] t2868 P2c: inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932
+
+- [ ] t2869 P2d: pulse digest of stale inbox items + weekly review surface #auto-dispatch #enhancement #framework ref:GH#20933
+
+- [ ] t2870 `_campaigns/` plane — marketing assets, intel, inspiration for ads + organic campaigns #parent #framework #enhancement #interactive ref:GH#20929
