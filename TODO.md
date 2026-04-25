@@ -3090,3 +3090,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2832 fix(dispatch-dedup): honour no-auto-dispatch label as unconditional block (parity with parent-task) #bug #framework #pulse ref:GH#20870
 
 - [ ] t2834 loc badges + readme badges template (reusable workflow + helpers) #auto-dispatch #enhancement ref:GH#20879
+
+- [ ] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882

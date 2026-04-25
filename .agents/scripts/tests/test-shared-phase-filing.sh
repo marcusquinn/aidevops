@@ -518,6 +518,68 @@ else
 fi
 
 # =============================================================================
+# Test 15: _parse_phases_section — `### Phase N detail` subsections do NOT
+#          inflate the declared count (GH#20871)
+# =============================================================================
+printf '%s--- Test 15: ### Phase N detail subsections do not double-count ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+# Canonical failure case from GH#20871:
+# Parent body declares 3 phases in a `## Phases` list, then includes
+# `### Phase N detail` subsections under the same `## Phases` heading
+# (terminated by the next `## ` heading, not the next `### ` heading).
+# A previous local raw extractor in pulse-issue-reconcile.sh emitted
+# every line of the section and counted "Phase N" mentions — yielding
+# 6+ for a body that declared 3 phases, blocking auto-close on
+# parents whose own auto-close path was supposed to fix this exact pattern.
+#
+# The structured parser must:
+#   1. Emit only the canonically-declared phases (3 rows).
+#   2. Ignore `### Phase N detail` subsection headings.
+#   3. Ignore prose mentions of "Phase N" inside the section.
+PARENT_BODY_GH20871='## Phases
+
+- Phase 1 - Extend parser to accept narrative bold-heading form [auto-fire:on-prior-merge]
+- Phase 2 - Add phase-declaration-aware guard [auto-fire:on-prior-merge]
+- Phase 3 - Flip default to 1 [auto-fire:on-prior-merge] #20768
+
+### Phase 1 detail
+
+Some prose elaborating Phase 1.
+
+### Phase 2 detail
+
+More prose, mentioning Phase 2 again.
+
+### Phase 3 detail
+
+Final prose, Phase 3.
+
+## Acceptance
+
+- [x] something
+'
+
+gh20871_output=$(_parse_phases_section "$PARENT_BODY_GH20871")
+gh20871_count=$(printf '%s\n' "$gh20871_output" | grep -c '^[0-9]')
+
+if [[ "$gh20871_count" -eq 3 ]]; then
+	pass "Subsection headings do not inflate count: 3 rows for 3 declared phases"
+else
+	fail "Expected 3 rows (one per canonically-declared phase), got ${gh20871_count}" "Output: ${gh20871_output}"
+fi
+
+# Also verify the unfiled extraction (used by _try_close_parent_tracker
+# nudge body): rows with empty 4th tab field are unfiled.
+gh20871_unfiled=$(printf '%s\n' "$gh20871_output" | awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s\n", $1 }')
+gh20871_unfiled_count=$(printf '%s\n' "$gh20871_unfiled" | grep -c '^Phase')
+
+if [[ "$gh20871_unfiled_count" -eq 2 ]]; then
+	pass "Unfiled extraction: Phase 1 + Phase 2 unfiled, Phase 3 (with #20768) excluded"
+else
+	fail "Expected 2 unfiled phases, got ${gh20871_unfiled_count}" "Output: ${gh20871_unfiled}"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s=== Results: %d/%d passed ===%s\n' \

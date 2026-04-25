@@ -96,7 +96,7 @@ Tasks that modify the worker dispatch/spawn path have a **tautology failure mode
 
 ### Trigger
 
-The task's brief `## How` section or `### Files Scope` references any file in the canonical self-hosting set. The canonical list is `.agents/configs/self-hosting-files.conf` — shared by `pre-dispatch-validator-helper.sh` (t2819) and the helpers below. Current entries: `pulse-wrapper.sh`, `pulse-dispatch-*`, `pulse-cleanup.sh`, `headless-runtime-helper.sh`, `headless-runtime-lib.sh`, `worker-lifecycle-common.sh`, `shared-dispatch-dedup.sh`, `shared-claim-lifecycle.sh`, `worker-activity-watchdog.sh`.
+The task's brief `## How` section or `### Files Scope` references any file in the canonical self-hosting set. The canonical list is `.agents/configs/self-hosting-files.conf` — shared by `pre-dispatch-validator-helper.sh` (t2819) and the helpers below. Current entries: `pulse-wrapper.sh`, `pulse-dispatch-*`, `pulse-cleanup.sh`, `headless-runtime-helper.sh`, `headless-runtime-lib.sh`, `worker-lifecycle-common.sh`, `shared-dispatch-dedup.sh`, `shared-claim-lifecycle.sh`, `worker-activity-watchdog.sh`, `dispatch-dedup-helper.sh` (t2832).
 
 ### Decision tree
 
@@ -129,10 +129,10 @@ The task's brief `## How` section or `### Files Scope` references any file in th
 | Label | Meaning |
 |---|---|
 | `dispatch-path-ok` | Author explicitly requested auto-dispatch on a dispatch-path task |
-| `parent-task` | Standard dispatch block (used alongside `no-auto-dispatch`) |
-| `no-auto-dispatch` | Prevents pulse from claiming the issue for auto-dispatch |
+| `parent-task` | Unconditional dispatch block — `dispatch-dedup-helper.sh` `_is_assigned_check_parent_task` short-circuits with `PARENT_TASK_BLOCKED` |
+| `no-auto-dispatch` | Unconditional dispatch block (t2832) — `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` short-circuits with `NO_AUTO_DISPATCH_BLOCKED`. Pre-fix the label was honoured by enrich/decomposition only; the dispatch path itself ignored it. After t2832, `no-auto-dispatch` alone is sufficient to block dispatch on a focused fix — no need to combine with `#parent`. Use `#parent` only for actual decomposition trackers. |
 
-Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), derived from #20765 dispatch-history analysis.
+Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), t2832 (no-auto-dispatch unconditional block), derived from #20765 / GH#20827 dispatch-history analysis.
 
 ## Reusable-Workflow Architecture (t2770)
 
