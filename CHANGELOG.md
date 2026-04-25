@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.4] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2865 complete (pr:#20928 completed:2026-04-25) [skip ci]
+- pulse canonical-worktree conflict auto-recovery (#20928)
+- Maintenance: sync ref:GH#20931 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20929 to TODO.md [skip ci]
+- reduce function complexity in upstream-watch-helper.sh (#20925)
+- reduce log_framework_issue complexity by extracting dedup and creation helpers (#20927)
+- Maintenance: mark t2864 complete (pr:#20924 completed:2026-04-25) [skip ci]
+- pre-write bash function complexity advisory hook (#20924)
+- Maintenance: add t2865 worktree-conflict recovery + blocked-by t2863 on t2862 (#20923)
+- Maintenance: sync ref:GH#20919 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20917 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20914 to TODO.md [skip ci]
+- Maintenance: mark t2841 complete (pr:#20907 completed:2026-04-25) [skip ci]
+- Maintenance: sync ref:GH#20912 to TODO.md [skip ci]
+- Maintenance: mark t2835 complete (pr:#20887 completed:2026-04-25) [skip ci]
+
+### Fixed
+
+- init _b_nums to prevent unbound-variable abort (#20907)
+
 ## [3.11.3] - 2026-04-25
 
 ### Changed
