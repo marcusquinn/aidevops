@@ -3062,3 +3062,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2817 post-merge-review-scanner: extend NOOP_RE to catch Gemini mid-sentence LGTM phrasing + zero-findings gate #auto-dispatch ref:GH#20818 pr:#20823 completed:2026-04-25
 
 - [ ] t2818 fix(lifecycle): detect worker_branch_orphan — pushed branch without PR is currently misclassified as worker_complete #auto-dispatch #bug ref:GH#20819
+
+- [ ] t2821 policy: dispatch-path tasks default to #parent + no-auto-dispatch for interactive implementation ref:GH#20827
+
+- [ ] t2820 pulse: extend no_work reclassification to worker_failed using Phase 3 log-tail data ref:GH#20826
+
+- [ ] t2819 pulse: pre-dispatch tier override for self-hosting dispatch-path tasks #auto-dispatch ref:GH#20825
