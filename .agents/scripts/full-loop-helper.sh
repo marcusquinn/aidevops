@@ -682,6 +682,177 @@ _stage_and_commit() {
 	return 0
 }
 
+# t2842: Run project-specific format/lint/typecheck validators on the staged
+# commit BEFORE pushing. Closes the worker-CI-failure gap where workers ship
+# code that fails project CI checks (Format, Lint, Typecheck) because no
+# pre-push validation runs at commit time.
+#
+# Detects project type from manifest files (package.json + scripts entries).
+# Runs auto-fixers (format:fix, lint:fix) first and amends the commit if
+# they produced changes. Then runs check-only validators (typecheck) and
+# returns 1 if any fail with a mentor error pointing to the diagnosis path.
+#
+# Skip conditions:
+#   - skip_hooks=1 (caller passed --skip-hooks)
+#   - AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 env var
+#   - HEAD commit subject begins with "wip:" or "wip("
+#   - All HEAD changes are docs-only (*.md, *.txt, LICENSE, COPYING)
+#   - No package.json with format/lint/typecheck scripts (silent skip — most
+#     aidevops worktrees fall here)
+#
+# Args: $1=skip_hooks (0|1)
+# Returns: 0 on pass/skip, 1 on validator failure
+_run_project_validators() {
+	local skip_hooks="${1:-0}"
+
+	# Bypass paths
+	if [[ "$skip_hooks" == "1" ]]; then
+		return 0
+	fi
+	if [[ "${AIDEVOPS_SKIP_PROJECT_VALIDATORS:-0}" == "1" ]]; then
+		print_info "[validators] AIDEVOPS_SKIP_PROJECT_VALIDATORS=1, skipping"
+		return 0
+	fi
+
+	# Skip wip commits
+	local last_msg
+	last_msg=$(git log -1 --format=%s 2>/dev/null || echo "")
+	if [[ "$last_msg" =~ ^wip[[:space:]:\(] ]]; then
+		print_info "[validators] wip commit (\"${last_msg}\"), skipping"
+		return 0
+	fi
+
+	# Skip docs-only changes (no point running typecheck on .md edits)
+	local non_docs_count
+	non_docs_count=$(git show --name-only --format='' HEAD 2>/dev/null |
+		grep -cvE '\.(md|txt|rst)$|^LICENSE|^COPYING|^\.gitignore$|^$' || true)
+	# safe_grep_count guard (t2763): zero-match path may emit "0\n0"
+	[[ "$non_docs_count" =~ ^[0-9]+$ ]] || non_docs_count=0
+	if [[ "$non_docs_count" == "0" ]]; then
+		print_info "[validators] docs-only change, skipping"
+		return 0
+	fi
+
+	# Detect project type — only node currently supported (covers awardsapp,
+	# wpallstars, vite/next/etc. monorepos). Rust/Python can be added when
+	# the first project that needs them lands.
+	if [[ ! -f package.json ]]; then
+		# Silent skip — non-node projects (most aidevops worktrees)
+		return 0
+	fi
+	if ! command -v jq >/dev/null 2>&1; then
+		print_warning "[validators] jq not available, cannot inspect package.json — skipping"
+		return 0
+	fi
+	local has_relevant_scripts
+	has_relevant_scripts=$(jq -r '
+		.scripts // {} |
+		[has("format"),has("format:fix"),has("format:write"),
+		 has("lint"),has("lint:fix"),
+		 has("typecheck"),has("check:types"),has("tsc")] |
+		any
+	' package.json 2>/dev/null || echo "false")
+	if [[ "$has_relevant_scripts" != "true" ]]; then
+		# Silent skip — package.json without format/lint/typecheck scripts
+		return 0
+	fi
+
+	# Detect package manager from lockfile presence
+	local pm="npm"
+	if [[ -f pnpm-lock.yaml ]]; then
+		pm="pnpm"
+	elif [[ -f yarn.lock ]]; then
+		pm="yarn"
+	fi
+
+	if ! command -v "$pm" >/dev/null 2>&1; then
+		print_warning "[validators] $pm not available on PATH — skipping (set AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 to silence)"
+		return 0
+	fi
+
+	print_info "[validators] running node project validators ($pm)..."
+
+	# 1. Auto-fix passes (format and lint). Pick the first matching script
+	# from each category (in preference order). Continue past failures —
+	# fix scripts may legitimately exit non-zero on un-auto-fixable issues.
+	local validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT:-300}"
+	local fix_changes=0
+	local script_name
+	for script_name in format:fix format:write prettier:fix; do
+		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
+			print_info "[validators] $pm run $script_name (auto-fix)"
+			timeout "$validator_timeout" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			break
+		fi
+	done
+	# Lint auto-fix: only one canonical script name today, but the loop
+	# pattern matches the format/typecheck shape so adding alternatives
+	# (e.g. eslint:fix, biome:fix) is a one-line change.
+	# shellcheck disable=SC2043
+	for script_name in lint:fix; do
+		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
+			print_info "[validators] $pm run $script_name (auto-fix)"
+			timeout "$validator_timeout" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			break
+		fi
+	done
+
+	# 2. If auto-fix produced changes, amend the commit. We use --amend
+	# rather than a follow-up commit to keep the worker's PR as a single
+	# coherent change — the auto-fix is part of "what the worker would
+	# have produced if it had remembered to run formatters."
+	if ! git diff --quiet 2>/dev/null; then
+		print_info "[validators] auto-fix produced changes, amending commit"
+		git add -A
+		# --no-verify on amend: we don't want pre-commit hooks to recurse
+		# into validator territory (we're already in that territory).
+		if ! git commit --amend --no-edit --no-verify >/dev/null 2>&1; then
+			print_error "[validators] failed to amend commit with auto-fix changes"
+			print_error "  git status:"
+			git status -s 2>&1 | head -10
+			return 1
+		fi
+		fix_changes=1
+	fi
+
+	# 3. Check-only typecheck (do NOT auto-fix — these need human review).
+	# Run the first typecheck-style script that exists.
+	local typecheck_script=""
+	for script_name in typecheck check:types tsc; do
+		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
+			typecheck_script="$script_name"
+			break
+		fi
+	done
+
+	if [[ -n "$typecheck_script" ]]; then
+		print_info "[validators] $pm run $typecheck_script (check-only)"
+		# Capture output for the failure path so we can surface diagnosis.
+		local tc_log
+		tc_log="$(mktemp -t validators-tc.XXXXXX)"
+		if ! timeout "$validator_timeout" "$pm" run "$typecheck_script" >"$tc_log" 2>&1; then
+			print_error "[validators] $typecheck_script FAILED — code has type errors"
+			print_error "  last 20 lines:"
+			tail -20 "$tc_log" >&2
+			print_error ""
+			print_error "  diagnose:    $pm run $typecheck_script"
+			print_error "  fix errors, commit, then re-run: full-loop-helper.sh commit-and-pr ..."
+			print_error "  bypass:      full-loop-helper.sh commit-and-pr ... --skip-hooks"
+			print_error "               (or AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 env)"
+			rm -f "$tc_log"
+			return 1
+		fi
+		rm -f "$tc_log"
+	fi
+
+	if [[ "$fix_changes" == "1" ]]; then
+		print_info "[validators] passed (auto-fix amended into commit)"
+	else
+		print_info "[validators] passed"
+	fi
+	return 0
+}
+
 # Rebase onto origin/main and force-push the current branch.
 # Args: $1=branch $2=skip_hooks (0|1, optional, default 0)
 # Returns 1 on rebase conflict or push failure.
@@ -1129,6 +1300,10 @@ cmd_commit_and_pr() {
 	_validate_commit_and_pr_inputs "$issue_number" "$commit_message" || return 1
 
 	_stage_and_commit "$commit_message" || return 1
+	# t2842: project-aware validators (auto-fix format/lint, fail-closed typecheck).
+	# Inserted between commit and push so amends apply to the same commit
+	# the worker just made, and so failures abort BEFORE we push broken code.
+	_run_project_validators "$skip_hooks" || return 1
 	_rebase_and_push "$branch" "$skip_hooks" || return 1
 
 	# Build PR metadata (t2720: prefer tNNN from TODO.md so issue-sync's
