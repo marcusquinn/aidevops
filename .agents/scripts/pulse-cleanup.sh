@@ -712,15 +712,57 @@ reap_zombie_workers() {
 # worker-activity-watchdog.sh:222 and headless-runtime-failure.sh:59 — those
 # paths already post CLAIM_RELEASED; the launch-failure recovery path was the
 # missing coverage.
+#
+# t2814 (Phase 3, fix #1): Include the tail of the worker log in the claim-
+# released comment for `no_worker_process` failures. Closes the diagnostic
+# gap identified in t2813 root cause analysis: worker logs at
+# /tmp/pulse-${safe_slug}-${issue_number}.log existed but were never read
+# during recovery, so every `no_worker_process` event ended with the same
+# opaque "no active worker process" message and no insight into whether the
+# canary failed, the session lock collided, or the runtime crashed before
+# OpenCode could spawn. The 20-line tail captures canary diagnostics
+# (last `print_warning` lines) and any early-exit traceback.
 _post_launch_recovery_claim_released() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local self_login="$3"
 	local failure_reason="$4"
 
+	local body
+	body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	# t2814: append worker-log tail when available so the failure is
+	# diagnosable from the audit trail alone (no log-file forensics needed).
+	# Bounded to last 20 lines and 4KB to keep comments readable and avoid
+	# accidental credential leakage from verbose stack traces.
+	local safe_slug log_file log_tail
+	safe_slug=$(echo "$repo_slug" | tr '/:' '--')
+	local -a log_candidates=(
+		"/tmp/pulse-${safe_slug}-${issue_number}.log"
+		"/tmp/pulse-${issue_number}.log"
+	)
+	for log_file in "${log_candidates[@]}"; do
+		if [[ -f "$log_file" ]] && [[ -s "$log_file" ]]; then
+			log_tail=$(tail -20 "$log_file" 2>/dev/null | head -c 4096 || true)
+			if [[ -n "$log_tail" ]]; then
+				body="${body}
+
+<details>
+<summary>worker log tail (last 20 lines, source: ${log_file})</summary>
+
+\`\`\`text
+${log_tail}
+\`\`\`
+
+</details>"
+			fi
+			break
+		fi
+	done
+
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \
-		--field body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		--field body="$body" \
 		>/dev/null 2>&1 || true
 	return 0
 }
