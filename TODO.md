@@ -3078,3 +3078,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2826 test-label-invariants: retarget WORKFLOW_FILE to issue-sync-reusable.yml after t2770 migration #auto-dispatch #bug #framework ref:GH#20840 pr:#20841 completed:2026-04-25
 
 - [x] t2827 nesting-depth pre-push guard: change-scoped scan to fix 60s timeout #auto-dispatch #bug ref:GH#20842 pr:#20848 completed:2026-04-25
+
+- [ ] t2828 pulse: split merge pass into dedicated 60s launchd plist (decouple from dispatch cycle) #auto-dispatch #framework #pulse ref:GH#20866
