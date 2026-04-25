@@ -587,13 +587,15 @@ _has_active_claim() {
 #   $3 = (optional) current runner login — if assigned to self, not a dup
 # Returns:
 #   exit 0 if assigned to another login (do NOT dispatch), parent-task labeled,
-#          cost-budget exceeded, or guard cannot determine safety (GUARD_UNCERTAIN)
+#          no-auto-dispatch labeled, cost-budget exceeded, or guard cannot
+#          determine safety (GUARD_UNCERTAIN)
 #   exit 1 if unassigned or assigned only to self (safe to dispatch)
 # Outputs: one of the following signals on stdout when blocking:
-#   PARENT_TASK_BLOCKED (label=<name>) — unconditional parent-task block
-#   COST_BUDGET_EXCEEDED (...)         — token spend circuit breaker
-#   GUARD_UNCERTAIN (reason=...)       — internal error, cannot determine safety
-#   <assignee info>                    — active claim by another runner
+#   PARENT_TASK_BLOCKED (label=<name>)      — unconditional parent-task / meta block
+#   NO_AUTO_DISPATCH_BLOCKED (label=...)    — unconditional no-auto-dispatch block (t2832)
+#   COST_BUDGET_EXCEEDED (...)              — token spend circuit breaker
+#   GUARD_UNCERTAIN (reason=...)            — internal error, cannot determine safety
+#   <assignee info>                         — active claim by another runner
 #
 # FAIL-CLOSED CONTRACT (t2046):
 #   When the guard cannot determine whether dispatch is safe due to an internal
@@ -649,6 +651,62 @@ _is_assigned_check_parent_task() {
 	fi
 	if [[ -n "$parent_task_hit" ]]; then
 		printf 'PARENT_TASK_BLOCKED (label=%s)\n' "$parent_task_hit"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# is_assigned helper: check the no-auto-dispatch unconditional block (t2832).
+#
+# t2832: no-auto-dispatch label is an unconditional dispatch block. The label
+# was previously honoured by enrichment, decomposition, and backfill paths but
+# NOT by the dispatch path itself — workers got dispatched to issues carrying
+# the label, contradicting maintainer intent and the documented behaviour.
+# Closes the dispatch hole observed on GH#20827 (t2821 policy issue): six
+# worker dispatches over two hours despite the label being applied at issue
+# creation, all failing in the dispatch-path tautology, ~30-50K opus tokens
+# burned. The label now carries the same hard-block semantics as parent-task.
+#
+# Use cases this enables (post-fix):
+#   - Maintainer-applied "do not auto-dispatch" hold without needing #parent
+#     (which forces decomposition lifecycle on focused fixes that don't decompose)
+#   - interactive-session-helper.sh lockdown — already applies this label;
+#     the label now actually blocks dispatch end-to-end as documented
+#   - Policy-level dispatch-path tasks (t2821) — sufficient as a focused-fix
+#     blocker without combining with #parent
+#
+# Emits NO_AUTO_DISPATCH_BLOCKED on stdout for caller pattern matching
+# (mirrors the PARENT_TASK_BLOCKED token used by parent-task check).
+#
+# Mirrors _is_assigned_check_parent_task structure:
+#   - Same jq-failure fail-closed contract (t2061): GUARD_UNCERTAIN on jq error
+#   - Same return-code contract: 0 = block (with signal printed), 1 = allow
+#   - Same args shape for traceable error output
+#
+# Args:
+#   $1 = issue metadata JSON (from `gh issue view --json ...,labels`)
+#   $2 = (optional) issue number — included in GUARD_UNCERTAIN output
+#   $3 = (optional) repo slug — included in GUARD_UNCERTAIN output
+# Returns: exit 0 if no-auto-dispatch label found or jq fails (prints signal),
+#          exit 1 if label absent and jq succeeds
+#######################################
+_is_assigned_check_no_auto_dispatch() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+	# t2061: explicit rc capture — fail-closed on jq failure.
+	local _jq_rc=0
+	local nad_hit
+	nad_hit=$(printf '%s' "$meta_json" |
+		jq -r '(.labels // [])[].name | select(. == "no-auto-dispatch")' 2>/dev/null | head -n 1) || _jq_rc=$?
+	if [[ "$_jq_rc" -ne 0 ]]; then
+		printf 'GUARD_UNCERTAIN (reason=jq-failure call=no-auto-dispatch-check issue=%s repo=%s)\n' \
+			"$issue_number" "$repo_slug"
+		return 0
+	fi
+	if [[ -n "$nad_hit" ]]; then
+		printf 'NO_AUTO_DISPATCH_BLOCKED (label=%s)\n' "$nad_hit"
 		return 0
 	fi
 	return 1
@@ -861,6 +919,15 @@ is_assigned() {
 	# t1986: parent-task / meta is an unconditional dispatch block.
 	# t2061: pass issue_number + repo_slug so GUARD_UNCERTAIN output is traceable.
 	if _is_assigned_check_parent_task "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	# t2832: no-auto-dispatch is an unconditional dispatch block. Mirrors
+	# parent-task semantics; closes the enforcement gap observed on GH#20827
+	# where the label was honoured by enrichment/decomposition but not the
+	# dispatch path. Placed immediately after parent-task so both unconditional
+	# blocks short-circuit before the cost-budget and assignee checks.
+	if _is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 
