@@ -482,6 +482,65 @@ else
 fi
 
 # =============================================================================
+# Part 5 — issue-sync-helper.sh::_do_close parent-task close gate (GH#20828)
+# =============================================================================
+# The bash-helper close path runs from TODO.md `[x]` pushes. Without a
+# parent-task probe, every `[x]` for a planning task whose linked issue
+# carries `parent-task` would close the parent — wiping the open-until-
+# terminal-PR contract. Mirror of Part 4's t2137 workflow guard, applied to
+# the parallel bash-helper code path.
+HELPER_FILE="${TEST_SCRIPTS_DIR}/issue-sync-helper.sh"
+
+if [[ ! -f "$HELPER_FILE" ]]; then
+	print_result "issue-sync-helper.sh exists (for close-gate guard)" 1 "(not found at $HELPER_FILE)"
+else
+	print_result "issue-sync-helper.sh exists (for close-gate guard)" 0
+
+	# Extract the _do_close function body. Awk handles the `name() { ... }`
+	# bash idiom: from `_do_close()` to the matching closing brace.
+	close_block=$(awk '/^_do_close\(\)/,/^}/' "$HELPER_FILE")
+
+	if [[ -z "$close_block" ]]; then
+		print_result "found _do_close function in issue-sync-helper.sh" 1
+	else
+		print_result "found _do_close function in issue-sync-helper.sh" 0
+
+		# Skip signature: parent-task probe (gh api fetching labels) AND a
+		# parent-task grep AND an early-return BEFORE the gh issue close
+		# call. All three indicators together prove the skip path exists
+		# and runs ahead of the close mutation.
+		has_label_fetch=0
+		has_parent_check=0
+		guard_before_close=0
+
+		if echo "$close_block" | grep -qE 'gh api.*labels.*name'; then
+			has_label_fetch=1
+		fi
+		if echo "$close_block" | grep -qE 'parent-task'; then
+			has_parent_check=1
+		fi
+		# Guard ordering: the parent-task line must precede `gh "${close_args[@]}"`
+		# (the close mutation). awk emits line numbers we can compare.
+		guard_line=$(echo "$close_block" | awk '/parent-task/ { print NR; exit }')
+		close_line=$(echo "$close_block" | awk '/gh "\$\{close_args\[@\]\}"/ { print NR; exit }')
+		if [[ -n "$guard_line" && -n "$close_line" && "$guard_line" -lt "$close_line" ]]; then
+			guard_before_close=1
+		fi
+
+		if [[ "$has_label_fetch" -eq 1 && "$has_parent_check" -eq 1 && "$guard_before_close" -eq 1 ]]; then
+			print_result "_do_close skips parent-task issues before gh close (GH#20828)" 0
+		else
+			missing=""
+			[[ "$has_label_fetch" -eq 0 ]] && missing="${missing} label-fetch"
+			[[ "$has_parent_check" -eq 0 ]] && missing="${missing} parent-task-grep"
+			[[ "$guard_before_close" -eq 0 ]] && missing="${missing} guard-before-close-ordering"
+			print_result "_do_close skips parent-task issues before gh close (GH#20828)" 1 \
+				"(missing:${missing})"
+		fi
+	fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo
