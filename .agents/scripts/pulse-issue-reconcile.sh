@@ -32,6 +32,24 @@
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_LOADED=1
 
+# GH#20871: explicit dependency on shared-phase-filing.sh's structured
+# `_parse_phases_section` parser (used by the t2786 declared-vs-filed
+# close guard in `_try_close_parent_tracker`). Previously this module
+# defined its own raw-section extractor of the same name — the local
+# definition over-counted by including `### Phase N detail` subsections
+# in the canonical "Phases" section, which blocked auto-close on parents
+# whose own auto-close path was supposed to fix that exact pattern.
+#
+# In production, pulse-merge.sh sources this file before pulse-wrapper.sh
+# loads pulse-issue-reconcile.sh, so this is a no-op for the orchestrator.
+# In test harnesses that source pulse-issue-reconcile.sh standalone (e.g.
+# test-pulse-reconcile-parent-task-subissue-graph.sh), the include guard
+# inside shared-phase-filing.sh ensures correctness.
+if [[ -z "${_SHARED_PHASE_FILING_LOADED:-}" ]]; then
+	# shellcheck source=/dev/null
+	source "$(dirname "${BASH_SOURCE[0]}")/shared-phase-filing.sh" 2>/dev/null || true
+fi
+
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
@@ -1325,26 +1343,26 @@ _Automated by \`_post_parent_decomposition_escalation\` in \`pulse-issue-reconci
 }
 
 #######################################
-# t2786: extract the ## Phases section from a parent issue body.
-# Returns only the text between the "## Phases" heading and the next
-# ## heading (or EOF). Returns empty if no ## Phases heading is found.
-# Pure string processing — no side effects, no gh calls.
-# Arguments:
-#   arg1 - parent issue body text
-# Returns: always 0
+# t2786 / GH#20871: phase-section parsing for the declared-vs-filed close
+# guard now delegates to the structured parser in shared-phase-filing.sh
+# (sourced indirectly via pulse-merge.sh which loads before this module
+# in pulse-wrapper.sh). The structured parser emits one tab-separated row
+# per *declared* phase:
+#
+#   <phase_num>\t<description>\t<marker>\t<child_ref>
+#
+# matching only the canonical list-form (`- Phase N - desc`) and bold-form
+# (`**Phase N — desc**`) declarations. Subsection headings like
+# `### Phase 1 detail` and prose mentions of "Phase N" are correctly
+# ignored — the over-count that GH#20871 surfaced (the very issue that
+# established this auto-close path was its own first victim).
+#
+# Previously this module redefined `_parse_phases_section` locally as a
+# raw section extractor. That local override has been removed; rows are
+# now counted by line-count over the structured parser's output. See
+# `_try_close_parent_tracker` for the count and unfiled-phase extraction
+# logic.
 #######################################
-_parse_phases_section() {
-	local body="$1"
-	printf '%s' "$body" | awk '
-		BEGIN { in_section = 0 }
-		/^##[[:space:]]+Phases[[:space:]]*$/ {
-			in_section = 1; next
-		}
-		in_section && /^##[[:space:]]/ { exit }
-		in_section { print }
-	'
-	return 0
-}
 
 #######################################
 # t2786: post an idempotent "declared phases not yet filed" nudge comment.
@@ -1454,21 +1472,28 @@ _try_close_parent_tracker() {
 	[[ "$child_count" -ge 2 ]] || return 1
 	[[ "$all_closed" == "true" ]] || return 1
 
-	# t2786: declared-vs-filed guard. If the parent body declares more phases
-	# in a ## Phases section than have been filed as child issues, skip close
-	# and post a one-time nudge. Prevents premature parent close when some
-	# declared phases were never filed as children.
+	# t2786 / GH#20871: declared-vs-filed guard. If the parent body declares
+	# more phases in a ## Phases section than have been filed as child issues,
+	# skip close and post a one-time nudge.
+	#
+	# Counting is over the structured parser's row output (see _parse_phases_section
+	# delegation comment near top of this module). Each row represents one
+	# canonically-declared phase (list-form or bold-form). Rows starting with
+	# a digit form the count; rows with an empty 4th tab field (child_ref)
+	# are unfiled.
 	if [[ -n "$parent_body" ]]; then
 		local _phases_section
 		_phases_section=$(_parse_phases_section "$parent_body")
 		if [[ -n "$_phases_section" ]]; then
 			local _declared_count
-			_declared_count=$(printf '%s' "$_phases_section" | safe_grep_count -E '(^|[[:space:]])Phase[[:space:]]+[0-9]+')
+			_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
 			if [[ "$_declared_count" -gt "$child_count" ]]; then
 				local _unfiled_phases
-				_unfiled_phases=$(printf '%s' "$_phases_section" | \
-					grep -E '(^|[[:space:]])Phase[[:space:]]+[0-9]+' | \
-					grep -vE '#[0-9]+' || true)
+				# Rows where field 4 (child_ref) is empty — phases declared
+				# but not yet linked to a child issue. Format human-readable
+				# for the nudge body: "Phase N: description".
+				_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
+					awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s: %s\n", $1, $2 }')
 				_post_parent_phases_unfiled_nudge \
 					"$slug" "$parent_num" "$_declared_count" "$child_count" "$_unfiled_phases"
 				echo "[pulse-wrapper] Reconcile parent-task: skip close #${parent_num} in ${slug} — declared ${_declared_count} phases but only ${child_count} filed (t2786)" >>"${LOGFILE:-/dev/null}"
