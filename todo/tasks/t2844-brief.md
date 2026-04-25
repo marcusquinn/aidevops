@@ -2,14 +2,14 @@
 mode: subagent
 ---
 
-# t2844: knowledge review gate routine + NMR integration
+# t2844: knowledge plane directory contract + provisioning
 
 ## Pre-flight
 
-- [x] Memory recall: `nmr review gate maintainer approval` → existing `pulse-nmr-approval.sh` and `sudo aidevops approve issue` flow
-- [x] Discovery: `pulse-nmr-approval.sh` and `auto_approve_maintainer_issues` recently iterated; current behaviour stable
-- [x] File refs verified: `.agents/scripts/pulse-nmr-approval.sh`, `.agents/scripts/pulse-wrapper.sh` (routine integration point), `prompts/build.txt` § "Crypto-approval"
-- [x] Tier: `tier:standard` — extends existing NMR pattern; mechanical promotion logic + routine wiring
+- [x] Memory recall: `directory provisioning setup.sh` → no relevant lessons (new framework primitive)
+- [x] Discovery: no recent commits/PRs touch `setup.sh` or `repos.json` provisioning paths in last 48h
+- [x] File refs verified: `.agents/setup.sh`, `~/.config/aidevops/repos.json` (schema in `reference/repos-json-fields.md`)
+- [x] Tier: `tier:standard` — mechanical directory contract + JSON config + provisioning logic; existing pattern (`.agents/` provisioning) to follow
 
 ## Origin
 
@@ -19,77 +19,69 @@ mode: subagent
 
 ## What
 
-The lifecycle stage gate: `inbox → staging → sources` requires per-source review unless source is auto-promoted (maintainer drop or trusted source). This task ships the **review gate routine** that runs on the pulse loop, classifies inbox items by trust ladder, auto-promotes maintainer/trusted drops, and files NMR-gated GitHub issues for untrusted sources. The crypto-approval flow (`sudo aidevops approve issue <N>`) promotes from staging to sources.
+Define and provision the `_knowledge/` directory contract in any aidevops-managed repo, gated by a new `knowledge: off | repo | personal` field in `repos.json`. Ship an `aidevops knowledge init` CLI to flip a repo from `off` → `repo` (or `personal`). Update `setup.sh` to provision the skeleton on `init` and on first `update` after the field is set.
 
 **Concrete deliverables:**
 
-1. `knowledge-review-helper.sh tick` — pulse-driven routine: scan inbox, classify trust, auto-promote or NMR-file
-2. Trust ladder definition in `_config/knowledge.json` (`trusted_emails`, `trusted_bots`, `auto_promote_paths`)
-3. NMR issue body template: includes source meta + sha + a side-by-side preview link
-4. Auto-promotion path: maintainer drops bypass NMR, audit-logged
-5. Crypto-approval hook: extend `aidevops approve issue <N>` to recognise knowledge-review issues and promote staging → sources atomically (move dir + update meta.json `state` field)
-6. Pulse routine entry in `TODO.md` `## Routines` (e.g. `r040`) with `repeat: cron(*/15 * * * *)` and `run: scripts/knowledge-review-helper.sh tick`
+1. Add `knowledge` field to `repos.json` schema with three values
+2. Document the directory contract: `_knowledge/inbox/`, `_knowledge/staging/`, `_knowledge/sources/`, `_knowledge/index/`, `_knowledge/collections/`, `_config/knowledge.json`
+3. Personal plane skeleton at `~/.aidevops/.agent-workspace/knowledge/` (same structure)
+4. `.gitignore` rules for `inbox/`, `staging/` (gitignored — pre-review zone), `sources/` (versioned)
+5. 30MB threshold logic: originals ≥30MB go to `~/.aidevops/.agent-workspace/knowledge-blobs/<repo>/<source-id>/` with hash+pointer in `meta.json`; below threshold, in-repo
+6. Source `meta.json` contract: `{id, kind, source_uri, sha256, ingested_at, ingested_by, sensitivity, trust, blob_path?, size_bytes}`
+7. `aidevops knowledge init` CLI: prompt for `repo` vs `personal`, write to `repos.json`, run provisioning
+8. `setup.sh` integration: skip provisioning when `knowledge: off`; provision on `init` and `update` when set
 
 ## Why
 
-Without a review gate, untrusted content lands directly in versioned `_knowledge/sources/` — no audit trail, no opportunity to redact PII or reject malicious payloads. The trust ladder lets self-drops and trusted sources flow without friction (95% of cases), while still gating untrusted submissions through the existing NMR + crypto-approval infrastructure (no new approval primitives — reuses what's already battle-tested).
+Without a contract, every repo invents its own ingestion directory layout. Without provisioning, users have to remember to create directories and `.gitignore` rules manually — high friction means low adoption. The opt-in `knowledge: off | repo | personal` field keeps existing repos unaffected while making the plane discoverable.
 
-Inbox content is gitignored; staging content is gitignored too. Only after promotion does anything enter git. This is privacy-by-default: even a momentary gitignore misconfig won't leak inbox content.
+`personal` mode (cross-repo, in `~/.aidevops/.agent-workspace/knowledge/`) covers the use case of "knowledge that doesn't belong to any one repo yet" or "knowledge that spans multiple repos" — important for early-stage work where a repo might not yet exist.
 
 ## How (Approach)
 
-1. **Trust ladder spec** — in `_config/knowledge.json`:
-   ```json
-   {
-     "trust": {
-       "auto_promote": { "from_paths": ["~/Drops/maintainer-knowledge/"], "from_emails": ["maintainer@example.com"], "from_bots": ["my-internal-bot"] },
-       "review_gate":  { "from_emails": ["partner@example.com"] },
-       "untrusted":    "*"
-     }
-   }
-   ```
-2. **Review helper** — new `scripts/knowledge-review-helper.sh`:
-   - `tick` subcommand: scan `_knowledge/inbox/*/meta.json`, for each:
-     - Read `trust` field (set by adder per source); if `maintainer` or `trusted` → auto-promote (move to `staging/` then to `sources/`, log audit)
-     - If `untrusted` → file GH issue with NMR label, move to `staging/`
-   - `promote <source-id>` subcommand: explicit promotion (used by approve hook)
-   - `audit-log <action> <source-id>` — append to `_knowledge/index/audit.log` (JSONL)
-3. **NMR issue body template** — embed source kind, sha256, size, ingested_by, and a snippet of extracted text (first 500 chars) so reviewer can decide without leaving GitHub
-4. **Crypto-approval hook** — extend `sudo aidevops approve issue <N>` (or its dispatch path in `pulse-nmr-approval.sh`) to detect knowledge-review issues (label `kind:knowledge-review`) and call `knowledge-review-helper.sh promote <source-id>` after approval
-5. **Pulse integration** — append routine to `TODO.md` Routines section; pulse picks it up on next cycle. Verify with `routine-helper.sh dry-run r040`
-6. **Tests** — covers auto-promotion path, NMR-file path, crypto-approval promotion, audit log correctness, idempotent tick (re-run doesn't double-process)
+1. **Update `repos.json` schema** — add `knowledge: "off" | "repo" | "personal"` (default `"off"` for backwards compat). Update `reference/repos-json-fields.md` with the new field.
+2. **Define directory contract** — write `.agents/aidevops/knowledge-plane.md` documenting:
+   - Directory layout (inbox/staging/sources/index/collections)
+   - `meta.json` schema (with version key for forward-compat)
+   - 30MB threshold rationale
+   - Personal vs repo plane semantics
+3. **Add `knowledge` subcommand to aidevops CLI** — extend `bin/aidevops` (or `cli/main.sh`) with `knowledge init|status` subcommands. `init` prompts for mode, writes to `repos.json`, calls provisioning helper.
+4. **Provisioning helper** — new `scripts/knowledge-helper.sh provision <repo-path>` that creates the directory tree, writes `.gitignore` rules, creates `_config/knowledge.json` with defaults.
+5. **Integrate with `setup.sh`** — extend `_initialize_repo()` and `_update_repo()` to call `knowledge-helper.sh provision` when `knowledge != "off"`.
+6. **Standard `.gitignore` template** — `.agents/templates/knowledge-gitignore.txt` containing the entries for `inbox/`, `staging/` (and a comment explaining why `sources/` is intentionally NOT ignored).
 
 ### Files Scope
 
-- NEW: `.agents/scripts/knowledge-review-helper.sh`
-- NEW: `.agents/templates/knowledge-review-nmr-body.md`
-- EDIT: `.agents/scripts/pulse-nmr-approval.sh` (add knowledge-review detection in `auto_approve_maintainer_issues` or sibling hook)
-- EDIT: `.agents/templates/knowledge-config.json` (add `trust` defaults)
-- EDIT: `TODO.md` (add `r040` routine entry — done in this task's PR)
-- NEW: `.agents/tests/test-knowledge-review.sh`
-- EDIT: `.agents/aidevops/knowledge-plane.md` (review gate section)
+- NEW: `.agents/scripts/knowledge-helper.sh`
+- NEW: `.agents/aidevops/knowledge-plane.md`
+- NEW: `.agents/templates/knowledge-gitignore.txt`
+- NEW: `.agents/templates/knowledge-config.json` (default `_config/knowledge.json`)
+- EDIT: `.agents/cli/aidevops` (or wherever the main CLI dispatcher lives — verify path)
+- EDIT: `.agents/setup.sh` (add knowledge provisioning hook in `_initialize_repo` / `_update_repo`)
+- EDIT: `.agents/reference/repos-json-fields.md` (add `knowledge` field)
+- EDIT: `.agents/AGENTS.md` (add knowledge to plane index in Quick Reference)
 
 ## Acceptance Criteria
 
-- [ ] Maintainer drop in `_knowledge/inbox/` auto-promotes to `_knowledge/sources/` on next pulse tick (audit-logged)
-- [ ] Trusted-email drop creates a `kind:knowledge-review` issue with `auto-dispatch` label (light review prompt)
-- [ ] Untrusted drop creates `kind:knowledge-review` issue with `needs-maintainer-review` label
-- [ ] `sudo aidevops approve issue <N>` on a knowledge-review issue: removes NMR, promotes source to `sources/`, closes issue with summary comment
-- [ ] Audit log at `_knowledge/index/audit.log` (JSONL) records every promotion + decision with timestamp + actor
-- [ ] Routine `r040` runs every 15 min on the pulse, idempotent (re-runs do not duplicate work)
-- [ ] ShellCheck zero violations
-- [ ] Tests pass: `bash .agents/tests/test-knowledge-review.sh`
-- [ ] Documentation: review gate diagram + trust ladder in `.agents/aidevops/knowledge-plane.md`
+- [ ] `aidevops knowledge init` (interactive) writes `knowledge: "repo"` (or `"personal"`) to `~/.config/aidevops/repos.json` for the current repo
+- [ ] After `init`, the directory tree exists at `_knowledge/{inbox,staging,sources,index,collections}` with correct `.gitignore`
+- [ ] `_config/knowledge.json` exists with default sensitivity policy and trust ladder placeholders
+- [ ] Personal mode provisions at `~/.aidevops/.agent-workspace/knowledge/` instead of in-repo
+- [ ] `setup.sh --update` re-provisions if directories were deleted (idempotent)
+- [ ] Existing repos with `knowledge` unset (or `"off"`) are unaffected by `setup.sh --update`
+- [ ] ShellCheck zero violations on new helper
+- [ ] Tests: `tests/test-knowledge-provisioning.sh` covers: fresh init, idempotent update, personal mode, off mode no-op, gitignore correctness
+- [ ] Documentation: `.agents/aidevops/knowledge-plane.md` written with full directory contract spec
 
 ## Dependencies
 
-- **Blocked by:** t2842 (directory contract + meta.json schema), t2843 (CLI surface for knowledge add)
-- **Blocks:** P4 cases plane (case attaches reference promoted sources only)
-- **Soft-blocks:** P5 email channel (reuses review gate for IMAP-fetched content)
+- **Blocked by:** parent t2840 planning PR merge
+- **Blocks:** t2843 (CLI surface needs directory contract), t2845 (sensitivity needs meta.json schema), t2848-t2849 (P1), t2850 (cases plane references knowledge sources)
 
 ## Reference
 
-- Parent brief: `todo/tasks/t2840-brief.md` § "Trust ladder"
-- Pattern to follow: `.agents/scripts/pulse-nmr-approval.sh` § `auto_approve_maintainer_issues` (existing crypto-approval flow)
-- Approval flow doc: `prompts/build.txt` § "Cryptographic issue/PR approval"
-- Routine pattern: existing routines in `TODO.md` `## Routines` and `.agents/reference/routines.md`
+- Parent brief: `todo/tasks/t2840-brief.md` § "Architecture summary" + "Repo provisioning"
+- Pattern to follow: `.agents/setup.sh` — existing `_initialize_repo` and `_update_repo` flow
+- Schema reference: `.agents/reference/repos-json-fields.md`
+- Existing personal-data location convention: `~/.aidevops/.agent-workspace/`
