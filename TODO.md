@@ -3100,3 +3100,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2838 periodic parent-task sub-issue backfill in pulse + --parent-issue flag on claim-task-id #auto-dispatch #enhancement #tooling ref:GH#20888
 
 - [ ] t2839 dispatch-issue CLI follow-ups: status PID liveness + model inference scope alignment #auto-dispatch #framework ref:GH#20889
+
+- [ ] t2840 knowledge / cases / matter framework planes (MVP) #enhancement #framework #parent ref:GH#20892
