@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.2] - 2026-04-25
+
+### Changed
+
+- Maintenance: sync ref:GH#20885 to TODO.md [skip ci]
+- Maintenance: mark t2832 complete (pr:#20877 completed:2026-04-25) [skip ci]
+- union (graph, body, prose) child sources for parent close
+- Maintenance: sync ref:GH#20882 to TODO.md [skip ci]
+- fix _parse_phases_section over-count of ### subsections
+- fix(orphan-recovery) SC2215 broken line continuation silently dropped PR creation args (#20878)
+- Maintenance: sync ref:GH#20879 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.11.1] - 2026-04-25
 
 ### Added
