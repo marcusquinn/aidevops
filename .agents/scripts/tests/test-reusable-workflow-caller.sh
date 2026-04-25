@@ -411,6 +411,43 @@ if [[ -f "$RBG_REUSABLE_WF" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Tests 15-17: GH#20807 — closing-keyword-only semantics in sync-on-pr-merge
+# Verifies the issue-sync-reusable.yml extract step uses word-boundary regex
+# for LINKED_ISSUES and that FOR_REF_ISSUES is passed to Apply closing hygiene.
+# ---------------------------------------------------------------------------
+
+# Test 15: LINKED_ISSUES regex uses \b word-boundary anchors
+if [[ -f "$REUSABLE_WF" ]]; then
+	if grep -qE "grep.*\\\\b.*close\[ds\]\?.*resolve\[ds\]\?" "$REUSABLE_WF" 2>/dev/null; then
+		_pass "LINKED_ISSUES regex uses \\b word-boundary anchors (GH#20807)"
+	else
+		_fail "LINKED_ISSUES regex uses \\b word-boundary anchors (GH#20807)" \
+			"expected '\\b(close[ds]?|...) pattern in LINKED_ISSUES extraction — without \\b, substrings like 'discloses' match 'closes'"
+	fi
+fi
+
+# Test 16: FOR_REF_ISSUES is passed to the Apply closing hygiene step
+if [[ -f "$REUSABLE_WF" ]]; then
+	# The env var should appear in the Apply closing hygiene step env block
+	if grep -qE "FOR_REF_ISSUES:.*steps\.extract\.outputs\.for_ref_issues" "$REUSABLE_WF" 2>/dev/null; then
+		_pass "FOR_REF_ISSUES passed to Apply closing hygiene step (GH#20807)"
+	else
+		_fail "FOR_REF_ISSUES passed to Apply closing hygiene step (GH#20807)" \
+			"expected 'FOR_REF_ISSUES: \${{ steps.extract.outputs.for_ref_issues }}' in Apply closing hygiene env — without this, Ref/For issues could receive status:done"
+	fi
+fi
+
+# Test 17: Apply closing hygiene step has explicit FOR_REF_ISSUES veto guard
+if [[ -f "$REUSABLE_WF" ]]; then
+	if grep -qE "grep.*-xv.*_ref_num|for _ref_num in.*FOR_REF" "$REUSABLE_WF" 2>/dev/null; then
+		_pass "Apply closing hygiene has FOR_REF_ISSUES veto guard (GH#20807)"
+	else
+		_fail "Apply closing hygiene has FOR_REF_ISSUES veto guard (GH#20807)" \
+			"expected 'for _ref_num in \$FOR_REF_ISSUES' filter in Apply closing hygiene — this guard prevents Ref/For issues from receiving status:done even if the keyword regex false-positives"
+	fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 

@@ -417,10 +417,15 @@ jobs:
           fi
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
 
-          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN)
+          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN).
+          # GH#20807: Use canonical closing-keyword-only regex from pulse-merge.sh::_extract_linked_issue.
+          # Changes from prior regex:
+          #   1. \b word-boundary anchors prevent substring matches (e.g. "discloses #NNN" → "closes")
+          #   2. close[ds]?  / fix(es|ed)? / resolve[ds]? match all grammatical forms (closed, fixed, etc.)
+          #   3. [[:space:]]+ (mandatory) instead of [[:space:]]* (zero-or-more) prevents "closes#NNN"
           LINKED_ISSUES=""
           if [[ -n "$PR_BODY" ]]; then
-            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+            LINKED_ISSUES=$(printf '%s' "$PR_BODY" | grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
           fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
@@ -510,6 +515,9 @@ jobs:
           PR_URL: ${{ github.event.pull_request.html_url }}
           LINKED_ISSUES: ${{ steps.extract.outputs.linked_issues }}
           FOUND_ISSUES: ${{ steps.find-issue.outputs.found_issues }}
+          # GH#20807: pass For/Ref issues explicitly so we can guard against false status:done.
+          # "Ref #NNN" / "For #NNN" are non-closing references — must NEVER receive status:done.
+          FOR_REF_ISSUES: ${{ steps.extract.outputs.for_ref_issues }}
           TASK_ID: ${{ steps.extract.outputs.task_id }}
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -517,6 +525,19 @@ jobs:
           # Merge all issue numbers (from PR body + fallback search)
           ALL_ISSUES="$LINKED_ISSUES $FOUND_ISSUES"
           ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | sort -u | { grep -v '^$' || true; } | tr '\n' ' ')
+
+          # GH#20807: Guard — explicitly remove any For/Ref referenced issues from ALL_ISSUES.
+          # Closing-keyword regex may still produce false positives via substring matches
+          # (e.g. "discloses #NNN" would match the "closes" pattern). For/Ref references are
+          # the authoritative "this PR does NOT close that issue" signal from the author, so
+          # they unconditionally veto status:done regardless of what the keyword scan extracted.
+          if [[ -n "${FOR_REF_ISSUES:-}" ]]; then
+            for _ref_num in $FOR_REF_ISSUES; do
+              [[ -z "$_ref_num" ]] && continue
+              ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | grep -xv "$_ref_num" | tr '\n' ' ')
+            done
+            ALL_ISSUES=$(echo "$ALL_ISSUES" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+          fi
 
           if [[ -z "$ALL_ISSUES" ]]; then
             echo "No linked issues found — skipping closing hygiene"
