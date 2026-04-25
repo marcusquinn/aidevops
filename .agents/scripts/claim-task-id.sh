@@ -1144,6 +1144,68 @@ _apply_blocked_by_detection() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# Dispatch-path auto-dispatch warning (t2821)
+#
+# When a caller requests --labels auto-dispatch on a task whose title or
+# description references dispatch-path scripts, emit a non-blocking stderr
+# advisory recommending #parent + no-auto-dispatch + #interactive instead.
+#
+# The canonical pattern list is loaded from self-hosting-files.conf.
+# Falls back to hardcoded defaults when the conf file is absent.
+#
+# Arguments: none (reads TASK_TITLE, TASK_DESCRIPTION, TASK_LABELS globals)
+#
+# Environment:
+#   AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1 — disable entirely
+# ---------------------------------------------------------------------------
+_warn_dispatch_path_auto_dispatch() {
+	[[ "${AIDEVOPS_SKIP_DISPATCH_PATH_CHECK:-}" == "1" ]] && return 0
+
+	# Only fire when auto-dispatch (or auto_dispatch) is in the label set
+	if [[ ",${TASK_LABELS}," != *",auto-dispatch,"* && \
+		",${TASK_LABELS}," != *",auto_dispatch,"* ]]; then
+		return 0
+	fi
+
+	# Load patterns from shared conf file
+	local _conf_file="${AIDEVOPS_DISPATCH_PATH_FILES_CONF:-${SCRIPT_DIR}/../configs/self-hosting-files.conf}"
+	local _patterns=()
+	if [[ -f "$_conf_file" ]]; then
+		while IFS= read -r _line; do
+			[[ -z "$_line" || "$_line" == \#* ]] && continue
+			_patterns+=("$_line")
+		done <"$_conf_file"
+	fi
+	if [[ ${#_patterns[@]} -eq 0 ]]; then
+		_patterns=(
+			"pulse-wrapper.sh" "pulse-dispatch-" "pulse-cleanup.sh"
+			"headless-runtime-helper.sh" "headless-runtime-lib.sh"
+			"worker-lifecycle-common.sh" "shared-dispatch-dedup.sh"
+			"shared-claim-lifecycle.sh" "worker-activity-watchdog.sh"
+		)
+	fi
+
+	# Scan title + description for any dispatch-path pattern
+	local _combined="${TASK_TITLE} ${TASK_DESCRIPTION:-}"
+	local _matched=""
+	local _p
+	for _p in "${_patterns[@]}"; do
+		if printf '%s' "$_combined" | grep -qF "$_p"; then
+			_matched="$_p"
+			break
+		fi
+	done
+	[[ -z "$_matched" ]] && return 0
+
+	log_warn "t2821: dispatch-path file detected ('${_matched}') with auto-dispatch label."
+	log_warn "  Self-hosting tasks have a tautology failure mode — workers fix dispatch via dispatch."
+	log_warn "  Recommended: use #parent #no-auto-dispatch #interactive instead."
+	log_warn "  Override: add #dispatch-path-ok to skip this check."
+	log_warn "  See: reference/auto-dispatch.md \"Dispatch-Path Default (t2821)\""
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -1159,6 +1221,11 @@ main() {
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "DRY RUN mode - no changes will be made"
 	fi
+
+	# t2821: Advisory warning when auto-dispatch is requested on a task that
+	# references dispatch-path scripts. Non-blocking — callers can override
+	# with #dispatch-path-ok or AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1.
+	_warn_dispatch_path_auto_dispatch
 
 	# Framework routing guard: warn if title looks like a framework issue
 	# but we're not in the aidevops repo (GH#5149)
