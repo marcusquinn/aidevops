@@ -3091,7 +3091,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2834 loc badges + readme badges template (reusable workflow + helpers) #auto-dispatch #enhancement ref:GH#20879 pr:#20883 completed:2026-04-25
 
-- [ ] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882
+- [x] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882 pr:#20887 completed:2026-04-25
 
 - [ ] t2837 document BSD awk and ratchet hazards from t2834 in reference docs #auto-dispatch #documentation ref:GH#20885
 
