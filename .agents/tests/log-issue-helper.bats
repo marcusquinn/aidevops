@@ -10,6 +10,12 @@
 #   - _normalize_body_for_fingerprint strips sig footer and source trailers
 #   - Cross-path dedup: same (title, body) filed via two paths hashes the same
 #   - check_recent_filing / record_filing round-trip dedup
+#
+# shellcheck disable=SC2016
+# Single-quoted printf format strings contain literal backticks (escaped \`...\`)
+# and `$N` placeholders that are intentional test fixtures, not unexpanded
+# expressions. Bats fixtures routinely use this pattern; SC2016 is a false
+# positive in this file.
 
 SCRIPT_DIR="$(cd "$(dirname "${BATS_TEST_FILENAME:-$0}")/.." && pwd)/scripts"
 HELPER="${SCRIPT_DIR}/log-issue-helper.sh"
