@@ -10,6 +10,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.0] - 2026-04-25
+
+### Added
+
+- extract pulse-wrapper config block into pulse-wrapper-config.sh (GH#20781) (#20786)
+- migrate 12 style archetypes to DESIGN.md spec v0.1.0 format (#20783)
+- upstream-watch files GitHub issues on detected updates (t2810) (#20784)
+- rebase MERGEABLE PRs with CI failures before routing to fix-worker (t2805) (#20752)
+
+### Changed
+
+- add parent-task close gate to bash-helper _do_close path (#20838)
+- Maintenance: mark t2816 complete (pr:#20814 completed:2026-04-25) [skip ci]
+- Maintenance: mark t2815 complete (pr:#20815 completed:2026-04-25) [skip ci]
+- Maintenance: mark t2818 complete (pr:#20833 completed:2026-04-25) [skip ci]
+- add /setup-git slash command + per-repo setup debt aggregator (Phase 1) (#20814)
+- prevent cascade tier escalation on infra failures (#20815)
+- wire fingerprint dedup into framework-routing-helper, normalize body before hashing (#20824)
+- fix(lifecycle): detect worker_branch_orphan — classify pushed-branch-without-PR and auto-recover (#20833)
+- Maintenance: sync ref:GH#20836 to TODO.md [skip ci]
+- fix(issue-triage-gate): remove title-prefix bypass that lets external contributors evade needs-maintainer-review (#20832)
+- Maintenance: sync ref:GH#20834 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20825 to TODO.md [skip ci]
+- Maintenance: mark t2817 complete (pr:#20823 completed:2026-04-25) [skip ci]
+- extend NOOP_RE to catch Gemini mid-sentence LGTM + zero-findings gate (#20823)
+- Maintenance: sync ref:GH#20819 to TODO.md [skip ci]
+- Maintenance: mark t2799 complete (pr:#20817 completed:2026-04-25) [skip ci]
+- Maintenance: sync ref:GH#20818 to TODO.md [skip ci]
+- split RATE_LIMIT_PATTERNS from NON_REVIEW_PATTERNS in review-bot-gate-helper (#20817)
+- Maintenance: sync ref:GH#20812 to TODO.md [skip ci]
+- align Complexity Impact thresholds — warning at 80-100 lines, mandatory refactor at >100 (#20805)
+- simplify jq abs calculation and remove 2>/dev/null in co-temporality guard (#20806)
+- fix _usage off-by-one and hoist _reusable_escaped out of per-repo loop (#20809)
+- robustify release_interactive_claim_on_merge regex and add pre-guard (#20810)
+- Refactor: consolidate dual gh pr view calls into single call in _attempt_pr_ci_rebase_retry (GH#20793) (#20799)
+- Maintenance: mark t2808 complete (pr:#20783 completed:2026-04-24) [skip ci]
+- Maintenance: mark t2810 complete (pr:#20784 completed:2026-04-24) [skip ci]
+- add log_warning alias to shared-constants.sh (#20779)
+- Maintenance: mark t2813 complete (pr:#20778 completed:2026-04-24) [skip ci]
+- remove deprecated is_rate_limit_comment alias (#20776)
+- Maintenance: mark t2812 complete (pr:#20770 completed:2026-04-24) [skip ci]
+- fix stale feature-flag comment in shared-phase-filing.sh header (#20771)
+- Maintenance: mark t2806 complete (pr:#20772 completed:2026-04-24) [skip ci]
+- detect SYNC_PAT need under rulesets-based branch protection (#20772)
+- Maintenance: mark t2786 complete (pr:#20731 completed:2026-04-24) [skip ci]
+- Maintenance: mark t2803 complete (pr:#20762 completed:2026-04-24) [skip ci]
+- Maintenance: mark t2804 complete (pr:#20767 completed:2026-04-24) [skip ci]
+- add declared-vs-filed guard to _try_close_parent_tracker (#20731)
+- add Complexity Impact brief section to prevent function-complexity gate surprises (#20762)
+- Maintenance: decompose t2804 parent-task into 4 child phases (t2812-t2815) (#20767)
+- Maintenance: mark t2805 complete (pr:#20752 completed:2026-04-24) [skip ci]
+- Maintenance: mark t2811 complete (pr:#20760 completed:2026-04-24) [skip ci]
+- release interactive claim on Ref/For planning PR merges (#20760)
+- Maintenance: mark t2798 complete (pr:#20759 completed:2026-04-24) [skip ci]
+- t2798: add status:available default workflow for bypass-path issue creation (#20759)
+- Maintenance: sync ref:GH#20757 to TODO.md [skip ci]
+
+### Fixed
+
+- closing-keyword-only status:done — word-boundary regex + For/Ref veto guard (#20831)
+- quote repo_slug in log_error and extract slug helper (GH#20796) (#20802)
+- expand heredoc tag regex and gh write boundary anchors (GH#20798) (#20804)
+- restore blank line before '### Files' header in conflict feedback (#20803)
+- sanitize YAML description field and portable mktemp in prompt-guard sub-libraries (#20800)
+- remove mode| from evil-twin YAML pattern to fix dark/light mode false positive (#20777)
+- invert NMR check order and add co-temporality guard to prevent scanner-label ever-NMR trap (GH#20758) (#20761)
+
 ## [3.10.3] - 2026-04-24
 
 ### Changed
