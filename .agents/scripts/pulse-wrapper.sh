@@ -240,6 +240,10 @@ source "${SCRIPT_DIR}/pulse-canonical-maintenance.sh"
 # t2350 (GH#19948): DIRTY-PR sweep runs every 30min after the merge pass.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dirty-pr-sweep.sh"
+# t2865 (GH#20922): canonical-worktree pull conflict auto-recovery.
+# Called from _pulse_refresh_repo on git pull --ff-only failure.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-canonical-recovery.sh"
 
 #######################################
 # SSH agent integration for commit signing (t1882)
@@ -371,9 +375,21 @@ _pulse_refresh_repo() {
 		echo "[pulse-wrapper] _pulse_refresh_repo: git fetch failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
 		return 0
 	}
-	git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1 || {
-		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} (diverged branch?) — proceeding with current checkout" >>"$LOGFILE"
-	}
+	if ! git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
+		# t2865 (GH#20922): pull may fail because of unmerged files (UU state)
+		# or local uncommitted changes that would be overwritten. Try
+		# canonical-recovery (stash + retry pull + pop) before giving up so the
+		# repo doesn't silently degrade across pulse cycles. Recovery is
+		# content-safe (no auto-resolve); on persistent failure it files an
+		# advisory issue and we proceed with the current checkout.
+		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} — attempting canonical-recovery" >>"$LOGFILE"
+		if declare -F pulse_canonical_recover >/dev/null 2>&1; then
+			pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 \
+				|| echo "[pulse-wrapper] _pulse_refresh_repo: canonical-recovery did not heal ${repo_path} — proceeding with current checkout (advisory filed)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] _pulse_refresh_repo: pulse_canonical_recover unavailable — proceeding with current checkout" >>"$LOGFILE"
+		fi
+	fi
 	return 0
 }
 
@@ -809,6 +825,7 @@ _pulse_execute_self_check() {
 		run_canonical_maintenance
 		dirty_pr_sweep_all_repos
 		_pulse_refresh_repo
+		pulse_canonical_recover
 		check_dispatch_backoff
 	)
 	for _sc_fn in "${_sc_expected_fns[@]}"; do
@@ -859,6 +876,7 @@ _pulse_execute_self_check() {
 		_PULSE_ANCILLARY_DISPATCH_LOADED
 		_PULSE_CANONICAL_MAINTENANCE_LOADED
 		_PULSE_DIRTY_PR_SWEEP_LOADED
+		_PULSE_CANONICAL_RECOVERY_LOADED
 	)
 	local _sc_guard _sc_val
 	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
