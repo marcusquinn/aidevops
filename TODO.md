@@ -827,6 +827,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2853 P4c: case milestone + deadline alarming routine #framework parent:t2840 ref:GH#20906
 
+- [ ] t2854 P5a: .eml ingestion handler (kind=email) #framework parent:t2840 #feat #framework ref:GH#20908
+
+- [ ] t2855 P5b: IMAP polling routine + mailboxes.json registry #framework parent:t2840 #feat #framework ref:GH#20909
+
+- [ ] t2856 P5c: email thread reconstruction + filter to case-attach #framework parent:t2840 #feat #framework ref:GH#20910
+
+- [ ] t2857 P6a: aidevops case draft agent (RAG, human-gated, provenance) #framework parent:t2840 #feat #framework ref:GH#20911
+
+- [ ] t2858 P6b: aidevops case chase (template-only, opt-in auto-send) #framework parent:t2840 #feat #framework ref:GH#20912
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22

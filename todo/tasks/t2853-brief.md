@@ -99,3 +99,7 @@ Pulse-based alarming (rather than a separate daemon) reuses existing infrastruct
 - Parent brief: `todo/tasks/t2840-brief.md` § "Pulse-based deadline alarming"
 - Routine pattern: `.agents/reference/routines.md` and existing routines in `TODO.md` `## Routines`
 - ntfy integration pattern (if existing): check `~/.aidevops/agents/scripts/` for any `ntfy-helper.sh`; otherwise use plain `curl -d 'msg' https://ntfy.sh/<topic>`
+
+<!-- aidevops:sig -->
+---
+[aidevops.sh](https://aidevops.sh) v3.11.2 plugin for [OpenCode](https://opencode.ai) v1.14.25 with claude-opus-4-7 spent 2h 18m and 138,839 tokens on this with the user in an interactive session.
