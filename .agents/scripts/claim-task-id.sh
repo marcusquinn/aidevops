@@ -1070,39 +1070,56 @@ _detect_predecessor_refs() {
 	local -a all_refs=()
 	local ref _tmpout
 
+	# Normalise a single extracted ref to canonical form and print it.
+	# t/T + digits → t<NNN>; gh#/GH#/Gh# + digits → GH#<NNN>; bare #NNN unchanged.
+	_normalise_ref() {
+		local r="$1"
+		if [[ "$r" =~ ^[Tt]([0-9]+)$ ]]; then
+			printf 't%s' "${BASH_REMATCH[1]}"
+		elif [[ "$r" =~ ^[Gg][Hh]#([0-9]+)$ ]]; then
+			printf 'GH#%s' "${BASH_REMATCH[1]}"
+		else
+			printf '%s' "$r"
+		fi
+		return 0
+	}
+
 	# Pattern 1: "Follow-up from tNNN" or "Follow-up from GH#NNN"
 	_tmpout=$(printf '%s' "$text" \
 		| grep -oiE 'follow-up from (t[0-9]+|GH#[0-9]+)' \
-		| grep -oE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
+		| grep -oiE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
 	while IFS= read -r ref; do
-		[[ -n "$ref" ]] && all_refs+=("$ref")
+		[[ -z "$ref" ]] && continue
+		all_refs+=("$(_normalise_ref "$ref")")
 	done <<<"$_tmpout"
 
 	# Pattern 2: "tracked in GH#NNN" or "tracked in #NNN"
 	_tmpout=$(printf '%s' "$text" \
 		| grep -oiE 'tracked in (GH#[0-9]+|#[0-9]+)' \
-		| grep -oE '(GH#[0-9]+|#[0-9]+)' 2>/dev/null || true)
+		| grep -oiE '(GH#[0-9]+|#[0-9]+)' 2>/dev/null || true)
 	while IFS= read -r ref; do
 		[[ -z "$ref" ]] && continue
-		# Normalise bare #NNN → GH#NNN
+		# Normalise bare #NNN → GH#NNN first, then canonical-case normalise
 		[[ "$ref" =~ ^#[0-9]+$ ]] && ref="GH${ref}"
-		all_refs+=("$ref")
+		all_refs+=("$(_normalise_ref "$ref")")
 	done <<<"$_tmpout"
 
 	# Pattern 3: explicit "blocked-by:tNNN" or "blocked-by: GH#NNN" (pass-through)
 	_tmpout=$(printf '%s' "$text" \
 		| grep -oiE 'blocked-by:?[[:space:]]*(t[0-9]+|GH#[0-9]+)' \
-		| grep -oE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
+		| grep -oiE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
 	while IFS= read -r ref; do
-		[[ -n "$ref" ]] && all_refs+=("$ref")
+		[[ -z "$ref" ]] && continue
+		all_refs+=("$(_normalise_ref "$ref")")
 	done <<<"$_tmpout"
 
 	# Pattern 4: "after tNNN ships/merges/lands"
 	_tmpout=$(printf '%s' "$text" \
 		| grep -oiE 'after t[0-9]+ (ships|merges|lands)' \
-		| grep -oE 't[0-9]+' 2>/dev/null || true)
+		| grep -oiE 't[0-9]+' 2>/dev/null || true)
 	while IFS= read -r ref; do
-		[[ -n "$ref" ]] && all_refs+=("$ref")
+		[[ -z "$ref" ]] && continue
+		all_refs+=("$(_normalise_ref "$ref")")
 	done <<<"$_tmpout"
 
 	[[ ${#all_refs[@]} -eq 0 ]] && return 0
