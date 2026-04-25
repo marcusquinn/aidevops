@@ -3102,3 +3102,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2839 dispatch-issue CLI follow-ups: status PID liveness + model inference scope alignment #auto-dispatch #framework ref:GH#20889
 
 - [ ] t2840 knowledge / cases / matter framework planes (MVP) #enhancement #framework #parent ref:GH#20892
+
+- [ ] t2841 pulse-issue-reconcile: _b_nums unbound when issue body has no children-section ref:GH#20893
