@@ -26,6 +26,8 @@
 #                              or value from .aidevops.json "counter_branch" key)
 #   --skip-label-validation    Skip pre-flight label existence check (useful for
 #                              bulk --count N allocation or when gh is rate-limited)
+#   --no-blocked-by            Suppress auto-detection of predecessor references
+#                              and blocked-by tag emission (GH#20834)
 #
 # Project-level config (.aidevops.json in repo root):
 #   {
@@ -123,9 +125,12 @@ OFFLINE_MODE=false
 DRY_RUN=false
 NO_ISSUE=false
 SKIP_LABEL_VALIDATION=false
+NO_BLOCKED_BY=false
 TASK_TITLE=""
 TASK_DESCRIPTION=""
 TASK_LABELS=""
+# GH#20834: populated by _detect_predecessor_refs; read by _ensure_todo_entry_written
+_CLAIM_BLOCKED_BY_REFS=""
 REPO_PATH="$PWD"
 ALLOC_COUNT=1
 OFFLINE_OFFSET=100
@@ -242,6 +247,10 @@ parse_args() {
 			;;
 		--skip-label-validation)
 			SKIP_LABEL_VALIDATION=true
+			shift
+			;;
+		--no-blocked-by)
+			NO_BLOCKED_BY=true
 			shift
 			;;
 		--dry-run)
@@ -863,6 +872,11 @@ _main_output_results() {
 		echo "ref=none"
 	fi
 
+	# GH#20834: emit blocked-by refs when auto-detected from description
+	if [[ -n "${_CLAIM_BLOCKED_BY_REFS:-}" ]]; then
+		echo "blocked_by=${_CLAIM_BLOCKED_BY_REFS}"
+	fi
+
 	return 0
 }
 
@@ -1030,6 +1044,106 @@ _pre_claim_discovery_pass() {
 	return $?
 }
 
+# ---------------------------------------------------------------------------
+# Predecessor reference detection (GH#20834)
+#
+# Scans description text for prose references to predecessor tasks and
+# emits a comma-separated list of IDs for automatic blocked-by tagging.
+#
+# Recognised patterns (case-insensitive):
+#   1. "Follow-up from tNNN" / "Follow-up from GH#NNN"
+#   2. "tracked in GH#NNN" / "tracked in #NNN"
+#   3. "blocked-by: tNNN" / "blocked-by:GH#NNN"  (explicit pass-through)
+#   4. "after tNNN ships/merges/lands"
+#
+# Outputs comma-separated IDs on stdout. Empty output means no refs found.
+# Bare "#NNN" references in pattern 2 are normalised to "GH#NNN".
+#
+# The caller stores the result in the global _CLAIM_BLOCKED_BY_REFS.
+# _ensure_todo_entry_written reads _CLAIM_BLOCKED_BY_REFS to append the
+# blocked-by tag to the TODO.md line it writes.
+# ---------------------------------------------------------------------------
+_detect_predecessor_refs() {
+	local text="$1"
+	[[ -z "$text" ]] && return 0
+
+	local -a all_refs=()
+	local ref _tmpout
+
+	# Pattern 1: "Follow-up from tNNN" or "Follow-up from GH#NNN"
+	_tmpout=$(printf '%s' "$text" \
+		| grep -oiE 'follow-up from (t[0-9]+|GH#[0-9]+)' \
+		| grep -oE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] && all_refs+=("$ref")
+	done <<<"$_tmpout"
+
+	# Pattern 2: "tracked in GH#NNN" or "tracked in #NNN"
+	_tmpout=$(printf '%s' "$text" \
+		| grep -oiE 'tracked in (GH#[0-9]+|#[0-9]+)' \
+		| grep -oE '(GH#[0-9]+|#[0-9]+)' 2>/dev/null || true)
+	while IFS= read -r ref; do
+		[[ -z "$ref" ]] && continue
+		# Normalise bare #NNN → GH#NNN
+		[[ "$ref" =~ ^#[0-9]+$ ]] && ref="GH${ref}"
+		all_refs+=("$ref")
+	done <<<"$_tmpout"
+
+	# Pattern 3: explicit "blocked-by:tNNN" or "blocked-by: GH#NNN" (pass-through)
+	_tmpout=$(printf '%s' "$text" \
+		| grep -oiE 'blocked-by:?[[:space:]]*(t[0-9]+|GH#[0-9]+)' \
+		| grep -oE '(t[0-9]+|GH#[0-9]+)' 2>/dev/null || true)
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] && all_refs+=("$ref")
+	done <<<"$_tmpout"
+
+	# Pattern 4: "after tNNN ships/merges/lands"
+	_tmpout=$(printf '%s' "$text" \
+		| grep -oiE 'after t[0-9]+ (ships|merges|lands)' \
+		| grep -oE 't[0-9]+' 2>/dev/null || true)
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] && all_refs+=("$ref")
+	done <<<"$_tmpout"
+
+	[[ ${#all_refs[@]} -eq 0 ]] && return 0
+
+	# Deduplicate preserving insertion order.
+	local -a deduped=()
+	local seen=""
+	for ref in "${all_refs[@]}"; do
+		if [[ ",${seen}," != *",${ref},"* ]]; then
+			deduped+=("$ref")
+			seen="${seen:+${seen},}${ref}"
+		fi
+	done
+
+	# Output comma-separated
+	local csv=""
+	for ref in "${deduped[@]}"; do
+		csv="${csv:+${csv},}${ref}"
+	done
+	printf '%s' "$csv"
+	return 0
+}
+
+# _apply_blocked_by_detection — populate _CLAIM_BLOCKED_BY_REFS from description.
+# Skipped when NO_BLOCKED_BY=true, TASK_DESCRIPTION is empty, or dry-run.
+# Emits advisory to stderr when predecessor refs are found.
+_apply_blocked_by_detection() {
+	_CLAIM_BLOCKED_BY_REFS=""
+	[[ "$NO_BLOCKED_BY" == "true" ]] && return 0
+	[[ -z "$TASK_DESCRIPTION" ]] && return 0
+	[[ "$DRY_RUN" == "true" ]] && return 0
+
+	local detected
+	detected=$(_detect_predecessor_refs "$TASK_DESCRIPTION") || true
+	[[ -z "$detected" ]] && return 0
+
+	_CLAIM_BLOCKED_BY_REFS="$detected"
+	log_warn "GH#20834: Detected predecessor reference(s) in description; auto-emitting blocked-by:${detected}. Override with --no-blocked-by."
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -1037,6 +1151,10 @@ main() {
 	# Load project config after parse_args so REPO_PATH is resolved,
 	# but before detect_platform so REMOTE_NAME is set correctly.
 	load_project_config "$REPO_PATH"
+
+	# GH#20834: detect predecessor refs in description and populate
+	# _CLAIM_BLOCKED_BY_REFS for use by _ensure_todo_entry_written.
+	_apply_blocked_by_detection
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "DRY RUN mode - no changes will be made"

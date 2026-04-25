@@ -517,6 +517,12 @@ _ensure_todo_entry_written() {
 	[[ -z "$safe_desc" ]] && safe_desc="(no description)"
 	local todo_line="- [ ] ${task_id} ${safe_desc}"
 	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
+	# GH#20834: append blocked-by tag when predecessor refs were auto-detected.
+	# _CLAIM_BLOCKED_BY_REFS is populated by _apply_blocked_by_detection in
+	# claim-task-id.sh before _ensure_todo_entry_written is called.
+	if [[ -n "${_CLAIM_BLOCKED_BY_REFS:-}" ]]; then
+		todo_line="${todo_line} blocked-by:${_CLAIM_BLOCKED_BY_REFS}"
+	fi
 	todo_line="${todo_line} ref:GH#${issue_num}"
 
 	_insert_todo_line "$todo_file" "$todo_line"
