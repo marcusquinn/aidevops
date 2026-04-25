@@ -316,7 +316,34 @@ log_framework_issue() {
 		return 1
 	fi
 
-	# Dedup: search for existing issues with similar title
+	# Build body (before sig footer, so fingerprint is stable across paths)
+	if [[ -z "$body" ]]; then
+		body="$title"
+	fi
+
+	# Add source context if provided — BEFORE dedup so it's part of the identity
+	if [[ -n "$source_repo" ]]; then
+		body="${body}
+
+---
+*Detected by framework-routing-helper in \`${source_repo}\`.*"
+	fi
+
+	# Source canonical fingerprint dedup (shared state file, cross-path dedup)
+	# shellcheck source=./log-issue-helper.sh
+	source "${SCRIPT_DIR}/log-issue-helper.sh"
+
+	local dedup_result
+	dedup_result=$(check_recent_filing "$title" "$body" || true)
+	if [[ "$dedup_result" == DUPLICATE:* ]]; then
+		local dup_num="${dedup_result#DUPLICATE:}"
+		dup_num="${dup_num%%:*}"
+		log_info "Fingerprint duplicate within window: #${dup_num}"
+		echo "https://github.com/${slug}/issues/${dup_num}"
+		return 2
+	fi
+
+	# Secondary dedup: search-based (catches duplicates outside the dedup window)
 	local search_terms
 	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
 	if [[ -n "$search_terms" ]]; then
@@ -325,39 +352,32 @@ log_framework_issue() {
 			--state open --search "$search_terms" \
 			--json number,url --limit 1 -q '.[0].url' 2>/dev/null || echo "")
 		if [[ -n "$existing" && "$existing" != "null" ]]; then
-			log_info "Duplicate found: $existing"
+			log_info "Duplicate found (search): $existing"
 			echo "$existing"
 			return 2
 		fi
 	fi
 
-	# Build body
-	if [[ -z "$body" ]]; then
-		body="$title"
-	fi
-
-	# Add source context if provided
-	if [[ -n "$source_repo" ]]; then
-		body="${body}
-
----
-*Detected by framework-routing-helper in \`${source_repo}\`.*"
-	fi
-
-	# Append signature footer
+	# Append signature footer only for the API call body (not for fingerprinting)
+	local body_for_api="$body"
 	local sig_footer=""
 	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
-	body="${body}${sig_footer}"
+	body_for_api="${body}${sig_footer}"
 
 	# Create the issue
 	local issue_url
 	if ! issue_url=$(gh_create_issue --repo "$slug" \
 		--title "$title" \
-		--body "$body" \
+		--body "$body_for_api" \
 		--label "$labels" 2>&1); then
 		log_error "Failed to create issue: $issue_url"
 		return 1
 	fi
+
+	# Record fingerprint for future cross-path dedup (body without sig footer)
+	local issue_number
+	issue_number=$(printf '%s' "$issue_url" | sed 's|.*/||')
+	record_filing "$title" "$body" "$issue_number"
 
 	log_success "Framework issue created: $issue_url"
 	echo "$issue_url"

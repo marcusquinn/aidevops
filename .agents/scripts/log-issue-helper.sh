@@ -204,10 +204,32 @@ _log_issue_dedup_window() {
 	return 0
 }
 
+_normalize_body_for_fingerprint() {
+	local body="$1"
+	# Strip aidevops sig footer (everything from <!-- aidevops:sig --> to end)
+	body=$(printf '%s' "$body" | awk '/<!-- aidevops:sig -->/{exit} {print}')
+	# Strip "*Detected by ... in `...`.*" source-context trailer lines
+	# shellcheck disable=SC2016
+	body=$(printf '%s' "$body" | sed '/^\*Detected by .*\*[[:space:]]*$/d')
+	# Strip trailing blank lines and standalone "---" separator lines
+	body=$(printf '%s' "$body" | awk '
+		{lines[NR]=$0}
+		END {
+			n=NR
+			while (n>0 && (lines[n]=="" || lines[n]=="---")) n--
+			for (i=1; i<=n; i++) print lines[i]
+		}
+	')
+	printf '%s' "$body"
+	return 0
+}
+
 _compute_issue_fingerprint() {
 	local title="$1"
 	local body="$2"
-	local input="${title}|${body}"
+	local normalized_body
+	normalized_body=$(_normalize_body_for_fingerprint "$body")
+	local input="${title}|${normalized_body}"
 	local hash=""
 
 	if command -v shasum &>/dev/null; then
@@ -473,4 +495,6 @@ EOF
 	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+	main "$@"
+fi
