@@ -3145,7 +3145,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #bug #framework ref:GH#20917
 
-- [ ] t2864 pre-write function complexity advisory hook #auto-dispatch #framework #quality ref:GH#20921
+- [x] t2864 pre-write function complexity advisory hook #auto-dispatch #framework #quality ref:GH#20921 pr:#20924 completed:2026-04-25
 
 - [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920
 
