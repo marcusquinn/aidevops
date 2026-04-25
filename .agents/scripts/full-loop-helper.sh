@@ -950,13 +950,22 @@ _derive_pr_title_prefix() {
 # auto-derive path idempotent so callers can safely include a prefix in
 # the commit message without producing a doubled title.
 #
+# Prefix validation (GH#20858): when commit_message already has a prefix,
+# verify it matches the canonical prefix for issue_number. A mismatched
+# prefix (e.g. "t999: ..." for issue that maps to t456) silently breaks
+# TODO auto-completion (issue-sync regex anchored on ^tNNN) and attribution.
+# When a mismatch is detected, the canonical prefix is substituted and a
+# warning is emitted to stderr. Pass-through is preserved when issue_number
+# is empty (can't validate) or when the prefix already matches.
+#
 # Args:
 #   $1 - issue_number
 #   $2 - commit_message
 #   $3 - todo_file (optional; passed through to _derive_pr_title_prefix)
 # Outputs:
-#   commit_message (verbatim) when it already has a tNNN: or GH#NNN: prefix
-#   <derived_prefix>: <commit_message> otherwise
+#   commit_message (verbatim) when it already has a correct tNNN: or GH#NNN: prefix
+#   <canonical_prefix>: <body> when prefix is present but mismatched
+#   <derived_prefix>: <commit_message> when no prefix is present
 # Returns: 0 always.
 _compose_pr_title() {
 	local issue_number="${1:-}"
@@ -964,7 +973,23 @@ _compose_pr_title() {
 	local todo_file="${3:-}"
 
 	if [[ "$commit_message" =~ ^(t[0-9]+|GH#[0-9]+): ]]; then
-		printf '%s\n' "$commit_message"
+		local existing_prefix="${BASH_REMATCH[1]}"
+		# Skip validation when issue_number is unknown — cannot derive canonical.
+		if [[ -z "$issue_number" ]]; then
+			printf '%s\n' "$commit_message"
+			return 0
+		fi
+		local canonical_prefix=""
+		canonical_prefix="$(_derive_pr_title_prefix "$issue_number" "$todo_file")"
+		if [[ "$existing_prefix" == "$canonical_prefix" ]]; then
+			printf '%s\n' "$commit_message"
+		else
+			# Strip the mismatched prefix (everything up to and including the first ": ")
+			# and substitute the canonical one so issue-sync auto-completion works.
+			local body="${commit_message#*: }"
+			print_warning "_compose_pr_title: prefix mismatch — commit has '${existing_prefix}:' but issue #${issue_number} maps to '${canonical_prefix}:'. Using canonical prefix."
+			printf '%s: %s\n' "$canonical_prefix" "$body"
+		fi
 		return 0
 	fi
 
