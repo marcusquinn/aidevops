@@ -275,10 +275,34 @@ echo ""
 echo "${TEST_BLUE}=== Part B: structural wiring tests ===${TEST_NC}"
 echo ""
 
-# B1: _parse_phases_section defined
+# B1: GH#20871 — _parse_phases_section is now canonically defined in
+# shared-phase-filing.sh (structured row parser). pulse-issue-reconcile.sh
+# previously defined its own raw-section extractor under the same name; the
+# duplicate over-counted by including ### subsections, defeating the t2786
+# declared-vs-filed close guard. Verify (a) the local override is gone, and
+# (b) the shared parser is sourced as a dependency so the test harness sees
+# the canonical version.
+SHARED_TARGET="$SCRIPT_DIR/shared-phase-filing.sh"
+
+# B1a: local _parse_phases_section override is REMOVED from reconcile module
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE '^_parse_phases_section\(\) \{' "$TARGET" 2>/dev/null; then
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: B1a: local _parse_phases_section override should be removed from $TARGET"
+else
+	echo "${TEST_GREEN}PASS${TEST_NC}: B1a: local _parse_phases_section override removed from reconcile module"
+fi
+
+# B1b: canonical _parse_phases_section is defined in shared-phase-filing.sh
 assert_grep \
-	"B1: _parse_phases_section function defined in source" \
+	"B1b: _parse_phases_section canonically defined in shared-phase-filing.sh" \
 	'^_parse_phases_section\(\) \{' \
+	"$SHARED_TARGET"
+
+# B1c: reconcile module sources shared-phase-filing.sh as an explicit dep
+assert_grep_fixed \
+	"B1c: reconcile module sources shared-phase-filing.sh dependency" \
+	'shared-phase-filing.sh' \
 	"$TARGET"
 
 # B2: _post_parent_phases_unfiled_nudge defined
