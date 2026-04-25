@@ -325,11 +325,30 @@ _detect_self_hosting_task() {
 		return 0
 	fi
 
-	# Check if body references any dispatch-path files
+	# Scope scan to implementation sections only (## Files to modify / ## How).
+	# Scanning the full body risks matching incidental mentions (e.g. in narrative
+	# prose or rationale text) that do not indicate the issue actually modifies the
+	# dispatch path — leading to unintended model:opus-4-7 escalation.
+	# Extract content after the first occurrence of either heading up to the next
+	# top-level heading (or end of body). Both headings are tried and concatenated.
+	local scan_target=""
+	local files_section how_section
+	files_section=$(printf '%s' "$issue_body" | \
+		awk '/^## Files to modify/{found=1; next} found && /^## /{found=0} found{print}')
+	how_section=$(printf '%s' "$issue_body" | \
+		awk '/^## How/{found=1; next} found && /^## /{found=0} found{print}')
+	scan_target="${files_section}${how_section}"
+
+	# Fall back to full body if neither section is present (older/manual issue format)
+	if [[ -z "$scan_target" ]]; then
+		scan_target="$issue_body"
+	fi
+
+	# Check if implementation sections reference any dispatch-path files
 	local matched_pattern=""
 	local pattern
 	for pattern in "${_SELF_HOSTING_PATTERNS[@]}"; do
-		if printf '%s' "$issue_body" | grep -qF "$pattern"; then
+		if printf '%s' "$scan_target" | grep -qF "$pattern"; then
 			matched_pattern="$pattern"
 			break
 		fi
@@ -358,12 +377,16 @@ _detect_self_hosting_task() {
 		return 0
 	fi
 
-	# Idempotency check: look for existing comment marker
+	# Idempotency check: look for existing comment marker.
+	# Use --paginate so all comment pages are fetched — without it the first-page
+	# limit (30 comments) can cause the marker to be missed on active issues,
+	# leading to duplicate audit comments.  Each page emits one integer via jq;
+	# we sum them to get a total match count.
 	local marker='<!-- self-hosting-tier-override -->'
 	local existing=""
-	existing=$(gh api "repos/${slug}/issues/${issue_number}/comments" \
+	existing=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments" \
 		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
-		2>/dev/null) || existing=""
+		2>/dev/null | awk '{s+=$1} END{print s+0}') || existing="0"
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		_log "INFO" "#${issue_number}: self-hosting comment already posted — ensuring label"
 		# Ensure label even if comment exists (in case label was manually removed)
