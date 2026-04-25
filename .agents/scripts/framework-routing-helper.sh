@@ -270,6 +270,87 @@ get_aidevops_slug() {
 #   0 = issue created (issue URL on stdout)
 #   1 = error
 #   2 = duplicate found (existing issue URL on stdout)
+
+# Shared output variables for helpers below (avoid subshell isolation)
+_LFI_DEDUP_URL=""
+_LFI_ISSUE_URL=""
+
+# _lfi_check_dedup — fingerprint + search dedup for log_framework_issue
+# Arguments: "$slug" "$title" "$body"
+# Sets _LFI_DEDUP_URL on duplicate. Returns: 0=no dup, 2=dup found.
+_lfi_check_dedup() {
+	local slug="$1"
+	local title="$2"
+	local body="$3"
+	_LFI_DEDUP_URL=""
+
+	# Source canonical fingerprint dedup (shared state file, cross-path dedup)
+	# shellcheck source=./log-issue-helper.sh
+	source "${SCRIPT_DIR}/log-issue-helper.sh"
+
+	local dedup_result
+	dedup_result=$(check_recent_filing "$title" "$body" || true)
+	if [[ "$dedup_result" == DUPLICATE:* ]]; then
+		local dup_num="${dedup_result#DUPLICATE:}"
+		dup_num="${dup_num%%:*}"
+		log_info "Fingerprint duplicate within window: #${dup_num}"
+		_LFI_DEDUP_URL="https://github.com/${slug}/issues/${dup_num}"
+		return 2
+	fi
+
+	# Secondary dedup: search-based (catches duplicates outside the dedup window)
+	local search_terms
+	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+	if [[ -n "$search_terms" ]]; then
+		local existing
+		existing=$(gh issue list --repo "$slug" \
+			--state open --search "$search_terms" \
+			--json number,url --limit 1 -q '.[0].url' 2>/dev/null || echo "")
+		if [[ -n "$existing" && "$existing" != "null" ]]; then
+			log_info "Duplicate found (search): $existing"
+			_LFI_DEDUP_URL="$existing"
+			return 2
+		fi
+	fi
+
+	return 0
+}
+
+# _lfi_create_and_record — create issue via gh, append sig footer, record fingerprint
+# Arguments: "$slug" "$title" "$body" "$labels"
+# Sets _LFI_ISSUE_URL on success. Returns: 0=created, 1=error.
+# Requires: log-issue-helper.sh already sourced (via _lfi_check_dedup).
+_lfi_create_and_record() {
+	local slug="$1"
+	local title="$2"
+	local body="$3"
+	local labels="$4"
+	_LFI_ISSUE_URL=""
+
+	# Append signature footer for API call (body without sig used for fingerprinting)
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
+	local body_for_api="${body}${sig_footer}"
+
+	local issue_url
+	if ! issue_url=$(gh_create_issue --repo "$slug" \
+		--title "$title" \
+		--body "$body_for_api" \
+		--label "$labels" 2>&1); then
+		log_error "Failed to create issue: $issue_url"
+		return 1
+	fi
+
+	# Record fingerprint for future cross-path dedup (body without sig footer)
+	local issue_number
+	issue_number=$(printf '%s' "$issue_url" | sed 's|.*/||')
+	record_filing "$title" "$body" "$issue_number"
+
+	log_success "Framework issue created: $issue_url"
+	_LFI_ISSUE_URL="$issue_url"
+	return 0
+}
+
 log_framework_issue() {
 	local title="" body="" labels="bug" source_repo=""
 
@@ -329,58 +410,17 @@ log_framework_issue() {
 *Detected by framework-routing-helper in \`${source_repo}\`.*"
 	fi
 
-	# Source canonical fingerprint dedup (shared state file, cross-path dedup)
-	# shellcheck source=./log-issue-helper.sh
-	source "${SCRIPT_DIR}/log-issue-helper.sh"
-
-	local dedup_result
-	dedup_result=$(check_recent_filing "$title" "$body" || true)
-	if [[ "$dedup_result" == DUPLICATE:* ]]; then
-		local dup_num="${dedup_result#DUPLICATE:}"
-		dup_num="${dup_num%%:*}"
-		log_info "Fingerprint duplicate within window: #${dup_num}"
-		echo "https://github.com/${slug}/issues/${dup_num}"
+	# Dedup check (fingerprint + search); sets _LFI_DEDUP_URL on duplicate
+	if ! _lfi_check_dedup "$slug" "$title" "$body"; then
+		echo "$_LFI_DEDUP_URL"
 		return 2
 	fi
 
-	# Secondary dedup: search-based (catches duplicates outside the dedup window)
-	local search_terms
-	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
-	if [[ -n "$search_terms" ]]; then
-		local existing
-		existing=$(gh issue list --repo "$slug" \
-			--state open --search "$search_terms" \
-			--json number,url --limit 1 -q '.[0].url' 2>/dev/null || echo "")
-		if [[ -n "$existing" && "$existing" != "null" ]]; then
-			log_info "Duplicate found (search): $existing"
-			echo "$existing"
-			return 2
-		fi
-	fi
-
-	# Append signature footer only for the API call body (not for fingerprinting)
-	local body_for_api="$body"
-	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
-	body_for_api="${body}${sig_footer}"
-
-	# Create the issue
-	local issue_url
-	if ! issue_url=$(gh_create_issue --repo "$slug" \
-		--title "$title" \
-		--body "$body_for_api" \
-		--label "$labels" 2>&1); then
-		log_error "Failed to create issue: $issue_url"
+	# Create the issue and record fingerprint; sets _LFI_ISSUE_URL on success
+	if ! _lfi_create_and_record "$slug" "$title" "$body" "$labels"; then
 		return 1
 	fi
-
-	# Record fingerprint for future cross-path dedup (body without sig footer)
-	local issue_number
-	issue_number=$(printf '%s' "$issue_url" | sed 's|.*/||')
-	record_filing "$title" "$body" "$issue_number"
-
-	log_success "Framework issue created: $issue_url"
-	echo "$issue_url"
+	echo "$_LFI_ISSUE_URL"
 	return 0
 }
 
