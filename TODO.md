@@ -3060,3 +3060,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2816 /setup-git slash command — guided per-repo platform secret setup with toast surfacing (Phase 1) #enhancement #framework #security ref:GH#20812
 
 - [ ] t2817 post-merge-review-scanner: extend NOOP_RE to catch Gemini mid-sentence LGTM phrasing + zero-findings gate #auto-dispatch ref:GH#20818
+
+- [ ] t2818 fix(lifecycle): detect worker_branch_orphan — pushed branch without PR is currently misclassified as worker_complete #auto-dispatch #bug ref:GH#20819
