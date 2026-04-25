@@ -515,6 +515,21 @@ _do_close() {
 	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
 	[[ -z "$task_with_notes" ]] && task_with_notes="$task_line"
 
+	# GH#20828: probe parent-task label before closing. The workflow path's
+	# title-fallback close was guarded by t2137 (issue-sync-reusable.yml:480-484);
+	# this is the parallel guard for the bash-helper close path that runs from
+	# TODO.md `[x]` pushes. A `parent-task`-labelled issue must stay open until
+	# its terminal-phase PR merges with `Closes #NNN` (per the t2046 For/Ref
+	# convention). Skip the close + skip status:done; the TODO entry is left
+	# unchanged so a human can decide whether the `[x]` was premature or
+	# whether the parent should be closed via terminal PR.
+	local issue_labels
+	issue_labels=$(gh api "repos/${repo}/issues/${issue_number}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
+	if echo "$issue_labels" | grep -qw "parent-task"; then
+		print_info "Skipping #$issue_number ($task_id): parent-task label set — parent issues close via terminal-phase PR with explicit Closes #NNN, not TODO [x] (GH#20828)"
+		return 0
+	fi
+
 	pr_info=$(_find_closing_pr "$task_with_notes" "$task_id" "$repo" 2>/dev/null || echo "")
 	if [[ -n "$pr_info" ]]; then
 		pr_num="${pr_info%%|*}"
