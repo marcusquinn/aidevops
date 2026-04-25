@@ -26,6 +26,7 @@ New to aidevops? Type `/onboarding`.
 
 **Write-time quality hooks:**
 - **Claude Code**: A `PreToolUse` git safety hook is installed via `~/.aidevops/hooks/git_safety_guard.py` — blocks edits on main/master. Install with `install-hooks-helper.sh install`. Linting is prompt-level (see build.txt "Write-Time Quality Enforcement").
+- **Claude Code**: A `PreToolUse` complexity advisory hook is installed via `~/.aidevops/hooks/complexity_advisory_pre_edit.py` (t2864) — emits an advisory (non-blocking) when a proposed bash function body exceeds 80 lines, the 40% buffer below the 100-line `function-complexity` CI gate. Covers `Edit` and `Write` tool calls on `*.sh`/`*.bash`/`*.zsh` files. Install with `install-hooks-helper.sh install`. Threshold configurable via `AIDEVOPS_COMPLEXITY_WARN_THRESHOLD` env var.
 - **OpenCode**: `opencode-aidevops` plugin provides `tool.execute.before`/`tool.execute.after` hooks for the git safety check.
 - **Neither available**: Enforce via prompt-level discipline and explicit tool calls (see build.txt "Write-Time Quality Enforcement").
 
