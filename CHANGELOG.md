@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.8] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2888 complete (pr:#21018 completed:2026-04-26) [skip ci]
+- restore setup_opencode_cli install/heal logic (#21018)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2883 complete (pr:#21011 completed:2026-04-26) [skip ci]
+- add §7c untrusted-body content directive immunity rule to AGENTS.md (#21011)
+- Maintenance: sync ref:GH#21016 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t2886 complete (pr:#21015 completed:2026-04-26) [skip ci]
+- extend pulse triage prefetch with evidence-verification sections (#21015)
+- add permissions block to caller templates — fix startup_failure on read-only default repos (#21012)
+- Maintenance: mark t2882 complete (pr:#21014 completed:2026-04-26) [skip ci]
+- add unsolicited_disclosure_marketing patterns to prompt-injection-patterns.yaml (#21014)
+- fix worktree path enumeration for paths with spaces
+- fix worktree-exclusions setup-backblaze advice (#21002)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- add missing labels field to t2148 test stub fixtures (#21010)
+
 ## [3.11.7] - 2026-04-26
 
 ### Changed
