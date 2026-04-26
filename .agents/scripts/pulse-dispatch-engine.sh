@@ -37,6 +37,25 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# These vars are normally set by pulse-wrapper.sh bootstrap and pulse-wrapper-config.sh.
+# Guard them here so dispatch engine functions survive standalone sourcing (test
+# harnesses, pulse-merge-routine.sh, or any caller that doesn't run the full bootstrap).
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+: "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
+: "${PIDFILE:=${HOME}/.aidevops/logs/pulse.pid}"
+: "${PRE_RUN_STAGE_TIMEOUT:=600}"
+: "${PULSE_ACTIVE_REFILL_INTERVAL:=120}"
+: "${PULSE_ACTIVE_REFILL_IDLE_MIN:=60}"
+: "${PULSE_ACTIVE_REFILL_STALL_MIN:=120}"
+: "${PULSE_BACKFILL_MAX_ATTEMPTS:=3}"
+: "${PULSE_LAUNCH_GRACE_SECONDS:=35}"
+: "${PULSE_LAUNCH_SETTLE_BATCH_MAX:=5}"
+: "${PULSE_LLM_DAILY_INTERVAL:=86400}"
+: "${PULSE_LLM_STALL_THRESHOLD:=3600}"
+: "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
+: "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
+
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
 # shellcheck source=pulse-rate-limit-circuit-breaker.sh
 if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh" ]]; then

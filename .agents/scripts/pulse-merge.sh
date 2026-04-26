@@ -68,6 +68,17 @@
 [[ -n "${_PULSE_MERGE_LOADED:-}" ]] && return 0
 _PULSE_MERGE_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# When this module is sourced standalone (e.g. pulse-merge-routine.sh, test
+# harnesses), the pulse-wrapper.sh bootstrap has NOT run. Guard each bare var
+# used across this module's functions so set -u does not abort them.
+# The :=default form sets the var only when unset or empty; pre-existing values
+# from the orchestrator bootstrap are preserved.
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+: "${STOP_FLAG:=${HOME}/.aidevops/logs/pulse-session.stop}"
+: "${PULSE_MERGE_BATCH_LIMIT:=50}"
+: "${PULSE_MERGE_CLOSE_CONFLICTING:=true}"
+
 # Comma-delimited label pattern constant — avoids matching "origin:worker-takeover"
 # when checking for "origin:worker" in comma-joined label strings. (t2449)
 _OW_LABEL_PAT=",origin:worker,"

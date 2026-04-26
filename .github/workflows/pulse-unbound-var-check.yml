@@ -1,0 +1,145 @@
+name: Pulse Unbound-Var Check
+
+# t2863: CI lint gate that detects multi-var local declarations without init
+# in pulse-*.sh files — the bug class that caused t2841 (_b_nums unbound,
+# 3-7x per pulse cycle) and the broader set of unbound-variable aborts in
+# pulse-merge.sh (STOP_FLAG, REPOS_JSON, PULSE_MERGE_BATCH_LIMIT).
+#
+# Bug class: `local foo bar baz` (multi-var, no = init) causes set -u to
+# abort the function on the first read of any var that was only conditionally
+# assigned. Canonical failure: t2841 — _b_nums fired 3-7x/cycle, blocking
+# parent-tracker auto-close for hours/days before being caught.
+#
+# Fix: explicit empty-string init at declaration:
+#   local foo="" bar="" baz=""   (or 0 for numeric accumulators)
+#
+# Diff-scoped (Option A, same as counter-stack-check.yml): pre-existing
+# violations on main do not fail CI; only PR-changed pulse-*.sh files are
+# checked. New violations in a PR fail CI.
+#
+# Violations posted as a PR comment with remediation guidance.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.agents/scripts/pulse-*.sh'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Pulse Unbound-Var Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed pulse-*.sh files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+            '.agents/scripts/pulse-*.sh' || true)
+          if [ -z "$changed" ]; then
+            echo "No pulse-*.sh files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed pulse files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" > /tmp/changed-puv-files.txt
+
+      - name: Run pulse unbound-var check
+        if: steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          files=$(tr '\n' ' ' < /tmp/changed-puv-files.txt)
+          # shellcheck disable=SC2086
+          output=$(bash .agents/scripts/pulse-unbound-var-check.sh --scan-files $files 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" > /tmp/pulse-unbound-var-report.txt
+
+      - name: Post PR comment on failure
+        if: steps.changed.outputs.has_files == 'true' && steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report=$(cat /tmp/pulse-unbound-var-report.txt)
+          marker="<!-- pulse-unbound-var-check -->"
+          body=$(cat <<EOF
+          ${marker}
+          ## Pulse Unbound-Var Violations (set -u safety)
+
+          The following files introduce \`local foo bar baz\` multi-var
+          declarations without initialisation (see t2863 and canonical
+          failure t2841 — _b_nums unbound, 3-7x per pulse cycle):
+
+          \`\`\`
+          ${report}
+          \`\`\`
+
+          **Fix:** initialise all vars at declaration time:
+
+          \`\`\`bash
+          # BAD — any var only assigned in a conditional branch aborts with set -u
+          local _g_nums _b_nums _p_nums child_nums
+
+          # GOOD — explicit empty-string init
+          local _g_nums="" _b_nums="" _p_nums="" child_nums=""
+
+          # GOOD — single-var declaration is safe
+          local pr_json
+          pr_json=\$(gh pr list ...)
+          \`\`\`
+
+          Run \`.agents/scripts/pulse-unbound-var-check.sh --fix-hint\` for more remediation examples.
+          Reference fix: commit e05bcae1f (t2841).
+          EOF
+          )
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body="$body" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "Pulse unbound-var check: clean."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::error::Pulse unbound-var violations found. See PR comment for details."
+            exit 1
+          fi
+          echo "::error::Pulse unbound-var check failed with unexpected exit code: $EXIT_CODE"
+          exit 1

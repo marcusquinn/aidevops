@@ -42,6 +42,11 @@
 [[ -n "${_PULSE_MERGE_FEEDBACK_LOADED:-}" ]] && return 0
 _PULSE_MERGE_FEEDBACK_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# Ensures LOGFILE is safe to dereference in all functions when this module
+# is sourced outside the pulse-wrapper.sh bootstrap context.
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+
 #######################################
 # Build the markdown "Review Feedback" section for routing to a linked
 # issue (t2093).
