@@ -3240,7 +3240,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2908 setup.sh non-interactive resilience: caching, instrumentation, lock recovery #bug #framework #parent #setup ref:GH#21056
 
-- [ ] t2909 Auto-release path leaves status:in-review and self-assignment on GitHub #bug ref:GH#21057
+- [ ] t2909 Auto-release path leaves status:in-review and self-assignment on GitHub, poisoning footprint cache and blocking dispatch #bug #framework #pulse #interactive ref:GH#21057
 
 - [ ] t2910 Cache generate-runtime-config.sh on input hash (saves 135s/cycle) #auto-dispatch #bug #framework #performance #setup ref:GH#21059
 
