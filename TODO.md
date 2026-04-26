@@ -3281,7 +3281,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2925 feat(security): auto-detect and close bounty-hunter spam PRs from external authors #auto-dispatch #framework #security ref:GH#21100
 
 - [ ] t2924 perf(pulse): filter non-dispatchable labels at candidate-build time, not dispatch time #auto-dispatch #enhancement #framework ref:GH#21099
-- [ ] t2926 setup.sh auto-install util-linux on macOS so setsid is available for worker PGID isolation — root cause of mass worker death observed Apr 26 (398 setsid warnings, 5/9 workers had unpushed WIP) #auto-dispatch #bug #framework #setup ref:GH#21102
-- [ ] t2927 fix FOOTPRINT_OVERLAP cache leaks closed-issue defers — invalidate when issue closes/merges to prevent 30-120s stale-cache blocks during burst-merge waves #auto-dispatch #bug #framework #pulse ref:GH#21103
-- [ ] t2928 fix SQLite archive.project schema column-count mismatch (12 values into 11-column table) polluting pulse log every cycle #auto-dispatch #bug #framework #observability ref:GH#21104
-- [ ] t2929 preflight_cleanup_and_ledger 60-133s — stagger git fetches across cycles, parallelize, and skip inactive repos to hit <30s target #auto-dispatch #enhancement #framework #performance #pulse ref:GH#21105
+
+- [ ] t2926 setup.sh: auto-install util-linux on macOS so setsid is available for worker PGID isolation #auto-dispatch #bug #framework #setup ref:GH#21102
+
+- [ ] t2929 perf(pulse): preflight_cleanup_and_ledger 60-133s — stagger and parallelize git fetches #auto-dispatch #enhancement #framework #performance #pulse ref:GH#21105
+
+- [ ] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104
+
+- [ ] t2927 fix(pulse): FOOTPRINT_OVERLAP cache leaks closed-issue defers — invalidate when issue closes #auto-dispatch #bug #framework #pulse ref:GH#21103
