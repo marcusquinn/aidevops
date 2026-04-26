@@ -655,3 +655,44 @@ credential_exposure:
   - severity: MEDIUM
     description: "URL query param: webhook_secret"
     pattern: '[?&]webhook_secret=[^&\s]{8,}'
+
+# ================================================================
+# UNSOLICITED DISCLOSURE MARKETING (parent #20983)
+# ================================================================
+# Detects content-spam dressed as security disclosure: external
+# scanners that mass-file "responsible disclosure" issues with an
+# embedded product install CTA. Real responsible disclosure goes
+# through SECURITY.md / private security advisories, not public
+# issues with marketing footers.
+#
+# Canonical example: aidevops#20978 (Pentesterra DevGuard).
+# Threat model: Issue body invites worker/maintainer to install
+# adversary-controlled tooling, fetch tracking URLs, or email
+# adversary-controlled addresses. The patterns below detect the
+# CTA shapes; structural checks (non-collaborator author,
+# single-domain repetition) live in Phase C.
+# ================================================================
+unsolicited_disclosure_marketing:
+  - severity: HIGH
+    description: "Pip install solicitation"
+    pattern: '(?im)^[\s>`]*pip\s+install\s+[a-z][-a-z0-9_]+'
+
+  - severity: HIGH
+    description: "NPM install solicitation"
+    pattern: '(?im)^[\s>`]*npm\s+install\s+[a-z@][-a-z0-9_/]+'
+
+  - severity: HIGH
+    description: "Curl-pipe-bash install pattern"
+    pattern: '(?i)\bcurl\s+(-[a-zA-Z]+\s+)*[^|\s]+\s*\|\s*(bash|sh|zsh)\b'
+
+  - severity: HIGH
+    description: "Brew install solicitation"
+    pattern: '(?im)^[\s>`]*brew\s+install\s+[a-z][-a-z0-9_]+'
+
+  - severity: MEDIUM
+    description: "False-positive out-clause"
+    pattern: '(?i)(if\s+(this|you\s+believe).{1,40}false\s+positive|believe\s+this\s+is\s+a\s+false\s+positive)'
+
+  - severity: MEDIUM
+    description: "Disclosure marketing footer"
+    pattern: '(?i)responsible\s+disclosure.{1,200}(security\s+research|security\s+policy)'
