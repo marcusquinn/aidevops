@@ -3192,3 +3192,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2884 Add external-content-spam-detector.sh helper combining patterns + structural checks #auto-dispatch #framework #security ref:GH#20986
 
 - [ ] t2886 Extend pulse triage prefetch to supply evidence-verification data to triage-review agent #auto-dispatch #framework #pulse #security ref:GH#20987
+
+- [ ] t2885 exclude worktrees from macOS Spotlight, Time Machine, and Backblaze at creation time + backfill existing #framework #performance ref:GH#20988
