@@ -452,6 +452,17 @@ Issue threads accumulate dispatch/kill/triage comments from the pulse that are a
 - Skip approval instruction comments (wrapped in `<!-- provenance:start/end -->`). Workers are dispatched AFTER approval — the instructions are irrelevant.
 - From issue threads, focus on: the issue body (implementation context), and any comments containing code suggestions or error reports.
 
+**8e. Same-bash-call gotcha for --body-file (t2893)**
+
+The JS plugin hook (`quality-hooks-signature.mjs::checkSignatureFooterGate`) runs BEFORE bash executes. If you build a body file and then post it in the SAME bash call (e.g. `cp ... /tmp/foo.md && gh issue comment --body-file /tmp/foo.md`, or `cat <<EOF > /tmp/foo.md ... EOF; gh issue comment --body-file /tmp/foo.md`), the hook's `readFileSync` sees ENOENT — bash hasn't created the file yet — and blocks with `FAIL_REASON.FILE_NOT_FOUND`.
+
+This is NOT a heredoc / command-substitution / quoting failure (those report different `FAIL_REASON` values). When the error message names `body-file not found (may be created later in this same bash call)`, use one of these two patterns:
+
+- **Two bash tool calls.** Write the file in call 1, post it in call 2. The JS hook reads the file in call 2 and sees the marker.
+- **Sourced wrapper.** `source ~/.aidevops/agents/scripts/shared-gh-wrappers.sh && gh_issue_comment N --body-file "$BODY_FILE"`. The shell wrapper runs AFTER the file-creation steps in your shell, the PATH shim takes over at exec-time, and both layers see the completed file.
+
+Do NOT respond to a `FILE_NOT_FOUND` block by debugging temp-file paths, file content, or the JS hook source — the file is correct, the hook just runs too early. The error message itself names the same-bash-call hypothesis as the likely cause; trust it.
+
 ### Stale-symptom investigations (runtime debugging, t2036)
 
 The DEPLOYED copy at `~/.aidevops/agents/scripts/<file>` may differ from source at `~/Git/aidevops/.agents/scripts/<file>`. Pulse executes the deployed copy — reading source-as-truth when debugging runtime symptoms wastes hours.

@@ -36,10 +36,34 @@
 # ------
 #   AIDEVOPS_GH_SHIM_DISABLE=1 gh …   # skip shim, exec real gh directly
 #
+# Runtime-vs-pre-execution split (t2893)
+# --------------------------------------
+# Two enforcement layers cooperate, separated by WHEN they run:
+#   - JS plugin hook (quality-hooks-signature.mjs):
+#       Runs PRE-bash-execution. Blocks gh writes missing the signature,
+#       repairs `--body` and pre-existing `--body-file` in place. CANNOT
+#       see files that bash will create later in the same call — the
+#       readFileSync sees ENOENT and now reports FAIL_REASON.FILE_NOT_FOUND
+#       with same-bash-call mentorship instead of a generic guess.
+#   - This PATH shim:
+#       Runs at EXEC-TIME (after bash finishes building --body-file). The
+#       file exists at the moment gh is invoked, so this layer is the
+#       canonical enforcement point for the same-bash-call shape. The JS
+#       hook is the canonical enforcement point for `--body "literal"`
+#       writes (where exec-time has no opportunity to mutate the body).
+# When the JS hook blocks a `--body-file` call whose file is created
+# earlier in the same bash command, the worker should split into two
+# bash calls or source `shared-gh-wrappers.sh` and call gh_issue_comment
+# (etc.) by name. The wrapper-sourcing path runs in the worker's shell
+# AFTER the file-creation steps complete, then this shim takes over for
+# the actual gh exec. AIDEVOPS_GH_SHIM_DISABLE=1 only defeats this shim
+# — the JS hook still blocks unsigned writes.
+#
 # Related
 # -------
 #   .agents/plugins/opencode-aidevops/quality-hooks.mjs — JS-side enforcement
-#   .agents/prompts/build.txt section 8 — prompt-level rule
+#   .agents/plugins/opencode-aidevops/quality-hooks-signature.mjs — t2893 structured failures
+#   .agents/AGENTS.md "Signature footer hallucination (t2685)" — prompt-level rule
 #   .agents/scripts/shared-gh-wrappers.sh _gh_wrapper_auto_sig — reference impl
 # =============================================================================
 
