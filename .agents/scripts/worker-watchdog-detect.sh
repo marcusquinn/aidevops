@@ -44,11 +44,22 @@ fi
 # Output: one line per worker: "PID|ELAPSED_SECS|COMMAND"
 #######################################
 find_workers() {
-	# Match worker processes with /full-loop (headless workers)
-	# Build grep pattern: bracket-trick on first char excludes grep from results
-	local pattern_char="${WORKER_PROCESS_PATTERN:0:1}"
-	local pattern_rest="${WORKER_PROCESS_PATTERN:1}"
-	local grep_pattern="[${pattern_char}]${pattern_rest}"
+	# Match worker processes with /full-loop (headless workers).
+	#
+	# WORKER_PROCESS_PATTERN is an extended-regex alternation
+	# (e.g. "opencode|claude|Claude" — see shared-constants.sh § "Process
+	# pattern constants"). It MUST be passed to grep -E. The historical
+	# bracket-trick that excluded grep from its own output (`[o]pencode`)
+	# only worked for single-word patterns; with alternation present, the
+	# pattern itself contains words that would match the grep argv. Filter
+	# grep out explicitly via `grep -v -- 'grep -E'` instead.
+	#
+	# Filters layered on the ps stream:
+	#   1. grep -E "$WORKER_PROCESS_PATTERN" — match opencode/claude binaries
+	#   2. grep -v -- 'grep -E'              — skip the grep pipeline itself
+	#   3. grep -F '/full-loop'              — keep only headless dispatch
+	# The in-loop "$line == *worker-watchdog*" guard is a defence-in-depth
+	# skip for the watchdog's own ps line; it does not replace filter #2.
 	local line pid cmd elapsed_seconds
 
 	while IFS= read -r line; do
@@ -68,7 +79,11 @@ find_workers() {
 
 		# Output: PID|ELAPSED|COMMAND
 		echo "${pid}|${elapsed_seconds}|${cmd}"
-	done < <(ps axwwo pid,command | grep "$grep_pattern" | grep '/full-loop' || true)
+	done < <(ps axwwo pid,command \
+		| grep -E "${WORKER_PROCESS_PATTERN:-opencode}" \
+		| grep -v -- 'grep -E' \
+		| grep -F '/full-loop' \
+		|| true)
 
 	return 0
 }
