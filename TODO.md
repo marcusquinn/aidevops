@@ -3145,7 +3145,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2854 P5a: .eml ingestion handler (kind=email) #enhancement #framework ref:GH#20908 blocked-by:t2844,t2843,t2849
 
-- [ ] t2855 P5b: IMAP polling routine + mailboxes.json registry #enhancement #framework ref:GH#20909 blocked-by:t2844,t2843,t2849
+- [x] t2855 P5b: IMAP polling routine + mailboxes.json registry #enhancement #framework ref:GH#20909 blocked-by:t2844,t2843,t2849 pr:#21112 completed:2026-04-26
 
 - [ ] t2856 P5c: email thread reconstruction + filter to case-attach #enhancement #framework ref:GH#20910 blocked-by:t2844,t2843,t2849,t2851,t2852
 
