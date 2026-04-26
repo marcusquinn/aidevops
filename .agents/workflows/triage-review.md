@@ -52,6 +52,9 @@ The dispatcher builds a prompt that contains every field below under clearly mar
 - `PR_FILES`: JSON array of changed file paths
 - `RECENT_CLOSED`: Up to 15 recently closed issue titles (for duplicate detection)
 - `GIT_LOG`: Up to 5 recent commits on the affected files
+- `EVIDENCE_RECENT_MERGED_PRS`: Up to 5 recently merged PRs matching the issue title keywords — use to detect already-fixed issues (t2886)
+- `EVIDENCE_RECENT_COMMITS_ON_CITED_FILES`: Git log entries since issue was posted for each cited `file:line` — use to detect stale scan findings where the file changed after the report was generated (t2886)
+- `EVIDENCE_CITED_FILE_CONTENTS`: ±5-line window around each cited `file:line` — use to verify whether the issue's claim matches the actual code (t2886)
 
 ## Task
 
@@ -59,8 +62,9 @@ Analyze issue/PR using ONLY the pre-fetched context above. Do not explore the co
 
 ### For Issues
 
+0. **File:line evidence verification** (MANDATORY when `EVIDENCE_CITED_FILE_CONTENTS` is non-empty): For each `file:line` claim in `ISSUE_BODY`, locate the matching entry in `EVIDENCE_CITED_FILE_CONTENTS` and verify that the cited line matches the claimed finding. If the cited line does NOT match the claim (e.g. the line contains different code than the issue asserts, or the file reference is fabricated), mark the finding as **fabricated evidence** and recommend `invalid` closure. Do not accept a `file:line` claim that the evidence section falsifies.
 1. **Problem Validation**: Reproducible? Real bug or expected behavior?
-2. **Duplicate Check**: Compare against `RECENT_CLOSED` titles.
+2. **Duplicate Check**: Compare against `RECENT_CLOSED` titles AND `EVIDENCE_RECENT_MERGED_PRS` — if a matching merged PR exists, the issue may already be fixed.
 3. **Root Cause**: 1-3 sentences based only on the pre-fetched context.
 4. **Scope Assessment**: In scope for project?
 5. **Complexity**: Estimate `tier:simple` (haiku), `tier:standard` (sonnet), or `tier:thinking` (opus).

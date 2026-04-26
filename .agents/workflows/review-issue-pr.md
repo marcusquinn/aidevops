@@ -290,7 +290,7 @@ Accepted and queued for implementation as #{internal_issue}. We'll link back her
 
 > **Note (t1894):** Pulse-dispatched triage reviews now use the sandboxed `triage-review.md` agent which has NO Bash/network access. This file (`review-issue-pr.md`) is only used for interactive `/review-issue-pr` sessions where the user is present. The sandboxed agent receives all GitHub data pre-fetched by deterministic code.
 >
-> **Gap (t2017):** Section 0 (Pre-Review Discovery), Section 6 (Second-Order Effects), and the new output sections are currently only enforced in the interactive path. The sandboxed `triage-review.md` agent cannot run `gh pr list --state merged --search` or `git log --since` because it has no Bash/network. To bring the same discipline to pulse triage, the prefetch in `pulse-ancillary-dispatch.sh` must be extended to supply: (1) recent merged PRs matching the issue keywords, (2) recent commits on the affected files since the issue was posted, and (3) the current contents of those files at the cited line numbers. Tracked as a follow-up — see the companion issue created with this change.
+> **Closed by t2886 / GH#20987:** The prefetch in `pulse-ancillary-dispatch.sh` now supplies `EVIDENCE_RECENT_MERGED_PRS`, `EVIDENCE_RECENT_COMMITS_ON_CITED_FILES`, and `EVIDENCE_CITED_FILE_CONTENTS` — enabling the sandboxed `triage-review.md` agent to verify `file:line` claims and detect already-fixed issues without Bash or network access.
 
 When invoked by pulse (via `/review-issue-pr <number>`):
 
