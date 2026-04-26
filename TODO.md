@@ -3252,7 +3252,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2910 Cache generate-runtime-config.sh on input hash (saves 135s/cycle) #auto-dispatch #bug #framework #performance #setup ref:GH#21059 pr:#21064 completed:2026-04-26
 
-- [ ] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061
+- [x] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061 pr:#21108 completed:2026-04-26
 
 - [ ] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060
 
