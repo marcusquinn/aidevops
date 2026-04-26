@@ -118,6 +118,7 @@ _is_search_rate_limited() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_issues_for_slug() {
 	local slug="$1"
+	gh_record_call rest 2>/dev/null || true
 	local rest_json
 	rest_json=$(gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
@@ -157,6 +158,7 @@ _prefetch_rest_issues_for_slug() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_prs_for_slug() {
 	local slug="$1"
+	gh_record_call rest 2>/dev/null || true
 	local rest_json
 	rest_json=$(gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
@@ -185,6 +187,44 @@ _prefetch_rest_prs_for_slug() {
 	local item_count
 	item_count=$(jq '.items | length' "$cache_file" 2>/dev/null) || item_count=0
 	_log "REST PRs fallback: wrote ${item_count} items to cache for ${slug}"
+	return 0
+}
+
+# --- REST per-slug iteration (t2902) ---
+# Iterate a comma-separated slug list and dispatch each to the per-slug REST
+# fallback helper for the requested kind. Updates _OWNER_CACHE_WRITES /
+# _OWNER_ERRORS (Bash 3.2 namerefs workaround — these are pseudo-globals
+# set by the caller).
+#
+# Used by both:
+#   (a) the proactive guard in _refresh_owner_* (skip gh search when GraphQL
+#       budget is below threshold), and
+#   (b) the reactive fallback after a gh search rate-limit error.
+#
+# Arguments: $1=kind ("issues" | "prs")  $2=slugs (comma-separated)
+# Returns: 0 always (per-slug failures roll into _OWNER_ERRORS counter)
+_prefetch_rest_per_slug() {
+	local kind="$1"
+	local slugs="${2:-}"
+	[[ -n "$slugs" ]] || return 0
+	local slug ok
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		ok=0
+		case "$kind" in
+		issues) _prefetch_rest_issues_for_slug "$slug" && ok=1 ;;
+		prs) _prefetch_rest_prs_for_slug "$slug" && ok=1 ;;
+		*)
+			_log "_prefetch_rest_per_slug: unknown kind=${kind}"
+			return 1
+			;;
+		esac
+		if [[ "$ok" -eq 1 ]]; then
+			_OWNER_CACHE_WRITES=$((_OWNER_CACHE_WRITES + 1))
+		else
+			_OWNER_ERRORS=$((_OWNER_ERRORS + 1))
+		fi
+	done < <(tr ',' '\n' <<< "$slugs")
 	return 0
 }
 
@@ -309,6 +349,17 @@ _write_per_slug_caches() {
 _refresh_owner_issues() {
 	local owner="$1"
 	local slugs="${2:-}"
+	# Proactive REST fallback (t2902): if GraphQL is at/below the fallback
+	# threshold, skip `gh search issues` (which uses the GraphQL Search API,
+	# ~30 points/call) and go straight to per-slug REST iteration. Avoids
+	# burning points on a call that will fail and then be retried via REST.
+	if _gh_should_fallback_to_rest 2>/dev/null; then
+		_log "GraphQL <= threshold — skipping gh search issues for owner=${owner}, going straight to REST"
+		gh_record_call search-rest 2>/dev/null || true
+		_prefetch_rest_per_slug issues "$slugs"
+		return 0
+	fi
+	gh_record_call search-graphql 2>/dev/null || true
 	local issue_err
 	issue_err=$(mktemp)
 	local issue_json=""
@@ -323,18 +374,8 @@ _refresh_owner_issues() {
 		if _is_search_rate_limited "$issue_err"; then
 			_log "Search/GraphQL rate-limited during issues fetch for owner=${owner} — falling back to per-repo REST"
 			rm -f "$issue_err"
-			# REST fallback: iterate per-slug via core REST bucket (5000/hr, independent of GraphQL).
-			if [[ -n "$slugs" ]]; then
-				local slug
-				while IFS= read -r slug; do
-					[[ -n "$slug" ]] || continue
-					if _prefetch_rest_issues_for_slug "$slug"; then
-						_OWNER_CACHE_WRITES=$((_OWNER_CACHE_WRITES + 1))
-					else
-						_OWNER_ERRORS=$((_OWNER_ERRORS + 1))
-					fi
-				done < <(tr ',' '\n' <<< "$slugs")
-			fi
+			# Reactive REST fallback: iterate per-slug via core REST bucket.
+			_prefetch_rest_per_slug issues "$slugs"
 			return 0
 		else
 			_log "gh search issues failed for owner=${owner}: ${issue_err_msg}"
@@ -363,6 +404,14 @@ _refresh_owner_issues() {
 _refresh_owner_prs() {
 	local owner="$1"
 	local slugs="${2:-}"
+	# Proactive REST fallback (t2902): same pattern as _refresh_owner_issues.
+	if _gh_should_fallback_to_rest 2>/dev/null; then
+		_log "GraphQL <= threshold — skipping gh search prs for owner=${owner}, going straight to REST"
+		gh_record_call search-rest 2>/dev/null || true
+		_prefetch_rest_per_slug prs "$slugs"
+		return 0
+	fi
+	gh_record_call search-graphql 2>/dev/null || true
 	local pr_err
 	pr_err=$(mktemp)
 	local pr_json=""
@@ -377,18 +426,8 @@ _refresh_owner_prs() {
 		if _is_search_rate_limited "$pr_err"; then
 			_log "Search/GraphQL rate-limited during PR fetch for owner=${owner} — falling back to per-repo REST"
 			rm -f "$pr_err"
-			# REST fallback: iterate per-slug via core REST bucket (5000/hr, independent of GraphQL).
-			if [[ -n "$slugs" ]]; then
-				local slug
-				while IFS= read -r slug; do
-					[[ -n "$slug" ]] || continue
-					if _prefetch_rest_prs_for_slug "$slug"; then
-						_OWNER_CACHE_WRITES=$((_OWNER_CACHE_WRITES + 1))
-					else
-						_OWNER_ERRORS=$((_OWNER_ERRORS + 1))
-					fi
-				done < <(tr ',' '\n' <<< "$slugs")
-			fi
+			# Reactive REST fallback: iterate per-slug via core REST bucket.
+			_prefetch_rest_per_slug prs "$slugs"
 			return 0
 		else
 			_log "gh search prs failed for owner=${owner}: ${pr_err_msg}"
