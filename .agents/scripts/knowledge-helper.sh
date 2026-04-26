@@ -8,10 +8,11 @@
 # knowledge mode from ~/.config/aidevops/repos.json (field: "knowledge").
 #
 # Usage:
-#   knowledge-helper.sh provision [repo-path]           Provision/repair directory tree
-#   knowledge-helper.sh init [off|repo|personal] [path] Set mode and provision
-#   knowledge-helper.sh status [repo-path]              Show provisioning state
-#   knowledge-helper.sh help                            Show this help
+#   knowledge-helper.sh provision [repo-path]                          Provision/repair directory tree
+#   knowledge-helper.sh init [off|repo|personal] [path]                Set mode and provision
+#   knowledge-helper.sh add <file> [--id <id>] [--sensitivity <tier>]  Ingest a file into sources/
+#   knowledge-helper.sh status [repo-path]                             Show provisioning state
+#   knowledge-helper.sh help                                           Show this help
 #
 # Modes (stored in repos.json "knowledge" field):
 #   off       No knowledge plane (default, backwards-compatible)
@@ -70,6 +71,11 @@ KNOWLEDGE_DIRS=(inbox staging sources index collections)
 SCRIPT_TEMPLATES_DIR="${SCRIPT_DIR%/scripts}/templates"
 GITIGNORE_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/knowledge-gitignore.txt"
 CONFIG_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/knowledge-config.json"
+SENSITIVITY_DETECTOR="${SCRIPT_DIR}/sensitivity-detector-helper.sh"
+BLOB_THRESHOLD_BYTES=31457280
+META_DEFAULT_SENSITIVITY="internal"
+META_DEFAULT_TRUST="unverified"
+META_DEFAULT_KIND="document"
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -161,20 +167,13 @@ _write_config() {
 	if [[ -f "$CONFIG_TEMPLATE" ]]; then
 		cp "$CONFIG_TEMPLATE" "$config_path"
 	else
-		cat >"$config_path" <<'CONFIG'
-{
-  "version": 1,
-  "sensitivity_default": "internal",
-  "trust_default": "unverified",
-  "blob_threshold_bytes": 31457280,
-  "trust_ladder": ["unverified", "reviewed", "trusted", "authoritative"],
-  "sensitivity_levels": ["public", "internal", "confidential", "restricted"],
-  "ingest_policy": {
-    "auto_sha256": true,
-    "require_meta": true
-  }
-}
-CONFIG
+		# Minimal fallback — real config ships via CONFIG_TEMPLATE (knowledge-config.json).
+		# Tier lists live in sensitivity.json; this fallback only sets defaults + policy.
+		jq -n \
+			--arg sens "$META_DEFAULT_SENSITIVITY" \
+			--arg trust "$META_DEFAULT_TRUST" \
+			'{version:2,sensitivity_default:$sens,trust_default:$trust,blob_threshold_bytes:31457280,sensitivity_schema:"_config/sensitivity.json",ingest_policy:{auto_sha256:true,require_meta:true,auto_sensitivity:true}}' \
+			>"$config_path"
 	fi
 	return 0
 }
@@ -357,8 +356,233 @@ cmd_status() {
 	return 0
 }
 
+_sha256sum_file() {
+	local file="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$file" | awk '{print $1}'
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$file" | awk '{print $1}'
+	else
+		print_error "sha256sum/shasum not found — cannot compute hash"
+		return 1
+	fi
+	return 0
+}
+
+_slugify() {
+	local input="$1"
+	echo "$input" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/--*/-/g' | sed 's/^-//; s/-$//'
+	return 0
+}
+
+_write_meta_json() {
+	local meta_path="$1"
+	local source_id="$2"
+	local source_uri="$3"
+	local sha256="$4"
+	local size_bytes="$5"
+	local sensitivity="$6"
+	local blob_path="${7:-null}"
+	_require_jq || return 1
+	local ts actor
+	ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date +"%Y-%m-%dT%H:%M:%SZ")
+	actor="${USER:-unknown}"
+	if [[ "$blob_path" == "null" ]]; then
+		jq -n \
+			--arg id "$source_id" \
+			--arg kind "$META_DEFAULT_KIND" \
+			--arg uri "$source_uri" \
+			--arg sha "$sha256" \
+			--arg ts "$ts" \
+			--arg by "$actor" \
+			--arg sens "$sensitivity" \
+			--arg trust "$META_DEFAULT_TRUST" \
+			--argjson sz "$size_bytes" \
+			'{version:1,id:$id,kind:$kind,source_uri:$uri,sha256:$sha,ingested_at:$ts,ingested_by:$by,sensitivity:$sens,trust:$trust,blob_path:null,size_bytes:$sz}' \
+			>"$meta_path"
+	else
+		jq -n \
+			--arg id "$source_id" \
+			--arg kind "$META_DEFAULT_KIND" \
+			--arg uri "$source_uri" \
+			--arg sha "$sha256" \
+			--arg ts "$ts" \
+			--arg by "$actor" \
+			--arg sens "$sensitivity" \
+			--arg trust "$META_DEFAULT_TRUST" \
+			--arg bp "$blob_path" \
+			--argjson sz "$size_bytes" \
+			'{version:1,id:$id,kind:$kind,source_uri:$uri,sha256:$sha,ingested_at:$ts,ingested_by:$by,sensitivity:$sens,trust:$trust,blob_path:$bp,size_bytes:$sz}' \
+			>"$meta_path"
+	fi
+	return 0
+}
+
+# cmd_add: ingest a file into the knowledge plane sources/ directory
+# Arguments: <file> [--id <id>] [--sensitivity <tier>] [--repo-path <path>]
+#
+# Steps:
+#   1. Resolve knowledge root from mode (repo or personal)
+#   2. Compute sha256 + size
+#   3. Generate source-id from filename if not provided
+#   4. For files >=30MB: move to blob store, record blob_path in meta.json
+#   5. Write meta.json with sensitivity=internal (default) or provided tier
+#   6. Call sensitivity-detector-helper.sh classify to stamp final tier
+#   7. Override tier if --sensitivity flag was passed (takes precedence)
+cmd_add() {
+	local file_path=""
+	local source_id=""
+	local sensitivity_override=""
+	local repo_path
+	repo_path="$(pwd)"
+	while [[ $# -gt 0 ]]; do
+		local _key="$1"
+		shift
+		case "$_key" in
+		--id)
+			local _val="$1"
+			source_id="$_val"
+			shift
+			;;
+		--sensitivity)
+			local _val="$1"
+			sensitivity_override="$_val"
+			shift
+			;;
+		--repo-path)
+			local _val="$1"
+			repo_path="$_val"
+			shift
+			;;
+		-*)
+			print_error "Unknown option: $_key"
+			return 1
+			;;
+		*)
+			if [[ -z "$file_path" ]]; then
+				file_path="$_key"
+			fi
+			;;
+		esac
+	done
+	if [[ -z "$file_path" ]]; then
+		print_error "add requires <file>"
+		return 1
+	fi
+	if [[ ! -f "$file_path" ]]; then
+		print_error "File not found: $file_path"
+		return 1
+	fi
+	repo_path="$(cd "$repo_path" && pwd)"
+	local mode
+	mode=$(_get_knowledge_mode "$repo_path")
+	local knowledge_root
+	case "$mode" in
+	repo)
+		knowledge_root="${repo_path}/${KNOWLEDGE_ROOT}"
+		;;
+	personal)
+		knowledge_root="${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}"
+		;;
+	off)
+		print_error "Knowledge plane is disabled for $repo_path — run: knowledge-helper.sh init repo"
+		return 1
+		;;
+	*)
+		print_error "Unknown knowledge mode: $mode"
+		return 1
+		;;
+	esac
+	if ! _is_provisioned "${knowledge_root%/"$KNOWLEDGE_ROOT"}"; then
+		print_error "Knowledge plane not provisioned. Run: knowledge-helper.sh provision"
+		return 1
+	fi
+	# Derive source-id from filename if not provided
+	if [[ -z "$source_id" ]]; then
+		local basename_no_ext
+		basename_no_ext="$(basename "$file_path")"
+		basename_no_ext="${basename_no_ext%.*}"
+		source_id=$(_slugify "$basename_no_ext")
+		if [[ -z "$source_id" ]]; then
+			source_id="source-$(date +%s)"
+		fi
+	fi
+	# Ensure unique: if dir already exists, append timestamp
+	local source_dir="${knowledge_root}/sources/${source_id}"
+	if [[ -d "$source_dir" ]]; then
+		source_id="${source_id}-$(date +%s)"
+		source_dir="${knowledge_root}/sources/${source_id}"
+	fi
+	mkdir -p "$source_dir"
+	# Compute hash and size
+	local sha256 size_bytes
+	sha256=$(_sha256sum_file "$file_path") || return 1
+	size_bytes=$(wc -c <"$file_path" | tr -d ' ')
+	local abs_file_path
+	abs_file_path="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
+	local source_uri="file://${abs_file_path}"
+	local blob_path="null"
+	# Handle large files (>=30MB)
+	if [[ "$size_bytes" -ge "$BLOB_THRESHOLD_BYTES" ]]; then
+		local repo_name
+		repo_name="$(basename "$repo_path")"
+		local blob_dir="${HOME}/.aidevops/.agent-workspace/knowledge-blobs/${repo_name}/${source_id}"
+		mkdir -p "$blob_dir"
+		cp "$file_path" "${blob_dir}/$(basename "$file_path")"
+		blob_path="${blob_dir}/$(basename "$file_path")"
+		print_info "Large file (${size_bytes}B) stored at blob path: $blob_path"
+	else
+		# Copy file into sources/
+		cp "$file_path" "${source_dir}/$(basename "$file_path")"
+	fi
+	# Write meta.json with initial sensitivity=META_DEFAULT_SENSITIVITY
+	local meta_path="${source_dir}/meta.json"
+	_write_meta_json "$meta_path" "$source_id" "$source_uri" "$sha256" "$size_bytes" "$META_DEFAULT_SENSITIVITY" "$blob_path" || return 1
+	# Run sensitivity detector (auto-classify)
+	if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
+		local detected_tier
+		detected_tier=$(bash "$SENSITIVITY_DETECTOR" classify "$source_id" \
+			--knowledge-root "$knowledge_root" 2>/dev/null | tail -1 || echo "$META_DEFAULT_SENSITIVITY")
+		print_info "[$source_id] auto-detected sensitivity: $detected_tier"
+	else
+		print_warning "sensitivity-detector-helper.sh not found at $SENSITIVITY_DETECTOR — skipping auto-classify"
+	fi
+	# Apply explicit --sensitivity override (takes precedence over detector)
+	if [[ -n "$sensitivity_override" ]]; then
+		if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
+			bash "$SENSITIVITY_DETECTOR" override "$source_id" "$sensitivity_override" \
+				--reason "user-provided via --sensitivity flag" \
+				--knowledge-root "$knowledge_root" >/dev/null 2>&1 || true
+		else
+			# Fallback: write directly to meta.json
+			local tmp
+			tmp=$(mktemp)
+			if jq --arg t "$sensitivity_override" '.sensitivity = $t' "$meta_path" >"$tmp" 2>/dev/null; then
+				mv "$tmp" "$meta_path"
+			else
+				rm -f "$tmp"
+			fi
+		fi
+		print_info "[$source_id] sensitivity overridden to: $sensitivity_override"
+	fi
+	local final_tier
+	final_tier=$(jq -r --arg def "$META_DEFAULT_SENSITIVITY" '.sensitivity // $def' "$meta_path" 2>/dev/null || echo "$META_DEFAULT_SENSITIVITY")
+	print_success "Added source: $source_id (sensitivity=${final_tier})"
+	return 0
+}
+
+# cmd_sensitivity: proxy to sensitivity-detector-helper.sh for override/show/classify
+cmd_sensitivity() {
+	if [[ ! -x "$SENSITIVITY_DETECTOR" ]]; then
+		print_error "sensitivity-detector-helper.sh not found at $SENSITIVITY_DETECTOR"
+		return 1
+	fi
+	bash "$SENSITIVITY_DETECTOR" "$@"
+	return 0
+}
+
 cmd_help() {
-	sed -n '4,28p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,29p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
@@ -433,10 +657,12 @@ main() {
 	local subcommand="${1:-help}"
 	shift || true
 	case "$subcommand" in
-	provision) cmd_provision "$@" ;;
-	init) cmd_init "$@" ;;
-	status) cmd_status "$@" ;;
-	search) cmd_search "$@" ;;
+	provision)   cmd_provision "$@" ;;
+	init)        cmd_init "$@" ;;
+	add)         cmd_add "$@" ;;
+	sensitivity) cmd_sensitivity "$@" ;;
+	status)      cmd_status "$@" ;;
+	search)      cmd_search "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown subcommand: $subcommand"
