@@ -22,13 +22,18 @@
 #
 # Environment overrides:
 #   AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD — fraction of total budget below
-#     which the breaker trips (default 0.30 = 30% = 1500/5000). Set to 0 to
-#     disable entirely. Tuned for proactive headroom preservation (t2744):
-#     the original 0.05 fired only after 95% of budget was already burned,
-#     by which point in-flight reads (issue list, pr view) were already
-#     failing with RATE_LIMIT_EXHAUSTED. Tripping at 30% keeps a reserve
-#     for ops without REST equivalents (some GraphQL-only mutations) and
-#     gives the next pulse cycle room to recover gracefully.
+#     which the breaker trips (default 0.05 = 5% = 250/5000). Set to 0 to
+#     disable entirely. Tuned as an emergency floor (t2896): the previous
+#     0.30 raise (t2744) was justified to "preserve headroom for in-flight
+#     reads", but t2689 shipped read-side REST fallback after t2744 — reads
+#     now route through the 5000/hr REST core pool when GraphQL is low.
+#     With t2574 (write-side) and t2689 (read-side) REST fallbacks both
+#     active, the GraphQL reserve is mostly redundant for in-flight ops.
+#     Operational data: 43 fires/4.5 days at 0.30, GraphQL still hit 0/5000
+#     during fires — the breaker fires alongside exhaustion, not preventing
+#     it. 0.05 restores the original t2690 emergency-floor value: still
+#     fires in genuine exhaustion (last 250 points), recovers ~25% of
+#     dispatch budget for productive work.
 #   AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1 — emergency bypass (dispatch proceeds
 #     unconditionally, logged)
 #
