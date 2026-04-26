@@ -64,6 +64,12 @@ readonly TRIAGE_KEY_STATUS="status"
 readonly TRIAGE_KEY_PATH="path"
 readonly TRIAGE_VAL_PENDING="pending"
 
+# Sub-folders scanned by digest for stale/unprocessed items (transit zones).
+# Reference INBOX_SUB_DIRS by index to avoid repeating the string literals.
+# INBOX_SUB_DIRS = ("_drop" "email" "web" "scan" "voice" "import" "_needs-review")
+#                    [0]                                                [6]
+readonly DIGEST_SCAN_SUBS=("${INBOX_SUB_DIRS[0]}" "${INBOX_SUB_DIRS[6]}")
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -908,11 +914,165 @@ _triage_route_to_plane() {
 }
 
 # =============================================================================
+# cmd_digest — stale inbox item digest (t2869)
+# =============================================================================
+# Flags:
+#   --age-days N          Age threshold in days (default: 7)
+#   --repo PATH           Repo root to scan (default: pwd)
+#   --include-workspace   Also scan ~/.aidevops/.agent-workspace/inbox/
+#   --json                Machine-readable JSON array output
+#
+# Sub-folders scanned: _drop/ _needs-review/ (transit zones awaiting triage)
+# Output sorted by age descending.
+# =============================================================================
+
+# _file_age_days <filepath>
+# Returns the age of the file in whole days (integer).
+_file_age_days() {
+	local filepath="$1"
+	local file_ts now_ts
+	file_ts="$(date -r "$filepath" +%s 2>/dev/null || stat -c '%Y' "$filepath" 2>/dev/null || echo 0)"
+	now_ts="$(date +%s)"
+	echo $(( (now_ts - file_ts) / 86400 ))
+	return 0
+}
+
+# _triage_prior_attempts <log-path> <rel-path>
+# Returns count of triage log entries for rel-path with status != pending.
+_triage_prior_attempts() {
+	local log_path="$1"
+	local rel_path="$2"
+	local count=0
+	[[ ! -f "$log_path" ]] && echo "0" && return 0
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local path_field status_field
+		path_field="$(_json_field "$line" "$TRIAGE_KEY_PATH")"
+		status_field="$(_json_field "$line" "$TRIAGE_KEY_STATUS")"
+		if [[ "$path_field" == "$rel_path" && "$status_field" != "$TRIAGE_VAL_PENDING" ]]; then
+			count=$(( count + 1 ))
+		fi
+	done < "$log_path"
+	echo "$count"
+	return 0
+}
+
+# _digest_scan_inbox <inbox-dir> <age-days>
+# Scans _drop/ and _needs-review/ for files older than age-days.
+# Prints lines: "<age_days>\t<sub_folder>\t<rel_path>\t<prior_attempts>"
+_digest_scan_inbox() {
+	local inbox_dir="$1"
+	local age_days="$2"
+	local log_path="${inbox_dir}/${TRIAGE_LOG}"
+	local inbox_parent
+	inbox_parent="$(dirname "$inbox_dir")"
+
+	local sub
+	for sub in "${DIGEST_SCAN_SUBS[@]}"; do
+		local sub_dir="${inbox_dir}/${sub}"
+		[[ -d "$sub_dir" ]] || continue
+		local f
+		while IFS= read -r -d '' f; do
+			local age
+			age="$(_file_age_days "$f")"
+			if [[ "$age" -ge "$age_days" ]]; then
+				local rel_path="${f#"${inbox_parent}"/}"
+				local attempts
+				attempts="$(_triage_prior_attempts "$log_path" "$rel_path")"
+				printf '%s\t%s\t%s\t%s\n' "$age" "$sub" "$rel_path" "$attempts"
+			fi
+		done < <(find "$sub_dir" -maxdepth 1 -type f ! -name '.*' -print0 2>/dev/null)
+	done
+	return 0
+}
+
+cmd_digest() {
+	local age_days=7
+	local repo_path
+	repo_path="$(pwd)"
+	local include_workspace=0
+	local json_output=0
+
+	while [[ $# -gt 0 ]]; do
+		local cur_arg="$1"
+		case "$cur_arg" in
+		--age-days)          age_days="${2:-7}"; shift 2 ;;
+		--age-days=*)        age_days="${cur_arg#--age-days=}"; shift ;;
+		--repo)              repo_path="${2:-$(pwd)}"; shift 2 ;;
+		--repo=*)            repo_path="${cur_arg#--repo=}"; shift ;;
+		--include-workspace) include_workspace=1; shift ;;
+		--json)              json_output=1; shift ;;
+		*) print_error "Unknown digest flag: $cur_arg"; return 1 ;;
+		esac
+	done
+
+	repo_path="$(cd "$repo_path" && pwd)"
+	local inbox_dir="${repo_path}/${INBOX_DIR_NAME}"
+
+	# Collect rows: age_days TAB sub_folder TAB rel_path TAB prior_attempts
+	local -a rows=()
+	if [[ -d "$inbox_dir" ]]; then
+		while IFS= read -r row; do
+			[[ -n "$row" ]] && rows+=("$row")
+		done < <(_digest_scan_inbox "$inbox_dir" "$age_days")
+	fi
+
+	if [[ "$include_workspace" -eq 1 && -d "$WORKSPACE_INBOX_DIR" ]]; then
+		while IFS= read -r row; do
+			[[ -n "$row" ]] && rows+=("$row")
+		done < <(_digest_scan_inbox "$WORKSPACE_INBOX_DIR" "$age_days")
+	fi
+
+	# Sort by age descending (field 1, numeric)
+	local -a sorted_rows=()
+	if [[ ${#rows[@]} -gt 0 ]]; then
+		while IFS= read -r row; do
+			[[ -n "$row" ]] && sorted_rows+=("$row")
+		done < <(printf '%s\n' "${rows[@]}" | sort -t$'\t' -k1 -rn)
+	fi
+
+	if [[ "$json_output" -eq 1 ]]; then
+		local first=1
+		printf '['
+		local row
+		for row in "${sorted_rows[@]}"; do
+			IFS=$'\t' read -r age sub rel_path attempts <<< "$row"
+			[[ "$first" -eq 1 ]] && first=0 || printf ','
+			printf '{"age_days":%s,"sub_folder":"%s","file_path":"%s","prior_attempts":%s}' \
+				"$age" \
+				"$(_json_escape "$sub")" \
+				"$(_json_escape "$rel_path")" \
+				"$attempts"
+		done
+		printf ']\n'
+	else
+		if [[ ${#sorted_rows[@]} -eq 0 ]]; then
+			print_info "No items >= ${age_days} day(s) old in _inbox/ transit folders."
+			return 0
+		fi
+		printf '\nStale _inbox/ items (>= %d day(s) old)\n\n' "$age_days"
+		printf '  %-8s  %-20s  %-60s  %s\n' \
+			"AGE" "SUB_FOLDER" "FILE_PATH" "PRIOR_ATTEMPTS"
+		printf '  %-8s  %-20s  %-60s  %s\n' \
+			"--------" "--------------------" \
+			"------------------------------------------------------------" "--------------"
+		local row
+		for row in "${sorted_rows[@]}"; do
+			IFS=$'\t' read -r age sub rel_path attempts <<< "$row"
+			printf '  %-8s  %-20s  %-60s  %s\n' \
+				"${age}d" "$sub" "$rel_path" "$attempts"
+		done
+		printf '\nTotal: %d stale item(s)\n\n' "${#sorted_rows[@]}"
+	fi
+	return 0
+}
+
+# =============================================================================
 # cmd_help
 # =============================================================================
 cmd_help() {
 	cat <<'EOF'
-inbox-helper.sh — _inbox/ transit zone manager (t2866 + t2867 + t2868)
+inbox-helper.sh — _inbox/ transit zone manager (t2866 + t2867 + t2868 + t2869)
 
 Commands:
   provision [<repo-path>]   Create _inbox/ structure (default: current dir)
@@ -921,6 +1081,11 @@ Commands:
   add --url <url>           Capture a web page (saves HTML + text + metadata)
   find <query>              Search triage.log for entries matching query (last 30 days)
   status [<repo-path>]      Show item counts per sub-folder
+  digest [options]          Show stale items in _drop/ and _needs-review/ (default: >= 7d old)
+    --age-days N              Age threshold in days (default: 7)
+    --repo PATH               Repo root to scan (default: current dir)
+    --include-workspace       Also scan workspace inbox (~/.aidevops/.agent-workspace/inbox/)
+    --json                    Machine-readable JSON array output
   triage [--dry-run] [--limit N] [--confidence-threshold N]
                             Process pending items: sensitivity → classify → route
   help                      Show this help
@@ -965,6 +1130,7 @@ main() {
 	add) cmd_add "$@" ;;
 	find) cmd_find "$@" ;;
 	status) cmd_status "$@" ;;
+	digest) cmd_digest "$@" ;;
 	triage) cmd_triage "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
