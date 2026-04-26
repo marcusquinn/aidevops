@@ -2703,3 +2703,11 @@ bash <(curl -fsSL https://aidevops.sh/install)
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=marcusquinn/aidevops&type=Date)](https://star-history.com/#marcusquinn/aidevops&Date)
+
+## 💰 Bounty Contribution
+
+- **Task:** t2911: Add structured per-stage timing log to setup.sh non-interactive path
+- **Reward:** $1
+- **Source:** GitHub-Paid
+- **Date:** 2026-04-27
+
