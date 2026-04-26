@@ -683,6 +683,54 @@ cmd_archive() {
 # cmd_list — list cases
 # =============================================================================
 
+# _list_match_case <case_dir> <status_filter> <kind_filter> <party_filter> <json_mode>
+# Returns 0 if case matches all filters and prints a table row (text) or JSON object.
+# Returns 1 if filtered out (no output).
+_list_match_case() {
+	local case_dir="$1" status_filter="$2" kind_filter="$3" party_filter="$4" json_mode="$5"
+	local dossier_path="${case_dir}/${CASE_DOSSIER_FILE}"
+	[[ ! -f "$dossier_path" ]] && return 1
+
+	local dossier
+	dossier="$(jq '.' "$dossier_path" 2>/dev/null)" || return 1
+
+	local cs_status cs_kind cs_id
+	cs_status="$(echo "$dossier" | jq -r '.status')"
+	cs_kind="$(echo "$dossier" | jq -r '.kind')"
+	cs_id="$(echo "$dossier" | jq -r '.id')"
+
+	# Status filter
+	if [[ "$status_filter" != "all" ]]; then
+		if [[ "$cs_status" != "$status_filter" ]]; then
+			_is_archived "$case_dir" && [[ "$status_filter" != "${CASES_ARCHIVE_DIR}" ]] && return 1
+			! _is_archived "$case_dir" && return 1
+		fi
+	fi
+
+	# Kind filter
+	[[ -n "$kind_filter" && "$cs_kind" != "$kind_filter" ]] && return 1
+
+	# Party filter
+	if [[ -n "$party_filter" ]]; then
+		local party_match
+		party_match="$(echo "$dossier" | jq -r \
+			--arg p "$party_filter" '.parties[] | select(.name | test($p;"i")) | .name' \
+			2>/dev/null)" || true
+		[[ -z "$party_match" ]] && return 1
+	fi
+
+	if [[ "$json_mode" == true ]]; then
+		echo "$dossier"
+	else
+		local cs_parties cs_deadline
+		cs_parties="$(echo "$dossier" | jq -r '[.parties[].name] | join(", ")')"
+		cs_deadline="$(echo "$dossier" | jq -r '(.deadlines | sort_by(.date) | first | .date) // ""')"
+		printf '%-36s %-16s %-8s %-24s %-12s\n' \
+			"$cs_id" "$cs_kind" "$cs_status" "${cs_parties:0:24}" "${cs_deadline}"
+	fi
+	return 0
+}
+
 cmd_list() {
 	_require_jq || return 1
 
@@ -708,7 +756,7 @@ cmd_list() {
 	cases_dir="$(_resolve_cases_dir "$repo_path")"
 	[[ ! -d "$cases_dir" ]] && { print_error "Cases plane not provisioned. Run: aidevops case init"; return 1; }
 
-	# Collect cases to inspect
+	# Collect candidate directories (active + optionally archived)
 	local -a case_dirs=()
 	local dir
 	for dir in "${cases_dir}"/case-*/; do
@@ -724,72 +772,31 @@ cmd_list() {
 		done
 	fi
 
-	# Filter and format
+	# Filter cases and accumulate output
 	local -a rows=()
-	local results_json="[]"
+	local results_json="[]" case_dir match_out
 	for case_dir in "${case_dirs[@]:-}"; do
 		[[ -z "$case_dir" ]] && continue
-		local dossier_path="${case_dir}/${CASE_DOSSIER_FILE}"
-		[[ ! -f "$dossier_path" ]] && continue
-
-		local dossier
-		dossier="$(jq '.' "$dossier_path" 2>/dev/null)" || continue
-
-		local cs_status cs_kind cs_id cs_slug cs_opened
-		cs_status="$(echo "$dossier" | jq -r '.status')"
-		cs_kind="$(echo "$dossier" | jq -r '.kind')"
-		cs_id="$(echo "$dossier" | jq -r '.id')"
-		cs_slug="$(echo "$dossier" | jq -r '.slug')"
-		cs_opened="$(echo "$dossier" | jq -r '.opened_at')"
-
-		# Apply status filter
-		if [[ "$status_filter" != "all" ]]; then
-			[[ "$cs_status" != "$status_filter" ]] && {
-				# Also show archived if in archive dir
-				_is_archived "$case_dir" && [[ "$status_filter" != "${CASES_ARCHIVE_DIR}" ]] && continue
-				! _is_archived "$case_dir" && [[ "$cs_status" != "$status_filter" ]] && continue
-			}
-		fi
-
-		# Apply kind filter
-		[[ -n "$kind_filter" && "$cs_kind" != "$kind_filter" ]] && continue
-
-		# Apply party filter
-		if [[ -n "$party_filter" ]]; then
-			local party_match
-			party_match="$(echo "$dossier" | jq -r \
-				--arg p "$party_filter" '.parties[] | select(.name | test($p;"i")) | .name' \
-				2>/dev/null)" || true
-			[[ -z "$party_match" ]] && continue
-		fi
-
-		local cs_parties cs_deadline
-		cs_parties="$(echo "$dossier" | jq -r '[.parties[].name] | join(", ")')"
-		cs_deadline="$(echo "$dossier" | jq -r '(.deadlines | sort_by(.date) | first | .date) // ""')"
-
+		match_out="$(_list_match_case \
+			"$case_dir" "$status_filter" "$kind_filter" "$party_filter" "$json_mode")" || continue
 		if [[ "$json_mode" == true ]]; then
-			results_json="$(echo "$results_json" | jq --argjson d "$dossier" '. + [$d]')"
+			results_json="$(echo "$results_json" | jq --argjson d "$match_out" '. + [$d]')"
 		else
-			rows+=("$(printf '%-36s %-16s %-8s %-24s %-12s' \
-				"$cs_id" "$cs_kind" "$cs_status" "${cs_parties:0:24}" "${cs_deadline}")")
+			rows+=("$match_out")
 		fi
 	done
 
 	if [[ "$json_mode" == true ]]; then
-		echo "$results_json"
-		return 0
+		echo "$results_json"; return 0
 	fi
 
 	if [[ ${#rows[@]} -eq 0 ]]; then
-		echo "No cases found (status: ${status_filter})"
-		return 0
+		echo "No cases found (status: ${status_filter})"; return 0
 	fi
 
 	printf '%-36s %-16s %-8s %-24s %-12s\n' "CASE-ID" "KIND" "STATUS" "PARTIES" "NEXT-DEADLINE"
 	printf '%s\n' "$(printf '%.0s-' {1..100})"
-	for row in "${rows[@]}"; do
-		echo "$row"
-	done
+	for row in "${rows[@]}"; do echo "$row"; done
 	return 0
 }
 
