@@ -491,6 +491,13 @@ _cmd_refresh() {
 
 	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS}"
 
+	# t2902: aggregate gh API call records to JSON report at the end of each
+	# refresh cycle. Fail-open: if gh-api-instrument.sh isn't sourced, the
+	# 2>/dev/null || true silences the unbound function and the host script
+	# keeps working. trim keeps the append-only log under MAX_LINES.
+	gh_aggregate_calls 2>/dev/null || true
+	gh_trim_log 2>/dev/null || true
+
 	# Export counters for health instrumentation
 	echo "search_calls=${_OWNER_SEARCH_CALLS}"
 	echo "cache_writes=${_OWNER_CACHE_WRITES}"
