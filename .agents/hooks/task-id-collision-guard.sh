@@ -553,6 +553,40 @@ _run_hook() {
 }
 
 # ---------------------------------------------------------------------------
+# Check the PR title (and body, for cross-reference footers) for invented
+# t-IDs. Extracted from _run_check_pr (t2895) to keep that function under the
+# 100-line function-complexity gate.
+#
+# Strategy: concatenate PR title + PR body and run _check_message on the
+# combined string. The PR body typically contains the Resolves/Closes/Fixes
+# footer that supplies the cross-reference context, so title + body together
+# give _check_message everything it needs to distinguish a valid tNNN from
+# an invented one. Fail-open if gh is unavailable or the fetch fails.
+#
+# Returns 1 on violation, 0 otherwise (including fail-open paths).
+# ---------------------------------------------------------------------------
+_check_pr_title() {
+	local pr_number="$1"
+	if ! command -v gh >/dev/null 2>&1; then
+		_warn "gh not available — skipping PR title check (fail-open)"
+		return 0
+	fi
+	local pr_title pr_body pr_combined title_rc
+	pr_title=$(gh pr view "$pr_number" --json title --jq '.title' 2>/dev/null)
+	if [[ -z "$pr_title" ]]; then
+		_warn "Could not fetch PR #${pr_number} title via gh — skipping title check (fail-open)"
+		return 0
+	fi
+	pr_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null)
+	pr_combined="${pr_title}"$'\n\n'"${pr_body:-}"
+	_debug "Checking PR #${pr_number} title: $pr_title"
+	_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}"
+	title_rc=$?
+	[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title references invented t-ID: %s\n' "$pr_number" "$pr_title" >&2
+	return "$title_rc"
+}
+
+# ---------------------------------------------------------------------------
 # CI mode: check-pr <PR_NUMBER>
 # Scans every commit in the PR range (merge-base..HEAD).
 # ---------------------------------------------------------------------------
@@ -635,35 +669,13 @@ _run_check_pr() {
 		fi
 	done <<<"$commits"
 
-	# Also check the PR title for invented t-IDs (GH#19987).
-	# Commits-only scanning misses the case where a worker opens a PR whose
-	# title advertises a tNNN that never appears in any commit subject or body
-	# and was never claimed via claim-task-id.sh.
-	#
-	# Strategy: concatenate PR title + PR body and run _check_message on the
-	# combined string. The PR body typically contains the Resolves/Closes/Fixes
-	# footer that supplies the cross-reference context, so title + body together
-	# give _check_message everything it needs to distinguish a valid tNNN from
-	# an invented one. Fail-open if gh is unavailable or the fetch fails.
-	if command -v gh >/dev/null 2>&1; then
-		local pr_title pr_body pr_combined title_rc
-		pr_title=$(gh pr view "$pr_number" --json title --jq '.title' 2>/dev/null)
-		if [[ -n "$pr_title" ]]; then
-			pr_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null)
-			pr_combined="${pr_title}"$'\n\n'"${pr_body:-}"
-			_debug "Checking PR #${pr_number} title: $pr_title"
-			_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}"
-			title_rc=$?
-			# Avoid a third nesting level (awk NEST depth gate); use [[ ]] &&
-			# one-liner instead of if/fi for the violation print.
-			[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title references invented t-ID: %s\n' "$pr_number" "$pr_title" >&2
-			total_violations=$((total_violations + (title_rc == 1 ? 1 : 0)))
-		else
-			_warn "Could not fetch PR #${pr_number} title via gh — skipping title check (fail-open)"
-		fi
-	else
-		_warn "gh not available — skipping PR title check (fail-open)"
-	fi
+	# Also check the PR title for invented t-IDs (GH#19987). See
+	# _check_pr_title for the strategy. Extracted to keep _run_check_pr
+	# under the 100-line function-complexity gate (t2895).
+	local title_rc
+	_check_pr_title "$pr_number"
+	title_rc=$?
+	total_violations=$((total_violations + (title_rc == 1 ? 1 : 0)))
 
 	if [[ "$total_violations" -gt 0 ]]; then
 		printf '\n[task-id-guard][SUMMARY] %d violation(s) found in PR #%s\n' "$total_violations" "$pr_number" >&2
