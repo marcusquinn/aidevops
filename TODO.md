@@ -3146,3 +3146,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2869 P2d: pulse digest of stale inbox items + weekly review surface #auto-dispatch #enhancement #framework ref:GH#20933
 
 - [ ] t2870 `_campaigns/` plane — marketing assets, intel, inspiration for ads + organic campaigns #parent #framework #enhancement #interactive ref:GH#20929
+
+- [ ] t2874 structured tag format for knowledge planes (Markdoc-style peer parent) #parent #framework #enhancement #interactive ref:GH#20966

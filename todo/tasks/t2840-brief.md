@@ -71,11 +71,12 @@ Each phase ships as 2-3 child issues; children within a phase can run in paralle
 
 Total: **20 children**.
 
-### Future planes (separate parents — NOT in this MVP)
+### Future planes and crosscutting parents (separate parents — NOT in this MVP)
 
-These planes are part of the long-term knowledge architecture but file separately so MVP scope ships first:
+These planes and crosscutting concerns are part of the long-term architecture but file separately so MVP scope ships first:
 
 - `_campaigns/` — marketing/ads/outreach work (brand assets, competitive intel, swipe files, in-flight creative, post-launch performance + learnings). Filed as **t2870** (peer parent-task). Decomposed into 6 future phases (directory contract, CLI, sensitivity tier, asset binary integration, AI creative agent, performance integration). Children file post-MVP-exit.
+- **Structured tag format (Markdoc-style)** — crosscutting content format peer parent. Filed as **t2874**. Defines tag namespace + schema validator + extractor + migration tooling for inline semantic tags (`{% sensitivity %}`, `{% citation %}`, `{% case-attach %}`, `{% provenance %}`, etc.) across all planes. P1a (t2849) ships forward-compat tag emission in a draft namespace; P1c (t2850) ships forward-compat metadata-lift on the tree. Phase 4 of t2874 migrates `meta.json + text.txt` → `source.md + slim meta.json`. 7 future phases (schema, validator, extractor, migration, PageIndex consumer, retrieval consumer, tooling). Children file post-MVP-exit + after t2849/t2850 are merged so producer-consumer pair exists.
 - `_performance/` — KPI tracking, metrics, dashboards. Future parent-task.
 - `_feedback/` — raw user-feedback corpus + capability-gap mining. Future parent-task.
 - `_projects/` — active project work (peer to `_cases/` but proactive not reactive). Future parent-task.
@@ -144,23 +145,25 @@ Detection runs locally only. Routing layer fails hard if no compliant provider; 
 | P0 | t2843 / GH#20895 | knowledge plane directory contract + provisioning |
 | P0 | t2844 / GH#20896 | knowledge CLI surface (`add`, `list`, `search`) + platform abstraction |
 | P0 | t2845 / GH#20897 | knowledge review gate routine + NMR integration |
-| P0.5 | t2846 / GH#20898 | sensitivity classification schema + detector helper |
-| P0.5 | t2847 / GH#20899 | LLM routing helper + audit log |
-| P0.5 | t2848 / GH#20900 | Ollama integration + local LLM substrate (extends ollama-helper.sh) |
-| P1 | t2849 / GH#20901 | kind-aware enrichment + structured field extraction (generalises ocr-receipt-helper) |
-| P1 | t2850 / GH#20902 | PageIndex tree generation across corpus |
+| P0.5 | t2846 / GH#20899 | sensitivity classification schema + detector helper |
+| P0.5 | t2847 / GH#20900 | LLM routing helper + audit log |
+| P0.5 | t2848 / GH#20901 | Ollama integration + local LLM substrate (extends ollama-helper.sh) |
+| P1 | t2849 / GH#20902 | kind-aware enrichment + structured field extraction (generalises ocr-receipt-helper) |
+| P1 | t2850 / GH#20903 | PageIndex tree generation across corpus |
 | P2 | t2866 / GH#20930 | `_inbox/` directory contract + per-repo provisioning |
 | P2 | t2867 / GH#20931 | inbox capture CLI + watch folder + audit log |
 | P2 | t2868 / GH#20932 | inbox triage routine: sensitivity gate → classification → routing |
 | P2 | t2869 / GH#20933 | pulse digest of stale inbox items + weekly review surface |
-| P4 | t2851 / GH#20903 | case dossier contract + `aidevops case open` |
-| P4 | t2852 / GH#20904 | case CLI surface (`attach`, `status`, `close`, `archive`, `list`) |
-| P4 | t2853 / GH#20905 | case milestone + deadline alarming routine |
-| P5 | t2854 / GH#20906 | `.eml` ingestion handler (knowledge channel for kind=email) |
-| P5 | t2855 / GH#20907 | IMAP polling routine + `mailboxes.json` registry |
-| P5 | t2856 / GH#20908 | email thread reconstruction + filter→case-attach |
+| P4 | t2851 / GH#20904 | case dossier contract + `aidevops case open` |
+| P4 | t2852 / GH#20905 | case CLI surface (`attach`, `status`, `close`, `archive`, `list`) |
+| P4 | t2853 / GH#20906 | case milestone + deadline alarming routine |
+| P5 | t2854 / GH#20908 | `.eml` ingestion handler (knowledge channel for kind=email) |
+| P5 | t2855 / GH#20909 | IMAP polling routine + `mailboxes.json` registry |
+| P5 | t2856 / GH#20910 | email thread reconstruction + filter→case-attach |
 | P6 | t2857 / GH#20911 | `aidevops case draft` agent (RAG, human-gated, provenance) |
 | P6 | t2858 / GH#20912 | `aidevops case chase` (template-only auto-send, opt-in per case) |
+
+GH#20898 and GH#20907 in this range are PRs for unrelated bugfixes (t2842 + t2841) that landed during decomposition — they share the issue+PR number space but are not children of this parent.
 
 P2 children (t2866-t2869) added 2026-04-25 — `_inbox/` is foundational for capture velocity. Sensitivity-first triage means P2c blocks on P0.5a + P0.5c. P2a/P2b ship in parallel with P0.
 

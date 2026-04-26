@@ -56,6 +56,46 @@ Building corpus-wide tree on top of per-doc trees lets an LLM agent (P6a) ask "w
 5. **Routine `r042`** — `repeat: cron(*/60 * * * *)` (hourly), `run: scripts/knowledge-index-helper.sh build`, idempotent
 6. **CLI upgrade** — extend `knowledge-helper.sh search` to detect tree existence; if present, route to `knowledge-index-helper.sh query`; otherwise fall back to grep
 7. **Tests** — covers per-source build, corpus build, incremental rebuild skip path, query result shape, sensitivity routing, fallback to grep when tree absent
+8. **Markdoc tag-aware metadata (forward-compat hook for t2874):** when a source has a tagged `source.md` (emitted by t2849), tag attributes lift to PageIndex node metadata. See "Markdoc tag-awareness" section below.
+
+### Markdoc tag-awareness (for t2874 phase 5)
+
+The structured-content-format peer parent (t2874) ships its real consumer wiring in phase 5 ("PageIndex consumer"). To make that wiring additive rather than rewrite-from-scratch, P1c SHIPS WITH the metadata extension point already in the tree shape AND a minimal tag-lift implementation that works against t2849's draft-namespace tags:
+
+**Tree node shape:**
+
+```jsonc
+{
+  "title": "Background",
+  "summary": "...",
+  "char_start": 1240,
+  "char_end": 3856,
+  "metadata": {
+    // empty when source has no Markdoc tags
+    // populated by tag-lift from source.md when tags are present
+    "sensitivity": "internal",
+    "provenance": { "from": "supplier@example.com", "received": "2026-04-23" },
+    "case_attach": ["acme-dispute"],
+    "extracted_fields": { "supplier_name": "Acme Widgets Ltd", ... }
+  },
+  "children": [...]
+}
+```
+
+**Tag scope rules (lifted to which nodes):**
+
+- File-level tags (in frontmatter or top of body before any heading) → root node + propagated to all descendants as inherited metadata (read-time merge, not stored on every node)
+- Section-level tags (inside a heading scope, before any nested heading) → that node + propagated to descendants of that node
+- Inline tags (within a paragraph) → leaf node attribute only (e.g. `{% extracted-field %}` from t2849 lands as `metadata.extracted_fields.<name> = <value>` on the leaf containing the wrapped span)
+- Citation tags (`{% citation source-id="..." %}`) → emit a tree-level cross-reference edge: `tree.edges.citations: [{from_node: "node-id", to_source_id: "src-014"}, ...]`. Citations are NOT just node metadata; they describe inter-source relationships.
+
+**Forward-compat behaviour:**
+
+- If `source.md` is absent (legacy `text.txt`-only sources from before t2849 migrates), `metadata` field is `{}` and the build proceeds normally. Existing trees are not invalidated.
+- If t2874's validator is not yet installed (phase 1-2 not landed), tag parsing is best-effort regex; malformed tags log a warning and are skipped (not fatal).
+- Once t2874 phase 5 ships, the tag-lift implementation is replaced with a proper consumer of `markdoc-extract.sh` output. The tree node shape doesn't change — phase 5 is a swap-in of a more rigorous parser, not a re-wire.
+
+This makes P1c immediately useful (it lifts the draft-namespace tags t2849 emits) AND forward-compat (phase 5 of t2874 swaps the parser without breaking the tree shape or downstream consumers).
 
 ### Files Scope
 
@@ -77,6 +117,11 @@ Building corpus-wide tree on top of per-doc trees lets an LLM agent (P6a) ask "w
 - [ ] Routine `r042` runs hourly, idempotent under concurrent invocation (lock-protected)
 - [ ] Personal plane tree at `~/.aidevops/.agent-workspace/knowledge/index/tree.json` works equivalently
 - [ ] LLM calls during build route through `llm-routing-helper.sh` with each source's sensitivity tier (auditable)
+- [ ] **Markdoc tag-awareness:** when `source.md` exists, tree nodes carry `metadata` field populated from tag attributes per scope rules (file-level → root + descendants; section-level → that subtree; inline → leaf)
+- [ ] **Markdoc tag-awareness:** citation tags produce `tree.edges.citations` array of cross-references
+- [ ] **Markdoc tag-awareness:** when `source.md` is absent, `metadata` field is `{}` and build still succeeds (graceful degradation)
+- [ ] **Markdoc tag-awareness:** test asserts an invoice tree built from t2849-produced `source.md` carries `extracted_fields.supplier_name` on the leaf node containing that span
+- [ ] **Markdoc tag-awareness:** test asserts a privileged-region tag inside an internal-tier file produces correct per-node sensitivity metadata (not just file-level)
 - [ ] ShellCheck zero violations on new + modified helpers
 - [ ] Tests pass: `bash .agents/tests/test-knowledge-index.sh`
 
@@ -92,3 +137,5 @@ Building corpus-wide tree on top of per-doc trees lets an LLM agent (P6a) ask "w
 - Existing skill: `.agents/tools/context/pageindex.md`
 - Existing scripts: `.agents/scripts/pageindex-generator.py`, `.agents/scripts/pageindex_helpers.py`
 - Pattern for incremental rebuild: `.agents/scripts/pulse-simplification.sh` (sha-based change detection)
+- Forward-compat target: `todo/tasks/t2874-brief.md` (structured tag format peer parent — phase 5 swaps the tag parser to use t2874's `markdoc-extract.sh`; tree shape unchanged)
+- Tag producer: `todo/tasks/t2849-brief.md` (P1a kind-aware enrichment — emits `source.md` with draft-namespace tags this brief consumes)
