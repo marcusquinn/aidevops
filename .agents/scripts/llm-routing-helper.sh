@@ -432,6 +432,79 @@ _call_openai() {
 # Subcommands
 # =============================================================================
 
+# _route_apply_redaction: apply redaction if tier+provider requires it.
+# Sets caller's redaction_applied and prompt_file via output vars pattern:
+# outputs "applied:<path>" or "skip" on stdout.
+_route_apply_redaction() {
+	local config_file="$1"
+	local tier="$2"
+	local provider="$3"
+	local prompt_file="$4"
+
+	local policy
+	policy=$(_get_tier_policy "$config_file" "$tier") || { printf 'skip'; return 0; }
+	local redaction_required
+	redaction_required=$(printf '%s' "$policy" | jq -r '.redaction_required_for_cloud // false')
+	local provider_kind
+	provider_kind=$(jq -r --arg p "$provider" '.providers[$p].kind // "cloud"' "$config_file")
+
+	if [[ "$redaction_required" == "$_LLM_TRUE" && "$provider_kind" == "cloud" ]]; then
+		local redacted_file
+		redacted_file=$(mktemp)
+		if "${SCRIPT_DIR}/redaction-helper.sh" redact "$prompt_file" "$redacted_file" 2>/dev/null; then
+			printf 'applied:%s' "$redacted_file"
+			return 0
+		fi
+		print_warning "Redaction failed; proceeding with original prompt for tier=${tier}"
+	fi
+	printf 'skip'
+	return 0
+}
+
+# _route_call_provider: dispatch to the appropriate LLM provider.
+# Outputs the response text on stdout.
+_route_call_provider() {
+	local provider="$1"
+	local prompt_file="$2"
+	local max_tokens="$3"
+	local model="$4"
+	local config_file="$5"
+	local tier="$6"
+	local task="$7"
+
+	if [[ "$LLM_ROUTING_DRY_RUN" == "1" ]]; then
+		print_info "[dry-run] Would call provider=${provider} tier=${tier} task=${task}"
+		printf '[dry-run response]'
+		return 0
+	fi
+
+	case "$provider" in
+	ollama)
+		_call_ollama "$prompt_file" "$max_tokens" "$model" "$config_file" || {
+			print_error "Ollama call failed for tier=${tier} task=${task}"
+			return 1
+		}
+		;;
+	anthropic)
+		_call_anthropic "$prompt_file" "$max_tokens" "$model" || {
+			print_error "Anthropic call failed for tier=${tier} task=${task}"
+			return 1
+		}
+		;;
+	openai)
+		_call_openai "$prompt_file" "$max_tokens" "$model" || {
+			print_error "OpenAI call failed for tier=${tier} task=${task}"
+			return 1
+		}
+		;;
+	*)
+		print_error "Unsupported provider: ${provider}"
+		return 1
+		;;
+	esac
+	return 0
+}
+
 cmd_route() {
 	_require_jq || return 1
 
@@ -441,165 +514,63 @@ cmd_route() {
 		local _opt="$1"
 		local _val="${2:-}"
 		case "$_opt" in
-		--tier)
-			tier="$_val"
-			shift 2
-			;;
-		--task)
-			task="$_val"
-			shift 2
-			;;
-		--prompt-file)
-			prompt_file="$_val"
-			shift 2
-			;;
-		--max-tokens)
-			max_tokens="$_val"
-			shift 2
-			;;
-		--model)
-			model_override="$_val"
-			shift 2
-			;;
-		*)
-			print_error "Unknown option: $_opt"
-			return 1
-			;;
+		--tier) tier="$_val"; shift 2 ;;
+		--task) task="$_val"; shift 2 ;;
+		--prompt-file) prompt_file="$_val"; shift 2 ;;
+		--max-tokens) max_tokens="$_val"; shift 2 ;;
+		--model) model_override="$_val"; shift 2 ;;
+		*) print_error "Unknown option: $_opt"; return 1 ;;
 		esac
 	done
 
-	# Validate required args
 	if [[ -z "$tier" ]]; then
-		print_error "--tier is required (public|internal|pii|sensitive|privileged)"
-		return 1
+		print_error "--tier is required (public|internal|pii|sensitive|privileged)"; return 1
 	fi
-	if [[ -z "$prompt_file" ]]; then
-		print_error "--prompt-file is required"
-		return 1
+	if [[ -z "$prompt_file" || ! -f "$prompt_file" ]]; then
+		print_error "--prompt-file is required and must exist"; return 1
 	fi
-	if [[ ! -f "$prompt_file" ]]; then
-		print_error "Prompt file not found: ${prompt_file}"
-		return 1
-	fi
-	if [[ -z "$task" ]]; then
-		task="general"
-	fi
+	[[ -z "$task" ]] && task="general"
 
 	local config_file
 	config_file=$(_load_config) || return 1
 
-	# Select provider
 	local provider
 	provider=$(_select_provider "$config_file" "$tier" "$model_override") || return 1
 
-	# Use model override if specified
-	local model="$model_override"
-
-	# Check if redaction is needed for this tier+provider combo
-	local redaction_applied=false
-	local policy
-	policy=$(_get_tier_policy "$config_file" "$tier") || return 1
-	local redaction_required
-	redaction_required=$(printf '%s' "$policy" | jq -r '.redaction_required_for_cloud // false')
-	local provider_kind
-	provider_kind=$(jq -r --arg p "$provider" '.providers[$p].kind // "cloud"' "$config_file")
-
-	if [[ "$redaction_required" == "$_LLM_TRUE" && "$provider_kind" == "cloud" ]]; then
-		# Apply redaction before cloud call
-		local redacted_file
-		redacted_file=$(mktemp)
-		if "${SCRIPT_DIR}/redaction-helper.sh" redact "$prompt_file" "$redacted_file" 2>/dev/null; then
-			redaction_applied=true
-			prompt_file="$redacted_file"
-		else
-			print_warning "Redaction failed; proceeding with original prompt for tier=${tier}"
-		fi
+	# Apply redaction if needed
+	local _redir_result redaction_applied=false
+	_redir_result=$(_route_apply_redaction "$config_file" "$tier" "$provider" "$prompt_file")
+	if [[ "$_redir_result" == applied:* ]]; then
+		redaction_applied=true
+		prompt_file="${_redir_result#applied:}"
 	fi
 
-	# Hash prompt before call
-	local prompt_sha
+	local prompt_sha timestamp
 	prompt_sha=$(_sha256_file "$prompt_file")
-
-	local timestamp
 	timestamp=$(_iso_timestamp)
 
-	# Call the provider
-	local response=""
-	local call_start call_end tokens_used=0 cost_estimate="0"
+	local response
+	response=$(_route_call_provider "$provider" "$prompt_file" "$max_tokens" \
+		"$model_override" "$config_file" "$tier" "$task") || return 1
 
-	call_start=$(date +%s 2>/dev/null || printf '0')
-
-	if [[ "$LLM_ROUTING_DRY_RUN" == "1" ]]; then
-		print_info "[dry-run] Would call provider=${provider} tier=${tier} task=${task}"
-		response="[dry-run response]"
-	else
-		case "$provider" in
-		ollama)
-			response=$(_call_ollama "$prompt_file" "$max_tokens" "$model" "$config_file") || {
-				print_error "Ollama call failed for tier=${tier} task=${task}"
-				return 1
-			}
-			;;
-		anthropic)
-			response=$(_call_anthropic "$prompt_file" "$max_tokens" "$model") || {
-				print_error "Anthropic call failed for tier=${tier} task=${task}"
-				return 1
-			}
-			;;
-		openai)
-			response=$(_call_openai "$prompt_file" "$max_tokens" "$model") || {
-				print_error "OpenAI call failed for tier=${tier} task=${task}"
-				return 1
-			}
-			;;
-		*)
-			print_error "Unsupported provider: ${provider}"
-			return 1
-			;;
-		esac
-	fi
-
-	call_end=$(date +%s 2>/dev/null || printf '0')
-
-	# Hash response
-	local response_sha
+	local response_sha prompt_len tokens_used=0 cost_estimate="0"
 	response_sha=$(_sha256_string "$response")
-
-	# Estimate tokens (rough: 4 chars per token)
-	local prompt_len response_len
 	prompt_len=$(wc -c <"$prompt_file" 2>/dev/null || printf '0')
-	response_len=${#response}
-	tokens_used=$(((prompt_len + response_len) / 4))
+	tokens_used=$(((prompt_len + ${#response}) / 4))
 
-	# Resolve audit log path
 	local audit_log
 	audit_log=$(
-		if [[ -n "$LLM_AUDIT_LOG" ]]; then
-			printf '%s' "$LLM_AUDIT_LOG"
-		else
-			_resolve_audit_log "$config_file"
-		fi
+		if [[ -n "$LLM_AUDIT_LOG" ]]; then printf '%s' "$LLM_AUDIT_LOG"
+		else _resolve_audit_log "$config_file"; fi
 	)
 
-	# Append audit record
-	_append_audit_log \
-		"$audit_log" \
-		"$timestamp" \
-		"$tier" \
-		"$task" \
-		"$provider" \
-		"$redaction_applied" \
-		"$prompt_sha" \
-		"$response_sha" \
-		"$tokens_used" \
-		"$cost_estimate"
+	_append_audit_log "$audit_log" "$timestamp" "$tier" "$task" "$provider" \
+		"$redaction_applied" "$prompt_sha" "$response_sha" "$tokens_used" "$cost_estimate"
 
-	# Update costs
 	local costs_path
 	costs_path=$(_resolve_costs_path "$config_file")
 	_update_costs "$costs_path" "$provider" "$cost_estimate"
 
-	# Output response to stdout
 	printf '%s\n' "$response"
 	return 0
 }
