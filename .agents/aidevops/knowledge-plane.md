@@ -207,7 +207,7 @@ Field reference:
 | `id` | string | Unique identifier used in state keys and .eml filenames |
 | `provider` | string | Provider slug (matched against `email-providers.json.txt` for host defaults) |
 | `host` | string | IMAP server hostname |
-| `port` | integer | IMAP port (993 = TLS, 143 = STARTTLS) |
+| `port` | integer | IMAP port — use 993 (implicit TLS via `IMAP4_SSL`). Port 143 / STARTTLS is not supported. |
 | `user` | string | Login username / email address |
 | `password_ref` | string | `gopass:<path>` or environment variable name |
 | `folders` | array | IMAP folders to poll — each tracked independently |
@@ -256,13 +256,15 @@ no duplicate `.eml` files across restarts or pulse restarts.
 ### .eml Filename Convention
 
 ```
-_knowledge/inbox/email-<mailbox-id>-<uid>.eml
+_knowledge/inbox/email-<mailbox-id>-<folder>-<uid>.eml
 ```
 
-Example: `email-personal-icloud-3421.eml`
+Example: `email-personal-icloud-INBOX-3421.eml`
 
-Hyphens in mailbox IDs are preserved; other non-alphanumeric characters are
-replaced with underscores. UIDs are stable per IMAP server (UIDPLUS-compatible).
+Hyphens in mailbox IDs and folder names are preserved; other non-alphanumeric
+characters are replaced with underscores. UIDs are per-folder on IMAP, so the
+folder name is included in the filename to prevent silent collisions when
+multiple folders are polled.
 
 ### Backfill
 

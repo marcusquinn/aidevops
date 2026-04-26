@@ -58,13 +58,15 @@ _load_or_init_config() {
 		if [[ -f "$MAILBOXES_TEMPLATE" ]]; then
 			cp "$MAILBOXES_TEMPLATE" "$config_path"
 			# Remove example entries from the template copy
-			python3 -c "
-import json, sys
-with open('$config_path') as f:
+			# Use env var to avoid shell-interpolation injection from the config path.
+			AIDEVOPS_CONFIG_PATH="$config_path" python3 -c "
+import json, os
+config_path = os.environ['AIDEVOPS_CONFIG_PATH']
+with open(config_path) as f:
     d = json.load(f)
 # Strip entries with _comment fields (they are examples)
 d['mailboxes'] = [m for m in d.get('mailboxes', []) if '_comment' not in m]
-with open('$config_path', 'w') as f:
+with open(config_path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
 "
@@ -188,32 +190,53 @@ cmd_add() {
 	fi
 
 	# Build folders array
+	# Use env var to avoid shell-interpolation injection (e.g. quotes in folder names).
 	local folders_json
-	folders_json=$(python3 -c "
-import json
-folders = [f.strip() for f in '$folders_input'.split(',') if f.strip()]
+	folders_json=$(AIDEVOPS_FOLDERS_INPUT="$folders_input" python3 -c "
+import json, os
+folders = [f.strip() for f in os.environ['AIDEVOPS_FOLDERS_INPUT'].split(',') if f.strip()]
 print(json.dumps(folders))
 ")
 
-	# Add entry to config
+	# Add entry to config.
+	# All user-controlled values are passed via env vars to avoid shell-interpolation
+	# injection (e.g. quotes or backslashes in mailbox IDs, usernames, or paths).
+	AIDEVOPS_CONFIG_PATH="$config_path" \
+	AIDEVOPS_MB_ID="$mb_id" \
+	AIDEVOPS_PROVIDER="$provider" \
+	AIDEVOPS_HOST="$host" \
+	AIDEVOPS_PORT="$port" \
+	AIDEVOPS_USER="$user" \
+	AIDEVOPS_PASSWORD_REF="$password_ref" \
+	AIDEVOPS_FOLDERS_JSON="$folders_json" \
+	AIDEVOPS_SINCE="$since" \
 	python3 -c "
-import json
-with open('$config_path') as f:
+import json, os
+config_path   = os.environ['AIDEVOPS_CONFIG_PATH']
+mb_id         = os.environ['AIDEVOPS_MB_ID']
+provider      = os.environ['AIDEVOPS_PROVIDER']
+host          = os.environ['AIDEVOPS_HOST']
+port          = int(os.environ['AIDEVOPS_PORT'])
+user          = os.environ['AIDEVOPS_USER']
+password_ref  = os.environ['AIDEVOPS_PASSWORD_REF']
+folders       = json.loads(os.environ['AIDEVOPS_FOLDERS_JSON'])
+since         = os.environ['AIDEVOPS_SINCE']
+with open(config_path) as f:
     d = json.load(f)
 entry = {
-    'id': '$mb_id',
-    'provider': '$provider',
-    'host': '$host',
-    'port': $port,
-    'user': '$user',
-    'password_ref': '$password_ref',
-    'folders': $folders_json,
-    'since': '$since',
+    'id': mb_id,
+    'provider': provider,
+    'host': host,
+    'port': port,
+    'user': user,
+    'password_ref': password_ref,
+    'folders': folders,
+    'since': since,
 }
 # Remove existing entry with same id if present
-d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != '$mb_id']
+d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != mb_id]
 d['mailboxes'].append(entry)
-with open('$config_path', 'w') as f:
+with open(config_path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
 print('Saved')
@@ -256,17 +279,20 @@ cmd_remove() {
 		return 1
 	fi
 
-	python3 -c "
-import json, sys
-with open('$config_path') as f:
+	# Use env vars to avoid shell-interpolation injection from mailbox_id or config_path.
+	AIDEVOPS_CONFIG_PATH="$config_path" AIDEVOPS_MB_ID="$mailbox_id" python3 -c "
+import json, sys, os
+config_path = os.environ['AIDEVOPS_CONFIG_PATH']
+mailbox_id  = os.environ['AIDEVOPS_MB_ID']
+with open(config_path) as f:
     d = json.load(f)
 before = len(d.get('mailboxes', []))
-d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != '$mailbox_id']
+d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != mailbox_id]
 after = len(d['mailboxes'])
 if before == after:
     print('ERROR: mailbox not found', file=sys.stderr)
     sys.exit(1)
-with open('$config_path', 'w') as f:
+with open(config_path, 'w') as f:
     json.dump(d, f, indent=2)
     f.write('\n')
 print('Removed')
