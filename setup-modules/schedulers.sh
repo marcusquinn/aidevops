@@ -703,6 +703,17 @@ _install_pulse_launchd() {
 		_interval_label="${_interval_sec}s"
 	fi
 
+	# One-time legacy cleanup: unload and remove the old-label plist if present.
+	# Users on stale installs may have com.aidevops.supervisor-pulse (legacy) and
+	# com.aidevops.aidevops-supervisor-pulse (current) both loaded, causing 2x
+	# dispatch.  Only targets the hardcoded legacy path; idempotent — no-op when
+	# the legacy file is absent.
+	local _legacy_plist="$HOME/Library/LaunchAgents/com.aidevops.supervisor-pulse.plist"
+	if [[ -f "$_legacy_plist" ]]; then
+		launchctl unload "$_legacy_plist" 2>/dev/null || true
+		rm -f "$_legacy_plist"
+	fi
+
 	# _launchd_install_if_changed handles unload-before-replace only when content
 	# has changed, and writes atomically via tmp+rename (see setup.sh).
 	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
