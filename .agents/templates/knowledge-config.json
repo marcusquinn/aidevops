@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sensitivity_default": "internal",
+  "trust_default": "unverified",
+  "blob_threshold_bytes": 31457280,
+  "trust_ladder": ["unverified", "reviewed", "trusted", "authoritative"],
+  "sensitivity_levels": ["public", "internal", "confidential", "restricted"],
+  "ingest_policy": {
+    "auto_sha256": true,
+    "require_meta": true
+  }
+}
