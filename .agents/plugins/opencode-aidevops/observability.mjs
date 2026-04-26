@@ -14,7 +14,9 @@
  * @module observability
  */
 
-import { mkdirSync, readFileSync } from "fs";
+import {
+  mkdirSync, readFileSync, writeFileSync, existsSync, rmdirSync, unlinkSync,
+} from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
@@ -24,8 +26,12 @@ import {
 } from "./observability-sqlite.mjs";
 
 const HOME = homedir();
-const OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
-const DB_PATH = join(OBS_DIR, "llm-requests.db");
+const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observability");
+// AIDEVOPS_OBS_DB_OVERRIDE lets tests redirect to a temp DB without touching
+// the prod observability DB. Module-load semantics — set the env var BEFORE
+// importing this module. See tests/test-observability-concurrent-init.sh (t2900).
+const DB_PATH = process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db");
+const OBS_DIR = dirname(DB_PATH);
 
 // ---------------------------------------------------------------------------
 // Pricing table — loaded from shared JSON (single source of truth).
@@ -155,6 +161,67 @@ function initDatabase() {
   // Set the DB path for the SQLite process manager
   setDbPath(DB_PATH);
 
+  // FAST PATH (t2900): the schema includes `PRAGMA journal_mode=WAL` and
+  // `CREATE TABLE/INDEX IF NOT EXISTS`. Even though the CREATEs are
+  // idempotent, all of them require the writer lock. With 24 concurrent
+  // workers (see `MAX_WORKERS` in pulse-wrapper.sh), the writer queue grew
+  // beyond the 5s `.timeout` and produced `database is locked (5)` on
+  // 100% of worker startups. Read-only check first — no lock contention,
+  // skips the slow path entirely once the DB is ready.
+  if (existsSync(DB_PATH) && _isSchemaInitialized()) {
+    return _runDataMigrations();
+  }
+
+  // SLOW PATH (t2900): serialise schema creation across concurrent workers
+  // via mkdir-based advisory lock. mkdir is POSIX-atomic on every fs we
+  // care about, so we don't need flock (which has FD-inheritance footguns).
+  // Pattern follows oauth-pool-storage::withPoolLock.
+  return _withInitLock(() => {
+    // DOUBLE-CHECKED LOCKING: another worker may have completed init while
+    // we waited. If schema is now ready, skip the writer-lock-heavy path.
+    if (existsSync(DB_PATH) && _isSchemaInitialized()) {
+      return _runDataMigrations();
+    }
+    if (!_createSchema()) return false;
+    return _runDataMigrations();
+  });
+}
+
+/**
+ * Read-only check: are all expected tables present and is the t1309 `intent`
+ * column on `tool_calls`? Uses `sqlite3 -readonly` so it never contends on
+ * the writer lock — safe to call from N concurrent workers without race.
+ *
+ * Returns false on any error (DB doesn't exist, sqlite3 fails, schema is
+ * incomplete) so the caller falls through to the slow path.
+ *
+ * @returns {boolean}
+ */
+function _isSchemaInitialized() {
+  try {
+    const result = execSync(
+      `sqlite3 -readonly -separator '|' "${DB_PATH}" ` +
+      `"SELECT ` +
+      `(SELECT COUNT(*) FROM sqlite_master WHERE type='table' ` +
+      `AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, ` +
+      `(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;"`,
+      { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] },
+    ).trim();
+    if (!result) return false;
+    const [tbls, intentCol] = result.split("|");
+    return tbls === "3" && intentCol === "1";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run the heavy schema CREATE block (the writer-lock contention point).
+ * Caller is responsible for serialising this via `_withInitLock`.
+ *
+ * @returns {boolean} true on success
+ */
+function _createSchema() {
   const schema = `
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
@@ -234,7 +301,21 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
     console.error("[aidevops] Observability: schema creation failed");
     return false;
   }
+  return true;
+}
 
+/**
+ * Idempotent data migrations that run on every plugin init.
+ *
+ * Both migrations are no-ops on the second+ run (they check state first /
+ * have `WHERE cost=0` filters), so calling this on the fast path is cheap.
+ * It still touches the writer lock briefly when the SELECT promotes to a
+ * BEGIN IMMEDIATE — but the per-call write is a microsecond, not a 459MB
+ * journal flush, so writer-queue contention is no longer the bottleneck.
+ *
+ * @returns {boolean} true on success (best-effort — never returns false)
+ */
+function _runDataMigrations() {
   // Migration: add intent column to tool_calls if it doesn't exist (t1309).
   // Check first to avoid noisy "duplicate column" errors in logs.
   // Fresh DBs already have the column from the CREATE TABLE above.
@@ -252,6 +333,97 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   backfillCosts();
 
   return true;
+}
+
+/**
+ * mkdir-based advisory lock for schema initialisation (t2900).
+ *
+ * Pattern matches `oauth-pool-storage::withPoolLock`. mkdirSync is
+ * POSIX-atomic — only one of N concurrent callers wins. Stale locks (dead
+ * PID or older than `STALE_MS`) are reclaimed automatically.
+ *
+ * Lock is per-DB-path so the test suite (which sets `AIDEVOPS_OBS_DB_OVERRIDE`)
+ * doesn't fight production workers for the same lockdir.
+ *
+ * On lock-acquisition timeout, falls back to running `fn()` without the
+ * lock — the SQLite `.timeout 5000` busy_timeout is still in effect, and
+ * a worst-case `database is locked` is preferable to dropping observability
+ * for the rest of the session.
+ *
+ * @template T
+ * @param {() => T} fn
+ * @returns {T}
+ */
+function _withInitLock(fn) {
+  const LOCK_DIR = `${DB_PATH}.init.lock.d`;
+  const OWNER_FILE = `${LOCK_DIR}/owner`;
+  const STALE_MS = 30000; // 30s — schema init has historically taken <2s
+  const ACQUIRE_TIMEOUT_MS = 30000;
+  const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
+  while (true) {
+    try {
+      mkdirSync(LOCK_DIR);
+      writeFileSync(OWNER_FILE, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
+      break;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      if (_isInitLockStale(OWNER_FILE, STALE_MS)) {
+        try { unlinkSync(OWNER_FILE); } catch { /* race */ }
+        try { rmdirSync(LOCK_DIR); } catch { /* race */ }
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        console.error("[aidevops] Observability: init lock timeout — proceeding without lock");
+        return fn();
+      }
+      Atomics.wait(sleepBuf, 0, 0, 100);
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    _releaseInitLock(LOCK_DIR, OWNER_FILE);
+  }
+}
+
+/**
+ * Returns true if the init lock's owner PID is dead or older than `staleMs`.
+ * Returns false on any read error (caller should keep waiting).
+ *
+ * @param {string} ownerFile
+ * @param {number} staleMs
+ * @returns {boolean}
+ */
+function _isInitLockStale(ownerFile, staleMs) {
+  try {
+    const { pid, ts } = JSON.parse(readFileSync(ownerFile, "utf-8"));
+    const processGone = (() => {
+      try { process.kill(pid, 0); return false; } catch { return true; }
+    })();
+    return processGone || (Date.now() - ts > staleMs);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Release the init lock if and only if we still own it (PID match).
+ * Prevents a finally-block from removing another process's lock after a
+ * stale takeover.
+ *
+ * @param {string} lockDir
+ * @param {string} ownerFile
+ */
+function _releaseInitLock(lockDir, ownerFile) {
+  try {
+    const { pid } = JSON.parse(readFileSync(ownerFile, "utf-8"));
+    if (pid !== process.pid) return;
+    try { unlinkSync(ownerFile); } catch { /* race */ }
+    try { rmdirSync(lockDir); } catch { /* race */ }
+  } catch { /* lock dir already gone */ }
 }
 
 /**
