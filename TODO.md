@@ -85,6 +85,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ## Routines
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
+- [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 
 ## Ready
 

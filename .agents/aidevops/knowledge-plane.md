@@ -124,3 +124,94 @@ aidevops knowledge provision [path]    # Re-provision / repair (idempotent)
 ```
 
 The helper: `.agents/scripts/knowledge-helper.sh`.
+
+## Email Thread Reconstruction (t2856)
+
+Email sources with `"kind": "email"` support JWZ-style thread reconstruction.
+Thread indexes live at `_knowledge/index/email-threads/<thread-id>.json`:
+
+```json
+{
+  "thread_id": "<msg-001@example.com>",
+  "root_subject": "Project kickoff",
+  "participants": ["alice@example.com", "bob@example.com"],
+  "sources": [
+    {"source_id": "src-001", "message_id": "<msg-001@example.com>", "date": "2026-01-10T09:00:00Z", "from": "alice@example.com"},
+    {"source_id": "src-002", "message_id": "<msg-002@example.com>", "date": "2026-01-10T10:00:00Z", "from": "bob@example.com"}
+  ]
+}
+```
+
+**Threading algorithm (JWZ):**
+
+1. Parent-link via `in_reply_to` — if the referenced message_id is in the corpus
+2. Fall back to last entry in `references` header
+3. Subject-merge orphans: emails sharing a normalised subject (strip Re:/Fwd:, lowercase) but lacking In-Reply-To are grouped under the earliest message as root
+
+**Incremental:** re-threads only when source meta.json files change (mtime comparison). Use `--force` to rebuild unconditionally.
+
+**Email meta.json fields used:** `id`, `kind`, `message_id`, `in_reply_to`, `references`, `subject`, `from`, `date`/`ingested_at`.
+
+```bash
+aidevops email build   [knowledge-root] [--force]        # Rebuild thread index
+aidevops email thread  <message-id> [knowledge-root]     # Look up thread by message-id
+```
+
+Helper: `.agents/scripts/email-thread-helper.sh`.
+Python module: `.agents/scripts/email_thread.py`.
+
+## Email Filter → Case-Attach (t2856)
+
+Sieve-style rules in `_config/email-filters.json` auto-attach matched email
+sources to cases when the filter tick runs (routine `r045`, every 15 min).
+
+**Filter config:** `<repo>/_config/email-filters.json` (template at `.agents/templates/email-filters-config.json`):
+
+```json
+{
+  "rules": [
+    {
+      "name": "Dispute counsel correspondence",
+      "match": {
+        "from_contains": "counsel@example.com",
+        "subject_contains_any": ["Re: Dispute"]
+      },
+      "actions": [
+        { "attach_to_case": "case-2026-0001-dispute-acme", "role": "evidence" },
+        { "set_sensitivity": "privileged" }
+      ]
+    }
+  ]
+}
+```
+
+**Match predicates (AND semantics — all must match):**
+
+| Predicate | Type | Description |
+|-----------|------|-------------|
+| `from_contains` | string | Partial match on From/Sender (case-insensitive) |
+| `from_equals` | string | Exact match on From/Sender |
+| `subject_contains_any` | string[] | Any element present in Subject (case-insensitive) |
+| `subject_matches_regex` | string | Python regex matched against Subject |
+| `body_contains` | string | Partial match on body_preview/body |
+| `has_attachment_kind` | string | Attachment kind present in `attachments[]` |
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `attach_to_case` + `role` | Calls `case-helper.sh attach <case-id> <source-id> --role <role>` |
+| `set_sensitivity` | Updates `sensitivity` field in meta.json |
+
+**Filter state:** `_knowledge/.email-filter-state.json` — last-processed source ID, prevents double-processing.
+
+**Audit log:** `_cases/<case-id>/comms/email-attach.jsonl` — one line per attachment action.
+
+```bash
+aidevops email filter tick   [knowledge-root]             # Run filter pass (called by r045)
+aidevops email filter list   [knowledge-root]             # List rules with match summaries
+aidevops email filter add    [knowledge-root]             # Interactive rule builder
+aidevops email filter test   <rule-name> [knowledge-root] # Dry-run against last 50 sources
+```
+
+Helper: `.agents/scripts/email-filter-helper.sh`.
