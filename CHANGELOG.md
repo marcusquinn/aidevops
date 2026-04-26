@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.15] - 2026-04-26
+
+### Changed
+
+- Performance: t2910: cache generate-runtime-config.sh on input hash (saves 135s/cycle) (#21064)
+- file ref:GH#21057 — auto-release leaves GitHub state stale (#21058)
+- Maintenance: mark t2902 complete (pr:#21053 completed:2026-04-26) [skip ci]
+- stop GraphQL exhaustion via instrumentation + proactive REST guard (#21053)
+- Maintenance: mark t2906 complete (pr:#21062 completed:2026-04-26) [skip ci]
+- fix 0-byte pulse plist on interrupted setup (#21062)
+- Maintenance: sync ref:GH#21061 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21059 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21057 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21056 to TODO.md [skip ci]
+- implement runner-health circuit breaker and auto-update daemon verifier (#21039)
+
 ## [3.11.14] - 2026-04-26
 
 ### Changed
