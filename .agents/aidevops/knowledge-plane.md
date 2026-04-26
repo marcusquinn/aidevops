@@ -173,9 +173,7 @@ To disable: change `[x] r044` to `[ ] r044` in `TODO.md`.
 ~/.aidevops/agents/scripts/email-poll-helper.sh tick
 
 # Back-fill historical messages from 2026-01-01 (rate-limited to 100 msg/min)
-~/.aidevops/agents/scripts/email-poll-helper.sh backfill <mailbox-id> \
-    --since 2026-01-01 \
-    --rate-limit 100
+~/.aidevops/agents/scripts/email-poll-helper.sh backfill <mailbox-id>     --since 2026-01-01     --rate-limit 100
 
 # Show all mailboxes and their last-polled timestamps
 ~/.aidevops/agents/scripts/email-poll-helper.sh list
@@ -217,112 +215,93 @@ Field reference:
 
 `password_ref` supports two forms:
 
-- `gopass:aidevops/email/<id>/password` → calls `gopass show -o <path>` silently
-- `MY_ENV_VAR` → reads from environment variable `MY_ENV_VAR`
+## Email Thread Reconstruction (t2856)
 
-The resolved password is **never** logged or written to any file.
-
-### State File
-
-`_knowledge/.imap-state.json` persists the last-seen UID per mailbox+folder:
+Email sources with `"kind": "email"` support JWZ-style thread reconstruction.
+Thread indexes live at `_knowledge/index/email-threads/<thread-id>.json`:
 
 ```json
 {
-  "personal-icloud/INBOX": {
-    "last_uid_seen": 3421,
-    "last_polled_at": "2026-04-26T21:00:00+00:00"
-  },
-  "personal-icloud": {
-    "last_polled_at": "2026-04-26T21:00:00+00:00"
-  }
+  "thread_id": "<msg-001@example.com>",
+  "root_subject": "Project kickoff",
+  "participants": ["alice@example.com", "bob@example.com"],
+  "sources": [
+    {"source_id": "src-001", "message_id": "<msg-001@example.com>", "date": "2026-01-10T09:00:00Z", "from": "alice@example.com"},
+    {"source_id": "src-002", "message_id": "<msg-002@example.com>", "date": "2026-01-10T10:00:00Z", "from": "bob@example.com"}
+  ]
 }
 ```
 
-Each tick fetches only UIDs strictly greater than `last_uid_seen`, guaranteeing
-no duplicate `.eml` files across restarts or pulse restarts.
+**Threading algorithm (JWZ):**
 
-### Error Handling
+1. Parent-link via `in_reply_to` — if the referenced message_id is in the corpus
+2. Fall back to last entry in `references` header
+3. Subject-merge orphans: emails sharing a normalised subject (strip Re:/Fwd:, lowercase) but lacking In-Reply-To are grouped under the earliest message as root
 
-- **Wrong password / credential not found** → `status: credential_error` in tick
-  output; `last_error` recorded in state; pulse continues with next mailbox.
-- **Connection refused / DNS failure** → `status: connection_error` in tick output;
-  `last_error` recorded; pulse continues.
-- **Partial folder error** → `status: partial_error`; successfully-polled folders
-  update state; failed folder logged; pulse continues.
-- **Lock contention** → if a previous tick is still running, the new tick exits
-  cleanly (no second poll). Lock is a directory mutex in
-  `~/.aidevops/.agent-workspace/locks/email-poll.lock`.
+**Incremental:** re-threads only when source meta.json files change (mtime comparison). Use `--force` to rebuild unconditionally.
 
-### .eml Filename Convention
-
-```
-_knowledge/inbox/email-<mailbox-id>-<uid>.eml
-```
-
-Example: `email-personal-icloud-3421.eml`
-
-Hyphens in mailbox IDs are preserved; other non-alphanumeric characters are
-replaced with underscores. UIDs are stable per IMAP server (UIDPLUS-compatible).
-
-### Backfill
-
-First-time setup of a mailbox with existing messages:
+**Email meta.json fields used:** `id`, `kind`, `message_id`, `in_reply_to`, `references`, `subject`, `from`, `date`/`ingested_at`.
 
 ```bash
-~/.aidevops/agents/scripts/email-poll-helper.sh backfill personal-icloud \
-    --since 2026-01-01 \
-    --rate-limit 100
+aidevops email build   [knowledge-root] [--force]        # Rebuild thread index
+aidevops email thread  <message-id> [knowledge-root]     # Look up thread by message-id
 ```
 
-- `--since` accepts ISO date `YYYY-MM-DD`.
-- `--rate-limit` defaults to 100 messages/minute. Set to 0 for no throttle
-  (not recommended for large mailboxes — risks IMAP server rate limits).
-- Backfill does **not** update the high-watermark UID; it is additive. After
-  backfill, the routine tick resumes from where it left off.
+Helper: `.agents/scripts/email-thread-helper.sh`.
+Python module: `.agents/scripts/email_thread.py`.
 
-### Removing a Mailbox
+## Email Filter → Case-Attach (t2856)
+
+Sieve-style rules in `_config/email-filters.json` auto-attach matched email
+sources to cases when the filter tick runs (routine `r045`, every 15 min).
+
+**Filter config:** `<repo>/_config/email-filters.json` (template at `.agents/templates/email-filters-config.json`):
+
+```json
+{
+  "rules": [
+    {
+      "name": "Dispute counsel correspondence",
+      "match": {
+        "from_contains": "counsel@example.com",
+        "subject_contains_any": ["Re: Dispute"]
+      },
+      "actions": [
+        { "attach_to_case": "case-2026-0001-dispute-acme", "role": "evidence" },
+        { "set_sensitivity": "privileged" }
+      ]
+    }
+  ]
+}
+```
+
+**Match predicates (AND semantics — all must match):**
+
+| Predicate | Type | Description |
+|-----------|------|-------------|
+| `from_contains` | string | Partial match on From/Sender (case-insensitive) |
+| `from_equals` | string | Exact match on From/Sender |
+| `subject_contains_any` | string[] | Any element present in Subject (case-insensitive) |
+| `subject_matches_regex` | string | Python regex matched against Subject |
+| `body_contains` | string | Partial match on body_preview/body |
+| `has_attachment_kind` | string | Attachment kind present in `attachments[]` |
+
+**Actions:**
+
+| Action | Description |
+|--------|-------------|
+| `attach_to_case` + `role` | Calls `case-helper.sh attach <case-id> <source-id> --role <role>` |
+| `set_sensitivity` | Updates `sensitivity` field in meta.json |
+
+**Filter state:** `_knowledge/.email-filter-state.json` — last-processed source ID, prevents double-processing.
+
+**Audit log:** `_cases/<case-id>/comms/email-attach.jsonl` — one line per attachment action.
 
 ```bash
-aidevops email mailbox remove <id>
+aidevops email filter tick   [knowledge-root]             # Run filter pass (called by r045)
+aidevops email filter list   [knowledge-root]             # List rules with match summaries
+aidevops email filter add    [knowledge-root]             # Interactive rule builder
+aidevops email filter test   <rule-name> [knowledge-root] # Dry-run against last 50 sources
 ```
 
-This removes the entry from `mailboxes.json`. The state entry at
-`_knowledge/.imap-state.json` and any already-fetched `.eml` files are preserved.
-
-### Dependencies
-
-- Python 3 (stdlib only: `imaplib`, `email`, `json`, `re`, `subprocess`, `pathlib`)
-- gopass (for credential resolution when using `gopass:` references)
-- `shared-constants.sh` (sourced by `email-poll-helper.sh`)
-
-### Provider IMAP Hosts
-
-See `.agents/configs/email-providers.json.txt` for a full list of supported
-providers with verified IMAP host/port pairs. The `aidevops email mailbox add`
-command auto-fills these when you specify a known provider slug.
-
-Common providers:
-
-| Provider | Host | Port |
-|----------|------|------|
-| iCloud | imap.mail.me.com | 993 |
-| Gmail | imap.gmail.com | 993 |
-| Fastmail | imap.fastmail.com | 993 |
-| Cloudron | my.yourdomain.com | 993 |
-| Outlook.com | outlook.office365.com | 993 |
-
-### Routine r044
-
-The routine entry in `TODO.md`:
-
-```
-- [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
-```
-
-- `repeat:cron(*/10 * * * *)` — runs every 10 minutes
-- `run:scripts/email-poll-helper.sh tick` — the pulse executes this script
-- Lock-protected — only one poll runs per cycle
-- Errors are fail-open: connection failures or missing credentials are logged
-  but do not crash the pulse
-
-To disable: change `[x]` to `[ ]` in `TODO.md` and commit.
+Helper: `.agents/scripts/email-filter-helper.sh`.
