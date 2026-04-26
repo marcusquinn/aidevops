@@ -32,14 +32,26 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 # Threshold below which we route reads/writes through REST instead of GraphQL.
 # Env override: AIDEVOPS_GH_REST_FALLBACK_THRESHOLD
 #
-# Tuning rationale (t2744): the original default of 10 only engaged after
-# 99.8% of the GraphQL budget was already spent — by which point in-flight
-# operations were already failing. Raising to 1000 (20% remaining) routes
-# read-heavy traffic through the separate 5000/hr REST core pool while
-# GraphQL still has reserve for ops without REST equivalents (a small set
-# of GraphQL-only mutations). Splitting load across pools roughly doubles
-# effective capacity in steady state.
-_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1000}"
+# Tuning rationale:
+#   t2574 (default 10):   only engaged after 99.8% of the GraphQL budget was
+#                         spent — by then in-flight ops were already failing.
+#   t2744 (default 1000): proactive fallback at 20% remaining. Routes read-
+#                         heavy traffic through the 5000/hr REST core pool
+#                         while GraphQL keeps reserve for GraphQL-only
+#                         mutations. Doubles steady-state capacity.
+#   t2902 (default 1500): raised again. Operational data over 4.5 days on
+#                         the marcusquinn runtime: 47 lifetime circuit-breaker
+#                         fires (~10/day) AND GraphQL still hit 0/5000. The
+#                         1000-point reserve was consumed faster than expected
+#                         because `gh search` calls in pulse-batch-prefetch
+#                         (per-owner per-cycle) were not routed through this
+#                         threshold — they bypassed the wrappers entirely.
+#                         t2902 wires those call sites in (see
+#                         pulse-batch-prefetch-helper.sh) AND raises the
+#                         threshold to give earlier headroom (1500 = 30%
+#                         remaining). Pair: instrumentation + earlier
+#                         fallback. Trivial revert: set back to 1000 here.
+_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1500}"
 
 #######################################
 # Build the `-F` value for `gh api` that uploads a file's contents as the
