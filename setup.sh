@@ -1076,6 +1076,15 @@ _setup_run_non_interactive() {
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
 	# indexers tracked separately.
 	setup_worktree_exclusions
+	# Provision the cross-repo workspace inbox at
+	# ~/.aidevops/.agent-workspace/inbox/ (t2866). Idempotent — safe to
+	# re-run on every update. Fail-open: a missing helper (first install
+	# before agent deploy) is not fatal.
+	local _inbox_helper="${AGENTS_DIR}/scripts/inbox-helper.sh"
+	[[ ! -f "$_inbox_helper" ]] && _inbox_helper="${INSTALL_DIR}/.agents/scripts/inbox-helper.sh"
+	if [[ -f "$_inbox_helper" ]]; then
+		bash "$_inbox_helper" provision-workspace || print_warning "inbox-helper.sh provision-workspace failed (non-critical)"
+	fi
 	return 0
 }
 
