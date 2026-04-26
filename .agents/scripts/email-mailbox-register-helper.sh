@@ -58,15 +58,12 @@ _load_or_init_config() {
 		if [[ -f "$MAILBOXES_TEMPLATE" ]]; then
 			cp "$MAILBOXES_TEMPLATE" "$config_path"
 			# Remove example entries from the template copy
-			python3 -c "
-import json, sys
-with open('$config_path') as f:
-    d = json.load(f)
-# Strip entries with _comment fields (they are examples)
+			AIDEVOPS_CFG="$config_path" python3 -c "
+import json, os
+cfg = os.environ['AIDEVOPS_CFG']
+with open(cfg) as f: d = json.load(f)
 d['mailboxes'] = [m for m in d.get('mailboxes', []) if '_comment' not in m]
-with open('$config_path', 'w') as f:
-    json.dump(d, f, indent=2)
-    f.write('\n')
+with open(cfg, 'w') as f: json.dump(d, f, indent=2); f.write('\n')
 "
 		else
 			echo '{"mailboxes":[]}' > "$config_path"
@@ -82,16 +79,13 @@ _provider_defaults() {
 		echo "imap.${provider}.com 993"
 		return 0
 	fi
+	AIDEVOPS_TEMPLATE="$PROVIDERS_TEMPLATE" AIDEVOPS_PROVIDER="$provider" \
 	python3 -c "
-import json, sys
-with open('$PROVIDERS_TEMPLATE') as f:
-    data = json.load(f)
-providers = data.get('providers', {})
-p = providers.get('$provider', {})
+import json, os
+p = json.load(open(os.environ['AIDEVOPS_TEMPLATE'])).get('providers', {}).get(os.environ['AIDEVOPS_PROVIDER'], {})
 imap = p.get('imap', {})
-host = imap.get('host', 'imap.${provider}.com')
-port = imap.get('port', 993)
-print(host, port)
+prov = os.environ['AIDEVOPS_PROVIDER']
+print(imap.get('host', f'imap.{prov}.com'), imap.get('port', 993))
 " 2>/dev/null || echo "imap.${provider}.com 993"
 	return 0
 }
@@ -101,13 +95,35 @@ _list_known_providers() {
 		echo "gmail icloud fastmail cloudron"
 		return 0
 	fi
-	python3 -c "
-import json
-with open('$PROVIDERS_TEMPLATE') as f:
-    data = json.load(f)
-providers = list(data.get('providers', {}).keys())
-print(' '.join(providers))
+	AIDEVOPS_TEMPLATE="$PROVIDERS_TEMPLATE" python3 -c "
+import json, os
+print(' '.join(json.load(open(os.environ['AIDEVOPS_TEMPLATE'])).get('providers', {}).keys()))
 " 2>/dev/null || echo "gmail icloud fastmail cloudron"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Config write helper — uses env vars to avoid shell-interpolation injection
+# ---------------------------------------------------------------------------
+
+_write_mailbox_entry() {
+	local config_path="$1" mb_id="$2" provider="$3" host="$4" port="$5"
+	local user="$6" password_ref="$7" folders_json="$8" since="$9"
+	AIDEVOPS_CFG="$config_path" AIDEVOPS_MBID="$mb_id" \
+	AIDEVOPS_PROV="$provider" AIDEVOPS_HOST="$host" AIDEVOPS_PORT="$port" \
+	AIDEVOPS_USER="$user" AIDEVOPS_PWREF="$password_ref" \
+	AIDEVOPS_FOLDERS="$folders_json" AIDEVOPS_SINCE="$since" \
+	python3 -c "
+import json, os; e = os.environ
+with open(e['AIDEVOPS_CFG']) as f: d = json.load(f)
+entry = {'id': e['AIDEVOPS_MBID'], 'provider': e['AIDEVOPS_PROV'],
+    'host': e['AIDEVOPS_HOST'], 'port': int(e['AIDEVOPS_PORT']),
+    'user': e['AIDEVOPS_USER'], 'password_ref': e['AIDEVOPS_PWREF'],
+    'folders': json.loads(e['AIDEVOPS_FOLDERS']), 'since': e['AIDEVOPS_SINCE']}
+d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != entry['id']]
+d['mailboxes'].append(entry)
+with open(e['AIDEVOPS_CFG'], 'w') as f: json.dump(d, f, indent=2); f.write('\n')
+"
 	return 0
 }
 
@@ -187,37 +203,17 @@ cmd_add() {
 		return 0
 	fi
 
-	# Build folders array
+	# Build folders array (env var avoids interpolation issues with user input)
 	local folders_json
-	folders_json=$(python3 -c "
-import json
-folders = [f.strip() for f in '$folders_input'.split(',') if f.strip()]
+	folders_json=$(AIDEVOPS_FOLDERS_INPUT="$folders_input" python3 -c "
+import json, os
+folders = [f.strip() for f in os.environ['AIDEVOPS_FOLDERS_INPUT'].split(',') if f.strip()]
 print(json.dumps(folders))
 ")
 
-	# Add entry to config
-	python3 -c "
-import json
-with open('$config_path') as f:
-    d = json.load(f)
-entry = {
-    'id': '$mb_id',
-    'provider': '$provider',
-    'host': '$host',
-    'port': $port,
-    'user': '$user',
-    'password_ref': '$password_ref',
-    'folders': $folders_json,
-    'since': '$since',
-}
-# Remove existing entry with same id if present
-d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != '$mb_id']
-d['mailboxes'].append(entry)
-with open('$config_path', 'w') as f:
-    json.dump(d, f, indent=2)
-    f.write('\n')
-print('Saved')
-"
+	# Add entry to config via helper (env vars, no shell interpolation)
+	_write_mailbox_entry "$config_path" "$mb_id" "$provider" "$host" "$port" \
+		"$user" "$password_ref" "$folders_json" "$since"
 	print_success "Mailbox '$mb_id' registered in $config_path"
 
 	# Test connection (dry-run)
@@ -256,19 +252,14 @@ cmd_remove() {
 		return 1
 	fi
 
-	python3 -c "
-import json, sys
-with open('$config_path') as f:
-    d = json.load(f)
+	AIDEVOPS_CFG="$config_path" AIDEVOPS_MBID="$mailbox_id" python3 -c "
+import json, sys, os
+cfg, mb_id = os.environ['AIDEVOPS_CFG'], os.environ['AIDEVOPS_MBID']
+with open(cfg) as f: d = json.load(f)
 before = len(d.get('mailboxes', []))
-d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != '$mailbox_id']
-after = len(d['mailboxes'])
-if before == after:
-    print('ERROR: mailbox not found', file=sys.stderr)
-    sys.exit(1)
-with open('$config_path', 'w') as f:
-    json.dump(d, f, indent=2)
-    f.write('\n')
+d['mailboxes'] = [m for m in d.get('mailboxes', []) if m.get('id') != mb_id]
+if before == len(d['mailboxes']): print('ERROR: not found', file=sys.stderr); sys.exit(1)
+with open(cfg, 'w') as f: json.dump(d, f, indent=2); f.write('\n')
 print('Removed')
 " && print_success "Mailbox '$mailbox_id' removed from $config_path" || {
 		print_error "Mailbox '$mailbox_id' not found in $config_path"
