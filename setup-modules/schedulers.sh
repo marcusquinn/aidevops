@@ -1799,6 +1799,118 @@ setup_complexity_scan() {
 	return 0
 }
 
+# Install pulse-merge-routine launchd plist (macOS).
+# Args: $1=label $2=script $3=log_dir
+_install_pulse_merge_routine_launchd() {
+	local pmr_label="$1"
+	local pmr_script="$2"
+	local _pmr_log_dir="$3"
+	local pmr_plist="$HOME/Library/LaunchAgents/${pmr_label}.plist"
+
+	local _xml_pmr_script _xml_pmr_home _xml_pmr_log_dir
+	_xml_pmr_script=$(_xml_escape "$pmr_script")
+	_xml_pmr_home=$(_xml_escape "$HOME")
+	_xml_pmr_log_dir=$(_xml_escape "$_pmr_log_dir")
+
+	local pmr_plist_content
+	pmr_plist_content=$(
+		cat <<PMR_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${pmr_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_pmr_script}</string>
+		<string>run</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>120</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_pmr_log_dir}/pulse-merge-routine.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_pmr_log_dir}/pulse-merge-routine.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_pmr_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PMR_PLIST
+	)
+
+	if _launchd_install_if_changed "$pmr_label" "$pmr_plist" "$pmr_plist_content"; then
+		print_info "Pulse merge routine enabled (launchd, every 2 min)"
+	else
+		print_warning "Failed to load pulse merge routine LaunchAgent"
+	fi
+	return 0
+}
+
+# Install pulse-merge-routine via systemd or cron (Linux).
+# Args: $1=script path, $2=log dir
+_install_pulse_merge_routine_linux() {
+	local pmr_script="$1"
+	local _pmr_log_dir="$2"
+	local pmr_systemd="aidevops-pulse-merge-routine"
+	_install_scheduler_linux \
+		"$pmr_systemd" \
+		"aidevops: pulse-merge-routine" \
+		"*/2 * * * *" \
+		"\"${pmr_script}\" run" \
+		"120" \
+		"${_pmr_log_dir}/pulse-merge-routine.log" \
+		"" \
+		"Pulse merge routine enabled (every 2 min)" \
+		"Failed to install pulse merge routine scheduler" \
+		"true" \
+		"true"
+	return 0
+}
+
+# Setup pulse merge routine (t2862, GH#20919) — runs merge_ready_prs_all_repos()
+# as a fast 120s standalone routine, decoupled from the monolithic pulse cycle.
+# The pulse cycle's preflight stack (60-470s) meant the merge pass ran only ~7
+# times/24h despite ~40+ cycles. This routine ensures green PRs merge within ~3
+# min of CI completion. The in-cycle merge call in pulse-wrapper.sh is kept as
+# defense-in-depth but short-circuits when this routine ran within the last 60s.
+setup_pulse_merge_routine() {
+	local pmr_script="$HOME/.aidevops/agents/scripts/pulse-merge-routine.sh"
+	local pmr_label="sh.aidevops.pulse-merge-routine"
+	if ! [[ -x "$pmr_script" ]]; then
+		return 0
+	fi
+
+	# Reuse contribution-watch's log-dir resolver (same logic, same config key).
+	local _pmr_log_dir
+	_pmr_log_dir=$(_resolve_cw_log_dir) || return 1
+	mkdir -p "$_pmr_log_dir"
+
+	# Install/update scheduled runner
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_pulse_merge_routine_launchd "$pmr_label" "$pmr_script" "$_pmr_log_dir"
+	else
+		_install_pulse_merge_routine_linux "$pmr_script" "$_pmr_log_dir"
+	fi
+	return 0
+}
+
 # Setup draft responses — private repo + local draft storage for reviewing
 # AI-drafted replies to external contributions (t1555).
 # Respects config: aidevops config set orchestration.draft_responses false
