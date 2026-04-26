@@ -306,6 +306,90 @@ test_single_pass_wired_in_engine() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 10: Batched per-issue field extraction parity (t2904)
+#
+# Verifies the t2904 single-jq-per-repo + base64 round-trip preserves
+# every field exactly — including multi-line bodies, embedded tabs, and
+# UTF-8. Catches the @tsv-without-base64 footgun where embedded \n / \t
+# break the consumer (_extract_children_section grep'ing for child refs).
+# ---------------------------------------------------------------------------
+test_batched_field_extraction_parity() {
+	# Fixture: 2 issues, body[0] has multiline + tab + UTF-8, body[1] is empty.
+	local fixture_json
+	fixture_json=$(jq -nc '[
+		{
+			number: 12345,
+			title: "t2904: batch jq extraction",
+			labels: [{name:"origin:worker"},{name:"status:available"}],
+			body: "Line 1\nLine 2\twith tab\n— em-dash + Unicode ✓"
+		},
+		{
+			number: 67890,
+			title: "Empty body case",
+			labels: [],
+			body: ""
+		}
+	]')
+
+	# Run the extraction pattern from reconcile_issues_single_pass.
+	local extracted
+	extracted=$(printf '%s' "$fixture_json" | jq -r '
+		.[] | [
+			(.number // "" | tostring),
+			((.title // "") | @base64),
+			((.labels // []) | map(.name) | join(",")),
+			((.body // "") | @base64)
+		] | @tsv
+	' 2>/dev/null)
+
+	local row_count
+	row_count=$(printf '%s\n' "$extracted" | grep -c .)
+	[[ "$row_count" =~ ^[0-9]+$ ]] || row_count=0
+	if [[ "$row_count" -ne 2 ]]; then
+		_fail "batched-extraction: expected 2 rows, got ${row_count}"
+		return 0
+	fi
+
+	local all_ok=1
+
+	# Decode and verify row 1 (multiline + tab + UTF-8 body).
+	local r1_num r1_title_b64 r1_labels r1_body_b64 r1_title r1_body
+	IFS=$'\t' read -r r1_num r1_title_b64 r1_labels r1_body_b64 < <(printf '%s\n' "$extracted" | sed -n 1p)
+	r1_title=$(printf '%s' "$r1_title_b64" | base64 -d 2>/dev/null)
+	r1_body=$(printf '%s' "$r1_body_b64" | base64 -d 2>/dev/null)
+
+	[[ "$r1_num" == "12345" ]] || { _fail "row1 number: expected 12345, got '$r1_num'"; all_ok=0; }
+	[[ "$r1_title" == "t2904: batch jq extraction" ]] || { _fail "row1 title decode mismatch"; all_ok=0; }
+	[[ "$r1_labels" == "origin:worker,status:available" ]] || { _fail "row1 labels: got '$r1_labels'"; all_ok=0; }
+	# Body must contain BOTH a real newline AND a real tab — the @tsv-only path
+	# would have escaped these to literal \n / \t markers.
+	if ! printf '%s' "$r1_body" | grep -q $'Line 1\nLine 2\twith tab'; then
+		_fail "row1 body: newline/tab lost in round-trip"
+		all_ok=0
+	fi
+	# UTF-8 must survive the base64 round-trip.
+	if ! printf '%s' "$r1_body" | grep -q '— em-dash + Unicode ✓'; then
+		_fail "row1 body: UTF-8 corrupted in round-trip"
+		all_ok=0
+	fi
+
+	# Decode and verify row 2 (empty body, empty labels).
+	local r2_num r2_title_b64 r2_labels r2_body_b64 r2_title r2_body
+	IFS=$'\t' read -r r2_num r2_title_b64 r2_labels r2_body_b64 < <(printf '%s\n' "$extracted" | sed -n 2p)
+	r2_title=$(printf '%s' "$r2_title_b64" | base64 -d 2>/dev/null)
+	# Empty body — base64-decode of empty input is empty.
+	r2_body=$(printf '%s' "$r2_body_b64" | base64 -d 2>/dev/null)
+
+	[[ "$r2_num" == "67890" ]] || { _fail "row2 number: expected 67890, got '$r2_num'"; all_ok=0; }
+	[[ "$r2_title" == "Empty body case" ]] || { _fail "row2 title decode mismatch"; all_ok=0; }
+	[[ -z "$r2_labels" ]] || { _fail "row2 labels: expected empty, got '$r2_labels'"; all_ok=0; }
+	[[ -z "$r2_body" ]] || { _fail "row2 body: expected empty, got '$r2_body'"; all_ok=0; }
+
+	[[ "$all_ok" == "1" ]] && _pass "batched-extraction: 2 rows decode with multiline/tab/UTF-8/empty fidelity"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_cache_miss_no_file
@@ -317,6 +401,7 @@ test_single_pass_cache_consolidation
 test_body_in_prefetch_fetch
 test_should_predicates
 test_single_pass_wired_in_engine
+test_batched_field_extraction_parity
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
