@@ -683,10 +683,16 @@ _install_pulse_launchd() {
 	local _pulse_installed="$4"
 	local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 
-	_cleanup_old_pulse_plists "$pulse_label" "$pulse_plist"
+	# Capture plist content before touching the existing file.
+	# This avoids the "unload old, then write fails" window that leaves a 0-byte plist.
+	local pulse_plist_content
+	pulse_plist_content=$(_generate_pulse_plist_content "$pulse_label" "$wrapper_script" "$opencode_bin")
 
-	# Write the plist (always regenerated to pick up config changes)
-	_generate_pulse_plist_content "$pulse_label" "$wrapper_script" "$opencode_bin" >"$pulse_plist"
+	# Defensive: if generation produced empty content, refuse to touch the existing plist.
+	if [[ -z "$pulse_plist_content" ]]; then
+		print_warning "Pulse plist generation produced empty content — leaving existing plist untouched"
+		return 1
+	fi
 
 	# Resolve interval for the user-facing message (matches what the plist contains).
 	local _interval_sec _interval_label
@@ -697,8 +703,10 @@ _install_pulse_launchd() {
 		_interval_label="${_interval_sec}s"
 	fi
 
+	# _launchd_install_if_changed handles unload-before-replace only when content
+	# has changed, and writes atomically via tmp+rename (see setup.sh).
 	# shell-portability: ignore next — _install_pulse_launchd is macOS-only (launchd)
-	if launchctl load "$pulse_plist"; then
+	if _launchd_install_if_changed "$pulse_label" "$pulse_plist" "$pulse_plist_content"; then
 		if [[ "$_pulse_installed" == "true" ]]; then
 			print_info "Supervisor pulse updated (launchd config regenerated, every ${_interval_label})"
 		else

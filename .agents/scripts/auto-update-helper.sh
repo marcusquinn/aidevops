@@ -950,6 +950,36 @@ _cmd_enable_cron() {
 cmd_enable() {
 	ensure_dirs
 
+	# Parse flags (t2898): --idempotent skips the install when already loaded.
+	# Existing callers retain the same behaviour because no flag = legacy path.
+	local idempotent=0
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--idempotent)
+			idempotent=1
+			shift
+			;;
+		--)
+			shift
+			break
+			;;
+		*)
+			# Forward unknown args to platform installers (none today).
+			break
+			;;
+		esac
+	done
+
+	# Idempotent fast-path: if the daemon is already loaded (regardless of
+	# state-file freshness), this is a no-op. setup.sh calls this on every
+	# release so the daemon self-heals — but the existing user state must
+	# survive (custom intervals, env vars). "Loaded but stalled" is also a
+	# no-op here; the caller follows up with `health-check` to surface it.
+	if [[ "$idempotent" -eq 1 ]] && _daemon_is_loaded; then
+		log_info "auto-update daemon already loaded (idempotent enable — no-op)"
+		return 0
+	fi
+
 	# Read from JSONC config (handles env var > user config > defaults priority)
 	local interval
 	interval=$(get_feature_toggle update_interval "$DEFAULT_INTERVAL")
@@ -1270,6 +1300,138 @@ cmd_status() {
 }
 
 #######################################
+# Daemon-loaded check (platform-aware) — t2898.
+# Returns 0 if the auto-update daemon is loaded/installed under the active
+# scheduler backend, 1 otherwise. Mirrors the platform detection in
+# `_cmd_status_scheduler` but without the human-readable output.
+#
+# This is a "is the unit registered" check, not a "did it run recently"
+# check. For freshness, see `cmd_health_check` which combines both.
+#######################################
+_daemon_is_loaded() {
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		_launchd_is_loaded
+		return $?
+	fi
+
+	if [[ "$backend" == "systemd" ]]; then
+		# `is-active --quiet` is true when the timer is running (loaded AND
+		# enabled in this session). Falls back to `is-enabled` for the case
+		# where the timer is registered but the user just hasn't started it
+		# yet (e.g. fresh setup before logout/login). Either is fine for
+		# "the daemon is registered with the scheduler".
+		if command -v systemctl &>/dev/null; then
+			systemctl --user is-active --quiet "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null && return 0
+			systemctl --user is-enabled --quiet "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null && return 0
+		fi
+		return 1
+	fi
+
+	# cron fallback (Linux without systemctl)
+	local crontab_output
+	crontab_output=$(crontab -l 2>/dev/null) || true
+	echo "$crontab_output" | grep -qF "$CRON_MARKER"
+	return $?
+}
+
+#######################################
+# Health-check subcommand (t2898).
+# Verifies the auto-update daemon is registered with the active scheduler
+# AND has run within a reasonable freshness window.
+#
+# Exit codes:
+#   0 — healthy (daemon loaded, recent successful run within 2× interval)
+#   1 — degraded (daemon loaded but state-file is stale or unparseable)
+#   2 — not installed (daemon not registered with the active scheduler)
+#
+# Output: human-readable status line + remediation command on stderr.
+# Quiet mode: --quiet suppresses output; only the exit code matters
+# (used by `cmd_enable --idempotent` to detect "already healthy").
+#######################################
+cmd_health_check() {
+	local quiet=0
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--quiet | -q) quiet=1 ;;
+		*) ;;
+		esac
+	done
+
+	# Helper that prints to stderr unless --quiet was passed.
+	_hc_say() {
+		if [[ "$quiet" -eq 0 ]]; then
+			printf '%s\n' "$*" >&2
+		fi
+		return 0
+	}
+
+	if ! _daemon_is_loaded; then
+		_hc_say "auto-update daemon: NOT INSTALLED"
+		_hc_say "fix: ~/.aidevops/agents/scripts/auto-update-helper.sh enable"
+		return 2
+	fi
+
+	# Loaded — check freshness via state file. Field is `last_timestamp`
+	# (set on every cmd_check run, regardless of update outcome). The brief
+	# referenced `last_run`; this is the actual deployed name.
+	if ! [[ -f "$STATE_FILE" ]] || ! command -v jq &>/dev/null; then
+		# State file absent or jq missing — daemon is loaded but we cannot
+		# verify freshness. Treat as soft-healthy: the loaded check is the
+		# primary signal; freshness is the secondary signal.
+		_hc_say "auto-update daemon: LOADED (state file absent — freshness unknown)"
+		return 0
+	fi
+
+	local last_ts
+	last_ts=$(jq -r '.last_timestamp // empty' "$STATE_FILE" 2>/dev/null || echo "")
+
+	if [[ -z "$last_ts" ]]; then
+		# Loaded but never ran — fresh install before first cycle.
+		_hc_say "auto-update daemon: LOADED (never run yet)"
+		return 0
+	fi
+
+	# Convert ISO-8601 to epoch (handles both GNU and BSD date).
+	local now_ts last_run_epoch
+	now_ts=$(date -u '+%s')
+	if last_run_epoch=$(date -u -d "$last_ts" '+%s' 2>/dev/null); then
+		: # GNU date worked
+	elif last_run_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$last_ts" '+%s' 2>/dev/null); then
+		: # BSD date worked
+	else
+		_hc_say "auto-update daemon: LOADED (state file unparseable: '${last_ts}')"
+		_hc_say "fix: ~/.aidevops/agents/scripts/auto-update-helper.sh check"
+		return 1
+	fi
+
+	local age_sec
+	age_sec=$((now_ts - last_run_epoch))
+
+	# Resolve interval the same way cmd_enable does so the threshold tracks
+	# user config. 2× interval is the staleness window.
+	local interval
+	interval=$(get_feature_toggle update_interval "$DEFAULT_INTERVAL")
+	if ! [[ "$interval" =~ ^[0-9]+$ ]] || [[ "$interval" -eq 0 ]]; then
+		interval="$DEFAULT_INTERVAL"
+	fi
+	local interval_sec=$((interval * 60))
+	local stale_threshold=$((2 * interval_sec))
+
+	if [[ "$age_sec" -gt "$stale_threshold" ]]; then
+		_hc_say "auto-update daemon: STALLED (last run ${age_sec}s ago, expected every ${interval_sec}s)"
+		_hc_say "fix: ~/.aidevops/agents/scripts/auto-update-helper.sh check"
+		return 1
+	fi
+
+	_hc_say "auto-update daemon: HEALTHY (last run ${age_sec}s ago)"
+	return 0
+}
+
+#######################################
 # View logs
 #######################################
 cmd_logs() {
@@ -1313,13 +1475,16 @@ USAGE:
     aidevops auto-update <command> [options]
 
 COMMANDS:
-    enable              Install scheduler (launchd on macOS, cron on Linux)
-    disable             Remove scheduler
-    status              Show current auto-update state
-    check               One-shot: check for updates and install if available
-    logs [--tail N]     View update logs (default: last 50 lines)
-    logs --follow       Follow log output in real-time
-    help                Show this help
+    enable [--idempotent]  Install scheduler (launchd on macOS, cron on Linux)
+                           --idempotent: no-op if already loaded (used by setup.sh)
+    disable                Remove scheduler
+    status                 Show current auto-update state
+    check                  One-shot: check for updates and install if available
+    health-check [--quiet] Verify daemon is loaded and ran recently
+                           Exit: 0 healthy, 1 stalled, 2 not installed
+    logs [--tail N]        View update logs (default: last 50 lines)
+    logs --follow          Follow log output in real-time
+    help                   Show this help
 
 CONFIGURATION:
     Persistent settings: aidevops config set <key> <value>
@@ -1404,6 +1569,7 @@ main() {
 	disable) cmd_disable "$@" ;;
 	status) cmd_status "$@" ;;
 	check) cmd_check "$@" ;;
+	health-check) cmd_health_check "$@" ;;
 	logs) cmd_logs "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
