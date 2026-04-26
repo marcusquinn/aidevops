@@ -16,8 +16,13 @@
 #
 # Recovery strategy: optionally `git merge --abort` (for unmerged state) →
 # stash → retry pull → pop. Stash-and-pop is content-safe (no `-X theirs`
-# auto-resolve). On persistent failure, file an advisory issue with the exact
-# remediation commands the user can run.
+# auto-resolve). On persistent failure, write a LOCAL advisory file
+# (`~/.aidevops/advisories/canonical-recovery-<basename>.advisory`) with
+# the exact remediation commands the user can run. The local file is
+# surfaced in the session-start greeting via aidevops-update-check.sh —
+# we never file GitHub issues for canonical-recovery failures because
+# the advisory describes user-local state and would leak filesystem paths
+# (username, drive topology) into the public maintainer tracker (t2871).
 #
 # Scope:
 #   - Canonical repo paths only (`~/Git/<repo>/`). Worktrees have separate
@@ -52,13 +57,11 @@ fi
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 init_log_file 2>/dev/null || true
 
-# shared-gh-wrappers.sh provides gh_create_issue (auto-injects signature
-# footer + origin label). Source it here so standalone invocations have the
-# wrapper available; pulse-wrapper context already loaded it via its own
-# include chain so this re-source is a no-op via the wrapper's include guard.
-# shellcheck source=shared-gh-wrappers.sh
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/shared-gh-wrappers.sh" 2>/dev/null || true
+# shared-gh-wrappers.sh was previously sourced here so `_pcr_file_advisory`
+# could call `gh_create_issue`. Removed in t2871: advisories now write to
+# the local channel (`~/.aidevops/advisories/`) and never touch GitHub.
+# Reintroduce the source line ONLY if a future feature in this module needs
+# a real `gh` call.
 
 # -----------------------------------------------------------------------------
 # Configuration constants
@@ -72,12 +75,23 @@ PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS="${PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS:-
 # State file for attempt timestamps. JSON: {"<repo_path>": [ts1, ts2, ...]}.
 PULSE_CANONICAL_RECOVERY_STATE="${PULSE_CANONICAL_RECOVERY_STATE:-${HOME}/.aidevops/.agent-workspace/supervisor/canonical-recovery-state.json}"
 
+# Local advisory directory — surfaced in session greeting via
+# aidevops-update-check.sh::_check_advisories.  This is the canonical channel
+# for user-actionable warnings about local-machine state.  Filing a GitHub
+# issue here would leak `${repo_path}` (username, drive topology, possibly
+# private repo names) into a public maintainer tracker — only the affected
+# user can act on canonical-recovery failures, so cloud filing has zero
+# diagnostic value to maintainers and a non-trivial privacy cost (t2871).
+PULSE_CANONICAL_RECOVERY_ADVISORY_DIR="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR:-${HOME}/.aidevops/advisories}"
+
 # The audit-log-helper's event-type allowlist is closed. `operation.verify`
 # is the closest fit for "pulse took a verified deterministic action".
 readonly _CANONICAL_RECOVERY_AUDIT_EVENT="operation.verify"
 
-# Canonical advisory issue title prefix — used for idempotency lookup so we
-# don't refile the same advisory cycle after cycle.
+# Advisory headline used in both the local advisory file (line 1, surfaced
+# in session greeting) and the legacy GitHub-issue title-suffix constant.
+# Kept under the legacy name so downstream tooling that searched for filed
+# issues by title can still recognise pre-t2871 issues if any survive.
 readonly _CANONICAL_RECOVERY_ADVISORY_TITLE_SUFFIX="canonical worktree conflict — manual intervention required"
 
 # Dry-run flag — CLI `--dry-run` or env `DRY_RUN=1`. Module-local copy so we
@@ -225,107 +239,187 @@ _pcr_record_attempt() {
 # -----------------------------------------------------------------------------
 # Advisory filing
 # -----------------------------------------------------------------------------
+#
+# Channel design (t2871 — privacy fix):
+#
+# Canonical-recovery failures describe the affected user's local machine state
+# (their worktree, their stash, their merge conflicts). Only the affected user
+# can run the remediation commands; maintainers cannot act on these reports.
+#
+# We therefore write to the LOCAL advisory channel
+# (`~/.aidevops/advisories/*.advisory`) which `aidevops-update-check.sh::
+# _check_advisories` surfaces in the session-start TUI toast. This avoids
+# leaking filesystem paths (username, drive topology, repo names) into the
+# public framework issue tracker.
+#
+# Pre-t2871 behaviour filed GitHub issues against `marcusquinn/aidevops` with
+# `${repo_path}` substituted verbatim — that channel was the wrong design
+# (cloud-filing local advisories) AND a privacy bug. See GH#20934, #20936-
+# 20941 for the leaked issues that motivated this rewrite.
 
-# Compose the advisory issue body. Captures the failure mode and exact
-# remediation commands the user can run.
+# Sanitise an absolute filesystem path for any context that might be
+# transmitted off the user's machine (logs, telemetry, future scanners).
+# Defence-in-depth: the local advisory channel does not transmit, but if a
+# log line gets shipped to OTEL or a future contribution-watch scanner picks
+# up advisory text, the substitution still applies.
+#
+# Substitutions:
+#   $HOME prefix              → ~
+#   /Users/<name>/            → /Users/<user>/
+#   /home/<name>/             → /home/<user>/
+#   /mnt/data/<name>/         → /mnt/data/<user>/   (and similar /mnt/* roots)
+#
+# The original `repo_path` is NEVER stored — we recompute the basename
+# separately so the advisory file name uses only the leaf repo identifier.
+_pcr_sanitise_path() {
+	local raw="$1"
+	[[ -n "$raw" ]] || { printf ''; return 0; }
+
+	# 1. $HOME prefix → ~ (covers macOS /Users/<me> and Linux /home/<me>
+	#    when the user is the current login).
+	if [[ -n "${HOME:-}" && "$raw" == "$HOME"* ]]; then
+		printf '~%s' "${raw#"$HOME"}"
+		return 0
+	fi
+
+	# 2. Other users' home directories — strip the username segment.
+	#    Bash 3.2 compatible: no =~ named captures.
+	case "$raw" in
+		/Users/*/*)
+			# /Users/<name>/<rest> → /Users/<user>/<rest>
+			local rest="${raw#/Users/}"
+			rest="${rest#*/}"
+			printf '/Users/<user>/%s' "$rest"
+			return 0
+			;;
+		/home/*/*)
+			local rest="${raw#/home/}"
+			rest="${rest#*/}"
+			printf '/home/<user>/%s' "$rest"
+			return 0
+			;;
+		/mnt/*/*/*)
+			# /mnt/<volume>/<name>/<rest> — strip the user segment but keep
+			# the volume label since that's not PII (e.g. /mnt/data/<user>/Git).
+			local volume="${raw#/mnt/}"
+			volume="${volume%%/*}"
+			local rest_after_volume="${raw#"/mnt/${volume}/"}"
+			rest_after_volume="${rest_after_volume#*/}"
+			printf '/mnt/%s/<user>/%s' "$volume" "$rest_after_volume"
+			return 0
+			;;
+	esac
+
+	# 3. Fallback — emit the basename only. We never want to emit unknown
+	#    absolute paths verbatim because they may carry usernames or other
+	#    PII that the cases above didn't catch.
+	printf '<repo>/%s' "$(basename "$raw")"
+	return 0
+}
+
+# Compose the advisory body. The body is read by humans in their own
+# terminal (via session greeting) and may also be eyeballed in the
+# advisory file directly. Paths are sanitised — the user can mentally
+# re-substitute their own home directory.
 _pcr_advisory_body() {
 	local repo_path="$1"
 	local failure_mode="$2"
+	local repo_basename
+	repo_basename=$(basename "$repo_path")
+	local sanitised
+	sanitised=$(_pcr_sanitise_path "$repo_path")
 	cat <<EOF
-## Session Origin
+[CANONICAL RECOVERY] ${repo_basename} stash conflict — manual intervention required
 
-Auto-filed by \`pulse-canonical-recovery.sh\` after exhausting auto-recovery
-attempts for canonical repo \`${repo_path}\`. Pulse cannot \`git pull --ff-only\`
-this repo, blocking PR processing, CI failure routing, and completion sweep.
+  Pulse cannot \`git pull --ff-only\` your canonical repo at:
+      ${sanitised}
 
-## What
+  Failure mode: ${failure_mode}
+  Effect:       PR processing, CI failure routing, and completion sweep are
+                paused for this repo until the working tree is clean.
 
-Failure mode: \`${failure_mode}\`. Pulse attempted stash + retry + pop and
-either could not stash, could not pull after stashing, or hit a conflict on
-\`git stash pop\`. The stash (if created) is preserved on the stash list so no
-work is lost.
+  Recovery commands (run in a SEPARATE terminal, not in AI chat):
 
-## Recovery commands
+    cd ${sanitised}
+    git status
+    # If you see UU/AA/DD entries (unmerged):
+    git merge --abort 2>/dev/null || true
 
-\`\`\`bash
-cd ${repo_path}
-git status
-# If you see UU/AA/DD entries (unmerged):
-git merge --abort 2>/dev/null || true
+    # Inspect the auto-stash if one was retained:
+    git stash list | grep pulse-auto-stash
 
-# Inspect the auto-stash if one was retained:
-git stash list | grep pulse-auto-stash
+    # Restore the stash (resolve conflicts if any):
+    git stash pop          # or: git stash drop  (if the stash content is obsolete)
 
-# Restore the stash (resolve conflicts if any):
-git stash pop          # or: git stash drop  (if the stash content is obsolete)
+    # Then refresh:
+    git fetch origin
+    git pull --ff-only
 
-# Then refresh:
-git fetch origin
-git pull --ff-only
-\`\`\`
+  Acceptance:
+  - \`git status\` shows nothing to commit, working tree clean
+  - \`git pull --ff-only\` succeeds without intervention
+  - Pulse resumes processing PRs/issues for this repo on the next cycle
 
-## Why
-
-Pulse repeatedly logging \`error: Pulling is not possible because you have
-unmerged files\` or \`Your local changes ... would be overwritten by merge\`
-silently degrades the affected repo's processing. This advisory surfaces the
-condition with actionable remediation rather than letting it accumulate.
-
-## Acceptance Criteria
-
-- \`git status\` shows nothing to commit, working tree clean
-- \`git pull --ff-only\` succeeds without intervention
-- Pulse resumes processing PRs/issues for this repo on the next cycle
-
-#framework #pulse #reliability #priority:medium #no-auto-dispatch
+  Dismiss after fixing:  aidevops security dismiss canonical-recovery-${repo_basename}
 EOF
+	return 0
 }
 
-# File a framework advisory if one is not already open. Idempotent across
-# pulse cycles via title-substring search. Honours dry-run.
+# File a local advisory. Idempotent — overwriting an existing advisory file
+# is fine because the content is deterministic from (repo_basename,
+# failure_mode) and any concurrent failure for the same repo describes the
+# same condition. Honours dry-run.
+#
+# Advisory file naming: `canonical-recovery-<basename>.advisory`. Surfaced in
+# session greeting by `aidevops-update-check.sh::_check_advisories` (line 1
+# becomes the toast summary). Dismissable via
+# `aidevops security dismiss canonical-recovery-<basename>`.
 _pcr_file_advisory() {
 	local repo_path="$1"
 	local failure_mode="$2"
 	local repo_basename
 	repo_basename=$(basename "$repo_path")
-	local title="${repo_basename} ${_CANONICAL_RECOVERY_ADVISORY_TITLE_SUFFIX}"
 
-	command -v gh >/dev/null 2>&1 || {
-		_pcr_log "gh unavailable — cannot file advisory for $repo_path"
-		return 0
-	}
+	# Sanitise the basename for filesystem safety — strip anything that
+	# isn't [A-Za-z0-9._-]. Practically all repo basenames are safe, but
+	# defensive: a basename containing `/` or shell metacharacters could
+	# escape the advisory directory if we trusted it raw. Bash 3.2 safe.
+	local safe_basename
+	safe_basename=$(printf '%s' "$repo_basename" | tr -c 'A-Za-z0-9._-' '_')
+	[[ -n "$safe_basename" ]] || safe_basename="unknown"
 
-	# Idempotency: scan open issues for matching title in aidevops repo.
-	local existing
-	existing=$(gh issue list --repo marcusquinn/aidevops --state open \
-		--search "in:title \"${repo_basename} ${_CANONICAL_RECOVERY_ADVISORY_TITLE_SUFFIX}\"" \
-		--json number --jq '.[0].number // empty' 2>/dev/null) || existing=""
-	if [[ -n "$existing" ]]; then
-		_pcr_log "advisory already filed: GH#${existing} for $repo_path"
-		return 0
-	fi
+	local advisory_file="${PULSE_CANONICAL_RECOVERY_ADVISORY_DIR}/canonical-recovery-${safe_basename}.advisory"
 
 	if _pcr_is_dry_run; then
-		_pcr_log "[dry-run] would file advisory: ${title}"
+		_pcr_log "[dry-run] would write advisory: ${advisory_file}"
 		return 0
 	fi
 
+	# Ensure the advisory directory exists. mkdir -p is a no-op if present.
+	if ! mkdir -p "$PULSE_CANONICAL_RECOVERY_ADVISORY_DIR" 2>/dev/null; then
+		_pcr_log "could not create advisory dir: $PULSE_CANONICAL_RECOVERY_ADVISORY_DIR"
+		return 0
+	fi
+
+	# Compose body — sanitised paths only; no username/drive-topology leak.
 	local body
 	body=$(_pcr_advisory_body "$repo_path" "$failure_mode")
 
-	# gh_create_issue is provided by shared-gh-wrappers.sh (sourced at top).
-	# It auto-injects the signature footer and origin label; no bare gh
-	# fallback so the gh-wrapper-guard pre-push hook stays happy.
-	if ! declare -F gh_create_issue >/dev/null 2>&1; then
-		_pcr_log "gh_create_issue wrapper unavailable — cannot file advisory for $repo_path"
+	# Atomic write via tmp+rename so a partial write never leaves a torn
+	# advisory file (which would surface garbled in the session greeting).
+	local tmp="${advisory_file}.tmp.$$"
+	if ! printf '%s\n' "$body" >"$tmp" 2>/dev/null; then
+		_pcr_log "could not write advisory tmp file: $tmp"
+		rm -f "$tmp" 2>/dev/null
 		return 0
 	fi
-	gh_create_issue --repo marcusquinn/aidevops \
-		--title "$title" \
-		--body "$body" \
-		--label "framework,pulse,reliability,priority:medium,no-auto-dispatch" \
-		>/dev/null 2>&1 \
-		|| _pcr_log "gh_create_issue failed for $repo_path"
+	if ! mv "$tmp" "$advisory_file" 2>/dev/null; then
+		_pcr_log "could not finalise advisory file: $advisory_file"
+		rm -f "$tmp" 2>/dev/null
+		return 0
+	fi
+
+	_pcr_log "advisory filed locally: ${advisory_file}"
 	return 0
 }
 
