@@ -3191,7 +3191,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2876 gh PATH shim: privacy-scan layer to fail-closed on private-slug references when posting to public repos #auto-dispatch #framework #security ref:GH#20970 pr:#20974 completed:2026-04-26
 
-- [ ] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972
+- [x] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972 pr:#21141 completed:2026-04-26
 
 - [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
 
