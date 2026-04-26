@@ -3218,20 +3218,19 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in awardsapp/develop #bug #framework #priority:high #security ref:GH#21026
 
+- [x] t2897 pulse: per-runner zero-attempt failure circuit breaker triggers update check — adds a new `pulse-runner-health-helper.sh` and three `pulse-wrapper.sh` integration points that track consecutive zero-attempt worker dispatches (`launch_recovery:no_worker_process`, no branch created, near-zero token usage, watchdog-killed before first commit). After 10 consecutive zero-attempts in a 6h window the runner pauses dispatch, runs `aidevops update` synchronously, auto-resumes if the update changed VERSION (t2579 hook handles restart), or stays paused with an advisory if the runner is on latest (real local problem). Closes the §4.4 cross-runner-coordination gap where a stale/broken runner keeps burning workers without anyone noticing. Brief: `todo/tasks/t2897-brief.md`. #bug #pulse #framework #multi-runner #interactive ~5h tier:thinking no-auto-dispatch logged:2026-04-26 pr:#21039 completed:2026-04-26 ref:GH#21047 -> [todo/tasks/t2897-brief.md]
 
-- [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
+- [x] t2898 aidevops update + setup.sh: verify auto-update daemon is enabled and warn if not — adds `auto-update-helper.sh health-check` (returns 0/1/2 per platform-specific launchd / systemd / cron detection plus state-file freshness), `--idempotent` flag on the existing `enable` subcommand, and two integration points: `setup.sh` end-of-run idempotently re-installs the daemon so every release self-heals broken installs, and `aidevops update` (when interactive) prints a yellow warning + writes a session-greeting advisory if the daemon is unhealthy. Closes the asymmetry where the user with the broken daemon is the user not seeing greetings. Brief: `todo/tasks/t2898-brief.md`. #enhancement #framework #reliability #auto-dispatch ~2h tier:standard logged:2026-04-26 pr:#21039 completed:2026-04-26 ref:GH#21048 -> [todo/tasks/t2898-brief.md]
 
 - [ ] t2900 Eliminate SQLite database lock errors during concurrent worker startup #bug ref:GH#21041
 
-- [ ] t2898 aidevops update + setup.sh verify auto-update daemon is enabled ref:GH#21048
-
-- [ ] t2897 pulse per-runner zero-attempt failure circuit breaker ref:GH#21047
+- [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
 
 - [ ] t2902 Stop recurring GraphQL budget exhaustion despite REST fallback (t2574, t2689) #bug ref:GH#21043
 
-- [ ] t2904 Cache assignment graph + classify errors in preflight_ownership_reconcile #bug #framework #performance #pulse ref:GH#21050
-
 - [ ] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049
+
+- [ ] t2904 Cache assignment graph + classify errors in preflight_ownership_reconcile #bug #framework #performance #pulse ref:GH#21050
 
 - [ ] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051
 

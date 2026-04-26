@@ -32,6 +32,28 @@ setup_auto_update() {
 		"aidevops-auto-update"; then
 		_auto_update_installed=true
 	fi
+	# t2898: ALWAYS run idempotent re-install + health-check after the
+	# detection above, so every release self-heals broken installs (daemon
+	# unloaded by an OS update, scrubbed by a cron cleanup, etc.). The
+	# detection helper already handled the "freshly install if missing"
+	# interactive prompt; this loop ensures that even when the detection
+	# said "yes installed" the daemon is actually loaded right now and
+	# running on schedule.
+	if [[ "$_auto_update_installed" == "true" ]]; then
+		# Idempotent: no-op when daemon already loaded; re-installs only on drift.
+		bash "$auto_update_script" enable --idempotent >/dev/null 2>&1 || true
+		# Verify it's actually healthy. Surface any degradation so the
+		# operator sees it on every release deploy.
+		local _hc_rc=0
+		bash "$auto_update_script" health-check --quiet >/dev/null 2>&1 || _hc_rc=$?
+		if [[ "$_hc_rc" -eq 0 ]]; then
+			:
+		elif [[ "$_hc_rc" -eq 1 ]]; then
+			print_warning "Auto-update daemon installed but stalled — run: aidevops auto-update check"
+		elif [[ "$_hc_rc" -eq 2 ]]; then
+			print_warning "Auto-update daemon not loaded — run: aidevops auto-update enable"
+		fi
+	fi
 	if [[ "$_auto_update_installed" == "false" ]]; then
 		if [[ "$NON_INTERACTIVE" == "true" ]]; then
 			# Non-interactive: enable silently
