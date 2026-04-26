@@ -299,7 +299,13 @@ readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','
 
 scrub_credentials() {
 	local text="$1"
-	printf '%s' "$text" | sed -E 's/(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/[redacted-credential]/g'
+	# Word-boundary anchor (^|non-word-char) prevents false positives where a
+	# credential prefix appears mid-word — e.g. `task-failure-handler` contains
+	# the literal `sk-failure-handler` (16 chars, matches `sk-[A-Za-z0-9_-]{10,}`)
+	# but is NOT a credential. macOS BSD sed has no `\b`, so we capture the
+	# preceding boundary character and restore it via \1 in the replacement.
+	# (t2892, GH#21026)
+	printf '%s' "$text" | sed -E 's/(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/\1[redacted-credential]/g'
 	return 0
 }
 
