@@ -3247,3 +3247,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061
 
 - [ ] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060
+
+- [x] t2914 ensure pulse running after every aidevops update via idempotent start #bug ref:GH#21069 pr:#21071 completed:2026-04-26
+
+- [x] t2913 Move gh wall-clock timeouts into wrapper layer (replaces #21038) #bug #framework #reliability #interactive ref:GH#21067 pr:#21068 completed:2026-04-26
+
+- [ ] t2915 fix line-continuation regex bug in test-pulse-dispatch-engine-stage-wiring.sh #auto-dispatch ref:GH#21072

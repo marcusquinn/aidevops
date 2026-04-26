@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.16] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2914 complete (pr:#21071 completed:2026-04-26) [skip ci]
+- ensure pulse running after every aidevops update via idempotent start (#21071)
+- Maintenance: mark t2913 complete (pr:#21068 completed:2026-04-26) [skip ci]
+- move gh wall-clock timeouts into wrapper layer (#21068)
+- Maintenance: sync ref:GH#21072 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21069 to TODO.md [skip ci]
+- Maintenance: mark t2910 complete (pr:#21064 completed:2026-04-26) [skip ci]
+
 ## [3.11.15] - 2026-04-26
 
 ### Changed

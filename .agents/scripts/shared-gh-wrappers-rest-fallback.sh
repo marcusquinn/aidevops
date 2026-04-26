@@ -713,10 +713,20 @@ _rest_issue_view() {
 	fi
 
 	local _path="/repos/${repo}/issues/${num}"
-	if [[ -n "$jq_expr" ]]; then
-		gh api "$_path" --jq "$jq_expr"
+	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
+	# Fail-open if helper not loaded — invoke gh api directly.
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		if [[ -n "$jq_expr" ]]; then
+			_gh_with_timeout read gh api "$_path" --jq "$jq_expr"
+		else
+			_gh_with_timeout read gh api "$_path"
+		fi
 	else
-		gh api "$_path"
+		if [[ -n "$jq_expr" ]]; then
+			gh api "$_path" --jq "$jq_expr"
+		else
+			gh api "$_path"
+		fi
 	fi
 	return $?
 }
@@ -784,10 +794,19 @@ _rest_pr_list() {
 	fi
 
 	local _path="/repos/${repo}/pulls?${_query}"
-	if [[ -n "$jq_expr" ]]; then
-		gh api "$_path" --jq "$jq_expr"
+	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		if [[ -n "$jq_expr" ]]; then
+			_gh_with_timeout read gh api "$_path" --jq "$jq_expr"
+		else
+			_gh_with_timeout read gh api "$_path"
+		fi
 	else
-		gh api "$_path"
+		if [[ -n "$jq_expr" ]]; then
+			gh api "$_path" --jq "$jq_expr"
+		else
+			gh api "$_path"
+		fi
 	fi
 	return $?
 }
@@ -864,10 +883,19 @@ _rest_issue_list() {
 	fi
 
 	local _path="/repos/${repo}/issues?${_query}"
-	if [[ -n "$jq_expr" ]]; then
-		gh api "$_path" --jq "$jq_expr"
+	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		if [[ -n "$jq_expr" ]]; then
+			_gh_with_timeout read gh api "$_path" --jq "$jq_expr"
+		else
+			_gh_with_timeout read gh api "$_path"
+		fi
 	else
-		gh api "$_path"
+		if [[ -n "$jq_expr" ]]; then
+			gh api "$_path" --jq "$jq_expr"
+		else
+			gh api "$_path"
+		fi
 	fi
 	return $?
 }

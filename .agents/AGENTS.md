@@ -518,6 +518,7 @@ See also `reference/pre-commit-hooks.md` for the full playbook and "Stale-sympto
 **Pulse restart after deploying pulse script fixes (MANDATORY):**
 
 - `aidevops update` and `setup.sh` auto-restart the pulse (t2579). For manual hot-deploys (`cp` to `~/.aidevops/agents/scripts/`), restart manually: `pulse-lifecycle-helper.sh restart-if-running`. Fallback: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`. Subcommands: `is-running | status | start | stop | restart | restart-if-running`.
+- **Ensure-running guarantee (t2914):** every `aidevops update` ends with an idempotent `pulse-lifecycle-helper.sh start` call (in `aidevops.sh::cmd_update`). The earlier `restart-if-running` paths in `setup.sh:1329` / `agent-deploy.sh:601` are silent no-ops when pulse is **dead**, so a crashed pulse used to stay dead through subsequent updates. The `start` subcommand is idempotent — no-op when running, starts when dead — closing that gap. Honours `AIDEVOPS_SKIP_PULSE_RESTART=1` at the call site for parity with restart paths.
 
 ### Quality Standards
 
