@@ -1841,6 +1841,11 @@ main() {
 		[[ $# -eq 0 ]] && set -- status
 		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
 		;;
+	case | cases)
+		# Bare `aidevops case` defaults to list (most common use).
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
