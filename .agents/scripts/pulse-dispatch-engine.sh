@@ -1345,8 +1345,12 @@ _run_preflight_stages() {
 	# _preflight_daily_scans() group with a shared 600s budget — a slow
 	# complexity_scan (200-340s) would starve downstream scanners
 	# (auto_decomposer, post_merge, dedup) from ever running.
-	run_stage_with_timeout "complexity_scan" "$_pflt_timeout" \
-		run_weekly_complexity_scan || true
+	# t2903 (#21049): complexity_scan extracted to its own launchd plist
+	# (sh.aidevops.complexity-scan, hourly) via complexity-scan-runner.sh.
+	# Observed cost was 470s per cycle — 26%+ of the 1800s pulse stale
+	# ceiling — so promoting it to its own schedule prevents preflight
+	# starvation entirely. The function still lives in pulse-simplification.sh
+	# and is invoked by the standalone runner.
 	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
 		run_daily_codebase_review || true
 	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" \
