@@ -3299,3 +3299,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2932 feat(dispatch): peer-productivity-monitor for adaptive compete/collaborate switching ref:GH#21125 pr:#21128 completed:2026-04-26
 
 - [ ] t2933 harden approve_collaborator_pr: defense-in-depth + regression test (GH#17671 follow-up) #auto-dispatch #security ref:GH#21132
+
+- [ ] t2934 harden pulse-merge against admin --admin bypass on external-contributor PRs #auto-dispatch #bug #security ref:GH#21134
