@@ -2277,20 +2277,36 @@ reconcile_issues_single_pass() {
 			jq -r --arg pt "$_PIR_PT_LABEL" '.[] | select((.labels // []) | map(.name) | index($pt) != null) | .number' \
 			2>/dev/null) || parent_task_nums=""
 
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-		[[ "$issue_count" -gt 0 ]] || continue
+		# t2904: Pre-extract all per-issue fields with a single jq call per
+		# repo instead of 4 jq subprocess spawns per issue. At cross-repo
+		# scale (8 repos x ~30 issues each), this collapses ~960 jq forks
+		# into ~8 — eliminating the dominant per-cycle CPU overhead that
+		# pushed reconcile_issues_single_pass past the 600s
+		# PRE_RUN_STAGE_TIMEOUT in #21042. Title and body are base64-wrapped
+		# so embedded newlines/tabs survive round-trip; @tsv would otherwise
+		# escape \n / \t into literal markers and break consumers like
+		# _extract_children_section that need real newlines.
+		local issues_tsv
+		issues_tsv=$(printf '%s' "$issues_json" | jq -r '
+			.[] | [
+				(.number // "" | tostring),
+				((.title // "") | @base64),
+				((.labels // []) | map(.name) | join(",")),
+				((.body // "") | @base64)
+			] | @tsv
+		' 2>/dev/null) || issues_tsv=""
+		[[ -n "$issues_tsv" ]] || continue
 
-		local i=0
-		while [[ "$i" -lt "$issue_count" ]]; do
-			local issue_num issue_title issue_body labels_csv
-			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
-			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
-			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
-			labels_csv=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" \
-				'.[$i].labels // [] | map(.name) | join(",")' 2>/dev/null) || labels_csv=""
-			i=$((i + 1))
+		while IFS=$'\t' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
+
+			local issue_title="" issue_body=""
+			if [[ -n "$issue_title_b64" ]]; then
+				issue_title=$(printf '%s' "$issue_title_b64" | base64 -d 2>/dev/null) || issue_title=""
+			fi
+			if [[ -n "$issue_body_b64" ]]; then
+				issue_body=$(printf '%s' "$issue_body_b64" | base64 -d 2>/dev/null) || issue_body=""
+			fi
 
 			# Stage 1: close issues whose dedup guard detects a merged PR
 			if [[ "$_ciw_rsd_enabled" == "1" ]] && \
