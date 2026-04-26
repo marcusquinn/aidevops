@@ -182,6 +182,55 @@ classify_worker_exit() {
 }
 
 #######################################
+# Push any local-only WIP commits to origin before worker exits.
+# Best-effort, fail-open — never blocks claim release or shutdown.
+#
+# t2923: Prevents workers dying mid-implementation from abandoning
+# unreachable commits. Next dispatch can continue from the pushed branch
+# instead of rewriting the same code from scratch.
+#
+# Globals consumed:
+#   _WORKER_WORKTREE_PATH  — set by _cmd_run_prepare in headless-runtime-helper.sh
+#   WORKER_NO_EXIT_PUSH    — escape hatch: set to "1" to disable push
+#######################################
+_push_wip_commits_on_exit() {
+	# Escape hatch: WORKER_NO_EXIT_PUSH=1 disables the push (e.g. in tests)
+	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
+
+	local work_dir="${_WORKER_WORKTREE_PATH:-}"
+	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+		return 0
+	fi
+
+	# Get the branch name — skip if detached HEAD or default branch
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
+	case "$branch_name" in
+	HEAD | main | master | "")
+		return 0
+		;;
+	esac
+
+	# Count commits ahead of origin/main (or origin/master) — fail-open
+	local ahead_count=0
+	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	if [[ "$ahead_count" -eq 0 ]]; then
+		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
+		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	fi
+	if [[ "$ahead_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Push best-effort — never block exit on push failure
+	print_info "[lifecycle] worker_exit_pushing_wip branch=${branch_name} ahead=${ahead_count}"
+	git -C "$work_dir" push -u origin "${branch_name}" 2>/dev/null || true
+	print_info "[lifecycle] worker_exit_pushed_wip branch=${branch_name} ahead=${ahead_count}"
+	return 0
+}
+
+#######################################
 # EXIT trap handler — classify worker termination and post CLAIM_RELEASED.
 # Replaces the inline 'process_exit' reason in the EXIT trap with a
 # classified reason from classify_worker_exit. Falls back to process_exit
@@ -193,6 +242,7 @@ classify_worker_exit() {
 # Globals consumed:
 #   _WORKER_START_EPOCH_MS   — ms epoch set by _cmd_run_prepare
 #   _WORKER_ISOLATED_DB_PATH — isolated DB path set by _invoke_opencode
+#   _WORKER_WORKTREE_PATH    — worktree path set by _cmd_run_prepare (t2923)
 #######################################
 _exit_trap_handler() {
 	local session_key="$1"
@@ -228,6 +278,9 @@ _exit_trap_handler() {
 	fi
 
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
+	# t2923: Push any WIP commits before releasing the claim so re-dispatch
+	# can continue from the pushed branch instead of starting over.
+	_push_wip_commits_on_exit
 	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
