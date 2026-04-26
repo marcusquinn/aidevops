@@ -122,17 +122,19 @@ for ref in "${EXTRACTED_REFS[@]}"; do
 	check_file_nonempty "$ref" 100 "Extracted reference"
 done
 
-# ─── Test 2: build.txt has pointers to extracted reference files ──────────────
+# ─── Test 2: AGENTS.md Framework Rules has pointers to extracted reference files ─
+# Post-t2878: build.txt was consolidated into AGENTS.md "Framework Rules", so
+# the pointers that used to live in prompts/build.txt now live in AGENTS.md.
 echo ""
-echo "=== 2. build.txt Pointers to Extracted References ==="
-BUILD_TXT="prompts/build.txt"
-BUILD_REFS=(
+echo "=== 2. AGENTS.md Framework Rules Pointers to Extracted References ==="
+FRAMEWORK_RULES_FILE="AGENTS.md"
+FRAMEWORK_REFS=(
 	"reference/memory-lookup.md"
 	"reference/screenshot-limits.md"
 	"reference/external-repo-submissions.md"
 )
-for ref in "${BUILD_REFS[@]}"; do
-	check_string_in_file "$BUILD_TXT" "$ref" "build.txt pointer: ${ref}"
+for ref in "${FRAMEWORK_REFS[@]}"; do
+	check_string_in_file "$FRAMEWORK_RULES_FILE" "$ref" "AGENTS.md pointer: ${ref}"
 done
 
 # ─── Test 3: AGENTS.md Domain Index section has pointer to reference file ─────

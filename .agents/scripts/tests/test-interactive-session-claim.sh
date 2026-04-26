@@ -468,8 +468,8 @@ rm -f "${claim_dir}"/*.json 2>/dev/null || true
 
 # Stub `gh issue list` to return two origin:interactive + assigned issues
 export STUB_ISSUE_LIST_JSON='[
-  {"number": 91001, "updatedAt": "2025-01-01T00:00:00Z"},
-  {"number": 91002, "updatedAt": "2025-01-01T00:00:00Z"}
+  {"number": 91001, "updatedAt": "2025-01-01T00:00:00Z", "labels": []},
+  {"number": 91002, "updatedAt": "2025-01-01T00:00:00Z", "labels": []}
 ]'
 
 stampless_rows=$(_isc_list_stampless_interactive_claims testuser stamp/test 2>&1)

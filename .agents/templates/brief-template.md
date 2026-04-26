@@ -145,7 +145,16 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      - No marker — not auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body
 
      The close guard (t2755 Phase 2) prevents premature parent closure while any declared
-     phase is still unfiled or open. -->
+     phase is still unfiled or open.
+
+     **Filing children manually outside auto-fire (t2838):** if you create a child
+     issue with `claim-task-id.sh` directly (not through auto-fire), pass
+     `--parent-issue N` to inject a `Parent: #N` body line AND populate GitHub's
+     sub-issue relationship field. This is the canonical decomposition pattern —
+     without it, children appear in the parent body but the GitHub UI does not
+     show them as sub-issues. The pulse also runs a periodic backfill
+     (`AIDEVOPS_PARENT_BACKFILL_INTERVAL_SECS`, default 3600s) so any
+     missed links are reconciled within an hour. -->
 
 {Delete this section for leaf tasks. For parent tasks, list phases here.}
 

@@ -10,6 +10,114 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.7] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2887 complete (pr:#21001 completed:2026-04-26) [skip ci]
+- canary detect wrong opencode binary, long backoff on config errors (#21001)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2876 complete (pr:#20974 completed:2026-04-26) [skip ci]
+- gh PATH shim privacy-scan layer (fail-closed on private slugs in public-repo writes) (#20974)
+- consolidate prompts/build.txt into AGENTS.md Framework Rules (#20982)
+- Maintenance: sync ref:GH#21000 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+## [3.11.6] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2885 complete (pr:#20989 completed:2026-04-26) [skip ci]
+- exclude worktrees from macOS Spotlight + Time Machine (#20989)
+- Maintenance: sync ref:GH#20988 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20987 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20986 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20985 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20984 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20983 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20981 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20980 to TODO.md [skip ci]
+- backfill blocked-by markers on t2840 decomposition children (#20973)
+- Maintenance: sync ref:GH#20975 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20972 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20970 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20966 to TODO.md [skip ci]
+- Maintenance: mark t2859 complete (pr:#20915 completed:2026-04-26) [skip ci]
+- inline config defaults in pulse-cleanup.sh to stop premature worktree destruction (#20915)
+- reduce _detect_self_hosting_task complexity via helper extraction (#20926)
+- Maintenance: sync ref:GH#20964 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+## [3.11.5] - 2026-04-26
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: mark t2871 complete (pr:#20945 completed:2026-04-26) [skip ci]
+- pulse-canonical-recovery: switch to local advisory channel (privacy fix) (#20945)
+- Maintenance: sync ref:GH#20944 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20942 to TODO.md [skip ci]
+
+## [3.11.4] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2865 complete (pr:#20928 completed:2026-04-25) [skip ci]
+- pulse canonical-worktree conflict auto-recovery (#20928)
+- Maintenance: sync ref:GH#20931 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20929 to TODO.md [skip ci]
+- reduce function complexity in upstream-watch-helper.sh (#20925)
+- reduce log_framework_issue complexity by extracting dedup and creation helpers (#20927)
+- Maintenance: mark t2864 complete (pr:#20924 completed:2026-04-25) [skip ci]
+- pre-write bash function complexity advisory hook (#20924)
+- Maintenance: add t2865 worktree-conflict recovery + blocked-by t2863 on t2862 (#20923)
+- Maintenance: sync ref:GH#20919 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20917 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20914 to TODO.md [skip ci]
+- Maintenance: mark t2841 complete (pr:#20907 completed:2026-04-25) [skip ci]
+- Maintenance: sync ref:GH#20912 to TODO.md [skip ci]
+- Maintenance: mark t2835 complete (pr:#20887 completed:2026-04-25) [skip ci]
+
+### Fixed
+
+- init _b_nums to prevent unbound-variable abort (#20907)
+
+## [3.11.3] - 2026-04-25
+
+### Changed
+
+- Maintenance: mark t2842 complete (pr:#20898 completed:2026-04-25) [skip ci]
+- add manual single-issue dispatch CLI (#20887)
+- full-loop-helper: run project validators before push (close worker-CI-failure gap) (#20898)
+- Maintenance: sync ref:GH#20910 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20909 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20908 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20906 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20905 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20904 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20903 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20902 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20901 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20900 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20899 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20897 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20896 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20895 to TODO.md [skip ci]
+- Maintenance: mark t2838 complete (pr:#20890 completed:2026-04-25) [skip ci]
+- periodic parent-task sub-issue backfill + --parent-issue flag (#20890)
+- Maintenance: sync ref:GH#20894 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20893 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20892 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20889 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20888 to TODO.md [skip ci]
+- Maintenance: mark t2834 complete (pr:#20883 completed:2026-04-25) [skip ci]
+- add reusable LOC badge workflow + canonical README badge template (#20883)
+- Maintenance: mark t2829 complete (pr:#20886 completed:2026-04-25) [skip ci]
+- enforce age check in pulse is_running short-circuit (#20886)
+- Maintenance: update simplification state registry
+
 ## [3.11.2] - 2026-04-25
 
 ### Changed

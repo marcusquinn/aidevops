@@ -84,6 +84,84 @@ _auto_assign_issue() {
 	return 0
 }
 
+# t2838: Wire a sub-issue parent link after issue creation. Bypasses body
+# parsing — uses GraphQL node IDs directly. Idempotent: GitHub returns
+# "duplicate sub-issues" or "only have one parent" on retry, both swallowed.
+#
+# Reads the global PARENT_ISSUE_NUM (set by --parent-issue N option). Returns
+# 0 always (non-blocking); failures are logged via log_warn.
+#
+# Mirrors _gh_add_sub_issue from issue-sync-relationships.sh:153 so that
+# claim-task-id.sh's bare-fallback path (which uses raw `gh` and bypasses
+# the _gh_auto_link_sub_issue wrapper) still produces a consistent
+# parent-child relationship at creation time.
+_link_parent_issue_post_create() {
+	local child_num="$1"
+	local repo_path="$2"
+
+	[[ -n "${PARENT_ISSUE_NUM:-}" ]] || return 0
+	[[ -n "$child_num" ]] || return 0
+
+	# Use the canonical helper — handles non-origin remotes via REMOTE_NAME
+	# and matches the slug-extraction style used elsewhere in this script.
+	local slug
+	slug=$(_extract_github_slug "$repo_path" "${REMOTE_NAME:-origin}" 2>/dev/null) || slug=""
+	[[ -n "$slug" ]] || return 0
+
+	local owner="${slug%%/*}" name="${slug##*/}"
+
+	# Single GraphQL query resolves both node IDs at once — half the API
+	# calls and half the rate-limit cost. The `// ""` jq fallback ensures
+	# the literal string "null" never leaks through when an issue is
+	# missing (which would pass the -z check below and cause a confusing
+	# downstream addSubIssue failure).
+	local node_ids parent_node child_node
+	# shellcheck disable=SC2016  # GraphQL query literal — $o/$n/$p/$c are GraphQL vars
+	node_ids=$(gh api graphql \
+		-f query='query($o:String!,$n:String!,$p:Int!,$c:Int!){repository(owner:$o,name:$n){parent:issue(number:$p){id} child:issue(number:$c){id}}}' \
+		-f o="$owner" -f n="$name" -F p="$PARENT_ISSUE_NUM" -F c="$child_num" \
+		--jq '"\(.data.repository.parent.id // "")|\(.data.repository.child.id // "")"' \
+		2>/dev/null) || node_ids="|"
+	parent_node="${node_ids%%|*}"
+	child_node="${node_ids##*|}"
+
+	if [[ -z "$parent_node" || -z "$child_node" ]]; then
+		log_warn "t2838: could not resolve node IDs for parent #${PARENT_ISSUE_NUM} or child #${child_num}; skipping sub-issue link"
+		return 0
+	fi
+
+	# Capture stderr separately from stdout so we can distinguish
+	# (a) GraphQL errors with a JSON body containing .errors[]
+	# (b) network/auth failures that don't return JSON at all
+	local result rc
+	# shellcheck disable=SC2016  # GraphQL mutation literal — $p/$c are GraphQL vars
+	result=$(gh api graphql \
+		-f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
+		-f p="$parent_node" -f c="$child_node" 2>&1)
+	rc=$?
+
+	# Idempotency: GitHub returns these specific error strings when the
+	# relationship already exists. Suppress and treat as success.
+	if [[ "$result" == *"duplicate sub-issues"* ]] || \
+		[[ "$result" == *"only have one parent"* ]]; then
+		log_info "t2838: sub-issue relationship #${child_num} → #${PARENT_ISSUE_NUM} already exists"
+		return 0
+	fi
+
+	# Explicit success: rc=0 AND response contains the expected addSubIssue
+	# success shape (numeric issue.number). Anything else is a failure —
+	# do NOT log "linked" on substring-only matches that may hit prose
+	# error messages or unrelated occurrences of the word "errors".
+	if [[ "$rc" -eq 0 ]] && [[ "$result" == *'"addSubIssue"'* ]] && \
+		[[ "$result" =~ \"number\":[[:space:]]*[0-9]+ ]]; then
+		log_info "t2838: linked #${child_num} as sub-issue of #${PARENT_ISSUE_NUM}"
+		return 0
+	fi
+
+	log_warn "t2838: addSubIssue failed for #${child_num} → #${PARENT_ISSUE_NUM} (rc=${rc}): ${result:0:200}"
+	return 0
+}
+
 # Lock maintainer/worker-created issues at creation to prevent comment
 # prompt-injection. The approval marker (<!-- aidevops-signed-approval -->)
 # and other trusted sentinels are checked by CI workflows — if an attacker
@@ -363,6 +441,12 @@ _compose_issue_body() {
 		body=$(_compose_issue_worker_guidance "$body" "$brief_file")
 		body=$(_compose_issue_brief "$body" "$brief_file")
 
+		# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
+		# and human readers can resolve the parent. Placed before the footer.
+		if [[ -n "${PARENT_ISSUE_NUM:-}" ]]; then
+			body="${body}"$'\n\n'"Parent: #${PARENT_ISSUE_NUM}"
+		fi
+
 		# Append the sentinel footer (via shared composer) so _enrich_update_issue
 		# recognises this body as framework-generated and refreshes it on future
 		# sync passes. The empty second argument skips HTML implementation notes.
@@ -389,6 +473,12 @@ _compose_issue_body() {
 		log_error "  OR: gh issue create --title \"${title}\" --body \"<description>\"" # aidevops-allow: raw-gh-wrapper
 		echo ""
 		return 1
+	fi
+
+	# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
+	# and human readers can resolve the parent. Placed before the footer.
+	if [[ -n "${PARENT_ISSUE_NUM:-}" ]]; then
+		body="${body}"$'\n\n'"Parent: #${PARENT_ISSUE_NUM}"
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)

@@ -100,6 +100,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 -->
 
 
+- [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules — moves universal framework rules from build.txt (currently only loaded by OpenCode + Claude Code) to top of AGENTS.md (loaded by all 11 supported runtimes via prompt-injection-adapter), reconciles duplicate sections (Worker Triage, Memory Recall, Git Workflow, File Discovery, Working Directories), redirects self-improvement automation (session-miner extract.py + compress.py) to AGENTS.md, leaves build.txt as empty placeholder file (preserves OpenCode `{file:...}` channel for future use). 3 phases: content migration → smoke-test priority drop on 5 high-stakes rules (URL guess, secret echo, instruction override, pre-edit check, worker scope) → cleanup remaining cross-references. #framework #parent-task #interactive ~3.5h tier:thinking ref:GH#20975 logged:2026-04-26 -> [todo/tasks/t2878-brief.md]
+
 - [x] t2742 fix(pre-commit): string-literal ratchet regex false-positive on adjacent quoted shell args — `grep -oE '"[^"]{4,}"'` in `validate_string_literals` (`.agents/scripts/pre-commit-hook.sh:270-293`) captures inter-argument whitespace spans like `" repo="` in `local tid="$1" repo="$2"` as literal repeats. Existing `^"\$` filter only rejects direct var-refs; cannot reject inter-arg spans that start with whitespace. Impact: blocks idiomatic multi-param `local` declarations, forces split-per-line workarounds. Confirmed in t2738 PR #20474 (workaround commit `1c128d3eb`). Fix: sed pre-strip of shell-syntax tokens (`"$var"`, `"${var}"`, `"$@"`, `"$1"` etc.) BEFORE the literal-extraction regex runs — cross-platform portable (POSIX ERE only, works on BSD + GNU + BusyBox). Also audit `:274,287` `grep -v '^\s*#'` — `\s` is a GNU grep extension, may not be honoured by BSD grep on macOS (replace with POSIX `[[:space:]]*`). Follow-up to t2230/#19739 (closed — ratchet-conversion done, regex fix deferred). EDIT: `.agents/scripts/pre-commit-hook.sh`. NEW: `.agents/scripts/tests/test-string-literal-ratchet.sh` (7 fixtures: 4 negative incl. the adjacent-args case, 2 positive, 1 boundary for escaped `\$`). #bugfix #framework #auto-dispatch #worker ~2h tier:standard ref:GH#20478 logged:2026-04-22 -> [todo/tasks/t2742-brief.md] pr:#20479 completed:2026-04-22
 - [x] t2143 refactor(pulse-triage): centralize consolidation gate defaults at module top — move `ISSUE_CONSOLIDATION_COMMENT_THRESHOLD=2` and `MIN_CHARS=500` to a single `: "${VAR:=default}"` block in `pulse-triage.sh`, simplify the Phase 1 inline guards back to bare `$VAR`, align line 499's fallback 200→500. Follow-up to #19343 (Phase 1 minimal defensive fix). Eliminates duplicate-default drift and the 200-vs-500 inconsistency between `_issue_needs_consolidation` and `_consolidation_substantive_comments`. #refactor #interactive ~1.5h tier:standard ref:GH#19346 blocked-by:t2142 logged:2026-04-16 -> [todo/tasks/t2143-brief.md] pr:#19383 completed:2026-04-16
 - [x] t2148 scan-stale: detect + auto-recover stampless `origin:interactive` claims — close the dispatch-block leak where issues filed from an interactive session get `origin:interactive` + owner auto-assigned (t1970) but the session never writes a stamp. Adds Phase 1a to `interactive-session-helper.sh scan-stale` for discovery and `_normalize_unassign_stampless_interactive` to `pulse-issue-reconcile.sh` for 24h autonomous recovery. Concrete evidence: #19346/#19347 blocked pulse dispatch indefinitely until manual `gh issue edit --remove-assignee`. #bugfix #interactive ~2.5h tier:standard ref:GH#19380 logged:2026-04-16 -> [todo/tasks/t2148-brief.md] pr:#19384 completed:2026-04-16
@@ -805,37 +807,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t2772 ## What Route all direct `gh issue list` and `gh pr list` calls in `pulse-*.sh` scripts through the existing REST-fallback wrappers (`gh_issue_list`, `gh_pr_list` in `shared-gh-wrappers.sh`). This shifts load from the exhausted GraphQL pool (5000/hr, regularly at 0) to the underutilized REST core pool (4613/5000 available). This is **Phase 1 of parent-task #20622** (highest ROI of the 4 phases drafted there). Filed as a standalone tier:standard child so Phase 1 can ship immediately rather than waiting on full decomposition. For #20622. ## Why Evidence in parent #20622: ``` $ gh api rate_limit | jq '{graphql: .resources.graphql, core: .resources.core}' { "graphql": { "limit": 5000, "used": 5000, "remaining": 0 }, "core": { "limit": 5000, "used": 387, "remaining": 4613 } } ``` GraphQL is being exhausted while REST sits at 92% unused. The wrappers exist (`gh_issue_list`, `gh_pr_list`) and already know how to fall back to REST when GraphQL is low — the gap is that `pulse-*.sh` scripts mostly use bare `gh issue list` / `gh pr list` calls that bypass the wrappers. This is a mechanical replacement — no logic change, just call-site rerouting. ## How ### Files to modify - EDIT: `.agents/scripts/pulse-issue-reconcile.sh` — replace every `gh issue list` with `gh_issue_list`, every `gh pr list` with `gh_pr_list` - EDIT: `.agents/scripts/pulse-merge.sh` — same - EDIT: `.agents/scripts/pulse-triage.sh` — same - EDIT: `.agents/scripts/pulse-capacity-alloc.sh` — same - EDIT: `.agents/scripts/pulse-merge-conflict.sh` — same - EDIT: any remaining `pulse-*.sh` scripts with direct gh-list calls ### Reference pattern `shared-gh-wrappers.sh` already defines `gh_issue_list` and `gh_pr_list`. Any existing `pulse-*.sh` that already uses them (there are some) is the reference shape — the wrapper handles auto-source checking so call sites don't need to explicitly source. Check each modified file already sources `shared-gh-wrappers.sh` at the top. If not, add the source line. ### Files Scope - .agents/scripts/pulse-issue-reconcile.sh - .agents/scripts/pulse-merge.sh - .agents/scripts/pulse-triage.sh - .agents/scripts/pulse-capacity-alloc.sh - .agents/scripts/pulse-merge-conflict.sh - .agents/scripts/pulse-*.sh ### Discovery command Find all call sites: ``` rg -n "^s*gh issue list|^s*gh pr list|| gh issue list|| gh pr list|=$(gh issue list|=$(gh pr list" .agents/scripts/pulse-*.sh ``` ## Verification ``` shellcheck .agents/scripts/pulse-*.sh # No remaining bare gh list calls in pulse-*.sh except through wrappers: rg -n "gh issue list|gh pr list" .agents/scripts/pulse-*.sh | rg -v "gh_issue_list|gh_pr_list|#" # Expected: zero matches # Smoke: live pulse run does not regress pulse-lifecycle-helper.sh restart-if-running # Watch for 30 min, confirm GraphQL remaining stays above 2000: watch -n 60 'gh api rate_limit --jq ".resources.graphql.remaining"' ``` ## Acceptance Criteria 1. All `gh issue list` and `gh pr list` calls in `pulse-*.sh` go through `gh_issue_list` / `gh_pr_list` wrappers 2. `shellcheck` passes on all modified files 3. Post-merge: during a 1-hour pulse run, `gh api rate_limit` GraphQL remaining does not drop below 2000 (was hitting 0 pre-change) 4. No functional regression in pulse stages (merge, reconcile, triage still work on live repos) ### Non-scope - Do NOT implement Phases 2, 3, 4 of #20622 (prefetch extension, cycle frequency, reconcile consolidation). Those are separate children. - Do NOT modify `shared-gh-wrappers.sh` itself — the wrappers already work; only call sites change. ## Session Origin Filed from interactive review of pulse concurrency blockers. Parent #20622's decomposer (#20633) is stuck in `launch_recovery:no_worker_process` loop; rather than wait on full decomposition, this lifts the highest-ROI phase directly. ## PR keyword reminder Parent #20622 has the `parent-task` label. Per `.agents/AGENTS.md` "Parent-task PR keyword rule", this PR body must use `For #20622` or `Ref #20622` — NEVER `Closes` / `Resolves` / `Fixes`. The parent stays open until all 4 phases merge. #auto-dispatch #bug #framework #pulse ref:GH#20642 pr:#20692 completed:2026-04-24
 
-- [ ] t2843 P0b: knowledge CLI surface (add/list/search) + platform abstraction #framework #parent:t2840 ref:GH#20895
-
-- [ ] t2844 P0a: knowledge plane directory contract + provisioning #framework parent:t2840 #feat #framework ref:GH#20896
-
-- [ ] t2845 P0c: knowledge review gate routine + NMR integration #framework parent:t2840 #feat #framework ref:GH#20897
-
-- [ ] t2846 P0.5a: sensitivity classification schema + detector #framework parent:t2840 #feat #framework ref:GH#20899
-
-- [ ] t2847 P0.5b: LLM routing helper + audit log #framework parent:t2840 #feat #framework ref:GH#20900
-
-- [ ] t2848 P0.5c: Ollama integration + local LLM substrate #framework parent:t2840 #feat #framework ref:GH#20901
-
-- [ ] t2849 P1a: kind-aware enrichment + structured field extraction #framework parent:t2840 #feat #framework ref:GH#20902
-
-- [ ] t2850 P1c: PageIndex tree generation across corpus #framework parent:t2840 #feat #framework ref:GH#20903
-
-- [ ] t2851 P4a: case dossier contract + aidevops case open #framework parent:t2840 #feat #framework ref:GH#20904
-
-- [ ] t2852 P4b: case CLI surface (attach/status/close/archive/list) #framework parent:t2840 #feat #framework ref:GH#20905
-
-- [ ] t2853 P4c: case milestone + deadline alarming routine #framework parent:t2840 ref:GH#20906
-
-- [ ] t2854 P5a: .eml ingestion handler (kind=email) #framework parent:t2840 #feat #framework ref:GH#20908
-
-- [ ] t2855 P5b: IMAP polling routine + mailboxes.json registry #framework parent:t2840 #feat #framework ref:GH#20909
-
-- [ ] t2856 P5c: email thread reconstruction + filter to case-attach #framework parent:t2840 #feat #framework ref:GH#20910
-
-- [ ] t2857 P6a: aidevops case draft agent (RAG, human-gated, provenance) #framework parent:t2840 #feat #framework ref:GH#20911
-
-- [ ] t2858 P6b: aidevops case chase (template-only, opt-in auto-send) #framework parent:t2840 #feat #framework ref:GH#20912
+- [ ] t2877 ## What A new pulse stage that parses prose phase-ordering declarations from parent-task issue bodies and emits the equivalent `blocked-by:tNNN` markers in TODO.md (and corresponding GitHub `blockedByIssue` relationships). Closes the gap surfaced during t2875 manual backfill. ## Why Parent-task authors naturally encode cross-phase dependencies as narrative prose in the issue body (e.g., t2840/#20892 had 8 dependency lines like `P1 children blocked by P0a + P0b`). The framework's relationship sync (issue-sync-relationships.sh) only reads explicit `blocked-by:tNNN` from TODO.md, so prose declarations never reach GitHub. Result: rich dependency graphs declared in parent bodies but invisible to GitHub Projects, the issues UI, and external tooling. t2875 manually backfilled 15 entries (42 blocked-by edges) for the t2840 decomposition. Automating closes the gap permanently. ## How ### Files Scope - .agents/scripts/pulse-issue-reconcile.sh - .agents/scripts/issue-sync-helper.sh - .agents/scripts/issue-sync-relationships.sh - .agents/scripts/tests/test-parent-phase-dep-parser.sh ### Approach 1. Add `_parse_parent_phase_deps <issue-body>` helper to issue-sync-relationships.sh that locates lines matching `P[0-9.]+[a-z]? (children|blocked) by ...`, extracts phase IDs, resolves each to a child issue number via the parent body's children table. 2. Add a new pulse-issue-reconcile stage (next to the t2838 backfill stage) that calls the parser per open parent-task and emits `blocked-by:` markers + GraphQL `addBlockedByRelationship`. Rate-limited via state file mirroring t2838 pattern. 3. Tests for prose edge cases, table extraction, idempotency, no-declarations case. ### Verification - New parser tests pass - Dry-run against #20892 produces 0 net changes (already backfilled) - End-to-end on a fresh parent decomposition ## Acceptance - [ ] Parser handles all 8 dependency line shapes from t2840 parent body - [ ] Idempotent on re-run - [ ] Rate-limited via state file like t2838 - [ ] Tests cover simple/multi-blocker/sub-phase/transitive cases - [ ] Verified end-to-end on a fresh decomposition ## Session origin t2838 → t2875 follow-up. t2838 shipped GraphQL sub-issue backfill; t2875 added cross-phase blocked-by markers manually because no parser exists. This task automates t2875's work. #feat #framework #tooling ref:GH#20972
 
 ## In Progress
 
@@ -3123,28 +3095,108 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2834 loc badges + readme badges template (reusable workflow + helpers) #auto-dispatch #enhancement ref:GH#20879 pr:#20883 completed:2026-04-25
 
-- [ ] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882
+- [x] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882 pr:#20887 completed:2026-04-25
 
 - [ ] t2837 document BSD awk and ratchet hazards from t2834 in reference docs #auto-dispatch #documentation ref:GH#20885
 
 - [ ] t2836 aidevops badges CLI subcommand + init hook + cross-repo drift detection #enhancement ref:GH#20884
 
-- [ ] t2838 periodic parent-task sub-issue backfill in pulse + --parent-issue flag on claim-task-id #auto-dispatch #enhancement #tooling ref:GH#20888
+- [x] t2838 periodic parent-task sub-issue backfill in pulse + --parent-issue flag on claim-task-id #auto-dispatch #enhancement #tooling ref:GH#20888 pr:#20890 completed:2026-04-25
 
 - [ ] t2839 dispatch-issue CLI follow-ups: status PID liveness + model inference scope alignment #auto-dispatch #framework ref:GH#20889
 
-- [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #interactive #framework #bugfix ref:GH#20917
+- [ ] t2840 knowledge / cases / matter framework planes (MVP) #enhancement #framework #parent ref:GH#20892
 
-- [ ] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #interactive #framework #bugfix ref:GH#20918
+- [x] t2841 pulse-issue-reconcile: _b_nums unbound when issue body has no children-section ref:GH#20893 pr:#20907 completed:2026-04-25
 
-- [ ] t2866 P2a: `_inbox/` directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
+- [x] t2842 full-loop-helper commit-and-pr: run project linters/formatters/typecheck before push (close worker-CI-failure gap) ref:GH#20894 pr:#20898 completed:2026-04-25
 
-- [ ] t2867 P2b: inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+- [ ] t2843 P0a: knowledge plane directory contract + provisioning (parent t2840) #enhancement #framework ref:GH#20895
 
-- [ ] t2868 P2c: inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932
+- [ ] t2844 P0a: knowledge plane directory contract + provisioning #enhancement #framework ref:GH#20896
 
-- [ ] t2869 P2d: pulse digest of stale inbox items + weekly review surface #auto-dispatch #enhancement #framework ref:GH#20933
+- [ ] t2845 P0c: knowledge review gate routine + NMR integration #enhancement #framework ref:GH#20897
 
-- [ ] t2870 `_campaigns/` plane — marketing assets, intel, inspiration for ads + organic campaigns #parent #framework #enhancement #interactive ref:GH#20929
+- [ ] t2846 P0.5a: sensitivity classification schema + detector #enhancement #framework ref:GH#20899 blocked-by:t2844
 
-- [ ] t2874 structured tag format for knowledge planes (Markdoc-style peer parent) #parent #framework #enhancement #interactive ref:GH#20966
+- [ ] t2847 P0.5b: LLM routing helper + audit log #enhancement #framework ref:GH#20900 blocked-by:t2844
+
+- [ ] t2848 P0.5c: Ollama integration + local LLM substrate #enhancement #framework ref:GH#20901 blocked-by:t2844
+
+- [ ] t2849 P1a: kind-aware enrichment + structured field extraction #enhancement #framework ref:GH#20902 blocked-by:t2844,t2843
+
+- [ ] t2850 P1c: PageIndex tree generation across corpus #enhancement #framework ref:GH#20903 blocked-by:t2844,t2843
+
+- [ ] t2851 P4a: case dossier contract + aidevops case open #enhancement #framework ref:GH#20904 blocked-by:t2844,t2843,t2846
+
+- [ ] t2852 P4b: case CLI surface (attach/status/close/archive/list) #enhancement #framework ref:GH#20905 blocked-by:t2844,t2843,t2846
+
+- [ ] t2853 P4c: case milestone + deadline alarming routine (parent t2840) #enhancement #framework ref:GH#20906 blocked-by:t2844,t2843,t2846
+
+- [ ] t2854 P5a: .eml ingestion handler (kind=email) #enhancement #framework ref:GH#20908 blocked-by:t2844,t2843,t2849
+
+- [ ] t2855 P5b: IMAP polling routine + mailboxes.json registry #enhancement #framework ref:GH#20909 blocked-by:t2844,t2843,t2849
+
+- [ ] t2856 P5c: email thread reconstruction + filter to case-attach #enhancement #framework ref:GH#20910 blocked-by:t2844,t2843,t2849,t2851,t2852
+
+- [ ] t2857 P6a: aidevops case draft agent (RAG, human-gated, provenance) #enhancement #framework ref:GH#20911 blocked-by:t2851,t2852,t2853,t2850,t2847,t2848
+
+- [ ] t2858 P6b: aidevops case chase (template-only, opt-in auto-send) #enhancement #framework ref:GH#20912 blocked-by:t2851,t2852,t2853,t2850,t2847,t2848
+
+- [x] t2859 fix unbound ORPHAN_WORKTREE_GRACE_SECS in pulse-cleanup.sh — destroys live worktrees #bug #framework ref:GH#20914 pr:#20915 completed:2026-04-26
+
+- [ ] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #bug #framework ref:GH#20918
+
+- [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #bug #framework ref:GH#20917
+
+- [x] t2864 pre-write function complexity advisory hook #auto-dispatch #framework #quality ref:GH#20921 pr:#20924 completed:2026-04-25
+
+- [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920
+
+- [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919
+
+- [x] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922 pr:#20928 completed:2026-04-25
+
+- [ ] t2870 _campaigns/ plane — marketing assets, intel, inspiration for ads + organic campaigns #enhancement #framework #parent ref:GH#20929
+
+- [ ] t2869 P2d — pulse digest of stale inbox items + weekly review surface #auto-dispatch #enhancement #framework ref:GH#20933 blocked-by:t2868
+
+- [ ] t2868 P2c — inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932 blocked-by:t2846,t2848
+
+- [ ] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+
+- [ ] t2866 P2a — _inbox/ directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
+
+- [x] t2871 pulse-canonical-recovery: switch to local advisory channel (privacy fix) #pulse #security ref:GH#20942 pr:#20945 completed:2026-04-26
+
+- [ ] t2872 redact private repo names + paths from issue/PR bodies posted to public marcusquinn/aidevops #framework #pulse #reliability #security ref:GH#20944
+
+- [ ] t2873 comment out OpenCode→Claude Code substitution after empirical A/B verification ref:GH#20964
+
+- [ ] t2874 structured tag format for knowledge planes (Markdoc-style peer parent) #enhancement #framework #parent ref:GH#20966
+
+- [x] t2876 gh PATH shim: privacy-scan layer to fail-closed on private-slug references when posting to public repos #auto-dispatch #framework #security ref:GH#20970 pr:#20974 completed:2026-04-26
+
+- [ ] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972
+
+- [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
+
+- [ ] t2879 docs(README): add per-repo platform setup section pointing to /setup-git #auto-dispatch #documentation #framework ref:GH#20980
+
+- [ ] t2880 feat(setup-debt): detect cross-account secrets:inherit pattern in issue-sync.yml #auto-dispatch #enhancement #framework ref:GH#20981
+
+- [ ] t2881 Harden against external scanner-spam reports filed as 'responsible disclosure' #framework #parent #security ref:GH#20983
+
+- [x] t2882 Add unsolicited_disclosure_marketing pattern category to prompt-injection-patterns.yaml #auto-dispatch #framework #security ref:GH#20984 pr:#21014 completed:2026-04-26
+
+- [x] t2883 Add untrusted-body content directive immunity rule to build.txt #auto-dispatch #framework #security ref:GH#20985 pr:#21011 completed:2026-04-26
+
+- [ ] t2884 Add external-content-spam-detector.sh helper combining patterns + structural checks #auto-dispatch #framework #security ref:GH#20986
+
+- [x] t2886 Extend pulse triage prefetch to supply evidence-verification data to triage-review agent #auto-dispatch #framework #pulse #security ref:GH#20987 pr:#21015 completed:2026-04-26
+
+- [x] t2885 Exclude worktrees from macOS Spotlight, Time Machine, and Backblaze at creation time + backfill #framework #performance #interactive ref:GH#20988 pr:#20989 completed:2026-04-26
+
+- [x] t2887 headless canary: validate opencode binary, detect claude CLI misconfig, long backoff on config errors #critical #framework #reliability ref:GH#21000 pr:#21001 completed:2026-04-26
+
+- [ ] t2888 restore setup_opencode_cli install logic; add to non-interactive path ref:GH#21016

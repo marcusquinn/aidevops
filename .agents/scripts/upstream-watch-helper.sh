@@ -260,6 +260,69 @@ _get_aidevops_slug() {
 }
 
 #######################################
+# Compose the issue body for an upstream update notification.
+# Extracted from _file_upstream_update_issue() to reduce complexity.
+# Arguments:
+#   $1 - slug_or_name
+#   $2 - kind
+#   $3 - old_display   (previous version/commit or "none")
+#   $4 - new_value_short
+#   $5 - relevance     (may be empty)
+#   $6 - affects       (newline-separated list, may be empty)
+#   $7 - compare_url   (may be empty)
+# Outputs: issue body text via stdout
+#######################################
+_compose_upstream_issue_body() {
+	local slug_or_name="$1"
+	local kind="$2"
+	local old_display="$3"
+	local new_value_short="$4"
+	local relevance="$5"
+	local affects="$6"
+	local compare_url="$7"
+
+	# Build affects section
+	local affects_section="See relevance text above."
+	if [[ -n "$affects" ]]; then
+		affects_section=""
+		while IFS= read -r af; do
+			[[ -n "$af" ]] && affects_section="${affects_section}\n- \`${af}\`"
+		done <<<"$affects"
+	fi
+
+	cat <<ISSUEEOF
+## Summary
+
+${relevance:-Upstream repo monitored for relevant changes.}
+
+## What Changed
+
+| Field | Value |
+|-------|-------|
+| Upstream | \`${slug_or_name}\` |
+| Kind | ${kind} |
+| Previous | \`${old_display}\` |
+| Current | \`${new_value_short}\` |
+$(if [[ -n "$compare_url" ]]; then echo "| Compare | [view diff](${compare_url}) |"; fi)
+
+## Affects
+
+$(printf '%b' "$affects_section")
+
+## Action
+
+1. Review the upstream changes${compare_url:+ at the [compare link](${compare_url})}
+2. Determine if adoption is needed (new feature, bug fix, security patch)
+3. If adopting: create a PR with the relevant changes
+4. Mark as reviewed: \`upstream-watch-helper.sh ack ${slug_or_name}\`
+
+<!-- aidevops:generator=upstream-watch upstream_slug=${slug_or_name} -->
+<!-- upstream-watch:slug=${slug_or_name} -->
+ISSUEEOF
+	return 0
+}
+
+#######################################
 # File a GitHub issue when an upstream update is detected (0→1 transition).
 # Deduplicates by searching for open issues with the same title prefix.
 # If a matching open issue exists and the upstream has advanced further,
@@ -290,8 +353,7 @@ _file_upstream_update_issue() {
 	aidevops_slug=$(_get_aidevops_slug)
 
 	local new_value_short="${new_value:0:12}"
-	local title_prefix="upstream: ${slug_or_name} ${kind}"
-	local title="${title_prefix} → ${new_value_short} (review adoption)"
+	local title="upstream: ${slug_or_name} ${kind} → ${new_value_short} (review adoption)"
 
 	# --- Dedup: check for existing open issue ---
 	local existing_number=""
@@ -300,14 +362,11 @@ _file_upstream_update_issue() {
 		--search "in:title upstream: ${slug_or_name}" \
 		--json number --jq '.[0].number // empty' 2>/dev/null) || existing_number=""
 
-	# Extract relevance and affects from config entry
-	local relevance=""
-	local affects=""
-	local upstream_url=""
+	# Extract relevance, affects, and upstream URL from config entry
+	local relevance="" affects="" upstream_url=""
 	if [[ -n "$entry_json" ]]; then
 		relevance=$(printf '%s' "$entry_json" | jq -r '.relevance // ""' 2>/dev/null) || relevance=""
 		affects=$(printf '%s' "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null) || affects=""
-		# For GitHub repos, construct the compare URL
 		local entry_slug=""
 		entry_slug=$(printf '%s' "$entry_json" | jq -r '.slug // ""' 2>/dev/null) || entry_slug=""
 		if [[ -n "$entry_slug" ]]; then
@@ -317,57 +376,16 @@ _file_upstream_update_issue() {
 		fi
 	fi
 
-	# Build compare URL if both old and new values are available
+	# Build compare URL for GitHub repos
 	local compare_url=""
 	if [[ -n "$old_value" && -n "$upstream_url" && "$upstream_url" == *"github.com"* ]]; then
 		compare_url="${upstream_url}/compare/${old_value}...${new_value_short}"
 	fi
 
-	# Build affects section
-	local affects_section="See relevance text above."
-	if [[ -n "$affects" ]]; then
-		affects_section=""
-		while IFS= read -r af; do
-			[[ -n "$af" ]] && affects_section="${affects_section}\n- \`${af}\`"
-		done <<<"$affects"
-	fi
-
-	local old_display="${old_value:-none}"
-
-	# Compose issue body
+	# Compose body via helper and append signature footer
 	local body
-	body=$(cat <<ISSUEEOF
-## Summary
-
-${relevance:-Upstream repo monitored for relevant changes.}
-
-## What Changed
-
-| Field | Value |
-|-------|-------|
-| Upstream | \`${slug_or_name}\` |
-| Kind | ${kind} |
-| Previous | \`${old_display}\` |
-| Current | \`${new_value_short}\` |
-$(if [[ -n "$compare_url" ]]; then echo "| Compare | [view diff](${compare_url}) |"; fi)
-
-## Affects
-
-$(printf '%b' "$affects_section")
-
-## Action
-
-1. Review the upstream changes${compare_url:+ at the [compare link](${compare_url})}
-2. Determine if adoption is needed (new feature, bug fix, security patch)
-3. If adopting: create a PR with the relevant changes
-4. Mark as reviewed: \`upstream-watch-helper.sh ack ${slug_or_name}\`
-
-<!-- aidevops:generator=upstream-watch upstream_slug=${slug_or_name} -->
-<!-- upstream-watch:slug=${slug_or_name} -->
-ISSUEEOF
-	)
-
-	# Append signature footer
+	body=$(_compose_upstream_issue_body "$slug_or_name" "$kind" "${old_value:-none}" \
+		"$new_value_short" "$relevance" "$affects" "$compare_url")
 	local sig_footer=""
 	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
 		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
@@ -681,6 +699,69 @@ _report_github_repo_update() {
 }
 
 #######################################
+# Probe GitHub API for the latest release of a repository.
+# Echoes release JSON on success; empty string if no releases (404).
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+# Outputs: release JSON via stdout (empty if no releases)
+# Returns: 0 on success or 404 (no releases), 1 on real API error
+#######################################
+_probe_github_release() {
+	local slug="$1"
+	local api_stderr
+	api_stderr=$(mktemp)
+	local release_json=""
+
+	if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
+		rm -f "$api_stderr"
+		printf '%s' "$release_json"
+		return 0
+	fi
+
+	local release_err
+	release_err=$(<"$api_stderr")
+	rm -f "$api_stderr"
+
+	# 404 = no releases (normal, not an error)
+	if [[ "$release_err" == *"Not Found"* || "$release_err" == *"404"* ]]; then
+		return 0
+	fi
+
+	_log_warn "gh api releases failed for ${slug}: ${release_err}"
+	echo -e "${YELLOW}Warning${NC}: Could not fetch releases for ${slug}" >&2
+	return 1
+}
+
+#######################################
+# Probe GitHub API for the latest commit of a repository.
+# Echoes commit JSON on success; empty string on error.
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+# Outputs: commit JSON via stdout (empty on error)
+# Returns: 0 on success, 1 on API error
+#######################################
+_probe_github_commit() {
+	local slug="$1"
+	local api_stderr
+	api_stderr=$(mktemp)
+	local commit_json=""
+
+	if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
+		rm -f "$api_stderr"
+		printf '%s' "$commit_json"
+		return 0
+	fi
+
+	local commit_err
+	commit_err=$(<"$api_stderr")
+	rm -f "$api_stderr"
+
+	_log_warn "gh api commits failed for ${slug}: ${commit_err}"
+	echo -e "${YELLOW}Warning${NC}: Could not fetch commits for ${slug}" >&2
+	return 1
+}
+
+#######################################
 # Check a single GitHub repo for new releases and commits.
 # Updates state in-place (passed by reference via global _check_state).
 # Arguments:
@@ -709,28 +790,11 @@ _check_single_github_repo() {
 	updates_pending_before=$(echo "$_check_state" | jq -r --arg slug "$slug" '.repos[$slug].updates_pending // 0')
 
 	# --- Check releases ---
+	local release_json="" probe_failed=false
 	local latest_release_tag="" latest_release_name="" latest_release_date=""
-	local release_json=""
-	local probe_failed=false
-	local api_stderr
-	api_stderr=$(mktemp)
-	if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
-		: # success — release_json has the response
-	else
-		local release_err
-		release_err=$(<"$api_stderr")
-		# 404 = no releases (normal), anything else = real error
-		if [[ "$release_err" == *"Not Found"* || "$release_err" == *"404"* ]]; then
-			release_json=""
-		else
-			_log_warn "gh api releases failed for ${slug}: ${release_err}"
-			echo -e "${YELLOW}Warning${NC}: Could not fetch releases for ${slug}" >&2
-			release_json=""
-			probe_failed=true
-		fi
+	if ! release_json=$(_probe_github_release "$slug"); then
+		probe_failed=true
 	fi
-	rm -f "$api_stderr"
-
 	if [[ -n "$release_json" ]]; then
 		latest_release_tag=$(echo "$release_json" | jq -r '.tag_name // ""')
 		latest_release_name=$(echo "$release_json" | jq -r '.name // ""')
@@ -743,21 +807,10 @@ _check_single_github_repo() {
 	fi
 
 	# --- Check commits (even if no new release) ---
-	local latest_commit="" latest_commit_date=""
-	local commit_json=""
-	api_stderr=$(mktemp)
-	if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
-		: # success
-	else
-		local commit_err
-		commit_err=$(<"$api_stderr")
-		_log_warn "gh api commits failed for ${slug}: ${commit_err}"
-		echo -e "${YELLOW}Warning${NC}: Could not fetch commits for ${slug}" >&2
-		commit_json=""
+	local commit_json="" latest_commit="" latest_commit_date=""
+	if ! commit_json=$(_probe_github_commit "$slug"); then
 		probe_failed=true
 	fi
-	rm -f "$api_stderr"
-
 	if [[ -n "$commit_json" ]]; then
 		latest_commit=$(echo "$commit_json" | jq -r '.sha // ""')
 		latest_commit_date=$(echo "$commit_json" | jq -r '.commit.committer.date // ""')
@@ -775,7 +828,7 @@ _check_single_github_repo() {
 		"$latest_release_tag" "$latest_release_name" "$latest_release_date" \
 		"$latest_commit" "$latest_commit_date" "$verbose"
 
-	# Update last_checked and updates_pending (but NOT last_release_seen or last_commit_seen — those require explicit ack)
+	# Update last_checked and updates_pending (not last_seen — requires explicit ack)
 	# Skip state update if probes failed to avoid masking errors as "up to date"
 	if [[ "$probe_failed" != true ]]; then
 		local new_pending

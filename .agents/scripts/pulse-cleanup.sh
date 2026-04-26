@@ -59,6 +59,21 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/canonica
 fi
 unset _PULSE_CLEANUP_SCRIPT_DIR
 
+# t2859: Config defaults (ORPHAN_WORKTREE_GRACE_SECS, ORPHAN_MAX_AGE,
+# PULSE_IDLE_CPU_THRESHOLD) are owned by pulse-wrapper-config.sh. When
+# this module is sourced standalone (cleanup-worktrees-async-helper.sh,
+# tests) without that config also being sourced, the variables are
+# unbound and bash's numeric coercion treats unbound expansion as 0 —
+# collapsing the 30-minute grace period to zero seconds and destroying
+# fresh worktrees with 0 commits and no PR.
+#
+# We do NOT defensively source pulse-wrapper-config.sh here: that file
+# depends on _validate_int from worker-lifecycle-common.sh, which the
+# async cleanup path also doesn't source. Instead, every use site in
+# this file carries an inline `${VAR:-default}` fallback that produces
+# the same default as the config file. Search for "t2859" comments to
+# see each fallback. Tested by test-pulse-cleanup-config-defaults.sh.
+
 #######################################
 # Move a path to system trash before permanent deletion (GH#19042).
 # Mirrors worktree-helper.sh trash_path() so Pass 2 orphan cleanup gets
@@ -276,8 +291,12 @@ _evaluate_worktree_removal() {
 	local wt_branch_age="${4:-}"
 	local repo_slug_age="${5:-}"
 
-	# Age thresholds — grace period from config, others hardcoded
-	local age_grace="$ORPHAN_WORKTREE_GRACE_SECS"
+	# Age thresholds — grace period from config, others hardcoded.
+	# t2859: inline ${VAR:-1800} fallback ensures grace=30min even when
+	# pulse-wrapper-config.sh is not sourced. Previously this expanded to
+	# empty string, which bash treats as 0 in numeric comparisons, making
+	# every fresh 0-commit worktree immediately eligible for destruction.
+	local age_grace="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"
 	local age_3h=$((3 * 3600))
 	local age_6h=$((6 * 3600))
 	local age_24h=$((24 * 3600))
@@ -987,9 +1006,12 @@ cleanup_orphans() {
 		esac
 
 		# Skip young processes
+		# t2859: ${ORPHAN_MAX_AGE:-7200} fallback (2h) — without this,
+		# unbound expansion to "" makes every process look "older than 0"
+		# and would kill all matched orphans regardless of actual age.
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
-		if [[ "$age_seconds" -lt "$ORPHAN_MAX_AGE" ]]; then
+		if [[ "$age_seconds" -lt "${ORPHAN_MAX_AGE:-7200}" ]]; then
 			continue
 		fi
 
@@ -1014,9 +1036,10 @@ cleanup_orphans() {
 			;;
 		esac
 
+		# t2859: ${ORPHAN_MAX_AGE:-7200} fallback (2h) — see comment above.
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
-		[[ "$age_seconds" -lt "$ORPHAN_MAX_AGE" ]] && continue
+		[[ "$age_seconds" -lt "${ORPHAN_MAX_AGE:-7200}" ]] && continue
 
 		kill "$pid" 2>/dev/null || true
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
@@ -1069,11 +1092,14 @@ cleanup_stale_opencode() {
 		fi
 
 		# Skip processes with significant CPU usage (actively working)
-		# cpu is a float like "0.0" or "40.3" — compare integer part
+		# cpu is a float like "0.0" or "40.3" — compare integer part.
+		# t2859: ${PULSE_IDLE_CPU_THRESHOLD:-2} fallback (2% CPU) — without
+		# this, unbound expansion to "" treated as 0 would make every
+		# process "active" (cpu >= 0) and skip every kill candidate.
 		local cpu_int
 		cpu_int="${cpu%%.*}"
 		[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
-		if [[ "$cpu_int" -ge "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
+		if [[ "$cpu_int" -ge "${PULSE_IDLE_CPU_THRESHOLD:-2}" ]]; then
 			continue
 		fi
 

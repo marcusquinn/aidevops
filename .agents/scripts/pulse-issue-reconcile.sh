@@ -1987,7 +1987,11 @@ _action_cpt_single() {
 	# Source label remains informative: dash-joined list of contributing
 	# sources (e.g. `graph+body`, `body`, `graph+body+prose`) so the log line
 	# in `_try_close_parent_tracker` records which extractors found children.
-	local _g_nums _b_nums _p_nums child_nums
+	# t2841: explicit init — under set -u, _b_nums is referenced at the
+	# union step (line ~2007) regardless of whether children_section is
+	# non-empty. Without init, an issue body with no children-section
+	# triggers `_b_nums: unbound variable` and aborts the function.
+	local _g_nums="" _b_nums="" _p_nums="" child_nums=""
 	local _src_parts=""
 	_g_nums=$(_fetch_subissue_numbers "$slug" "$issue_num" | sort -un | grep -v "^${issue_num}$" | grep -v '^$' || true)
 	[[ -n "$_g_nums" ]] && _src_parts="${_src_parts:+${_src_parts}+}graph"
@@ -2217,6 +2221,31 @@ reconcile_issues_single_pass() {
 	local cpt_total_escalated=0 cpt_max_escalations=3
 	local cpt_esc_hours="${PARENT_DECOMPOSITION_ESCALATION_HOURS:-168}"
 
+	# t2838: periodic parent-task sub-issue backfill — gated by interval
+	# state file so we don't burn rate-limit budget on already-linked
+	# parents every cycle. Default 3600s (hourly). The backfill itself
+	# is idempotent (addSubIssue swallows duplicates) so this is purely
+	# a cost control, not a correctness requirement.
+	local _pbf_state_file="${HOME}/.aidevops/state/parent-backfill-last-run.epoch"
+	local _pbf_interval="${AIDEVOPS_PARENT_BACKFILL_INTERVAL_SECS:-3600}"
+	# Validate interval is a positive integer — a mis-set env var (empty,
+	# negative, "1h") would error inside [[ ... -ge ... ]] and could abort
+	# the orchestrator under set -e. Fall back to default on any garbage.
+	[[ "$_pbf_interval" =~ ^[1-9][0-9]*$ ]] || _pbf_interval=3600
+	local _pbf_this_cycle=0
+	local _pbf_now _pbf_last_run=0
+	_pbf_now=$(date +%s 2>/dev/null) || _pbf_now=0
+	if [[ -r "$_pbf_state_file" ]]; then
+		_pbf_last_run=$(cat "$_pbf_state_file" 2>/dev/null || echo 0)
+		[[ "$_pbf_last_run" =~ ^[0-9]+$ ]] || _pbf_last_run=0
+	fi
+	if [[ "$_pbf_now" -gt 0 ]] && \
+		[[ $((_pbf_now - _pbf_last_run)) -ge "$_pbf_interval" ]] && \
+		[[ -n "$issue_sync_helper" ]]; then
+		_pbf_this_cycle=1
+	fi
+	local pbf_total_run=0 pbf_max_per_cycle=10
+
 	# Cycle-wide counters for log summary
 	local ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
 
@@ -2314,6 +2343,20 @@ reconcile_issues_single_pass() {
 					[[ "$_SP_CPT_NUDGED" -eq 1 ]] && cpt_total_nudged=$((cpt_total_nudged + 1))
 					[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && cpt_total_escalated=$((cpt_total_escalated + 1))
 				fi
+				# t2838: periodic sub-issue backfill — only if cycle-gate fired
+				# AND parent didn't just close (no point linking to closed parent).
+				# Idempotent and silent on no-op (already-linked children).
+				# Counter increments only on success — failed backfills (rate
+				# limit, network error) leave the gate state for next cycle's
+				# retry rather than advancing the clock on broken work.
+				if [[ "$_pbf_this_cycle" -eq 1 ]] && \
+					[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
+					[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]]; then
+					if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
+						--issue "$issue_num" >/dev/null 2>&1; then
+						pbf_total_run=$((pbf_total_run + 1))
+					fi
+				fi
 				continue  # parent-task issues do not flow to stage 5
 			fi
 
@@ -2328,10 +2371,17 @@ reconcile_issues_single_pass() {
 		done
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
+	# t2838: persist last-run epoch when backfill actually ran this cycle.
+	# Skip on dry runs (pbf_total_run == 0) so we retry next cycle.
+	if [[ "$_pbf_this_cycle" -eq 1 ]] && [[ "$pbf_total_run" -gt 0 ]]; then
+		mkdir -p "$(dirname "$_pbf_state_file")" 2>/dev/null || true
+		printf '%s\n' "$_pbf_now" >"$_pbf_state_file" 2>/dev/null || true
+	fi
+
 	local _total_actions
-	_total_actions=$((ciw_closed + rsd_closed + rsd_reset + oimp_total_closed + cpt_total_closed + cpt_total_nudged + cpt_total_escalated + lia_fixed))
+	_total_actions=$((ciw_closed + rsd_closed + rsd_reset + oimp_total_closed + cpt_total_closed + cpt_total_nudged + cpt_total_escalated + lia_fixed + pbf_total_run))
 	if [[ "$_total_actions" -gt 0 ]]; then
-		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed}" >>"$LOGFILE"
+		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run}" >>"$LOGFILE"
 	fi
 	return 0
 }

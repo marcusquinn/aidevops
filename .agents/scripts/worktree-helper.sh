@@ -711,6 +711,27 @@ _restore_worktree_node_modules() {
 	return 0
 }
 
+# t2885: exclude a fresh worktree from macOS Spotlight + Time Machine.
+# Backed by .agents/scripts/worktree-exclusions-helper.sh. Best-effort —
+# never blocks worktree creation. Silent on missing helper or non-macOS.
+_apply_worktree_exclusions() {
+	local wt_path="$1"
+	[[ -n "$wt_path" && -d "$wt_path" ]] || return 0
+
+	# Prefer deployed copy (runtime source of truth); fall back to in-repo
+	# copy when running pre-deploy.
+	local helper=""
+	if [[ -x "${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh"
+	elif [[ -x "${SCRIPT_DIR}/worktree-exclusions-helper.sh" ]]; then
+		helper="${SCRIPT_DIR}/worktree-exclusions-helper.sh"
+	fi
+	[[ -n "$helper" ]] || return 0
+
+	"$helper" apply "$wt_path" >/dev/null 2>&1 || true
+	return 0
+}
+
 # Print the success banner and editor hints after a worktree is created.
 _print_worktree_add_success() {
 	local wt_path="$1"
@@ -1049,6 +1070,11 @@ cmd_add() {
 	local _repo_root=""
 	_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root=""
 	_restore_worktree_node_modules "$path" "$_repo_root"
+
+	# t2885: exclude the new worktree from macOS Spotlight + Time Machine.
+	# Worktrees are ephemeral — persistent state lives on the git remote.
+	# Best-effort, never fails worktree creation.
+	_apply_worktree_exclusions "$path"
 
 	# t2057: interactive issue auto-claim. When the branch name encodes an
 	# issue number AND this is an interactive session, immediately apply

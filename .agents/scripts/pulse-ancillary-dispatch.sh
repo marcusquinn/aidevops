@@ -380,6 +380,130 @@ _triage_prefetch_issue() {
 }
 
 #######################################
+# Fetch evidence-verification sections for the triage review prompt.
+#
+# Supplies three data blocks that let the sandboxed triage-review agent
+# verify file:line claims without needing Bash or network access
+# (t2886 / GH#20987 — closes the gap documented in review-issue-pr.md:293):
+#
+#   1. Recent merged PRs matching the issue title keywords — catches
+#      "this was already fixed in PR #N" cases.
+#   2. Recent commits on files cited in the issue body since the issue was
+#      posted — catches "the file changed after the scan was generated".
+#   3. Current contents of cited files at cited line numbers (±5-line window)
+#      — lets the agent verify claimed code against the actual file.
+#
+# Writes results to caller-supplied named variables via printf -v so the
+# function's "return" values are explicit in the signature (GH#18865).
+#
+# Arguments:
+#   $1 - issue_body (raw issue text; searched for file:line refs)
+#   $2 - issue_json (full issue JSON; used for .title and .createdAt)
+#   $3 - repo_slug  (OWNER/REPO, passed to gh pr list)
+#   $4 - repo_path  (local checkout path for git log and file reads; may be "")
+#   $5 - name of variable to receive merged PRs text
+#   $6 - name of variable to receive recent commits text
+#   $7 - name of variable to receive file contents text
+#
+# Returns: 0
+#######################################
+_triage_fetch_evidence_sections() {
+	local issue_body="$1"
+	local issue_json="$2"
+	local repo_slug="$3"
+	local repo_path="$4"
+	local merged_prs_var="$5"
+	local recent_commits_var="$6"
+	local file_contents_var="$7"
+
+	# Use _ev_ prefix on internal vars to avoid clashing with caller's
+	# named output variables via bash printf -v dynamic scoping (GH#18865).
+
+	# Extract title keywords for PR search (first 4 words, lowercased, stripped)
+	local _ev_title=""
+	_ev_title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null) \
+		|| _ev_title=""
+	local _ev_keywords=""
+	_ev_keywords=$(printf '%s' "$_ev_title" \
+		| tr '[:upper:]' '[:lower:]' \
+		| tr -cs 'a-z0-9 ' ' ' \
+		| awk '{for(i=1;i<=4&&i<=NF;i++) printf $i" "}' \
+		| xargs) || _ev_keywords=""
+
+	# Extract issue creation timestamp for git log --since
+	local _ev_created_at=""
+	_ev_created_at=$(printf '%s' "$issue_json" | jq -r '.createdAt // ""' 2>/dev/null) \
+		|| _ev_created_at=""
+
+	# 1. Recent merged PRs matching issue keywords
+	local _ev_merged_prs=""
+	if [[ -n "$_ev_keywords" ]]; then
+		_ev_merged_prs=$(gh pr list --repo "$repo_slug" --state merged \
+			--search "$_ev_keywords" --limit 5 \
+			--json number,title,mergedAt \
+			--jq '.[] | "#\(.number) \(.title) (merged: \(.mergedAt))"' \
+			2>/dev/null) || _ev_merged_prs=""
+	fi
+	[[ -z "$_ev_merged_prs" ]] \
+		&& _ev_merged_prs="No recent merged PRs matching issue keywords"
+
+	# 2 + 3. Parse file:line references from issue body (cap at 10).
+	# rg -o (not -E; -E in rg means --encoding, not extended-regexp).
+	local _ev_file_refs=""
+	_ev_file_refs=$(printf '%s' "$issue_body" \
+		| rg -o '[a-zA-Z0-9_./-]+\.[a-zA-Z]+:[0-9]+' 2>/dev/null \
+		| head -10) || _ev_file_refs=""
+
+	local _ev_recent_commits=""
+	local _ev_file_contents=""
+
+	if [[ -n "$_ev_file_refs" && -n "$repo_path" && -d "$repo_path" ]]; then
+		while IFS=: read -r _ev_cited_file _ev_cited_line; do
+			[[ -z "$_ev_cited_file" ]] && continue
+
+			# Recent commits on this file since issue was posted
+			if [[ -n "$_ev_created_at" ]]; then
+				local _ev_file_commits=""
+				_ev_file_commits=$(git -C "$repo_path" log \
+					--since="$_ev_created_at" --oneline \
+					-- "$_ev_cited_file" 2>/dev/null) || _ev_file_commits=""
+				if [[ -n "$_ev_file_commits" ]]; then
+					_ev_recent_commits+="--- ${_ev_cited_file} ---"$'\n'
+					_ev_recent_commits+="${_ev_file_commits}"$'\n'
+				fi
+			fi
+
+			# File contents at cited line ±5-line window
+			local _ev_full_path="${repo_path}/${_ev_cited_file}"
+			if [[ -f "$_ev_full_path" && -n "$_ev_cited_line" ]]; then
+				local _ev_line_start
+				_ev_line_start=$(( _ev_cited_line - 5 ))
+				[[ "$_ev_line_start" -lt 1 ]] && _ev_line_start=1
+				local _ev_line_end
+				_ev_line_end=$(( _ev_cited_line + 5 ))
+				local _ev_snippet=""
+				_ev_snippet=$(sed -n "${_ev_line_start},${_ev_line_end}p" \
+					"$_ev_full_path" 2>/dev/null) || _ev_snippet=""
+				if [[ -n "$_ev_snippet" ]]; then
+					_ev_file_contents+="--- ${_ev_cited_file} (lines ${_ev_line_start}-${_ev_line_end}, cited line: ${_ev_cited_line}) ---"$'\n'
+					_ev_file_contents+="${_ev_snippet}"$'\n'
+				fi
+			fi
+		done <<< "$_ev_file_refs"
+	fi
+
+	[[ -z "$_ev_recent_commits" ]] \
+		&& _ev_recent_commits="No recent commits on cited files since issue was posted"
+	[[ -z "$_ev_file_contents" ]] \
+		&& _ev_file_contents="No file:line references found in issue body, or files not available locally"
+
+	printf -v "$merged_prs_var"     '%s' "$_ev_merged_prs"
+	printf -v "$recent_commits_var" '%s' "$_ev_recent_commits"
+	printf -v "$file_contents_var"  '%s' "$_ev_file_contents"
+	return 0
+}
+
+#######################################
 # Write the triage review prompt to a temp file.
 #
 # Caps issue comments at 8KB, fetches recent closed issues and git log,
@@ -432,6 +556,13 @@ _triage_write_prompt_file() {
 	if [[ -n "$is_pr" && -n "$repo_path" && -d "$repo_path" ]]; then
 		git_log_context=$(git -C "$repo_path" log --oneline -5 2>/dev/null) || git_log_context=""
 	fi
+
+	# t2886: Fetch evidence-verification data for file:line claim validation.
+	local evidence_merged_prs=""
+	local evidence_recent_commits=""
+	local evidence_file_contents=""
+	_triage_fetch_evidence_sections "$issue_body" "$issue_json" "$repo_slug" "$repo_path" \
+		"evidence_merged_prs" "evidence_recent_commits" "evidence_file_contents"
 
 	local prefetch_file=""
 	prefetch_file=$(mktemp)
@@ -507,6 +638,18 @@ ${recent_closed:-No recent closed issues}
 
 ### GIT_LOG
 ${git_log_context:-No git log available}
+
+### EVIDENCE_RECENT_MERGED_PRS
+<!-- prefetch:section=recent-merged-prs -->
+${evidence_merged_prs}
+
+### EVIDENCE_RECENT_COMMITS_ON_CITED_FILES
+<!-- prefetch:section=recent-commits-on-cited-files -->
+${evidence_recent_commits}
+
+### EVIDENCE_CITED_FILE_CONTENTS
+<!-- prefetch:section=cited-file-contents -->
+${evidence_file_contents}
 
 ---
 

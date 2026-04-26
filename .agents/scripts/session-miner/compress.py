@@ -334,7 +334,7 @@ def _extract_instruction_candidate(record: dict, seen: set[str]):
         return None
     seen.add(norm)
 
-    target_file = record.get("target_file", ".agents/prompts/build.txt")
+    target_file = record.get("target_file", ".agents/AGENTS.md")
     return target_file, {
         "text": raw_text[:800],
         "confidence": record.get("confidence", 0.5),

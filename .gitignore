@@ -136,6 +136,8 @@ bun.lock
 .Trashes
 ehthumbs.db
 Thumbs.db
+# Spotlight exclusion marker, written by worktree-exclusions-helper.sh (t2885)
+.metadata_never_index
 
 # Editor files
 .vscode/
