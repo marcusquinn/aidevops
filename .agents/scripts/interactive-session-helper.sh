@@ -38,7 +38,7 @@
 #   hand — the slash command and CLI exist as fallbacks only.
 #
 # Usage:
-#   interactive-session-helper.sh claim <issue> <slug> [--worktree PATH]
+#   interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing]
 #   interactive-session-helper.sh release <issue> <slug> [--unassign]
 #   interactive-session-helper.sh lockdown <issue> <slug> [--worktree PATH]
 #   interactive-session-helper.sh unlock <issue> <slug> [--unassign]
@@ -151,6 +151,26 @@ _isc_has_in_review() {
 	local json
 	json=$(gh issue view "$issue" --repo "$slug" --json labels 2>/dev/null) || return 2
 	if printf '%s' "$json" | jq -e '(.labels // []) | any(.name == "status:in-review")' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+# Generic label probe — returns 0 if the issue carries the named label, 1 if
+# absent, 2 if the gh lookup failed. Caller MUST use a direct `if` conditional
+# (not bare call + $? capture) to avoid the same set -e propagation foot-gun
+# documented above for `_isc_has_in_review` (GH#18786).
+#
+# Used by `_isc_cmd_claim` to honour the t2218 auto-dispatch carve-out at the
+# manual-claim entry point (GH#20946) and could be reused by other callers
+# that need to probe a specific label without parsing the full label JSON.
+_isc_has_label() {
+	local issue="$1"
+	local slug="$2"
+	local label="$3"
+	local json
+	json=$(gh issue view "$issue" --repo "$slug" --json labels 2>/dev/null) || return 2
+	if printf '%s' "$json" | jq -e --arg name "$label" '(.labels // []) | any(.name == $name)' >/dev/null 2>&1; then
 		return 0
 	fi
 	return 1
@@ -340,6 +360,28 @@ EOF
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
 #   [--worktree PATH] = optional worktree path to record in the stamp
+#   [--implementing] = opt in to claim an `auto-dispatch`-tagged issue
+#                      that the caller intends to implement themselves.
+#                      Without this flag, the helper refuses to claim
+#                      auto-dispatch issues so the pulse can dispatch a
+#                      worker (see auto-dispatch carve-out below).
+#
+# Auto-dispatch carve-out (GH#20946):
+#   Calling claim on an `auto-dispatch`-tagged issue WITHOUT `--implementing`
+#   is a no-op — it warns and exits 0. Three creation-time entry points already
+#   skip self-assign on auto-dispatch (t2218, t2132, t2157/t2406); this probe
+#   extends the same invariant to the manual `claim` subcommand. Without the
+#   probe, claim would create the (origin:interactive + assignee + status:in-review)
+#   combination that `_has_active_claim` in dispatch-dedup-helper.sh treats as an
+#   active claim, permanently blocking pulse dispatch (t1996/GH#18352).
+#
+#   `parent-task` issues are exempt from the probe — they're decomposition
+#   trackers the maintainer needs to own, and `parent-task` already blocks
+#   dispatch via `PARENT_TASK_BLOCKED` upstream of the auto-dispatch path.
+#
+#   Use `--implementing` when the AGENTS.md "Implementing a #auto-dispatch
+#   task interactively" mandate applies — i.e. when the agent legitimately
+#   intends to take the issue itself instead of letting a worker pick it up.
 #
 # Behaviour:
 #   - Offline gh: warn-and-continue (exit 0). A collision with a pulse worker
@@ -351,7 +393,7 @@ EOF
 #
 # Exit: 0 always (warn-and-continue contract).
 _isc_cmd_claim() {
-	local issue="" slug="" worktree_path=""
+	local issue="" slug="" worktree_path="" implementing=0
 
 	# Parse positional + flags
 	while [[ $# -gt 0 ]]; do
@@ -363,6 +405,10 @@ _isc_cmd_claim() {
 			;;
 		--worktree=*)
 			worktree_path="${arg#--worktree=}"
+			shift
+			;;
+		--implementing)
+			implementing=1
 			shift
 			;;
 		-h | --help)
@@ -384,7 +430,7 @@ _isc_cmd_claim() {
 
 	if [[ -z "$issue" || -z "$slug" ]]; then
 		_isc_err "claim: <issue> and <slug> are required"
-		_isc_err "usage: interactive-session-helper.sh claim <issue> <slug> [--worktree PATH]"
+		_isc_err "usage: interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing]"
 		return 2
 	fi
 
@@ -419,6 +465,23 @@ _isc_cmd_claim() {
 		_isc_info "claim: #$issue already has status:in-review — refreshing stamp"
 		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
 		return 0
+	fi
+
+	# Auto-dispatch carve-out (GH#20946): refuse to claim auto-dispatch issues
+	# unless the caller passed --implementing or the issue is also a parent-task.
+	# See the doc block above this function for the full rationale. Probe is
+	# fail-open: if the gh lookup fails (rc=2), fall through and let the claim
+	# proceed — better to over-claim than to silently fail when offline. The
+	# `if !` form consumes any non-zero return through the conditional branch,
+	# protecting the caller from set -e propagation (GH#18786 sibling class).
+	if [[ $implementing -eq 0 ]]; then
+		if _isc_has_label "$issue" "$slug" "auto-dispatch"; then
+			if ! _isc_has_label "$issue" "$slug" "parent-task"; then
+				_isc_warn "claim: #$issue carries 'auto-dispatch' without 'parent-task' — skipping to avoid permanent dispatch block (t2218 invariant; GH#20946)"
+				_isc_warn "if you intend to implement #$issue yourself instead of letting a worker pick it up, re-run with: claim $issue $slug --implementing"
+				return 0
+			fi
+		fi
 	fi
 
 	# Transition to in-review with atomic self-assign. Uses set_issue_status
@@ -1453,9 +1516,15 @@ _isc_cmd_help() {
 interactive-session-helper.sh - Interactive issue-ownership primitive (t2056)
 
 USAGE:
-  interactive-session-helper.sh claim <issue> <slug> [--worktree PATH]
+  interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing]
       Apply status:in-review + self-assign + write crash-recovery stamp.
       Idempotent. Offline gh → warn-and-continue (exit 0).
+      Auto-dispatch carve-out (GH#20946): refuses to claim issues tagged
+      'auto-dispatch' unless --implementing is passed or the issue is also
+      tagged 'parent-task'. Without the carve-out, claim creates a
+      permanent dispatch block (t1996/GH#18352). Use --implementing when
+      you intend to implement the issue yourself instead of letting a
+      worker pick it up.
 
   interactive-session-helper.sh release <issue> <slug> [--unassign]
       Transition status:in-review → status:available, delete stamp.
