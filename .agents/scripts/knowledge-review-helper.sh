@@ -426,21 +426,18 @@ _file_nmr_issue() {
 	local issue_title="Knowledge review: ${source_id} (${kind:-document})"
 
 	local issue_url
-	if declare -f gh_create_issue >/dev/null 2>&1; then
-		issue_url=$(gh_create_issue \
-			--repo "$repo_slug" \
-			--title "$issue_title" \
-			--label "$labels" \
-			--body-file "$body_file" \
-			2>/dev/null) || issue_url=""
-	else
-		issue_url=$(gh issue create \
-			--repo "$repo_slug" \
-			--title "$issue_title" \
-			--label "$labels" \
-			--body-file "$body_file" \
-			2>/dev/null) || issue_url=""
+	# gh_create_issue from shared-gh-wrappers.sh is required (sourced at script top)
+	if ! declare -f gh_create_issue >/dev/null 2>&1; then
+		echo "[knowledge-review] _file_nmr_issue: gh_create_issue not available, cannot file issue" >> "$LOGFILE"
+		rm -f "$body_file"
+		return 1
 	fi
+	issue_url=$(gh_create_issue \
+		--repo "$repo_slug" \
+		--title "$issue_title" \
+		--label "$labels" \
+		--body-file "$body_file" \
+		2>/dev/null) || issue_url=""
 
 	rm -f "$body_file"
 
