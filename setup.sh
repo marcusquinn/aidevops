@@ -959,6 +959,29 @@ _deploy_hotfix_config() {
 	return 0
 }
 
+# t2919: Early pulse plist install. The pulse launchd agent is critical
+# infrastructure — without it, every other pulse-driven feature (worker
+# dispatch, issue routing, cross-repo coordination) is dead. Previously,
+# setup_supervisor_pulse only ran inside _setup_post_setup_steps which
+# executes AFTER ~25 other migration/setup steps. When `aidevops update`
+# runs unattended and any earlier step times out (e.g. brew taps, MCP
+# installs, slow repo scans), the pulse plist never gets installed/refreshed
+# and the runner falls behind.
+#
+# Install immediately after deploy_aidevops_agents (so the scripts the plist
+# references already exist on disk). The late install in _setup_post_setup_steps
+# remains as the canonical regenerate-on-change path — _launchd_install_if_changed
+# compares content and skips reload when identical, so the second call is a
+# no-op when nothing changed. Failure here is non-fatal: the late path retries.
+_setup_install_pulse_plist_early() {
+	local _early_os
+	_early_os="$(uname -s)"
+	if _should_setup_noninteractive_supervisor_pulse; then
+		setup_supervisor_pulse "$_early_os" || print_warning "Early pulse plist install failed (will retry late)"
+	fi
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
@@ -990,28 +1013,7 @@ _setup_run_non_interactive() {
 	setup_opencode_cli
 	validate_opencode_config
 	deploy_aidevops_agents
-
-	# t2919: Early pulse plist install. The pulse launchd agent is critical
-	# infrastructure — without it, every other pulse-driven feature
-	# (worker dispatch, issue routing, cross-repo coordination) is dead.
-	# Previously, setup_supervisor_pulse only ran inside _setup_post_setup_steps
-	# (line ~1173), which executes AFTER ~25 other migration/setup steps.
-	# When `aidevops update` runs unattended and any earlier step times out
-	# (e.g. brew taps, MCP installs, slow repo scans), the pulse plist
-	# never gets installed/refreshed and the runner falls behind.
-	#
-	# Install immediately after deploy_aidevops_agents (the deployed scripts
-	# the plist references now exist on disk). The late install in
-	# _setup_post_setup_steps remains as the canonical regenerate-on-change
-	# path — _launchd_install_if_changed compares content and skips reload
-	# when identical, so the second call is a no-op when nothing changed.
-	# Failure here is non-fatal: the late path will retry.
-	local _early_os
-	_early_os="$(uname -s)"
-	if _should_setup_noninteractive_supervisor_pulse; then
-		setup_supervisor_pulse "$_early_os" || print_warning "Early pulse plist install failed (will retry late)"
-	fi
-
+	_setup_install_pulse_plist_early
 	_deploy_hotfix_config
 	sync_agent_sources
 	install_aidevops_cli
