@@ -32,6 +32,13 @@
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
 _PULSE_ISSUE_RECONCILE_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# Ensures bare var refs in all reconcile functions are safe when this module
+# is sourced outside the pulse-wrapper.sh bootstrap context (e.g. test harnesses).
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+: "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
+: "${PULSE_QUEUED_SCAN_LIMIT:=1000}"
+
 # GH#20871: explicit dependency on shared-phase-filing.sh's structured
 # `_parse_phases_section` parser (used by the t2786 declared-vs-filed
 # close guard in `_try_close_parent_tracker`). Previously this module

@@ -24,6 +24,15 @@
 [[ -n "${_PULSE_ANCILLARY_DISPATCH_LOADED:-}" ]] && return 0
 _PULSE_ANCILLARY_DISPATCH_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# Ensures bare var refs are safe when this module is sourced outside the full
+# pulse-wrapper.sh bootstrap (e.g. test harnesses, standalone dispatch calls).
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+_pad_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+: "${HEADLESS_RUNTIME_HELPER:=${_pad_script_dir}/headless-runtime-helper.sh}"
+: "${MODEL_AVAILABILITY_HELPER:=${_pad_script_dir}/model-availability-helper.sh}"
+unset _pad_script_dir
+
 #######################################
 # Ensure the triage-failed label exists in the target repo.
 #
