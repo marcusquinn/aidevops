@@ -3216,3 +3216,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2896 lower pulse circuit breaker threshold from 0.30 to 0.05 — REST fallback shifted the calculus #enhancement #framework ref:GH#21034 pr:#21036 completed:2026-04-26
 
 - [ ] t2893 harness gh signature-gate JS hook errors with misleading message when --body-file is created in same bash call #bug #enhancement #framework ref:GH#21030
+
+- [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in awardsapp/develop #bug #framework #priority:high #security ref:GH#21026
