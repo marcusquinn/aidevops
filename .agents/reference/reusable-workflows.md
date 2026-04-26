@@ -105,6 +105,9 @@ See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (
 - **`pull_request_target` vs `pull_request`.** The reusable workflow's job guards accept either event type. The caller picks based on its security model:
   - **Private repo with trusted contributors**: `pull_request` is simpler and has fewer footguns.
   - **Public repo accepting external PRs**: `pull_request_target` is required if the workflow needs write permissions or secrets (but bring standard `pull_request_target` hygiene — don't check out the PR's head code if you trust it to run with elevated privileges).
+- **`default_workflow_permissions: read` repos (GH#20967).** GitHub's recommended security default is `default_workflow_permissions: read`. Reusable workflow job-level `permissions:` declarations cannot exceed the CALLER's ceiling — they are capped at whatever the caller workflow grants. A caller with no `permissions:` block inherits the repo's restrictive default, so GitHub refuses to create any jobs (`conclusion: startup_failure`, zero jobs). The canonical caller templates include a top-level `permissions:` block that is the union of all job-level permissions used by the reusable workflow. If you add a new permission to a reusable workflow job, also update the matching caller template.
+
+  Verification: `gh api repos/OWNER/REPO/actions/permissions/workflow --jq .default_workflow_permissions` returns `"read"` or `"write"`. A `"read"` repo will fail without the caller's `permissions:` block.
 
 ## Migration: from copied workflow to caller
 
@@ -138,7 +141,7 @@ To make a new aidevops workflow reusable by downstream repos:
 
 1. Author the logic in `.github/workflows/<name>-reusable.yml` with `on: workflow_call:`.
 2. Add a thin caller for aidevops itself at `.github/workflows/<name>.yml` using `uses: ./.github/workflows/<name>-reusable.yml`.
-3. Add a canonical template at `.agents/templates/workflows/<name>-caller.yml` using `uses: marcusquinn/aidevops/.github/workflows/<name>-reusable.yml@main`.
+3. Add a canonical template at `.agents/templates/workflows/<name>-caller.yml` using `uses: marcusquinn/aidevops/.github/workflows/<name>-reusable.yml@main`. Include a top-level `permissions:` block that is the union of all job-level permissions declared in the reusable workflow — callers for repos with `default_workflow_permissions: read` cannot create any jobs without this (GH#20967).
 4. If the workflow depends on framework scripts, ensure each job includes an `actions/checkout` of `marcusquinn/aidevops` into `__aidevops/` before invoking those scripts. Reference scripts via `__aidevops/.agents/scripts/...`.
 5. Update `aidevops check-workflows` manifest to include the new template name (Phase 1 helper).
 6. Run `aidevops sync-workflows` to propagate to repos that have the predecessor workflow.

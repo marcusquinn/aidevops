@@ -18,6 +18,14 @@ name: Issue Sync - Bi-directional TODO.md ↔ GitHub Issues
 #   @v3.9.0         ← pin to a specific aidevops version for stability
 #                     (bump via aidevops sync-workflows after upgrades)
 
+# Permissions ceiling for downstream repos with default_workflow_permissions: read.
+# Reusable workflow job-level permissions cannot exceed the caller's ceiling.
+# This block sets the union of all job-level permissions used by issue-sync-reusable.yml.
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
 on:
   push:
     branches: [main]

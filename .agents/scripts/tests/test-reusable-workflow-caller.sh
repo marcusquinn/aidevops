@@ -448,6 +448,36 @@ if [[ -f "$REUSABLE_WF" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Tests 18-19: GH#20967 — every caller template must declare permissions:
+# Repos with default_workflow_permissions: read cause startup_failure unless
+# the caller sets a permissions ceiling. Both templates must declare permissions.
+# ---------------------------------------------------------------------------
+
+# Test 18: issue-sync-caller.yml declares a permissions: block
+if [[ -f "$DOWNSTREAM_TEMPLATE" ]]; then
+	if grep -qE "^permissions:" "$DOWNSTREAM_TEMPLATE" 2>/dev/null; then
+		_pass "issue-sync-caller.yml declares top-level permissions: block (GH#20967)"
+	else
+		_fail "issue-sync-caller.yml declares top-level permissions: block (GH#20967)" \
+			"missing 'permissions:' in $DOWNSTREAM_TEMPLATE — repos with default_workflow_permissions: read will get startup_failure"
+	fi
+else
+	_skip "issue-sync-caller.yml permissions check" "template file missing"
+fi
+
+# Test 19: review-bot-gate-caller.yml declares a permissions: block
+if [[ -f "$RBG_DOWNSTREAM_TEMPLATE" ]]; then
+	if grep -qE "^permissions:" "$RBG_DOWNSTREAM_TEMPLATE" 2>/dev/null; then
+		_pass "review-bot-gate-caller.yml declares top-level permissions: block (GH#20967)"
+	else
+		_fail "review-bot-gate-caller.yml declares top-level permissions: block (GH#20967)" \
+			"missing 'permissions:' in $RBG_DOWNSTREAM_TEMPLATE — repos with default_workflow_permissions: read will get startup_failure"
+	fi
+else
+	_skip "review-bot-gate-caller.yml permissions check" "template file missing"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 

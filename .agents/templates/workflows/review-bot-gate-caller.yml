@@ -26,6 +26,14 @@ name: Review Bot Gate
 #   @v3.9.0         ← pin to a specific aidevops version for stability
 #                     (bump via aidevops sync-workflows after upgrades)
 
+# Permissions ceiling for downstream repos with default_workflow_permissions: read.
+# Reusable workflow job-level permissions cannot exceed the caller's ceiling.
+# This block sets the union of all job-level permissions used by review-bot-gate-reusable.yml.
+permissions:
+  pull-requests: read
+  contents: read
+  statuses: read
+
 on:
   pull_request:
     types: [opened, synchronize, reopened]
