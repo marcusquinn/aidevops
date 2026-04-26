@@ -3218,3 +3218,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in awardsapp/develop #bug #framework #priority:high #security ref:GH#21026
 
 - [ ] t2899 Fix branch_orphan false-positive: workers complete on main, work discarded #bug #parent ref:GH#21040
+
+- [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
+
+- [ ] t2900 Eliminate SQLite database lock errors during concurrent worker startup #bug ref:GH#21041
