@@ -1134,9 +1134,7 @@ _setup_run_interactive() {
 	# Required steps (always run)
 	verify_location
 	check_requirements
-	# Check setsid availability; auto-install util-linux on macOS if missing
-	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
-	confirm_step "Install util-linux for setsid (worker PGID isolation)" && setup_setsid_advisory
+	setup_setsid_advisory
 
 	# Quality tools check (optional but recommended)
 	confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
