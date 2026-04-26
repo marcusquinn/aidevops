@@ -95,6 +95,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_task_id_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_canonical_guard.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_worktree_exclusions.sh"
 fi
 
 print_info() { local _m="$1"; echo -e "${BLUE}[INFO]${NC} $_m"; return 0; }
@@ -1024,8 +1026,13 @@ _setup_run_non_interactive() {
 	# Install/refresh the task-id collision guard commit-msg hook in every
 	# initialized repo so invented t-IDs in commit subjects are rejected
 	# at commit time (t2047). Belt-and-braces with the CI check in
-	# .github/workflows/task-id-collision-check.yml.
+	# .github/workflows/ta[redacted-credential].yml.
 	setup_task_id_guard
+	# Apply Spotlight + Time Machine exclusions to every worktree across
+	# registered repos so the backup/index cascade triggered by node_modules
+	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
+	# indexers tracked separately.
+	setup_worktree_exclusions
 	return 0
 }
 
