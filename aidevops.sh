@@ -1783,7 +1783,9 @@ _cmd_email() {
 		;;
 	poll)
 		# Direct poll commands forwarded to email-poll-helper.sh
-		_dispatch_helper "$_EPH" "$_EPH" "$action" "$@" ;;
+		local poll_action="${1:-tick}"
+		shift || true
+		_dispatch_helper "$_EPH" "$_EPH" "$poll_action" "$@" ;;
 	*)
 		echo "Usage: aidevops email <mailbox|poll> [subcommand]"
 		echo ""

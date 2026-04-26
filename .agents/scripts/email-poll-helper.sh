@@ -130,15 +130,23 @@ cmd_tick() {
 	mkdir -p "$_INBOX_DIR"
 
 	log_info "Polling mailboxes (config: $config_path)"
-	local result
+	# Capture stdout (JSON) and stderr separately.
+	# 2>&1 would merge stderr into $result, corrupting JSON when partial errors occur.
+	# Non-zero exit is expected when overall_status is "partial_error" (fail-open).
+	local py_stderr result py_exit
+	py_stderr=$(mktemp)
 	result=$(python3 "$POLL_PY" tick \
 		--config "$config_path" \
 		--state "$_STATE_FILE" \
-		--inbox "$_INBOX_DIR" 2>&1) || {
-		log_error "email_poll.py tick failed"
-		log_error "$result"
+		--inbox "$_INBOX_DIR" 2>"$py_stderr") && py_exit=0 || py_exit=$?
+	local py_err_out
+	py_err_out=$(cat "$py_stderr" 2>/dev/null || true)
+	rm -f "$py_stderr"
+	[[ -n "$py_err_out" ]] && log_warn "email_poll.py: $py_err_out"
+	if [[ -z "$result" ]] && [[ $py_exit -ne 0 ]]; then
+		log_error "email_poll.py tick failed (exit $py_exit)"
 		return 1
-	}
+	fi
 
 	# Parse summary from JSON result
 	local overall_status fetched_count
