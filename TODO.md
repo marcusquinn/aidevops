@@ -3258,6 +3258,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2917 Runner scripts hardcode $HOME/.aidevops/logs but plist/timer installers resolve paths.log_dir — divergence on customization ref:GH#21076
 
-- [ ] t2918 Invert tooling/product priority boost so tooling lifts product #bug #framework #pulse ref:GH#21079
+- [x] t2918 Invert tooling/product priority boost so tooling lifts product #bug #framework #pulse ref:GH#21079 pr:#21080 completed:2026-04-26
 
 - [ ] t2919 Move pulse plist install earlier in setup flow to avoid timeout-skip #bug #framework #setup ref:GH#21081
