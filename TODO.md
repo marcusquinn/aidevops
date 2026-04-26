@@ -3281,3 +3281,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2925 feat(security): auto-detect and close bounty-hunter spam PRs from external authors #auto-dispatch #framework #security ref:GH#21100
 
 - [ ] t2924 perf(pulse): filter non-dispatchable labels at candidate-build time, not dispatch time #auto-dispatch #enhancement #framework ref:GH#21099
+
+- [ ] t2926 setup.sh: auto-install util-linux on macOS so setsid is available for worker PGID isolation #auto-dispatch #bug #framework #setup ref:GH#21102
