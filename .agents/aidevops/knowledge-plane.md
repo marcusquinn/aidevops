@@ -121,9 +121,82 @@ aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspa
 aidevops knowledge init off            # Disable knowledge plane for current repo
 aidevops knowledge status              # Show provisioning state + item counts
 aidevops knowledge provision [path]    # Re-provision / repair (idempotent)
+
+# Ingest a file (auto-classifies sensitivity)
+knowledge-helper.sh add path/to/file.pdf
+
+# Ingest with explicit sensitivity override
+knowledge-helper.sh add path/to/file.pdf --sensitivity privileged
+
+# Manual sensitivity correction after ingestion
+knowledge-helper.sh sensitivity override <source-id> privileged --reason "Legal advice per review"
+
+# Show current tier + audit trail for a source
+knowledge-helper.sh sensitivity show <source-id>
 ```
 
 The helper: `.agents/scripts/knowledge-helper.sh`.
+
+---
+
+## Sensitivity Classification (t2846)
+
+Every ingested source is automatically stamped with a sensitivity tier. Detection runs
+entirely offline — no cloud calls, no network.
+
+### Tiers
+
+| Tier | Redact | LLM Policy | Retention | Description |
+|------|--------|------------|-----------|-------------|
+| `public` | No | Any | 10 yr | Public-facing content |
+| `internal` | No | Cloud OK | 7 yr | Internal business docs |
+| `pii` | Yes | Local or redacted cloud | 7 yr | Personal data |
+| `sensitive` | Yes | Local only | 7 yr | Board, strategy, HR |
+| `privileged` | Yes | Local hard-fail | 10 yr | Attorney-client, regulatory |
+
+Tier precedence (highest wins): `privileged > sensitive > pii > internal > public`
+
+### Detection Pipeline
+
+1. **Regex/pattern**: NI numbers, IBAN, payment cards, email addresses, postcodes → `pii`
+2. **Path heuristics**: `legal/`, `privileged/`, `board-minutes/`, `strategy/` → tier per config
+3. **Maintainer override**: `--sensitivity <tier>` on `knowledge add` or `sensitivity override` subcommand
+4. **Precautionary upgrade** (P0.5c pending): ambiguous content defaults to `internal` until
+   local-LLM (Ollama, P0.5c) ships. After P0.5c, routes via `llm-routing-helper.sh`.
+
+### Configuration
+
+Default patterns and heuristics: `.agents/templates/sensitivity-config.json`
+
+Deployed at: `_knowledge/_config/sensitivity.json`
+
+To customise per-repo: edit `_knowledge/_config/sensitivity.json` after provisioning.
+
+### Audit Log
+
+Every classification is recorded at `_knowledge/index/sensitivity-audit.log` (JSONL):
+
+```json
+{"ts":"2026-04-27T10:00:00Z","source_id":"my-doc","tier":"pii","evidence":"regex:uk_ni","actor":"sensitivity-detector"}
+```
+
+### Override CLI
+
+```bash
+# Manual correction with audit trail
+knowledge-helper.sh sensitivity override <source-id> internal --reason "False positive NI match"
+
+# View current tier + recent audit entries
+knowledge-helper.sh sensitivity show <source-id>
+```
+
+### meta.json Fields
+
+| Field | Description |
+|-------|-------------|
+| `sensitivity` | Current tier (`public`\|`internal`\|`pii`\|`sensitive`\|`privileged`) |
+| `sensitivity_override` | Manually set tier (detector respects this on re-classify) |
+| `sensitivity_override_reason` | Free-text reason for the override |
 
 ---
 

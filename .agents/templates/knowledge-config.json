@@ -1,12 +1,14 @@
 {
-  "version": 1,
+  "version": 2,
   "sensitivity_default": "internal",
   "trust_default": "unverified",
   "blob_threshold_bytes": 31457280,
   "trust_ladder": ["unverified", "reviewed", "trusted", "authoritative"],
-  "sensitivity_levels": ["public", "internal", "confidential", "restricted"],
+  "sensitivity_levels": ["public", "internal", "pii", "sensitive", "privileged"],
+  "sensitivity_schema": "_config/sensitivity.json",
   "ingest_policy": {
     "auto_sha256": true,
-    "require_meta": true
+    "require_meta": true,
+    "auto_sensitivity": true
   }
 }
