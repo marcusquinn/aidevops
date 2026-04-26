@@ -313,6 +313,117 @@ _validator_upstream_watch() {
 }
 
 # ---------------------------------------------------------------------------
+# Self-hosting dispatch-path detector helpers (t2819)
+#
+# Private helpers for _detect_self_hosting_task(). Named with _sht_ prefix
+# to avoid collisions with other helpers in this file.
+# ---------------------------------------------------------------------------
+
+# Extract the implementation-scoped scan target from an issue body.
+# Scans ## Files to modify and ## How sections only; falls back to full body.
+# Outputs the scan target text to stdout.
+_sht_extract_scan_target() {
+	local issue_body="$1"
+	local files_section how_section scan_target
+
+	files_section=$(printf '%s' "$issue_body" | \
+		awk '/^## Files to modify/{found=1; next} found && /^## /{found=0} found{print}')
+	how_section=$(printf '%s' "$issue_body" | \
+		awk '/^## How/{found=1; next} found && /^## /{found=0} found{print}')
+	scan_target="${files_section}${how_section}"
+
+	# Fall back to full body if neither section is present (older/manual issue format)
+	if [[ -z "$scan_target" ]]; then
+		scan_target="$issue_body"
+	fi
+
+	printf '%s' "$scan_target"
+	return 0
+}
+
+# Scan scan_target for the first matching dispatch-path pattern.
+# Outputs the matched pattern name to stdout.
+# Returns 0 if a match is found, 1 if no match.
+_sht_match_dispatch_pattern() {
+	local scan_target="$1"
+	local pattern
+
+	for pattern in "${_SELF_HOSTING_PATTERNS[@]}"; do
+		if printf '%s' "$scan_target" | grep -qF "$pattern"; then
+			printf '%s' "$pattern"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# Check whether the self-hosting audit comment has already been posted.
+# If the marker exists: ensures label is applied (idempotent recovery).
+# Returns 0 when caller should skip re-posting, 1 when posting is needed.
+# Uses --paginate to avoid missing the marker on high-comment issues.
+_sht_check_comment_idempotent() {
+	local issue_number="$1"
+	local slug="$2"
+	local marker="$3"
+
+	local existing=""
+	existing=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null | awk '{s+=$1} END{print s+0}') || existing="0"
+
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		_log "INFO" "#${issue_number}: self-hosting comment already posted — ensuring label"
+		# Ensure label even if comment exists (in case label was manually removed)
+		if [[ "${AIDEVOPS_SELF_HOSTING_DETECTOR_DRY_RUN:-}" != "1" ]]; then
+			gh issue edit "$issue_number" --repo "$slug" \
+				--add-label "$_SELF_HOSTING_TARGET_LABEL" >/dev/null 2>&1 || true
+		fi
+		return 0
+	fi
+
+	return 1
+}
+
+# Apply the self-hosting tier-override label and post the provenance-wrapped
+# audit comment. Always returns 0 (failures are logged, not fatal).
+_sht_apply_label_and_comment() {
+	local issue_number="$1"
+	local slug="$2"
+	local matched_pattern="$3"
+	local marker="$4"
+
+	if ! gh issue edit "$issue_number" --repo "$slug" \
+		--add-label "$_SELF_HOSTING_TARGET_LABEL" >/dev/null 2>&1; then
+		_log "WARN" "#${issue_number}: failed to apply ${_SELF_HOSTING_TARGET_LABEL} label — continuing"
+		return 0
+	fi
+
+	_log "INFO" "#${issue_number}: applied ${_SELF_HOSTING_TARGET_LABEL} label (self-hosting dispatch-path task)"
+
+	local comment_body
+	comment_body="${marker}
+<!-- provenance:start -->
+## Self-Hosting Tier Override
+
+Pre-dispatch self-hosting detector applied \`${_SELF_HOSTING_TARGET_LABEL}\` to this \`${_SELF_HOSTING_TIER_REQUIRED}\` issue.
+
+**Matched pattern:** \`${matched_pattern}\` in issue body
+
+**Rationale:** Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed. Starting at opus-4-6 wastes 1-2 attempts before the cascade reaches the tier needed for these task sizes. Applying \`${_SELF_HOSTING_TARGET_LABEL}\` upfront eliminates wasted dispatch cycles.
+
+**Bypass:** \`AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1\`
+
+_Automated by \`pre-dispatch-validator-helper.sh\` (t2819). This comment is posted once via the \`${marker}\` marker; re-runs are no-ops._
+<!-- provenance:end -->"
+
+	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" \
+		>/dev/null 2>&1 || _log "WARN" "#${issue_number}: self-hosting audit comment post failed — label still applied"
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Self-hosting dispatch-path detector (t2819)
 #
 # Scans the issue body for references to dispatch-path scripts. When found
@@ -347,36 +458,16 @@ _detect_self_hosting_task() {
 		return 0
 	fi
 
-	# Scope scan to implementation sections only (## Files to modify / ## How).
-	# Scanning the full body risks matching incidental mentions (e.g. in narrative
-	# prose or rationale text) that do not indicate the issue actually modifies the
-	# dispatch path — leading to unintended model:opus-4-7 escalation.
-	# Extract content after the first occurrence of either heading up to the next
-	# top-level heading (or end of body). Both headings are tried and concatenated.
-	local scan_target=""
-	local files_section how_section
-	files_section=$(printf '%s' "$issue_body" | \
-		awk '/^## Files to modify/{found=1; next} found && /^## /{found=0} found{print}')
-	how_section=$(printf '%s' "$issue_body" | \
-		awk '/^## How/{found=1; next} found && /^## /{found=0} found{print}')
-	scan_target="${files_section}${how_section}"
-
-	# Fall back to full body if neither section is present (older/manual issue format)
-	if [[ -z "$scan_target" ]]; then
-		scan_target="$issue_body"
-	fi
+	# Extract implementation sections only (## Files to modify / ## How).
+	# Scanning the full body risks matching incidental mentions in prose that do
+	# not indicate the issue actually modifies the dispatch path, leading to
+	# unintended model:opus-4-7 escalation.
+	local scan_target
+	scan_target=$(_sht_extract_scan_target "$issue_body")
 
 	# Check if implementation sections reference any dispatch-path files
-	local matched_pattern=""
-	local pattern
-	for pattern in "${_SELF_HOSTING_PATTERNS[@]}"; do
-		if printf '%s' "$scan_target" | grep -qF "$pattern"; then
-			matched_pattern="$pattern"
-			break
-		fi
-	done
-
-	if [[ -z "$matched_pattern" ]]; then
+	local matched_pattern
+	if ! matched_pattern=$(_sht_match_dispatch_pattern "$scan_target"); then
 		_log "INFO" "#${issue_number}: no dispatch-path patterns found — self-hosting detector skips"
 		return 0
 	fi
@@ -399,23 +490,10 @@ _detect_self_hosting_task() {
 		return 0
 	fi
 
-	# Idempotency check: look for existing comment marker.
-	# Use --paginate so all comment pages are fetched — without it the first-page
-	# limit (30 comments) can cause the marker to be missed on active issues,
-	# leading to duplicate audit comments.  Each page emits one integer via jq;
-	# we sum them to get a total match count.
 	local marker='<!-- self-hosting-tier-override -->'
-	local existing=""
-	existing=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments" \
-		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
-		2>/dev/null | awk '{s+=$1} END{print s+0}') || existing="0"
-	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
-		_log "INFO" "#${issue_number}: self-hosting comment already posted — ensuring label"
-		# Ensure label even if comment exists (in case label was manually removed)
-		if [[ "${AIDEVOPS_SELF_HOSTING_DETECTOR_DRY_RUN:-}" != "1" ]]; then
-			gh issue edit "$issue_number" --repo "$slug" \
-				--add-label "$_SELF_HOSTING_TARGET_LABEL" >/dev/null 2>&1 || true
-		fi
+
+	# Idempotency check: look for existing comment marker
+	if _sht_check_comment_idempotent "$issue_number" "$slug" "$marker"; then
 		return 0
 	fi
 
@@ -425,35 +503,8 @@ _detect_self_hosting_task() {
 		return 0
 	fi
 
-	# Apply the label
-	if ! gh issue edit "$issue_number" --repo "$slug" \
-		--add-label "$_SELF_HOSTING_TARGET_LABEL" >/dev/null 2>&1; then
-		_log "WARN" "#${issue_number}: failed to apply ${_SELF_HOSTING_TARGET_LABEL} label — continuing"
-		return 0
-	fi
-
-	_log "INFO" "#${issue_number}: applied ${_SELF_HOSTING_TARGET_LABEL} label (self-hosting dispatch-path task)"
-
-	# Post provenance-wrapped audit comment
-	local comment_body
-	comment_body="${marker}
-<!-- provenance:start -->
-## Self-Hosting Tier Override
-
-Pre-dispatch self-hosting detector applied \`${_SELF_HOSTING_TARGET_LABEL}\` to this \`${_SELF_HOSTING_TIER_REQUIRED}\` issue.
-
-**Matched pattern:** \`${matched_pattern}\` in issue body
-
-**Rationale:** Issues modifying the dispatch path have a self-referential property — workers dispatched to fix them run through the code being fixed. Starting at opus-4-6 wastes 1-2 attempts before the cascade reaches the tier needed for these task sizes. Applying \`${_SELF_HOSTING_TARGET_LABEL}\` upfront eliminates wasted dispatch cycles.
-
-**Bypass:** \`AIDEVOPS_SKIP_SELF_HOSTING_DETECTOR=1\`
-
-_Automated by \`pre-dispatch-validator-helper.sh\` (t2819). This comment is posted once via the \`${marker}\` marker; re-runs are no-ops._
-<!-- provenance:end -->"
-
-	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" \
-		>/dev/null 2>&1 || _log "WARN" "#${issue_number}: self-hosting audit comment post failed — label still applied"
-
+	# Apply the label and post the audit comment
+	_sht_apply_label_and_comment "$issue_number" "$slug" "$matched_pattern" "$marker"
 	return 0
 }
 
