@@ -3178,3 +3178,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972
 
 - [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
+
+- [ ] t2879 docs(README): add per-repo platform setup section pointing to /setup-git #auto-dispatch #documentation #framework ref:GH#20980
