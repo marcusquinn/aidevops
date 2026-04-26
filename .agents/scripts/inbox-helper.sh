@@ -578,13 +578,155 @@ readonly TRIAGE_RATE_LIMIT_DEFAULT=50
 # Default consecutive needs-review backoff threshold
 readonly TRIAGE_BACKOFF_THRESHOLD_DEFAULT=10
 
+# _triage_check_deps
+# Checks availability of P0.5a (sensitivity-detect.sh) and P0.5b
+# (llm-routing-helper.sh). Prints warnings and sets caller's has_* variables.
+# Returns: sets HAS_SENSITIVITY_DETECT and HAS_LLM_ROUTING in caller scope via echo.
+_triage_check_deps() {
+	local _sens=0 _llm=0
+	if command -v sensitivity-detect.sh >/dev/null 2>&1 \
+		|| [[ -x "${SCRIPT_DIR}/sensitivity-detect.sh" ]]; then
+		_sens=1
+	else
+		print_warning "sensitivity-detect.sh not found (P0.5a pending). Items will route to _needs-review/."
+	fi
+	if command -v llm-routing-helper.sh >/dev/null 2>&1 \
+		|| [[ -x "${SCRIPT_DIR}/llm-routing-helper.sh" ]]; then
+		_llm=1
+	else
+		print_warning "llm-routing-helper.sh not found (P0.5b pending). Items will route to _needs-review/."
+	fi
+	echo "${_sens} ${_llm}"
+	return 0
+}
+
+# _triage_collect_pending <log-path>
+# Reads triage.log and prints one relative path per line for pending items.
+_triage_collect_pending() {
+	local log_path="$1"
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		local status_field
+		status_field="$(_json_field "$line" "$TRIAGE_KEY_STATUS")"
+		if [[ "$status_field" == "$TRIAGE_VAL_PENDING" ]]; then
+			local path_field
+			path_field="$(_json_field "$line" "$TRIAGE_KEY_PATH")"
+			[[ -n "$path_field" ]] && printf '%s\n' "$path_field"
+		fi
+	done < "$log_path"
+	return 0
+}
+
+# _triage_run_sensitivity_gate <abs-path>
+# Runs sensitivity-detect.sh on a file. Returns the sensitivity tier string on
+# stdout: public | confidential | privileged | competitive | unknown.
+# Always returns 0; never fails.
+_triage_run_sensitivity_gate() {
+	local abs_path="$1"
+	local detect_script="${SCRIPT_DIR}/sensitivity-detect.sh"
+	command -v sensitivity-detect.sh >/dev/null 2>&1 && detect_script="sensitivity-detect.sh"
+	local result
+	result="$("$detect_script" "$abs_path" 2>/dev/null || echo "unknown")"
+	case "$result" in
+	public | confidential | privileged | competitive | unknown) printf '%s' "$result" ;;
+	*) printf 'unknown' ;;
+	esac
+	return 0
+}
+
+# _triage_run_classification <abs-path> <sensitivity> <confidence-threshold>
+# Runs llm-routing-helper.sh to classify a file.
+# Outputs space-separated: <plane> <sub-folder> <confidence> <use-local-only> <reason>
+# On failure, outputs: "" "" 0 0 <reason>
+_triage_run_classification() {
+	local abs_path="$1" sensitivity="$2" confidence_threshold="$3"
+	local use_local_only=0
+	local tier_check
+	for tier_check in $SENSITIVITY_LOCAL_ONLY_TIERS; do
+		[[ "$sensitivity" == "$tier_check" ]] && use_local_only=1 && break
+	done
+
+	local routing_script="${SCRIPT_DIR}/llm-routing-helper.sh"
+	command -v llm-routing-helper.sh >/dev/null 2>&1 && routing_script="llm-routing-helper.sh"
+
+	local content_preview
+	content_preview="$(dd if="$abs_path" bs=1 count=2048 2>/dev/null | strings 2>/dev/null | head -40 || true)"
+
+	local llm_flags=("--task" "classify-inbox")
+	[[ "$use_local_only" -eq 1 ]] && llm_flags+=("--local-only")
+	local llm_output
+	llm_output="$("$routing_script" "${llm_flags[@]}" --content "$content_preview" 2>/dev/null || true)"
+
+	local plane="" sub_folder="" confidence=0 reasoning="" reason=""
+	if [[ -n "$llm_output" ]]; then
+		plane="$(_json_field "$llm_output" "target_plane")"
+		sub_folder="$(_json_field "$llm_output" "sub_folder")"
+		local conf_raw
+		conf_raw="$(printf '%s' "$llm_output" | grep -o '"confidence":[0-9.]*' | cut -d':' -f2 || true)"
+		[[ -n "$conf_raw" ]] && confidence="$(printf '%.0f' "$(echo "$conf_raw * 100" | bc 2>/dev/null || echo 0)" 2>/dev/null || echo 0)"
+		reasoning="$(_json_field "$llm_output" "reasoning")"
+	fi
+
+	if [[ -z "$plane" ]]; then
+		reason="classifier-no-output"
+	elif [[ "$confidence" -lt "$confidence_threshold" ]]; then
+		reason="low-confidence:${confidence}"
+	fi
+
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$plane" "$sub_folder" "$confidence" "$use_local_only" "$reason" "$reasoning"
+	return 0
+}
+
+# _triage_process_item <inbox-dir> <repo-root> <rel-path>
+#   <has-sensitivity-detect> <has-llm-routing>
+#   <confidence-threshold> <dry-run> <log-path>
+# Processes a single pending item through the full triage pipeline.
+# Outputs: "routed" or "needs-review" on stdout.
+_triage_process_item() {
+	local inbox_dir="$1" repo_root="$2" rel_path="$3"
+	local has_sd="$4" has_llm="$5"
+	local confidence_threshold="$6" dry_run="$7" log_path="$8"
+
+	local abs_path="${repo_root}/${rel_path}"
+
+	# Step 1: Sensitivity gate (LOCAL ONLY)
+	local sensitivity="unknown"
+	[[ "$has_sd" -eq 1 ]] && sensitivity="$(_triage_run_sensitivity_gate "$abs_path")"
+
+	# Step 2: Classification (or immediate needs-review if deps missing)
+	local needs_review_reason=""
+	local plane="" sub_folder="" confidence=0 use_local_only=0 reasoning=""
+	if [[ "$has_sd" -eq 0 || "$has_llm" -eq 0 ]]; then
+		needs_review_reason="dependency-unavailable"
+	else
+		local class_out
+		class_out="$(_triage_run_classification "$abs_path" "$sensitivity" "$confidence_threshold")"
+		IFS=$'\t' read -r plane sub_folder confidence use_local_only needs_review_reason reasoning <<< "$class_out"
+	fi
+
+	# Step 3: Route
+	if [[ -n "$needs_review_reason" ]]; then
+		_triage_route_needs_review \
+			"$inbox_dir" "$abs_path" "$rel_path" \
+			"$sensitivity" "$needs_review_reason" "$dry_run" "$log_path"
+		printf 'needs-review'
+	else
+		_triage_route_to_plane \
+			"$inbox_dir" "$abs_path" "$rel_path" \
+			"$sensitivity" "$plane" "$sub_folder" \
+			"$confidence" "$reasoning" "$dry_run" "$log_path" "$use_local_only"
+		printf 'routed'
+	fi
+	return 0
+}
+
 cmd_triage() {
 	local dry_run=0
 	local limit="${TRIAGE_RATE_LIMIT:-${TRIAGE_RATE_LIMIT_DEFAULT}}"
 	local confidence_threshold="${TRIAGE_CONFIDENCE_THRESHOLD:-${TRIAGE_CONFIDENCE_THRESHOLD_DEFAULT}}"
 	local backoff_threshold="${TRIAGE_BACKOFF_THRESHOLD:-${TRIAGE_BACKOFF_THRESHOLD_DEFAULT}}"
 
-	# Parse flags
 	while [[ $# -gt 0 ]]; do
 		local cur_arg="$1"
 		case "$cur_arg" in
@@ -593,75 +735,36 @@ cmd_triage() {
 		--limit=*) limit="${cur_arg#--limit=}"; shift ;;
 		--confidence-threshold)  confidence_threshold="${2:-$confidence_threshold}"; shift 2 ;;
 		--confidence-threshold=*) confidence_threshold="${cur_arg#--confidence-threshold=}"; shift ;;
-		*)
-			print_error "Unknown triage flag: $cur_arg"
-			return 1
-			;;
+		*) print_error "Unknown triage flag: $cur_arg"; return 1 ;;
 		esac
 	done
 
 	local repo_root
 	repo_root="$(pwd)"
 	local inbox_dir="${repo_root}/${INBOX_DIR_NAME}"
-
-	if [[ ! -d "$inbox_dir" ]]; then
-		print_warning "_inbox/ not found at ${inbox_dir}. Run: aidevops inbox provision"
-		return 0
-	fi
-
+	[[ ! -d "$inbox_dir" ]] && print_warning "_inbox/ not found. Run: aidevops inbox provision" && return 0
 	local log_path="${inbox_dir}/${TRIAGE_LOG}"
-	if [[ ! -f "$log_path" ]]; then
-		print_warning "triage.log not found at ${log_path}. Nothing to triage."
-		return 0
-	fi
+	[[ ! -f "$log_path" ]] && print_warning "triage.log not found. Nothing to triage." && return 0
 
-	# Check availability of dependency scripts
-	local has_sensitivity_detect=0
-	local has_llm_routing=0
-	if command -v sensitivity-detect.sh >/dev/null 2>&1 \
-		|| [[ -x "${SCRIPT_DIR}/sensitivity-detect.sh" ]]; then
-		has_sensitivity_detect=1
-	fi
-	if command -v llm-routing-helper.sh >/dev/null 2>&1 \
-		|| [[ -x "${SCRIPT_DIR}/llm-routing-helper.sh" ]]; then
-		has_llm_routing=1
-	fi
-
-	if [[ "$has_sensitivity_detect" -eq 0 ]]; then
-		print_warning "sensitivity-detect.sh not found (P0.5a pending). Items will route to _needs-review/."
-	fi
-	if [[ "$has_llm_routing" -eq 0 ]]; then
-		print_warning "llm-routing-helper.sh not found (P0.5b pending). Items will route to _needs-review/."
-	fi
+	local dep_out has_sd has_llm
+	dep_out="$(_triage_check_deps)"
+	has_sd="${dep_out%% *}"
+	has_llm="${dep_out##* }"
 
 	[[ "$dry_run" -eq 1 ]] && print_info "[DRY RUN] No files will be moved."
 
-	# Collect pending items from triage.log
-	local pending_paths=()
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local status_field
-		status_field="$(_json_field "$line" "$TRIAGE_KEY_STATUS")"
-		if [[ "$status_field" == "$TRIAGE_VAL_PENDING" ]]; then
-			local path_field
-			path_field="$(_json_field "$line" "$TRIAGE_KEY_PATH")"
-			[[ -n "$path_field" ]] && pending_paths+=("$path_field")
-		fi
-	done < "$log_path"
+	local -a pending_paths
+	while IFS= read -r p; do
+		[[ -n "$p" ]] && pending_paths+=("$p")
+	done < <(_triage_collect_pending "$log_path")
 
 	if [[ ${#pending_paths[@]} -eq 0 ]]; then
 		print_info "No pending items found in triage.log."
 		return 0
 	fi
-
 	print_info "Found ${#pending_paths[@]} pending item(s). Processing up to ${limit}."
 
-	local processed=0
-	local routed=0
-	local needs_review=0
-	local consecutive_needs_review=0
-	local skipped=0
-
+	local processed=0 routed=0 needs_review=0 consecutive_needs_review=0 skipped=0
 	local rel_path
 	for rel_path in "${pending_paths[@]}"; do
 		if [[ "$processed" -ge "$limit" ]]; then
@@ -669,115 +772,29 @@ cmd_triage() {
 			print_warning "Rate limit reached (${limit}). Skipping ${skipped} item(s)."
 			break
 		fi
-
-		# Backoff: too many consecutive needs-review → classifier may be broken
 		if [[ "$consecutive_needs_review" -ge "$backoff_threshold" ]]; then
-			print_warning "Backoff: ${consecutive_needs_review} consecutive needs-review results. Halting to avoid classifier loop."
+			print_warning "Backoff: ${consecutive_needs_review} consecutive needs-review. Halting."
 			break
 		fi
-
 		local abs_path="${repo_root}/${rel_path}"
 		if [[ ! -f "$abs_path" ]]; then
 			print_warning "Skipping missing file: ${rel_path}"
 			processed=$(( processed + 1 ))
 			continue
 		fi
-
 		print_info "Triaging: ${rel_path}"
-
-		# --- Step 1: Sensitivity gate (LOCAL ONLY) ---
-		local sensitivity="unknown"
-		if [[ "$has_sensitivity_detect" -eq 1 ]]; then
-			local detect_script="${SCRIPT_DIR}/sensitivity-detect.sh"
-			if ! command -v sensitivity-detect.sh >/dev/null 2>&1; then
-				detect_script="sensitivity-detect.sh"
-			fi
-			sensitivity="$("$detect_script" "$abs_path" 2>/dev/null || echo "unknown")"
-			# Sanitise output to known values
-			case "$sensitivity" in
-			public | confidential | privileged | competitive | unknown) ;;
-			*) sensitivity="unknown" ;;
-			esac
-		fi
-
-		# --- Step 2: Classification (LLM tier per sensitivity) ---
-		local classification_plane=""
-		local classification_sub_folder=""
-		local classification_confidence=0
-		local classification_reasoning="dependency-unavailable"
-		local needs_review_reason=""
-
-		if [[ "$has_sensitivity_detect" -eq 0 || "$has_llm_routing" -eq 0 ]]; then
-			needs_review_reason="dependency-unavailable"
-		else
-			# Determine LLM tier based on sensitivity
-			local use_local_only=0
-			local tier_check
-			for tier_check in $SENSITIVITY_LOCAL_ONLY_TIERS; do
-				if [[ "$sensitivity" == "$tier_check" ]]; then
-					use_local_only=1
-					break
-				fi
-			done
-
-			local routing_script="${SCRIPT_DIR}/llm-routing-helper.sh"
-			if ! command -v llm-routing-helper.sh >/dev/null 2>&1; then
-				routing_script="llm-routing-helper.sh"
-			fi
-
-			# Build classification prompt content (first 2KB — no full binary content)
-			local content_preview
-			content_preview="$(dd if="$abs_path" bs=1 count=2048 2>/dev/null | strings 2>/dev/null | head -40 || true)"
-
-		# Call LLM routing helper
-		local llm_output
-		local llm_flags=("--task" "classify-inbox")
-		[[ "$use_local_only" -eq 1 ]] && llm_flags+=("--local-only")
-
-		llm_output="$("$routing_script" "${llm_flags[@]}" --content "$content_preview" 2>/dev/null || true)"
-
-			if [[ -n "$llm_output" ]]; then
-				# Parse JSON response fields via helper (avoids repeated grep+cut literals)
-				classification_plane="$(_json_field "$llm_output" "target_plane")"
-				classification_sub_folder="$(_json_field "$llm_output" "sub_folder")"
-				local conf_raw
-				conf_raw="$(printf '%s' "$llm_output" | grep -o '"confidence":[0-9.]*' | cut -d':' -f2 || true)"
-				# Convert 0.0-1.0 to 0-100 integer
-				if [[ -n "$conf_raw" ]]; then
-					classification_confidence="$(printf '%.0f' "$(echo "$conf_raw * 100" | bc 2>/dev/null || echo 0)" 2>/dev/null || echo 0)"
-				fi
-				classification_reasoning="$(_json_field "$llm_output" "reasoning")"
-			fi
-
-			# Validate required fields
-			if [[ -z "$classification_plane" || "$classification_confidence" -lt "$confidence_threshold" ]]; then
-				if [[ -z "$classification_plane" ]]; then
-					needs_review_reason="classifier-no-output"
-				else
-					needs_review_reason="low-confidence:${classification_confidence}"
-				fi
-			fi
-		fi
-
+		local outcome
+		outcome="$(_triage_process_item \
+			"$inbox_dir" "$repo_root" "$rel_path" \
+			"$has_sd" "$has_llm" \
+			"$confidence_threshold" "$dry_run" "$log_path")"
 		processed=$(( processed + 1 ))
-
-		if [[ -n "$needs_review_reason" ]]; then
-			# --- Route to _needs-review/ ---
-			_triage_route_needs_review \
-				"$inbox_dir" "$abs_path" "$rel_path" \
-				"$sensitivity" "$needs_review_reason" \
-				"$dry_run" "$log_path"
-			needs_review=$(( needs_review + 1 ))
-			consecutive_needs_review=$(( consecutive_needs_review + 1 ))
-		else
-			# --- Route to target plane ---
-			_triage_route_to_plane \
-				"$inbox_dir" "$abs_path" "$rel_path" \
-				"$sensitivity" "$classification_plane" "$classification_sub_folder" \
-				"$classification_confidence" "$classification_reasoning" \
-				"$dry_run" "$log_path" "$use_local_only"
+		if [[ "$outcome" == "routed" ]]; then
 			routed=$(( routed + 1 ))
 			consecutive_needs_review=0
+		else
+			needs_review=$(( needs_review + 1 ))
+			consecutive_needs_review=$(( consecutive_needs_review + 1 ))
 		fi
 	done
 
