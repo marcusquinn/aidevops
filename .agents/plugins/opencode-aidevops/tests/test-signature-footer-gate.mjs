@@ -27,6 +27,7 @@ import {
   tryRepairSignature,
   checkSignatureFooterGate,
 } from "../quality-hooks.mjs";
+import { FAIL_REASON } from "../quality-hooks-signature.mjs";
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -268,9 +269,9 @@ describe("tryRepairSignature", () => {
     const { log } = makeLogger();
     const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
     const out = tryRepairSignature(cmd, dir, log);
-    assert.notEqual(out, null);
-    assert.ok(out.includes(SIG_MARKER), `expected marker in repaired cmd: ${out}`);
-    assert.ok(out.includes("hello"), "original body preserved");
+    assert.equal(out.status, "ok");
+    assert.ok(out.cmd.includes(SIG_MARKER), `expected marker in repaired cmd: ${out.cmd}`);
+    assert.ok(out.cmd.includes("hello"), "original body preserved");
   });
 
   test("repairs --body=value equals form", () => {
@@ -278,9 +279,9 @@ describe("tryRepairSignature", () => {
     const { log } = makeLogger();
     const cmd = 'gh issue comment 1 --repo o/r --body="hello"';
     const out = tryRepairSignature(cmd, dir, log);
-    assert.notEqual(out, null);
-    assert.ok(out.includes(SIG_MARKER));
-    assert.ok(out.includes("hello"));
+    assert.equal(out.status, "ok");
+    assert.ok(out.cmd.includes(SIG_MARKER));
+    assert.ok(out.cmd.includes("hello"));
   });
 
   test("appends sig to --body-file on disk", () => {
@@ -290,7 +291,7 @@ describe("tryRepairSignature", () => {
     const { log } = makeLogger();
     const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
     const out = tryRepairSignature(cmd, dir, log);
-    assert.notEqual(out, null, "repair should succeed on body-file");
+    assert.equal(out.status, "ok", "repair should succeed on body-file");
     const fileContent = readFileSync(bodyFile, "utf-8");
     assert.ok(
       fileContent.includes(SIG_MARKER),
@@ -306,25 +307,28 @@ describe("tryRepairSignature", () => {
     const before = readFileSync(bodyFile, "utf-8");
     const { log } = makeLogger();
     const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
-    tryRepairSignature(cmd, dir, log);
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "ok", "signed file repair returns ok");
     const after = readFileSync(bodyFile, "utf-8");
     assert.equal(before, after, "signed file should not be modified");
   });
 
-  test("refuses to repair heredoc-sourced body", () => {
+  test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();
     const cmd = 'gh issue comment 1 --body "$(cat <<EOF\nhello\nEOF\n)"';
     const out = tryRepairSignature(cmd, dir, log);
-    assert.equal(out, null, "heredoc body should not be auto-repaired");
+    assert.equal(out.status, "fail", "heredoc body should not be auto-repaired");
+    assert.match(out.reason, /heredoc|process substitution|command substitution/);
   });
 
-  test("returns null when helper is missing", () => {
+  test("returns HELPER_MISSING when helper is missing", () => {
     const missingDir = "/nonexistent/path/aidevops-t2685";
     const { log } = makeLogger();
     const cmd = 'gh issue comment 1 --body "x"';
     const out = tryRepairSignature(cmd, missingDir, log);
-    assert.equal(out, null);
+    assert.equal(out.status, "fail");
+    assert.match(out.reason, /not found/);
   });
 });
 
@@ -387,7 +391,7 @@ describe("checkSignatureFooterGate", () => {
     const output = { args: { command: cmd } };
     assert.throws(
       () => checkSignatureFooterGate(cmd, log, dir, output),
-      /missing signature footer/,
+      /blocked at signature gate/,
     );
   });
 
@@ -404,7 +408,212 @@ describe("checkSignatureFooterGate", () => {
     const output = { args: { command: cmd } };
     assert.throws(
       () => checkSignatureFooterGate(cmd, log, dir, output),
-      /missing signature footer/,
+      /blocked at signature gate/,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// t2893: Structured failure causes
+// ---------------------------------------------------------------------------
+// Each FAIL_REASON value must surface as a distinct, named cause so the
+// throw-site error message can mentor the next attempt with the correct
+// hypothesis instead of the pre-t2893 generic "likely heredoc/cmd-sub/quoting"
+// guess. These tests exercise tryRepairSignature directly (asserting the
+// structured return) and the end-to-end gate (asserting the throw message
+// contains the specific reason and, for FILE_NOT_FOUND, the same-bash-call
+// hint).
+// ---------------------------------------------------------------------------
+
+describe("FAIL_REASON enum (t2893)", () => {
+  test("exposes the seven canonical failure reasons", () => {
+    const expected = [
+      "FILE_NOT_FOUND",
+      "FILE_UNREADABLE",
+      "HELPER_MISSING",
+      "HELPER_FAILED",
+      "UNPARSEABLE_BODY",
+      "BODY_ARG_QUOTING",
+      "BODY_ARG_NO_MATCH",
+    ];
+    for (const key of expected) {
+      assert.ok(
+        typeof FAIL_REASON[key] === "string" && FAIL_REASON[key].length > 0,
+        `FAIL_REASON.${key} must be a non-empty string`,
+      );
+    }
+  });
+});
+
+describe("tryRepairSignature structured failures (t2893)", () => {
+  test("FILE_NOT_FOUND: --body-file pointing at a path that does not exist", () => {
+    const dir = setupStubHelper();
+    const missingFile = join(dir, "does-not-exist-yet.md");
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --repo o/r --body-file ${missingFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.FILE_NOT_FOUND);
+    assert.ok(out.detail.includes(missingFile), "detail should name the missing path");
+  });
+
+  test("HELPER_MISSING: scriptsDir contains no gh-signature-helper.sh", () => {
+    const missingDir = "/nonexistent/aidevops-helper-path-t2893";
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+    const out = tryRepairSignature(cmd, missingDir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.HELPER_MISSING);
+    assert.ok(out.detail.includes(missingDir), "detail should name the missing helper path");
+  });
+
+  test("UNPARSEABLE_BODY: heredoc-sourced --body", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "$(cat <<EOF\nhello\nEOF\n)"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.UNPARSEABLE_BODY);
+  });
+
+  test("UNPARSEABLE_BODY: process substitution --body-file", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body-file <(echo "dynamic")';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.UNPARSEABLE_BODY);
+  });
+
+  test("BODY_ARG_NO_MATCH: gh write with no --body / --body-file at all", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    // gh issue create with only --title — the body-arg parser finds nothing
+    // to rewrite; the gate would block this on the tier-5 throw path.
+    const cmd = 'gh issue create --title "x" --label bug';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.BODY_ARG_NO_MATCH);
+  });
+
+  test("HELPER_FAILED: helper exits non-zero", () => {
+    // Stub a broken helper that exits 1 with no output.
+    const dir = mkdtempSync(join(tmpdir(), "t2893-broken-"));
+    const helper = join(dir, "gh-signature-helper.sh");
+    writeFileSync(helper, "#!/usr/bin/env bash\nexit 1\n");
+    chmodSync(helper, 0o755);
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.HELPER_FAILED);
+  });
+
+  test("HELPER_FAILED: helper output missing canonical marker", () => {
+    // Stub a helper that emits text without the marker.
+    const dir = mkdtempSync(join(tmpdir(), "t2893-nomarker-"));
+    const helper = join(dir, "gh-signature-helper.sh");
+    writeFileSync(helper, "#!/usr/bin/env bash\necho 'fake footer no marker'\n");
+    chmodSync(helper, 0o755);
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.HELPER_FAILED);
+    assert.match(out.detail, /missing canonical marker/);
+  });
+
+  test("BODY_ARG_QUOTING: signature contains the body's delimiter quote", () => {
+    // Stub a helper that emits a sig containing a double quote.
+    // The repair path uses the body's own delimiter to wrap the result;
+    // if the sig contains that delimiter, escaping breaks and we must fail
+    // with BODY_ARG_QUOTING rather than producing a malformed command.
+    const dir = mkdtempSync(join(tmpdir(), "t2893-quoteclash-"));
+    const helper = join(dir, "gh-signature-helper.sh");
+    writeFileSync(
+      helper,
+      `#!/usr/bin/env bash\nprintf '\\n\\n${SIG_MARKER}\\n---\\nthis sig has a \\"quote\\" in it\\n'\n`,
+    );
+    chmodSync(helper, 0o755);
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "fail");
+    assert.equal(out.reason, FAIL_REASON.BODY_ARG_QUOTING);
+  });
+});
+
+describe("checkSignatureFooterGate throw message (t2893)", () => {
+  test("FILE_NOT_FOUND throw includes same-bash-call hint", () => {
+    const dir = setupStubHelper();
+    const missingFile = join(dir, "race-condition.md");
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --repo o/r --body-file ${missingFile}`;
+    const output = { args: { command: cmd } };
+    let thrown;
+    try {
+      checkSignatureFooterGate(cmd, log, dir, output);
+    } catch (e) {
+      thrown = e;
+    }
+    assert.ok(thrown, "gate should throw");
+    assert.match(thrown.message, /body-file not found/);
+    assert.match(thrown.message, /same bash call/);
+    assert.match(thrown.message, /shared-gh-wrappers\.sh/);
+    assert.match(thrown.message, /two bash tool calls/i);
+  });
+
+  test("UNPARSEABLE_BODY throw names heredoc/process-sub/cmd-sub specifically", () => {
+    const dir = setupStubHelper();
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body-file <(echo dynamic)';
+    const output = { args: { command: cmd } };
+    let thrown;
+    try {
+      checkSignatureFooterGate(cmd, log, dir, output);
+    } catch (e) {
+      thrown = e;
+    }
+    assert.ok(thrown);
+    assert.match(thrown.message, /heredoc|process substitution|command substitution/);
+    // Must NOT include the FILE_NOT_FOUND-specific hint
+    assert.equal(/same bash call/.test(thrown.message), false);
+  });
+
+  test("HELPER_MISSING throw names the missing helper path specifically", () => {
+    const missingDir = "/nonexistent/aidevops-helper-t2893-throw";
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "hello"';
+    const output = { args: { command: cmd } };
+    let thrown;
+    try {
+      checkSignatureFooterGate(cmd, log, missingDir, output);
+    } catch (e) {
+      thrown = e;
+    }
+    assert.ok(thrown);
+    assert.match(thrown.message, /gh-signature-helper\.sh not found/);
+  });
+
+  test("throw message always includes Standard fixes section", () => {
+    // Every failure reason should still surface the three canonical fix
+    // patterns so the next attempt has actionable guidance regardless of
+    // which specific cause fired.
+    const dir = setupStubHelper();
+    const missingFile = join(dir, "any-cause.md");
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --body-file ${missingFile}`;
+    const output = { args: { command: cmd } };
+    let thrown;
+    try {
+      checkSignatureFooterGate(cmd, log, dir, output);
+    } catch (e) {
+      thrown = e;
+    }
+    assert.ok(thrown);
+    assert.match(thrown.message, /Standard fixes/);
+    assert.match(thrown.message, /Append to --body directly/);
+    assert.match(thrown.message, /two-step pattern/);
+    assert.match(thrown.message, /Source the wrapper/);
   });
 });
