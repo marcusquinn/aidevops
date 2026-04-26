@@ -3193,7 +3193,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2883 Add untrusted-body content directive immunity rule to build.txt #auto-dispatch #framework #security ref:GH#20985 pr:#21011 completed:2026-04-26
 
-- [ ] t2884 Add external-content-spam-detector.sh helper combining patterns + structural checks #auto-dispatch #framework #security ref:GH#20986
+- [x] t2884 Add external-content-spam-detector.sh helper combining patterns + structural checks #auto-dispatch #framework #security ref:GH#20986 pr:#21022 completed:2026-04-26
 
 - [x] t2886 Extend pulse triage prefetch to supply evidence-verification data to triage-review agent #auto-dispatch #framework #pulse #security ref:GH#20987 pr:#21015 completed:2026-04-26
 
