@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 14 acceptance criteria cases:
+# Covers all 16 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -19,6 +19,8 @@
 #  12. Reject: Ref #NNN where linked issue title does NOT contain the t-ID (GH#19783)
 #  13. Reject: PR title tNNN not in any commit AND not confirmed via linked issue (GH#19987)
 #  14. Allow: PR title tNNN confirmed via PR body Resolves #NNN with matching issue title (GH#19987)
+#  15. Allow: t-ID ≤ counter when claimed in repo history (GH#20291)
+#  16. Allow: check-pr skips merge commits via --no-merges regardless of subject (t2895)
 
 set -u
 
@@ -789,10 +791,97 @@ EOF
 }
 
 # ---------------------------------------------------------------------------
+# Case 16: check-pr skips merge commits via --no-merges regardless of subject
+# (t2895 — the previous `^(Merge|fixup!|squash!)` subject-regex filter was
+# bypassed by custom merge subjects, e.g. "feat: pulled main into feature".
+# `--no-merges` filters structurally on commit topology, not subject text.)
+#
+# This is the canonical regression test for the t2895 perf fix. With the OLD
+# range (`merge-base..HEAD`) and the OLD subject filter:
+#   - merge commit with subject "feat: pull main (mentions t99999)" was scanned
+#   - t99999 > counter, no Resolves, no branch claim → REJECT
+# With the NEW range (`origin/main..HEAD --no-merges`):
+#   - merge commit excluded structurally, regardless of subject text
+#   - only the feature-branch commit is scanned (clean, no t-IDs) → ALLOW
+# ---------------------------------------------------------------------------
+test_check_pr_skips_merge_commits_via_no_merges() {
+	local name="case-16: check-pr skips merge commits via --no-merges (custom merge subject)"
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	# Base/origin repo with .task-counter=100
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q -b main
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '100' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init: counter=100"
+
+	# Clone work_repo (origin/main = init)
+	local work_repo="${tmpdir}/work"
+	git clone -q "$base_repo" "$work_repo" 2>/dev/null
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+
+	# Feature branch off main
+	git -C "$work_repo" checkout -q -b feature/test-branch
+
+	# Clean feature commit (no t-IDs)
+	printf 'feature' >"${work_repo}/feature.txt"
+	git -C "$work_repo" add feature.txt
+	git -C "$work_repo" commit -q -m "feat: clean feature commit"
+
+	# Move main forward with an upstream commit (any subject, no invented IDs)
+	printf 'upstream' >"${base_repo}/upstream.txt"
+	git -C "$base_repo" add upstream.txt
+	git -C "$base_repo" commit -q -m "feat: upstream change"
+
+	# Fetch upstream commit into work_repo (updates origin/main)
+	git -C "$work_repo" fetch -q origin main
+
+	# Merge origin/main into feature with a CUSTOM SUBJECT containing an
+	# invented t-ID. The OLD subject-regex filter `^(Merge|fixup!|squash!)`
+	# does NOT match "feat: pull main..." and would scan this merge commit,
+	# finding t99999 in the subject and rejecting. The NEW `--no-merges`
+	# filter excludes it structurally regardless of subject text.
+	git -C "$work_repo" merge -q --no-ff \
+		-m "feat: pull main into feature (mentions t99999)" \
+		origin/main
+
+	# Stub gh to fail so PR title scan fails-open and doesn't affect the result
+	local fake_bin="${tmpdir}/bin"
+	mkdir -p "$fake_bin"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"${fake_bin}/gh"
+	chmod +x "${fake_bin}/gh"
+
+	local rc
+	PATH="${fake_bin}:$PATH" \
+		GIT_DIR="${work_repo}/.git" \
+		bash "$GUARD" check-pr 9999 2>/dev/null
+	rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (merge commit excluded by --no-merges regardless of subject text), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
-	printf 'Running ta[redacted-credential] tests...\n\n'
+	printf 'Running task-id-collision-guard tests...\n\n'
 
 	test_rejects_invented_tid
 	test_allows_claimed_tid
@@ -809,6 +898,7 @@ main() {
 	test_check_pr_rejects_invented_tid_in_title
 	test_check_pr_allows_pr_title_tid_confirmed_via_body
 	test_repo_wide_claim_in_prose
+	test_check_pr_skips_merge_commits_via_no_merges
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

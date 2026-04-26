@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-04-26T12:14:35Z",
-      "hash": "8cab81f0a74a18fad0fad76f476efb66f4881dcd",
-      "passes": 59,
+      "at": "2026-04-26T14:23:33Z",
+      "hash": "5e780160061a960b629e76a1b8593b8823dea959",
+      "passes": 61,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -820,9 +820,9 @@
       "pr": 15249
     },
     ".agents/hooks/task-id-collision-guard.sh": {
-      "at": "2026-04-21T13:07:09Z",
-      "hash": "d90861ec1e14d4aa478e0043a8670768a004c771",
-      "passes": 8,
+      "at": "2026-04-26T14:23:36Z",
+      "hash": "7441a7bffda4dcd1df09936720629846d79571e3",
+      "passes": 9,
       "pr": 18718
     },
     ".agents/legal.md": {
@@ -2262,9 +2262,9 @@
       "pr": 12145
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "at": "2026-04-25T19:26:01Z",
-      "hash": "b7333472289e7f68a9dec9cebe553602b2400ac6",
-      "passes": 21,
+      "at": "2026-04-26T13:08:52Z",
+      "hash": "ae47c771d3c6bc2a6dba0604db559c6545933f76",
+      "passes": 22,
       "pr": 19046
     },
     ".agents/scripts/generate-claude-commands.sh": {
@@ -2544,9 +2544,9 @@
       "pr": 15916
     },
     ".agents/scripts/shared-constants.sh": {
-      "at": "2026-04-26T12:14:43Z",
-      "hash": "244e7c1df15567eea432cf9944994832a7a6d404",
-      "passes": 24,
+      "at": "2026-04-26T13:08:54Z",
+      "hash": "c154f063eec4afb398202d00870823668c3b713b",
+      "passes": 25,
       "pr": 18847
     },
     ".agents/scripts/stats-functions.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-04-26T12:29:00Z",
-      "hash": "86d3f3b47024b1fbc806ca02f7c919494d1c739d",
-      "passes": 113,
+      "at": "2026-04-26T14:56:45Z",
+      "hash": "2f85c6e0ef621faa7425d92e67fc1051436ef0d2",
+      "passes": 116,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-04-26T12:29:00Z",
-      "hash": "015ddd22c55e8d9337c027f89058970da2f4af4a",
-      "passes": 116,
+      "at": "2026-04-26T13:09:18Z",
+      "hash": "80f9ef840d7fd450c177e85e28fad8e5c9a8d100",
+      "passes": 117,
       "pr": 19029
     },
     "setup-modules/agent-deploy.sh": {
@@ -7504,9 +7504,9 @@
       "pr": 19203
     },
     "setup.sh": {
-      "at": "2026-04-26T12:29:01Z",
-      "hash": "e42c89c2f4feaa024fa2099bf87278b26500f337",
-      "passes": 112,
+      "at": "2026-04-26T13:09:19Z",
+      "hash": "dfc106b6009400ea8898418a990793a7ab2368b0",
+      "passes": 113,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {

@@ -130,11 +130,12 @@ _resolve_current_counter() {
 # Falls back to the root commit.
 # ---------------------------------------------------------------------------
 _find_merge_base() {
-	local base=""
+	local base="" ref
 	# Try main first, then master
 	for branch in main master; do
-		if git rev-parse --verify "origin/${branch}" >/dev/null 2>&1; then
-			base=$(git merge-base HEAD "origin/${branch}" 2>/dev/null) && break
+		ref="origin/${branch}"
+		if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+			base=$(git merge-base HEAD "$ref" 2>/dev/null) && break
 		elif git rev-parse --verify "$branch" >/dev/null 2>&1; then
 			base=$(git merge-base HEAD "$branch" 2>/dev/null) && break
 		fi
@@ -144,6 +145,93 @@ _find_merge_base() {
 		base=$(git rev-list --max-parents=0 HEAD 2>/dev/null | head -1)
 	fi
 	printf '%s' "$base"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Resolve the best ref for "the upstream default branch tip" for use as the
+# left-hand side of `git log A..HEAD`. Prefers origin/main, then origin/master,
+# then local main, then local master. Returns empty if none found.
+#
+# Used by _run_check_pr (t2895) to scope the commit list to the PR's unique
+# commits, excluding upstream commits brought in via a merge from main. This
+# is critical for performance when a PR has merged main to resolve conflicts —
+# the merge-base..HEAD range expands to include all commits between fork-point
+# and the new main tip, which can be hundreds of commits on long-lived branches.
+# ---------------------------------------------------------------------------
+_find_default_branch_ref() {
+	local branch ref
+	for branch in main master; do
+		ref="origin/${branch}"
+		if git rev-parse --verify "$ref" >/dev/null 2>&1; then
+			printf '%s' "$ref"
+			return 0
+		fi
+	done
+	for branch in main master; do
+		if git rev-parse --verify "$branch" >/dev/null 2>&1; then
+			printf '%s' "$branch"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# Subject caches (t2895 performance fix).
+#
+# When invoked in check-pr mode, _check_message is called per commit in the
+# PR range. Each call may trigger _branch_has_claim and _repo_has_claim, both
+# of which run `git log` against the same data set. Without caching, these
+# scans are repeated O(N_commits × M_tids) times — for a PR with 143 commits
+# brought in via a merge from main, this caused 21+ minute hangs in CI before
+# being cancelled (canonical: PR #20913).
+#
+# These caches are populated once per check-pr invocation and read by the
+# subject-list helpers below. Commit-msg hook mode does NOT populate these,
+# so its behavior is unchanged (single-commit scope, caching not worthwhile).
+# ---------------------------------------------------------------------------
+_TASK_ID_GUARD_BRANCH_SUBJECTS=""
+_TASK_ID_GUARD_BRANCH_SUBJECTS_HOT="0"
+_TASK_ID_GUARD_REPO_SUBJECTS=""
+_TASK_ID_GUARD_REPO_SUBJECTS_HOT="0"
+
+# Emit `git log --format='%s' BASE..HEAD` output, using the cache when hot.
+# Args:
+#   arg1 = base ref (e.g. merge-base SHA)
+_branch_subjects() {
+	local base="${1:-}"
+	if [[ "$_TASK_ID_GUARD_BRANCH_SUBJECTS_HOT" == "1" ]]; then
+		printf '%s' "$_TASK_ID_GUARD_BRANCH_SUBJECTS"
+		return 0
+	fi
+	[[ -n "$base" ]] && git log --format='%s' "${base}..HEAD" 2>/dev/null
+	return 0
+}
+
+# Emit `git log --all --format='%s'` output, using the cache when hot.
+_repo_subjects() {
+	if [[ "$_TASK_ID_GUARD_REPO_SUBJECTS_HOT" == "1" ]]; then
+		printf '%s' "$_TASK_ID_GUARD_REPO_SUBJECTS"
+		return 0
+	fi
+	git log --all --format='%s' 2>/dev/null
+	return 0
+}
+
+# Pre-populate both subject caches. Call once at entry of _run_check_pr so
+# subsequent _branch_has_claim / _repo_has_claim calls hit the cache instead
+# of forking git per (commit, t-ID) pair.
+# Args:
+#   arg1 = base ref for branch subjects (typically the merge-base SHA)
+_populate_check_pr_caches() {
+	local base="${1:-}"
+	if [[ -n "$base" ]]; then
+		_TASK_ID_GUARD_BRANCH_SUBJECTS=$(git log --format='%s' "${base}..HEAD" 2>/dev/null)
+		_TASK_ID_GUARD_BRANCH_SUBJECTS_HOT="1"
+	fi
+	_TASK_ID_GUARD_REPO_SUBJECTS=$(git log --all --format='%s' 2>/dev/null)
+	_TASK_ID_GUARD_REPO_SUBJECTS_HOT="1"
 	return 0
 }
 
@@ -172,8 +260,7 @@ _branch_has_claim() {
 		return 1
 	fi
 	# Look for an exact single-ID claim first.
-	if git log --format='%s' "${base}..HEAD" 2>/dev/null |
-		grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if _branch_subjects "$base" | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -187,7 +274,7 @@ _branch_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(git log --format='%s' "${base}..HEAD" 2>/dev/null)
+	done < <(_branch_subjects "$base")
 	return 1
 }
 
@@ -208,8 +295,7 @@ _repo_has_claim() {
 		return 1
 	fi
 	# Look for an exact single-ID claim first.
-	if git log --all --format='%s' 2>/dev/null |
-		grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if _repo_subjects | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -223,7 +309,7 @@ _repo_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(git log --all --format='%s' 2>/dev/null)
+	done < <(_repo_subjects)
 	return 1
 }
 
@@ -467,6 +553,40 @@ _run_hook() {
 }
 
 # ---------------------------------------------------------------------------
+# Check the PR title (and body, for cross-reference footers) for invented
+# t-IDs. Extracted from _run_check_pr (t2895) to keep that function under the
+# 100-line function-complexity gate.
+#
+# Strategy: concatenate PR title + PR body and run _check_message on the
+# combined string. The PR body typically contains the Resolves/Closes/Fixes
+# footer that supplies the cross-reference context, so title + body together
+# give _check_message everything it needs to distinguish a valid tNNN from
+# an invented one. Fail-open if gh is unavailable or the fetch fails.
+#
+# Returns 1 on violation, 0 otherwise (including fail-open paths).
+# ---------------------------------------------------------------------------
+_check_pr_title() {
+	local pr_number="$1"
+	if ! command -v gh >/dev/null 2>&1; then
+		_warn "gh not available — skipping PR title check (fail-open)"
+		return 0
+	fi
+	local pr_title pr_body pr_combined title_rc
+	pr_title=$(gh pr view "$pr_number" --json title --jq '.title' 2>/dev/null)
+	if [[ -z "$pr_title" ]]; then
+		_warn "Could not fetch PR #${pr_number} title via gh — skipping title check (fail-open)"
+		return 0
+	fi
+	pr_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null)
+	pr_combined="${pr_title}"$'\n\n'"${pr_body:-}"
+	_debug "Checking PR #${pr_number} title: $pr_title"
+	_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}"
+	title_rc=$?
+	[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title references invented t-ID: %s\n' "$pr_number" "$pr_title" >&2
+	return "$title_rc"
+}
+
+# ---------------------------------------------------------------------------
 # CI mode: check-pr <PR_NUMBER>
 # Scans every commit in the PR range (merge-base..HEAD).
 # ---------------------------------------------------------------------------
@@ -477,22 +597,51 @@ _run_check_pr() {
 		return 1
 	fi
 
-	local merge_base
-	merge_base=$(_find_merge_base)
-	_debug "Merge base for PR #${pr_number}: $merge_base"
-
-	if [[ -z "$merge_base" ]]; then
-		_warn "Could not determine merge base — fail-open"
-		return 0
+	# Resolve the upstream default-branch ref (origin/main, then origin/master,
+	# then local main/master). Use it as the left-hand side of `git log A..HEAD`
+	# to bound the scan to commits unique to the PR — excluding upstream
+	# commits brought in via a merge from main. This is the t2895 fix: a
+	# merge-from-main on a long-lived branch can pull in hundreds of upstream
+	# commits whose t-IDs were claimed via prior merged PRs; scanning all of
+	# them once was timing out CI at 21+ min (canonical: PR #20913).
+	#
+	# When neither origin/main nor a local main/master exists (rare — fork
+	# without remote, fresh clone with no upstream tracking), fall back to the
+	# merge-base of HEAD against the root commit. This preserves the prior
+	# behavior for that edge case.
+	local default_ref base
+	if default_ref=$(_find_default_branch_ref); then
+		base="$default_ref"
+		_debug "Using default-branch ref for PR scan range: $base"
+	else
+		base=$(_find_merge_base)
+		_debug "No default-branch ref found; falling back to merge-base: $base"
+		if [[ -z "$base" ]]; then
+			_warn "Could not determine PR scan base — fail-open"
+			return 0
+		fi
 	fi
 
-	# Get commits in the PR range
+	# Get commits unique to the branch, excluding merge commits via --no-merges.
+	# `git log A..B` already excludes commits reachable from A; combined with
+	# `--no-merges` we skip both upstream commits and the merge commit that
+	# brought them in. fixup!/squash! commits are handled by _check_message.
 	local commits
-	commits=$(git log "${merge_base}..HEAD" --format='%H' 2>/dev/null)
+	commits=$(git log --no-merges "${base}..HEAD" --format='%H' 2>/dev/null)
 	if [[ -z "$commits" ]]; then
 		_info "No commits in PR range — nothing to check"
 		return 0
 	fi
+
+	# Pre-populate subject caches once. _branch_has_claim and _repo_has_claim
+	# called from _check_message would otherwise fork `git log` per (commit,
+	# t-ID) pair, which is the actual cost driver behind the timeout. Compute
+	# the merge-base for the branch-subjects cache; this is independent of
+	# `base` above (which may be origin/main directly) — we want claims that
+	# live on the branch since fork-point, not since the current main tip.
+	local merge_base
+	merge_base=$(_find_merge_base)
+	_populate_check_pr_caches "$merge_base"
 
 	local total_violations=0
 	local commit_hash
@@ -505,9 +654,9 @@ _run_check_pr() {
 
 		_debug "Checking commit $commit_hash: $subject"
 
-		# Skip merge commits
-		if printf '%s' "$subject" | grep -qE '^(Merge|fixup!|squash!)'; then
-			_debug "Skipping merge/fixup/squash: $commit_hash"
+		# Skip fixup/squash commits (merges already excluded by --no-merges)
+		if printf '%s' "$subject" | grep -qE '^(fixup!|squash!)'; then
+			_debug "Skipping fixup/squash: $commit_hash"
 			continue
 		fi
 
@@ -520,35 +669,13 @@ _run_check_pr() {
 		fi
 	done <<<"$commits"
 
-	# Also check the PR title for invented t-IDs (GH#19987).
-	# Commits-only scanning misses the case where a worker opens a PR whose
-	# title advertises a tNNN that never appears in any commit subject or body
-	# and was never claimed via claim-task-id.sh.
-	#
-	# Strategy: concatenate PR title + PR body and run _check_message on the
-	# combined string. The PR body typically contains the Resolves/Closes/Fixes
-	# footer that supplies the cross-reference context, so title + body together
-	# give _check_message everything it needs to distinguish a valid tNNN from
-	# an invented one. Fail-open if gh is unavailable or the fetch fails.
-	if command -v gh >/dev/null 2>&1; then
-		local pr_title pr_body pr_combined title_rc
-		pr_title=$(gh pr view "$pr_number" --json title --jq '.title' 2>/dev/null)
-		if [[ -n "$pr_title" ]]; then
-			pr_body=$(gh pr view "$pr_number" --json body --jq '.body' 2>/dev/null)
-			pr_combined="${pr_title}"$'\n\n'"${pr_body:-}"
-			_debug "Checking PR #${pr_number} title: $pr_title"
-			_check_message "$pr_combined" "PR #${pr_number} title: ${pr_title}"
-			title_rc=$?
-			# Avoid a third nesting level (awk NEST depth gate); use [[ ]] &&
-			# one-liner instead of if/fi for the violation print.
-			[[ "$title_rc" -eq 1 ]] && printf '[task-id-guard][VIOLATION] PR #%s title references invented t-ID: %s\n' "$pr_number" "$pr_title" >&2
-			total_violations=$((total_violations + (title_rc == 1 ? 1 : 0)))
-		else
-			_warn "Could not fetch PR #${pr_number} title via gh — skipping title check (fail-open)"
-		fi
-	else
-		_warn "gh not available — skipping PR title check (fail-open)"
-	fi
+	# Also check the PR title for invented t-IDs (GH#19987). See
+	# _check_pr_title for the strategy. Extracted to keep _run_check_pr
+	# under the 100-line function-complexity gate (t2895).
+	local title_rc
+	_check_pr_title "$pr_number"
+	title_rc=$?
+	total_violations=$((total_violations + (title_rc == 1 ? 1 : 0)))
 
 	if [[ "$total_violations" -gt 0 ]]; then
 		printf '\n[task-id-guard][SUMMARY] %d violation(s) found in PR #%s\n' "$total_violations" "$pr_number" >&2

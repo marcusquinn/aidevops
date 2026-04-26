@@ -784,6 +784,25 @@ ${_WORKER_LOG_TAIL_CONTENT}
 	return 0
 }
 
+# t2897 helper: record a launch failure as a zero-attempt outcome for the
+# per-runner circuit breaker. Only `no_worker_process` counts as a zero-
+# attempt signal — other failure_reasons (cli_usage_output, stale_timeout,
+# etc.) are real-attempt failures and aren't recorded. Extracted from
+# recover_failed_launch_state to keep that function under the 100-line
+# function-complexity gate.
+_record_runner_health_zero_attempt() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_reason="$3"
+
+	[[ "$failure_reason" == "no_worker_process" ]] || return 0
+	local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
+	[[ -x "$_rh_helper" ]] || return 0
+	"$_rh_helper" record-outcome no_worker_process \
+		"${repo_slug}#${issue_number}" >/dev/null 2>&1 || true
+	return 0
+}
+
 recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -855,7 +874,8 @@ recover_failed_launch_state() {
 
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
 	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
-
+	# t2897: Record zero-attempt outcome for the per-runner circuit breaker.
+	_record_runner_health_zero_attempt "$issue_number" "$repo_slug" "$failure_reason"
 	# t1934: Unlock issue and linked PRs (locked at dispatch time)
 	unlock_issue_after_worker "$issue_number" "$repo_slug"
 

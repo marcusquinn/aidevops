@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.11.11
+# Version: 3.11.14
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -241,8 +241,20 @@ _launchd_install_if_changed() {
 		fi
 	fi
 
-	# Write new plist and load
-	printf '%s\n' "$new_content" >"$plist_path"
+	# Atomic write: build at sibling tmp path, then rename into place.
+	# If printf is killed mid-write, the destination is untouched.
+	local tmp_plist="${plist_path}.tmp.$$"
+	if ! printf '%s\n' "$new_content" >"$tmp_plist"; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
+	# Defensive: refuse to install an empty file (should be guaranteed by the
+	# caller's content check, but guard here too).
+	if [[ ! -s "$tmp_plist" ]]; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
+	mv -f "$tmp_plist" "$plist_path"
 	launchctl load "$plist_path" 2>/dev/null || return 1
 	return 0
 }

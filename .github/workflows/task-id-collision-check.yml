@@ -17,6 +17,11 @@ on:
       - 'CHANGELOG.md'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - 'TODO.md'
+      - 'todo/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
@@ -26,6 +31,12 @@ jobs:
   task-id-collision-check:
     name: Task-ID Collision Guard
     runs-on: ubuntu-latest
+    # Belt: cap the job at 5 minutes. Healthy runs complete in 16-52s on
+    # small PRs; the t2895 fix bounds the scan range to commits unique to
+    # the branch (excluding upstream commits brought in by merges from main).
+    # If a regression slips through, the cap surfaces it as a CI failure
+    # instead of a 21+ minute hang that has to be cancelled by hand.
+    timeout-minutes: 5
 
     steps:
       - name: Checkout code

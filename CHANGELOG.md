@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.14] - 2026-04-26
+
+### Changed
+
+- Maintenance: sync ref:GH#21055 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21054 to TODO.md [skip ci]
+
+## [3.11.13] - 2026-04-26
+
+### Changed
+
+- Maintenance: sync ref:GH#21041 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21049 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21047 to TODO.md [skip ci]
+
+## [3.11.12] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2899 complete (pr:#21045 testing:runtime-verified)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#21041 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21040 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t2893 complete (pr:#21032 completed:2026-04-26) [skip ci]
+- structured failure causes in gh signature-gate JS hook (#21032)
+- Maintenance: mark t2895 complete (pr:#21037 completed:2026-04-26) [skip ci]
+- bound task-id-guard check-pr scan range and cache subjects to prevent CI hang (#21037)
+- Maintenance: surface t2892 in TODO.md (credential-scrub regex bug already filed as GH#21026)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- guard branch_orphan classifier against default branch (t2899) (#21045)
+- correct path prefix and ambiguous section ref in .agents/AGENTS.md (#21009)
+
 ## [3.11.11] - 2026-04-26
 
 ### Changed

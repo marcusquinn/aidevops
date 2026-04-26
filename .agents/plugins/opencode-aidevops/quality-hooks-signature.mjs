@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 // ---------------------------------------------------------------------------
-// Signature footer gate (GH#12805, t1755, t2685)
+// Signature footer gate (GH#12805, t1755, t2685, t2893)
 // ---------------------------------------------------------------------------
 // Enforces that every `gh issue create|comment` and `gh pr create|comment`
 // command posts a body ending with the canonical aidevops signature footer.
@@ -26,18 +26,36 @@
 //      unparseable structure), THROW an error that blocks the tool call and
 //      educates the next attempt.
 //
-// The prior implementation only logged a WARN and accepted the literal
-// string "aidevops.sh" as sufficient evidence — a failure mode tripped in
-// t2685 when the agent composed a human-readable footer inline (which
-// happened to contain the word "aidevops.sh") but omitted the runtime,
-// version, model, token, and duration metadata that only the helper
-// produces. The marker is the reliable, forgery-resistant signal.
+// Pre-execution race (t2893)
+// --------------------------
+// This hook runs PRE-bash-execution. When the model writes a single bash
+// call that creates a `--body-file` and then immediately posts it (e.g.
+// `cp x /tmp/foo.md && gh issue comment --body-file /tmp/foo.md`), the
+// readFileSync in _repairBodyFile sees ENOENT — bash hasn't executed the
+// file-creation step yet. Prior to t2893 this surfaced as a generic
+// "likely heredoc/cmd-sub/quoting" error that didn't name the actual
+// cause; the model wasted 3-5 tool calls on the wrong hypothesis.
+//
+// As of t2893, repair helpers return structured failures
+// `{ status: "ok"|"fail", reason?: string, detail?: string, cmd?: string }`,
+// the throw site formats the specific cause, and the FILE_NOT_FOUND path
+// includes targeted same-bash-call mentorship. The PATH shim at
+// .agents/scripts/gh runs at exec-time (after bash creates the file) and
+// is the correct enforcement layer for the same-bash-call shape.
 
 import { existsSync, readFileSync, appendFileSync } from "fs";
 import { execSync } from "child_process";
 import { join } from "path";
 
+import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
+
 export const SIG_MARKER = "<!-- aidevops:sig -->";
+
+// Re-export FAIL_REASON so existing test imports
+// (`import { FAIL_REASON } from "../quality-hooks-signature.mjs"`) keep
+// working. Definition lives in quality-hooks-signature-failures.mjs to
+// keep this file under the qlty per-file complexity threshold (t2893).
+export { FAIL_REASON };
 
 /**
  * Strip heredoc body lines from a multi-line command string.
@@ -187,12 +205,13 @@ function _hasUnparseableBody(cmd) {
 
 /**
  * Generate a signature footer by invoking gh-signature-helper.sh synchronously.
- * Returns the footer string on success, or null on any failure (missing
- * helper, helper error, output missing marker).
+ * Returns `{ status: "ok", sig }` on success or
+ * `{ status: "fail", reason: FAIL_REASON.HELPER_FAILED, detail }` on any
+ * failure (missing helper, helper error, output missing marker) (t2893).
  * @param {string} helperPath
  * @param {string} bodyValue - body text passed to --body arg of helper
  * @param {Function} log
- * @returns {string | null}
+ * @returns {{ status: "ok", sig: string } | { status: "fail", reason: string, detail: string }}
  */
 function _generateSignature(helperPath, bodyValue, log) {
   try {
@@ -204,43 +223,62 @@ function _generateSignature(helperPath, bodyValue, log) {
     });
     if (!sig || !sig.includes(SIG_MARKER)) {
       log("WARN", "gh-signature-helper output missing marker; refusing to inject");
-      return null;
+      return {
+        status: "fail",
+        reason: FAIL_REASON.HELPER_FAILED,
+        detail: "helper output missing canonical marker",
+      };
     }
-    return sig;
+    return { status: "ok", sig };
   } catch (e) {
     log("WARN", `gh-signature-helper invocation failed: ${e.message}`);
-    return null;
+    return {
+      status: "fail",
+      reason: FAIL_REASON.HELPER_FAILED,
+      detail: e.message,
+    };
   }
 }
 
 /**
  * Repair a `--body-file PATH` form by appending the signature footer to the
- * referenced file if missing. Returns the unchanged cmd on success, or null
- * on failure (file unreadable, sig generation error).
+ * referenced file if missing.
+ *
+ * Returns `{ status: "ok", cmd }` on success or
+ * `{ status: "fail", reason, detail }` on failure. The reason distinguishes
+ * FILE_NOT_FOUND (likely the same-bash-call race — bash hasn't created the
+ * file yet at the moment this hook runs), FILE_UNREADABLE (other I/O error),
+ * or a forwarded HELPER_FAILED from _generateSignature. (t2893)
  * @param {string} cmd
  * @param {string} filePath
  * @param {string} helperPath
  * @param {Function} log
- * @returns {string | null}
+ * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail: string }}
  */
 function _repairBodyFile(cmd, filePath, helperPath, log) {
   try {
     const current = readFileSync(filePath, "utf-8");
-    if (current.includes(SIG_MARKER)) return cmd; // already signed
-    const sig = _generateSignature(helperPath, current, log);
-    if (sig === null) return null;
-    appendFileSync(filePath, sig);
+    if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
+    const sigResult = _generateSignature(helperPath, current, log);
+    if (sigResult.status === "fail") return sigResult;
+    appendFileSync(filePath, sigResult.sig);
     log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
-    return cmd;
+    return { status: "ok", cmd };
   } catch (e) {
-    log("WARN", `Could not repair --body-file ${filePath}: ${e.message}`);
-    return null;
+    const reason =
+      e.code === "ENOENT" ? FAIL_REASON.FILE_NOT_FOUND : FAIL_REASON.FILE_UNREADABLE;
+    log("WARN", `Could not repair --body-file ${filePath}: ${e.message} (${reason})`);
+    return { status: "fail", reason, detail: `${filePath}: ${e.message}` };
   }
 }
 
 /**
  * Match the `--body "value"` / `--body 'value'` / `--body=QUOTED` forms.
  * Returns { match, bodyValue, quote } on the first match, or null.
+ *
+ * Returning null is "no body arg matched" — distinct from a structured
+ * failure object; the caller (`tryRepairSignature`) maps null to
+ * `BODY_ARG_NO_MATCH`. (t2893)
  * @param {string} cmd
  * @returns {{ match: RegExpMatchArray, bodyValue: string, quote: string } | null}
  */
@@ -262,49 +300,64 @@ function _matchBodyArg(cmd) {
 
 /**
  * Repair a `--body "VALUE"` form by rewriting the command with sig-augmented
- * body. Returns the repaired command string, or null on failure.
+ * body.
+ *
+ * Returns `{ status: "ok", cmd }` on success or
+ * `{ status: "fail", reason, detail }` when the helper failed or the
+ * generated signature contains the same delimiter quote as the body
+ * (`BODY_ARG_QUOTING`) which would break shell escaping. (t2893)
  * @param {string} cmd
  * @param {{ match: RegExpMatchArray, bodyValue: string, quote: string }} parsed
  * @param {string} helperPath
  * @param {Function} log
- * @returns {string | null}
+ * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail: string }}
  */
 function _repairBodyArg(cmd, parsed, helperPath, log) {
   const { match, bodyValue, quote } = parsed;
-  const sig = _generateSignature(helperPath, bodyValue, log);
-  if (sig === null) return null;
+  const sigResult = _generateSignature(helperPath, bodyValue, log);
+  if (sigResult.status === "fail") return sigResult;
+  const { sig } = sigResult;
   // If sig contains our delimiter quote, rewrite would break escaping —
   // let the block path force explicit helper invocation.
   if (sig.includes(quote)) {
     log("WARN", `Signature contains delimiter quote ${quote}; cannot safely rewrite --body`);
-    return null;
+    return {
+      status: "fail",
+      reason: FAIL_REASON.BODY_ARG_QUOTING,
+      detail: `delimiter ${quote}`,
+    };
   }
   const fullMatch = match[0];
   const newArg = fullMatch.slice(0, -1) + sig + quote;
   log("INFO", `Auto-appended signature footer to --body arg (t2685)`);
-  return cmd.replace(fullMatch, newArg);
+  return { status: "ok", cmd: cmd.replace(fullMatch, newArg) };
 }
 
 /**
  * Attempt to append the canonical signature footer to the command's body.
  * Handles `--body "value"`, `--body=value`, and `--body-file path` forms.
- * Returns the modified command string on success, or null if the command
- * structure is too dynamic to rewrite safely (heredoc body, command
- * substitution inside body, etc.).
+ *
+ * Returns a structured result so the throw site can name the specific
+ * failure cause:
+ *   - `{ status: "ok", cmd }` — repair succeeded; cmd may equal input if
+ *     the body was already signed.
+ *   - `{ status: "fail", reason, detail }` — repair could not be applied;
+ *     reason is one of the FAIL_REASON values. (t2893)
+ *
  * @param {string} cmd
  * @param {string} scriptsDir
  * @param {Function} log
- * @returns {string | null}
+ * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
 export function tryRepairSignature(cmd, scriptsDir, log) {
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
   if (!existsSync(helperPath)) {
     log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-    return null;
+    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
   }
   if (_hasUnparseableBody(cmd)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
-    return null;
+    return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
   }
 
   // --body-file PATH form: filesystem-side repair.
@@ -320,13 +373,13 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
   const parsed = _matchBodyArg(cmd);
   if (!parsed) {
     log("WARN", "Could not parse --body argument; refusing auto-repair");
-    return null;
+    return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
   }
   return _repairBodyArg(cmd, parsed, helperPath, log);
 }
 
 /**
- * Check signature footer gate on gh write commands (GH#12805, t1755, t2685).
+ * Check signature footer gate on gh write commands (GH#12805, t1755, t2685, t2893).
  * @param {string} cmd - Bash command string
  * @param {Function} log - Quality logger function
  * @param {string} scriptsDir - Path to .agents/scripts (for helper invocation)
@@ -341,37 +394,26 @@ export function checkSignatureFooterGate(cmd, log, scriptsDir, output) {
   // without thinking about the footer. Mutate the command in place so the
   // user/session gets correct output without an error-retry cycle.
   if (scriptsDir && output && output.args) {
-    const repaired = tryRepairSignature(cmd, scriptsDir, log);
-    if (repaired !== null) {
-      if (repaired !== cmd) {
-        output.args.command = repaired;
+    const result = tryRepairSignature(cmd, scriptsDir, log);
+    if (result.status === "ok") {
+      if (result.cmd !== cmd) {
+        output.args.command = result.cmd;
       }
       return;
     }
-  }
 
-  // Repair failed or not attempted — block the tool call with a mentoring
-  // error message. The throw propagates up through opencode's tool execution
-  // path and surfaces to the session/model as a tool_error, which means the
-  // next attempt can correct itself.
-  const snippet = cmd.length > 300 ? cmd.substring(0, 300) + "…" : cmd;
-  log("ERROR", `Blocked gh write missing signature footer (t2685): ${snippet}`);
-  throw new Error(
-    `aidevops: gh write command missing signature footer (t2685).\n\n` +
-      `Fix one of:\n` +
-      `  1. Append to --body directly:\n` +
-      `       gh issue comment N --body "...$(gh-signature-helper.sh footer)"\n` +
-      `  2. Append to --body-file:\n` +
-      `       gh-signature-helper.sh footer >> "$BODY_FILE"\n` +
-      `       gh issue comment N --body-file "$BODY_FILE"\n` +
-      `  3. Call the shell wrapper by name (from a script sourcing\n` +
-      `     shared-gh-wrappers.sh): gh_issue_comment / gh_create_issue /\n` +
-      `     gh_create_pr / gh_pr_comment.\n\n` +
-      `Hook auto-repair could not parse the command — likely a heredoc, ` +
-      `command substitution inside the body, or a --body value whose quoting ` +
-      `this hook declined to rewrite. See .agents/prompts/build.txt section ` +
-      `"8. Signature footer hallucination" for the full rule.\n\n` +
-      `Emergency bypass (last resort, breaks audit trail): set ` +
-      `AIDEVOPS_GH_SHIM_DISABLE=1 — but the plugin hook still blocks.`,
-  );
+    // Repair failed — block the tool call with a mentoring error message
+    // that names the SPECIFIC failure cause (t2893). The throw propagates
+    // up through opencode's tool execution path and surfaces to the
+    // session/model as a tool_error, which means the next attempt can
+    // correct itself with knowledge of the actual cause.
+    const snippet = cmd.length > 300 ? cmd.substring(0, 300) + "…" : cmd;
+    log(
+      "ERROR",
+      `Blocked gh write missing signature footer (t2685): ${result.reason}` +
+        (result.detail ? ` (${result.detail})` : "") +
+        ` | cmd: ${snippet}`,
+    );
+    throw new Error(formatGateThrowMessage(result, snippet));
+  }
 }
