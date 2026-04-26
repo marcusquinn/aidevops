@@ -3164,7 +3164,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2868 P2c — inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932 blocked-by:t2846,t2848
 
-- [ ] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+- [x] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931 pr:#21085 completed:2026-04-26
 
 - [ ] t2866 P2a — _inbox/ directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
 
@@ -3261,3 +3261,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2918 Invert tooling/product priority boost so tooling lifts product #bug #framework #pulse ref:GH#21079 pr:#21080 completed:2026-04-26
 
 - [x] t2919 Move pulse plist install earlier in setup flow to avoid timeout-skip #bug #framework #setup ref:GH#21081 pr:#21082 completed:2026-04-26
+
+- [x] t2920 remove dispatch-path no-auto-dispatch default — keep advisory, drop recommendation #bug ref:GH#21086 pr:#21089 completed:2026-04-26

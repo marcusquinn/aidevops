@@ -847,32 +847,27 @@ _append_dispatch_path_notice() {
 
 	[[ -z "$_matched" ]] && return 0
 
-	log_warn "$task_id: dispatch-path file detected in brief ('${_matched}') — recommending #parent + no-auto-dispatch"
+	log_info "$task_id: dispatch-path file detected in brief ('${_matched}') — opus-4-7 will auto-elevate at dispatch (t2920)"
 
 	cat >>"$brief_file" <<'DISPATCH_NOTICE'
 
-## Dispatch-Path Classification
+## Dispatch-Path Classification (advisory)
 
-> **Dispatch-path files detected in this brief (t2821).**
+> **Dispatch-path files detected in this brief.**
 >
-> This task modifies files on the worker dispatch/spawn path. Workers dispatched
-> to fix this code run through the code being fixed — a tautology loop that burns
-> cascade attempts before one succeeds (canonical: 3 attempts, ~90K tokens on #20765).
+> This task modifies files on the worker dispatch/spawn path. The pre-dispatch
+> detector (t2819) will automatically elevate the worker to `model:opus-4-7`
+> before dispatch — workers can fix dispatch code reliably with the right tier.
 >
-> **Recommended TODO entry tags:**
+> **No special TODO tags required.** Use the normal `#auto-dispatch` flow. Workers
+> run in their own worktrees, so a buggy in-flight fix doesn't break the live pulse;
+> CI gates and the pulse circuit breaker (t2690) catch regressions before merge.
 >
-> ```
-> - [ ] tNNNN description #parent #no-auto-dispatch #interactive
-> ```
+> **Opt out only when needed:** if you specifically want to implement this
+> interactively (e.g. to observe the running system mid-fix), add `#no-auto-dispatch
+> #interactive` to the TODO entry — but this is the exception, not the default.
 >
-> **Why:** Maintainers implementing these interactively bypass the broken dispatch
-> path entirely, have unlimited context, and can observe the running system.
->
-> **Override:** Add `#dispatch-path-ok` to the TODO entry to opt into auto-dispatch
-> anyway. The self-hosting pre-dispatch detector (t2819) remains active as a safety
-> net — it applies `model:opus-4-7` before dispatch to reduce wasted cascade attempts.
->
-> Reference: `reference/auto-dispatch.md` "Dispatch-Path Default (t2821)"
+> Reference: `reference/auto-dispatch.md` "Dispatch-Path Default (t2821 / t2920)"
 
 DISPATCH_NOTICE
 
