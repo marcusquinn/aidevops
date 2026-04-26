@@ -37,6 +37,7 @@
 #   - check_external_contributor_pr
 #   - _external_pr_has_linked_issue
 #   - _external_pr_linked_issue_crypto_approved
+#   - _pulse_merge_admin_safety_check        (t2934)
 #   - check_permission_failure_pr
 #   - approve_collaborator_pr
 #   - check_pr_modifies_workflows
@@ -249,6 +250,89 @@ _external_pr_linked_issue_crypto_approved() {
 	result=$(bash "$approval_helper" verify "$linked" "$repo_slug" 2>/dev/null) || result=""
 	[[ "$result" == "VERIFIED" ]]
 	return $?
+}
+
+#######################################
+# Defense-in-depth: refuse `gh pr merge --admin` for external-contributor
+# (or unlabeled fork) PRs without crypto approval (t2934).
+#
+# Background. Workers run with admin-equivalent permissions. The `--admin`
+# flag at the merge call site bypasses GitHub branch protection (required
+# status checks, required reviewers). The 2026-04-07 incident merged three
+# external-contributor PRs (#17671, #17685, #3846) because the
+# `maintainer-gate.yml` workflow's Check 0 only inspected the linked-issue
+# label, not the PR's own label. PR #17868 hardened the workflow, and the
+# external-contributor gate inside `_check_pr_merge_gates` (lines ~1101-1117)
+# is the primary client-side check today.
+#
+# This function is a deliberately-redundant LAST gate, evaluated immediately
+# before the `gh pr merge … --admin` invocation in `_process_single_ready_pr`.
+# It restates the external-contributor gate at the call site so the safety
+# property becomes local to the bypass operation — independent of:
+#
+#   * upstream gate ordering (a future refactor that reshuffles
+#     `_check_pr_merge_gates` cannot remove the protection),
+#   * label-application timing races (pr-triage-gate.yml has not yet
+#     applied `external-contributor` when the merge pass fires),
+#   * any future code path that reaches the merge invocation without
+#     traversing the existing gate chain.
+#
+# Two complementary triggers treat a PR as "external" for this gate:
+#
+#   1. `external-contributor` label present, OR
+#   2. `isCrossRepository=true` (the PR head is on a fork) — even if the
+#      label is absent. An unlabeled fork PR is a HIGHER-severity signal
+#      than a labeled one, because the labeling system itself failed.
+#
+# When external: require linked issue + cryptographic approval (the same
+# evidence the upstream gate requires). When not external: pass — the
+# existing collaborator gates apply.
+#
+# Args:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#
+# Returns:
+#   0 - safe to invoke `--admin` merge (not external, OR external with
+#       linked issue + crypto approval)
+#   1 - REFUSE: external/fork PR without crypto approval
+#######################################
+_pulse_merge_admin_safety_check() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	local pr_meta_json labels_str is_fork
+	pr_meta_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels,isCrossRepository 2>/dev/null) || pr_meta_json=""
+	labels_str=$(printf '%s' "$pr_meta_json" \
+		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels_str=""
+	is_fork=$(printf '%s' "$pr_meta_json" \
+		| jq -r '.isCrossRepository // false' 2>/dev/null) || is_fork="false"
+
+	local treat_as_external=0
+	if [[ ",${labels_str}," == *",external-contributor,"* ]]; then
+		treat_as_external=1
+	elif [[ "$is_fork" == "true" ]]; then
+		treat_as_external=1
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: PR #${pr_number} in ${repo_slug} — fork PR missing external-contributor label (label-system race or failure), treating as external (t2934)" >>"$LOGFILE"
+	fi
+
+	if [[ "$treat_as_external" -eq 0 ]]; then
+		return 0
+	fi
+
+	# External / fork PR — require linked issue + crypto approval.
+	if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR has no linked issue (t2934)" >>"$LOGFILE"
+		return 1
+	fi
+	if ! _external_pr_linked_issue_crypto_approved "$pr_number" "$repo_slug"; then
+		local linked
+		linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked="unknown"
+		echo "[pulse-merge] DEFENSE-IN-DEPTH: REFUSING --admin merge of PR #${pr_number} in ${repo_slug} — external/fork PR linked issue #${linked} lacks crypto approval (t2934)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -1488,6 +1572,16 @@ _process_single_ready_pr() {
 	# base branch disappears; retargeting to the default branch prevents this.
 	# (t2412 / GH#20005)
 	_retarget_stacked_children "$pr_number" "$repo_slug"
+
+	# Defense-in-depth (t2934). Refuse `--admin` merge for external/fork PRs
+	# without crypto approval, evaluated at the bypass call site so that any
+	# future regression in upstream gate ordering, label-application timing,
+	# or new code paths cannot re-open the threat addressed by PR #17868
+	# (the 2026-04-07 incident: #17671, #17685, #3846 merged via Check 0
+	# bypass). Returns 1 (skipped) — same semantics as a gate failure above.
+	if ! _pulse_merge_admin_safety_check "$pr_number" "$repo_slug"; then
+		return 1
+	fi
 
 	# Merge
 	local merge_output _merge_exit
