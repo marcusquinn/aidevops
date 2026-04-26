@@ -3291,7 +3291,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2929 perf(pulse): preflight_cleanup_and_ledger 60-133s — stagger and parallelize git fetches #auto-dispatch #enhancement #framework #performance #pulse ref:GH#21105
 
-- [ ] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104
+- [x] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104 pr:#21143 completed:2026-04-26
 
 - [x] t2927 fix(pulse): FOOTPRINT_OVERLAP cache leaks closed-issue defers — invalidate when issue closes #auto-dispatch #bug #framework #pulse ref:GH#21103 pr:#21117 completed:2026-04-26
 
