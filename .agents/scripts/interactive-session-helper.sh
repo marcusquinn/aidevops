@@ -840,12 +840,18 @@ _isc_cmd_release() {
 		fi
 	fi
 
-	if set_issue_status "$issue" "$slug" "available" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1; then
+	# Capture stderr so failures surface with the actual gh error message
+	# rather than being silently swallowed. Previously >/dev/null 2>&1 hid
+	# the root cause of stuck-claim incidents (GH#21057).
+	local _set_status_err
+	_set_status_err=$(set_issue_status "$issue" "$slug" "available" \
+		${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
+	local _set_status_rc=$?
+	if [[ $_set_status_rc -eq 0 ]]; then
 		_isc_info "release: #$issue → status:available"
 		return 0
 	fi
-
-	_isc_warn "release: gh failed on #$issue — label may still be set"
+	_isc_warn "release: gh failed on #$issue (rc=$_set_status_rc): $_set_status_err"
 	return 0
 }
 
@@ -1123,8 +1129,13 @@ _isc_release_claim_by_stamp_path() {
 	fi
 
 	# Delegate to canonical release flow: stamp deletion + label transition.
+	# --unassign is mandatory here: auto-release is the dead-stamp recovery
+	# path, the runner that owned the claim is gone, so the self-assignment
+	# is meaningless and must clear. Without it, the owner self-assignment
+	# persists and keeps dispatch blocked per the t1996 invariant even after
+	# the label transitions (GH#21057).
 	# _isc_cmd_release is idempotent and fail-open on offline gh.
-	_isc_cmd_release "$r_issue" "$r_slug"
+	_isc_cmd_release --unassign "$r_issue" "$r_slug"
 	return 0
 }
 
