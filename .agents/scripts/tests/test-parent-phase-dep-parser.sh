@@ -127,7 +127,12 @@ assert_empty() {
 
 count_lines() {
 	local text="$1"
-	printf '%s' "$text" | grep -c '.' 2>/dev/null || echo "0"
+	# Use safe grep-c pattern (t2763): grep -c exits 1 on zero-match and still
+	# prints "0"; "|| echo 0" would stack "0\n0". Use || true and validate instead.
+	local _n
+	_n=$(printf '%s' "$text" | grep -c '.' 2>/dev/null || true)
+	[[ "$_n" =~ ^[0-9]+$ ]] || _n=0
+	printf '%s\n' "$_n"
 	return 0
 }
 
