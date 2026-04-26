@@ -3216,3 +3216,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2893 harness gh signature-gate JS hook errors with misleading message when --body-file is created in same bash call #bug #enhancement #framework ref:GH#21030 pr:#21032 completed:2026-04-26
 
 - [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in awardsapp/develop #bug #framework #priority:high #security ref:GH#21026
+
+- [ ] t2899 fix branch_orphan false-positive: workers complete on main, work discarded (90% rate, 31/24h) #bug #framework #priority:high #worker-lifecycle #parent #interactive ref:GH#21040 logged:2026-04-26
+
+- [ ] t2900 eliminate SQLite database lock errors during concurrent worker startup (100% of workers) #bug #framework #priority:high #worker-lifecycle #interactive ref:GH#21041 logged:2026-04-26 blocked-by:t2899
+
+- [ ] t2901 reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills (25-30min cycle vs 3min interval) #bug #framework #priority:high #pulse #parent #interactive ref:GH#21042 logged:2026-04-26
+
+- [ ] t2902 stop recurring GraphQL budget exhaustion despite REST fallback (11 circuit fires/24h) #bug #framework #priority:high #pulse #interactive ref:GH#21043 logged:2026-04-26
