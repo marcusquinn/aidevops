@@ -866,6 +866,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 
 ## Done
 
+- [x] t2899 Fix branch_orphan false-positive: workers complete on main, work discarded #bug #parent ref:GH#21040 pr:#21045 testing:runtime-verified completed:2026-04-26
 - [x] t2693 ES `export { X } from "./Y"` is a re-export only and does NOT create a local binding for X. quality-hooks.mjs (introduced by t2685/PR #20307) called checkSignatureFooterGate locally at handleToolAfter while only re-exporting it, throwing `ReferenceError: checkSignatureFooterGate is not defined` on every Bash tool call in OpenCode and Claude Code sessions. Same latent bug in google-proxy.mjs for discoverGoogleModels and persistGoogleProvider. #bug #hotfix ref:GH#20319 pr:#20320 completed:2026-04-21
 - [x] t2207 refactor(hooks): split pre-commit — fast local checks stay, slow network checks move to pre-push — follow-up to t2191. The installed pre-commit hook runs secretlint + SonarCloud API + optional CodeRabbit CLI and exceeded the 2-min interactive commit timeout on aidevops itself (t2191 PR had to commit with --no-verify). Split `pre-commit-hook.sh main()` into `main_pre_commit()` (TODO validation, repo-root allowlist, shellcheck, shell lint) and `main_pre_push()` (secretlint, SonarCloud, CodeRabbit). Single script with HOOK_MODE env-var dispatcher — easier to keep validators in sync than two scripts. Extend `install-hooks-helper.sh` with `install_pre_push_quality_hook()` modelled on the existing `install_gh_wrapper_guard_hook` chain pattern. Target: `git commit --allow-empty` on aidevops completes <5s with both hooks installed. NEW regression test: `tests/test-pre-commit-split.sh`. EDIT: `.agents/scripts/pre-commit-hook.sh:541`, `.agents/scripts/install-hooks-helper.sh`. #refactor #hooks #auto-dispatch ~2h tier:standard ref:GH#19693 logged:2026-04-18 -> [todo/tasks/t2207-brief.md] pr:#19786 testing:self-assessed completed:2026-04-19
 - [x] t2239 Add opus-4.7 as top auto-escalation rung + model:opus-4-7 opt-in label @marcusquinn #framework #enhancement #interactive ~2h tier:standard ref:GH#19755 logged:2026-04-18 -> [todo/tasks/t2239-brief.md] pr:#19759 completed:2026-04-18
@@ -3217,7 +3218,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in awardsapp/develop #bug #framework #priority:high #security ref:GH#21026
 
-- [ ] t2899 Fix branch_orphan false-positive: workers complete on main, work discarded #bug #parent ref:GH#21040
 
 - [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
 
