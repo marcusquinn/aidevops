@@ -1134,7 +1134,6 @@ _setup_run_interactive() {
 	# Required steps (always run)
 	verify_location
 	check_requirements
-	setup_setsid_advisory
 
 	# Quality tools check (optional but recommended)
 	confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
