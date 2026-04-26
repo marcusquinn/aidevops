@@ -1723,6 +1723,7 @@ Issue Sync Helper — stateless TODO.md <-> GitHub Issues sync via gh CLI.
 Usage: issue-sync-helper.sh [command] [options]
 Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
+          backfill-cross-phase-blocked-by --issue N
           status | help
 Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
@@ -1749,6 +1750,15 @@ Sub-issue backfill (t2114):
                          line in body, (3) `Blocked by: tNNN` where the blocker
                          carries the `parent-task` label. Idempotent; supports
                          --dry-run.
+
+Cross-phase blocked-by backfill (t2877):
+  backfill-cross-phase-blocked-by --issue N
+                       — parse prose dependency declarations (e.g.
+                         "P1 children blocked by P0a + P0b") from the body
+                         of the given parent-task issue and emit the
+                         corresponding addBlockedBy GitHub relationships.
+                         Per-issue entry point called by the pulse t2877
+                         reconcile stage. Idempotent; supports --dry-run.
 
 Note: Bulk push (no task ID) is CI-only by default to prevent duplicate issues.
       Use 'push <task_id>' for single tasks, or --force-push to override.
@@ -1801,6 +1811,13 @@ main() {
 			cmd_backfill_sub_issues "${positional_args[@]:1}"
 		else
 			cmd_backfill_sub_issues
+		fi
+		;;
+	backfill-cross-phase-blocked-by)
+		if [[ ${#positional_args[@]} -gt 1 ]]; then
+			cmd_backfill_cross_phase_blocked_by "${positional_args[@]:1}"
+		else
+			cmd_backfill_cross_phase_blocked_by
 		fi
 		;;
 	status) cmd_status ;; help) cmd_help ;;
