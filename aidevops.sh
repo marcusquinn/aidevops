@@ -1461,6 +1461,7 @@ _help_commands() {
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
+	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
@@ -1539,6 +1540,13 @@ _help_detailed_sections() {
 	echo "  aidevops config set <k> <v>  # Set a toggle (true/false)"
 	echo "  aidevops config reset [key]  # Reset toggle(s) to defaults"
 	echo "  aidevops config path         # Show config file path"
+	echo ""
+	echo "Knowledge Plane:"
+	echo "  aidevops knowledge init repo           # Provision _knowledge/ in current repo"
+	echo "  aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspace/knowledge/"
+	echo "  aidevops knowledge init off            # Disable knowledge plane"
+	echo "  aidevops knowledge status              # Show provisioning state"
+	echo "  aidevops knowledge provision [path]    # Re-provision (idempotent)"
 	echo ""
 	echo "LLM Stats:"
 	echo "  aidevops stats               # Show usage summary (last 30 days)"
@@ -1841,10 +1849,16 @@ main() {
 		[[ $# -eq 0 ]] && set -- status
 		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
 		;;
+	case | cases)
+		# Bare `aidevops case` defaults to list (most common use).
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
+	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;

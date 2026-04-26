@@ -994,6 +994,39 @@ _setup_install_pulse_plist_early() {
 	return 0
 }
 
+# Provision knowledge planes for all repos in repos.json where knowledge != "off".
+# Idempotent: already-provisioned directories are not modified.
+# Called from the non-interactive setup path (update) and after interactive init.
+setup_knowledge_planes() {
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	local helper
+	helper="${BASH_SOURCE[0]%/*}/.agents/scripts/knowledge-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		helper="$HOME/.aidevops/agents/scripts/knowledge-helper.sh"
+	fi
+	if [[ ! -f "$helper" ]]; then
+		print_warning "knowledge-helper.sh not found — skipping knowledge plane provisioning"
+		return 0
+	fi
+	if [[ ! -f "$repos_file" ]]; then
+		return 0
+	fi
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not installed — skipping knowledge plane provisioning"
+		return 0
+	fi
+	local repo_path mode
+	while IFS=$'\t' read -r repo_path mode; do
+		[[ -z "$repo_path" || "$mode" == "off" ]] && continue
+		if [[ ! -d "$repo_path" ]]; then
+			print_warning "knowledge-plane: repo path not found: $repo_path"
+			continue
+		fi
+		bash "$helper" provision "$repo_path" || print_warning "knowledge-plane: provision failed for $repo_path"
+	done < <(jq -r '.initialized_repos[] | select(.knowledge != null and .knowledge != "off") | [.path, .knowledge] | @tsv' "$repos_file" 2>/dev/null || true)
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
@@ -1088,6 +1121,8 @@ _setup_run_non_interactive() {
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
 	# indexers tracked separately.
 	setup_worktree_exclusions
+	# Provision knowledge planes for repos where knowledge != "off" (idempotent).
+	setup_knowledge_planes
 	return 0
 }
 
