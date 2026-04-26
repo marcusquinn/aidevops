@@ -183,16 +183,18 @@ _we_enumerate_worktrees() {
 		# repos but the field signals user intent to skip framework ops).
 		# git worktree list works fine — we just enumerate.
 
-		# Format: "<path>  <sha>  [branch]" or similar.
+		# Use --porcelain so paths with spaces are handled correctly.
+		# Each worktree block starts with "worktree <path>"; the last
+		# variable in read captures the remainder of the line verbatim.
 		# We emit only paths that are NOT the canonical repo path.
-		local _line="" _wt=""
-		while IFS= read -r _line; do
-			_wt=$(printf '%s' "$_line" | awk '{print $1}') || _wt=""
+		local _key="" _wt=""
+		while read -r _key _wt; do
+			[[ "$_key" == "worktree" ]] || continue
 			[[ -n "$_wt" ]] || continue
 			[[ "$_wt" == "$repo_path" ]] && continue
 			[[ -d "$_wt" ]] || continue
 			printf '%s\n' "$_wt"
-		done < <(git -C "$repo_path" worktree list 2>/dev/null)
+		done < <(git -C "$repo_path" worktree list --porcelain 2>/dev/null)
 	done < <(jq -r '.initialized_repos[]?.path // empty' "$REPOS_JSON" 2>/dev/null)
 	return 0
 }
