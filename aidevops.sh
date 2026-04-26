@@ -651,6 +651,27 @@ cmd_update() {
 		_update_check_daemon_health
 	fi
 
+	# t2914: ensure pulse is running after every update. The existing
+	# restart paths (setup.sh:1329, agent-deploy.sh:601) call
+	# pulse-lifecycle-helper.sh restart-if-running which is a silent no-op
+	# when pulse is dead — so a dead pulse stays dead through any number
+	# of subsequent updates. The 'start' subcommand is idempotent
+	# (pulse-lifecycle-helper.sh:127-131): no-op when running, starts when
+	# dead. This belt-and-braces call after the daemon health check
+	# guarantees the pulse is alive when 'aidevops update' returns,
+	# regardless of whether scripts were redeployed.
+	#
+	# Honour AIDEVOPS_SKIP_PULSE_RESTART=1 at the call site (the helper's
+	# 'start' subcommand does not check it directly — only 'restart' and
+	# 'restart-if-running' do). Non-fatal: a pulse start failure should
+	# not fail the update.
+	if [[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" != "1" ]]; then
+		local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
+		if [[ -x "$_pulse_helper" ]]; then
+			"$_pulse_helper" start >/dev/null 2>&1 || print_warning "Pulse start failed (non-fatal)"
+		fi
+	fi
+
 	return 0
 }
 
