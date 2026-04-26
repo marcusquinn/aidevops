@@ -305,3 +305,102 @@ aidevops email filter test   <rule-name> [knowledge-root] # Dry-run against last
 ```
 
 Helper: `.agents/scripts/email-filter-helper.sh`.
+
+## LLM Routing
+
+All LLM calls in the framework are centralised behind `llm-routing-helper.sh`. Direct invocations of `claude`, `ollama`, or any other LLM CLI are prohibited in new helpers — route through this layer instead.
+
+### Sensitivity Tiers
+
+Every LLM call is assigned a sensitivity tier that controls which providers are allowed:
+
+| Tier | Allowed providers | Default | Notes |
+|------|-------------------|---------|-------|
+| `public` | any | anthropic | No restrictions |
+| `internal` | cloud or local | anthropic | Normal framework data |
+| `pii` | local preferred; cloud with redaction | ollama | Redaction applied before cloud calls |
+| `sensitive` | local only | ollama | No cloud fallback |
+| `privileged` | local only | ollama | Hard-fail if Ollama is not running |
+
+**Hard-fail rule:** when `tier=privileged` and no local provider is available, `llm-routing-helper.sh` exits 1 with "no compliant provider for tier=privileged". There is no silent fallback to cloud.
+
+### Routing Decision Tree
+
+```
+route --tier <t> --prompt-file <p>
+  │
+  ├─ tier = public/internal?
+  │     └─ use default_provider from config (anthropic)
+  │
+  ├─ tier = pii?
+  │     ├─ Ollama running? → use Ollama (no redaction needed)
+  │     └─ cloud provider? → call redaction-helper.sh first, then cloud
+  │
+  ├─ tier = sensitive?
+  │     ├─ Ollama running? → use Ollama
+  │     └─ Ollama down? → exit 1 (no cloud fallback)
+  │
+  └─ tier = privileged?
+        ├─ Ollama running? → use Ollama
+        └─ Ollama down? → EXIT 1 (hard-fail, policy enforced)
+```
+
+### Audit Log
+
+Every LLM call appends a JSONL record to `_knowledge/index/llm-audit.log`:
+
+```json
+{
+  "timestamp": "2026-04-27T12:00:00Z",
+  "tier": "public",
+  "task": "summarise",
+  "provider": "anthropic",
+  "redaction_applied": false,
+  "prompt_sha256": "<sha256 of prompt — not raw content>",
+  "response_sha256": "<sha256 of response — not raw content>",
+  "tokens": 512,
+  "cost": "0"
+}
+```
+
+Raw prompts and responses are **never** stored in the audit log. Only SHA-256 hashes are recorded, providing provenance ("this call happened") without leaking content.
+
+### Cost Tracking
+
+Per-day per-provider costs are accumulated at `~/.aidevops/.agent-workspace/llm-costs.json`:
+
+```bash
+llm-routing-helper.sh costs --since 2026-04-01
+llm-routing-helper.sh costs --provider ollama
+```
+
+### Configuration
+
+Policy lives in `_config/llm-routing.json` (copy from `.agents/templates/llm-routing-config.json` on init). Key fields:
+
+- `tiers.<name>.hard_fail_if_unavailable` — if true, exit 1 instead of falling back
+- `tiers.<name>.redaction_required_for_cloud` — if true, call `redaction-helper.sh` before any cloud call
+- `providers.<name>.kind` — `"local"` or `"cloud"`
+
+### Redaction
+
+`redaction-helper.sh redact <input> <output>` is called automatically for `pii` tier cloud calls. The MVP implementation is a pass-through stub — it copies the file unchanged and logs a warning. Real PII entity recognition is tracked as a post-MVP TODO in `redaction-helper.sh`.
+
+### Usage
+
+```bash
+# Public tier — uses anthropic by default
+llm-routing-helper.sh route --tier public --task summarise \
+    --prompt-file /tmp/prompt.txt
+
+# Privileged tier — uses Ollama; fails if not running
+llm-routing-helper.sh route --tier privileged --task draft \
+    --prompt-file /tmp/prompt.txt --max-tokens 4096
+
+# Dry-run (no real LLM call — useful in tests)
+LLM_ROUTING_DRY_RUN=1 llm-routing-helper.sh route \
+    --tier pii --task classify --prompt-file /tmp/data.txt
+
+# Check provider availability
+llm-routing-helper.sh status
+```
