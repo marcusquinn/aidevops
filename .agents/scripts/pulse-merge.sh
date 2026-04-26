@@ -57,6 +57,7 @@
 #   - _is_owner_or_member_author
 #   - _check_interactive_pr_gates            (t2411)
 #   - _attempt_worker_briefed_auto_merge     (t2449)
+#   - _check_required_checks_passing         (t2922)
 #   - _extract_linked_issue
 #   - _extract_merge_summary
 #
@@ -1421,18 +1422,36 @@ _process_single_ready_pr() {
 	# then routed through the same pipeline — human session must be gone
 	# (no status, no claim stamp, >24h idle) for handover to fire.
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
-		# t2805: try cheap rebase first if PR is behind base — pre-existing
-		# failures in unrelated tests are often fixed by base advancement.
-		# If rebase succeeds, skip fix-worker routing — next pulse cycle
-		# will re-check CI on the rebased HEAD.
-		if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug"; then
+		# t2922: For origin:worker PRs, phantom-pending non-required checks
+		# (CodeRabbit, qlty, linked-issue-check, url-allowlist, etc.) can
+		# report null status indefinitely and cause _pr_required_checks_pass
+		# to fail-closed via an API quirk. Cross-check with the branch
+		# protection API (authoritative required-context list). If every
+		# required-by-protection context is passing, bypass this block and
+		# let the worker-briefed trust-chain gates run. Non-worker PRs
+		# (external contributors, interactive sessions) take the normal
+		# CI-failure routing path, preserving the contributor security gate.
+		local _rcl_labels
+		_rcl_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _rcl_labels=""
+		if [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
+			&& _check_required_checks_passing "$repo_slug" "$pr_number"; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for origin:worker — branch-protection required contexts all pass (t2922)" >>"$LOGFILE"
+			# Fall through to linked-issue fetch and merge gate checks
+		else
+			# t2805: try cheap rebase first if PR is behind base — pre-existing
+			# failures in unrelated tests are often fixed by base advancement.
+			# If rebase succeeds, skip fix-worker routing — next pulse cycle
+			# will re-check CI on the rebased HEAD.
+			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug"; then
+				return 1
+			fi
+			# CI failure: route to fix worker if applicable (t2203: consolidated).
+			local _ci_linked_issue
+			_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" "ci" || true
 			return 1
 		fi
-		# CI failure: route to fix worker if applicable (t2203: consolidated).
-		local _ci_linked_issue
-		_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-		_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" "ci" || true
-		return 1
 	fi
 
 	# Fetch linked issue once — used in gate checks and post-merge close
@@ -1664,6 +1683,111 @@ _attempt_worker_briefed_auto_merge() {
 
 	# All gates pass — eligible for worker-briefed auto-merge
 	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, author_assoc=${issue_author_assoc}) (t2449)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Verify all branch-protection-required check contexts have passed on a PR.
+#
+# Uses the branch protection API as the authoritative source for required
+# contexts — more precise than `gh pr checks --required` which can be
+# confused by null-status non-required checks (CodeRabbit, qlty, linked-
+# issue-check, url-allowlist, etc.) that report indefinitely and trigger the
+# fail-closed path spuriously. (t2922)
+#
+# Called from _process_single_ready_pr to provide an escape hatch for
+# origin:worker PRs when _pr_required_checks_pass fires on phantom pending
+# contexts that are absent from branch_protection.required_status_checks.
+#
+# Passing state for each required context:
+#   - StatusContext: state == SUCCESS
+#   - CheckRun: conclusion in {SUCCESS, NEUTRAL, SKIPPED}
+# Any context absent from the rollup, or in any other state, is non-passing.
+# Fail-closed on API errors.
+#
+# Args: $1=repo_slug, $2=pr_number
+# Returns: 0=all required contexts passing, 1=some not passing or API error
+#######################################
+_check_required_checks_passing() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	# Resolve default branch (required to query branch protection endpoint).
+	local default_branch _db_exit
+	default_branch=$(gh api "repos/${repo_slug}" \
+		--jq '.default_branch' 2>/dev/null)
+	_db_exit=$?
+	if [[ $_db_exit -ne 0 || -z "$default_branch" ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: failed to resolve default branch for ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Fetch required contexts from branch protection — authoritative list.
+	# One context name per line in required_contexts; empty = no required checks.
+	local required_contexts _rc_exit
+	required_contexts=$(gh api \
+		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
+		--jq '.contexts // [] | .[]' 2>/dev/null)
+	_rc_exit=$?
+	if [[ $_rc_exit -ne 0 ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: branch protection API failed for ${repo_slug} (exit ${_rc_exit}) — failing closed (t2922)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# No required contexts → nothing required, treat as passing.
+	if [[ -z "$required_contexts" ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: no required contexts for ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Fetch PR statusCheckRollup to get actual check states.
+	local rollup_json _ru_exit
+	rollup_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json statusCheckRollup \
+		--jq '.statusCheckRollup // []' 2>/dev/null)
+	_ru_exit=$?
+	if [[ $_ru_exit -ne 0 ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: statusCheckRollup fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		return 1
+	fi
+	[[ -z "$rollup_json" ]] && rollup_json="[]"
+
+	# Build JSON array from newline-delimited required_contexts string.
+	local req_json
+	req_json=$(printf '%s' "$required_contexts" \
+		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
+
+	# Count required contexts that are not in a passing state.
+	#   Passing: StatusContext.state == SUCCESS, or
+	#            CheckRun.conclusion in {SUCCESS, NEUTRAL, SKIPPED}.
+	#   NOT_FOUND (absent from rollup) counts as non-passing.
+	local failing_count _fc_exit
+	failing_count=$(jq -n \
+		--argjson req "$req_json" \
+		--argjson checks "$rollup_json" \
+		'$req | map(
+			. as $ctx |
+			($checks | map(select((.name // .context // "") == $ctx)) | last) as $c |
+			if $c == null then "NOT_FOUND"
+			elif (($c.state // "" | ascii_upcase) == "SUCCESS") then "PASS"
+			elif (($c.conclusion // "" | ascii_upcase)
+				| . == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED") then "PASS"
+			else "FAIL"
+			end
+		) | map(select(. != "PASS")) | length' 2>/dev/null)
+	_fc_exit=$?
+
+	if [[ $_fc_exit -ne 0 || -z "$failing_count" ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: jq evaluation failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		return 1
+	fi
+
+	if [[ "$failing_count" -gt 0 ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: ${failing_count} required context(s) not passing for PR #${pr_number} in ${repo_slug} (t2922)" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-merge] _check_required_checks_passing: all required contexts passing for PR #${pr_number} in ${repo_slug} (t2922)" >>"$LOGFILE"
 	return 0
 }
 
