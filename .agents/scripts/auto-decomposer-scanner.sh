@@ -513,6 +513,66 @@ _create_decompose_issue() {
 	return 0
 }
 
+# GH#21017: Evaluate the two new skip gates against a parent and report
+# the reason on stdout. Designed as a single helper so do_scan can stay
+# under the 100-line function-complexity gate while still expressing
+# the full check inline-readable in this file.
+#
+# Logic:
+#   1. If parent body declares decomposition (## Children/Phase/prose
+#      ref), emit "has-children".
+#   2. Otherwise, if the parent OR any extracted child has an
+#      OWNER/MEMBER comment in the last MAINTAINER_ACTIVITY_HOURS
+#      (capped by MAINTAINER_ACTIVITY_CHILD_CAP for the children
+#      sweep), emit "maintainer-activity".
+#   3. Otherwise, emit "" (caller proceeds with existing nudge-age
+#      gate).
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - parent issue number
+#   $3 - parent body (already fetched once by the caller)
+# Stdout: "has-children" | "maintainer-activity" | ""
+# Returns: 0 always (caller inspects the printed value).
+_evaluate_gh21017_skip_reason() {
+	local repo="$1"
+	local parent_num="$2"
+	local parent_body="$3"
+
+	if _body_has_decomposition_markers "$parent_body"; then
+		printf 'has-children'
+		return 0
+	fi
+
+	local maintainer_cutoff
+	maintainer_cutoff=$(_iso_cutoff_hours_ago "$MAINTAINER_ACTIVITY_HOURS")
+	if [[ -z "$maintainer_cutoff" ]]; then
+		printf ''
+		return 0
+	fi
+
+	if _has_recent_maintainer_comment "$repo" "$parent_num" "$maintainer_cutoff"; then
+		printf 'maintainer-activity'
+		return 0
+	fi
+
+	local child_count=0 child
+	while IFS= read -r child; do
+		[[ -z "$child" || "$child" == "$parent_num" ]] && continue
+		child_count=$((child_count + 1))
+		if [[ "$child_count" -gt "$MAINTAINER_ACTIVITY_CHILD_CAP" ]]; then
+			break
+		fi
+		if _has_recent_maintainer_comment "$repo" "$child" "$maintainer_cutoff"; then
+			printf 'maintainer-activity'
+			return 0
+		fi
+	done < <(_extract_children_from_body "$parent_body")
+
+	printf ''
+	return 0
+}
+
 do_scan() {
 	local repo="$1"
 	local dry_run="$2"
@@ -560,55 +620,16 @@ do_scan() {
 			fi
 		fi
 
-		# GH#21017: Fetch the parent body once for the two new skip checks.
-		# An empty body (or fetch failure) falls through to existing
-		# behaviour — neither skip fires, but the existing nudge-age check
-		# still gates dispatch.
-		local parent_body
+		# GH#21017: Skip on body decomposition markers or recent maintainer
+		# activity. Helper returns "" on fetch failure → fall through to
+		# the existing nudge-age gate.
+		local parent_body skip_reason
 		parent_body=$(gh api "repos/${repo}/issues/${parent_num}" --jq '.body // ""' 2>/dev/null || echo "")
-
-		# GH#21017: Skip if the parent body already declares decomposition.
-		# Catches the canonical failure case where the maintainer (or another
-		# worker) decomposed the parent between scan and re-scan, but the
-		# scanner re-fired because it never read the parent body.
-		if _body_has_decomposition_markers "$parent_body"; then
-			log "[skip:has-children] parent #${parent_num}: body declares decomposition (## Children/Phase/prose ref)"
-			skipped_has_children=$((skipped_has_children + 1))
-			continue
-		fi
-
-		# GH#21017: Skip if the parent OR any extracted child has an
-		# OWNER/MEMBER comment in the last MAINTAINER_ACTIVITY_HOURS.
-		# Recent maintainer engagement = the maintainer is steering the
-		# work; a worker dispatch would duplicate or overwrite that
-		# direction. Children are extracted from the parent body via the
-		# same prose patterns _extract_children_from_prose honours.
-		local maintainer_cutoff
-		maintainer_cutoff=$(_iso_cutoff_hours_ago "$MAINTAINER_ACTIVITY_HOURS")
-		if [[ -n "$maintainer_cutoff" ]]; then
-			local maintainer_engaged=0
-			if _has_recent_maintainer_comment "$repo" "$parent_num" "$maintainer_cutoff"; then
-				maintainer_engaged=1
-			else
-				local child_count=0 child
-				while IFS= read -r child; do
-					[[ -z "$child" || "$child" == "$parent_num" ]] && continue
-					child_count=$((child_count + 1))
-					if [[ "$child_count" -gt "$MAINTAINER_ACTIVITY_CHILD_CAP" ]]; then
-						break
-					fi
-					if _has_recent_maintainer_comment "$repo" "$child" "$maintainer_cutoff"; then
-						maintainer_engaged=1
-						break
-					fi
-				done < <(_extract_children_from_body "$parent_body")
-			fi
-			if [[ "$maintainer_engaged" -eq 1 ]]; then
-				log "[skip:recent-maintainer-activity] parent #${parent_num}: OWNER/MEMBER comment in last ${MAINTAINER_ACTIVITY_HOURS}h on parent or child"
-				skipped_maintainer_activity=$((skipped_maintainer_activity + 1))
-				continue
-			fi
-		fi
+		skip_reason=$(_evaluate_gh21017_skip_reason "$repo" "$parent_num" "$parent_body")
+		case "$skip_reason" in
+			has-children) log "[skip:has-children] parent #${parent_num}: body declares decomposition (## Children/Phase/prose ref)"; skipped_has_children=$((skipped_has_children + 1)); continue ;;
+			maintainer-activity) log "[skip:recent-maintainer-activity] parent #${parent_num}: OWNER/MEMBER comment in last ${MAINTAINER_ACTIVITY_HOURS}h on parent or child"; skipped_maintainer_activity=$((skipped_maintainer_activity + 1)); continue ;;
+		esac
 
 		local hours
 		hours=$(_nudge_age_hours "$repo" "$parent_num")
