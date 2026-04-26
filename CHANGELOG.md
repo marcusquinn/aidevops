@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.7] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2887 complete (pr:#21001 completed:2026-04-26) [skip ci]
+- canary detect wrong opencode binary, long backoff on config errors (#21001)
+- Maintenance: update simplification state registry
+- Maintenance: mark t2876 complete (pr:#20974 completed:2026-04-26) [skip ci]
+- gh PATH shim privacy-scan layer (fail-closed on private slugs in public-repo writes) (#20974)
+- consolidate prompts/build.txt into AGENTS.md Framework Rules (#20982)
+- Maintenance: sync ref:GH#21000 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.11.6] - 2026-04-26
 
 ### Changed
