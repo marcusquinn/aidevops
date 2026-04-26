@@ -3184,3 +3184,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2880 feat(setup-debt): detect cross-account secrets:inherit pattern in issue-sync.yml #auto-dispatch #enhancement #framework ref:GH#20981
 
 - [ ] t2881 Harden against external scanner-spam reports filed as 'responsible disclosure' #framework #parent #security ref:GH#20983
+
+- [ ] t2882 Add unsolicited_disclosure_marketing pattern category to prompt-injection-patterns.yaml #auto-dispatch #framework #security ref:GH#20984
