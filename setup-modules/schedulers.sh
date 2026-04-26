@@ -2399,3 +2399,126 @@ setup_repo_aidevops_health() {
 	fi
 	return 0
 }
+
+# ============================================================================
+# Peer productivity monitor (t2932)
+# ============================================================================
+#
+# Adaptive cross-runner dispatch coordination: observes peer GitHub activity
+# every 30 min and updates ~/.config/aidevops/dispatch-override.conf to
+# `ignore` peers whose pulse is broken (claims issues but never PRs) and
+# back to `honour` when they recover. Self-healing across the ecosystem —
+# each runner observes peers independently, no central coordinator needed.
+# Manual entries in dispatch-override.conf above the auto-managed marker
+# always take precedence.
+
+# Install peer-productivity-monitor launchd plist (macOS).
+# Args: $1=label $2=script $3=log_dir
+_install_peer_productivity_monitor_launchd() {
+	local ppm_label="$1"
+	local ppm_script="$2"
+	local _ppm_log_dir="$3"
+	local ppm_plist="$HOME/Library/LaunchAgents/${ppm_label}.plist"
+
+	local _xml_ppm_script _xml_ppm_home _xml_ppm_log_dir
+	_xml_ppm_script=$(_xml_escape "$ppm_script")
+	_xml_ppm_home=$(_xml_escape "$HOME")
+	_xml_ppm_log_dir=$(_xml_escape "$_ppm_log_dir")
+
+	local ppm_plist_content
+	ppm_plist_content=$(
+		cat <<PPM_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${ppm_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_ppm_script}</string>
+		<string>observe</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>1800</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_ppm_log_dir}/peer-productivity-launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_ppm_log_dir}/peer-productivity-launchd.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_ppm_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PPM_PLIST
+	)
+
+	if _launchd_install_if_changed "$ppm_label" "$ppm_plist" "$ppm_plist_content"; then
+		print_info "Peer productivity monitor enabled (launchd, every 30 min)"
+	else
+		print_warning "Failed to load peer-productivity-monitor LaunchAgent"
+	fi
+	return 0
+}
+
+# Install peer-productivity-monitor via systemd or cron (Linux).
+# Args: $1=script path, $2=log dir
+_install_peer_productivity_monitor_linux() {
+	local ppm_script="$1"
+	local _ppm_log_dir="$2"
+	local ppm_systemd="aidevops-peer-productivity-monitor"
+	_install_scheduler_linux \
+		"$ppm_systemd" \
+		"aidevops: peer-productivity-monitor" \
+		"*/30 * * * *" \
+		"\"${ppm_script}\" observe" \
+		"1800" \
+		"${_ppm_log_dir}/peer-productivity-launchd.log" \
+		"" \
+		"Peer productivity monitor enabled (every 30 min)" \
+		"Failed to install peer-productivity-monitor scheduler" \
+		"true" \
+		"true"
+	return 0
+}
+
+# Setup peer-productivity-monitor (t2932) — observes peer GitHub activity
+# every 30 min and updates ~/.config/aidevops/dispatch-override.conf so the
+# local pulse competes with broken peers and collaborates with healthy ones.
+# Manual entries in dispatch-override.conf above the auto-managed marker
+# always take precedence.
+setup_peer_productivity_monitor() {
+	local ppm_script="$HOME/.aidevops/agents/scripts/peer-productivity-monitor.sh"
+	local ppm_label="sh.aidevops.peer-productivity-monitor"
+	if ! [[ -x "$ppm_script" ]]; then
+		return 0
+	fi
+
+	# Reuse contribution-watch's log-dir resolver (same logic, same config key).
+	local _ppm_log_dir
+	_ppm_log_dir=$(_resolve_cw_log_dir) || return 1
+	mkdir -p "$_ppm_log_dir"
+
+	# Install/update scheduled runner
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_peer_productivity_monitor_launchd "$ppm_label" "$ppm_script" "$_ppm_log_dir"
+	else
+		_install_peer_productivity_monitor_linux "$ppm_script" "$_ppm_log_dir"
+	fi
+	return 0
+}

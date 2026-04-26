@@ -1275,6 +1275,11 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_scheduler "Pulse merge routine" "sh.aidevops.pulse-merge-routine" "aidevops: pulse-merge-routine" "aidevops-pulse-merge-routine"; then
 		setup_pulse_merge_routine
 	fi
+	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
+	# dispatch coordination, runs every 30 min.
+	if _should_setup_noninteractive_scheduler "Peer productivity monitor" "sh.aidevops.peer-productivity-monitor" "aidevops: peer-productivity-monitor" "aidevops-peer-productivity-monitor"; then
+		setup_peer_productivity_monitor
+	fi
 	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 	setup_repo_sync
 	# r914 repo-aidevops-health — daily drift keeper (t2366)
