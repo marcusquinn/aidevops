@@ -1826,8 +1826,21 @@ _cmd_email() {
 	poll)
 		# Direct poll commands forwarded to email-poll-helper.sh
 		_dispatch_helper "$_EPH" "$_EPH" "$action" "$@" ;;
+	thread)
+		# Thread lookup: email thread <message-id> [knowledge-root]
+		local _ETH="email-thread-helper.sh"
+		_dispatch_helper "$_ETH" "$_ETH" thread "$@" ;;
+	build)
+		# Thread rebuild: email build [knowledge-root] [--force]
+		local _ETH2="email-thread-helper.sh"
+		_dispatch_helper "$_ETH2" "$_ETH2" build "$@" ;;
+	filter)
+		# Filter rules: email filter tick|add|test|list [knowledge-root]
+		local _EFH="email-filter-helper.sh"
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "$_EFH" "$_EFH" "$@" ;;
 	*)
-		echo "Usage: aidevops email <mailbox|poll> [subcommand]"
+		echo "Usage: aidevops email <mailbox|poll|thread|build|filter> [subcommand]"
 		echo ""
 		echo "Email subcommands:"
 		echo "  mailbox add              Register a new IMAP mailbox (interactive)"
@@ -1836,6 +1849,12 @@ _cmd_email() {
 		echo "  mailbox remove <id>      Un-register a mailbox"
 		echo "  poll tick                Poll all mailboxes now (same as routine r044)"
 		echo "  poll backfill <id>       Backfill a mailbox from a given date"
+		echo "  thread <message-id>      Look up thread by message-id"
+		echo "  build [--force]          Rebuild thread index from email sources"
+		echo "  filter list              List filter rules"
+		echo "  filter add               Add a new filter rule (interactive)"
+		echo "  filter test <rule>       Dry-run rule against last 50 sources"
+		echo "  filter tick              Run filter pass (routine r045)"
 		;;
 	esac
 	return 0
@@ -1947,47 +1966,6 @@ main() {
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
 	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
-	email)
-		# email thread|filter subcommand groups
-		# email thread <message-id>   → email-thread-helper.sh thread <message-id>
-		# email filter tick|add|test|list → email-filter-helper.sh <subcommand>
-		local email_sub="${1:-help}"
-		local _eth="email-thread-helper.sh" _efh="email-filter-helper.sh"
-		shift || true
-		case "$email_sub" in
-		thread)
-			_dispatch_helper "$_eth" "$_eth" thread "$@"
-			;;
-		filter)
-			[[ $# -eq 0 ]] && set -- list
-			_dispatch_helper "$_efh" "$_efh" "$@"
-			;;
-		build)
-			_dispatch_helper "$_eth" "$_eth" build "$@"
-			;;
-		help | -h | --help)
-			cat <<'EMAILHELP'
-aidevops email — email channel commands
-
-Subcommands:
-  email thread <message-id>  [knowledge-root]  Look up thread by message-id
-  email build  [knowledge-root] [--force]       Rebuild thread index from email sources
-  email filter list  [knowledge-root]           List filter rules
-  email filter add   [knowledge-root]           Add a new filter rule (interactive)
-  email filter test  <rule-name> [root]         Dry-run rule against last 50 sources
-  email filter tick  [knowledge-root]           Run filter pass (pulse routine r045)
-  email help                                    Show this help
-
-Thread indexes: <knowledge-root>/index/email-threads/<thread-id>.json
-Filter config:  <repo>/_config/email-filters.json
-EMAILHELP
-			;;
-		*)
-			print_error "Unknown email subcommand: ${email_sub}. Use: thread | filter | build | help"
-			exit 1
-			;;
-		esac
-		;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;

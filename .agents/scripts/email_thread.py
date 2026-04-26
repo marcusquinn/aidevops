@@ -132,6 +132,93 @@ def _thread_id_from_root(root_entry: dict) -> str:
     return f"src-{root_entry['source_id']}"
 
 
+def _build_index_and_links(
+    sources: list[dict],
+) -> tuple[dict, dict, dict]:
+    """Build message-id index, parent-map, and children-map.
+
+    Returns (by_message_id, parent_map, children_map).
+    """
+    by_message_id: dict[str, dict] = {
+        e.get("message_id", "").strip(): e
+        for e in sources
+        if e.get("message_id", "").strip()
+    }
+    parent_map: dict[str, Optional[str]] = {}
+    children_map: dict[str, list[str]] = defaultdict(list)
+    for entry in sources:
+        parent_mid = _parent_message_id(entry, by_message_id)
+        parent_map[entry["source_id"]] = parent_mid
+        if parent_mid:
+            children_map[parent_mid].append(entry["source_id"])
+    return by_message_id, parent_map, children_map
+
+
+def _merge_orphans_by_subject(
+    roots: list[dict],
+    children_map: dict,
+    parent_map: dict,
+) -> list[dict]:
+    """Group orphan roots by normalised subject; returns final true_roots list."""
+    by_subject: dict[str, list[dict]] = defaultdict(list)
+    true_roots: list[dict] = []
+    for entry in roots:
+        norm_subj = _normalise_subject(entry.get("subject", ""))
+        if norm_subj:
+            by_subject[norm_subj].append(entry)
+        else:
+            true_roots.append(entry)
+    for _ns, group in by_subject.items():
+        if len(group) == 1:
+            true_roots.append(group[0])
+            continue
+        group_sorted = sorted(group, key=lambda e: e.get("date", ""))
+        subj_root = group_sorted[0]
+        true_roots.append(subj_root)
+        if subj_root.get("message_id"):
+            for sibling in group_sorted[1:]:
+                children_map[subj_root["message_id"]].append(sibling["source_id"])
+                parent_map[sibling["source_id"]] = subj_root["message_id"]
+    return true_roots
+
+
+def _traverse_tree(
+    entry: dict,
+    children_map: dict,
+    by_source_id: dict,
+) -> list[dict]:
+    """DFS traversal returning ordered list of source entries."""
+    result = [entry]
+    kids = children_map.get(entry.get("message_id", ""), [])
+    kids_sorted = sorted(
+        [by_source_id[sid] for sid in kids if sid in by_source_id],
+        key=lambda e: e.get("date", ""),
+    )
+    for child in kids_sorted:
+        result.extend(_traverse_tree(child, children_map, by_source_id))
+    return result
+
+
+def _make_thread_record(thread_id: str, ordered: list[dict]) -> dict:
+    """Build a thread record dict from an ordered list of source entries."""
+    participants = list(dict.fromkeys(e["from"] for e in ordered if e.get("from")))
+    root_subject = ordered[0].get("subject", "") if ordered else ""
+    return {
+        "thread_id": thread_id,
+        "root_subject": root_subject,
+        "participants": participants,
+        "sources": [
+            {
+                "source_id": e["source_id"],
+                "message_id": e.get("message_id", ""),
+                "date": e.get("date", ""),
+                "from": e.get("from", ""),
+            }
+            for e in ordered
+        ],
+    }
+
+
 def build_thread_graph(sources: list[dict]) -> dict[str, dict]:
     """Build a thread graph using JWZ algorithm.
 
@@ -143,94 +230,16 @@ def build_thread_graph(sources: list[dict]) -> dict[str, dict]:
         "sources": [{"source_id", "message_id", "date", "from"}, ...]  # chronological
     }
     """
-    # Index by message_id
-    by_message_id: dict[str, dict] = {}
-    for entry in sources:
-        mid = entry.get("message_id", "").strip()
-        if mid:
-            by_message_id[mid] = entry
-
-    # Build parent map: source_id → parent_entry
-    parent_map: dict[str, Optional[str]] = {}  # source_id → parent message_id
-    children_map: dict[str, list[str]] = defaultdict(list)  # parent mid → [child source_id]
-
-    for entry in sources:
-        parent_mid = _parent_message_id(entry, by_message_id)
-        parent_map[entry["source_id"]] = parent_mid
-        if parent_mid:
-            children_map[parent_mid].append(entry["source_id"])
-
-    # Identify roots: entries with no parent
+    _by_mid, parent_map, children_map = _build_index_and_links(sources)
     roots = [e for e in sources if not parent_map.get(e["source_id"])]
-
-    # Subject-based orphan merging: entries with no parent that share normalised subject
-    # → group them under the earliest message as root
-    by_subject: dict[str, list[dict]] = defaultdict(list)
-    true_roots: list[dict] = []
-
-    for entry in roots:
-        norm_subj = _normalise_subject(entry.get("subject", ""))
-        if norm_subj:
-            by_subject[norm_subj].append(entry)
-        else:
-            true_roots.append(entry)
-
-    # For each subject group, pick the oldest as root, make others children
-    for _norm_subj, group in by_subject.items():
-        if len(group) == 1:
-            true_roots.append(group[0])
-            continue
-        # Sort by date, oldest first
-        group_sorted = sorted(group, key=lambda e: e.get("date", ""))
-        subj_root = group_sorted[0]
-        true_roots.append(subj_root)
-        for sibling in group_sorted[1:]:
-            # Adopt as children of subj_root via its message_id (if available)
-            if subj_root.get("message_id"):
-                children_map[subj_root["message_id"]].append(sibling["source_id"])
-                parent_map[sibling["source_id"]] = subj_root["message_id"]
-
-    # Build source-id index for traversal
+    true_roots = _merge_orphans_by_subject(roots, children_map, parent_map)
     by_source_id: dict[str, dict] = {e["source_id"]: e for e in sources}
-
-    def _traverse(entry: dict, depth: int = 0) -> list[dict]:
-        """DFS traversal returning ordered list of source entries."""
-        result = [entry]
-        mid = entry.get("message_id", "")
-        kids = children_map.get(mid, [])
-        # Sort children by date
-        kids_sorted = sorted(
-            [by_source_id[sid] for sid in kids if sid in by_source_id],
-            key=lambda e: e.get("date", ""),
-        )
-        for child in kids_sorted:
-            result.extend(_traverse(child, depth + 1))
-        return result
 
     threads: dict[str, dict] = {}
     for root in true_roots:
-        ordered = _traverse(root)
+        ordered = _traverse_tree(root, children_map, by_source_id)
         thread_id = _thread_id_from_root(root)
-
-        participants = list(dict.fromkeys(
-            e["from"] for e in ordered if e.get("from")
-        ))
-        root_subject = ordered[0].get("subject", "") if ordered else ""
-
-        threads[thread_id] = {
-            "thread_id": thread_id,
-            "root_subject": root_subject,
-            "participants": participants,
-            "sources": [
-                {
-                    "source_id": e["source_id"],
-                    "message_id": e.get("message_id", ""),
-                    "date": e.get("date", ""),
-                    "from": e.get("from", ""),
-                }
-                for e in ordered
-            ],
-        }
+        threads[thread_id] = _make_thread_record(thread_id, ordered)
 
     return threads
 
