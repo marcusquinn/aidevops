@@ -969,6 +969,13 @@ _setup_run_non_interactive() {
 	cleanup_stale_health_issue_caches
 	cleanup_worktree_entries_in_repos_json
 	_cleanup_legacy_model_config
+	# t2888: install/heal opencode-ai. Companion to t2887's runtime canary
+	# fail-fast -- t2887 detects when $OPENCODE_BIN_DEFAULT is wrong, this
+	# one fixes it by reinstalling opencode-ai@latest (overwriting any bin
+	# collision with @anthropic-ai/claude-code or similar). Skipping this
+	# in non-interactive mode is the bug PR #20189 introduced and what
+	# alex-solovyev's runner spam stemmed from.
+	setup_opencode_cli
 	validate_opencode_config
 	deploy_aidevops_agents
 	_deploy_hotfix_config
