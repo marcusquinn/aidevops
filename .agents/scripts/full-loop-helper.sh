@@ -158,10 +158,14 @@ emit_deploy_phase() {
 	echo "Run setup.sh per full-loop.md guidance."
 }
 
-# Pre-start maintainer gate check (GH#17810).
+# Pre-start maintainer gate check (GH#17810, t2890).
 # Extracts the first issue number from the prompt and verifies the linked
-# issue does not have needs-maintainer-review label or missing assignee.
-# Mirrors the logic in .github/workflows/maintainer-gate.yml check-pr job.
+# issue does not have needs-maintainer-review label or missing assignee
+# (GH#17810). Then inherits the pulse-side structural dispatch gates via
+# dispatch-dedup-helper.sh::is-assigned so /full-loop honors parent-task
+# and no-auto-dispatch blocks the same way the pulse does — closing the
+# entry-point asymmetry where /full-loop bypassed gates the pulse refused
+# (t2890). Mirrors the logic in .github/workflows/maintainer-gate.yml.
 #
 # Returns:
 #   0 — gate passes (safe to start)
@@ -225,6 +229,30 @@ _check_linked_issue_gate() {
 			blocked=true
 			reasons="${reasons}Issue #${issue_num} has no assignee — assign the issue before starting work.\n"
 		fi
+	fi
+
+	# Check 3 (t2890): inherit pulse-side structural dispatch gates by calling
+	# dispatch-dedup-helper.sh::is-assigned — the canonical primitive the pulse
+	# uses (pulse-dispatch-dedup-layers.sh:243). Translates the unambiguous
+	# hard-block signals (PARENT_TASK_BLOCKED, NO_AUTO_DISPATCH_BLOCKED) into
+	# blocks here so /full-loop honors the same eligibility semantics as the
+	# pulse. Cost-budget, hydration window, and ownership-by-other are
+	# intentionally out of scope (need nuanced interactive UX). Fail-open on
+	# missing helper or empty stdout (matches the gh-api fail-open above).
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ -x "$dedup_helper" ]]; then
+		local dedup_out
+		dedup_out=$("$dedup_helper" is-assigned "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
+		case "$dedup_out" in
+		*PARENT_TASK_BLOCKED*)
+			blocked=true
+			reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
+			;;
+		*NO_AUTO_DISPATCH_BLOCKED*)
+			blocked=true
+			reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
+			;;
+		esac
 	fi
 
 	if [[ "$blocked" == "true" ]]; then
