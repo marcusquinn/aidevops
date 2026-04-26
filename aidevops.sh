@@ -1456,6 +1456,7 @@ _help_commands() {
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
+	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/help)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -1834,6 +1835,11 @@ main() {
 		# Other subcommands (seed, scan, stop, restart, install, uninstall) forward verbatim.
 		[[ $# -eq 0 ]] && set -- status
 		_dispatch_helper "contribution-watch-helper.sh" "contribution-watch-helper.sh" "$@"
+		;;
+	inbox)
+		# Bare `aidevops inbox` defaults to status (most common use).
+		[[ $# -eq 0 ]] && set -- status
+		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
 		;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
