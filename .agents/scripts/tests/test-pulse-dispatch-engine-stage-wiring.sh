@@ -60,15 +60,21 @@ assert_not_grep() {
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
 
-echo "=== t2443: pulse-dispatch-engine stage wiring regression tests ==="
+echo "=== t2443 + t2903: pulse-dispatch-engine stage wiring regression tests ==="
 echo "Engine: $ENGINE"
 echo ""
 
 # --- Each daily scanner has its own independent run_stage_with_timeout ---
+#
+# t2903 (#21049): complexity_scan was REMOVED from the dispatch engine and
+# moved to its own launchd plist (sh.aidevops.complexity-scan) backed by
+# complexity-scan-runner.sh. The function still exists in pulse-simplification.sh
+# but is no longer invoked from the preflight stages. Slot #1 below is the
+# negative assertion that pins the removal.
 
-assert_grep \
-	"1: complexity_scan has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "complexity_scan".*run_weekly_complexity_scan' \
+assert_not_grep \
+	"1: complexity_scan extracted to standalone launchd plist (t2903) — must NOT be in dispatch engine" \
+	'run_stage_with_timeout "complexity_scan"' \
 	"$ENGINE"
 
 assert_grep \
@@ -109,14 +115,11 @@ assert_not_grep \
 	"$ENGINE"
 
 # --- All daily stages use the same timeout variable as peer preflight groups ---
+# (complexity_scan removed in t2903 — moved to standalone launchd plist;
+# kept auto_decomposer_scanner as the canary for _pflt_timeout wiring.)
 
 assert_grep \
-	"9: complexity_scan uses _pflt_timeout (same as other preflight groups)" \
-	'run_stage_with_timeout "complexity_scan" "\$_pflt_timeout"' \
-	"$ENGINE"
-
-assert_grep \
-	"10: auto_decomposer_scanner uses _pflt_timeout" \
+	"9: auto_decomposer_scanner uses _pflt_timeout" \
 	'run_stage_with_timeout "auto_decomposer_scanner" "\$_pflt_timeout"' \
 	"$ENGINE"
 

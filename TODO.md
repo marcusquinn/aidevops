@@ -3164,7 +3164,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2868 P2c — inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932 blocked-by:t2846,t2848
 
-- [ ] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+- [x] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931 pr:#21085 completed:2026-04-26
 
 - [ ] t2866 P2a — _inbox/ directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
 
@@ -3228,11 +3228,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2902 Stop recurring GraphQL budget exhaustion despite REST fallback (t2574, t2689) #bug ref:GH#21043 pr:#21053 completed:2026-04-26
 
-- [ ] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049
+- [x] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049 pr:#21070 completed:2026-04-26
 
 - [x] t2904 Cache assignment graph + classify errors in preflight_ownership_reconcile #bug #framework #performance #pulse ref:GH#21050 pr:#21073 completed:2026-04-26
 
-- [ ] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051
+- [x] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051 pr:#21078 completed:2026-04-26
 
 - [x] t2906 setup.sh leaves 0-byte pulse plist when _generate_pulse_plist_content is interrupted #auto-dispatch #bug #framework #setup ref:GH#21054 pr:#21062 completed:2026-04-26
 
@@ -3257,3 +3257,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2916 worktree sweep: consult interactive-session claim stamps in should_skip_cleanup ref:GH#21074
 
 - [ ] t2917 Runner scripts hardcode $HOME/.aidevops/logs but plist/timer installers resolve paths.log_dir — divergence on customization ref:GH#21076
+
+- [x] t2918 Invert tooling/product priority boost so tooling lifts product #bug #framework #pulse ref:GH#21079 pr:#21080 completed:2026-04-26
+
+- [x] t2919 Move pulse plist install earlier in setup flow to avoid timeout-skip #bug #framework #setup ref:GH#21081 pr:#21082 completed:2026-04-26
+
+- [x] t2920 remove dispatch-path no-auto-dispatch default — keep advisory, drop recommendation #bug ref:GH#21086 pr:#21089 completed:2026-04-26
+
+- [x] t2921 fix worker-watchdog find_workers regex broken by alternation pattern (t2421 regression) #auto-dispatch ref:GH#21091 pr:#21092 completed:2026-04-26

@@ -90,49 +90,65 @@ Without it, the workflow posts a remediation comment containing both the root-ca
 
 **Known false-positive (pending t2252):** the auto-completion path may mis-mark planning-only PRs (those using `Ref #NNN` / `For #NNN` without closing keywords) as `status:done` on merge — tracked as GH#19782.
 
-## Dispatch-Path Default (t2821)
+## Dispatch-Path Default (t2821 / t2920)
 
-Tasks that modify the worker dispatch/spawn path have a **tautology failure mode**: a worker dispatched to fix broken dispatch runs through the code being fixed. Observed on #20765 (t2814): 3 worker attempts across ~90 minutes, ~90K tokens burned before a successful opus-4-7 run.
+Tasks that modify the worker dispatch/spawn path **historically** defaulted to `no-auto-dispatch` because of the **tautology failure mode**: a worker dispatched to fix broken dispatch runs through the code being fixed. The canonical incident was #20765 (t2814): 3 worker attempts across ~90 minutes, ~90K tokens burned before a successful opus-4-7 run.
+
+**As of t2920 (Apr 2026), this default is reversed: dispatch-path tasks auto-dispatch like everything else.** The protection cascade now covers the residual risk:
+
+1. **Worker worktree isolation** — workers operate in isolated worktrees; a buggy in-flight fix cannot affect the live pulse.
+2. **t2819 pre-dispatch detector** — auto-elevates dispatch-path tasks to `model:opus-4-7` before dispatch, eliminating wasted cascade attempts at lower tiers.
+3. **CI gates** — every PR runs the full quality suite before merge.
+4. **Watchdog kills** — `worker-activity-watchdog.sh` kills workers with no output for 300s.
+5. **t2690 circuit breaker** — pauses ALL dispatch when GraphQL budget < 5%.
+6. **t2820 cheaper failed attempts** — `no_work` reclassification reduces retry cost.
+
+Combined, this cascade catches what slips. The cost of pre-blocking dispatch-path issues from a single-operator backlog (17 issues stuck on aidevops at the time of t2920) far exceeds the residual tautology risk.
 
 ### Trigger
 
 The task's brief `## How` section or `### Files Scope` references any file in the canonical self-hosting set. The canonical list is `.agents/configs/self-hosting-files.conf` — shared by `pre-dispatch-validator-helper.sh` (t2819) and the helpers below. Current entries: `pulse-wrapper.sh`, `pulse-dispatch-*`, `pulse-cleanup.sh`, `headless-runtime-helper.sh`, `headless-runtime-lib.sh`, `worker-lifecycle-common.sh`, `shared-dispatch-dedup.sh`, `shared-claim-lifecycle.sh`, `worker-activity-watchdog.sh`, `dispatch-dedup-helper.sh` (t2832).
 
-### Decision tree
+### Decision tree (post-t2920)
 
-1. Brief references a dispatch-path file → recommend `#parent`, `no-auto-dispatch`, `#interactive` in the TODO entry.
-2. Author overrides with `#dispatch-path-ok` → auto-dispatch proceeds with the `dispatch-path-ok` label applied. The t2819 self-hosting pre-dispatch detector remains active as a safety net (`model:opus-4-7` applied before dispatch).
+1. Brief references a dispatch-path file → use `#auto-dispatch` as normal. The t2819 detector applies `model:opus-4-7` before dispatch. The advisory tooling (below) emits non-blocking informational messages.
+2. Author wants to implement interactively (rare — e.g. observing the running system mid-fix) → use `#no-auto-dispatch #interactive` and run `interactive-session-helper.sh claim <N> <slug>`.
 3. No dispatch-path files in brief → normal dispatch rules apply.
 
-### Tooling
+`#dispatch-path-ok` is now redundant. Existing issues that carry it document explicit author intent — leave them alone.
 
-- `task-brief-helper.sh` scans the generated brief after write and appends a `## Dispatch-Path Classification` section when patterns are found.
-- `claim-task-id.sh` emits a **non-blocking** stderr advisory when `--labels auto-dispatch` is used on a dispatch-path task.
+### Tooling (post-t2920, advisory only)
+
+- `task-brief-helper.sh` scans the generated brief and appends a `## Dispatch-Path Classification (advisory)` section when patterns are found, noting that the t2819 detector will auto-elevate the worker.
+- `claim-task-id.sh` emits a **non-blocking** stderr `log_info` when `--labels auto-dispatch` is used on a dispatch-path task, naming the auto-elevation. No recommendation to switch to `no-auto-dispatch`.
 - Both helpers load patterns from `.agents/configs/self-hosting-files.conf`; adding a new file to the conf automatically updates all detection points.
 
-### Why interactive is better for dispatch-path tasks
+### When to opt out (post-t2920)
 
-1. Human context for judgment calls about dispatch-path design trade-offs.
-2. Bypasses the broken dispatch path entirely — interactive sessions don't spawn workers through the pulse.
-3. Unlimited context budget vs ~200K soft-ceiling for workers.
-4. Faster iteration on canary/FD/session-lock logic requiring visibility into the running system.
+The opt-out (`#no-auto-dispatch #interactive`) is the exception, not the default. Use it when:
+
+1. You want to observe the running system mid-fix (e.g. canary/FD/session-lock logic that benefits from live visibility).
+2. The fix requires judgment calls about dispatch-path design trade-offs that haven't been resolved in the brief.
+3. You're investigating a pulse incident and need full insulation from automated dispatch interference.
+
+For routine bug fixes, refactors, and well-specified work in dispatch-path files, just use `#auto-dispatch`. Workers handle these reliably with opus-4-7.
 
 ### Environment overrides
 
 | Variable | Effect |
 |---|---|
-| `AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1` | Disable both the brief notice and claim-task-id warning |
+| `AIDEVOPS_SKIP_DISPATCH_PATH_CHECK=1` | Disable both the brief notice and claim-task-id advisory |
 | `AIDEVOPS_DISPATCH_PATH_FILES_CONF=<path>` | Override the conf file path |
 
 ### Labels
 
 | Label | Meaning |
 |---|---|
-| `dispatch-path-ok` | Author explicitly requested auto-dispatch on a dispatch-path task |
+| `dispatch-path-ok` | (Legacy / redundant since t2920) Author explicitly requested auto-dispatch on a dispatch-path task. New tasks don't need this label. |
 | `parent-task` | Unconditional dispatch block — `dispatch-dedup-helper.sh` `_is_assigned_check_parent_task` short-circuits with `PARENT_TASK_BLOCKED` |
-| `no-auto-dispatch` | Unconditional dispatch block (t2832) — `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` short-circuits with `NO_AUTO_DISPATCH_BLOCKED`. Pre-fix the label was honoured by enrich/decomposition only; the dispatch path itself ignored it. After t2832, `no-auto-dispatch` alone is sufficient to block dispatch on a focused fix — no need to combine with `#parent`. Use `#parent` only for actual decomposition trackers. |
+| `no-auto-dispatch` | Unconditional dispatch block (t2832) — `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` short-circuits with `NO_AUTO_DISPATCH_BLOCKED`. Use only when you specifically want the dispatch-path opt-out described above. |
 
-Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), t2832 (no-auto-dispatch unconditional block), derived from #20765 / GH#20827 dispatch-history analysis.
+Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), t2832 (no-auto-dispatch unconditional block), t2920 (default reversed to auto-dispatch + advisory). Derived from #20765 / GH#20827 / GH#21086 dispatch-history analysis.
 
 ## Reusable-Workflow Architecture (t2770)
 
