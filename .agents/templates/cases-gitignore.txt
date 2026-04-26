@@ -1,0 +1,10 @@
+# _cases/ gitignore template
+# Drafts and work-in-progress are excluded by default.
+# Committed: dossier.toon, timeline.jsonl, sources.toon, notes/, comms/
+# Excluded:  drafts/ (work-in-progress, not for audit trail)
+
+# Exclude drafts sub-directory
+drafts/
+
+# Exclude macOS metadata
+.DS_Store

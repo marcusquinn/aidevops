@@ -390,12 +390,14 @@ setup_shell_linting_tools() {
 
 setup_setsid_advisory() {
 	# setsid is required to detach pulse workers into their own process group
-	# (t2757, GH#20561). Without it, workers inherit pulse's PGID and are
-	# killed by any PG-scoped signal (launchd unload, restart chain).
+	# (t2757, GH#20561, GH#21102). Without it, workers inherit pulse's PGID and
+	# are killed by any PG-scoped signal (launchd unload, restart chain).
 	#
 	# Linux: setsid ships with util-linux (present on all mainstream distros).
-	# macOS: available from macOS 12+ at /usr/bin/setsid. Older versions need
-	#        util-linux via Homebrew (brew install util-linux).
+	# macOS: available from macOS 12+ at /usr/bin/setsid. Older macOS or systems
+	#        where /usr/bin/setsid is absent need util-linux via Homebrew.
+	#        util-linux is keg-only on Homebrew — binary is not linked into PATH
+	#        automatically, so we create a symlink after install.
 	if command -v setsid >/dev/null 2>&1; then
 		local setsid_path
 		setsid_path="$(command -v setsid)"
@@ -403,23 +405,51 @@ setup_setsid_advisory() {
 		return 0
 	fi
 
-	# setsid missing — emit an advisory; it's a quality-of-life improvement,
-	# not a hard requirement (pulse falls back to nohup-only).
-	print_warning "setsid not found — pulse workers will share the pulse process group"
-	echo "  Impact: a pulse restart or launchd unload may kill in-flight workers"
-	echo "  (GH#20561 / t2757: worker survived 3/4 dispatches without setsid isolation)"
-	echo ""
+	# setsid missing — on macOS with Homebrew, auto-install util-linux and
+	# symlink setsid into PATH (GH#21102 / t2926). On Linux and macOS without
+	# Homebrew, emit an actionable error with install instructions.
 	if [[ "$(uname)" == "Darwin" ]]; then
 		if command -v brew >/dev/null 2>&1; then
-			echo "  Install: brew install util-linux"
+			print_info "setsid not found — installing util-linux for worker PGID isolation (GH#21102)"
+			if brew install util-linux 2>&1 | tail -3; then
+				# util-linux is keg-only: binary lives under the keg, not in /opt/homebrew/bin.
+				# Symlink setsid into a standard PATH directory so 'command -v setsid' works.
+				local brew_prefix
+				brew_prefix="$(brew --prefix 2>/dev/null || echo "")"
+				local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
+				local link_target="${brew_prefix}/bin/setsid"
+				if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
+					ln -s "$keg_setsid" "$link_target" && \
+						print_success "Symlinked setsid: $keg_setsid → $link_target"
+				fi
+				# Verify setsid is now reachable
+				if command -v setsid >/dev/null 2>&1; then
+					print_success "setsid installed at $(command -v setsid) (worker PGID isolation enabled)"
+				else
+					print_error "util-linux installed but setsid still not in PATH — check brew --prefix"
+				fi
+			else
+				print_error "brew install util-linux failed — workers will share pulse PGID until resolved"
+				echo "  Manual fix: brew install util-linux"
+			fi
 		else
-			echo "  Install Homebrew first, then: brew install util-linux"
+			print_error "setsid not found — worker isolation broken; install util-linux"
+			echo "  Impact: every pulse restart sends SIGHUP to workers in its PGID,"
+			echo "          killing in-flight workers before they can finish (GH#21102)"
+			echo "  Fix:    install Homebrew, then run: brew install util-linux"
 			echo "  Or upgrade to macOS 12+ where /usr/bin/setsid ships by default"
 		fi
 	else
-		echo "  Install: sudo apt install util-linux  # Debian/Ubuntu"
-		echo "           sudo dnf install util-linux  # Fedora/RHEL"
-		echo "           sudo pacman -S util-linux    # Arch"
+		# Linux: setsid should be present on all mainstream distros via util-linux.
+		# If it is missing, emit an error rather than a warning — workers will be
+		# killed on every pulse cycle restart without it.
+		print_error "setsid not found — worker isolation broken; install util-linux"
+		echo "  Impact: every pulse restart sends SIGHUP to workers in its PGID,"
+		echo "          killing in-flight workers before they can finish (GH#21102)"
+		echo "  Fix:    sudo apt install util-linux     # Debian/Ubuntu"
+		echo "          sudo dnf install util-linux     # Fedora/RHEL"
+		echo "          sudo pacman -S util-linux       # Arch"
+		echo "          sudo apk add util-linux         # Alpine"
 	fi
 	echo ""
 

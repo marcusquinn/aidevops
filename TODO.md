@@ -85,6 +85,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ## Routines
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
+- [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
 
 ## Ready
 
@@ -808,6 +809,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t2772 ## What Route all direct `gh issue list` and `gh pr list` calls in `pulse-*.sh` scripts through the existing REST-fallback wrappers (`gh_issue_list`, `gh_pr_list` in `shared-gh-wrappers.sh`). This shifts load from the exhausted GraphQL pool (5000/hr, regularly at 0) to the underutilized REST core pool (4613/5000 available). This is **Phase 1 of parent-task #20622** (highest ROI of the 4 phases drafted there). Filed as a standalone tier:standard child so Phase 1 can ship immediately rather than waiting on full decomposition. For #20622. ## Why Evidence in parent #20622: ``` $ gh api rate_limit | jq '{graphql: .resources.graphql, core: .resources.core}' { "graphql": { "limit": 5000, "used": 5000, "remaining": 0 }, "core": { "limit": 5000, "used": 387, "remaining": 4613 } } ``` GraphQL is being exhausted while REST sits at 92% unused. The wrappers exist (`gh_issue_list`, `gh_pr_list`) and already know how to fall back to REST when GraphQL is low — the gap is that `pulse-*.sh` scripts mostly use bare `gh issue list` / `gh pr list` calls that bypass the wrappers. This is a mechanical replacement — no logic change, just call-site rerouting. ## How ### Files to modify - EDIT: `.agents/scripts/pulse-issue-reconcile.sh` — replace every `gh issue list` with `gh_issue_list`, every `gh pr list` with `gh_pr_list` - EDIT: `.agents/scripts/pulse-merge.sh` — same - EDIT: `.agents/scripts/pulse-triage.sh` — same - EDIT: `.agents/scripts/pulse-capacity-alloc.sh` — same - EDIT: `.agents/scripts/pulse-merge-conflict.sh` — same - EDIT: any remaining `pulse-*.sh` scripts with direct gh-list calls ### Reference pattern `shared-gh-wrappers.sh` already defines `gh_issue_list` and `gh_pr_list`. Any existing `pulse-*.sh` that already uses them (there are some) is the reference shape — the wrapper handles auto-source checking so call sites don't need to explicitly source. Check each modified file already sources `shared-gh-wrappers.sh` at the top. If not, add the source line. ### Files Scope - .agents/scripts/pulse-issue-reconcile.sh - .agents/scripts/pulse-merge.sh - .agents/scripts/pulse-triage.sh - .agents/scripts/pulse-capacity-alloc.sh - .agents/scripts/pulse-merge-conflict.sh - .agents/scripts/pulse-*.sh ### Discovery command Find all call sites: ``` rg -n "^s*gh issue list|^s*gh pr list|| gh issue list|| gh pr list|=$(gh issue list|=$(gh pr list" .agents/scripts/pulse-*.sh ``` ## Verification ``` shellcheck .agents/scripts/pulse-*.sh # No remaining bare gh list calls in pulse-*.sh except through wrappers: rg -n "gh issue list|gh pr list" .agents/scripts/pulse-*.sh | rg -v "gh_issue_list|gh_pr_list|#" # Expected: zero matches # Smoke: live pulse run does not regress pulse-lifecycle-helper.sh restart-if-running # Watch for 30 min, confirm GraphQL remaining stays above 2000: watch -n 60 'gh api rate_limit --jq ".resources.graphql.remaining"' ``` ## Acceptance Criteria 1. All `gh issue list` and `gh pr list` calls in `pulse-*.sh` go through `gh_issue_list` / `gh_pr_list` wrappers 2. `shellcheck` passes on all modified files 3. Post-merge: during a 1-hour pulse run, `gh api rate_limit` GraphQL remaining does not drop below 2000 (was hitting 0 pre-change) 4. No functional regression in pulse stages (merge, reconcile, triage still work on live repos) ### Non-scope - Do NOT implement Phases 2, 3, 4 of #20622 (prefetch extension, cycle frequency, reconcile consolidation). Those are separate children. - Do NOT modify `shared-gh-wrappers.sh` itself — the wrappers already work; only call sites change. ## Session Origin Filed from interactive review of pulse concurrency blockers. Parent #20622's decomposer (#20633) is stuck in `launch_recovery:no_worker_process` loop; rather than wait on full decomposition, this lifts the highest-ROI phase directly. ## PR keyword reminder Parent #20622 has the `parent-task` label. Per `.agents/AGENTS.md` "Parent-task PR keyword rule", this PR body must use `For #20622` or `Ref #20622` — NEVER `Closes` / `Resolves` / `Fixes`. The parent stays open until all 4 phases merge. #auto-dispatch #bug #framework #pulse ref:GH#20642 pr:#20692 completed:2026-04-24
 
 
+
+- [x] t2922 ## What Pulse-merge auto-merge path checks `mergeStateStatus == CLEAN` and treats `BLOCKED`/`UNSTABLE` as non-mergeable. Many PRs end up `BLOCKED` because non-required check contexts (`CodeRabbit`, `qlty check`, `linked-issue-check`, `maintainer-gate`, `url-allowlist`) report `status: null` indefinitely. These are NOT in `branch_protection.required_status_checks` but still cause `mergeStateStatus = BLOCKED`. ## Why This blocks the t2449 worker-briefed auto-merge path (origin:worker PRs from owner/member-filed issues). 3+ PRs admin-merged manually in last hour because phantom pending checks blocked them despite all required checks passing. Required: ["review-bot-gate", "Maintainer Review & Assignee Gate", "Complexity Analysis"]. Pulse should distinguish required-pending vs non-required-pending and merge when only the latter remains. ## How EDIT: `.agents/scripts/pulse-merge.sh` - Locate the `mergeStateStatus` evaluation (in `_check_pr_mergeable` / `_attempt_auto_merge`) - Before failing on `BLOCKED`/`UNSTABLE`, fetch required check contexts: `gh api repos/$REPO/branches/$DEFAULT/protection/required_status_checks --jq '.contexts[]'` - Cross-reference `statusCheckRollup` — if all FAILURE/PENDING checks are NOT in required list, treat as mergeable for auto-merge path - Apply ONLY for owner+origin:worker PRs (preserves contributor security gate) - Add helper: `_check_required_checks_passing <slug> <pr_num>` returning 0 if all required-by-protection checks are SUCCESS Reference pattern: existing `_attempt_auto_merge` and `_check_review_state` follow conditional-gate style. ## Verification ```bash shellcheck .agents/scripts/pulse-merge.sh bash -n .agents/scripts/pulse-merge.sh PULSE_VERBOSE=1 .agents/scripts/pulse-merge.sh check 21075 ``` ## Acceptance Criteria - [ ] `_check_required_checks_passing` helper added with shellcheck-clean - [ ] Auto-merge path bypasses non-required FAILURE/PENDING checks for owner+origin:worker PRs only - [ ] Test added: all-required-success / one-required-failure / only-non-required-pending - [ ] `shellcheck` zero violations #auto-dispatch #bug #framework ref:GH#21097 pr:#21118 completed:2026-04-26
+
+- [x] t2923 ## What Workers spawned by pulse can die mid-implementation (timeout, OOM, killed) leaving uncommitted/unpushed work in their worktree. Currently 5 aidevops worktrees have `ahead=1..2` with WIP commits that never reached origin. The next dispatch cycle creates a NEW worktree with a fresh worker that re-does the work — wasting tokens. ## Why Observed during 24-worker concurrency push (Apr 26): 5/9 active worker worktrees had unpushed commits. Worker for t2868 had 2 commits (`3548ccbf7 t2868: inbox triage routine` + `a5db80346 t2868: add triage subcommand`) that died before pushing. Re-dispatch will rewrite the same code from scratch. ## How EDIT: `.agents/scripts/headless-runtime-helper.sh` (or `worker-lifecycle-common.sh` if hooks exist there) - Add EXIT trap: before exit, if `git -C $WORKER_WORKTREE_PATH log main..HEAD` has commits, run: - `git push -u origin $branch_name 2>/dev/null || true` (best-effort, fail-open) - Log `[lifecycle] worker_exit_pushed_wip branch=$branch ahead=N` to stderr - Skip if `WORKER_NO_EXIT_PUSH=1` (escape hatch) - The 300s activity-watchdog kill path (`worker-activity-watchdog.sh`) should also push before SIGKILL Reference pattern: similar EXIT-trap pattern in `pulse-cleanup.sh::_post_launch_recovery_claim_released` (audit trail on early exit). ## Verification ```bash shellcheck .agents/scripts/headless-runtime-helper.sh shellcheck .agents/scripts/worker-activity-watchdog.sh # Manual: kill a running worker via SIGTERM, verify branch has remote gh api "repos/$slug/branches/$branch" --jq '.name' ``` ## Acceptance Criteria - [ ] EXIT trap pushes any local-only commits to origin before worker exits - [ ] Watchdog kill path also pushes WIP before SIGKILL - [ ] `WORKER_NO_EXIT_PUSH=1` escape hatch documented - [ ] No regression on workers that complete normally (push happens once, not twice) - [ ] Test: kill worker mid-implementation, verify branch on remote with WIP commit #auto-dispatch #feat #framework ref:GH#21098 pr:#21121 completed:2026-04-26
+
+- [x] t2924 ## What Pulse `dispatch_deterministic_fill_floor` enumerates 200+ candidates per cycle then iterates them. Each iteration calls `dispatch_with_dedup` which checks dedup layers and returns `rc=1` for non-dispatchable management labels (`parent-task`, `origin:interactive` with assignee, `no-auto-dispatch`). These candidates are RE-EVALUATED every pulse cycle, wasting GraphQL calls and CPU. ## Why Observed in current pulse run: candidates `#21056` (parent-task), `#20966`, `#20929`, `#20892` (all parent-task) re-checked every iteration. The dispatch loop processes them, fails dedup, skips. Next cycle: same thing. With 201 candidates and ~10s pulse cycle interval, this is hundreds of wasted GraphQL calls per hour. ## How EDIT: `.agents/scripts/pulse-dispatch-engine.sh::build_ranked_dispatch_candidates_json` - Filter OUT issues with non-dispatchable management labels at candidate-build time, not dispatch time - Specifically exclude (use `--label-not` filter or post-fetch jq filter): - `parent-task` - `no-auto-dispatch` - `needs-maintainer-review` - `status:done`, `status:in-progress`, `status:in-review`, `status:claimed` - Keep dispatch-time check as defense-in-depth (race conditions) Reference pattern: existing label exclusion in `gh issue list --label-not` calls; check usage in `dispatch-dedup-helper.sh`. ## Verification ```bash # Before fix: count non-dispatchable in candidate set .agents/scripts/pulse-dispatch-engine.sh build_ranked_dispatch_candidates_json | jq '[.[] | select(.labels | any(. == "parent-task" or . == "no-auto-dispatch"))] | length' # After: should be 0 ``` ## Acceptance Criteria - [ ] Candidates with `parent-task`/`no-auto-dispatch`/active-status labels filtered before dispatch loop - [ ] Dispatch-time `Dispatch blocked: non-dispatchable management label present` log line frequency drops to near-zero - [ ] `pulse_dispatch_iter_count` per cycle measurably reduced - [ ] No new dispatch race regressions #auto-dispatch #feat #framework ref:GH#21099 pr:#21109 completed:2026-04-26
+
+- [ ] t2925 ## What Auto-detect and close PRs from "automated bounty hunter" spam authors. Pattern observed across multiple repos: PRs with body matching `## 💰 Paid Bounty Contribution`, `Reward: $1`, `Source: GitHub-Paid`, `🤖 Generated via automated bounty hunter`, or similar templated headers. Author posts identical bodies to 20+ unrelated repos (Expensify, NVIDIA-NeMo, anthropics/claude-code, up-for-grabs, etc.). ## Why These PRs block dispatch on the issue they "address" because the dedup system sees an open PR. Two such PRs (#21077 and #21094 from carycooper777) blocked dispatch on issues #21061 and #20918 today until I manually closed them. Auto-detection saves manual triage. ## How NEW: `.agents/scripts/bounty-spam-detector.sh` - Function `is_bounty_spam_pr <slug> <pr_num>` — fetches body, returns 0 if matches: - Heading patterns: `## 💰`, `### 💰 (Paid )?Bounty`, `Paid Bounty Contribution` - Field patterns: `Reward: $d+`, `Source: GitHub-Paid`, `automated bounty hunter` - Author-pattern flag: known spam usernames list (configurable) - Action: close PR with comment `> Detected as automated bounty-hunter spam (matches templated pattern). Auto-closed.` EDIT: `.agents/scripts/pulse-merge.sh` (or new pulse pre-pass) - Run `is_bounty_spam_pr` on every open external-author PR (authorAssociation != OWNER/MEMBER/COLLABORATOR) - Auto-close detected spam NEW: `.github/workflows/bounty-spam-auto-close.yml` - Triggered on `pull_request: opened` - Runs the detector, auto-closes if positive - Posts the standardised dismissal comment ## Verification ```bash shellcheck .agents/scripts/bounty-spam-detector.sh # Test with PR #21077 (closed, but body still readable) .agents/scripts/bounty-spam-detector.sh check marcusquinn/aidevops 21077 # should return 0 ``` ## Acceptance Criteria - [ ] `bounty-spam-detector.sh` with `check`, `close`, `is-spam` subcommands - [ ] Matches all 3 known patterns from carycooper777 PRs - [ ] Workflow auto-closes within 1 minute of PR open - [ ] False-positive guard: if PR body has substantive code changes (not just template), human-review label applied instead - [ ] Test fixtures with positive (carycooper777) and negative (legitimate) examples #auto-dispatch #framework #security ref:GH#21100
+
+- [ ] t2930 Currently dispatch-override.conf 'ignore' filters CLAIM COMMENTS but not GitHub assignees. When a peer raw-assigns themselves, is_assigned() blocks unconditionally, creating dispatch starvation. Patch _is_assigned_compute_blocking to honor the override at assignee level for competitive dispatch (winner-takes-merge model). ref:GH#21119
 
 ## In Progress
 
@@ -3114,7 +3125,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2843 P0a: knowledge plane directory contract + provisioning (parent t2840) #enhancement #framework ref:GH#20895
 
-- [ ] t2844 P0a: knowledge plane directory contract + provisioning #enhancement #framework ref:GH#20896
+- [x] t2844 P0a: knowledge plane directory contract + provisioning #enhancement #framework ref:GH#20896 pr:#21107 completed:2026-04-26
 
 - [ ] t2845 P0c: knowledge review gate routine + NMR integration #enhancement #framework ref:GH#20897
 
@@ -3130,13 +3141,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2851 P4a: case dossier contract + aidevops case open #enhancement #framework ref:GH#20904 blocked-by:t2844,t2843,t2846
 
-- [ ] t2852 P4b: case CLI surface (attach/status/close/archive/list) #enhancement #framework ref:GH#20905 blocked-by:t2844,t2843,t2846
+- [x] t2852 P4b: case CLI surface (attach/status/close/archive/list) #enhancement #framework ref:GH#20905 blocked-by:t2844,t2843,t2846 pr:#21114 completed:2026-04-26
 
 - [ ] t2853 P4c: case milestone + deadline alarming routine (parent t2840) #enhancement #framework ref:GH#20906 blocked-by:t2844,t2843,t2846
 
 - [ ] t2854 P5a: .eml ingestion handler (kind=email) #enhancement #framework ref:GH#20908 blocked-by:t2844,t2843,t2849
 
-- [ ] t2855 P5b: IMAP polling routine + mailboxes.json registry #enhancement #framework ref:GH#20909 blocked-by:t2844,t2843,t2849
+- [x] t2855 P5b: IMAP polling routine + mailboxes.json registry #enhancement #framework ref:GH#20909 blocked-by:t2844,t2843,t2849 pr:#21112 completed:2026-04-26
 
 - [ ] t2856 P5c: email thread reconstruction + filter to case-attach #enhancement #framework ref:GH#20910 blocked-by:t2844,t2843,t2849,t2851,t2852
 
@@ -3146,15 +3157,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2859 fix unbound ORPHAN_WORKTREE_GRACE_SECS in pulse-cleanup.sh — destroys live worktrees #bug #framework ref:GH#20914 pr:#20915 completed:2026-04-26
 
-- [ ] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #bug #framework ref:GH#20918
+- [x] t2861 gh PATH shim mutates user --body-file source on disk instead of using a temp copy #bug #framework ref:GH#20918 pr:#21106 completed:2026-04-26
 
-- [ ] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #bug #framework ref:GH#20917
+- [x] t2860 pulse-cleanup destroys worktrees without calling unregister_worktree, leaking SQLite registry entries #bug #framework ref:GH#20917 pr:#21095 completed:2026-04-26
 
 - [x] t2864 pre-write function complexity advisory hook #auto-dispatch #framework #quality ref:GH#20921 pr:#20924 completed:2026-04-25
 
-- [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920
+- [x] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920 pr:#21113 completed:2026-04-26
 
-- [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919
+- [x] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919 pr:#21093 completed:2026-04-26
 
 - [x] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922 pr:#20928 completed:2026-04-25
 
@@ -3164,7 +3175,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2868 P2c — inbox triage routine: sensitivity gate → classification → routing #auto-dispatch #enhancement #framework ref:GH#20932 blocked-by:t2846,t2848
 
-- [ ] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931
+- [x] t2867 P2b — inbox capture CLI + watch folder + audit log #auto-dispatch #enhancement #framework ref:GH#20931 pr:#21085 completed:2026-04-26
 
 - [ ] t2866 P2a — _inbox/ directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
 
@@ -3228,11 +3239,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2902 Stop recurring GraphQL budget exhaustion despite REST fallback (t2574, t2689) #bug ref:GH#21043 pr:#21053 completed:2026-04-26
 
-- [ ] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049
+- [x] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049 pr:#21070 completed:2026-04-26
 
 - [x] t2904 Cache assignment graph + classify errors in preflight_ownership_reconcile #bug #framework #performance #pulse ref:GH#21050 pr:#21073 completed:2026-04-26
 
-- [ ] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051
+- [x] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051 pr:#21078 completed:2026-04-26
 
 - [x] t2906 setup.sh leaves 0-byte pulse plist when _generate_pulse_plist_content is interrupted #auto-dispatch #bug #framework #setup ref:GH#21054 pr:#21062 completed:2026-04-26
 
@@ -3244,7 +3255,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2910 Cache generate-runtime-config.sh on input hash (saves 135s/cycle) #auto-dispatch #bug #framework #performance #setup ref:GH#21059 pr:#21064 completed:2026-04-26
 
-- [ ] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061
+- [x] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061 pr:#21108 completed:2026-04-26
 
 - [ ] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060
 
@@ -3257,3 +3268,33 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2916 worktree sweep: consult interactive-session claim stamps in should_skip_cleanup ref:GH#21074
 
 - [ ] t2917 Runner scripts hardcode $HOME/.aidevops/logs but plist/timer installers resolve paths.log_dir — divergence on customization ref:GH#21076
+
+- [x] t2918 Invert tooling/product priority boost so tooling lifts product #bug #framework #pulse ref:GH#21079 pr:#21080 completed:2026-04-26
+
+- [x] t2919 Move pulse plist install earlier in setup flow to avoid timeout-skip #bug #framework #setup ref:GH#21081 pr:#21082 completed:2026-04-26
+
+- [x] t2920 remove dispatch-path no-auto-dispatch default — keep advisory, drop recommendation #bug ref:GH#21086 pr:#21089 completed:2026-04-26
+
+- [x] t2921 fix worker-watchdog find_workers regex broken by alternation pattern (t2421 regression) #auto-dispatch ref:GH#21091 pr:#21092 completed:2026-04-26
+
+- [x] t2922 fix(pulse-merge): bypass phantom pending checks for owner+origin:worker auto-merge #auto-dispatch #bug #framework ref:GH#21097 pr:#21118 completed:2026-04-26
+
+- [x] t2923 feat(worker): push WIP commits to origin on worker exit/kill — prevent abandoned work #auto-dispatch #enhancement #framework ref:GH#21098 pr:#21121 completed:2026-04-26
+
+- [ ] t2925 feat(security): auto-detect and close bounty-hunter spam PRs from external authors #auto-dispatch #framework #security ref:GH#21100
+
+- [x] t2924 perf(pulse): filter non-dispatchable labels at candidate-build time, not dispatch time #auto-dispatch #enhancement #framework ref:GH#21099 pr:#21109 completed:2026-04-26
+
+- [x] t2926 setup.sh: auto-install util-linux on macOS so setsid is available for worker PGID isolation #auto-dispatch #bug #framework #setup ref:GH#21102 pr:#21115 completed:2026-04-26
+
+- [ ] t2929 perf(pulse): preflight_cleanup_and_ledger 60-133s — stagger and parallelize git fetches #auto-dispatch #enhancement #framework #performance #pulse ref:GH#21105
+
+- [ ] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104
+
+- [x] t2927 fix(pulse): FOOTPRINT_OVERLAP cache leaks closed-issue defers — invalidate when issue closes #auto-dispatch #bug #framework #pulse ref:GH#21103 pr:#21117 completed:2026-04-26
+
+- [ ] t2931 fix t2855 post-merge review: 6 correctness bugs in email polling #bug #framework ref:GH#21122
+
+- [x] t2932 feat(dispatch): peer-productivity-monitor for adaptive compete/collaborate switching ref:GH#21125 pr:#21128 completed:2026-04-26
+
+- [ ] t2933 harden approve_collaborator_pr: defense-in-depth + regression test (GH#17671 follow-up) #auto-dispatch #security ref:GH#21132

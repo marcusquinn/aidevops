@@ -54,6 +54,11 @@
 [[ -n "${_PULSE_DISPATCH_CORE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_CORE_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# Ensures LOGFILE is safe to dereference in all functions when this module
+# is sourced outside the pulse-wrapper.sh bootstrap context.
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+
 # Extracted modules — sourced in load order.
 # shellcheck source=pulse-dispatch-dedup-layers.sh
 source "${BASH_SOURCE[0]%/*}/pulse-dispatch-dedup-layers.sh"

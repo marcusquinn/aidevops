@@ -85,6 +85,15 @@ Resolution order (per field independently): per-tool > per-repo > env var (`REVI
 
 CLI: `aidevops review-gate --help` — configure `rate_limit_behavior` without hand-editing JSON.
 
+## Knowledge Plane
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| `knowledge` | string | `"off"` (default), `"repo"`, `"personal"` | Controls knowledge plane provisioning. `"off"`: no plane (backwards-compatible default). `"repo"`: provisions `_knowledge/` inside the repo. `"personal"`: provisions at `~/.aidevops/.agent-workspace/knowledge/`. |
+
+CLI: `aidevops knowledge init [repo|personal|off]` — sets field and provisions directories.
+See `.agents/aidevops/knowledge-plane.md` for the full directory contract, meta.json schema, and 30MB threshold rationale.
+
 ## Platform Integration
 
 | Field | Values | Description |

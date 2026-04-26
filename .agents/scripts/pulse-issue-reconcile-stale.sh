@@ -46,6 +46,7 @@ _normalize_clear_status_labels() {
 
 	# t2033: atomic transition to status:available, clearing all sibling
 	# core status labels in one edit (not just queued/in-progress).
+	declare -F invalidate_footprint_cache_for_issue >/dev/null 2>&1 && invalidate_footprint_cache_for_issue "$issue_num" || true
 	set_issue_status "$issue_num" "$slug" "available" \
 		--remove-assignee "$runner_user" >/dev/null 2>&1
 	return $?

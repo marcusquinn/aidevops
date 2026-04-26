@@ -54,6 +54,7 @@ WORKER_PID=""
 EXIT_CODE_FILE=""
 SESSION_KEY=""
 REPO_SLUG=""
+WORKTREE_PATH=""
 STALL_TIMEOUT=300
 PHASE1_TIMEOUT=30
 POLL_INTERVAL=10
@@ -82,6 +83,10 @@ _parse_args() {
 			;;
 		--repo-slug)
 			REPO_SLUG="$2"
+			shift 2
+			;;
+		--worktree-path)
+			WORKTREE_PATH="$2"
 			shift 2
 			;;
 		--stall-timeout)
@@ -154,6 +159,59 @@ _get_output_size() {
 }
 
 #######################################
+# Push any local-only WIP commits to origin before killing the worker.
+# Best-effort, fail-open — never blocks the kill sequence.
+#
+# t2923: Ensures commits made before the stall are reachable on origin
+# so the next worker dispatch can continue from the branch instead of
+# rewriting the same code from scratch.
+#
+# Globals consumed:
+#   WORKTREE_PATH        — set via --worktree-path arg
+#   WORKER_NO_EXIT_PUSH  — escape hatch: set to "1" to disable push
+#######################################
+_push_wip_before_kill() {
+	# Escape hatch
+	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
+
+	local work_dir="$WORKTREE_PATH"
+	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
+		return 0
+	fi
+
+	# Get branch name — skip if detached HEAD or default branch
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
+	case "$branch_name" in
+	HEAD | main | master | "")
+		return 0
+		;;
+	esac
+
+	# Count commits ahead of origin/main (or origin/master)
+	local ahead_count=0
+	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	if [[ "$ahead_count" -eq 0 ]]; then
+		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
+		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	fi
+	if [[ "$ahead_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	# Push best-effort — never block the kill sequence on push failure
+	printf '[WATCHDOG_WIP_PUSH] timestamp=%s branch=%s ahead=%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$branch_name" "$ahead_count" \
+		>>"$OUTPUT_FILE" 2>/dev/null || true
+	git -C "$work_dir" push -u origin "$branch_name" 2>/dev/null || true
+	printf '[WATCHDOG_WIP_PUSHED] branch=%s ahead=%s\n' \
+		"$branch_name" "$ahead_count" \
+		>>"$OUTPUT_FILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Kill the worker process tree and write markers
 #
 # Args:
@@ -161,6 +219,10 @@ _get_output_size() {
 #######################################
 _kill_worker() {
 	local reason="$1"
+
+	# t2923: Push WIP commits before killing so the work is reachable on origin.
+	# Must happen before SIGTERM so git operations complete cleanly.
+	_push_wip_before_kill
 
 	# Write the .watchdog_killed sentinel BEFORE killing. The dying
 	# subshell may overwrite exit_code_file with its own exit code

@@ -37,6 +37,25 @@
 [[ -n "${_PULSE_DISPATCH_ENGINE_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_ENGINE_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# These vars are normally set by pulse-wrapper.sh bootstrap and pulse-wrapper-config.sh.
+# Guard them here so dispatch engine functions survive standalone sourcing (test
+# harnesses, pulse-merge-routine.sh, or any caller that doesn't run the full bootstrap).
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+: "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
+: "${PIDFILE:=${HOME}/.aidevops/logs/pulse.pid}"
+: "${PRE_RUN_STAGE_TIMEOUT:=600}"
+: "${PULSE_ACTIVE_REFILL_INTERVAL:=120}"
+: "${PULSE_ACTIVE_REFILL_IDLE_MIN:=60}"
+: "${PULSE_ACTIVE_REFILL_STALL_MIN:=120}"
+: "${PULSE_BACKFILL_MAX_ATTEMPTS:=3}"
+: "${PULSE_LAUNCH_GRACE_SECONDS:=35}"
+: "${PULSE_LAUNCH_SETTLE_BATCH_MAX:=5}"
+: "${PULSE_LLM_DAILY_INTERVAL:=86400}"
+: "${PULSE_LLM_STALL_THRESHOLD:=3600}"
+: "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
+: "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
+
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
 # shellcheck source=pulse-rate-limit-circuit-breaker.sh
 if [[ -f "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-rate-limit-circuit-breaker.sh" ]]; then
@@ -163,7 +182,7 @@ build_ranked_dispatch_candidates_json() {
 				repo_path: $path,
 				repo_priority: $priority,
 				score: (
-					(if $priority == "product" then 2000 elif $priority == "tooling" then 1000 else 0 end) +
+					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
 					(if (.labels | index("priority:critical")) != null then 10000
 					 elif (.labels | index("priority:high")) != null then 8000
 					 elif (.labels | index("bug")) != null then 7000
@@ -1345,8 +1364,12 @@ _run_preflight_stages() {
 	# _preflight_daily_scans() group with a shared 600s budget — a slow
 	# complexity_scan (200-340s) would starve downstream scanners
 	# (auto_decomposer, post_merge, dedup) from ever running.
-	run_stage_with_timeout "complexity_scan" "$_pflt_timeout" \
-		run_weekly_complexity_scan || true
+	# t2903 (#21049): complexity_scan extracted to its own launchd plist
+	# (sh.aidevops.complexity-scan, hourly) via complexity-scan-runner.sh.
+	# Observed cost was 470s per cycle — 26%+ of the 1800s pulse stale
+	# ceiling — so promoting it to its own schedule prevents preflight
+	# starvation entirely. The function still lives in pulse-simplification.sh
+	# and is invoked by the standalone runner.
 	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
 		run_daily_codebase_review || true
 	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" \

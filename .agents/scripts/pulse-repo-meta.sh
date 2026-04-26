@@ -178,7 +178,19 @@ get_repo_role_by_slug() {
 #   - status:blocked (explicit hold)
 #   - needs-* (waiting for maintainer action)
 #   - supervisor/persistent/routine-tracking (non-work telemetry)
+#   - parent-task (decomposition tracker, never directly dispatchable; t2924)
+#   - no-auto-dispatch (explicit dispatch opt-out; t2924)
+#   - status:in-progress, status:in-review, status:claimed, status:done
+#     (active or completed claims that the dispatcher would always block; t2924)
 # Everything else passes through for the downstream dedup layers to decide.
+#
+# t2924 rationale: filtering these at candidate-build time (instead of dispatch
+# time) avoids re-evaluating the same blocked candidates on every pulse cycle
+# (~10s interval). With 200+ candidates and parent-task issues frequently
+# appearing in the top of the ranked list, this saves measurable GraphQL+CPU
+# per cycle. The dispatch-time check (dispatch-dedup-helper.sh::is-assigned)
+# remains as defense-in-depth for the race window between candidate build and
+# dispatch.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
@@ -217,6 +229,18 @@ list_dispatchable_issue_candidates_json() {
 			select(($labels | index("supervisor")) == null) |
 			select(($labels | index("persistent")) == null) |
 			select(($labels | index("routine-tracking")) == null) |
+			# t2924: filter non-dispatchable management labels at candidate-build
+			# time, not dispatch time. Reduces wasted GraphQL+CPU on every pulse cycle
+			# re-evaluating issues the dispatcher would always block.
+			# The dispatch-time check (dispatch-dedup-helper.sh) remains as
+			# defense-in-depth for race conditions where labels are added between
+			# candidate build and dispatch.
+			select(($labels | index("parent-task")) == null) |
+			select(($labels | index("no-auto-dispatch")) == null) |
+			select(($labels | index("status:in-progress")) == null) |
+			select(($labels | index("status:in-review")) == null) |
+			select(($labels | index("status:claimed")) == null) |
+			select(($labels | index("status:done")) == null) |
 			{
 				number,
 				title,
