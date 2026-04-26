@@ -1156,17 +1156,38 @@ _worker_produced_output() {
 	fi
 
 	# Signal 2: branch pushed to remote
+	# Default-branch guard (t2899): when HEAD ends on the repo's default branch
+	# (main/master), Signal 2 ALWAYS matches because the default branch exists
+	# on the remote — every worker that exits without checking out a feature
+	# branch was previously misclassified as branch_orphan. Resolve the default
+	# branch via origin/HEAD symbolic-ref (with env + literal fallback) and skip
+	# Signal 2 entirely when branch_name matches it. The signal is meaningless
+	# on default branches: there is no orphan branch to recover.
 	local has_pushed_branch=0
 	local branch_name=""
+	local default_branch=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
+	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null \
+		| sed 's|^origin/||' || true)
+	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+	if [[ -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]]; then
 		local remote_ref=""
 		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
 		[[ -n "$remote_ref" ]] && has_pushed_branch=1
 	fi
 
 	# Early exit: no commits, no pushed branch → definitely noop (no PR check needed)
+	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
+	# but no feature branch pushed → noop, not branch_orphan.
 	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
+		printf 'noop'
+		return 0
+	fi
+	# t2899: HEAD on default branch with commits ahead but no feature branch pushed.
+	# This is "worker landed on main with local commits" — not an orphan branch.
+	# Without a feature branch to recover, Signal 1 alone cannot produce a meaningful
+	# branch_orphan classification, so collapse to noop.
+	if [[ "$has_pushed_branch" -eq 0 && "$branch_name" == "$default_branch" ]]; then
 		printf 'noop'
 		return 0
 	fi
@@ -1252,7 +1273,24 @@ _handle_worker_branch_orphan() {
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 
-	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>}"
+	# t2899: extended diagnostic — surface what the worker actually produced so
+	# the next regression in this classifier is debuggable from a single log line.
+	# target_branch is the branch the worker was DISPATCHED to operate on
+	# (set by the dispatch path via WORKER_TARGET_BRANCH env if present);
+	# final_head is the HEAD SHA the worker exited on; ahead_count is commits
+	# ahead of origin/main (or origin/master); work_dir is the worktree path.
+	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
+	local final_head=""
+	final_head=$(git -C "$work_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '<unreadable>')
+	local ahead_count=0
+	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	if [[ "$ahead_count" -eq 0 ]]; then
+		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
+		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	fi
+
+	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
 
 	# Always increment counter — failure or success
 	_increment_orphan_count_stat
