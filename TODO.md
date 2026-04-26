@@ -3234,3 +3234,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2903 Move complexity_scan from pulse dispatch preflight to standalone launchd plist #bug #framework #pulse ref:GH#21049
 
 - [ ] t2905 Audit prefetch_state cost vs downstream savings (184s/cycle) #bug #framework #performance #pulse ref:GH#21051
+
+- [ ] t2906 setup.sh leaves 0-byte pulse plist when _generate_pulse_plist_content is interrupted #auto-dispatch #bug #framework #setup ref:GH#21054
