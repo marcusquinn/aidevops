@@ -1826,8 +1826,21 @@ _cmd_email() {
 	poll)
 		# Direct poll commands forwarded to email-poll-helper.sh
 		_dispatch_helper "$_EPH" "$_EPH" "$action" "$@" ;;
+	thread)
+		# Thread lookup: email thread <message-id> [knowledge-root]
+		local _ETH="email-thread-helper.sh"
+		_dispatch_helper "$_ETH" "$_ETH" thread "$@" ;;
+	build)
+		# Thread rebuild: email build [knowledge-root] [--force]
+		local _ETH2="email-thread-helper.sh"
+		_dispatch_helper "$_ETH2" "$_ETH2" build "$@" ;;
+	filter)
+		# Filter rules: email filter tick|add|test|list [knowledge-root]
+		local _EFH="email-filter-helper.sh"
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "$_EFH" "$_EFH" "$@" ;;
 	*)
-		echo "Usage: aidevops email <mailbox|poll> [subcommand]"
+		echo "Usage: aidevops email <mailbox|poll|thread|build|filter> [subcommand]"
 		echo ""
 		echo "Email subcommands:"
 		echo "  mailbox add              Register a new IMAP mailbox (interactive)"
@@ -1836,6 +1849,12 @@ _cmd_email() {
 		echo "  mailbox remove <id>      Un-register a mailbox"
 		echo "  poll tick                Poll all mailboxes now (same as routine r044)"
 		echo "  poll backfill <id>       Backfill a mailbox from a given date"
+		echo "  thread <message-id>      Look up thread by message-id"
+		echo "  build [--force]          Rebuild thread index from email sources"
+		echo "  filter list              List filter rules"
+		echo "  filter add               Add a new filter rule (interactive)"
+		echo "  filter test <rule>       Dry-run rule against last 50 sources"
+		echo "  filter tick              Run filter pass (routine r045)"
 		;;
 	esac
 	return 0
