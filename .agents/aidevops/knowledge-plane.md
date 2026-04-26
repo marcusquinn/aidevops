@@ -124,3 +124,205 @@ aidevops knowledge provision [path]    # Re-provision / repair (idempotent)
 ```
 
 The helper: `.agents/scripts/knowledge-helper.sh`.
+
+---
+
+## IMAP Polling (t2855)
+
+The pulse-driven `r044` routine polls configured IMAP mailboxes every 10 minutes,
+drops new messages as `.eml` files into `_knowledge/inbox/`, and the existing
+ingestion pipeline (t2854) picks them up from there.
+
+### Setup
+
+**1. Store the mailbox password in gopass:**
+
+```bash
+aidevops secret set email/personal-icloud/password
+# or directly: gopass insert aidevops/email/personal-icloud/password
+```
+
+**2. Register the mailbox interactively:**
+
+```bash
+aidevops email mailbox add
+```
+
+This prompts for provider (auto-fills IMAP host/port from `email-providers.json.txt`),
+username, gopass path, and which folders to poll. It tests the connection before
+saving.
+
+**3. Verify the configuration:**
+
+```bash
+aidevops email mailbox list       # shows all registered mailboxes + state
+aidevops email mailbox test <id>  # dry-run: connect + fetch 1 message, no writes
+```
+
+**4. Enable the polling routine:**
+
+The `r044` entry in `TODO.md` is enabled by default (`[x]`). The pulse picks it
+up and runs `scripts/email-poll-helper.sh tick` every 10 minutes.
+
+To disable: change `[x] r044` to `[ ] r044` in `TODO.md`.
+
+### Manual Operations
+
+```bash
+# Poll all mailboxes immediately (same as the r044 routine)
+~/.aidevops/agents/scripts/email-poll-helper.sh tick
+
+# Back-fill historical messages from 2026-01-01 (rate-limited to 100 msg/min)
+~/.aidevops/agents/scripts/email-poll-helper.sh backfill <mailbox-id> \
+    --since 2026-01-01 \
+    --rate-limit 100
+
+# Show all mailboxes and their last-polled timestamps
+~/.aidevops/agents/scripts/email-poll-helper.sh list
+```
+
+### mailboxes.json Schema
+
+```json
+{
+  "mailboxes": [
+    {
+      "id": "personal-icloud",
+      "provider": "icloud",
+      "host": "imap.mail.me.com",
+      "port": 993,
+      "user": "you@icloud.com",
+      "password_ref": "gopass:aidevops/email/personal-icloud/password",
+      "folders": ["INBOX", "Cases/2026"],
+      "since": "2026-01-01"
+    }
+  ]
+}
+```
+
+Field reference:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier used in state keys and .eml filenames |
+| `provider` | string | Provider slug (matched against `email-providers.json.txt` for host defaults) |
+| `host` | string | IMAP server hostname |
+| `port` | integer | IMAP port (993 = TLS, 143 = STARTTLS) |
+| `user` | string | Login username / email address |
+| `password_ref` | string | `gopass:<path>` or environment variable name |
+| `folders` | array | IMAP folders to poll — each tracked independently |
+| `since` | string | ISO date — only used on first backfill, not by routine ticks |
+
+### Credential Resolution
+
+`password_ref` supports two forms:
+
+- `gopass:aidevops/email/<id>/password` → calls `gopass show -o <path>` silently
+- `MY_ENV_VAR` → reads from environment variable `MY_ENV_VAR`
+
+The resolved password is **never** logged or written to any file.
+
+### State File
+
+`_knowledge/.imap-state.json` persists the last-seen UID per mailbox+folder:
+
+```json
+{
+  "personal-icloud/INBOX": {
+    "last_uid_seen": 3421,
+    "last_polled_at": "2026-04-26T21:00:00+00:00"
+  },
+  "personal-icloud": {
+    "last_polled_at": "2026-04-26T21:00:00+00:00"
+  }
+}
+```
+
+Each tick fetches only UIDs strictly greater than `last_uid_seen`, guaranteeing
+no duplicate `.eml` files across restarts or pulse restarts.
+
+### Error Handling
+
+- **Wrong password / credential not found** → `status: credential_error` in tick
+  output; `last_error` recorded in state; pulse continues with next mailbox.
+- **Connection refused / DNS failure** → `status: connection_error` in tick output;
+  `last_error` recorded; pulse continues.
+- **Partial folder error** → `status: partial_error`; successfully-polled folders
+  update state; failed folder logged; pulse continues.
+- **Lock contention** → if a previous tick is still running, the new tick exits
+  cleanly (no second poll). Lock is a directory mutex in
+  `~/.aidevops/.agent-workspace/locks/email-poll.lock`.
+
+### .eml Filename Convention
+
+```
+_knowledge/inbox/email-<mailbox-id>-<uid>.eml
+```
+
+Example: `email-personal-icloud-3421.eml`
+
+Hyphens in mailbox IDs are preserved; other non-alphanumeric characters are
+replaced with underscores. UIDs are stable per IMAP server (UIDPLUS-compatible).
+
+### Backfill
+
+First-time setup of a mailbox with existing messages:
+
+```bash
+~/.aidevops/agents/scripts/email-poll-helper.sh backfill personal-icloud \
+    --since 2026-01-01 \
+    --rate-limit 100
+```
+
+- `--since` accepts ISO date `YYYY-MM-DD`.
+- `--rate-limit` defaults to 100 messages/minute. Set to 0 for no throttle
+  (not recommended for large mailboxes — risks IMAP server rate limits).
+- Backfill does **not** update the high-watermark UID; it is additive. After
+  backfill, the routine tick resumes from where it left off.
+
+### Removing a Mailbox
+
+```bash
+aidevops email mailbox remove <id>
+```
+
+This removes the entry from `mailboxes.json`. The state entry at
+`_knowledge/.imap-state.json` and any already-fetched `.eml` files are preserved.
+
+### Dependencies
+
+- Python 3 (stdlib only: `imaplib`, `email`, `json`, `re`, `subprocess`, `pathlib`)
+- gopass (for credential resolution when using `gopass:` references)
+- `shared-constants.sh` (sourced by `email-poll-helper.sh`)
+
+### Provider IMAP Hosts
+
+See `.agents/configs/email-providers.json.txt` for a full list of supported
+providers with verified IMAP host/port pairs. The `aidevops email mailbox add`
+command auto-fills these when you specify a known provider slug.
+
+Common providers:
+
+| Provider | Host | Port |
+|----------|------|------|
+| iCloud | imap.mail.me.com | 993 |
+| Gmail | imap.gmail.com | 993 |
+| Fastmail | imap.fastmail.com | 993 |
+| Cloudron | my.yourdomain.com | 993 |
+| Outlook.com | outlook.office365.com | 993 |
+
+### Routine r044
+
+The routine entry in `TODO.md`:
+
+```
+- [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
+```
+
+- `repeat:cron(*/10 * * * *)` — runs every 10 minutes
+- `run:scripts/email-poll-helper.sh tick` — the pulse executes this script
+- Lock-protected — only one poll runs per cycle
+- Errors are fail-open: connection failures or missing credentials are logged
+  but do not crash the pulse
+
+To disable: change `[x]` to `[ ]` in `TODO.md` and commit.

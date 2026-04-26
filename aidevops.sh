@@ -1499,6 +1499,7 @@ _help_commands() {
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
 	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/help)"
+	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -1796,6 +1797,50 @@ _cmd_security() {
 	return 0
 }
 
+# Route 'aidevops email [subcommand]' to email helpers
+_cmd_email() {
+	local sub="${1:-help}"
+	local _EPH="email-poll-helper.sh"
+	shift || true
+	case "$sub" in
+	mailbox)
+		local action="${1:-list}"
+		shift || true
+		local _EMR_HELPER="email-mailbox-register-helper.sh"
+		case "$action" in
+		add)      _dispatch_helper "$_EMR_HELPER" "$_EMR_HELPER" add "$@" ;;
+		list)     _dispatch_helper "$_EPH" "$_EPH" list "$@" ;;
+		test)     _dispatch_helper "$_EPH" "$_EPH" test "$@" ;;
+		remove)   _dispatch_helper "$_EMR_HELPER" "$_EMR_HELPER" remove "$@" ;;
+		*)
+			echo "Usage: aidevops email mailbox <add|list|test|remove>"
+			echo ""
+			echo "Mailbox subcommands:"
+			echo "  add           Interactive: prompt for provider, user, gopass path; test connection"
+			echo "  list          Table of mailboxes with last-polled-at and last-error"
+			echo "  test <id>     Dry-run fetch (1 message); does not commit state"
+			echo "  remove <id>   Un-register a mailbox"
+			;;
+		esac
+		;;
+	poll)
+		# Direct poll commands forwarded to email-poll-helper.sh
+		_dispatch_helper "$_EPH" "$_EPH" "$action" "$@" ;;
+	*)
+		echo "Usage: aidevops email <mailbox|poll> [subcommand]"
+		echo ""
+		echo "Email subcommands:"
+		echo "  mailbox add              Register a new IMAP mailbox (interactive)"
+		echo "  mailbox list             Show all mailboxes + polling status"
+		echo "  mailbox test <id>        Dry-run connection test"
+		echo "  mailbox remove <id>      Un-register a mailbox"
+		echo "  poll tick                Poll all mailboxes now (same as routine r044)"
+		echo "  poll backfill <id>       Backfill a mailbox from a given date"
+		;;
+	esac
+	return 0
+}
+
 # Route 'aidevops client-format [subcommand]' to appropriate helpers
 _cmd_client_format() {
 	case "${1:-status}" in
@@ -1896,6 +1941,7 @@ main() {
 		[[ $# -eq 0 ]] && set -- list
 		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
 		;;
+	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;

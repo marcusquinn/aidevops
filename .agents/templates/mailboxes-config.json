@@ -1,0 +1,36 @@
+{
+  "_description": "IMAP Mailbox Registry for aidevops email polling (t2855)",
+  "_docs": "See .agents/aidevops/knowledge-plane.md for IMAP polling setup guide.",
+  "_setup": "Copy to _config/mailboxes.json (per-repo) or ~/.config/aidevops/mailboxes.json (global). Do NOT store passwords here — use gopass references.",
+  "_version": "1.0.0",
+  "_credentials": "password_ref must be a gopass path (gopass:aidevops/email/<id>/password) or an environment variable name. Never store plaintext passwords in this file.",
+  "mailboxes": [
+    {
+      "_comment": "Example: iCloud personal mailbox — remove this block and replace with real entries",
+      "id": "personal-icloud",
+      "provider": "icloud",
+      "host": "imap.mail.me.com",
+      "port": 993,
+      "user": "you@icloud.com",
+      "password_ref": "gopass:aidevops/email/personal-icloud/password",
+      "folders": [
+        "INBOX"
+      ],
+      "since": "2026-01-01"
+    },
+    {
+      "_comment": "Example: Gmail mailbox — remove this block and replace with real entries",
+      "id": "work-gmail",
+      "provider": "gmail",
+      "host": "imap.gmail.com",
+      "port": 993,
+      "user": "you@gmail.com",
+      "password_ref": "gopass:aidevops/email/work-gmail/password",
+      "folders": [
+        "INBOX",
+        "Cases/2026"
+      ],
+      "since": "2026-01-01"
+    }
+  ]
+}
