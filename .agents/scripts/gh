@@ -71,9 +71,11 @@ _find_real_gh() {
 # -----------------------------------------------------------------------------
 # Fast pass-through for non-intercepted subcommands.
 # Every gh invocation pays this case-match plus one exec.
+# t2876: extended to include issue:edit and pr:edit so privacy-scan layer
+# protects body/title edits the same way create/comment are protected.
 # -----------------------------------------------------------------------------
 case "${1:-}:${2:-}" in
-issue:comment | issue:create | pr:create | pr:comment) ;;
+issue:comment | issue:create | issue:edit | pr:create | pr:comment | pr:edit) ;;
 api:*)
 	# `gh api` subcommand — needs further analysis for POST/PATCH write endpoints.
 	# Falls through to the api-specific handling block below.
@@ -254,6 +256,172 @@ _shim_api_inject_body_sig() {
 }
 
 # -----------------------------------------------------------------------------
+# t2876: Privacy-scan layer
+# After signature-footer injection, before exec'ing real gh, scan write
+# content for private-repo references when the target is a public repo.
+# Fail-closed on hit; fail-open on missing helper / unauthenticated gh /
+# unparseable args. Bypass via AIDEVOPS_GH_PRIVACY_BYPASS=1.
+# -----------------------------------------------------------------------------
+
+# Locate privacy-guard-helper.sh (same lookup pattern as SIG_HELPER above).
+_PRIVACY_HELPER=""
+for _cand in \
+	"$_SHIM_DIR/privacy-guard-helper.sh" \
+	"$HOME/.aidevops/agents/scripts/privacy-guard-helper.sh"; do
+	if [[ -f "$_cand" ]]; then
+		_PRIVACY_HELPER="$_cand"
+		break
+	fi
+done
+
+# _shim_privacy_scan
+# Returns 0 to allow exec, 1 to block (caller should print no extra
+# message — this function emits its own mentoring error to stderr).
+# Fail-open on every error path.
+_shim_privacy_scan() {
+	# Bypass — explicit override with audit log.
+	if [[ "${AIDEVOPS_GH_PRIVACY_BYPASS:-0}" == "1" ]]; then
+		printf '[aidevops][privacy-scan] BYPASSED via AIDEVOPS_GH_PRIVACY_BYPASS=1\n' >&2
+		return 0
+	fi
+
+	# Helper available?
+	if [[ -z "$_PRIVACY_HELPER" || ! -f "$_PRIVACY_HELPER" ]]; then
+		return 0 # fail-open
+	fi
+	# shellcheck source=/dev/null
+	source "$_PRIVACY_HELPER" 2>/dev/null || return 0
+
+	# Determine target repo from --repo arg or current git remote.
+	local target_url="" _idx=0
+	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
+		case "${_modified_args[$_idx]}" in
+		--repo)
+			target_url="${_modified_args[_idx + 1]:-}"
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--repo=*) target_url="${_modified_args[$_idx]#--repo=}" ;;
+		-R)
+			target_url="${_modified_args[_idx + 1]:-}"
+			_idx=$((_idx + 2))
+			continue
+			;;
+		-R*) target_url="${_modified_args[$_idx]#-R}" ;;
+		esac
+		_idx=$((_idx + 1))
+	done
+	if [[ -z "$target_url" ]]; then
+		target_url=$(git remote get-url origin 2>/dev/null) || return 0
+		[[ -z "$target_url" ]] && return 0
+	fi
+	# Normalize bare owner/repo to a URL form privacy_is_target_public accepts.
+	if [[ "$target_url" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		target_url="https://github.com/${target_url}"
+	fi
+
+	# Public-target check — fail-open on private (rc=1) or unknown (rc=2).
+	privacy_is_target_public "$target_url"
+	local _pub_rc=$?
+	if [[ $_pub_rc -ne 0 ]]; then
+		return 0
+	fi
+
+	# Enumerate private slugs.
+	local _slugs_file
+	_slugs_file=$(mktemp 2>/dev/null) || return 0
+	if ! privacy_enumerate_private_slugs "$_slugs_file" 2>/dev/null; then
+		rm -f "$_slugs_file"
+		return 0
+	fi
+	if [[ ! -s "$_slugs_file" ]]; then
+		rm -f "$_slugs_file"
+		return 0
+	fi
+
+	# Build content blob from --body / --body-file / --title args plus
+	# `-f body=...` / `-F body=@...` forms used by gh api.
+	local _blob="" _bf _kv
+	_idx=0
+	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
+		case "${_modified_args[$_idx]}" in
+		--body)
+			_blob+="${_modified_args[_idx + 1]:-}"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--body=*) _blob+="${_modified_args[$_idx]#--body=}"$'\n' ;;
+		--body-file)
+			_bf="${_modified_args[_idx + 1]:-}"
+			[[ -n "$_bf" && -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--body-file=*)
+			_bf="${_modified_args[$_idx]#--body-file=}"
+			[[ -n "$_bf" && -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+			;;
+		--title)
+			_blob+="${_modified_args[_idx + 1]:-}"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--title=*) _blob+="${_modified_args[$_idx]#--title=}"$'\n' ;;
+		-f | --field | -F | --raw-field)
+			_kv="${_modified_args[_idx + 1]:-}"
+			case "$_kv" in
+			body=@*)
+				_bf="${_kv#body=@}"
+				[[ -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+				;;
+			body=*) _blob+="${_kv#body=}"$'\n' ;;
+			title=*) _blob+="${_kv#title=}"$'\n' ;;
+			esac
+			_idx=$((_idx + 2))
+			continue
+			;;
+		-f* | -F* | --field=* | --raw-field=*)
+			case "${_modified_args[$_idx]}" in
+			-f*) _kv="${_modified_args[$_idx]#-f}" ;;
+			-F*) _kv="${_modified_args[$_idx]#-F}" ;;
+			--field=*) _kv="${_modified_args[$_idx]#--field=}" ;;
+			--raw-field=*) _kv="${_modified_args[$_idx]#--raw-field=}" ;;
+			esac
+			case "$_kv" in
+			body=@*)
+				_bf="${_kv#body=@}"
+				[[ -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+				;;
+			body=*) _blob+="${_kv#body=}"$'\n' ;;
+			title=*) _blob+="${_kv#title=}"$'\n' ;;
+			esac
+			;;
+		esac
+		_idx=$((_idx + 1))
+	done
+
+	if [[ -z "$_blob" ]]; then
+		rm -f "$_slugs_file"
+		return 0
+	fi
+
+	local _hits
+	_hits=$(privacy_scan_text "$_blob" "$_slugs_file")
+	local _scan_rc=$?
+	rm -f "$_slugs_file"
+
+	if [[ $_scan_rc -eq 1 ]]; then
+		printf '\n[aidevops][privacy-scan][BLOCK] Write to public %s contains private-repo references:\n\n' "$target_url" >&2
+		printf '%s\n' "$_hits" | sed 's/^/  /' >&2
+		printf '\n  Use generic placeholders (e.g. <webapp>) for private repo names before posting to public repos.\n' >&2
+		printf '  Private slugs source: privacy_enumerate_private_slugs (mirror_upstream/local_only in repos.json + ~/.aidevops/configs/privacy-guard-extra-slugs.txt).\n' >&2
+		printf '  Bypass (audit-logged): AIDEVOPS_GH_PRIVACY_BYPASS=1 gh ...\n\n' >&2
+		return 1
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Initialise the mutable args array used by all injection code below.
 # -----------------------------------------------------------------------------
 _modified_args=("$@")
@@ -261,10 +429,14 @@ _modified_args=("$@")
 # -----------------------------------------------------------------------------
 # Handle `gh api` subcommand: intercept write calls to content endpoints.
 # Non-targeted api calls pass straight through after this block.
+# t2876: write endpoints also run through the privacy-scan layer.
 # -----------------------------------------------------------------------------
 if [[ "${1:-}" == "api" ]]; then
 	if _shim_api_is_write_endpoint; then
 		_shim_api_inject_body_sig
+		if ! _shim_privacy_scan; then
+			exit 1
+		fi
 	fi
 	exec "$REAL_GH" "${_modified_args[@]}"
 fi
@@ -332,6 +504,11 @@ if [[ $_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; 
 			printf '%s' "$_sig_footer" >>"$_body_file_val" || true
 		fi
 	fi
+fi
+
+# t2876: privacy scan runs after sig footer injection — fail-closed on hit.
+if ! _shim_privacy_scan; then
+	exit 1
 fi
 
 exec "$REAL_GH" "${_modified_args[@]}"
