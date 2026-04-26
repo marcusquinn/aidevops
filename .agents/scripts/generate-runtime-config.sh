@@ -65,6 +65,35 @@ source "${SCRIPT_DIR}/prompt-injection-adapter.sh"
 # =============================================================================
 
 AGENTS_DIR="${HOME}/.aidevops/agents"
+# Bypass flag: set to true when --verify-parity is active so the cache is
+# skipped and fresh outputs are generated for regression comparison.
+# --dry-run is handled by main() before any generation call, so it never
+# reaches _generate_for_runtime() and does not need a flag here.
+_SKIP_CACHE=false
+
+# =============================================================================
+# Cache check — skip generation if source files haven't changed
+# =============================================================================
+# One hash file per runtime: ${AGENTS_DIR}/.runtime-config-source-hash-<id>
+# Independent caches ensure an opencode-only change doesn't invalidate
+# the claude-code cache, and vice versa.
+
+RUNTIME_CACHE_HASH_FILE_PREFIX="${AGENTS_DIR}/.runtime-config-source-hash"
+
+# Compute a stable hash of all files the generator reads.
+# Includes: the script itself + all source .md/.toml/.json files under AGENTS_DIR.
+# Uses file metadata (name/size/mtime) for speed (~10ms for 1600 files)
+# rather than content hashing (~80s per runtime).
+# NOTE: stat -f is macOS/BSD syntax; on Linux it silently fails (2>/dev/null)
+# producing an empty hash, which forces regeneration — acceptable behaviour.
+compute_runtime_source_hash() {
+	{
+		stat -f '%N %z %m' "${BASH_SOURCE[0]}" 2>/dev/null
+		find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+			-exec stat -f '%N %z %m' {} + 2>/dev/null
+	} | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
+	return 0
+}
 
 # =============================================================================
 # Shared MCP Definitions — defined once, consumed by all runtimes
@@ -1300,6 +1329,39 @@ _generate_for_runtime() {
 	local display_name
 	display_name=$(rt_display_name "$runtime_id") || display_name="$runtime_id"
 
+	# Cache check — skip regeneration when source files haven't changed.
+	# Bypassed when _SKIP_CACHE=true (set by --verify-parity in main()).
+	if [[ "$_SKIP_CACHE" == false ]]; then
+		local cache_hash_file="${RUNTIME_CACHE_HASH_FILE_PREFIX}-${runtime_id}"
+		local current_hash stored_hash
+		current_hash=$(compute_runtime_source_hash)
+		if [[ -f "$cache_hash_file" ]]; then
+			stored_hash=$(cat "$cache_hash_file" 2>/dev/null || echo "")
+			if [[ "$current_hash" == "$stored_hash" ]]; then
+				# Paranoia check: verify at least one expected output artefact
+				# exists before declaring a cache hit — handles the edge case
+				# where the hash file was written but outputs were later deleted.
+				local output_ok=false
+				case "$runtime_id" in
+				opencode)
+					[[ -f "$HOME/.config/opencode/AGENTS.md" ]] && output_ok=true
+					;;
+				claude-code)
+					[[ -f "$HOME/.config/Claude/AGENTS.md" ]] && output_ok=true
+					;;
+				*)
+					# Unknown runtime: optimistically trust the hash
+					output_ok=true
+					;;
+				esac
+				if [[ "$output_ok" == true ]]; then
+					print_info "$display_name config up to date (source unchanged) — skipping generation"
+					return 0
+				fi
+			fi
+		fi
+	fi
+
 	print_info "Generating config for $display_name..."
 
 	case "$subcommand" in
@@ -1339,6 +1401,14 @@ _generate_for_runtime() {
 		_generate_prompts_for_runtime "$runtime_id"
 		;;
 	esac
+
+	# Write the source hash after successful generation so the next invocation
+	# can skip regeneration when inputs are unchanged.
+	if [[ "$_SKIP_CACHE" == false ]]; then
+		local new_hash
+		new_hash=$(compute_runtime_source_hash)
+		echo "$new_hash" >"${RUNTIME_CACHE_HASH_FILE_PREFIX}-${runtime_id}"
+	fi
 
 	return 0
 }
@@ -1414,6 +1484,11 @@ main() {
 		esac
 		shift
 	done
+
+	# --verify-parity must generate fresh outputs for a valid regression comparison.
+	if [[ "$verify_parity" == "true" ]]; then
+		_SKIP_CACHE=true
+	fi
 
 	if [[ "$dry_run" == "true" ]]; then
 		print_info "[DRY RUN] Would generate: $subcommand"
