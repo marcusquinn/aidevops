@@ -480,6 +480,46 @@ _update_check_homebrew() {
 	return 0
 }
 
+# t2926 / GH#21102: Re-check setsid on every 'aidevops update' run.
+# setsid (from util-linux) is required to detach pulse workers into their own
+# process group — without it, every pulse restart sends SIGHUP to its PGID,
+# killing in-flight workers. This check runs even when setup.sh is skipped
+# (already up-to-date path), so Homebrew drift doesn't silently break workers.
+_update_check_setsid() {
+	command -v setsid >/dev/null 2>&1 && return 0
+
+	# setsid is missing. On macOS with Homebrew, auto-install util-linux.
+	# Use a boolean flag to avoid repeating the OS literal string.
+	local _on_mac=false
+	[[ "$(uname -s)" == Darwin* ]] && _on_mac=true
+	if $_on_mac && command -v brew >/dev/null 2>&1; then
+		print_info "setsid not found — installing util-linux for worker PGID isolation (GH#21102)"
+		if brew install util-linux 2>&1 | tail -3; then
+			local brew_prefix=""
+			brew_prefix="$(brew --prefix 2>/dev/null || true)"
+			local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
+			local link_target="${brew_prefix}/bin/setsid"
+			if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
+				ln -s "$keg_setsid" "$link_target" && \
+					print_success "Symlinked setsid: $keg_setsid → $link_target"
+			fi
+			if command -v setsid >/dev/null 2>&1; then
+				print_success "setsid installed at $(command -v setsid) (worker PGID isolation enabled)"
+			else
+				print_error "util-linux installed but setsid still not in PATH — check brew --prefix"
+			fi
+		else
+			print_error "brew install util-linux failed — workers will share pulse PGID until resolved"
+		fi
+	elif $_on_mac; then
+		print_error "setsid not found — worker isolation broken; install Homebrew then run: brew install util-linux"
+	else
+		print_error "setsid not found — worker isolation broken; install util-linux via your distro package manager"
+	fi
+
+	return 0
+}
+
 # Verify supply chain signature after pulling framework updates.
 # Checks that the HEAD commit is signed by the trusted maintainer key.
 # Non-blocking: warns on failure, does not abort the update.
@@ -638,6 +678,8 @@ cmd_update() {
 	_update_check_planning
 	_update_check_tools
 	_update_sweep_opencode_symlinks
+	# t2926: Re-check setsid on every update (runs even when setup.sh is skipped).
+	_update_check_setsid
 
 	# t2898: When invoked interactively (terminal stdin AND not from the
 	# auto-update daemon itself, which sets AIDEVOPS_AUTO_UPDATE=1 in its

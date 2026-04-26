@@ -426,7 +426,7 @@ _dlw_exec_detached() {
 		[[ -n "$pulse_pgid" ]] || pulse_pgid="unknown"
 		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
 	else
-		echo "[dispatch_worker_launch] Warning: setsid not found — worker will share pulse's PGID; install util-linux (Linux) or upgrade macOS 12+ for signal isolation" >>"$LOGFILE"
+		echo "[dispatch_worker_launch] ERROR: setsid missing — worker isolation broken; worker shares pulse PGID and will be killed on next pulse restart. Run: aidevops update (GH#21102)" >>"$LOGFILE"
 		nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 	fi

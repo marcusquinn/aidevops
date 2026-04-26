@@ -1034,6 +1034,9 @@ _setup_run_non_interactive() {
 	check_requirements
 	# Run quality tool detection in non-interactive mode too (warn-only path).
 	check_quality_tools
+	# Check setsid availability; auto-install util-linux on macOS if missing
+	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
+	setup_setsid_advisory
 	check_python_upgrade_available
 	set_permissions
 	migrate_old_backups
@@ -1131,6 +1134,9 @@ _setup_run_interactive() {
 	# Required steps (always run)
 	verify_location
 	check_requirements
+	# Check setsid availability; auto-install util-linux on macOS if missing
+	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
+	confirm_step "Install util-linux for setsid (worker PGID isolation)" && setup_setsid_advisory
 
 	# Quality tools check (optional but recommended)
 	confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
