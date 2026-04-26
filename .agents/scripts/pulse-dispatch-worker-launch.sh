@@ -229,7 +229,8 @@ _dlw_resolve_tier_and_model() {
 #
 # Fix: after creating or resetting a worktree, copy node_modules from
 # the canonical repo for any directory that has a package.json tracked
-# in git. This is fast (cp -a), offline, and idempotent.
+# in git. Uses fast_cp (clonefile/reflink CoW where available — sub-
+# second on APFS, near-zero disk delta), offline, and idempotent.
 #
 # Arguments: worktree_path, repo_path
 ###############################################################################
@@ -253,7 +254,9 @@ _dlw_restore_worktree_deps() {
 		local _src_nm="${repo_path}${_rel_dir}/node_modules"
 		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
 		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]]; then
-			cp -a "$_src_nm" "$_dst_nm" 2>/dev/null || true
+			# t2889: fast_cp uses APFS clonefile / btrfs reflink CoW
+			# where available — sub-second copy, near-zero disk delta.
+			fast_cp "$_src_nm" "$_dst_nm" 2>/dev/null || true
 			echo "[dispatch_with_dedup] Restored node_modules: ${_rel_dir:-/} ($(du -sh "$_dst_nm" 2>/dev/null | cut -f1))" >>"$LOGFILE"
 		fi
 	done < <(find "$worktree_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)

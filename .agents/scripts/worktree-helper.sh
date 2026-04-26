@@ -705,7 +705,9 @@ _restore_worktree_node_modules() {
 		local _src="${repo_root}${_rel}/node_modules"
 		local _dst="${wt_path}${_rel}/node_modules"
 		if [[ -d "$_src" && ! -d "$_dst" ]]; then
-			cp -a "$_src" "$_dst" 2>/dev/null || true
+			# t2889: fast_cp uses APFS clonefile / btrfs reflink CoW where
+			# available — sub-second copy on macOS, near-zero disk delta.
+			fast_cp "$_src" "$_dst" 2>/dev/null || true
 		fi
 	done < <(find "$wt_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
 	return 0
