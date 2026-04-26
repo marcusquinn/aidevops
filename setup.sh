@@ -1221,6 +1221,10 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
 		setup_complexity_scan
 	fi
+	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass
+	if _should_setup_noninteractive_scheduler "Pulse merge routine" "sh.aidevops.pulse-merge-routine" "aidevops: pulse-merge-routine" "aidevops-pulse-merge-routine"; then
+		setup_pulse_merge_routine
+	fi
 	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 	setup_repo_sync
 	# r914 repo-aidevops-health — daily drift keeper (t2366)
@@ -1282,6 +1286,7 @@ _setup_post_setup_steps() {
 	setup_screen_time_snapshot
 	setup_contribution_watch
 	setup_complexity_scan
+	setup_pulse_merge_routine
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh
