@@ -126,7 +126,10 @@ _acquire_lock() {
 	fi
 
 	# Stale lock — reclaim. mkdir again after rm to confirm we won the race.
-	rm -rf "$LOCK_DIR"
+	# Best-effort rm: if removal fails (permissions/IO), the mkdir below will
+	# still fail and we'll skip cleanly. Never let a failed cleanup brick the
+	# scheduled job under `set -e`.
+	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	if mkdir "$LOCK_DIR" 2>/dev/null; then
 		printf '%s\n' "$$" >"${LOCK_DIR}/pid"
 		trap '_release_lock' EXIT INT TERM

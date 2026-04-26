@@ -1728,7 +1728,7 @@ _install_complexity_scan_launchd() {
 		<string>${_xml_cs_home}</string>
 	</dict>
 	<key>RunAtLoad</key>
-	<false/>
+	<true/>
 	<key>KeepAlive</key>
 	<false/>
 	<key>ProcessType</key>
@@ -1766,7 +1766,7 @@ _install_complexity_scan_linux() {
 		"" \
 		"Complexity scan enabled (hourly run)" \
 		"Failed to install complexity scan scheduler" \
-		"false" \
+		"true" \
 		"true"
 	return 0
 }
