@@ -13,9 +13,11 @@ name: Pulse Unbound-Var Check
 # Fix: explicit empty-string init at declaration:
 #   local foo="" bar="" baz=""   (or 0 for numeric accumulators)
 #
-# Diff-scoped (Option A, same as counter-stack-check.yml): pre-existing
-# violations on main do not fail CI; only PR-changed pulse-*.sh files are
-# checked. New violations in a PR fail CI.
+# Diff-scoped (diff-additions-only): only NEWLY ADDED lines in PR-changed
+# pulse-*.sh files are scanned. Pre-existing violations in a touched file do
+# not fail CI — only lines introduced by this PR are checked. This is stricter
+# than the counter-stack-check.yml "changed files" approach: it uses
+# `git diff | grep '^+'` to extract added lines before scanning.
 #
 # Violations posted as a PR comment with remediation guidance.
 
@@ -43,7 +45,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get changed pulse-*.sh files
+      - name: Get changed pulse-*.sh files and extract diff additions
         id: changed
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -58,17 +60,41 @@ jobs:
             exit 0
           fi
           printf 'Changed pulse files:\n%s\n' "$changed"
-          echo "has_files=true" >> "$GITHUB_OUTPUT"
-          printf '%s\n' "$changed" > /tmp/changed-puv-files.txt
 
-      - name: Run pulse unbound-var check
+          # Extract only ADDED lines (+) from each changed file so pre-existing
+          # violations don't block CI — only new violations introduced by this PR fail.
+          mkdir -p /tmp/puv-diff-lines
+          any_diff=false
+          while IFS= read -r file; do
+            basename_file=$(basename "$file")
+            diff_file="/tmp/puv-diff-lines/${basename_file}"
+            # grep '^+' gives added lines; grep -v '^+++' strips the file header.
+            # Prefix the line with a fake function body indent so the scan pattern
+            # (requires leading whitespace) matches correctly.
+            git diff "$BASE_SHA" "$HEAD_SHA" -- "$file" \
+              | grep '^+' | grep -v '^+++' | sed 's/^+//' \
+              > "$diff_file" || true
+            if [ -s "$diff_file" ]; then
+              any_diff=true
+            fi
+          done <<< "$changed"
+
+          if [ "$any_diff" = "false" ]; then
+            echo "No added lines to check."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+
+      - name: Run pulse unbound-var check (diff additions only)
         if: steps.changed.outputs.has_files == 'true'
         id: scan
         run: |
           set +e
-          files=$(tr '\n' ' ' < /tmp/changed-puv-files.txt)
+          diff_files=$(find /tmp/puv-diff-lines -name 'pulse-*.sh' -type f | tr '\n' ' ')
           # shellcheck disable=SC2086
-          output=$(bash .agents/scripts/pulse-unbound-var-check.sh --scan-files $files 2>&1)
+          output=$(bash .agents/scripts/pulse-unbound-var-check.sh --scan-files $diff_files 2>&1)
           exit_code=$?
           set -e
           echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
