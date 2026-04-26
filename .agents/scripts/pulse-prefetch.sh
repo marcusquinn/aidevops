@@ -256,6 +256,63 @@ _prefetch_batch_refresh() {
 #
 # This is a deterministic data-fetch utility. The intelligence about
 # what to DO with this data stays in pulse.md.
+#
+# -----------------------------------------------------------------------------
+# Architectural rationale (t2905, audit #21051) — DO NOT REMOVE THIS STAGE
+# -----------------------------------------------------------------------------
+# Measured cost: ~170s avg (156s-224s range, 30-cycle sample, Apr 2026).
+# Naive view: "184s of housekeeping per pulse, can we drop it?" — NO.
+#
+# prefetch_state is NOT a downstream-call amortisation optimisation. It is
+# the ONLY mechanism that produces three outputs the dispatch pipeline
+# cannot operate without:
+#
+# 1. STATE_FILE (cross-repo PR/issue/missions/FOSS/contribution-watch
+#    summary). This is INJECTED into the pulse agent's prompt at
+#    pulse-wrapper.sh:428-434 — the LLM reads it via Read tool because
+#    the payload routinely exceeds Linux execve() MAX_ARG_STRLEN (#4257).
+#    Without STATE_FILE the LLM has zero cross-repo visibility and the
+#    cycle is useless.
+#
+# 2. PULSE_SCOPE_REPOS export (line ~350) + SCOPE_FILE persistence.
+#    Every worker checks PULSE_SCOPE_REPOS to gate branch/PR creation
+#    (t1405, GH#2928). Without it, workers either dispatch with no scope
+#    (all repos allowed = security regression) or refuse to dispatch.
+#
+# 3. STATE_FILE is also read directly by shell-stage consumers:
+#      - prefetch_foss_scan / FOSS dispatch (pulse-wrapper.sh:1726).
+#      - dispatch_foss_workers reads pre-fetched FOSS data from STATE_FILE.
+#    Removing prefetch_state would force these stages to fetch on demand
+#    or skip silently.
+#
+# What ALREADY makes this stage cheap:
+#   - L3 batch prefetch via gh search (GH#19963) — _prefetch_batch_refresh
+#     consolidates per-repo fetches when the org search cache hits.
+#   - Idle-repo skip (t2098) — repos with no recent activity bypass the
+#     full per-repo gh sweep.
+#   - Read-side REST fallback (t2689) — when GraphQL is constrained,
+#     individual sub-fetches route via the separate 5000/hr REST pool
+#     instead of failing.
+#   - Per-repo schedule check (pulse_hours / pulse_expires) — repos
+#     outside their schedule window contribute zero gh calls.
+#   - Hard timeout (120s for parallel pids, t1482, GH#15060) — bounded
+#     worst case even when GraphQL is slow.
+#
+# Hypothesis ruled out (audit #21051): the issue body framed prefetch_state
+# as cost-amortisation across "downstream stages" and asked whether those
+# stages still benefit. The framing was wrong — the primary downstream
+# consumer is the LLM agent (output 1 above), not subsequent shell stages.
+# REST-fallback and dispatch-dedup REST routing (t2689, #20991) reduce the
+# cost of OTHER gh paths but do not displace this stage's role.
+#
+# If you find yourself auditing this stage again because the cycle is slow:
+#   - Look at preflight_ownership_reconcile (~600s, see t2904 — separate
+#     audit).
+#   - Look at complexity_scan (~470s, moved to standalone plist in t2903).
+#   - Move the pulse interval up (180s -> 600s in settings.json) instead
+#     of removing structurally-required stages. The cycle is naturally
+#     long because it is a cross-repo state observer; running it more
+#     often does not produce better outcomes.
 #######################################
 prefetch_state() {
 	local repos_json="$REPOS_JSON"

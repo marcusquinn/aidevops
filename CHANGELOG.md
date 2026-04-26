@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.17] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2905 complete (pr:#21078 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2903 complete (pr:#21070 completed:2026-04-26) [skip ci]
+- extract complexity_scan to standalone launchd plist (#21070)
+- Maintenance: sync ref:GH#21076 to TODO.md [skip ci]
+- Maintenance: mark t2904 complete (pr:#21073 completed:2026-04-26) [skip ci]
+- Performance: batch per-issue jq extraction in reconcile_issues_single_pass (#21073)
+- Maintenance: sync ref:GH#21074 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.11.16] - 2026-04-26
 
 ### Changed
