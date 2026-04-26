@@ -36,7 +36,7 @@ Use `framework-issue-helper.sh`, not `claim-task-id.sh`:
 
 **Issue quality filter (GH#6508):** Enhancements require (1) observed failure (no preemptive bloat), (2) no deterministic alternative, (3) not a deliberate framework choice. Bar: **observed failure first, minimal guidance**.
 
-**Intelligence over determinism:** See `prompts/build.txt`. Use deterministic rules for CLI/paths/security; judgment for everything else. Use cheapest capable model.
+**Intelligence over determinism:** See `.agents/AGENTS.md` "Framework Rules > Intelligence Over Determinism". Use deterministic rules for CLI/paths/security; judgment for everything else. Use cheapest capable model.
 
 ## What to Improve
 

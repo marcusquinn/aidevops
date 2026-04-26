@@ -100,24 +100,26 @@ TASK_SPECIFIC_DISQUALIFIERS = [
 _INSTRUCTION_COMPILED = [re.compile(p, re.IGNORECASE) for p in INSTRUCTION_SIGNAL_PATTERNS]
 _DISQUALIFIER_COMPILED = [re.compile(p, re.IGNORECASE) for p in TASK_SPECIFIC_DISQUALIFIERS]
 
-# Target file heuristics — map content keywords to likely instruction files
+# Target file heuristics — map content keywords to likely instruction files.
+# All categories now route to .agents/AGENTS.md "Framework Rules" since
+# prompts/build.txt was consolidated into AGENTS.md (t2878).
 _TARGET_FILE_RULES: list[tuple[re.Pattern, str, str]] = [
     (re.compile(r"\b(?:shell|bash|script|\.sh|shellcheck|function|local\s+var)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "code_style"),
+     ".agents/AGENTS.md", "code_style"),
     (re.compile(r"\b(?:AGENTS\.md|agent|subagent|prompt|instruction|build\.txt)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "agent_instructions"),
+     ".agents/AGENTS.md", "agent_instructions"),
     (re.compile(r"\b(?:git|commit|branch|PR|worktree|merge|push|pull)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "git_workflow"),
+     ".agents/AGENTS.md", "git_workflow"),
     (re.compile(r"\b(?:style|format|markdown|emoji|tone|concise|verbose)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "style"),
+     ".agents/AGENTS.md", "style"),
     (re.compile(r"\b(?:security|secret|credential|token|key|password)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "security"),
+     ".agents/AGENTS.md", "security"),
     (re.compile(r"\b(?:test|lint|quality|verify|check|validate)\b", re.IGNORECASE),
-     ".agents/prompts/build.txt", "quality"),
+     ".agents/AGENTS.md", "quality"),
     (re.compile(r"\b(?:AGENTS\.md|workflow|process|lifecycle|routine)\b", re.IGNORECASE),
      ".agents/AGENTS.md", "workflow"),
 ]
-_TARGET_FILE_DEFAULT = (".agents/prompts/build.txt", "general")
+_TARGET_FILE_DEFAULT = (".agents/AGENTS.md", "general")
 
 
 def _infer_target_file(text: str) -> tuple[str, str]:

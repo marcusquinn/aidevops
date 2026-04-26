@@ -96,55 +96,57 @@ check_inline_only() {
 	return 0
 }
 
-check_build_txt_extractions() {
-	[[ "$QUIET" != "--quiet" ]] && printf "\n--- build.txt extractions ---"
+check_framework_rules_extractions() {
+	# Post-t2878: build.txt was consolidated into AGENTS.md "Framework Rules".
+	# All checks below now run against AGENTS.md instead of build.txt.
+	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md Framework Rules extractions ---"
 
 	check_extraction \
 		"Screenshot Size Limits" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"screenshot-limits.md" \
 		"reference/screenshot-limits\.md"
 
 	# Secret Handling (8.1-8.4): extracted to reference/secret-handling.md by t1679.5.
-	# Inline trigger (pointer comment) retained in build.txt; full rules in reference file.
+	# Inline trigger (pointer comment) retained in AGENTS.md; full rules in reference file.
 	check_extraction \
 		"Secret Handling (8.1-8.4)" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"secret-handling.md" \
 		"reference/secret-handling\.md"
 
 	check_extraction \
 		"External Repo Issue/PR Submission" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"external-repo-submissions.md" \
 		"reference/external-repo-submissions\.md"
 
-	# Bash 3.2 Compatibility: reference file is a supplement; inline content kept in build.txt
+	# Bash 3.2 Compatibility: reference file is a supplement; inline content kept in AGENTS.md
 	check_inline_only \
 		"Bash 3.2 Compatibility — inline + reference/bash-compat.md supplement" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"Bash 3\.2 Compatibility|bash 3\.2"
 
 	check_extraction \
 		"Conversational Memory Lookup" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"memory-lookup.md" \
 		"reference/memory-lookup\.md"
 
 	# Sections still inline (not yet extracted) — verify they haven't been lost
 	check_inline_only \
 		"Parallel Model Verification (still inline)" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"verify-operation-helper\.sh|check_operation"
 
 	check_inline_only \
 		"Tamper-Evident Audit Logging (still inline)" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"audit-log-helper\.sh"
 
 	check_inline_only \
 		"Review Bot Gate (still inline)" \
-		"$BUILD_TXT" \
+		"$AGENTS_MD" \
 		"review-bot-gate-helper\.sh"
 
 	return 0
@@ -186,20 +188,22 @@ print_summary() {
 }
 
 main() {
-	if [[ ! -f "$BUILD_TXT" ]]; then
-		printf "ERROR: build.txt not found at %s\n" "$BUILD_TXT" >&2
+	if [[ ! -f "$AGENTS_MD" ]]; then
+		printf "ERROR: AGENTS.md not found at %s\n" "$AGENTS_MD" >&2
 		return 2
 	fi
 
-	if [[ ! -f "$AGENTS_MD" ]]; then
-		printf "ERROR: AGENTS.md not found at %s\n" "$AGENTS_MD" >&2
+	# build.txt is a placeholder post-t2878 — its presence still required for
+	# the OpenCode {file:...} injection channel to remain a valid no-op.
+	if [[ ! -f "$BUILD_TXT" ]]; then
+		printf "ERROR: build.txt placeholder not found at %s\n" "$BUILD_TXT" >&2
 		return 2
 	fi
 
 	[[ "$QUIET" != "--quiet" ]] && printf "Progressive Load Safety Check\n"
 	[[ "$QUIET" != "--quiet" ]] && printf "Source: %s\n" "$AGENTS_DIR"
 
-	check_build_txt_extractions
+	check_framework_rules_extractions
 	check_agents_md_extractions
 	print_summary
 }

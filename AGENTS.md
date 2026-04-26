@@ -10,7 +10,7 @@
 - **User Guide**: `.agents/AGENTS.md` (deployed to `~/.aidevops/agents/`)
 - **Commands**: `./setup.sh` (deploy) | `.agents/scripts/linters-local.sh` (quality) | `.agents/scripts/version-manager.sh release [major|minor|patch]`
 - **Config**: Runtime-specific (see `.agents/AGENTS.md` "Runtime-Specific References")
-- **Quality**: `.agents/prompts/build.txt`
+- **Quality**: `.agents/AGENTS.md` "Framework Rules"
 
 **File Structure**: `TODO.md` (tasks), `todo/` (plans, PRDs), `.agents/` (agents, tools, services, workflows, scripts).
 
@@ -30,7 +30,7 @@ The `.agents/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh
 ## Development Lifecycle
 
 See `.agents/AGENTS.md` "Development Lifecycle" for the full lifecycle.
-Completion self-check: see `prompts/build.txt` "Completion and quality discipline".
+Completion self-check: see `.agents/AGENTS.md` "Framework Rules > Completion and quality discipline".
 
 ## Contributing
 
@@ -57,7 +57,7 @@ From `tools/build-agent/build-agent.md`:
 
 ## Security
 
-Security rules: see `prompts/build.txt`. Additional contributor rule:
+Security rules: see `.agents/AGENTS.md` "Framework Rules > Security Rules". Additional contributor rule:
 - Use placeholders in examples, note secure storage location
 
 ## Quality Workflow
