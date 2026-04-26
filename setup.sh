@@ -1159,6 +1159,63 @@ _setup_run_interactive() {
 }
 
 # Post-setup steps: schedulers, final instructions, optional tool update check.
+# Non-interactive scheduler installation. Extracted from
+# `_setup_post_setup_steps` (t2903) to keep the parent under the
+# function-complexity gate threshold. Each `_should_setup_noninteractive_*`
+# guard returns 0 when the corresponding scheduler is already installed
+# (regenerate on update) or first-time install is consented via config.
+_setup_noninteractive_schedulers() {
+	local os="$1"
+
+	# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
+	setup_auto_update
+	if _should_setup_noninteractive_supervisor_pulse; then
+		setup_supervisor_pulse "$os"
+	fi
+	# Regenerate other schedulers if already installed (GH#17695 Finding B).
+	# Stats wrapper is a pulse dependency — also install on first run when
+	# the supervisor pulse is consented (t2418, GH#20016).
+	if _should_setup_noninteractive_stats_wrapper; then
+		setup_stats_wrapper "${PULSE_ENABLED:-}"
+	fi
+	if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
+		setup_failure_miner "${PULSE_ENABLED:-}"
+	fi
+	if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
+		setup_process_guard
+	fi
+	if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
+		setup_memory_pressure_monitor
+	fi
+	if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
+		setup_screen_time_snapshot
+	fi
+	if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
+		setup_contribution_watch
+	fi
+	# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
+	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
+		setup_complexity_scan
+	fi
+	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
+	setup_repo_sync
+	# r914 repo-aidevops-health — daily drift keeper (t2366)
+	setup_repo_aidevops_health
+	if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
+		setup_profile_readme
+	fi
+	if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
+		setup_oauth_token_refresh
+	fi
+	# opencode DB maintenance (r913, t2183). Helper self-noops on missing
+	# DB — safe to install unconditionally in non-interactive mode too.
+	setup_opencode_db_maintenance
+	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
+	migrate_cron_to_systemd
+	setup_tabby
+	return 0
+}
+
 _setup_post_setup_steps() {
 	local os="$1"
 
@@ -1184,52 +1241,7 @@ _setup_post_setup_steps() {
 	# Exceptions: regenerate existing schedulers (GH#17381, GH#17695 Finding B)
 	# and allow first-time install when config consent is explicitly true (GH#17403).
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
-		setup_auto_update
-		if _should_setup_noninteractive_supervisor_pulse; then
-			setup_supervisor_pulse "$os"
-		fi
-		# Regenerate other schedulers if already installed (GH#17695 Finding B).
-		# Stats wrapper is a pulse dependency — also install on first run when
-		# the supervisor pulse is consented (t2418, GH#20016).
-		if _should_setup_noninteractive_stats_wrapper; then
-			setup_stats_wrapper "${PULSE_ENABLED:-}"
-		fi
-		if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
-			setup_failure_miner "${PULSE_ENABLED:-}"
-		fi
-		if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
-			setup_process_guard
-		fi
-		if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
-			setup_memory_pressure_monitor
-		fi
-		if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
-			setup_screen_time_snapshot
-		fi
-		if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
-			setup_contribution_watch
-		fi
-		# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
-		if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
-			setup_complexity_scan
-		fi
-		# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
-		setup_repo_sync
-		# r914 repo-aidevops-health — daily drift keeper (t2366)
-		setup_repo_aidevops_health
-		if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
-			setup_profile_readme
-		fi
-		if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
-			setup_oauth_token_refresh
-		fi
-		# opencode DB maintenance (r913, t2183). Helper self-noops on missing
-		# DB — safe to install unconditionally in non-interactive mode too.
-		setup_opencode_db_maintenance
-		# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
-		migrate_cron_to_systemd
-		setup_tabby
+		_setup_noninteractive_schedulers "$os"
 		return 0
 	fi
 
