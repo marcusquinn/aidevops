@@ -3164,3 +3164,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2866 P2a — _inbox/ directory contract + per-repo provisioning #auto-dispatch #enhancement #framework ref:GH#20930
 
 - [ ] t2871 pulse-canonical-recovery: switch to local advisory channel (privacy fix) #pulse #security ref:GH#20942
+
+- [ ] t2872 redact private repo names + paths from issue/PR bodies posted to public marcusquinn/aidevops #framework #pulse #reliability #security ref:GH#20944
