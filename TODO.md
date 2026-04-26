@@ -85,6 +85,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ## Routines
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
+- [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
 - [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 

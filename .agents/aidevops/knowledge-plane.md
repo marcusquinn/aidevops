@@ -127,6 +127,103 @@ The helper: `.agents/scripts/knowledge-helper.sh`.
 
 ---
 
+## Review Gate (t2845)
+
+The pulse-driven `r040` routine runs every 15 minutes, scans
+`_knowledge/inbox/` for pending sources, and classifies them using the trust
+ladder defined in `_knowledge/_config/knowledge.json`.
+
+### Trust Ladder
+
+Three trust classes determine what happens to each inbox item:
+
+| Class | Trigger | Action |
+|-------|---------|--------|
+| `auto_promote` | `meta.json` `trust: "trusted"\|"authoritative"`, OR `ingested_by` matches a configured bot/email, OR `source_uri` starts with a trusted path | Direct promotion: inbox → staging → sources + audit entry |
+| `review_gate` | `ingested_by` matches `trust.review_gate.from_emails` | Staged + `kind:knowledge-review` issue filed with `auto-dispatch` (light review, worker-handled) |
+| `untrusted` | Default (`"*"`) | Staged + `kind:knowledge-review` issue filed with `needs-maintainer-review` (requires crypto-approval) |
+
+### Trust Config
+
+Defined in `_knowledge/_config/knowledge.json` (written at provision time from
+`.agents/templates/knowledge-config.json`):
+
+```json
+{
+  "trust": {
+    "auto_promote": {
+      "from_paths": ["~/Drops/maintainer-knowledge/"],
+      "from_emails": ["you@yourdomain.com"],
+      "from_bots":   ["my-internal-bot"]
+    },
+    "review_gate": {
+      "from_emails": ["partner@example.com"]
+    },
+    "untrusted": "*"
+  }
+}
+```
+
+Override per-repo after provisioning: edit `_knowledge/_config/knowledge.json`
+directly. The config is versioned in `sources/` — changes are tracked in git.
+
+### NMR Issues
+
+Untrusted and review_gate sources produce `kind:knowledge-review` GitHub
+issues. Each issue body includes:
+
+- Source ID, kind, SHA256, size, ingested_by, sensitivity
+- Trust class and review instructions
+- Text preview (first 500 chars) of the source content
+
+**Untrusted**: issues carry `needs-maintainer-review`. Approve with:
+
+```bash
+sudo aidevops approve issue <N>
+```
+
+This triggers `knowledge-review-helper.sh promote <source-id>`, which moves
+the source from `_knowledge/staging/` to `_knowledge/sources/`, updates
+`meta.json` with `state: "promoted"`, and closes the issue.
+
+**Review-gate**: issues carry `auto-dispatch`. A worker reviews and can promote
+by calling the same `promote` subcommand.
+
+### Audit Log
+
+Every action is appended to `_knowledge/index/audit.log` (JSONL):
+
+```json
+{"ts":"2026-04-27T00:00:00Z","action":"auto_promoted","source_id":"my-doc","actor":"tick","extra":"actor:tick"}
+{"ts":"2026-04-27T00:01:00Z","action":"nmr_filed","source_id":"ext-doc","actor":"tick","extra":"issue:https://github.com/… trust_class:untrusted"}
+{"ts":"2026-04-27T12:00:00Z","action":"promoted","source_id":"ext-doc","actor":"maintainer","extra":"actor:maintainer path:approve_hook"}
+```
+
+`_knowledge/index/` is gitignored — the audit log is local only.
+
+### Routine r040
+
+```
+- [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
+```
+
+To disable: change `[x]` to `[ ]` in `TODO.md` and commit.
+
+### Helper CLI
+
+```bash
+# Manual tick (same as r040 routine)
+~/.aidevops/agents/scripts/knowledge-review-helper.sh tick
+
+# Explicit promotion (called automatically by approve hook)
+~/.aidevops/agents/scripts/knowledge-review-helper.sh promote <source-id>
+
+# Manual audit entry
+~/.aidevops/agents/scripts/knowledge-review-helper.sh audit-log <action> <source-id> [extra]
+```
+
+---
+
 ## IMAP Polling (t2855)
 
 The pulse-driven `r044` routine polls configured IMAP mailboxes every 10 minutes,
