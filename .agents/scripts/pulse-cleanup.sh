@@ -787,6 +787,7 @@ ${_WORKER_LOG_TAIL_CONTENT}
 		--method POST \
 		--field body="$body" \
 		>/dev/null 2>&1 || true
+	declare -F invalidate_footprint_cache_for_issue >/dev/null 2>&1 && invalidate_footprint_cache_for_issue "$issue_number" || true
 	return 0
 }
 

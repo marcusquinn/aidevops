@@ -1261,6 +1261,7 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 	if [[ -n "$linked_issue" && "${_parent_task_guard:-0}" -eq 0 ]]; then
 		auto_file_next_phase "$linked_issue" "$repo_slug" || true
 	fi
+	declare -F invalidate_footprint_cache_for_issue >/dev/null 2>&1 && invalidate_footprint_cache_for_issue "${linked_issue:-}" || true
 	return 0
 }
 
