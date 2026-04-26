@@ -3255,3 +3255,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2915 fix line-continuation regex bug in test-pulse-dispatch-engine-stage-wiring.sh #auto-dispatch ref:GH#21072
 
 - [ ] t2916 worktree sweep: consult interactive-session claim stamps in should_skip_cleanup ref:GH#21074
+
+- [ ] t2917 Runner scripts hardcode $HOME/.aidevops/logs but plist/timer installers resolve paths.log_dir — divergence on customization ref:GH#21076
