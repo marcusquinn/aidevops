@@ -1057,8 +1057,29 @@ _pulse_run_deterministic_pipeline() {
 	# worker slot) and deterministic (no judgment needed). Previously merging
 	# was LLM-only, which meant backlogs of 100+ PRs accumulated when the
 	# LLM failed to execute merge steps or the prefetch showed 0 PRs.
-	run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
-		merge_ready_prs_all_repos || true
+	#
+	# t2862 (GH#20919): short-circuit if pulse-merge-routine.sh (the fast
+	# 120s standalone runner) already ran within the last 60s. This avoids
+	# double-execution while keeping the in-cycle call as defense-in-depth
+	# for environments where the launchd/cron schedule is not installed.
+	local _pulse_merge_routine_last_run="${HOME}/.aidevops/logs/pulse-merge-routine-last-run"
+	local _pmr_skip=0
+	if [[ -f "$_pulse_merge_routine_last_run" ]]; then
+		local _pmr_last _pmr_now _pmr_elapsed
+		_pmr_last=$(cat "$_pulse_merge_routine_last_run" 2>/dev/null || echo "0")
+		_pmr_now=$(date +%s 2>/dev/null || echo "0")
+		[[ "$_pmr_last" =~ ^[0-9]+$ ]] || _pmr_last=0
+		[[ "$_pmr_now" =~ ^[0-9]+$ ]] || _pmr_now=0
+		_pmr_elapsed=$((_pmr_now - _pmr_last))
+		if [[ "$_pmr_elapsed" -lt 60 ]]; then
+			echo "[pulse-wrapper] deterministic_merge_pass: skipping (pulse-merge-routine ran ${_pmr_elapsed}s ago)" >>"$LOGFILE"
+			_pmr_skip=1
+		fi
+	fi
+	if [[ "$_pmr_skip" -eq 0 ]]; then
+		run_stage_with_timeout "deterministic_merge_pass" "$PRE_RUN_STAGE_TIMEOUT" \
+			merge_ready_prs_all_repos || true
+	fi
 
 	# t2350 (GH#19948): DIRTY-PR sweep — auto-rebase young + TODO-only conflicts,
 	# auto-close stale abandoned PRs, escalate anything else. Internally gated

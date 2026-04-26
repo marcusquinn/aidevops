@@ -544,13 +544,22 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 }
 
 merge_ready_prs_all_repos() {
-	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$LOGFILE"
+	# Initialise required env vars with ${VAR:-default} guards so this
+	# function can be called standalone from pulse-merge-routine.sh (t2862)
+	# without relying on pulse-wrapper.sh having set them in the bootstrap.
+	# When called from pulse-wrapper.sh the pre-existing values are kept.
+	local _mr_stop_flag="${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}"
+	local _mr_repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local _mr_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
+
+	if [[ -f "$_mr_stop_flag" ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$_mr_logfile"
 		return 0
 	fi
 
-	if [[ ! -f "$REPOS_JSON" ]]; then
-		echo "[pulse-wrapper] Deterministic merge pass skipped: repos.json not found" >>"$LOGFILE"
+	if [[ ! -f "$_mr_repos_json" ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass skipped: repos.json not found" >>"$_mr_logfile"
 		return 0
 	fi
 
@@ -571,13 +580,13 @@ merge_ready_prs_all_repos() {
 		total_closed=$((total_closed + repo_closed))
 		total_failed=$((total_failed + repo_failed))
 
-		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$LOGFILE"
+		if [[ -f "$_mr_stop_flag" ]]; then
+			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$_mr_logfile"
 			break
 		fi
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$REPOS_JSON" 2>/dev/null)
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null)
 
-	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$_mr_logfile"
 	# Write health counter deltas to a temp file (GH#18571, GH#15107).
 	# run_stage_with_timeout backgrounds this function in a subshell, so
 	# direct updates to _PULSE_HEALTH_* variables are lost on return.

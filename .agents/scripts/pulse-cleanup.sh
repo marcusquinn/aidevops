@@ -481,6 +481,12 @@ _cleanup_single_worktree() {
 	_trash_or_remove "$wt_path_age" || git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || true
 	# Prune git's worktree registry for the now-missing directory
 	git -C "$rp_age" worktree prune 2>/dev/null || true
+	# t2860: deregister from SQLite ownership registry to prevent stale entries.
+	# Without this call, pulse-cleanup destroys the worktree directory but leaves
+	# a row in worktree_owners pointing to a non-existent path with a recycled PID.
+	# Mirrors the pattern in worktree-helper.sh:1224 (cmd_remove path).
+	# Fail-open: registry deregistration must never block cleanup.
+	unregister_worktree "$wt_path_age" 2>/dev/null || true
 	if [[ -n "$wt_branch_age" ]]; then
 		git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
 		git -C "$rp_age" push origin --delete "$wt_branch_age" 2>/dev/null || true
