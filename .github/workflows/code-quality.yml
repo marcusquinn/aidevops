@@ -364,6 +364,16 @@ jobs:
         bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Approve Collaborator Author Guard (GH#17671, t2933)
+      run: |
+        # Pins the function-level supply-chain defense in approve_collaborator_pr.
+        # Case B in this test fails if the t2933 author guard is removed,
+        # regardless of upstream gate state. See:
+        # .agents/reference/incident-gh17671-supply-chain.md
+        echo "Running approve_collaborator_pr regression test..."
+        bash .agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh
+        echo "Approve collaborator author guard test passed"
+
     - name: Bash Expansion Pattern Guard (GH#19966)
       run: |
         # Guard against the ${N:-{}} expansion bug: bash reads "${2:-{}" as the
