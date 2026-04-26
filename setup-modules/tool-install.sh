@@ -1514,24 +1514,124 @@ setup_nodejs() {
 	return 0
 }
 
-setup_opencode_cli() {
-	print_info "Setting up OpenCode CLI..."
+# t2891: Validate that an opencode binary is real anomalyco/opencode.
+# Mirrors the t2887 runtime canary validator (headless-runtime-lib.sh) and
+# the t2888 setup module validator (.agents/scripts/setup/_services.sh).
+# Inlined to keep tool-install.sh self-contained — sourced from setup.sh
+# during early bootstrap before headless-runtime-lib.sh is on the path.
+# Returns: 0=valid, 1=wrong package (e.g. claude CLI), 2=missing/unrunnable.
+_setup_validate_opencode_binary() {
+	local bin="${1:-}"
+	[[ -n "$bin" ]] || return 2
+	command -v "$bin" >/dev/null 2>&1 || return 2
 
-	# Check if OpenCode is already installed
-	if command -v opencode >/dev/null 2>&1; then
-		local oc_version
-		oc_version=$(opencode --version 2>/dev/null | head -1 || echo "unknown")
-		print_success "OpenCode already installed: $oc_version"
+	local v
+	v=$("$bin" --version 2>/dev/null || echo "")
+	[[ -n "$v" ]] || return 2
+
+	# Anthropic claude CLI signature — highest-confidence rejection.
+	[[ "$v" == *"(Claude Code)"* ]] && return 1
+
+	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x).
+	[[ "$v" =~ ^[2-9][0-9]*\. ]] && return 1
+
+	# Sanity: must look like a semver (X.Y.Z).
+	[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+
+	return 0
+}
+
+# t2891: detect-and-heal when 'opencode' bin name is owned by a wrong
+# package (canonical case: @anthropic-ai/claude-code shadowing
+# anomalyco/opencode after a npm install collision). Auto-installs
+# without prompt because:
+#   1) it's healing a broken state, not first-time setup
+#   2) non-interactive runners (the canonical victim) would auto-Y anyway
+# Idempotent. Fail-open if no installer available.
+_setup_opencode_force_heal() {
+	local install_pkg="$1" wrong_bin="$2" wrong_v="$3"
+	print_warning "OpenCode binary at '$wrong_bin' is the wrong package ('$wrong_v')"
+	print_info "Forcing reinstall of $install_pkg to heal bin collision (t2891)..."
+
+	local installer=""
+	if command -v bun >/dev/null 2>&1; then
+		installer="bun"
+	elif command -v npm >/dev/null 2>&1; then
+		installer="npm"
+	else
+		print_warning "Neither bun nor npm found — cannot heal OpenCode binary"
+		print_info "Install Node.js or Bun first, then re-run 'aidevops update'"
 		return 0
 	fi
 
-	# Need either bun or npm to install
-	local installer=""
+	if run_with_spinner "Reinstalling OpenCode (heal)" npm_global_install "$install_pkg"; then
+		print_success "OpenCode reinstalled via $installer"
+	else
+		print_warning "Heal install failed via $installer"
+		print_info "Try manually: $installer install -g $install_pkg"
+	fi
+
+	# Re-validate post-heal.
+	local new_bin
+	new_bin=$(command -v opencode 2>/dev/null || echo "")
+	if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
+		local new_v
+		new_v=$("$new_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "OpenCode CLI: $new_bin ($new_v)"
+		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+		printf '%s\n' "$new_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+	else
+		local v_after
+		v_after=$("$new_bin" --version 2>/dev/null | head -1 || echo "<missing>")
+		print_warning "Post-heal validation still failing: '$new_bin' returns '$v_after'"
+		print_info "Check PATH: 'which -a opencode' — npm/bun global bin dir must come first"
+	fi
+	return 0
+}
+
+setup_opencode_cli() {
+	print_info "Setting up OpenCode CLI..."
+
 	# Respect OPENCODE_PINNED_VERSION from shared-constants.sh if sourced,
 	# otherwise fall back to latest.
 	local pin_ver="${OPENCODE_PINNED_VERSION:-latest}"
 	local install_pkg="opencode-ai@${pin_ver}"
 
+	# t2891: validate the resolved binary is anomalyco/opencode, not a
+	# wrong package (claude CLI etc) that took the 'opencode' bin name.
+	# Without this, alex-solovyev's runner — where command -v opencode
+	# resolves to @anthropic-ai/claude-code — silently passes through
+	# this function, leaving t2887's runtime canary to throttle the spam
+	# without ever healing the binary.
+	local current_bin
+	current_bin=$(command -v opencode 2>/dev/null || echo "")
+	local validate_rc=0
+	if [[ -n "$current_bin" ]]; then
+		_setup_validate_opencode_binary "$current_bin" || validate_rc=$?
+	else
+		validate_rc=2
+	fi
+
+	# Already valid → record + early return.
+	if [[ $validate_rc -eq 0 ]]; then
+		local oc_version
+		oc_version=$("$current_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "OpenCode already installed: $oc_version"
+		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+		printf '%s\n' "$current_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+		return 0
+	fi
+
+	# Wrong package → auto-heal (no prompt).
+	if [[ $validate_rc -eq 1 ]]; then
+		local wrong_v
+		wrong_v=$("$current_bin" --version 2>/dev/null | head -1 || echo "<unknown>")
+		_setup_opencode_force_heal "$install_pkg" "$current_bin" "$wrong_v"
+		return 0
+	fi
+
+	# Missing → first-time install path (preserves prompt for interactive UX).
+	local installer=""
 	if command -v bun >/dev/null 2>&1; then
 		installer="bun"
 	elif command -v npm >/dev/null 2>&1; then
@@ -1551,6 +1651,14 @@ setup_opencode_cli() {
 	if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing OpenCode" npm_global_install "$install_pkg"; then
 			print_success "OpenCode installed"
+
+			# Persist resolved path on first-time success too (t2891).
+			local new_bin
+			new_bin=$(command -v opencode 2>/dev/null || echo "")
+			if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
+				mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+				printf '%s\n' "$new_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+			fi
 
 			# Offer authentication
 			echo ""
