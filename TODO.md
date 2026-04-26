@@ -3206,3 +3206,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2890 align /full-loop interactive gate with pulse dispatch primitives (parent-task... #framework #reliability ref:GH#21023
 
 - [ ] t2889 apply opencode binary validation to active setup-modules/tool-install.sh:1517 (t2888 followup — wrong file) #critical #reliability ref:GH#21025
+
+- [ ] t2891 apply opencode binary validation to active setup-modules/tool-install.sh:1517 (t2888 followup — wrong file) #critical #reliability ref:GH#21025
