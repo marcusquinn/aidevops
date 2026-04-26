@@ -256,6 +256,175 @@ else
 	echo "${TEST_BLUE}SKIP${TEST_NC}: 15: shellcheck not installed"
 fi
 
+# --- GH#21017: skip-decomposed-parents + skip-recent-maintainer-activity ---
+#
+# Structural checks: the script defines the new helpers, declares the env
+# vars, emits the documented skip-log lines, and threads new counters
+# into the final summary. Then function-level checks: source the script
+# and exercise the pure helpers (no I/O — the regex-only ones).
+
+assert_grep "16a: MAINTAINER_ACTIVITY_HOURS env var declared with default 48" \
+	'^MAINTAINER_ACTIVITY_HOURS="\$\{MAINTAINER_ACTIVITY_HOURS:-48\}"' "$SCANNER"
+
+assert_grep "16b: MAINTAINER_ACTIVITY_CHILD_CAP env var declared with default 10" \
+	'^MAINTAINER_ACTIVITY_CHILD_CAP="\$\{MAINTAINER_ACTIVITY_CHILD_CAP:-10\}"' "$SCANNER"
+
+assert_grep "16c: _body_has_decomposition_markers helper defined" \
+	'^_body_has_decomposition_markers\(\) \{' "$SCANNER"
+
+assert_grep "16d: _extract_children_from_body helper defined" \
+	'^_extract_children_from_body\(\) \{' "$SCANNER"
+
+assert_grep "16e: _has_recent_maintainer_comment helper defined" \
+	'^_has_recent_maintainer_comment\(\) \{' "$SCANNER"
+
+assert_grep "16f: _iso_cutoff_hours_ago helper defined" \
+	'^_iso_cutoff_hours_ago\(\) \{' "$SCANNER"
+
+assert_grep_fixed "16g: do_scan emits [skip:has-children] log line" \
+	'[skip:has-children]' "$SCANNER"
+
+assert_grep_fixed "16h: do_scan emits [skip:recent-maintainer-activity] log line" \
+	'[skip:recent-maintainer-activity]' "$SCANNER"
+
+assert_grep_fixed "16i: do_scan declares skipped_has_children counter" \
+	'skipped_has_children=0' "$SCANNER"
+
+assert_grep_fixed "16j: do_scan declares skipped_maintainer_activity counter" \
+	'skipped_maintainer_activity=0' "$SCANNER"
+
+assert_grep_fixed "16k: final summary includes skipped(has-children) counter" \
+	'skipped(has-children): ${skipped_has_children}' "$SCANNER"
+
+assert_grep_fixed "16l: final summary includes skipped(maintainer-activity) counter" \
+	'skipped(maintainer-activity): ${skipped_maintainer_activity}' "$SCANNER"
+
+assert_grep_fixed "16m: help text documents MAINTAINER_ACTIVITY_HOURS" \
+	'MAINTAINER_ACTIVITY_HOURS' "$SCANNER"
+
+# --- Function-level checks: source the script and exercise pure helpers ---
+#
+# The scanner uses a `(return 0 2>/dev/null) || main "$@"` source-guard
+# at EOF, so sourcing it defines every helper without invoking main().
+
+# shellcheck disable=SC1090
+if source "$SCANNER" 2>/dev/null; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17a: scanner sources cleanly without invoking main"
+	TESTS_RUN=$((TESTS_RUN + 1))
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17a: scanner failed to source"
+fi
+
+# _body_has_decomposition_markers — positive cases
+TESTS_RUN=$((TESTS_RUN + 1))
+if _body_has_decomposition_markers $'## Children\n- #100\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17b: _body_has_decomposition_markers detects '## Children' heading"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17b: _body_has_decomposition_markers MISSED '## Children' heading"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if _body_has_decomposition_markers $'## Phases\n\nSome content\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17c: _body_has_decomposition_markers detects '## Phases' heading"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17c: _body_has_decomposition_markers MISSED '## Phases' heading"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if _body_has_decomposition_markers $'Phase 1 split out as #19996\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17d: _body_has_decomposition_markers detects 'Phase N #NNNN' prose pattern"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17d: _body_has_decomposition_markers MISSED 'Phase N #NNNN' prose pattern"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if _body_has_decomposition_markers $'Filed as #20001\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17e: _body_has_decomposition_markers detects 'filed as #NNNN' prose pattern"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17e: _body_has_decomposition_markers MISSED 'filed as #NNNN' prose pattern"
+fi
+
+# _body_has_decomposition_markers — negative cases
+TESTS_RUN=$((TESTS_RUN + 1))
+if ! _body_has_decomposition_markers $'## Open questions\n\n- evaluate option A vs option B\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17f: _body_has_decomposition_markers correctly REJECTS '## Open questions' (no #NNNN ref)"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17f: _body_has_decomposition_markers wrongly accepted '## Open questions'"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if ! _body_has_decomposition_markers "" >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17g: _body_has_decomposition_markers correctly REJECTS empty body"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17g: _body_has_decomposition_markers wrongly accepted empty body"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if ! _body_has_decomposition_markers $'see also #19708 for context\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17h: _body_has_decomposition_markers correctly REJECTS bare '#NNNN' mention (t2244 narrow-prose contract)"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17h: _body_has_decomposition_markers wrongly accepted bare '#NNNN' mention"
+fi
+
+# _extract_children_from_body — extracts numbers from prose patterns
+extracted=$(_extract_children_from_body $'Phase 1 split out as #19996\nPhase 2 was filed as #20001\ntracks #19808\n')
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "$extracted" == *"19996"* && "$extracted" == *"20001"* && "$extracted" == *"19808"* ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17i: _extract_children_from_body extracts all three prose-referenced child numbers"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17i: _extract_children_from_body output: $(printf '%q' "$extracted")"
+fi
+
+# _extract_children_from_body — empty input returns empty
+TESTS_RUN=$((TESTS_RUN + 1))
+empty_out=$(_extract_children_from_body "")
+if [[ -z "$empty_out" ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17j: _extract_children_from_body returns empty for empty input"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17j: _extract_children_from_body wrongly returned: $empty_out"
+fi
+
+# _extract_children_from_body — bare #N mentions are NOT extracted
+TESTS_RUN=$((TESTS_RUN + 1))
+bare_out=$(_extract_children_from_body $'see also #19708 for context\nrelated: #12345\n')
+if [[ -z "$bare_out" ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17k: _extract_children_from_body correctly REJECTS bare '#NNNN' mentions (t2244 contract)"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17k: _extract_children_from_body wrongly extracted: $bare_out"
+fi
+
+# _iso_cutoff_hours_ago — produces a parseable ISO-8601 UTC timestamp
+TESTS_RUN=$((TESTS_RUN + 1))
+cutoff=$(_iso_cutoff_hours_ago 48)
+if [[ "$cutoff" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17l: _iso_cutoff_hours_ago 48 produces valid ISO-8601 UTC timestamp ($cutoff)"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17l: _iso_cutoff_hours_ago 48 returned invalid: $(printf '%q' "$cutoff")"
+fi
+
+# _iso_cutoff_hours_ago — invalid input returns empty
+TESTS_RUN=$((TESTS_RUN + 1))
+bad_cutoff=$(_iso_cutoff_hours_ago "not-a-number")
+if [[ -z "$bad_cutoff" ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17m: _iso_cutoff_hours_ago rejects non-numeric input"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17m: _iso_cutoff_hours_ago returned: $bad_cutoff"
+fi
+
 # --- Summary ---
 echo ""
 echo "${TEST_BLUE}=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ===${TEST_NC}"

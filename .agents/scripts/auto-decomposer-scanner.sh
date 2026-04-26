@@ -71,6 +71,14 @@ SCANNER_LABEL="source:auto-decomposer"
 # Per-parent re-file interval: inherited from pulse-wrapper.sh export or defaulted here.
 AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-86400}"
 AUTO_DECOMPOSER_PARENT_STATE="${AUTO_DECOMPOSER_PARENT_STATE:-${HOME}/.aidevops/logs/auto-decomposer-parent-state.json}"
+# GH#21017: Lookback window for maintainer-activity skip. Skips a parent
+# when the parent OR any extracted child has an OWNER/MEMBER comment in
+# the last MAINTAINER_ACTIVITY_HOURS — prevents the scanner from
+# re-firing on a parent the maintainer is actively steering.
+MAINTAINER_ACTIVITY_HOURS="${MAINTAINER_ACTIVITY_HOURS:-48}"
+# GH#21017: Cap on children iterated for the maintainer-activity check.
+# Bounds API cost on parents that name many sub-issues in prose.
+MAINTAINER_ACTIVITY_CHILD_CAP="${MAINTAINER_ACTIVITY_CHILD_CAP:-10}"
 
 log() { echo "[auto-decomposer] $*" >&2; }
 
@@ -78,6 +86,21 @@ log() { echo "[auto-decomposer] $*" >&2; }
 # (not a human-engagement signal). Extend as needed when new review bots
 # are adopted.
 readonly REVIEW_BOT_LOGINS_JQ_FILTER='["coderabbitai", "coderabbitai[bot]", "sonarcloud[bot]", "sonarqubecloud[bot]", "codacy-production[bot]", "github-actions[bot]", "gemini-code-assist[bot]", "qodo-merge-pro[bot]", "codefactor-io", "socket-security[bot]"]'
+
+# Build the GitHub REST API path for an issue's comments. Centralised so the
+# same `repos/<owner>/<repo>/issues/<num>/comments` literal does not appear
+# in multiple call sites (string-literal-ratchet compliance).
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - issue number
+# Stdout: the API path string.
+_issue_comments_api_path() {
+	local repo="$1"
+	local issue_num="$2"
+	printf 'repos/%s/issues/%s/comments' "$repo" "$issue_num"
+	return 0
+}
 
 # Count comments on an issue that are NOT the <!-- parent-needs-decomposition -->
 # nudge AND NOT authored by a known review bot. A count of 0 means the parent is
@@ -90,11 +113,12 @@ readonly REVIEW_BOT_LOGINS_JQ_FILTER='["coderabbitai", "coderabbitai[bot]", "son
 _count_non_nudge_comments() {
 	local repo="$1"
 	local issue_num="$2"
-	local count
+	local count api_path
+	api_path=$(_issue_comments_api_path "$repo" "$issue_num")
 	# Exclude both the nudge marker AND any comment authored by a known
 	# review bot. The comparison is against user.login (lowercased) to
 	# absorb the "[bot]" suffix variations.
-	count=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
+	count=$(gh api --paginate "$api_path" \
 		--jq "[.[] | select(
 			(.body | contains(\"<!-- parent-needs-decomposition -->\") | not) and
 			(.user.login as \$login | ${REVIEW_BOT_LOGINS_JQ_FILTER} | index(\$login) | not)
@@ -163,8 +187,9 @@ _update_parent_state() {
 _nudge_age_hours() {
 	local repo="$1"
 	local issue_num="$2"
-	local created_at
-	created_at=$(gh api --paginate "repos/${repo}/issues/${issue_num}/comments" \
+	local created_at api_path
+	api_path=$(_issue_comments_api_path "$repo" "$issue_num")
+	created_at=$(gh api --paginate "$api_path" \
 		--jq '[.[] | select(.body | contains("<!-- parent-needs-decomposition -->")) | .created_at] | first // ""' \
 		|| echo "")
 	if [[ -z "$created_at" ]]; then
@@ -185,6 +210,154 @@ _nudge_age_hours() {
 	local now_epoch
 	now_epoch=$(date +%s)
 	printf '%s' "$(((now_epoch - created_epoch) / 3600))"
+	return 0
+}
+
+# GH#21017: Check whether a parent body declares decomposition.
+#
+# Mirrors `_parent_body_has_phase_markers` in `issue-sync-lib.sh:701` —
+# kept inline to avoid sourcing the 1645-line library on every pulse
+# cycle. Both functions MUST stay in regex-sync; if you change the
+# pattern in one, update the other and the canonical definition in
+# `pulse-issue-reconcile.sh::_extract_children_section`.
+#
+# A body is considered "decomposition-ready" if it contains any of:
+#   - `## Children` / `## Child issues` / `## Sub-tasks` heading
+#   - `## Phase` / `## Phases` heading
+#   - Narrow prose patterns: `Phase N #NNNN`, `filed as #NNNN`,
+#     `tracks #NNNN`, `blocked by #NNNN` (matches
+#     `_extract_children_from_prose`)
+#
+# This is the primary fix for the canonical failure case (a maintainer
+# decomposed a parent between scan and re-scan, but the scanner re-fired
+# because it never read the parent body).
+#
+# Arguments:
+#   $1 - parent issue body text (may be empty)
+# Returns: 0 if at least one marker present, 1 otherwise.
+_body_has_decomposition_markers() {
+	local body="$1"
+	[[ -n "$body" ]] || return 1
+
+	# H2 heading match — must mirror issue-sync-lib.sh:709 byte-for-byte.
+	if printf '%s' "$body" | grep -qE '^##[[:space:]]+(Children|Child [Ii]ssues|Sub-?[Tt]asks|Phases?([[:space:]]+.*)?)[[:space:]]*$' 2>/dev/null; then
+		return 0
+	fi
+
+	# Prose patterns — must mirror issue-sync-lib.sh:715 byte-for-byte.
+	if printf '%s' "$body" | grep -qE '(^|[^a-zA-Z0-9_])([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+|[Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+|[Tt]racks[[:space:]]+#[0-9]+|[Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)' 2>/dev/null; then
+		return 0
+	fi
+
+	return 1
+}
+
+# GH#21017: Extract child issue numbers from a parent body using the
+# same prose patterns `_extract_children_from_prose` honours.
+#
+# DELIBERATELY narrow — see `pulse-issue-reconcile.sh:1017` for the
+# rationale (bare `#NNN` mentions caused premature parent close in
+# t2244/#19734). We accept the same four phrase shapes:
+#
+#   1. `Phase N <anything> #NNNN`
+#   2. `filed as #NNNN`
+#   3. `tracks #NNNN`
+#   4. `[Bb]locked by:? #NNNN`
+#
+# Output: one child issue number per line, deduplicated. Empty output
+# means "no children declared in prose" — caller must NOT treat as
+# "no children exist", only as "we cannot enumerate from the body".
+#
+# Arguments:
+#   $1 - parent issue body text
+# Returns: always 0.
+_extract_children_from_body() {
+	local body="$1"
+	[[ -n "$body" ]] || return 0
+
+	# Match patterns then extract the bare numeric token. Anchors prevent
+	# in-word matches (e.g. "hashtracks" or "#Nfiled").
+	printf '%s' "$body" | grep -oE '(^|[^a-zA-Z0-9_])([Pp]hase[[:space:]]+[0-9]+[^#]*#[0-9]+|[Ff]iled[[:space:]]+as[[:space:]]*#[0-9]+|[Tt]racks[[:space:]]+#[0-9]+|[Bb]locked[[:space:]]-?[[:space:]]*by[[:space:]]*:?[[:space:]]*#[0-9]+)' 2>/dev/null \
+		| grep -oE '#[0-9]+' \
+		| tr -d '#' \
+		| sort -u
+	return 0
+}
+
+# GH#21017: Return 0 if the issue has at least one OWNER/MEMBER comment
+# created after the supplied ISO-8601 cutoff timestamp, EXCLUDING
+# framework-automated comments (nudge, ops, provenance markers).
+#
+# OWNER/MEMBER scope is intentional — it captures maintainer steering
+# without including drive-by COLLABORATOR or external-contributor
+# comments (which can be high-volume on busy issues without representing
+# a real "the maintainer is engaged" signal).
+#
+# Framework-automated comment exclusion matches the existing contract
+# of `_count_non_nudge_comments` (which filters the nudge marker and
+# review bots). Filtered markers — these are HTML comments emitted by
+# framework helpers running under the maintainer's gh auth, NOT actual
+# human comments:
+#   - `<!-- parent-needs-decomposition -->` (decomposition nudge)
+#   - `<!-- ops:start -->`                  (dispatch / kill / triage)
+#   - `<!-- provenance:start -->`           (auto-generated bodies)
+#   - `<!-- aidevops:generator=`            (any auto-decompose / scanner output)
+# Comments carrying ONLY the `<!-- aidevops:sig -->` signature footer
+# remain counted — the body itself is still maintainer authorship via
+# a framework wrapper (e.g. `gh_issue_comment`).
+#
+# Fail-open on API errors (returns 1) so a transient `gh api` failure
+# never silently expands scanner activity. The dispatch decision is
+# already conservative — the worst case of a missed maintainer comment
+# is one extra worker dispatch the maintainer can close as Outcome A.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - issue number
+#   $3 - cutoff timestamp (ISO-8601 UTC, e.g. 2026-04-24T12:00:00Z)
+# Returns: 0 if recent maintainer comment found, 1 otherwise.
+_has_recent_maintainer_comment() {
+	local repo="$1"
+	local issue_num="$2"
+	local cutoff_iso="$3"
+
+	[[ -n "$repo" && "$issue_num" =~ ^[0-9]+$ && -n "$cutoff_iso" ]] || return 1
+
+	local count api_path
+	api_path=$(_issue_comments_api_path "$repo" "$issue_num")
+	count=$(gh api --paginate "$api_path" \
+		--jq "[.[] | select(.created_at > \"${cutoff_iso}\")
+			| select(.author_association == \"OWNER\" or .author_association == \"MEMBER\")
+			| select(.body | contains(\"<!-- parent-needs-decomposition -->\") | not)
+			| select(.body | contains(\"<!-- ops:start -->\") | not)
+			| select(.body | contains(\"<!-- provenance:start -->\") | not)
+			| select(.body | contains(\"<!-- aidevops:generator=\") | not)
+		] | length" \
+		2>/dev/null || echo "0")
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$count" -gt 0 ]]
+}
+
+# GH#21017: Compute the ISO-8601 UTC timestamp `lookback_hours` ago.
+# Uses GNU date on Linux and BSD date on macOS via feature detection.
+# Prints empty string on parse failure (caller should treat as
+# "cannot compute cutoff" and fail-open).
+#
+# Arguments:
+#   $1 - lookback hours (positive integer)
+_iso_cutoff_hours_ago() {
+	local lookback_hours="$1"
+	[[ "$lookback_hours" =~ ^[1-9][0-9]*$ ]] || {
+		printf ''
+		return 0
+	}
+	local cutoff=""
+	if date --version >/dev/null 2>&1; then
+		cutoff=$(date -u -d "${lookback_hours} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+	else
+		cutoff=$(date -u -v "-${lookback_hours}H" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+	fi
+	printf '%s' "$cutoff"
 	return 0
 }
 
@@ -358,6 +531,8 @@ do_scan() {
 	now_epoch=$(date +%s)
 
 	local issues_created=0 total_seen=0 skipped_no_nudge=0 skipped_too_young=0 skipped_existing=0 skipped_refiled=0
+	# GH#21017: counters for the new skip paths.
+	local skipped_has_children=0 skipped_maintainer_activity=0
 	while IFS=$'\t' read -r parent_num parent_title; do
 		[[ -z "$parent_num" ]] && continue
 		total_seen=$((total_seen + 1))
@@ -381,6 +556,56 @@ do_scan() {
 				local days_remaining=$(( (AUTO_DECOMPOSER_INTERVAL - elapsed_since_filed) / 86400 ))
 				log "parent #${parent_num}: re-file suppressed (filed $((elapsed_since_filed / 86400))d ago, gate ${days_remaining}d remaining)"
 				skipped_refiled=$((skipped_refiled + 1))
+				continue
+			fi
+		fi
+
+		# GH#21017: Fetch the parent body once for the two new skip checks.
+		# An empty body (or fetch failure) falls through to existing
+		# behaviour — neither skip fires, but the existing nudge-age check
+		# still gates dispatch.
+		local parent_body
+		parent_body=$(gh api "repos/${repo}/issues/${parent_num}" --jq '.body // ""' 2>/dev/null || echo "")
+
+		# GH#21017: Skip if the parent body already declares decomposition.
+		# Catches the canonical failure case where the maintainer (or another
+		# worker) decomposed the parent between scan and re-scan, but the
+		# scanner re-fired because it never read the parent body.
+		if _body_has_decomposition_markers "$parent_body"; then
+			log "[skip:has-children] parent #${parent_num}: body declares decomposition (## Children/Phase/prose ref)"
+			skipped_has_children=$((skipped_has_children + 1))
+			continue
+		fi
+
+		# GH#21017: Skip if the parent OR any extracted child has an
+		# OWNER/MEMBER comment in the last MAINTAINER_ACTIVITY_HOURS.
+		# Recent maintainer engagement = the maintainer is steering the
+		# work; a worker dispatch would duplicate or overwrite that
+		# direction. Children are extracted from the parent body via the
+		# same prose patterns _extract_children_from_prose honours.
+		local maintainer_cutoff
+		maintainer_cutoff=$(_iso_cutoff_hours_ago "$MAINTAINER_ACTIVITY_HOURS")
+		if [[ -n "$maintainer_cutoff" ]]; then
+			local maintainer_engaged=0
+			if _has_recent_maintainer_comment "$repo" "$parent_num" "$maintainer_cutoff"; then
+				maintainer_engaged=1
+			else
+				local child_count=0 child
+				while IFS= read -r child; do
+					[[ -z "$child" || "$child" == "$parent_num" ]] && continue
+					child_count=$((child_count + 1))
+					if [[ "$child_count" -gt "$MAINTAINER_ACTIVITY_CHILD_CAP" ]]; then
+						break
+					fi
+					if _has_recent_maintainer_comment "$repo" "$child" "$maintainer_cutoff"; then
+						maintainer_engaged=1
+						break
+					fi
+				done < <(_extract_children_from_body "$parent_body")
+			fi
+			if [[ "$maintainer_engaged" -eq 1 ]]; then
+				log "[skip:recent-maintainer-activity] parent #${parent_num}: OWNER/MEMBER comment in last ${MAINTAINER_ACTIVITY_HOURS}h on parent or child"
+				skipped_maintainer_activity=$((skipped_maintainer_activity + 1))
 				continue
 			fi
 		fi
@@ -422,7 +647,7 @@ do_scan() {
 		fi
 	done < <(printf '%s' "$parents_json" | jq -r '.[] | "\(.number)\t\(.title)"')
 
-	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}, skipped(re-file gate): ${skipped_refiled}"
+	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}, skipped(re-file gate): ${skipped_refiled}, skipped(has-children): ${skipped_has_children}, skipped(maintainer-activity): ${skipped_maintainer_activity}"
 	return 0
 }
 
@@ -455,16 +680,19 @@ Usage: $(basename "$0") {scan|dry-run|help} [REPO]
   help      This message.
 
 Env vars:
-  SCANNER_NUDGE_AGE_HOURS    (default 0)       Minimum nudge age (hours) for aged parents (≥1 non-nudge comment); 0 = immediate
-  SCANNER_FRESH_PARENT_HOURS (default 0)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments); 0 = immediate
-  SCANNER_MAX_ISSUES         (default 3)       Cap per-repo decompose issues per run
-  SCANNER_PARENT_LIST_LIMIT  (default 100)     Max parent-task issues to list
-  AUTO_DECOMPOSER_INTERVAL   (default 86400)   Seconds before re-filing the same parent (1 day)
-  AUTO_DECOMPOSER_PARENT_STATE                 Path to per-parent state file (JSON)
+  SCANNER_NUDGE_AGE_HOURS         (default 0)       Minimum nudge age (hours) for aged parents (≥1 non-nudge comment); 0 = immediate
+  SCANNER_FRESH_PARENT_HOURS      (default 0)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments); 0 = immediate
+  SCANNER_MAX_ISSUES              (default 3)       Cap per-repo decompose issues per run
+  SCANNER_PARENT_LIST_LIMIT       (default 100)     Max parent-task issues to list
+  AUTO_DECOMPOSER_INTERVAL        (default 86400)   Seconds before re-filing the same parent (1 day)
+  AUTO_DECOMPOSER_PARENT_STATE                      Path to per-parent state file (JSON)
+  MAINTAINER_ACTIVITY_HOURS       (default 48)      Lookback window for OWNER/MEMBER comment skip (GH#21017)
+  MAINTAINER_ACTIVITY_CHILD_CAP   (default 10)      Max children iterated for maintainer-activity check (GH#21017)
 
 t2442: closes the parent-task dispatch black hole.
 t2573: per-parent gating, fresh-parent threshold, no global run gate.
 GH#20532: zero-delay thresholds + 1-day re-file for AI-throughput mode.
+GH#21017: skip decomposed parents + skip during recent maintainer activity.
 EOF
 		;;
 	*)
