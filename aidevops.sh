@@ -639,6 +639,58 @@ cmd_update() {
 	_update_check_tools
 	_update_sweep_opencode_symlinks
 
+	# t2898: When invoked interactively (terminal stdin AND not from the
+	# auto-update daemon itself, which sets AIDEVOPS_AUTO_UPDATE=1 in its
+	# environment), verify the daemon is healthy and warn if not. The
+	# advisory file gets picked up by the next session greeting so the
+	# user sees the warning even if they miss this output.
+	#
+	# Skip in headless / CI runs (no stdin, no TTY) to avoid spurious
+	# warnings in setup.sh-driven flows that already do their own check.
+	if [[ -t 0 ]] && [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "${NON_INTERACTIVE:-false}" != "true" ]]; then
+		_update_check_daemon_health
+	fi
+
+	return 0
+}
+
+# t2898: post-update daemon health verification (interactive only).
+# Side effect: writes ~/.aidevops/advisories/daemon-disabled.advisory when
+# the daemon is unhealthy so the session greeting surfaces the warning.
+# Cleared (file removed) when the daemon recovers.
+_update_check_daemon_health() {
+	local helper="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
+	[[ -x "$helper" ]] || return 0
+	local advisory_dir="$HOME/.aidevops/advisories"
+	local advisory_file="$advisory_dir/daemon-disabled.advisory"
+
+	local hc_rc=0
+	"$helper" health-check --quiet >/dev/null 2>&1 || hc_rc=$?
+
+	if [[ "$hc_rc" -eq 0 ]]; then
+		# Healthy — clear any stale advisory.
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		return 0
+	fi
+
+	# Unhealthy — warn on stderr and write advisory.
+	mkdir -p "$advisory_dir" 2>/dev/null || return 0
+	local fix_cmd="aidevops auto-update enable"
+	[[ "$hc_rc" -eq 1 ]] && fix_cmd="aidevops auto-update check"
+	cat >"$advisory_file" <<EOF
+auto-update daemon is not running normally on this runner. Without it, this
+runner falls behind the fleet and may dispatch workers that fail because of
+bugs already fixed upstream. See cross-runner-coordination.md §4.4.
+
+Diagnose: aidevops auto-update health-check
+Fix:      ${fix_cmd}
+EOF
+
+	if [[ "$hc_rc" -eq 1 ]]; then
+		print_warning "Auto-update daemon is stalled. Fix: ${fix_cmd}"
+	else
+		print_warning "Auto-update daemon is not running. Fix: ${fix_cmd}"
+	fi
 	return 0
 }
 # Uninstall helpers (extracted for complexity reduction)
