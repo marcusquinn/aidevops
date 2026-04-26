@@ -243,7 +243,16 @@ _launchd_install_if_changed() {
 
 	# Atomic write: build at sibling tmp path, then rename into place.
 	# If printf is killed mid-write, the destination is untouched.
-	local tmp_plist="${plist_path}.tmp.$$"
+	# mktemp avoids predictable tmp names (defense-in-depth against symlink attacks).
+	local tmp_plist
+	tmp_plist=$(mktemp "${plist_path}.XXXXXX") || return 1
+	# Guard: refuse to write empty content — catching this before the write avoids
+	# creating a tmp file that the file-size check would also catch, but the
+	# content check is more direct and gives a clearer failure point.
+	if [[ -z "$new_content" ]]; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
 	if ! printf '%s\n' "$new_content" >"$tmp_plist"; then
 		rm -f "$tmp_plist"
 		return 1
@@ -254,7 +263,10 @@ _launchd_install_if_changed() {
 		rm -f "$tmp_plist"
 		return 1
 	fi
-	mv -f "$tmp_plist" "$plist_path"
+	if ! mv -f "$tmp_plist" "$plist_path"; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
 	launchctl load "$plist_path" 2>/dev/null || return 1
 	return 0
 }
