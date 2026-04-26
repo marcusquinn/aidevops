@@ -89,6 +89,57 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/gh-api-instr
 fi
 
 # =============================================================================
+# Wall-clock timeout helper for gh subprocess invocations (t2913)
+# =============================================================================
+# `gh` (Go HTTP client) does not apply a default request timeout, so a wedged
+# TCP/TLS/DNS path can hang the subprocess indefinitely. Canonical incident:
+# 7+ min hang on `gh issue list` blocked stats-health-dashboard.sh's whole
+# update loop (Ultimate-Multisite/gratis-ai-agent#1192).
+#
+# Precedence: env var > pulse-rate-limit.conf > hardcoded fallback (15/45).
+# Match the pattern at pulse-wrapper-config.sh:99-105 for AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:
+# only source the conf file if the env var is unset, so an explicit env
+# override (e.g. for a slow-network runner) is never silently overwritten.
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/../configs/pulse-rate-limit.conf" ]]; then
+	if [[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || [[ -z "${AIDEVOPS_GH_WRITE_TIMEOUT+x}" ]]; then
+		# shellcheck disable=SC1091
+		source "$_SHARED_GH_WRAPPERS_DIR/../configs/pulse-rate-limit.conf"
+	fi
+fi
+: "${AIDEVOPS_GH_READ_TIMEOUT:=15}"
+: "${AIDEVOPS_GH_WRITE_TIMEOUT:=45}"
+
+# _gh_with_timeout — invoke a command (typically `gh ...`) with a wall-clock
+# cap classified by operation type. Falls through to direct invocation when
+# coreutils `timeout` is not on PATH (rare; macOS users have it via Homebrew
+# coreutils, Linux distros ship it by default).
+#
+# Usage:
+#   _gh_with_timeout read  gh issue list --repo owner/repo --state open
+#   _gh_with_timeout write gh issue edit 123 --repo owner/repo --add-label foo
+#   _gh_with_timeout read  gh api /repos/owner/repo/issues
+#
+# Exit codes:
+#   124 = timeout fired (per coreutils convention)
+#   *   = passthrough from the wrapped command
+_gh_with_timeout() {
+	local op_class="${1:-read}"
+	shift
+	local secs
+	case "$op_class" in
+	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
+	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
+	*) secs=30 ;;
+	esac
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
+# =============================================================================
 # GitHub Token Workflow Scope Check (t1540)
 # =============================================================================
 # Reusable function to check if the current gh token has the `workflow` scope.
@@ -1662,7 +1713,7 @@ set_issue_status() {
 #######################################
 gh_issue_view() {
 	local _first_num="${1:-}"
-	gh issue view "$@"
+	_gh_with_timeout read gh issue view "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue view #${_first_num}"
@@ -1687,7 +1738,7 @@ gh_issue_view() {
 # when both paths ran).
 #######################################
 gh_pr_list() {
-	gh pr list "$@"
+	_gh_with_timeout read gh pr list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
@@ -1712,7 +1763,7 @@ gh_pr_list() {
 # when both paths ran).
 #######################################
 gh_issue_list() {
-	gh issue list "$@"
+	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue list"
