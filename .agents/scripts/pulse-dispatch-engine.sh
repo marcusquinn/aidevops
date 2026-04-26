@@ -163,7 +163,7 @@ build_ranked_dispatch_candidates_json() {
 				repo_path: $path,
 				repo_priority: $priority,
 				score: (
-					(if $priority == "product" then 2000 elif $priority == "tooling" then 1000 else 0 end) +
+					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
 					(if (.labels | index("priority:critical")) != null then 10000
 					 elif (.labels | index("priority:high")) != null then 8000
 					 elif (.labels | index("bug")) != null then 7000
