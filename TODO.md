@@ -3222,3 +3222,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
 
 - [ ] t2900 Eliminate SQLite database lock errors during concurrent worker startup #bug ref:GH#21041
+
+- [ ] t2898 aidevops update + setup.sh verify auto-update daemon is enabled ref:GH#21048
+
+- [ ] t2897 pulse per-runner zero-attempt failure circuit breaker ref:GH#21047
+
+- [ ] t2902 Stop recurring GraphQL budget exhaustion despite REST fallback (t2574, t2689) #bug ref:GH#21043
