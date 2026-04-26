@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Lower pulse GraphQL circuit-breaker threshold from 0.30 to 0.05 (t2896, GH#21034). REST fallback (t2689) makes the 30% reserve redundant; restores original t2690 emergency-floor value, recovers ~25% of dispatch budget.
+
 ## [3.11.10] - 2026-04-26
 
 ### Changed
