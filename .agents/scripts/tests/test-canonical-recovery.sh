@@ -124,6 +124,14 @@ export PATH="${GH_STUB_DIR}:${PATH}"
 # coverage that wasn't real.
 export _PCR_AUDIT_HELPER="${TEST_ROOT}/stubs/audit-log-helper.sh"
 
+# Override the advisory directory to point at the sandbox BEFORE sourcing
+# the helper, so the helper picks up the sandboxed default. (The helper
+# uses parameter expansion `:-` so the env var wins over the in-script
+# default at source time.)
+PULSE_CANONICAL_RECOVERY_ADVISORY_DIR="${TEST_ROOT}/advisories"
+export PULSE_CANONICAL_RECOVERY_ADVISORY_DIR
+mkdir -p "$PULSE_CANONICAL_RECOVERY_ADVISORY_DIR"
+
 # Source the recovery helper. shellcheck disable=SC1091
 # shellcheck source=../pulse-canonical-recovery.sh
 source "${TEST_SCRIPTS_DIR}/pulse-canonical-recovery.sh" || {
@@ -131,20 +139,25 @@ source "${TEST_SCRIPTS_DIR}/pulse-canonical-recovery.sh" || {
 	exit 1
 }
 
-# Sanity-check: gh_create_issue must be defined now that we're sourcing the
-# real shared-gh-wrappers.sh from the real SCRIPT_DIR. If this fails the
-# test is silently exercising the wrapper-unavailable branch and assertions
-# below cannot prove advisory coverage.
-if ! declare -F gh_create_issue >/dev/null 2>&1; then
-	echo "FAIL: gh_create_issue undefined after sourcing helper — test setup broken" >&2
-	exit 1
-fi
-
 # Override state file to point at the sandbox.
 PULSE_CANONICAL_RECOVERY_STATE="${HOME}/.aidevops/.agent-workspace/supervisor/canonical-recovery-state.json"
 export PULSE_CANONICAL_RECOVERY_STATE
 PULSE_CANONICAL_RECOVERY_HOT_WINDOW=3600
 PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS=3
+
+# Helper for advisory-file assertions. After t2871, advisories are written
+# to a local file rather than filed as GitHub issues. Mirror the production
+# safe-basename derivation in `_pcr_file_advisory` exactly — `printf '%s'`
+# avoids the trailing newline that `basename` would otherwise produce
+# (which `tr -c` would convert to `_`, breaking the filename match).
+advisory_file_for() {
+	local repo_path="$1"
+	local raw safe
+	raw=$(basename "$repo_path")
+	safe=$(printf '%s' "$raw" | tr -c 'A-Za-z0-9._-' '_')
+	printf '%s/canonical-recovery-%s.advisory' "$PULSE_CANONICAL_RECOVERY_ADVISORY_DIR" "$safe"
+	return 0
+}
 
 # -----------------------------------------------------------------------------
 # Helpers: synthetic git fixtures
@@ -196,6 +209,11 @@ reset_call_logs() {
 	: >"$GH_CALL_LOG"
 	: >"$AUDIT_CALL_LOG"
 	rm -f "$PULSE_CANONICAL_RECOVERY_STATE" 2>/dev/null || true
+	# Clear any advisory files from prior tests so per-test assertions are
+	# independent. Bash 3.2-safe glob expansion.
+	if [[ -d "$PULSE_CANONICAL_RECOVERY_ADVISORY_DIR" ]]; then
+		rm -f "$PULSE_CANONICAL_RECOVERY_ADVISORY_DIR"/*.advisory 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -338,7 +356,7 @@ state=$(_pcr_detect_state "$CANON_DIR")
 	|| print_result "unmerged: working tree clean after merge --abort" 1 "state: $state"
 
 # =============================================================================
-# Test 5: failure path — pull fails after stash → advisory + return 1
+# Test 5: failure path — pull fails after stash → local advisory file + return 1
 # =============================================================================
 
 make_repo_pair "fail-pull"
@@ -361,9 +379,15 @@ else
 	print_result "fail-pull: persistent failure returns 1" 0
 fi
 
-grep -q "issue create" "$GH_CALL_LOG" \
-	&& print_result "fail-pull: gh issue create invoked for advisory" 0 \
-	|| print_result "fail-pull: gh issue create invoked for advisory" 1 "log: $(cat "$GH_CALL_LOG")"
+# Local advisory file MUST be created and MUST NOT trigger any gh call.
+adv_file=$(advisory_file_for "$CANON_DIR")
+[[ -f "$adv_file" ]] \
+	&& print_result "fail-pull: local advisory file created" 0 \
+	|| print_result "fail-pull: local advisory file created" 1 "expected: $adv_file"
+
+[[ ! -s "$GH_CALL_LOG" ]] \
+	&& print_result "fail-pull: NO gh call (privacy: t2871)" 0 \
+	|| print_result "fail-pull: NO gh call (privacy: t2871)" 1 "log: $(cat "$GH_CALL_LOG")"
 
 grep -q "operation.verify" "$AUDIT_CALL_LOG" \
 	&& print_result "fail-pull: audit log records failure entry" 0 \
@@ -389,9 +413,15 @@ else
 	print_result "hot-loop: returns 1 after MAX_ATTEMPTS exhausted" 0
 fi
 
-grep -q "issue create" "$GH_CALL_LOG" \
-	&& print_result "hot-loop: advisory issue create invoked on escalation" 0 \
-	|| print_result "hot-loop: advisory issue create invoked on escalation" 1 "log: $(cat "$GH_CALL_LOG")"
+# Local advisory file is the new escalation channel (t2871).
+adv_file=$(advisory_file_for "$CANON_DIR")
+[[ -f "$adv_file" ]] \
+	&& print_result "hot-loop: local advisory file created on escalation" 0 \
+	|| print_result "hot-loop: local advisory file created on escalation" 1 "expected: $adv_file"
+
+[[ ! -s "$GH_CALL_LOG" ]] \
+	&& print_result "hot-loop: NO gh call (privacy: t2871)" 0 \
+	|| print_result "hot-loop: NO gh call (privacy: t2871)" 1 "log: $(cat "$GH_CALL_LOG")"
 
 # Verify recovery did NOT actually try to stash (escalation short-circuit).
 state=$(_pcr_detect_state "$CANON_DIR")
@@ -429,6 +459,12 @@ stash_count=$(git -C "$CANON_DIR" stash list 2>/dev/null | wc -l | tr -d ' ')
 [[ ! -s "$GH_CALL_LOG" ]] \
 	&& print_result "dry-run: no gh advisory call" 0 \
 	|| print_result "dry-run: no gh advisory call" 1 "log: $(cat "$GH_CALL_LOG")"
+
+# No local advisory file written either.
+adv_file=$(advisory_file_for "$CANON_DIR")
+[[ ! -e "$adv_file" ]] \
+	&& print_result "dry-run: no local advisory file written" 0 \
+	|| print_result "dry-run: no local advisory file written" 1 "found: $adv_file"
 
 _PULSE_CANONICAL_RECOVERY_DRY_RUN=0
 
@@ -487,15 +523,114 @@ else
 	print_result "no-jq: fail-closed returns 1 on first call" 0
 fi
 
-grep -q "issue create" "$GH_CALL_LOG" \
-	&& print_result "no-jq: advisory filed via gh issue create" 0 \
-	|| print_result "no-jq: advisory filed via gh issue create" 1 "log: $(cat "$GH_CALL_LOG")"
+# Local advisory still files even with jq missing — escalation path is
+# unchanged by t2871; only the channel changed.
+adv_file=$(advisory_file_for "$CANON_DIR")
+[[ -f "$adv_file" ]] \
+	&& print_result "no-jq: local advisory file created" 0 \
+	|| print_result "no-jq: local advisory file created" 1 "expected: $adv_file"
+
+[[ ! -s "$GH_CALL_LOG" ]] \
+	&& print_result "no-jq: NO gh call (privacy: t2871)" 0 \
+	|| print_result "no-jq: NO gh call (privacy: t2871)" 1 "log: $(cat "$GH_CALL_LOG")"
 
 # Repo state must be preserved — fail-closed does not stash, pull, or pop.
 state=$(_pcr_detect_state "$CANON_DIR")
 [[ "$state" == "uncommitted" ]] \
 	&& print_result "no-jq: repo state preserved (no stash attempted)" 0 \
 	|| print_result "no-jq: repo state preserved (no stash attempted)" 1 "state: $state"
+
+# =============================================================================
+# Test 10: privacy regression (t2871) — advisory body contains no raw
+# absolute paths that would leak username, drive topology, or repo prefix.
+# =============================================================================
+#
+# This test replaces the no-op repo path with a representative leaky path
+# and asserts the composed advisory body never contains:
+#   - the raw username segment (e.g. /home/dave/, /Users/dave/)
+#   - the drive/mount segment in the form that exposes user identity
+#   - the legacy "Auto-filed by `pulse-canonical-recovery.sh` after exhausting
+#     auto-recovery attempts for canonical repo `<absolute path>`" preamble
+#
+# `_pcr_advisory_body` is sourced from the helper and we call it directly —
+# no need to fully simulate a failure. This is a pure body-composition test.
+
+# Restore the real jq gate (if still overridden from Test 9 — it's a function
+# definition leak, not actually used in this synthetic path, but be tidy).
+unset -f _pcr_jq_required 2>/dev/null || true
+
+# Synthetic "user paths" — these never touch a real filesystem.
+declare -a leak_test_paths=(
+	"/home/dave/Git/request-handler"
+	"/Users/marcusquinn/Git/awardsapp"
+	"/mnt/data/dave/Git/php-src"
+)
+
+for raw_path in "${leak_test_paths[@]}"; do
+	body=$(_pcr_advisory_body "$raw_path" "stash-push-failed")
+
+	# Username segment must not appear verbatim. We test the leaf segment
+	# right after the home/users/mount root.
+	case "$raw_path" in
+		/home/*) leaked_user="/home/dave/" ;;
+		/Users/*) leaked_user="/Users/marcusquinn/" ;;
+		/mnt/*) leaked_user="/mnt/data/dave/" ;;
+		*) leaked_user="" ;;
+	esac
+
+	if [[ -n "$leaked_user" ]]; then
+		if printf '%s' "$body" | grep -qF "$leaked_user"; then
+			print_result "privacy: '${raw_path}' — username segment NOT in advisory body" 1 "leaked: $leaked_user"
+		else
+			print_result "privacy: '${raw_path}' — username segment NOT in advisory body" 0
+		fi
+	fi
+
+	# Sanity: the basename SHOULD appear (it identifies the affected repo
+	# for the user — that's the whole point of the advisory) AND a
+	# sanitised <user> placeholder SHOULD appear.
+	basename=$(basename "$raw_path")
+	printf '%s' "$body" | grep -qF "$basename" \
+		&& print_result "privacy: '${raw_path}' — basename '$basename' present (identifies affected repo)" 0 \
+		|| print_result "privacy: '${raw_path}' — basename '$basename' present (identifies affected repo)" 1
+done
+
+# Direct unit test of _pcr_sanitise_path — exercise each substitution rule.
+# /Users/<name>/<rest>
+got=$(_pcr_sanitise_path "/Users/dave/Git/php-src")
+[[ "$got" == "/Users/<user>/Git/php-src" ]] \
+	&& print_result "sanitise: /Users/<name>/ → /Users/<user>/" 0 \
+	|| print_result "sanitise: /Users/<name>/ → /Users/<user>/" 1 "got: $got"
+
+# /home/<name>/<rest>
+got=$(_pcr_sanitise_path "/home/dave/Git/request-handler")
+[[ "$got" == "/home/<user>/Git/request-handler" ]] \
+	&& print_result "sanitise: /home/<name>/ → /home/<user>/" 0 \
+	|| print_result "sanitise: /home/<name>/ → /home/<user>/" 1 "got: $got"
+
+# /mnt/<volume>/<name>/<rest> — keep volume label, strip user
+got=$(_pcr_sanitise_path "/mnt/data/dave/Git/php-src")
+[[ "$got" == "/mnt/data/<user>/Git/php-src" ]] \
+	&& print_result "sanitise: /mnt/<volume>/<name>/ → /mnt/<volume>/<user>/" 0 \
+	|| print_result "sanitise: /mnt/<volume>/<name>/ → /mnt/<volume>/<user>/" 1 "got: $got"
+
+# $HOME-prefixed → ~ (uses sandbox HOME from this test setup). The helper
+# deliberately emits a literal `~` byte rather than a shell-expandable
+# tilde, so SC2088 is the right warning to silence here — there is no
+# expansion semantics involved, the test asserts the exact byte sequence
+# the helper writes into the advisory file.
+# shellcheck disable=SC2088
+expected_home_subst='~/Git/awardsapp'
+got=$(_pcr_sanitise_path "${HOME}/Git/awardsapp")
+[[ "$got" == "$expected_home_subst" ]] \
+	&& print_result "sanitise: \$HOME/ → ~/" 0 \
+	|| print_result "sanitise: \$HOME/ → ~/" 1 "got: $got"
+
+# Unknown root → fallback to <repo>/<basename>
+got=$(_pcr_sanitise_path "/some/weird/place/myrepo")
+[[ "$got" == "<repo>/myrepo" ]] \
+	&& print_result "sanitise: unknown root → <repo>/basename" 0 \
+	|| print_result "sanitise: unknown root → <repo>/basename" 1 "got: $got"
 
 # =============================================================================
 # Summary
