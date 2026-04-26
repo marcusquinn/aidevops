@@ -47,8 +47,15 @@ import time
 # Regex mirrors shared-constants.sh scrub_credentials sed pattern exactly.
 # Group 1: token prefix family (one of the 9 families).
 # Suffix: 10+ alphanumeric / dash / underscore chars (token body).
+#
+# Word-boundary anchor `(?:^|(?<=[^A-Za-z0-9_-]))` prevents false positives
+# where a credential prefix appears mid-word — e.g. `task-failure-handler`
+# contains the literal `sk-failure-handler` (16 chars, matches the body) but
+# is NOT a credential. Without this anchor the regex corrupts identifiers
+# into `ta[redacted-credential]` and similar (see GH#21026 / t2892 for the
+# canonical incident on awardsapp/develop).
 CREDENTIAL_PATTERN = re.compile(
-    r"(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}",
+    r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}",
     re.ASCII,
 )
 

@@ -127,6 +127,52 @@ _assert_eq "no tokens → verbatim" \
 	"$(scrub_credentials "the quick brown fox")"
 
 echo ""
+echo "[test] scrub_credentials — word-boundary anchor (t2892, GH#21026)"
+# These strings contain literal credential prefixes (sk-, ghp_, etc.) embedded
+# inside identifiers, but are NOT credentials. Without the word-boundary
+# anchor in the regex, `task-failure-handler` matched the substring
+# `sk-failure-handler` (16-char body suffix passes the {10,} length gate)
+# and was corrupted to `ta[redacted-credential]` in tool output and
+# (more critically) in committed source files written by workers whose
+# tool stream was scrubbed before the worker read it.
+_assert_eq "task-failure-handler NOT scrubbed (mid-word sk-)" \
+	"./task-failure-handler" \
+	"$(scrub_credentials "./task-failure-handler")"
+
+_assert_eq "task-decompose-helper NOT scrubbed (mid-word sk-)" \
+	"task-decompose-helper.sh" \
+	"$(scrub_credentials "task-decompose-helper.sh")"
+
+_assert_eq "task-runner-helper NOT scrubbed (mid-word sk-)" \
+	"task-runner-helper.sh" \
+	"$(scrub_credentials "task-runner-helper.sh")"
+
+_assert_eq "task-id-collision-guard NOT scrubbed" \
+	"task-id-collision-guard.yml" \
+	"$(scrub_credentials "task-id-collision-guard.yml")"
+
+_assert_eq "agent-task-failure-handler id NOT scrubbed" \
+	"agent-task-failure-handler" \
+	"$(scrub_credentials "agent-task-failure-handler")"
+
+# Real credentials must still be redacted across boundary contexts.
+_assert_notcontains "real sk- at start-of-line still redacted" \
+	"sk-abcdefghij1234567890" \
+	"$(scrub_credentials "sk-abcdefghij1234567890")"
+
+_assert_notcontains "real ghp_ after space still redacted" \
+	"ghp_abcdefghij1234567890" \
+	"$(scrub_credentials "Bearer ghp_abcdefghij1234567890")"
+
+_assert_notcontains "real sk- after colon still redacted" \
+	"sk-abcdefghij1234567890" \
+	"$(scrub_credentials "key:sk-abcdefghij1234567890")"
+
+_assert_notcontains "real github_pat_ in URL query still redacted" \
+	"github_pat_abcdefghij1234567890" \
+	"$(scrub_credentials "https://example.com/?token=github_pat_abcdefghij1234567890")"
+
+echo ""
 printf '%d test(s), %d failure(s)\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
 	exit 1

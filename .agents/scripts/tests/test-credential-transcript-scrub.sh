@@ -197,6 +197,42 @@ fi
 assert_exit_zero "14. Malformed JSON exits 0 (fail-open)" \
 	"not-valid-json"
 
+# ── Word-boundary anchor regression (t2892, GH#21026) ──────────────────────
+
+printf '\n%s\n' "${TEST_BLUE}Word-boundary anchor (t2892)${TEST_NC}"
+
+# Without the word-boundary anchor `(?:^|(?<=[^A-Za-z0-9_-]))`, the regex
+# matches credential prefixes embedded inside identifiers. Canonical failure:
+# `task-failure-handler` matched the substring `sk-failure-handler`
+# (16-char body suffix passes the {10,} gate) and was rewritten to
+# `ta[redacted-credential]` — corrupting committed source on
+# awardsapp/develop and breaking 4 PRs (#3168, #3155, #3068, #2984).
+# The hook scrubs tool stream content fed to the model; the same regex bug
+# in `shared-constants.sh::scrub_credentials` corrupts source files at
+# write-time. All three locations must agree on the boundary anchor.
+
+assert_no_output "16. task-failure-handler NOT scrubbed (mid-word sk-)" \
+	'{"tool_response": "import { handler } from \"./task-failure-handler\""}'
+
+assert_no_output "17. task-decompose-helper NOT scrubbed (mid-word sk-)" \
+	'{"tool_response": "Calling task-decompose-helper.sh now"}'
+
+assert_no_output "18. agent-task-failure-handler id NOT scrubbed" \
+	'{"tool_response": "inngest function id: agent-task-failure-handler"}'
+
+assert_no_output "19. task-id-collision-guard NOT scrubbed" \
+	'{"tool_response": "workflow: task-id-collision-guard.yml"}'
+
+# Real credentials must still be redacted across boundary contexts.
+assert_redacted "20. real sk- after space still redacted (control)" \
+	'{"tool_response": "API key sk-abcdefghij1234567890 invalid"}'
+
+assert_redacted "21. real sk- at start of string still redacted" \
+	'{"tool_response": "sk-abcdefghij1234567890"}'
+
+assert_redacted "22. real ghp_ after colon still redacted" \
+	'{"tool_response": "token:ghp_abcdefghij1234567890"}'
+
 # ── Performance budget ─────────────────────────────────────────────────────
 
 printf '\n%s\n' "${TEST_BLUE}Performance (<5ms per 10KB)${TEST_NC}"
