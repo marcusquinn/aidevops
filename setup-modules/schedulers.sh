@@ -1684,6 +1684,121 @@ setup_contribution_watch() {
 	return 0
 }
 
+# Install complexity scan via launchd (macOS).
+# Args: $1=label, $2=script path, $3=log dir
+# (t2903) Extracted from pulse dispatch preflight — independent schedule so
+# the 200-470s scan never starves dispatch or downstream scanners.
+_install_complexity_scan_launchd() {
+	local cs_label="$1"
+	local cs_script="$2"
+	local _cs_log_dir="$3"
+	local cs_plist="$HOME/Library/LaunchAgents/${cs_label}.plist"
+
+	local _xml_cs_script _xml_cs_home _xml_cs_log_dir
+	_xml_cs_script=$(_xml_escape "$cs_script")
+	_xml_cs_home=$(_xml_escape "$HOME")
+	_xml_cs_log_dir=$(_xml_escape "$_cs_log_dir")
+
+	local cs_plist_content
+	cs_plist_content=$(
+		cat <<CS_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${cs_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_cs_script}</string>
+		<string>run</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_cs_log_dir}/complexity-scan-runner.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_cs_log_dir}/complexity-scan-runner.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_cs_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+CS_PLIST
+	)
+
+	if _launchd_install_if_changed "$cs_label" "$cs_plist" "$cs_plist_content"; then
+		print_info "Complexity scan enabled (launchd, hourly run)"
+	else
+		print_warning "Failed to load complexity scan LaunchAgent"
+	fi
+	return 0
+}
+
+# Install complexity scan via systemd or cron (Linux).
+# Args: $1=script path, $2=log dir
+_install_complexity_scan_linux() {
+	local cs_script="$1"
+	local _cs_log_dir="$2"
+	local cs_systemd="aidevops-complexity-scan"
+	_install_scheduler_linux \
+		"$cs_systemd" \
+		"aidevops: complexity-scan" \
+		"$CRON_HOURLY" \
+		"\"${cs_script}\" run" \
+		"3600" \
+		"${_cs_log_dir}/complexity-scan-runner.log" \
+		"" \
+		"Complexity scan enabled (hourly run)" \
+		"Failed to install complexity scan scheduler" \
+		"true" \
+		"true"
+	return 0
+}
+
+# Setup complexity scan (t2903) — extracts the weekly complexity scan from
+# pulse dispatch preflight into its own launchd/cron schedule. The scan was
+# observed consuming 200-470s per pulse cycle (26%+ of the 1800s pulse stale
+# ceiling), starving downstream scanners. Promoting it to its own schedule
+# decouples it from dispatch entirely. The runner reuses run_weekly_complexity_scan
+# from pulse-simplification.sh, which has internal 15-min cadence gating
+# (COMPLEXITY_SCAN_INTERVAL=900) so hourly launchd ticks are always safe.
+setup_complexity_scan() {
+	local cs_script="$HOME/.aidevops/agents/scripts/complexity-scan-runner.sh"
+	local cs_label="sh.aidevops.complexity-scan"
+	if ! [[ -x "$cs_script" ]]; then
+		return 0
+	fi
+
+	# Reuse contribution-watch's log-dir resolver (same logic, same config key).
+	local _cs_log_dir
+	_cs_log_dir=$(_resolve_cw_log_dir) || return 1
+	mkdir -p "$_cs_log_dir"
+
+	# Install/update scheduled runner
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_complexity_scan_launchd "$cs_label" "$cs_script" "$_cs_log_dir"
+	else
+		_install_complexity_scan_linux "$cs_script" "$_cs_log_dir"
+	fi
+	return 0
+}
+
 # Setup draft responses — private repo + local draft storage for reviewing
 # AI-drafted replies to external contributions (t1555).
 # Respects config: aidevops config set orchestration.draft_responses false
