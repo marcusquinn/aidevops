@@ -78,6 +78,15 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wr
 	# shellcheck source=shared-gh-wrappers-rest-fallback.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh"
 fi
+# gh API instrumentation (t2902): records every routed gh call partitioned
+# by endpoint family (graphql/rest/search-*) so heavy GraphQL consumers can
+# be identified. The recorder is fail-open — if the helper is missing, the
+# `gh_record_call rest 2>/dev/null || true` calls in the REST translators
+# above silently no-op and the host script keeps working.
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/gh-api-instrument.sh" ]]; then
+	# shellcheck source=gh-api-instrument.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/gh-api-instrument.sh"
+fi
 
 # =============================================================================
 # GitHub Token Workflow Scope Check (t1540)
