@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.9] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2884 complete (pr:#21022 completed:2026-04-26) [skip ci]
+- add external-content-spam-detector.sh combining patterns + structural checks (#21022)
+- Maintenance: sync ref:GH#21025 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#21023 to TODO.md [skip ci]
+- fix(interactive-session): auto-dispatch carve-out in _isc_cmd_claim (#20977)
+- land _campaigns/ plane parent-task brief (#21020)
+
 ## [3.11.8] - 2026-04-26
 
 ### Changed
