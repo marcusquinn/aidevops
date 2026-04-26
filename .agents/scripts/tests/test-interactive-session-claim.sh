@@ -93,6 +93,13 @@ api)
 issue)
 	case "$2" in
 	view)
+		# GH#20946 PR #20977 review: STUB_GH_VIEW_FAILS=1 simulates a gh lookup
+		# failure (network, auth glitch, rate limit) so tests can exercise the
+		# fail-OPEN path through `_isc_carve_out_required` rc=2 and the
+		# matching `_isc_has_in_review` / `_isc_has_label` rc=2 returns.
+		if [[ "${STUB_GH_VIEW_FAILS:-0}" == "1" ]]; then
+			exit 1
+		fi
 		# Compose labels JSON from individual STUB_ISSUE_HAS_* flags so callers
 		# can mix and match. Order does not matter; jq queries are by name.
 		# - STUB_ISSUE_HAS_IN_REVIEW: status:in-review (idempotency tests)
@@ -663,6 +670,98 @@ fi
 # Reset stub state to avoid polluting any tests added below
 export STUB_ISSUE_HAS_AUTO_DISPATCH=0
 export STUB_ISSUE_HAS_PARENT_TASK=0
+
+# =============================================================================
+# Test 19 — GH#20946 PR #20977 review: _isc_carve_out_required returns
+# 0 / 1 / 1 / 2 across the full matrix.
+#
+# Consolidated single-call helper that replaces the original two-call
+# (`_isc_has_label auto-dispatch` + `_isc_has_label parent-task`) probe
+# pattern. Two review findings closed in one helper:
+#   - augmentcode (medium): the inner `if !` for parent-task conflated rc=1
+#     (label absent → carve-out applies) with rc=2 (gh lookup failed →
+#     intent unknown), failing CLOSED on transient errors. The new helper
+#     surfaces rc=2 as a distinct return value so the caller can fail OPEN.
+#   - gemini-code-assist (medium): two `gh issue view` calls in the claim
+#     hot path consolidated to one round-trip via a combined jq predicate.
+#
+# Sub-cases:
+#   1. auto-dispatch present + parent-task absent → rc=0 (carve-out applies)
+#   2. auto-dispatch present + parent-task present → rc=1 (parent-task exempt)
+#   3. auto-dispatch absent → rc=1 (no carve-out needed)
+#   4. gh lookup fails → rc=2 (fail-OPEN signal — caller proceeds with claim)
+# =============================================================================
+export STUB_ISSUE_HAS_IN_REVIEW=0
+export STUB_GH_VIEW_FAILS=0
+
+# Sub-case 1: auto-dispatch + no parent-task → carve-out applies (rc=0)
+export STUB_ISSUE_HAS_AUTO_DISPATCH=1
+export STUB_ISSUE_HAS_PARENT_TASK=0
+_isc_carve_out_required 60005 carveout/test
+co_apply_rc=$?
+
+# Sub-case 2: auto-dispatch + parent-task → exempt (rc=1)
+export STUB_ISSUE_HAS_AUTO_DISPATCH=1
+export STUB_ISSUE_HAS_PARENT_TASK=1
+_isc_carve_out_required 60005 carveout/test
+co_exempt_rc=$?
+
+# Sub-case 3: no auto-dispatch → no carve-out (rc=1)
+export STUB_ISSUE_HAS_AUTO_DISPATCH=0
+export STUB_ISSUE_HAS_PARENT_TASK=0
+_isc_carve_out_required 60005 carveout/test
+co_absent_rc=$?
+
+# Sub-case 4: gh issue view fails → fail-OPEN signal (rc=2)
+export STUB_GH_VIEW_FAILS=1
+_isc_carve_out_required 60005 carveout/test
+co_failopen_rc=$?
+export STUB_GH_VIEW_FAILS=0
+
+if [[ $co_apply_rc -eq 0 && $co_exempt_rc -eq 1 && $co_absent_rc -eq 1 && $co_failopen_rc -eq 2 ]]; then
+	print_result "GH#20946 review: _isc_carve_out_required returns 0/1/1/2 across matrix" 0
+else
+	print_result "GH#20946 review: _isc_carve_out_required returns 0/1/1/2 across matrix" 1 \
+		"(apply=$co_apply_rc, exempt=$co_exempt_rc, absent=$co_absent_rc, failopen=$co_failopen_rc)"
+fi
+
+# Reset stub state
+export STUB_ISSUE_HAS_AUTO_DISPATCH=0
+export STUB_ISSUE_HAS_PARENT_TASK=0
+
+# =============================================================================
+# Test 20 — GH#20946 PR #20977 review: claim proceeds when carve-out probe
+# fails (fail-OPEN integration test).
+#
+# Direct caller-side verification of the `&& _isc_carve_out_required` short-
+# circuit semantics — when the probe returns rc=2 (gh lookup failed), the
+# `&&` short-circuit evaluates false and the claim falls through to the
+# normal `set_issue_status` path. This was the exact failure mode flagged
+# by augmentcode in the original two-call pattern: rc=2 on the inner
+# parent-task check entered the warning branch and silently blocked a
+# legitimate claim. The new single-call form fails OPEN consistently.
+# =============================================================================
+fo_stamp=$(_isc_stamp_path 60006 carveout/failopen)
+rm -f "$fo_stamp" >/dev/null 2>&1 || true
+: >"$STUB_LOG"
+fo_out=$(STUB_ISSUE_HAS_IN_REVIEW=0 STUB_ISSUE_HAS_AUTO_DISPATCH=1 STUB_ISSUE_HAS_PARENT_TASK=0 \
+	STUB_GH_VIEW_FAILS=1 STUB_GH_MODE=online \
+	_isc_cmd_claim 60006 carveout/failopen 2>&1)
+fo_rc=$?
+
+if [[ $fo_rc -eq 0 ]] &&
+	! grep -q "skipping to avoid permanent dispatch block" <<<"$fo_out" &&
+	grep -q 'issue edit 60006' "$STUB_LOG" &&
+	grep -q 'add-label status:in-review' "$STUB_LOG" &&
+	[[ -f "$fo_stamp" ]]; then
+	print_result "GH#20946 review: claim proceeds (fail-OPEN) when carve-out probe gh fails" 0
+else
+	print_result "GH#20946 review: claim proceeds (fail-OPEN) when carve-out probe gh fails" 1 \
+		"(rc=$fo_rc, stamp=$([[ -f "$fo_stamp" ]] && echo yes || echo no), out=${fo_out:0:200})"
+fi
+
+# Reset stub state
+export STUB_ISSUE_HAS_AUTO_DISPATCH=0
 
 # =============================================================================
 # Summary

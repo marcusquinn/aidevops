@@ -176,6 +176,47 @@ _isc_has_label() {
 	return 1
 }
 
+# Single-pass auto-dispatch carve-out probe (GH#20946 PR #20977 review).
+# Combines the two-call (`auto-dispatch` AND NOT `parent-task`) probe into one
+# `gh issue view` round-trip. Addresses two review findings together:
+#   - gemini-code-assist: redundant gh+jq calls in the claim hot path
+#   - augmentcode: the prior two-call form's inner `if !` branch conflated
+#     rc=1 (parent-task absent → carve-out applies) with rc=2 (gh lookup
+#     failed → caller intent unknown), failing CLOSED on transient errors
+#     and contradicting the outer fail-OPEN comment.
+#
+# Returns:
+#   0  carve-out applies — has `auto-dispatch` AND lacks `parent-task`. Caller
+#      MUST refuse to claim; self-assign would create a permanent dispatch
+#      block per the t1996/t2218 invariant (see _has_active_claim in
+#      dispatch-dedup-helper.sh).
+#   1  carve-out does NOT apply — auto-dispatch absent OR parent-task present.
+#      Caller proceeds with the normal claim path.
+#   2  lookup failed (gh offline, network, auth). Caller falls through and
+#      proceeds with the claim — fail-OPEN. A spurious carve-out skip on a
+#      transient error would be just as harmful as a missed carve-out;
+#      proceeding matches the offline gate at the top of `_isc_cmd_claim`.
+#
+# `if [[ $implementing -eq 0 ]] && _isc_carve_out_required ...; then` is the
+# canonical caller form — only enters the skip branch on rc=0; rc=1 and rc=2
+# both fall through. The `&&` short-circuit also consumes any non-zero return
+# through a conditional context, protecting against set -e propagation
+# (GH#18786 sibling class).
+_isc_carve_out_required() {
+	local issue="$1"
+	local slug="$2"
+	local json
+	json=$(gh issue view "$issue" --repo "$slug" --json labels 2>/dev/null) || return 2
+	if printf '%s' "$json" | jq -e '
+		(.labels // []) |
+		(any(.name == "auto-dispatch")) and
+		(any(.name == "parent-task") | not)
+	' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 # Write a stamp JSON file for a claim. Idempotent — overwrites on re-call so
 # the `claimed_at` timestamp refreshes for crash-recovery tie-breaks.
 _isc_write_stamp() {
@@ -453,14 +494,10 @@ _isc_cmd_claim() {
 		return 0
 	fi
 
-	# Idempotency: if already in-review, just refresh the stamp and exit.
-	# NOTE: `_isc_has_in_review` legitimately returns non-zero ("label absent"
-	# = 1, "lookup failed" = 2). Under `set -e`, a bare call followed by
-	# `local rc=$?` capture kills this function before `rc=$?` runs — because
-	# the unchecked non-zero return propagates up through the parent function.
-	# Use a direct `if` conditional so the return is consumed by the branch,
-	# which `set -e` treats as a tested condition and does not propagate.
-	# Sibling bug class: GH#18770 (pulse self-check), GH#18784 (aidevops.sh getent).
+	# Idempotency: if already in-review, refresh stamp and exit. The `if`
+	# conditional consumes any non-zero return so set -e doesn't propagate
+	# rc=2 (lookup failed) up the call stack — see _isc_has_in_review header
+	# for the full set -e foot-gun (GH#18770/GH#18784/GH#18786 sibling class).
 	if _isc_has_in_review "$issue" "$slug"; then
 		_isc_info "claim: #$issue already has status:in-review — refreshing stamp"
 		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
@@ -468,20 +505,16 @@ _isc_cmd_claim() {
 	fi
 
 	# Auto-dispatch carve-out (GH#20946): refuse to claim auto-dispatch issues
-	# unless the caller passed --implementing or the issue is also a parent-task.
-	# See the doc block above this function for the full rationale. Probe is
-	# fail-open: if the gh lookup fails (rc=2), fall through and let the claim
-	# proceed — better to over-claim than to silently fail when offline. The
-	# `if !` form consumes any non-zero return through the conditional branch,
-	# protecting the caller from set -e propagation (GH#18786 sibling class).
-	if [[ $implementing -eq 0 ]]; then
-		if _isc_has_label "$issue" "$slug" "auto-dispatch"; then
-			if ! _isc_has_label "$issue" "$slug" "parent-task"; then
-				_isc_warn "claim: #$issue carries 'auto-dispatch' without 'parent-task' — skipping to avoid permanent dispatch block (t2218 invariant; GH#20946)"
-				_isc_warn "if you intend to implement #$issue yourself instead of letting a worker pick it up, re-run with: claim $issue $slug --implementing"
-				return 0
-			fi
-		fi
+	# unless --implementing was passed or the issue is also a parent-task.
+	# `_isc_carve_out_required` does both label checks in one gh round-trip and
+	# fails OPEN on rc=2 (lookup failed) — the `&&` short-circuit only enters
+	# the skip branch on rc=0, so rc=1 (no carve-out) and rc=2 (lookup failed)
+	# both fall through to the normal claim path. See PR #20977 review thread
+	# (augmentcode rc=2 + gemini consolidation findings) for context.
+	if [[ $implementing -eq 0 ]] && _isc_carve_out_required "$issue" "$slug"; then
+		_isc_warn "claim: #$issue carries 'auto-dispatch' without 'parent-task' — skipping to avoid permanent dispatch block (t2218 invariant; GH#20946)"
+		_isc_warn "if you intend to implement #$issue yourself instead of letting a worker pick it up, re-run with: claim $issue $slug --implementing"
+		return 0
 	fi
 
 	# Transition to in-review with atomic self-assign. Uses set_issue_status
