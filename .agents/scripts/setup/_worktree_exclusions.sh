@@ -101,12 +101,12 @@ _setup_worktree_exclusions_backblaze_advisory() {
 	# Write the advisory body.
 	cat >"$advisory_file" <<'EOF'
 [advisory:worktree-exclusions-backblaze]
-title: Backblaze worktree exclusion needs a one-time sudo step
+title: Backblaze worktree exclusion — check Time Machine inheritance setting
 severity: info
-action: run `worktree-exclusions-helper.sh setup-backblaze` to print the
-        sudo + GUI steps that exclude ~/Git/<repo>-{feature,bugfix,...}-*
-        worktree paths from your Backblaze backup. Worktrees are ephemeral
-        and the canonical repo + git remote already provide the backup.
+action: run `worktree-exclusions-helper.sh setup-backblaze` to check whether
+        your Backblaze is configured to inherit Time Machine exclusions. If
+        enabled, worktrees are already covered. If not, the command will print
+        GUI steps to enable it.
 dismiss: aidevops security dismiss worktree-exclusions-backblaze
 EOF
 	print_info "Backblaze detected — wrote advisory to $advisory_file"

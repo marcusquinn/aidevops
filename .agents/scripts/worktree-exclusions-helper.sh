@@ -40,7 +40,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 [[ -z "${NC+x}" ]] && NC=''
 
 REPOS_JSON="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-BACKBLAZE_RULES_FILE="/Library/Backblaze.bzpkg/bzdata/bzexcluderules_editable.xml"
 
 ###############################################################################
 # Logging — fall back to printf if shared-constants.sh helpers are absent.
@@ -276,9 +275,9 @@ cmd_detect() {
 }
 
 ###############################################################################
-# cmd_setup_backblaze — print the sudo commands to add a worktree exclusion
-# rule. Does NOT execute anything (security policy: sudo never runs from inside
-# AI sessions). Prints copy-paste-ready commands.
+# cmd_setup_backblaze — check Backblaze's Time Machine inheritance setting.
+# If enabled, worktree exclusions are already covered via tmutil. If disabled,
+# print GUI guidance to enable it.
 ###############################################################################
 cmd_setup_backblaze() {
 	if ! _we_is_macos; then
@@ -291,37 +290,53 @@ cmd_setup_backblaze() {
 		return 0
 	fi
 
-	if [[ ! -f "$BACKBLAZE_RULES_FILE" ]]; then
-		_we_warn "setup-backblaze: rules file not found at $BACKBLAZE_RULES_FILE"
+	local bzinfo_file="/Library/Backblaze.bzpkg/bzdata/bzinfo.xml"
+	if [[ ! -f "$bzinfo_file" ]]; then
+		_we_warn "setup-backblaze: bzinfo.xml not found at $bzinfo_file"
 		_we_warn "setup-backblaze: Backblaze may be a different version — skipping"
 		return 0
 	fi
 
+	# Parse the use_time_machine_excludes attribute. Read-only, no sudo needed.
+	# The attribute is typically: use_time_machine_excludes="true" or "false"
+	local tm_excludes=""
+	tm_excludes=$(grep -oP 'use_time_machine_excludes="\K[^"]+' "$bzinfo_file" 2>/dev/null || true)
+
+	if [[ "$tm_excludes" == "true" ]]; then
+		cat <<'EOF'
+
+Backblaze worktree exclusion — already covered
+==============================================
+
+Your Backblaze is configured to inherit Time Machine exclusions
+(use_time_machine_excludes="true"). Since worktree-exclusions-helper.sh
+already runs `tmutil addexclusion` on all worktrees, Backblaze will
+automatically exclude them from backup.
+
+No further action needed.
+
+EOF
+		_we_ok "Backblaze is inheriting Time Machine exclusions — worktrees are covered"
+		return 0
+	fi
+
+	# Attribute is false, missing, or unparseable — print GUI guidance.
 	cat <<'EOF'
 
-Backblaze worktree exclusion — manual sudo step required
-========================================================
+Backblaze worktree exclusion — enable Time Machine inheritance
+==============================================================
 
-The Backblaze exclude rules file is owned by root. To exclude all aidevops
-worktrees (paths matching ~/Git/<repo>-{feature,bugfix,hotfix,refactor,chore,
-experiment,release}-*), run the following in a separate terminal:
+Your Backblaze is not currently set to inherit Time Machine exclusions.
+To enable this (so worktrees excluded via tmutil are automatically excluded
+from Backblaze backup):
 
-  # 1. Back up the current rules
-  sudo cp /Library/Backblaze.bzpkg/bzdata/bzexcluderules_editable.xml \
-          /Library/Backblaze.bzpkg/bzdata/bzexcluderules_editable.xml.bak
+  1. Open the Backblaze app
+  2. Go to Settings → Backups
+  3. Tick the checkbox: "Use Time Machine excludes"
+  4. Quit and reopen Backblaze
 
-  # 2. Open Backblaze GUI: Settings → Exclusions → Add Exclusion (path)
-  #    Or alternatively: open System Settings → Backblaze → Exclusions
-
-Recommended exclusion patterns (add via the GUI):
-
-  ~/Git/*-feature-*
-  ~/Git/*-bugfix-*
-  ~/Git/*-hotfix-*
-  ~/Git/*-refactor-*
-  ~/Git/*-chore-*
-  ~/Git/*-experiment-*
-  ~/Git/*-release-*
+After this, all worktrees excluded via tmutil (which this setup already does)
+will be automatically excluded from Backblaze backup.
 
 Rationale: aidevops worktrees are ephemeral working copies. Their persistent
 state lives on the git remote, so backing them up duplicates work the remote
