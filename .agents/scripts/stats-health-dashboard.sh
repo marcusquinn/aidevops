@@ -178,7 +178,7 @@ _try_title_health_issue_fallback() {
 	local runner_prefix="$1" repo_slug="$2" runner_user="$3" role_label="$4" role_display="$5"
 
 	local title_result rc=0
-	title_result=$(gh_issue_list --repo "$repo_slug" \
+	title_result=$(timeout 30 gh issue list --repo "$repo_slug" \
 		--search "in:title ${runner_prefix}" \
 		--state open --json number,title \
 		--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null) || rc=$?
@@ -191,9 +191,9 @@ _try_title_health_issue_fallback() {
 
 	local health_issue_number="${title_result:-}"
 	if [[ -n "$health_issue_number" ]]; then
-		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+		timeout 30 gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
 			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
-		gh issue edit "$health_issue_number" --repo "$repo_slug" \
+		timeout 30 gh issue edit "$health_issue_number" --repo "$repo_slug" \
 			--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
 	fi
 	echo "$health_issue_number"
@@ -1327,9 +1327,9 @@ _check_health_issue_activity_guard() {
 	[[ -f "$health_issue_file" ]] && return 0
 
 	local guard_pr_count guard_assigned_count guard_worker_count
-	guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+	guard_pr_count=$(timeout 30 gh pr list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
+	guard_assigned_count=$(timeout 30 gh issue list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 
@@ -1357,7 +1357,7 @@ _update_health_issue_for_repo() {
 	[[ -z "$repo_slug" ]] && return 0
 
 	local runner_user
-	runner_user=$(gh api user --jq '.login' || whoami)
+	runner_user=$(timeout 30 gh api user --jq '.login' 2>/dev/null || whoami)
 
 	local runner_role
 	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")
@@ -1406,7 +1406,7 @@ _update_health_issue_for_repo() {
 		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md")
 
 	local body_edit_stderr
-	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" \
+	body_edit_stderr=$(timeout 30 gh issue edit "$health_issue_number" --repo "$repo_slug" \
 		--body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
 			>>"$LOGFILE"
