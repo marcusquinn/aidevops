@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.11.6] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2885 complete (pr:#20989 completed:2026-04-26) [skip ci]
+- exclude worktrees from macOS Spotlight + Time Machine (#20989)
+- Maintenance: sync ref:GH#20988 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20987 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20986 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20985 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20984 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20983 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20981 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20980 to TODO.md [skip ci]
+- backfill blocked-by markers on t2840 decomposition children (#20973)
+- Maintenance: sync ref:GH#20975 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20972 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20970 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#20966 to TODO.md [skip ci]
+- Maintenance: mark t2859 complete (pr:#20915 completed:2026-04-26) [skip ci]
+- inline config defaults in pulse-cleanup.sh to stop premature worktree destruction (#20915)
+- reduce _detect_self_hosting_task complexity via helper extraction (#20926)
+- Maintenance: sync ref:GH#20964 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.11.5] - 2026-04-26
 
 ### Changed
