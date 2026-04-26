@@ -806,6 +806,83 @@ CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-60}"
 # unaffected; success always wins and clears the negative cache.
 CANARY_NEGATIVE_TTL_SECONDS="${CANARY_NEGATIVE_TTL_SECONDS:-90}"
 
+# t2887: Long backoff for STRUCTURAL config errors (wrong binary, missing
+# binary, malformed config). Unlike transient API blips, structural errors
+# do not self-resolve in 90s — they require either a runner upgrade
+# (`aidevops update`) or maintainer intervention. Hammering an issue with
+# DISPATCH_CLAIM/CLAIM_RELEASED comment pairs every 90s on a structurally
+# broken runner destroys signal in issue threads (~120 spam comments/hour
+# on alex-solovyev's runner pre-fix). 1h backoff reduces noise ~40x while
+# still allowing recovery within a single pulse-update cycle.
+CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
+
+#######################################
+# t2887: Validate that an opencode binary path is the real anomalyco/opencode.
+#
+# Distinguishes anomalyco/opencode (the intended runtime) from anthropic's
+# `claude` CLI (`@anthropic-ai/claude-code`), which workers may have on
+# PATH and which the canary cannot use because it does not accept
+# opencode's `-m` flag.
+#
+# Signatures observed in the wild:
+#   anomalyco/opencode --version  -> "1.14.25"          (semver only)
+#   anthropic/claude --version    -> "2.1.120 (Claude Code)"
+#
+# Returns:
+#   0 = valid anomalyco/opencode (semver-shaped, no Claude Code marker, major <= 1)
+#   1 = wrong binary (Claude Code marker OR major version >= 2)
+#   2 = missing or unrunnable binary
+#######################################
+_validate_opencode_binary() {
+	local bin="${1:-}"
+	[[ -n "$bin" ]] || return 2
+	command -v "$bin" >/dev/null 2>&1 || return 2
+
+	local version_output
+	version_output=$("$bin" --version 2>/dev/null || echo "")
+	[[ -n "$version_output" ]] || return 2
+
+	# Anthropic claude CLI signature -- highest-confidence rejection
+	[[ "$version_output" == *"(Claude Code)"* ]] && return 1
+
+	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x)
+	[[ "$version_output" =~ ^[2-9][0-9]*\. ]] && return 1
+
+	# Sanity check: must look like a semver (X.Y.Z)
+	[[ "$version_output" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+
+	return 0
+}
+
+#######################################
+# t2887: Search common installation paths for a real anomalyco/opencode binary.
+#
+# Used as a self-heal when $OPENCODE_BIN_DEFAULT resolves to the wrong
+# binary (e.g. alex-solovyev's runner where `opencode` first on PATH
+# returns claude CLI). Echoes the first candidate that passes
+# _validate_opencode_binary; returns 0 on success, 1 if no valid binary
+# found. Caller is responsible for plumbing the result through (export
+# OPENCODE_BIN, set local _effective_opencode_bin) -- $OPENCODE_BIN_DEFAULT
+# itself is `readonly` and cannot be reassigned.
+#######################################
+_find_alternative_opencode_binary() {
+	local candidates=(
+		"/opt/homebrew/bin/opencode"
+		"/usr/local/bin/opencode"
+		"${HOME}/.local/bin/opencode"
+		"${HOME}/.opencode/bin/opencode"
+		"/snap/bin/opencode"
+	)
+	local candidate
+	for candidate in "${candidates[@]}"; do
+		if [[ -x "$candidate" ]] && _validate_opencode_binary "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	return 1
+}
+
 #######################################
 # Version guard -- enforce OPENCODE_PINNED_VERSION before worker launch.
 #
@@ -843,6 +920,10 @@ _run_canary_test() {
 	local requested_model="${1:-}"
 	local cache_file="${STATE_DIR}/canary-last-pass"
 	local fail_cache_file="${STATE_DIR}/canary-last-fail"
+	# t2887: sibling reason file -- categorises the most-recent failure so
+	# the negative-cache TTL can be tuned to the failure class (transient
+	# vs structural).
+	local fail_reason_file="${fail_cache_file}.reason"
 
 	# Check cache -- skip if last canary passed recently
 	if [[ -f "$cache_file" ]]; then
@@ -857,17 +938,68 @@ _run_canary_test() {
 	fi
 
 	# t2814 (Phase 3, fix #4): Negative cache short-circuit. If the canary
-	# failed within CANARY_NEGATIVE_TTL_SECONDS, fail-fast instead of
-	# re-running. Without this, every dispatch attempt during a 90s auth
-	# blip spends up to CANARY_TIMEOUT_SECONDS (default 60s) running a
-	# canary that will fail identically. Bypass: AIDEVOPS_SKIP_CANARY_NEG_CACHE=1.
+	# failed within the relevant TTL, fail-fast instead of re-running.
+	# Without this, every dispatch attempt during a 90s auth blip spends
+	# up to CANARY_TIMEOUT_SECONDS (default 60s) running a canary that
+	# will fail identically. Bypass: AIDEVOPS_SKIP_CANARY_NEG_CACHE=1.
+	#
+	# t2887: TTL is now reason-aware. Structural errors (wrong binary,
+	# missing binary -- "config_error") use CANARY_CONFIG_ERROR_TTL_SECONDS
+	# (default 1h) since they don't self-resolve in 90s. Transient errors
+	# (auth blip, rate limit, provider outage -- "transient" or absent)
+	# keep the original 90s TTL.
 	if [[ "${AIDEVOPS_SKIP_CANARY_NEG_CACHE:-0}" != "1" ]] && [[ -f "$fail_cache_file" ]]; then
-		local last_fail neg_now neg_age
+		local last_fail neg_now neg_age active_ttl fail_reason
 		last_fail=$(cat "$fail_cache_file" 2>/dev/null || echo "0")
 		neg_now=$(date +%s)
 		neg_age=$((neg_now - last_fail))
-		if [[ "$last_fail" =~ ^[0-9]+$ ]] && [[ "$neg_age" -ge 0 ]] && [[ "$neg_age" -lt "$CANARY_NEGATIVE_TTL_SECONDS" ]]; then
-			print_warning "Canary negative cache active (age=${neg_age}s, ttl=${CANARY_NEGATIVE_TTL_SECONDS}s) — failing fast (t2814)"
+		fail_reason=$(cat "$fail_reason_file" 2>/dev/null || echo "transient")
+		if [[ "$fail_reason" == "config_error" ]]; then
+			active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS"
+		else
+			active_ttl="$CANARY_NEGATIVE_TTL_SECONDS"
+		fi
+		if [[ "$last_fail" =~ ^[0-9]+$ ]] && [[ "$neg_age" -ge 0 ]] && [[ "$neg_age" -lt "$active_ttl" ]]; then
+			print_warning "Canary negative cache active (age=${neg_age}s, ttl=${active_ttl}s, reason=${fail_reason}) — failing fast (t2814/t2887)"
+			return 1
+		fi
+	fi
+
+	# t2887: Pre-canary binary validation. Detect the case where
+	# $OPENCODE_BIN_DEFAULT resolves to anthropic/claude CLI instead of
+	# anomalyco/opencode (alex-solovyev runner symptom: 468
+	# launch_recovery:no_worker_process failures in 48h). Recover via
+	# alternative-path search if a real opencode is installed elsewhere on
+	# the system; fail loud with structured diagnostic if not. The
+	# resolved path is stored in _effective_opencode_bin (the local
+	# variable used by the canary command) AND exported as OPENCODE_BIN so
+	# downstream worker dispatch picks up the same binary.
+	#
+	# OPENCODE_BIN_DEFAULT is `readonly` (headless-runtime-helper.sh:38),
+	# so we cannot reassign it -- _effective_opencode_bin is the local
+	# override that flows through.
+	local _effective_opencode_bin="$OPENCODE_BIN_DEFAULT"
+	local _validate_rc=0
+	_validate_opencode_binary "$OPENCODE_BIN_DEFAULT" || _validate_rc=$?
+	if [[ "$_validate_rc" -ne 0 ]]; then
+		local wrong_version
+		wrong_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "<missing>")
+		local alt_bin=""
+		if alt_bin=$(_find_alternative_opencode_binary); then
+			print_warning "Canary: OPENCODE_BIN_DEFAULT='${OPENCODE_BIN_DEFAULT}' is invalid (version='${wrong_version}', rc=${_validate_rc}) — falling back to '${alt_bin}' (t2887)"
+			_effective_opencode_bin="$alt_bin"
+			export OPENCODE_BIN="$alt_bin"
+		else
+			# Structural failure: no valid opencode anywhere. Stamp
+			# config_error so the next ~1h of dispatch attempts
+			# fail-fast on the cache hit instead of re-discovering this
+			# state every 90s.
+			print_warning "Canary: OPENCODE_BIN_DEFAULT='${OPENCODE_BIN_DEFAULT}' returns '${wrong_version}' (rc=${_validate_rc}) — not anomalyco/opencode."
+			print_warning "Canary: searched /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.opencode/bin, /snap/bin — no valid binary found."
+			print_warning "Canary: install with 'npm install -g opencode-ai' or set OPENCODE_BIN to a valid binary (t2887)."
+			mkdir -p "${STATE_DIR}" 2>/dev/null || true
+			date +%s >"$fail_cache_file" 2>/dev/null || true
+			printf 'config_error\n' >"$fail_reason_file" 2>/dev/null || true
 			return 1
 		fi
 	fi
@@ -939,9 +1071,12 @@ _run_canary_test() {
 		_canary_timeout_cmd=(perl -e "alarm $CANARY_TIMEOUT_SECONDS; exec @ARGV" --)
 	fi
 
+	# t2887: use _effective_opencode_bin (resolved above), not
+	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
+	# happy path; differs only when alternative-path fallback fired.
 	XDG_DATA_HOME="$_canary_data_dir" \
 		"${_canary_timeout_cmd[@]}" \
-		"$OPENCODE_BIN_DEFAULT" run "Reply with exactly: CANARY_OK" \
+		"$_effective_opencode_bin" run "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
 		>"$canary_output" 2>&1 || canary_exit=$?
@@ -964,7 +1099,10 @@ _run_canary_test() {
 		date +%s >"$cache_file"
 		# t2814: success clears the negative cache so the next failure
 		# starts a fresh TTL window instead of inheriting a stale one.
+		# t2887: also clear the reason file so a subsequent transient
+		# failure is not mis-categorised as a structural error.
 		rm -f "$fail_cache_file" 2>/dev/null || true
+		rm -f "$fail_reason_file" 2>/dev/null || true
 		rm -f "$canary_output"
 		return 0
 	fi
@@ -972,13 +1110,17 @@ _run_canary_test() {
 	# Canary failed -- log diagnostics (capture enough output to surface API errors,
 	# not just startup hooks which is all head -5 typically showed)
 	local oc_version
-	oc_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "unknown")
+	oc_version=$("$_effective_opencode_bin" --version 2>/dev/null || echo "unknown")
 	print_warning "Canary test FAILED (exit=$canary_exit, model=$canary_model, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
 	print_warning "Output (last 20 lines): $(tail -20 "$canary_output" 2>/dev/null || echo '<empty>')"
 	# t2814 (Phase 3, fix #4): Stamp the negative cache so subsequent
 	# dispatches within CANARY_NEGATIVE_TTL_SECONDS short-circuit.
+	# t2887: stamp reason as "transient" -- the binary is valid (we
+	# pre-validated above) but the actual run failed. Keeps the standard
+	# 90s TTL for API/auth/timeout-class failures.
 	mkdir -p "${STATE_DIR}" 2>/dev/null || true
 	date +%s >"$fail_cache_file" 2>/dev/null || true
+	printf 'transient\n' >"$fail_reason_file" 2>/dev/null || true
 	rm -f "$canary_output"
 	return 1
 }
