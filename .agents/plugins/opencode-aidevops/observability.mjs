@@ -358,28 +358,11 @@ function _withInitLock(fn) {
   const LOCK_DIR = `${DB_PATH}.init.lock.d`;
   const OWNER_FILE = `${LOCK_DIR}/owner`;
   const STALE_MS = 30000; // 30s — schema init has historically taken <2s
-  const ACQUIRE_TIMEOUT_MS = 30000;
-  const deadline = Date.now() + ACQUIRE_TIMEOUT_MS;
-  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + 30000;
 
-  while (true) {
-    try {
-      mkdirSync(LOCK_DIR);
-      writeFileSync(OWNER_FILE, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
-      break;
-    } catch (e) {
-      if (e.code !== "EEXIST") throw e;
-      if (_isInitLockStale(OWNER_FILE, STALE_MS)) {
-        try { unlinkSync(OWNER_FILE); } catch { /* race */ }
-        try { rmdirSync(LOCK_DIR); } catch { /* race */ }
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        console.error("[aidevops] Observability: init lock timeout — proceeding without lock");
-        return fn();
-      }
-      Atomics.wait(sleepBuf, 0, 0, 100);
-    }
+  if (!_acquireInitLock(LOCK_DIR, OWNER_FILE, STALE_MS, deadline)) {
+    console.error("[aidevops] Observability: init lock timeout — proceeding without lock");
+    return fn();
   }
 
   try {
@@ -387,6 +370,51 @@ function _withInitLock(fn) {
   } finally {
     _releaseInitLock(LOCK_DIR, OWNER_FILE);
   }
+}
+
+/**
+ * Block until the init lock is acquired, the deadline is reached, or a
+ * stale lock is reclaimed. Returns true on acquisition, false on timeout.
+ *
+ * Stale locks (dead PID or older than `staleMs`) are removed and the loop
+ * retries. Concurrent callers race via mkdirSync POSIX-atomic semantics —
+ * exactly one wins per attempt.
+ *
+ * @param {string} lockDir
+ * @param {string} ownerFile
+ * @param {number} staleMs
+ * @param {number} deadline epoch-ms after which we give up
+ * @returns {boolean}
+ */
+function _acquireInitLock(lockDir, ownerFile, staleMs, deadline) {
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(lockDir);
+      writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, ts: Date.now() }), { mode: 0o600 });
+      return true;
+    } catch (e) {
+      if (e.code !== "EEXIST") throw e;
+      if (_isInitLockStale(ownerFile, staleMs)) {
+        _removeStaleLockFiles(lockDir, ownerFile);
+        continue;
+      }
+      Atomics.wait(sleepBuf, 0, 0, 100);
+    }
+  }
+  return false;
+}
+
+/**
+ * Best-effort removal of a stale init lock's owner file and dir. Any
+ * ENOENT/EBUSY race against another reclaiming process is swallowed.
+ *
+ * @param {string} lockDir
+ * @param {string} ownerFile
+ */
+function _removeStaleLockFiles(lockDir, ownerFile) {
+  try { unlinkSync(ownerFile); } catch { /* race */ }
+  try { rmdirSync(lockDir); } catch { /* race */ }
 }
 
 /**
