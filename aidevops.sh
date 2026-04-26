@@ -1498,7 +1498,7 @@ _help_commands() {
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
-	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/help)"
+	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/digest/help)"
 	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
