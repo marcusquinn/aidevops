@@ -1117,8 +1117,24 @@ _pulse_run_deterministic_pipeline() {
 		# stall. Complementary to the per-issue no_work escalation (GH#20639).
 		local _nw_rc=0
 		is_no_work_rate_acceptable || _nw_rc=$?
+		# t2897: per-runner zero-attempt circuit breaker check.
+		# Pauses dispatch ONLY on this runner when N consecutive zero-attempt
+		# worker dispatches signal a stale or broken local install. The
+		# breaker auto-trips an `aidevops update`; if VERSION changed, the
+		# t2579 restart hook refreshes code on the next cycle and the
+		# breaker reopens on the first non-zero-attempt outcome.
+		local _rh_rc=1
+		local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
+		if [[ -x "$_rh_helper" ]]; then
+			"$_rh_helper" is-paused >/dev/null 2>&1 && _rh_rc=0 || _rh_rc=1
+		fi
 		if [[ "$_nw_rc" -eq 1 ]]; then
 			echo "[pulse-wrapper] Deterministic fill floor skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
+		elif [[ "$_rh_rc" -eq 0 ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
+			if declare -F pulse_stats_increment >/dev/null 2>&1; then
+				pulse_stats_increment "pulse_dispatch_runner_health_breaker_tripped" 2>/dev/null || true
+			fi
 		else
 			apply_deterministic_fill_floor
 		fi

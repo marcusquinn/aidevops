@@ -856,6 +856,19 @@ recover_failed_launch_state() {
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
 	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
 
+	# t2897: Record the launch failure as a zero-attempt outcome for the
+	# per-runner circuit breaker. Only `no_worker_process` counts as a
+	# zero-attempt signal here — other failure_reasons (cli_usage_output,
+	# stale_timeout, etc.) are real-attempt failures and aren't recorded.
+	# The helper's `record-outcome` already validates the signal name.
+	if [[ "$failure_reason" == "no_worker_process" ]]; then
+		local _rh_helper="${SCRIPT_DIR}/pulse-runner-health-helper.sh"
+		if [[ -x "$_rh_helper" ]]; then
+			"$_rh_helper" record-outcome no_worker_process \
+				"${repo_slug}#${issue_number}" >/dev/null 2>&1 || true
+		fi
+	fi
+
 	# t1934: Unlock issue and linked PRs (locked at dispatch time)
 	unlock_issue_after_worker "$issue_number" "$repo_slug"
 
