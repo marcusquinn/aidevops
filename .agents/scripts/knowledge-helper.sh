@@ -1,0 +1,419 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+# Knowledge Plane Helper - Provisions and manages the _knowledge/ directory contract
+# for any aidevops-managed repo.
+#
+# Usage:
+#   knowledge-helper.sh provision <repo-path>         # Create/repair directory tree
+#   knowledge-helper.sh init [repo|personal] [path]   # Interactive init (sets repos.json)
+#   knowledge-helper.sh status [repo-path]             # Show provisioning state
+#   knowledge-helper.sh help                           # Show help
+#
+# The knowledge plane has three modes controlled by repos.json "knowledge" field:
+#   "off"      (default) — no directory provisioned, no-op on setup
+#   "repo"     — _knowledge/ tree lives inside the repo (versioned sources, gitignored inbox/staging)
+#   "personal" — tree lives in ~/.aidevops/.agent-workspace/knowledge/ (cross-repo)
+#
+# Directory contract:
+#   inbox/       — raw drops, pre-review, gitignored
+#   staging/     — curated before commit, gitignored
+#   sources/     — versioned originals ≤30MB; pointers (meta.json) for larger blobs
+#   index/       — generated search artifacts (gitignored or versioned depending on workflow)
+#   collections/ — named curated subsets, versioned
+#   _config/     — knowledge.json defaults, versioned
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/shared-constants.sh"
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+readonly KNOWLEDGE_DIRS=(inbox staging sources index collections)
+readonly KNOWLEDGE_CONFIG_SUBDIR="_config"
+readonly KNOWLEDGE_CONFIG_FILE="knowledge.json"
+readonly KNOWLEDGE_ROOT="_knowledge"
+readonly BLOB_THRESHOLD_BYTES=$((30 * 1024 * 1024))  # 30MB
+readonly PERSONAL_PLANE_BASE="${HOME}/.aidevops/.agent-workspace/knowledge"
+readonly CONFIG_DIR="${HOME}/.config/aidevops"
+# Allow env var override for testing (REPOS_FILE=/path/to/test.json bash knowledge-helper.sh ...)
+readonly REPOS_FILE="${REPOS_FILE:-${CONFIG_DIR}/repos.json}"
+readonly TEMPLATE_DIR="${SCRIPT_DIR}/../templates"
+readonly GITIGNORE_TEMPLATE="${TEMPLATE_DIR}/knowledge-gitignore.txt"
+readonly CONFIG_TEMPLATE="${TEMPLATE_DIR}/knowledge-config.json"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+_require_jq() {
+	if ! command -v jq &>/dev/null; then
+		print_error "jq is required but not installed. Run: brew install jq"
+		return 1
+	fi
+	return 0
+}
+
+# Resolve the knowledge mode for a given repo path from repos.json.
+# Outputs: "off" | "repo" | "personal" (default "off" when unset)
+_get_knowledge_mode() {
+	local repo_path="$1"
+	local mode
+	_require_jq || return 1
+	if [[ ! -f "$REPOS_FILE" ]]; then
+		echo "off"
+		return 0
+	fi
+	mode=$(jq -r --arg path "$repo_path" \
+		'.initialized_repos[] | select(.path == $path) | .knowledge // "off"' \
+		"$REPOS_FILE" 2>/dev/null | head -1)
+	echo "${mode:-off}"
+	return 0
+}
+
+# Update or insert the knowledge field for a repo entry in repos.json.
+_set_knowledge_mode() {
+	local repo_path="$1"
+	local mode="$2"
+	_require_jq || return 1
+	[[ ! -f "$REPOS_FILE" ]] && print_error "repos.json not found at $REPOS_FILE" && return 1
+
+	# Validate mode
+	case "$mode" in
+	off | repo | personal) ;;
+	*)
+		print_error "Invalid mode: $mode (must be off|repo|personal)"
+		return 1
+		;;
+	esac
+
+	local tmp_file
+	tmp_file=$(mktemp)
+
+	# Update the matching repo entry; insert field if missing
+	jq --arg path "$repo_path" --arg mode "$mode" \
+		'(.initialized_repos[] | select(.path == $path)) |= . + {"knowledge": $mode}' \
+		"$REPOS_FILE" >"$tmp_file"
+
+	# Validate output before overwriting
+	if ! jq . "$tmp_file" >/dev/null 2>&1; then
+		print_error "JSON validation failed — repos.json not modified"
+		rm -f "$tmp_file"
+		return 1
+	fi
+
+	mv "$tmp_file" "$REPOS_FILE"
+	print_success "Set knowledge=$mode for $repo_path in repos.json"
+	return 0
+}
+
+# Create the directory tree for the knowledge plane.
+# Args: base_dir (absolute path that will contain the knowledge root)
+_create_knowledge_tree() {
+	local base_dir="$1"
+	local knowledge_root="${base_dir}/${KNOWLEDGE_ROOT}"
+	local config_dir="${knowledge_root}/${KNOWLEDGE_CONFIG_SUBDIR}"
+	local dir
+
+	for dir in "${KNOWLEDGE_DIRS[@]}"; do
+		mkdir -p "${knowledge_root}/${dir}"
+	done
+	mkdir -p "$config_dir"
+	return 0
+}
+
+# Write .gitignore rules inside the knowledge root.
+# Uses the template if available, otherwise writes defaults inline.
+_write_gitignore() {
+	local knowledge_root="$1"
+	local gitignore_path="${knowledge_root}/.gitignore"
+
+	if [[ -f "$GITIGNORE_TEMPLATE" ]]; then
+		cp "$GITIGNORE_TEMPLATE" "$gitignore_path"
+	else
+		# Inline fallback (same content as the template)
+		cat >"$gitignore_path" <<'GITIGNORE'
+# Knowledge plane — gitignore rules
+# Generated by knowledge-helper.sh
+#
+# inbox/ and staging/ are pre-review zones — never version raw drops.
+# sources/ is intentionally NOT ignored: versioned originals belong in git
+# (for files ≤30MB; larger originals use blob_path in meta.json).
+# index/ contains generated artifacts — ignore by default; remove this
+# line if your workflow versions the index.
+# collections/ is versioned — remove from this file if you want to ignore it.
+
+inbox/
+staging/
+index/
+GITIGNORE
+	fi
+	return 0
+}
+
+# Write _config/knowledge.json defaults from template or inline fallback.
+_write_config() {
+	local knowledge_root="$1"
+	local config_path="${knowledge_root}/${KNOWLEDGE_CONFIG_SUBDIR}/${KNOWLEDGE_CONFIG_FILE}"
+
+	if [[ -f "$CONFIG_TEMPLATE" ]]; then
+		cp "$CONFIG_TEMPLATE" "$config_path"
+	else
+		# Inline fallback (mirrors knowledge-config.json template)
+		cat >"$config_path" <<'CONFIG'
+{
+  "version": 1,
+  "sensitivity_default": "internal",
+  "trust_default": "unverified",
+  "blob_threshold_bytes": 31457280,
+  "trust_ladder": ["unverified", "reviewed", "trusted", "authoritative"],
+  "sensitivity_levels": ["public", "internal", "confidential", "restricted"],
+  "ingest_policy": {
+    "auto_sha256": true,
+    "require_meta": true
+  }
+}
+CONFIG
+	fi
+	return 0
+}
+
+# Append .gitignore entries to the REPO root .gitignore (not the knowledge root).
+# Ensures the inbox/ and staging/ subdirs are ignored repo-wide (belt + suspenders).
+_patch_repo_gitignore() {
+	local repo_path="$1"
+	local repo_gitignore="${repo_path}/.gitignore"
+	local marker="# knowledge-plane-rules"
+
+	# Nothing to patch if marker already present
+	if [[ -f "$repo_gitignore" ]] && grep -q "$marker" "$repo_gitignore" 2>/dev/null; then
+		return 0
+	fi
+
+	# Append block
+	{
+		echo ""
+		echo "${marker}"
+		echo "_knowledge/inbox/"
+		echo "_knowledge/staging/"
+		echo "_knowledge/index/"
+	} >>"$repo_gitignore"
+	return 0
+}
+
+# Check if knowledge root already has the expected structure.
+# Returns 0 if all dirs present; 1 otherwise.
+_is_provisioned() {
+	local base_dir="$1"
+	local knowledge_root="${base_dir}/${KNOWLEDGE_ROOT}"
+	local dir
+
+	[[ -d "$knowledge_root" ]] || return 1
+	for dir in "${KNOWLEDGE_DIRS[@]}"; do
+		[[ -d "${knowledge_root}/${dir}" ]] || return 1
+	done
+	[[ -f "${knowledge_root}/${KNOWLEDGE_CONFIG_SUBDIR}/${KNOWLEDGE_CONFIG_FILE}" ]] || return 1
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_provision() {
+	local repo_path="${1:-$(pwd)}"
+	local mode
+
+	# Resolve absolute path
+	repo_path="$(cd "$repo_path" && pwd)"
+	mode=$(_get_knowledge_mode "$repo_path")
+
+	case "$mode" in
+	off)
+		print_info "Knowledge mode is 'off' for $repo_path — skipping provision."
+		return 0
+		;;
+	repo)
+		local base_dir="$repo_path"
+		if _is_provisioned "$base_dir"; then
+			print_info "Knowledge plane already provisioned at ${base_dir}/${KNOWLEDGE_ROOT}"
+		else
+			print_info "Provisioning repo knowledge plane at ${base_dir}/${KNOWLEDGE_ROOT}..."
+			_create_knowledge_tree "$base_dir"
+			_write_gitignore "${base_dir}/${KNOWLEDGE_ROOT}"
+			_write_config "${base_dir}/${KNOWLEDGE_ROOT}"
+			_patch_repo_gitignore "$repo_path"
+			print_success "Provisioned: ${base_dir}/${KNOWLEDGE_ROOT}"
+		fi
+		;;
+	personal)
+		local base_dir="$PERSONAL_PLANE_BASE"
+		if _is_provisioned "$base_dir"; then
+			print_info "Personal knowledge plane already provisioned at $base_dir"
+		else
+			print_info "Provisioning personal knowledge plane at $base_dir..."
+			_create_knowledge_tree "$base_dir"
+			_write_gitignore "${base_dir}/${KNOWLEDGE_ROOT}"
+			_write_config "${base_dir}/${KNOWLEDGE_ROOT}"
+			print_success "Provisioned: ${base_dir}/${KNOWLEDGE_ROOT}"
+		fi
+		;;
+	*)
+		print_error "Unknown knowledge mode '$mode' for $repo_path"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+cmd_init() {
+	local mode="${1:-}"
+	local repo_path="${2:-$(pwd)}"
+
+	# Resolve absolute path
+	repo_path="$(cd "$repo_path" && pwd)"
+
+	# Interactive prompt when mode not supplied
+	if [[ -z "$mode" ]]; then
+		echo ""
+		echo "Knowledge plane init for: $repo_path"
+		echo ""
+		echo "Choose mode:"
+		echo "  1) repo     — _knowledge/ lives inside this repo"
+		echo "  2) personal — knowledge lives at ~/.aidevops/.agent-workspace/knowledge/"
+		echo "  3) off      — disable knowledge plane for this repo"
+		echo ""
+		local choice
+		read -r -p "Mode [1/2/3]: " choice
+		case "$choice" in
+		1) mode="repo" ;;
+		2) mode="personal" ;;
+		3) mode="off" ;;
+		*)
+			print_error "Invalid choice: $choice"
+			return 1
+			;;
+		esac
+	fi
+
+	# Validate mode
+	case "$mode" in
+	off | repo | personal) ;;
+	*)
+		print_error "Invalid mode: $mode (must be off|repo|personal)"
+		return 1
+		;;
+	esac
+
+	# Update repos.json
+	_set_knowledge_mode "$repo_path" "$mode" || return 1
+
+	# Provision unless turning off
+	if [[ "$mode" != "off" ]]; then
+		cmd_provision "$repo_path"
+	fi
+	return 0
+}
+
+cmd_status() {
+	local repo_path="${1:-$(pwd)}"
+	repo_path="$(cd "$repo_path" && pwd)"
+
+	local mode
+	mode=$(_get_knowledge_mode "$repo_path")
+
+	echo ""
+	echo "Knowledge plane status for: $repo_path"
+	echo "  Mode: $mode"
+
+	case "$mode" in
+	off)
+		echo "  State: disabled"
+		;;
+	repo)
+		local base_dir="$repo_path"
+		if _is_provisioned "$base_dir"; then
+			echo "  State: provisioned (${base_dir}/${KNOWLEDGE_ROOT})"
+			local dir
+			for dir in "${KNOWLEDGE_DIRS[@]}"; do
+				local full="${base_dir}/${KNOWLEDGE_ROOT}/${dir}"
+				local count=0
+				if [[ -d "$full" ]]; then
+					count=$(find "$full" -maxdepth 1 -not -name '.' | wc -l | tr -d ' ')
+				fi
+				printf "    %-12s %s items\n" "${dir}/" "$count"
+			done
+		else
+			echo "  State: not provisioned (run: aidevops knowledge init repo)"
+		fi
+		;;
+	personal)
+		local base_dir="${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}"
+		if _is_provisioned "$PERSONAL_PLANE_BASE"; then
+			echo "  State: provisioned ($base_dir)"
+		else
+			echo "  State: not provisioned (run: aidevops knowledge init personal)"
+		fi
+		;;
+	esac
+	echo ""
+	return 0
+}
+
+cmd_help() {
+	cat <<HELP
+knowledge-helper.sh — Knowledge plane provisioning
+
+Usage:
+  knowledge-helper.sh provision [repo-path]          Provision/repair directory tree
+  knowledge-helper.sh init [off|repo|personal] [path] Set mode and provision
+  knowledge-helper.sh status [repo-path]             Show provisioning state
+  knowledge-helper.sh help                           Show this help
+
+Modes (stored in repos.json "knowledge" field):
+  off       No knowledge plane (default, backwards-compatible)
+  repo      _knowledge/ tree inside the repo
+  personal  Tree at ~/.aidevops/.agent-workspace/knowledge/
+
+Directory contract:
+  _knowledge/inbox/       Raw drops — gitignored, pre-review
+  _knowledge/staging/     Curated before commit — gitignored
+  _knowledge/sources/     Versioned originals (≤30MB)
+  _knowledge/index/       Generated search index — gitignored
+  _knowledge/collections/ Named curated subsets — versioned
+  _knowledge/_config/     knowledge.json defaults — versioned
+
+Blob threshold: files ≥30MB go to ~/.aidevops/.agent-workspace/knowledge-blobs/
+with a hash pointer in meta.json instead of being stored in-repo.
+HELP
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+	local subcommand="${1:-help}"
+	shift || true
+
+	case "$subcommand" in
+	provision) cmd_provision "$@" ;;
+	init) cmd_init "$@" ;;
+	status) cmd_status "$@" ;;
+	help | -h | --help) cmd_help ;;
+	*)
+		print_error "Unknown subcommand: $subcommand"
+		cmd_help
+		exit 1
+		;;
+	esac
+	return 0
+}
+
+main "$@"

@@ -85,6 +85,22 @@ Resolution order (per field independently): per-tool > per-repo > env var (`REVI
 
 CLI: `aidevops review-gate --help` — configure `rate_limit_behavior` without hand-editing JSON.
 
+## Knowledge Plane
+
+`knowledge` — opt-in knowledge plane mode for structured ingestion of external sources.
+
+| Value | Meaning |
+|-------|---------|
+| `"off"` | Disabled (default — existing repos unaffected) |
+| `"repo"` | `_knowledge/` tree lives inside the repo (versioned sources) |
+| `"personal"` | Tree lives at `~/.aidevops/.agent-workspace/knowledge/` (cross-repo, local) |
+
+Set interactively: `aidevops knowledge init` — prompts for mode, writes to `repos.json`, provisions directory tree.
+
+`setup.sh --update` (or `aidevops update`) re-provisions when the field is `"repo"` or `"personal"` and directories were deleted. Repos with `knowledge` unset or `"off"` are untouched.
+
+Full directory contract (inbox, staging, sources, index, collections, `_config/knowledge.json`): `.agents/aidevops/knowledge-plane.md`.
+
 ## Platform Integration
 
 | Field | Values | Description |
