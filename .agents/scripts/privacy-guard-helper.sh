@@ -231,6 +231,97 @@ privacy_enumerate_private_slugs() {
 }
 
 # =============================================================================
+# Free-form text scanning (used by gh PATH shim — t2876)
+# =============================================================================
+
+#######################################
+# Minimum basename length for bare-basename matching. Basenames shorter than
+# this are matched only as full slug form (owner/basename) to avoid false
+# positives on common short tokens (web, app, api, mvp). Override via env.
+#######################################
+PRIVACY_BARE_BASENAME_MIN_LEN="${PRIVACY_BARE_BASENAME_MIN_LEN:-6}"
+
+#######################################
+# Scan free-form text content (issue/PR body, title, gh api -f body=value)
+# for private repo references. Used by .agents/scripts/gh PATH shim before
+# letting a write reach a public repo.
+#
+# Two match forms per slug:
+#   1. Full slug "owner/basename" — fixed-string match, low FP risk.
+#   2. Bare "basename" with word boundaries — only when len >= MIN_LEN
+#      (default 6) so common tokens like "app"/"web"/"api" don't trigger.
+#
+# Arguments:
+#   $1 - text content to scan
+#   $2 - file containing newline-separated private slugs (output of
+#        privacy_enumerate_private_slugs)
+# Output:
+#   One line per hit on stdout, format:
+#     "owner/basename"                    (full slug form match)
+#     "basename (basename of owner/basename)"  (bare basename form match)
+# Returns:
+#   0 if no hits, 1 if at least one hit, 2 on argument/setup error.
+#######################################
+privacy_scan_text() {
+	local text="$1"
+	local slugs_file="$2"
+
+	if [[ -z "$slugs_file" || ! -f "$slugs_file" ]]; then
+		return 2
+	fi
+	# Empty text or empty slug list — nothing to scan.
+	if [[ -z "$text" ]] || [[ ! -s "$slugs_file" ]]; then
+		return 0
+	fi
+
+	local hits=0
+	local slug owner basename
+	while IFS= read -r slug; do
+		# Skip blanks and comment lines.
+		[[ -z "$slug" || "$slug" == \#* ]] && continue
+		# Trim leading/trailing whitespace.
+		slug="${slug#"${slug%%[![:space:]]*}"}"
+		slug="${slug%"${slug##*[![:space:]]}"}"
+		[[ -z "$slug" ]] && continue
+		# Slug must be owner/basename — single-token entries (legacy) treated as basename only.
+		if [[ "$slug" == */* ]]; then
+			owner="${slug%/*}"
+			basename="${slug##*/}"
+		else
+			owner=""
+			basename="$slug"
+		fi
+		[[ -z "$basename" ]] && continue
+
+		# Form 1: full slug fixed-string match (only if owner present).
+		if [[ -n "$owner" ]] && printf '%s' "$text" | grep -qF "$slug" 2>/dev/null; then
+			printf '%s\n' "$slug"
+			hits=$((hits + 1))
+			continue
+		fi
+
+		# Form 2: bare basename with word boundaries — only for distinctive lengths.
+		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			# Word boundary regex: must NOT be flanked by [a-zA-Z0-9_-].
+			# Note: we use grep -E (POSIX ERE), not PCRE, so \b is unreliable.
+			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+				if [[ -n "$owner" ]]; then
+					printf '%s (basename of %s)\n' "$basename" "$slug"
+				else
+					printf '%s\n' "$basename"
+				fi
+				hits=$((hits + 1))
+			fi
+		fi
+	done <"$slugs_file"
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# =============================================================================
 # Diff scanning
 # =============================================================================
 
