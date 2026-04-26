@@ -259,6 +259,47 @@ _migrate_cron_to_launchd() {
 # Lock management (prevents concurrent updates)
 # Uses mkdir for atomic locking (POSIX-safe)
 #######################################
+
+#######################################
+# _lock_holder_is_wedged
+# Returns 0 if the lock holder is wedged (process alive but no log progress
+# for more than WEDGE_THRESHOLD_SECONDS), 1 otherwise.
+# Conservative: treats absence of log file as "not wedged" (can't tell).
+# Uses log file mtime as a proxy for "last sign of life" — more accurate than
+# lock directory mtime which only reflects lock acquisition time.
+# t2912
+#######################################
+_lock_holder_is_wedged() {
+	local _pid="$1"
+	local _threshold="${WEDGE_THRESHOLD_SECONDS:-1800}"  # 30 min default
+	local _log="${LOG_FILE:-$HOME/.aidevops/logs/auto-update.log}"
+
+	# Belt-and-braces: process must be alive for a wedge to be possible.
+	kill -0 "$_pid" 2>/dev/null || return 1
+
+	# No log file = nothing to measure progress against.
+	# Conservative: assume not wedged rather than force-killing blindly.
+	[[ -f "$_log" ]] || return 1
+
+	# Modification time of the log file proxies "last sign of life".
+	# Use Darwin without quotes in [[ ]] — RHS is not word-split, no SC warning.
+	local _log_mtime
+	local _now
+	local _idle
+	if [[ "$(uname)" == Darwin ]]; then
+		_log_mtime=$(stat -f '%m' "$_log" 2>/dev/null || echo "0")
+	else
+		_log_mtime=$(stat -c '%Y' "$_log" 2>/dev/null || echo "0")
+	fi
+	_now=$(date +%s)
+	_idle=$(( _now - _log_mtime ))
+
+	if [[ "$_idle" -gt "$_threshold" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 acquire_lock() {
 	local max_wait=30
 	local waited=0
@@ -277,6 +318,17 @@ acquire_lock() {
 			if [[ -n "$lock_pid" ]] && ! _is_process_alive_and_matches "$lock_pid" "${FRAMEWORK_PROCESS_PATTERN:-}"; then
 				log_warn "Removing stale lock (PID $lock_pid dead or reused, t2421)"
 				rm -rf "$LOCK_FILE"
+				continue
+			# t2912: wedge detection — process alive but log has had no activity
+			# beyond WEDGE_THRESHOLD_SECONDS (default 1800s / 30 min).
+			elif [[ -n "$lock_pid" ]] && _lock_holder_is_wedged "$lock_pid"; then
+				local _wedge_thr="${WEDGE_THRESHOLD_SECONDS:-1800}"
+				log_warn "Wedged lock holder detected (PID $lock_pid alive but no log progress in ${_wedge_thr}s) — force-releasing (t2912)"
+				kill -TERM "$lock_pid" 2>/dev/null || true
+				sleep 2
+				kill -KILL "$lock_pid" 2>/dev/null || true
+				rm -rf "$LOCK_FILE"
+				"${SCRIPT_DIR}/audit-log-helper.sh" log "lock.wedge-recovery" "auto-update wedged lock (PID $lock_pid) force-released after ${_wedge_thr}s with no log progress" 2>/dev/null || true
 				continue
 			fi
 		fi
