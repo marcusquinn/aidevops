@@ -3173,7 +3173,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2872 redact private repo names + paths from issue/PR bodies posted to public marcusquinn/aidevops #framework #pulse #reliability #security ref:GH#20944
 
-- [ ] t2873 comment out OpenCode→Claude Code substitution after empirical A/B verification ref:GH#20964
+- [x] t2873 comment out OpenCode→Claude Code substitution after empirical A/B verification ref:GH#20964 pr:#20965 completed:2026-04-26
 
 - [ ] t2874 structured tag format for knowledge planes (Markdoc-style peer parent) #enhancement #framework #parent ref:GH#20966
 
