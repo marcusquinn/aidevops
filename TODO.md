@@ -3154,7 +3154,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2863 sweep pulse-*.sh for set -u unbound variable bugs #bug #framework #interactive #no-auto-dispatch #priority:high #pulse ref:GH#20920
 
-- [ ] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919
+- [x] t2862 decouple pulse-merge into a fast standalone routine #framework #interactive #no-auto-dispatch #performance #priority:high #pulse blocked-by:t2863 ref:GH#20919 pr:#21093 completed:2026-04-26
 
 - [x] t2865 pulse canonical-worktree conflict auto-recovery #framework #interactive #no-auto-dispatch #priority:medium #pulse #reliability ref:GH#20922 pr:#20928 completed:2026-04-25
 
