@@ -1210,6 +1210,10 @@ _setup_post_setup_steps() {
 		if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
 			setup_contribution_watch
 		fi
+		# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
+		if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
+			setup_complexity_scan
+		fi
 		# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
 		setup_repo_sync
 		# r914 repo-aidevops-health — daily drift keeper (t2366)
@@ -1241,6 +1245,7 @@ _setup_post_setup_steps() {
 	setup_memory_pressure_monitor
 	setup_screen_time_snapshot
 	setup_contribution_watch
+	setup_complexity_scan
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh
