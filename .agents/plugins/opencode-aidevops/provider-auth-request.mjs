@@ -114,7 +114,30 @@ const SYSTEM_CHAR_LIMIT = 40000; // conservative margin below 50K trigger
 function sanitizeSystemPrompt(system) {
   return system.map((item) => {
     if (item.type !== "text" || !item.text) return item;
-    let text = item.text.replace(/OpenCode/g, "Claude Code").replace(/opencode/gi, "Claude");
+    // t2873 (2026-04-26): OpenCode → Claude Code text substitution disabled
+    // after empirical A/B testing against api.anthropic.com confirmed it is
+    // unnecessary. Six tests at sizes 380B–36KB all returned 200 OK with the
+    // literal word "OpenCode" present in the system prompt.
+    //
+    // History:
+    //   t1543 (2025-09): added with comment "Anthropic server blocks
+    //     'OpenCode' string" — never empirically verified.
+    //   t2040 (2026-04-09): investigation found the ACTUAL trigger was the
+    //     XML tags <directories>, <env>, <available_skills> — TAG_RENAMES
+    //     below handles those.
+    //   t2723 (2026-04-22): redistributeSystemToMessages handles the
+    //     ~50K-char framework-prompt size trigger.
+    //
+    // Cost of leaving it on: model believes it is running in Claude Code
+    // when it is in OpenCode → wrong commands, wrong config paths, wrong
+    // session-DB locations.
+    //
+    // Re-enable: uncomment the line below if Anthropic adds a name-based
+    // detection layer in the future. The A/B test harness lives at
+    // ~/.aidevops/.agent-workspace/work/aidevops/third-party-name-test/.
+    //
+    // let text = item.text.replace(/OpenCode/g, "Claude Code").replace(/opencode/gi, "Claude");
+    let text = item.text;
     for (const [pattern, replacement] of TAG_RENAMES) text = text.replace(pattern, replacement);
     return { ...item, text };
   });
