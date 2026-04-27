@@ -779,7 +779,7 @@ cmd_update() {
 	# 'restart-if-running' do). Non-fatal: a pulse start failure should
 	# not fail the update.
 	if [[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" != "1" ]]; then
-		local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
+		local _pulse_helper="${AGENTS_DIR}/scripts/pulse-lifecycle-helper.sh"
 		if [[ -x "$_pulse_helper" ]]; then
 			"$_pulse_helper" start >/dev/null 2>&1 || print_warning "Pulse start failed (non-fatal)"
 		fi
