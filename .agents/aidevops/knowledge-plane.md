@@ -200,6 +200,88 @@ knowledge-helper.sh sensitivity show <source-id>
 
 ---
 
+## Structured Field Extraction / Enrichment (t2849)
+
+After a source is promoted to `sources/`, the enrichment pipeline extracts structured
+fields from the OCR text and writes `_knowledge/sources/<id>/extracted.json` with
+per-field provenance.
+
+### What Enrichment Produces
+
+```json
+{
+  "version": 1,
+  "source_id": "my-invoice",
+  "kind": "invoice",
+  "schema_version": 1,
+  "schema_hash": "a3f2c1d4e5b6",
+  "enriched_at": "2026-04-27T10:00:00Z",
+  "fields": {
+    "invoice_number": { "value": "INV-2026-001", "confidence": "high", "source": "regex", "evidence_excerpt": "Invoice Number: INV-2026-001", "page": null },
+    "supplier_name":  { "value": "Acme Corp Ltd", "confidence": "high", "source": "llm",   "evidence_excerpt": "Supplier: Acme Corp Ltd", "page": null }
+  }
+}
+```
+
+### Schemas
+
+Seven extraction schemas live in `.agents/tools/document/extraction-schemas/`:
+
+| Kind | Schema | Sensitivity |
+|------|--------|-------------|
+| `invoice` | `invoice.json` | `internal` |
+| `contract` | `contract.json` | `internal`/`sensitive` |
+| `bank_statement` | `bank_statement.json` | `pii` |
+| `financial_statement` | `financial_statement.json` | `internal`/`sensitive` |
+| `payment_receipt` | `payment_receipt.json` | `pii` |
+| `email` | `email.json` | `pii` |
+| `generic` | `generic.json` | `internal` (fallback) |
+
+Each field declares `extractor: "regex"` (fast, deterministic) or `extractor: "llm"`
+(flexible). LLM fields route through `llm-routing-helper.sh` with the source's
+`sensitivity` tier — PII documents stay local.
+
+### CLI
+
+```bash
+# Enrich a specific source (kind from meta.json)
+aidevops knowledge enrich <source-id>
+
+# Override kind when meta.json has wrong value
+document-enrich-helper.sh enrich <source-id> --kind contract
+
+# Batch: enrich all sources without extracted.json (same as r041)
+document-enrich-helper.sh tick
+
+# Dry-run — show what would be extracted without writing
+document-enrich-helper.sh enrich <source-id> --dry-run
+
+# Force re-extract even if extracted.json exists
+document-enrich-helper.sh enrich <source-id> --force-refresh
+
+# Show enrichment status across sources
+document-enrich-helper.sh status
+```
+
+### Idempotency
+
+Tracks a 12-char schema hash in `extracted.json::schema_hash`. Same hash → skip
+(no LLM calls, no file write). Schema changed → re-extract. `--force-refresh` → always.
+
+### Routine r041
+
+```
+- [x] r041 Knowledge enrichment — extract structured fields from freshly-promoted sources repeat:cron(*/30 * * * *) ~2m run:scripts/document-enrich-helper.sh tick
+```
+
+### Schema Authoring
+
+Create `.agents/tools/document/extraction-schemas/<kind>.json` with the format shown
+in `10-classification.md §Extraction Schemas`. The helper auto-discovers schemas by
+filename — no registration step needed.
+
+---
+
 ## Corpus Index (t2850)
 
 The pulse-driven `r042` routine runs hourly, incrementally rebuilds per-source

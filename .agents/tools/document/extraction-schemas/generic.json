@@ -1,0 +1,67 @@
+{
+  "kind": "generic",
+  "version": 1,
+  "description": "Generic document fallback — extract universal metadata fields when no specific schema matches",
+  "fields": [
+    {
+      "name": "document_title",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the document title or heading. Return the first prominent heading or title text found."
+    },
+    {
+      "name": "document_type",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Describe the type of document in one or two words (e.g. 'Report', 'Letter', 'Form', 'Certificate', 'Policy'). Be specific but concise."
+    },
+    {
+      "name": "author_or_issuer",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the author, issuer, or organisation that produced this document. Return null if not determinable."
+    },
+    {
+      "name": "recipient",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the intended recipient or addressee. Return null if not addressed to a specific party."
+    },
+    {
+      "name": "document_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the most prominent date on this document in ISO 8601 format (YYYY-MM-DD). Return null if not found."
+    },
+    {
+      "name": "reference_number",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:ref(?:erence)?\\s*(?:no\\.?|number|#)?|case\\s*(?:no\\.?|number|#)?|doc(?:ument)?\\s*(?:no\\.?|id|#)?)\\s*[:#]?\\s*([A-Z0-9/_-]{2,40})"
+    },
+    {
+      "name": "summary",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Summarise this document in two to four sentences. Include the purpose, key facts, and any significant conclusions or decisions."
+    },
+    {
+      "name": "key_dates",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract any significant dates mentioned in the document as a JSON array of {label, date} objects where date is YYYY-MM-DD. Return empty array if none."
+    },
+    {
+      "name": "key_parties",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract the names of key people, companies, or organisations mentioned in this document as a JSON array of strings. Limit to 5 most significant. Return empty array if none."
+    },
+    {
+      "name": "page_count",
+      "type": "number",
+      "extractor": "regex",
+      "pattern": "(?i)(?:page\\s*[0-9]+\\s*of\\s*)([0-9]+)|(?:([0-9]+)\\s*pages?)"
+    }
+  ]
+}

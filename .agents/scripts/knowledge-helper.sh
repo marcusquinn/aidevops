@@ -593,6 +593,18 @@ cmd_sensitivity() {
 	return 0
 }
 
+# cmd_enrich: proxy to document-enrich-helper.sh for structured field extraction
+# Usage: knowledge-helper.sh enrich <source-id> [--kind <override>] [--max-cost <USD>]
+cmd_enrich() {
+	local enrich_helper="${SCRIPT_DIR}/document-enrich-helper.sh"
+	if [[ ! -x "$enrich_helper" ]]; then
+		print_error "document-enrich-helper.sh not found at $enrich_helper"
+		return 1
+	fi
+	bash "$enrich_helper" enrich "$@"
+	return 0
+}
+
 cmd_help() {
 	sed -n '4,29p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
@@ -673,6 +685,7 @@ main() {
 	init)        cmd_init "$@" ;;
 	add)         cmd_add "$@" ;;
 	sensitivity) cmd_sensitivity "$@" ;;
+	enrich)      cmd_enrich "$@" ;;
 	status)      cmd_status "$@" ;;
 	search)      cmd_search "$@" ;;
 	help | -h | --help) cmd_help ;;

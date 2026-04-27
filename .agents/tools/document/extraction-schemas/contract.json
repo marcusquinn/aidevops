@@ -1,0 +1,85 @@
+{
+  "kind": "contract",
+  "version": 1,
+  "description": "Commercial contract or agreement — extract parties, dates, and key terms",
+  "fields": [
+    {
+      "name": "party_a_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the first party (Party A) in this contract."
+    },
+    {
+      "name": "party_b_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the second party (Party B / counterparty) in this contract."
+    },
+    {
+      "name": "contract_title",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the title or type of this agreement (e.g. 'Service Agreement', 'NDA', 'Lease Agreement')."
+    },
+    {
+      "name": "contract_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the contract signing or effective date in ISO 8601 format (YYYY-MM-DD). Return null if not found."
+    },
+    {
+      "name": "start_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the contract start or commencement date in ISO 8601 format (YYYY-MM-DD). Return null if not specified."
+    },
+    {
+      "name": "end_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the contract end or expiry date in ISO 8601 format (YYYY-MM-DD). Return null if open-ended or not specified."
+    },
+    {
+      "name": "contract_value",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the total contract value as a plain number. Return null if not explicitly stated."
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the 3-letter ISO 4217 currency code for contract values (e.g. GBP, USD, EUR). Return null if no monetary value."
+    },
+    {
+      "name": "payment_terms",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Summarise the payment terms in one sentence (e.g. 'Monthly in advance, net 30'). Return null if not applicable."
+    },
+    {
+      "name": "governing_law",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)governed\\s+by\\s+(?:the\\s+)?(?:laws?\\s+of\\s+)?([A-Za-z ]{3,50})"
+    },
+    {
+      "name": "notice_period_days",
+      "type": "number",
+      "extractor": "regex",
+      "pattern": "(?i)(?:notice\\s+period|terminate\\s+on\\s+(?:giving|providing))\\s+(?:of\\s+)?([0-9]+)\\s*(?:days?|calendar\\s*days?)"
+    },
+    {
+      "name": "auto_renewal",
+      "type": "boolean",
+      "extractor": "llm",
+      "prompt": "Does this contract auto-renew? Return true, false, or null if unclear."
+    },
+    {
+      "name": "key_obligations",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract a short list (max 5) of the key obligations or deliverables described in the contract as plain strings."
+    }
+  ]
+}

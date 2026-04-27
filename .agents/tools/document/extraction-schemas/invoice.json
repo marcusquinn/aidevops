@@ -1,0 +1,85 @@
+{
+  "kind": "invoice",
+  "version": 1,
+  "description": "Purchase invoice from supplier — extract billing and line-item fields",
+  "fields": [
+    {
+      "name": "supplier_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the supplier company name (the business that issued this invoice)."
+    },
+    {
+      "name": "supplier_address",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the supplier full postal address. Return null if not present."
+    },
+    {
+      "name": "supplier_vat_number",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:vat|gst|tax)\\s*(?:no\\.?|number|reg(?:istration)?)\\s*[:#]?\\s*([A-Z]{0,3}[0-9]{7,12})"
+    },
+    {
+      "name": "invoice_number",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)invoice[\\s\\w]*[#:]\\s*([A-Z0-9][A-Z0-9/_-]{1,29})"
+    },
+    {
+      "name": "invoice_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the invoice issue date in ISO 8601 format (YYYY-MM-DD). Return null if not found."
+    },
+    {
+      "name": "due_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the payment due date in ISO 8601 format (YYYY-MM-DD). Return null if not present."
+    },
+    {
+      "name": "purchase_order",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:purchase\\s*order|p\\.?o\\.?)\\s*(?:no\\.?|number|#|:)?\\s*([A-Z0-9/_-]{2,30})"
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the 3-letter ISO 4217 currency code (e.g. GBP, USD, EUR). Infer from symbols if explicit code is absent."
+    },
+    {
+      "name": "subtotal",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the subtotal amount (before VAT/tax) as a plain number. Return null if not shown."
+    },
+    {
+      "name": "vat_amount",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the VAT or tax amount as a plain number. Return 0 if explicitly zero; null if not present."
+    },
+    {
+      "name": "total_amount",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the total invoice amount including all taxes as a plain number."
+    },
+    {
+      "name": "payment_terms",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(net\\s*\\d+|\\d+\\s*days?|due\\s*on\\s*receipt|immediate(?:ly)?|on\\s*delivery)"
+    },
+    {
+      "name": "line_items",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract all line items as a JSON array. Each item: {description, quantity, unit_price, amount, vat_rate}. Use null for missing numeric fields."
+    }
+  ]
+}
