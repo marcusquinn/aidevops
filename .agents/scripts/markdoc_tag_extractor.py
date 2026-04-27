@@ -22,6 +22,14 @@ Tag output shape (per entry):
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
+# Compiled once at module load — tag names: letter followed by word chars + hyphens
+_TAG_NAME_RE = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*$')
+
+# Compiled attribute-parser pattern — reused across all calls
+_ATTR_PATTERN = re.compile(
+    r'([\w-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s\'"}{%]+))'
+)
+
 
 def parse_markdoc_attrs(attrs_str: str) -> Dict[str, Any]:
     """Parse a Markdoc attribute string into a dict.
@@ -37,11 +45,7 @@ def parse_markdoc_attrs(attrs_str: str) -> Dict[str, Any]:
         {'source-id': 'doc.pdf', 'confidence': 0.95}
     """
     attrs: Dict[str, Any] = {}
-    # Match: name="value" | name='value' | name=bare_value
-    pattern = re.compile(
-        r'([\w-]+)\s*=\s*(?:"([^"]*)"|\'([^\']*)\'|([^\s\'"}{%]+))'
-    )
-    for m in pattern.finditer(attrs_str):
+    for m in _ATTR_PATTERN.finditer(attrs_str):
         key = m.group(1)
         # Prefer group 2 (double-quoted), then 3 (single-quoted), then 4 (unquoted)
         raw: str = (
@@ -49,7 +53,7 @@ def parse_markdoc_attrs(attrs_str: str) -> Dict[str, Any]:
             if m.group(2) is not None
             else (m.group(3) if m.group(3) is not None else (m.group(4) or ''))
         )
-        # Numeric coercion — only for unquoted values (groups 4)
+        # Numeric coercion — only for unquoted values (group 4)
         if m.group(4) is not None:
             try:
                 fval = float(raw)
@@ -59,6 +63,44 @@ def parse_markdoc_attrs(attrs_str: str) -> Dict[str, Any]:
         else:
             attrs[key] = raw
     return attrs
+
+
+def _parse_tag_entry(
+    inner: str, line_idx: int
+) -> Optional[Dict[str, Any]]:
+    """Parse a single tag from the raw content between {% and %}.
+
+    Returns a tag dict or None if the content is not a valid Markdoc tag.
+    """
+    inner = inner.strip()
+
+    is_close = inner.startswith('/')
+    if is_close:
+        inner = inner[1:].strip()
+
+    is_self_close = inner.endswith('/')
+    if is_self_close:
+        inner = inner[:-1].strip()
+
+    name_and_attrs = inner.split(None, 1)
+    if not name_and_attrs:
+        return None
+
+    tag_name = name_and_attrs[0]
+    if not _TAG_NAME_RE.match(tag_name):
+        return None
+
+    attrs_str = name_and_attrs[1] if len(name_and_attrs) > 1 else ''
+    # Closing tags never carry meaningful attrs
+    attrs = parse_markdoc_attrs(attrs_str) if attrs_str and not is_close else {}
+
+    return {
+        'tag': tag_name,
+        'attrs': attrs,
+        'line': line_idx,
+        'is_close': is_close,
+        'is_self_close': is_self_close,
+    }
 
 
 def extract_tags_from_lines(lines: List[str]) -> List[Dict[str, Any]]:
@@ -72,7 +114,6 @@ def extract_tags_from_lines(lines: List[str]) -> List[Dict[str, Any]]:
     silently skipped.
     """
     tags: List[Dict[str, Any]] = []
-    tag_name_re = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*$')
 
     for line_idx, raw_line in enumerate(lines):
         rest = raw_line
@@ -80,37 +121,10 @@ def extract_tags_from_lines(lines: List[str]) -> List[Dict[str, Any]]:
             _, _, rest = rest.partition('{%')
             if '%}' not in rest:
                 break  # no closing %} on this line — multi-line tag, skip
-
             inner, _, rest = rest.partition('%}')
-            inner = inner.strip()
-
-            is_close = inner.startswith('/')
-            if is_close:
-                inner = inner[1:].strip()
-
-            is_self_close = inner.endswith('/')
-            if is_self_close:
-                inner = inner[:-1].strip()
-
-            # Extract tag name (first whitespace-delimited token)
-            name_and_attrs = inner.split(None, 1)
-            if not name_and_attrs:
-                continue
-            tag_name = name_and_attrs[0]
-            if not tag_name_re.match(tag_name):
-                continue
-
-            attrs_str = name_and_attrs[1] if len(name_and_attrs) > 1 else ''
-            # Closing tags never carry meaningful attrs
-            attrs = parse_markdoc_attrs(attrs_str) if attrs_str and not is_close else {}
-
-            tags.append({
-                'tag': tag_name,
-                'attrs': attrs,
-                'line': line_idx,
-                'is_close': is_close,
-                'is_self_close': is_self_close,
-            })
+            entry = _parse_tag_entry(inner, line_idx)
+            if entry is not None:
+                tags.append(entry)
 
     return tags
 
@@ -170,9 +184,8 @@ def build_file_metadata(file_tags: List[Dict[str, Any]]) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {}
     for entry in file_tags:
         attrs = entry.get('attrs', {})
-        if not attrs:
-            continue
-        metadata[entry['tag']] = dict(attrs)
+        if attrs:
+            metadata[entry['tag']] = dict(attrs)
     return metadata
 
 
@@ -181,6 +194,19 @@ def build_cross_references(
 ) -> List[Dict[str, Any]]:
     """Return a cross_references list from non-closing citation tag entries."""
     return [dict(e['attrs']) for e in citation_tags if e.get('attrs')]
+
+
+def _find_owning_section(
+    tag_line: int, sections: List[Dict[str, Any]]
+) -> Optional[int]:
+    """Return the index of the section that contains tag_line, or None."""
+    for i, sec in enumerate(sections):
+        next_start: Any = (
+            sections[i + 1]['line_idx'] if i + 1 < len(sections) else float('inf')
+        )
+        if sec['line_idx'] <= tag_line < next_start:
+            return i
+    return None
 
 
 def assign_tags_to_sections(
@@ -201,20 +227,10 @@ def assign_tags_to_sections(
         return section_metadata
 
     for entry in section_tags:
-        tag_line = entry['line']
         attrs = entry.get('attrs', {})
         if not attrs:
             continue
-
-        owning_idx: Optional[int] = None
-        for i, sec in enumerate(sections):
-            next_start: Any = (
-                sections[i + 1]['line_idx'] if i + 1 < len(sections) else float('inf')
-            )
-            if sec['line_idx'] <= tag_line < next_start:
-                owning_idx = i
-                break
-
+        owning_idx = _find_owning_section(entry['line'], sections)
         if owning_idx is not None:
             if owning_idx not in section_metadata:
                 section_metadata[owning_idx] = {}
@@ -242,9 +258,8 @@ def extract_and_classify_tags(
     citation_tags: List[Dict[str, Any]] = []
 
     for tag in all_tags:
-        # Skip closing tags — structural, not metadata carriers
         if tag.get('is_close'):
-            continue
+            continue  # closing tags are structural, not metadata carriers
         if tag['tag'] == 'citation':
             citation_tags.append(tag)
             continue  # citations are always inline; skip file/section buckets
