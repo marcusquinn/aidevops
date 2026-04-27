@@ -227,7 +227,8 @@ _tier_cache_write_one() {
 	fi
 
 	local tmp_cache
-	tmp_cache=$(mktemp "${cache_dir}/.pulse-repo-tiers-XXXXXX.json") || return 0
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	tmp_cache=$(mktemp "${cache_dir}/.pulse-repo-tiers-XXXXXX") || return 0
 
 	if printf '%s' "$existing" | jq \
 		--arg slug "$slug" \

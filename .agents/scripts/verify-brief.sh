@@ -659,7 +659,8 @@ _runtime_start_dev_env() {
 
 	log_info "  Starting dev environment: $start_cmd"
 	local start_log
-	start_log=$(mktemp "${TMPDIR:-/tmp}/verify-brief-runtime-XXXXXX.log")
+	# t2997: drop .log — XXXXXX must be at end for BSD mktemp.
+	start_log=$(mktemp "${TMPDIR:-/tmp}/verify-brief-runtime-XXXXXX")
 	(cd "$repo_path" && bash -c "$start_cmd" >"$start_log" 2>&1) &
 	local start_pid=$!
 	log_debug "Dev env started with PID $start_pid, log: $start_log"

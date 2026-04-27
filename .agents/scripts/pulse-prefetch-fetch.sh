@@ -883,7 +883,8 @@ update_repo_pulse_timestamp() {
 	[[ -d "$state_dir" ]] || mkdir -p "$state_dir" 2>/dev/null || true
 
 	local tmp_state
-	tmp_state=$(mktemp "${state_dir}/.pulse-last-per-repo-XXXXXX.json") || {
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	tmp_state=$(mktemp "${state_dir}/.pulse-last-per-repo-XXXXXX") || {
 		echo "[pulse-wrapper] update_repo_pulse_timestamp: mktemp failed for ${slug} — skipping write" >>"$LOGFILE"
 		return 0
 	}
@@ -1104,7 +1105,9 @@ update_repo_tier_check_timestamp() {
 	[[ -d "$state_dir" ]] || mkdir -p "$state_dir" 2>/dev/null || true
 
 	local tmp_state
-	tmp_state=$(mktemp "${state_dir}/.pulse-tier-last-check-XXXXXX.json") || {
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp. This was the
+	# canonical 142-spam-lines/day offender in pulse-wrapper.log (GH#21408).
+	tmp_state=$(mktemp "${state_dir}/.pulse-tier-last-check-XXXXXX") || {
 		echo "[pulse-wrapper] update_repo_tier_check_timestamp: mktemp failed for ${slug}" >>"$LOGFILE"
 		return 0
 	}

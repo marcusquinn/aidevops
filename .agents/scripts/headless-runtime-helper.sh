@@ -1277,7 +1277,8 @@ _increment_orphan_count_stat() {
 	[[ -f "$_stats_file" ]] || printf '{"counters":{}}\n' >"$_stats_file" 2>/dev/null || return 0
 	local _ts _tmp
 	_ts=$(date +%s 2>/dev/null) || _ts=0
-	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-orphan-XXXXXX.json") || return 0
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-orphan-XXXXXX") || return 0
 	jq --argjson ts "$_ts" \
 		'.counters.worker_branch_orphan_count += [$ts]' \
 		"$_stats_file" >"$_tmp" 2>/dev/null \

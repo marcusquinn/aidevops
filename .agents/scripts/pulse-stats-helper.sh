@@ -72,7 +72,8 @@ pulse_stats_increment() {
 	_pulse_stats_ensure_file || return 0
 
 	local tmp_file
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX.json") || return 0
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 0
 
 	# Append timestamp to counter array; create counter if absent.
 	# jq -e fails if the input JSON is invalid → we fall back to no-op.
@@ -162,7 +163,8 @@ pulse_stats_reset() {
 	fi
 
 	local tmp_file
-	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX.json") || return 1
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 1
 
 	jq --arg name "$counter_name" \
 		'del(.counters[$name])' \

@@ -187,7 +187,9 @@ verified_install() {
 
 	# Create secure temp file
 	local tmp_script
-	tmp_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-install-XXXXXX.sh") || {
+	# t2997: drop .sh — XXXXXX must be at end for BSD mktemp; bash executes by
+	# content, not extension.
+	tmp_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-install-XXXXXX") || {
 		print_error "Failed to create temp file for $description"
 		return 1
 	}

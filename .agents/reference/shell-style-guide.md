@@ -252,6 +252,71 @@ Both must be empty before commit.
 4. Test standalone (`bash ./the-script.sh --help`) and sourced (`setup.sh --non-interactive`). `shellcheck` must pass.
 5. Commit. The lint gate (`shell-init-pattern-check.sh`) automates detection and PR enforcement.
 
+## mktemp portability (t2997)
+
+`mktemp` template arguments must end the `XXXXXX` placeholder at the END of the path. macOS BSD `mktemp` does **not** substitute `XXXXXX` when followed by a literal extension — it returns the literal template name unchanged on first call and `mkstemp failed: File exists` on every subsequent call (until the literal-named file is removed).
+
+```bash
+# BANNED — macOS-broken
+mktemp /tmp/foo-XXXXXX.json    # first: /tmp/foo-XXXXXX.json (literal)
+                               # next:  mkstemp failed: File exists
+mktemp /tmp/foo.XXXXXX.log     # same — XXXXXX is not at end
+```
+
+### Allowed pattern A — drop the extension (preferred)
+
+```bash
+tmp=$(mktemp "${TMPDIR:-/tmp}/foo-XXXXXX")
+```
+
+Most temp files (data, scripts run by interpreter via `python "$tmp"`, `bash "$tmp"`, log buffers, intermediate JSON read by `jq < "$tmp"`) do NOT need an extension. The interpreter or content-type detection works on bytes, not filename suffix. Drop the extension and the BSD bug disappears.
+
+### Allowed pattern B — extension before the placeholder
+
+```bash
+tmp=$(mktemp "${TMPDIR:-/tmp}/foo.json.XXXXXX")
+```
+
+Use only when downstream code matches on the extension as a substring (rare). The placeholder MUST be the final segment.
+
+### Allowed pattern C — `mktemp -d` + fixed filename (extension-required tools)
+
+```bash
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/foo-XXXXXX")
+script_file="$tmp_dir/script.mjs"
+# ... write/use $script_file ...
+rm -rf "$tmp_dir"
+```
+
+REQUIRED for `node` ESM (`.mjs` / `.cjs`) — node 22+ refuses to load the file unless the extension is exact. Use a unique directory + fixed-name child file. Cleanup is `rm -rf "$tmp_dir"`.
+
+### Enforcement
+
+CI gate `.github/workflows/mktemp-portability-check.yml` runs `lint-mktemp-portability.sh` against PR-changed `.sh` files and blocks any new instance of `XXXXXX.<ext>` in a `mktemp` template argument.
+
+```bash
+# Local check (whole tree)
+bash .agents/scripts/lint-mktemp-portability.sh
+
+# Local check (specific files)
+bash .agents/scripts/lint-mktemp-portability.sh path/to/script.sh
+```
+
+The lint deliberately ignores `mktemp -d` and `mktemp -u` invocations (the bug only triggers on file-creation form), and excludes test fixtures that intentionally test the bug.
+
+### Originating incident
+
+GH#21408 (t2997) — `pulse-prefetch-fetch.sh:1107` `update_repo_tier_check_timestamp` produced 142 `mkstemp failed` lines/day in `pulse-wrapper.log` during launchd respawn races. 42 production callsites had the same bug. Reproduction:
+
+```bash
+$ mktemp /tmp/x-XXXXXX.json    # macOS: /tmp/x-XXXXXX.json (literal!)
+$ mktemp /tmp/x-XXXXXX.json    # macOS: mkstemp failed: File exists
+$ mktemp /tmp/x.json.XXXXXX    # macOS: /tmp/x.json.TW5AIa (correct)
+$ mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
+```
+
+GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate enforces the BSD-safe form everywhere so future macOS regressions are caught at PR time.
+
 ## Related
 
 - **Originating incident**: PR #18728, GH#18702 (primary), GH#18693 (cascade)

@@ -66,7 +66,8 @@ rotate_pulse_log() {
 	local archive_name="pulse-${ts}.log.gz"
 	local archive_path="${PULSE_LOG_ARCHIVE_DIR}/${archive_name}"
 	local tmp_archive
-	tmp_archive=$(mktemp "${PULSE_LOG_ARCHIVE_DIR}/.pulse-archive-XXXXXX.gz") || {
+	# t2997: drop .gz — XXXXXX must be at end for BSD mktemp.
+	tmp_archive=$(mktemp "${PULSE_LOG_ARCHIVE_DIR}/.pulse-archive-XXXXXX") || {
 		echo "[pulse-wrapper] rotate_pulse_log: mktemp failed for archive" >>"$WRAPPER_LOGFILE"
 		return 0
 	}
@@ -201,7 +202,8 @@ append_cycle_index() {
 	if [[ "$line_count" -gt "$PULSE_CYCLE_INDEX_MAX_LINES" ]]; then
 		local excess=$((line_count - PULSE_CYCLE_INDEX_MAX_LINES))
 		local tmp_index
-		tmp_index=$(mktemp "${HOME}/.aidevops/logs/.pulse-cycle-index-XXXXXX.jsonl") || {
+		# t2997: drop .jsonl — XXXXXX must be at end for BSD mktemp.
+		tmp_index=$(mktemp "${HOME}/.aidevops/logs/.pulse-cycle-index-XXXXXX") || {
 			echo "[pulse-wrapper] append_cycle_index: mktemp failed for index prune" >>"$WRAPPER_LOGFILE"
 			return 0
 		}
@@ -264,7 +266,8 @@ write_pulse_health_file() {
 	fi
 
 	local tmp_health
-	tmp_health=$(mktemp "${HOME}/.aidevops/logs/.pulse-health-XXXXXX.json") || {
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	tmp_health=$(mktemp "${HOME}/.aidevops/logs/.pulse-health-XXXXXX") || {
 		echo "[pulse-wrapper] write_pulse_health_file: mktemp failed — skipping health write" >>"$LOGFILE"
 		return 0
 	}

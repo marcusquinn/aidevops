@@ -338,7 +338,9 @@ _build_nmr_body_file() {
 	preview=$(_extract_preview "$staging_dir" 500)
 
 	local body_file
-	body_file=$(mktemp /tmp/knowledge-review-body.XXXXXX.md 2>/dev/null) || return 1
+	# t2997: drop .md — XXXXXX must be at end for BSD mktemp; gh issue body-file
+	# reads content regardless of extension.
+	body_file=$(mktemp /tmp/knowledge-review-body-XXXXXX 2>/dev/null) || return 1
 
 	local tmpl="${SCRIPT_TEMPLATES_DIR}/knowledge-review-nmr-body.md"
 	if [[ -f "$tmpl" ]]; then

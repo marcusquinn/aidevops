@@ -114,7 +114,8 @@ assert_file_exists "${SANDBOX}/_inbox/triage.log"     "_inbox/triage.log"
 # ============================================================================
 echo ""
 echo "--- Test 2: add file (email) ---"
-local_eml="$(mktemp /tmp/test-XXXXXXXX.eml)"
+		# t2997: drop .eml — XXXXXX must be at end for BSD mktemp.
+local_eml="$(mktemp /tmp/test-XXXXXXXX)"
 printf 'From: test@example.com\nSubject: Test\n\nBody\n' > "$local_eml"
 # shellcheck disable=SC2064
 trap "rm -f '${local_eml}'; rm -rf '${SANDBOX}'" EXIT

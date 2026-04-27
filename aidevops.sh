@@ -290,7 +290,8 @@ cmd_status() {
 _update_fresh_install() {
 	print_warning "Repository not found, performing fresh install..."
 	local tmp_setup
-	tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || {
+	# t2997: drop .sh — XXXXXX must be at end for BSD mktemp.
+	tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX") || {
 		print_error "Failed to create temp file for setup script"
 		return 1
 	}

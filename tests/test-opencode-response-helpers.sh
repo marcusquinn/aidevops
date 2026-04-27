@@ -65,8 +65,10 @@ if command -v node >/dev/null 2>&1; then
 fi
 
 # --- 2. Runtime behaviour -------------------------------------------------
-TMP_SCRIPT="$(mktemp -t response-helpers-test.XXXXXX.mjs)"
-trap 'rm -f "$TMP_SCRIPT"' EXIT
+# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+TMP_DIR="$(mktemp -d -t response-helpers-test.XXXXXX)"
+TMP_SCRIPT="$TMP_DIR/script.mjs"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 cat >"$TMP_SCRIPT" <<EOF
 import { jsonResponse, jsonResponseFallback, textResponse } from "$PLUGIN_DIR/response-helpers.mjs";

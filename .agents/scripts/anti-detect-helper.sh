@@ -1031,7 +1031,9 @@ warmup_write_script() {
 	local duration="$4"
 
 	local tmp_script
-	tmp_script=$(mktemp /tmp/warmup_XXXXXX.py)
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp; python doesn't
+	# need a .py extension to execute a script.
+	tmp_script=$(mktemp /tmp/warmup-XXXXXX)
 
 	cat >"$tmp_script" <<PYEOF
 import json, asyncio, random, time

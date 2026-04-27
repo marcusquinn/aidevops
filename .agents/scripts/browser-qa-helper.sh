@@ -395,8 +395,12 @@ cmd_screenshot() {
 	max_dim=$(resolve_max_image_dim "$max_dim")
 	mkdir -p "$output_dir"
 
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-screenshot-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; use mktemp -d for a unique
+	# directory + fixed-name script.mjs inside (XXXXXX must be at end for BSD
+	# mktemp). Cleanup is rm -rf on the directory.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-screenshot-XXXXXX")
+	script_file="$script_dir/script.mjs"
 
 	local viewport_array
 	viewport_array=$(_build_viewports_js_array "$viewports")
@@ -411,7 +415,7 @@ cmd_screenshot() {
 	log_info "Capturing screenshots for ${pages} at viewports: ${viewports}"
 	local exit_code=0
 	node "$script_file" || exit_code=$?
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 
 	if [[ "$exit_code" -ne 0 ]]; then
 		return "$exit_code"
@@ -463,8 +467,10 @@ cmd_links() {
 		return 1
 	fi
 
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-links-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-links-XXXXXX")
+	script_file="$script_dir/script.mjs"
 
 	cat >"$script_file" <<'SCRIPT'
 import { chromium } from 'playwright';
@@ -533,7 +539,7 @@ SCRIPT
 	log_info "Checking links from ${url} (depth: ${depth})"
 	local exit_code=0
 	node "$script_file" "$url" "$depth" "$timeout" || exit_code=$?
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 	return $exit_code
 }
 
@@ -776,8 +782,10 @@ cmd_a11y() {
 	local contrast_json
 	contrast_json=$(_run_contrast_checks "$url" "$pages" "$level")
 
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-a11y-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-a11y-XXXXXX")
+	script_file="$script_dir/script.mjs"
 
 	local pages_array
 	pages_array=$(_build_pages_js_array "$pages")
@@ -788,7 +796,7 @@ cmd_a11y() {
 
 	local exit_code=0
 	node "$script_file" "$contrast_json" || exit_code=$?
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 	return $exit_code
 }
 
@@ -1040,8 +1048,10 @@ cmd_stability() {
 		return 1
 	fi
 
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-stability-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-stability-XXXXXX")
+	script_file="$script_dir/script.mjs"
 
 	local pages_array
 	pages_array=$(_build_pages_js_array "$pages")
@@ -1055,7 +1065,7 @@ cmd_stability() {
 	local exit_code=0
 	local output
 	output=$(node "$script_file") || exit_code=$?
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 
 	if [[ $exit_code -ne 0 ]]; then
 		printf '%s\n' "$output"
@@ -1252,8 +1262,10 @@ cmd_smoke() {
 		return 1
 	fi
 
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-smoke-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/browser-qa-smoke-XXXXXX")
+	script_file="$script_dir/script.mjs"
 
 	local pages_array
 	pages_array=$(_build_pages_js_array "$pages")
@@ -1266,7 +1278,7 @@ cmd_smoke() {
 	local exit_code=0
 	local output
 	output=$(node "$script_file") || exit_code=$?
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 
 	if [[ $exit_code -ne 0 ]]; then
 		printf '%s\n' "$output"

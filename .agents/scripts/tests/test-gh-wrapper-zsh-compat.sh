@@ -111,7 +111,8 @@ extract_function() {
 	return 0
 }
 
-TMPFILE=$(mktemp "${TMPDIR:-/tmp}/t2688-zsh-snippet.XXXXXX.sh")
+# t2997: drop .sh — XXXXXX must be at end for BSD mktemp.
+TMPFILE=$(mktemp "${TMPDIR:-/tmp}/t2688-zsh-snippet.XXXXXX")
 trap 'rm -f "$TMPFILE"' EXIT
 
 {

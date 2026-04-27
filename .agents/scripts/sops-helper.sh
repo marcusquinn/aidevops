@@ -105,7 +105,9 @@ cmd_install() {
 		arch=$(dpkg --print-architecture 2>/dev/null || echo "amd64")
 		local latest_url="https://github.com/getsops/sops/releases/latest/download/sops_3.9.4_${arch}.deb"
 		local tmp_deb
-		tmp_deb=$(mktemp /tmp/sops-XXXXXX.deb)
+		# t2997: drop .deb — XXXXXX must be at end for BSD mktemp; dpkg detects
+		# package format from magic bytes, not filename extension.
+		tmp_deb=$(mktemp /tmp/sops-XXXXXX)
 		_save_cleanup_scope
 		trap '_run_cleanups' RETURN
 		push_cleanup "rm -f '${tmp_deb}'"
