@@ -3309,8 +3309,10 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2935 Block GitHub user internet-dot — drive-by spam author of GH#17671 #security ref:GH#21145
 
-- [ ] t2939 feat(pulse): defense-in-depth restart reliability — KeepAlive dict + watchdog plist #auto-dispatch #enhancement ref:GH#21148
+- [x] t2939 feat(pulse): defense-in-depth restart reliability — KeepAlive dict + watchdog plist #auto-dispatch #enhancement ref:GH#21148 pr:#21155 completed:2026-04-27
 
 - [ ] t2940 scrub identifying details from t2933 incident artifacts #security ref:GH#21149
 
 - [ ] t2941 redact bad-actor usernames from committed files and live artifacts #auto-dispatch #refactor #security ref:GH#21150
+
+- [ ] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154
