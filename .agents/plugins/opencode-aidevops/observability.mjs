@@ -15,7 +15,7 @@
  */
 
 import {
-  mkdirSync, readFileSync, writeFileSync, existsSync, rmdirSync, unlinkSync,
+  mkdirSync, readFileSync, writeFileSync, existsSync, rmdirSync, unlinkSync, statSync,
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
@@ -200,12 +200,17 @@ function initDatabase() {
 function _isSchemaInitialized() {
   try {
     const result = execSync(
-      `sqlite3 -readonly -separator '|' "${DB_PATH}" ` +
-      `"SELECT ` +
-      `(SELECT COUNT(*) FROM sqlite_master WHERE type='table' ` +
-      `AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, ` +
-      `(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;"`,
-      { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] },
+      "sqlite3 -readonly -separator '|' \"$TARGET_DB\" " +
+      "\"SELECT " +
+      "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
+      "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
+      "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;\"",
+      {
+        encoding: "utf-8",
+        timeout: 2000,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: { ...process.env, TARGET_DB: DB_PATH },
+      },
     ).trim();
     if (!result) return false;
     const [tbls, intentCol] = result.split("|");
@@ -429,11 +434,24 @@ function _isInitLockStale(ownerFile, staleMs) {
   try {
     const { pid, ts } = JSON.parse(readFileSync(ownerFile, "utf-8"));
     const processGone = (() => {
-      try { process.kill(pid, 0); return false; } catch { return true; }
+      try {
+        process.kill(pid, 0);
+        return false;
+      } catch (e) {
+        // ESRCH = no such process (gone); EPERM = exists but owned by another user
+        return e.code === "ESRCH";
+      }
     })();
     return processGone || (Date.now() - ts > staleMs);
   } catch {
-    return false;
+    // Owner file missing or corrupt (e.g. killed between mkdirSync and writeFileSync).
+    // Fall back to the lock directory's mtime as a reliable staleness signal.
+    try {
+      const stats = statSync(dirname(ownerFile));
+      return (Date.now() - stats.mtimeMs) > staleMs;
+    } catch {
+      return false;
+    }
   }
 }
 
