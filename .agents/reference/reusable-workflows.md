@@ -95,7 +95,8 @@ jobs:
     uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@v3.9.0
     #                                                                   ^^^^^^^
     #                                                                   change this
-    secrets: inherit
+    secrets:
+      SYNC_PAT: ${{ secrets.SYNC_PAT }}
 ```
 
 Keep pinned callers in sync with aidevops releases via:
@@ -109,7 +110,29 @@ See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (
 
 ## Security model
 
-- **`secrets: inherit`** in the caller grants the reusable workflow access to all the caller's secrets. This is intentional — `SYNC_PAT` is the only secret the reusable workflow needs, and it varies per-repo. `inherit` is the simplest way to expose it without listing every secret by name.
+- **`secrets: inherit` only works within the same GitHub account/org (GH#20976).** Cross-account callers (every downstream user — `marcusquinn/aidevops` is the only same-account consumer) receive empty values for caller-repo secrets when using `secrets: inherit` against a reusable workflow in a different account. Explicit secret pass-through is required:
+
+  ```yaml
+  # CORRECT for cross-account consumers (canonical template uses this):
+  jobs:
+    sync:
+      uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main
+      secrets:
+        SYNC_PAT: ${{ secrets.SYNC_PAT }}
+
+  # BROKEN for cross-account consumers (SYNC_PAT resolves to empty):
+  jobs:
+    sync:
+      uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main
+      secrets: inherit   # ← only works within the same account/org
+  ```
+
+  The canonical caller templates (`issue-sync-caller.yml`, `loc-badge-caller.yml`) use explicit pass-through. `review-bot-gate-caller.yml` and `maintainer-gate-caller.yml` keep `secrets: inherit` because they only reference `secrets.GITHUB_TOKEN` internally — `GITHUB_TOKEN` is always provided by the runner and is unaffected by the cross-account limitation.
+
+  If a new user-defined secret is added to a reusable workflow's `secrets:` input block, the matching caller template MUST also add it as an explicit `secrets: MySecret: ${{ secrets.MySecret }}` entry. This is the enumeration trade-off of explicit pass-through — adding a new optional secret upstream requires a template bump + `aidevops sync-workflows --apply` on consumers. It is preferable to silently broken cross-account inherit.
+
+  **Symptom of the cross-account bug**: `gh secret list` shows `SYNC_PAT` set and recent, but the workflow's `Check SYNC_PAT visibility` step logs `SYNC_PAT_PRESENT:` (empty). Fix: `aidevops sync-workflows --apply`.
+
 - **Referencing `@main` is a trust boundary.** You're trusting whoever controls aidevops's `main` branch. For higher-trust deployments, pin to a version tag (`@v3.9.0`) and update explicitly.
 - **`pull_request_target` vs `pull_request`.** The reusable workflow's job guards accept either event type. The caller picks based on its security model:
   - **Private repo with trusted contributors**: `pull_request` is simpler and has fewer footguns.
@@ -117,6 +140,20 @@ See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (
 - **`default_workflow_permissions: read` repos (GH#20967).** GitHub's recommended security default is `default_workflow_permissions: read`. Reusable workflow job-level `permissions:` declarations cannot exceed the CALLER's ceiling — they are capped at whatever the caller workflow grants. A caller with no `permissions:` block inherits the repo's restrictive default, so GitHub refuses to create any jobs (`conclusion: startup_failure`, zero jobs). The canonical caller templates include a top-level `permissions:` block that is the union of all job-level permissions used by the reusable workflow. If you add a new permission to a reusable workflow job, also update the matching caller template.
 
   Verification: `gh api repos/OWNER/REPO/actions/permissions/workflow --jq .default_workflow_permissions` returns `"read"` or `"write"`. A `"read"` repo will fail without the caller's `permissions:` block.
+
+## Framework self-test assumption guard
+
+Both GH#20967 (missing `permissions:` block) and GH#20976 (`secrets: inherit` cross-account failure) share the same root cause class: the canonical caller templates were authored against the framework's own self-test scenario (`marcusquinn/aidevops` calling itself) which has same-account and same-repo semantics that don't hold for downstream consumers.
+
+When authoring or reviewing a canonical caller template, apply this checklist to catch the pattern before it ships:
+
+| Check | Self-test passes? | Downstream breaks? | Gate |
+|---|---|---|---|
+| `secrets: inherit` for user-defined secrets | Yes (same-account) | Yes (cross-account empty) | Always use explicit `secrets: MySecret: ${{ secrets.MySecret }}` for user-defined secrets |
+| Missing `permissions:` block | Yes (`default_workflow_permissions: write` on framework repo) | Yes (`startup_failure` on read-default repos) | Always include a top-level `permissions:` block with the union of all job-level permissions |
+| Hardcoded `marcusquinn` org references | Yes (same repo) | Possible (wrong org) | Use `github.repository_owner` or `inputs:` for org-specific values |
+
+This checklist lives here so the next "framework self-test passes, downstream broken" instance surfaces during template authoring, not after a downstream user files a bug report.
 
 ## Migration: from copied workflow to caller
 
@@ -162,6 +199,8 @@ To make a new aidevops workflow reusable by downstream repos:
 - Issue [#20648](https://github.com/marcusquinn/aidevops/issues/20648) — Phase 1 drift detector
 - Issue [#20649](https://github.com/marcusquinn/aidevops/issues/20649) — Phase 2 opt-in resync
 - Issue [#20727](https://github.com/marcusquinn/aidevops/issues/20727) — review-bot-gate migration (SHA-pin stale drift)
+- Issue [#20967](https://github.com/marcusquinn/aidevops/issues/20967) — missing `permissions:` block in caller template (sister bug, same root cause class)
+- Issue [#20976](https://github.com/marcusquinn/aidevops/issues/20976) — `secrets: inherit` fails cross-account; canonical template switched to explicit pass-through
 - Issue [#21154](https://github.com/marcusquinn/aidevops/issues/21154) — maintainer-gate migration (layer-1 defense-in-depth propagation)
 - Reference [incident-gh17671-supply-chain.md](incident-gh17671-supply-chain.md) — postmortem that motivated maintainer-gate propagation
 - GitHub docs: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
