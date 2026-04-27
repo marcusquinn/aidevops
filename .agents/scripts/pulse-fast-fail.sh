@@ -36,6 +36,14 @@
 # Originally a pure move from pulse-wrapper.sh (byte-identical to pre-extraction
 # form). GH#18692 decomposed _fast_fail_record_locked (115 lines) into focused
 # helpers to satisfy the 100-line complexity gate.
+#
+# Environment variables (optional overrides):
+#   FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS — minimum age in seconds before an empty
+#     lockdir (no owner.pid file) is treated as an orphan and removed (t2953).
+#     Default: 5. The 5-second default is well above the normal mkdir→printf
+#     window (~10-100µs) but short enough to recover fast. An empty lockdir
+#     is left behind when a process is SIGKILL'd between the mkdir(2) call and
+#     the subsequent write of owner.pid — bash EXIT traps do not fire on SIGKILL.
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_FAST_FAIL_LOADED:-}" ]] && return 0
@@ -163,6 +171,24 @@ _ff_with_lock() {
 			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
 			rmdir "$lock_dir" 2>/dev/null || true
 			continue
+		fi
+		# t2953: empty-lockdir orphan detection.
+		# The t2421 path above fires ONLY when owner.pid exists. A process killed
+		# with SIGKILL between mkdir (lock acquired) and printf >owner.pid leaves
+		# an empty lockdir permanently — bash EXIT traps do NOT fire on SIGKILL.
+		# Fix: if owner.pid is missing AND the lockdir is older than the orphan
+		# threshold, treat it as orphaned and remove it.
+		if [[ -z "$_ff_owner_pid" ]]; then
+			local _orphan_threshold="${FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS:-5}"
+			local _lock_mtime _now _lock_age
+			_lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null || stat -c %Y "$lock_dir" 2>/dev/null || echo 0)
+			_now=$(date +%s)
+			_lock_age=$((_now - _lock_mtime))
+			if [[ "$_lock_age" -ge "$_orphan_threshold" ]]; then
+				echo "[pulse-wrapper] _ff_with_lock: clearing orphan lock (no owner.pid, age=${_lock_age}s >= ${_orphan_threshold}s, t2953)" >>"$LOGFILE"
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
 		fi
 		sleep 0.1
 	done
