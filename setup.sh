@@ -1350,6 +1350,7 @@ _setup_post_setup_steps() {
 	setup_contribution_watch
 	setup_complexity_scan
 	setup_pulse_merge_routine
+	setup_peer_productivity_monitor
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh
