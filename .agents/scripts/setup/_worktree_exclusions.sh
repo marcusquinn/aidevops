@@ -63,8 +63,15 @@ setup_worktree_exclusions() {
 		local log_dir="${HOME}/.aidevops/logs"
 		mkdir -p "$log_dir" 2>/dev/null || true
 		local log_file="${log_dir}/worktree-exclusions-backfill.log"
-		print_info "Applying worktree exclusions in background → $log_file"
-		nohup "$helper" backfill >>"$log_file" 2>&1 </dev/null &
+		# Guard the log-file redirection: if $log_dir was not created above
+		# (e.g. unwritable parent directory), a bare >>"$log_file" would fail
+		# and abort the caller (setup.sh runs with set -Eeuo pipefail +
+		# inherit_errexit).  Probe writability; fall back to /dev/null so the
+		# nohup launch is always best-effort regardless of disk/permission state.
+		local log_dest="$log_file"
+		{ true >> "$log_dest"; } 2>/dev/null || log_dest="/dev/null"
+		print_info "Applying worktree exclusions in background → $log_dest"
+		nohup "$helper" backfill >> "$log_dest" 2>&1 </dev/null &
 		disown 2>/dev/null || true
 	fi
 
