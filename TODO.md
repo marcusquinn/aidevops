@@ -3405,6 +3405,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2966 t2874 Phase 1: Markdoc tag schema — define namespace and 7 JSON schemas #auto-dispatch #enhancement #framework ref:GH#21254
 
-- [ ] t2984 chunked or time-budgeted reconcile_issues_single_pass to stop preflight_ownership_reconcile timing out #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21373
+- [x] t2984 chunked or time-budgeted reconcile_issues_single_pass to stop preflight_ownership_reconcile timing out #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21373 pr:#21374 completed:2026-04-27
 
 - [ ] t2985 batch _action_oimp_single search per-repo to eliminate per-issue gh API calls #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21375
