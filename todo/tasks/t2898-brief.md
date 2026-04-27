@@ -74,7 +74,7 @@ Leaf task. PR body uses `Resolves #NNN` linking to the GitHub issue created from
 
 ```bash
 _cmd_health_check() {
-    local platform unit_loaded last_run_ts now_ts age_sec interval_sec
+    local platform unit_loaded last_run_ts now_ts age_sec interval_sec interval_minutes
 
     platform=$(uname -s)
     unit_loaded=0
@@ -124,7 +124,9 @@ _cmd_health_check() {
         return 1
     fi
 
-    interval_sec=$((INTERVAL_MINUTES * 60))
+    # Use local with default so the function is self-contained regardless of caller scope.
+    interval_minutes=${INTERVAL_MINUTES:-10}
+    interval_sec=$((interval_minutes * 60))
     if (( age_sec > 2 * interval_sec )); then
         printf "auto-update daemon: STALLED (last run %ds ago, expected every %ds)\n" "$age_sec" "$interval_sec" >&2
         printf "fix: ~/.aidevops/agents/scripts/auto-update-helper.sh check\n" >&2
@@ -143,16 +145,26 @@ The `STATE_FILE` is already populated by the daemon's per-run logic — verify b
 ```bash
 _cmd_enable() {
     local idempotent=0
+    local args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --idempotent) idempotent=1; shift ;;
-            *) shift ;;
+            *) args+=("$1"); shift ;;
         esac
     done
+    set -- "${args[@]}"
 
-    if [[ $idempotent -eq 1 ]] && _cmd_health_check >/dev/null 2>&1; then
-        log_info "auto-update daemon already enabled (idempotent — no-op)"
-        return 0
+    if [[ $idempotent -eq 1 ]]; then
+        local health_status
+        _cmd_health_check >/dev/null 2>&1
+        health_status=$?
+        # Exit 0 = healthy; exit 1 = stalled but still loaded.
+        # Both mean the unit is already loaded — skip re-enable to avoid
+        # launchctl/systemctl errors from double-loading.
+        if [[ $health_status -eq 0 || $health_status -eq 1 ]]; then
+            log_info "auto-update daemon already enabled (idempotent — no-op)"
+            return 0
+        fi
     fi
 
     # ... existing enable logic ...
@@ -235,17 +247,21 @@ shellcheck .agents/scripts/tests/test-auto-update-health-check.sh
 ## Acceptance Criteria
 
 - [ ] `auto-update-helper.sh health-check` exists and returns 0 / 1 / 2 per the spec, with human-readable stderr output on each path.
+
   ```yaml
   verify:
     method: bash
     run: ".agents/scripts/auto-update-helper.sh health-check; rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 2 ]]"
   ```
+
 - [ ] `auto-update-helper.sh enable --idempotent` is a no-op when daemon is already loaded; first call enables when not loaded.
+
   ```yaml
   verify:
     method: bash
     run: ".agents/scripts/tests/test-auto-update-health-check.sh"
   ```
+
 - [ ] Running `setup.sh --non-interactive` on a host with the daemon unloaded re-loads it. Verified by `launchctl list` (macOS) or `systemctl --user is-active` (Linux) before vs after.
 - [ ] Running `aidevops update` interactively when the daemon is unhealthy prints a yellow warning AND writes `~/.aidevops/advisories/daemon-disabled.advisory`. The advisory is removed (or rewritten as cleared) on the next update where the daemon is healthy.
 
