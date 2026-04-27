@@ -481,6 +481,137 @@ test_t2984_budget_env_validation() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 13 (t2985): _build_oimp_lookup_for_slug — extracts |issue=pr| pairs
+# ---------------------------------------------------------------------------
+# Verifies the per-repo prefetch helper that replaces _action_oimp_single's
+# per-issue `gh pr list --search` calls. The helper:
+#   1. Calls _gh_pr_list_merged for the slug (stubbed in test).
+#   2. jq scan() extracts (issue_num, pr_num) pairs from PR bodies that
+#      contain Resolves|Closes|Fixes #N (case-insensitive).
+#   3. Returns a "|num=pr|...|" string for grep-based lookup downstream.
+#
+# Test fixture covers:
+#   - Multiple keywords (Resolves, Fixes, Closes) in one PR body.
+#   - Multiple issues closed by one PR.
+#   - PRs with no closing keyword (must be skipped).
+#   - PRs with null body (must not crash).
+#   - Case-insensitivity (resolves/RESOLVES/Resolves all match).
+# ---------------------------------------------------------------------------
+test_t2985_oimp_lookup_builder() {
+	# Fixture: 4 PRs covering the cases above.
+	local fixture_json
+	fixture_json=$(jq -nc '[
+		{number: 1234, body: "Resolves #42\nFixes #99\nCloses #50"},
+		{number: 5678, body: "closes #100"},
+		{number: 9999, body: "merge candidate, no keyword"},
+		{number: 1111, body: null}
+	]')
+
+	# Extract the helper definition from RECONCILE_SH.
+	# The function spans ~10 lines from declaration to closing brace.
+	local helper_def
+	helper_def=$(sed -n '/^_build_oimp_lookup_for_slug()/,/^}$/p' "${RECONCILE_SH}")
+	if [[ -z "$helper_def" ]]; then
+		_fail "t2985: _build_oimp_lookup_for_slug not found in ${RECONCILE_SH}"
+		return 0
+	fi
+
+	# Run the helper in a subshell with a stub _gh_pr_list_merged.
+	local result
+	result=$(bash -c "
+		${helper_def}
+		_gh_pr_list_merged() { printf '%s' '${fixture_json}'; return 0; }
+		_build_oimp_lookup_for_slug 'test/repo'
+	" 2>/dev/null)
+
+	# Expected output: pipe-delimited |num=pr| pairs, one per scan match.
+	# PR 1234 contributes 3 pairs (42, 99, 50); PR 5678 contributes 1 (100);
+	# PRs 9999 and 1111 contribute 0.
+	local expected="|42=1234|99=1234|50=1234|100=5678|"
+	if [[ "$result" == "$expected" ]]; then
+		_pass "t2985: lookup builder extracts 4 pairs from 2 keyword-bearing PRs"
+	else
+		_fail "t2985: lookup builder — expected '${expected}', got '${result}'"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 14 (t2985): grep-based lookup avoids prefix-substring false matches
+# ---------------------------------------------------------------------------
+# Critical correctness test: with input lookup |1=100|10=200|11=300|, a
+# search for issue #1 must NOT match #10 or #11. The leading "|" plus the
+# "=" separator anchor each pair so grep -oE "\|1=[0-9]+" only matches the
+# #1 entry. Without the "=" anchor, a regex like "|1[0-9]+" would falsely
+# match "|10=" or "|11=".
+# ---------------------------------------------------------------------------
+test_t2985_oimp_lookup_no_prefix_collision() {
+	# Three issues with prefix-overlap numbers all in the same lookup.
+	local lookup="|1=100|10=200|11=300|"
+
+	local m1 m10 m11
+	m1=$(printf '%s' "$lookup" | grep -oE "\|1=[0-9]+" 2>/dev/null | head -1 | cut -d= -f2)
+	m10=$(printf '%s' "$lookup" | grep -oE "\|10=[0-9]+" 2>/dev/null | head -1 | cut -d= -f2)
+	m11=$(printf '%s' "$lookup" | grep -oE "\|11=[0-9]+" 2>/dev/null | head -1 | cut -d= -f2)
+
+	local all_ok=1
+	[[ "$m1"  == "100" ]] || { _fail "t2985: |1=  matched '${m1}', expected 100"; all_ok=0; }
+	[[ "$m10" == "200" ]] || { _fail "t2985: |10= matched '${m10}', expected 200"; all_ok=0; }
+	[[ "$m11" == "300" ]] || { _fail "t2985: |11= matched '${m11}', expected 300"; all_ok=0; }
+
+	[[ "$all_ok" == "1" ]] && _pass "t2985: |N= boundary anchors prevent prefix-substring false matches (#1 vs #10/#11)"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 15 (t2985): _action_oimp_single takes the lookup as 4th arg
+# ---------------------------------------------------------------------------
+# Verify the signature change in pulse-issue-reconcile-actions.sh and
+# both call sites in pulse-issue-reconcile.sh pass the lookup. This
+# catches the partial-rollout case where the helper exists but a caller
+# still uses the 3-arg form.
+# ---------------------------------------------------------------------------
+test_t2985_action_oimp_single_signature() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local all_ok=1
+
+	# 1. _action_oimp_single body must read the 4th arg as oimp_lookup.
+	# SC2016: single-quoted pattern intentionally contains literal ${4:-} —
+	# grepping for the literal source string, no expansion wanted.
+	# shellcheck disable=SC2016
+	if ! grep -q 'oimp_lookup="${4:-}"' "${actions_sh}"; then
+		_fail "t2985: _action_oimp_single signature missing oimp_lookup 4th arg"
+		all_ok=0
+	fi
+
+	# 2. _action_oimp_single must NOT call _gh_pr_list_merged directly anymore.
+	#    The acceptance criterion: only the per-repo prefetch builder calls it.
+	if grep -q '_gh_pr_list_merged' "${actions_sh}"; then
+		_fail "t2985: _action_oimp_single still calls _gh_pr_list_merged directly (should use lookup)"
+		all_ok=0
+	fi
+
+	# 3. Both call sites in RECONCILE_SH pass 4 args (slug, issue, verify, lookup).
+	#    Use grep -E to match the multi-arg form and require oimp_lookup at end.
+	# SC2016: single-quoted pattern intentionally contains literal $slug etc. —
+	# grepping for the literal source string, no expansion wanted.
+	local call_count
+	# shellcheck disable=SC2016
+	call_count=$(grep -cE '_action_oimp_single "\$slug" "\$issue_num" "\$verify_helper" "\$oimp_lookup"' \
+		"${RECONCILE_SH}" 2>/dev/null || true)
+	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0
+	if [[ "$call_count" -ge 2 ]]; then
+		_pass "t2985: ${call_count} call site(s) pass oimp_lookup to _action_oimp_single"
+	else
+		_fail "t2985: expected ≥2 call sites passing oimp_lookup, got ${call_count}"
+		all_ok=0
+	fi
+
+	[[ "$all_ok" == "1" ]] && _pass "t2985: _action_oimp_single signature contract enforced"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_cache_miss_no_file
@@ -495,6 +626,9 @@ test_single_pass_wired_in_engine
 test_batched_field_extraction_parity
 test_t2984_time_budget_present
 test_t2984_budget_env_validation
+test_t2985_oimp_lookup_builder
+test_t2985_oimp_lookup_no_prefix_collision
+test_t2985_action_oimp_single_signature
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"

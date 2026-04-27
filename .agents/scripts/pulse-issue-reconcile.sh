@@ -123,6 +123,69 @@ _gh_pr_list_merged() {
 	return $?
 }
 
+#######################################
+# t2985: Build a per-repo "issue → merged PR" lookup string for stage-3
+# reconcile (oimp).
+#
+# Replaces the per-issue `gh pr list --search "Resolves #N OR Closes #N OR
+# Fixes #N"` call previously made by _action_oimp_single. At cross-repo
+# scale (8 pulse-enabled repos × ~30 non-parent open issues each ≈ 200+
+# search calls per cycle, ~3s each) the per-issue search is the dominant
+# cost driver — this is what t2984's 360s time budget exists to contain
+# rather than fix. With this prefetch: 1 batched call per repo per cycle
+# (8 calls total), local string lookup for each issue.
+#
+# Output format: pipe-delimited "|issue_num=pr_num|...|" string. Bash 3.2
+# does not support associative arrays; a string + grep is the most
+# portable lookup primitive (matches issue body's stated approach).
+#
+# Lookup contract (caller side):
+#   merged_pr=$(printf '%s' "$lookup" | grep -oE "\|${issue_num}=[0-9]+" \
+#       | head -1 | cut -d= -f2)
+# The leading + trailing "|" and the "=" separator together prevent
+# prefix-substring false matches (e.g. lookup `|10=`, search `|1=` — the
+# required `=` after the issue number anchors the match boundary).
+#
+# Body-keyword check is built into the lookup itself: the jq scan only
+# emits pairs from PR bodies actually containing Resolves|Closes|Fixes #N.
+# This collapses what was previously two gh API calls per issue (search +
+# pr view --json body) into the single per-repo prefetch.
+#
+# Limit 200 most-recent merged PRs per repo. Sufficient for the typical
+# case (open issue resolved by a PR within days/weeks of merge); a 6-month
+# old open-but-already-merged-by-an-old-PR is degenerate and falls
+# through to next-cycle retry without harm (issue stays open).
+#
+# Args:    $1 = slug (owner/repo)
+# Returns: prints lookup string on stdout (may be empty); exit 0 always.
+#######################################
+_build_oimp_lookup_for_slug() {
+	local slug="$1"
+	[[ -n "$slug" ]] || return 0
+
+	# One gh call per repo per cycle (replaces ~30 per-issue calls).
+	# --json body costs more bytes per call but the trip count goes from
+	# ~200/cycle to 8/cycle — net ~30x reduction in API round-trips.
+	local merged_prs_json
+	merged_prs_json=$(_gh_pr_list_merged --repo "$slug" --state merged \
+		--json number,body --limit 200 2>/dev/null) || merged_prs_json="[]"
+	[[ -n "$merged_prs_json" && "$merged_prs_json" != "null" ]] || return 0
+
+	# jq scan() with one capture group returns ["issue_num"] per match.
+	# (?i) makes the keyword case-insensitive — mirrors the original
+	# `grep -iE` pattern in _action_oimp_single.
+	# Output `|num=pr|...|` so callers can grep with anchored boundaries.
+	printf '%s' "$merged_prs_json" | jq -r '
+		[
+			.[] | . as $pr |
+			(.body // "") |
+			scan("(?i)(?:resolves|closes|fixes)\\s+#([0-9]+)") |
+			"\(.[0])=\($pr.number)"
+		] | if length > 0 then "|" + join("|") + "|" else "" end
+	' 2>/dev/null || true
+	return 0
+}
+
 # t2375: stale-recovery subsystem extracted to keep this file below the 1500-
 # line complexity gate. SCRIPT_DIR is set by pulse-wrapper.sh when sourced by
 # the orchestrator; fall back to BASH_SOURCE-derived path when sourced directly
@@ -650,6 +713,12 @@ reconcile_open_issues_with_merged_prs() {
 			jq -r --arg pt "$_PIR_PT_LABEL" '.[] | select((.labels // []) | map(.name) | index($pt) != null) | .number' \
 			2>/dev/null) || parent_task_nums=""
 
+		# t2985: per-repo merged-PR prefetch (replaces per-issue gh search).
+		# Same pattern as reconcile_issues_single_pass — one gh call here
+		# replaces N per-issue gh search calls in _action_oimp_single.
+		local oimp_lookup=""
+		oimp_lookup=$(_build_oimp_lookup_for_slug "$slug")
+
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
 			local issue_num
@@ -662,7 +731,8 @@ reconcile_open_issues_with_merged_prs() {
 			_should_oimp "$issue_num" "$parent_task_nums" || continue
 
 			# t2776: delegate per-issue action to shared helper (_action_oimp_single).
-			if _action_oimp_single "$slug" "$issue_num" "$verify_helper"; then
+			# t2985: pass oimp_lookup as 4th arg.
+			if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup"; then
 				total_closed=$((total_closed + 1))
 			fi
 		done
@@ -1497,6 +1567,13 @@ reconcile_issues_single_pass() {
 		') || issues_tsv=""
 		[[ -n "$issues_tsv" ]] || continue
 
+		# t2985: per-repo merged-PR prefetch for stage 3 (oimp).
+		# One gh call per repo replaces ~30 per-issue gh search calls.
+		# Empty lookup is safe — _action_oimp_single returns 1 on empty
+		# lookup, deferring stage 3 closes to the next cycle.
+		local oimp_lookup=""
+		oimp_lookup=$(_build_oimp_lookup_for_slug "$slug")
+
 		while IFS='|' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
@@ -1549,7 +1626,7 @@ reconcile_issues_single_pass() {
 			# Stage 3: close open issues whose linked PR already merged (global cap)
 			if [[ "$oimp_total_closed" -lt "$oimp_max" ]] && \
 				_should_oimp "$issue_num" "$parent_task_nums"; then
-				if _action_oimp_single "$slug" "$issue_num" "$verify_helper"; then
+				if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup"; then
 					oimp_total_closed=$((oimp_total_closed + 1))
 					continue
 				fi
