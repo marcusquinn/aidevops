@@ -67,6 +67,11 @@ _KI_FALSE="false"
 _KI_TRUE="true"
 _KI_INTERNAL="internal"
 
+# Case-scope constants (t2857 extension)
+_CASES_DIR_NAME="_cases"
+_CASE_SOURCES_FILE="sources.toon"
+_META_FILE="meta.json"
+
 # ---------------------------------------------------------------------------
 # Internal: requirement checks
 # ---------------------------------------------------------------------------
@@ -404,13 +409,72 @@ cmd_build() {
 }
 
 # ---------------------------------------------------------------------------
+# Case-scope helpers (t2857 — case-draft integration)
+# ---------------------------------------------------------------------------
+
+# _case_find_dir <repo-path> <case-id> — find a case directory by ID or slug
+_case_find_dir() {
+	local repo_path="$1" query="$2"
+	local cases_dir="${repo_path}/${_CASES_DIR_NAME}"
+
+	if [[ -d "${cases_dir}/${query}" ]]; then
+		echo "${cases_dir}/${query}"
+		return 0
+	fi
+	local dir
+	for dir in "${cases_dir}"/case-*-"${query}" "${cases_dir}"/case-*-*"${query}"*; do
+		[[ -d "$dir" ]] || continue
+		[[ "$dir" == *"/archived/"* ]] && continue
+		echo "$dir"
+		return 0
+	done
+	return 1
+}
+
+# _get_case_source_ids <repo-path> <case-id> — list source IDs attached to a case
+_get_case_source_ids() {
+	local repo_path="$1" case_id="$2"
+	local case_dir
+	case_dir="$(_case_find_dir "$repo_path" "$case_id")" || {
+		print_error "Case not found for scope filter: ${case_id}"
+		return 1
+	}
+	local sources_file="${case_dir}/${_CASE_SOURCES_FILE}"
+	if [[ -f "$sources_file" ]] && command -v jq >/dev/null 2>&1; then
+		jq -r '.[].id' "$sources_file" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # cmd_query: walk corpus tree and return ranked matches
 # ---------------------------------------------------------------------------
 
 cmd_query() {
-	local intent="$1"
+	# Supports two calling conventions:
+	#   1. Positional: cmd_query "intent string" [knowledge-root]
+	#   2. Flagged:    cmd_query --intent "..." [--scope case=<id>] [--repo <path>]
+	local intent="" knowledge_root_arg="" scope="" repo_path=""
+
+	# Detect flag-based invocation vs positional
+	if [[ "${1:-}" == --* ]]; then
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--intent) intent="$2"; shift 2 ;;
+			--scope) scope="$2"; shift 2 ;;
+			--repo) repo_path="$2"; shift 2 ;;
+			--limit | --max-chars | --json) shift 2 ;; # accepted but ignored by tree-walk
+			*) shift ;;
+			esac
+		done
+	else
+		intent="${1:-}"
+		knowledge_root_arg="${2:-}"
+	fi
+
+	[[ -z "$repo_path" ]] && repo_path="$(pwd)"
 	local knowledge_root
-	knowledge_root=$(_resolve_root "${2:-}")
+	knowledge_root=$(_resolve_root "${knowledge_root_arg:-}")
 	local index_dir
 	index_dir=$(_index_dir "$knowledge_root")
 	local corpus_tree="${index_dir}/tree.json"
@@ -420,6 +484,49 @@ cmd_query() {
 		return 1
 	fi
 
+	# Case-scope filter: if --scope case=<id>, restrict to that case's sources
+	if [[ "$scope" == case=* ]]; then
+		local scope_case_id="${scope#case=}"
+		local allowed_ids
+		allowed_ids="$(_get_case_source_ids "$repo_path" "$scope_case_id")" || return 1
+
+		if [[ -z "$allowed_ids" ]]; then
+			echo "No sources attached to case: ${scope_case_id}"
+			return 0
+		fi
+
+		# If corpus tree exists, filter query through it
+		if [[ -f "$corpus_tree" ]]; then
+			_require_python3 || return 1
+			# Pass allowed IDs as env var for the Python helper to filter
+			KNOWLEDGE_SCOPE_IDS="$allowed_ids" python3 "$_QUERY_HELPER" query "$corpus_tree" "$intent"
+			return 0
+		fi
+
+		# Fallback: direct source reading when no tree exists
+		local sources_dir
+		sources_dir="$(_sources_dir "$knowledge_root")"
+		local sid
+		while IFS= read -r sid; do
+			[[ -z "$sid" ]] && continue
+			local src_dir="${sources_dir}/${sid}"
+			[[ ! -d "$src_dir" ]] && continue
+			local content_file=""
+			local f
+			for f in "${src_dir}"/content.txt "${src_dir}"/text.txt "${src_dir}"/*.txt "${src_dir}"/*.md; do
+				if [[ -f "$f" ]]; then
+					content_file="$f"
+					break
+				fi
+			done
+			if [[ -n "$content_file" ]]; then
+				printf '[%s]: "%s"\n\n' "$sid" "$(head -c 2000 "$content_file" 2>/dev/null)"
+			fi
+		done <<<"$allowed_ids"
+		return 0
+	fi
+
+	# Standard (non-scoped) query
 	if [[ ! -f "$corpus_tree" ]]; then
 		print_warning "query: corpus tree not found at ${corpus_tree} — run 'build' first"
 		return 1
