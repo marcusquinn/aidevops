@@ -3172,7 +3172,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2850 P1c: PageIndex tree generation across corpus #enhancement #framework ref:GH#20903 blocked-by:t2844,t2843 pr:#21161 completed:2026-04-27
 
-- [ ] t2851 P4a: case dossier contract + aidevops case open #enhancement #framework ref:GH#20904 blocked-by:t2844,t2843,t2846
+- [x] t2851 P4a: case dossier contract + aidevops case open #enhancement #framework ref:GH#20904 blocked-by:t2844,t2843,t2846 pr:#21245 completed:2026-04-27
 
 - [x] t2852 P4b: case CLI surface (attach/status/close/archive/list) #enhancement #framework ref:GH#20905 blocked-by:t2844,t2843,t2846 pr:#21114 completed:2026-04-26
 
