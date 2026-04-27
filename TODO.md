@@ -89,6 +89,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [x] r041 Knowledge enrichment — extract structured fields from freshly-promoted sources repeat:cron(*/30 * * * *) ~2m run:scripts/document-enrich-helper.sh tick
 - [x] r042 Knowledge index build — incremental PageIndex tree across corpus repeat:cron(*/60 * * * *) ~2m run:scripts/knowledge-index-helper.sh build
 - [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
+- [x] r043 Case deadline alarming — classify open-case deadlines, fire gh-issue + ntfy alarms by stage repeat:cron(*/15 * * * *) ~1m run:scripts/case-alarm-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 
 ## Ready

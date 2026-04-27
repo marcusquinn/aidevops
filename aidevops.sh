@@ -2034,7 +2034,13 @@ main() {
 	case | cases)
 		# Bare `aidevops case` defaults to list (most common use).
 		[[ $# -eq 0 ]] && set -- list
-		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		# alarm-test subcommand routes to case-alarm-helper.sh
+		if [[ "${1:-}" == "alarm-test" ]]; then
+			shift
+			_dispatch_helper "case-alarm-helper.sh" "case-alarm-helper.sh" alarm-test "$@"
+		else
+			_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		fi
 		;;
 	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;

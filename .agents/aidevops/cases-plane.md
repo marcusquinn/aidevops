@@ -182,6 +182,70 @@ Paper-trail entry — full email content attaches via P5 (inbox-to-case filter).
 
 All read-side commands (`list`, `show`) and all mutating commands support `--json` for machine consumption. Use for scripting, P5 filter integration, and P4c alarming.
 
+## Deadline Alarming (P4c — t2853)
+
+The alarming subsystem reads `dossier.deadlines` from every open case on each pulse tick and fires notifications when a deadline enters a configured urgency stage.
+
+### Alarm stages
+
+Default config (`.agents/templates/case-alarms-config.json` → `_config/case-alarms.json`):
+
+| Stage | Days remaining | Action |
+|-------|---------------|--------|
+| green | > 30 | No alarm |
+| amber | 8–30 | Alarm fired |
+| red   | ≤ 7  | Alarm fired (escalation from amber) |
+| passed | < 0 | Alarm issue auto-closed |
+
+Stage thresholds are configurable via `stages_days` in the config. Per-case overrides are supported under `per_case_overrides.<case-id>.stages_days`.
+
+### Alarm channels
+
+- **gh-issue** — opens a GitHub issue tagged `kind:case-alarm` with a stable title (`Case alarm: <case-id> deadline <label>`). Re-ticking at the same stage updates the issue comment, not a duplicate. Auto-closes when deadline passes.
+- **ntfy** — POST to the configured ntfy topic via `curl`. Server configurable via `AIDEVOPS_NTFY_SERVER` env var (default: `https://ntfy.sh`).
+- **email** — stub for MVP; full send in P5.
+
+### Alarm state
+
+`_cases/.alarm-state.json` records the last-alarmed stage per `(case-id, deadline-label)` pair. Re-ticking at the same stage is a no-op. Escalation (amber → red) fires a new alarm and updates the state.
+
+```json
+{ "case-2026-0001-acme-dispute": { "filing-deadline": { "stage": "amber", "gh_issue": 12345 } } }
+```
+
+### CLI commands
+
+```bash
+# Manual test (force-fires all alarms for a case, does NOT update alarm state)
+aidevops case alarm-test <case-id> [<repo-path>]
+
+# Direct helper (pulse routine)
+case-alarm-helper.sh tick [<repo-path>]
+```
+
+### Routine
+
+`r043` runs every 15 minutes via the pulse:
+
+```
+r043 Case deadline alarming repeat:cron(*/15 * * * *) ~1m run:scripts/case-alarm-helper.sh tick
+```
+
+### Config reference
+
+```json
+{
+  "stages_days": [30, 7],
+  "channels":    ["gh-issue", "ntfy"],
+  "ntfy_topic":  "aidevops-case-alarms",
+  "per_case_overrides": {
+    "case-2026-0001-foo": { "stages_days": [60, 14, 3] }
+  }
+}
+```
+
+Copy `.agents/templates/case-alarms-config.json` to `_config/case-alarms.json` in the repo to activate. The helper creates a default config on first `tick` if none exists.
+
 ## Chasing (P6b — t2858)
 
 Template-only, deterministic chaser emails. No LLM at send time.
