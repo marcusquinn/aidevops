@@ -166,7 +166,7 @@ def _connect_imap(host: str, port: int, user: str, password: str) -> imaplib.IMA
 
 def _search_uids_since(
     conn: imaplib.IMAP4_SSL, folder: str, last_uid: int, max_uids: int = 0
-) -> list:
+) -> list[int]:
     """SELECT folder and return UIDs > last_uid, optionally capped at max_uids.
 
     Returns a plain list[int]. Raises RuntimeError on IMAP errors.
@@ -201,7 +201,7 @@ def _search_uids_since(
 
 def _parse_fetch_response(
     fetch_data: list, valid_uids: list, last_uid: int = 0
-) -> list:
+) -> list[tuple[int, bytes]]:
     """Parse an imaplib RFC822 FETCH response into (uid, raw_bytes) tuples.
 
     Returns list[tuple[int, bytes]], sorted by UID ascending.
@@ -230,7 +230,7 @@ def _parse_fetch_response(
 
 def _uid_fetch_since(
     conn: imaplib.IMAP4_SSL, folder: str, last_uid: int, max_uids: int = 0
-) -> list:
+) -> list[tuple[int, bytes]]:
     """Fetch messages with UID > last_uid in folder.
 
     Args:
@@ -253,7 +253,7 @@ def _uid_fetch_since(
 
 def _uid_fetch_since_date(
     conn: imaplib.IMAP4_SSL, folder: str, since_date: str
-) -> list:
+) -> list[tuple[int, bytes]]:
     """Fetch all messages in folder with INTERNALDATE >= since_date.
 
     since_date: ISO date string, e.g. '2026-01-01'.
