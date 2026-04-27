@@ -31,6 +31,8 @@
 #   - _close_and_label_feedback_pr        (GH#20057, shared helper)
 #   - _build_ci_feedback_section          (GH#20057, extracted builder)
 #   - _dispatch_ci_fix_worker             (t2093 follow-up)
+#   - _classify_conflicts_by_pattern      (t2987, pattern classifier)
+#   - _emit_pattern_guidance_blocks       (t2987, guidance emitter)
 #   - _build_conflict_feedback_section    (t2426, extracted builder)
 #   - _dispatch_conflict_fix_worker       (t2093 follow-up)
 #   - _dispatch_pr_fix_worker             (t2093)
@@ -335,6 +337,182 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 }
 
 #######################################
+# Classify a list of conflicting file paths against the conflict-patterns.conf
+# registry and return a multi-line classification string (t2987).
+#
+# Each output line has the form:
+#   CLASSIFICATION path/to/file1 path/to/file2 ...
+#
+# Patterns are matched in conf order. CODE is the catch-all fallback.
+# Files that match a non-CODE pattern are collected per-classification.
+# Unmatched files fall through to the CODE bucket.
+#
+# Args:
+#   $1 - newline-separated list of conflicting file paths
+#   $2 - (optional) path to conflict-patterns.conf; defaults to the conf
+#        in the same directory as this script's parent configs/ dir.
+#
+# Output: multi-line classification on stdout (empty if no files given).
+#######################################
+_classify_conflicts_by_pattern() {
+	local file_list="$1"
+	local conf_file="${2:-}"
+
+	# Locate conf file relative to this script if not supplied.
+	if [[ -z "$conf_file" ]]; then
+		local script_dir
+		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+		conf_file="${script_dir}/../configs/conflict-patterns.conf"
+	fi
+
+	[[ -n "$file_list" ]] || return 0
+	[[ -f "$conf_file" ]] || {
+		# Fallback: classify everything as CODE if conf is missing.
+		printf 'CODE %s\n' "$file_list"
+		return 0
+	}
+
+	# Buckets: associative-array-like using declare (bash 4+) or plain
+	# string accumulation (bash 3.2 compat).  We use a temporary approach
+	# that accumulates "CLASS:path" lines and then groups at the end.
+	local classified_lines=""
+
+	# Read each conflicting file and match against conf patterns.
+	while IFS= read -r fpath; do
+		[[ -n "$fpath" ]] || continue
+		local fname
+		fname="${fpath##*/}"  # basename
+
+		local matched_class=""
+		# Iterate conf records (skip comments and blank lines).
+		while IFS='|' read -r class_raw glob_raw _rest; do
+			# Strip leading/trailing whitespace from each field.
+			local class glob
+			class="${class_raw#"${class_raw%%[![:space:]]*}"}"
+			class="${class%"${class##*[![:space:]]}"}"
+			glob="${glob_raw#"${glob_raw%%[![:space:]]*}"}"
+			glob="${glob%"${glob##*[![:space:]]}"}"
+
+			[[ -n "$class" && -n "$glob" ]] || continue
+			[[ "$class" == \#* ]] && continue
+
+			# Match against full relative path first, then basename.
+			# Use bash extended glob (shopt -s extglob already on in
+			# sourcing shells; we use case for portability).
+			local did_match=0
+			# shellcheck disable=SC2254  # dynamic glob is intentional
+			case "$fpath" in
+				$glob) did_match=1 ;;
+			esac
+			if [[ $did_match -eq 0 ]]; then
+				# shellcheck disable=SC2254  # dynamic glob is intentional
+				case "$fname" in
+					$glob) did_match=1 ;;
+				esac
+			fi
+
+			if [[ $did_match -eq 1 ]]; then
+				matched_class="$class"
+				break
+			fi
+		done < <(grep -v '^[[:space:]]*#' "$conf_file" | grep -v '^[[:space:]]*$')
+
+		# Default to CODE if nothing matched.
+		[[ -n "$matched_class" ]] || matched_class="CODE"
+		classified_lines="${classified_lines}${matched_class}:${fpath}"$'\n'
+	done < <(printf '%s\n' "$file_list")
+
+	# Group by classification: emit one line per class with all paths.
+	# We process each known class in priority order (non-CODE first).
+	local all_classes="DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE"
+	for class in $all_classes; do
+		local paths_for_class=""
+		while IFS= read -r entry; do
+			[[ "$entry" == "${class}:"* ]] || continue
+			local p="${entry#*:}"
+			paths_for_class="${paths_for_class}${p} "
+		done < <(printf '%s\n' "$classified_lines")
+		paths_for_class="${paths_for_class% }"  # trim trailing space
+		if [[ -n "$paths_for_class" ]]; then
+			printf '%s %s\n' "$class" "$paths_for_class"
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Emit markdown guidance blocks for each non-CODE conflict pattern (t2987).
+#
+# Called by _build_conflict_feedback_section after classification to append
+# a ### Pattern-Specific Resolution Guidance subsection per detected class.
+#
+# Args:
+#   $1 - classification_output  (multi-line: "CLASS file1 file2 ...")
+#   $2 - default_branch         (e.g. "main", "develop")
+#   $3 - conf_file              (path to conflict-patterns.conf)
+#
+# Output: markdown guidance blocks on stdout (nothing if all CODE or empty).
+#######################################
+_emit_pattern_guidance_blocks() {
+	local classification_output="$1"
+	local default_branch="$2"
+	local conf_file="$3"
+
+	[[ -n "$classification_output" ]] || return 0
+
+	# Check if any non-CODE class is present.
+	local has_non_code=0
+	while IFS= read -r cls_line; do
+		[[ "$cls_line" == CODE\ * ]] || has_non_code=1
+	done < <(printf '%s\n' "$classification_output")
+	[[ $has_non_code -eq 1 ]] || return 0
+
+	printf '\n### Pattern-Specific Resolution Guidance\n\n'
+	printf 'The conflicting files match known patterns with deterministic resolution paths.\n'
+	printf 'Follow the per-pattern guidance below before falling back to the generic\n'
+	printf 'cherry-pick instructions in the Worker guidance section above.\n\n'
+
+	while IFS= read -r cls_line; do
+		[[ -n "$cls_line" ]] || continue
+		local class="${cls_line%% *}"
+		local files="${cls_line#* }"
+		[[ "$class" == "CODE" ]] && continue
+
+		# Look up first matching guidance record in conf for this class.
+		local resolution_cmd="" guidance=""
+		if [[ -f "$conf_file" ]]; then
+			while IFS='|' read -r cr _gr rr guide_raw; do
+				# Trim whitespace.
+				local cn="${cr#"${cr%%[![:space:]]*}"}"
+				cn="${cn%"${cn##*[![:space:]]}"}"
+				[[ "$cn" == "$class" ]] || continue
+				rr="${rr#"${rr%%[![:space:]]*}"}"; rr="${rr%"${rr##*[![:space:]]}"}"
+				guide_raw="${guide_raw#"${guide_raw%%[![:space:]]*}"}"
+				guide_raw="${guide_raw%"${guide_raw##*[![:space:]]}"}"
+				resolution_cmd="$rr"; guidance="$guide_raw"
+				break
+			done < <(grep -v '^[[:space:]]*#' "$conf_file" \
+				| grep -v '^[[:space:]]*$')
+		fi
+
+		printf '#### Pattern: %s\n\n' "$class"
+		# shellcheck disable=SC2016  # backticks are literal markdown, not expansion
+		printf 'Affected files: `%s`\n\n' "${files// /, }"
+		if [[ -n "$guidance" ]]; then
+			local expanded="${guidance//\{default_branch\}/${default_branch}}"
+			expanded="${expanded//\\n/$'\n'}"
+			printf '%s\n\n' "$expanded"
+		fi
+		if [[ -n "$resolution_cmd" ]]; then
+			local rcmd="${resolution_cmd//\{default_branch\}/${default_branch}}"
+			# shellcheck disable=SC2016  # backticks are literal markdown, not expansion
+			printf 'Quick resolution command: `%s`\n\n' "$rcmd"
+		fi
+	done < <(printf '%s\n' "$classification_output")
+	return 0
+}
+
+#######################################
 # Build the conflict-feedback Markdown section for a closed-conflict PR.
 #
 # Produces the "## Merge Conflict Feedback" block appended to the linked
@@ -364,6 +542,17 @@ _build_conflict_feedback_section() {
 	local pr_head_sha="$4"
 	local default_branch="${5:-main}"
 	local pr_file_count="${6:-}"
+
+	# Locate the conflict-patterns.conf registry (t2987).
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	local conf_file="${script_dir}/../configs/conflict-patterns.conf"
+
+	# Classify conflicting files for pattern-aware guidance (t2987).
+	local classification_output=""
+	if [[ -n "$pr_files" ]]; then
+		classification_output=$(_classify_conflicts_by_pattern "$pr_files" "$conf_file")
+	fi
 
 	# Scope-leak detection (t2802). If prior PR touched >20 files, the
 	# base was probably wrong (canonical HEAD stale). Cherry-picking a
@@ -432,6 +621,9 @@ _build_conflict_feedback_section() {
 
 		_Routed by deterministic merge pass (pulse-merge.sh)._
 	EOF
+
+	# Append pattern-specific guidance block for non-CODE patterns (t2987).
+	_emit_pattern_guidance_blocks "$classification_output" "$default_branch" "$conf_file"
 	return 0
 }
 

@@ -532,6 +532,33 @@ See also `reference/pre-commit-hooks.md` for the full playbook and "Stale-sympto
 - `aidevops update` and `setup.sh` auto-restart the pulse (t2579). For manual hot-deploys (`cp` to `~/.aidevops/agents/scripts/`), restart manually: `pulse-lifecycle-helper.sh restart-if-running`. Fallback: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`. Subcommands: `is-running | status | start | stop | restart | restart-if-running`.
 - **Ensure-running guarantee (t2914):** every `aidevops update` ends with an idempotent `pulse-lifecycle-helper.sh start` call (in `aidevops.sh::cmd_update`). The earlier `restart-if-running` paths in `setup.sh:1329` / `agent-deploy.sh:601` are silent no-ops when pulse is **dead**, so a crashed pulse used to stay dead through subsequent updates. The `start` subcommand is idempotent — no-op when running, starts when dead — closing that gap. Honours `AIDEVOPS_SKIP_PULSE_RESTART=1` at the call site for parity with restart paths.
 
+### Conflict Resolution Patterns (t2987)
+
+When a worker PR develops merge conflicts that `gh pr update-branch` cannot resolve, `_dispatch_conflict_fix_worker` (in `pulse-merge-feedback.sh`) appends a conflict-feedback section to the linked issue. As of t2987, this section includes **pattern-aware guidance** derived from a declarative registry.
+
+**Pattern registry:** `.agents/configs/conflict-patterns.conf` — single source of truth for pattern → classification → guidance text. Format: `CLASSIFICATION | GLOB_PATTERN | RESOLUTION_COMMAND | GUIDANCE_TEXT` (one record per line, `#` comments and blank lines ignored). Add new patterns here; the shell code picks them up automatically.
+
+**Supported classifications:**
+
+| Classification | Canonical files | Resolution |
+|---|---|---|
+| `DRIZZLE_MIGRATION` | `*/migrations/meta/_journal.json`, `*_snapshot.json` | Renumber SQL + regenerate via `pnpm --filter <db-pkg> db:generate`. Never hand-merge snapshots. |
+| `LOCKFILE` | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb` | Accept one side, regenerate with the package manager. Never hand-merge. |
+| `I18N_JSON` | `*/translations/*/*.json` | Union-merge via `jq -s '.[0] * .[1]'`. Both sides add keys; merged result contains all. |
+| `GENERATED` | `*_snapshot.json`, `*.generated.ts`, `*.generated.graphql` | Delete and regenerate via project toolchain. Never hand-merge generated artifacts. |
+| `CODE` | everything else | Semantic conflict — hand-resolve required. No guidance block emitted (falls through to generic cherry-pick guidance). |
+
+**How the pattern detection works:** `_classify_conflicts_by_pattern()` in `pulse-merge-feedback.sh` takes the conflicting file list, matches each path/basename against conf patterns in order (first match wins), and returns one output line per classification containing all matching files. `_build_conflict_feedback_section()` then calls `_emit_pattern_guidance_blocks()` which appends a `### Pattern-Specific Resolution Guidance` block per non-CODE pattern. CODE-only conflicts receive only the generic cherry-pick guidance.
+
+**Adding a new pattern:**
+
+1. Add a record to `.agents/configs/conflict-patterns.conf` (see inline format comments).
+2. Add a test case to `.agents/scripts/tests/test-conflict-pattern-detection.sh`.
+3. Run `bash .agents/scripts/tests/test-conflict-pattern-detection.sh` — must pass 0 failures.
+4. Run `shellcheck .agents/scripts/pulse-merge-feedback.sh` — must pass clean.
+
+**Background (t2987):** 3 reroutes on the same Drizzle migration conflict in a managed private repo. The generic brief told each worker "files conflicted, rebuild on develop" — they did, hit the same index-collision conflict, got rerouted again. Pattern-aware briefs turn each reroute into a one-shot fix.
+
 ### Quality Standards
 
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
