@@ -116,26 +116,95 @@ Override per-repo by editing `_knowledge/_config/knowledge.json` after provision
 ## CLI
 
 ```bash
+# Provisioning
 aidevops knowledge init repo           # Provision _knowledge/ in current repo
 aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspace/knowledge/
 aidevops knowledge init off            # Disable knowledge plane for current repo
 aidevops knowledge status              # Show provisioning state + item counts
 aidevops knowledge provision [path]    # Re-provision / repair (idempotent)
 
-# Ingest a file (auto-classifies sensitivity)
-knowledge-helper.sh add path/to/file.pdf
+# Ingest a local file (auto-classifies sensitivity)
+aidevops knowledge add path/to/file.pdf
 
-# Ingest with explicit sensitivity override
-knowledge-helper.sh add path/to/file.pdf --sensitivity privileged
+# Ingest from a URL (downloads to inbox, moves to sources)
+aidevops knowledge add https://example.com/report.pdf
+
+# Ingest large file (>30MB) — routed to blob store, stub in _knowledge/sources/
+aidevops knowledge add https://example.com/large-dataset.zip --allow-large
+
+# Ingest with explicit ID and sensitivity override
+aidevops knowledge add path/to/file.pdf --id my-doc --sensitivity privileged
+
+# List all known sources (inbox + staging + sources)
+aidevops knowledge list
+
+# Filter by state or kind
+aidevops knowledge list --state staging
+aidevops knowledge list --state sources --kind document
+
+# Search across sources
+aidevops knowledge search "invoice 2026"
 
 # Manual sensitivity correction after ingestion
-knowledge-helper.sh sensitivity override <source-id> privileged --reason "Legal advice per review"
+aidevops knowledge sensitivity override <source-id> privileged --reason "Legal advice per review"
 
 # Show current tier + audit trail for a source
-knowledge-helper.sh sensitivity show <source-id>
+aidevops knowledge sensitivity show <source-id>
 ```
 
 The helper: `.agents/scripts/knowledge-helper.sh`.
+
+## Platform Abstraction (t2843)
+
+All operations that interact with a remote platform (create issues, comment,
+create PRs) are routed through `platform-helper.sh` — a thin abstraction layer
+that dispatches to `gh` (GitHub), `glab` (GitLab), `tea` (Gitea), or a local
+no-op logger.
+
+Platform detection order:
+
+1. `repos.json` `"platform"` field for the repo path (explicit override)
+2. `repos.json` `"local_only": true` → `local`
+3. Remote URL of `origin` (github.com → `github`, gitlab.com → `gitlab`, etc.)
+4. No remote found → `local`
+
+### Available Functions
+
+| Function | Description |
+|----------|-------------|
+| `platform_detect <repo_path>` | Prints `github\|gitea\|gitlab\|local` |
+| `platform_create_issue <slug> <title> <body_file> <labels>` | Creates an issue |
+| `platform_get_issue <slug> <num>` | Returns issue as JSON |
+| `platform_comment_issue <slug> <num> <body_file>` | Posts a comment |
+| `platform_create_pr <slug> <title> <body_file> <base> <head>` | Creates a PR |
+
+### Platform Status
+
+| Platform | Status |
+|----------|--------|
+| `github` | Fully implemented via `gh` CLI |
+| `gitea` | P9 stub — exits 1 with "adapter not implemented" |
+| `gitlab` | P9 stub — exits 1 with "adapter not implemented" |
+| `local` | No-op — operations logged to `~/.aidevops/logs/platform-local-ops.log` |
+
+### Usage
+
+```bash
+# Source and use directly
+source ~/.aidevops/agents/scripts/platform-helper.sh
+
+platform=$(platform_detect /path/to/repo)
+echo "Platform: $platform"
+
+# CLI invocation
+platform-helper.sh detect /path/to/repo
+platform-helper.sh create-issue owner/repo "Title" /tmp/body.md "label1,label2"
+platform-helper.sh get-issue owner/repo 123
+platform-helper.sh comment-issue owner/repo 123 /tmp/comment.md
+platform-helper.sh create-pr owner/repo "Title" /tmp/body.md main feature/branch
+```
+
+The helper: `.agents/scripts/platform-helper.sh`.
 
 ---
 
@@ -282,6 +351,88 @@ knowledge-helper.sh sensitivity show <source-id>
 | `sensitivity` | Current tier (`public`\|`internal`\|`pii`\|`sensitive`\|`privileged`) |
 | `sensitivity_override` | Manually set tier (detector respects this on re-classify) |
 | `sensitivity_override_reason` | Free-text reason for the override |
+
+---
+
+## Structured Field Extraction / Enrichment (t2849)
+
+After a source is promoted to `sources/`, the enrichment pipeline extracts structured
+fields from the OCR text and writes `_knowledge/sources/<id>/extracted.json` with
+per-field provenance.
+
+### What Enrichment Produces
+
+```json
+{
+  "version": 1,
+  "source_id": "my-invoice",
+  "kind": "invoice",
+  "schema_version": 1,
+  "schema_hash": "a3f2c1d4e5b6",
+  "enriched_at": "2026-04-27T10:00:00Z",
+  "fields": {
+    "invoice_number": { "value": "INV-2026-001", "confidence": "high", "source": "regex", "evidence_excerpt": "Invoice Number: INV-2026-001", "page": null },
+    "supplier_name":  { "value": "Acme Corp Ltd", "confidence": "high", "source": "llm",   "evidence_excerpt": "Supplier: Acme Corp Ltd", "page": null }
+  }
+}
+```
+
+### Schemas
+
+Seven extraction schemas live in `.agents/tools/document/extraction-schemas/`:
+
+| Kind | Schema | Sensitivity |
+|------|--------|-------------|
+| `invoice` | `invoice.json` | `internal` |
+| `contract` | `contract.json` | `internal`/`sensitive` |
+| `bank_statement` | `bank_statement.json` | `pii` |
+| `financial_statement` | `financial_statement.json` | `internal`/`sensitive` |
+| `payment_receipt` | `payment_receipt.json` | `pii` |
+| `email` | `email.json` | `pii` |
+| `generic` | `generic.json` | `internal` (fallback) |
+
+Each field declares `extractor: "regex"` (fast, deterministic) or `extractor: "llm"`
+(flexible). LLM fields route through `llm-routing-helper.sh` with the source's
+`sensitivity` tier — PII documents stay local.
+
+### CLI
+
+```bash
+# Enrich a specific source (kind from meta.json)
+aidevops knowledge enrich <source-id>
+
+# Override kind when meta.json has wrong value
+document-enrich-helper.sh enrich <source-id> --kind contract
+
+# Batch: enrich all sources without extracted.json (same as r041)
+document-enrich-helper.sh tick
+
+# Dry-run — show what would be extracted without writing
+document-enrich-helper.sh enrich <source-id> --dry-run
+
+# Force re-extract even if extracted.json exists
+document-enrich-helper.sh enrich <source-id> --force-refresh
+
+# Show enrichment status across sources
+document-enrich-helper.sh status
+```
+
+### Idempotency
+
+Tracks a 12-char schema hash in `extracted.json::schema_hash`. Same hash → skip
+(no LLM calls, no file write). Schema changed → re-extract. `--force-refresh` → always.
+
+### Routine r041
+
+```
+- [x] r041 Knowledge enrichment — extract structured fields from freshly-promoted sources repeat:cron(*/30 * * * *) ~2m run:scripts/document-enrich-helper.sh tick
+```
+
+### Schema Authoring
+
+Create `.agents/tools/document/extraction-schemas/<kind>.json` with the format shown
+in `10-classification.md §Extraction Schemas`. The helper auto-discovers schemas by
+filename — no registration step needed.
 
 ---
 

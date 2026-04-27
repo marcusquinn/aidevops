@@ -1,0 +1,85 @@
+{
+  "kind": "financial_statement",
+  "version": 1,
+  "description": "P&L, balance sheet, or management accounts — extract period, entity, and key financial figures",
+  "fields": [
+    {
+      "name": "entity_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the legal entity name or company name for which this financial statement was prepared."
+    },
+    {
+      "name": "statement_type",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Identify the type of financial statement: 'profit_and_loss', 'balance_sheet', 'cash_flow', 'management_accounts', or 'other'."
+    },
+    {
+      "name": "period_start",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the financial period start date in ISO 8601 format (YYYY-MM-DD)."
+    },
+    {
+      "name": "period_end",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the financial period end date in ISO 8601 format (YYYY-MM-DD)."
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the 3-letter ISO 4217 currency code for this statement (e.g. GBP, USD, EUR)."
+    },
+    {
+      "name": "total_revenue",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract total revenue or turnover as a plain number. Return null if not present."
+    },
+    {
+      "name": "gross_profit",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract gross profit as a plain number. Return null if not present."
+    },
+    {
+      "name": "operating_profit",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract operating profit (EBIT) as a plain number. Return null if not present."
+    },
+    {
+      "name": "net_profit",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract net profit (profit after tax) as a plain number. Return null if not present."
+    },
+    {
+      "name": "total_assets",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract total assets as a plain number (balance sheet). Return null if not applicable."
+    },
+    {
+      "name": "total_liabilities",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract total liabilities as a plain number (balance sheet). Return null if not applicable."
+    },
+    {
+      "name": "equity",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract total equity or net assets as a plain number (balance sheet). Return null if not applicable."
+    },
+    {
+      "name": "prepared_by",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the accountant, firm, or preparer. Return null if not stated."
+    }
+  ]
+}

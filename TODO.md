@@ -86,8 +86,10 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
 - [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
+- [x] r041 Knowledge enrichment — extract structured fields from freshly-promoted sources repeat:cron(*/30 * * * *) ~2m run:scripts/document-enrich-helper.sh tick
 - [x] r042 Knowledge index build — incremental PageIndex tree across corpus repeat:cron(*/60 * * * *) ~2m run:scripts/knowledge-index-helper.sh build
 - [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
+- [x] r043 Case deadline alarming — classify open-case deadlines, fire gh-issue + ntfy alarms by stage repeat:cron(*/15 * * * *) ~1m run:scripts/case-alarm-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 
 ## Ready
@@ -3126,7 +3128,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2842 full-loop-helper commit-and-pr: run project linters/formatters/typecheck before push (close worker-CI-failure gap) ref:GH#20894 pr:#20898 completed:2026-04-25
 
-- [ ] t2843 P0a: knowledge plane directory contract + provisioning (parent t2840) #enhancement #framework ref:GH#20895
+- [x] t2843 P0a: knowledge plane directory contract + provisioning (parent t2840) #enhancement #framework ref:GH#20895 pr:#21218 completed:2026-04-27
 
 - [x] t2844 P0a: knowledge plane directory contract + provisioning #enhancement #framework ref:GH#20896 pr:#21107 completed:2026-04-26
 
@@ -3138,7 +3140,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2848 P0.5c: Ollama integration + local LLM substrate #enhancement #framework ref:GH#20901 blocked-by:t2844 pr:#21217 completed:2026-04-27
 
-- [ ] t2849 P1a: kind-aware enrichment + structured field extraction #enhancement #framework ref:GH#20902 blocked-by:t2844,t2843
+- [x] t2849 P1a: kind-aware enrichment + structured field extraction #enhancement #framework ref:GH#20902 blocked-by:t2844,t2843 pr:#21214 completed:2026-04-27
 
 - [x] t2850 P1c: PageIndex tree generation across corpus #enhancement #framework ref:GH#20903 blocked-by:t2844,t2843 pr:#21161 completed:2026-04-27
 
@@ -3146,7 +3148,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2852 P4b: case CLI surface (attach/status/close/archive/list) #enhancement #framework ref:GH#20905 blocked-by:t2844,t2843,t2846 pr:#21114 completed:2026-04-26
 
-- [ ] t2853 P4c: case milestone + deadline alarming routine (parent t2840) #enhancement #framework ref:GH#20906 blocked-by:t2844,t2843,t2846
+- [x] t2853 P4c: case milestone + deadline alarming routine (parent t2840) #enhancement #framework ref:GH#20906 blocked-by:t2844,t2843,t2846 pr:#21221 completed:2026-04-27
 
 - [ ] t2854 P5a: .eml ingestion handler (kind=email) #enhancement #framework ref:GH#20908 blocked-by:t2844,t2843,t2849
 
@@ -3156,7 +3158,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2857 P6a: aidevops case draft agent (RAG, human-gated, provenance) #enhancement #framework ref:GH#20911 blocked-by:t2851,t2852,t2853,t2850,t2847,t2848 pr:#21194 completed:2026-04-27
 
-- [ ] t2858 P6b: aidevops case chase (template-only, opt-in auto-send) #enhancement #framework ref:GH#20912 blocked-by:t2851,t2852,t2853,t2850,t2847,t2848
+- [x] t2858 P6b: aidevops case chase (template-only, opt-in auto-send) #enhancement #framework ref:GH#20912 blocked-by:t2851,t2852,t2853,t2850,t2847,t2848 pr:#21216 completed:2026-04-27
 
 - [x] t2859 fix unbound ORPHAN_WORKTREE_GRACE_SECS in pulse-cleanup.sh — destroys live worktrees #bug #framework ref:GH#20914 pr:#20915 completed:2026-04-26
 

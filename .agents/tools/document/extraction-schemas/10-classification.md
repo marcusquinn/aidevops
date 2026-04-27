@@ -62,3 +62,36 @@ Manual override: `sensitivity-detector-helper.sh override <source-id> <tier> --r
 Tier precedence (highest wins when multiple signals): `privileged > sensitive > pii > internal > public`
 
 Config: `_knowledge/_config/sensitivity.json` — see `.agents/templates/sensitivity-config.json` for defaults.
+
+## Extraction Schemas (t2849)
+
+Each document kind has a JSON extraction schema in this directory declaring the structured fields to extract.
+
+| Kind | Schema File | Sensitivity | Description |
+|------|-------------|-------------|-------------|
+| `invoice` | `invoice.json` | `internal` | Purchase invoice — supplier, amounts, line items |
+| `contract` | `contract.json` | `internal`/`sensitive` | Commercial agreement — parties, dates, key terms |
+| `bank_statement` | `bank_statement.json` | `pii` | Bank statement — balances, transactions |
+| `financial_statement` | `financial_statement.json` | `internal`/`sensitive` | P&L, balance sheet, management accounts |
+| `payment_receipt` | `payment_receipt.json` | `pii` | Payment confirmation — transaction ID, amount |
+| `email` | `email.json` | `pii` | Email — headers, summary, action items |
+| `generic` | `generic.json` | `internal` | Fallback for unrecognised kinds |
+
+Schema JSON format:
+
+```json
+{
+  "kind": "invoice",
+  "version": 1,
+  "fields": [
+    { "name": "invoice_number", "type": "string", "extractor": "regex", "pattern": "(?i)invoice[\\s\\w]*[#:]\\s*([A-Z0-9][A-Z0-9/_-]{1,29})" },
+    { "name": "total_amount",   "type": "number", "extractor": "llm",   "prompt": "Extract the total invoice amount." }
+  ]
+}
+```
+
+**Extractor types:** `regex` (fast, deterministic) | `llm` (flexible, routes via `llm-routing-helper.sh`)
+
+**Run enrichment:** `document-enrich-helper.sh enrich <source-id>` or `aidevops knowledge enrich <source-id>`
+
+**Add a new kind:** create `.agents/tools/document/extraction-schemas/<kind>.json` — the helper auto-discovers by filename.

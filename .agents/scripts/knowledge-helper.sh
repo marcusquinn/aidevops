@@ -10,7 +10,11 @@
 # Usage:
 #   knowledge-helper.sh provision [repo-path]                          Provision/repair directory tree
 #   knowledge-helper.sh init [off|repo|personal] [path]                Set mode and provision
-#   knowledge-helper.sh add <file> [--id <id>] [--sensitivity <tier>]  Ingest a file into sources/
+#   knowledge-helper.sh add <file|url> [--id <id>] [--sensitivity <tier>] [--allow-large]
+#                                                                       Ingest a file or URL into sources/
+#   knowledge-helper.sh list [--state inbox|staging|sources|all] [--kind <type>]
+#                                                                       List known sources
+#   knowledge-helper.sh search <query> [repo-path]                     Search sources
 #   knowledge-helper.sh status [repo-path]                             Show provisioning state
 #   knowledge-helper.sh help                                           Show this help
 #
@@ -503,12 +507,47 @@ _cmd_add_apply_sensitivity() {
 	return 0
 }
 
-# cmd_add: ingest a file into the knowledge plane sources/ directory
-# Arguments: <file> [--id <id>] [--sensitivity <tier>] [--repo-path <path>]
+# _cmd_add_download_url: download a URL to inbox dir; prints local path or exits 1
+# Args: <url> <inbox_dir> <allow_large>
+_cmd_add_download_url() {
+	local url="$1"
+	local inbox_dir="$2"
+	local allow_large="$3"
+	if ! command -v curl >/dev/null 2>&1; then
+		print_error "curl is required to download URLs but is not installed"
+		return 1
+	fi
+	local filename
+	filename="$(basename "$url")"
+	filename="${filename%%\?*}"
+	[[ -z "$filename" || "$filename" == "/" ]] && filename="download-$(date +%s)"
+	local dest_path="${inbox_dir}/${filename}"
+	mkdir -p "$inbox_dir"
+	local curl_args=("-L" "-o" "$dest_path" "--fail" "--silent" "--show-error")
+	if [[ "$allow_large" -eq 0 ]]; then
+		curl_args+=("--max-filesize" "$BLOB_THRESHOLD_BYTES")
+	fi
+	print_info "Downloading: $url"
+	if ! curl "${curl_args[@]}" "$url" 2>&1; then
+		rm -f "$dest_path"
+		if [[ "$allow_large" -eq 0 ]]; then
+			print_error "Download failed (file may exceed ${BLOB_THRESHOLD_BYTES}B limit). Use --allow-large to permit large files."
+		else
+			print_error "Download failed: $url"
+		fi
+		return 1
+	fi
+	echo "$dest_path"
+	return 0
+}
+
+# cmd_add: ingest a file or URL into the knowledge plane sources/ directory
+# Arguments: <file|url> [--id <id>] [--sensitivity <tier>] [--allow-large] [--repo-path <path>]
 cmd_add() {
-	local file_path=""
+	local input_path=""
 	local source_id=""
 	local sensitivity_override=""
+	local allow_large=0
 	local repo_path
 	repo_path="$(pwd)"
 	while [[ $# -gt 0 ]]; do
@@ -516,35 +555,34 @@ cmd_add() {
 		shift
 		case "$_key" in
 		--id)
-			local _val="$1"
-			source_id="$_val"
+			local _v="$1"
+			source_id="$_v"
 			shift
 			;;
 		--sensitivity)
-			local _val="$1"
-			sensitivity_override="$_val"
+			local _s="$1"
+			sensitivity_override="$_s"
 			shift
 			;;
 		--repo-path)
-			local _val="$1"
-			repo_path="$_val"
+			local _rp="$1"
+			repo_path="$_rp"
 			shift
+			;;
+		--allow-large)
+			allow_large=1
 			;;
 		-*)
 			print_error "Unknown option: $_key"
 			return 1
 			;;
 		*)
-			[[ -z "$file_path" ]] && file_path="$_key"
+			[[ -z "$input_path" ]] && input_path="$_key"
 			;;
 		esac
 	done
-	if [[ -z "$file_path" ]]; then
-		print_error "add requires <file>"
-		return 1
-	fi
-	if [[ ! -f "$file_path" ]]; then
-		print_error "File not found: $file_path"
+	if [[ -z "$input_path" ]]; then
+		print_error "add requires <file|url>"
 		return 1
 	fi
 	# Route .eml/.emlx files through the email ingestion handler (t2854)
@@ -569,6 +607,26 @@ cmd_add() {
 		print_error "Knowledge plane not provisioned. Run: knowledge-helper.sh provision"
 		return 1
 	fi
+	# Determine source_uri and resolve file_path (download URL to inbox if needed)
+	local file_path source_uri tmp_inbox_file=""
+	if [[ "$input_path" =~ ^https?:// ]]; then
+		local inbox_dir="${knowledge_root}/inbox"
+		local downloaded
+		downloaded=$(_cmd_add_download_url "$input_path" "$inbox_dir" "$allow_large") || return 1
+		file_path="$downloaded"
+		source_uri="$input_path"
+		tmp_inbox_file="$file_path"
+	else
+		if [[ ! -f "$input_path" ]]; then
+			print_error "File not found: $input_path"
+			return 1
+		fi
+		file_path="$input_path"
+		local abs_file_path
+		abs_file_path="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
+		source_uri="file://${abs_file_path}"
+	fi
+	# Derive source_id from filename if not specified
 	if [[ -z "$source_id" ]]; then
 		local basename_no_ext
 		basename_no_ext="$(basename "$file_path")"
@@ -585,16 +643,137 @@ cmd_add() {
 	local sha256 size_bytes
 	sha256=$(_sha256sum_file "$file_path") || return 1
 	size_bytes=$(wc -c <"$file_path" | tr -d ' ')
-	local abs_file_path
-	abs_file_path="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
-	local source_uri="file://${abs_file_path}"
 	local blob_path
 	blob_path=$(_cmd_add_store_file "$file_path" "$source_id" "$source_dir" "$size_bytes" "$repo_path") || return 1
+	# Clean up inbox temp file if it was copied/moved to sources or blob store
+	[[ -n "$tmp_inbox_file" && -f "$tmp_inbox_file" ]] && rm -f "$tmp_inbox_file"
 	local meta_path="${source_dir}/meta.json"
 	_write_meta_json "$meta_path" "$source_id" "$source_uri" "$sha256" "$size_bytes" "$META_DEFAULT_SENSITIVITY" "$blob_path" || return 1
 	local final_tier
 	final_tier=$(_cmd_add_apply_sensitivity "$source_id" "$knowledge_root" "$meta_path" "$sensitivity_override") || true
 	print_success "Added source: $source_id (sensitivity=${final_tier})"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# list: show sources across inbox/staging/sources with state column
+# ---------------------------------------------------------------------------
+
+# _state_matches: returns 0 when filter is "all" or equals state_name
+_state_matches() {
+	local filter="$1"
+	local state_name="$2"
+	[[ "$filter" == "all" ]] || [[ "$filter" == "$state_name" ]]
+	return $?
+}
+
+# _list_print_meta: pretty-print one meta.json with state label
+# Args: <meta_path> <state_label> [kind_filter]
+_list_print_meta() {
+	local meta_path="$1"
+	local state_label="$2"
+	local kind_filter="${3:-}"
+	_require_jq || return 1
+	[[ ! -f "$meta_path" ]] && return 0
+	local _def="unknown"
+	local kind
+	kind=$(jq -r --arg d "$_def" '.kind // $d' "$meta_path" 2>/dev/null || echo "$_def")
+	[[ -n "$kind_filter" && "$kind" != "$kind_filter" ]] && return 1
+	local id sha256 sensitivity size_bytes
+	id=$(jq -r --arg d "$_def" '.id // $d' "$meta_path" 2>/dev/null || echo "$_def")
+	sha256=$(jq -r '.sha256 // ""' "$meta_path" 2>/dev/null || echo "")
+	sensitivity=$(jq -r --arg d "$_def" '.sensitivity // $d' "$meta_path" 2>/dev/null || echo "$_def")
+	size_bytes=$(jq -r '.size_bytes // 0' "$meta_path" 2>/dev/null || echo "0")
+	local sha_short="${sha256:0:8}"
+	printf "%-36s %-10s %-12s %-12s %s  %s\n" \
+		"$id" "$state_label" "$kind" "$sensitivity" "$sha_short" "$size_bytes"
+	return 0
+}
+
+cmd_list() {
+	local state_filter="all"
+	local kind_filter=""
+	local repo_path
+	repo_path="$(pwd)"
+	while [[ $# -gt 0 ]]; do
+		local _key="$1"
+		shift
+		case "$_key" in
+		--state)
+			local _st="$1"
+			state_filter="$_st"
+			shift
+			;;
+		--kind)
+			local _kd="$1"
+			kind_filter="$_kd"
+			shift
+			;;
+		--repo-path)
+			local _rp="$1"
+			repo_path="$_rp"
+			shift
+			;;
+		*)
+			print_error "Unknown option: $_key"
+			return 1
+			;;
+		esac
+	done
+	repo_path="$(cd "$repo_path" && pwd)"
+	_require_jq || return 1
+	local knowledge_root
+	knowledge_root=$(_cmd_add_resolve_knowledge_root "$repo_path") || return 1
+	# Print header
+	printf "%-36s %-10s %-12s %-12s %-8s  %s\n" \
+		"SOURCE-ID" "STATE" "KIND" "SENSITIVITY" "SHA256" "SIZE"
+	printf '%s\n' "$(printf -- '-%.0s' {1..90})"
+	local found=0
+	# inbox
+	if _state_matches "$state_filter" "inbox"; then
+		local inbox_dir="${knowledge_root}/inbox"
+		if [[ -d "$inbox_dir" ]]; then
+			local src_id
+			for src_id in $(ls "$inbox_dir" 2>/dev/null | sort); do
+				local meta="${inbox_dir}/${src_id}/meta.json"
+				[[ -f "$meta" ]] || continue
+				if _list_print_meta "$meta" "inbox" "$kind_filter"; then
+					found=$((found + 1))
+				fi
+			done
+		fi
+	fi
+	# staging
+	if _state_matches "$state_filter" "staging"; then
+		local staging_dir="${knowledge_root}/staging"
+		if [[ -d "$staging_dir" ]]; then
+			local src_id
+			for src_id in $(ls "$staging_dir" 2>/dev/null | sort); do
+				local meta="${staging_dir}/${src_id}/meta.json"
+				[[ -f "$meta" ]] || continue
+				if _list_print_meta "$meta" "staging" "$kind_filter"; then
+					found=$((found + 1))
+				fi
+			done
+		fi
+	fi
+	# sources
+	if _state_matches "$state_filter" "sources"; then
+		local sources_dir="${knowledge_root}/sources"
+		if [[ -d "$sources_dir" ]]; then
+			local src_id
+			for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+				local meta="${sources_dir}/${src_id}/meta.json"
+				[[ -f "$meta" ]] || continue
+				if _list_print_meta "$meta" "sources" "$kind_filter"; then
+					found=$((found + 1))
+				fi
+			done
+		fi
+	fi
+	if [[ "$found" -eq 0 ]]; then
+		print_info "No sources found (state=${state_filter}${kind_filter:+, kind=$kind_filter})"
+	fi
 	return 0
 }
 
@@ -605,6 +784,18 @@ cmd_sensitivity() {
 		return 1
 	fi
 	bash "$SENSITIVITY_DETECTOR" "$@"
+	return 0
+}
+
+# cmd_enrich: proxy to document-enrich-helper.sh for structured field extraction
+# Usage: knowledge-helper.sh enrich <source-id> [--kind <override>] [--max-cost <USD>]
+cmd_enrich() {
+	local enrich_helper="${SCRIPT_DIR}/document-enrich-helper.sh"
+	if [[ ! -x "$enrich_helper" ]]; then
+		print_error "document-enrich-helper.sh not found at $enrich_helper"
+		return 1
+	fi
+	bash "$enrich_helper" enrich "$@"
 	return 0
 }
 
@@ -687,7 +878,9 @@ main() {
 	provision)   cmd_provision "$@" ;;
 	init)        cmd_init "$@" ;;
 	add)         cmd_add "$@" ;;
+	list)        cmd_list "$@" ;;
 	sensitivity) cmd_sensitivity "$@" ;;
+	enrich)      cmd_enrich "$@" ;;
 	status)      cmd_status "$@" ;;
 	search)      cmd_search "$@" ;;
 	help | -h | --help) cmd_help ;;

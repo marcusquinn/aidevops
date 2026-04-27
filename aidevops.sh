@@ -1661,6 +1661,9 @@ _help_detailed_sections() {
 	echo "  aidevops knowledge init off            # Disable knowledge plane"
 	echo "  aidevops knowledge status              # Show provisioning state"
 	echo "  aidevops knowledge provision [path]    # Re-provision (idempotent)"
+	echo "  aidevops knowledge add <file|url>      # Ingest file or URL into sources/"
+	echo "  aidevops knowledge list [--state s] [--kind k]  # List all known sources"
+	echo "  aidevops knowledge search <query>      # Search sources (grep fallback)"
 	echo ""
 	echo "LLM Stats:"
 	echo "  aidevops stats               # Show usage summary (last 30 days)"
@@ -2031,7 +2034,13 @@ main() {
 	case | cases)
 		# Bare `aidevops case` defaults to list (most common use).
 		[[ $# -eq 0 ]] && set -- list
-		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		# alarm-test subcommand routes to case-alarm-helper.sh
+		if [[ "${1:-}" == "alarm-test" ]]; then
+			shift
+			_dispatch_helper "case-alarm-helper.sh" "case-alarm-helper.sh" alarm-test "$@"
+		else
+			_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		fi
 		;;
 	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
