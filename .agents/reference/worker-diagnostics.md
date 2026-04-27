@@ -454,6 +454,22 @@ The self-hosting detector in `pre-dispatch-validator-helper.sh` runs BEFORE gene
 
 Observed on GH#20765 (t2814): 2 opus-4-6 attempts (~40K wasted tokens) before cascade reached opus-4-7. This short-circuit eliminates that waste for the self-hosting task class.
 
+#### Phase 6 — Worker branch classification residual modes (t2980)
+
+**Problem.** Phase 5 (t2820) reclassified `worker_failed`, and t2899 closed the signal-2 false-positive on default-branch + zero-ahead state. The remaining `worker_branch_orphan branch=main` log lines fall into three modes that can't be fixed by tightening `_worker_produced_output`'s point-in-time check alone — the chain itself loses information between dispatch and exit.
+
+**Three residual modes** (full investigation: `reference/worker-branch-classification.md`):
+
+- **Mode A — Silent pre-creation failure.** `_dlw_precreate_worktree` returns 0 even on path-extraction failure (`pulse-dispatch-worker-launch.sh:340`); the worker falls back to `--dir "$repo_path"` (`pulse-dispatch-worker-launch.sh:602`) and runs in the canonical repo on the default branch.
+- **Mode B — Worker creates its own worktree.** Pre-creation succeeded but the V6 contract contradiction (`headless-runtime-lib.sh:418-460`) sends the worker into a different worktree it created itself; the dispatcher's `work_dir` snapshot stays stale.
+- **Mode C — Snapshot wrong by design.** Worker did real work, merged its PR, exited cleanly; the post-merge HEAD-on-default state at EXIT-trap time looks identical to "worker never left main".
+
+**Recommended fixes** (filed as separate follow-up issues):
+
+- Drop the silent-fail contract in `_dlw_precreate_worktree`; emit a `worktree_precreation_failed_count` counter; remove the `:-$repo_path` fallback in `_dlw_nohup_launch`.
+- Replace the `work_dir` snapshot in `_worker_produced_output` with a `git worktree list --porcelain` scan keyed off `WORKER_ISSUE_NUMBER`.
+- Resolve the V6 contract contradiction — pick "pre-creation always succeeds" or "worker creates own + writes path back to a known file", not both.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |
