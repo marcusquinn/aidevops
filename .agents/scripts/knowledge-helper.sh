@@ -977,6 +977,33 @@ _search_compute_allowed_ids() {
 	return 0
 }
 
+# _search_grep_sources <sources_dir> <query> <allowed_ids> <filters_active>
+# Grep for <query> across sources in <sources_dir>, filtered to <allowed_ids>
+# when <filters_active> is 1.  Outputs JSON per-match line to stdout.
+_search_grep_sources() {
+	local sources_dir="$1" query="$2" allowed_ids="$3" filters_active="$4"
+	local found=0 src_id
+	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+		if [[ $filters_active -eq 1 ]]; then
+			echo "$allowed_ids" | grep -qxF "$src_id" 2>/dev/null || continue
+		fi
+		local src_file
+		src_file=$(_get_source_text_file "${sources_dir}/${src_id}")
+		[[ -z "$src_file" ]] && continue
+		local match_lines
+		match_lines=$(_grep_source_file "$query" "$src_file" || true)
+		if [[ -n "$match_lines" ]]; then
+			local excerpt
+			excerpt="${match_lines%%$'\n'*}"
+			printf '{"source_id":"%s","excerpt":"%s"}\n' \
+				"$src_id" "${excerpt:0:200}"
+			found=$((found + 1))
+		fi
+	done
+	[[ "$found" -eq 0 ]] && print_info "search: no matches for '${query}'"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # search: keyword search across knowledge sources
 # Routes to knowledge-index-helper.sh query when corpus tree exists;
@@ -1073,27 +1100,7 @@ cmd_search() {
 		return 0
 	fi
 	print_info "search: no corpus tree — falling back to grep in sources/"
-	local found=0
-	local src_id
-	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-		# Apply allowed_ids scope when filters are active.
-		if [[ $filters_active -eq 1 ]]; then
-			echo "$allowed_ids" | grep -qxF "$src_id" 2>/dev/null || continue
-		fi
-		local src_file
-		src_file=$(_get_source_text_file "${sources_dir}/${src_id}")
-		[[ -z "$src_file" ]] && continue
-		local match_lines
-		match_lines=$(_grep_source_file "$query" "$src_file" || true)
-		if [[ -n "$match_lines" ]]; then
-			local excerpt
-			excerpt="${match_lines%%$'\n'*}"
-			printf '{"source_id":"%s","excerpt":"%s"}\n' \
-				"$src_id" "${excerpt:0:200}"
-			found=$((found + 1))
-		fi
-	done
-	[[ "$found" -eq 0 ]] && print_info "search: no matches for '${query}'"
+	_search_grep_sources "$sources_dir" "$query" "$allowed_ids" "$filters_active"
 	return 0
 }
 
