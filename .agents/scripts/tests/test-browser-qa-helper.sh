@@ -192,8 +192,10 @@ test_stability_unknown_option_rejected() {
 }
 
 test_stability_script_generation() {
-	local script_file
-	script_file=$(mktemp "${TMPDIR:-/tmp}/test-stability-XXXXXX.mjs")
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local script_dir script_file
+	script_dir=$(mktemp -d "${TMPDIR:-/tmp}/test-stability-XXXXXX")
+	script_file="$script_dir/script.mjs"
 	_generate_stability_script "$script_file" "http://localhost:3000" "'/'," "3" "30000" "500" "10000"
 	local exit_code=$?
 	if [[ "$exit_code" -eq 0 ]] && [[ -s "$script_file" ]]; then
@@ -205,7 +207,7 @@ test_stability_script_generation() {
 	else
 		print_result "stability: script generation produces non-empty file" 1 "exit=${exit_code} or empty file"
 	fi
-	rm -f "$script_file"
+	rm -rf "$script_dir"
 	return 0
 }
 

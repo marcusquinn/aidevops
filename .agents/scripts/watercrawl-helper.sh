@@ -590,11 +590,13 @@ scrape_url() {
 	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 
 	# Create Node.js script for scraping
-	local temp_script
-	temp_script=$(mktemp /tmp/watercrawl_scrape_XXXXXX.mjs)
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local temp_dir temp_script
+	temp_dir=$(mktemp -d /tmp/watercrawl_scrape_XXXXXX)
+	temp_script="$temp_dir/script.mjs"
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_script}'"
+	push_cleanup "rm -rf '${temp_dir}'"
 
 	cat >"$temp_script" <<'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';
@@ -641,11 +643,11 @@ SCRIPT
 		print_success "Scrape completed"
 	else
 		print_error "Scrape failed: $result"
-		rm -f "$temp_script"
+		rm -rf "$temp_dir"
 		return 1
 	fi
 
-	rm -f "$temp_script"
+	rm -rf "$temp_dir"
 	return 0
 }
 
@@ -738,11 +740,13 @@ crawl_website() {
 	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 	print_info "Max depth: $max_depth, Page limit: $page_limit"
 
-	local temp_script
-	temp_script=$(mktemp /tmp/watercrawl_crawl_XXXXXX.mjs)
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local temp_dir temp_script
+	temp_dir=$(mktemp -d /tmp/watercrawl_crawl_XXXXXX)
+	temp_script="$temp_dir/script.mjs"
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_script}'"
+	push_cleanup "rm -rf '${temp_dir}'"
 
 	_crawl_write_script "$temp_script"
 
@@ -753,11 +757,11 @@ crawl_website() {
 	else
 		print_error "Crawl failed"
 		printf '%s\n' "$result" >&2
-		rm -f "$temp_script"
+		rm -rf "$temp_dir"
 		return 1
 	fi
 
-	rm -f "$temp_script"
+	rm -rf "$temp_dir"
 	return 0
 }
 
@@ -784,11 +788,13 @@ search_web() {
 	print_info "Result limit: $limit"
 
 	# Create Node.js script for searching
-	local temp_script
-	temp_script=$(mktemp /tmp/watercrawl_search_XXXXXX.mjs)
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local temp_dir temp_script
+	temp_dir=$(mktemp -d /tmp/watercrawl_search_XXXXXX)
+	temp_script="$temp_dir/script.mjs"
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_script}'"
+	push_cleanup "rm -rf '${temp_dir}'"
 
 	cat >"$temp_script" <<'SCRIPT'
 import { WaterCrawlAPIClient } from '@watercrawl/nodejs';
@@ -844,11 +850,11 @@ SCRIPT
 	else
 		print_error "Search failed"
 		echo "$result" >&2
-		rm -f "$temp_script"
+		rm -rf "$temp_dir"
 		return 1
 	fi
 
-	rm -f "$temp_script"
+	rm -rf "$temp_dir"
 	return 0
 }
 
@@ -940,11 +946,13 @@ generate_sitemap() {
 	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 	print_info "Format: $format"
 
-	local temp_script
-	temp_script=$(mktemp /tmp/watercrawl_sitemap_XXXXXX.mjs)
+	# t2997: node ESM requires exact .mjs extension; mktemp -d + fixed filename.
+	local temp_dir temp_script
+	temp_dir=$(mktemp -d /tmp/watercrawl_sitemap_XXXXXX)
+	temp_script="$temp_dir/script.mjs"
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_script}'"
+	push_cleanup "rm -rf '${temp_dir}'"
 
 	_sitemap_write_script "$temp_script"
 
@@ -955,11 +963,11 @@ generate_sitemap() {
 	else
 		print_error "Sitemap generation failed"
 		printf '%s\n' "$result" >&2
-		rm -f "$temp_script"
+		rm -rf "$temp_dir"
 		return 1
 	fi
 
-	rm -f "$temp_script"
+	rm -rf "$temp_dir"
 	return 0
 }
 
