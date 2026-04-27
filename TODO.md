@@ -3308,3 +3308,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146
 
 - [ ] t2935 Block GitHub user internet-dot — drive-by spam author of GH#17671 #security ref:GH#21145
+
+- [ ] t2939 feat(pulse): defense-in-depth restart reliability — KeepAlive dict + watchdog plist #auto-dispatch #enhancement ref:GH#21148
