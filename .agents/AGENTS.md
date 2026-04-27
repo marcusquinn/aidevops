@@ -857,6 +857,33 @@ Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR 
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
+## Conflict Resolution Patterns (t2987)
+
+When a worker PR develops merge conflicts that `gh pr update-branch` cannot resolve,
+`_dispatch_conflict_fix_worker` in `pulse-merge-feedback.sh` classifies the conflicting
+files using the declarative pattern registry at `.agents/configs/conflict-patterns.conf`.
+The next worker's brief receives targeted, one-shot resolution steps instead of generic
+cherry-pick guidance — breaking the repeat-reroute loop.
+
+**Pattern registry** (`.agents/configs/conflict-patterns.conf`):
+
+| Pattern (grep substring) | Classification | Resolution strategy |
+|--------------------------|----------------|---------------------|
+| `/migrations/meta/` | `DRIZZLE_MIGRATION` | Renumber migration idx + `db:generate` |
+| `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock` | `LOCKFILE` | `pnpm/npm/yarn install` after rebase |
+| `/translations/`, `/locales/` | `I18N_JSON` | `jq -s '.[0] * .[1]'` union merge |
+| `_snapshot.sql`, `.generated.ts`, `__generated__/` | `GENERATED` | Delete and regenerate |
+| _(unmatched)_ | `CODE` | Generic cherry-pick guidance |
+
+**Implementation**: `_classify_conflicts_by_pattern()` reads the conf (first match wins,
+`grep -F` substring), `_emit_conflict_pattern_guidance()` emits the Markdown block per
+non-CODE class. Both are called from `_build_conflict_feedback_section()`.
+
+**Adding a new pattern**: add one `grep_substring | CLASSIFICATION | hint` line to
+`.agents/configs/conflict-patterns.conf`. No shell edits required for new patterns
+within the five existing classes. For a new class, also add a `case` arm to
+`_emit_conflict_pattern_guidance()` in `pulse-merge-feedback.sh`.
+
 ---
 
 ## Operational Routines (Non-Code Work)

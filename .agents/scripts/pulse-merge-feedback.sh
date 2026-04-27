@@ -335,6 +335,188 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 }
 
 #######################################
+# Classify a newline-separated list of file paths into known conflict
+# pattern classes using the declarative registry in conflict-patterns.conf.
+#
+# Pattern registry: .agents/configs/conflict-patterns.conf (t2987)
+# Format: grep_substring | CLASSIFICATION | one_line_hint
+#
+# Known classifications: DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE
+# CODE is the implicit fallback for unmatched files — no conf entry needed.
+#
+# Args: $1=newline-separated file paths
+#       $2=optional conf file path override (defaults to auto-detected)
+# Stdout: one line per classification: "CLASS file1 file2 ..."
+# Exit 0 always (fail-open).
+#######################################
+_classify_conflicts_by_pattern() {
+	local file_list="$1"
+	local conf_override="${2:-}"
+	local conf_file="$conf_override"
+	local script_dir raw_pattern classification hint_unused pattern filepath matched
+
+	if [[ -z "$conf_file" ]]; then
+		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || script_dir=""
+		conf_file="${script_dir}/../configs/conflict-patterns.conf"
+	fi
+
+	# Per-class accumulators (bash 3.2 compat — no declare -A)
+	local drizzle_files="" lockfile_files="" i18n_files="" generated_files="" code_files=""
+
+	while IFS= read -r filepath; do
+		[[ -z "$filepath" ]] && continue
+		matched="CODE"
+
+		if [[ -f "$conf_file" ]]; then
+			while IFS='|' read -r raw_pattern classification hint_unused; do
+				case "$raw_pattern" in
+					'#'*|'') continue ;;
+				esac
+				# Strip surrounding whitespace from pattern and classification.
+				pattern="${raw_pattern#"${raw_pattern%%[![:space:]]*}"}"
+				pattern="${pattern%"${pattern##*[![:space:]]}"}"
+				classification="${classification#"${classification%%[![:space:]]*}"}"
+				classification="${classification%"${classification##*[![:space:]]}"}"
+				[[ -z "$pattern" || -z "$classification" ]] && continue
+				if printf '%s' "$filepath" | grep -qF "$pattern" 2>/dev/null; then
+					matched="$classification"
+					break
+				fi
+			done < "$conf_file"
+		fi
+
+		case "$matched" in
+			DRIZZLE_MIGRATION) drizzle_files="${drizzle_files:+$drizzle_files }$filepath" ;;
+			LOCKFILE)          lockfile_files="${lockfile_files:+$lockfile_files }$filepath" ;;
+			I18N_JSON)         i18n_files="${i18n_files:+$i18n_files }$filepath" ;;
+			GENERATED)         generated_files="${generated_files:+$generated_files }$filepath" ;;
+			*)                 code_files="${code_files:+$code_files }$filepath" ;;
+		esac
+	done <<< "$file_list"
+
+	[[ -n "$drizzle_files" ]]   && printf 'DRIZZLE_MIGRATION %s\n' "$drizzle_files"
+	[[ -n "$lockfile_files" ]]  && printf 'LOCKFILE %s\n' "$lockfile_files"
+	[[ -n "$i18n_files" ]]      && printf 'I18N_JSON %s\n' "$i18n_files"
+	[[ -n "$generated_files" ]] && printf 'GENERATED %s\n' "$generated_files"
+	[[ -n "$code_files" ]]      && printf 'CODE %s\n' "$code_files"
+	return 0
+}
+
+#######################################
+# Emit a "### Pattern-Specific Resolution Guidance" Markdown block for the
+# non-CODE classifications returned by _classify_conflicts_by_pattern.
+#
+# Reads the classification lines (one per class: "CLASS file1 file2 ...") and
+# emits targeted guidance per detected pattern. CODE lines are silently skipped.
+# Emits nothing if only CODE patterns are present.
+#
+# Args: $1=classification output from _classify_conflicts_by_pattern
+#       $2=default_branch (e.g. "main", "develop")
+# Stdout: Markdown guidance block (may be empty)
+# Exit 0 always (fail-open).
+#######################################
+_emit_conflict_pattern_guidance() {
+	local classifications="$1"
+	local default_branch="${2:-main}"
+	local class_line cls files header_emitted=""
+
+	while IFS= read -r class_line; do
+		[[ -z "$class_line" ]] && continue
+		cls="${class_line%% *}"; files="${class_line#* }"
+		[[ "$cls" == "CODE" ]] && continue
+
+		if [[ -z "$header_emitted" ]]; then
+			printf '### Pattern-Specific Resolution Guidance\n\nThe conflicting files match known patterns. Targeted steps below break the reroute loop — generic cherry-pick guidance alone is insufficient.\n\n'
+			header_emitted="yes"
+		fi
+
+		case "$cls" in
+			DRIZZLE_MIGRATION)
+				cat <<-EOF
+					#### Pattern: Drizzle migration meta conflict
+
+					Affected files: \`${files}\`
+
+					Drizzle migration index collisions: this PR numbered its migration for an
+					idx that \`${default_branch}\` has since consumed.
+
+					Resolution (verbatim — do NOT manually merge snapshot content):
+
+					1. Rebase on \`origin/${default_branch}\`:
+					   \`git fetch origin && git rebase origin/${default_branch}\`
+					2. Find the next available idx in the upstream journal:
+					   \`git show origin/${default_branch}:packages/db/migrations/meta/_journal.json | jq '.entries | sort_by(.idx) | last'\`
+					3. Renumber your migration SQL + snapshot file to idx+1.
+					4. Regenerate the canonical schema snapshot:
+					   \`pnpm --filter @<scope>/db db:generate\`
+					5. Commit the renamed SQL + new snapshot — do NOT include any manually
+					   merged snapshot content from both branches.
+
+					> **WARNING**: Snapshots are cumulative, not deltas. Manual merging of
+					> \`*_snapshot.json\` content from both sides corrupts the schema chain.
+					> Delete your snapshot, rename the SQL to the new idx, then regenerate.
+
+				EOF
+				;;
+			LOCKFILE)
+				cat <<-EOF
+					#### Pattern: Lockfile conflict
+
+					Affected files: \`${files}\`
+
+					Lockfiles are fully auto-generated. Regenerate after rebasing —
+					never merge lockfile content manually.
+
+					Resolution:
+					\`\`\`bash
+					git fetch origin && git rebase origin/${default_branch}
+					# Then regenerate the lockfile:
+					# pnpm-lock.yaml   → pnpm install --no-frozen-lockfile
+					# package-lock.json → npm install
+					# yarn.lock        → yarn install
+					\`\`\`
+
+				EOF
+				;;
+			I18N_JSON)
+				cat <<-EOF
+					#### Pattern: i18n / translation JSON conflict
+
+					Affected files: \`${files}\`
+
+					Translation JSON files are mechanically union-mergeable — keys from both
+					branches are independently valid. Use \`jq\` union merge; do NOT choose
+					"ours" or "theirs".
+
+					Resolution (per conflicting file):
+					\`\`\`bash
+					git show origin/${default_branch}:<path> > /tmp/base.json
+					git show HEAD:<path> > /tmp/pr.json
+					jq -s '.[0] * .[1]' /tmp/base.json /tmp/pr.json > <path>
+					\`\`\`
+
+				EOF
+				;;
+			GENERATED)
+				cat <<-EOF
+					#### Pattern: Generated file conflict
+
+					Affected files: \`${files}\`
+
+					Generated files must be regenerated — never manually merged.
+
+					Resolution: rebase on \`origin/${default_branch}\`, delete the conflicted
+					generated file(s), then run the relevant generator (see \`package.json\`
+					scripts for \`codegen\`, \`generate\`, \`build:types\`, or similar).
+				EOF
+				;;
+		esac
+	done <<< "$classifications"
+
+	return 0
+}
+
+#######################################
 # Build the conflict-feedback Markdown section for a closed-conflict PR.
 #
 # Produces the "## Merge Conflict Feedback" block appended to the linked
@@ -394,6 +576,19 @@ _build_conflict_feedback_section() {
 		scope_block=$'\n'"${scope_leak_warning}"$'\n'
 	fi
 
+	# Pattern-aware conflict classification (t2987). Classify the file list
+	# using the declarative registry and emit targeted guidance so the next
+	# worker gets a one-shot resolution path instead of hitting the same
+	# pattern-specific conflict again.
+	local pattern_classifications="" pattern_guidance_block=""
+	if [[ -n "$pr_files" ]] && [[ "$pr_files" != "(could not fetch)" ]]; then
+		pattern_classifications=$(_classify_conflicts_by_pattern "$pr_files")
+	fi
+	if [[ -n "$pattern_classifications" ]]; then
+		pattern_guidance_block=$(_emit_conflict_pattern_guidance \
+			"$pattern_classifications" "$default_branch")
+	fi
+
 	cat <<-EOF
 		## Merge Conflict Feedback (from PR #${pr_number})
 
@@ -407,6 +602,7 @@ _build_conflict_feedback_section() {
 		${pr_files}
 		\`\`\`
 
+		${pattern_guidance_block}
 		### Worker guidance
 
 		The prior PR's head commit is \`${pr_head_sha:-<lookup via gh pr view ${pr_number} --json headRefOid>}\`. Choose the cheapest path that works:
