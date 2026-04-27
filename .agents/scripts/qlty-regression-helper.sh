@@ -42,10 +42,20 @@ HEAD_WORKTREE=""
 
 cleanup() {
 	if [ -n "$BASE_WORKTREE" ] && [ -d "$BASE_WORKTREE" ]; then
-		git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
+		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
+		if [[ "$BASE_WORKTREE" != */base-worktree ]]; then
+			log "WARN: Path '$BASE_WORKTREE' does not match fixture pattern — skipping remove"
+		else
+			git worktree remove --force "$BASE_WORKTREE" >/dev/null 2>&1 || true
+		fi
 	fi
 	if [ -n "$HEAD_WORKTREE" ] && [ -d "$HEAD_WORKTREE" ]; then
-		git worktree remove --force "$HEAD_WORKTREE" >/dev/null 2>&1 || true
+		# Path-shape assertion (t2974): only remove paths matching the fixture pattern
+		if [[ "$HEAD_WORKTREE" != */head-worktree ]]; then
+			log "WARN: Path '$HEAD_WORKTREE' does not match fixture pattern — skipping remove"
+		else
+			git worktree remove --force "$HEAD_WORKTREE" >/dev/null 2>&1 || true
+		fi
 	fi
 	if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
 		rm -rf "$TMP_DIR"
