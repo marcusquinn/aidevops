@@ -3142,7 +3142,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2835 ops: manual single-issue dispatch CLI for smoke-testing pulse worker dispatch #auto-dispatch #framework ref:GH#20882 pr:#20887 completed:2026-04-25
 
-- [ ] t2837 document BSD awk and ratchet hazards from t2834 in reference docs #auto-dispatch #documentation ref:GH#20885
+- [x] t2837 document BSD awk and ratchet hazards from t2834 in reference docs #auto-dispatch #documentation ref:GH#20885 pr:#21242 completed:2026-04-27
 
 - [ ] t2836 aidevops badges CLI subcommand + init hook + cross-repo drift detection #enhancement ref:GH#20884
 
