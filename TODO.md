@@ -3136,7 +3136,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2847 P0.5b: LLM routing helper + audit log #enhancement #framework ref:GH#20900 blocked-by:t2844 pr:#21138 completed:2026-04-26
 
-- [ ] t2848 P0.5c: Ollama integration + local LLM substrate #enhancement #framework ref:GH#20901 blocked-by:t2844
+- [x] t2848 P0.5c: Ollama integration + local LLM substrate #enhancement #framework ref:GH#20901 blocked-by:t2844 pr:#21217 completed:2026-04-27
 
 - [ ] t2849 P1a: kind-aware enrichment + structured field extraction #enhancement #framework ref:GH#20902 blocked-by:t2844,t2843
 
