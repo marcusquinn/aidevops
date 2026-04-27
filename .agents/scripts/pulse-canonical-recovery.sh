@@ -277,8 +277,10 @@ _pcr_sanitise_path() {
 
 	# 1. $HOME prefix → ~ (covers macOS /Users/<me> and Linux /home/<me>
 	#    when the user is the current login).
-	if [[ -n "${HOME:-}" && "$raw" == "$HOME"* ]]; then
-		printf '~%s' "${raw#"$HOME"}"
+	# Strip any trailing slash so the boundary check works reliably.
+	local h="${HOME%/}"
+	if [[ -n "$h" && ( "$raw" == "$h" || "$raw" == "$h/"* ) ]]; then
+		printf '~%s' "${raw#"$h"}"
 		return 0
 	fi
 
