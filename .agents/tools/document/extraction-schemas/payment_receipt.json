@@ -1,0 +1,73 @@
+{
+  "kind": "payment_receipt",
+  "version": 1,
+  "description": "Payment confirmation or receipt — extract transaction ID, amounts, and parties",
+  "fields": [
+    {
+      "name": "payer_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the person or entity who made the payment. Return null if not stated."
+    },
+    {
+      "name": "payee_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the person or entity who received the payment."
+    },
+    {
+      "name": "transaction_id",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:transaction\\s*(?:id|ref(?:erence)?|no\\.?)|payment\\s*ref(?:erence)?)\\s*[:#]?\\s*([A-Z0-9_/-]{4,40})"
+    },
+    {
+      "name": "payment_date",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the payment date in ISO 8601 format (YYYY-MM-DD)."
+    },
+    {
+      "name": "payment_time",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "([0-9]{1,2}:[0-9]{2}(?::[0-9]{2})?\\s*(?:AM|PM|am|pm|UTC|BST|GMT)?)"
+    },
+    {
+      "name": "amount",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the payment amount as a plain number."
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the 3-letter ISO 4217 currency code (e.g. GBP, USD, EUR)."
+    },
+    {
+      "name": "payment_method",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the payment method: 'bank_transfer', 'card', 'cash', 'direct_debit', 'standing_order', 'paypal', 'cheque', or describe other methods."
+    },
+    {
+      "name": "reference",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:ref(?:erence)?|payment\\s+for|description)\\s*[:#]?\\s*([A-Za-z0-9 _/-]{2,80})"
+    },
+    {
+      "name": "masked_card_last4",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?:\\*{4,}|x{4,})\\s*([0-9]{4})"
+    },
+    {
+      "name": "invoice_reference",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:inv(?:oice)?\\s*(?:no\\.?|#|ref)?\\s*[:#]?\\s*)([A-Z0-9/_-]{2,30})"
+    }
+  ]
+}

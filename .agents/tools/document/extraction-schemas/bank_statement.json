@@ -1,0 +1,85 @@
+{
+  "kind": "bank_statement",
+  "version": 1,
+  "description": "Bank account statement — extract account details, period, balances, and transactions",
+  "fields": [
+    {
+      "name": "bank_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the name of the bank or financial institution that issued this statement."
+    },
+    {
+      "name": "account_holder",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the account holder's full name or business name."
+    },
+    {
+      "name": "account_number",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:account\\s*(?:no\\.?|number|#)\\s*[:\\-]?\\s*)([0-9]{6,12})"
+    },
+    {
+      "name": "sort_code",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:sort\\s*code\\s*[:\\-]?\\s*)([0-9]{2}[-\\s]?[0-9]{2}[-\\s]?[0-9]{2})"
+    },
+    {
+      "name": "iban",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)(?:IBAN\\s*[:\\-]?\\s*)([A-Z]{2}[0-9]{2}[A-Z0-9]{4,30})"
+    },
+    {
+      "name": "statement_period_start",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the statement period start date in ISO 8601 format (YYYY-MM-DD)."
+    },
+    {
+      "name": "statement_period_end",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the statement period end date in ISO 8601 format (YYYY-MM-DD)."
+    },
+    {
+      "name": "currency",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the 3-letter ISO 4217 currency code for this account (e.g. GBP, USD, EUR)."
+    },
+    {
+      "name": "opening_balance",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the opening balance at the start of the statement period as a plain number. Negative if overdrawn."
+    },
+    {
+      "name": "closing_balance",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the closing balance at the end of the statement period as a plain number. Negative if overdrawn."
+    },
+    {
+      "name": "total_credits",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the total credits (money in) for the period as a plain number. Return null if not summarised."
+    },
+    {
+      "name": "total_debits",
+      "type": "number",
+      "extractor": "llm",
+      "prompt": "Extract the total debits (money out) for the period as a plain number. Return null if not summarised."
+    },
+    {
+      "name": "transactions",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract all transactions as a JSON array. Each item: {date (YYYY-MM-DD), description, credit, debit, balance}. Use null for absent fields. Limit to 100 if very long."
+    }
+  ]
+}

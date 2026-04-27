@@ -1,0 +1,79 @@
+{
+  "kind": "email",
+  "version": 1,
+  "description": "Email correspondence — extract header fields, participants, and key content",
+  "fields": [
+    {
+      "name": "from_address",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)^From:\\s*.*?([a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,})"
+    },
+    {
+      "name": "from_name",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the display name of the email sender (not the email address itself). Return null if only an address is shown."
+    },
+    {
+      "name": "to_addresses",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract all recipient email addresses from the To: field as a JSON array of strings."
+    },
+    {
+      "name": "cc_addresses",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract all CC email addresses as a JSON array of strings. Return empty array if none."
+    },
+    {
+      "name": "subject",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)^Subject:\\s*(.+)"
+    },
+    {
+      "name": "date_sent",
+      "type": "date",
+      "extractor": "llm",
+      "prompt": "Extract the email sent date in ISO 8601 format (YYYY-MM-DD). Use the Date: header if present."
+    },
+    {
+      "name": "time_sent",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the time the email was sent in HH:MM format (24-hour). Return null if not determinable."
+    },
+    {
+      "name": "message_id",
+      "type": "string",
+      "extractor": "regex",
+      "pattern": "(?i)Message-ID:\\s*<([^>]+)>"
+    },
+    {
+      "name": "thread_topic",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Extract the thread or conversation topic — usually the subject line with Re: / Fwd: prefixes stripped. Return null if single email."
+    },
+    {
+      "name": "body_summary",
+      "type": "string",
+      "extractor": "llm",
+      "prompt": "Summarise the email body in one to three sentences. Focus on the main request, information, or action items."
+    },
+    {
+      "name": "action_items",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract any explicit action items, requests, or deadlines from the email body as a JSON array of strings. Return empty array if none."
+    },
+    {
+      "name": "attachments",
+      "type": "array",
+      "extractor": "llm",
+      "prompt": "Extract attachment filenames or descriptions mentioned in the email as a JSON array of strings. Return empty array if none."
+    }
+  ]
+}
