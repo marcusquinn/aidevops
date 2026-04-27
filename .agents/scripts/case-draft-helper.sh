@@ -326,6 +326,23 @@ _read_timeline_recent() {
 	return 0
 }
 
+# _collect_excerpts_for_draft <case_id> <intent> <source_ids> <repo_path> <max>
+# Routes through knowledge-helper.sh search --case <case_id> for ranked
+# case-scoped RAG (t2977 Phase 6); falls back to direct _collect_excerpts.
+_collect_excerpts_for_draft() {
+	local case_id="$1" intent="$2" source_ids="$3" repo_path="$4" max_sources="${5:-8}"
+	local _kh="${SCRIPT_DIR}/knowledge-helper.sh"
+	local excerpts=""
+	if [[ -x "$_kh" ]]; then
+		excerpts="$(_collect_excerpts_via_search "$_kh" "$case_id" "$intent" "$repo_path" "$max_sources")"
+		[[ -z "$excerpts" ]] && excerpts="$(_collect_excerpts "$source_ids" "$repo_path" "$max_sources")"
+	else
+		excerpts="$(_collect_excerpts "$source_ids" "$repo_path" "$max_sources")"
+	fi
+	printf '%s' "$excerpts"
+	return 0
+}
+
 # _collect_excerpts_via_search <knowledge_helper> <case_id> <intent> <repo_path> <max>
 # Retrieves ranked excerpts by routing through knowledge-helper.sh search with
 # --case <case_id> so corpus retrieval is automatically scoped to case-relevant
@@ -735,16 +752,9 @@ cmd_draft() {
 	local tier source_ids excerpts timeline_text tones_config tone_fragment length_guidance
 	tier="$(_max_tier "$sources_json" "$repo_path")"
 	source_ids="$(echo "$sources_json" | jq -r '.[].id' 2>/dev/null)" || source_ids=""
-	# Retrieve excerpts via knowledge search (--case scoping, t2977 Phase 6):
-	# automatically scopes corpus retrieval to case-relevant sources by passing
-	# the case_id filter. Falls back to direct file reads if helper unavailable.
-	local _kh="${SCRIPT_DIR}/knowledge-helper.sh"
-	if [[ -x "$_kh" ]]; then
-		excerpts="$(_collect_excerpts_via_search "$_kh" "$case_id" "$intent" "$repo_path" 8)"
-		[[ -z "$excerpts" ]] && excerpts="$(_collect_excerpts "$source_ids" "$repo_path" 8)"
-	else
-		excerpts="$(_collect_excerpts "$source_ids" "$repo_path" 8)"
-	fi
+	# Retrieve excerpts with case-scoped RAG (t2977 Phase 6): automatically
+	# scopes corpus retrieval to case-relevant sources via knowledge search.
+	excerpts="$(_collect_excerpts_for_draft "$case_id" "$intent" "$source_ids" "$repo_path" 8)"
 	timeline_text="$(_read_timeline_recent "$case_dir" 5)"
 	tones_config="$(_load_tones_config "$repo_path")"
 	tone_fragment="$(_get_tone_fragment "$tones_config" "$tone")"
