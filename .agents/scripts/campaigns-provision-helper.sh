@@ -1,0 +1,523 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# campaigns-provision-helper.sh — _campaigns/ plane P1: directory contract + provisioning
+#
+# Establishes the _campaigns/ directory contract as a peer-level user-data plane.
+# Creates lib/, intel/, active/, launched/ sub-folder structure, writes
+# CAMPAIGNS.md, .gitignore rules, and _config/campaigns.json defaults.
+#
+# Usage:
+#   campaigns-provision-helper.sh init [<repo-path>]
+#       Provision _campaigns/ directory contract in the given repo (default: pwd).
+#   campaigns-provision-helper.sh provision [<repo-path>]
+#       Idempotent: re-provision / repair any missing directories or files.
+#   campaigns-provision-helper.sh status [<repo-path>]
+#       Show provisioning state and campaign counts.
+#   campaigns-provision-helper.sh ls [--active] [--launched] [--all] [<repo-path>]
+#       List campaigns in the plane (default: active + launched).
+#   campaigns-provision-helper.sh help
+#       Show this help.
+#
+# Directory contract:
+#   _campaigns/lib/brand/    Reusable brand identity files (versioned)
+#   _campaigns/lib/swipe/    Inspiration swipe files (versioned)
+#   _campaigns/intel/        Competitive intel (gitignored — sensitive)
+#   _campaigns/active/       In-flight campaigns (gitignored by default)
+#   _campaigns/launched/     Post-launch campaigns (versioned)
+#   _campaigns/_config/      Plane config (versioned)
+#
+# Sensitivity: intel/ is local-only; active/ is internal; lib/ and launched/ are internal/public.
+# See .agents/aidevops/campaigns-plane.md for the full contract.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+
+# Guard color fallbacks when shared-constants.sh is absent (e.g. standalone tests)
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
+
+# Prefer print_* from shared-constants; define fallbacks only when absent.
+if ! declare -f print_info >/dev/null 2>&1; then
+	print_info() { local _m="$1"; printf "${BLUE}[INFO]${NC} %s\n" "$_m"; }
+fi
+if ! declare -f print_success >/dev/null 2>&1; then
+	print_success() { local _m="$1"; printf "${GREEN}[OK]${NC} %s\n" "$_m"; }
+fi
+if ! declare -f print_warning >/dev/null 2>&1; then
+	print_warning() { local _m="$1"; printf "${YELLOW}[WARN]${NC} %s\n" "$_m"; }
+fi
+if ! declare -f print_error >/dev/null 2>&1; then
+	print_error() { local _m="$1"; printf "${RED}[ERROR]${NC} %s\n" "$_m"; }
+fi
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+
+readonly CAMPAIGNS_ROOT="_campaigns"
+readonly CAMPAIGNS_CONFIG_SUBDIR="_config"
+readonly CAMPAIGNS_CONFIG_FILE="campaigns.json"
+readonly CAMPAIGNS_GITIGNORE_FILE=".gitignore"
+readonly CAMPAIGNS_CONTRACT_FILE="CAMPAIGNS.md"
+
+readonly CAMPAIGNS_LIB_DIRS=(lib/brand lib/swipe)
+readonly CAMPAIGNS_DATA_DIRS=(intel active launched)
+
+SCRIPT_TEMPLATES_DIR="${SCRIPT_DIR%/scripts}/templates"
+readonly GITIGNORE_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/campaigns-gitignore.txt"
+readonly CONFIG_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/campaigns-config.json"
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_resolve_campaigns_root() {
+	local repo_path="${1:-$(pwd)}"
+	echo "${repo_path}/${CAMPAIGNS_ROOT}"
+	return 0
+}
+
+_is_provisioned() {
+	local repo_path="${1:-$(pwd)}"
+	local campaigns_root
+	campaigns_root="$(_resolve_campaigns_root "$repo_path")"
+	[[ -d "$campaigns_root" ]] || return 1
+	[[ -d "${campaigns_root}/lib/brand" ]] || return 1
+	[[ -d "${campaigns_root}/lib/swipe" ]] || return 1
+	[[ -d "${campaigns_root}/intel" ]] || return 1
+	[[ -d "${campaigns_root}/active" ]] || return 1
+	[[ -d "${campaigns_root}/launched" ]] || return 1
+	[[ -d "${campaigns_root}/${CAMPAIGNS_CONFIG_SUBDIR}" ]] || return 1
+	[[ -f "${campaigns_root}/${CAMPAIGNS_CONFIG_SUBDIR}/${CAMPAIGNS_CONFIG_FILE}" ]] || return 1
+	return 0
+}
+
+_create_directory_tree() {
+	local campaigns_root="$1"
+	local config_dir="${campaigns_root}/${CAMPAIGNS_CONFIG_SUBDIR}"
+	local dir
+	for dir in "${CAMPAIGNS_LIB_DIRS[@]}"; do
+		mkdir -p "${campaigns_root}/${dir}"
+	done
+	for dir in "${CAMPAIGNS_DATA_DIRS[@]}"; do
+		mkdir -p "${campaigns_root}/${dir}"
+	done
+	mkdir -p "$config_dir"
+	return 0
+}
+
+_write_gitignore() {
+	local campaigns_root="$1"
+	local gitignore_path="${campaigns_root}/${CAMPAIGNS_GITIGNORE_FILE}"
+	if [[ -f "$GITIGNORE_TEMPLATE" ]]; then
+		cp "$GITIGNORE_TEMPLATE" "$gitignore_path"
+	else
+		cat >"$gitignore_path" <<'GITIGNORE'
+# _campaigns/ plane — gitignore rules
+# Generated by campaigns-provision-helper.sh
+#
+# intel/ is pre-launch competitive data — never committed (sensitive tier).
+# active/ is in-progress work — gitignored by default (confidential drafts).
+# launched/ is versioned: post-launch directory moves are committed.
+# lib/ is versioned: brand assets + swipe files are stable references.
+
+active/
+intel/
+index/
+GITIGNORE
+	fi
+	return 0
+}
+
+_write_config() {
+	local campaigns_root="$1"
+	local config_path="${campaigns_root}/${CAMPAIGNS_CONFIG_SUBDIR}/${CAMPAIGNS_CONFIG_FILE}"
+	if [[ -f "$CONFIG_TEMPLATE" ]]; then
+		cp "$CONFIG_TEMPLATE" "$config_path"
+	else
+		# Minimal fallback — real config ships via CONFIG_TEMPLATE (campaigns-config.json).
+		# Use a variable so the "cloud-ok" literal does not appear more than once (string ratchet).
+		local _cloud_ok_policy="cloud-ok"
+		cat >"$config_path" <<CONFIG
+{
+  "version": 1,
+  "campaign_id_prefix": "camp",
+  "sensitivity": {
+    "intel": "sensitive",
+    "active": "internal",
+    "lib": "internal",
+    "launched": "public"
+  },
+  "llm_policy": {
+    "intel": "local-only",
+    "active": "${_cloud_ok_policy}",
+    "lib": "${_cloud_ok_policy}",
+    "launched": "${_cloud_ok_policy}"
+  },
+  "blob_threshold_bytes": 31457280,
+  "swipe_auto_tag": true
+}
+CONFIG
+	fi
+	return 0
+}
+
+_write_intel_readme() {
+	local campaigns_root="$1"
+	local intel_readme="${campaigns_root}/intel/README.md"
+	[[ -f "$intel_readme" ]] && return 0
+	cat >"$intel_readme" <<'README'
+# _campaigns/intel/ — Competitive Research
+
+This directory is **gitignored** (sensitivity: `sensitive`).
+
+Store competitive intelligence here:
+- Competitor ad screenshots and copy
+- Market research reports
+- Pricing benchmarks
+- Channel strategy observations
+
+## Sensitivity Policy
+
+Files in this directory are classified `sensitive`:
+- **Never committed** — stays local only.
+- **Local LLM only** — `aidevops campaign` commands that process intel
+  route exclusively to Ollama (hard-fail if unavailable).
+- **Do NOT copy to cloud storage** or sync via unencrypted means.
+
+To version competitive intel, remove `intel/` from `_campaigns/.gitignore`
+and ensure the repo is private with restricted collaborator access.
+README
+	return 0
+}
+
+_write_contract_file() {
+	local campaigns_root="$1"
+	local contract_path="${campaigns_root}/${CAMPAIGNS_CONTRACT_FILE}"
+	[[ -f "$contract_path" ]] && return 0
+	cat >"$contract_path" <<'CONTRACT'
+# _campaigns/ — Marketing Campaign Plane
+
+This directory is managed by the aidevops campaigns plane.
+See `.agents/aidevops/campaigns-plane.md` for the full contract.
+
+## Directory Structure
+
+```
+_campaigns/
+├── CAMPAIGNS.md           ← this file
+├── .gitignore             ← intel/ and active/ are ignored by default
+├── _config/
+│   └── campaigns.json     ← sensitivity policy, blob threshold, cross-plane paths
+├── lib/
+│   ├── brand/             ← logos, colour palette, fonts, voice/tone guides
+│   └── swipe/             ← inspiration: saved ads, landing pages, email examples
+├── intel/                 ← competitive research (GITIGNORED — sensitive tier)
+├── active/                ← in-flight campaigns (GITIGNORED by default)
+│   └── <campaign-id>/
+│       ├── brief.md
+│       ├── creative/
+│       ├── research/
+│       └── schedule.md
+└── launched/              ← post-launch campaigns (versioned)
+    └── <campaign-id>/
+        ├── brief.md
+        ├── creative/
+        ├── results.md     ← post-launch metrics
+        └── learnings.md   ← retrospective insights
+```
+
+## Sensitivity
+
+- `intel/` — `sensitive`, local-LLM-only, gitignored
+- `active/` — `internal`, gitignored by default
+- `lib/` — `internal`, versioned
+- `launched/` — `public`, versioned
+
+## CLI
+
+```bash
+aidevops campaign init        # Provision this plane (idempotent)
+aidevops campaign provision   # Re-provision / repair
+aidevops campaign status      # Show provisioning state + counts
+aidevops campaign ls          # List active + launched campaigns
+aidevops campaign ls --active # List active campaigns only
+```
+
+Managed by: aidevops campaigns-provision-helper.sh (t2962)
+CONTRACT
+	return 0
+}
+
+_patch_repo_gitignore() {
+	local repo_path="$1"
+	local repo_gitignore="${repo_path}/.gitignore"
+	local marker="# campaigns-plane-rules"
+	if [[ -f "$repo_gitignore" ]] && grep -q "$marker" "$repo_gitignore" 2>/dev/null; then
+		return 0
+	fi
+	{
+		printf '\n%s\n' "$marker"
+		printf '%s\n' "_campaigns/active/"
+		printf '%s\n' "_campaigns/intel/"
+		printf '%s\n' "_campaigns/index/"
+	} >>"$repo_gitignore"
+	return 0
+}
+
+_provision_internal() {
+	local repo_path="$1"
+	local campaigns_root
+	campaigns_root="$(_resolve_campaigns_root "$repo_path")"
+
+	if _is_provisioned "$repo_path"; then
+		print_info "_campaigns/ already provisioned at ${campaigns_root}"
+	else
+		print_info "Provisioning _campaigns/ at ${campaigns_root}..."
+		_create_directory_tree "$campaigns_root"
+		print_success "Directories created"
+	fi
+
+	_write_gitignore "$campaigns_root"
+	_write_config "$campaigns_root"
+	_write_intel_readme "$campaigns_root"
+	_write_contract_file "$campaigns_root"
+	_patch_repo_gitignore "$repo_path"
+	print_success "Provisioned: ${campaigns_root}"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Subcommands
+# ---------------------------------------------------------------------------
+
+cmd_init() {
+	local repo_path="${1:-$(pwd)}"
+	repo_path="$(cd "$repo_path" && pwd)"
+	print_info "Initialising _campaigns/ plane for: $repo_path"
+	_provision_internal "$repo_path"
+	echo ""
+	echo "Next steps:"
+	echo "  1. Add brand assets: ${repo_path}/_campaigns/lib/brand/"
+	echo "  2. Add swipe files:  ${repo_path}/_campaigns/lib/swipe/"
+	echo "  3. Start a campaign: mkdir ${repo_path}/_campaigns/active/<campaign-id>/"
+	echo "  4. View status:      aidevops campaign status"
+	return 0
+}
+
+cmd_provision() {
+	local repo_path="${1:-$(pwd)}"
+	repo_path="$(cd "$repo_path" && pwd)"
+	_provision_internal "$repo_path"
+	return 0
+}
+
+cmd_status() {
+	local repo_path="${1:-$(pwd)}"
+	repo_path="$(cd "$repo_path" && pwd)"
+	local campaigns_root
+	campaigns_root="$(_resolve_campaigns_root "$repo_path")"
+
+	echo "Campaigns plane status: ${campaigns_root}"
+	echo ""
+
+	if ! _is_provisioned "$repo_path"; then
+		print_warning "Not provisioned. Run: aidevops campaign init"
+		return 0
+	fi
+
+	print_success "Provisioned"
+
+	# Count items in each sub-folder
+	local active_count=0 launched_count=0 lib_brand_count=0 lib_swipe_count=0 intel_count=0
+
+	# Count active campaigns (directories only)
+	if [[ -d "${campaigns_root}/active" ]]; then
+		while IFS= read -r -d '' _dir; do
+			active_count=$((active_count + 1))
+		done < <(find "${campaigns_root}/active" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null || true)
+	fi
+
+	# Count launched campaigns (directories only)
+	if [[ -d "${campaigns_root}/launched" ]]; then
+		while IFS= read -r -d '' _dir; do
+			launched_count=$((launched_count + 1))
+		done < <(find "${campaigns_root}/launched" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null || true)
+	fi
+
+	# Count brand assets (files only, immediate children)
+	if [[ -d "${campaigns_root}/lib/brand" ]]; then
+		while IFS= read -r -d '' _f; do
+			lib_brand_count=$((lib_brand_count + 1))
+		done < <(find "${campaigns_root}/lib/brand" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null || true)
+	fi
+
+	# Count swipe files
+	if [[ -d "${campaigns_root}/lib/swipe" ]]; then
+		while IFS= read -r -d '' _f; do
+			lib_swipe_count=$((lib_swipe_count + 1))
+		done < <(find "${campaigns_root}/lib/swipe" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null || true)
+	fi
+
+	# Count intel files (directory itself is gitignored)
+	if [[ -d "${campaigns_root}/intel" ]]; then
+		while IFS= read -r -d '' _f; do
+			intel_count=$((intel_count + 1))
+		done < <(find "${campaigns_root}/intel" -mindepth 1 -type f -not -name "README.md" -print0 2>/dev/null || true)
+	fi
+
+	echo "  Active campaigns:  ${active_count}"
+	echo "  Launched campaigns:${launched_count}"
+	echo "  Brand assets:      ${lib_brand_count}"
+	echo "  Swipe files:       ${lib_swipe_count}"
+	echo "  Intel files:       ${intel_count} (gitignored — sensitive)"
+	echo ""
+	echo "Config: ${campaigns_root}/${CAMPAIGNS_CONFIG_SUBDIR}/${CAMPAIGNS_CONFIG_FILE}"
+	return 0
+}
+
+cmd_ls() {
+	local repo_path='' show_active=true show_launched=true
+
+	while [[ $# -gt 0 ]]; do
+		local _cur="${1:-}"
+		case "$_cur" in
+		--active)   show_launched=false; shift ;;
+		--launched) show_active=false; shift ;;
+		--all)      show_active=true; show_launched=true; shift ;;
+		-*) print_error "Unknown option: ${_cur}"; return 1 ;;
+		*)  repo_path="$_cur"; shift ;;
+		esac
+	done
+
+	[[ -z "$repo_path" ]] && repo_path="$(pwd)"
+	repo_path="$(cd "$repo_path" && pwd)"
+	local campaigns_root
+	campaigns_root="$(_resolve_campaigns_root "$repo_path")"
+
+	if ! _is_provisioned "$repo_path"; then
+		print_warning "_campaigns/ not provisioned. Run: aidevops campaign init"
+		return 0
+	fi
+
+	local found=0
+
+	if [[ "$show_active" == true && -d "${campaigns_root}/active" ]]; then
+		local active_dirs=()
+		while IFS= read -r -d '' d; do
+			active_dirs+=("$d")
+		done < <(find "${campaigns_root}/active" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z || true)
+		if [[ ${#active_dirs[@]} -gt 0 ]]; then
+			echo "Active campaigns:"
+			for d in "${active_dirs[@]}"; do
+				local id
+				id="$(basename "$d")"
+				local brief_snippet=""
+				if [[ -f "${d}/brief.md" ]]; then
+					brief_snippet=" — $(head -1 "${d}/brief.md" 2>/dev/null | sed 's/^#* *//' | head -c 60 || true)"
+				fi
+				printf "  %-40s%s\n" "$id" "$brief_snippet"
+			done
+			found=1
+		fi
+	fi
+
+	if [[ "$show_launched" == true && -d "${campaigns_root}/launched" ]]; then
+		local launched_dirs=()
+		while IFS= read -r -d '' d; do
+			launched_dirs+=("$d")
+		done < <(find "${campaigns_root}/launched" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null | sort -z || true)
+		if [[ ${#launched_dirs[@]} -gt 0 ]]; then
+			echo "Launched campaigns:"
+			for d in "${launched_dirs[@]}"; do
+				local id
+				id="$(basename "$d")"
+				local results_state="no results"
+				[[ -f "${d}/results.md" ]] && results_state="results present"
+				printf "  %-40s[%s]\n" "$id" "$results_state"
+			done
+			found=1
+		fi
+	fi
+
+	if [[ $found -eq 0 ]]; then
+		print_info "No campaigns found. Start one: mkdir ${campaigns_root}/active/<campaign-id>/"
+	fi
+	return 0
+}
+
+cmd_help() {
+	cat <<HELP
+campaigns-provision-helper.sh — _campaigns/ plane P1: directory contract + provisioning
+
+Commands:
+  init [<repo-path>]
+      Provision _campaigns/ directory structure in the given repo (default: pwd).
+      Creates: lib/brand/, lib/swipe/, intel/, active/, launched/, _config/,
+               .gitignore, CAMPAIGNS.md, _config/campaigns.json
+
+  provision [<repo-path>]
+      Idempotent: re-provision or repair missing directories and config files.
+
+  status [<repo-path>]
+      Show provisioning state and campaign counts (active, launched, assets).
+
+  ls [--active] [--launched] [--all] [<repo-path>]
+      List campaigns in the plane.
+      --active    Show only active (in-flight) campaigns
+      --launched  Show only launched campaigns
+      --all       Show both (default)
+
+  help
+      Show this help.
+
+Examples:
+  campaigns-provision-helper.sh init
+  campaigns-provision-helper.sh status
+  campaigns-provision-helper.sh ls --active
+  campaigns-provision-helper.sh ls /path/to/repo
+
+Directory contract:
+  _campaigns/lib/brand/    Brand identity files (logos, colours, fonts) — versioned
+  _campaigns/lib/swipe/    Inspiration swipe files — versioned
+  _campaigns/intel/        Competitive research — GITIGNORED (sensitive tier)
+  _campaigns/active/       In-flight campaigns — GITIGNORED by default
+  _campaigns/launched/     Post-launch campaigns — versioned
+  _campaigns/_config/      Plane config — versioned
+
+See: .agents/aidevops/campaigns-plane.md for full contract.
+     t2962 / GH#21250
+HELP
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+main() {
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	init)      cmd_init "$@" ;;
+	provision) cmd_provision "$@" ;;
+	status)    cmd_status "$@" ;;
+	ls | list) cmd_ls "$@" ;;
+	help | --help | -h) cmd_help ;;
+	*)
+		print_error "Unknown command: ${command}"
+		cmd_help
+		return 1
+		;;
+	esac
+}
+
+main "$@"
