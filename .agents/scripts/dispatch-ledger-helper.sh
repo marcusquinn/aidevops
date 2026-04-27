@@ -652,50 +652,83 @@ cmd_expire() {
 	local tmp_file
 	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local status
-		status=$(printf '%s' "$line" | jq -r '.status // ""' 2>/dev/null) || status=""
+	# GH#21105: single-pass jq extraction. The previous loop forked jq up to
+	# 3x per line (status, dispatched_at, pid) — for 600+ ledger entries this
+	# was ~10s per cycle. One jq invocation produces all needed metadata as TSV;
+	# bash then performs the kill -0 liveness checks (which jq cannot do) and
+	# decides which entries to expire. Final rewrite uses a single jq pass too.
+	local tsv_data
+	tsv_data=$(jq -nr '
+		[inputs] | to_entries[]
+		| .key as $idx | .value as $v
+		| "\($idx)\t\($v.status // "")\t\($v.dispatched_at // "")\t\($v.pid // 0)"
+	' "$LEDGER_FILE" 2>/dev/null) || tsv_data=""
 
-		if [[ "$status" != "in-flight" ]]; then
-			printf '%s\n' "$line" >>"$tmp_file"
-			continue
-		fi
+	# Walk the TSV and collect ledger line indices that need to be expired.
+	# should_expire is an integer (0/1) rather than a "true"/"false" string
+	# to avoid tripping the repeated-string-literal ratchet on the value.
+	local -a expire_indices=()
+	local idx status dispatched_at entry_pid dispatch_epoch age
+	local -i should_expire
+	while IFS=$'\t' read -r idx status dispatched_at entry_pid; do
+		[[ -z "$idx" ]] && continue
+		[[ "$status" != "in-flight" ]] && continue
 
-		local should_expire=false
-
-		# Check TTL expiry
-		local dispatched_at
-		dispatched_at=$(printf '%s' "$line" | jq -r '.dispatched_at // ""' 2>/dev/null) || dispatched_at=""
+		should_expire=0
 		if [[ -n "$dispatched_at" ]]; then
-			local dispatch_epoch
 			dispatch_epoch=$(_iso_to_epoch "$dispatched_at")
-			local age=$((now_epoch - dispatch_epoch))
-			if [[ "$age" -gt "$ttl" ]]; then
-				should_expire=true
-			fi
-		fi
-
-		# Check PID liveness
-		if [[ "$should_expire" != "true" ]]; then
-			local entry_pid
-			entry_pid=$(printf '%s' "$line" | jq -r '.pid // 0' 2>/dev/null) || entry_pid=0
-			if [[ "$entry_pid" =~ ^[0-9]+$ ]] && [[ "$entry_pid" -gt 0 ]]; then
-				if ! kill -0 "$entry_pid" 2>/dev/null; then
-					should_expire=true
+			if [[ "$dispatch_epoch" =~ ^[0-9]+$ ]] && [[ "$dispatch_epoch" -gt 0 ]]; then
+				age=$((now_epoch - dispatch_epoch))
+				if [[ "$age" -gt "$ttl" ]]; then
+					should_expire=1
 				fi
 			fi
 		fi
-
-		if [[ "$should_expire" == "true" ]]; then
-			printf '%s\n' "$line" | jq -c --arg ts "$now_ts" '.status = "failed" | .updated_at = $ts' >>"$tmp_file" 2>/dev/null || printf '%s\n' "$line" >>"$tmp_file"
-			expired_count=$((expired_count + 1))
-		else
-			printf '%s\n' "$line" >>"$tmp_file"
+		if ((!should_expire)) && [[ "$entry_pid" =~ ^[0-9]+$ ]] && [[ "$entry_pid" -gt 0 ]]; then
+			if ! kill -0 "$entry_pid" 2>/dev/null; then
+				should_expire=1
+			fi
 		fi
-	done <"$LEDGER_FILE"
 
-	mv "$tmp_file" "$LEDGER_FILE"
+		if ((should_expire)); then
+			expire_indices+=("$idx")
+		fi
+	done <<<"$tsv_data"
+
+	expired_count=${#expire_indices[@]}
+
+	if [[ "$expired_count" -gt 0 ]]; then
+		# Single jq pass rewrites the file: entries at the listed indices have
+		# their status flipped to "failed" with a fresh updated_at timestamp.
+		local indices_csv
+		indices_csv=$(IFS=,; printf '%s' "${expire_indices[*]}")
+		# Two subtleties learned the hard way during GH#21105:
+		#   1. -n is REQUIRED: without it, jq consumes the first JSON line as
+		#      its initial input, then `[inputs]` collects only entries 2..N.
+		#      Indices in $exp (assigned by the matching -n TSV pass above)
+		#      become off-by-one, and the first ledger entry is silently
+		#      dropped from the rewritten file.
+		#   2. .key MUST be bound to $k BEFORE the pipe into $exp. Writing
+		#      `$exp | index(.key)` evaluates `.key` against $exp (an array)
+		#      and jq raises "Cannot index array with string 'key'", which
+		#      `2>/dev/null` would swallow into the cp fallback path.
+		if ! jq -nc --arg ts "$now_ts" --argjson exp "[${indices_csv}]" '
+			[inputs] | to_entries[]
+			| .key as $k
+			| if (($exp | index($k)) != null)
+			  then .value | .status = "failed" | .updated_at = $ts
+			  else .value
+			  end
+		' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null; then
+			# jq failure: preserve original file rather than risk corruption.
+			cp "$LEDGER_FILE" "$tmp_file"
+			expired_count=0
+		fi
+		mv "$tmp_file" "$LEDGER_FILE"
+	else
+		rm -f "$tmp_file"
+	fi
+
 	_release_lock
 
 	printf '%s\n' "$expired_count"
@@ -798,39 +831,43 @@ cmd_prune() {
 		return 0
 	fi
 
-	local now_epoch prune_threshold pruned_count
+	local now_epoch prune_threshold pruned_count orig_count new_count
 	now_epoch=$(_now_epoch)
 	prune_threshold=86400 # 24 hours
 	pruned_count=0
 	local tmp_file
 	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
 
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local status
-		status=$(printf '%s' "$line" | jq -r '.status // ""' 2>/dev/null) || status=""
+	# GH#21105: single-pass jq filter. Previously this loop forked jq up to 2x
+	# per line (status, updated_at) — for 600+ ledger entries this was ~7s per
+	# cycle. The new filter processes all entries in one jq invocation:
+	# in-flight entries are always kept; completed/failed entries are kept only
+	# when updated_at is within the prune threshold (default 24h). Empty/
+	# unparseable updated_at values are kept (fail-open) to avoid silent loss.
+	#
+	# fromdateiso8601 in jq parses RFC 3339 / ISO 8601 with the 'Z' suffix
+	# directly; the try/catch falls back to "$now" so unparseable timestamps
+	# keep the entry rather than dropping it.
+	if ! jq -c --argjson now "$now_epoch" --argjson threshold "$prune_threshold" '
+		select(
+			(.status == "in-flight")
+			or
+			(((.updated_at // "") | length) == 0)
+			or
+			(($now - ((.updated_at) | try fromdateiso8601 catch $now)) <= $threshold)
+		)
+	' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null; then
+		# jq failure: preserve original ledger rather than risk corruption.
+		cp "$LEDGER_FILE" "$tmp_file"
+	fi
 
-		# Keep in-flight entries always
-		if [[ "$status" == "in-flight" ]]; then
-			printf '%s\n' "$line" >>"$tmp_file"
-			continue
-		fi
-
-		# Prune completed/failed entries older than threshold
-		local updated_at
-		updated_at=$(printf '%s' "$line" | jq -r '.updated_at // ""' 2>/dev/null) || updated_at=""
-		if [[ -n "$updated_at" ]]; then
-			local update_epoch
-			update_epoch=$(_iso_to_epoch "$updated_at")
-			local age=$((now_epoch - update_epoch))
-			if [[ "$age" -gt "$prune_threshold" ]]; then
-				pruned_count=$((pruned_count + 1))
-				continue
-			fi
-		fi
-
-		printf '%s\n' "$line" >>"$tmp_file"
-	done <"$LEDGER_FILE"
+	# Pruned count = original line count - kept line count.
+	orig_count=$(wc -l <"$LEDGER_FILE" | tr -d ' ')
+	new_count=$(wc -l <"$tmp_file" | tr -d ' ')
+	[[ "$orig_count" =~ ^[0-9]+$ ]] || orig_count=0
+	[[ "$new_count" =~ ^[0-9]+$ ]] || new_count=0
+	pruned_count=$((orig_count - new_count))
+	[[ "$pruned_count" -lt 0 ]] && pruned_count=0
 
 	mv "$tmp_file" "$LEDGER_FILE"
 	_release_lock

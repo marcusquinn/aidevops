@@ -1178,10 +1178,25 @@ _preflight_cleanup_and_ledger() {
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.
 	# Concurrent workers hit SQLITE_BUSY on a bloated DB (busy_timeout=0).
-	# Runs daily with a 30s budget — catches up over multiple pulse cycles.
-	local _archive_helper="${SCRIPT_DIR}/opencode-db-archive.sh"
-	if [[ -x "$_archive_helper" ]]; then
-		"$_archive_helper" archive --max-duration-seconds 30 >>"$LOGFILE" 2>&1 || true
+	# GH#21105: Moved to an async background job so the per-cycle 30s budget
+	# stops contributing to preflight_cleanup_and_ledger wall time. The async
+	# helper enforces a single-runner lock and a cadence gate
+	# (OPENCODE_DB_ARCHIVE_ASYNC_CADENCE_MIN, default 10 min) so concurrent
+	# pulse invocations do not spawn duplicate archive processes. With archiving
+	# off the critical path, each invocation can use a larger budget
+	# (OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC, default 60s) and still not block
+	# dispatch. Progress and last-run timestamp: ~/.aidevops/logs/opencode-db-archive.*
+	local _archive_async_helper="${SCRIPT_DIR}/opencode-db-archive-async-helper.sh"
+	if [[ -x "$_archive_async_helper" ]]; then
+		nohup "$_archive_async_helper" \
+			>>"${HOME}/.aidevops/logs/opencode-db-archive.log" 2>&1 &
+		disown $! 2>/dev/null || true
+	else
+		# Fallback: synchronous with short timeout (pre-GH#21105 behaviour)
+		local _archive_helper="${SCRIPT_DIR}/opencode-db-archive.sh"
+		if [[ -x "$_archive_helper" ]]; then
+			"$_archive_helper" archive --max-duration-seconds 30 >>"$LOGFILE" 2>&1 || true
+		fi
 	fi
 
 	# t1751: Reap zombie workers whose PRs have been merged by the deterministic merge pass.
