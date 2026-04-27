@@ -353,7 +353,7 @@ _classify_conflicts_by_pattern() {
 	local file_list="$1"
 	local conf_override="${2:-}"
 	local conf_file="$conf_override"
-	local script_dir raw_pattern classification hint_unused pattern filepath matched
+	local script_dir="" raw_pattern="" classification="" hint_unused="" pattern="" filepath="" matched=""
 
 	if [[ -z "$conf_file" ]]; then
 		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || script_dir=""
