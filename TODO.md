@@ -3391,7 +3391,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2982 fix worker output classification to follow worker (Mode B/C from t2980) #auto-dispatch ref:GH#21354
 
-- [ ] t2981 fix worker dispatch silent pre-creation failure (Mode A from t2980) #auto-dispatch ref:GH#21353
+- [x] t2981 fix worker dispatch silent pre-creation failure (Mode A from t2980) #auto-dispatch ref:GH#21353 pr:#21359 completed:2026-04-27
 
 - [x] t2979 t2874 Phase 7: gh comment renderer — strip/annotate Markdoc tags in PR/issue output #auto-dispatch #enhancement #framework ref:GH#21269 pr:#21360 completed:2026-04-27
 
