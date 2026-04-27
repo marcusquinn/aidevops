@@ -3132,7 +3132,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2829 pulse: aggressive stale-lock breaker for wedged cycles holding lockdir for hours #auto-dispatch #framework #pulse ref:GH#20867 pr:#20886 completed:2026-04-25
 
-- [ ] t2831 pulse: per-repo adaptive cadence (hot/warm/cold tiers based on 7-day activity) #auto-dispatch #framework #pulse ref:GH#20869
+- [x] t2831 pulse: per-repo adaptive cadence (hot/warm/cold tiers based on 7-day activity) #auto-dispatch #framework #pulse ref:GH#20869 pr:#21347 completed:2026-04-27
 
 - [ ] t2830 pulse: L1 events-ETag tickle layer above batch prefetch (skip search calls when nothing changed) #auto-dispatch #framework #pulse ref:GH#20868
 
