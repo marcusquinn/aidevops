@@ -553,9 +553,19 @@ _call_llm_route() {
 }
 
 # _build_draft_body <frontmatter> <response> <provenance> — compose full markdown
+# Pipes <response> through markdoc-render-gh.sh (--annotate) before composing
+# so that raw Markdoc tag syntax never appears in the GH comment output.
 _build_draft_body() {
 	local frontmatter="$1" response="$2" provenance="$3"
-	printf '%s\n\n%s\n\n%s\n' "$frontmatter" "$response" "$provenance"
+	local _render_sh="${SCRIPT_DIR}/markdoc-render-gh.sh"
+	local rendered_response
+	if [[ -x "$_render_sh" ]]; then
+		rendered_response="$(printf '%s' "$response" | "$_render_sh" render - --annotate 2>/dev/null)" \
+			|| rendered_response="$response"
+	else
+		rendered_response="$response"
+	fi
+	printf '%s\n\n%s\n\n%s\n' "$frontmatter" "$rendered_response" "$provenance"
 	return 0
 }
 

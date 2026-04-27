@@ -899,6 +899,7 @@ cmd_search() {
 		fi
 		print_info "search: no corpus tree — falling back to grep in sources/"
 		local found=0
+		local _render_sh="${SCRIPT_DIR}/markdoc-render-gh.sh"
 		local src_id
 		for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
 			local src_file
@@ -907,10 +908,18 @@ cmd_search() {
 			local match_lines
 			match_lines=$(_grep_source_file "$query" "$src_file" || true)
 			if [[ -n "$match_lines" ]]; then
-				local excerpt
-				excerpt="${match_lines%%$'\n'*}"
+				local excerpt raw_excerpt
+				raw_excerpt="${match_lines%%$'\n'*}"
+				raw_excerpt="${raw_excerpt:0:200}"
+				# Strip Markdoc tags so raw {% %} syntax never leaks into GH output
+				if [[ -x "$_render_sh" ]]; then
+					excerpt="$(printf '%s' "$raw_excerpt" | "$_render_sh" render - --strip 2>/dev/null)" \
+						|| excerpt="$raw_excerpt"
+				else
+					excerpt="$raw_excerpt"
+				fi
 				printf '{"source_id":"%s","excerpt":"%s"}\n' \
-					"$src_id" "${excerpt:0:200}"
+					"$src_id" "$excerpt"
 				found=$((found + 1))
 			fi
 		done
