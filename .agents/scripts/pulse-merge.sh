@@ -301,7 +301,9 @@ _pulse_merge_admin_safety_check() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	local pr_meta_json labels_str is_fork
+	# t2863: initialise multi-var locals at declaration time so set -u
+	# is safe even on a partial-failure path through the assignments.
+	local pr_meta_json="" labels_str="" is_fork="false"
 	pr_meta_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json labels,isCrossRepository 2>/dev/null) || pr_meta_json=""
 	labels_str=$(printf '%s' "$pr_meta_json" \
