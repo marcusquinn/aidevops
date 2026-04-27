@@ -266,6 +266,73 @@ assert 'kw_style' in r.get('permissionDecisionReason', ''), 'func name missing f
 	return 0
 }
 
+# --- Test 11: one-liner function → no spurious advisory (fix for j>start bug) ---
+test_oneliner_function_no_spurious_advisory() {
+	# A one-liner followed by an unrelated large function.
+	# Before the fix, the parser treated the entire rest of the file as the
+	# one-liner's body because depth reached 0 at j==start and j>start was False.
+	local large_body
+	large_body=$(python3 -c "print('  echo x\n' * 10)")
+	local content
+	content="$(printf 'oneliner() { :; }\n\nsmall_after() {\n%s}\n' "$large_body")"
+	local result
+	result=$(_edit_payload "test.sh" "$content" | python3 "$HOOK_SCRIPT" 2>/dev/null)
+	if [[ -z "$result" ]]; then
+		print_result "one-liner function → no spurious advisory for following small function" 0
+	else
+		print_result "one-liner function → no spurious advisory for following small function" 1 "unexpected output: $result"
+	fi
+	return 0
+}
+
+# --- Test 12: next-line brace style → detected and counted correctly ---
+test_next_line_brace_style() {
+	# func()
+	# {
+	#   body lines...
+	# }
+	local body_lines
+	body_lines=$(python3 -c "print('  echo x\n' * 90)")
+	local content
+	content="$(printf 'nextline_func()\n{\n%s}\n' "$body_lines")"
+	local result
+	result=$(_edit_payload "test.sh" "$content" | python3 "$HOOK_SCRIPT" 2>/dev/null)
+	if echo "$result" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+r = d.get('hookSpecificOutput', {})
+assert r.get('permissionDecision') == 'allow', 'permissionDecision != allow'
+assert 'nextline_func' in r.get('permissionDecisionReason', ''), 'func name missing'
+" 2>/dev/null; then
+		print_result "next-line brace style → detected and advisory emitted" 0
+	else
+		print_result "next-line brace style → detected and advisory emitted" 1 "output: $result"
+	fi
+	return 0
+}
+
+# --- Test 13: next-line brace with 'function' keyword style ---
+test_next_line_brace_keyword_style() {
+	local body_lines
+	body_lines=$(python3 -c "print('  echo x\n' * 90)")
+	local content
+	content="$(printf 'function kw_nextline\n{\n%s}\n' "$body_lines")"
+	local result
+	result=$(_edit_payload "test.sh" "$content" | python3 "$HOOK_SCRIPT" 2>/dev/null)
+	if echo "$result" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+r = d.get('hookSpecificOutput', {})
+assert r.get('permissionDecision') == 'allow', 'permissionDecision != allow'
+assert 'kw_nextline' in r.get('permissionDecisionReason', ''), 'func name missing'
+" 2>/dev/null; then
+		print_result "next-line brace keyword style → detected and advisory emitted" 0
+	else
+		print_result "next-line brace keyword style → detected and advisory emitted" 1 "output: $result"
+	fi
+	return 0
+}
+
 # --- Main ---
 if [[ ! -f "$HOOK_SCRIPT" ]]; then
 	printf '%sFAIL%s Hook script not found: %s\n' "$TEST_RED" "$TEST_RESET" "$HOOK_SCRIPT"
@@ -282,6 +349,9 @@ test_write_tool_checked
 test_bash_tool_ignored
 test_always_allow
 test_function_keyword_style
+test_oneliner_function_no_spurious_advisory
+test_next_line_brace_style
+test_next_line_brace_keyword_style
 
 echo ""
 if [[ "$TESTS_FAILED" -eq 0 ]]; then

@@ -49,7 +49,8 @@ def _is_shell_file(file_path: str) -> bool:
     return ext.lower() in SHELL_EXTENSIONS
 
 
-# Regex to detect bash function declaration lines (module-level, compiled once)
+# Regex to detect bash function declaration lines with same-line opening brace.
+# (module-level, compiled once)
 _FUNC_RE = re.compile(
     r"""
     ^\s*
@@ -62,17 +63,37 @@ _FUNC_RE = re.compile(
     re.VERBOSE,
 )
 
+# Regex for function declarations where the opening brace is on the *next* line.
+# Matches only when the declaration line ends with optional whitespace (no trailing {).
+_FUNC_RE_NOBRACE = re.compile(
+    r"""
+    ^\s*
+    (?:
+        function\s+(\w+)\s*(?:\(\s*\))?\s*$   # function name() or function name (no {)
+        |
+        (\w+)\s*\(\s*\)\s*$                    # name() with no trailing { (brace on next line)
+    )
+    """,
+    re.VERBOSE,
+)
+
 
 def _find_close_brace(lines: list[str], start: int) -> int:
     """Return the index of the closing brace for the function starting at `start`.
 
-    Uses a simple brace-depth counter (fast heuristic, sufficient for advisory).
-    Returns -1 if no matching close is found before end-of-input.
+    `start` is the line index where brace counting begins (i.e. the line
+    containing the opening ``{``).  Uses a simple brace-depth counter (fast
+    heuristic, sufficient for advisory).  Returns -1 if no matching close is
+    found before end-of-input.
+
+    The guard ``j > start`` was intentionally removed so that one-liner
+    functions (``func() { :; }``) are handled correctly: depth reaches 0 on
+    the declaration line itself, which is the correct closing position.
     """
     depth = 0
     for j in range(start, len(lines)):
         depth += lines[j].count("{") - lines[j].count("}")
-        if depth <= 0 and j > start:
+        if depth <= 0:
             return j
     return -1
 
@@ -80,12 +101,14 @@ def _find_close_brace(lines: list[str], start: int) -> int:
 def _iter_function_blocks(text: str) -> Generator[tuple[str, int], None, None]:
     """Yield (function_name, line_count) for each bash function in text.
 
-    Handles both declaration styles:
-      - func_name() {
-      - function func_name {
-      - function func_name() {
+    Handles all three common declaration styles:
+      - func_name() {          (same-line brace)
+      - function func_name {   (same-line brace, keyword form)
+      - function func_name() { (same-line brace, keyword + parens)
+      - func_name()\\n{        (next-line brace)
+      - function func_name\\n{ (next-line brace, keyword form)
 
-    Line count includes the opening brace line and the closing brace line.
+    Line count includes the declaration line and the closing brace line.
     Raises no exceptions — malformed bash is silently skipped.
     """
     lines = text.splitlines()
@@ -93,11 +116,16 @@ def _iter_function_blocks(text: str) -> Generator[tuple[str, int], None, None]:
     i = 0
     while i < n:
         m = _FUNC_RE.match(lines[i])
+        brace_start = i  # line where brace counting starts (contains opening {)
         if not m:
-            i += 1
-            continue
+            # Try next-line brace: declaration on line i, { on line i+1
+            m = _FUNC_RE_NOBRACE.match(lines[i])
+            if not m or i + 1 >= n or lines[i + 1].strip() != "{":
+                i += 1
+                continue
+            brace_start = i + 1  # brace is on the following line
         func_name = m.group(1) or m.group(2)
-        close = _find_close_brace(lines, i)
+        close = _find_close_brace(lines, brace_start)
         if close >= 0:
             yield (func_name, close - i + 1)
             i = close + 1
