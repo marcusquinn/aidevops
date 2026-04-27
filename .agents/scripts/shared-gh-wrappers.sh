@@ -101,7 +101,7 @@ fi
 # only source the conf file if the env var is unset, so an explicit env
 # override (e.g. for a slow-network runner) is never silently overwritten.
 if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/../configs/pulse-rate-limit.conf" ]]; then
-	if [[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] || [[ -z "${AIDEVOPS_GH_WRITE_TIMEOUT+x}" ]]; then
+	if [[ -z "${AIDEVOPS_GH_READ_TIMEOUT+x}" ]] && [[ -z "${AIDEVOPS_GH_WRITE_TIMEOUT+x}" ]]; then
 		# shellcheck disable=SC1091
 		source "$_SHARED_GH_WRAPPERS_DIR/../configs/pulse-rate-limit.conf"
 	fi

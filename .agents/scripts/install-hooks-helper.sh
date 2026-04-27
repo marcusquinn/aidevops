@@ -46,6 +46,10 @@ PRE_COMMIT_DEPLOYED="$HOME/.aidevops/agents/scripts/pre-commit-hook.sh"
 # pre-push quality-validation hook (t2207) — slow network checks split from pre-commit
 PRE_PUSH_QUALITY_MARKER="# aidevops-pre-push-quality-hook"
 
+# markdoc schema conformance pre-commit hook (t2968) — opt-in for knowledge plane repos
+MARKDOC_VALIDATE_MARKER="# aidevops-markdoc-validate-hook"
+MARKDOC_VALIDATE_DEPLOYED="$HOME/.aidevops/agents/scripts/markdoc-validate.sh"
+
 print_info() {
 	local msg="$1"
 	printf "${BLUE}[INFO]${NC} %s\n" "$msg"
@@ -354,6 +358,109 @@ HOOKEOF
 	return 0
 }
 
+# --- Markdoc schema conformance pre-commit hook (t2968) ---
+# Opt-in: installed when the repo has at least one knowledge plane directory
+# OR when AIDEVOPS_MARKDOC_VALIDATE=1 is set. The validate-staged command
+# is a no-op (exit 0) when no knowledge plane *.md files are staged.
+
+_kp_dirs=(
+	"_knowledge" "_cases" "_projects"
+	"_performance" "_feedback" "_campaigns" "_inbox"
+)
+
+_has_knowledge_plane_dir() {
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+	local _d
+	for _d in "${_kp_dirs[@]}"; do
+		[[ -d "${repo_root}/${_d}" ]] && return 0
+	done
+	return 1
+}
+
+install_markdoc_validate_hook() {
+	# Opt-in: skip unless KP dirs exist or env flag set
+	if [[ "${AIDEVOPS_MARKDOC_VALIDATE:-0}" != "1" ]] && ! _has_knowledge_plane_dir; then
+		print_info "markdoc-validate: no knowledge plane dirs found — skipping (set AIDEVOPS_MARKDOC_VALIDATE=1 to force)"
+		return 0
+	fi
+
+	local common_dir
+	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		print_info "markdoc-validate: not in a git repo — skipping"
+		return 0
+	fi
+
+	local hook_path="${common_dir}/hooks/pre-commit"
+
+	if [[ -f "$hook_path" ]] && grep -q "$MARKDOC_VALIDATE_MARKER" "$hook_path" 2>/dev/null; then
+		print_info "markdoc-validate pre-commit hook already installed — skipping"
+		return 0
+	fi
+
+	# Build the hook body with a single-quoted heredoc (no \$ escaping needed).
+	# AIDEVOPS_DEPLOYED_PLACEHOLDER is substituted for the actual path after the
+	# heredoc, keeping the body text free of double-heredoc duplication which
+	# would trigger the repeated-string-literal ratchet gate (t2968).
+	local _deployed="${MARKDOC_VALIDATE_DEPLOYED}"
+	local hook_snippet
+	hook_snippet=$(cat <<'SNIPPET'
+_mkdv_hook=""
+if _mkdv_root=$(git rev-parse --show-toplevel 2>/dev/null); then
+	_mkdv_hook="${_mkdv_root}/.agents/scripts/markdoc-validate.sh"
+fi
+_mkdv_deployed="AIDEVOPS_DEPLOYED_PLACEHOLDER"
+if [[ -f "$_mkdv_hook" ]]; then
+	"$_mkdv_hook" validate-staged || exit $?
+elif [[ -f "$_mkdv_deployed" ]]; then
+	"$_mkdv_deployed" validate-staged || exit $?
+else
+	printf '[markdoc-validate][WARN] markdoc-validate.sh not found — skipping\n' >&2
+fi
+SNIPPET
+	)
+	hook_snippet="${hook_snippet//AIDEVOPS_DEPLOYED_PLACEHOLDER/$_deployed}"
+
+	local _header
+	_header="$MARKDOC_VALIDATE_MARKER
+# Managed by install-hooks-helper.sh — do not edit.
+# Validates staged Markdoc-tagged knowledge plane files. Bypass: git commit --no-verify"
+
+	if [[ ! -f "$hook_path" ]]; then
+		# No existing hook — create a standalone dispatcher
+		printf '#!/usr/bin/env bash\n%s\n\nset -u\n\n%s\n' \
+			"$_header" "$hook_snippet" >"$hook_path"
+		chmod +x "$hook_path"
+		print_success "installed markdoc-validate pre-commit hook at $hook_path"
+		return 0
+	fi
+
+	# Existing hook — append the snippet
+	if grep -q "$MARKDOC_VALIDATE_MARKER" "$hook_path" 2>/dev/null; then
+		print_info "markdoc-validate: already chained in $hook_path"
+		return 0
+	fi
+
+	printf '\n%s\n\n%s\n' "$_header" "$hook_snippet" >>"$hook_path"
+	print_success "chained markdoc-validate into existing pre-commit hook at $hook_path"
+	return 0
+}
+
+_check_status_markdoc_validate_hook() {
+	local common_dir hook_path
+	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
+		print_info "markdoc-validate: not in a git repo — skipped"
+		return 0
+	fi
+	hook_path="${common_dir}/hooks/pre-commit"
+	if [[ -f "$hook_path" ]] && grep -q "$MARKDOC_VALIDATE_MARKER" "$hook_path" 2>/dev/null; then
+		print_success "markdoc-validate: installed in pre-commit hook"
+	else
+		print_info "markdoc-validate: not installed (set AIDEVOPS_MARKDOC_VALIDATE=1 and run: install-hooks-helper.sh install)"
+	fi
+	return 0
+}
+
 # --- Pre-install validator dry-run (t2226) ---
 # Runs all validate_* functions from pre-commit-hook.sh against HEAD state.
 # If any validator fails a no-op commit, the hook is buggy and would strand
@@ -525,6 +632,9 @@ install_hook() {
 
 	# Also install the pre-push quality-validation hook (t2207)
 	install_pre_push_quality_hook
+
+	# Also install the markdoc-validate pre-commit hook (t2968, opt-in)
+	install_markdoc_validate_hook
 
 	return 0
 }
@@ -1000,6 +1110,11 @@ check_status() {
 	echo "Pre-push Quality Hook (t2207)"
 	echo "------------------------------"
 	_check_status_prepush_quality_hook
+
+	echo ""
+	echo "Markdoc Validate Hook (t2968, opt-in)"
+	echo "--------------------------------------"
+	_check_status_markdoc_validate_hook
 
 	echo ""
 	if [[ "$all_ok" == "true" ]]; then

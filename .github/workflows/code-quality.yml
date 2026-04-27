@@ -635,9 +635,9 @@ jobs:
         exit 1
 
     - name: File size check
-      # t2171: per-file regression model replaces total-count-vs-threshold.
-      # PRs fail only when they introduce NEW >1500-line files, not for
-      # pre-existing debt in base. Raw count is non-blocking warning.
+      # t2171 + t2938: ratchet gate — block only when the PR introduces a net
+      # increase in files >1500 lines, or adds a brand-new oversized file.
+      # Pre-existing debt does not block. Matches linters-local.sh (t2228 rule).
       env:
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
@@ -649,28 +649,12 @@ jobs:
       run: |
         set -euo pipefail
 
-        # --- Non-blocking warning: total violation count ---
-        THRESHOLD=40
-        if [ -f ".agents/configs/complexity-thresholds.conf" ]; then
-          val=$(grep '^FILE_SIZE_THRESHOLD=' .agents/configs/complexity-thresholds.conf \
-            | cut -d= -f2 || true)
-          if [ -n "$val" ] && [ "$val" -eq "$val" ] 2>/dev/null; then
-            THRESHOLD=$val
-          fi
-        fi
-
+        # --- Informational: total violation count (no threshold gate) ---
         echo "Scanning file sizes (>1500 lines)..."
         total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
           --metric file-size 2>/dev/null \
           | grep '^Total violations' || echo "Total violations (file-size): unknown")
-        echo "$total_out"
-
-        total=$(echo "$total_out" | grep -oE '[0-9]+$' || echo "0")
-        if [ "$total" -gt "$THRESHOLD" ]; then
-          echo "::warning::File size total: $total violations (threshold: $THRESHOLD). See simplification routine."
-        else
-          echo "Within simplification threshold ($THRESHOLD)"
-        fi
+        echo "$total_out (informational — debt tracked by #21146, gate is ratchet-based per t2938)"
 
         # --- Blocking gate: per-file regression check (PRs only) ---
         if [ "${EVENT_NAME}" != "pull_request" ]; then

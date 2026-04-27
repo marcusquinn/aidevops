@@ -2009,7 +2009,7 @@ _action_cpt_single() {
 	# sources (e.g. `graph+body`, `body`, `graph+body+prose`) so the log line
 	# in `_try_close_parent_tracker` records which extractors found children.
 	# t2841: explicit init — under set -u, _b_nums is referenced at the
-	# union step (line ~2007) regardless of whether children_section is
+	# union step below regardless of whether children_section is
 	# non-empty. Without init, an issue body with no children-section
 	# triggers `_b_nums: unbound variable` and aborts the function.
 	local _g_nums="" _b_nums="" _p_nums="" child_nums=""
@@ -2290,6 +2290,11 @@ reconcile_issues_single_pass() {
 	# Cycle-wide counters for log summary
 	local ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
 
+	# Cross-platform base64 decode flag: GNU uses -d, BSD/macOS canonical is -D.
+	# Both flags work on modern macOS (10.15+), but -D is the documented BSD form.
+	local _b64d_flag="-d"
+	[[ "$(uname -s)" == "Darwin" ]] && _b64d_flag="-D"
+
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
@@ -2324,9 +2329,11 @@ reconcile_issues_single_pass() {
 		# into ~8 — eliminating the dominant per-cycle CPU overhead that
 		# pushed reconcile_issues_single_pass past the 600s
 		# PRE_RUN_STAGE_TIMEOUT in #21042. Title and body are base64-wrapped
-		# so embedded newlines/tabs survive round-trip; @tsv would otherwise
-		# escape \n / \t into literal markers and break consumers like
-		# _extract_children_section that need real newlines.
+		# so embedded newlines/tabs survive round-trip. join("|") is used
+		# instead of @tsv: IFS=$'\t' with read collapses consecutive tabs
+		# (empty fields) into a single delimiter, corrupting field offsets
+		# when labels_csv is empty. "|" is not an IFS whitespace character
+		# so consecutive "|" separators are never collapsed. See bash(1) IFS.
 		local issues_tsv
 		issues_tsv=$(printf '%s' "$issues_json" | jq -r '
 			.[] | [
@@ -2334,19 +2341,19 @@ reconcile_issues_single_pass() {
 				((.title // "") | @base64),
 				((.labels // []) | map(.name) | join(",")),
 				((.body // "") | @base64)
-			] | @tsv
-		' 2>/dev/null) || issues_tsv=""
+			] | join("|")
+		') || issues_tsv=""
 		[[ -n "$issues_tsv" ]] || continue
 
-		while IFS=$'\t' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
+		while IFS='|' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
 			local issue_title="" issue_body=""
 			if [[ -n "$issue_title_b64" ]]; then
-				issue_title=$(printf '%s' "$issue_title_b64" | base64 -d 2>/dev/null) || issue_title=""
+				issue_title=$(printf '%s' "$issue_title_b64" | base64 "$_b64d_flag" 2>/dev/null) || issue_title=""
 			fi
 			if [[ -n "$issue_body_b64" ]]; then
-				issue_body=$(printf '%s' "$issue_body_b64" | base64 -d 2>/dev/null) || issue_body=""
+				issue_body=$(printf '%s' "$issue_body_b64" | base64 "$_b64d_flag" 2>/dev/null) || issue_body=""
 			fi
 
 			# Stage 1: close issues whose dedup guard detects a merged PR
@@ -2436,7 +2443,7 @@ reconcile_issues_single_pass() {
 					lia_per_repo=$((lia_per_repo + 1))
 				fi
 			fi
-		done
+		done <<< "$issues_tsv"
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	# t2838: persist last-run epoch when backfill actually ran this cycle.

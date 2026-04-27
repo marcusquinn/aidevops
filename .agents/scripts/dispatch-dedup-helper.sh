@@ -1047,6 +1047,83 @@ is_assigned() {
 	return 0
 }
 
+#######################################
+# enumerate_blockers — report ALL structural dispatch blockers for an issue.
+#
+# Unlike is_assigned() which short-circuits on the first match, this function
+# runs every unconditional structural check (parent-task, no-auto-dispatch)
+# and emits ALL matching signals as newline-separated tokens on stdout.
+#
+# Intentionally excludes cost-budget, hydration window, and assignee checks —
+# those have nuanced interactive UX that the caller handles separately.
+# GUARD_UNCERTAIN is emitted when the gh API call fails (fail-closed).
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#   $3 = self_login (optional, reserved for future extension)
+#
+# Stdout: newline-separated blocker tokens; empty when no structural blockers.
+# Returns:
+#   0 — at least one blocker token was emitted
+#   1 — no structural blockers found (safe to dispatch for label-based checks)
+#
+# t2894: used by _check_linked_issue_gate in full-loop-helper.sh to surface
+# ALL label-based blockers in a single pass rather than stopping at the first.
+#######################################
+enumerate_blockers() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	# self_login reserved for future extension — not used by structural checks
+	# local self_login="${3:-}"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	# Re-use pre-fetched JSON when the caller has already loaded issue metadata.
+	local issue_meta_json gh_rc=0
+	if [[ -n "${ISSUE_META_JSON:-}" ]] \
+		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
+		issue_meta_json="$ISSUE_META_JSON"
+	else
+		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
+	fi
+
+	if [[ "$gh_rc" -ne 0 || -z "$issue_meta_json" ]]; then
+		printf 'GUARD_UNCERTAIN (reason=gh-api-failure issue=%s repo=%s rc=%s)\n' \
+			"$issue_number" "$repo_slug" "$gh_rc"
+		return 0
+	fi
+
+	local _found=false
+	local _blocker_out
+
+	# Check 1: parent-task / meta unconditional block (t1986).
+	_blocker_out=$(_is_assigned_check_parent_task "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ -n "$_blocker_out" ]]; then
+		printf '%s\n' "$_blocker_out"
+		_found=true
+	fi
+
+	# Check 2: no-auto-dispatch unconditional block (t2832).
+	_blocker_out=$(_is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ -n "$_blocker_out" ]]; then
+		printf '%s\n' "$_blocker_out"
+		_found=true
+	fi
+
+	if [[ "$_found" == "true" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # PR evidence dedup check functions are in dispatch-dedup-pr.sh (GH#18916).
 
 #######################################
@@ -1278,6 +1355,11 @@ Usage:
                                                      Check for recent "Dispatching worker" comment (exit 0=found, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
                                                        Check if assigned to another login (exit 0=blocked, 1=free)
+  dispatch-dedup-helper.sh enumerate-blockers <issue> <slug> [runner]
+                                                       Report ALL structural label blockers (exit 0=blocked, 1=none)
+                                                       Emits newline-separated tokens: PARENT_TASK_BLOCKED,
+                                                       NO_AUTO_DISPATCH_BLOCKED, GUARD_UNCERTAIN. Unlike is-assigned,
+                                                       does not short-circuit on first match. t2894.
   dispatch-dedup-helper.sh check-cost-budget <issue> <slug> [tier]
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
@@ -1323,6 +1405,11 @@ Examples:
     echo "No merged PR evidence — safe to dispatch"
   fi
 
+  # Report ALL structural label blockers in one pass (t2894)
+  while IFS= read -r blocker; do
+    echo "Blocker: $blocker"
+  done < <(dispatch-dedup-helper.sh enumerate-blockers 2300 owner/repo)
+
   # Cross-machine claim lock (t1686)
   if dispatch-dedup-helper.sh claim 2300 owner/repo mylogin; then
     echo "Claim won — safe to dispatch"
@@ -1354,6 +1441,13 @@ main() {
 	is-assigned)
 		_require_args is-assigned 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
 		is_assigned "$1" "$2" "${3:-}"
+		;;
+	enumerate-blockers)
+		# t2894: report ALL structural label blockers in a single pass.
+		# local capture avoids positional-param ratchet violation in main().
+		_require_args enumerate-blockers 2 "$#" "<issue-number> <repo-slug> [runner]" || return 1
+		local _eb_issue="$1" _eb_repo="$2" _eb_runner="${3:-}"
+		enumerate_blockers "$_eb_issue" "$_eb_repo" "$_eb_runner"
 		;;
 	check-cost-budget)
 		# t2007: cost-per-issue circuit breaker. Direct entry point for tests

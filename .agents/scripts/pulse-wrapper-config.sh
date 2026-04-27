@@ -135,6 +135,20 @@ PULSE_BATCH_PREFETCH_ENABLED="${PULSE_BATCH_PREFETCH_ENABLED:-1}"               
 PULSE_BATCH_PREFETCH_CACHE_DIR="${PULSE_BATCH_PREFETCH_CACHE_DIR:-${HOME}/.aidevops/logs/batch-prefetch}"  # GH#19963: Directory for batch prefetch per-slug cache files
 PULSE_BATCH_SEARCH_LIMIT="${PULSE_BATCH_SEARCH_LIMIT:-200}"                                                # GH#19963: Max results per gh search call (Search API --limit cap)
 
+# Per-repo activity tier classification (t2831)
+#
+# Classifies repos into hot/warm/cold based on rolling 7-day event count.
+# Controls prefetch cadence: hot=every cycle, warm=every ~3 cycles, cold=every ~10 cycles.
+# Tier cache refreshed hourly by pulse-repo-tier-classifier-routine.sh (launchd).
+#
+# Intervals are minimum seconds between full prefetches per tier.
+# Hot (interval=0) repos are never skipped — they always get a fresh prefetch.
+PULSE_TIER_CLASSIFICATION_ENABLED="${PULSE_TIER_CLASSIFICATION_ENABLED:-1}"                               # t2831: 1=enable, 0=disable tier-based cadence (rollback switch)
+PULSE_TIER_HOT_INTERVAL="${PULSE_TIER_HOT_INTERVAL:-0}"                                                   # t2831: hot repos: 0=never skip (check every cycle)
+PULSE_TIER_WARM_INTERVAL="${PULSE_TIER_WARM_INTERVAL:-180}"                                               # t2831: warm repos: skip if last check < 180s ago (~3 cycles at 60s base)
+PULSE_TIER_COLD_INTERVAL="${PULSE_TIER_COLD_INTERVAL:-600}"                                               # t2831: cold repos: skip if last check < 600s ago (~10 cycles at 60s base)
+export PULSE_TIER_CLASSIFICATION_ENABLED PULSE_TIER_HOT_INTERVAL PULSE_TIER_WARM_INTERVAL PULSE_TIER_COLD_INTERVAL
+
 # Per-issue retry state (t1888, GH#2076, GH#17384)
 #
 # Cause-aware retry backoff per issue. Different failure types get

@@ -1,0 +1,51 @@
+From: colleague@example.com
+To: team@example.com
+Cc: manager@example.com
+Subject: Report with attachment
+Date: Wed, 23 Apr 2026 12:00:00 +0000
+Message-ID: <test-003@example.com>
+In-Reply-To: <original-thread@example.com>
+References: <original-thread@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary-mixed-001"
+
+--boundary-mixed-001
+Content-Type: multipart/alternative; boundary="boundary-alt-001"
+
+--boundary-alt-001
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+Please find the quarterly report attached.
+
+Thanks,
+Colleague
+
+--boundary-alt-001
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html><body><p>Please find the quarterly report attached.</p><p>Thanks,<br/>Colleague</p></body></html>
+
+--boundary-alt-001--
+
+--boundary-mixed-001
+Content-Type: text/plain; charset="utf-8"
+Content-Disposition: attachment; filename="report.txt"
+Content-Transfer-Encoding: 7bit
+
+Quarterly Report Q1 2026
+========================
+Revenue: $1.2M
+Expenses: $0.8M
+Net: $0.4M
+
+--boundary-mixed-001
+Content-Type: application/octet-stream
+Content-Disposition: attachment; filename="data.csv"
+Content-Transfer-Encoding: base64
+
+bW9udGgscmV2ZW51ZSxleHBlbnNlcwpKYW4sMzAwMDAwLDIwMDAwMApGZWIsMzUwMDAw
+LDI1MDAwMApNYXIsNTUwMDAwLDM1MDAwMAo=
+
+--boundary-mixed-001--

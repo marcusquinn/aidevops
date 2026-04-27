@@ -346,14 +346,18 @@ _write_per_slug_caches() {
 # Fetch and cache issues for a single owner.
 # Sets _OWNER_SEARCH_CALLS, _OWNER_CACHE_WRITES, _OWNER_ERRORS (Bash 3.2 namerefs workaround)
 # Arguments: $1=owner  $2=slugs (comma-separated owner/repo list for REST fallback)
+#            $3=graphql_remaining (optional pre-computed integer; pass to avoid redundant
+#                                  rate-limit API calls when iterating over many owners)
 _refresh_owner_issues() {
 	local owner="$1"
 	local slugs="${2:-}"
+	local graphql_remaining="${3:-}"
 	# Proactive REST fallback (t2902): if GraphQL is at/below the fallback
 	# threshold, skip `gh search issues` (which uses the GraphQL Search API,
 	# ~30 points/call) and go straight to per-slug REST iteration. Avoids
 	# burning points on a call that will fail and then be retried via REST.
-	if _gh_should_fallback_to_rest 2>/dev/null; then
+	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
+	if _gh_should_fallback_to_rest "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search issues for owner=${owner}, going straight to REST"
 		gh_record_call search-rest 2>/dev/null || true
 		_prefetch_rest_per_slug issues "$slugs"
@@ -401,11 +405,15 @@ _refresh_owner_issues() {
 # Fetch and cache PRs for a single owner.
 # Sets _OWNER_SEARCH_CALLS, _OWNER_CACHE_WRITES, _OWNER_ERRORS
 # Arguments: $1=owner  $2=slugs (comma-separated owner/repo list for REST fallback)
+#            $3=graphql_remaining (optional pre-computed integer; pass to avoid redundant
+#                                  rate-limit API calls when iterating over many owners)
 _refresh_owner_prs() {
 	local owner="$1"
 	local slugs="${2:-}"
+	local graphql_remaining="${3:-}"
 	# Proactive REST fallback (t2902): same pattern as _refresh_owner_issues.
-	if _gh_should_fallback_to_rest 2>/dev/null; then
+	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
+	if _gh_should_fallback_to_rest "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search prs for owner=${owner}, going straight to REST"
 		gh_record_call search-rest 2>/dev/null || true
 		_prefetch_rest_per_slug prs "$slugs"
@@ -482,11 +490,21 @@ _cmd_refresh() {
 	_OWNER_CACHE_WRITES=0
 	_OWNER_ERRORS=0
 
+	# Pre-fetch GraphQL remaining once per refresh cycle (t2902 review followup).
+	# Both _refresh_owner_issues and _refresh_owner_prs call _gh_should_fallback_to_rest,
+	# which issues a `gh api rate_limit` call when no pre-computed value is supplied.
+	# With N owners that produces 2×N redundant API calls. Fetch here and pass the
+	# integer down so each per-owner function can reuse it without hitting the API again.
+	# Fail-open: if the fetch fails, an empty string is passed and the per-owner functions
+	# fall back to their own rate-limit call (the existing behaviour).
+	local _graphql_remaining=""
+	_graphql_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _graphql_remaining=""
+
 	local owner slugs
 	while IFS='|' read -r owner slugs; do
 		[[ -n "$owner" ]] || continue
-		_refresh_owner_issues "$owner" "$slugs" || true
-		_refresh_owner_prs "$owner" "$slugs" || true
+		_refresh_owner_issues "$owner" "$slugs" "$_graphql_remaining" || true
+		_refresh_owner_prs "$owner" "$slugs" "$_graphql_remaining" || true
 	done <<<"$owner_groups"
 
 	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS}"

@@ -1,0 +1,13 @@
+From: =?utf-8?B?VMOpc3Qgw5xzZXI=?= <tester@example.com>
+To: recipient@example.com
+Subject: =?utf-8?B?UmVwb3J0IPCfk4ogd2l0aCBkaWFjcml0aWNzOiDDvMO2w6Q=?=
+Date: Wed, 23 Apr 2026 13:00:00 +0000
+Message-ID: <test-004@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+This email tests UTF-8 handling with diacritics: =C3=BC=C3=B6=C3=A4
+And emoji in subject line.
+
+Special chars: =C3=A9=C3=A8=C3=AA =C3=B1 =C3=9F

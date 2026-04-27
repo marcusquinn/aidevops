@@ -53,7 +53,7 @@ Each ingested source should have a `meta.json` alongside its content in `sources
 {
   "version": 1,
   "id": "unique-kebab-id",
-  "kind": "document|dataset|export|reference",
+  "kind": "document|dataset|export|reference|email|attachment",
   "source_uri": "https://original.url.or/local/path",
   "sha256": "hex-hash-of-original-file",
   "ingested_at": "2026-04-25T00:00:00Z",
@@ -68,6 +68,102 @@ Each ingested source should have a `meta.json` alongside its content in `sources
 Fields: `id` (unique within repo), `kind` (broad category), `source_uri` (original
 location for re-verification), `sha256` (integrity check), `sensitivity`/`trust` (policy
 enforcement), `blob_path` (set when file ≥30MB — see below), `size_bytes` (raw byte count).
+
+## Email Kind (`kind=email`) (t2854)
+
+`.eml` and `.emlx` (Apple Mail) files are ingested as first-class `kind=email` sources.
+When `knowledge-helper.sh add` receives an `.eml`/`.emlx` file, it delegates to
+`email-ingest-helper.sh` which parses headers, body, and attachments into structured
+sources.
+
+### Email-Specific Meta Fields
+
+Parent source (`kind=email`) `meta.json` extends the base schema with:
+
+```json
+{
+  "kind": "email",
+  "from": "sender@example.com",
+  "to": "recipient@example.com",
+  "cc": "cc@example.com",
+  "bcc": "",
+  "date": "Wed, 23 Apr 2026 10:00:00 +0000",
+  "subject": "Email subject line",
+  "message_id": "<unique-id@example.com>",
+  "in_reply_to": "<parent-id@example.com>",
+  "references": "<thread-id@example.com>",
+  "body_text_sha": "sha256-of-text.txt",
+  "body_html_sha": "sha256-of-body.html",
+  "attachments": [
+    {"source_id": "child-source-id", "filename": "report.pdf"}
+  ]
+}
+```
+
+Child source (`kind=attachment`) `meta.json` adds:
+
+```json
+{
+  "kind": "attachment",
+  "parent_source": "parent-email-source-id",
+  "attachment_filename": "report.pdf",
+  "content_type": "application/pdf"
+}
+```
+
+### Source File Layout
+
+```text
+sources/<email-id>/
+  meta.json          # kind=email, full email headers + attachment refs
+  text.txt           # Plain-text body (or text extracted from HTML-only)
+  body.html          # Sanitised HTML body (if present)
+sources/<attachment-id>/
+  meta.json          # kind=attachment, parent_source linkage
+  report.pdf         # Original attachment file
+```
+
+### Body Sanitisation
+
+Stored email bodies are sanitised on ingest for privacy and reproducibility:
+
+- **Tracking pixels:** `<img src="https://...">` tags are replaced with
+  `<!-- tracker stripped -->` comments.
+- **UTM parameters:** `?utm_source=...&utm_medium=...` query strings are stripped
+  from URLs in the HTML body.
+- **Remote images:** all remote `<img>` sources are stripped (prevents phone-home
+  on re-render).
+
+Sanitisation is idempotent — re-ingesting the same `.eml` produces identical
+`body.html` output.
+
+### MIME Edge Cases
+
+| Case | Handling |
+|------|----------|
+| `multipart/alternative` (text + html) | Both extracted; text preferred for `text.txt` |
+| `multipart/related` (html + inline images) | Inline images treated as attachments |
+| Apple Mail `.emlx` | Length-prefix header stripped before parsing |
+| Quoted-printable encoding | Decoded by Python `email` stdlib |
+| Base64-encoded bodies | Decoded by Python `email` stdlib |
+| Non-UTF-8 charsets | Attempted UTF-8, fallback to latin-1 with warning |
+
+### CLI
+
+```bash
+# Direct ingestion via email helper
+email-ingest-helper.sh ingest /path/to/email.eml [--repo-path <path>] [--sensitivity <tier>]
+
+# Auto-detected via knowledge add
+knowledge-helper.sh add /path/to/email.eml
+```
+
+### Sensitivity Classification
+
+Each source (parent email body + each child attachment) is independently classified
+by the sensitivity detector (t2846). A benign email body at `tier:internal` can have
+a contract attachment at `tier:privileged` — the child's tier is independent of the
+parent's.
 
 ## 30MB Blob Threshold
 

@@ -231,28 +231,33 @@ _check_linked_issue_gate() {
 		fi
 	fi
 
-	# Check 3 (t2890): inherit pulse-side structural dispatch gates by calling
-	# dispatch-dedup-helper.sh::is-assigned — the canonical primitive the pulse
-	# uses (pulse-dispatch-dedup-layers.sh:243). Translates the unambiguous
-	# hard-block signals (PARENT_TASK_BLOCKED, NO_AUTO_DISPATCH_BLOCKED) into
-	# blocks here so /full-loop honors the same eligibility semantics as the
-	# pulse. Cost-budget, hydration window, and ownership-by-other are
-	# intentionally out of scope (need nuanced interactive UX). Fail-open on
-	# missing helper or empty stdout (matches the gh-api fail-open above).
+	# Check 3 (t2890, t2894): inherit pulse-side structural dispatch gates by
+	# calling dispatch-dedup-helper.sh::enumerate-blockers — which runs ALL
+	# unconditional label checks in a single pass and emits each matching
+	# signal on a separate line. Replaces the former is-assigned call + case
+	# statement that short-circuited on the first match, so users now see
+	# every blocker in one /full-loop invocation instead of one per retry.
+	# Cost-budget, hydration window, and ownership-by-other are intentionally
+	# out of scope (need nuanced interactive UX). Fail-open on missing helper
+	# or empty stdout (matches the gh-api fail-open above).
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]]; then
 		local dedup_out
-		dedup_out=$("$dedup_helper" is-assigned "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
-		case "$dedup_out" in
-		*PARENT_TASK_BLOCKED*)
-			blocked=true
-			reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
-			;;
-		*NO_AUTO_DISPATCH_BLOCKED*)
-			blocked=true
-			reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
-			;;
-		esac
+		dedup_out=$("$dedup_helper" enumerate-blockers "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
+		local _blocker_line
+		while IFS= read -r _blocker_line; do
+			[[ -z "$_blocker_line" ]] && continue
+			case "$_blocker_line" in
+			*PARENT_TASK_BLOCKED*)
+				blocked=true
+				reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
+				;;
+			*NO_AUTO_DISPATCH_BLOCKED*)
+				blocked=true
+				reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
+				;;
+			esac
+		done <<<"$dedup_out"
 	fi
 
 	if [[ "$blocked" == "true" ]]; then
@@ -763,10 +768,15 @@ _detect_node_project() {
 		return 1
 	fi
 	local has_relevant_scripts
+	# Only include scripts that are actually executed by the runner.
+	# "format" and "lint" (without :fix suffix) are omitted because the runner
+	# only attempts format:fix/format:write/prettier:fix and lint:fix — detecting
+	# on bare format/lint causes false positives where validators report "passed"
+	# without actually running anything (Augment review, PR #20898).
 	has_relevant_scripts=$(jq -r '
 		.scripts // {} |
-		[has("format"),has("format:fix"),has("format:write"),
-		 has("lint"),has("lint:fix"),
+		[has("format:fix"),has("format:write"),has("prettier:fix"),
+		 has("lint:fix"),
 		 has("typecheck"),has("check:types"),has("tsc")] |
 		any
 	' package.json 2>/dev/null || echo "false")
@@ -790,16 +800,21 @@ _detect_node_project() {
 # fix scripts may legitimately exit non-zero on un-auto-fixable issues.
 # If auto-fix produced changes, amend the HEAD commit.
 # Sets caller-scope `fix_changes` to 1 if amend happened, 0 otherwise.
-# Args: $1=pm (npm|pnpm|yarn) $2=timeout_secs
+# Args: $1=pm (npm|pnpm|yarn) $2=timeout_secs $3=timeout_available (0|1)
 # Returns 0 on success, 1 if amend failed.
 _run_node_auto_fix() {
-	local pm="$1" t="$2"
+	local pm="$1"
+	local t="$2"
+	local timeout_available="${3:-0}"
+	# Build a timeout prefix array; empty when timeout(1) is not available.
+	local -a timeout_prefix=()
+	[[ "$timeout_available" == "1" ]] && timeout_prefix=("timeout" "$t")
 	fix_changes=0
 	local script_name
 	for script_name in format:fix format:write prettier:fix; do
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
 			print_info "[validators] $pm run $script_name (auto-fix)"
-			timeout "$t" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
 			break
 		fi
 	done
@@ -808,7 +823,7 @@ _run_node_auto_fix() {
 	for script_name in lint:fix; do
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
 			print_info "[validators] $pm run $script_name (auto-fix)"
-			timeout "$t" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
 			break
 		fi
 	done
@@ -816,7 +831,9 @@ _run_node_auto_fix() {
 		return 0
 	fi
 	print_info "[validators] auto-fix produced changes, amending commit"
-	git add -A
+	# Use git add -u (tracked files only) to avoid staging untracked artifacts
+	# that format/lint runners may create (e.g. caches, generated files).
+	git add -u
 	# --no-verify on amend: avoid recursing into pre-commit territory.
 	if ! git commit --amend --no-edit --no-verify >/dev/null 2>&1; then
 		print_error "[validators] failed to amend commit with auto-fix changes"
@@ -829,11 +846,17 @@ _run_node_auto_fix() {
 
 # Run check-only typecheck. Picks first existing script in preference order.
 # Captures output for failure diagnosis. Mentor error on failure.
-# Args: $1=pm $2=timeout_secs
+# Args: $1=pm $2=timeout_secs $3=timeout_available (0|1)
 # Returns 0 on pass/no-script, 1 on failure.
 _run_node_typecheck() {
-	local pm="$1" t="$2"
-	local typecheck_script=""
+	local pm="$1"
+	local t="$2"
+	local timeout_available="${3:-0}"
+	# Build a timeout prefix array; empty when timeout(1) is not available.
+	local -a timeout_prefix=()
+	[[ "$timeout_available" == "1" ]] && timeout_prefix=("timeout" "$t")
+	local typecheck_script
+	typecheck_script=""
 	local script_name
 	for script_name in typecheck check:types tsc; do
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
@@ -845,21 +868,26 @@ _run_node_typecheck() {
 		return 0
 	fi
 	print_info "[validators] $pm run $typecheck_script (check-only)"
+	# Separate declaration from mktemp assignment: local masks the exit code of
+	# command substitutions, so declare first then assign (Gemini review PR #20898).
+	# mktemp without -t: more portable (GNU and BSD mktemp differ on -t semantics).
 	local tc_log
-	tc_log="$(mktemp -t validators-tc.XXXXXX)"
-	if timeout "$t" "$pm" run "$typecheck_script" >"$tc_log" 2>&1; then
+	tc_log="$(mktemp)"
+	local tc_rc=0
+	"${timeout_prefix[@]}" "$pm" run "$typecheck_script" >"$tc_log" 2>&1 || tc_rc=$?
+	if [[ "$tc_rc" -eq 0 ]]; then
 		rm -f "$tc_log"
 		return 0
 	fi
 	print_error "[validators] $typecheck_script FAILED — code has type errors"
 	print_error "  last 20 lines:"
 	tail -20 "$tc_log" >&2
+	rm -f "$tc_log"
 	print_error ""
 	print_error "  diagnose:    $pm run $typecheck_script"
 	print_error "  fix errors, commit, then re-run: full-loop-helper.sh commit-and-pr ..."
 	print_error "  bypass:      full-loop-helper.sh commit-and-pr ... --skip-hooks"
 	print_error "               (or AIDEVOPS_SKIP_PROJECT_VALIDATORS=1 env)"
-	rm -f "$tc_log"
 	return 1
 }
 
@@ -876,10 +904,16 @@ _run_project_validators() {
 		return 0
 	fi
 	print_info "[validators] running node project validators ($pm)..."
-	local validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT:-300}"
+	local validator_timeout
+	validator_timeout="${AIDEVOPS_VALIDATOR_TIMEOUT:-300}"
+	# Detect timeout(1) availability once here; sub-functions receive a flag so
+	# they don't each re-check (portability: macOS may lack timeout without
+	# GNU coreutils; pattern mirrors _rebase_and_push:L941).
+	local timeout_available=0
+	command -v timeout >/dev/null 2>&1 && timeout_available=1
 	local fix_changes=0
-	_run_node_auto_fix "$pm" "$validator_timeout" || return 1
-	_run_node_typecheck "$pm" "$validator_timeout" || return 1
+	_run_node_auto_fix "$pm" "$validator_timeout" "$timeout_available" || return 1
+	_run_node_typecheck "$pm" "$validator_timeout" "$timeout_available" || return 1
 	if [[ "$fix_changes" == "1" ]]; then
 		print_info "[validators] passed (auto-fix amended into commit)"
 	else

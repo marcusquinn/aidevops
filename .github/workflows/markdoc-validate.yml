@@ -1,0 +1,96 @@
+name: Markdoc Schema Validation
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - '_knowledge/**/*.md'
+      - '_cases/**/*.md'
+      - '_projects/**/*.md'
+      - '_performance/**/*.md'
+      - '_feedback/**/*.md'
+      - '_campaigns/**/*.md'
+      - '_inbox/**/*.md'
+      - '.agents/tools/markdoc/schemas/**'
+      - '.agents/scripts/markdoc-validate.sh'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - '_knowledge/**/*.md'
+      - '_cases/**/*.md'
+      - '_projects/**/*.md'
+      - '_performance/**/*.md'
+      - '_feedback/**/*.md'
+      - '_campaigns/**/*.md'
+      - '_inbox/**/*.md'
+      - '.agents/tools/markdoc/schemas/**'
+      - '.agents/scripts/markdoc-validate.sh'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.sha || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  markdoc-validate:
+    name: Markdoc Schema Conformance
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate markdoc-validate.sh (ShellCheck)
+        run: |
+          shellcheck .agents/scripts/markdoc-validate.sh
+
+      - name: Validate knowledge plane *.md files
+        run: |
+          set -euo pipefail
+          VALIDATOR=".agents/scripts/markdoc-validate.sh"
+          chmod +x "$VALIDATOR"
+
+          # Knowledge plane directories
+          KP_DIRS=(
+            "_knowledge" "_cases" "_projects"
+            "_performance" "_feedback" "_campaigns" "_inbox"
+          )
+
+          # Collect all .md files in knowledge plane directories
+          TARGETS=()
+          for dir in "${KP_DIRS[@]}"; do
+            if [[ -d "$dir" ]]; then
+              while IFS= read -r f; do
+                [[ -n "$f" ]] && TARGETS+=("$f")
+              done < <(find "$dir" -name '*.md' -type f 2>/dev/null)
+            fi
+          done
+
+          if [[ ${#TARGETS[@]} -eq 0 ]]; then
+            echo "No knowledge plane Markdown files found — skipping validation."
+            exit 0
+          fi
+
+          echo "Validating ${#TARGETS[@]} knowledge plane file(s)..."
+          "$VALIDATOR" validate "${TARGETS[@]}"
+          echo "All files valid."
+
+      - name: Validate schemas lint cleanly (jq)
+        run: |
+          SCHEMA_DIR=".agents/tools/markdoc/schemas"
+          if [[ ! -d "$SCHEMA_DIR" ]]; then
+            echo "Schema directory $SCHEMA_DIR not found — skipping."
+            exit 0
+          fi
+          errors=0
+          for f in "$SCHEMA_DIR"/*.json; do
+            [[ -f "$f" ]] || continue
+            if ! jq . "$f" > /dev/null 2>&1; then
+              echo "ERROR: $f is not valid JSON"
+              errors=$((errors + 1))
+            fi
+          done
+          if [[ "$errors" -gt 0 ]]; then
+            echo "$errors schema file(s) failed JSON validation."
+            exit 1
+          fi
+          echo "All schema files are valid JSON."

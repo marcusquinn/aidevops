@@ -797,6 +797,11 @@ _handle_run_result() {
 	# continuation — the model may have created a worktree, written files, etc.
 	# Killing and starting fresh wastes all that context.
 	#
+	# - 124 + activity + hard-kill sentinel → return 79 (watchdog_stall_killed)
+	#   to skip continuation entirely. The watchdog escalated to a proactive
+	#   kill because total elapsed ≥ WORKER_STALL_HARD_KILL_SECONDS — the slot
+	#   should be freed for re-dispatch instead of held through more stalls.
+	#   (t2956 / Issue #21231)
 	# - 124 + activity → return 78 (watchdog_stall_continue) so the retry loop
 	#   can resume the session with a continuation prompt before giving up.
 	# - 124 + no activity → rate_limit as before (provider never responded).
@@ -808,6 +813,21 @@ _handle_run_result() {
 			discovered_session_for_continue=$(extract_session_id_from_output "$output_file")
 			if [[ "$role" != "pulse" && -n "$discovered_session_for_continue" ]]; then
 				store_session_id "$provider" "$session_key" "$discovered_session_for_continue" "$selected_model"
+			fi
+			# t2956: Hard-kill path — proactive elapsed-time kill from the
+			# watchdog. Skip continuation, free the slot. The flag is set in
+			# _execute_run_attempt when the .watchdog_stall_killed sentinel
+			# was present alongside .watchdog_killed.
+			if [[ "${_run_watchdog_hard_killed:-0}" -eq 1 ]]; then
+				# Local to avoid duplicating the literal across the file
+				# (string-literal ratchet). The pre-existing per-session cap
+				# branch below uses the same label string.
+				local _hk_label="watchdog_stall_killed"
+				_run_result_label="$_hk_label"
+				_run_failure_reason="$_hk_label"
+				rm -f "$output_file"
+				print_warning "$selected_model watchdog hard-kill (elapsed ≥ WORKER_STALL_HARD_KILL_SECONDS) — slot freed for re-dispatch (no continuation)"
+				return 79
 			fi
 			_run_result_label="watchdog_stall_continue"
 			rm -f "$output_file"
@@ -948,6 +968,17 @@ _execute_run_attempt() {
 		exit_code=124
 		rm -f "${exit_code_file}.watchdog_killed"
 	fi
+	# t2956 / Issue #21231: Hard-kill sentinel — set when the watchdog
+	# escalated from passive (78 / continue) to proactive (79 / killed)
+	# because the worker had been stalling for ≥ WORKER_STALL_HARD_KILL_SECONDS
+	# total elapsed. _handle_run_result reads this flag (via the function-
+	# scope variable) and returns 79 to short-circuit the continuation loop.
+	_run_watchdog_hard_killed=0
+	local _stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
+	if [[ -f "$_stall_killed_marker" ]]; then
+		_run_watchdog_hard_killed=1
+		rm -f "$_stall_killed_marker"
+	fi
 	rm -f "$exit_code_file"
 
 	# GH#16978 Bug B: Stale session ID causes "Session not found" on OpenCode.
@@ -977,6 +1008,12 @@ _execute_run_attempt() {
 			if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
 				exit_code=124
 				rm -f "${exit_code_file}.watchdog_killed"
+			fi
+			# t2956: Hard-kill sentinel must also be re-checked on the retry path.
+			local _retry_stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
+			if [[ -f "$_retry_stall_killed_marker" ]]; then
+				_run_watchdog_hard_killed=1
+				rm -f "$_retry_stall_killed_marker"
 			fi
 			rm -f "$exit_code_file"
 		fi
@@ -1351,11 +1388,12 @@ _cmd_run_finish() {
 		# _run_result_label is set by _handle_run_result:
 		#   "premature_exit" = model had activity but no completion signal
 		#   "no_activity"    = no LLM output at all
-		#   "watchdog_stall_continue" = stall with prior activity
+		#   "watchdog_stall_continue" = stall with prior activity (passive kill)
+		#   "watchdog_stall_killed"   = stall + elapsed ≥ hard-kill cap (proactive)
 		#   other            = provider/infra failures
 		local crash_type=""
 		case "${_run_result_label:-}" in
-		premature_exit | watchdog_stall_continue)
+		premature_exit | watchdog_stall_continue | watchdog_stall_killed)
 			# Model attempted real work (read files, created worktree) but
 			# couldn't produce commits/PR. This is "overwhelmed" — the model
 			# tried and failed due to task complexity, not infra issues.
@@ -1715,6 +1753,32 @@ cmd_run() {
 			return 1
 		fi
 
+		# t2956 / Issue #21231: Handle watchdog hard-kill (exit 79).
+		# The watchdog escalated from passive (78 / continue) to proactive
+		# (79 / killed) because total elapsed reached
+		# WORKER_STALL_HARD_KILL_SECONDS while still stalled. Skip
+		# continuation, skip provider rotation — record the
+		# watchdog_stall_killed metric and free the slot for re-dispatch.
+		# This is the per-attempt analogue of the existing per-session cap
+		# (GH#20681) below: same outcome label, different trigger.
+		if [[ "$attempt_exit" -eq 79 ]]; then
+			# Accumulate per-session stall metrics so subsequent attempts
+			# (if the dispatcher re-runs this issue) see prior cost.
+			_session_stall_count=$((_session_stall_count + 1))
+			_session_stall_cumulative_s=$((_session_stall_cumulative_s + _stall_timeout_s))
+			print_warning "Watchdog hard-kill — recording watchdog_stall_killed (per-attempt elapsed cap, slot freed for re-dispatch)"
+			# _run_result_label and _run_failure_reason were already set to
+			# "watchdog_stall_killed" by _handle_run_result when it returned 79;
+			# reuse them here instead of re-declaring the literal so the
+			# repeated-string ratchet is not crossed.
+			local _ledger_fail="fail"
+			append_runtime_metric "$role" "$session_key" "$selected_model" \
+				"$(extract_provider "$selected_model")" \
+				"$_run_result_label" "79" "$_run_failure_reason" "1" "0"
+			_cmd_run_finish "$session_key" "$_ledger_fail"
+			return 1
+		fi
+
 		# GH#17648 / GH#20681: Handle watchdog stall with activity (exit 78).
 		# The worker was making progress but the connection/stream dropped.
 		# Track cumulative stall events per session and apply hard-kill caps
@@ -1730,10 +1794,14 @@ cmd_run() {
 				"$_session_stall_count" "$_session_stall_cumulative_s" \
 				"$_stall_continue_max" "$_stall_cumulative_max_s"; then
 				print_warning "Watchdog stall cap exceeded (stalls=${_session_stall_count}/${_stall_continue_max}, cumulative=${_session_stall_cumulative_s}s/${_stall_cumulative_max_s}s) — recording watchdog_stall_killed"
-				_run_result_label="watchdog_stall_killed"
-				_run_failure_reason="watchdog_stall_killed"
-				# Use the already-set label vars as metric args to avoid
-				# pushing "watchdog_stall_killed" past the 3-occurrence ratchet.
+				# t2956: Reuse the same local already declared earlier in this
+				# block so the literal "watchdog_stall_killed" stays under the
+				# repeated-string ratchet. The hard-kill (exit 79) and
+				# session-cap (exit 78 cap-exceeded) branches both record the
+				# same outcome label.
+				local _hk_label="watchdog_stall_killed"
+				_run_result_label="$_hk_label"
+				_run_failure_reason="$_hk_label"
 				append_runtime_metric "$role" "$session_key" "$selected_model" \
 					"$(extract_provider "$selected_model")" \
 					"$_run_result_label" "143" "$_run_failure_reason" "1" "0"

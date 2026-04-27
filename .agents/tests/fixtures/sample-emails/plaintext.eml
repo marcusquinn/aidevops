@@ -1,0 +1,15 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: Plain text test email
+Date: Wed, 23 Apr 2026 10:00:00 +0000
+Message-ID: <test-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This is a plain text email body for testing the knowledge plane email ingestion.
+
+It has multiple lines and should be preserved as-is in text.txt.
+
+Best regards,
+Test Sender

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.aidevops.repo-tier-classify</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{BASH_BIN}}</string>
+		<string>{{AIDEVOPS_AGENTS_SCRIPTS}}/pulse-repo-tier-classifier-routine.sh</string>
+		<string>run</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/.aidevops/logs/repo-tier-classify.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/.aidevops/logs/repo-tier-classify.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>

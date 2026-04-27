@@ -1,0 +1,23 @@
+{
+  "name": "sensitivity",
+  "description": "Marks content with a data-sensitivity classification tier. Applied at file, section, or inline scope to control visibility, redaction policy, and access gating.",
+  "attributes": {
+    "tier": {
+      "type": "string",
+      "required": true,
+      "enum": ["public", "internal", "confidential", "privileged", "redacted"],
+      "description": "Classification level. public = unrestricted; internal = org-visible; confidential = need-to-know; privileged = legal hold; redacted = scrubbed output."
+    },
+    "scope": {
+      "type": "string",
+      "required": false,
+      "enum": ["file", "section", "inline"],
+      "description": "Granularity of the classification. Defaults to the tag's positional scope when omitted."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["file", "section", "inline"],
+    "description": "File-level wraps the entire document. Section-level wraps a heading block. Inline marks a phrase or span."
+  },
+  "example": "{% sensitivity tier=\"confidential\" scope=\"section\" %}\nThis section contains client-confidential analysis.\n{% /sensitivity %}"
+}

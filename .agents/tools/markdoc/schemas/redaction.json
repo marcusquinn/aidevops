@@ -1,0 +1,21 @@
+{
+  "name": "redaction",
+  "description": "Marks content for redaction in output renders. The tagged content is replaced with a redaction placeholder, preserving the reason and optional redactor identity for audit trails.",
+  "attributes": {
+    "reason": {
+      "type": "string",
+      "required": true,
+      "description": "Why the content is redacted (e.g. \"PII\", \"attorney-client privilege\", \"trade secret\", \"ongoing investigation\")."
+    },
+    "redacted-by": {
+      "type": "string",
+      "required": false,
+      "description": "Identity of the person or process that applied the redaction (e.g. username, role, or automated pipeline name)."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["section", "inline"],
+    "description": "Section-level redacts an entire block. Inline redacts a specific phrase or value within running text."
+  },
+  "example": "The payment was made to {% redaction reason=\"PII\" redacted-by=\"legal-review\" %}John Smith at 123 Main St{% /redaction %} on 2026-02-14."
+}

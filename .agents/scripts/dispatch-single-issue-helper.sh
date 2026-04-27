@@ -143,43 +143,74 @@ _dsi_check_parent_task() {
 
 #######################################
 # Resolve model + tier for dispatch.
+# Priority order (mirrors pulse-model-routing.sh::resolve_dispatch_model_for_labels):
+#   1. Explicit --model CLI flag (operator intent, always wins)
+#   2. model:opus-4-7 label (highest-priority override, t2239 — before tier labels)
+#   3. Tier labels: tier:thinking → opus, tier:standard → sonnet, tier:simple → haiku
+#   4. Default tier: sonnet
+#
+# NOTE: the pulse additionally applies a dispatch-path safety net (t2819) that
+# auto-elevates issues touching self-hosting files to opus-4-7. That safety net
+# is not replicated here because it requires inspecting the issue body + brief
+# file scope, which is a heavier operation than this helper performs. If you are
+# dispatching a dispatch-path issue manually and want the safety-net tier, pass
+# --model anthropic/claude-opus-4-7 explicitly.
+#
 # Args:
 #   $1 - labels CSV
 #   $2 - --model override (may be empty)
-# Sets: _DSI_TIER (haiku|sonnet|opus), _DSI_SELECTED_MODEL (may be empty)
+# Sets: _DSI_TIER (haiku|sonnet|opus), _DSI_SELECTED_MODEL (full model id or empty)
 #######################################
 _dsi_resolve_model() {
 	local labels_csv="$1"
 	local model_override="$2"
 
-	# Default tier
-	_DSI_TIER="sonnet"
-
-	# Tier label takes precedence
-	local needle=",${labels_csv},"
-	if [[ "$needle" == *",tier:simple,"* ]]; then
-		_DSI_TIER="haiku"
-	elif [[ "$needle" == *",tier:standard,"* ]]; then
-		_DSI_TIER="sonnet"
-	elif [[ "$needle" == *",tier:thinking,"* ]]; then
-		_DSI_TIER="opus"
-	fi
-
-	# Explicit --model wins
+	# Explicit --model CLI flag takes highest priority (operator intent).
+	# Infer tier from the model string for display purposes only.
 	if [[ -n "$model_override" ]]; then
 		_DSI_SELECTED_MODEL="$model_override"
+		case "$model_override" in
+		*opus*) _DSI_TIER="opus" ;;
+		*haiku*) _DSI_TIER="haiku" ;;
+		*) _DSI_TIER="sonnet" ;;
+		esac
 		return 0
 	fi
 
-	# Otherwise inspect model:* label (e.g., model:opus-4-7)
+	# Default tier: sonnet. Labels below may override.
+	_DSI_TIER="sonnet"
+	_DSI_SELECTED_MODEL=""
+
+	# Normalise labels to lowercase for case-insensitive matching
+	# (mirrors _resolve_worker_tier in pulse-dispatch-core.sh).
+	local labels_lower
+	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
+	local needle=",${labels_lower},"
+
+	# model:opus-4-7 label and tier:thinking both elevate to the opus tier.
+	# model:opus-4-7 also pins the specific model and takes precedence over
+	# tier:* labels (t2239 — same priority order as pulse-model-routing.sh
+	# resolve_dispatch_model_for_labels).
+	if [[ "$needle" == *",model:opus-4-7,"* || "$needle" == *",tier:thinking,"* ]]; then
+		_DSI_TIER="opus"
+		if [[ "$needle" == *",model:opus-4-7,"* ]]; then
+			_DSI_SELECTED_MODEL="anthropic/claude-opus-4-7"
+		fi
+		return 0
+	fi
+
+	# Remaining tier labels (sonnet is already the default; only haiku changes it)
+	if [[ "$needle" == *",tier:simple,"* ]]; then
+		_DSI_TIER="haiku"
+	fi
+
+	# Other model:* labels (e.g. model:sonnet-4-6) — lower priority than
+	# model:opus-4-7 (handled above) but takes effect over tier default.
 	local m
-	m=$(printf '%s\n' "${labels_csv//,/$'\n'}" | grep -oE '^model:[a-z0-9.-]+' | head -1 || true)
+	m=$(printf '%s\n' "${labels_lower//,/$'\n'}" | grep -oE '^model:[a-z0-9.-]+' | head -1 || true)
 	if [[ -n "$m" ]]; then
-		# Map model:opus-4-7 → anthropic/claude-opus-4-7 (canonical form)
 		local short="${m#model:}"
 		_DSI_SELECTED_MODEL="anthropic/claude-${short}"
-	else
-		_DSI_SELECTED_MODEL=""
 	fi
 	return 0
 }
@@ -560,6 +591,10 @@ cmd_dispatch() {
 
 #######################################
 # Subcommand: status <issue> <slug>
+# Reads the dispatch ledger for the given issue and pretty-prints the state,
+# including a PID liveness check via kill -0 (same as dispatch-ledger-helper.sh
+# cmd_check_issue). This ensures `status` and the pulse agree on whether a
+# worker is actually running — not just recorded in the ledger.
 #######################################
 cmd_status() {
 	local issue_number="${1:-}"
@@ -578,20 +613,41 @@ cmd_status() {
 		return 0
 	fi
 
-	# Pretty-print key fields
-	local pid session_key launched_by status started_at
+	# Extract ledger fields (use actual field names from ledger schema:
+	# session_key, issue_number, repo_slug, pid, dispatched_at, status,
+	# updated_at, tier, model)
+	local pid session_key ledger_status dispatched_at tier model
 	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
 	session_key=$(printf '%s' "$entry" | jq -r '.session_key // "?"')
-	launched_by=$(printf '%s' "$entry" | jq -r '.launched_by // "?"')
-	status=$(printf '%s' "$entry" | jq -r '.status // "?"')
-	started_at=$(printf '%s' "$entry" | jq -r '.started_at // "?"')
+	ledger_status=$(printf '%s' "$entry" | jq -r '.status // "?"')
+	dispatched_at=$(printf '%s' "$entry" | jq -r '.dispatched_at // "?"')
+	tier=$(printf '%s' "$entry" | jq -r '.tier // "?"')
+	model=$(printf '%s' "$entry" | jq -r '.model // "?"')
 
-	_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
-	_dsi_info "  PID:          ${pid}"
+	# PID liveness check (kill -0 tests whether the process exists, without
+	# sending a real signal). Mirrors the check in dispatch-ledger-helper.sh
+	# cmd_check_issue so the manual CLI and the pulse agree on liveness.
+	local liveness="unknown"
+	if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -gt 0 ]]; then
+		if kill -0 "$pid" 2>/dev/null; then
+			liveness="running"
+		else
+			liveness="dead"
+		fi
+	fi
+
+	_dsi_ok "Dispatch for #${issue_number} (${repo_slug}):"
+	_dsi_info "  PID:          ${pid} (${liveness})"
 	_dsi_info "  Session key:  ${session_key}"
-	_dsi_info "  Launched by:  ${launched_by}"
-	_dsi_info "  Status:       ${status}"
-	_dsi_info "  Started:      ${started_at}"
+	_dsi_info "  Ledger status: ${ledger_status}"
+	_dsi_info "  Dispatched:   ${dispatched_at}"
+	_dsi_info "  Tier:         ${tier}"
+	_dsi_info "  Model:        ${model}"
+
+	if [[ "$liveness" == "dead" ]]; then
+		_dsi_warn "Worker PID ${pid} is no longer running — ledger may be stale"
+		_dsi_info "  If no other worker is active, the issue is safe to re-dispatch."
+	fi
 	return 0
 }
 

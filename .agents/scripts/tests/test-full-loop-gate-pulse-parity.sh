@@ -77,14 +77,14 @@ assert_in_gate() {
 }
 
 # -------------------------------------------------------------------
-# Assertion A: gate calls dispatch-dedup-helper.sh::is-assigned
+# Assertion A: gate calls dispatch-dedup-helper.sh::enumerate-blockers (t2894)
 # -------------------------------------------------------------------
 assert_in_gate \
 	'dispatch-dedup-helper\.sh' \
 	"_check_linked_issue_gate references dispatch-dedup-helper.sh"
 assert_in_gate \
-	'is-assigned' \
-	"_check_linked_issue_gate calls is-assigned subcommand"
+	'enumerate-blockers' \
+	"_check_linked_issue_gate calls enumerate-blockers subcommand (t2894)"
 
 # -------------------------------------------------------------------
 # Assertion B: PARENT_TASK_BLOCKED case translates to a block
@@ -119,6 +119,17 @@ assert_in_gate \
 assert_in_gate \
 	'blocked=true' \
 	"_check_linked_issue_gate sets blocked=true on hard-block signals"
+
+# -------------------------------------------------------------------
+# Assertion G (t2894): gate iterates over enumerate-blockers output
+# with a loop so ALL blockers are reported (not just the first).
+# -------------------------------------------------------------------
+assert_in_gate \
+	'while.*read.*_blocker_line' \
+	"_check_linked_issue_gate iterates enumerate-blockers output with a loop (t2894)"
+assert_in_gate \
+	'done.*dedup_out' \
+	"_check_linked_issue_gate loop reads from dedup_out heredoc string (t2894)"
 
 # -------------------------------------------------------------------
 # Assertion F: full-loop-helper.sh shellcheck-clean
