@@ -2009,7 +2009,7 @@ _action_cpt_single() {
 	# sources (e.g. `graph+body`, `body`, `graph+body+prose`) so the log line
 	# in `_try_close_parent_tracker` records which extractors found children.
 	# t2841: explicit init — under set -u, _b_nums is referenced at the
-	# union step (line ~2007) regardless of whether children_section is
+	# union step below regardless of whether children_section is
 	# non-empty. Without init, an issue body with no children-section
 	# triggers `_b_nums: unbound variable` and aborts the function.
 	local _g_nums="" _b_nums="" _p_nums="" child_nums=""
