@@ -1534,7 +1534,7 @@ main() {
 				# Fix: enforce PULSE_LOCK_MAX_AGE_S as a fall-through trigger so
 				# stale-but-alive locks reach the proper reclaim path below.
 				local _ir_age _ir_max
-				_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || echo 0)
+				_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || true)
 				_ir_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
 				if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then
 					echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}, age ${_ir_age}s), skipping" >>"$WRAPPER_LOGFILE"
