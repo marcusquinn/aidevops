@@ -3324,7 +3324,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2944 hotfix: bash 3.2 syntax error in bounty-spam-detector.sh blocks all macOS CI #auto-dispatch #bug #framework ref:GH#21162 pr:#21165 completed:2026-04-27
 
-- [ ] t2946 settings namespace divergence: orchestration.* schema completely unread, supervisor.* read but undocumented #auto-dispatch #bug #enhancement #framework ref:GH#21180
+- [x] t2946 settings namespace divergence: orchestration.* schema completely unread, supervisor.* read but undocumented #auto-dispatch #bug #enhancement #framework ref:GH#21180 pr:#21191 completed:2026-04-27
 
 - [ ] t2950 raise MAX_WORKERS_CAP ceiling 32→64 in pulse-wrapper-config.sh #auto-dispatch #enhancement #framework ref:GH#21185
 
