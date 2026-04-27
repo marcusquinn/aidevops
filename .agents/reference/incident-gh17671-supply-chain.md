@@ -11,13 +11,13 @@ This is the canonical postmortem for the only known supply-chain attempt against
 
 ## Threat actor
 
-- **Account:** `internet-dot` (GitHub user ID 207546839, account created 2025-04-14, ~1650 public repos).
-- **Profile shape:** drive-by external contributor (`authorAssociation: NONE` on every PR they filed). Public profile cross-references blog `hol.org` → `hashgraph-online` org, which controls the action that the malicious PR invoked.
-- **Pattern after 17671:** at least seven follow-up PRs (#17865, 17862, 17815, 17743, 17742, 17731, 17718) with similar shape — workflow-file injection, no engagement, fire-and-forget. All closed without merge.
+- **Account:** non-collaborator drive-by external contributor (`authorAssociation: NONE`). Specific identifier and account metadata redacted; the lesson value here is in the threat-actor *pattern*, not in naming the individual. The full identity remains in the original PR/issue audit trail (#17671) for forensic reference.
+- **Profile shape:** `authorAssociation: NONE` on every PR they filed. Public profile cross-referenced an external blog → vendor org, which controlled the action the malicious PR invoked.
+- **Pattern after 17671:** multiple follow-up PRs with similar shape — workflow-file injection, no engagement, fire-and-forget. All closed without merge.
 
 ## What happened
 
-PR #17671 was a single-file change adding a `.github/workflows/*.yml` whose only job was `uses: hashgraph-online/skill-publish@<sha>` — i.e. invoking an action the attacker controlled. Because GitHub Actions configured via `on: push:` and `on: pull_request:` run on every event in the repo, merging that workflow file would have given the attacker arbitrary code execution on every subsequent CI run, including with read access to repository secrets.
+PR #17671 was a single-file change adding a `.github/workflows/*.yml` whose only job was `uses: <attacker-controlled-action>@<sha>` — i.e. invoking an action the attacker controlled. Because GitHub Actions configured via `on: push:` and `on: pull_request:` run on every event in the repo, merging that workflow file would have given the attacker arbitrary code execution on every subsequent CI run, including with read access to repository secrets.
 
 The PR was filed against `main`. The auto-merge cascade in `pulse-merge.sh` engaged. Three independent gates would each have stopped the merge IF correctly designed; all three had latent gaps:
 
