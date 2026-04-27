@@ -1460,6 +1460,50 @@ _record_invocation_source() {
 	return 0
 }
 
+# t2994: cache priming with staleness gate. Called from main() once per
+# launchd invocation, but only fires if the sentinel is missing or older
+# than $_prime_max_age seconds (default 1800 = 30 min, override via
+# AIDEVOPS_PULSE_PRIME_MAX_AGE). Steady-state launchd respawns (every 120s)
+# hit a fresh sentinel and skip — prefetch_state inside the cycle keeps
+# caches warm naturally. Post-deploy first invocations and long quiet
+# periods trigger an actual prime. Non-fatal — a prime failure must not
+# abort the cycle. Honours AIDEVOPS_SKIP_CACHE_PRIME=1 for debug.
+#
+# Moved here from pulse-lifecycle-helper.sh::_start (t2992) because
+# launchd's KeepAlive bypasses the helper — auto-respawn within the
+# helper's stop→sleep→start window means _start's _is_running early-return
+# skips priming entirely, and the original t2992 hook never fired during
+# launchd-managed restarts (the canonical path on macOS).
+_pulse_prime_caches_if_stale() {
+	[[ "${AIDEVOPS_SKIP_CACHE_PRIME:-0}" == "1" ]] && return 0
+
+	local _prime_helper=""
+	local _prime_sentinel=""
+	local _prime_max_age=""
+	_prime_helper="${SCRIPT_DIR}/pulse-cache-prime.sh"
+	_prime_sentinel="${HOME}/.aidevops/cache/pulse-cache-prime-last-run"
+	_prime_max_age="${AIDEVOPS_PULSE_PRIME_MAX_AGE:-1800}"
+
+	[[ ! -x "$_prime_helper" ]] && return 0
+
+	local _should_prime=0
+	if [[ ! -f "$_prime_sentinel" ]]; then
+		_should_prime=1
+	else
+		local _now_epoch="" _stamp_epoch="" _age_s=""
+		_now_epoch=$(date +%s)
+		_stamp_epoch=$(stat -f %m "$_prime_sentinel" 2>/dev/null || stat -c %Y "$_prime_sentinel" 2>/dev/null || echo 0)
+		_age_s=$((_now_epoch - _stamp_epoch))
+		[[ "$_age_s" -gt "$_prime_max_age" ]] && _should_prime=1
+	fi
+
+	if [[ "$_should_prime" == "1" ]]; then
+		printf '[pulse-wrapper] Pre-warming pulse caches (t2992 + t2994 stale-gate)...\n' >&2
+		"$_prime_helper" >/dev/null 2>&1 || printf '[pulse-wrapper] WARN: cache prime returned non-zero (non-fatal — first cycle may be slow)\n' >&2
+	fi
+	return 0
+}
+
 main() {
 	# GH#18670: declare this process as headless BEFORE anything else runs
 	# so every child shell stage sees AIDEVOPS_HEADLESS and
@@ -1608,6 +1652,14 @@ main() {
 	if ! check_dedup; then
 		return 0
 	fi
+
+	# t2994: pre-warm L3 caches when sentinel is stale. Runs after lock,
+	# canary, session, and dedup gates have all passed (so a real cycle is
+	# about to run) and BEFORE prefetch_state inside the cycle. Steady-state
+	# launchd respawns skip via the staleness gate; first-cycle-after-deploy
+	# (or after a long quiet period) primes once. See helper comment for
+	# the launchd-bypass rationale.
+	_pulse_prime_caches_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.
