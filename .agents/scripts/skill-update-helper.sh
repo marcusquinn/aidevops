@@ -1401,6 +1401,11 @@ _cleanup_worktree() {
 	ahead=$(git -C "$wt_path" rev-list --count "${default_branch}..HEAD" 2>/dev/null || echo "0")
 
 	if [[ "$ahead" -eq 0 ]]; then
+		# Ownership check (t2974): refuse to remove worktrees owned by other sessions
+		if is_worktree_owned_by_others "$wt_path"; then
+			log_warn "Skipping removal of worktree owned by another session: $wt_path"
+			return 0
+		fi
 		log_info "Cleaning up empty worktree: $wt_path"
 		git worktree remove "$wt_path" --force 2>/dev/null || true
 		git branch -D "$branch" 2>/dev/null || true
