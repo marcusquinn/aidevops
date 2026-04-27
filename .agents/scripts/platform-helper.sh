@@ -176,11 +176,8 @@ platform_create_issue() {
 		_platform_require_gh || return 1
 		local label_args=()
 		[[ -n "$labels" ]] && label_args=("--label" "$labels")
-		gh issue create \
-			--repo "$slug" \
-			--title "$title" \
-			--body-file "$body_file" \
-			"${label_args[@]}"
+		# aidevops-allow: raw-gh-wrapper — platform-helper IS the abstraction layer
+		gh issue create --repo "$slug" --title "$title" --body-file "$body_file" "${label_args[@]}"
 		;;
 	local)
 		_platform_local_log "create_issue" "slug=${slug} title=${title}"
@@ -270,12 +267,8 @@ platform_create_pr() {
 	case "$platform" in
 	github)
 		_platform_require_gh || return 1
-		gh pr create \
-			--repo "$slug" \
-			--title "$title" \
-			--body-file "$body_file" \
-			--base "$base" \
-			--head "$head"
+		# aidevops-allow: raw-gh-wrapper — platform-helper IS the abstraction layer
+		gh pr create --repo "$slug" --title "$title" --body-file "$body_file" --base "$base" --head "$head"
 		;;
 	local)
 		_platform_local_log "create_pr" "slug=${slug} title=${title} base=${base} head=${head}"
