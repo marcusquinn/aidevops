@@ -3317,7 +3317,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154 pr:#21178 completed:2026-04-27
 
-- [ ] t2942 reduce STAMPLESS_INTERACTIVE_AGE_THRESHOLD default from 24h to 1h to recover pulse productivity faster #auto-dispatch #enhancement ref:GH#21157
+- [x] t2942 reduce STAMPLESS_INTERACTIVE_AGE_THRESHOLD default from 24h to 1h to recover pulse productivity faster #auto-dispatch #enhancement ref:GH#21157 pr:#21159 completed:2026-04-27
 
 - [ ] t2943 follow-up to t2942: claim-task-id.sh should atomically create interactive-claim stamp on self-assign #auto-dispatch #enhancement #framework ref:GH#21160
 
