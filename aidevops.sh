@@ -557,6 +557,71 @@ _update_verify_signature() {
 	return 0
 }
 
+# One-shot, idempotent migration of supervisor.* → orchestration.* in settings.json (t2946).
+# Safe: reads value from supervisor.* only when orchestration.* key is absent.
+# Logs to ~/.aidevops/logs/settings-migration.log.
+_migrate_settings_supervisor_to_orchestration() {
+	local _settings_file="${HOME}/.config/aidevops/settings.json"
+	local _log_file="${HOME}/.aidevops/logs/settings-migration.log"
+
+	if ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	if [[ ! -f "$_settings_file" ]]; then
+		return 0
+	fi
+	if ! jq . "$_settings_file" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Check if supervisor.pulse_interval_seconds exists and orchestration.pulse_interval_seconds is absent.
+	local _has_sv _has_orch
+	_has_sv=$(jq -r 'if .supervisor.pulse_interval_seconds != null then "yes" else "no" end' "$_settings_file" 2>/dev/null)
+	_has_orch=$(jq -r 'if .orchestration.pulse_interval_seconds != null then "yes" else "no" end' "$_settings_file" 2>/dev/null)
+
+	if [[ "$_has_sv" != "yes" ]]; then
+		return 0
+	fi
+
+	local _ts
+	_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date +%Y-%m-%dT%H:%M:%SZ)
+	mkdir -p "$(dirname "$_log_file")" 2>/dev/null || true
+
+	local _tmp
+	_tmp=$(mktemp 2>/dev/null) || return 0
+
+	if [[ "$_has_orch" == "no" ]]; then
+		# Migrate: copy supervisor.pulse_interval_seconds to orchestration.pulse_interval_seconds,
+		# then remove supervisor.pulse_interval_seconds.
+		local _sv_val
+		_sv_val=$(jq -r '.supervisor.pulse_interval_seconds' "$_settings_file" 2>/dev/null)
+		if jq --argjson v "$_sv_val" \
+			'(.orchestration.pulse_interval_seconds) = $v | del(.supervisor.pulse_interval_seconds)' \
+			"$_settings_file" >"$_tmp" 2>/dev/null && [[ -s "$_tmp" ]]; then
+			mv "$_tmp" "$_settings_file"
+			printf '[%s] migrated supervisor.pulse_interval_seconds=%s → orchestration.pulse_interval_seconds\n' \
+				"$_ts" "$_sv_val" >>"$_log_file" 2>/dev/null || true
+			print_info "Settings migrated: supervisor.pulse_interval_seconds → orchestration.pulse_interval_seconds ($_sv_val)"
+		else
+			rm -f "$_tmp"
+		fi
+	else
+		# Both present: orchestration wins, remove the stale supervisor key.
+		local _orch_val
+		_orch_val=$(jq -r '.orchestration.pulse_interval_seconds' "$_settings_file" 2>/dev/null)
+		if jq 'del(.supervisor.pulse_interval_seconds)' \
+			"$_settings_file" >"$_tmp" 2>/dev/null && [[ -s "$_tmp" ]]; then
+			mv "$_tmp" "$_settings_file"
+			printf '[%s] removed stale supervisor.pulse_interval_seconds (orchestration.pulse_interval_seconds=%s wins)\n' \
+				"$_ts" "$_orch_val" >>"$_log_file" 2>/dev/null || true
+			print_info "Settings cleaned: removed stale supervisor.pulse_interval_seconds (orchestration value $_orch_val kept)"
+		else
+			rm -f "$_tmp"
+		fi
+	fi
+	return 0
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
@@ -692,6 +757,12 @@ cmd_update() {
 	if [[ -t 0 ]] && [[ -z "${AIDEVOPS_AUTO_UPDATE:-}" ]] && [[ "${NON_INTERACTIVE:-false}" != "true" ]]; then
 		_update_check_daemon_health
 	fi
+
+	# t2946: one-shot idempotent migration from legacy supervisor.* to canonical
+	# orchestration.* namespace in settings.json. Safe: no-op when orchestration.*
+	# is already set. Runs even on "already up to date" updates so users who
+	# install the fix without a new release still get migrated on next 'aidevops update'.
+	_migrate_settings_supervisor_to_orchestration
 
 	# t2914: ensure pulse is running after every update. The existing
 	# restart paths (setup.sh:1329, agent-deploy.sh:601) call

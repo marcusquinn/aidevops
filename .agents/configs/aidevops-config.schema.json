@@ -106,6 +106,13 @@
           "default": true,
           "description": "Enable the autonomous supervisor pulse scheduler. Env: AIDEVOPS_SUPERVISOR_PULSE"
         },
+        "pulse_interval_seconds": {
+          "type": "integer",
+          "default": 180,
+          "minimum": 30,
+          "maximum": 3600,
+          "description": "Seconds between pulse cycles. Canonical key (t2946). Legacy: supervisor.pulse_interval_seconds (still honoured for one release)."
+        },
         "repo_sync": {
           "type": "boolean",
           "default": true,
@@ -408,6 +415,73 @@
         "log_dir": { "type": "string", "default": "~/.aidevops/logs" },
         "memory_db": { "type": "string", "default": "~/.aidevops/.agent-workspace/memory/memory.db" },
         "worktree_registry_db": { "type": "string", "default": "~/.aidevops/.agent-workspace/worktree-registry.db" }
+      },
+      "additionalProperties": false
+    },
+
+    "supervisor": {
+      "type": "object",
+      "deprecated": true,
+      "description": "DEPRECATED (t2946): Use orchestration.* instead. This namespace is still consumed for one release but will be removed. Run 'aidevops update' to auto-migrate.",
+      "properties": {
+        "pulse_enabled": {
+          "type": "boolean",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.supervisor_pulse"
+        },
+        "pulse_interval_seconds": {
+          "type": "integer",
+          "minimum": 30,
+          "maximum": 3600,
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.pulse_interval_seconds"
+        },
+        "stale_threshold_seconds": {
+          "type": "integer",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration settings"
+        },
+        "circuit_breaker_max_failures": {
+          "type": "integer",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration settings"
+        },
+        "strategic_review_hours": {
+          "type": "integer",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration settings"
+        },
+        "peak_hours_enabled": {
+          "type": "boolean",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.peak_hours_enabled"
+        },
+        "peak_hours_start": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23,
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.peak_hours_start"
+        },
+        "peak_hours_end": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 23,
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.peak_hours_end"
+        },
+        "peak_hours_tz": {
+          "type": "string",
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.peak_hours_tz"
+        },
+        "peak_hours_worker_fraction": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1.0,
+          "deprecated": true,
+          "description": "DEPRECATED: use orchestration.peak_hours_worker_fraction"
+        }
       },
       "additionalProperties": false
     }
