@@ -162,6 +162,8 @@ Even with a compatible bash version, external commands diverge silently between 
 | `sed -r '...'` (extended regex) | `sed -E '...'` | `sed -E` works on both — always use `-E`, never `-r`. |
 | `grep -P '...'` (PCRE) | N/A on BSD grep | Use `grep -E` with POSIX ERE, or pipe to `perl -ne '...'`. |
 | `awk` dynamic regex `match($0, var)` | BSD awk rejects non-literal regex | Use `gsub()` with literal patterns, or switch to `perl`. Caught production bug t1983. |
+| `awk` 3-arg `match(str, regex, capture_array)` | BSD awk has no capture-array form (gawk-only) | Use 2-arg `match(str, regex)`, then read `RSTART`/`RLENGTH` and slice with `substr()`. Caught during t2834 / PR #20883. |
+| `awk -v key="$multi_line_value"` | BSD awk rejects embedded newlines in `-v` values | Stage the multi-line content to a temp file and slurp via `BEGIN { while ((getline line < f) > 0) arr[n++] = line; close(f) }`. Caught during t2834 / PR #20883. |
 | `xargs -r` | BSD xargs has no `-r`; empty input is a no-op by default | Pre-check input with `[[ -s input ]]` before calling xargs, or use `find ... -exec {} +` which is portable. |
 | `find -printf` | BSD find has no `-printf` | Use `find ... -exec <fmt-cmd> {} +` or pipe through `stat`. |
 | `mktemp --suffix=.X` | BSD mktemp uses `-t prefix` differently | `mktemp -t aidevops.XXXXXX` works on both; never use `--suffix`. |

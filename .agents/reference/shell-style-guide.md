@@ -157,6 +157,93 @@ The scanner skips any file with that directive.
 - Parent issue #20581 (t2762) — systemic sweep and prevention
 - Canonical reference implementation: `.agents/scripts/progressive-load-check.sh:80-97` (pre-existing correct counter usage)
 
+## Code-generators and the string-literal ratchet (t2834)
+
+The string-literal ratchet (`pre-commit-hook.sh::validate_string_literals`) flags any `"..."`-quoted substring of 4+ chars that appears 3+ times in a single file, with the ratchet baselined at zero for **new** files (existing files are grandfathered at HEAD). Helpers that emit SVG, HTML, XML, or any other attribute-rich markup trip this trivially because every element repeats `width="`, `height="`, `fill="`, etc. as boundary fragments.
+
+### Banned pattern — inline attribute fragments
+
+Multiple `printf` calls (or one heredoc with many elements) each containing inline `attr="value"` fragments:
+
+```bash
+# Trips the ratchet — `" fill="`, `" width="`, `" height="` count >= 3
+printf '  <rect x="%s" y="%s" width="%s" height="%s" fill="%s"/>\n' "$x" "$y" "$w" "$h" "$c"
+printf '  <text x="%s" y="%s" font-family="%s" fill="%s">%s</text>\n' "$x" "$y" "$f" "$c" "$t"
+```
+
+### Allowed pattern — attribute-builder helpers
+
+Build attribute strings via a single `'%s="%s" '` format template, eliminating inline fragments entirely:
+
+```bash
+_ATTR_FMT='%s="%s" '
+
+_svg_attrs() {
+    local _out=""
+    while [[ $# -ge 2 ]]; do
+        local _k="$1" _v="$2"
+        # shellcheck disable=SC2059  # _ATTR_FMT is a trusted constant
+        _out+=$(printf "$_ATTR_FMT" "$_k" "$_v")
+        shift 2
+    done
+    printf '%s' "${_out%% }"
+    return 0
+}
+
+_svg_elem() {
+    local _tag="$1"; shift
+    local _attrs; _attrs=$(_svg_attrs "$@")
+    printf '  <%s %s/>\n' "$_tag" "$_attrs"
+    return 0
+}
+
+# Usage — no inline attr= fragments, no ratchet trip
+_svg_elem rect x "$x" y "$y" width "$w" height "$h" fill "$c"
+```
+
+Canonical implementation: `.agents/scripts/loc-badge-helper.sh::_svg_attrs / _svg_elem / _svg_open / _svg_close / _svg_text_elem`.
+
+### Ratchet baseline-at-zero for new files
+
+Every ratchet-style validator (string-literal, positional-parameter, function-complexity, nesting-depth, file-size) compares HEAD content vs staged content. For an **existing** file with pre-existing violations, the ratchet only blocks when the staged count exceeds HEAD — pre-existing debt is grandfathered.
+
+For a **new** file, HEAD count is zero. Every violation is "new" and blocks the commit.
+
+**Practical rule:** in a new file, follow the strict pattern from line 1. The "fix later" approach available to maintenance commits on legacy files is not available to new files.
+
+Examples of strict patterns required from line 1 of every new shell helper:
+
+- Positional parameters: `local _arg="$1"` always (never bare `case "$1" in` or `VAR="$2"`)
+- Function arguments: `local _msg="$1"` at the top of every function body
+- Repeated string fragments: extract to constants OR build via a helper template (see attribute-builder pattern above)
+
+### Detection
+
+Reproduce the validator locally before committing a new helper:
+
+```bash
+# Show literals that would trigger the ratchet (after the canonical sed pre-strip)
+grep -v '^[[:space:]]*#' your-helper.sh | sed -E '
+  s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
+  s/"\$\{[^}]*\}"//g
+  s/"\$@"//g
+  s/"\$[0-9*#?$!-]"//g
+' | grep -oE '"[^"]{4,}"' | grep -vE '^"[0-9]+\.?[0-9]*"$' | grep -vE '^"\$' | sort | uniq -c | awk '$1 >= 3' | sort -rn
+
+# Show direct positional-parameter usage that would trigger
+awk '
+  { line = $0
+    gsub(/\047[^\047]*\047/, "", line)
+    if (line ~ /^[[:space:]]*#/) next
+    sub(/[[:space:]]+#.*/, "", line)
+    if (line ~ /local[[:space:]].*=.*\$[1-9]/) next
+    if (line ~ /\$[1-9]/) print NR ": " $0
+  }
+' your-helper.sh
+```
+
+Both must be empty before commit.
+
 ## Migration checklist
 
 1. Identify current pattern (plain, readonly, include-guard, or prefixed).
