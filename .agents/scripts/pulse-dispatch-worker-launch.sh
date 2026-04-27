@@ -335,7 +335,10 @@ _dlw_precreate_worktree() {
 		# regressions in path parsing are visible in the log. Previously
 		# this message gave no diagnostic — 247 failures accumulated in
 		# a single pulse.log before the root cause was found.
-		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — worker will create its own (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+		# t2981: return 1 so the caller can skip dispatch instead of
+		# falling back to the canonical repo on the default branch.
+		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
+		return 1
 	fi
 	return 0
 }
@@ -599,7 +602,7 @@ _dlw_nohup_launch() {
 		"$HEADLESS_RUNTIME_HELPER" run
 		--role worker
 		--session-key "$session_key"
-		--dir "${worker_worktree_path:-$repo_path}"
+		--dir "$worker_worktree_path"
 		--tier "$dispatch_model_tier"
 		--title "$worker_title"
 		--prompt "$prompt"
@@ -744,7 +747,13 @@ _dispatch_launch_worker() {
 	# The pull still happens before the worker starts; it now also happens before
 	# the gate that decides whether to dispatch at all. See GH#20071.
 
-	_dlw_precreate_worktree "$issue_number" "$repo_path"
+	# t2981: capture pre-creation return code — skip dispatch on failure
+	# instead of falling back to canonical repo on the default branch.
+	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
+		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
+		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
+		return 0
+	fi
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
 
