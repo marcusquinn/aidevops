@@ -177,11 +177,14 @@ test_vote_for_peer() {
 	local cases=(
 		# active_claims:worker_prs:expected_vote
 		"0:0:keep"      # no signal → keep
-		"5:0:ignore"    # claims but no PRs → broken pulse → ignore
+		"1:0:keep"      # single claim, no PRs → insufficient data (< 2 threshold) → keep
+		"2:0:ignore"    # 2 claims, no PRs → broken pulse (meets >=2 threshold) → ignore
+		"5:0:ignore"    # 5 claims but no PRs → broken pulse → ignore
 		"0:1:honour"    # no claims, 1 PR → recovered → honour
+		"1:1:honour"    # 1 claim + 1 PR → productive → honour (merges win)
 		"5:1:honour"    # claims AND PRs → working, just slow → honour
 		"10:3:honour"   # productive peer → honour
-		"3:0:ignore"    # silent peer with claims → ignore
+		"3:0:ignore"    # 3 claims, no PRs → broken → ignore
 	)
 	for c in "${cases[@]}"; do
 		IFS=: read -r ac wp expected <<<"$c"
@@ -412,6 +415,83 @@ EOF
 	return 0
 }
 test_rewrite_drops_honour_entries
+
+# ============================================================================
+section "Claim regression — broken-peer detection (GH#21135)"
+# ============================================================================
+# These tests specifically exercise the claim-but-no-merge regression case:
+# a peer whose runner CLAIMS issues but never merges should trigger `ignore`
+# after 3 consecutive cycles of >=2 claims with 0 worker PRs.
+
+test_claim_regression_single_claim_is_keep() {
+	# A peer with exactly 1 open claim and 0 merges must vote `keep`
+	# (insufficient data — 1 in-flight task is normal).
+	local result
+	result=$(_vote_for_peer 1 0)
+	if [[ "$result" == "keep" ]]; then
+		pass "1 claim + 0 merges = keep (single in-flight task is normal)"
+	else
+		fail "1 claim + 0 merges: expected keep, got $result"
+	fi
+	return 0
+}
+test_claim_regression_single_claim_is_keep
+
+test_claim_regression_two_claims_is_ignore() {
+	# 2+ open worker-labeled claims with 0 merges triggers the ignore vote.
+	local r2 r3
+	r2=$(_vote_for_peer 2 0)
+	r3=$(_vote_for_peer 3 0)
+	if [[ "$r2" == "ignore" ]] && [[ "$r3" == "ignore" ]]; then
+		pass "2+ claims + 0 merges = ignore (broken peer)"
+	else
+		fail "2+ claims + 0 merges: expected ignore, got r2=$r2 r3=$r3"
+	fi
+	return 0
+}
+test_claim_regression_two_claims_is_ignore
+
+test_claim_regression_hysteresis_three_cycles() {
+	# Simulate a peer that was healthy, now breaks (claims but no merges).
+	# After 3 consecutive cycles of ignore votes, the action flips to ignore.
+	local state='{"brokenbot":{"current_action":"honour","vote_history":["honour","honour","honour"],"last_observed":"2026-01-01T00:00:00Z"}}'
+	local r
+	for _ in 1 2 3; do
+		r=$(_apply_hysteresis "$state" "brokenbot" "ignore")
+		state=$(printf '%s\n%s' "$state" "$r" | jq -s '.[0] * .[1]')
+	done
+	local action
+	action=$(_extract_action "$state" "brokenbot")
+	if [[ "$action" == "ignore" ]]; then
+		pass "regression: 3x ignore cycles flip honour → ignore"
+	else
+		fail "regression: expected ignore after 3 cycles, got $action"
+	fi
+	return 0
+}
+test_claim_regression_hysteresis_three_cycles
+
+test_claim_regression_merges_block_ignore() {
+	# A peer with 2+ claims BUT also has merged PRs → vote is honour (productive).
+	# The monitor must not penalise a peer that is both claiming and delivering.
+	local cases=(
+		"2:1"   # 2 claims, 1 merge → honour
+		"5:1"   # 5 claims, 1 merge → honour
+		"10:2"  # 10 claims, 2 merges → honour
+	)
+	for c in "${cases[@]}"; do
+		IFS=: read -r claims prs <<<"$c"
+		local result
+		result=$(_vote_for_peer "$claims" "$prs")
+		if [[ "$result" == "honour" ]]; then
+			pass "vote(claims=$claims, merges=$prs) = honour (merges block ignore)"
+		else
+			fail "vote(claims=$claims, merges=$prs): expected honour, got $result"
+		fi
+	done
+	return 0
+}
+test_claim_regression_merges_block_ignore
 
 # ============================================================================
 section "CLI smoke (help/report)"
