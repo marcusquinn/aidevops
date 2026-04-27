@@ -756,13 +756,25 @@ _issue_targets_large_files() {
 	# can detect when a previously-gated file has been simplified below
 	# threshold and clear the label.
 	local force_recheck="${5:-false}"
+	# t2996: optional pre-fetched issue JSON containing `.labels` and `.title`.
+	# When `dispatch_with_dedup` invokes this gate, the canonical bundle
+	# already carries both fields; threading them through skips two
+	# `gh issue view` calls (labels + title) per dispatch candidate.
+	# Re-evaluation paths in pulse-triage.sh that may hold stale labels
+	# omit this argument and fall back to a fresh fetch.
+	local pre_fetched_json="${6:-}"
 
 	[[ -n "$issue_body" ]] || return 1
 	[[ -d "$repo_path" ]] || return 1
 
 	local issue_labels
-	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.labels' >/dev/null 2>&1; then
+		issue_labels=$(printf '%s' "$pre_fetched_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	else
+		issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	fi
 
 	local _precheck_rc=0
 	_large_file_gate_precheck_labels "$issue_number" "$repo_slug" "$issue_labels" "$force_recheck" || _precheck_rc=$?
@@ -791,9 +803,17 @@ _issue_targets_large_files() {
 	# t2713: Surgical-brief exemption — check before the per-target evaluation
 	# loop. If the issue title has a task ID and the linked brief cites line
 	# ranges for every extracted path, dispatch proceeds without a split.
+	# t2996: title travels in pre_fetched_json when dispatch_with_dedup is
+	# the caller; only fall back to a fresh fetch when the bundle is absent
+	# (re-evaluation paths from pulse-triage.sh).
 	local _surgical_title=""
-	_surgical_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json title --jq '.title // ""' 2>/dev/null) || _surgical_title=""
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.title' >/dev/null 2>&1; then
+		_surgical_title=$(printf '%s' "$pre_fetched_json" | jq -r '.title // ""' 2>/dev/null) || _surgical_title=""
+	else
+		_surgical_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json title --jq '.title // ""' 2>/dev/null) || _surgical_title=""
+	fi
 	if _large_file_gate_check_surgical_brief \
 		"$_surgical_title" "$all_paths" "$repo_path"; then
 		echo "[pulse-wrapper] Large-file gate EXEMPTED for #${issue_number} (${repo_slug}): surgical brief with line ranges for ${_LFG_SURGICAL_EXEMPTED_FILES}" >>"$LOGFILE"

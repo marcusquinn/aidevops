@@ -942,10 +942,13 @@ _dispatch_dedup_check_layers() {
 	fi
 
 	# t1927: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
-	# Fetches issue body and parses for "blocked-by:tNNN" or "Blocked by #NNN".
+	# Parses issue body for "blocked-by:tNNN" or "Blocked by #NNN".
+	# t2996: body now travels in $issue_meta_json (`,body` was added at the
+	# canonical gh call); extract once and reuse for the consolidation,
+	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
+	# per dispatch candidate.
 	local _dispatch_issue_body
-	_dispatch_issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json body --jq '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
+	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
 	if [[ -n "$_dispatch_issue_body" ]] && is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		return 1
@@ -956,7 +959,9 @@ _dispatch_dedup_check_layers() {
 	# machinery), dispatch a consolidation worker first to merge everything
 	# into a clean issue body. This prevents implementing workers from spending
 	# tokens reconstructing scope from comment archaeology.
-	if _issue_needs_consolidation "$issue_number" "$repo_slug"; then
+	# t2996: pass meta_json through so the consolidation helper skips its
+	# `gh issue view --json labels` call (label CSV derived from JSON instead).
+	if _issue_needs_consolidation "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_dispatch_issue_consolidation "$issue_number" "$repo_slug" "$repo_path"
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: issue needs comment consolidation" >>"$LOGFILE"
 		return 1
@@ -966,7 +971,9 @@ _dispatch_dedup_check_layers() {
 	# references files that exceed LARGE_FILE_LINE_THRESHOLD, create a
 	# blocked-by simplification task instead of dispatching. Workers
 	# shouldn't pay the complexity tax of navigating a 12,000-line file.
-	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path"; then
+	# t2996: pass meta_json through so the gate skips its `gh issue view --json
+	# labels` AND `--json title` calls (both derived from the bundled JSON).
+	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path" "false" "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
 		return 1
 	fi
@@ -982,8 +989,18 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
-	# All 7 dedup layers — cannot be skipped
-	if check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login"; then
+	# All 7 dedup layers — cannot be skipped.
+	# t2996: ISSUE_META_JSON forwards the canonical bundle to
+	# dispatch-dedup-helper.sh (Layer 6 `is-assigned`, Layer 4 `has-open-pr`,
+	# etc.). The helper's t-prefixed lookup paths already detect the env var
+	# (see dispatch-dedup-helper.sh:898-900) and skip their own
+	# `gh issue view --json labels,assignees` call when present. Without this
+	# export, those layers re-fetch the same JSON we just bundled — wasting
+	# 1-2 more gh calls under load.
+	local _dedup_rc=0
+	ISSUE_META_JSON="$issue_meta_json" \
+		check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login" || _dedup_rc=$?
+	if [[ "$_dedup_rc" -eq 0 ]]; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 1
 	fi
@@ -1083,10 +1100,17 @@ dispatch_with_dedup() {
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
 	# The pulse prompt should already avoid these, but this deterministic
 	# gate prevents dispatch when prompt fallback logic is too permissive.
-	# Load metadata once here; passed to both helpers to avoid extra API calls.
+	#
+	# t2996: Single canonical gh call. Fetch number,title,state,labels,
+	# assignees AND body in ONE request, then thread the bundle through every
+	# downstream gate so they don't re-fetch. Replaces 4-5 redundant gh calls
+	# (the old meta call + the blocked-by body fetch + the consolidation labels
+	# fetch + the large-file labels/title fetches + the brief-freshness body
+	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
+	# "gh API call budget" for the full inventory.
 	local issue_meta_json
 	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees 2>/dev/null) || issue_meta_json=""
+		--json number,title,state,labels,assignees,body 2>/dev/null) || issue_meta_json=""
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
 		return 1
@@ -1109,7 +1133,9 @@ dispatch_with_dedup() {
 	# catches any legacy issue created via the pre-t2063 bare path, and
 	# any future path that might bypass the primary fixes in claim-task-id.sh
 	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
-	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title"
+	# t2996: thread meta_json so the helper extracts body from JSON instead of
+	# making a 5th `gh issue view --json body` call on the same candidate.
+	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$issue_meta_json"
 
 	# t2389: tier:simple body-shape check — auto-downgrade mis-tiered briefs.
 	# Non-blocking: inspects the issue body for 4 high-precision tier:simple
@@ -1177,6 +1203,12 @@ _ensure_issue_body_has_brief() {
 	local repo_slug="$2"
 	local repo_path="$3"
 	local issue_title="$4"
+	# t2996: optional pre-fetched issue JSON (full bundle from
+	# dispatch_with_dedup including `.body`). Skips the duplicate
+	# `gh issue view --json body` call that this guard would otherwise
+	# make as the 5th gh hit on the same candidate. Falls back to a
+	# fresh fetch when omitted (defence-in-depth callers).
+	local pre_fetched_json="${5:-}"
 
 	# Extract task ID from title (format: "tNNN: description")
 	local task_id=""
@@ -1194,7 +1226,12 @@ _ensure_issue_body_has_brief() {
 	# "## How" bodies ~5KB each; the old check treated them as stubs and
 	# force-enriched them into emptiness.
 	local current_body
-	current_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q .body 2>/dev/null || echo "")
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.body' >/dev/null 2>&1; then
+		current_body=$(printf '%s' "$pre_fetched_json" | jq -r '.body // ""' 2>/dev/null) || current_body=""
+	else
+		current_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q .body 2>/dev/null || echo "")
+	fi
 	if [[ "$current_body" == *"## Task Brief"* ]] || [[ "$current_body" == *"## Worker Guidance"* ]]; then
 		return 0
 	fi

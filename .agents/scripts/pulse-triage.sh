@@ -292,10 +292,22 @@ _clear_needs_consolidation_label() {
 _issue_needs_consolidation() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	# t2996: optional pre-fetched issue JSON. When dispatch_with_dedup calls
+	# this helper it has already fetched `.labels` (and the rest of the
+	# canonical bundle); threading it through saves one gh call per dispatch
+	# candidate. When omitted (re-evaluation paths in pulse-triage.sh that
+	# may have stale labels), fall back to a fresh fetch so the helper
+	# remains self-sufficient.
+	local pre_fetched_json="${3:-}"
 
 	local issue_labels
-	issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.labels' >/dev/null 2>&1; then
+		issue_labels=$(printf '%s' "$pre_fetched_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	else
+		issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	fi
 	# Skip if consolidation was already done (label removed = consolidated)
 	if [[ ",$issue_labels," == *",consolidated,"* ]]; then
 		return 1
