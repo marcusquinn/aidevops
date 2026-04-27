@@ -34,6 +34,18 @@
 #   --stall-timeout SECS      Seconds without growth before kill (default: 300)
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
+#   --hard-kill-seconds SECS  Total elapsed seconds before forced hard-kill on
+#                             stall (default: 1500 = 25 min). When stall is
+#                             detected AND total elapsed > this threshold, the
+#                             watchdog writes the .watchdog_stall_killed
+#                             sentinel (in addition to .watchdog_killed) so the
+#                             helper can classify the result as exit code 79
+#                             (watchdog_stall_killed) instead of 78
+#                             (watchdog_stall_continue) — no continuation, slot
+#                             freed for re-dispatch. Override env var:
+#                             WORKER_STALL_HARD_KILL_SECONDS. Set to 0 to
+#                             disable the hard-kill branch (legacy behaviour).
+#                             Issue #21231 / supersedes #21201.
 #
 # Usage:
 #   nohup worker-activity-watchdog.sh \
@@ -58,6 +70,11 @@ WORKTREE_PATH=""
 STALL_TIMEOUT=300
 PHASE1_TIMEOUT=30
 POLL_INTERVAL=10
+# t2956 / Issue #21231: Hard-kill threshold (default 1500s = 25 min).
+# Env var WORKER_STALL_HARD_KILL_SECONDS overrides; --hard-kill-seconds CLI
+# flag overrides the env var. Set to 0 to disable hard-kill (stall continues
+# indefinitely up to the runtime's wall-clock cap — legacy behaviour).
+HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
 
 #######################################
 # Parse arguments
@@ -101,6 +118,15 @@ _parse_args() {
 			POLL_INTERVAL="$2"
 			shift 2
 			;;
+		--hard-kill-seconds)
+			# t2956: assign via `local` so the bare-positional ratchet
+			# (linters-local.sh::_ratchet_count_bare_positional) excludes
+			# this line. The other case branches predate the ratchet and
+			# remain in the pre-existing baseline.
+			local _hard_kill_arg="$2"
+			HARD_KILL_SECONDS="$_hard_kill_arg"
+			shift 2
+			;;
 		*)
 			echo "Unknown argument: $1" >&2
 			return 1
@@ -126,6 +152,8 @@ _parse_args() {
 	[[ "$STALL_TIMEOUT" =~ ^[0-9]+$ ]] || STALL_TIMEOUT=300
 	[[ "$PHASE1_TIMEOUT" =~ ^[0-9]+$ ]] || PHASE1_TIMEOUT=30
 	[[ "$POLL_INTERVAL" =~ ^[0-9]+$ ]] || POLL_INTERVAL=10
+	# t2956: HARD_KILL_SECONDS=0 disables the hard-kill branch (allowed).
+	[[ "$HARD_KILL_SECONDS" =~ ^[0-9]+$ ]] || HARD_KILL_SECONDS=1500
 	[[ "$WORKER_PID" =~ ^[0-9]+$ ]] || {
 		echo "Error: --worker-pid must be numeric" >&2
 		return 1
@@ -216,9 +244,14 @@ _push_wip_before_kill() {
 #
 # Args:
 #   $1 - reason string (logged in output file)
+#   $2 - kill kind: "stall_killed" for hard-kill (writes additional
+#        .watchdog_stall_killed sentinel), anything else (or empty) for the
+#        legacy passive watchdog kill that classifies as 78
+#        (watchdog_stall_continue) downstream. (t2956 / Issue #21231)
 #######################################
 _kill_worker() {
 	local reason="$1"
+	local kill_kind="${2:-}"
 
 	# t2923: Push WIP commits before killing so the work is reachable on origin.
 	# Must happen before SIGTERM so git operations complete cleanly.
@@ -228,6 +261,17 @@ _kill_worker() {
 	# subshell may overwrite exit_code_file with its own exit code
 	# (race condition). The sentinel is authoritative.
 	touch "${EXIT_CODE_FILE}.watchdog_killed"
+
+	# t2956 / Issue #21231: Hard-kill sentinel — distinguishes proactive
+	# elapsed-time kills from passive no-output stall kills. The helper
+	# (`headless-runtime-helper.sh::_handle_run_result`) reads this sentinel
+	# and returns exit 79 (watchdog_stall_killed) instead of 78
+	# (watchdog_stall_continue), short-circuiting the per-attempt
+	# continuation loop and freeing the slot for re-dispatch. Without this
+	# sentinel, exit 78 still fires (legacy continuation behaviour).
+	if [[ "$kill_kind" == "stall_killed" ]]; then
+		touch "${EXIT_CODE_FILE}.watchdog_stall_killed"
+	fi
 
 	# Kill child processes first (pipeline members: opencode, tee),
 	# then the subshell itself. pkill -P walks the process tree by PPID.
@@ -301,12 +345,27 @@ _release_claim() {
 #
 # Phase 1: Wait for any output (dead runtime detection)
 # Phase 2: Monitor continuous growth (stall detection)
+#
+# t2956 / Issue #21231: Total elapsed time is also tracked. When a stall is
+# detected AND HARD_KILL_SECONDS is non-zero AND total elapsed has crossed
+# that threshold, the watchdog escalates to a hard-kill that emits the
+# `.watchdog_stall_killed` sentinel — telling the helper to classify as
+# exit 79 (watchdog_stall_killed) instead of 78 (watchdog_stall_continue).
+# This caps the per-attempt cost of a single stall and frees the dispatch
+# slot for re-dispatch instead of holding it through repeated continuations.
 #######################################
 _monitor() {
 	local phase1_passed=0
 	local phase1_elapsed=0
 	local last_size=0
 	local stall_seconds=0
+	# t2956: Wall-clock start so HARD_KILL_SECONDS is measured against the
+	# total time the watchdog has been monitoring this worker — not just the
+	# duration of the current stall window. A worker that's been alternately
+	# producing output and stalling for >25 min is just as wasteful as one
+	# that's been silent the whole time.
+	local start_epoch
+	start_epoch=$(date +%s)
 
 	while true; do
 		# Worker exited on its own — watchdog not needed
@@ -345,7 +404,21 @@ _monitor() {
 		fi
 
 		if [[ "$stall_seconds" -ge "$STALL_TIMEOUT" ]]; then
-			_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b)"
+			# t2956: When a stall is confirmed, decide whether to do a
+			# passive kill (legacy → exit 78 → continuation attempt) or a
+			# proactive hard-kill (new → exit 79 → no continuation, slot
+			# freed). The threshold is total elapsed time since the watchdog
+			# started monitoring. HARD_KILL_SECONDS=0 disables the branch.
+			local now_epoch elapsed_total
+			now_epoch=$(date +%s)
+			elapsed_total=$((now_epoch - start_epoch))
+			if [[ "$HARD_KILL_SECONDS" -gt 0 && "$elapsed_total" -ge "$HARD_KILL_SECONDS" ]]; then
+				_kill_worker \
+					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b) — slot freed for re-dispatch" \
+					"stall_killed"
+				return 0
+			fi
+			_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)"
 			return 0
 		fi
 
