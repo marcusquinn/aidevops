@@ -415,92 +415,20 @@ _enrich_process_field() {
 }
 
 # ---------------------------------------------------------------------------
-# cmd_enrich: main enrichment pipeline
+# _enrich_run_fields: process schema fields and write extracted.json
+# Args: source_id kind sensitivity schema_path schema_hash text_file
+#       extracted_path dry_run
 # ---------------------------------------------------------------------------
 
-cmd_enrich() {
-	local source_id=""
-	local kind_override=""
-	local max_cost=""
-	local knowledge_root_override=""
-	local dry_run=0
-	local force_refresh=0
-
-	while [[ $# -gt 0 ]]; do
-		local _k="$1"
-		shift
-		case "$_k" in
-		--kind)
-			local _kv="$1"
-			kind_override="$_kv"
-			shift
-			;;
-		--max-cost)
-			local _cv="$1"
-			max_cost="$_cv"
-			shift
-			;;
-		--knowledge-root)
-			local _rv="$1"
-			knowledge_root_override="$_rv"
-			shift
-			;;
-		--dry-run)      dry_run=1 ;;
-		--force-refresh) force_refresh=1 ;;
-		-*)
-			print_error "Unknown option: $_k"
-			return 1
-			;;
-		*)
-			[[ -z "$source_id" ]] && source_id="$_k"
-			;;
-		esac
-	done
-
-	if [[ -z "$source_id" ]]; then
-		print_error "enrich: source-id is required"
-		return 1
-	fi
-
-	_require_jq || return 1
-
-	local knowledge_root
-	knowledge_root=$(_resolve_knowledge_root "$knowledge_root_override") || return 1
-
-	local source_dir="${knowledge_root}/sources/${source_id}"
-	if [[ ! -d "$source_dir" ]]; then
-		print_error "Source not found: ${source_dir}"
-		return 1
-	fi
-
-	local meta_lines kind sensitivity
-	meta_lines=$(_enrich_load_meta "$source_dir") || return 1
-	kind=$(echo "$meta_lines" | sed -n '1p')
-	sensitivity=$(echo "$meta_lines" | sed -n '2p')
-
-	[[ -n "$kind_override" ]] && kind="$kind_override"
-
-	local schema_path
-	schema_path=$(_schema_path "$kind") || return 1
-	local schema_hash
-	schema_hash=$(_schema_hash "$schema_path")
-
-	local text_file
-	text_file=$(_enrich_find_text "$source_dir")
-
-	if [[ -z "$text_file" ]]; then
-		print_error "No text file found in ${source_dir} — run OCR/extract first"
-		return 1
-	fi
-
-	local extracted_path="${source_dir}/extracted.json"
-
-	if ! _enrich_check_idempotent "$extracted_path" "$schema_hash" "$force_refresh"; then
-		print_info "[${source_id}] Already enriched with current schema (hash=${schema_hash}). Use --force-refresh to re-run."
-		return 0
-	fi
-
-	print_info "[${source_id}] Enriching as kind='${kind}' sensitivity='${sensitivity}'"
+_enrich_run_fields() {
+	local source_id="$1"
+	local kind="$2"
+	local sensitivity="$3"
+	local schema_path="$4"
+	local schema_hash="$5"
+	local text_file="$6"
+	local extracted_path="$7"
+	local dry_run="$8"
 
 	local fields_json
 	fields_json=$(jq -c '.fields[]' "$schema_path" 2>/dev/null)
@@ -571,6 +499,93 @@ cmd_enrich() {
 
 	print_success "[${source_id}] Enriched: ${field_count} fields written to ${extracted_path}"
 	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_enrich: main enrichment pipeline — parses args and delegates to helpers
+# ---------------------------------------------------------------------------
+
+cmd_enrich() {
+	local source_id=""
+	local kind_override=""
+	local max_cost=""
+	local knowledge_root_override=""
+	local dry_run=0
+	local force_refresh=0
+
+	while [[ $# -gt 0 ]]; do
+		local _k="$1"
+		shift
+		case "$_k" in
+		--kind)
+			local _kv="$1"
+			kind_override="$_kv"
+			shift
+			;;
+		--max-cost)
+			local _cv="$1"
+			max_cost="$_cv"
+			shift
+			;;
+		--knowledge-root)
+			local _rv="$1"
+			knowledge_root_override="$_rv"
+			shift
+			;;
+		--dry-run)       dry_run=1 ;;
+		--force-refresh) force_refresh=1 ;;
+		-*)
+			print_error "Unknown option: $_k"
+			return 1
+			;;
+		*)
+			[[ -z "$source_id" ]] && source_id="$_k"
+			;;
+		esac
+	done
+
+	if [[ -z "$source_id" ]]; then
+		print_error "enrich: source-id is required"
+		return 1
+	fi
+
+	_require_jq || return 1
+
+	local knowledge_root
+	knowledge_root=$(_resolve_knowledge_root "$knowledge_root_override") || return 1
+
+	local source_dir="${knowledge_root}/sources/${source_id}"
+	if [[ ! -d "$source_dir" ]]; then
+		print_error "Source not found: ${source_dir}"
+		return 1
+	fi
+
+	local meta_lines kind sensitivity
+	meta_lines=$(_enrich_load_meta "$source_dir") || return 1
+	kind=$(echo "$meta_lines" | sed -n '1p')
+	sensitivity=$(echo "$meta_lines" | sed -n '2p')
+	[[ -n "$kind_override" ]] && kind="$kind_override"
+
+	local schema_path schema_hash text_file extracted_path
+	schema_path=$(_schema_path "$kind") || return 1
+	schema_hash=$(_schema_hash "$schema_path")
+	text_file=$(_enrich_find_text "$source_dir")
+	extracted_path="${source_dir}/extracted.json"
+
+	if [[ -z "$text_file" ]]; then
+		print_error "No text file found in ${source_dir} — run OCR/extract first"
+		return 1
+	fi
+
+	if ! _enrich_check_idempotent "$extracted_path" "$schema_hash" "$force_refresh"; then
+		print_info "[${source_id}] Already enriched with current schema (hash=${schema_hash}). Use --force-refresh to re-run."
+		return 0
+	fi
+
+	print_info "[${source_id}] Enriching as kind='${kind}' sensitivity='${sensitivity}'"
+	_enrich_run_fields "$source_id" "$kind" "$sensitivity" \
+		"$schema_path" "$schema_hash" "$text_file" "$extracted_path" "$dry_run"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
