@@ -3344,4 +3344,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2956 investigate watchdog_stall_continue 21.6% rate (avg 38min wasted vs 16min success) — biggest overnight throughput drain #auto-dispatch #bug #enhancement #framework ref:GH#21201
 
-- [ ] t2955 cache _is_task_committed_to_main result via dispatch-blocked label — eliminate per-cycle scan on 224 issues #auto-dispatch #bug #enhancement #framework ref:GH#21200
+- [x] t2955 cache _is_task_committed_to_main result via dispatch-blocked label — eliminate per-cycle scan on 224 issues #auto-dispatch #bug #enhancement #framework ref:GH#21200 pr:#21205 completed:2026-04-27
