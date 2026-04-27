@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.4] - 2026-04-27
+
+### Fixed
+
+- t2999 — dispatch-ledger-helper stale-lock recovery: 24-day-old lock dir was silently disabling all worker registration (`mkdir` retry loop returned rc=1 every dispatch). Replaces busy-wait with stale-detection (PID-alive + age-threshold force-reclaim, mirroring `pulse-instance-lock.sh` pattern). All workers now visible to ledger. (#21428)
+- t3000 — dispatch-single-issue-helper: apply pulse-parity ceremony pre-launch. Manual workers now receive `status:in-progress` label transition (replacing `status:queued`), claim stamp via `interactive-session-helper.sh write-stamp`, and dispatch-ledger registration before the worker process starts. Closes the dispatch-double-launch race window where the pulse could spawn a duplicate worker on top of a manually-launched one. `--no-ceremony` opt-out preserved for smoke-testing. (#21430)
+- t2996 — perf: reduce `dispatch_with_dedup` gh-call count from 10-15 to 1-3 by passing already-loaded metadata through downstream gates. Eliminates the t2989 30s per-candidate timeout cliff (37 timeout events / 24h pre-fix → near-zero). (#21410)
+- t2997 — fix BSD-incompatible mktemp templates (`XXXXXX` placed before file extension): ~17 production callsites + new CI lint gate. macOS `mktemp` returned the literal template name on the first call, then failed `mkstemp: File exists` on subsequent calls — silently breaking `update_repo_tier_check_timestamp`, browser-qa screenshots, codacy collectors, and pulse-stats persistence. (#21421)
+- t2995 — distinguish file-size-debt dedup lookup-failure from no-match. The large-file-simplification-gate scanner was creating duplicate `file-size-debt:` issues when `gh_issue_list` timed out silently and returned empty. Now treats timeout/error as "abort dedup, do not file" rather than "no match, file new". (#21424)
+
+### Added
+
+- t3001 — `gh-status-helper.sh` for GitHub incident detection (`check`/`incidents`/`correlate` subcommands) with 60s Statuspage cache and exit-code semantic mapping (operational/degraded/outage/unknown). New incident-recovery runbook at `.agents/reference/incident-recovery-runbook.md` cross-linking pulse-lock-recovery and t2999/t3000 procedures. Filed during recovery from a real-world GitHub search-degradation incident that exposed the dispatch-helper gaps the rest of this release fixes. (#21432)
+
 ## [3.13.3] - 2026-04-27
 
 ### Changed
