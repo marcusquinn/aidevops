@@ -59,8 +59,108 @@ _ensure_ledger() {
 }
 
 #######################################
+# Get the age in seconds of a directory's mtime.
+# Args: $1 = directory path
+# Returns: age in seconds via stdout (0 if directory absent or stat fails)
+# Portable across BSD (macOS) and GNU (Linux) stat invocations.
+#######################################
+_lock_dir_age() {
+	local dir="$1"
+	local mtime=""
+	local now=""
+	if [[ ! -d "$dir" ]]; then
+		echo "0"
+		return 0
+	fi
+	# BSD stat (macOS) first, then GNU stat (Linux)
+	mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "")
+	if [[ -z "$mtime" ]] || [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+		echo "0"
+		return 0
+	fi
+	now=$(date -u '+%s')
+	echo "$((now - mtime))"
+	return 0
+}
+
+#######################################
+# Detect a stale ledger lock and clear it if so.
+#
+# Three-tier detection mirroring pulse-instance-lock.sh::_handle_existing_lock
+# (GH#20025), but with ledger-appropriate semantics:
+#   1. No valid PID in the lockdir → corrupt or pre-PID-file lock from
+#      an older client. Use mtime as the staleness signal.
+#   2. Owner PID dead → stale from SIGKILL/OOM/crash. Clear immediately.
+#   3. Owner alive but lock age > AIDEVOPS_LEDGER_LOCK_MAX_AGE_S
+#      (default 60s) → hung holder. Clear so we can re-acquire. Unlike
+#      pulse-instance-lock we do NOT kill the owner — ledger ops should
+#      complete in <100ms; a 60s+ hold means the holder is stuck and
+#      the safe move is to steal the lock. Worst-case race outcome is a
+#      single corrupted JSONL line, which the helper already tolerates
+#      (registration failures are logged non-fatal upstream).
+#
+# Args:
+#   $1 = lock directory path
+#   $2 = pid file path (lock_dir/pid)
+#   $3 = max age in seconds (threshold for force-reclaim)
+# Returns: 0 if the lock was stale and was cleared, 1 if still live
+#######################################
+_ledger_lock_is_stale() {
+	local lock_dir="$1"
+	local pid_file="$2"
+	local max_age="$3"
+	local lock_pid=""
+	local lock_age=""
+
+	# Must still exist — race: another waiter may have just cleared it.
+	if [[ ! -d "$lock_dir" ]]; then
+		return 1
+	fi
+
+	if [[ -f "$pid_file" ]]; then
+		lock_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+	fi
+
+	# Tier 1: no valid PID file (corrupt, or pre-PID lock from old client)
+	# Use mtime as the staleness signal.
+	if [[ -z "$lock_pid" ]] || [[ ! "$lock_pid" =~ ^[0-9]+$ ]]; then
+		lock_age=$(_lock_dir_age "$lock_dir")
+		if [[ "$lock_age" -gt "$max_age" ]]; then
+			rm -rf "$lock_dir" 2>/dev/null || true
+			return 0
+		fi
+		return 1
+	fi
+
+	# Tier 2: owner PID is dead → stale (SIGKILL, OOM, crash)
+	if ! ps -p "$lock_pid" >/dev/null 2>&1; then
+		rm -rf "$lock_dir" 2>/dev/null || true
+		return 0
+	fi
+
+	# Tier 3: owner alive but lock too old → hung holder, steal lock
+	lock_age=$(_lock_dir_age "$lock_dir")
+	if [[ "$lock_age" -gt "$max_age" ]]; then
+		rm -rf "$lock_dir" 2>/dev/null || true
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Acquire file lock (fail-closed — aborts if lock cannot be obtained)
 # Uses flock when available, falls back to mkdir-based lock.
+#
+# Stale-lock recovery (t2999): when the mkdir fallback path is used,
+# each failed mkdir attempt checks whether the existing lock is stale
+# (dead PID, corrupt PID file with old mtime, or hung-holder age
+# ceiling) via _ledger_lock_is_stale. If stale, the lockdir is cleared
+# and mkdir is retried. Without this, a worker killed mid-registration
+# leaves a permanent lockdir that blocks all subsequent ledger writes.
+# Canonical incident: marcusquinn/aidevops#21427 — a 24-day-old stale
+# lockdir suppressed registration for the entire dispatch fleet.
+#
 # Returns: 0 on success, 1 on failure (caller must abort write)
 #######################################
 _acquire_lock() {
@@ -70,33 +170,49 @@ _acquire_lock() {
 			echo "Error: could not acquire ledger lock: $LEDGER_LOCK" >&2
 			return 1
 		fi
-	else
-		# Portable fallback: mkdir is atomic on all POSIX systems
-		local lock_dir="${LEDGER_LOCK}.d"
-		local attempts=0
-		local max_attempts=50 # 50 × 0.1s = 5s timeout
-		while ! mkdir "$lock_dir" 2>/dev/null; do
-			attempts=$((attempts + 1))
-			if [[ "$attempts" -ge "$max_attempts" ]]; then
-				echo "Error: could not acquire ledger lock (mkdir): $lock_dir" >&2
-				return 1
-			fi
-			sleep 0.1
-		done
+		return 0
 	fi
+
+	# Portable fallback: mkdir is atomic on all POSIX systems
+	local lock_dir="${LEDGER_LOCK}.d"
+	local pid_file="${lock_dir}/pid"
+	local max_age="${AIDEVOPS_LEDGER_LOCK_MAX_AGE_S:-60}"
+	local attempts=0
+	local max_attempts=50 # 50 × 0.1s = 5s timeout
+
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		# Stale-lock recovery (t2999): if the existing lock is stale,
+		# clear it and retry mkdir immediately without burning an attempt.
+		if _ledger_lock_is_stale "$lock_dir" "$pid_file" "$max_age"; then
+			continue
+		fi
+		attempts=$((attempts + 1))
+		if [[ "$attempts" -ge "$max_attempts" ]]; then
+			echo "Error: could not acquire ledger lock (mkdir): $lock_dir" >&2
+			return 1
+		fi
+		sleep 0.1
+	done
+
+	# Record holder PID inside the lockdir so future waiters can
+	# detect a stale lock if we die before _release_lock runs.
+	echo "$$" >"$pid_file" 2>/dev/null || true
 	return 0
 }
 
 #######################################
 # Release file lock
+# Note: mkdir-based lock now contains a PID file (t2999), so we use
+# `rm -rf` instead of `rmdir`. Backward-compatible — rm -rf also
+# removes empty lockdirs left by older clients.
 #######################################
 _release_lock() {
 	if command -v flock &>/dev/null; then
 		flock -u 8 2>/dev/null || true
 	else
-		# Remove mkdir-based lock
+		# Remove mkdir-based lock (and any PID file inside it)
 		local lock_dir="${LEDGER_LOCK}.d"
-		rmdir "$lock_dir" 2>/dev/null || true
+		rm -rf "$lock_dir" 2>/dev/null || true
 	fi
 	return 0
 }

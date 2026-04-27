@@ -474,6 +474,231 @@ test_empty_ledger_operations() {
 }
 
 #######################################
+# t2999: stale-lock recovery — dead-PID stale lock
+#
+# Place a fake pid file with a PID known to be dead inside the lockdir.
+# The next register call should detect the stale lock, clear it, and
+# succeed.
+#######################################
+test_stale_lock_recovered_dead_pid() {
+	setup_test_env
+
+	# Skip when flock is available — flock path doesn't use mkdir lockdir.
+	if command -v flock &>/dev/null; then
+		print_result "stale-lock recovered (dead PID)" 0 "skipped: flock present, mkdir path not exercised"
+		teardown_test_env
+		return 0
+	fi
+
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR}"
+	local lock_dir="${ledger_dir}/dispatch-ledger.lock.d"
+	mkdir -p "$lock_dir"
+	# A PID very unlikely to be in use. ps returns non-zero on absent PID.
+	echo "999999" >"${lock_dir}/pid"
+
+	run_helper "$LEDGER_HELPER" register --session-key "stale-test-1" --issue 1 --repo "owner/repo" --pid $$
+	local register_exit="$LAST_EXIT"
+
+	local result=0
+	if [[ "$register_exit" -ne 0 ]]; then
+		result=1
+	fi
+	# Lock should be released after register completes.
+	if [[ -d "$lock_dir" ]]; then
+		result=1
+	fi
+	# Entry should have been written.
+	if [[ ! -s "${ledger_dir}/dispatch-ledger.jsonl" ]]; then
+		result=1
+	fi
+
+	print_result "stale-lock recovered (dead PID 999999)" "$result" \
+		"register_exit=${register_exit}, lock_dir_present=$([[ -d $lock_dir ]] && echo yes || echo no)"
+	teardown_test_env
+	return 0
+}
+
+#######################################
+# t2999: stale-lock recovery — no PID file, old mtime (legacy/corrupt)
+#
+# Simulates the actual production bug: a lockdir from an old client
+# (no PID file written), abandoned 24 days ago. mtime-based staleness
+# detection should reclaim it.
+#######################################
+test_stale_lock_recovered_no_pid_old_mtime() {
+	setup_test_env
+
+	if command -v flock &>/dev/null; then
+		print_result "stale-lock recovered (no PID, old mtime)" 0 "skipped: flock present, mkdir path not exercised"
+		teardown_test_env
+		return 0
+	fi
+
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR}"
+	local lock_dir="${ledger_dir}/dispatch-ledger.lock.d"
+	mkdir -p "$lock_dir"
+	# Backdate the directory mtime well beyond the 60s default ceiling.
+	# touch -t YYYYMMDDhhmm — set to 1 hour in the past.
+	local backdate
+	backdate=$(date -u -v-1H '+%Y%m%d%H%M' 2>/dev/null || date -u -d '1 hour ago' '+%Y%m%d%H%M' 2>/dev/null || echo "")
+	if [[ -n "$backdate" ]]; then
+		touch -t "$backdate" "$lock_dir" 2>/dev/null || true
+	fi
+
+	run_helper "$LEDGER_HELPER" register --session-key "stale-test-2" --issue 2 --repo "owner/repo" --pid $$
+	local register_exit="$LAST_EXIT"
+
+	local result=0
+	if [[ "$register_exit" -ne 0 ]]; then
+		result=1
+	fi
+	if [[ -d "$lock_dir" ]]; then
+		result=1
+	fi
+	if [[ ! -s "${ledger_dir}/dispatch-ledger.jsonl" ]]; then
+		result=1
+	fi
+
+	print_result "stale-lock recovered (no PID file, old mtime)" "$result" \
+		"register_exit=${register_exit}, lock_dir_present=$([[ -d $lock_dir ]] && echo yes || echo no)"
+	teardown_test_env
+	return 0
+}
+
+#######################################
+# t2999: live owner within max_age must NOT be reclaimed
+#
+# A lockdir owned by a live PID with fresh mtime must survive — stealing
+# it would corrupt concurrent registrations. Verify by setting a very
+# high max_age (1 hour) and confirming register fails to acquire within
+# the 5s mkdir timeout.
+#######################################
+test_stale_lock_blocks_on_live_owner_within_max_age() {
+	setup_test_env
+
+	if command -v flock &>/dev/null; then
+		print_result "live owner blocks within max_age" 0 "skipped: flock present, mkdir path not exercised"
+		teardown_test_env
+		return 0
+	fi
+
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR}"
+	local lock_dir="${ledger_dir}/dispatch-ledger.lock.d"
+	mkdir -p "$lock_dir"
+	# Use this test process's own PID — guaranteed alive.
+	echo "$$" >"${lock_dir}/pid"
+
+	# Set a generous max_age so age-based reclaim cannot fire.
+	export AIDEVOPS_LEDGER_LOCK_MAX_AGE_S=3600
+
+	run_helper "$LEDGER_HELPER" register --session-key "live-owner-test" --issue 3 --repo "owner/repo" --pid $$
+	local register_exit="$LAST_EXIT"
+
+	unset AIDEVOPS_LEDGER_LOCK_MAX_AGE_S
+
+	local result=0
+	# Expect register to fail (lock contention) — the live lock must hold.
+	if [[ "$register_exit" -eq 0 ]]; then
+		result=1
+	fi
+	# Live lock must still be present.
+	if [[ ! -d "$lock_dir" ]]; then
+		result=1
+	fi
+	# Our PID must still be in the lock file (not overwritten).
+	local recorded_pid
+	recorded_pid=$(cat "${lock_dir}/pid" 2>/dev/null || echo "")
+	if [[ "$recorded_pid" != "$$" ]]; then
+		result=1
+	fi
+
+	# Cleanup the live lock manually since release_lock didn't run.
+	rm -rf "$lock_dir" 2>/dev/null || true
+
+	print_result "live owner blocks within max_age" "$result" \
+		"register_exit=${register_exit}, recorded_pid=${recorded_pid}, expected=${$}"
+	teardown_test_env
+	return 0
+}
+
+#######################################
+# t2999: backward-compat — legacy lockdir without PID file
+#
+# Older clients did not write a PID file. A fresh legacy lockdir
+# (mtime <= max_age, no PID file) must NOT be reclaimed (would steal
+# from a live old-client). After max_age expires, mtime-based recovery
+# fires (covered by test_stale_lock_recovered_no_pid_old_mtime).
+#######################################
+test_stale_lock_recovered_legacy_no_pid_lockdir() {
+	setup_test_env
+
+	if command -v flock &>/dev/null; then
+		print_result "legacy no-PID lockdir respected within max_age" 0 "skipped: flock present, mkdir path not exercised"
+		teardown_test_env
+		return 0
+	fi
+
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR}"
+	local lock_dir="${ledger_dir}/dispatch-ledger.lock.d"
+	mkdir -p "$lock_dir"
+	# No PID file — fresh legacy lockdir.
+
+	# Default max_age=60s; a freshly-created lockdir is age 0.
+	run_helper "$LEDGER_HELPER" register --session-key "legacy-fresh" --issue 4 --repo "owner/repo" --pid $$
+	local register_exit="$LAST_EXIT"
+
+	local result=0
+	# Expect register to fail (lock contention) — the fresh legacy lock holds.
+	if [[ "$register_exit" -eq 0 ]]; then
+		result=1
+	fi
+
+	# Cleanup
+	rm -rf "$lock_dir" 2>/dev/null || true
+
+	print_result "legacy no-PID lockdir respected within max_age" "$result" \
+		"register_exit=${register_exit} (expected non-zero)"
+	teardown_test_env
+	return 0
+}
+
+#######################################
+# t2999: _release_lock must clear lockdir even when it contains a PID file
+#
+# After register, the lockdir should be gone. Catches regression where
+# a switch back to rmdir would fail silently on a non-empty dir.
+#######################################
+test_release_clears_lockdir_with_pid_file() {
+	setup_test_env
+
+	if command -v flock &>/dev/null; then
+		print_result "release clears lockdir with PID file" 0 "skipped: flock present, mkdir path not exercised"
+		teardown_test_env
+		return 0
+	fi
+
+	local ledger_dir="${AIDEVOPS_DISPATCH_LEDGER_DIR}"
+	local lock_dir="${ledger_dir}/dispatch-ledger.lock.d"
+
+	run_helper "$LEDGER_HELPER" register --session-key "release-test" --issue 5 --repo "owner/repo" --pid $$
+	local register_exit="$LAST_EXIT"
+
+	local result=0
+	if [[ "$register_exit" -ne 0 ]]; then
+		result=1
+	fi
+	# Lockdir must be gone after register completes.
+	if [[ -d "$lock_dir" ]]; then
+		result=1
+	fi
+
+	print_result "release clears lockdir with PID file" "$result" \
+		"register_exit=${register_exit}, lock_dir_present=$([[ -d $lock_dir ]] && echo yes || echo no)"
+	teardown_test_env
+	return 0
+}
+
+#######################################
 # Run all tests
 #######################################
 main() {
@@ -508,6 +733,12 @@ main() {
 	test_prune_old_entries
 	test_status_runs
 	test_empty_ledger_operations
+	# t2999: stale-lock recovery
+	test_stale_lock_recovered_dead_pid
+	test_stale_lock_recovered_no_pid_old_mtime
+	test_stale_lock_blocks_on_live_owner_within_max_age
+	test_stale_lock_recovered_legacy_no_pid_lockdir
+	test_release_clears_lockdir_with_pid_file
 
 	echo ""
 	echo "=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ==="
