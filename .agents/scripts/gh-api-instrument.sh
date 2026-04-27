@@ -99,8 +99,14 @@ gh_record_call() {
 		[[ -z "$caller" || "$caller" == "-bash" || "$caller" == "bash" ]] && caller="unknown"
 	fi
 	local ts
-	ts=$(date +%s 2>/dev/null) || return 0
-	mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
+	# Use bash builtin printf for timestamp when available (bash 4.2+) to avoid
+	# forking a date subprocess on every call in this high-frequency path.
+	# Falls back to date(1) for bash < 4.2; fails safe by returning 0.
+	printf -v ts '%(%s)T' -1 || ts=$(date +%s) || return 0
+	# Only create the parent dir when the path contains a slash — avoids
+	# creating a directory named like the log file on relative paths (e.g.
+	# AIDEVOPS_GH_API_LOG="gh.log" would expand ${GH_API_LOG%/*} to "gh.log").
+	[[ "$GH_API_LOG" == */* ]] && mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
 	# Tab-separated; printf is atomic for short lines on POSIX file systems.
 	printf '%s\t%s\t%s\n' "$ts" "$caller" "$path" >>"$GH_API_LOG" 2>/dev/null || true
 	return 0
