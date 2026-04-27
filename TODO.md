@@ -3340,7 +3340,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2953 fast-fail _ff_with_lock orphan-lock detection: empty lockdir without owner.pid never cleaned, blocks all dispatches #auto-dispatch #bug #enhancement #framework ref:GH#21197 pr:#21203 completed:2026-04-27
 
-- [ ] t2954 fix _resolve_pulse_runtime_binary nvm path discovery + product validation (Linux dispatch broke 9d on alex-solovyev runner) #interactive #bug #framework ref:GH#21199
+- [x] t2954 fix _resolve_pulse_runtime_binary nvm path discovery + product validation (Linux dispatch broke 9d on alex-solovyev runner) #interactive #bug #framework ref:GH#21199 pr:#21204 completed:2026-04-27
 
 - [ ] t2956 investigate watchdog_stall_continue 21.6% rate (avg 38min wasted vs 16min success) — biggest overnight throughput drain #auto-dispatch #bug #enhancement #framework ref:GH#21201
 
