@@ -6,7 +6,7 @@
 #
 # Background — GH#17671 supply-chain incident
 # -------------------------------------------
-# In April 2025 a non-collaborator (`internet-dot`) opened PR #17671 against
+# In April 2025 an external contributor (non-collaborator) opened PR #17671 against
 # this repo. The PR added a workflow file that invoked an attacker-controlled
 # action. `approve_collaborator_pr` was invoked anyway because the upstream
 # gate at the time only inspected linked-issue labels, not the PR author. The
@@ -238,7 +238,7 @@ pulse-runner
 EOF
 
 	local result=0
-	approve_collaborator_pr "200" "owner/repo" "internet-dot" || result=$?
+	approve_collaborator_pr "200" "owner/repo" "external-contributor" || result=$?
 
 	# Function returns 0 (skip is not failure) but MUST NOT call gh pr review.
 	if [[ "$result" -ne 0 ]]; then
