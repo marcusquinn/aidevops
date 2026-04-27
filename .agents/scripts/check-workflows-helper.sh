@@ -9,6 +9,7 @@
 # managed workflows:
 #   - issue-sync.yml         (template: issue-sync-caller.yml)
 #   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
+#   - maintainer-gate.yml    (template: maintainer-gate-caller.yml, GH#21154)
 #
 # Classifies each (repo × workflow) as:
 #
@@ -72,9 +73,11 @@ SCRIPT_NAME=$(basename "$0")
 # for every repo and classifies each (repo × workflow) independently.
 #
 # GH#20727: review-bot-gate added.
+# GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
 readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
+	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 )
 
 # ─── Path resolution ────────────────────────────────────────────────────────

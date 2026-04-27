@@ -1,0 +1,959 @@
+name: Maintainer Gate (reusable)
+
+# Reusable workflow — call via a thin caller YAML in each repo.
+# See: .agents/templates/workflows/maintainer-gate-caller.yml
+# See: .agents/reference/reusable-workflows.md
+#
+# The caller declares the triggers (pull_request_target / issues)
+# and the top-level permissions ceiling. All gate logic lives here;
+# unlike issue-sync or review-bot-gate, no framework scripts are
+# fetched at runtime — the gate is entirely self-contained.
+#
+# GH#21154: migrated from single-repo workflow to reusable-workflow
+# pattern, enabling propagation via `aidevops sync-workflows` to all
+# pulse-enabled repos. This is the layer-1 generalisation referenced
+# in .agents/reference/incident-gh17671-supply-chain.md.
+#
+# To enforce: add "maintainer-gate" as a required status check in
+# GitHub branch protection settings for each repo.
+#
+# Blocks merge when:
+# 1. PR itself has 'needs-maintainer-review' label (external contributor PRs)
+# 2. PR references an issue with 'needs-maintainer-review' label
+# 3. PR references an issue with no assignee
+#
+# Also protects labels:
+# - Re-applies 'needs-maintainer-review' if removed without cryptographic approval.
+# - Re-applies 'origin:worker' if removed by a non-bot actor (Job 5).
+#   origin:worker is set exclusively by github-actions[bot] and must not be
+#   manually applied by contributors to bypass the assignee gate.
+#
+# This is the hard enforcement layer. The issue-triage-gate.yml and
+# pr-triage-gate.yml apply the label on creation; this workflow enforces
+# it at merge time.
+#
+# GH#17671 post-mortem: Previously, external PRs without linked issues
+# passed the gate because only linked-issue labels were checked. Now the
+# gate also checks the PR's own labels, closing the bypass vector.
+#
+# GH#18197 post-mortem: The assignee-gate exemption was label-based
+# (quality-debt), which any write-access collaborator could apply. The
+# exemption is now authorship-based: only issues created by
+# github-actions[bot] are exempt. origin:worker is additionally protected
+# from manual addition/removal (Job 5).
+
+on:
+  workflow_call:
+    inputs:
+      aidevops_ref:
+        description: 'aidevops ref (unused — all gate logic is inline; kept for API consistency with other reusable workflows)'
+        required: false
+        type: string
+        default: 'main'
+
+jobs:
+  # =========================================================================
+  # Job 1: Block PRs that reference issues still needing maintainer review
+  #         or issues with no assignee
+  # =========================================================================
+  check-pr:
+    name: Maintainer Review & Assignee Gate
+    if: >-
+      github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: maintainer-gate-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    permissions:
+      pull-requests: write
+      issues: read
+      contents: read
+      statuses: write
+
+    steps:
+      # Security: This job uses pull_request_target for fork PR write access.
+      # It ONLY reads event metadata (PR title, body, number) — never checks
+      # out or executes code from the PR head branch.
+      - name: Check PR labels and linked issues for maintainer review
+        id: check
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
+        run: |
+          # ---------------------------------------------------------------
+          # Check 0: Does the PR itself carry needs-maintainer-review?
+          # GH#17671 post-mortem: external PRs without linked issues bypassed
+          # the gate because only linked-issue labels were checked. This block
+          # catches that case — the PR's own labels are the primary signal for
+          # external contributor PRs. Requires cryptographic approval on the
+          # PR's comments (same pattern as issue approval).
+          # ---------------------------------------------------------------
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)
+
+          if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
+            # Check for signed approval comment on the PR itself
+            SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+              2>/dev/null || echo "0")
+
+            if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+              echo "PR #$PR_NUMBER has needs-maintainer-review but signed approval found — continuing"
+            else
+              echo "BLOCKED: PR #$PR_NUMBER has needs-maintainer-review label with no signed approval"
+              echo "blocked=true" >> "$GITHUB_OUTPUT"
+              printf 'PR #%s has \x60needs-maintainer-review\x60 label — a maintainer must cryptographically approve it before merge.\n' "$PR_NUMBER" > /tmp/gate-reasons.txt
+              echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="PR has needs-maintainer-review — requires cryptographic approval" \
+                2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="PR has needs-maintainer-review — requires cryptographic approval"; } || {
+                echo "::error::Failed to post maintainer-gate commit status after retry"
+                exit 1
+              }
+              exit 0
+            fi
+          fi
+
+          # Collect linked issue numbers from PR body
+          LINKED_ISSUES=""
+          if [[ -n "$PR_BODY" ]]; then
+            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+          fi
+
+          # Also check PR title for task ID and find matching issue
+          TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+          TITLE_LOOKUP_FAILED=false
+          if [[ -n "$TASK_ID" && -z "$LINKED_ISSUES" ]]; then
+            ISSUE_SEARCH_OUTPUT=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 2>&1) || {
+              echo "::warning::Title-based issue lookup failed for task ID '$TASK_ID': $ISSUE_SEARCH_OUTPUT"
+              ISSUE_SEARCH_OUTPUT=""
+              TITLE_LOOKUP_FAILED=true
+            }
+            if [[ -n "$ISSUE_SEARCH_OUTPUT" ]]; then
+              FOUND=$(echo "$ISSUE_SEARCH_OUTPUT" \
+                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>&1) || {
+                echo "::error::jq parsing failed during title-based issue lookup for task ID '$TASK_ID': $FOUND"
+                FOUND=""
+                TITLE_LOOKUP_FAILED=true
+              }
+              if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+                LINKED_ISSUES="$FOUND"
+              fi
+            fi
+          fi
+
+          # If title-based lookup was attempted but failed, block — don't pass the gate on API errors
+          if [[ -z "$LINKED_ISSUES" && "$TITLE_LOOKUP_FAILED" == "true" ]]; then
+            echo "::error::Title-based issue lookup failed — cannot verify linked issues. Blocking to be safe."
+            echo "blocked=true" >> "$GITHUB_OUTPUT"
+            printf 'Title-based issue lookup for task ID %s failed — cannot verify linked issues.\n' "$TASK_ID" > /tmp/gate-reasons.txt
+            echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+            # Post failure commit status so branch protection sees the result
+            # Fail-closed: if status post fails after retry, fail the job to avoid
+            # leaving the PR without a maintainer-gate status (GH#14277)
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="Title-based issue lookup failed — cannot verify linked issues" \
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="Title-based issue lookup failed — cannot verify linked issues"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
+            exit 0
+          fi
+
+          # ---------------------------------------------------------------
+          # Check -1: origin:interactive — implied maintainer approval
+          # GH#18285 post-mortem: PRs created during interactive maintainer
+          # sessions carry origin:interactive. The maintainer was present and
+          # directing the work — no separate cryptographic approval is needed.
+          #
+          # t2030: applies to ALL PRs (with or without linked issues). The
+          # previous placement was nested inside `if [[ -z "$LINKED_ISSUES" ]]`,
+          # which was a documented-vs-implemented mismatch — build.txt says
+          # "PRs tagged origin:interactive pass the maintainer gate
+          # automatically when the PR author is OWNER or MEMBER", full stop.
+          # The nested placement narrowed the rule to "only PRs with no
+          # linked issues", making the common maintainer-triages-external-bug
+          # flow still hit the full linked-issue gate despite being the exact
+          # case the rule was supposed to cover.
+          #
+          # Security gate: ONLY passes for OWNER or MEMBER author_association.
+          # COLLABORATOR is excluded — write-access contributors must still go
+          # through the normal gate. A contributor could apply origin:interactive
+          # manually (labels are not protected like origin:worker), so we verify
+          # the PR author is actually a maintainer via GitHub's author_association.
+          # The authorship check is unchanged from the pre-t2030 version — the
+          # only change is which PRs reach it.
+          # ---------------------------------------------------------------
+          if echo "$PR_LABELS" | grep -q 'origin:interactive'; then
+            if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
+               [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
+              echo "PASS: PR #$PR_NUMBER has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval (t2030: applies to linked-issue PRs too)"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=success \
+                -f context="maintainer-gate" \
+                -f description="origin:interactive by maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval" \
+                2>/dev/null || true
+              exit 0
+            else
+              echo "SKIP: PR #$PR_NUMBER has origin:interactive but author is $PR_AUTHOR_ASSOCIATION (not OWNER/MEMBER) — continuing normal gate checks"
+            fi
+          fi
+
+          if [[ -z "$LINKED_ISSUES" ]]; then
+            echo "No linked issues found — gate passes (no issues to check)"
+            echo "blocked=false" >> "$GITHUB_OUTPUT"
+            echo "reason=" >> "$GITHUB_OUTPUT"
+            # Post success commit status so branch protection sees the result
+            # Fail-closed: if status post fails after retry, fail the job (GH#14277)
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="No linked issues to check" \
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="No linked issues to check"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
+            exit 0
+          fi
+
+          echo "Checking linked issues: $LINKED_ISSUES"
+
+          BLOCKED=false
+          REASONS=""
+
+          for ISSUE_NUM in $LINKED_ISSUES; do
+            echo "--- Checking issue #$ISSUE_NUM ---"
+
+            # Fetch raw issue JSON first, then parse — never silence API errors (GH#11063)
+            RAW_ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" 2>&1) || {
+              echo "::error::gh api failed for issue #$ISSUE_NUM: $RAW_ISSUE_DATA"
+              BLOCKED=true
+              REASONS="${REASONS}Issue #${ISSUE_NUM}: API call failed — cannot verify assignee/labels.\n"
+              continue
+            }
+
+            # Debug: log raw assignees and labels arrays for troubleshooting (opt-in via workflow_dispatch or re-run)
+            if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+              echo "DEBUG: Raw assignees for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.assignees[]?.login]')"
+              echo "DEBUG: Raw labels for issue #$ISSUE_NUM: $(echo "$RAW_ISSUE_DATA" | jq -c '[.labels[]?.name]')"
+            fi
+
+            # Parse fields from raw JSON — use []? to handle empty arrays safely
+            ISSUE_DATA=$(echo "$RAW_ISSUE_DATA" | jq '{labels: [.labels[]?.name], assignees: [.assignees[]?.login], state: .state, author_association: .author_association, user_login: .user.login}') || {
+              echo "::error::jq parsing failed for issue #$ISSUE_NUM"
+              echo "DEBUG: First 500 chars of raw response: ${RAW_ISSUE_DATA:0:500}"
+              BLOCKED=true
+              REASONS="${REASONS}Issue #${ISSUE_NUM}: Failed to parse API response.\n"
+              continue
+            }
+
+            LABELS=$(echo "$ISSUE_DATA" | jq -r '.labels[]' 2>/dev/null || true)
+            ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
+            STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
+            ISSUE_AUTHOR=$(echo "$ISSUE_DATA" | jq -r '.user_login' 2>/dev/null || echo "unknown")
+
+            if [[ "${MAINTAINER_GATE_DEBUG:-false}" == "true" ]]; then
+              echo "DEBUG: Parsed LABELS='$LABELS' ASSIGNEES='$ASSIGNEES' STATE='$STATE' ISSUE_AUTHOR='$ISSUE_AUTHOR'"
+            fi
+
+            # Skip closed issues — they've already been reviewed
+            if [[ "$STATE" == "closed" ]]; then
+              echo "Issue #$ISSUE_NUM is closed — skipping"
+              continue
+            fi
+
+            # Check 1: needs-maintainer-review label
+            if echo "$LABELS" | grep -q 'needs-maintainer-review'; then
+              BLOCKED=true
+              REASONS="${REASONS}Issue #${ISSUE_NUM} has \`needs-maintainer-review\` label — a maintainer must review and approve the issue before it can be worked on.\n"
+              echo "BLOCKED: Issue #$ISSUE_NUM has needs-maintainer-review"
+            fi
+
+            # Check 2: no assignee
+            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956, GH#20195):
+            #   1) PR author is OWNER or MEMBER (maintainer-tier only).
+            #      COLLABORATOR is excluded — write-access contributors must have the
+            #      issue explicitly assigned before their PR passes the gate.
+            #      On personal repos there are no MEMBERs, so effectively OWNER-only.
+            #   2) AND one of:
+            #      a) Issue was created by github-actions[bot] — immutable, cannot be spoofed, OR
+            #      b) Issue carries a source:* automation label (non-spoofable — only the
+            #         pulse process running with the repo owner's token can apply these
+            #         labels at issue-creation time; contributors cannot self-label), OR
+            #      c) Issue carries origin:worker or origin:interactive AND the issue
+            #         author is the repo owner or github-actions[bot] AND no non-
+            #         maintainer comments exist (t2451/GH#20195).
+            # Neither the PR author check nor the origin signal alone is sufficient.
+            #
+            # t2451/GH#20195 rationale: the pulse creates issues as the repo owner
+            # (not github-actions[bot]) and tags them origin:worker. Until this
+            # widening, such issues only passed the gate if an assignee was
+            # explicitly set — but the worker's CLAIM_RELEASED path strips the
+            # assignee when the worker exits, stranding PRs at maintainer-gate.
+            # origin:worker is bot/owner-only (Job 5 of this workflow enforces it),
+            # so its presence is a non-forgeable trust signal. The non-maintainer
+            # comment guard adds defence-in-depth: if an external contributor has
+            # commented on the issue, drop back to the normal gate — an external
+            # comment could contain prompt-injection content that altered the
+            # worker's behaviour.
+            if [[ -z "$ASSIGNEES" ]]; then
+              PR_AUTHOR_IS_MAINTAINER=false
+              if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
+                 [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
+                PR_AUTHOR_IS_MAINTAINER=true
+              fi
+
+              HAS_AUTOMATION_LABEL=false
+              for automation_label in \
+                "source:review-scanner" "source:review-feedback" "source:ci-feedback" \
+                "source:ci-failure-miner" "source:conflict-feedback" "source:quality-debt" \
+                "source:post-merge-review-scanner"; do
+                if echo "$LABELS" | grep -qxF "$automation_label"; then
+                  HAS_AUTOMATION_LABEL=true
+                  break
+                fi
+              done
+
+              # t2451/GH#20195: trusted-origin-label exemption with defence-in-depth
+              HAS_TRUSTED_ORIGIN_LABEL=false
+              if echo "$LABELS" | grep -qxF 'origin:worker' || \
+                 echo "$LABELS" | grep -qxF 'origin:interactive'; then
+                if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || \
+                   { [[ -n "$REPO_OWNER" ]] && [[ "$ISSUE_AUTHOR" == "$REPO_OWNER" ]]; }; then
+                  # Defence-in-depth: deny trust if any non-maintainer has commented.
+                  # Comments with author_association == CONTRIBUTOR or NONE are from
+                  # external users who could have injected prompt content that
+                  # altered worker behaviour. The source:* and bot-author paths
+                  # above are NOT subject to this check — source:* labels are
+                  # applied by the pulse itself (not user comments), and bot-
+                  # authored issues have a narrower attack surface.
+                  NON_MAINT_COMMENTS=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+                    --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "$NON_MAINT_COMMENTS" == "0" ]]; then
+                    HAS_TRUSTED_ORIGIN_LABEL=true
+                  else
+                    echo "INFO: Issue #$ISSUE_NUM has trusted origin label but $NON_MAINT_COMMENTS non-maintainer comment(s) — trust denied (defence-in-depth)"
+                  fi
+                fi
+              fi
+
+              if [[ "$PR_AUTHOR_IS_MAINTAINER" == "true" ]] && \
+                 { [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || \
+                   [[ "$HAS_AUTOMATION_LABEL" == "true" ]] || \
+                   [[ "$HAS_TRUSTED_ORIGIN_LABEL" == "true" ]]; }; then
+                echo "EXEMPT: Issue #$ISSUE_NUM (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, trusted_origin=$HAS_TRUSTED_ORIGIN_LABEL, pr_author=$PR_AUTHOR_ASSOCIATION) — assignee check skipped"
+              else
+                BLOCKED=true
+                REASONS="${REASONS}Issue #${ISSUE_NUM} has no assignee — an issue must be assigned before work begins.\n"
+                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee (issue_author=$ISSUE_AUTHOR, automation_label=$HAS_AUTOMATION_LABEL, trusted_origin=$HAS_TRUSTED_ORIGIN_LABEL, pr_author_association=$PR_AUTHOR_ASSOCIATION)"
+              fi
+            fi
+          done
+
+          echo "blocked=$BLOCKED" >> "$GITHUB_OUTPUT"
+          # Use a temp file for multi-line reasons
+          printf '%b' "$REASONS" > /tmp/gate-reasons.txt
+          echo "has_reasons=true" >> "$GITHUB_OUTPUT"
+
+          # Post commit status so branch protection sees the result (GH#14277)
+          # The check-run (job name) is separate from the commit status context.
+          # Branch protection may require the "maintainer-gate" commit status,
+          # which Job 1 now posts directly on all pull_request_target events.
+          # Job 3 (retrigger-pr-checks) triggers a Job 1 rerun on issue changes
+          # rather than posting its own status — t2037 delegates all evaluation
+          # to Job 1 as the single source of truth.
+          # Fail-closed: if status post fails after retry, fail the job (GH#14277)
+          if [[ "$BLOCKED" == "true" ]]; then
+            DESCRIPTION=$(head -c 140 /tmp/gate-reasons.txt | tr '\n' ' ')
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="${DESCRIPTION}" \
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=failure \
+              -f context="maintainer-gate" \
+              -f description="${DESCRIPTION}"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
+          else
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="All linked issues pass gate checks" \
+              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=success \
+              -f context="maintainer-gate" \
+              -f description="All linked issues pass gate checks"; } || {
+              echo "::error::Failed to post maintainer-gate commit status after retry"
+              exit 1
+            }
+          fi
+
+      - name: Post or update gate comment
+        if: steps.check.outputs.blocked == 'true'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REASONS=$(cat /tmp/gate-reasons.txt)
+
+          BODY="<!-- maintainer-gate-check -->
+          **Maintainer Gate: BLOCKED**
+
+          This PR cannot be merged because:
+
+          ${REASONS}
+          **What to do:**
+          1. A maintainer must review the linked issue(s) and approve them using the cryptographic approval command:
+             \`\`\`
+             sudo aidevops approve issue <issue_number>
+             \`\`\`
+             This requires your system password and signs the approval with a root-protected key that automation cannot forge.
+          2. The issue(s) must have an assignee before work begins
+          3. This check re-runs automatically when the issue is updated
+
+          _This is an automated check. See [issue-triage-gate.yml](/.github/workflows/issue-triage-gate.yml) for the triage policy._"
+
+          # Check if we already posted a gate comment
+          EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments \
+            --jq '[.comments[] | select(.body | contains("maintainer-gate-check"))] | length' 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY" 2>/dev/null || true
+          fi
+
+      - name: Gate result
+        if: steps.check.outputs.blocked == 'true'
+        run: |
+          echo "::error::PR is blocked by maintainer gate. See PR comment for details."
+          cat /tmp/gate-reasons.txt
+          exit 1
+
+  # =========================================================================
+  # Job 2: Protect labels — re-apply needs-maintainer-review if removed by
+  #         a non-maintainer on an external issue
+  # =========================================================================
+  protect-labels:
+    name: Protect Triage Labels
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'unlabeled' &&
+      github.event.label.name == 'needs-maintainer-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Re-apply label if no signed approval exists (t1894)
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ACTOR: ${{ github.actor }}
+          ACTOR_ASSOCIATION: ${{ github.event.issue.author_association }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Label 'needs-maintainer-review' removed from issue #$ISSUE_NUMBER by $ACTOR"
+
+          # Always allow the bot — the approval-helper.sh removes labels after
+          # posting a signed approval comment, so this is the legitimate path.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — label removal accepted"
+            exit 0
+          fi
+
+          # t1894: Check for a cryptographic signed approval comment.
+          # Even admin/maintainer actors must use the approval command —
+          # manual label removal alone is insufficient because it leaves
+          # no auditable cryptographic proof of approval.
+          SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+            2>/dev/null || echo "0")
+
+          if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+            echo "ALLOWED: Signed approval comment found — label removal accepted"
+            exit 0
+          fi
+
+          echo "DENIED: No signed approval found — re-applying label (actor: $ACTOR)"
+
+          # Re-apply the label
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
+
+          # Post a comment explaining why
+          EXISTING=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --jq "[.[] | select(.body | test(\"label-protection-notice\"))] | length" 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "<!-- label-protection-notice -->
+          The \`needs-maintainer-review\` label was re-applied automatically.
+
+          Removing this label requires a cryptographic approval — even for maintainers. This ensures every approval is auditable and cannot be forged by automation.
+
+          To approve this issue, run from your terminal:
+          \`\`\`
+          sudo aidevops approve issue $ISSUE_NUMBER
+          \`\`\`
+          This signs the approval with a root-protected key and posts a verifiable comment."
+          fi
+
+  # =========================================================================
+  # Job 3: Re-evaluate PR gate when a linked issue's labels or assignees change
+  #         Pure plumbing: finds linked PRs, posts pending, triggers Job 1 rerun.
+  #         Gate evaluation logic lives exclusively in Job 1 (t2037).
+  # =========================================================================
+  retrigger-pr-checks:
+    name: Re-evaluate PR Gate on Issue Change
+    if: >-
+      github.event_name == 'issues' &&
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned' || github.event.action == 'unassigned')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      pull-requests: read
+      issues: read
+      contents: read
+      statuses: write
+      actions: write  # t2018: refresh required CheckRun by re-running Job 1
+
+    steps:
+      - name: Find linked PRs and trigger Job 1 rerun
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
+
+          # Find open PRs that reference this issue via body closing keywords
+          # OR via title task-ID pattern (e.g. "t1234: description" where issue
+          # title starts with the same task ID). Both linking methods are used
+          # by check-pr, so retrigger must discover both. (GH#14413)
+          OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,body,title --limit 50 \
+            | jq -r --arg num "$ISSUE_NUMBER" \
+              '[.[] | select(
+                (.body // "" | test("(closes?|fixes?|resolves?)\\s*#" + $num + "\\b"; "i"))
+                or (.title // "" | test("^(GH)?#?" + $num + "[.:\\s]"))
+              )] | .[].number' \
+            2>/dev/null || true)
+
+          # If body/title match missed, also try task-ID reverse lookup:
+          # find the issue's task ID from its title, then find PRs whose title
+          # starts with that task ID.
+          if [[ -z "$OPEN_PRS" ]]; then
+            ISSUE_TITLE=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.title' 2>/dev/null || true)
+            ISSUE_TASK_ID=$(echo "$ISSUE_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+            if [[ -n "$ISSUE_TASK_ID" ]]; then
+              OPEN_PRS=$(gh pr list --repo "$REPO" --state open --json number,title --limit 50 \
+                | jq -r --arg tid "$ISSUE_TASK_ID" \
+                  '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[].number' \
+                2>/dev/null || true)
+            fi
+          fi
+
+          if [[ -z "$OPEN_PRS" ]]; then
+            echo "No open PRs reference issue #$ISSUE_NUMBER"
+            exit 0
+          fi
+
+          echo "Found PRs referencing issue #$ISSUE_NUMBER: $OPEN_PRS"
+
+          for PR_NUM in $OPEN_PRS; do
+            echo "=== Triggering Job 1 rerun for PR #$PR_NUM ==="
+
+            HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+            if [[ -z "$HEAD_SHA" ]]; then
+              echo "::warning::Could not get HEAD SHA for PR #$PR_NUM — skipping"
+              continue
+            fi
+
+            # -----------------------------------------------------------------
+            # Check -1 mirror: origin:interactive — skip pending + rerun for
+            # maintainer-authored interactive PRs (GH#18532, mirrors Job 1).
+            # When an issue changes, Job 3 would otherwise post a "pending"
+            # status that temporarily overrides Job 1's prior "success" for
+            # origin:interactive PRs. For those PRs the gate will always pass,
+            # so post success directly and skip the rerun entirely.
+            #
+            # Security gate: same as Job 1 — only OWNER or MEMBER. COLLABORATOR
+            # is excluded (write-access contributors must still use the normal gate).
+            # -----------------------------------------------------------------
+            PR_INFO=$(gh pr view "$PR_NUM" --repo "$REPO" \
+              --json labels,authorAssociation \
+              --jq '{labels: [.labels[].name], assoc: .authorAssociation}' \
+              2>/dev/null || true)
+            PR_LABELS_J3=$(printf '%s' "$PR_INFO" | jq -r '.labels[]' 2>/dev/null || true)
+            PR_AUTHOR_ASSOC_J3=$(printf '%s' "$PR_INFO" | jq -r '.assoc' 2>/dev/null || true)
+            if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:interactive'; then
+              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
+                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+                echo "SKIP rerun: PR #$PR_NUM has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOC_J3) — posting success, no Job 1 rerun needed"
+                gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                  --method POST \
+                  -f state=success \
+                  -f context="maintainer-gate" \
+                  -f description="origin:interactive by maintainer — implied approval (Job 3 exemption)" \
+                  2>/dev/null || true
+                continue
+              fi
+            fi
+
+            # -----------------------------------------------------------------
+            # t2451/GH#20195: origin:worker — skip pending + rerun when the
+            # linked issue is trusted (owner- or bot-authored) AND has no
+            # non-maintainer comments. Mirrors Job 1's HAS_TRUSTED_ORIGIN_LABEL
+            # exemption so Job 3 doesn't post a transient "pending" that
+            # clobbers a prior Job 1 success.
+            #
+            # Why here and not in Job 1 only: Job 3 posts a pending status
+            # before triggering the rerun. Even when Job 1 will eventually
+            # pass, the pending window breaks branch-protection merge
+            # acceptance. The skip short-circuits that window for PRs the
+            # gate will definitely pass.
+            # -----------------------------------------------------------------
+            if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:worker'; then
+              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
+                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+                ISSUE_DATA_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+                  --jq '{author: .user.login}' 2>/dev/null || true)
+                ISSUE_AUTHOR_J3=$(printf '%s' "$ISSUE_DATA_J3" | jq -r '.author // empty' 2>/dev/null || true)
+                ISSUE_TRUSTED_J3=false
+                if [[ "$ISSUE_AUTHOR_J3" == "github-actions[bot]" ]] || \
+                   { [[ -n "$REPO_OWNER" ]] && [[ "$ISSUE_AUTHOR_J3" == "$REPO_OWNER" ]]; }; then
+                  NON_MAINT_COMMENTS_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                    --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
+                    2>/dev/null || echo "0")
+                  if [[ "$NON_MAINT_COMMENTS_J3" == "0" ]]; then
+                    ISSUE_TRUSTED_J3=true
+                  fi
+                fi
+                if [[ "$ISSUE_TRUSTED_J3" == "true" ]]; then
+                  echo "SKIP rerun: PR #$PR_NUM has origin:worker, trusted issue author ($ISSUE_AUTHOR_J3), no non-maintainer comments — posting success, no Job 1 rerun needed (t2451)"
+                  gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                    --method POST \
+                    -f state=success \
+                    -f context="maintainer-gate" \
+                    -f description="origin:worker on trusted issue — implied approval (Job 3 exemption, t2451)" \
+                    2>/dev/null || true
+                  continue
+                fi
+              fi
+            fi
+
+            # Post pending status while Job 1 re-evaluates
+            # t2037: Job 3 is pure plumbing — gate evaluation is Job 1's sole responsibility
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=pending \
+              -f context="maintainer-gate" \
+              -f description="Refreshing via Job 1 rerun..." \
+              2>/dev/null || true
+
+            # -----------------------------------------------------------------
+            # t2018 + t2037: Trigger Job 1 rerun so it re-evaluates gate
+            # conditions against current issue state. Use full /rerun endpoint
+            # (not /rerun-failed-jobs) to handle both directions:
+            # - Issue loses NMR label / gains assignee: previous run may have
+            #   been SUCCESS — must rerun to produce updated result
+            # - Issue gains NMR label / loses assignee: previous run may have
+            #   been SUCCESS — same requirement
+            # /rerun-failed-jobs would skip re-running a previously-successful
+            # run, leaving stale SUCCESS status when conditions changed.
+            #
+            # Security: the rerun executes the same pull_request_target event.
+            # Jobs 2-5 are gated on `github.event_name == 'issues'` and are
+            # skipped, so only Job 1 runs in the rerun. No infinite loop risk.
+            # -----------------------------------------------------------------
+            RUN_LOOKUP=$(gh api \
+              "repos/${REPO}/actions/workflows/maintainer-gate.yml/runs?head_sha=${HEAD_SHA}&event=pull_request_target&per_page=1" \
+              --jq '.workflow_runs[0] | [.id, .conclusion] | @tsv' \
+              2>/dev/null || true)
+
+            if [[ -z "$RUN_LOOKUP" ]]; then
+              echo "No prior maintainer-gate run found for PR #$PR_NUM at $HEAD_SHA — pending status posted; will resolve on next PR push"
+            else
+              RUN_ID=$(printf '%s' "$RUN_LOOKUP" | cut -f1)
+              if [[ -z "$RUN_ID" || "$RUN_ID" == "null" ]]; then
+                echo "::warning::Could not parse run id for PR #$PR_NUM — pending status posted"
+              else
+                RUN_CONCLUSION=$(printf '%s' "$RUN_LOOKUP" | cut -f2)
+                echo "Triggering Job 1 rerun (run_id=$RUN_ID, prior=$RUN_CONCLUSION) for PR #$PR_NUM"
+                gh api \
+                  "repos/${REPO}/actions/runs/${RUN_ID}/rerun" \
+                  --method POST \
+                  2>/dev/null \
+                  || echo "::warning::Failed to re-run Job 1 for PR #$PR_NUM — pending status remains until next PR push"
+              fi
+            fi
+          done
+
+  # =========================================================================
+  # Job 4: Protect PR labels — re-apply needs-maintainer-review if removed
+  #         from an external-contributor PR without cryptographic approval.
+  #         Mirrors the issue label protection (Job 2) for PRs.
+  #
+  # GH#17671 post-mortem: the issue protection existed but PRs had no
+  # equivalent. An actor could remove the NMR label from a PR and the
+  # maintainer-gate Check 0 would no longer block.
+  # =========================================================================
+  protect-pr-labels:
+    name: Protect PR Triage Labels
+    if: >-
+      github.event_name == 'pull_request_target' &&
+      github.event.action == 'unlabeled' &&
+      github.event.label.name == 'needs-maintainer-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Re-apply label if no signed approval exists
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Label 'needs-maintainer-review' removed from PR #$PR_NUMBER by $ACTOR"
+
+          # Always allow the bot — the approval-helper.sh removes labels after
+          # posting a signed approval comment, so this is the legitimate path.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — label removal accepted"
+            exit 0
+          fi
+
+          # Only protect PRs that were labelled external-contributor.
+          # Internal PRs (from collaborators) should never have had NMR in
+          # the first place — don't fight a manual correction on those.
+          PR_LABELS=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
+            --json labels --jq '.labels[].name' 2>/dev/null || true)
+
+          if ! echo "$PR_LABELS" | grep -q 'external-contributor'; then
+            echo "ALLOWED: PR #$PR_NUMBER is not an external-contributor PR — label removal accepted"
+            exit 0
+          fi
+
+          # Check for a cryptographic signed approval comment on the PR.
+          # PRs use the same issues API endpoint for comments.
+          SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
+            2>/dev/null || echo "0")
+
+          if [[ "$SIGNED_APPROVAL" -gt 0 ]]; then
+            echo "ALLOWED: Signed approval comment found — label removal accepted"
+            exit 0
+          fi
+
+          echo "DENIED: No signed approval found — re-applying label (actor: $ACTOR)"
+
+          # Re-apply the label
+          gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "needs-maintainer-review"
+
+          # Post a comment explaining why (only once)
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | test(\"pr-label-protection-notice\"))] | length" 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- pr-label-protection-notice -->
+          The \`needs-maintainer-review\` label was re-applied automatically.
+
+          Removing this label requires a cryptographic approval — even for maintainers. This ensures every approval is auditable and cannot be forged by automation.
+
+          To approve this PR, run from your terminal:
+          \`\`\`
+          sudo aidevops approve pr $PR_NUMBER
+          \`\`\`
+          This signs the approval with a root-protected key and posts a verifiable comment."
+          fi
+
+  # =========================================================================
+  # Job 5: Protect origin:worker label — re-apply if added or removed by a
+  #         non-bot actor. This label is set exclusively by github-actions[bot]
+  #         to mark machine-generated issues. Manual manipulation would allow
+  #         contributors to bypass the assignee gate (GH#18197).
+  # =========================================================================
+  protect-origin-worker-label:
+    name: Protect origin:worker Label
+    if: >-
+      github.event_name == 'issues' &&
+      (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+      github.event.label.name == 'origin:worker'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Enforce bot-only origin:worker label (GH#18197, widened for repo owner GH#18684, collaborators GH#20311)
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ACTION: ${{ github.event.action }}
+          ACTOR: ${{ github.actor }}
+          REPO: ${{ github.repository }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "origin:worker label $ACTION on issue #$ISSUE_NUMBER by $ACTOR (repo owner: $REPO_OWNER)"
+
+          # ALLOWLIST: who may add or remove origin:worker.
+          #
+          # 1. github-actions[bot] — the original allowlist from GH#18197.
+          #    Covers server-side CI workflows that label issues (e.g.
+          #    issue-triage-gate.yml assigning origin:worker to non-
+          #    maintainer-authored issues).
+          #
+          # 2. The repository owner — added by GH#18670. The aidevops
+          #    pulse runs on the maintainer's local machine authenticated
+          #    as the owner's personal token, not as github-actions[bot].
+          #    When the pulse creates issues via gh_create_issue under
+          #    AIDEVOPS_HEADLESS=true, it correctly applies origin:worker
+          #    — but this server-side protection was stripping the label
+          #    on every application because the actor was the owner, not
+          #    the bot. The owner has unambiguous repo authority and
+          #    cannot be a "forger". Adding the repo owner to the
+          #    allowlist restores the intent of the protection: block
+          #    external contributors from forging origin:worker to bypass
+          #    the assignee gate, while allowing the legitimate automation
+          #    pipeline (which runs as the owner) to apply it.
+          #
+          # 3. Collaborators with write/admin/maintain permission —
+          #    added by GH#20311 (t2691). Multi-runner aidevops setups
+          #    authenticate secondary pulse instances as collaborator
+          #    accounts (e.g. alex-solovyev). These runners execute
+          #    stats-wrapper.sh → update_health_issues →
+          #    _create_health_issue → gh_create_issue with
+          #    AIDEVOPS_HEADLESS=true, which correctly applies
+          #    origin:worker. However, the server-side check was
+          #    stripping the label because the actor (the collaborator
+          #    account) was not in the allowlist. Root-cause evidence:
+          #    issue #20298 timeline — origin:worker applied by
+          #    alex-solovyev at 13:17:56Z, removed by github-actions[bot]
+          #    at 13:18:03Z (7 seconds later). Collaborators with write
+          #    access are trusted automation operators; they cannot forge
+          #    dispatch gates any more than the repo owner can.
+          #    CONTRIBUTOR/FIRST_TIME_CONTRIBUTOR/NONE actors remain
+          #    blocked — the external-contributor forge guarantee from
+          #    GH#18197 is preserved.
+          if [[ "$ACTOR" == "github-actions[bot]" ]] || [[ "$ACTOR" == "github-actions" ]]; then
+            echo "ALLOWED: GitHub Actions bot — origin:worker label change accepted"
+            exit 0
+          fi
+          if [[ -n "$REPO_OWNER" && "$ACTOR" == "$REPO_OWNER" ]]; then
+            echo "ALLOWED: repository owner ($ACTOR) — origin:worker label change accepted (GH#18684)"
+            exit 0
+          fi
+          # t2691/GH#20311: Check if the actor is a collaborator with write
+          # access. The /collaborators/{username}/permission endpoint returns
+          # the user's effective permission level. Non-collaborators (external
+          # contributors) return permission=none or HTTP 404; both map to
+          # "none" via the fallback. write/admin/maintain = trusted runner.
+          ACTOR_PERM=$(gh api "repos/${REPO}/collaborators/${ACTOR}/permission" \
+            --jq '.permission // "none"' 2>/dev/null || echo "none")
+          if [[ "$ACTOR_PERM" == "write" || "$ACTOR_PERM" == "admin" || "$ACTOR_PERM" == "maintain" ]]; then
+            echo "ALLOWED: collaborator $ACTOR (permission=$ACTOR_PERM) — origin:worker label change accepted (t2691, GH#20311)"
+            exit 0
+          fi
+
+          echo "DENIED: $ACTOR is not in the allowlist — reversing origin:worker label $ACTION"
+
+          if [[ "$ACTION" == "labeled" ]]; then
+            # Non-allowlisted actor added the label. Fetch the issue author's
+            # association to decide the remediation (t2450). For external
+            # contributors, stripping `origin:worker` alone isn't enough —
+            # the `tier:*` label the labelless-backfill applies alongside it
+            # (pulse-issue-reconcile.sh::reconcile_labelless_aidevops_issues)
+            # is what actually makes the issue dispatchable. We must also
+            # strip `tier:*` and apply `needs-maintainer-review` to close
+            # the full gating gap. Reference: #20180, #20184.
+            ISSUE_AUTHOR_ASSOC=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
+              --jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
+
+            # External-contributor classes. Fail-closed: unknown values are
+            # treated as external. The cost of false-positive external is
+            # one NMR review; the cost of the opposite is the #20180 bug.
+            EXTERNAL_AUTHOR="true"
+            case "$ISSUE_AUTHOR_ASSOC" in
+              OWNER|MEMBER|COLLABORATOR) EXTERNAL_AUTHOR="false" ;;
+            esac
+
+            if [[ "$EXTERNAL_AUTHOR" == "true" ]]; then
+              # External-authored — strip origin:worker AND all tier:*
+              # labels, and apply needs-maintainer-review. Single gh edit
+              # call for atomicity; --remove-label is a no-op when the
+              # label isn't present, so listing all three tiers is safe.
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" \
+                --remove-label "origin:worker" \
+                --remove-label "tier:simple" \
+                --remove-label "tier:standard" \
+                --remove-label "tier:thinking" \
+                --add-label "needs-maintainer-review"
+              NOTICE="The \`origin:worker\` and \`tier:*\` labels were removed and \`needs-maintainer-review\` applied automatically. This issue was filed by an external contributor (\`author_association=${ISSUE_AUTHOR_ASSOC}\`) and must pass maintainer review before a worker can be dispatched. Maintainers: review the proposal, then either claim a fresh internal task via \`claim-task-id.sh\` or approve cryptographically with \`sudo aidevops approve issue ${ISSUE_NUMBER}\`."
+            else
+              # Internal-authored but actor non-allowlisted — just strip
+              # origin:worker. The tier:* label is valid on internally
+              # authored issues; no NMR needed.
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --remove-label "origin:worker"
+              NOTICE="The \`origin:worker\` label was removed automatically. This label is reserved for issues created by the automation pipeline and cannot be applied by non-maintainer contributors."
+            fi
+          else
+            # Non-allowlisted actor removed the label — re-apply it only if
+            # the issue was authored by the bot OR the repo owner (both
+            # valid pulse authorship paths).
+            ISSUE_AUTHOR=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.user.login' 2>/dev/null || echo "unknown")
+            if [[ "$ISSUE_AUTHOR" == "github-actions[bot]" ]] || [[ "$ISSUE_AUTHOR" == "$REPO_OWNER" ]]; then
+              gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "origin:worker"
+              NOTICE="The \`origin:worker\` label was re-applied automatically. This issue was created by the automation pipeline and its provenance label cannot be removed by non-maintainer contributors."
+            else
+              echo "Issue #$ISSUE_NUMBER was not bot- or owner-authored — skipping re-apply"
+              exit 0
+            fi
+          fi
+
+          # Post a one-time notice
+          EXISTING=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --jq "[.[] | select(.body | test(\"origin-worker-protection-notice\"))] | length" 2>/dev/null || echo "0")
+
+          if [[ "$EXISTING" == "0" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "<!-- origin-worker-protection-notice -->
+          ${NOTICE}"
+          fi
