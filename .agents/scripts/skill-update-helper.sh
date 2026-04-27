@@ -24,6 +24,14 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# t2976: canonical audit logger for worktree-removal events
+if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
+	# shellcheck source=audit-worktree-removal-helper.sh
+	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
+fi
+# Caller ID constant (avoids repeated literals).
+_WTAR_SU_CALLER="skill-update-helper.sh"
+
 set -euo pipefail
 
 # Configuration
@@ -1404,12 +1412,16 @@ _cleanup_worktree() {
 		# Ownership check (t2974): refuse to remove worktrees owned by other sessions
 		if is_worktree_owned_by_others "$wt_path"; then
 			log_warn "Skipping removal of worktree owned by another session: $wt_path"
+			# t2976: audit log — skill worktree removal blocked by ownership registry
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_SU_CALLER" "$wt_path" "owned-skip"
 			return 0
 		fi
 		log_info "Cleaning up empty worktree: $wt_path"
 		git worktree remove "$wt_path" --force 2>/dev/null || true
 		git branch -D "$branch" 2>/dev/null || true
 		unregister_worktree "$wt_path"
+		# t2976: audit log — empty skill worktree removed on failure cleanup
+		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_SU_CALLER" "$wt_path" "manual"
 	fi
 	return 0
 }
