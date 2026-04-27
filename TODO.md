@@ -3337,3 +3337,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2951 bounty-spam-auto-close.yml never fires close: cmd_score rc=0 contract collides with workflow rc=1 gate #auto-dispatch #bug #security ref:GH#21181 pr:#21192 completed:2026-04-27
 
 - [ ] t2952 qlty smells regression: 32 actual vs 30 threshold (file-complexity drift) #auto-dispatch #enhancement #framework ref:GH#21186
+
+- [ ] t2953 fast-fail _ff_with_lock orphan-lock detection: empty lockdir without owner.pid never cleaned, blocks all dispatches #auto-dispatch #bug #enhancement #framework ref:GH#21197
