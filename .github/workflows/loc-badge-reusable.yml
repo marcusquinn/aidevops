@@ -71,6 +71,8 @@ jobs:
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # GH#20976: SYNC_PAT can appear empty even when set on the caller if the
+      # caller uses `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility
         if: steps.check-author.outputs.skip != 'true'
         env:
@@ -78,8 +80,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT is not set — badge commit may be rejected by branch protection (GH006)."
-            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+            echo "::warning::SYNC_PAT not present in this run — badge commit may be rejected by branch protection (GH006)."
+            echo "::warning::Cause A (secret not set): gh secret set SYNC_PAT --repo ${REPO} (Contents: Read and write)"
+            echo "::warning::Cause B (cross-account caller): your caller uses 'secrets: inherit' which fails cross-account — run: aidevops sync-workflows --apply (see GH#20976)"
           else
             echo "::notice::SYNC_PAT present — badge commit will use PAT"
           fi
