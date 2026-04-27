@@ -1,6 +1,42 @@
 ---
 description: Product management - validation, onboarding, monetisation, growth, UI design, and analytics for all app types
 mode: agent
+subagents:
+  # Built-in
+  - general
+  - explore
+  # Context / research
+  - context7
+  - augment-context-engine
+  # Validation / market research
+  - serper
+  - keyword-research
+  # Onboarding
+  - onboarding
+  - app-dev-onboarding
+  - humanise
+  # Monetisation
+  - app-dev-monetisation
+  - stripe
+  - accounts-subscription-audit
+  # Growth
+  - growth
+  # UI Design — DESIGN.md system + tools
+  - design-md
+  - brand-identity
+  - ui-ux-inspiration
+  - design-inspiration
+  - colour-palette
+  - shadcn
+  - ui-skills
+  # UI testing / performance
+  - pagespeed
+  - playwright
+  - stagehand
+  # Analytics
+  - analytics-tracking
+  - google-analytics
+  - app-dev-analytics
 tools:
   read: true
   edit: true
