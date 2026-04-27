@@ -131,14 +131,21 @@ cmd_tick() {
 
 	log_info "Polling mailboxes (config: $config_path)"
 	local result
+	local py_exit=0
+	local _stderr_tmp
+	_stderr_tmp=$(mktemp)
 	result=$(python3 "$POLL_PY" tick \
 		--config "$config_path" \
 		--state "$_STATE_FILE" \
-		--inbox "$_INBOX_DIR" 2>&1) || {
-		log_error "email_poll.py tick failed"
-		log_error "$result"
+		--inbox "$_INBOX_DIR" 2>"$_stderr_tmp") || py_exit=$?
+	local _py_stderr
+	_py_stderr=$(cat "$_stderr_tmp" 2>/dev/null || true)
+	rm -f "$_stderr_tmp"
+	[[ -n "$_py_stderr" ]] && log_warn "email_poll.py: $_py_stderr"
+	if [[ "$py_exit" -ne 0 && -z "$result" ]]; then
+		log_error "email_poll.py tick failed (exit $py_exit)"
 		return 1
-	}
+	fi
 
 	# Parse summary from JSON result
 	local overall_status fetched_count

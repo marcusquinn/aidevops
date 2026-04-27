@@ -302,7 +302,7 @@ Field reference:
 | `id` | string | Unique identifier used in state keys and .eml filenames |
 | `provider` | string | Provider slug (matched against `email-providers.json.txt` for host defaults) |
 | `host` | string | IMAP server hostname |
-| `port` | integer | IMAP port (993 = TLS, 143 = STARTTLS) |
+| `port` | integer | IMAP port — use 993 (TLS/SSL). Port 143/STARTTLS is not supported; the implementation uses `IMAP4_SSL` exclusively. |
 | `user` | string | Login username / email address |
 | `password_ref` | string | `gopass:<path>` or environment variable name |
 | `folders` | array | IMAP folders to poll — each tracked independently |

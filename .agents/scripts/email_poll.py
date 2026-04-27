@@ -145,8 +145,14 @@ def _connect_imap(host: str, port: int, user: str, password: str) -> imaplib.IMA
     return conn
 
 
-def _uid_fetch_since(conn: imaplib.IMAP4_SSL, folder: str, last_uid: int) -> list[tuple[int, bytes]]:
-    """Fetch all messages with UID > last_uid in folder.
+def _uid_fetch_since(
+    conn: imaplib.IMAP4_SSL, folder: str, last_uid: int, max_uids: int = 0
+) -> list[tuple[int, bytes]]:
+    """Fetch messages with UID > last_uid in folder.
+
+    Args:
+        max_uids: If > 0, fetch at most this many messages (oldest first).
+                  Used by cmd_test to avoid fetching entire mailboxes.
 
     Returns a list of (uid, raw_rfc822_bytes) tuples sorted by UID ascending.
     """
@@ -172,6 +178,10 @@ def _uid_fetch_since(conn: imaplib.IMAP4_SSL, folder: str, last_uid: int) -> lis
     valid_uids = [int(u) for u in uid_strings if int(u) > last_uid]
     if not valid_uids:
         return []
+
+    # Limit to max_uids when set (test mode: avoids fetching entire mailboxes)
+    if max_uids > 0:
+        valid_uids = valid_uids[:max_uids]
 
     uid_set = ",".join(str(u) for u in valid_uids)
     status, fetch_data = conn.uid("FETCH", uid_set, "(RFC822)")  # type: ignore[arg-type]
@@ -260,11 +270,16 @@ def _uid_fetch_since_date(
 # .eml file output
 # ---------------------------------------------------------------------------
 
-def _write_eml(inbox_dir: str, mailbox_id: str, uid: int, raw_msg: bytes) -> Path:
-    """Write raw RFC-822 bytes to inbox_dir/email-<mailbox_id>-<uid>.eml."""
+def _write_eml(inbox_dir: str, mailbox_id: str, folder: str, uid: int, raw_msg: bytes) -> Path:
+    """Write raw RFC-822 bytes to inbox_dir/email-<mailbox_id>-<folder>-<uid>.eml.
+
+    Folder is included to prevent UID collisions across folders (UIDs are
+    per-folder on IMAP servers, so the same UID can exist in multiple folders).
+    """
     Path(inbox_dir).mkdir(parents=True, exist_ok=True)
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", mailbox_id)
-    filename = f"email-{safe_id}-{uid}.eml"
+    safe_folder = re.sub(r"[^a-zA-Z0-9_-]", "_", folder)
+    filename = f"email-{safe_id}-{safe_folder}-{uid}.eml"
     out_path = Path(inbox_dir) / filename
     out_path.write_bytes(raw_msg)
     return out_path
@@ -280,6 +295,7 @@ def poll_mailbox(
     inbox_dir: str,
     dry_run: bool = False,
     rate_limit_per_min: int = 0,
+    max_messages: int = 0,
 ) -> dict:
     """Poll a single mailbox; return a per-mailbox result dict.
 
@@ -289,6 +305,7 @@ def poll_mailbox(
         inbox_dir:         Absolute path to the _knowledge/inbox/ directory.
         dry_run:           If True, fetch but do NOT write .eml or update state.
         rate_limit_per_min: Max messages per minute (0 = unlimited).
+        max_messages:      If > 0, fetch at most this many per folder (test mode).
 
     Returns:
         {mailbox_id, status, fetched_count, new_high_uid, error?}
@@ -338,7 +355,7 @@ def poll_mailbox(
 
             folder_result = {"folder": folder, "fetched": 0, "error": None}
             try:
-                messages = _uid_fetch_since(conn, folder, last_uid)
+                messages = _uid_fetch_since(conn, folder, last_uid, max_uids=max_messages)
             except Exception as exc:
                 folder_result["error"] = str(exc)
                 result["folders"][folder] = folder_result
@@ -350,7 +367,7 @@ def poll_mailbox(
 
             for uid, raw_msg in messages:
                 if not dry_run:
-                    _write_eml(inbox_dir, mb_id, uid, raw_msg)
+                    _write_eml(inbox_dir, mb_id, folder, uid, raw_msg)
                 if uid > new_high_uid:
                     new_high_uid = uid
                 total_fetched += 1
@@ -440,7 +457,7 @@ def backfill_mailbox(
                 continue
 
             for uid, raw_msg in messages:
-                _write_eml(inbox_dir, mb_id, uid, raw_msg)
+                _write_eml(inbox_dir, mb_id, folder, uid, raw_msg)
                 total_fetched += 1
                 folder_result["fetched"] += 1
                 if delay > 0:
@@ -517,7 +534,7 @@ def cmd_test(args: argparse.Namespace) -> int:
     mb_config = get_mailbox_config(config, args.mailbox_id)
     state: dict = {}
 
-    res = poll_mailbox(mb_config, state, inbox_dir="/dev/null", dry_run=True)
+    res = poll_mailbox(mb_config, state, inbox_dir="/dev/null", dry_run=True, max_messages=1)
     print(json.dumps(res, indent=2))
     return 0 if res["status"] in ("ok", "partial_error") else 1
 

@@ -1825,7 +1825,9 @@ _cmd_email() {
 		;;
 	poll)
 		# Direct poll commands forwarded to email-poll-helper.sh
-		_dispatch_helper "$_EPH" "$_EPH" "$action" "$@" ;;
+		local poll_action="${1:-tick}"
+		shift || true
+		_dispatch_helper "$_EPH" "$_EPH" "$poll_action" "$@" ;;
 	thread)
 		# Thread lookup: email thread <message-id> [knowledge-root]
 		local _ETH="email-thread-helper.sh"
