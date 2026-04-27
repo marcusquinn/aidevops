@@ -231,28 +231,33 @@ _check_linked_issue_gate() {
 		fi
 	fi
 
-	# Check 3 (t2890): inherit pulse-side structural dispatch gates by calling
-	# dispatch-dedup-helper.sh::is-assigned — the canonical primitive the pulse
-	# uses (pulse-dispatch-dedup-layers.sh:243). Translates the unambiguous
-	# hard-block signals (PARENT_TASK_BLOCKED, NO_AUTO_DISPATCH_BLOCKED) into
-	# blocks here so /full-loop honors the same eligibility semantics as the
-	# pulse. Cost-budget, hydration window, and ownership-by-other are
-	# intentionally out of scope (need nuanced interactive UX). Fail-open on
-	# missing helper or empty stdout (matches the gh-api fail-open above).
+	# Check 3 (t2890, t2894): inherit pulse-side structural dispatch gates by
+	# calling dispatch-dedup-helper.sh::enumerate-blockers — which runs ALL
+	# unconditional label checks in a single pass and emits each matching
+	# signal on a separate line. Replaces the former is-assigned call + case
+	# statement that short-circuited on the first match, so users now see
+	# every blocker in one /full-loop invocation instead of one per retry.
+	# Cost-budget, hydration window, and ownership-by-other are intentionally
+	# out of scope (need nuanced interactive UX). Fail-open on missing helper
+	# or empty stdout (matches the gh-api fail-open above).
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
 	if [[ -x "$dedup_helper" ]]; then
 		local dedup_out
-		dedup_out=$("$dedup_helper" is-assigned "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
-		case "$dedup_out" in
-		*PARENT_TASK_BLOCKED*)
-			blocked=true
-			reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
-			;;
-		*NO_AUTO_DISPATCH_BLOCKED*)
-			blocked=true
-			reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
-			;;
-		esac
+		dedup_out=$("$dedup_helper" enumerate-blockers "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
+		local _blocker_line
+		while IFS= read -r _blocker_line; do
+			[[ -z "$_blocker_line" ]] && continue
+			case "$_blocker_line" in
+			*PARENT_TASK_BLOCKED*)
+				blocked=true
+				reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
+				;;
+			*NO_AUTO_DISPATCH_BLOCKED*)
+				blocked=true
+				reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
+				;;
+			esac
+		done <<<"$dedup_out"
 	fi
 
 	if [[ "$blocked" == "true" ]]; then
