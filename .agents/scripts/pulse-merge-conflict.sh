@@ -247,8 +247,8 @@ _interactive_pr_is_stale() {
 	fi
 
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
-	local threshold_secs updated_at now_epoch updated_epoch pr_age_secs
-	threshold_secs="${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}"  # default 4h (t2948; was 24h)
+	local threshold_secs="${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}"  # default 4h (t2948; was 24h)
+	local updated_at="" now_epoch=0 updated_epoch=0 pr_age_secs=0
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
 	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
 	# "value too great for base" and silently breaks stale detection.
