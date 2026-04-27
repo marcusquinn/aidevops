@@ -3321,6 +3321,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147
 
 - [ ] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146
+  - Decomposed into 53 child issues (#21283–#21290, #21294–#21339) via #21156
+  - Children: one per file, ordered by descending line count, all tagged auto-dispatch+tier:thinking
+  - Pulse-path files (pulse-merge, pulse-wrapper, pulse-issue-reconcile, headless-runtime, etc.) auto-elevated to opus-4-7
 
 - [ ] t2935 Block drive-by spam author of GH#17671 (see issue for username) #security ref:GH#21145
 
