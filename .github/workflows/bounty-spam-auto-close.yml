@@ -102,8 +102,12 @@ jobs:
           echo "verdict=$VERDICT" >> "$GITHUB_OUTPUT"
           echo "detector_rc=$RC" >> "$GITHUB_OUTPUT"
 
-          # Only auto-close on spam-likely (rc=1). Ambiguous and error stay open.
-          if [[ "$RC" -eq 1 && "$VERDICT" == "spam-likely" ]]; then
+          # Auto-close on spam-likely verdict. cmd_score always returns rc=0
+          # (unlike cmd_check which encodes the verdict as rc=1 for spam-likely).
+          # The verdict string is the reliable signal here — see cmd_score:460
+          # and _priv_verdict_to_exit in bounty-spam-detector.sh.
+          # Ambiguous and error verdicts stay open for human triage.
+          if [[ "$VERDICT" == "spam-likely" ]]; then
             echo "should_close=true" >> "$GITHUB_OUTPUT"
           else
             echo "should_close=false" >> "$GITHUB_OUTPUT"
