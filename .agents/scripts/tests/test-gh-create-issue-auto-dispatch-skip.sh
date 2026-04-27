@@ -12,8 +12,8 @@
 #   session was interactive, even when auto-dispatch was among the labels.
 #   This created the (origin:interactive + assigned + active status) combo
 #   that GH#18352/t1996 treats as a permanent dispatch block, stranding
-#   the issue until manual unassign or the 24h STAMPLESS_INTERACTIVE_AGE_THRESHOLD
-#   safety net (t2148).
+#   the issue until manual unassign or the 1h STAMPLESS_INTERACTIVE_AGE_THRESHOLD
+#   safety net (t2148, threshold reduced from 24h to 1h in t2942).
 #
 # Fix (t2406): early check in gh_create_issue — if the resolved --label set
 # contains auto-dispatch, skip self-assignment and emit an [INFO] log line

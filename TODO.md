@@ -86,6 +86,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
 - [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
+- [x] r042 Knowledge index build — incremental PageIndex tree across corpus repeat:cron(*/60 * * * *) ~2m run:scripts/knowledge-index-helper.sh build
 - [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 
@@ -3139,7 +3140,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2849 P1a: kind-aware enrichment + structured field extraction #enhancement #framework ref:GH#20902 blocked-by:t2844,t2843
 
-- [ ] t2850 P1c: PageIndex tree generation across corpus #enhancement #framework ref:GH#20903 blocked-by:t2844,t2843
+- [x] t2850 P1c: PageIndex tree generation across corpus #enhancement #framework ref:GH#20903 blocked-by:t2844,t2843 pr:#21161 completed:2026-04-27
 
 - [ ] t2851 P4a: case dossier contract + aidevops case open #enhancement #framework ref:GH#20904 blocked-by:t2844,t2843,t2846
 
@@ -3259,7 +3260,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061 pr:#21108 completed:2026-04-26
 
-- [ ] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060
+- [x] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060 pr:#21158 completed:2026-04-27
 
 - [x] t2914 ensure pulse running after every aidevops update via idempotent start #bug ref:GH#21069 pr:#21071 completed:2026-04-26
 
@@ -3315,10 +3316,24 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2941 redact bad-actor usernames from committed files and live artifacts #auto-dispatch #refactor #security ref:GH#21150
 
-- [ ] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154
+- [x] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154 pr:#21178 completed:2026-04-27
 
-- [ ] t2942 reduce STAMPLESS_INTERACTIVE_AGE_THRESHOLD default from 24h to 1h to recover pulse productivity faster #auto-dispatch #enhancement ref:GH#21157
+- [x] t2942 reduce STAMPLESS_INTERACTIVE_AGE_THRESHOLD default from 24h to 1h to recover pulse productivity faster #auto-dispatch #enhancement ref:GH#21157 pr:#21159 completed:2026-04-27
 
 - [ ] t2943 follow-up to t2942: claim-task-id.sh should atomically create interactive-claim stamp on self-assign #auto-dispatch #enhancement #framework ref:GH#21160
 
-- [ ] t2944 hotfix: bash 3.2 syntax error in bounty-spam-detector.sh blocks all macOS CI #auto-dispatch #bug #framework ref:GH#21162
+- [x] t2944 hotfix: bash 3.2 syntax error in bounty-spam-detector.sh blocks all macOS CI #auto-dispatch #bug #framework ref:GH#21162 pr:#21165 completed:2026-04-27
+
+- [ ] t2946 settings namespace divergence: orchestration.* schema completely unread, supervisor.* read but undocumented #auto-dispatch #bug #enhancement #framework ref:GH#21180
+
+- [ ] t2950 raise MAX_WORKERS_CAP ceiling 32→64 in pulse-wrapper-config.sh #auto-dispatch #enhancement #framework ref:GH#21185
+
+- [ ] t2949 reduce parent-task advisory nudge threshold 24h→4h #auto-dispatch #enhancement #framework ref:GH#21184
+
+- [ ] t2948 reduce idle interactive PR handover threshold 24h→4h (AGENTS.md t2189) #auto-dispatch #enhancement #framework ref:GH#21183
+
+- [ ] t2947 reduce pulse-fast-fail FAST_FAIL_AGE_OUT_SECONDS default 86400→3600 (1h) #auto-dispatch #enhancement #framework ref:GH#21182
+
+- [ ] t2951 bounty-spam-auto-close.yml never fires close: cmd_score rc=0 contract collides with workflow rc=1 gate #auto-dispatch #bug #security ref:GH#21181
+
+- [ ] t2952 qlty smells regression: 32 actual vs 30 threshold (file-complexity drift) #auto-dispatch #enhancement #framework ref:GH#21186

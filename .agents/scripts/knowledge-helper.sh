@@ -363,6 +363,69 @@ cmd_help() {
 }
 
 # ---------------------------------------------------------------------------
+# search: keyword search across knowledge sources
+# Routes to knowledge-index-helper.sh query when corpus tree exists;
+# falls back to grep over text.txt files otherwise.
+# ---------------------------------------------------------------------------
+
+cmd_search() {
+	local query="${1:-}"
+	local repo_path="${2:-$(pwd)}"
+	repo_path="$(cd "$repo_path" && pwd)"
+	local mode
+	mode=$(_get_knowledge_mode "$repo_path")
+
+	if [[ -z "$query" ]]; then
+		print_error "search: query string is required"
+		return 1
+	fi
+
+	local knowledge_root=""
+	case "$mode" in
+	repo) knowledge_root="${repo_path}/${KNOWLEDGE_ROOT}" ;;
+	personal) knowledge_root="${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}" ;;
+	off)
+		print_warning "search: knowledge plane is disabled for $repo_path"
+		return 0
+		;;
+	esac
+
+	local corpus_tree="${knowledge_root}/index/tree.json"
+	local index_helper
+	index_helper="$(dirname "${BASH_SOURCE[0]}")/knowledge-index-helper.sh"
+
+	if [[ -f "$corpus_tree" && -f "$index_helper" ]]; then
+		# Route to tree-walk when corpus index exists
+		print_info "search: routing to knowledge-index-helper query (corpus tree found)"
+		KNOWLEDGE_ROOT="$knowledge_root" \
+			bash "$index_helper" query "$query"
+	else
+		# Fallback: grep text.txt files in sources/
+		local sources_dir="${knowledge_root}/sources"
+		if [[ ! -d "$sources_dir" ]]; then
+			print_warning "search: no sources directory found at $sources_dir"
+			return 0
+		fi
+		print_info "search: no corpus tree — falling back to grep in sources/"
+		local found=0
+		local src_id
+		for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+			local txt="${sources_dir}/${src_id}/text.txt"
+			[[ -f "$txt" ]] || continue
+			if grep -qi "$query" "$txt" 2>/dev/null; then
+				local excerpt
+				excerpt=$(grep -i "$query" "$txt" 2>/dev/null | head -1 || true)
+				printf '{"source_id":"%s","excerpt":"%s"}\n' \
+					"$src_id" "${excerpt:0:200}"
+				found=$((found + 1))
+			fi
+		done
+		[[ "$found" -eq 0 ]] && print_info "search: no matches for '${query}'"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -373,6 +436,7 @@ main() {
 	provision) cmd_provision "$@" ;;
 	init) cmd_init "$@" ;;
 	status) cmd_status "$@" ;;
+	search) cmd_search "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown subcommand: $subcommand"

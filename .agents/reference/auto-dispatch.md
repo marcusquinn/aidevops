@@ -21,7 +21,7 @@ The `ORIGIN_LABELS` constant in `shared-constants.sh` is the canonical list.
 
 When any of the three issue-creation paths creates an issue tagged `#auto-dispatch`, the pusher is NOT self-assigned even when the session origin is `interactive`.
 
-**Why:** Self-assignment would create the `(origin:interactive + assigned + active status)` combo that GH#18352/t1996 treats as a permanent dispatch block, stranding the issue until manual `gh issue edit --remove-assignee` or the 24h `STAMPLESS_INTERACTIVE_AGE_THRESHOLD` safety net (t2148).
+**Why:** Self-assignment would create the `(origin:interactive + assigned + active status)` combo that GH#18352/t1996 treats as a permanent dispatch block, stranding the issue until manual `gh issue edit --remove-assignee` or the 1h `STAMPLESS_INTERACTIVE_AGE_THRESHOLD` safety net (t2148, threshold reduced from 24h to 1h in t2942).
 
 The three paths where the skip fires:
 - `issue-sync-helper.sh` (TODO-first push)

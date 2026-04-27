@@ -50,6 +50,33 @@ Document
 
 **vs Vector RAG**: Vector uses embedding similarity + fixed-size chunks + cosine scores + requires vector DB. PageIndex uses LLM reasoning over natural sections + reasoning traces with page refs + no DB (JSON tree + LLM).
 
+## Corpus-Wide Usage (aidevops t2850)
+
+The aidevops framework extends PageIndex from single-document to corpus-wide retrieval
+via `knowledge-index-helper.sh`. Each promoted source in `_knowledge/sources/` gets its
+own `tree.json`; a meta-tree at `_knowledge/index/tree.json` aggregates all sources grouped
+by kind for cross-corpus navigation.
+
+```bash
+# Build/update the corpus index (also runs as routine r042 every hour)
+knowledge-index-helper.sh build
+
+# Query across all indexed sources
+knowledge-index-helper.sh query "all invoices over £5k"
+# → {"matches": [{"source_id": "inv-2026-001", "score": 5, "anchor": "Invoice", ...}]}
+
+# CLI alias (auto-routes to tree-walk or grep fallback)
+aidevops knowledge search "invoice Q1 2026"
+```
+
+Key design choices vs the upstream PageIndex library:
+- No vector DB — keyword-scored tree-walk in `knowledge_index_helpers.py`
+- LLM routing via `llm-routing-helper.sh` per source sensitivity tier (auditable)
+- Incremental rebuild (sha-cache): only rebuilds changed sources
+- Corpus tree = meta-tree grouping source trees by kind (invoices, contracts, …)
+
+Reference: `.agents/aidevops/knowledge-plane.md` § "Corpus Index (t2850)"
+
 ## Gotchas
 
 1. **LLM cost per query** — multiple LLM calls to navigate tree. Cost scales with depth.
@@ -57,7 +84,7 @@ Document
 3. **PDF quality** — scanned PDFs without OCR produce poor trees. Pre-process with OCR.
 4. **Model dependency** — GPT-4o recommended; smaller models miss nuanced navigation.
 5. **No incremental updates** — document changes require full re-index.
-6. **Single-document focus** — deep retrieval within one document, not cross-corpus.
+6. **Single-document focus** — deep retrieval within one document, not cross-corpus (see Corpus-Wide Usage above for the multi-source extension).
 
 ## Usage
 
