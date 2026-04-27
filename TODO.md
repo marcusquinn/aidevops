@@ -3417,3 +3417,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2986 fix shellcheck false positives blocking release preflight (SC2027 + SC2154) #bug #framework ref:GH#21377 pr:#21378 completed:2026-04-27
 
 - [ ] t2989 preflight stages: missing per-iteration timeouts cause cycle cadence collapse on dispatch-path regressions #auto-dispatch #bug #enhancement #framework ref:GH#21383
+
+- [ ] t2992 post-update cache priming routine to eliminate first-cycle stage cost #auto-dispatch #enhancement #framework ref:GH#21395
+
+- [ ] t2991 fix subagent permission.task entries (4 broken keys + missing Product allowlist) #auto-dispatch ref:GH#21394
