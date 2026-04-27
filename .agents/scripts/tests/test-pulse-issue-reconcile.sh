@@ -339,8 +339,8 @@ test_batched_field_extraction_parity() {
 			((.title // "") | @base64),
 			((.labels // []) | map(.name) | join(",")),
 			((.body // "") | @base64)
-		] | @tsv
-	' 2>/dev/null)
+		] | join("|")
+	')
 
 	local row_count
 	row_count=$(printf '%s\n' "$extracted" | grep -c .)
@@ -354,7 +354,7 @@ test_batched_field_extraction_parity() {
 
 	# Decode and verify row 1 (multiline + tab + UTF-8 body).
 	local r1_num r1_title_b64 r1_labels r1_body_b64 r1_title r1_body
-	IFS=$'\t' read -r r1_num r1_title_b64 r1_labels r1_body_b64 < <(printf '%s\n' "$extracted" | sed -n 1p)
+	IFS='|' read -r r1_num r1_title_b64 r1_labels r1_body_b64 < <(printf '%s\n' "$extracted" | sed -n 1p)
 	r1_title=$(printf '%s' "$r1_title_b64" | base64 -d 2>/dev/null)
 	r1_body=$(printf '%s' "$r1_body_b64" | base64 -d 2>/dev/null)
 
@@ -375,7 +375,7 @@ test_batched_field_extraction_parity() {
 
 	# Decode and verify row 2 (empty body, empty labels).
 	local r2_num r2_title_b64 r2_labels r2_body_b64 r2_title r2_body
-	IFS=$'\t' read -r r2_num r2_title_b64 r2_labels r2_body_b64 < <(printf '%s\n' "$extracted" | sed -n 2p)
+	IFS='|' read -r r2_num r2_title_b64 r2_labels r2_body_b64 < <(printf '%s\n' "$extracted" | sed -n 2p)
 	r2_title=$(printf '%s' "$r2_title_b64" | base64 -d 2>/dev/null)
 	# Empty body — base64-decode of empty input is empty.
 	r2_body=$(printf '%s' "$r2_body_b64" | base64 -d 2>/dev/null)
