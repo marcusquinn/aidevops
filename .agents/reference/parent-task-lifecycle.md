@@ -18,23 +18,23 @@ Called from both `issue-sync-helper.sh cmd_push` and `claim-task-id.sh create_gi
 
 Narrow patterns only: `Phase N ... #NNNN`, `filed as #NNNN`, `tracks #NNNN`, `Blocked by: #NNNN`. Widening this set is forbidden — CodeRabbit disqualified "any `#NNN` = child" matching in PR #19810 (t2244).
 
-### 3. 24-Hour Advisory Nudge (t2388)
+### 3. 4-Hour Advisory Nudge (t2388, tightened t2949)
 
-`reconcile_completed_parent_tasks` posts `_post_parent_task_decomposition_nudge` on parent-tasks with 0 children where ≥24h have elapsed since label application. Dedup via `<!-- parent-task-decomposition-nudge -->` marker.
+`reconcile_completed_parent_tasks` posts `_post_parent_task_decomposition_nudge` on parent-tasks with 0 children where ≥4h have elapsed since label application (env `PARENT_TASK_NUDGE_SECONDS`, default 14400s; was 86400s/24h). Dedup via `<!-- parent-task-decomposition-nudge -->` marker.
 
 ### 4. Auto-Decomposer Scanner (Fix #1, tightened t2573)
 
-`auto-decomposer-scanner.sh` runs on every pulse cycle via `_run_auto_decomposer_scanner` (in `pulse-simplification.sh`) — the former global 24h run gate was removed in t2573 to allow multiple parents to be cleared per day.
+`auto-decomposer-scanner.sh` runs on every pulse cycle via `_run_auto_decomposer_scanner` (in `pulse-simplification.sh`) — the former global 24h run gate was removed in t2573 to allow multiple parents to be cleared per day (t2949 reduced the per-parent re-file gate further from 1d/86400s to 4h/14400s).
 
 For each open parent-task with 0 children and an eligible nudge, it files a fresh `tier:thinking` worker issue with generator marker `<!-- aidevops:generator=auto-decompose -->`.
 
-Age thresholds (AI-throughput defaults — GH#20532):
-- **Fresh parents** (0 non-nudge comments): ≥`SCANNER_FRESH_PARENT_HOURS` (default 0h — fires immediately once nudge exists)
-- **Aged parents** (≥1 non-nudge comments): ≥`SCANNER_NUDGE_AGE_HOURS` (default 0h — fires immediately once nudge exists)
+Age thresholds (t2949 defaults — reduced from GH#20532 zero-delay to 4h):
+- **Fresh parents** (0 non-nudge comments): ≥`SCANNER_FRESH_PARENT_HOURS` (default 4h, driven by `PARENT_TASK_NUDGE_SECONDS`)
+- **Aged parents** (≥1 non-nudge comments): ≥`SCANNER_NUDGE_AGE_HOURS` (default 4h, driven by `PARENT_TASK_NUDGE_SECONDS`)
 
-The comparison is `age_hours >= threshold_hours` (`-lt` guard), so threshold=0 fires for any nudge age including same-cycle (0h). Override via env var to restore a delay.
+The comparison is `age_hours >= threshold_hours` (`-lt` guard). Set `PARENT_TASK_NUDGE_SECONDS=0` to restore zero-delay (AI-throughput) mode.
 
-Per-parent state file (`AUTO_DECOMPOSER_PARENT_STATE`) prevents re-filing the same parent within `AUTO_DECOMPOSER_INTERVAL` (default 1 day / 86400s). The worker's job: read the parent, propose a decomposition plan as children, and stop. Dedup via `source:auto-decomposer` label.
+Per-parent state file (`AUTO_DECOMPOSER_PARENT_STATE`) prevents re-filing the same parent within `AUTO_DECOMPOSER_INTERVAL` (default 4h / 14400s; was 1d/86400s before t2949; env `PARENT_TASK_REFILE_GATE_SECONDS`). The worker's job: read the parent, propose a decomposition plan as children, and stop. Dedup via `source:auto-decomposer` label.
 
 Constants in `pulse-wrapper.sh`: `AUTO_DECOMPOSER_INTERVAL`, `AUTO_DECOMPOSER_PARENT_STATE`. Maintainer-only (skips `role: contributor` repos).
 

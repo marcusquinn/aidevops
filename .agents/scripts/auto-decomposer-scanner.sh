@@ -6,8 +6,8 @@
 # Finds `parent-task` labeled issues where the
 # `<!-- parent-needs-decomposition -->` nudge has aged without a human
 # response. Two thresholds govern when the scanner fires (t2573):
-#   - Fresh parents (0 non-nudge comments): ≥SCANNER_FRESH_PARENT_HOURS (default 6h)
-#   - Aged parents (≥1 non-nudge comments): ≥SCANNER_NUDGE_AGE_HOURS (default 24h)
+#   - Fresh parents (0 non-nudge comments): ≥SCANNER_FRESH_PARENT_HOURS (default 4h, env PARENT_TASK_NUDGE_SECONDS)
+#   - Aged parents (≥1 non-nudge comments): ≥SCANNER_NUDGE_AGE_HOURS (default 4h, env PARENT_TASK_NUDGE_SECONDS)
 # For each qualifying parent, files a worker-ready `tier:thinking` issue
 # asking the dispatched worker to read the parent, identify phases/components,
 # and create child implementation issues.
@@ -22,7 +22,7 @@
 #   nudge comment was advisory-only. Six open backlog issues in
 #   marcusquinn/aidevops sat in this state by the time t2442 was filed.
 #
-#   This scanner closes the loop. After 24h of advisory silence, it
+#   This scanner closes the loop. After 4h of advisory silence, it
 #   files a separate `auto-dispatch` issue that the pulse can actually
 #   dispatch a worker against — and that worker, NOT the parent's own
 #   (blocked) dispatch slot, performs the decomposition.
@@ -47,11 +47,11 @@
 #   auto-decomposer-scanner.sh {scan|dry-run|help} [REPO]
 #
 # Env:
-#   SCANNER_NUDGE_AGE_HOURS       (default 0)   — minimum nudge age for aged parents (≥1 non-nudge comment); 0 = fire immediately
-#   SCANNER_FRESH_PARENT_HOURS    (default 0)   — minimum nudge age for fresh parents (0 non-nudge comments); 0 = fire immediately
+#   SCANNER_NUDGE_AGE_HOURS       (default 4h)  — minimum nudge age for aged parents (≥1 non-nudge comment); driven by PARENT_TASK_NUDGE_SECONDS
+#   SCANNER_FRESH_PARENT_HOURS    (default 4h)  — minimum nudge age for fresh parents (0 non-nudge comments); driven by PARENT_TASK_NUDGE_SECONDS
 #   SCANNER_MAX_ISSUES            (default 3)   — cap per-repo decompose issues per run
 #   SCANNER_PARENT_LIST_LIMIT     (default 100) — max parent-task issues to list
-#   AUTO_DECOMPOSER_INTERVAL      (default 86400) — seconds before re-filing the same parent (1 day)
+#   AUTO_DECOMPOSER_INTERVAL      (default 14400) — seconds before re-filing the same parent (4h, was 86400/1d); env PARENT_TASK_REFILE_GATE_SECONDS
 #   AUTO_DECOMPOSER_PARENT_STATE  (default ~/.aidevops/logs/auto-decomposer-parent-state.json) — per-parent state file
 #
 # t2442: https://github.com/marcusquinn/aidevops/issues/20139
@@ -63,13 +63,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
-SCANNER_NUDGE_AGE_HOURS="${SCANNER_NUDGE_AGE_HOURS:-0}"
-SCANNER_FRESH_PARENT_HOURS="${SCANNER_FRESH_PARENT_HOURS:-0}"
+# t2949: PARENT_TASK_NUDGE_SECONDS drives both age thresholds (default 4h = 14400s).
+# Derive hours from seconds for the scanner's hour-based comparisons.
+_PTNUDGE_HOURS="$(( ${PARENT_TASK_NUDGE_SECONDS:-14400} / 3600 ))"
+SCANNER_NUDGE_AGE_HOURS="${SCANNER_NUDGE_AGE_HOURS:-${_PTNUDGE_HOURS}}"
+SCANNER_FRESH_PARENT_HOURS="${SCANNER_FRESH_PARENT_HOURS:-${_PTNUDGE_HOURS}}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-3}"
 SCANNER_PARENT_LIST_LIMIT="${SCANNER_PARENT_LIST_LIMIT:-100}"
 SCANNER_LABEL="source:auto-decomposer"
 # Per-parent re-file interval: inherited from pulse-wrapper.sh export or defaulted here.
-AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-86400}"
+# t2949: PARENT_TASK_REFILE_GATE_SECONDS controls this (default 4h = 14400s, was 86400s).
+AUTO_DECOMPOSER_INTERVAL="${AUTO_DECOMPOSER_INTERVAL:-${PARENT_TASK_REFILE_GATE_SECONDS:-14400}}"
 AUTO_DECOMPOSER_PARENT_STATE="${AUTO_DECOMPOSER_PARENT_STATE:-${HOME}/.aidevops/logs/auto-decomposer-parent-state.json}"
 # GH#21017: Lookback window for maintainer-activity skip. Skips a parent
 # when the parent OR any extracted child has an OWNER/MEMBER comment in
@@ -696,23 +700,23 @@ Usage: $(basename "$0") {scan|dry-run|help} [REPO]
   scan      Scan open parent-task issues; file worker-ready decompose
             issues for parents whose nudge has aged past the threshold.
             Dedupes via title + source:auto-decomposer label. Per-parent
-            state prevents re-filing the same parent within 7 days.
+            state prevents re-filing the same parent within 4h (AUTO_DECOMPOSER_INTERVAL).
   dry-run   Same as scan but logs what would be created (no state writes).
   help      This message.
 
 Env vars:
-  SCANNER_NUDGE_AGE_HOURS         (default 0)       Minimum nudge age (hours) for aged parents (≥1 non-nudge comment); 0 = immediate
-  SCANNER_FRESH_PARENT_HOURS      (default 0)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments); 0 = immediate
+  SCANNER_NUDGE_AGE_HOURS         (default 4)       Minimum nudge age (hours) for aged parents (≥1 non-nudge comment); driven by PARENT_TASK_NUDGE_SECONDS
+  SCANNER_FRESH_PARENT_HOURS      (default 4)       Minimum nudge age (hours) for fresh parents (0 non-nudge comments); driven by PARENT_TASK_NUDGE_SECONDS
   SCANNER_MAX_ISSUES              (default 3)       Cap per-repo decompose issues per run
   SCANNER_PARENT_LIST_LIMIT       (default 100)     Max parent-task issues to list
-  AUTO_DECOMPOSER_INTERVAL        (default 86400)   Seconds before re-filing the same parent (1 day)
+  AUTO_DECOMPOSER_INTERVAL        (default 14400)   Seconds before re-filing the same parent (4h); env PARENT_TASK_REFILE_GATE_SECONDS
   AUTO_DECOMPOSER_PARENT_STATE                      Path to per-parent state file (JSON)
   MAINTAINER_ACTIVITY_HOURS       (default 48)      Lookback window for OWNER/MEMBER comment skip (GH#21017)
   MAINTAINER_ACTIVITY_CHILD_CAP   (default 10)      Max children iterated for maintainer-activity check (GH#21017)
 
 t2442: closes the parent-task dispatch black hole.
 t2573: per-parent gating, fresh-parent threshold, no global run gate.
-GH#20532: zero-delay thresholds + 1-day re-file for AI-throughput mode.
+GH#20532: zero-delay thresholds + 1-day re-file for AI-throughput mode (t2949: now 4h).
 GH#21017: skip decomposed parents + skip during recent maintainer activity.
 EOF
 		;;
