@@ -96,12 +96,14 @@ compute_runtime_source_hash() {
 				-exec stat -f '%N %z %m' {} + 2>/dev/null
 		})
 	else
-		# Linux/GNU stat uses -c instead of -f
-		metadata=$({
-			stat -c '%n %s %Y' "${BASH_SOURCE[0]}"
-			find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
-				-exec stat -c '%n %s %Y' {} + 2>/dev/null
-		})
+		# Linux/GNU stat uses -c instead of -f; guarded by uname branch above.
+		local script_meta find_meta
+		# shell-portability: ignore next
+		script_meta=$(stat -c '%n %s %Y' "${BASH_SOURCE[0]}" 2>/dev/null || true)
+		# shell-portability: ignore next
+		find_meta=$(find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+			-exec stat -c '%n %s %Y' {} + 2>/dev/null || true)
+		metadata="${script_meta}"$'\n'"${find_meta}"
 	fi
 
 	# If metadata collection failed entirely, return a unique sentinel so the
