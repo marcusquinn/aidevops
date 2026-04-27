@@ -20,7 +20,7 @@ Tag output shape (per entry):
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def parse_markdoc_attrs(attrs_str: str) -> Dict[str, Any]:
@@ -147,3 +147,115 @@ def classify_tag_scope(
         return 'file'
 
     return 'section'
+
+
+# ---------------------------------------------------------------------------
+# Higher-level helpers — PageIndex metadata lifting (used by pageindex-generator.py)
+# ---------------------------------------------------------------------------
+
+def first_heading_line(content_lines: List[str]) -> Optional[int]:
+    """Return the 0-indexed line of the first heading in content, or None."""
+    for i, line in enumerate(content_lines):
+        if re.match(r'^#{1,6}\s', line.strip()):
+            return i
+    return None
+
+
+def build_file_metadata(file_tags: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Return metadata dict keyed by tag name from file-scope tag entries.
+
+    Only non-closing tags with at least one attribute are included.
+    If the same tag name appears more than once, the last occurrence wins.
+    """
+    metadata: Dict[str, Any] = {}
+    for entry in file_tags:
+        attrs = entry.get('attrs', {})
+        if not attrs:
+            continue
+        metadata[entry['tag']] = dict(attrs)
+    return metadata
+
+
+def build_cross_references(
+    citation_tags: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Return a cross_references list from non-closing citation tag entries."""
+    return [dict(e['attrs']) for e in citation_tags if e.get('attrs')]
+
+
+def assign_tags_to_sections(
+    section_tags: List[Dict[str, Any]],
+    sections: List[Dict[str, Any]],
+) -> Dict[int, Dict[str, Any]]:
+    """Map section-scope tags to the flat section index they belong to.
+
+    A tag at content line *L* belongs to section *I* when:
+    ``sections[I].line_idx <= L < sections[I+1].line_idx``
+    (for the last section the upper bound is infinity).
+
+    Returns ``{section_idx: {tag_name: attrs}}``.
+    Same-tag-name last-wins within each section.
+    """
+    section_metadata: Dict[int, Dict[str, Any]] = {}
+    if not sections or not section_tags:
+        return section_metadata
+
+    for entry in section_tags:
+        tag_line = entry['line']
+        attrs = entry.get('attrs', {})
+        if not attrs:
+            continue
+
+        owning_idx: Optional[int] = None
+        for i, sec in enumerate(sections):
+            next_start: Any = (
+                sections[i + 1]['line_idx'] if i + 1 < len(sections) else float('inf')
+            )
+            if sec['line_idx'] <= tag_line < next_start:
+                owning_idx = i
+                break
+
+        if owning_idx is not None:
+            if owning_idx not in section_metadata:
+                section_metadata[owning_idx] = {}
+            section_metadata[owning_idx][entry['tag']] = dict(attrs)
+
+    return section_metadata
+
+
+def extract_and_classify_tags(
+    content_lines: List[str],
+    sections: List[Dict[str, Any]],
+) -> Tuple[Dict[str, Any], Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
+    """Extract Markdoc tags and classify them for PageIndex metadata injection.
+
+    Returns a 3-tuple:
+      file_metadata     — dict to inject into the root tree node ``metadata``
+      section_metadata  — {section_idx: {tag_name: attrs}} for subtree nodes
+      cross_references  — list of citation attrs for the root ``cross_references``
+    """
+    all_tags = extract_tags_from_lines(content_lines)
+    first_hdg = first_heading_line(content_lines)
+
+    file_tags: List[Dict[str, Any]] = []
+    section_tags_raw: List[Dict[str, Any]] = []
+    citation_tags: List[Dict[str, Any]] = []
+
+    for tag in all_tags:
+        # Skip closing tags — structural, not metadata carriers
+        if tag.get('is_close'):
+            continue
+        if tag['tag'] == 'citation':
+            citation_tags.append(tag)
+            continue  # citations are always inline; skip file/section buckets
+        scope = classify_tag_scope(tag, first_hdg)
+        if scope == 'file':
+            file_tags.append(tag)
+        elif scope == 'section':
+            section_tags_raw.append(tag)
+
+    return (
+        build_file_metadata(file_tags),
+        assign_tags_to_sections(section_tags_raw, sections),
+        build_cross_references(citation_tags),
+    )

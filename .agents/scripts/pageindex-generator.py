@@ -26,10 +26,7 @@ import hashlib
 from typing import Any, Dict, List, Optional
 
 from pageindex_helpers import extract_first_sentence, get_ollama_summary
-from markdoc_tag_extractor import (
-    extract_tags_from_lines,
-    classify_tag_scope,
-)
+from markdoc_tag_extractor import extract_and_classify_tags
 
 
 def extract_frontmatter(lines: List[str]) -> Dict[str, str]:
@@ -114,8 +111,8 @@ def build_tree_recursive(
     """Recursively build tree from sections starting at start_idx.
 
     ``section_metadata`` maps flat section index → metadata dict (tag_name →
-    attrs) to inject into that node.  Passed through unchanged to all
-    recursive calls so every level can look up its own index.
+    attrs) injected into that node.  Passed through unchanged to all recursive
+    calls so every level can look up its own index.
     """
     children = []
     i = start_idx
@@ -186,131 +183,6 @@ def parse_sections(content_lines: List[str]) -> List[Dict[str, Any]]:
     return sections
 
 
-# ---------------------------------------------------------------------------
-# Tag metadata helpers (Phase 5 — t2972)
-# ---------------------------------------------------------------------------
-
-def _first_heading_line(content_lines: List[str]) -> Optional[int]:
-    """Return the 0-indexed line of the first heading in content, or None."""
-    for i, line in enumerate(content_lines):
-        if re.match(r'^#{1,6}\s', line.strip()):
-            return i
-    return None
-
-
-def _build_file_metadata(file_tags: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Return metadata dict keyed by tag name from file-scope tag entries.
-
-    Only non-closing tags with at least one attribute are included.
-    If the same tag name appears more than once, the last occurrence wins.
-    """
-    metadata: Dict[str, Any] = {}
-    for entry in file_tags:
-        attrs = entry.get('attrs', {})
-        if not attrs:
-            continue
-        metadata[entry['tag']] = dict(attrs)
-    return metadata
-
-
-def _build_cross_references(
-    all_citation_tags: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    """Return a cross_references list from non-closing citation tag entries."""
-    refs = []
-    for entry in all_citation_tags:
-        attrs = entry.get('attrs', {})
-        if attrs:
-            refs.append(dict(attrs))
-    return refs
-
-
-def _assign_tags_to_sections(
-    section_tags: List[Dict[str, Any]],
-    sections: List[Dict[str, Any]],
-) -> Dict[int, Dict[str, Any]]:
-    """Map section-scope tags to the flat section index they belong to.
-
-    A tag at content line *L* belongs to section *I* when:
-    ``sections[I].line_idx <= L < sections[I+1].line_idx``
-    (for the last section the upper bound is infinity).
-
-    Returns ``{section_idx: {tag_name: attrs}}``.  The same-tag-name
-    last-wins rule applies within each section.
-    """
-    section_metadata: Dict[int, Dict[str, Any]] = {}
-    if not sections or not section_tags:
-        return section_metadata
-
-    for entry in section_tags:
-        tag_line = entry['line']
-        attrs = entry.get('attrs', {})
-        if not attrs:
-            continue
-
-        owning_idx: Optional[int] = None
-        for i, sec in enumerate(sections):
-            next_start: Any = (
-                sections[i + 1]['line_idx'] if i + 1 < len(sections) else float('inf')
-            )
-            if sec['line_idx'] <= tag_line < next_start:
-                owning_idx = i
-                break
-
-        if owning_idx is not None:
-            if owning_idx not in section_metadata:
-                section_metadata[owning_idx] = {}
-            section_metadata[owning_idx][entry['tag']] = dict(attrs)
-
-    return section_metadata
-
-
-def _extract_and_classify_tags(
-    content_lines: List[str],
-    sections: List[Dict[str, Any]],
-) -> tuple:
-    """Extract Markdoc tags from content and classify them.
-
-    Returns:
-        file_metadata  — dict to inject into the root tree node ``metadata``
-        section_metadata — {section_idx: {tag_name: attrs}} for subtree nodes
-        cross_references — list of citation attrs for the root ``cross_references``
-    """
-    all_tags = extract_tags_from_lines(content_lines)
-    first_heading = _first_heading_line(content_lines)
-
-    file_tags: List[Dict[str, Any]] = []
-    section_tags_raw: List[Dict[str, Any]] = []
-    citation_tags: List[Dict[str, Any]] = []
-
-    for tag in all_tags:
-        # Skip closing tags — they are structural, not metadata carriers
-        if tag.get('is_close'):
-            continue
-
-        if tag['tag'] == 'citation':
-            citation_tags.append(tag)
-            # Citations are always inline; do NOT add to file/section buckets
-            continue
-
-        scope = classify_tag_scope(tag, first_heading)
-        if scope == 'file':
-            file_tags.append(tag)
-        elif scope == 'section':
-            section_tags_raw.append(tag)
-        # inline tags other than citation are not injected into node metadata
-
-    file_metadata = _build_file_metadata(file_tags)
-    section_metadata = _assign_tags_to_sections(section_tags_raw, sections)
-    cross_references = _build_cross_references(citation_tags)
-
-    return file_metadata, section_metadata, cross_references
-
-
-# ---------------------------------------------------------------------------
-# Tree result builders
-# ---------------------------------------------------------------------------
-
 def build_headingless_result(
     frontmatter: Dict[str, str],
     content_lines: List[str],
@@ -378,8 +250,8 @@ def build_pageindex_tree(
 
     sections = parse_sections(content_lines)
 
-    # --- Phase 5: extract and classify Markdoc tag metadata ---
-    file_metadata, section_metadata, cross_references = _extract_and_classify_tags(
+    # Phase 5: extract and classify Markdoc tag metadata
+    file_metadata, section_metadata, cross_references = extract_and_classify_tags(
         content_lines, sections
     )
 
@@ -389,7 +261,6 @@ def build_pageindex_tree(
 
     if not sections:
         result = build_headingless_result(frontmatter, content_lines, ctx)
-        # Headingless doc: inject file-scope metadata and cross-references into root
         if file_metadata:
             result['tree']['metadata'] = file_metadata
         if cross_references:
@@ -410,9 +281,7 @@ def build_pageindex_tree(
         "children": root_children,
     }
 
-    # File-scope metadata goes on the root tree node (document-level).
-    # Section-scope metadata for section index 0 (the root heading's own range)
-    # is merged into file-scope metadata — root heading owns both.
+    # File-scope metadata → root node; fall back to section index 0 if no file-scope tags
     if file_metadata:
         tree["metadata"] = file_metadata
     elif 0 in section_metadata and section_metadata[0]:
