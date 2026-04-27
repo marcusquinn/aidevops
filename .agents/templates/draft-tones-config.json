@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "description": "Tone presets for case-draft-helper.sh. Copy to _config/draft-tones.json to customise per repo.",
+  "tones": {
+    "neutral": {
+      "label": "Neutral",
+      "system_fragment": "Maintain a balanced, objective tone. Present facts without emotional colouring. Use measured language.",
+      "use_when": "Default for most communications. Status updates, information requests, neutral correspondence."
+    },
+    "formal": {
+      "label": "Formal",
+      "system_fragment": "Use formal, professional language appropriate for official correspondence. Address the recipient with proper titles. Use structured paragraphs with clear topic sentences. Avoid contractions and colloquialisms.",
+      "use_when": "Official letters, regulatory correspondence, formal notices, court filings."
+    },
+    "conciliatory": {
+      "label": "Conciliatory",
+      "system_fragment": "Adopt a cooperative, solution-oriented tone that seeks common ground. Acknowledge the other party's perspective where appropriate. Frame proposals as mutual benefits. Avoid accusatory language.",
+      "use_when": "Settlement discussions, mediation preparation, de-escalation, relationship repair."
+    },
+    "firm": {
+      "label": "Firm",
+      "system_fragment": "Be direct, assertive, and clear about positions and expectations. State deadlines and consequences plainly. Use active voice. Do not soften obligations or requirements.",
+      "use_when": "Demand letters, enforcement notices, final warnings, deadline communications."
+    }
+  }
+}
