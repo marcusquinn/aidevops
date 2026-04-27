@@ -499,6 +499,31 @@ cmd_scan_body() {
 	return "$rc"
 }
 
+# _bsd_compose_close_comment <markers>
+#
+# Emits the canonical dismissal comment to stdout. Defined as a function with a
+# top-level heredoc rather than as `comment_body=$(cat <<EOF ... EOF)` inside
+# cmd_close because Bash 3.2 (macOS /bin/bash) cannot parse heredocs nested
+# inside command substitutions — it reports a syntax error at the next case-arm
+# token, masking the real cause. The function form parses cleanly on Bash 3.2,
+# 4.x, and 5.x. See t2944.
+_bsd_compose_close_comment() {
+	local markers="$1"
+	cat <<EOF
+Auto-closed as templated bounty-hunter spam.
+
+Detected markers:
+
+${markers}
+This pattern matches an automated bounty-hunter bot known to file templated PRs across many public repositories with claims of one-dollar bounty rewards. The PR body matches verbatim phrases or markdown structures used exclusively by this bot.
+
+If filed in error, please contact the maintainer through the repository's normal contact channel — do **not** edit the PR body and reopen, as the auto-close trigger will fire again.
+
+Reference: ${BSD_REFERENCE_URL}
+EOF
+	return 0
+}
+
 cmd_close() {
 	local type="${1:-}"
 	local num="${2:-}"
@@ -569,20 +594,7 @@ cmd_close() {
 	[[ "$fields" == "BOTH" ]] && markers="${markers}- Markdown table: \`Reward: \$N\` + \`Source: GitHub-Bounty/Paid\`"$'\n'
 
 	local comment_body
-	comment_body=$(
-		cat <<EOF
-Auto-closed as templated bounty-hunter spam.
-
-Detected markers:
-
-${markers}
-This pattern matches an automated bounty-hunter bot known to file templated PRs across many public repositories with claims of one-dollar bounty rewards. The PR body matches verbatim phrases or markdown structures used exclusively by this bot.
-
-If filed in error, please contact the maintainer through the repository's normal contact channel — do **not** edit the PR body and reopen, as the auto-close trigger will fire again.
-
-Reference: ${BSD_REFERENCE_URL}
-EOF
-	)
+	comment_body="$(_bsd_compose_close_comment "$markers")"
 
 	if [[ "$dry_run" -eq 1 ]]; then
 		_bsd_log_warn "[DRY RUN] Would close PR #${num} in ${slug} with comment:"
