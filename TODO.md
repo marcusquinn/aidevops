@@ -3226,7 +3226,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
 
-- [ ] t2879 docs(README): add per-repo platform setup section pointing to /setup-git #auto-dispatch #documentation #framework ref:GH#20980
+- [x] t2879 docs(README): add per-repo platform setup section pointing to /setup-git #auto-dispatch #documentation #framework ref:GH#20980 pr:#21244 completed:2026-04-27
 
 - [ ] t2880 feat(setup-debt): detect cross-account secrets:inherit pattern in issue-sync.yml #auto-dispatch #enhancement #framework ref:GH#20981
 
