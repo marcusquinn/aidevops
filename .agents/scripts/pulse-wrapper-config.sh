@@ -50,8 +50,11 @@ ORPHAN_WORKTREE_GRACE_SECS="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"                
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                                # 512 MB per worker (opencode headless is lightweight)
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                     # 6 GB reserved for OS + user apps
 # Compute sensible default cap from total RAM (not free RAM — that's volatile).
-# Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 32].
+# Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 64].
 # This replaces the old static default of 8 which silently throttled capable machines (t1532).
+# t2950: ceiling raised 32→64; on a 64GB runner (64*1024-6144)/512=116 workers fit physically — old clamp left >70% headroom unused.
+MAX_WORKERS_CAP_FLOOR=4
+MAX_WORKERS_CAP_CEILING=64                                                                           # t2950: raised from 32; modern 64GB+ runners support far more concurrency
 _default_cap=8
 if [[ "$(uname)" == "Darwin" ]]; then
 	_total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}')
@@ -60,8 +63,8 @@ elif [[ -f /proc/meminfo ]]; then
 fi
 if [[ "${_total_mb:-0}" -gt 0 ]]; then
 	_default_cap=$(((_total_mb - RAM_RESERVE_MB) / RAM_PER_WORKER_MB))
-	[[ "$_default_cap" -lt 4 ]] && _default_cap=4
-	[[ "$_default_cap" -gt 32 ]] && _default_cap=32
+	[[ "$_default_cap" -lt "$MAX_WORKERS_CAP_FLOOR" ]] && _default_cap="$MAX_WORKERS_CAP_FLOOR"
+	[[ "$_default_cap" -gt "$MAX_WORKERS_CAP_CEILING" ]] && _default_cap="$MAX_WORKERS_CAP_CEILING"
 fi
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "$_default_cap")}"     # Derived from total RAM; override via config or env
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
