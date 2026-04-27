@@ -77,29 +77,55 @@ assert_not_grep \
 	'run_stage_with_timeout "complexity_scan"' \
 	"$ENGINE"
 
+# Assertions 2-6: each stage uses two separate greps (2a/2b pattern) because the
+# dispatch engine wires stages with a backslash line-continuation:
+#   run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
+#       run_daily_codebase_review || true
+# Single-line grep -E cannot span the newline, so split into stage-name + function-name.
+
 assert_grep \
-	"2: coderabbit_review has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "coderabbit_review".*run_daily_codebase_review' \
+	"2a: coderabbit_review stage call present" \
+	'run_stage_with_timeout "coderabbit_review"' \
+	"$ENGINE"
+assert_grep \
+	"2b: coderabbit_review function name present" \
+	'run_daily_codebase_review' \
 	"$ENGINE"
 
 assert_grep \
-	"3: post_merge_scanner has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "post_merge_scanner".*_run_post_merge_review_scanner' \
+	"3a: post_merge_scanner stage call present" \
+	'run_stage_with_timeout "post_merge_scanner"' \
+	"$ENGINE"
+assert_grep \
+	"3b: post_merge_scanner function name present" \
+	'_run_post_merge_review_scanner' \
 	"$ENGINE"
 
 assert_grep \
-	"4: auto_decomposer_scanner has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "auto_decomposer_scanner".*_run_auto_decomposer_scanner' \
+	"4a: auto_decomposer_scanner stage call present" \
+	'run_stage_with_timeout "auto_decomposer_scanner"' \
+	"$ENGINE"
+assert_grep \
+	"4b: auto_decomposer_scanner function name present" \
+	'_run_auto_decomposer_scanner' \
 	"$ENGINE"
 
 assert_grep \
-	"5: dedup_cleanup has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "dedup_cleanup".*run_simplification_dedup_cleanup' \
+	"5a: dedup_cleanup stage call present" \
+	'run_stage_with_timeout "dedup_cleanup"' \
+	"$ENGINE"
+assert_grep \
+	"5b: dedup_cleanup function name present" \
+	'run_simplification_dedup_cleanup' \
 	"$ENGINE"
 
 assert_grep \
-	"6: fast_fail_prune_expired has independent run_stage_with_timeout" \
-	'run_stage_with_timeout "fast_fail_prune_expired".*fast_fail_prune_expired' \
+	"6a: fast_fail_prune_expired stage call present" \
+	'run_stage_with_timeout "fast_fail_prune_expired"' \
+	"$ENGINE"
+assert_grep \
+	"6b: fast_fail_prune_expired function name present" \
+	'fast_fail_prune_expired' \
 	"$ENGINE"
 
 # --- The shared-budget wrapper must NOT exist ---
