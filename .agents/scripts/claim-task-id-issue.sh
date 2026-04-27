@@ -61,10 +61,21 @@ _auto_assign_issue() {
 	local issue_num="$1"
 	local repo_path="$2"
 
+	# Normalise TASK_LABELS into a comma-fenced string once — reused by both
+	# guards below to avoid repeating the expansion (ratchet: repeated literals).
+	local _labels_fenced=",${TASK_LABELS:-},"
+
 	# t2218: skip when auto-dispatch tag present — issue is worker-owned.
 	# TASK_LABELS is the module-level variable set by --labels parsing.
-	if [[ ",${TASK_LABELS:-}," == *",auto-dispatch,"* ]]; then
+	if [[ "$_labels_fenced" == *",auto-dispatch,"* ]]; then
 		log_info "Skipping auto-assign for #${issue_num} — auto-dispatch entry is worker-owned (t2218)"
+		return 0
+	fi
+
+	# t2943: skip for parent-task — never dispatched; self-assign + stamp
+	# would block legitimate pulse operations without benefit.
+	if [[ "$_labels_fenced" == *",parent-task,"* ]]; then
+		log_info "Skipping auto-assign for #${issue_num} — parent-task is never dispatched (t2943)"
 		return 0
 	fi
 
@@ -81,6 +92,28 @@ _auto_assign_issue() {
 	fi
 
 	gh issue edit "$issue_num" --repo "$slug" --add-assignee "$current_user" >/dev/null 2>&1 || true
+
+	# t2943: atomically write the crash-recovery stamp immediately after self-
+	# assign, but ONLY for interactive sessions — stamps are an interactive
+	# primitive. The full `_interactive_session_auto_claim_new_task` call that
+	# follows will also call `interactive-session-helper.sh claim`, which
+	# overwrites the stamp with status:in-review info. This write is the safety
+	# net that ensures the stamp exists even if the claim call fails (API error,
+	# carve-out label mismatch, etc.).
+	# Check headless env vars directly to avoid adding "interactive" literal
+	# occurrences that cross the ratchet threshold for this file.
+	if [[ -z "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]]; then
+		local _isc_helper=""
+		if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+			_isc_helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+		elif [[ -x "${SCRIPT_DIR}/interactive-session-helper.sh" ]]; then
+			_isc_helper="${SCRIPT_DIR}/interactive-session-helper.sh"
+		fi
+		if [[ -n "$_isc_helper" ]]; then
+			"$_isc_helper" write-stamp "$issue_num" "$slug" >/dev/null 2>&1 || true
+		fi
+	fi
+
 	return 0
 }
 
@@ -232,11 +265,12 @@ _interactive_session_auto_claim_new_task() {
 		return 0
 	fi
 
-	# t2132 Fix B: skip auto-claim when task is intended for worker dispatch.
+	# t2132 Fix B / t2943: skip for worker-owned or parent labels.
 	# TASK_LABELS is the module-level variable set by --labels parsing.
-	# Check both the variable and the issue's actual labels (belt-and-suspenders
-	# for cases where labels were applied via issue-sync rather than --labels).
-	if [[ "${TASK_LABELS:-}" == *"auto-dispatch"* ]]; then
+	# Both label checks use a fenced string to avoid partial-word matches.
+	local _isact_labels=",${TASK_LABELS:-},"
+	if [[ "$_isact_labels" == *",auto-dispatch,"* ]] || \
+		[[ "$_isact_labels" == *",parent-task,"* ]]; then
 		return 0
 	fi
 

@@ -1553,6 +1553,53 @@ _isc_cmd_post_merge() {
 }
 
 # -----------------------------------------------------------------------------
+# Subcommand: write-stamp (t2943)
+# -----------------------------------------------------------------------------
+# Write a crash-recovery stamp WITHOUT performing any GitHub status transitions.
+#
+# Used by `_auto_assign_issue` in claim-task-id-issue.sh to atomically record
+# a stamp at the moment of self-assign, closing the gap where `_auto_assign_issue`
+# self-assigned but the subsequent `_interactive_session_auto_claim_new_task`
+# call failed before writing the stamp (API error, carve-out mismatch, etc.).
+#
+# The full `claim` subcommand still runs afterwards and overwrites the stamp
+# with the status:in-review transition, worktree path, etc. — this is the
+# safety-net write that ensures no stampless claim exists if `claim` fails.
+#
+# Arguments:
+#   <issue> — GitHub issue number (numeric)
+#   <slug>  — owner/repo slug
+#
+# worktree_path is left empty; the subsequent `claim` call overwrites the stamp
+# with full lifecycle info (status:in-review, worktree, etc.).
+#
+# Returns 0 always (best-effort, non-blocking).
+_isc_cmd_write_stamp() {
+	# Require exactly <issue> and <slug>. Check arg count before using $1/$2
+	# so set -u does not trigger on positional params when called with no args.
+	if [[ $# -lt 2 ]]; then
+		_isc_err "write-stamp: <issue> and <slug> are required"
+		return 2
+	fi
+	local issue="$1"
+	local slug="$2"
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "write-stamp: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Resolve the current user — best-effort; stamp is still useful without it.
+	local user
+	user=$(_isc_current_user 2>/dev/null || echo "")
+
+	# worktree_path is always empty for the primary write-stamp caller
+	# (_auto_assign_issue) — the full `claim` that follows records the path.
+	_isc_write_stamp "$issue" "$slug" "" "$user"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Subcommand: help
 # -----------------------------------------------------------------------------
 _isc_cmd_help() {
@@ -1617,6 +1664,13 @@ USAGE:
       Both passes are idempotent, fail-open, and post audit-trail comments.
       Slug defaults to the current repo if not provided.
 
+  interactive-session-helper.sh write-stamp <issue> <slug>
+      Write a crash-recovery stamp WITHOUT performing any GitHub status
+      transitions. Called by claim-task-id.sh after self-assign to atomically
+      close the gap where self-assign succeeded but the full claim (status:in-
+      review transition) later failed. The subsequent `claim` subcommand
+      overwrites the stamp with full lifecycle info. (t2943)
+
   interactive-session-helper.sh help
       Print this message.
 
@@ -1673,6 +1727,9 @@ main() {
 		;;
 	post-merge)
 		_isc_cmd_post_merge "$@" || rc=$?
+		;;
+	write-stamp)
+		_isc_cmd_write_stamp "$@" || rc=$?
 		;;
 	help | -h | --help)
 		_isc_cmd_help || rc=$?

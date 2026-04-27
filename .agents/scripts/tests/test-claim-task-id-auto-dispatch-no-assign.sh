@@ -121,6 +121,20 @@ log_info() {
 }
 export -f log_info
 
+# t2943: _auto_assign_issue now checks headless env vars directly (not
+# detect_session_origin) for the stamp-writing gate. Ensure none of the
+# FULL_LOOP_HEADLESS / AIDEVOPS_HEADLESS / OPENCODE_HEADLESS / GITHUB_ACTIONS
+# vars are set in the test environment so the stamp-writing path is exercised.
+# (The auto-dispatch and parent-task tests fire early-return guards that are
+# unaffected by these vars.)
+unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS OPENCODE_HEADLESS GITHUB_ACTIONS
+
+# detect_session_origin stub is kept for compatibility with _interactive_session_
+# auto_claim_new_task which still uses it; _auto_assign_issue no longer calls it.
+# shellcheck disable=SC2317
+detect_session_origin() { echo "interactive"; return 0; }
+export -f detect_session_origin
+
 printf '%sRunning _auto_assign_issue auto-dispatch guard tests (t2218)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
@@ -164,6 +178,92 @@ if grep -q "worker-owned" "$LOG_INFO_OUTPUT" 2>/dev/null; then
 else
 	fail "auto-dispatch → log_info skip message logged" \
 		"expected 'worker-owned' in log_info output — got: $(cat "$LOG_INFO_OUTPUT" 2>/dev/null || printf '(empty)')"
+fi
+
+# =============================================================================
+# Test 4 — parent-task in TASK_LABELS → --add-assignee NOT called (t2943)
+# =============================================================================
+: >"$GH_CALLS"
+TASK_LABELS="bug,parent-task,tier:standard"
+_auto_assign_issue 99996 "$FAKE_REPO" 2>/dev/null || true
+
+if ! grep -q -- "--add-assignee" "$GH_CALLS" 2>/dev/null; then
+	pass "parent-task in TASK_LABELS → --add-assignee NOT called (t2943)"
+else
+	fail "parent-task in TASK_LABELS → --add-assignee NOT called (t2943)" \
+		"gh was called with --add-assignee when parent-task was present"
+fi
+
+# =============================================================================
+# Test 5 — parent-task in TASK_LABELS → log_info skip message emitted (t2943)
+# =============================================================================
+: >"$LOG_INFO_OUTPUT"
+TASK_LABELS="parent-task,tier:standard"
+_auto_assign_issue 99995 "$FAKE_REPO" 2>/dev/null || true
+
+if grep -q "parent-task" "$LOG_INFO_OUTPUT" 2>/dev/null; then
+	pass "parent-task → log_info skip message logged (t2943)"
+else
+	fail "parent-task → log_info skip message logged (t2943)" \
+		"expected 'parent-task' in log_info output — got: $(cat "$LOG_INFO_OUTPUT" 2>/dev/null || printf '(empty)')"
+fi
+
+# =============================================================================
+# Test 6 — interactive + non-auto-dispatch + non-parent-task → stamp written
+# (t2943 regression guard: _auto_assign_issue atomically writes stamp)
+# =============================================================================
+STAMP_DIR="${TMP}/interactive-claims"
+FAKE_HOME="${TMP}/fakehome"
+mkdir -p "${FAKE_HOME}/.aidevops/agents/scripts"
+
+# Place a stub interactive-session-helper.sh under FAKE_HOME so the deployed
+# helper at ~/.aidevops/ is not found. The _auto_assign_issue lookup prefers
+# ${HOME}/.aidevops/agents/scripts/ over ${SCRIPT_DIR}/; overriding HOME
+# to FAKE_HOME ensures the stub in FAKE_HOME is the one found.
+ISC_HELPER="${FAKE_HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+cat >"$ISC_HELPER" <<'ISC_STUB_EOF'
+#!/usr/bin/env bash
+cmd="${1:-}"
+issue="${2:-}"
+slug="${3:-}"
+if [[ "$cmd" == "write-stamp" && -n "$issue" && -n "$slug" ]]; then
+	# Mirror _isc_slug_flat: replace / and . with -
+	flat_slug="${slug//\//-}"
+	flat_slug="${flat_slug//./-}"
+	stamp_dir="${CLAIM_STAMP_DIR:-${HOME}/.aidevops/.agent-workspace/interactive-claims}"
+	mkdir -p "$stamp_dir" 2>/dev/null
+	printf '{"issue":%s,"slug":"%s","pid":%s}\n' "$issue" "$slug" "$$" \
+		>"${stamp_dir}/${flat_slug}-${issue}.json"
+fi
+exit 0
+ISC_STUB_EOF
+chmod +x "$ISC_HELPER"
+
+# Override HOME to isolate from the real deployed helper.
+# Override CLAIM_STAMP_DIR so the stub writes to our sandbox dir.
+original_home="${HOME}"
+HOME="$FAKE_HOME"
+export CLAIM_STAMP_DIR="$STAMP_DIR"
+
+: >"$GH_CALLS"
+TASK_LABELS="bug,framework,tier:standard"
+_auto_assign_issue 99994 "$FAKE_REPO" 2>/dev/null || true
+
+# Restore HOME.
+HOME="$original_home"
+
+# Check that a stamp file was created.
+stamp_found=0
+if [[ -d "$STAMP_DIR" ]]; then
+	stamp_count=$(find "$STAMP_DIR" -name "*.json" 2>/dev/null | wc -l)
+	[[ "${stamp_count:-0}" -gt 0 ]] && stamp_found=1
+fi
+
+if [[ "$stamp_found" -eq 1 ]]; then
+	pass "interactive + non-auto-dispatch → stamp file written by _auto_assign_issue (t2943)"
+else
+	fail "interactive + non-auto-dispatch → stamp file written by _auto_assign_issue (t2943)" \
+		"expected stamp file in ${STAMP_DIR} — got 0 files"
 fi
 
 # =============================================================================
