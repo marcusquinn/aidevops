@@ -30,9 +30,9 @@ HELPER="${SCRIPT_DIR}/../gh-status-helper.sh"
 TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-NC='\033[0m'
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
 
 print_result() {
 	local name="$1"
