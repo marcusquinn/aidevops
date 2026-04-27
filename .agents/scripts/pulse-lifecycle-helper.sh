@@ -137,17 +137,13 @@ _start() {
 
 	mkdir -p "${_PULSE_LOG%/*}"
 
-	# t2992: pre-warm the L3 per-owner JSON caches before pulse boots so the
-	# next cycle's prefetch_state finds warm state and runs the delta path
-	# (t1975) instead of the cold-cache full fetch. Eliminates the structural
-	# ~210s prefetch_state cost on the first post-restart cycle. Non-fatal —
-	# a prime failure should not abort startup. Honours
-	# AIDEVOPS_SKIP_CACHE_PRIME=1 for debug.
-	local _prime_helper="${_PULSE_AGENTS_DIR}/scripts/pulse-cache-prime.sh"
-	if [[ -x "$_prime_helper" ]]; then
-		_pl_info "Pre-warming pulse caches (t2992)..."
-		"$_prime_helper" >/dev/null 2>&1 || _pl_warn "Cache prime returned non-zero (non-fatal — first cycle may be slow)"
-	fi
+	# t2994: cache priming moved into pulse-wrapper.sh::main() with a
+	# staleness gate. The original t2992 hook here never fired under
+	# launchd-managed pulse on macOS because launchd's KeepAlive
+	# auto-respawns inside this helper's stop→sleep→start window, so
+	# _start's _is_running early-return skipped priming entirely. The
+	# in-pulse hook fires regardless of how pulse boots (manual restart,
+	# launchd respawn, aidevops update, setup.sh ensure-running).
 
 	# GH#20580: set AIDEVOPS_PULSE_SOURCE so pulse-wrapper.sh records this
 	# invocation as "lifecycle-helper" in its invocation_sources counter.
