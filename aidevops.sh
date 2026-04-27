@@ -1567,6 +1567,7 @@ _help_commands() {
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
+	echo "  issue <cmd>        Interactive issue ownership (claim/release/status/scan-stale)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
 	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/digest/help)"
@@ -2019,6 +2020,7 @@ main() {
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
+	issue) _dispatch_helper "interactive-session-helper.sh" "interactive-session-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	contributions | contrib)
 		# Bare `aidevops contributions` defaults to status (most common use).
