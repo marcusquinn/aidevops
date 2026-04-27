@@ -229,20 +229,25 @@ _prefetch_batch_refresh() {
 	fi
 	local _batch_output
 	_batch_output=$("$_batch_helper" refresh 2>/dev/null) || true
-	# Parse counters for health instrumentation
+	# Parse counters for health instrumentation (t2830: also parses tickle counters)
 	local _batch_search_calls=0 _batch_cache_writes=0
+	local _tickle_fresh=0 _tickle_stale=0
 	if [[ -n "$_batch_output" ]]; then
 		local _line
 		while IFS= read -r _line; do
 			case "$_line" in
-			search_calls=*)  _batch_search_calls="${_line#search_calls=}" ;;
-			cache_writes=*)  _batch_cache_writes="${_line#cache_writes=}" ;;
+			search_calls=*)         _batch_search_calls="${_line#search_calls=}" ;;
+			cache_writes=*)         _batch_cache_writes="${_line#cache_writes=}" ;;
+			events_tickle_fresh=*)  _tickle_fresh="${_line#events_tickle_fresh=}" ;;
+			events_tickle_stale=*)  _tickle_stale="${_line#events_tickle_stale=}" ;;
 			esac
 		done <<<"$_batch_output"
 	fi
 	_PULSE_HEALTH_BATCH_SEARCH_CALLS=$((_PULSE_HEALTH_BATCH_SEARCH_CALLS + _batch_search_calls))
 	_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + _batch_cache_writes))
-	echo "[pulse-wrapper] Batch prefetch: search_calls=${_batch_search_calls} cache_writes=${_batch_cache_writes}" >>"$LOGFILE"
+	_PULSE_HEALTH_EVENTS_TICKLE_FRESH=$((_PULSE_HEALTH_EVENTS_TICKLE_FRESH + _tickle_fresh))
+	_PULSE_HEALTH_EVENTS_TICKLE_STALE=$((_PULSE_HEALTH_EVENTS_TICKLE_STALE + _tickle_stale))
+	echo "[pulse-wrapper] Batch prefetch: search_calls=${_batch_search_calls} cache_writes=${_batch_cache_writes} tickle_fresh=${_tickle_fresh} tickle_stale=${_tickle_stale}" >>"$LOGFILE"
 	return 0
 }
 
