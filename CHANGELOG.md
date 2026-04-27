@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-04-27
+
+### Added
+
+- pulse defense-in-depth restart reliability (#21155)
+
+### Changed
+
+- Maintenance: mark t2925 complete (pr:#21139 completed:2026-04-27) [skip ci]
+- add bounty-spam-detector for templated bot PRs (#21139)
+- Maintenance: mark t2929 complete (pr:#21153 completed:2026-04-27) [skip ci]
+- cut preflight_cleanup_and_ledger by ~47s — async DB archive + single-pass jq ledger (#21153)
+- Maintenance: mark t2931 complete (pr:#21142 completed:2026-04-27) [skip ci]
+- Maintenance: mark t2940 complete (pr:#21152 completed:2026-04-27) [skip ci]
+- fix 6 correctness bugs in email polling post-merge review (#21142)
+- Maintenance: mark t2934 complete (pr:#21144 completed:2026-04-27) [skip ci]
+- redact bad-actor identifiers from incident artifacts (#21152)
+- defense-in-depth admin-merge guard for external-contributor PRs (#21144)
+- Maintenance: mark t2939 complete (pr:#21155 completed:2026-04-27) [skip ci]
+- Maintenance: sync ref:GH#21154 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21150 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21149 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21148 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20972 to TODO.md [skip ci]
+- Maintenance: mark t2877 complete (pr:#21141 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2928 complete (pr:#21143 completed:2026-04-26) [skip ci]
+- parse parent-task body cross-phase dep declarations into blocked-by markers (#21141)
+- Maintenance: mark t2847 complete (pr:#21138 completed:2026-04-26) [skip ci]
+- LLM routing helper + audit log (#21138)
+- Maintenance: mark t2845 complete (pr:#21140 completed:2026-04-26) [skip ci]
+- feat(t2845): knowledge review gate routine + NMR integration (#21140)
+- Maintenance: mark t2933 complete (pr:#21133 completed:2026-04-26) [skip ci]
+- harden approve_collaborator_pr against GH#17671 supply-chain class (#21133)
+- Maintenance: sync ref:GH#21134 to TODO.md [skip ci]
+- Maintenance: mark t2856 complete (pr:#21127 completed:2026-04-26) [skip ci]
+- email thread reconstruction + filter→case-attach (#21127)
+- Maintenance: sync ref:GH#21132 to TODO.md [skip ci]
+
+### Fixed
+
+- add missing icon_url_override column to archive.project schema (#21143)
+
 ## [3.12.0] - 2026-04-27
 
 ### Added
