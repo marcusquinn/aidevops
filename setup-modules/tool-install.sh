@@ -51,6 +51,7 @@ setup_git_clis() {
 			echo ""
 			setup_prompt install_git_clis "Install Git CLI tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
+			# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
 			if [[ "$install_git_clis" =~ ^[Yy]?$ ]]; then
 				print_info "Installing ${missing_packages[*]}..."
 				if install_packages "$pkg_manager" "${missing_packages[@]}"; then
@@ -233,6 +234,7 @@ setup_file_discovery_tools() {
 		if [[ "$pkg_manager" != "unknown" ]]; then
 			setup_prompt install_fd_tools "Install file discovery tools (${missing_packages[*]}) using $pkg_manager? [Y/n]: " "Y"
 
+			# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
 			if [[ "$install_fd_tools" =~ ^[Yy]?$ ]]; then
 				_install_file_discovery_packages "$pkg_manager" "${missing_packages[@]}"
 			else
@@ -272,6 +274,7 @@ setup_rtk() {
 
 		setup_prompt install_rtk "Install rtk for token-optimized CLI output? [y/N]: " "n"
 
+		# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
 		if [[ "$install_rtk" =~ ^[Yy]$ ]]; then
 			VERIFIED_INSTALL_SHELL="sh"
 			if command -v brew >/dev/null 2>&1; then
@@ -1922,6 +1925,7 @@ setup_orbstack_vm() {
 	fi
 
 	setup_prompt install_orb "Install OrbStack? [y/N]: " "n"
+	# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
 	if [[ "$install_orb" =~ ^[Yy]$ ]]; then
 		if run_with_spinner "Installing OrbStack" brew install --cask orbstack; then
 			print_success "OrbStack installed"
