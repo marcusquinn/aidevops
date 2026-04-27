@@ -94,6 +94,15 @@ CLI: `aidevops review-gate --help` — configure `rate_limit_behavior` without h
 CLI: `aidevops knowledge init [repo|personal|off]` — sets field and provisions directories.
 See `.agents/aidevops/knowledge-plane.md` for the full directory contract, meta.json schema, and 30MB threshold rationale.
 
+## Cases Plane
+
+| Field | Type | Values | Description |
+|-------|------|--------|-------------|
+| `cases` | string | `"off"` (default), `"repo"`, `"personal"` | Controls cases plane provisioning. `"off"`: no plane (backwards-compatible default). `"repo"`: provisions `_cases/` inside the repo. `"personal"`: provisions at `~/.aidevops/.agent-workspace/cases/`. |
+
+CLI: `aidevops case init [<repo-path>]` — sets `cases: "repo"` and provisions directories.
+See `.agents/aidevops/cases-plane.md` for the full directory contract, dossier.toon schema, and timeline format.
+
 ## Platform Integration
 
 | Field | Values | Description |

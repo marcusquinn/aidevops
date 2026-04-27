@@ -74,6 +74,13 @@
       "type": "array",
       "description": "Slugs of related repos (owner/repo format)",
       "items": { "type": "string" }
+    },
+    "chasers_enabled": {
+      "description": "Whether automated chase emails are enabled for this case. false=disabled (default), true=enabled, false-with-force-allowed=disabled but --force overrides",
+      "oneOf": [
+        { "type": "boolean" },
+        { "type": "string", "enum": ["false-with-force-allowed"] }
+      ]
     }
   }
 }
