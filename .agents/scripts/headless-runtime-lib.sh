@@ -839,6 +839,11 @@ source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
 # --- Section 12: Canary + Version Pin ---
 
+# Module-level variable set by _validate_opencode_binary as a side-effect.
+# Callers that need the version string after validation can read this instead
+# of re-running "$bin" --version (avoids redundant I/O — GH#21003 finding 2).
+_VALIDATE_OC_VERSION=""
+
 CANARY_CACHE_TTL_SECONDS="${CANARY_CACHE_TTL_SECONDS:-1800}"
 CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-60}"
 # t2814 (Phase 3, fix #4): Short-lived negative cache. When the canary
@@ -877,6 +882,7 @@ CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
 #   0 = valid anomalyco/opencode (semver-shaped, no Claude Code marker, major <= 1)
 #   1 = wrong binary (Claude Code marker OR major version >= 2)
 #   2 = missing or unrunnable binary
+# Side-effect: sets _VALIDATE_OC_VERSION to the raw --version output (GH#21003).
 #######################################
 _validate_opencode_binary() {
 	local bin="${1:-}"
@@ -887,11 +893,16 @@ _validate_opencode_binary() {
 	version_output=$("$bin" --version 2>/dev/null || echo "")
 	[[ -n "$version_output" ]] || return 2
 
+	# GH#21003: expose version to callers so they don't re-run --version.
+	_VALIDATE_OC_VERSION="$version_output"
+
 	# Anthropic claude CLI signature -- highest-confidence rejection
 	[[ "$version_output" == *"(Claude Code)"* ]] && return 1
 
-	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x)
-	[[ "$version_output" =~ ^[2-9][0-9]*\. ]] && return 1
+	# GH#21003: Extract major version as integer for robust comparison.
+	# The previous regex ^[2-9][0-9]*\. missed two-digit majors like 10.x.
+	local major="${version_output%%.*}"
+	[[ "$major" =~ ^[0-9]+$ ]] && [[ "$major" -ge 2 ]] && return 1
 
 	# Sanity check: must look like a semver (X.Y.Z)
 	[[ "$version_output" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
@@ -1056,8 +1067,9 @@ _run_canary_test() {
 	local _validate_rc=0
 	_validate_opencode_binary "$OPENCODE_BIN_DEFAULT" || _validate_rc=$?
 	if [[ "$_validate_rc" -ne 0 ]]; then
-		local wrong_version
-		wrong_version=$("$OPENCODE_BIN_DEFAULT" --version 2>/dev/null || echo "<missing>")
+		# GH#21003: reuse version captured by _validate_opencode_binary
+		# instead of re-running --version (avoids redundant I/O).
+		local wrong_version="${_VALIDATE_OC_VERSION:-<missing>}"
 		local alt_bin=""
 		if alt_bin=$(_find_alternative_opencode_binary); then
 			print_warning "Canary: OPENCODE_BIN_DEFAULT='${OPENCODE_BIN_DEFAULT}' is invalid (version='${wrong_version}', rc=${_validate_rc}) — falling back to '${alt_bin}' (t2887)"
