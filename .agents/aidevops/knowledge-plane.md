@@ -139,6 +139,91 @@ The helper: `.agents/scripts/knowledge-helper.sh`.
 
 ---
 
+## Email Ingestion (`kind=email`, t2854)
+
+`.eml` and `.emlx` (Apple Mail) files are ingested as a first-class knowledge
+channel. When `knowledge-helper.sh add` receives an `.eml`/`.emlx` file, it
+delegates to `email-ingest-helper.sh ingest` which:
+
+1. Parses headers, body parts, and attachments via `email_parse.py` (Python
+   stdlib `email` module with `policy=default` for proper Unicode).
+2. Creates a **parent source** (`kind=email`) with email-specific meta fields.
+3. Extracts plain text to `text.txt` and preserves HTML at `body.html`.
+4. **Sanitises** the HTML body: strips tracking pixels (`1x1` images, beacon
+   URLs) and removes UTM query parameters from links.
+5. Splits each attachment into a **child source** (`kind=attachment`) linked
+   via `parent_source` in the child's `meta.json`.
+6. Runs the sensitivity detector independently on the parent body and each
+   child attachment.
+
+### Email-Specific `meta.json` Fields
+
+| Field | Description |
+|-------|-------------|
+| `kind` | `"email"` for the parent source |
+| `from` | Decoded `From` header |
+| `to` | Decoded `To` header |
+| `cc` | Decoded `Cc` header |
+| `bcc` | Decoded `Bcc` header |
+| `subject` | Decoded `Subject` header (RFC 2047) |
+| `date` | `Date` header in ISO 8601 |
+| `message_id` | `Message-ID` header |
+| `in_reply_to` | `In-Reply-To` header (threading) |
+| `references` | `References` header (threading) |
+| `body_text_sha` | SHA-256 of the stored `text.txt` |
+| `body_html_sha` | SHA-256 of the stored `body.html` |
+| `attachments` | Array of `{source_id, filename}` child references |
+
+Child (attachment) sources additionally carry `parent_source`, `attachment_filename`,
+and `content_type`.
+
+### CLI
+
+```bash
+# Ingest an email (auto-detects .eml extension)
+knowledge-helper.sh add /path/to/message.eml
+
+# Ingest with explicit ID and sensitivity
+knowledge-helper.sh add /path/to/message.eml --id meeting-notes --sensitivity confidential
+
+# Direct invocation of the email helper
+email-ingest-helper.sh ingest /path/to/message.eml --repo-path /path/to/repo
+```
+
+### MIME Edge Cases
+
+- **`multipart/alternative`** (text + HTML): both parts extracted; text preferred
+  for `text.txt`, HTML preserved at `body.html`.
+- **HTML-only emails**: plain text auto-generated via stdlib `HTMLParser` tag
+  stripping (no external dependencies).
+- **Apple Mail `.emlx`**: the decimal length-header on line 1 and trailing plist
+  are stripped before standard RFC 5322 parsing.
+- **Encoding**: quoted-printable, base64, and 8bit transfer encodings are decoded
+  transparently. Non-UTF-8 charsets fall back to `errors="replace"`.
+
+### Body Sanitisation
+
+Stored HTML bodies are sanitised on ingestion to prevent phone-home behaviour if
+the email is ever re-rendered and to remove analytics noise:
+
+- **Tracking pixels**: `<img>` tags matching `1x1` dimensions or known tracking
+  URL patterns (`/pixel`, `/beacon`, `/track`, `/open`, `/img.gif`, `/spacer`)
+  are replaced with `<!-- tracker stripped: <url> -->`.
+- **UTM parameters**: `?utm_*` query strings are stripped from link `href`
+  attributes.
+- Sanitisation is idempotent: running it twice produces the same output.
+
+### Helpers
+
+| File | Purpose |
+|------|---------|
+| `.agents/scripts/email_parse.py` | Python .eml parser (headers, body, attachments) |
+| `.agents/scripts/email-ingest-helper.sh` | Shell wrapper (source creation, sanitisation, child linking) |
+| `.agents/tests/test-email-ingest.sh` | Test suite |
+| `.agents/tests/fixtures/sample-emails/` | Test .eml fixtures |
+
+---
+
 ## Sensitivity Classification (t2846)
 
 Every ingested source is automatically stamped with a sensitivity tier. Detection runs

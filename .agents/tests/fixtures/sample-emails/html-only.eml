@@ -1,0 +1,17 @@
+From: =?utf-8?Q?M=C3=A1ria_T=C3=A9st?= <maria@example.com>
+To: recipient@example.com
+Subject: =?utf-8?B?SFRNTCBlbWFpbCB3aXRoIMOhY2PDqW50cw==?=
+Date: Fri, 25 Apr 2026 11:00:00 +0000
+Message-ID: <html-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html>
+<head><title>Test</title></head>
+<body>
+<h1>HTML Only Email</h1>
+<p>This email has <strong>only HTML</strong> content with =C3=A1cc=C3=A9nts.</p>
+<p>The ingestion handler should extract plain text from this HTML.</p>
+</body>
+</html>

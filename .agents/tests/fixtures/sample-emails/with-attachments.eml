@@ -1,0 +1,48 @@
+From: sender@example.com
+To: recipient@example.com
+Subject: Email with attachments
+Date: Fri, 25 Apr 2026 12:00:00 +0000
+Message-ID: <attach-001@example.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="boundary-mixed-001"
+
+--boundary-mixed-001
+Content-Type: multipart/alternative; boundary="boundary-alt-001"
+
+--boundary-alt-001
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This email has both text and HTML parts, plus attachments.
+
+Please see the attached files.
+
+--boundary-alt-001
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<body>
+<p>This email has both <em>text and HTML</em> parts, plus attachments.</p>
+<p>Please see the attached files.</p>
+</body>
+</html>
+
+--boundary-alt-001--
+
+--boundary-mixed-001
+Content-Type: text/plain; charset="utf-8"; name="notes.txt"
+Content-Disposition: attachment; filename="notes.txt"
+Content-Transfer-Encoding: 7bit
+
+These are some test notes in a text attachment.
+Line 2 of the notes.
+
+--boundary-mixed-001
+Content-Type: application/octet-stream; name="data.bin"
+Content-Disposition: attachment; filename="data.bin"
+Content-Transfer-Encoding: base64
+
+SGVsbG8gV29ybGQhIFRoaXMgaXMgYSBiaW5hcnkgdGVzdCBmaWxlLg==
+
+--boundary-mixed-001--

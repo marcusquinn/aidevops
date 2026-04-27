@@ -547,6 +547,21 @@ cmd_add() {
 		print_error "File not found: $file_path"
 		return 1
 	fi
+	# Route .eml/.emlx files through the email ingestion handler (t2854)
+	local _ext="${file_path##*.}"
+	_ext=$(echo "$_ext" | tr '[:upper:]' '[:lower:]')
+	if [[ "$_ext" == "eml" || "$_ext" == "emlx" ]]; then
+		local _email_helper="${SCRIPT_DIR}/email-ingest-helper.sh"
+		if [[ -x "$_email_helper" ]]; then
+			local _eml_args=("ingest" "$file_path" "--repo-path" "$repo_path")
+			[[ -n "$source_id" ]] && _eml_args+=("--id" "$source_id")
+			[[ -n "$sensitivity_override" ]] && _eml_args+=("--sensitivity" "$sensitivity_override")
+			bash "$_email_helper" "${_eml_args[@]}"
+			return $?
+		else
+			print_warning "email-ingest-helper.sh not found — falling back to generic add"
+		fi
+	fi
 	repo_path="$(cd "$repo_path" && pwd)"
 	local knowledge_root
 	knowledge_root=$(_cmd_add_resolve_knowledge_root "$repo_path") || return 1

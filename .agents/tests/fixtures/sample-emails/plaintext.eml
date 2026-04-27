@@ -1,0 +1,17 @@
+From: sender@example.com
+To: recipient@example.com
+Cc: cc-user@example.com
+Subject: Plain text test email
+Date: Fri, 25 Apr 2026 10:00:00 +0000
+Message-ID: <plaintext-001@example.com>
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+This is a plain text email for testing the email ingestion handler.
+
+It has multiple paragraphs and should be ingested as-is into text.txt
+without any HTML processing needed.
+
+Best regards,
+Test Sender
