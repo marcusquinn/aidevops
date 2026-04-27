@@ -238,6 +238,23 @@ This creates:
 
 **Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`, `beads`
 
+### Per-repo platform setup
+
+After `aidevops init` registers a new repo, run `/setup-git` in your AI assistant
+to apply per-repo platform secrets. Most notably, this sets `SYNC_PAT` — a
+GitHub Actions secret that lets `issue-sync.yml` push TODO.md auto-completion
+past branch protection.
+
+This is distinct from `/onboarding` (per-account credentials like `gh auth login`):
+GitHub Actions secrets are scoped per-repo, so each repo needs its own. You need
+`gh auth login` to succeed before any per-repo helper can run, so `/onboarding`
+comes first, `/setup-git` second.
+
+Run `/setup-git` again whenever you register a new repo with `aidevops repos add`
+or when a `SYNC_PAT` advisory appears in the session greeting toast. If you skip
+this step, `issue-sync.yml` will post a remediation comment when it hits branch
+protection — `/setup-git` walks through the fix.
+
 ### Upgrade Planning Files
 
 When aidevops templates evolve, upgrade existing projects to the latest format:
