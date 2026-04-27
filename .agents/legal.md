@@ -4,7 +4,7 @@ description: Legal compliance, case management, and litigation support - contrac
 mode: subagent
 subagents:
   # Legal-specific research
-  - tools/legal/legal-research
+  - legal-research
   # Research
   - context7
   - crawl4ai

@@ -11,7 +11,6 @@ subagents:
   - production-video
   - production-audio
   - production-characters
-  - heygen-skill
   - video-higgsfield
   - video-runway
   - video-wavespeed

@@ -3,11 +3,16 @@ name: automate
 description: Automation agent - scheduling, dispatch, monitoring, and background orchestration
 mode: subagent
 subagents:
-  - github-cli    # gh pr merge, gh issue edit
+  # Git platforms (gh pr merge, gh issue edit, etc.)
+  - github-cli
   - gitlab-cli
-  - plans         # Orchestration workflows
-  - toon          # Context tools
-  - macos-automator  # AppleScript/JXA
+  # Orchestration workflows
+  - plans
+  # Context tools
+  - toon
+  # macOS AppleScript/JXA automation
+  - macos-automator
+  # Built-in
   - general
   - explore
 ---

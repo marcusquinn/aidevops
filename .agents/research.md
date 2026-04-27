@@ -13,7 +13,7 @@ subagents:
   # Summarization
   - summarize
   # Domain-specific corpus research
-  - tools/legal/legal-research
+  - legal-research
   # Built-in
   - general
   - explore
