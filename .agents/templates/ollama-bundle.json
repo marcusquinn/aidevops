@@ -1,0 +1,23 @@
+{
+  "_comment": "Recommended Ollama model bundle for aidevops sensitivity tiers.",
+  "_comment2": "Deployed to ~/.aidevops/configs/ollama-bundle.json on first use.",
+  "_comment3": "Size estimates are approximate; actual size depends on quantisation.",
+  "fast": {
+    "model": "llama3.1:8b",
+    "purpose": "classify, short-form summary, tier:pii/sensitive",
+    "size_estimate": "4.9 GB",
+    "min_ram_gb": 8
+  },
+  "reasoning": {
+    "model": "llama3.1:70b",
+    "purpose": "drafts, structured extraction, long-form, tier:privileged",
+    "size_estimate": "39 GB",
+    "min_ram_gb": 48
+  },
+  "embed": {
+    "model": "nomic-embed-text",
+    "purpose": "vector embeddings for semantic search and RAG",
+    "size_estimate": "274 MB",
+    "min_ram_gb": 2
+  }
+}

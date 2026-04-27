@@ -1965,3 +1965,88 @@ setup_ai_orchestration() {
 
 	return 0
 }
+
+# Prompt to install Ollama when the knowledge plane is enabled.
+# Called from _setup_run_interactive when the user opts in.
+# Installs Ollama and pulls the recommended fast model (llama3.1:8b).
+# The reasoning model (llama3.1:70b) and embed model are suggested but not
+# pulled automatically due to their large size (39 GB and 274 MB respectively).
+setup_ollama_for_knowledge() {
+	print_info "Ollama — local LLM for knowledge plane (pii/sensitive/privileged tiers)"
+	print_info "Required for: tier:pii, tier:sensitive, tier:privileged routing."
+
+	# Check if Ollama is already installed
+	if command -v ollama >/dev/null 2>&1; then
+		local version
+		version=$(ollama --version 2>/dev/null | grep -o '[0-9][0-9.]*' | head -1) || version="unknown"
+		print_success "Ollama already installed (version: ${version})"
+	else
+		print_info "Ollama not found."
+		if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
+			print_info "Installing Ollama via Homebrew..."
+			if brew install ollama 2>/dev/null; then
+				print_success "Ollama installed via Homebrew"
+			else
+				print_warning "Homebrew install failed. Download from https://ollama.com"
+				return 0
+			fi
+		else
+			print_info "Install Ollama manually from https://ollama.com"
+			print_info "Then re-run this setup to pull the recommended models."
+			return 0
+		fi
+	fi
+
+	# Deploy the bundle config template
+	local bundle_dir="$HOME/.aidevops/configs"
+	local bundle_dest="${bundle_dir}/ollama-bundle.json"
+	local bundle_src
+	bundle_src="${BASH_SOURCE[0]%/*}/../.agents/templates/ollama-bundle.json"
+	if [[ ! -f "$bundle_src" ]]; then
+		bundle_src="$HOME/.aidevops/agents/templates/ollama-bundle.json"
+	fi
+	if [[ -f "$bundle_src" ]] && [[ ! -f "$bundle_dest" ]]; then
+		mkdir -p "$bundle_dir"
+		cp "$bundle_src" "$bundle_dest"
+		print_success "Ollama bundle config deployed: ${bundle_dest}"
+	fi
+
+	# Start Ollama service if not running
+	if ! curl -sf "http://localhost:11434/api/tags" >/dev/null 2>&1; then
+		print_info "Starting Ollama service..."
+		ollama serve >/dev/null 2>&1 &
+		local i=0
+		while [[ $i -lt 10 ]]; do
+			if curl -sf "http://localhost:11434/api/tags" >/dev/null 2>&1; then
+				break
+			fi
+			sleep 1
+			i=$((i + 1))
+		done
+	fi
+
+	# Pull the fast model (minimum required for pii/sensitive tiers)
+	print_info "Pulling minimum required model: llama3.1:8b (~4.9 GB)"
+	print_info "This is required for tier:pii and tier:sensitive routing."
+	if ollama pull llama3.1:8b 2>/dev/null; then
+		print_success "llama3.1:8b pulled successfully"
+	else
+		print_warning "Failed to pull llama3.1:8b. Run manually: ollama pull llama3.1:8b"
+	fi
+
+	# Pull the embed model (small — pull automatically)
+	print_info "Pulling embed model: nomic-embed-text (~274 MB)"
+	if ollama pull nomic-embed-text 2>/dev/null; then
+		print_success "nomic-embed-text pulled successfully"
+	else
+		print_warning "Failed to pull nomic-embed-text. Run manually: ollama pull nomic-embed-text"
+	fi
+
+	print_info ""
+	print_info "Optional: pull the reasoning model for tier:privileged (~39 GB, requires 48+ GB RAM):"
+	print_info "  ollama pull llama3.1:70b"
+	print_info ""
+	print_info "Verify: ollama-helper.sh health"
+
+	return 0
+}
