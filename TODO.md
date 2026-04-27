@@ -3335,3 +3335,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2947 reduce pulse-fast-fail FAST_FAIL_AGE_OUT_SECONDS default 86400→3600 (1h) #auto-dispatch #enhancement #framework ref:GH#21182
 
 - [ ] t2951 bounty-spam-auto-close.yml never fires close: cmd_score rc=0 contract collides with workflow rc=1 gate #auto-dispatch #bug #security ref:GH#21181
+
+- [ ] t2952 qlty smells regression: 32 actual vs 30 threshold (file-complexity drift) #auto-dispatch #enhancement #framework ref:GH#21186
