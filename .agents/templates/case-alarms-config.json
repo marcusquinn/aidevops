@@ -1,0 +1,11 @@
+{
+  "stages_days": [30, 7, 1],
+  "channels": ["gh-issue", "ntfy"],
+  "ntfy_topic": "aidevops-case-alarms",
+  "per_case_overrides": {
+    "_comment": "Override stages_days per case. Remove this _comment entry in deployed configs.",
+    "_example-case-2026-0001-special": {
+      "stages_days": [60, 14, 3]
+    }
+  }
+}

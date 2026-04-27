@@ -1309,6 +1309,7 @@ Commands:
   comm log <case-id>                    Log a communication entry
   draft <case-id> --intent "..."        Generate a draft (via case-draft-helper)
   revise --revise <file> --feedback ".." Revise an existing draft
+  alarm-test <case-id>                  Re-fire alarms for a case (testing/debug)
   help                                  Show this help
 
 Open options:
@@ -1373,6 +1374,7 @@ main() {
 	comm | comms) cmd_comm "$@" ;;
 	draft) bash "${SCRIPT_DIR}/case-draft-helper.sh" draft "$@" ;;
 	revise) bash "${SCRIPT_DIR}/case-draft-helper.sh" revise "$@" ;;
+	alarm-test) bash "${SCRIPT_DIR}/case-alarm-helper.sh" alarm-test "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		print_error "Unknown command: ${command}"

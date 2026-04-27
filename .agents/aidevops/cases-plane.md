@@ -79,7 +79,7 @@ Each line is a JSON event object. Timeline is append-only — no event is ever d
 {"ts":"2026-04-27T09:01:00Z","kind":"archive","actor":"Marcus Quinn","content":"Case archived","ref":""}
 ```
 
-**Event kinds:** `open` | `status_change` | `attach` | `note` | `comm` | `deadline` | `party` | `archive`
+**Event kinds:** `open` | `status_change` | `attach` | `note` | `comm` | `deadline` | `party` | `archive` | `alarm`
 
 ## sources.toon Format
 
@@ -254,11 +254,69 @@ Four built-in tones: `neutral`, `formal`, `conciliatory`, `firm`. Custom tones c
 
 The drafting helper has **no** `--send` or `--auto-send` flag. Drafts are written to the `drafts/` directory (gitignored by default) for human review. Sending is a separate, deliberate act outside the draft workflow.
 
+## Deadline Alarming (P4c — t2853)
+
+The case alarm routine (`case-alarm-helper.sh tick`) is a pulse-driven routine (r043, every 15 min) that scans all open cases, classifies each deadline by urgency stage, and fires alarms when a stage escalation is detected.
+
+### Alarm stages
+
+| Stage  | Default threshold | Action                                 |
+|--------|------------------|----------------------------------------|
+| green  | >30d             | No alarm                               |
+| amber  | ≤30d             | Fire alarm channels                    |
+| red    | ≤7d              | Fire alarm channels (higher priority)  |
+| passed | deadline reached | Auto-close GH alarm issue              |
+
+### Alarm channels
+
+- **`gh-issue`** — opens a GitHub issue tagged `kind:case-alarm` with a stable title `Case alarm: <case-id> deadline <label>`. Re-ticks update via comment. Auto-closes when deadline passes.
+- **`ntfy`** — POST to configured ntfy topic (priority: urgent for red, high for amber).
+- **`email`** — stub for MVP; full send in P5.
+
+### Stage memory
+
+Alarm state is recorded in `_cases/.alarm-state.json` so repeated ticks at the same stage do not spam. A more-severe stage (escalation) triggers a new alarm.
+
+```json
+{ "case-2026-0001-acme-dispute": { "filing-deadline": "amber" } }
+```
+
+### Config file
+
+Copy `.agents/templates/case-alarms-config.json` to `_config/case-alarms.json` to customise:
+
+```json
+{
+  "stages_days": [30, 7, 1],
+  "channels":    ["gh-issue", "ntfy"],
+  "ntfy_topic":  "aidevops-case-alarms",
+  "per_case_overrides": {
+    "case-2026-0001-special": { "stages_days": [60, 14, 3] }
+  }
+}
+```
+
+Per-case overrides honour individual matter urgency profiles (e.g. statute-of-limitations deadlines need earlier warning).
+
+### Manual trigger
+
+```bash
+aidevops case alarm-test <case-id>
+```
+
+Re-fires alarms for all deadlines on the case, bypassing stage memory. For testing and debugging.
+
+### Routine entry
+
+```
+r043 Case deadline alarming repeat:cron(*/15 * * * *) ~1m run:scripts/case-alarm-helper.sh tick
+```
+
 ## Dependencies
 
 - **Provisioned by:** `aidevops case init`
 - **Sources come from:** `_knowledge/sources/` (managed by knowledge plane, t2844)
-- **Alarming reads:** `dossier.deadlines` (t2853 P4c)
+- **Alarming reads:** `dossier.deadlines` (t2853 P4c — implemented)
 - **Comms agent operates on:** cases (P6)
 - **Filter→case-attach:** uses `aidevops case attach` (P5c)
 - **Drafting uses:** `llm-routing-helper.sh` (t2847), `knowledge-index-helper.sh` (t2850)
