@@ -34,7 +34,11 @@ on:
 jobs:
   badges:
     uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@main
-    secrets: inherit
+    # GH#20976: `secrets: inherit` only works within the same GitHub account/org.
+    # Cross-account consumers (every downstream user) must pass secrets explicitly.
+    # If a new secret is added to loc-badge-reusable.yml, add it here too.
+    secrets:
+      SYNC_PAT: ${{ secrets.SYNC_PAT }}
     # Optional input overrides — uncomment and edit as needed:
     # with:
     #   top_n: 8

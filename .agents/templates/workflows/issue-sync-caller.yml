@@ -55,6 +55,12 @@ on:
 jobs:
   sync:
     uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main
-    secrets: inherit
+    # GH#20976: `secrets: inherit` only works within the same GitHub account/org.
+    # Cross-account consumers (every downstream user) receive empty values for any
+    # caller-repo secret when using `secrets: inherit` against a cross-account
+    # reusable workflow. Explicit pass-through is required for secrets to resolve.
+    # If a new secret is added to issue-sync-reusable.yml, add it here too.
+    secrets:
+      SYNC_PAT: ${{ secrets.SYNC_PAT }}
     with:
       command: ${{ inputs.command || '' }}
