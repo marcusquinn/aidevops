@@ -11,7 +11,7 @@
 #   - Validating brief worker-readiness before committing pulse capacity
 #
 # Subcommands:
-#   dispatch <issue_number> <owner/repo> [--model <id>] [--dry-run]
+#   dispatch <issue_number> <owner/repo> [--model <id>] [--dry-run] [--no-ceremony]
 #   status <issue_number> <owner/repo>
 #   help
 #
@@ -262,6 +262,64 @@ _dsi_default_branch() {
 }
 
 #######################################
+# Apply the pre-launch dispatch ceremony — pulse-parity ownership claim.
+# Mirrors `pulse-dispatch-worker-launch.sh::_dlw_assign_and_label` exactly:
+#
+#   1. Atomic transition to status:queued (clears sibling status:* labels
+#      via set_issue_status).
+#   2. Add origin:worker; remove origin:interactive + origin:worker-takeover
+#      (t2200 mutual exclusion in the same gh edit).
+#   3. Add runner as assignee; remove any prior assignees so dedup layer 6
+#      sees a clean single-owner state.
+#
+# Why pre-launch (not post-launch): closes the race window where the next
+# pulse cycle could see the issue in its prior state (e.g. status:available
+# with no assignee) and dispatch a duplicate worker on top of the running
+# one. This was the canonical failure mode observed during the 2026-04-27
+# GitHub-search degradation incident on #21406/#21407/#21408.
+#
+# Best-effort — non-fatal if the gh edit fails. The worker still launches;
+# the operator can manually fix labels via `set_issue_status` after the
+# fact. The race-window risk is preferred over refusing to launch.
+#
+# Args:
+#   $1 - issue_number, $2 - repo_slug, $3 - self_login (runner GH login),
+#   $4 - issue_meta_json (.assignees[].login parsed for normalization)
+# Returns: 0 success, 1 gh edit failed (warning emitted)
+#######################################
+_dsi_apply_dispatch_ceremony() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local issue_meta_json="$4"
+
+	if [[ -z "$self_login" ]]; then
+		_dsi_warn "Cannot resolve runner login — skipping dispatch ceremony"
+		return 1
+	fi
+
+	# t2200: origin label mutual exclusion — atomic flip in the same edit.
+	# Assignee normalization: add self, remove any prior assignees (e.g. the
+	# issue creator) so dedup is unambiguous.
+	local -a _extra_flags=(--add-assignee "$self_login"
+		--add-label "origin:worker"
+		--remove-label "origin:interactive"
+		--remove-label "origin:worker-takeover")
+	local _prev_login
+	while IFS= read -r _prev_login; do
+		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] \
+			&& _extra_flags+=(--remove-assignee "$_prev_login")
+	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
+
+	if ! set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" >/dev/null 2>&1; then
+		_dsi_warn "Dispatch ceremony failed (non-fatal — worker will still launch; fix labels manually if needed)"
+		return 1
+	fi
+	_dsi_info "Ceremony applied — status:queued, origin:worker, assignee=${self_login}"
+	return 0
+}
+
+#######################################
 # Register the dispatch in the ledger with the real worker PID.
 # Best-effort — non-fatal if it fails. Note: dispatch-ledger-helper.sh
 # register accepts --session-key, --issue, --repo, --pid only — there is
@@ -396,7 +454,8 @@ _dsi_launch_worker() {
 
 #######################################
 # Parse + validate dispatch args. Sets globals:
-#   _DSI_ARG_ISSUE, _DSI_ARG_REPO, _DSI_ARG_MODEL, _DSI_ARG_DRYRUN
+#   _DSI_ARG_ISSUE, _DSI_ARG_REPO, _DSI_ARG_MODEL, _DSI_ARG_DRYRUN,
+#   _DSI_ARG_NO_CEREMONY
 # Returns: 0 ok, 2 invalid usage (caller should propagate)
 #######################################
 _dsi_parse_dispatch_args() {
@@ -404,6 +463,7 @@ _dsi_parse_dispatch_args() {
 	_DSI_ARG_REPO=""
 	_DSI_ARG_MODEL=""
 	_DSI_ARG_DRYRUN=0
+	_DSI_ARG_NO_CEREMONY=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
@@ -421,6 +481,15 @@ _dsi_parse_dispatch_args() {
 			;;
 		--dry-run)
 			_DSI_ARG_DRYRUN=1
+			shift
+			;;
+		--no-ceremony)
+			# Skip the pre-launch dispatch ceremony (status:queued + origin:worker
+			# + assignee normalize). Default: ceremony is ON. Use only when
+			# you intentionally want to bypass dedup-visibility — e.g., when
+			# debugging a stuck worker by re-launching without disturbing
+			# the existing label/assignee state.
+			_DSI_ARG_NO_CEREMONY=1
 			shift
 			;;
 		-h | --help)
@@ -482,6 +551,11 @@ _dsi_print_dryrun() {
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
+	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
+		_dsi_info "  Ceremony:     SKIPPED (--no-ceremony) — labels and assignee unchanged"
+	else
+		_dsi_info "  Ceremony:     would set status:queued + origin:worker + assignee=self (pulse-parity)"
+	fi
 	case "$dedup_state" in
 	blocked) _dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}" ;;
 	clear) _dsi_info "  Dedup:        clear (no active claim)" ;;
@@ -555,10 +629,39 @@ cmd_dispatch() {
 		;;
 	esac
 
+	# Step 5.5: pre-launch dispatch ceremony (t3000) — pulse-parity ownership
+	# claim. Closes the race window between worker launch and the next pulse
+	# cycle by transitioning status:queued + origin:worker + assignee=self
+	# atomically before the worker spawns. Bypassed via --no-ceremony.
+	if [[ "$_DSI_ARG_NO_CEREMONY" -ne 1 ]]; then
+		_dsi_apply_dispatch_ceremony "$issue_number" "$repo_slug" \
+			"$self_login" "$_DSI_ISSUE_META_JSON" || true
+	fi
+
 	# Step 6: pre-create worktree
 	_dsi_create_worktree "$issue_number" || return 1
 
-	# Step 7: launch (gets back the LAUNCH wrapper PID — short-lived)
+	# Steps 7-9 + report: launch worker, resolve real PID, register ledger,
+	# print success summary. Extracted to keep cmd_dispatch under the 100-line
+	# function-complexity gate (t3000).
+	_dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"
+}
+
+# Steps 7-9 of cmd_dispatch: launch the headless runtime, resolve the real
+# worker PID from its log header, register it in the dispatch ledger with
+# that PID (so liveness checks reflect the actual worker, not the wrapper),
+# and emit the human-facing success summary.
+# Args:
+#   $1 issue_number
+#   $2 repo_slug
+#   $3 session_key
+# Reads: _DSI_ISSUE_URL, _DSI_LOG_DIR, _DSI_WORKTREE_PATH, _DSI_ISSUE_TITLE,
+#        _DSI_TIER, _DSI_SELECTED_MODEL.
+_dsi_launch_and_report() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
@@ -568,13 +671,9 @@ cmd_dispatch() {
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
 		"$worker_log" "$issue_number") || return 1
 
-	# Step 8: resolve REAL worker PID from log (headless-runtime-helper
-	# prints "Dispatched PID: <pid>" before its subshell takes over).
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")
 
-	# Step 9: register in ledger with the real PID (so check-issue PID
-	# liveness checks reflect the actual worker, not the dead wrapper).
 	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key" "$worker_pid"
 
 	_dsi_ok "Worker launched"
@@ -659,12 +758,16 @@ Options:
   --model <id>    Override model (e.g. anthropic/claude-opus-4-7).
                   Default: inferred from tier:* and model:* labels.
   --dry-run       Print planned dispatch without launching.
+  --no-ceremony   Skip the pre-launch ceremony (status:queued + origin:worker
+                  + assignee normalize). Default: ceremony is ON. Use only
+                  when you intentionally want to bypass dedup-visibility.
   -h, --help      Show this help.
 
 Examples:
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
+  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --no-ceremony
 EOF
 	return 0
 }
