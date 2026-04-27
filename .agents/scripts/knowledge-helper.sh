@@ -418,17 +418,93 @@ _write_meta_json() {
 	return 0
 }
 
+# _cmd_add_resolve_knowledge_root: resolve knowledge_root from mode, echoes root path
+# Prints error and returns 1 on failure.
+_cmd_add_resolve_knowledge_root() {
+	local repo_path="$1"
+	local mode
+	mode=$(_get_knowledge_mode "$repo_path")
+	case "$mode" in
+	repo)
+		echo "${repo_path}/${KNOWLEDGE_ROOT}"
+		;;
+	personal)
+		echo "${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}"
+		;;
+	off)
+		print_error "Knowledge plane is disabled for $repo_path — run: knowledge-helper.sh init repo"
+		return 1
+		;;
+	*)
+		print_error "Unknown knowledge mode: $mode"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# _cmd_add_store_file: copy file into source_dir or blob store; echoes blob_path or "null"
+# Args: <file_path> <source_id> <source_dir> <size_bytes> <repo_path>
+_cmd_add_store_file() {
+	local file_path="$1"
+	local source_id="$2"
+	local source_dir="$3"
+	local size_bytes="$4"
+	local repo_path="$5"
+	if [[ "$size_bytes" -ge "$BLOB_THRESHOLD_BYTES" ]]; then
+		local repo_name
+		repo_name="$(basename "$repo_path")"
+		local blob_dir="${HOME}/.aidevops/.agent-workspace/knowledge-blobs/${repo_name}/${source_id}"
+		mkdir -p "$blob_dir"
+		local blob_path
+		blob_path="${blob_dir}/$(basename "$file_path")"
+		cp "$file_path" "$blob_path"
+		print_info "Large file (${size_bytes}B) stored at blob path: $blob_path"
+		echo "$blob_path"
+	else
+		cp "$file_path" "${source_dir}/$(basename "$file_path")"
+		echo "null"
+	fi
+	return 0
+}
+
+# _cmd_add_apply_sensitivity: run detector + optional override; prints final tier
+# Args: <source_id> <knowledge_root> <meta_path> <sensitivity_override>
+_cmd_add_apply_sensitivity() {
+	local source_id="$1"
+	local knowledge_root="$2"
+	local meta_path="$3"
+	local sensitivity_override="$4"
+	if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
+		local detected_tier
+		detected_tier=$(bash "$SENSITIVITY_DETECTOR" classify "$source_id" \
+			--knowledge-root "$knowledge_root" 2>/dev/null | tail -1 || echo "$META_DEFAULT_SENSITIVITY")
+		print_info "[$source_id] auto-detected sensitivity: $detected_tier"
+	else
+		print_warning "sensitivity-detector-helper.sh not found at $SENSITIVITY_DETECTOR — skipping auto-classify"
+	fi
+	if [[ -n "$sensitivity_override" ]]; then
+		if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
+			bash "$SENSITIVITY_DETECTOR" override "$source_id" "$sensitivity_override" \
+				--reason "user-provided via --sensitivity flag" \
+				--knowledge-root "$knowledge_root" >/dev/null 2>&1 || true
+		else
+			local tmp
+			tmp=$(mktemp)
+			if jq --arg t "$sensitivity_override" '.sensitivity = $t' "$meta_path" >"$tmp" 2>/dev/null; then
+				mv "$tmp" "$meta_path"
+			else
+				rm -f "$tmp"
+			fi
+		fi
+		print_info "[$source_id] sensitivity overridden to: $sensitivity_override"
+	fi
+	jq -r --arg def "$META_DEFAULT_SENSITIVITY" '.sensitivity // $def' "$meta_path" 2>/dev/null || echo "$META_DEFAULT_SENSITIVITY"
+	return 0
+}
+
 # cmd_add: ingest a file into the knowledge plane sources/ directory
 # Arguments: <file> [--id <id>] [--sensitivity <tier>] [--repo-path <path>]
-#
-# Steps:
-#   1. Resolve knowledge root from mode (repo or personal)
-#   2. Compute sha256 + size
-#   3. Generate source-id from filename if not provided
-#   4. For files >=30MB: move to blob store, record blob_path in meta.json
-#   5. Write meta.json with sensitivity=internal (default) or provided tier
-#   6. Call sensitivity-detector-helper.sh classify to stamp final tier
-#   7. Override tier if --sensitivity flag was passed (takes precedence)
 cmd_add() {
 	local file_path=""
 	local source_id=""
@@ -459,9 +535,7 @@ cmd_add() {
 			return 1
 			;;
 		*)
-			if [[ -z "$file_path" ]]; then
-				file_path="$_key"
-			fi
+			[[ -z "$file_path" ]] && file_path="$_key"
 			;;
 		esac
 	done
@@ -474,99 +548,37 @@ cmd_add() {
 		return 1
 	fi
 	repo_path="$(cd "$repo_path" && pwd)"
-	local mode
-	mode=$(_get_knowledge_mode "$repo_path")
 	local knowledge_root
-	case "$mode" in
-	repo)
-		knowledge_root="${repo_path}/${KNOWLEDGE_ROOT}"
-		;;
-	personal)
-		knowledge_root="${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}"
-		;;
-	off)
-		print_error "Knowledge plane is disabled for $repo_path — run: knowledge-helper.sh init repo"
-		return 1
-		;;
-	*)
-		print_error "Unknown knowledge mode: $mode"
-		return 1
-		;;
-	esac
+	knowledge_root=$(_cmd_add_resolve_knowledge_root "$repo_path") || return 1
 	if ! _is_provisioned "${knowledge_root%/"$KNOWLEDGE_ROOT"}"; then
 		print_error "Knowledge plane not provisioned. Run: knowledge-helper.sh provision"
 		return 1
 	fi
-	# Derive source-id from filename if not provided
 	if [[ -z "$source_id" ]]; then
 		local basename_no_ext
 		basename_no_ext="$(basename "$file_path")"
 		basename_no_ext="${basename_no_ext%.*}"
 		source_id=$(_slugify "$basename_no_ext")
-		if [[ -z "$source_id" ]]; then
-			source_id="source-$(date +%s)"
-		fi
+		[[ -z "$source_id" ]] && source_id="source-$(date +%s)"
 	fi
-	# Ensure unique: if dir already exists, append timestamp
 	local source_dir="${knowledge_root}/sources/${source_id}"
 	if [[ -d "$source_dir" ]]; then
 		source_id="${source_id}-$(date +%s)"
 		source_dir="${knowledge_root}/sources/${source_id}"
 	fi
 	mkdir -p "$source_dir"
-	# Compute hash and size
 	local sha256 size_bytes
 	sha256=$(_sha256sum_file "$file_path") || return 1
 	size_bytes=$(wc -c <"$file_path" | tr -d ' ')
 	local abs_file_path
 	abs_file_path="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
 	local source_uri="file://${abs_file_path}"
-	local blob_path="null"
-	# Handle large files (>=30MB)
-	if [[ "$size_bytes" -ge "$BLOB_THRESHOLD_BYTES" ]]; then
-		local repo_name
-		repo_name="$(basename "$repo_path")"
-		local blob_dir="${HOME}/.aidevops/.agent-workspace/knowledge-blobs/${repo_name}/${source_id}"
-		mkdir -p "$blob_dir"
-		cp "$file_path" "${blob_dir}/$(basename "$file_path")"
-		blob_path="${blob_dir}/$(basename "$file_path")"
-		print_info "Large file (${size_bytes}B) stored at blob path: $blob_path"
-	else
-		# Copy file into sources/
-		cp "$file_path" "${source_dir}/$(basename "$file_path")"
-	fi
-	# Write meta.json with initial sensitivity=META_DEFAULT_SENSITIVITY
+	local blob_path
+	blob_path=$(_cmd_add_store_file "$file_path" "$source_id" "$source_dir" "$size_bytes" "$repo_path") || return 1
 	local meta_path="${source_dir}/meta.json"
 	_write_meta_json "$meta_path" "$source_id" "$source_uri" "$sha256" "$size_bytes" "$META_DEFAULT_SENSITIVITY" "$blob_path" || return 1
-	# Run sensitivity detector (auto-classify)
-	if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
-		local detected_tier
-		detected_tier=$(bash "$SENSITIVITY_DETECTOR" classify "$source_id" \
-			--knowledge-root "$knowledge_root" 2>/dev/null | tail -1 || echo "$META_DEFAULT_SENSITIVITY")
-		print_info "[$source_id] auto-detected sensitivity: $detected_tier"
-	else
-		print_warning "sensitivity-detector-helper.sh not found at $SENSITIVITY_DETECTOR — skipping auto-classify"
-	fi
-	# Apply explicit --sensitivity override (takes precedence over detector)
-	if [[ -n "$sensitivity_override" ]]; then
-		if [[ -x "$SENSITIVITY_DETECTOR" ]]; then
-			bash "$SENSITIVITY_DETECTOR" override "$source_id" "$sensitivity_override" \
-				--reason "user-provided via --sensitivity flag" \
-				--knowledge-root "$knowledge_root" >/dev/null 2>&1 || true
-		else
-			# Fallback: write directly to meta.json
-			local tmp
-			tmp=$(mktemp)
-			if jq --arg t "$sensitivity_override" '.sensitivity = $t' "$meta_path" >"$tmp" 2>/dev/null; then
-				mv "$tmp" "$meta_path"
-			else
-				rm -f "$tmp"
-			fi
-		fi
-		print_info "[$source_id] sensitivity overridden to: $sensitivity_override"
-	fi
 	local final_tier
-	final_tier=$(jq -r --arg def "$META_DEFAULT_SENSITIVITY" '.sensitivity // $def' "$meta_path" 2>/dev/null || echo "$META_DEFAULT_SENSITIVITY")
+	final_tier=$(_cmd_add_apply_sensitivity "$source_id" "$knowledge_root" "$meta_path" "$sensitivity_override") || true
 	print_success "Added source: $source_id (sensitivity=${final_tier})"
 	return 0
 }
