@@ -872,6 +872,7 @@ _cmd_enable_systemd() {
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
+	# shellcheck disable=SC1078,SC1079,SC2027,SC2086  # systemd ExecStart wraps a single-quoted shell command; bash interpolates "${script_path}" into the systemd directive value, embedded single+double quotes are intentional
 	printf '%s' "[Unit]
 Description=aidevops auto-update
 After=network.target
