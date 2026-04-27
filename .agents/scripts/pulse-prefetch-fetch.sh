@@ -13,12 +13,14 @@
 #   5. State assembly and sub-helper runner
 #   6. Per-repo pulse schedule checking
 #   7. Per-repo pulse interval throttle (GH#20660)
+#   8. Per-repo activity tier skip (t2831) — hot/warm/cold cadence control
 #
 # Usage: source "${SCRIPT_DIR}/pulse-prefetch-fetch.sh"
 #
 # Dependencies:
 #   - pulse-prefetch-infra.sh (cache helpers, rate-limit helpers)
 #   - shared-constants.sh
+#   - pulse-repo-tier.sh (t2831: tier-of command, optional — degrades gracefully)
 #   - Environment vars: LOGFILE, PULSE_PREFETCH_PR_LIMIT, PULSE_PREFETCH_ISSUE_LIMIT,
 #     DAILY_PR_CAP, STATE_FILE, TRIAGE_STATE_FILE, REPOS_JSON, FOSS_SCAN_TIMEOUT
 #
@@ -471,6 +473,42 @@ _prefetch_single_repo() {
 	local slug="$1"
 	local path="$2"
 	local outfile="$3"
+
+	# t2831 Tier-based skip (before ANY gh API calls):
+	# Hot repos proceed every cycle; warm/cold repos skip when last check
+	# is more recent than their tier interval. Falls back to "proceed" when
+	# PULSE_TIER_CLASSIFICATION_ENABLED != 1 or the tier script is missing.
+	if ! check_repo_tier_skip "$slug"; then
+		# Tier skip: emit cached data so the state file still has an entry
+		# for this repo, then return without making any gh API calls.
+		local _tier_cache
+		_tier_cache=$(_prefetch_cache_get "$slug")
+		{
+			echo "## ${slug} (${path})"
+			echo ""
+			echo "> **Tier skip** — this repo is below hot tier and was checked recently."
+			echo "> Using cached state from last full prefetch."
+			echo ""
+			if [[ -n "$_tier_cache" && "$_tier_cache" != "null" ]]; then
+				PREFETCH_UPDATED_PRS="[]"
+				PREFETCH_UPDATED_ISSUES="[]"
+				_prefetch_single_repo_idle_skip "$slug" "$_tier_cache"
+			else
+				echo "### Open PRs [tier-skipped, no cache]"
+				echo "- None"
+				echo ""
+				echo "### Open Issues [tier-skipped, no cache]"
+				echo "- None"
+				echo ""
+			fi
+		} >"$outfile"
+		echo "[pulse-wrapper] _prefetch_single_repo: TIER SKIP for ${slug} — cached data replayed" >>"$LOGFILE"
+		_PULSE_HEALTH_IDLE_REPO_SKIPS=$((_PULSE_HEALTH_IDLE_REPO_SKIPS + 1))
+		return 0
+	fi
+
+	# Record that we are doing a full prefetch for this repo (for tier interval tracking).
+	update_repo_tier_check_timestamp "$slug"
 
 	# GH#15286: Determine sweep mode from cache
 	local cache_entry
@@ -927,5 +965,158 @@ check_repo_pulse_schedule() {
 		fi
 	fi
 
+	return 0
+}
+
+# =============================================================================
+# Per-Repo Activity Tier Skip (t2831)
+# =============================================================================
+# Controls how often each repo is evaluated based on its activity tier.
+# Hot repos: check every cycle (PULSE_TIER_HOT_INTERVAL=0, no skip).
+# Warm repos: skip if last full check < PULSE_TIER_WARM_INTERVAL seconds ago.
+# Cold repos: skip if last full check < PULSE_TIER_COLD_INTERVAL seconds ago.
+#
+# Tier assignment is performed hourly by pulse-repo-tier-classifier-routine.sh
+# and cached at ~/.aidevops/cache/pulse-repo-tiers.json.
+# The tier-of command reads from the cache and falls back to "warm" on miss.
+#
+# State file: PULSE_TIER_LAST_CHECK_FILE (separate from PULSE_LAST_PER_REPO_FILE
+# so tier-based throttle is independent of repos.json pulse_interval).
+# =============================================================================
+
+########################################
+# State file for per-repo tier-based last-check timestamps.
+########################################
+PULSE_TIER_LAST_CHECK_FILE="${PULSE_TIER_LAST_CHECK_FILE:-${HOME}/.aidevops/logs/pulse-tier-last-check.json}"
+
+########################################
+# Tier classifier script path.
+########################################
+PULSE_TIER_SCRIPT="${PULSE_TIER_SCRIPT:-${SCRIPT_DIR}/pulse-repo-tier.sh}"
+
+########################################
+# Check whether a repo should be skipped this cycle based on its activity tier.
+#
+# Reads the tier via pulse-repo-tier.sh tier-of (cache-backed, < 1ms typical).
+# Compares elapsed time since last full prefetch against the tier interval.
+#
+# Hot:  PULSE_TIER_HOT_INTERVAL=0 — never skip (every cycle)
+# Warm: skip if elapsed < PULSE_TIER_WARM_INTERVAL (default 180s)
+# Cold: skip if elapsed < PULSE_TIER_COLD_INTERVAL (default 600s)
+#
+# Feature-flag: returns 0 (proceed) immediately when
+# PULSE_TIER_CLASSIFICATION_ENABLED is unset or 0.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - state_file (optional; defaults to PULSE_TIER_LAST_CHECK_FILE)
+#
+# Exit codes:
+#   0 - proceed with this repo (not skipped)
+#   1 - skip this repo (tier interval not elapsed)
+########################################
+check_repo_tier_skip() {
+	local slug="$1"
+	local state_file="${2:-$PULSE_TIER_LAST_CHECK_FILE}"
+
+	# Feature flag — enabled by default (set to 0 to disable for rollback)
+	if [[ "${PULSE_TIER_CLASSIFICATION_ENABLED:-1}" != "1" ]]; then
+		return 0
+	fi
+
+	local warm_interval="${PULSE_TIER_WARM_INTERVAL:-180}"
+	local cold_interval="${PULSE_TIER_COLD_INTERVAL:-600}"
+
+	# Get tier from cache (fast — reads local JSON file); default to warm on error.
+	local tier
+	tier="warm"
+	if [[ -x "$PULSE_TIER_SCRIPT" ]]; then
+		local _t
+		_t=$("$PULSE_TIER_SCRIPT" tier-of "$slug" 2>/dev/null) || true
+		# Accept only known tier values; anything else stays at the default.
+		case "$_t" in hot|warm|cold) tier="$_t" ;; esac
+	fi
+
+	# Hot repos always proceed (no skip)
+	if [[ "$tier" == "hot" ]]; then
+		return 0
+	fi
+
+	# Determine minimum interval for this tier
+	local min_interval=0
+	case "$tier" in
+		warm) min_interval="$warm_interval" ;;
+		cold) min_interval="$cold_interval" ;;
+		*)    return 0 ;;
+	esac
+
+	if [[ "$min_interval" -le 0 ]]; then
+		return 0
+	fi
+
+	# Read last full prefetch epoch from state file
+	local last_check=0
+	if [[ -f "$state_file" ]] && command -v jq &>/dev/null; then
+		local val
+		val=$(jq -r --arg slug "$slug" '.last_check[$slug] // 0' "$state_file" 2>/dev/null)
+		[[ "$val" =~ ^[0-9]+$ ]] && last_check="$val"
+	fi
+
+	local now elapsed
+	now=$(date +%s)
+	elapsed=$((now - last_check))
+
+	if [[ "$elapsed" -lt "$min_interval" ]]; then
+		echo "[pulse-wrapper] tier_skip repo=${slug} tier=${tier} interval=${min_interval}s elapsed=${elapsed}s" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+########################################
+# Record the current epoch as the last full prefetch time for a repo (tier tracking).
+# Uses atomic mktemp+mv pattern (same as update_repo_pulse_timestamp).
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - state_file (optional; defaults to PULSE_TIER_LAST_CHECK_FILE)
+#
+# Returns: 0 always (non-fatal)
+########################################
+update_repo_tier_check_timestamp() {
+	local slug="$1"
+	local state_file="${2:-$PULSE_TIER_LAST_CHECK_FILE}"
+
+	command -v jq &>/dev/null || return 0
+
+	local now
+	now=$(date +%s)
+
+	local existing='{}'
+	if [[ -f "$state_file" ]]; then
+		existing=$(jq '.' "$state_file" 2>/dev/null) || existing='{}'
+		[[ -n "$existing" ]] || existing='{}'
+	fi
+
+	local state_dir
+	state_dir="${state_file%/*}"
+	[[ -d "$state_dir" ]] || mkdir -p "$state_dir" 2>/dev/null || true
+
+	local tmp_state
+	tmp_state=$(mktemp "${state_dir}/.pulse-tier-last-check-XXXXXX.json") || {
+		echo "[pulse-wrapper] update_repo_tier_check_timestamp: mktemp failed for ${slug}" >>"$LOGFILE"
+		return 0
+	}
+
+	if printf '%s' "$existing" | jq --arg slug "$slug" --argjson ts "$now" '
+		if .last_check then .last_check[$slug] = $ts
+		else .last_check = {($slug): $ts} end
+	' >"$tmp_state" 2>/dev/null && jq empty "$tmp_state" 2>/dev/null; then
+		mv "$tmp_state" "$state_file"
+	else
+		rm -f "$tmp_state"
+		echo "[pulse-wrapper] WARNING: update_repo_tier_check_timestamp: jq produced invalid JSON for ${slug}" >>"$LOGFILE"
+	fi
 	return 0
 }
