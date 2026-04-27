@@ -32,6 +32,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=/dev/null
+if [[ -f "${SCRIPT_DIR}/shared-gh-wrappers.sh" ]]; then
+	source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
+fi
 
 init_log_file
 
@@ -383,8 +387,8 @@ EOF
 		issue_num="$existing_num"
 		log_info "Updated gh-issue #${issue_num} for ${case_id}/${label}"
 	else
-		# Create new alarm issue
-		issue_num="$(gh issue create --repo "$slug" \
+		# Create new alarm issue — use gh_create_issue wrapper (origin labelling)
+		issue_num="$(gh_create_issue --repo "$slug" \
 			--title "$title" \
 			--body "$body" \
 			--label "$ALARM_ISSUE_LABEL" \
