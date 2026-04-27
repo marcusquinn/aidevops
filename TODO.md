@@ -3339,3 +3339,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2952 qlty smells regression: 32 actual vs 30 threshold (file-complexity drift) #auto-dispatch #enhancement #framework ref:GH#21186
 
 - [ ] t2953 fast-fail _ff_with_lock orphan-lock detection: empty lockdir without owner.pid never cleaned, blocks all dispatches #auto-dispatch #bug #enhancement #framework ref:GH#21197
+
+- [ ] t2954 fix _resolve_pulse_runtime_binary nvm path discovery + product validation (Li... #bug #framework ref:GH#21199
