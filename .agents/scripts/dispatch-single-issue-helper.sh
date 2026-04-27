@@ -579,15 +579,21 @@ cmd_status() {
 	fi
 
 	# Pretty-print key fields
-	local pid session_key launched_by status started_at
+	local pid session_key launched_by status started_at liveness
 	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
 	session_key=$(printf '%s' "$entry" | jq -r '.session_key // "?"')
 	launched_by=$(printf '%s' "$entry" | jq -r '.launched_by // "?"')
 	status=$(printf '%s' "$entry" | jq -r '.status // "?"')
 	started_at=$(printf '%s' "$entry" | jq -r '.started_at // "?"')
 
+	# Check PID liveness (as documented in dispatch-issue.md line 60)
+	liveness="dead"
+	if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null; then
+		liveness="running"
+	fi
+
 	_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
-	_dsi_info "  PID:          ${pid}"
+	_dsi_info "  PID:          ${pid} (${liveness})"
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Launched by:  ${launched_by}"
 	_dsi_info "  Status:       ${status}"
