@@ -11,9 +11,9 @@ This is the canonical postmortem for the only known supply-chain attempt against
 
 ## Threat actor
 
-- **Account:** `internet-dot` (GitHub user ID 207546839, account created 2025-04-14, ~1650 public repos).
-- **Profile shape:** drive-by external contributor (`authorAssociation: NONE` on every PR they filed). Public profile cross-references blog `hol.org` → `hashgraph-online` org, which controls the action that the malicious PR invoked.
-- **Pattern after 17671:** at least seven follow-up PRs (#17865, 17862, 17815, 17743, 17742, 17731, 17718) with similar shape — workflow-file injection, no engagement, fire-and-forget. All closed without merge.
+- **Profile shape:** drive-by external contributor (`authorAssociation: NONE` on every PR filed). Account created within weeks of the attack with a high public-repo count (~1650) — a low-cost reputation-padding pattern. Public profile cross-references a blog → `hashgraph-online` org, which controls the action the malicious PR invoked.
+- **Pattern after #17671:** at least seven follow-up PRs (#17865, #17862, #17815, #17743, #17742, #17731, #17718) with similar shape — workflow-file injection, no engagement, fire-and-forget. All closed without merge.
+- **Username intentionally redacted:** the public PR/issue numbers above remain the audit trail; identifying labels are out of band per maintainer policy ("don't make bad actors famous").
 
 ## What happened
 
