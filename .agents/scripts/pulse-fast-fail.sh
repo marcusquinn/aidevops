@@ -36,6 +36,13 @@
 # Originally a pure move from pulse-wrapper.sh (byte-identical to pre-extraction
 # form). GH#18692 decomposed _fast_fail_record_locked (115 lines) into focused
 # helpers to satisfy the 100-line complexity gate.
+#
+# Configurable environment variables (all optional):
+#   FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS — seconds before an empty lockdir (no owner.pid
+#     file) is treated as an orphan and cleaned. Covers the SIGKILL race window where
+#     a process dies between mkdir and owner.pid write, leaving the lockdir without an
+#     owner and permanently blocking all dispatch. Default: 5 (well above the normal
+#     mkdir→printf window of microseconds; short enough that recovery is fast). (t2953)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_FAST_FAIL_LOADED:-}" ]] && return 0
@@ -163,6 +170,25 @@ _ff_with_lock() {
 			rm -f "${lock_dir}/owner.pid" 2>/dev/null || true
 			rmdir "$lock_dir" 2>/dev/null || true
 			continue
+		fi
+		# t2953: empty-lockdir orphan path — detect lockdirs created by processes
+		# that died between mkdir and owner.pid write (SIGKILL race window).
+		# When owner.pid is absent, use lockdir mtime as age proxy. The normal
+		# mkdir→printf window is microseconds; a 5s threshold provides safe margin.
+		if [[ -z "$_ff_owner_pid" ]]; then
+			local _orphan_age_threshold _lock_mtime _lock_now _lock_age
+			_orphan_age_threshold="${FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS:-5}"
+			# stat -c %Y (GNU/Linux) before stat -f %m (BSD/macOS) to avoid
+			# GNU stat printing filesystem info to stdout when -f is used.
+			_lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo 0)
+			[[ "$_lock_mtime" =~ ^[0-9]+$ ]] || _lock_mtime=0
+			_lock_now=$(date +%s)
+			_lock_age=$((_lock_now - _lock_mtime))
+			if [[ "$_lock_age" -ge "$_orphan_age_threshold" ]]; then
+				echo "[pulse-wrapper] _ff_with_lock: clearing orphan lock (no owner.pid, age=${_lock_age}s >= ${_orphan_age_threshold}s, t2953)" >>"$LOGFILE"
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
 		fi
 		sleep 0.1
 	done
