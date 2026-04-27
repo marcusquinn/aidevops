@@ -57,7 +57,14 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/canonica
 	# shellcheck source=/dev/null
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/canonical-guard-helper.sh"
 fi
+# t2976: canonical audit logger for worktree-removal events
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/audit-worktree-removal-helper.sh" ]]; then
+	# shellcheck source=audit-worktree-removal-helper.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/audit-worktree-removal-helper.sh"
+fi
 unset _PULSE_CLEANUP_SCRIPT_DIR
+# Caller ID constant for audit log calls (avoids repeated literals).
+_WTAR_PC_CALLER="pulse-cleanup.sh"
 
 # t2859: Config defaults (ORPHAN_WORKTREE_GRACE_SECS, ORPHAN_MAX_AGE,
 # PULSE_IDLE_CPU_THRESHOLD) are owned by pulse-wrapper-config.sh. When
@@ -218,6 +225,8 @@ _worktree_owner_alive() {
 	# pgrep check: any process referencing this path in its command line
 	if pgrep -f "$wt_path" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — pgrep matched active process" >>"$LOGFILE"
+		# t2976: audit log — orphan cleanup blocked, pgrep found active owner
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip"
 		return 0
 	fi
 
@@ -225,6 +234,8 @@ _worktree_owner_alive() {
 	# worktree path never appears in process argv.
 	if is_worktree_owned_by_others "$wt_path"; then
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — registered owner alive in registry" >>"$LOGFILE"
+		# t2976: audit log — orphan cleanup blocked, registry owner is alive
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip"
 		return 0
 	fi
 
@@ -487,6 +498,8 @@ _cleanup_single_worktree() {
 	# Mirrors the pattern in worktree-helper.sh:1224 (cmd_remove path).
 	# Fail-open: registry deregistration must never block cleanup.
 	unregister_worktree "$wt_path_age" 2>/dev/null || true
+	# t2976: audit log — orphan worktree removed by pulse cleanup
+	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible"
 	if [[ -n "$wt_branch_age" ]]; then
 		git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
 		git -C "$rp_age" push origin --delete "$wt_branch_age" 2>/dev/null || true

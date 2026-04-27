@@ -43,6 +43,14 @@ if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
 	source "${SCRIPT_DIR}/canonical-guard-helper.sh"
 fi
 
+# t2976: canonical audit logger for worktree-removal events (removed / skipped).
+if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
+	# shellcheck source=audit-worktree-removal-helper.sh
+	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
+fi
+# Caller ID used in every log_worktree_removal_event call below (avoids repeated literals).
+_WTAR_WH_CALLER="worktree-helper.sh"
+
 set -euo pipefail
 
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
@@ -1183,6 +1191,8 @@ _remove_validate_path() {
 	if is_worktree_owned_by_others "$path_to_remove"; then
 		_remove_show_owner_error "$path_to_remove"
 		if [[ "${WORKTREE_FORCE_REMOVE:-}" != "true" ]]; then
+			# t2976: audit log — removal blocked by ownership registry
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "owned-skip"
 			return 1
 		fi
 		echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
@@ -1224,6 +1234,9 @@ _remove_cleanup_and_execute() {
 	unregister_worktree "$path_to_remove"
 
 	echo -e "${GREEN}Worktree removed successfully${NC}"
+
+	# t2976: audit log — manual removal completed
+	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$path_to_remove" "manual"
 
 	# Localdev integration (t1224.8): auto-remove branch subdomain route
 	if [[ -n "$removed_branch" ]]; then
@@ -1452,6 +1465,8 @@ should_skip_cleanup() {
 		echo -e "  ${RED}$wt_branch${NC} (owned by active session PID $owner_pid - skipping)"
 		echo "    $wt_path"
 		echo ""
+		# t2976: audit log — cleanup skipped, registry owner is alive
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip"
 		return 0
 	fi
 
@@ -1465,6 +1480,8 @@ should_skip_cleanup() {
 		echo -e "  ${RED}$wt_branch${NC} (within grace period ${grace_hours}h - skipping)"
 		echo "    $wt_path"
 		echo ""
+		# t2976: audit log — cleanup skipped, within grace period
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "grace-period"
 		return 0
 	fi
 
@@ -1475,6 +1492,8 @@ should_skip_cleanup() {
 		echo -e "  ${RED}$wt_branch${NC} (has open PR - skipping)"
 		echo "    $wt_path"
 		echo ""
+		# t2976: audit log — cleanup skipped, open PR exists
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "open-pr"
 		return 0
 	fi
 
@@ -1486,6 +1505,8 @@ should_skip_cleanup() {
 		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead + dirty files = in-progress, not merged - skipping)"
 		echo "    $wt_path"
 		echo ""
+		# t2976: audit log — cleanup skipped, zero-commit+dirty safety check
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "zero-commit-dirty"
 		return 0
 	fi
 
@@ -1496,6 +1517,8 @@ should_skip_cleanup() {
 			echo -e "  ${RED}$wt_branch${NC} (has uncommitted changes - skipping)"
 			echo "    $wt_path"
 			echo ""
+			# t2976: audit log — cleanup skipped, uncommitted changes present
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "dirty-skip"
 			return 0
 		fi
 		# force_merged=true: dirty state is abandoned WIP, safe to force-remove
@@ -1746,6 +1769,8 @@ _clean_remove_merged() {
 				else
 						# Unregister ownership (t189)
 						unregister_worktree "$worktree_path"
+						# t2976: audit log — merged/closed branch worktree removed
+						log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "branch-merged"
 						# Localdev integration (t1224.8): auto-remove branch route
 						localdev_auto_branch_rm "$worktree_branch"
 						# Also delete the local branch
