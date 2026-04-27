@@ -3412,7 +3412,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2984 chunked or time-budgeted reconcile_issues_single_pass to stop preflight_ownership_reconcile timing out #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21373 pr:#21374 completed:2026-04-27
 
-- [ ] t2985 batch _action_oimp_single search per-repo to eliminate per-issue gh API calls #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21375
+- [x] t2985 batch _action_oimp_single search per-repo to eliminate per-issue gh API calls #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21375 pr:#21392 completed:2026-04-27
 
 - [x] t2986 fix shellcheck false positives blocking release preflight (SC2027 + SC2154) #bug #framework ref:GH#21377 pr:#21378 completed:2026-04-27
 
