@@ -353,6 +353,8 @@ cmd_open() {
 			'[{label:$l, date:$d}]')"
 	fi
 
+	# chasers_enabled defaults to false — must be explicitly set to true per-case
+	# before case-chase-helper.sh send will proceed (t2858 opt-in gate).
 	# Write dossier.toon
 	jq -n \
 		--arg id "$case_id" \
@@ -365,6 +367,7 @@ cmd_open() {
 		'{id:$id, slug:$slug, kind:$kind, opened_at:$opened_at,
 		  status:$initial_status, outcome:"", outcome_summary:"",
 		  parties:$parties, deadlines:$deadlines,
+		  chasers_enabled: false,
 		  related_cases:[], related_repos:[]}' \
 		>"${case_dir}/${CASE_DOSSIER_FILE}"
 
@@ -1307,8 +1310,8 @@ Commands:
   deadline add|remove <case-id>         Manage deadlines
   party add|remove <case-id>            Manage parties
   comm log <case-id>                    Log a communication entry
-  draft <case-id> --intent "..."        Generate a draft (via case-draft-helper)
-  revise --revise <file> --feedback ".." Revise an existing draft
+  chase <case-id> --template <name>     Send a template chase email (opt-in)
+  chase-template add|list|test          Manage chase templates
   help                                  Show this help
 
 Open options:
@@ -1371,8 +1374,8 @@ main() {
 	deadline | dl) cmd_deadline "$@" ;;
 	party) cmd_party "$@" ;;
 	comm | comms) cmd_comm "$@" ;;
-	draft) bash "${SCRIPT_DIR}/case-draft-helper.sh" draft "$@" ;;
-	revise) bash "${SCRIPT_DIR}/case-draft-helper.sh" revise "$@" ;;
+	chase) bash "${SCRIPT_DIR}/case-chase-helper.sh" send "$@" ;;
+	chase-template) bash "${SCRIPT_DIR}/case-chase-helper.sh" template "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		print_error "Unknown command: ${command}"

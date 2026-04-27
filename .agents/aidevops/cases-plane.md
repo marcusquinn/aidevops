@@ -182,77 +182,76 @@ Paper-trail entry — full email content attaches via P5 (inbox-to-case filter).
 
 All read-side commands (`list`, `show`) and all mutating commands support `--json` for machine consumption. Use for scripting, P5 filter integration, and P4c alarming.
 
-## Drafting (P6a — t2857)
+## Chasing (P6b — t2858)
 
-The drafting subsystem generates strategic communication drafts using RAG over case knowledge sources. All drafts are **human-gated** — they write to `_cases/<id>/drafts/` and never auto-send.
+Template-only, deterministic chaser emails. No LLM at send time.
 
-### Draft command
+### Opt-in policy
 
-```bash
-aidevops case draft <case-id> --intent "request payment of overdue invoice" \
-    [--tone neutral|formal|conciliatory|firm] \
-    [--length short|medium|long] \
-    [--cite strict|loose] \
-    [--include-case <other-case-id>] \
-    [--dry-run] [--json]
-```
+Chasers are **disabled by default** per case. `dossier.toon` is initialised with `chasers_enabled: false`.
 
-### Revise command
+Set `chasers_enabled: true` in `dossier.toon` before using `aidevops case chase`. This is a deliberate opt-in: cases in active dispute or sensitive negotiation should not be auto-chased.
 
-```bash
-aidevops case draft <case-id> --revise <draft-file> --feedback "soften paragraph 3"
-```
+Three valid values:
 
-Produces a new revision file (`-rev2.md`, `-rev3.md`, etc.) preserving the citation standard.
+| Value | Behaviour |
+|-------|-----------|
+| `false` | Blocked (default). Chase exits 1 with a friendly message. |
+| `true` | Allowed. All templates may be sent. |
+| `false-with-force-allowed` | Blocked by default; `--force` overrides (requires deliberate flag). |
 
-### Draft output
+### Templates
 
-Drafts are written to `_cases/<case-id>/drafts/<timestamp>-<intent-slug>.md` with:
+Located at `.agents/templates/case-chase-templates/<name>.eml.tmpl`.
 
-- **YAML frontmatter:** `case_id`, `intent`, `tone`, `length`, `model`, `generated_at`, `sources_consulted`, `cross_case_includes`
-- **Body:** LLM output with `[source-id]` citation anchors
-- **Provenance footer:** explicit list of source IDs with kind, sensitivity, and sha — always appended even if the model omits it
+Format: RFC 5322 headers (`From:`, `To:`, `Subject:`) followed by a blank line, then body. Comments (lines starting with `#`) are stripped before substitution.
 
-### Sensitivity-tier routing
+Placeholder syntax: `{{field_name}}`. All placeholders must resolve — any missing field causes an exit 1 before any SMTP call.
 
-The draft helper reads `meta.json` from each attached source to determine sensitivity. The **maximum sensitivity** across all sources determines the LLM routing tier:
+Starter templates:
 
-| Source sensitivity | LLM routing tier | Provider |
-|---|---|---|
-| `public` | `public` | Any (default: Anthropic) |
-| `internal` | `internal` | Cloud or local |
-| `confidential` | `sensitive` | Local only (Ollama) |
-| `restricted` | `privileged` | Local only; hard-fail if unavailable |
+| Template | Description |
+|----------|-------------|
+| `payment-reminder` | Invoice outstanding — polite initial chase |
+| `deadline-reminder` | Upcoming or past deadline — action required |
+| `receipt-acknowledge` | Confirm receipt of document or correspondence |
 
-When any attached source is `restricted` (privileged tier), the draft **must** route through the local LLM (Ollama). If Ollama is not running, the draft fails rather than sending privileged content to a cloud provider.
-
-### Cross-case privilege firewall
-
-By default, each case's draft sees **only its own** `sources.toon`. Cross-case retrieval requires explicit opt-in:
+### CLI
 
 ```bash
-aidevops case draft <case-id> --intent "..." --include-case <other-case-id>
+# Send a chaser (case must have chasers_enabled: true)
+aidevops case chase <case-id> --template payment-reminder
+
+# Dry-run: show substituted email without sending
+aidevops case chase <case-id> --template payment-reminder --dry-run
+
+# Template management
+aidevops case chase-template list
+aidevops case chase-template test --case <case-id> --template payment-reminder
+aidevops case chase-template add my-custom-template
 ```
 
-Every cross-case access is:
+### Audit
 
-1. **Audited** — appended to `_cases/<case-id>/comms/cross-case-access.jsonl`:
+Every send (success or failure) appends to `_cases/<case-id>/comms/sent.jsonl`:
 
-   ```json
-   {"at":"2026-04-27T10:00:00Z","included_case":"case-2026-0002-related","included_by":"user","reason":"Draft intent: ..."}
-   ```
+```json
+{"ts":"...", "case_id":"...", "template":"payment-reminder", "recipient":"...",
+ "mailbox_id":"...", "message_id":"<...@...>", "status":"sent"}
+```
 
-2. **Logged in timeline** — a `cross-case-access` event records the inclusion
+A timeline event (`kind: chase_sent` or `kind: chase_error`) is also appended.
 
-This ensures cross-case knowledge bleed is always a deliberate, traceable act — critical for matters with multiple unrelated cases where discovery concerns apply.
+### Failure handling
 
-### Tone library
+- **First failure:** logged with `status: error`, `retry_allowed: true`. Manual retry via `aidevops case chase retry <case-id> <message-id>`.
+- **Second consecutive failure:** case status set to `hold` + alarm fired via `case-alarm-helper.sh fire` (if available).
 
-Four built-in tones: `neutral`, `formal`, `conciliatory`, `firm`. Custom tones can be added by copying `.agents/templates/draft-tones-config.json` to `_config/draft-tones.json` in the repo.
+### SMTP credentials
 
-### No auto-send enforcement
+SMTP host/port resolved from `_config/mailboxes.json` (per-repo) or `~/.config/aidevops/mailboxes.json` (global). Provider SMTP settings auto-detected from `email-providers.json.txt` using the mailbox `provider` field.
 
-The drafting helper has **no** `--send` or `--auto-send` flag. Drafts are written to the `drafts/` directory (gitignored by default) for human review. Sending is a separate, deliberate act outside the draft workflow.
+Credentials fetched at send-time from `gopass` (via `password_ref: gopass:aidevops/email/<id>/password`). Never stored in logs or output.
 
 ## Dependencies
 
@@ -261,6 +260,6 @@ The drafting helper has **no** `--send` or `--auto-send` flag. Drafts are writte
 - **Alarming reads:** `dossier.deadlines` (t2853 P4c)
 - **Comms agent operates on:** cases (P6)
 - **Filter→case-attach:** uses `aidevops case attach` (P5c)
-- **Drafting uses:** `llm-routing-helper.sh` (t2847), `knowledge-index-helper.sh` (t2850)
+- **Chase send:** `case-chase-helper.sh` (t2858 P6b) — template-only, no LLM
 
 <!-- AI-CONTEXT-END -->
