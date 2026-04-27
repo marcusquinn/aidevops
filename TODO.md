@@ -3430,6 +3430,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2995 Scanner intermittently creates duplicate file-size-debt issues despite dedup logic #auto-dispatch #bug #framework ref:GH#21406 pr:#21424 completed:2026-04-27
 
-- [ ] t2996 dispatch_with_dedup hits t2989 30s timeout consistently — too many serial gh calls #auto-dispatch #bug #framework ref:GH#21407
+- [x] t2996 dispatch_with_dedup hits t2989 30s timeout consistently — too many serial gh calls #auto-dispatch #bug #framework ref:GH#21407 pr:#21410 completed:2026-04-27
 
 - [x] t2997 mktemp templates with XXXXXX before extension are BSD-broken — 17+ callsites #auto-dispatch #bug #framework ref:GH#21408 pr:#21421 completed:2026-04-27
