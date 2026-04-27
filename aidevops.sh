@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.11.16
+# Version: 3.13.0
 
 set -euo pipefail
 
@@ -480,6 +480,46 @@ _update_check_homebrew() {
 	return 0
 }
 
+# t2926 / GH#21102: Re-check setsid on every 'aidevops update' run.
+# setsid (from util-linux) is required to detach pulse workers into their own
+# process group — without it, every pulse restart sends SIGHUP to its PGID,
+# killing in-flight workers. This check runs even when setup.sh is skipped
+# (already up-to-date path), so Homebrew drift doesn't silently break workers.
+_update_check_setsid() {
+	command -v setsid >/dev/null 2>&1 && return 0
+
+	# setsid is missing. On macOS with Homebrew, auto-install util-linux.
+	# Use a boolean flag to avoid repeating the OS literal string.
+	local _on_mac=false
+	[[ "$(uname -s)" == Darwin* ]] && _on_mac=true
+	if $_on_mac && command -v brew >/dev/null 2>&1; then
+		print_info "setsid not found — installing util-linux for worker PGID isolation (GH#21102)"
+		if brew install util-linux 2>&1 | tail -3; then
+			local brew_prefix=""
+			brew_prefix="$(brew --prefix 2>/dev/null || true)"
+			local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
+			local link_target="${brew_prefix}/bin/setsid"
+			if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
+				ln -s "$keg_setsid" "$link_target" && \
+					print_success "Symlinked setsid: $keg_setsid → $link_target"
+			fi
+			if command -v setsid >/dev/null 2>&1; then
+				print_success "setsid installed at $(command -v setsid) (worker PGID isolation enabled)"
+			else
+				print_error "util-linux installed but setsid still not in PATH — check brew --prefix"
+			fi
+		else
+			print_error "brew install util-linux failed — workers will share pulse PGID until resolved"
+		fi
+	elif $_on_mac; then
+		print_error "setsid not found — worker isolation broken; install Homebrew then run: brew install util-linux"
+	else
+		print_error "setsid not found — worker isolation broken; install util-linux via your distro package manager"
+	fi
+
+	return 0
+}
+
 # Verify supply chain signature after pulling framework updates.
 # Checks that the HEAD commit is signed by the trusted maintainer key.
 # Non-blocking: warns on failure, does not abort the update.
@@ -638,6 +678,8 @@ cmd_update() {
 	_update_check_planning
 	_update_check_tools
 	_update_sweep_opencode_symlinks
+	# t2926: Re-check setsid on every update (runs even when setup.sh is skipped).
+	_update_check_setsid
 
 	# t2898: When invoked interactively (terminal stdin AND not from the
 	# auto-update daemon itself, which sets AIDEVOPS_AUTO_UPDATE=1 in its
@@ -1456,10 +1498,13 @@ _help_commands() {
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
+	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/digest/help)"
+	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
+	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
@@ -1538,6 +1583,13 @@ _help_detailed_sections() {
 	echo "  aidevops config set <k> <v>  # Set a toggle (true/false)"
 	echo "  aidevops config reset [key]  # Reset toggle(s) to defaults"
 	echo "  aidevops config path         # Show config file path"
+	echo ""
+	echo "Knowledge Plane:"
+	echo "  aidevops knowledge init repo           # Provision _knowledge/ in current repo"
+	echo "  aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspace/knowledge/"
+	echo "  aidevops knowledge init off            # Disable knowledge plane"
+	echo "  aidevops knowledge status              # Show provisioning state"
+	echo "  aidevops knowledge provision [path]    # Re-provision (idempotent)"
 	echo ""
 	echo "LLM Stats:"
 	echo "  aidevops stats               # Show usage summary (last 30 days)"
@@ -1745,6 +1797,71 @@ _cmd_security() {
 	return 0
 }
 
+# Route 'aidevops email [subcommand]' to email helpers
+_cmd_email() {
+	local sub="${1:-help}"
+	local _EPH="email-poll-helper.sh"
+	shift || true
+	case "$sub" in
+	mailbox)
+		local action="${1:-list}"
+		shift || true
+		local _EMR_HELPER="email-mailbox-register-helper.sh"
+		case "$action" in
+		add)      _dispatch_helper "$_EMR_HELPER" "$_EMR_HELPER" add "$@" ;;
+		list)     _dispatch_helper "$_EPH" "$_EPH" list "$@" ;;
+		test)     _dispatch_helper "$_EPH" "$_EPH" test "$@" ;;
+		remove)   _dispatch_helper "$_EMR_HELPER" "$_EMR_HELPER" remove "$@" ;;
+		*)
+			echo "Usage: aidevops email mailbox <add|list|test|remove>"
+			echo ""
+			echo "Mailbox subcommands:"
+			echo "  add           Interactive: prompt for provider, user, gopass path; test connection"
+			echo "  list          Table of mailboxes with last-polled-at and last-error"
+			echo "  test <id>     Dry-run fetch (1 message); does not commit state"
+			echo "  remove <id>   Un-register a mailbox"
+			;;
+		esac
+		;;
+	poll)
+		# Direct poll commands forwarded to email-poll-helper.sh
+		local poll_action="${1:-tick}"
+		shift || true
+		_dispatch_helper "$_EPH" "$_EPH" "$poll_action" "$@" ;;
+	thread)
+		# Thread lookup: email thread <message-id> [knowledge-root]
+		local _ETH="email-thread-helper.sh"
+		_dispatch_helper "$_ETH" "$_ETH" thread "$@" ;;
+	build)
+		# Thread rebuild: email build [knowledge-root] [--force]
+		local _ETH2="email-thread-helper.sh"
+		_dispatch_helper "$_ETH2" "$_ETH2" build "$@" ;;
+	filter)
+		# Filter rules: email filter tick|add|test|list [knowledge-root]
+		local _EFH="email-filter-helper.sh"
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "$_EFH" "$_EFH" "$@" ;;
+	*)
+		echo "Usage: aidevops email <mailbox|poll|thread|build|filter> [subcommand]"
+		echo ""
+		echo "Email subcommands:"
+		echo "  mailbox add              Register a new IMAP mailbox (interactive)"
+		echo "  mailbox list             Show all mailboxes + polling status"
+		echo "  mailbox test <id>        Dry-run connection test"
+		echo "  mailbox remove <id>      Un-register a mailbox"
+		echo "  poll tick                Poll all mailboxes now (same as routine r044)"
+		echo "  poll backfill <id>       Backfill a mailbox from a given date"
+		echo "  thread <message-id>      Look up thread by message-id"
+		echo "  build [--force]          Rebuild thread index from email sources"
+		echo "  filter list              List filter rules"
+		echo "  filter add               Add a new filter rule (interactive)"
+		echo "  filter test <rule>       Dry-run rule against last 50 sources"
+		echo "  filter tick              Run filter pass (routine r045)"
+		;;
+	esac
+	return 0
+}
+
 # Route 'aidevops client-format [subcommand]' to appropriate helpers
 _cmd_client_format() {
 	case "${1:-status}" in
@@ -1835,10 +1952,22 @@ main() {
 		[[ $# -eq 0 ]] && set -- status
 		_dispatch_helper "contribution-watch-helper.sh" "contribution-watch-helper.sh" "$@"
 		;;
+	inbox)
+		# Bare `aidevops inbox` defaults to status (most common use).
+		[[ $# -eq 0 ]] && set -- status
+		_dispatch_helper "inbox-helper.sh" "inbox-helper.sh" "$@"
+		;;
+	case | cases)
+		# Bare `aidevops case` defaults to list (most common use).
+		[[ $# -eq 0 ]] && set -- list
+		_dispatch_helper "case-helper.sh" "case-helper.sh" "$@"
+		;;
+	email) _cmd_email "$@" ;;
 	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
 	tabby) _dispatch_helper "tabby-helper.sh" "tabby-helper.sh" "$@" ;;
 	init-routines) _dispatch_helper "init-routines-helper.sh" "init-routines-helper.sh" "$@" ;;
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
+	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;

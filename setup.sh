@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.11.16
+# Version: 3.13.0
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -243,7 +243,16 @@ _launchd_install_if_changed() {
 
 	# Atomic write: build at sibling tmp path, then rename into place.
 	# If printf is killed mid-write, the destination is untouched.
-	local tmp_plist="${plist_path}.tmp.$$"
+	# mktemp avoids predictable tmp names (defense-in-depth against symlink attacks).
+	local tmp_plist
+	tmp_plist=$(mktemp "${plist_path}.XXXXXX") || return 1
+	# Guard: refuse to write empty content — catching this before the write avoids
+	# creating a tmp file that the file-size check would also catch, but the
+	# content check is more direct and gives a clearer failure point.
+	if [[ -z "$new_content" ]]; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
 	if ! printf '%s\n' "$new_content" >"$tmp_plist"; then
 		rm -f "$tmp_plist"
 		return 1
@@ -254,7 +263,10 @@ _launchd_install_if_changed() {
 		rm -f "$tmp_plist"
 		return 1
 	fi
-	mv -f "$tmp_plist" "$plist_path"
+	if ! mv -f "$tmp_plist" "$plist_path"; then
+		rm -f "$tmp_plist"
+		return 1
+	fi
 	launchctl load "$plist_path" 2>/dev/null || return 1
 	return 0
 }
@@ -959,6 +971,62 @@ _deploy_hotfix_config() {
 	return 0
 }
 
+# t2919: Early pulse plist install. The pulse launchd agent is critical
+# infrastructure — without it, every other pulse-driven feature (worker
+# dispatch, issue routing, cross-repo coordination) is dead. Previously,
+# setup_supervisor_pulse only ran inside _setup_post_setup_steps which
+# executes AFTER ~25 other migration/setup steps. When `aidevops update`
+# runs unattended and any earlier step times out (e.g. brew taps, MCP
+# installs, slow repo scans), the pulse plist never gets installed/refreshed
+# and the runner falls behind.
+#
+# Install immediately after deploy_aidevops_agents (so the scripts the plist
+# references already exist on disk). The late install in _setup_post_setup_steps
+# remains as the canonical regenerate-on-change path — _launchd_install_if_changed
+# compares content and skips reload when identical, so the second call is a
+# no-op when nothing changed. Failure here is non-fatal: the late path retries.
+_setup_install_pulse_plist_early() {
+	local _early_os
+	_early_os="$(uname -s)"
+	if _should_setup_noninteractive_supervisor_pulse; then
+		setup_supervisor_pulse "$_early_os" || print_warning "Early pulse plist install failed (will retry late)"
+	fi
+	return 0
+}
+
+# Provision knowledge planes for all repos in repos.json where knowledge != "off".
+# Idempotent: already-provisioned directories are not modified.
+# Called from the non-interactive setup path (update) and after interactive init.
+setup_knowledge_planes() {
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	local helper
+	helper="${BASH_SOURCE[0]%/*}/.agents/scripts/knowledge-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		helper="$HOME/.aidevops/agents/scripts/knowledge-helper.sh"
+	fi
+	if [[ ! -f "$helper" ]]; then
+		print_warning "knowledge-helper.sh not found — skipping knowledge plane provisioning"
+		return 0
+	fi
+	if [[ ! -f "$repos_file" ]]; then
+		return 0
+	fi
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not installed — skipping knowledge plane provisioning"
+		return 0
+	fi
+	local repo_path mode
+	while IFS=$'\t' read -r repo_path mode; do
+		[[ -z "$repo_path" || "$mode" == "off" ]] && continue
+		if [[ ! -d "$repo_path" ]]; then
+			print_warning "knowledge-plane: repo path not found: $repo_path"
+			continue
+		fi
+		bash "$helper" provision "$repo_path" || print_warning "knowledge-plane: provision failed for $repo_path"
+	done < <(jq -r '.initialized_repos[] | select(.knowledge != null and .knowledge != "off") | [.path, .knowledge] | @tsv' "$repos_file" 2>/dev/null || true)
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
@@ -966,6 +1034,9 @@ _setup_run_non_interactive() {
 	check_requirements
 	# Run quality tool detection in non-interactive mode too (warn-only path).
 	check_quality_tools
+	# Check setsid availability; auto-install util-linux on macOS if missing
+	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
+	setup_setsid_advisory
 	check_python_upgrade_available
 	set_permissions
 	migrate_old_backups
@@ -990,6 +1061,7 @@ _setup_run_non_interactive() {
 	setup_opencode_cli
 	validate_opencode_config
 	deploy_aidevops_agents
+	_setup_install_pulse_plist_early
 	_deploy_hotfix_config
 	sync_agent_sources
 	install_aidevops_cli
@@ -1052,6 +1124,8 @@ _setup_run_non_interactive() {
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
 	# indexers tracked separately.
 	setup_worktree_exclusions
+	# Provision knowledge planes for repos where knowledge != "off" (idempotent).
+	setup_knowledge_planes
 	return 0
 }
 
@@ -1159,6 +1233,78 @@ _setup_run_interactive() {
 }
 
 # Post-setup steps: schedulers, final instructions, optional tool update check.
+# Non-interactive scheduler installation. Extracted from
+# `_setup_post_setup_steps` (t2903) to keep the parent under the
+# function-complexity gate threshold. Each `_should_setup_noninteractive_*`
+# guard returns 0 when the corresponding scheduler is already installed
+# (regenerate on update) or first-time install is consented via config.
+_setup_noninteractive_schedulers() {
+	local os="$1"
+
+	# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
+	setup_auto_update
+	if _should_setup_noninteractive_supervisor_pulse; then
+		setup_supervisor_pulse "$os"
+	fi
+	# t2939: pulse-watchdog (independent revival mechanism). Always installed
+	# alongside the pulse — it is a no-op when pulse is disabled. Skipping the
+	# `_should_setup_noninteractive_*` guard intentionally: this is layered
+	# defense, the cost of installing it is one plist file, and the user opts
+	# in by enabling the pulse itself.
+	setup_pulse_watchdog "${PULSE_ENABLED:-}"
+	# Regenerate other schedulers if already installed (GH#17695 Finding B).
+	# Stats wrapper is a pulse dependency — also install on first run when
+	# the supervisor pulse is consented (t2418, GH#20016).
+	if _should_setup_noninteractive_stats_wrapper; then
+		setup_stats_wrapper "${PULSE_ENABLED:-}"
+	fi
+	if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
+		setup_failure_miner "${PULSE_ENABLED:-}"
+	fi
+	if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
+		setup_process_guard
+	fi
+	if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
+		setup_memory_pressure_monitor
+	fi
+	if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
+		setup_screen_time_snapshot
+	fi
+	if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
+		setup_contribution_watch
+	fi
+	# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
+	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
+		setup_complexity_scan
+	fi
+	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass
+	if _should_setup_noninteractive_scheduler "Pulse merge routine" "sh.aidevops.pulse-merge-routine" "aidevops: pulse-merge-routine" "aidevops-pulse-merge-routine"; then
+		setup_pulse_merge_routine
+	fi
+	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
+	# dispatch coordination, runs every 30 min.
+	if _should_setup_noninteractive_scheduler "Peer productivity monitor" "sh.aidevops.peer-productivity-monitor" "aidevops: peer-productivity-monitor" "aidevops-peer-productivity-monitor"; then
+		setup_peer_productivity_monitor
+	fi
+	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
+	setup_repo_sync
+	# r914 repo-aidevops-health — daily drift keeper (t2366)
+	setup_repo_aidevops_health
+	if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
+		setup_profile_readme
+	fi
+	if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
+		setup_oauth_token_refresh
+	fi
+	# opencode DB maintenance (r913, t2183). Helper self-noops on missing
+	# DB — safe to install unconditionally in non-interactive mode too.
+	setup_opencode_db_maintenance
+	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
+	migrate_cron_to_systemd
+	setup_tabby
+	return 0
+}
+
 _setup_post_setup_steps() {
 	local os="$1"
 
@@ -1184,54 +1330,15 @@ _setup_post_setup_steps() {
 	# Exceptions: regenerate existing schedulers (GH#17381, GH#17695 Finding B)
 	# and allow first-time install when config consent is explicitly true (GH#17403).
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
-		setup_auto_update
-		if _should_setup_noninteractive_supervisor_pulse; then
-			setup_supervisor_pulse "$os"
-		fi
-		# Regenerate other schedulers if already installed (GH#17695 Finding B).
-		# Stats wrapper is a pulse dependency — also install on first run when
-		# the supervisor pulse is consented (t2418, GH#20016).
-		if _should_setup_noninteractive_stats_wrapper; then
-			setup_stats_wrapper "${PULSE_ENABLED:-}"
-		fi
-		if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
-			setup_failure_miner "${PULSE_ENABLED:-}"
-		fi
-		if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
-			setup_process_guard
-		fi
-		if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
-			setup_memory_pressure_monitor
-		fi
-		if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
-			setup_screen_time_snapshot
-		fi
-		if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
-			setup_contribution_watch
-		fi
-		# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
-		setup_repo_sync
-		# r914 repo-aidevops-health — daily drift keeper (t2366)
-		setup_repo_aidevops_health
-		if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
-			setup_profile_readme
-		fi
-		if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
-			setup_oauth_token_refresh
-		fi
-		# opencode DB maintenance (r913, t2183). Helper self-noops on missing
-		# DB — safe to install unconditionally in non-interactive mode too.
-		setup_opencode_db_maintenance
-		# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
-		migrate_cron_to_systemd
-		setup_tabby
+		_setup_noninteractive_schedulers "$os"
 		return 0
 	fi
 
 	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
 	setup_auto_update
 	setup_supervisor_pulse "$os"
+	# t2939: pulse-watchdog — independent revival mechanism, layered defense.
+	setup_pulse_watchdog "${PULSE_ENABLED:-}"
 	setup_stats_wrapper "${PULSE_ENABLED:-}"
 	setup_failure_miner "${PULSE_ENABLED:-}"
 	setup_repo_sync
@@ -1241,6 +1348,8 @@ _setup_post_setup_steps() {
 	setup_memory_pressure_monitor
 	setup_screen_time_snapshot
 	setup_contribution_watch
+	setup_complexity_scan
+	setup_pulse_merge_routine
 	setup_draft_responses
 	setup_profile_readme
 	setup_oauth_token_refresh

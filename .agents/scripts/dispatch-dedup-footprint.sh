@@ -36,7 +36,11 @@ _FOOTPRINT_CACHE_DATA=""
 _FOOTPRINT_CACHE_EPOCH=0
 
 # Maximum age of the footprint cache in seconds. After this, rebuild.
-_FOOTPRINT_CACHE_TTL=120
+# 30s: long enough to catch concurrent same-file dispatch races (the
+# original use-case), short enough to limit blast radius when issues
+# close mid-window. See invalidate_footprint_cache_for_issue() for
+# immediate eviction on known-close events (t2927/GH#21103).
+_FOOTPRINT_CACHE_TTL=30
 
 #######################################
 # Extract file paths from an issue body.
@@ -253,4 +257,42 @@ _footprint_check_overlap() {
 	fi
 
 	return 1
+}
+
+#######################################
+# Evict all cache entries for a specific issue number.
+#
+# Called after an issue closes (PR merge, worktree cleanup, stale reset,
+# claim release) so the next _footprint_check_overlap call does not
+# produce a stale FOOTPRINT_OVERLAP defer against the already-closed
+# issue. This provides immediate eviction on known-close events;
+# _FOOTPRINT_CACHE_TTL bounds the maximum stale window for untracked
+# closes. (t2927/GH#21103)
+#
+# Safe to call when the cache is empty or the issue is not in the cache —
+# both are no-ops. Safe to call when dispatch-dedup-footprint.sh is not
+# sourced — callers guard with `declare -F ... && ...`.
+#
+# Args:
+#   $1 = issue_num (number of the issue to evict)
+# Exit: always 0
+#######################################
+invalidate_footprint_cache_for_issue() {
+	local issue_num="$1"
+	[[ -n "$issue_num" ]] || return 0
+	[[ -n "$_FOOTPRINT_CACHE_DATA" ]] || return 0
+
+	# Rebuild cache without entries for this issue.
+	# Cache stores "file_path|issue_num\n" (literal \n separators).
+	# printf '%b' expands \n to actual newlines for line-by-line filtering.
+	local _new_cache_data=""
+	local _cache_entry _cache_issue
+	while IFS= read -r _cache_entry; do
+		[[ -n "$_cache_entry" ]] || continue
+		_cache_issue="${_cache_entry##*|}"
+		[[ "$_cache_issue" == "$issue_num" ]] && continue
+		_new_cache_data="${_new_cache_data}${_cache_entry}\n"
+	done <<<"$(printf '%b' "$_FOOTPRINT_CACHE_DATA")"
+	_FOOTPRINT_CACHE_DATA="$_new_cache_data"
+	return 0
 }

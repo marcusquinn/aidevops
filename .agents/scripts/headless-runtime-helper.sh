@@ -534,6 +534,7 @@ _invoke_opencode() {
 			--exit-code-file "$exit_code_file" \
 			--session-key "${_invoke_session_key:-}" \
 			--repo-slug "${DISPATCH_REPO_SLUG:-}" \
+			--worktree-path "${_WORKER_WORKTREE_PATH:-}" \
 			--stall-timeout "$_stall_timeout" \
 			--phase1-timeout "$_phase1_timeout" \
 			</dev/null >/dev/null 2>&1 &
@@ -1452,6 +1453,10 @@ _cmd_run_prepare() {
 	# session created since start) from crash_during_execution (session found).
 	# Uses the same python3 ms-epoch pattern as _execute_run_attempt metrics.
 	_WORKER_START_EPOCH_MS=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
+
+	# t2923: Expose worktree path to exit trap handler so _push_wip_commits_on_exit
+	# can push any local-only commits before the worker releases its claim.
+	export _WORKER_WORKTREE_PATH="$work_dir"
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
 	# can detect workers that haven't created PRs yet. The ledger bridges

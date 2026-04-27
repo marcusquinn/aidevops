@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "case-dossier-schema.json",
+  "title": "Case Dossier",
+  "description": "Schema for dossier.toon — the metadata file for an aidevops case",
+  "type": "object",
+  "required": ["id", "slug", "kind", "opened_at", "status", "parties"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique case ID in format case-YYYY-NNNN-slug",
+      "pattern": "^case-[0-9]{4}-[0-9]{4}-.+$"
+    },
+    "slug": {
+      "type": "string",
+      "description": "Human-readable slug (kebab-case)"
+    },
+    "kind": {
+      "type": "string",
+      "description": "Case type — e.g. dispute, contract, compliance, inquiry, support"
+    },
+    "opened_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the case was opened"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["open", "hold", "closed"],
+      "description": "Current lifecycle status"
+    },
+    "outcome": {
+      "type": "string",
+      "description": "Outcome when status=closed — e.g. settled, withdrawn, resolved, dismissed"
+    },
+    "outcome_summary": {
+      "type": "string",
+      "description": "Free-text summary of the outcome"
+    },
+    "parties": {
+      "type": "array",
+      "description": "Named parties involved in the case",
+      "items": {
+        "type": "object",
+        "required": ["name", "role"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string" },
+          "role": { "type": "string" }
+        }
+      },
+      "minItems": 1
+    },
+    "deadlines": {
+      "type": "array",
+      "description": "Key dates and deadlines",
+      "items": {
+        "type": "object",
+        "required": ["label", "date"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string" },
+          "date": { "type": "string", "format": "date" }
+        }
+      }
+    },
+    "related_cases": {
+      "type": "array",
+      "description": "IDs of related cases in the same repo",
+      "items": { "type": "string" }
+    },
+    "related_repos": {
+      "type": "array",
+      "description": "Slugs of related repos (owner/repo format)",
+      "items": { "type": "string" }
+    }
+  }
+}

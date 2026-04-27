@@ -1004,6 +1004,345 @@ _backfill_process_loop() {
 	return 0
 }
 
+# =============================================================================
+# Cross-Phase Blocked-By Backfill (t2877 — GH#20972)
+# =============================================================================
+# Parses prose dependency declarations from parent-task issue bodies (e.g.,
+# "P1 children blocked by P0a + P0b") and emits the corresponding GitHub
+# addBlockedBy relationships. Closes the gap identified in t2875: decomposition
+# parents encode rich dependency graphs in narrative prose that the existing
+# relationship-sync (which only reads explicit blocked-by:tNNN from TODO.md)
+# cannot reach.
+#
+# Three helpers compose the pipeline:
+#   _resolve_single_phase_ref  — resolves one phase ID (exact or prefix match)
+#   _expand_phase_refs_to_nums — tokenises a raw ref string and resolves each
+#   _parse_parent_phase_deps   — full parser: phases table + dep section → PAIR lines
+# Plus cmd_backfill_cross_phase_blocked_by — the public entry point.
+
+# Resolve a single phase reference to one or more issue numbers using a
+# pre-built phase_map (one "phase_id=issue_num" per line).
+#
+# Two resolution modes:
+#   - Specific (trailing letter, e.g. P0a, P0.5b): exact key lookup.
+#   - Bare (no trailing letter, e.g. P1, P4, P0.5): prefix match returns all
+#     children whose ID starts with the given prefix followed by a letter.
+#     The prefix's dots are escaped to avoid regex ambiguity (P0.5 → P0\.5).
+#
+# Arguments:
+#   $1 - phase ref (e.g., P0a, P1, P0.5)
+#   $2 - phase_map text
+# Echo: issue numbers — one per line (zero or more)
+# Returns: 0 always
+_resolve_single_phase_ref() {
+	local ref="$1" phase_map="$2"
+	[[ -z "$ref" || -z "$phase_map" ]] && return 0
+
+	if [[ "$ref" =~ [a-z]$ ]]; then
+		# Specific child — exact key lookup (grep -F to treat as fixed string)
+		local num
+		num=$(printf '%s' "$phase_map" | grep -F "${ref}=" | head -1 | cut -d= -f2- || true)
+		[[ -n "$num" ]] && printf '%s\n' "$num"
+	else
+		# Bare phase — prefix match: Pn or Pn.m followed by exactly one letter
+		local escaped_ref
+		escaped_ref=$(printf '%s' "$ref" | sed 's/\./\\./g')
+		printf '%s' "$phase_map" | grep -E "^${escaped_ref}[a-z]=" | cut -d= -f2- || true
+	fi
+	return 0
+}
+
+# Expand slash notation (e.g., P0.5b/c or P4a/P4b) to issue numbers.
+#
+# Parts after the first that do not start with 'P' inherit the numeric prefix
+# of the first part (all characters before its trailing letter). Examples:
+#   P0.5b/c  → P0.5b, P0.5c
+#   P4a/P4b  → P4a, P4b  (both start with P, no inheritance needed)
+#   P2a/b    → P2a, P2b
+#
+# Arguments:
+#   $1 - slash token (e.g., P0.5b/c)
+#   $2 - phase_map text
+# Echo: issue numbers — one per line
+# Returns: 0 always
+_expand_slash_notation() {
+	local token="$1" phase_map="$2"
+	[[ -z "$token" ]] && return 0
+
+	# Numeric prefix of the first part — used when subsequent parts lack 'P'
+	local first_part
+	first_part=$(printf '%s' "$token" | cut -d/ -f1)
+	local numeric_prefix
+	numeric_prefix=$(printf '%s' "$first_part" | sed -E 's/[a-z]+$//')
+
+	# Iterate over slash-separated parts (tr splits cleanly in bash 3.2)
+	local _part
+	while IFS= read -r _part; do
+		[[ -z "$_part" ]] && continue
+		if [[ "$_part" =~ ^P ]]; then
+			_resolve_single_phase_ref "$_part" "$phase_map"
+		else
+			_resolve_single_phase_ref "${numeric_prefix}${_part}" "$phase_map"
+		fi
+	done < <(printf '%s\n' "$token" | tr '/' '\n')
+	return 0
+}
+
+# Expand a raw phase reference string to a list of issue numbers.
+#
+# Handles separators (+ and ,) between phase refs, and slash notation within
+# individual refs. Examples:
+#   "P0a + P0b"        → (issue for P0a, issue for P0b)
+#   "P4 + P1c + P0.5b/c" → (all P4 issues, P1c issue, P0.5b issue, P0.5c issue)
+#   "P1 children"      → all P1 children (strip "children" first)
+#
+# Arguments:
+#   $1 - raw phase ref string (may contain +, comma, slash)
+#   $2 - phase_map text
+# Echo: issue numbers — one per line (may contain duplicates if phase_map has them)
+# Returns: 0 always
+_expand_phase_refs_to_nums() {
+	local raw="$1" phase_map="$2"
+	[[ -z "$raw" || -z "$phase_map" ]] && return 0
+
+	# Normalise: strip "children" keyword, replace + and , with spaces
+	local normalised
+	normalised=$(printf '%s' "$raw" \
+		| sed 's/[[:space:]]*children[[:space:]]*//' \
+		| sed 's/+/ /g' \
+		| sed 's/,/ /g')
+
+	# Iterate over whitespace-separated tokens.
+	# Word-split is intentional here (IFS=default, no quoting).
+	local token
+	# shellcheck disable=SC2086
+	for token in $normalised; do
+		token=$(printf '%s' "$token" | sed -E 's/^[[:space:]]+|[[:space:]]+$//g')
+		[[ -z "$token" ]] && continue
+
+		if printf '%s' "$token" | grep -q '/'; then
+			_expand_slash_notation "$token" "$phase_map"
+		else
+			_resolve_single_phase_ref "$token" "$phase_map"
+		fi
+	done
+	return 0
+}
+
+# Parse cross-phase dependency declarations from a parent-task issue body and
+# resolve them to (child_issue_num, blocker_issue_num) pairs.
+#
+# Parsing pipeline:
+#   1. Scan the full body for table rows of the form
+#      "| tNNN / #MMM | PXYz: description |" and build a phase_id → issue_num
+#      map (e.g. "P0a=20896").
+#   2. Extract the "## Cross-Phase Dependencies" section (or heading variations
+#      matching "cross.phase dep", "phase dep", or "dependencies").
+#   3. For each list item in the section that contains "blocked by" (and does NOT
+#      contain "in parallel"), split into (left/blocked, right/blocker) sides,
+#      expand each via _expand_phase_refs_to_nums, and emit pairs.
+#
+# Handled line shapes (all 8+ patterns from t2840 / #20892):
+#   - "P0.5 children blocked by P0a"
+#   - "P1 children blocked by P0a + P0b"
+#   - "P2c blocked by P0.5a + P0.5c"
+#   - "P2d blocked by P2c"
+#   - "P4 children blocked by P0a + P0b + P0.5a"
+#   - "P5 children blocked by P0a + P0b + P1a"
+#   - "P5c blocked by P4a + P4b"
+#   - "P6 blocked by P4 + P1c + P0.5b/c"
+#   (Lines containing "in parallel" are intentionally skipped.)
+#
+# Arguments:
+#   $1 - issue body text
+# Echo: "PAIR:child_num:blocker_num" lines (zero or more; may have duplicates
+#        that callers should tolerate — _gh_add_blocked_by is idempotent)
+# Returns: 0 always
+_parse_parent_phase_deps() {
+	local body="$1"
+	[[ -z "$body" ]] && return 0
+
+	# --- Step 1: Build phase_id → issue_num map from table rows ---
+	# Table row format: | tNNN / #MMM | PXYz: description |
+	# We scan the entire body (not just the Phases section) so that
+	# split-across-sections tables still resolve correctly.
+	local phase_map=""
+	while IFS= read -r tline; do
+		# Quick pre-filter: must start with | and contain / #
+		[[ "$tline" =~ ^\|[[:space:]]* ]] || continue
+		printf '%s' "$tline" | grep -q '/ #' || continue
+
+		local _iss_num _phase_id
+		_iss_num=$(printf '%s' "$tline" | sed -nE \
+			's/^[[:space:]]*\|[[:space:]]*t[0-9]+[[:space:]]*\/[[:space:]]*#([0-9]+)[[:space:]]*\|.*/\1/p' \
+			| head -1 || true)
+		_phase_id=$(printf '%s' "$tline" | sed -nE \
+			's/^[[:space:]]*\|[^|]+\|[[:space:]]*(P[0-9]+(\.[0-9]+)*[a-z]).*/\1/p' \
+			| head -1 || true)
+		[[ -z "$_iss_num" || -z "$_phase_id" ]] && continue
+		phase_map+="${_phase_id}=${_iss_num}"$'\n'
+	done < <(printf '%s\n' "$body")
+
+	[[ -z "$phase_map" ]] && return 0
+
+	# --- Step 2: Extract cross-phase dependency section ---
+	# Matches headings (case-insensitive) containing:
+	#   "cross-phase dep…", "cross phase dep…", "phase dep…", or "dependencies"
+	local dep_section
+	dep_section=$(printf '%s\n' "$body" | awk '
+		BEGIN { in_sec = 0 }
+		{
+			lc = tolower($0)
+			if (lc ~ /^##[[:space:]]+(cross.phase[[:space:]]+dep|cross[[:space:]]+phase[[:space:]]+dep|phase[[:space:]]+dep)/ ||
+			    lc ~ /^##[[:space:]]+dependencies/) {
+				in_sec = 1; next
+			}
+			if (/^##[[:space:]]/) { if (in_sec) exit }
+			if (in_sec) print
+		}
+	')
+	[[ -z "$dep_section" ]] && return 0
+
+	# --- Step 3: Parse dep lines and emit PAIR:child:blocker ---
+	while IFS= read -r dep_line; do
+		printf '%s' "$dep_line" | grep -qi "blocked by" || continue
+		printf '%s' "$dep_line" | grep -qi "in parallel" && continue
+		[[ "$dep_line" =~ ^[[:space:]]*- ]] || continue
+
+		# Normalise "Blocked by" / "blocked By" → "blocked by" for sed extraction
+		local norm_line
+		norm_line=$(printf '%s' "$dep_line" \
+			| sed 's/[Bb][Ll][Oo][Cc][Kk][Ee][Dd][[:space:]]\{1,\}[Bb][Yy]/blocked by/g')
+
+		# Left side: text between "- " and " blocked by", strip trailing "children"
+		local _left _right
+		_left=$(printf '%s' "$norm_line" | sed -nE \
+			's/^[[:space:]]*-[[:space:]]+([^(]+)[[:space:]]+blocked by.*/\1/p' \
+			| sed -E 's/[[:space:]]*(children)?[[:space:]]*$//' \
+			| head -1 || true)
+		# Right side: text after "blocked by ", up to "(" (optional trailing comment)
+		_right=$(printf '%s' "$norm_line" | sed -nE \
+			's/^.*blocked by[[:space:]]+([^(]+).*/\1/p' \
+			| sed -E 's/[[:space:]]*$//' \
+			| head -1 || true)
+
+		[[ -z "$_left" || -z "$_right" ]] && continue
+
+		# Resolve left (blocked) and right (blocker) to issue numbers
+		local blocked_nums blocker_nums
+		blocked_nums=$(_expand_phase_refs_to_nums "$_left" "$phase_map")
+		blocker_nums=$(_expand_phase_refs_to_nums "$_right" "$phase_map")
+
+		[[ -z "$blocked_nums" || -z "$blocker_nums" ]] && continue
+
+		# Emit pairs (nested loops over newline-separated lists)
+		local _bn _lr
+		while IFS= read -r _bn; do
+			[[ -z "$_bn" ]] && continue
+			while IFS= read -r _lr; do
+				[[ -z "$_lr" ]] && continue
+				[[ "$_bn" == "$_lr" ]] && continue
+				printf 'PAIR:%s:%s\n' "$_bn" "$_lr"
+			done <<< "$blocker_nums"
+		done <<< "$blocked_nums"
+	done < <(printf '%s\n' "$dep_section")
+
+	return 0
+}
+
+# Backfill cross-phase blocked-by relationships for a single parent-task issue.
+# Parses the issue body for prose dependency declarations and calls
+# addBlockedBy for each resolved (child, blocker) pair. Idempotent —
+# _gh_add_blocked_by silently ignores already-existing relationships.
+#
+# Usage:
+#   cmd_backfill_cross_phase_blocked_by --issue N
+#
+# --issue N is mandatory; this command is designed for per-issue invocation
+# from the pulse reconcile loop (t2877 stage, mirroring t2838 sub-issue
+# backfill).
+#
+# Returns: 0 on success, 1 on setup error
+cmd_backfill_cross_phase_blocked_by() {
+	local target_issue=""
+	while [[ $# -gt 0 ]]; do
+		local _cbb_arg="$1"
+		case "$_cbb_arg" in
+		--issue)
+			target_issue="${2:-}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	_init_cmd || return 1
+	local repo="$_CMD_REPO"
+
+	if [[ -z "$target_issue" ]]; then
+		print_error "backfill-cross-phase-blocked-by: --issue N is required"
+		return 1
+	fi
+
+	# Fetch the parent issue body
+	local body
+	body=$(gh issue view "$target_issue" --repo "$repo" \
+		--json body --jq '.body // ""' 2>/dev/null) || body=""
+
+	if [[ -z "$body" ]]; then
+		log_verbose "#$target_issue: empty body — no cross-phase deps to backfill"
+		printf '\n=== Cross-Phase Blocked-By Backfill ===\nPairs: 0\n'
+		return 0
+	fi
+
+	# Initialise node-ID cache for this invocation
+	_init_node_id_cache
+
+	# Parse dependency pairs from the body
+	local pairs
+	pairs=$(_parse_parent_phase_deps "$body")
+
+	if [[ -z "$pairs" ]]; then
+		log_verbose "#$target_issue: no cross-phase dependency declarations found"
+		printf '\n=== Cross-Phase Blocked-By Backfill ===\nPairs: 0\n'
+		return 0
+	fi
+
+	local pairs_set=0 pairs_skipped=0
+	local _bn _lr child_node blocker_node
+
+	while IFS= read -r pair_line; do
+		[[ "$pair_line" =~ ^PAIR:([0-9]+):([0-9]+)$ ]] || continue
+		_bn="${BASH_REMATCH[1]}"
+		_lr="${BASH_REMATCH[2]}"
+
+		child_node=$(_cached_node_id "$_bn" "$repo")
+		blocker_node=$(_cached_node_id "$_lr" "$repo")
+
+		if [[ -z "$child_node" || -z "$blocker_node" ]]; then
+			log_verbose "#$_bn blocked-by #$_lr: could not resolve node IDs — skipping"
+			pairs_skipped=$((pairs_skipped + 1))
+			continue
+		fi
+
+		if [[ "$DRY_RUN" == "true" ]]; then
+			print_info "[DRY-RUN] Would set #$_bn blocked-by #$_lr"
+			pairs_set=$((pairs_set + 1))
+		elif _gh_add_blocked_by "$child_node" "$blocker_node"; then
+			log_verbose "#$_bn blocked-by #$_lr ✓"
+			pairs_set=$((pairs_set + 1))
+		else
+			pairs_skipped=$((pairs_skipped + 1))
+		fi
+	done <<< "$pairs"
+
+	printf '\n=== Cross-Phase Blocked-By Backfill ===\nPairs set: %d | Skipped: %d\n' \
+		"$pairs_set" "$pairs_skipped"
+	return 0
+}
+
 # Backfill sub-issue parent-child links for issues in the current repo.
 # Detects parents from title/body only — no TODO.md or brief file required.
 #

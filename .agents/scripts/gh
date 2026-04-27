@@ -520,12 +520,37 @@ if [[ $_body_idx -ge 0 && -n "$_body_val" ]]; then
 fi
 
 # --- --body-file case --------------------------------------------------------
+# t2861: write the augmented content to a fresh temp file rather than appending
+# to the user's source. The user's brief on disk stays byte-identical after the
+# gh call. The temp file is cleaned up by a background reaper (the shim ends
+# with exec, which replaces the process and clears traps).
 if [[ $_body_file_idx -ge 0 && -n "$_body_file_val" && -f "$_body_file_val" ]]; then
 	if ! grep -q "<!-- aidevops:sig -->" "$_body_file_val" 2>/dev/null; then
 		_file_content=$(<"$_body_file_val") || _file_content=""
 		_sig_footer=$("$SIG_HELPER" footer --body "$_file_content" 2>/dev/null || echo "")
 		if [[ -n "$_sig_footer" ]]; then
-			printf '%s' "$_sig_footer" >>"$_body_file_val" || true
+			# Build augmented body in a temp file we own — never mutate the source.
+			_tmp_body_file=$(mktemp -t aidevops-gh-shim-body.XXXXXX 2>/dev/null) || _tmp_body_file=""
+			if [[ -n "$_tmp_body_file" ]]; then
+				if printf '%s%s' "$_file_content" "$_sig_footer" >"$_tmp_body_file" 2>/dev/null; then
+					# Substitute the arg pointing at user's file with our temp file.
+					if [[ $_body_file_eq -eq 1 ]]; then
+						_modified_args[_body_file_idx]="--body-file=${_tmp_body_file}"
+					else
+						_modified_args[_body_file_idx + 1]="$_tmp_body_file"
+					fi
+					# Background reaper: exec replaces this process so EXIT traps
+					# never fire. Fork a sleep-then-rm to clean up the temp file
+					# after gh has had time to read it (30s >> typical gh runtime).
+					( sleep 30 && rm -f "$_tmp_body_file" ) &
+					disown
+				else
+					rm -f "$_tmp_body_file"
+					# Fall through: gh receives original file, footer is omitted.
+					# Better than corrupting the user's source on a write failure.
+				fi
+			fi
+			# If mktemp failed, fall through silently — same safe degradation.
 		fi
 	fi
 fi
@@ -533,6 +558,25 @@ fi
 # t2876: privacy scan runs after sig footer injection — fail-closed on hit.
 if ! _shim_privacy_scan; then
 	exit 1
+fi
+
+# t2861: test-mode hook — short-circuits exec so regression tests can inspect
+# the resolved --body-file path without actually calling the real gh binary.
+# Usage: SHIM_TEST_MODE=1 ./gh issue create --body-file <file> ...
+if [[ "${SHIM_TEST_MODE:-}" == "1" ]]; then
+	_shim_t=0
+	while [[ $_shim_t -lt ${#_modified_args[@]} ]]; do
+		case "${_modified_args[$_shim_t]}" in
+		--body-file)
+			printf 'resolved_body_file=%s\n' "${_modified_args[_shim_t + 1]}"
+			;;
+		--body-file=*)
+			printf 'resolved_body_file=%s\n' "${_modified_args[$_shim_t]#--body-file=}"
+			;;
+		esac
+		_shim_t=$((_shim_t + 1))
+	done
+	exit 0
 fi
 
 exec "$REAL_GH" "${_modified_args[@]}"

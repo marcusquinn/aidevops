@@ -1,0 +1,50 @@
+{
+  "tiers": {
+    "public": {
+      "providers": ["any"],
+      "default_provider": "anthropic"
+    },
+    "internal": {
+      "providers": ["cloud", "local"],
+      "default_provider": "anthropic"
+    },
+    "pii": {
+      "providers": ["local", "cloud-with-redaction"],
+      "default_provider": "ollama",
+      "redaction_required_for_cloud": true
+    },
+    "sensitive": {
+      "providers": ["local"],
+      "default_provider": "ollama"
+    },
+    "privileged": {
+      "providers": ["local"],
+      "default_provider": "ollama",
+      "hard_fail_if_unavailable": true
+    }
+  },
+  "providers": {
+    "ollama": {
+      "kind": "local",
+      "command": "ollama-helper.sh chat",
+      "models": ["llama3.1:70b", "mixtral"],
+      "default_model": "llama3.1:70b"
+    },
+    "anthropic": {
+      "kind": "cloud",
+      "command": "claude --headless",
+      "vendor_dpa": true
+    },
+    "openai": {
+      "kind": "cloud",
+      "command": "openai-cli",
+      "vendor_dpa": true
+    }
+  },
+  "audit": {
+    "log_path": "_knowledge/index/llm-audit.log",
+    "costs_path": "~/.aidevops/.agent-workspace/llm-costs.json",
+    "hash_algorithm": "sha256",
+    "log_raw_prompts": false
+  }
+}

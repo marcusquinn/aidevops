@@ -10,6 +10,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.0] - 2026-04-27
+
+### Added
+
+- pulse defense-in-depth restart reliability (#21155)
+
+### Changed
+
+- Maintenance: mark t2925 complete (pr:#21139 completed:2026-04-27) [skip ci]
+- add bounty-spam-detector for templated bot PRs (#21139)
+- Maintenance: mark t2929 complete (pr:#21153 completed:2026-04-27) [skip ci]
+- cut preflight_cleanup_and_ledger by ~47s — async DB archive + single-pass jq ledger (#21153)
+- Maintenance: mark t2931 complete (pr:#21142 completed:2026-04-27) [skip ci]
+- Maintenance: mark t2940 complete (pr:#21152 completed:2026-04-27) [skip ci]
+- fix 6 correctness bugs in email polling post-merge review (#21142)
+- Maintenance: mark t2934 complete (pr:#21144 completed:2026-04-27) [skip ci]
+- redact bad-actor identifiers from incident artifacts (#21152)
+- defense-in-depth admin-merge guard for external-contributor PRs (#21144)
+- Maintenance: mark t2939 complete (pr:#21155 completed:2026-04-27) [skip ci]
+- Maintenance: sync ref:GH#21154 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21150 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21149 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21148 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#20972 to TODO.md [skip ci]
+- Maintenance: mark t2877 complete (pr:#21141 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2928 complete (pr:#21143 completed:2026-04-26) [skip ci]
+- parse parent-task body cross-phase dep declarations into blocked-by markers (#21141)
+- Maintenance: mark t2847 complete (pr:#21138 completed:2026-04-26) [skip ci]
+- LLM routing helper + audit log (#21138)
+- Maintenance: mark t2845 complete (pr:#21140 completed:2026-04-26) [skip ci]
+- feat(t2845): knowledge review gate routine + NMR integration (#21140)
+- Maintenance: mark t2933 complete (pr:#21133 completed:2026-04-26) [skip ci]
+- harden approve_collaborator_pr against GH#17671 supply-chain class (#21133)
+- Maintenance: sync ref:GH#21134 to TODO.md [skip ci]
+- Maintenance: mark t2856 complete (pr:#21127 completed:2026-04-26) [skip ci]
+- email thread reconstruction + filter→case-attach (#21127)
+- Maintenance: sync ref:GH#21132 to TODO.md [skip ci]
+
+### Fixed
+
+- add missing icon_url_override column to archive.project schema (#21143)
+
+## [3.12.0] - 2026-04-27
+
+### Added
+
+- knowledge plane directory contract + provisioning (#21107)
+- decouple pulse-merge into fast standalone routine (GH#20919) (#21093)
+
+### Changed
+
+- Maintenance: mark t2932 complete (pr:#21128 completed:2026-04-26) [skip ci]
+- peer-productivity-monitor for adaptive cross-runner coordination (#21128)
+- Maintenance: sync ref:GH#21119 to TODO.md, drop duplicate t2932 [skip ci]
+- add inbox digest subcommand + weekly pulse routine + advisory integration (#21124)
+- Maintenance: sync ref:GH#21125 to TODO.md [skip ci]
+- Maintenance: mark t2923 complete (pr:#21121 completed:2026-04-26) [skip ci]
+- feat(worker): push WIP commits to origin on exit/kill (#21121)
+- Maintenance: sync ref:GH#21122 to TODO.md [skip ci]
+- Maintenance: mark t2855 complete (pr:#21112 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2922 complete (pr:#21118 completed:2026-04-26) [skip ci]
+- IMAP polling routine + mailboxes.json registry (#21112)
+- fix(pulse-merge): bypass phantom pending checks for owner+origin:worker auto-merge (#21118)
+- Maintenance: mark t2927 complete (pr:#21117 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2926 complete (pr:#21115 completed:2026-04-26) [skip ci]
+- setup.sh: auto-install util-linux for setsid on macOS (#21115)
+- honor dispatch-override.conf 'ignore' at assignee level (#21120)
+- Maintenance: mark t2863 complete (pr:#21113 completed:2026-04-26) [skip ci]
+- sweep pulse-*.sh for set -u unbound variable bugs (#21113)
+- Maintenance: mark t2852 complete (pr:#21114 completed:2026-04-26) [skip ci]
+- case CLI surface (attach/status/close/archive/list/show/note/deadline/party/comm) (#21114)
+- inbox triage routine: sensitivity gate → classification → routing (#21111)
+- Maintenance: mark t2844 complete (pr:#21107 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2924 complete (pr:#21109 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2912 complete (pr:#21108 completed:2026-04-26) [skip ci]
+- filter non-dispatchable management labels at candidate-build time (#21109)
+- detect wedged auto-update lock holder and force-release (#21108)
+- Maintenance: mark t2861 complete (pr:#21106 completed:2026-04-26) [skip ci]
+- fix gh PATH shim --body-file source mutation — use temp file (#21106)
+- Maintenance: sync ref:GH#21105 to TODO.md [skip ci]
+- Maintenance: append t2926-t2929 systemic-fix tasks (refs:GH#21102-#21105) [skip ci]
+- Maintenance: sync ref:GH#21102 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21100 to TODO.md [skip ci]
+- Maintenance: append t2922-t2925 systemic-fix tasks (refs:GH#21097-#21100) [skip ci]
+- Maintenance: sync ref:GH#21098 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21097 to TODO.md [skip ci]
+- Maintenance: mark t2860 complete (pr:#21095 completed:2026-04-26) [skip ci]
+- fix mv check, legacy cleanup, mktemp, empty guard in plist install (#21096)
+- deregister from SQLite worktree registry on pulse-cleanup removal (#21095)
+- Maintenance: mark t2862 complete (pr:#21093 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2921 complete (pr:#21092 completed:2026-04-26) [skip ci]
+- fix worker-watchdog find_workers regex broken by t2421 alternation (#21092)
+- Maintenance: sync ref:GH#21091 to TODO.md [skip ci]
+- Maintenance: mark t2920 complete (pr:#21089 completed:2026-04-26) [skip ci]
+- Maintenance: sync ref:GH#21086 to TODO.md [skip ci]
+- Maintenance: mark t2867 complete (pr:#21085 completed:2026-04-26) [skip ci]
+- inbox capture CLI + watch folder + audit log (t2866 + t2867) (#21085)
+- Maintenance: mark t2919 complete (pr:#21082 completed:2026-04-26) [skip ci]
+- fix(setup): install pulse plist early to survive unattended-update timeouts (#21082)
+- Maintenance: mark t2918 complete (pr:#21080 completed:2026-04-26) [skip ci]
+- Maintenance: sync ref:GH#21081 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21079 to TODO.md [skip ci]
+
+### Fixed
+
+- split cmd_list to satisfy function-complexity gate (<100 lines) (#21116)
+- invalidate FOOTPRINT_OVERLAP cache on issue close — reduce TTL 120s→30s (#21117)
+- repair Phase 1 auto-release GitHub gap (GH#21057) (#21110)
+- invert tooling/product priority boost (#21080)
+
+## [3.11.17] - 2026-04-26
+
+### Changed
+
+- Maintenance: mark t2905 complete (pr:#21078 completed:2026-04-26) [skip ci]
+- Maintenance: mark t2903 complete (pr:#21070 completed:2026-04-26) [skip ci]
+- extract complexity_scan to standalone launchd plist (#21070)
+- Maintenance: sync ref:GH#21076 to TODO.md [skip ci]
+- Maintenance: mark t2904 complete (pr:#21073 completed:2026-04-26) [skip ci]
+- Performance: batch per-issue jq extraction in reconcile_issues_single_pass (#21073)
+- Maintenance: sync ref:GH#21074 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.11.16] - 2026-04-26
 
 ### Changed

@@ -85,6 +85,34 @@ DISPATCH_CLAIM_IGNORE_RUNNERS=""
 DISPATCH_OVERRIDE_ENABLED=true
 
 # ==============================================================================
+# Auto-managed section (t2932 — peer-productivity-monitor)
+# ==============================================================================
+#
+# When `peer-productivity-monitor.sh` is installed (it runs every 30 min via
+# launchd/systemd), it manages a section of THIS file between the BEGIN and
+# END markers below. It observes peer GitHub activity and writes
+# `DISPATCH_OVERRIDE_<SLUG>="ignore"` entries for peers whose pulse appears
+# broken (claiming issues but never merging worker PRs in the last 24h),
+# and clears the entry once the peer recovers (1+ merged worker PR resumes).
+#
+# Manual entries placed ABOVE the BEGIN marker take precedence and are NEVER
+# overwritten by the monitor — this is the user-override channel.
+#
+# The monitor:
+#   - Counts only peer's `origin:worker` PRs, never their interactive PRs
+#     (their human work doesn't count toward "broken pulse" signal).
+#   - Requires 3 consecutive same-vote observations before flipping (hysteresis,
+#     prevents flapping during transient outages).
+#   - Skips bot accounts (dependabot, renovate, github-actions, *-bot).
+#   - Default for unknown peers: honour (override that with the monitor's
+#     compete-by-default policy via env if you want stricter behaviour).
+#
+# To disable temporarily: set AIDEVOPS_PEER_MONITOR_DISABLE=1 in the launchd
+# environment, or `launchctl unload ~/Library/LaunchAgents/sh.aidevops.peer-productivity-monitor.plist`.
+#
+# To inspect state and decisions: `peer-productivity-monitor.sh report`.
+
+# ==============================================================================
 # Safety
 # ==============================================================================
 #

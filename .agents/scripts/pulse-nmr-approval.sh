@@ -577,6 +577,81 @@ notify_ever_nmr_without_approval() {
 }
 
 #######################################
+# t2845: Handle knowledge-review issue promotion after cryptographic approval.
+#
+# When auto_approve_maintainer_issues clears NMR on a kind:knowledge-review
+# issue, this function extracts the source_id from the body marker
+# (<!-- aidevops:knowledge-review source_id:xxx -->), calls
+# knowledge-review-helper.sh promote <source_id> to move staging -> sources,
+# posts a closing comment, and closes the issue.
+#
+# Arguments:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#
+# Returns: 0 always (fail-open — a missed promotion is better than a broken
+#          approval loop).
+#######################################
+_handle_knowledge_review_promotion() {
+	local issue_num="$1"
+	local slug="$2"
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 0
+
+	# Shared API path (avoids repeated literal, which would trip the string-literal ratchet)
+	local issue_api="repos/${slug}/issues/${issue_num}"
+
+	# Only act on kind:knowledge-review issues
+	local has_kr_label
+	has_kr_label=$(gh api "$issue_api" \
+		--jq '.labels | map(.name) | map(select(. == "kind:knowledge-review")) | length' \
+		2>/dev/null) || has_kr_label=0
+	[[ "$has_kr_label" =~ ^[0-9]+$ ]] || has_kr_label=0
+	[[ "$has_kr_label" -gt 0 ]] || return 0
+
+	# Extract source_id from body marker <!-- aidevops:knowledge-review source_id:xxx -->
+	local issue_body
+	issue_body=$(gh api "$issue_api" \
+		--jq '.body // ""' 2>/dev/null) || issue_body=""
+
+	local source_id
+	source_id=$(printf '%s' "$issue_body" \
+		| grep -oE 'source_id:[a-zA-Z0-9_.-]+' \
+		| head -1 \
+		| cut -d: -f2 2>/dev/null) || source_id=""
+
+	if [[ -z "$source_id" ]]; then
+		echo "[pulse-wrapper] _handle_knowledge_review_promotion: #${issue_num} in ${slug} — no source_id in body, skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Locate knowledge-review-helper.sh in the deployed agents dir
+	local kr_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/knowledge-review-helper.sh"
+	if [[ ! -f "$kr_helper" ]]; then
+		echo "[pulse-wrapper] _handle_knowledge_review_promotion: helper not found at ${kr_helper}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Promote source from staging -> sources
+	if ! bash "$kr_helper" promote "$source_id" 2>/dev/null; then
+		echo "[pulse-wrapper] _handle_knowledge_review_promotion: #${issue_num} — promote '${source_id}' failed, issue stays open" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] _handle_knowledge_review_promotion: #${issue_num} in ${slug} — promoted '${source_id}' to sources/" >>"$LOGFILE"
+
+	# Post closing comment then close the issue
+	gh_issue_comment "$issue_num" --repo "$slug" \
+		--body "<!-- aidevops:knowledge-review-complete -->
+Knowledge source \`${source_id}\` promoted from staging to \`sources/\` after cryptographic approval. Audit log updated." \
+		2>/dev/null || true
+
+	gh issue close "$issue_num" --repo "$slug" 2>/dev/null || true
+	echo "[pulse-wrapper] _handle_knowledge_review_promotion: #${issue_num} in ${slug} — closed" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Auto-approve needs-maintainer-review issues using cryptographic
 # signature verification (t1894, replaces GH#16842 comment-based check).
 #
@@ -671,6 +746,8 @@ Auto-approved: ${approval_reason}. Stale recovery tick reset." \
 				if [[ "$edit_exit" -eq 0 ]]; then
 					echo "[pulse-wrapper] Auto-approved #${issue_num} in ${slug} — ${approval_reason} (locked + approval marker + tick reset)" >>"$LOGFILE"
 					total_approved=$((total_approved + 1))
+					# t2845: promote knowledge-review source if this is a kind:knowledge-review issue
+					_handle_knowledge_review_promotion "$issue_num" "$slug" || true
 				else
 					echo "[pulse-wrapper] Auto-approve label update FAILED for #${issue_num} in ${slug} (exit: ${edit_exit}) — approval marker posted but labels unchanged" >>"$LOGFILE"
 				fi

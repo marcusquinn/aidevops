@@ -963,6 +963,41 @@ is_assigned() {
 		return 1
 	fi
 
+	# t2930: Honor dispatch-override.conf "ignore" entries at the ASSIGNEE level.
+	# The dispatch-claim-helper filters claim COMMENTS by override config, but
+	# ignored peers can still raw-assign themselves via gh issue edit
+	# --add-assignee — and is_assigned previously honored that unconditionally,
+	# creating a permanent dispatch block. With this filter, an "ignore"-listed
+	# peer is treated as if not assigned, allowing competitive dispatch (winner's
+	# PR closes the issue; loser wastes tokens but doesn't block throughput).
+	# Self-runner and parent-task / no-auto-dispatch / cost circuit-breaker /
+	# hydration window guards above remain in effect.
+	local override_conf="${HOME}/.config/aidevops/dispatch-override.conf"
+	if [[ -f "$override_conf" ]]; then
+		local _filtered_assignees=""
+		local _saved_ifs="${IFS:-}"
+		local -a _override_array=()
+		IFS=',' read -ra _override_array <<<"$assignees"
+		IFS="$_saved_ifs"
+		local _a _upper _override_val
+		for _a in "${_override_array[@]}"; do
+			_upper="$(printf '%s' "$_a" | tr 'a-z-' 'A-Z_')"
+			_override_val=$(grep -E "^DISPATCH_OVERRIDE_${_upper}=" "$override_conf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+			if [[ "$_override_val" == "ignore" ]]; then
+				continue
+			fi
+			if [[ -n "$_filtered_assignees" ]]; then
+				_filtered_assignees="${_filtered_assignees},${_a}"
+			else
+				_filtered_assignees="$_a"
+			fi
+		done
+		assignees="$_filtered_assignees"
+		if [[ -z "$assignees" ]]; then
+			return 1
+		fi
+	fi
+
 	local repo_owner repo_maintainer
 	repo_owner=$(_get_repo_owner "$repo_slug")
 	repo_maintainer=$(_get_repo_maintainer "$repo_slug")

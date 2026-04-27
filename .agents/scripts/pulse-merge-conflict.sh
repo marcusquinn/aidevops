@@ -40,6 +40,11 @@
 [[ -n "${_PULSE_MERGE_CONFLICT_LOADED:-}" ]] && return 0
 _PULSE_MERGE_CONFLICT_LOADED=1
 
+# t2863: Module-level variable defaults (set -u guards).
+# Ensures LOGFILE is safe to dereference in all functions when this module
+# is sourced outside the pulse-wrapper.sh bootstrap context.
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+
 #######################################
 # GH#18650 (Fix 4): Post a one-time rebase nudge on an origin:interactive
 # CONFLICTING PR that the pulse is about to skip.
