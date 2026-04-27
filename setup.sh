@@ -1052,6 +1052,39 @@ setup_knowledge_planes() {
 	return 0
 }
 
+# Provision cases planes for all repos in repos.json where cases != "off".
+# Idempotent: already-provisioned directories are not modified.
+# Called from the non-interactive setup path (update) and after interactive init.
+setup_cases_planes() {
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	local helper
+	helper="${BASH_SOURCE[0]%/*}/.agents/scripts/case-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		helper="$HOME/.aidevops/agents/scripts/case-helper.sh"
+	fi
+	if [[ ! -f "$helper" ]]; then
+		print_warning "case-helper.sh not found — skipping cases plane provisioning"
+		return 0
+	fi
+	if [[ ! -f "$repos_file" ]]; then
+		return 0
+	fi
+	if ! command -v jq &>/dev/null; then
+		print_warning "jq not installed — skipping cases plane provisioning"
+		return 0
+	fi
+	local repo_path mode
+	while IFS=$'\t' read -r repo_path mode; do
+		[[ -z "$repo_path" || "$mode" == "off" ]] && continue
+		if [[ ! -d "$repo_path" ]]; then
+			print_warning "cases-plane: repo path not found: $repo_path"
+			continue
+		fi
+		bash "$helper" init "$repo_path" || print_warning "cases-plane: init failed for $repo_path"
+	done < <(jq -r '.initialized_repos[] | select(.cases != null and .cases != "off") | [.path, .cases] | @tsv' "$repos_file" 2>/dev/null || true)
+	return 0
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 # GH#21060 / t2911: Every direct function call is wrapped with _time_step so
 # that a one-line-per-stage TSV timing record is appended to
@@ -1172,6 +1205,8 @@ _setup_run_non_interactive() {
 	_time_step "setup_worktree_exclusions" setup_worktree_exclusions
 	# Provision knowledge planes for repos where knowledge != "off" (idempotent).
 	_time_step "setup_knowledge_planes" setup_knowledge_planes
+	# Provision cases planes for repos where cases != "off" (idempotent).
+	_time_step "setup_cases_planes" setup_cases_planes
 	return 0
 }
 
