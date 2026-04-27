@@ -1,0 +1,17 @@
+# description: Payment reminder — invoice outstanding, polite initial chase
+From: {{sender_email}}
+To: {{recipient_email}}
+Subject: Reminder: invoice {{invoice_number}} dated {{invoice_date}}
+
+Dear {{recipient_name}},
+
+This is a reminder that invoice {{invoice_number}} dated {{invoice_date}} for
+{{currency}} {{amount}} remains outstanding. The original due date was {{due_date}}.
+
+Please advise on the status of this payment at your earliest convenience.
+
+If you have already made payment, please disregard this reminder and accept
+our thanks.
+
+Regards,
+{{sender_name}}

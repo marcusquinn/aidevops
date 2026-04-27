@@ -354,6 +354,8 @@ cmd_open() {
 	fi
 
 	# Write dossier.toon
+	# chasers_enabled defaults to false — must be explicitly set to true per-case
+	# before case-chase-helper.sh send will proceed (t2858 opt-in gate).
 	jq -n \
 		--arg id "$case_id" \
 		--arg slug "$slug" \
@@ -364,6 +366,7 @@ cmd_open() {
 		--argjson deadlines "$deadlines_json" \
 		'{id:$id, slug:$slug, kind:$kind, opened_at:$opened_at,
 		  status:$initial_status, outcome:"", outcome_summary:"",
+		  chasers_enabled: false,
 		  parties:$parties, deadlines:$deadlines,
 		  related_cases:[], related_repos:[]}' \
 		>"${case_dir}/${CASE_DOSSIER_FILE}"

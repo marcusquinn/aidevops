@@ -182,6 +182,77 @@ Paper-trail entry — full email content attaches via P5 (inbox-to-case filter).
 
 All read-side commands (`list`, `show`) and all mutating commands support `--json` for machine consumption. Use for scripting, P5 filter integration, and P4c alarming.
 
+## Chasing (P6b — t2858)
+
+Template-only, deterministic chaser emails. No LLM at send time.
+
+### Opt-in policy
+
+Chasers are **disabled by default** per case. `dossier.toon` is initialised with `chasers_enabled: false`.
+
+Set `chasers_enabled: true` in `dossier.toon` before using `aidevops case chase`. This is a deliberate opt-in: cases in active dispute or sensitive negotiation should not be auto-chased.
+
+Three valid values:
+
+| Value | Behaviour |
+|-------|-----------|
+| `false` | Blocked (default). Chase exits 1 with a friendly message. |
+| `true` | Allowed. All templates may be sent. |
+| `false-with-force-allowed` | Blocked by default; `--force` overrides (requires deliberate flag). |
+
+### Templates
+
+Located at `.agents/templates/case-chase-templates/<name>.eml.tmpl`.
+
+Format: RFC 5322 headers (`From:`, `To:`, `Subject:`) followed by a blank line, then body. Comments (lines starting with `#`) are stripped before substitution.
+
+Placeholder syntax: `{{field_name}}`. All placeholders must resolve — any missing field causes an exit 1 before any SMTP call.
+
+Starter templates:
+
+| Template | Description |
+|----------|-------------|
+| `payment-reminder` | Invoice outstanding — polite initial chase |
+| `deadline-reminder` | Upcoming or past deadline — action required |
+| `receipt-acknowledge` | Confirm receipt of document or correspondence |
+
+### CLI
+
+```bash
+# Send a chaser (case must have chasers_enabled: true)
+aidevops case chase <case-id> --template payment-reminder
+
+# Dry-run: show substituted email without sending
+aidevops case chase <case-id> --template payment-reminder --dry-run
+
+# Template management
+aidevops case chase-template list
+aidevops case chase-template test --case <case-id> --template payment-reminder
+aidevops case chase-template add my-custom-template
+```
+
+### Audit
+
+Every send (success or failure) appends to `_cases/<case-id>/comms/sent.jsonl`:
+
+```json
+{"ts":"...", "case_id":"...", "template":"payment-reminder", "recipient":"...",
+ "mailbox_id":"...", "message_id":"<...@...>", "status":"sent"}
+```
+
+A timeline event (`kind: chase_sent` or `kind: chase_error`) is also appended.
+
+### Failure handling
+
+- **First failure:** logged with `status: error`, `retry_allowed: true`. Manual retry via `aidevops case chase retry <case-id> <message-id>`.
+- **Second consecutive failure:** case status set to `hold` + alarm fired via `case-alarm-helper.sh fire` (if available).
+
+### SMTP credentials
+
+SMTP host/port resolved from `_config/mailboxes.json` (per-repo) or `~/.config/aidevops/mailboxes.json` (global). Provider SMTP settings auto-detected from `email-providers.json.txt` using the mailbox `provider` field.
+
+Credentials fetched at send-time from `gopass` (via `password_ref: gopass:aidevops/email/<id>/password`). Never stored in logs or output.
+
 ## Dependencies
 
 - **Provisioned by:** `aidevops case init`
@@ -189,5 +260,6 @@ All read-side commands (`list`, `show`) and all mutating commands support `--jso
 - **Alarming reads:** `dossier.deadlines` (t2853 P4c)
 - **Comms agent operates on:** cases (P6)
 - **Filter→case-attach:** uses `aidevops case attach` (P5c)
+- **Chase send:** `case-chase-helper.sh` (t2858 P6b) — template-only, no LLM
 
 <!-- AI-CONTEXT-END -->
