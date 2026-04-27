@@ -136,6 +136,19 @@ _start() {
 	fi
 
 	mkdir -p "${_PULSE_LOG%/*}"
+
+	# t2992: pre-warm the L3 per-owner JSON caches before pulse boots so the
+	# next cycle's prefetch_state finds warm state and runs the delta path
+	# (t1975) instead of the cold-cache full fetch. Eliminates the structural
+	# ~210s prefetch_state cost on the first post-restart cycle. Non-fatal —
+	# a prime failure should not abort startup. Honours
+	# AIDEVOPS_SKIP_CACHE_PRIME=1 for debug.
+	local _prime_helper="${_PULSE_AGENTS_DIR}/scripts/pulse-cache-prime.sh"
+	if [[ -x "$_prime_helper" ]]; then
+		_pl_info "Pre-warming pulse caches (t2992)..."
+		"$_prime_helper" >/dev/null 2>&1 || _pl_warn "Cache prime returned non-zero (non-fatal — first cycle may be slow)"
+	fi
+
 	# GH#20580: set AIDEVOPS_PULSE_SOURCE so pulse-wrapper.sh records this
 	# invocation as "lifecycle-helper" in its invocation_sources counter.
 	AIDEVOPS_PULSE_SOURCE=lifecycle-helper nohup "$_PULSE_SCRIPT" >>"$_PULSE_LOG" 2>&1 &

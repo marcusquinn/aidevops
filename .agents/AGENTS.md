@@ -916,6 +916,8 @@ Headless workers failing, stalling, or stuck in dispatch loops: `reference/worke
 
 **Pulse decision correlation (t2714):** `pulse-diagnose-helper.sh pr <N> [--repo <slug>]` explains what the pulse did on any PR and why, classified against a 60+ rule inventory. Use `--verbose` for raw log lines, `--json` for programmatic output. Full detail: `reference/worker-diagnostics.md`.
 
+**Pulse cache priming (t2992):** Every pulse boot via `pulse-lifecycle-helper.sh::_start` (covering `aidevops update`, `setup.sh`, `restart-if-running`, t2914 ensure-running, manual restart) pre-warms the L3 per-owner JSON caches by invoking `pulse-cache-prime.sh` BEFORE the `nohup pulse-wrapper.sh` spawn. The next pulse cycle's `prefetch_state` then finds warm caches and runs the t1975 delta path (only items with `updatedAt > last_prefetch`) instead of the cold-cache full fetch. Eliminates the structural ~210s `prefetch_state` cost on the first post-restart cycle that t2989 (per-iteration timeout) and t2988 (reconcile budget) cannot address. Counters: `pulse_cache_prime_runs` and `pulse_cache_prime_failures` in `pulse-stats.json`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run`. Log: `~/.aidevops/logs/pulse-cache-prime.log`. Opt out: `AIDEVOPS_SKIP_CACHE_PRIME=1`. The early-return-if-running gate in `_start` makes this a no-op when pulse is already alive — priming only fires on actual startup.
+
 ## Self-Improvement
 
 Every agent session should improve the system, not just complete its task. Full guidance: `reference/self-improvement.md`.
