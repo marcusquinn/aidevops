@@ -39,10 +39,18 @@ helper deliberately does not.
    - Other exit code (helper missing, network error, etc.) → fail closed,
      refuse to dispatch, exit 1.
    - Dry-run: surface all three states as info, still print the planned dispatch.
-4. Resolve tier/model:
-   - `--model <id>` wins.
-   - Else infer from `tier:thinking|standard|simple` and `model:<id>` labels.
-   - Default tier = `standard`, default model family = `sonnet`.
+4. Resolve tier/model (mirrors `pulse-model-routing.sh::resolve_dispatch_model_for_labels`):
+   - `--model <id>` wins (operator explicit intent, highest priority).
+   - `model:opus-4-7` label wins over all tier labels (t2239 — same as pulse).
+   - Else tier labels: `tier:thinking` → opus, `tier:standard` → sonnet,
+     `tier:simple` → haiku. Default = `standard` / sonnet.
+   - Other `model:*` labels (e.g. `model:sonnet-4-6`) map to the named model.
+   - **Known divergence from pulse (t2839):** the pulse applies a dispatch-path
+     safety net (t2819) that auto-elevates issues touching self-hosting files
+     (pulse-wrapper.sh, headless-runtime-helper.sh, etc.) to `opus-4-7`. This
+     CLI does NOT apply that check — it would require parsing the issue body and
+     brief file scope. If you're manually dispatching a dispatch-path issue, pass
+     `--model anthropic/claude-opus-4-7` explicitly to match pulse behaviour.
 5. Dispatch (real path):
    - Pre-create worktree via `worktree-helper.sh add` (`auto-<ts>-gh<N>`),
      resolve actual path back from `git worktree list` (worktree-helper has
