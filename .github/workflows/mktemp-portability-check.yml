@@ -1,0 +1,154 @@
+name: mktemp Portability Check
+
+# t2997: CI lint gate that detects BSD-incompatible mktemp templates.
+# Scans only PR-changed .sh files (diff-scoped) so existing violations on main
+# don't block.
+#
+# Bug class: `mktemp prefix-XXXXXX.ext` is silently broken on macOS BSD mktemp.
+# First call returns the literal template name; subsequent calls fail with
+# `mkstemp failed: File exists`. Canonical failure: GH#21408 (142 spam lines/day
+# in pulse-wrapper.log from a single offender).
+#
+# Violations posted as a PR comment linking to the style guide.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '**/*.sh'
+      - '**/*.bash'
+      - '**/*.zsh'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: mktemp Portability Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed shell files
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- \
+            '*.sh' '*.bash' '*.zsh' || true)
+          if [ -z "$changed" ]; then
+            echo "No shell files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" > /tmp/changed-shell-files.txt
+
+      - name: Run mktemp portability lint
+        if: steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          # shellcheck disable=SC2046
+          output=$(bash .agents/scripts/lint-mktemp-portability.sh \
+            $(tr '\n' ' ' < /tmp/changed-shell-files.txt) 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" > /tmp/mktemp-portability-report.txt
+
+      - name: Post PR comment on failure
+        if: steps.changed.outputs.has_files == 'true' && steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report=$(cat /tmp/mktemp-portability-report.txt)
+          marker="<!-- mktemp-portability-check -->"
+          body=$(cat <<EOF
+          ${marker}
+          ## mktemp Portability Violations
+
+          The following \`mktemp\` templates have \`XXXXXX\` followed by a literal
+          extension. This silently breaks on macOS BSD mktemp — the first call
+          returns the literal template name, and every subsequent call fails
+          with \`mkstemp failed: File exists\`. GNU mktemp (Linux) accepts both
+          forms, so the bug is invisible in CI until it ships.
+
+          \`\`\`text
+          ${report}
+          \`\`\`
+
+          **Fix options** (see [style guide](.agents/reference/shell-style-guide.md#mktemp-portability-t2997)):
+
+          1. **Drop the extension** (preferred for most cases — interpreters and
+             tools that read content via magic bytes do not need a filename
+             extension):
+
+             \`\`\`bash
+             tmp=\$(mktemp "\${TMPDIR:-/tmp}/foo-XXXXXX")
+             \`\`\`
+
+          2. **Move the extension before the placeholder**:
+
+             \`\`\`bash
+             tmp=\$(mktemp "\${TMPDIR:-/tmp}/foo.json.XXXXXX")
+             \`\`\`
+
+          3. **\`mktemp -d\` + fixed filename** (REQUIRED for \`.mjs\` / \`.cjs\`
+             where node refuses to load files without the exact extension):
+
+             \`\`\`bash
+             tmp_dir=\$(mktemp -d "\${TMPDIR:-/tmp}/foo-XXXXXX")
+             script_file="\$tmp_dir/script.mjs"
+             # ... use \$script_file ...
+             rm -rf "\$tmp_dir"
+             \`\`\`
+
+          Local check: \`bash .agents/scripts/lint-mktemp-portability.sh\`.
+
+          Canonical failure: #21408 (t2997).
+          EOF
+          )
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body="$body" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.changed.outputs.has_files == 'true'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "mktemp portability check: clean."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::error::mktemp portability violations found. See PR comment for details."
+            exit 1
+          fi
+          echo "::error::mktemp portability check failed with unexpected exit code: $EXIT_CODE"
+          exit 1
