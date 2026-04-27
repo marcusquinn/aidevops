@@ -65,6 +65,8 @@ jobs:
       # t2166: emit a visible warning when SYNC_PAT is unset so operators
       # see on every run — not just after GH006 — that TODO.md push will
       # fall back to GITHUB_TOKEN and be rejected by branch protection.
+      # GH#20976: SYNC_PAT can also appear empty if the caller uses
+      # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
         if: steps.check-author.outputs.skip != 'true'
         env:
@@ -72,9 +74,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
-            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
-            echo "::warning::See todo/tasks/t2166-brief.md for the SYNC_PAT setup walkthrough."
+            echo "::warning::SYNC_PAT not present in this run — TODO.md push will be rejected by branch protection (GH006)."
+            echo "::warning::Cause A (secret not set): gh secret set SYNC_PAT --repo ${REPO} --body '<FINE_GRAINED_PAT>' (Contents: Read and write)"
+            echo "::warning::Cause B (cross-account caller): your caller uses 'secrets: inherit' which fails cross-account — run: aidevops sync-workflows --apply (see GH#20976)"
           else
             echo "::notice::SYNC_PAT present — TODO.md push will use PAT (bypasses branch protection via enforce_admins:false)"
           fi
@@ -211,6 +213,8 @@ jobs:
       # t2166: SYNC_PAT visibility — this job also pushes TODO.md updates
       # on every issue-opened/closed event, so it hits the same GH006 when
       # SYNC_PAT is unset. Warn explicitly before doing any work.
+      # GH#20976: SYNC_PAT can also appear empty if the caller uses
+      # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
         if: steps.check-issue.outputs.sync == 'true'
         env:
@@ -218,8 +222,9 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
-            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+            echo "::warning::SYNC_PAT not present in this run — TODO.md push will be rejected by branch protection (GH006)."
+            echo "::warning::Cause A (secret not set): gh secret set SYNC_PAT --repo ${REPO} --body '<FINE_GRAINED_PAT>' (Contents: Read and write)"
+            echo "::warning::Cause B (cross-account caller): your caller uses 'secrets: inherit' which fails cross-account — run: aidevops sync-workflows --apply (see GH#20976)"
           else
             echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
           fi
@@ -295,14 +300,17 @@ jobs:
 
     steps:
       # t2166: SYNC_PAT visibility for manual dispatch runs too.
+      # GH#20976: SYNC_PAT can also appear empty if the caller uses
+      # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
         env:
           SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT secret is not set — any TODO.md push from this manual run will be rejected by branch protection (GH006)."
-            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+            echo "::warning::SYNC_PAT not present in this run — any TODO.md push from this manual run will be rejected by branch protection (GH006)."
+            echo "::warning::Cause A (secret not set): gh secret set SYNC_PAT --repo ${REPO} --body '<FINE_GRAINED_PAT>' (Contents: Read and write)"
+            echo "::warning::Cause B (cross-account caller): your caller uses 'secrets: inherit' which fails cross-account — run: aidevops sync-workflows --apply (see GH#20976)"
           else
             echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
           fi
@@ -391,14 +399,17 @@ jobs:
       # Ensures the warning/notice emits unconditionally on every merged PR,
       # not just when the downstream TODO.md proof-log path actually runs
       # (which is skipped by range-syntax titles and planning-only PR bodies).
+      # GH#20976: SYNC_PAT can also appear empty if the caller uses
+      # `secrets: inherit` against a cross-account reusable workflow.
       - name: Check SYNC_PAT visibility (t2166)
         env:
           SYNC_PAT_PRESENT: ${{ secrets.SYNC_PAT != '' && 'true' || '' }}
           REPO: ${{ github.repository }}
         run: |
           if [[ -z "${SYNC_PAT_PRESENT:-}" ]]; then
-            echo "::warning::SYNC_PAT secret is not set — TODO.md auto-sync push will be rejected by branch protection (GH006)."
-            echo "::warning::Fix: gh secret set SYNC_PAT --repo ${REPO} --body \"<FINE_GRAINED_PAT>\" (Contents: Read and write)"
+            echo "::warning::SYNC_PAT not present in this run — TODO.md auto-sync push will be rejected by branch protection (GH006)."
+            echo "::warning::Cause A (secret not set): gh secret set SYNC_PAT --repo ${REPO} --body '<FINE_GRAINED_PAT>' (Contents: Read and write)"
+            echo "::warning::Cause B (cross-account caller): your caller uses 'secrets: inherit' which fails cross-account — run: aidevops sync-workflows --apply (see GH#20976)"
           else
             echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
           fi
