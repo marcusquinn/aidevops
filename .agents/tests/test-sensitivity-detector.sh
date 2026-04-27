@@ -22,6 +22,9 @@
 #   13. Invalid tier rejected by override
 #   14. Missing source-id returns error
 #   15. show subcommand displays tier and audit log
+#   16. _campaigns/intel/ path → tier competitive (t2964)
+#   17. competitive tier outranks sensitive for mixed-signal sources (t2964)
+#   18. competitive is a valid override tier (t2964)
 
 set -euo pipefail
 
@@ -344,6 +347,65 @@ test_show_displays_tier() {
 }
 
 # ---------------------------------------------------------------------------
+# Competitive tier tests (t2964 / GH#21252)
+# ---------------------------------------------------------------------------
+
+test_campaigns_intel_competitive() {
+	local name="_campaigns/intel/ path → competitive tier"
+	local kroot
+	kroot=$(make_knowledge_root "intel-test" \
+		"file:///Users/user/_campaigns/intel/competitor-a-ads-2026.pdf" \
+		"Market analysis: general public content, no PII")
+	local tier
+	tier=$(run_classify "intel-test" "$kroot")
+	if [[ "$tier" == "competitive" ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected competitive for _campaigns/intel/ path, got $tier"
+	fi
+	return 0
+}
+
+test_competitive_outranks_sensitive() {
+	local name="competitive tier outranks sensitive for mixed-signal sources"
+	local kroot
+	# Path is _campaigns/intel/ (competitive) AND board/ (sensitive) — competitive wins
+	kroot=$(make_knowledge_root "intel-board-test" \
+		"file:///Users/user/_campaigns/intel/board/competitor-analysis.pdf" \
+		"Competitor pricing strategy analysis")
+	local tier
+	tier=$(run_classify "intel-board-test" "$kroot")
+	if [[ "$tier" == "competitive" ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected competitive to outrank sensitive, got $tier"
+	fi
+	return 0
+}
+
+test_competitive_valid_override_tier() {
+	local name="competitive is a valid override tier"
+	local kroot
+	kroot=$(make_knowledge_root "competitive-override-test" \
+		"file:///tmp/general/market-research.pdf" \
+		"General market research document")
+	# First classify to set initial tier
+	run_classify "competitive-override-test" "$kroot" >/dev/null 2>&1
+	# Override to competitive explicitly
+	bash "$DETECTOR" override "competitive-override-test" "competitive" \
+		--reason "Competitive intel confirmed by review" \
+		--knowledge-root "$kroot" >/dev/null 2>&1
+	local tier
+	tier=$(run_classify "competitive-override-test" "$kroot")
+	if [[ "$tier" == "competitive" ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected competitive after override, got $tier"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Suite runner
 # ---------------------------------------------------------------------------
 
@@ -365,6 +427,9 @@ run_all_tests() {
 	test_invalid_tier_rejected
 	test_missing_source_id_error
 	test_show_displays_tier
+	test_campaigns_intel_competitive
+	test_competitive_outranks_sensitive
+	test_competitive_valid_override_tier
 
 	teardown
 

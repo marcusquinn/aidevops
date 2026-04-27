@@ -25,6 +25,12 @@
       "retention_years": 7,
       "description": "Sensitive business data — board minutes, strategy, HR records"
     },
+    "competitive": {
+      "redact": true,
+      "llm": "local-only-hard-fail",
+      "retention_months": 12,
+      "description": "Competitive intel — campaign-scoped, local-LLM-only (Ollama), never cloud, short retention"
+    },
     "privileged": {
       "redact": true,
       "llm": "local-only-hard-fail",
@@ -75,18 +81,19 @@
     }
   },
   "path_heuristics": [
-    { "glob": "**/legal/**",           "tier": "privileged" },
-    { "glob": "**/privileged/**",      "tier": "privileged" },
-    { "glob": "**/attorney-client/**", "tier": "privileged" },
-    { "glob": "**/board-minutes/**",   "tier": "sensitive" },
-    { "glob": "**/board/**",           "tier": "sensitive" },
-    { "glob": "**/strategy/**",        "tier": "sensitive" },
-    { "glob": "**/hr/**",              "tier": "sensitive" },
-    { "glob": "**/personnel/**",       "tier": "sensitive" },
-    { "glob": "**/payroll/**",         "tier": "sensitive" },
-    { "glob": "**/salary/**",          "tier": "sensitive" }
+    { "glob": "**/legal/**",              "tier": "privileged" },
+    { "glob": "**/privileged/**",         "tier": "privileged" },
+    { "glob": "**/attorney-client/**",    "tier": "privileged" },
+    { "glob": "**/_campaigns/intel/**",   "tier": "competitive" },
+    { "glob": "**/board-minutes/**",      "tier": "sensitive" },
+    { "glob": "**/board/**",              "tier": "sensitive" },
+    { "glob": "**/strategy/**",           "tier": "sensitive" },
+    { "glob": "**/hr/**",                 "tier": "sensitive" },
+    { "glob": "**/personnel/**",          "tier": "sensitive" },
+    { "glob": "**/payroll/**",            "tier": "sensitive" },
+    { "glob": "**/salary/**",             "tier": "sensitive" }
   ],
-  "tier_precedence": ["privileged", "sensitive", "pii", "internal", "public"],
+  "tier_precedence": ["privileged", "competitive", "sensitive", "pii", "internal", "public"],
   "precautionary_upgrade": true,
   "note": "precautionary_upgrade: ambiguous content defaults to next-higher tier until local-LLM (P0.5c) ships"
 }

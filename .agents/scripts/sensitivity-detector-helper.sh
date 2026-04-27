@@ -19,11 +19,12 @@
 #   sensitivity-detector-helper.sh help
 #
 # Sensitivity tiers (lowest to highest):
-#   public     No restrictions — marketing copy, public docs
-#   internal   Internal business docs — not public, not personal
-#   pii        Personal data — names, addresses, ID/payment numbers
-#   sensitive  Sensitive business — board minutes, strategy, HR
-#   privileged Legally privileged — attorney-client, court filings
+#   public      No restrictions — marketing copy, public docs
+#   internal    Internal business docs — not public, not personal
+#   pii         Personal data — names, addresses, ID/payment numbers
+#   sensitive   Sensitive business — board minutes, strategy, HR
+#   competitive Competitive intel — _campaigns/intel/ enforced, local-LLM-only (Ollama), never cloud, retention months not years
+#   privileged  Legally privileged — attorney-client, court filings
 #
 # Audit log: <knowledge-root>/index/sensitivity-audit.log (JSONL)
 # Config:    <knowledge-root>/_config/sensitivity.json (falls back to template)
@@ -34,7 +35,7 @@
 #   2  Source not found
 #   3  Knowledge root not found
 #
-# t2846 / GH#20899
+# t2846 / GH#20899 | competitive tier: t2964 / GH#21252
 
 set -euo pipefail
 
@@ -77,7 +78,7 @@ SCRIPT_TEMPLATES_DIR="${SCRIPT_DIR%/scripts}/templates"
 SENSITIVITY_CONFIG_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/sensitivity-config.json"
 
 # Tier precedence order (highest to lowest) — position 0 is strongest
-TIER_PRECEDENCE="privileged sensitive pii internal public"
+TIER_PRECEDENCE="privileged competitive sensitive pii internal public"
 # Tier string constants (avoids repeated literals)
 _T_PUBLIC="public"
 _T_INTERNAL="internal"
