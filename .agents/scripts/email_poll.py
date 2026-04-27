@@ -32,8 +32,27 @@ import os
 import re
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+# ---------------------------------------------------------------------------
+# Poll configuration
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PollConfig:
+    """Options controlling how a single mailbox poll run behaves.
+
+    Bundling these into one object keeps poll_mailbox and _poll_folder
+    at a low parameter count while remaining easy to extend.
+    """
+
+    inbox_dir: str = ""
+    dry_run: bool = False
+    rate_limit_per_min: int = 0
+    max_messages: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -145,24 +164,19 @@ def _connect_imap(host: str, port: int, user: str, password: str) -> imaplib.IMA
     return conn
 
 
-def _uid_fetch_since(
+def _search_uids_since(
     conn: imaplib.IMAP4_SSL, folder: str, last_uid: int, max_uids: int = 0
-) -> list[tuple[int, bytes]]:
-    """Fetch messages with UID > last_uid in folder.
+) -> list:
+    """SELECT folder and return UIDs > last_uid, optionally capped at max_uids.
 
-    Args:
-        max_uids: If > 0, fetch at most this many messages (oldest first).
-                  Used by cmd_test to avoid fetching entire mailboxes.
-
-    Returns a list of (uid, raw_rfc822_bytes) tuples sorted by UID ascending.
+    Returns a plain list[int]. Raises RuntimeError on IMAP errors.
     """
     status, _ = conn.select(f'"{folder}"', readonly=True)
     if status != "OK":
         raise RuntimeError(f"SELECT '{folder}' failed: {status}")
 
     start_uid = last_uid + 1
-    search_criterion = f"UID {start_uid}:*"
-    status, data = conn.uid("SEARCH", None, search_criterion)  # type: ignore[arg-type]
+    status, data = conn.uid("SEARCH", None, f"UID {start_uid}:*")  # type: ignore[arg-type]
     if status != "OK":
         raise RuntimeError(f"UID SEARCH failed: {status}")
 
@@ -174,20 +188,25 @@ def _uid_fetch_since(
     if not uid_strings:
         return []
 
-    # Filter out UIDs <= last_uid (server may return * = UIDNEXT-1 when empty)
+    # Filter: server may return * = UIDNEXT-1 when the range is empty
     valid_uids = [int(u) for u in uid_strings if int(u) > last_uid]
     if not valid_uids:
         return []
 
-    # Limit to max_uids when set (test mode: avoids fetching entire mailboxes)
     if max_uids > 0:
         valid_uids = valid_uids[:max_uids]
 
-    uid_set = ",".join(str(u) for u in valid_uids)
-    status, fetch_data = conn.uid("FETCH", uid_set, "(RFC822)")  # type: ignore[arg-type]
-    if status != "OK":
-        raise RuntimeError(f"UID FETCH failed: {status}")
+    return valid_uids
 
+
+def _parse_fetch_response(
+    fetch_data: list, valid_uids: list, last_uid: int = 0
+) -> list:
+    """Parse an imaplib RFC822 FETCH response into (uid, raw_bytes) tuples.
+
+    Returns list[tuple[int, bytes]], sorted by UID ascending.
+    Only includes messages with UID > last_uid (use last_uid=0 for all).
+    """
     messages = []
     i = 0
     while i < len(fetch_data):
@@ -195,12 +214,11 @@ def _uid_fetch_since(
         if isinstance(item, tuple):
             header_part = item[0]
             raw_msg = item[1]
-            # Extract UID from the header part b'N (RFC822 {size}'
             uid_match = re.search(rb"UID\s+(\d+)", header_part)
             if uid_match:
                 uid = int(uid_match.group(1))
             else:
-                # Fallback: parse from position in valid_uids
+                # Fallback: infer from position in valid_uids
                 uid = valid_uids[len(messages)] if len(messages) < len(valid_uids) else 0
             if uid > last_uid:
                 messages.append((uid, raw_msg))
@@ -210,9 +228,32 @@ def _uid_fetch_since(
     return messages
 
 
+def _uid_fetch_since(
+    conn: imaplib.IMAP4_SSL, folder: str, last_uid: int, max_uids: int = 0
+) -> list:
+    """Fetch messages with UID > last_uid in folder.
+
+    Args:
+        max_uids: If > 0, fetch at most this many messages (oldest first).
+                  Used by cmd_test to avoid fetching entire mailboxes.
+
+    Returns a list of (uid, raw_rfc822_bytes) tuples sorted by UID ascending.
+    """
+    valid_uids = _search_uids_since(conn, folder, last_uid, max_uids)
+    if not valid_uids:
+        return []
+
+    uid_set = ",".join(str(u) for u in valid_uids)
+    status, fetch_data = conn.uid("FETCH", uid_set, "(RFC822)")  # type: ignore[arg-type]
+    if status != "OK":
+        raise RuntimeError(f"UID FETCH failed: {status}")
+
+    return _parse_fetch_response(fetch_data, valid_uids, last_uid)
+
+
 def _uid_fetch_since_date(
     conn: imaplib.IMAP4_SSL, folder: str, since_date: str
-) -> list[tuple[int, bytes]]:
+) -> list:
     """Fetch all messages in folder with INTERNALDATE >= since_date.
 
     since_date: ISO date string, e.g. '2026-01-01'.
@@ -247,23 +288,8 @@ def _uid_fetch_since_date(
     if status != "OK":
         raise RuntimeError(f"UID FETCH failed: {status}")
 
-    messages = []
-    i = 0
-    while i < len(fetch_data):
-        item = fetch_data[i]
-        if isinstance(item, tuple):
-            header_part = item[0]
-            raw_msg = item[1]
-            uid_match = re.search(rb"UID\s+(\d+)", header_part)
-            if uid_match:
-                uid = int(uid_match.group(1))
-            else:
-                uid = valid_uids[len(messages)] if len(messages) < len(valid_uids) else 0
-            messages.append((uid, raw_msg))
-        i += 1
-
-    messages.sort(key=lambda t: t[0])
-    return messages
+    # last_uid=0 → keep all messages (UIDs are always >= 1)
+    return _parse_fetch_response(fetch_data, valid_uids, last_uid=0)
 
 
 # ---------------------------------------------------------------------------
@@ -286,31 +312,73 @@ def _write_eml(inbox_dir: str, mailbox_id: str, folder: str, uid: int, raw_msg: 
 
 
 # ---------------------------------------------------------------------------
+# Folder-level polling helper
+# ---------------------------------------------------------------------------
+
+def _poll_folder(
+    conn: imaplib.IMAP4_SSL,
+    mb_id: str,
+    folder: str,
+    state: dict,
+    config: PollConfig,
+) -> dict:
+    """Poll a single IMAP folder; update state in place.
+
+    Returns a folder-result dict: {folder, fetched, new_high_uid, error}.
+    Separated from poll_mailbox to keep cyclomatic complexity low.
+    """
+    import time  # noqa: PLC0415
+
+    key = _state_key(mb_id, folder)
+    last_uid = state.get(key, {}).get("last_uid_seen", 0)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    folder_result: dict = {"folder": folder, "fetched": 0, "error": None}
+
+    try:
+        messages = _uid_fetch_since(conn, folder, last_uid, max_uids=config.max_messages)
+    except Exception as exc:
+        folder_result["error"] = str(exc)
+        folder_result["new_high_uid"] = last_uid
+        return folder_result
+
+    new_high_uid = last_uid
+    delay = (60.0 / config.rate_limit_per_min) if config.rate_limit_per_min > 0 else 0
+
+    for uid, raw_msg in messages:
+        if not config.dry_run:
+            _write_eml(config.inbox_dir, mb_id, folder, uid, raw_msg)
+        if uid > new_high_uid:
+            new_high_uid = uid
+        folder_result["fetched"] += 1
+        if delay > 0:
+            time.sleep(delay)
+
+    if not config.dry_run and new_high_uid > last_uid:
+        state[key] = {"last_uid_seen": new_high_uid, "last_polled_at": now_iso}
+
+    folder_result["new_high_uid"] = new_high_uid
+    return folder_result
+
+
+# ---------------------------------------------------------------------------
 # Core polling logic
 # ---------------------------------------------------------------------------
 
-def poll_mailbox(
-    mb_config: dict,
-    state: dict,
-    inbox_dir: str,
-    dry_run: bool = False,
-    rate_limit_per_min: int = 0,
-    max_messages: int = 0,
-) -> dict:
+def poll_mailbox(mb_config: dict, state: dict, config: "PollConfig | None" = None) -> dict:
     """Poll a single mailbox; return a per-mailbox result dict.
 
     Args:
-        mb_config:         Entry from mailboxes.json 'mailboxes' array.
-        state:             Full state dict (mutated in place on success).
-        inbox_dir:         Absolute path to the _knowledge/inbox/ directory.
-        dry_run:           If True, fetch but do NOT write .eml or update state.
-        rate_limit_per_min: Max messages per minute (0 = unlimited).
-        max_messages:      If > 0, fetch at most this many per folder (test mode).
+        mb_config: Entry from mailboxes.json 'mailboxes' array.
+        state:     Full state dict (mutated in place on success).
+        config:    PollConfig with inbox_dir, dry_run, rate_limit_per_min,
+                   max_messages.  Defaults to PollConfig() (empty inbox_dir,
+                   no limits) when None.
 
     Returns:
-        {mailbox_id, status, fetched_count, new_high_uid, error?}
+        {mailbox_id, status, fetched_count, folders, error?}
     """
-    import time  # noqa: PLC0415
+    if config is None:
+        config = PollConfig()
 
     mb_id = mb_config["id"]
     host = mb_config["host"]
@@ -327,7 +395,6 @@ def poll_mailbox(
         "folders": {},
     }
 
-    # Resolve credential
     try:
         password = _resolve_password(password_ref)
     except Exception as exc:
@@ -337,7 +404,6 @@ def poll_mailbox(
         state[mb_id]["last_polled_at"] = now_iso
         return result
 
-    # Connect
     try:
         conn = _connect_imap(host, port, user, password)
     except Exception as exc:
@@ -350,40 +416,11 @@ def poll_mailbox(
     total_fetched = 0
     try:
         for folder in folders:
-            key = _state_key(mb_id, folder)
-            last_uid = state.get(key, {}).get("last_uid_seen", 0)
-
-            folder_result = {"folder": folder, "fetched": 0, "error": None}
-            try:
-                messages = _uid_fetch_since(conn, folder, last_uid, max_uids=max_messages)
-            except Exception as exc:
-                folder_result["error"] = str(exc)
-                result["folders"][folder] = folder_result
+            folder_result = _poll_folder(conn, mb_id, folder, state, config)
+            if folder_result.get("error"):
                 result["status"] = "partial_error"
-                continue
-
-            new_high_uid = last_uid
-            delay = (60.0 / rate_limit_per_min) if rate_limit_per_min > 0 else 0
-
-            for uid, raw_msg in messages:
-                if not dry_run:
-                    _write_eml(inbox_dir, mb_id, folder, uid, raw_msg)
-                if uid > new_high_uid:
-                    new_high_uid = uid
-                total_fetched += 1
-                folder_result["fetched"] += 1
-                if delay > 0:
-                    time.sleep(delay)
-
-            if not dry_run and new_high_uid > last_uid:
-                state[key] = {
-                    "last_uid_seen": new_high_uid,
-                    "last_polled_at": now_iso,
-                }
-
-            folder_result["new_high_uid"] = new_high_uid
+            total_fetched += folder_result["fetched"]
             result["folders"][folder] = folder_result
-
     finally:
         try:
             conn.logout()
@@ -391,7 +428,7 @@ def poll_mailbox(
             pass
 
     result["fetched_count"] = total_fetched
-    if not dry_run:
+    if not config.dry_run:
         state.setdefault(mb_id, {})["last_polled_at"] = now_iso
         state[mb_id].pop("last_error", None)
 
@@ -418,7 +455,6 @@ def backfill_mailbox(
     user = mb_config["user"]
     password_ref = mb_config.get("password_ref", "")
     folders = mb_config.get("folders", ["INBOX"])
-    now_iso = datetime.now(timezone.utc).isoformat()
 
     result: dict = {
         "mailbox_id": mb_id,
@@ -483,12 +519,13 @@ def cmd_tick(args: argparse.Namespace) -> int:
     """Tick: poll all mailboxes, write new messages to inbox."""
     config = load_mailboxes_config(args.config)
     state = load_state(args.state)
+    poll_cfg = PollConfig(inbox_dir=args.inbox)
     results = []
     overall_ok = True
 
     for mb_config in config.get("mailboxes", []):
         try:
-            res = poll_mailbox(mb_config, state, args.inbox)
+            res = poll_mailbox(mb_config, state, poll_cfg)
         except Exception as exc:  # noqa: BLE001
             res = {
                 "mailbox_id": mb_config.get("id", "unknown"),
@@ -534,7 +571,8 @@ def cmd_test(args: argparse.Namespace) -> int:
     mb_config = get_mailbox_config(config, args.mailbox_id)
     state: dict = {}
 
-    res = poll_mailbox(mb_config, state, inbox_dir="/dev/null", dry_run=True, max_messages=1)
+    poll_cfg = PollConfig(inbox_dir="/dev/null", dry_run=True, max_messages=1)
+    res = poll_mailbox(mb_config, state, poll_cfg)
     print(json.dumps(res, indent=2))
     return 0 if res["status"] in ("ok", "partial_error") else 1
 
