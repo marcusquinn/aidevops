@@ -20,7 +20,11 @@ import json
 import hashlib
 from typing import Any, Dict, List, Optional
 
-from pageindex_helpers import extract_first_sentence, get_ollama_summary
+from pageindex_helpers import (
+    extract_first_sentence,
+    get_ollama_summary,
+    extract_markdoc_tags,
+)
 
 
 def extract_frontmatter(lines: List[str]) -> Dict[str, str]:
@@ -101,7 +105,12 @@ def build_tree_recursive(
     parent_level: int,
     ctx: TreeContext,
 ) -> tuple:
-    """Recursively build tree from sections starting at start_idx."""
+    """Recursively build tree from sections starting at start_idx.
+
+    Each node gains private ``_line_start`` / ``_line_end`` fields (relative
+    to the content array, i.e. after frontmatter) used during tag injection.
+    Call ``_strip_internal_fields`` to remove them before serialising.
+    """
     children = []
     i = start_idx
 
@@ -111,23 +120,68 @@ def build_tree_recursive(
         if section['level'] <= parent_level:
             break
 
+        child_children, next_i = build_tree_recursive(
+            sections_list, i + 1, section['level'], ctx
+        )
+
+        # Line end: start of next sibling (or cousin at same/higher level) - 1.
+        if next_i < len(sections_list):
+            line_end = sections_list[next_i]['line_idx'] - 1
+        else:
+            line_end = ctx.total_lines - 1
+
         node: Dict[str, Any] = {
             "title": section['title'],
             "level": section['level'],
             "summary": get_section_summary(section, ctx),
             "page": get_section_page(section, ctx),
-            "children": [],
+            "metadata": {},
+            "_line_start": section['line_idx'],
+            "_line_end": line_end,
+            "children": child_children,
         }
-
-        child_children, next_i = build_tree_recursive(
-            sections_list, i + 1, section['level'], ctx
-        )
-        node['children'] = child_children
 
         children.append(node)
         i = next_i
 
     return children, i
+
+
+def _inject_tag_record(node: Dict[str, Any], tag_rec: Dict[str, Any]) -> bool:
+    """Inject a tag record into the deepest tree node containing its line.
+
+    Walks depth-first so the most specific (deepest) node wins.  Returns True
+    if the tag was consumed by this node or one of its descendants.
+    """
+    line = tag_rec['line_num']
+    if not (node.get('_line_start', 0) <= line <= node.get('_line_end', 0)):
+        return False
+
+    # Try children first — deepest match wins.
+    for child in node.get('children', []):
+        if _inject_tag_record(child, tag_rec):
+            return True
+
+    # No child claimed it — inject into this node.
+    tag_name = tag_rec['tag']
+    attrs = tag_rec['attrs']
+    meta = node.setdefault('metadata', {})
+    existing = meta.get(tag_name)
+    if existing is None:
+        meta[tag_name] = attrs
+    elif isinstance(existing, list):
+        existing.append(attrs)
+    else:
+        meta[tag_name] = [existing, attrs]
+    return True
+
+
+def _strip_internal_fields(node: Dict[str, Any]) -> None:
+    """Remove private line-range fields from a node tree in-place (recursive)."""
+    node.pop('_line_start', None)
+    node.pop('_line_end', None)
+    for child in node.get('children', []):
+        _strip_internal_fields(child)
 
 
 def parse_sections(content_lines: List[str]) -> List[Dict[str, Any]]:
@@ -171,7 +225,11 @@ def build_headingless_result(
     content_lines: List[str],
     ctx: TreeContext,
 ) -> Dict[str, Any]:
-    """Build a single-node result when the document has no headings."""
+    """Build a single-node result when the document has no headings.
+
+    The root node carries ``_line_start``/``_line_end`` so that callers can
+    inject Markdoc tag metadata before stripping internal fields.
+    """
     full_content = '\n'.join(content_lines).strip()
     title = frontmatter.get('title', 'Untitled')
     summary = ""
@@ -190,6 +248,9 @@ def build_headingless_result(
             "level": 1,
             "summary": summary,
             "page": 1 if ctx.page_count > 0 else None,
+            "metadata": {},
+            "_line_start": 0,
+            "_line_end": max(0, len(content_lines) - 1),
             "children": [],
         },
     }
@@ -202,16 +263,40 @@ def build_pageindex_tree(
     source_pdf: str,
     page_count: int,
 ) -> Dict[str, Any]:
-    """Build a hierarchical PageIndex tree from markdown headings."""
+    """Build a hierarchical PageIndex tree from markdown headings.
+
+    Markdoc tag attributes from the content are lifted into per-node
+    ``metadata`` fields (t2972):
+
+    - File-scope tags (before the first heading) → root node ``metadata``.
+    - Section-scope tags → the deepest subtree node whose line range
+      contains the tag's line.
+    - Inline tags → same depth-first injection rule.
+
+    ``{% citation ... %}`` tags are additionally aggregated into a top-level
+    ``cross_references`` array for fast retrieval without full-corpus re-reads.
+    """
     frontmatter = extract_frontmatter(lines)
     content_start = get_frontmatter_end(lines)
     content_lines = lines[content_start:]
     ctx = TreeContext(len(content_lines), page_count, use_ollama, ollama_model)
 
+    # Extract Markdoc tags once; skip bare closing tags (no attrs to lift).
+    all_tag_records = extract_markdoc_tags(content_lines)
+    open_tags = [t for t in all_tag_records if not t['is_close']]
+    citation_tags = [t for t in open_tags if t['tag'] == 'citation']
+
     sections = parse_sections(content_lines)
 
     if not sections:
-        return build_headingless_result(frontmatter, content_lines, ctx)
+        result = build_headingless_result(frontmatter, content_lines, ctx)
+        root_node = result['tree']
+        for tag_rec in open_tags:
+            _inject_tag_record(root_node, tag_rec)
+        _strip_internal_fields(root_node)
+        if citation_tags:
+            result['cross_references'] = [t['attrs'] for t in citation_tags]
+        return result
 
     root_section = sections[0]
     root_summary = get_section_summary(root_section, ctx)
@@ -222,14 +307,25 @@ def build_pageindex_tree(
         "level": root_section['level'],
         "summary": root_summary,
         "page": 1 if page_count > 0 else None,
+        "metadata": {},
+        # Root spans from line 0 so pre-heading tags are captured at root level.
+        "_line_start": 0,
+        "_line_end": max(0, len(content_lines) - 1),
         "children": root_children,
     }
+
+    # Inject all open tags into the deepest containing node.
+    for tag_rec in open_tags:
+        _inject_tag_record(tree, tag_rec)
+
+    # Remove line-range bookkeeping before serialising.
+    _strip_internal_fields(tree)
 
     content_hash = frontmatter.get('content_hash', '')
     if not content_hash:
         content_hash = hashlib.sha256('\n'.join(lines).encode('utf-8')).hexdigest()
 
-    return {
+    result = {
         "version": "1.0",
         "generator": "aidevops/document-creation-helper",
         "source_file": frontmatter.get('source_file', source_pdf if source_pdf else ''),
@@ -237,6 +333,12 @@ def build_pageindex_tree(
         "page_count": page_count,
         "tree": tree,
     }
+
+    # Cross-reference index: all citation tags aggregated at document root.
+    if citation_tags:
+        result['cross_references'] = [t['attrs'] for t in citation_tags]
+
+    return result
 
 
 def main() -> None:
