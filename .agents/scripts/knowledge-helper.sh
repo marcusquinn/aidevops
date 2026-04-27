@@ -14,7 +14,9 @@
 #                                                                       Ingest a file or URL into sources/
 #   knowledge-helper.sh list [--state inbox|staging|sources|all] [--kind <type>]
 #                                                                       List known sources
-#   knowledge-helper.sh search <query> [repo-path]                     Search sources
+#   knowledge-helper.sh search <query> [--sensitivity <tier>] [--case <case-id>]
+#                               [--status <draft-status>] [--repo-path <path>]
+#                                                                       Search sources with tag-attribute filters
 #   knowledge-helper.sh status [repo-path]                             Show provisioning state
 #   knowledge-helper.sh help                                           Show this help
 #
@@ -812,7 +814,7 @@ cmd_enrich() {
 }
 
 cmd_help() {
-	sed -n '4,29p' "$0" | sed 's/^# \{0,1\}//'
+	sed -n '4,31p' "$0" | sed 's/^# \{0,1\}//'
 	return 0
 }
 
@@ -854,26 +856,204 @@ _grep_source_file() {
 }
 
 # ---------------------------------------------------------------------------
+# Search filter helpers (t2977 Phase 6)
+# Each helper echoes newline-separated source IDs matching the filter.
+# Returns 0 (even when empty — no match is not an error).
+# ---------------------------------------------------------------------------
+
+# _search_ids_by_sensitivity <sources_dir> <tier>
+# Returns source IDs whose meta.json .sensitivity matches <tier>.
+_search_ids_by_sensitivity() {
+	local sources_dir="$1" tier="$2"
+	_require_jq || return 1
+	local src_id
+	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+		[[ -d "${sources_dir}/${src_id}" ]] || continue
+		local meta="${sources_dir}/${src_id}/meta.json"
+		[[ -f "$meta" ]] || continue
+		local sens
+		sens=$(jq -r --arg d "$META_DEFAULT_SENSITIVITY" \
+			'.sensitivity // $d' "$meta" 2>/dev/null) || sens="$META_DEFAULT_SENSITIVITY"
+		[[ "$sens" == "$tier" ]] && echo "$src_id"
+	done
+	return 0
+}
+
+# _search_ids_by_case <repo_path> <case_id>
+# Returns source IDs attached to a case via its sources.toon registry.
+_search_ids_by_case() {
+	local repo_path="$1" case_id="$2"
+	_require_jq || return 1
+	local cases_dir="${repo_path}/_cases"
+	local case_dir=""
+	# Direct match
+	[[ -d "${cases_dir}/${case_id}" ]] && case_dir="${cases_dir}/${case_id}"
+	# Prefix/slug match
+	if [[ -z "$case_dir" ]]; then
+		local _d
+		for _d in "${cases_dir}"/case-*-"${case_id}" "${cases_dir}"/case-*-*"${case_id}"*; do
+			[[ -d "$_d" ]] || continue
+			[[ "$_d" == *"/archived/"* ]] && continue
+			case_dir="$_d"
+			break
+		done
+	fi
+	if [[ -z "$case_dir" ]]; then
+		print_warning "search --case: case '${case_id}' not found"
+		return 0
+	fi
+	local sources_toon="${case_dir}/sources.toon"
+	[[ -f "$sources_toon" ]] || return 0
+	jq -r '.[].id' "$sources_toon" 2>/dev/null || true
+	return 0
+}
+
+# _search_ids_by_status <sources_dir> <draft_status>
+# Returns source IDs whose source.md has a draft-status tag matching <draft_status>.
+_search_ids_by_status() {
+	local sources_dir="$1" draft_status="$2"
+	local src_id
+	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+		[[ -d "${sources_dir}/${src_id}" ]] || continue
+		local src_md="${sources_dir}/${src_id}/source.md"
+		[[ -f "$src_md" ]] || continue
+		# Match Markdoc draft-status tag: {% draft-status status="<value>" ... %}
+		if grep -qiE "\{%\s*draft-status\b[^%]*status\s*=\s*[\"']?${draft_status}[\"']?" "$src_md" 2>/dev/null; then
+			echo "$src_id"
+		fi
+	done
+	return 0
+}
+
+# _search_compute_allowed_ids <sources_dir> <repo_path> <sensitivity> <case_id> <status>
+# Intersects ID sets from all active filters. Echoes newline-separated IDs.
+# An empty filter value means "no filter on this dimension".
+# Empty result when filters conflict (intersection is empty set).
+_search_compute_allowed_ids() {
+	local sources_dir="$1" repo_path="$2"
+	local filter_sensitivity="$3" filter_case="$4" filter_status="$5"
+	local all_ids="" active_filter=0
+
+	if [[ -n "$filter_sensitivity" ]]; then
+		local sens_ids
+		sens_ids=$(_search_ids_by_sensitivity "$sources_dir" "$filter_sensitivity") || sens_ids=""
+		if [[ $active_filter -eq 0 ]]; then
+			all_ids="$sens_ids"
+		else
+			all_ids=$(comm -12 \
+				<(echo "$all_ids" | sort) \
+				<(echo "$sens_ids" | sort))
+		fi
+		active_filter=1
+	fi
+
+	if [[ -n "$filter_case" ]]; then
+		local case_ids
+		case_ids=$(_search_ids_by_case "$repo_path" "$filter_case") || case_ids=""
+		if [[ $active_filter -eq 0 ]]; then
+			all_ids="$case_ids"
+		else
+			all_ids=$(comm -12 \
+				<(echo "$all_ids" | sort) \
+				<(echo "$case_ids" | sort))
+		fi
+		active_filter=1
+	fi
+
+	if [[ -n "$filter_status" ]]; then
+		local status_ids
+		status_ids=$(_search_ids_by_status "$sources_dir" "$filter_status") || status_ids=""
+		if [[ $active_filter -eq 0 ]]; then
+			all_ids="$status_ids"
+		else
+			all_ids=$(comm -12 \
+				<(echo "$all_ids" | sort) \
+				<(echo "$status_ids" | sort))
+		fi
+		active_filter=1
+	fi
+
+	echo "$all_ids"
+	return 0
+}
+
+# _search_grep_sources <sources_dir> <query> <allowed_ids> <filters_active>
+# Grep for <query> across sources in <sources_dir>, filtered to <allowed_ids>
+# when <filters_active> is 1.  Outputs JSON per-match line to stdout.
+_search_grep_sources() {
+	local sources_dir="$1" query="$2" allowed_ids="$3" filters_active="$4"
+	local found=0 src_id
+	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
+		if [[ $filters_active -eq 1 ]]; then
+			echo "$allowed_ids" | grep -qxF "$src_id" 2>/dev/null || continue
+		fi
+		local src_file
+		src_file=$(_get_source_text_file "${sources_dir}/${src_id}")
+		[[ -z "$src_file" ]] && continue
+		local match_lines
+		match_lines=$(_grep_source_file "$query" "$src_file" || true)
+		if [[ -n "$match_lines" ]]; then
+			local excerpt
+			excerpt="${match_lines%%$'\n'*}"
+			printf '{"source_id":"%s","excerpt":"%s"}\n' \
+				"$src_id" "${excerpt:0:200}"
+			found=$((found + 1))
+		fi
+	done
+	[[ "$found" -eq 0 ]] && print_info "search: no matches for '${query}'"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # search: keyword search across knowledge sources
 # Routes to knowledge-index-helper.sh query when corpus tree exists;
 # falls back to grep over source.md (preferred) or text.txt files otherwise.
 # ---------------------------------------------------------------------------
 
 cmd_search() {
-	local query="${1:-}"
-	local repo_path="${2:-$(pwd)}"
+	# Flag-based invocation (preferred):
+	#   cmd_search [--sensitivity <tier>] [--case <id>] [--status <ds>]
+	#              [--repo-path <path>] <query>
+	# Legacy positional: cmd_search <query> [repo_path]
+	local query="" repo_path="" filter_sensitivity="" filter_case="" filter_status=""
+
+	# Parse flags and positional args in any order.
+	# First non-flag arg is the query; second non-flag arg (legacy) is repo_path.
+	local _positional_count=0
+	while [[ $# -gt 0 ]]; do
+		local _opt="$1"
+		local _nxt="${2:-}"
+		shift
+		case "$_opt" in
+		--sensitivity) filter_sensitivity="$_nxt"; shift ;;
+		--case)        filter_case="$_nxt";        shift ;;
+		--status)      filter_status="$_nxt";      shift ;;
+		--repo-path)   repo_path="$_nxt";          shift ;;
+		-*)            print_error "search: unknown option: $_opt"; return 1 ;;
+		*)
+			if [[ $_positional_count -eq 0 ]]; then
+				query="$_opt"
+			elif [[ $_positional_count -eq 1 && -z "$repo_path" ]]; then
+				repo_path="$_opt"
+			fi
+			_positional_count=$((_positional_count + 1))
+			;;
+		esac
+	done
+
+	[[ -z "$repo_path" ]] && repo_path="$(pwd)"
 	repo_path="$(cd "$repo_path" && pwd)"
-	local mode
-	mode=$(_get_knowledge_mode "$repo_path")
 
 	if [[ -z "$query" ]]; then
 		print_error "search: query string is required"
 		return 1
 	fi
 
+	local mode
+	mode=$(_get_knowledge_mode "$repo_path")
 	local knowledge_root=""
 	case "$mode" in
-	repo) knowledge_root="${repo_path}/${KNOWLEDGE_ROOT}" ;;
+	repo)     knowledge_root="${repo_path}/${KNOWLEDGE_ROOT}" ;;
 	personal) knowledge_root="${PERSONAL_PLANE_BASE}/${KNOWLEDGE_ROOT}" ;;
 	off)
 		print_warning "search: knowledge plane is disabled for $repo_path"
@@ -881,50 +1061,46 @@ cmd_search() {
 		;;
 	esac
 
+	local sources_dir="${knowledge_root}/sources"
+	# Compute allowed source IDs for active filters.
+	# filters_active=1 means at least one filter flag was set.
+	# When filters_active=1 and allowed_ids is empty, no sources qualify.
+	local allowed_ids="" filters_active=0
+	if [[ -n "$filter_sensitivity" || -n "$filter_case" || -n "$filter_status" ]]; then
+		filters_active=1
+		allowed_ids=$(_search_compute_allowed_ids \
+			"$sources_dir" "$repo_path" \
+			"$filter_sensitivity" "$filter_case" "$filter_status") || allowed_ids=""
+	fi
+
 	local corpus_tree="${knowledge_root}/index/tree.json"
-	local index_helper
-	index_helper="$(dirname "${BASH_SOURCE[0]}")/knowledge-index-helper.sh"
+	local index_helper="${SCRIPT_DIR}/knowledge-index-helper.sh"
 
 	if [[ -f "$corpus_tree" && -f "$index_helper" ]]; then
-		# Route to tree-walk when corpus index exists
-		print_info "search: routing to knowledge-index-helper query (corpus tree found)"
-		KNOWLEDGE_ROOT="$knowledge_root" \
-			bash "$index_helper" query "$query"
-	else
-		# Fallback: grep source.md (preferred) or text.txt files in sources/
-		local sources_dir="${knowledge_root}/sources"
-		if [[ ! -d "$sources_dir" ]]; then
-			print_warning "search: no sources directory found at $sources_dir"
+		# Route to tree-walk when corpus index exists.
+		# When filters active and no IDs qualify, skip without calling index.
+		if [[ $filters_active -eq 1 && -z "$allowed_ids" ]]; then
+			print_info "search: no sources match active filters"
 			return 0
 		fi
-		print_info "search: no corpus tree — falling back to grep in sources/"
-		local found=0
-		local _render_sh="${SCRIPT_DIR}/markdoc-render-gh.sh"
-		local src_id
-		for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-			local src_file
-			src_file=$(_get_source_text_file "${sources_dir}/${src_id}")
-			[[ -z "$src_file" ]] && continue
-			local match_lines
-			match_lines=$(_grep_source_file "$query" "$src_file" || true)
-			if [[ -n "$match_lines" ]]; then
-				local excerpt raw_excerpt
-				raw_excerpt="${match_lines%%$'\n'*}"
-				raw_excerpt="${raw_excerpt:0:200}"
-				# Strip Markdoc tags so raw {% %} syntax never leaks into GH output
-				if [[ -x "$_render_sh" ]]; then
-					excerpt="$(printf '%s' "$raw_excerpt" | "$_render_sh" render - --strip 2>/dev/null)" \
-						|| excerpt="$raw_excerpt"
-				else
-					excerpt="$raw_excerpt"
-				fi
-				printf '{"source_id":"%s","excerpt":"%s"}\n' \
-					"$src_id" "$excerpt"
-				found=$((found + 1))
-			fi
-		done
-		[[ "$found" -eq 0 ]] && print_info "search: no matches for '${query}'"
+		print_info "search: routing to knowledge-index-helper query (corpus tree found)"
+		KNOWLEDGE_ROOT="$knowledge_root" KNOWLEDGE_SCOPE_IDS="$allowed_ids" \
+			bash "$index_helper" query "$query"
+		return 0
 	fi
+
+	# Fallback: grep source.md (preferred) or text.txt files in sources/
+	if [[ ! -d "$sources_dir" ]]; then
+		print_warning "search: no sources directory found at $sources_dir"
+		return 0
+	fi
+	# When filters active but no IDs qualify, return early without grep loop.
+	if [[ $filters_active -eq 1 && -z "$allowed_ids" ]]; then
+		print_info "search: no sources match active filters"
+		return 0
+	fi
+	print_info "search: no corpus tree — falling back to grep in sources/"
+	_search_grep_sources "$sources_dir" "$query" "$allowed_ids" "$filters_active"
 	return 0
 }
 

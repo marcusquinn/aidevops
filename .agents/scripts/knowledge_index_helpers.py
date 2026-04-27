@@ -237,7 +237,14 @@ def _cmd_aggregate(sources_dir: str, output_path: str) -> int:
 
 
 def _cmd_query(corpus_path: str, intent: str, max_results: int = 10) -> int:
-    """Query corpus tree and print JSON matches to stdout."""
+    """Query corpus tree and print JSON matches to stdout.
+
+    Respects KNOWLEDGE_SCOPE_IDS environment variable (newline-separated
+    source IDs). When set, only matches whose source_id appears in the
+    allowed set are returned. This enables tag-attribute filtering from
+    the shell layer (sensitivity, case-scope, draft-status) without
+    re-reading corpus files.
+    """
     try:
         with open(corpus_path, 'r', encoding='utf-8') as f:
             corpus = json.load(f)
@@ -247,6 +254,14 @@ def _cmd_query(corpus_path: str, intent: str, max_results: int = 10) -> int:
 
     tree = corpus.get('tree', corpus)
     matches = query_corpus_tree(tree, intent, max_results)
+
+    # Apply KNOWLEDGE_SCOPE_IDS filter when the shell layer has pre-computed
+    # an allowed source-ID set (e.g. --sensitivity / --case / --status flags).
+    scope_ids_raw = os.environ.get('KNOWLEDGE_SCOPE_IDS', '')
+    if scope_ids_raw:
+        allowed = {sid.strip() for sid in scope_ids_raw.splitlines() if sid.strip()}
+        matches = [m for m in matches if m.get('source_id', '') in allowed]
+
     output = {'matches': matches}
     print(json.dumps(output, indent=2, ensure_ascii=False))
     return 0

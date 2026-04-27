@@ -326,6 +326,58 @@ _read_timeline_recent() {
 	return 0
 }
 
+# _collect_excerpts_for_draft <case_id> <intent> <source_ids> <repo_path> <max>
+# Routes through knowledge-helper.sh search --case <case_id> for ranked
+# case-scoped RAG (t2977 Phase 6); falls back to direct _collect_excerpts.
+_collect_excerpts_for_draft() {
+	local case_id="$1" intent="$2" source_ids="$3" repo_path="$4" max_sources="${5:-8}"
+	local _kh="${SCRIPT_DIR}/knowledge-helper.sh"
+	local excerpts=""
+	if [[ -x "$_kh" ]]; then
+		excerpts="$(_collect_excerpts_via_search "$_kh" "$case_id" "$intent" "$repo_path" "$max_sources")"
+		[[ -z "$excerpts" ]] && excerpts="$(_collect_excerpts "$source_ids" "$repo_path" "$max_sources")"
+	else
+		excerpts="$(_collect_excerpts "$source_ids" "$repo_path" "$max_sources")"
+	fi
+	printf '%s' "$excerpts"
+	return 0
+}
+
+# _collect_excerpts_via_search <knowledge_helper> <case_id> <intent> <repo_path> <max>
+# Retrieves ranked excerpts by routing through knowledge-helper.sh search with
+# --case <case_id> so corpus retrieval is automatically scoped to case-relevant
+# sources (t2977 Phase 6). Returns formatted "[<id>]: <excerpt>" text.
+# Falls back gracefully to empty output on any error.
+_collect_excerpts_via_search() {
+	local knowledge_helper="$1" case_id="$2" intent="$3" repo_path="$4" max_sources="${5:-8}"
+	local search_out
+	search_out="$(bash "$knowledge_helper" search \
+		--case "$case_id" --repo-path "$repo_path" "$intent" 2>/dev/null)" || search_out=""
+	[[ -z "$search_out" ]] && return 0
+
+	local excerpts="" count=0 line
+	# Parse each output line as JSON: supports grep-fallback format
+	# {"source_id":...,"excerpt":...} and tree-walk .matches[] entries.
+	local _jq_sid_expr _jq_exc_expr
+	_jq_sid_expr='.source_id // empty'
+	_jq_exc_expr='.excerpt // .anchor // empty'
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		[[ $count -ge $max_sources ]] && break
+		local sid excerpt
+		sid="$(echo "$line" | jq -r "$_jq_sid_expr" 2>/dev/null)" || sid=""
+		[[ -z "$sid" ]] && continue
+		excerpt="$(echo "$line" | jq -r "$_jq_exc_expr" 2>/dev/null)" || excerpt=""
+		excerpts="${excerpts}[${sid}]: \"${excerpt}\"
+
+"
+		count=$((count + 1))
+	done <<<"$search_out"
+
+	printf '%s' "$excerpts"
+	return 0
+}
+
 # _collect_excerpts <source-ids> <repo-path> <max-sources> — collect excerpts from sources
 # Returns numbered excerpts with source anchors.
 _collect_excerpts() {
@@ -710,7 +762,9 @@ cmd_draft() {
 	local tier source_ids excerpts timeline_text tones_config tone_fragment length_guidance
 	tier="$(_max_tier "$sources_json" "$repo_path")"
 	source_ids="$(echo "$sources_json" | jq -r '.[].id' 2>/dev/null)" || source_ids=""
-	excerpts="$(_collect_excerpts "$source_ids" "$repo_path" 8)"
+	# Retrieve excerpts with case-scoped RAG (t2977 Phase 6): automatically
+	# scopes corpus retrieval to case-relevant sources via knowledge search.
+	excerpts="$(_collect_excerpts_for_draft "$case_id" "$intent" "$source_ids" "$repo_path" 8)"
 	timeline_text="$(_read_timeline_recent "$case_dir" 5)"
 	tones_config="$(_load_tones_config "$repo_path")"
 	tone_fragment="$(_get_tone_fragment "$tones_config" "$tone")"
@@ -896,6 +950,11 @@ Sensitivity routing:
   - Sources with sensitivity=restricted → privileged tier (local LLM only)
   - Sources with sensitivity=confidential → sensitive tier (local LLM only)
   - The highest sensitivity among all attached sources determines the tier
+
+RAG retrieval (t2977 Phase 6):
+  - Drafts automatically scope corpus retrieval to case-relevant sources via
+    knowledge-helper.sh search --case <case-id>. This uses intent as the search
+    query for ranked, case-scoped excerpts. Falls back to direct file reads.
 
 Cross-case access:
   - Default: only own case's sources
