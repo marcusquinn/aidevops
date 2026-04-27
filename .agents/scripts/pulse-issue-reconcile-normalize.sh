@@ -80,7 +80,7 @@ _PULSE_ISSUE_RECONCILE_NORMALIZE_LOADED=1
 _filter_core_status_labels() {
 	local status_list="$1"
 	_LI_FILTERED_STATUS=()
-	local _s _core_label
+	local _s="" _core_label=""
 	[[ -n "$status_list" ]] || return 0
 	for _s in $status_list; do
 		for _core_label in "${ISSUE_STATUS_LABELS[@]}"; do
@@ -96,7 +96,7 @@ _filter_core_status_labels() {
 # Helper: given an array of core status names, pick the survivor per
 # ISSUE_STATUS_LABEL_PRECEDENCE and emit it on stdout. Empty if none.
 _pick_status_survivor() {
-	local _precedent _current
+	local _precedent="" _current=""
 	for _precedent in "${ISSUE_STATUS_LABEL_PRECEDENCE[@]}"; do
 		for _current in "$@"; do
 			if [[ "$_current" == "$_precedent" ]]; then
@@ -111,7 +111,7 @@ _pick_status_survivor() {
 # Helper: given an array of tier names, pick the survivor per
 # ISSUE_TIER_LABEL_RANK and emit it on stdout. Empty if none.
 _pick_tier_survivor() {
-	local _rank _current_tier
+	local _rank="" _current_tier=""
 	for _rank in "${ISSUE_TIER_LABEL_RANK[@]}"; do
 		for _current_tier in "$@"; do
 			if [[ "$_current_tier" == "$_rank" ]]; then
@@ -210,7 +210,7 @@ _normalize_label_invariants_for_repo() {
 	rows=$(_fetch_label_invariant_rows "$slug") || return 0
 	[[ -n "$rows" ]] || return 0
 
-	local issue_num status_list tier_list has_origin_i has_auto created_epoch all_status_count
+	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" created_epoch="" all_status_count=""
 	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch all_status_count; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))

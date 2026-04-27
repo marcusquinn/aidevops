@@ -209,7 +209,7 @@ _compute_parent_nudge_age_hours() {
 	[[ -n "$nudge_created_at" ]] || return 0
 
 	# Convert ISO-8601 to epoch. macOS `date` needs -j -f; GNU `date` uses -d.
-	local nudge_epoch now_epoch
+	local nudge_epoch="" now_epoch=""
 	if date --version >/dev/null 2>&1; then
 		nudge_epoch=$(date -d "$nudge_created_at" +%s 2>/dev/null || echo "")
 	else
@@ -288,7 +288,7 @@ _Detected by \`_try_close_parent_tracker\` (pulse-issue-reconcile.sh, t2786). Po
 _try_close_parent_tracker() {
 	local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"
 	local all_closed="true" child_summary="" child_count=0
-	local child_num child_state child_title_line
+	local child_num="" child_state="" child_title_line=""
 
 	while IFS= read -r child_num; do
 		[[ -n "$child_num" && "$child_num" =~ ^[0-9]+$ ]] || continue
@@ -447,7 +447,7 @@ _action_ciw_single() {
 	local dedup_output=""
 	dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null) || return 1
 
-	local pr_ref pr_num merged_at
+	local pr_ref="" pr_num="" merged_at=""
 	pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
 	pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
 	merged_at=""
@@ -490,7 +490,7 @@ _action_rsd_single() {
 
 	local dedup_output=""
 	if dedup_output=$("$dedup_helper" has-open-pr "$issue_num" "$slug" "$issue_title" 2>/dev/null); then
-		local pr_ref pr_num merged_at
+		local pr_ref="" pr_num="" merged_at=""
 		pr_ref=$(printf '%s' "$dedup_output" | grep -o '#[0-9]*' | head -1) || pr_ref=""
 		pr_num=$(printf '%s' "$pr_ref" | tr -d '#')
 		merged_at=""
