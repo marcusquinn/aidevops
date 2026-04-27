@@ -3340,7 +3340,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2934 harden pulse-merge against admin --admin bypass on external-contributor PRs #auto-dispatch #bug #security ref:GH#21134 pr:#21144 completed:2026-04-27
 
-- [ ] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147
+- [x] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147 pr:#21346 completed:2026-04-27
 
 - [ ] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146
   - Decomposed into 53 child issues (#21283–#21290, #21294–#21339) via #21156
