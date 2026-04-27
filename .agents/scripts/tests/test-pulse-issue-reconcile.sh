@@ -407,9 +407,9 @@ test_t2984_time_budget_present() {
 		all_ok=0
 	fi
 
-	# 2. Default value 540 must be the documented default
-	if ! grep -qE '_t2984_budget=.*540' "${RECONCILE_SH}"; then
-		_fail "t2984: default budget 540 not present (or not parseable)"
+	# 2. Default value must be the documented default (GH#21380: reduced from 540 to 360)
+	if ! grep -qE '_t2984_budget=.*360' "${RECONCILE_SH}"; then
+		_fail "t2984/GH#21380: default budget 360 not present (or not parseable)"
 		all_ok=0
 	fi
 
@@ -452,29 +452,30 @@ test_t2984_time_budget_present() {
 test_t2984_budget_env_validation() {
 	local result
 	# Extract just the validation lines and exec them in isolation
+	# GH#21380: default changed from 540 to 360
 	result=$(bash -c '
 		RECONCILE_TIME_BUDGET_SECS="not-a-number"
-		_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-540}"
-		[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=540
+		_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
+		[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
 		echo "$_t2984_budget"
 	' 2>/dev/null)
-	if [[ "$result" == "540" ]]; then
-		_pass "t2984: non-numeric RECONCILE_TIME_BUDGET_SECS falls back to 540"
+	if [[ "$result" == "360" ]]; then
+		_pass "t2984/GH#21380: non-numeric RECONCILE_TIME_BUDGET_SECS falls back to 360"
 	else
-		_fail "t2984: garbage env var produced '$result' instead of fallback 540"
+		_fail "t2984/GH#21380: garbage env var produced '$result' instead of fallback 360"
 	fi
 
 	# Also verify zero is honoured (disable path)
 	result=$(bash -c '
 		RECONCILE_TIME_BUDGET_SECS="0"
-		_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-540}"
-		[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=540
+		_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
+		[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
 		echo "$_t2984_budget"
 	' 2>/dev/null)
 	if [[ "$result" == "0" ]]; then
-		_pass "t2984: RECONCILE_TIME_BUDGET_SECS=0 honoured (unbounded mode)"
+		_pass "t2984/GH#21380: RECONCILE_TIME_BUDGET_SECS=0 honoured (unbounded mode)"
 	else
-		_fail "t2984: '0' override produced '$result' instead of '0'"
+		_fail "t2984/GH#21380: '0' override produced '$result' instead of '0'"
 	fi
 	return 0
 }
