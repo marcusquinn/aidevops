@@ -53,21 +53,29 @@ External PR opens
        │
        ▼
 maintainer-gate.yml Check 0 ──── fail if (no linked issue) AND (author not collaborator)
-       │
+  [Layer 1 — workflow level]      t2937/GH#21154: now propagated to ALL pulse: true repos
+       │                          via aidevops sync-workflows (maintainer-gate-reusable.yml
+       │                          + per-repo caller). Before t2937, only the aidevops repo
+       │                          itself carried this layer.
        ▼
 review-bot-gate.yml ──────────── external-contributor exclusion blocks rate-limit grace
+  [Layer 2 — workflow level]
        │
        ▼
 _check_pr_merge_gates ────────── _is_collaborator_author on PR author (line ~1060)
+  [Layer 3 — pulse-side]
        │
        ▼
 approve_collaborator_pr ──────── self-check: refuses approval if author not collaborator (t2933)
+  [Layer 4 — function level]      pinned by test-pulse-merge-approve-collaborator-guard.sh
        │
        ▼
 gh pr merge --admin
 ```
 
 Each layer is independently sufficient to block a non-collaborator PR. The layered design is intentional: any single layer can be removed by future work without re-opening the hole.
+
+**Layer 1 generalisation (t2937):** before this task, only the aidevops repo carried `maintainer-gate.yml` at the workflow layer. Every other `pulse: true` repo was protected by layers 3 and 4 (pulse-side) only. t2937 converts the gate to a reusable workflow (`maintainer-gate-reusable.yml`) and propagates a caller template to all downstream repos via `aidevops sync-workflows`. See `reference/reusable-workflows.md` §"maintainer-gate (t2937 — security layer 1)".
 
 ## Test pinning
 

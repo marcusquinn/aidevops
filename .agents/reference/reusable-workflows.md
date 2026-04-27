@@ -27,33 +27,49 @@ The reusable pattern solves all three at once:
 |---|---|---|---|
 | `issue-sync.yml` | `issue-sync-reusable.yml` | `issue-sync-caller.yml` | t2770 (PR #20662) |
 | `review-bot-gate.yml` | `review-bot-gate-reusable.yml` | `review-bot-gate-caller.yml` | GH#20727 |
+| `maintainer-gate.yml` | `maintainer-gate-reusable.yml` | `maintainer-gate-caller.yml` | t2937 (GH#21154) |
+
+### maintainer-gate (t2937 — security layer 1)
+
+`maintainer-gate.yml` is the **first layer** of the four-layer defence-in-depth against supply-chain attacks (see `incident-gh17671-supply-chain.md`). Before t2937, only the aidevops repo carried this workflow; downstream `pulse: true` repos relied on the pulse-side layers alone. t2937 generalises the protection to every managed repo via `sync-workflows`.
+
+The workflow is self-contained (no framework script checkout needed — all logic is inline bash), so the reusable variant is structurally simpler than `issue-sync-reusable.yml`. The caller template (`maintainer-gate-caller.yml`) declares the triggers (`pull_request_target` + `issues` events) and the permissions ceiling; the reusable workflow owns all five jobs (PR gate, NMR label protection, PR retrigger, PR label protection, origin:worker label protection).
+
+**Propagation:** `aidevops sync-workflows --apply` installs or refreshes `maintainer-gate.yml` in every `pulse: true` repo. Drift is detected by `aidevops check-workflows`.
 
 ## Architecture
 
 ```
 aidevops repo (source of truth):
-  .github/workflows/issue-sync-reusable.yml       ← on: workflow_call:
-                                                     All jobs. All logic. 1300+ lines.
-  .github/workflows/issue-sync.yml                ← thin caller for aidevops's own CI
-                                                     (uses: ./.github/workflows/issue-sync-reusable.yml)
-  .github/workflows/review-bot-gate-reusable.yml  ← on: workflow_call: (GH#20727)
-                                                     All gate logic. Helper runtime-fetched.
-  .github/workflows/review-bot-gate.yml           ← thin caller for aidevops's own CI
-                                                     (uses: ./.github/workflows/review-bot-gate-reusable.yml)
+  .github/workflows/issue-sync-reusable.yml         ← on: workflow_call:
+                                                       All jobs. All logic. 1300+ lines.
+  .github/workflows/issue-sync.yml                  ← thin caller for aidevops's own CI
+                                                       (uses: ./.github/workflows/issue-sync-reusable.yml)
+  .github/workflows/review-bot-gate-reusable.yml    ← on: workflow_call: (GH#20727)
+                                                       All gate logic. Helper runtime-fetched.
+  .github/workflows/review-bot-gate.yml             ← thin caller for aidevops's own CI
+                                                       (uses: ./.github/workflows/review-bot-gate-reusable.yml)
+  .github/workflows/maintainer-gate-reusable.yml    ← on: workflow_call: (t2937/GH#21154)
+                                                       All five gate jobs. Inline bash, no checkout.
+  .github/workflows/maintainer-gate.yml             ← thin caller for aidevops's own CI
+                                                       (uses: ./.github/workflows/maintainer-gate-reusable.yml)
   .agents/templates/workflows/
-    issue-sync-caller.yml                         ← canonical downstream template (issue-sync)
-    review-bot-gate-caller.yml                    ← canonical downstream template (review-bot-gate)
-  .agents/scripts/issue-sync-helper.sh            ← framework shell (source of truth)
-  .agents/scripts/review-bot-gate-helper.sh       ← gate helper (source of truth, GH#20727)
+    issue-sync-caller.yml                           ← canonical downstream template (issue-sync)
+    review-bot-gate-caller.yml                      ← canonical downstream template (review-bot-gate)
+    maintainer-gate-caller.yml                      ← canonical downstream template (maintainer-gate)
+  .agents/scripts/issue-sync-helper.sh              ← framework shell (source of truth)
+  .agents/scripts/review-bot-gate-helper.sh         ← gate helper (source of truth, GH#20727)
   .agents/scripts/shared-constants.sh
   .agents/scripts/issue-sync-lib.sh
 
 downstream repo (thin callers):
-  .github/workflows/issue-sync.yml                ← ~45 lines, declares triggers,
-                                                     uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>
-  .github/workflows/review-bot-gate.yml           ← ~50 lines, declares triggers + concurrency,
-                                                     uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@<ref>
-  (no .agents/scripts/ needed — fetched at runtime via __aidevops/)
+  .github/workflows/issue-sync.yml                  ← ~45 lines, declares triggers,
+                                                       uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>
+  .github/workflows/review-bot-gate.yml             ← ~50 lines, declares triggers + concurrency,
+                                                       uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@<ref>
+  .github/workflows/maintainer-gate.yml             ← ~50 lines, declares triggers + permissions,
+                                                       uses: marcusquinn/aidevops/.github/workflows/maintainer-gate-reusable.yml@<ref>
+  (no .agents/scripts/ needed — fetched at runtime via __aidevops/ for sync/gate helpers)
 ```
 
 ### How a run flows
@@ -153,4 +169,6 @@ To make a new aidevops workflow reusable by downstream repos:
 - Issue [#20648](https://github.com/marcusquinn/aidevops/issues/20648) — Phase 1 drift detector
 - Issue [#20649](https://github.com/marcusquinn/aidevops/issues/20649) — Phase 2 opt-in resync
 - Issue [#20727](https://github.com/marcusquinn/aidevops/issues/20727) — review-bot-gate migration (SHA-pin stale drift)
+- Issue [#21154](https://github.com/marcusquinn/aidevops/issues/21154) — maintainer-gate migration (layer-1 defence-in-depth propagation, t2937)
+- Reference [`incident-gh17671-supply-chain.md`](incident-gh17671-supply-chain.md) — four-layer defence-in-depth; t2937 generalises layer 1 to all pulse: true repos
 - GitHub docs: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)

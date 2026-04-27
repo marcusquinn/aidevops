@@ -72,9 +72,14 @@ SCRIPT_NAME=$(basename "$0")
 # for every repo and classifies each (repo × workflow) independently.
 #
 # GH#20727: review-bot-gate added.
+# t2937/GH#21154: maintainer-gate added — layer-1 surface of the four-layer
+# defence-in-depth (incident-gh17671-supply-chain.md) propagated to all
+# pulse: true repos. Previously only the aidevops repo carried workflow-layer
+# protection; downstream repos now install a thin caller via sync-workflows.
 readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
+	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
 )
 
 # ─── Path resolution ────────────────────────────────────────────────────────
