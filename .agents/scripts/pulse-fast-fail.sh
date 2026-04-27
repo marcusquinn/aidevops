@@ -176,7 +176,7 @@ _ff_with_lock() {
 		# When owner.pid is absent, use lockdir mtime as age proxy. The normal
 		# mkdir→printf window is microseconds; a 5s threshold provides safe margin.
 		if [[ -z "$_ff_owner_pid" ]]; then
-			local _orphan_age_threshold _lock_mtime _lock_now _lock_age
+			local _orphan_age_threshold="" _lock_mtime="" _lock_now="" _lock_age=""
 			_orphan_age_threshold="${FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS:-5}"
 			# stat -c %Y (GNU/Linux) before stat -f %m (BSD/macOS) to avoid
 			# GNU stat printing filesystem info to stdout when -f is used.
