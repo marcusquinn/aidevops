@@ -1749,12 +1749,20 @@ gh_pr_list() {
 }
 
 #######################################
-# gh_issue_list — drop-in replacement for gh issue list.  (t2689)
-# Falls back to REST (`gh api GET /repos/{owner}/{repo}/issues`) when the
-# primary call fails AND GraphQL is exhausted. Supports --state, --label
-# (multiple), --assignee, --limit, --json, --jq. The --search flag is
-# accepted but silently skipped in the REST path (not supported by the
-# /repos/.../issues endpoint).
+# gh_issue_list — drop-in replacement for gh issue list.  (t2689, t2995)
+# Falls back to REST when the primary call fails AND GraphQL is exhausted.
+# Supports --state, --label (multiple), --assignee, --limit, --json, --jq,
+# --search.
+#
+# Routing (t2995):
+#   - --search non-empty → _rest_issue_search uses /search/issues?q=...
+#     (separate quota: 30 req/min). Preserves search semantics so the
+#     caller does not silently get a label-only result on fallback.
+#   - --search empty → _rest_issue_list uses /repos/{owner}/{repo}/issues.
+#
+# Pre-t2995 behaviour silently dropped --search in the REST path, causing
+# `_large_file_gate_find_existing_debt_issue` to match the wrong issue
+# during GraphQL exhaustion windows.
 #
 #   gh_issue_list --repo owner/repo --state open --label bug --json number,title
 #   gh_issue_list --repo owner/repo --state open --limit 500 --json number --jq length
@@ -1766,9 +1774,26 @@ gh_issue_list() {
 	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
-		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue list"
-		_rest_issue_list "$@"
-		rc=$?
+		# t2995: use search-aware REST fallback when --search is supplied.
+		# Walk argv to detect --search; the helper itself re-parses, but we
+		# need to know whether to dispatch to /search/issues (which preserves
+		# search semantics) or /repos/.../issues (which doesn't support it).
+		local _has_search=0
+		local _arg
+		for _arg in "$@"; do
+			case "$_arg" in
+			--search|--search=*) _has_search=1; break ;;
+			esac
+		done
+		if [[ $_has_search -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to /search/issues for issue list (--search preserved, t2995)"
+			_rest_issue_search "$@"
+			rc=$?
+		else
+			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue list"
+			_rest_issue_list "$@"
+			rc=$?
+		fi
 	fi
 	return $rc
 }

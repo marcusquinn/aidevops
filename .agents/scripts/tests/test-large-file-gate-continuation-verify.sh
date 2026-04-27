@@ -92,6 +92,20 @@ GH_CREATE_RESPONSE_URL=""
 # shellcheck source=/dev/null
 source "$GATE_SCRIPT"
 
+# t2995: define wrapper stubs so the gate's gh_issue_list calls reach the
+# gh() shell-function stub below. Without these, gh_issue_list resolves to
+# a missing external command (rc=127), which the old gate code path
+# swallowed as "no match" but the new t2995 path correctly treats as
+# "lookup failed → defer".
+gh_issue_list() {
+	gh issue list "$@"
+	return $?
+}
+
+# t2995: no-op the 2-second retry sleep introduced for search-index lag
+# so the test doesn't actually pause.
+sleep() { return 0; }
+
 gh() {
 	# Log every call for debugging
 	printf '%s\n' "gh $*" >>"$GH_CALLS_LOG"

@@ -368,26 +368,52 @@ _large_file_gate_verify_prior_reduced_size() {
 }
 
 #######################################
-# t2164 helper — find an open or recently-closed file-size-debt issue
-# that mentions `_lf_basename`. Prints "<state>:<number>" on stdout when
-# found (state is "open" or "closed"); prints nothing otherwise.
+# t2164 / t2995 helper — find an open or recently-closed file-size-debt
+# issue that mentions `_lf_basename`. Prints "<state>:<number>" on stdout
+# when found (state is "open" or "closed"); prints nothing otherwise.
 #
 # State is emitted as a stdout prefix instead of via `printf -v` because the
 # caller invokes this helper in a command substitution `$(…)`, which runs in
 # a subshell — `printf -v` in the subshell cannot reach the caller's scope.
 # Encoding both values in stdout sidesteps the subshell boundary entirely.
 #
+# t2995: distinguish three outcomes via exit code so the caller can defer
+# instead of duplicating on a transient lookup failure (the historical bug
+# where a 15s gh wall-clock timeout was swallowed by `|| _open=""` and
+# treated as "no match", causing the gate to file a duplicate on every
+# scanner cycle that timed out — observed 7 duplicates for worktree-helper.sh
+# alone over 30 days).
+#
 # Arguments: repo_slug, lf_basename
 # Stdout: "open:12345", "closed:18706", or empty
+# Exit codes:
+#   0 — match found (stdout populated)
+#   1 — no match (stdout empty, lookup succeeded)
+#   2 — lookup failed (timeout, network error, gh non-zero) — caller should
+#       defer. The next pulse cycle will retry.
 #######################################
 _large_file_gate_find_existing_debt_issue() {
 	local repo_slug="$1"
 	local lf_basename="$2"
 
-	local _open
+	# Open-state lookup. One retry with 2s backoff covers GitHub search
+	# index lag (typically 1-3s after issue creation) — t2995 investigation
+	# step 4. We only retry when the call SUCCEEDED but returned empty;
+	# retrying a real failure would just hit the same timeout twice.
+	local _open _open_rc=0
 	_open=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label "file-size-debt" --search "$lf_basename" \
-		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open=""
+		--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
+	if [[ $_open_rc -eq 0 && -z "$_open" ]]; then
+		sleep 2
+		_open=$(gh_issue_list --repo "$repo_slug" --state open \
+			--label "file-size-debt" --search "$lf_basename" \
+			--json number --jq '.[0].number // empty' --limit 5 2>/dev/null) || _open_rc=$?
+	fi
+	if [[ $_open_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] WARN: file-size-debt dedup open-search failed for ${lf_basename} (rc=${_open_rc}); deferring (t2995)" >>"$LOGFILE"
+		return 2
+	fi
 	if [[ -n "$_open" ]]; then
 		printf 'open:%s' "$_open"
 		return 0
@@ -401,12 +427,16 @@ _large_file_gate_find_existing_debt_issue() {
 		return 1
 	fi
 
-	local _closed
+	local _closed _closed_rc=0
 	_closed=$(gh_issue_list --repo "$repo_slug" \
 		--state closed --label "file-size-debt" \
 		--search "$lf_basename closed:>$_recent_date" \
 		--json number --jq '.[0].number // empty' \
-		--limit 5 2>/dev/null) || _closed=""
+		--limit 5 2>/dev/null) || _closed_rc=$?
+	if [[ $_closed_rc -ne 0 ]]; then
+		echo "[pulse-wrapper] WARN: file-size-debt dedup closed-search failed for ${lf_basename} (rc=${_closed_rc}); deferring (t2995)" >>"$LOGFILE"
+		return 2
+	fi
 	if [[ -n "$_closed" ]]; then
 		printf 'closed:%s' "$_closed"
 		return 0
@@ -519,8 +549,16 @@ _large_file_gate_create_debt_issue() {
 
 	# t2164: helper encodes state in stdout as "<state>:<number>" — subshell
 	# boundary prevents `printf -v` from crossing the command substitution.
-	local _existing_combined _existing _existing_state
-	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$_lf_basename") || _existing_combined=""
+	# t2995: helper now returns 2 when lookup fails (timeout / gh failure),
+	# distinct from 1 = no match. On lookup failure we MUST NOT fall through
+	# to filing a fresh issue — that's the duplicate-creation bug. Defer to
+	# the next pulse cycle.
+	local _existing_combined _existing _existing_state _lookup_rc=0
+	_existing_combined=$(_large_file_gate_find_existing_debt_issue "$repo_slug" "$_lf_basename") || _lookup_rc=$?
+	if [[ "$_lookup_rc" -eq 2 ]]; then
+		echo "[pulse-wrapper] file-size-debt dedup lookup failed for ${_lf_basename} (parent #${parent_issue}); deferring filing to next cycle (t2995)" >>"$LOGFILE"
+		return 0
+	fi
 	if [[ -n "$_existing_combined" && "$_existing_combined" == *:* ]]; then
 		_existing_state="${_existing_combined%%:*}"
 		_existing="${_existing_combined#*:}"

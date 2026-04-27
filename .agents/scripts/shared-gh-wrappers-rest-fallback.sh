@@ -881,3 +881,107 @@ _rest_issue_list() {
 	fi
 	return $?
 }
+
+#######################################
+# _rest_issue_search: GET /search/issues?q=...  (t2995)
+# REST-side equivalent of `gh issue list --search`. Used by the gh_issue_list
+# wrapper when GraphQL is exhausted AND the call carried a --search filter.
+# The plain /repos/{owner}/{repo}/issues endpoint does NOT support full-text
+# search, so the prior REST translator silently dropped --search and returned
+# label-only results — a silent-correctness bug that caused the file-size-debt
+# dedup helper to match wrong issues during exhaustion windows.
+#
+# Translation:
+#   gh issue list --repo OWNER/REPO --state open \
+#     --label LABEL --search QUERY --json number --jq '.[0].number'
+# becomes:
+#   gh api /search/issues?q=QUERY+repo:OWNER/REPO+is:issue+is:open+label:LABEL \
+#     --jq '.items[0].number'
+#
+# Notes:
+#   - Search API has its own quota (30 req/min for authenticated users) —
+#     separate from both core REST and GraphQL pools.
+#   - Multiple --label flags are AND-joined into multiple `+label:"X"` qualifiers.
+#   - --json FIELDS is accepted for parity but ignored (caller uses --jq).
+#   - --jq expressions written for `gh issue list` operate on a flat array
+#     (e.g. `.[0].number`). The /search/issues endpoint wraps results in
+#     `{items:[...]}`. To preserve drop-in semantics, we extract `.items`
+#     before applying the user's jq filter.
+#
+# Returns the underlying gh api exit code.
+#######################################
+_rest_issue_search() {
+	gh_record_call rest 2>/dev/null || true
+	local repo=""
+	local state=""
+	local search=""
+	local limit=30
+	local jq_expr=""
+	local -a labels
+	local _tok
+	labels=()
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--state) state="${2:-}"; shift 2 ;;
+		--state=*) state="${_arg#--state=}"; shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--limit) limit="${2:-}"; shift 2 ;;
+		--limit=*) limit="${_arg#--limit=}"; shift ;;
+		--search) search="${2:-}"; shift 2 ;;
+		--search=*) search="${_arg#--search=}"; shift ;;
+		--json) shift 2 ;;
+		--json=*) shift ;;
+		--jq) jq_expr="${2:-}"; shift 2 ;;
+		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$repo" || -z "$search" ]]; then
+		printf '_rest_issue_search: --repo and --search are required\n' >&2
+		return 1
+	fi
+
+	# Build the q= parameter. Each token is URI-encoded individually then
+	# joined with `+`. The repo:/is:issue/state qualifiers go AFTER the
+	# user-supplied search to preserve the user's term ordering.
+	local _q
+	_q=$(jq -rn --arg v "$search" '$v | @uri')
+	local _repo_enc
+	_repo_enc=$(jq -rn --arg v "$repo" '$v | @uri')
+	_q="${_q}+repo:${_repo_enc}+is:issue"
+	if [[ -n "$state" && "$state" != "all" ]]; then
+		# /search/issues uses `is:open` / `is:closed`, not `state:`.
+		_q="${_q}+is:${state}"
+	fi
+	local _label
+	for _label in "${labels[@]}"; do
+		local _label_enc
+		_label_enc=$(jq -rn --arg v "$_label" '$v | @uri')
+		_q="${_q}+label:%22${_label_enc}%22"
+	done
+
+	local _path="/search/issues?q=${_q}&per_page=${limit}"
+
+	# Translate caller's jq (which expects a flat array) into one that
+	# operates on .items. If no --jq, just return .items as a JSON array.
+	local _final_jq
+	if [[ -n "$jq_expr" ]]; then
+		_final_jq=".items | ${jq_expr}"
+	else
+		_final_jq=".items"
+	fi
+
+	local _gh_cmd=(gh api "$_path" --jq "$_final_jq")
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "${_gh_cmd[@]}"
+	else
+		"${_gh_cmd[@]}"
+	fi
+	return $?
+}
