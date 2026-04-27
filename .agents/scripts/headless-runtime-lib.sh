@@ -447,15 +447,17 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V6]
+[HEADLESS_CONTINUATION_CONTRACT_V7]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
 Setup shortcuts -- the dispatcher has already done these for you:
-- Your worktree is pre-created. Check $WORKER_WORKTREE_PATH env var for the path.
-  If set, you are already in the worktree on a feature branch. Do NOT call
-  pre-edit-check.sh, worktree-helper.sh, or session-rename tools.
-  If not set, create a worktree yourself via worktree-helper.sh add.
+- Your worktree is pre-created. $WORKER_WORKTREE_PATH contains the path. You are
+  already in the worktree on a feature branch. Do NOT call pre-edit-check.sh,
+  worktree-helper.sh, or session-rename tools under any circumstances.
+  Pre-creation is guaranteed by the dispatcher (GH#21353 / t2983 Fix C). If
+  WORKER_WORKTREE_PATH is unset, the headless runtime has already aborted — you
+  are not running. Do NOT attempt to create a worktree yourself.
 - Do NOT call aidevops-update-check.sh -- it exits immediately for headless workers.
 - Do NOT call session-rename or session-rename_sync_branch -- your session title
   is already set to the issue title by the dispatcher.

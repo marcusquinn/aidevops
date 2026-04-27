@@ -173,20 +173,35 @@ into) with the issue number in its branch name will be discovered. The
 `work_dir` fallback preserves current behaviour when no
 issue-numbered worktree exists.
 
-### Fix C — Resolve the V6 contract contradiction
+### Fix C — Resolve the V6 contract contradiction (IMPLEMENTED — t2983 / GH#21355)
 
-`headless-runtime-lib.sh:418-460` tells the worker both not to use
-`worktree-helper.sh` and to use it as a fallback. Pick one:
+**Status:** Implemented. Path 1 (recommended) chosen.
 
-- If pre-creation must always succeed (recommended), forbid worker
-  worktree creation absolutely and have headless-runtime exit with a
-  clear error if `WORKER_WORKTREE_PATH` is unset.
-- If pre-creation can fail, document the worker-creates-own-worktree
-  path explicitly, *and* have the worker echo the new path into a
-  well-known file that `_worker_produced_output` reads.
+**Path taken:** Pre-creation must always succeed; worker never creates worktrees.
 
-The current contract makes Mode B nearly inevitable on any
-pre-creation hiccup.
+**What changed (PR for GH#21355):**
+
+1. `headless-runtime-lib.sh::append_worker_headless_contract` — contract bumped
+   from V6 to V7. The contradictory "If not set, create a worktree yourself via
+   `worktree-helper.sh add`" clause is removed. The prohibition is now
+   unconditional with rationale: "Pre-creation is guaranteed by the dispatcher
+   (GH#21353 / t2983 Fix C). If WORKER_WORKTREE_PATH is unset, the headless
+   runtime has already aborted — you are not running."
+
+2. `headless-runtime-helper.sh::_cmd_run_prepare` — early guard added: if
+   `WORKER_ISSUE_NUMBER` is set (worker dispatch) but `WORKER_WORKTREE_PATH` is
+   unset, the function logs a fatal error and returns non-zero immediately.
+   This turns a silent mis-dispatch into an observable error.
+
+3. `.agents/scripts/tests/test-headless-contract-clarity.sh` — new test that
+   verifies the emitted contract does NOT contain both "Do NOT call" and
+   "create a worktree" clauses simultaneously, and that V7 is the active
+   contract version.
+
+**Depends on:** Fix A (GH#21353, t2981) — merged PR #21359 on 2026-04-27.
+Without Fix A's non-silent pre-creation failure, WORKER_WORKTREE_PATH could
+still be unset at worker launch time. Fix C's guard in `_cmd_run_prepare`
+catches this as an explicit fatal rather than a silent wrong-directory error.
 
 ## Diagnosing in production
 
