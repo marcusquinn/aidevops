@@ -3301,7 +3301,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2933 harden approve_collaborator_pr: defense-in-depth + regression test (GH#17671 follow-up) #auto-dispatch #security ref:GH#21132 pr:#21133 completed:2026-04-26
 
-- [ ] t2934 harden pulse-merge against admin --admin bypass on external-contributor PRs #auto-dispatch #bug #security ref:GH#21134
+- [x] t2934 harden pulse-merge against admin --admin bypass on external-contributor PRs #auto-dispatch #bug #security ref:GH#21134 pr:#21144 completed:2026-04-27
 
 - [ ] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147
 
