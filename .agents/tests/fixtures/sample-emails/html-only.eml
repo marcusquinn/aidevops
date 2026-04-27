@@ -1,0 +1,18 @@
+From: marketing@example.com
+To: user@example.com
+Subject: HTML only email with tracking pixel
+Date: Wed, 23 Apr 2026 11:00:00 +0000
+Message-ID: <test-002@example.com>
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+Content-Transfer-Encoding: 7bit
+
+<html>
+<body>
+<h1>Newsletter</h1>
+<p>This is an HTML-only email with a <a href="https://example.com?utm_source=email&utm_medium=newsletter">tracked link</a>.</p>
+<p>It contains important content.</p>
+<img src="https://tracker.example.com/pixel.gif" width="1" height="1" />
+<img src="https://analytics.example.com/beacon.png" alt="" />
+</body>
+</html>

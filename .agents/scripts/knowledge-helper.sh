@@ -541,6 +541,29 @@ _cmd_add_download_url() {
 	return 0
 }
 
+# _cmd_add_route_email: check if file is .eml/.emlx and route to email handler
+# Returns 0 and exits early if routed, returns 1 to fall through to generic path
+# Args: <file_path> <repo_path> <sensitivity_override>
+_cmd_add_route_email() {
+	local file_path="$1"
+	local repo_path="$2"
+	local sensitivity_override="$3"
+	local _ext="${file_path##*.}"
+	_ext=$(echo "$_ext" | tr '[:upper:]' '[:lower:]')
+	if [[ "$_ext" == "eml" || "$_ext" == "emlx" ]]; then
+		local _email_helper="${SCRIPT_DIR}/email-ingest-helper.sh"
+		if [[ -x "$_email_helper" ]]; then
+			local _email_args=("ingest" "$file_path" "--repo-path" "$repo_path")
+			[[ -n "$sensitivity_override" ]] && _email_args+=("--sensitivity" "$sensitivity_override")
+			bash "$_email_helper" "${_email_args[@]}"
+			return 0
+		else
+			print_warning "email-ingest-helper.sh not found — falling back to generic ingestion"
+		fi
+	fi
+	return 1
+}
+
 # cmd_add: ingest a file or URL into the knowledge plane sources/ directory
 # Arguments: <file|url> [--id <id>] [--sensitivity <tier>] [--allow-large] [--repo-path <path>]
 cmd_add() {
@@ -610,6 +633,10 @@ cmd_add() {
 		local abs_file_path
 		abs_file_path="$(cd "$(dirname "$file_path")" && pwd)/$(basename "$file_path")"
 		source_uri="file://${abs_file_path}"
+	fi
+	# Route .eml/.emlx files through the dedicated email ingestion handler
+	if _cmd_add_route_email "$file_path" "$repo_path" "$sensitivity_override"; then
+		return 0
 	fi
 	# Derive source_id from filename if not specified
 	if [[ -z "$source_id" ]]; then
