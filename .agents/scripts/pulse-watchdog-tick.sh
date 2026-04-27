@@ -57,11 +57,13 @@ _wd_log() {
 
 # Resolve the configured pulse interval from settings.json (default 180s).
 # Mirrors _read_pulse_interval_seconds in setup-modules/schedulers.sh.
+# Reads orchestration.pulse_interval_seconds canonically; falls back to
+# supervisor.pulse_interval_seconds for legacy settings.json files (t2946).
 _read_pulse_interval() {
 	local _interval=180
 	if command -v jq >/dev/null 2>&1 && [[ -f "$_SETTINGS_FILE" ]]; then
 		local _raw
-		_raw=$(jq -r '.supervisor.pulse_interval_seconds // empty' "$_SETTINGS_FILE" 2>/dev/null) || _raw=""
+		_raw=$(jq -r '.orchestration.pulse_interval_seconds // .supervisor.pulse_interval_seconds // empty' "$_SETTINGS_FILE" 2>/dev/null) || _raw=""
 		if [[ -n "$_raw" && "$_raw" =~ ^[0-9]+$ ]]; then
 			_interval="$_raw"
 		fi

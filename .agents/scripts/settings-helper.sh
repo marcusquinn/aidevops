@@ -388,10 +388,28 @@ cmd_validate() {
 		errors=$((errors + 1))
 	fi
 
-	local pulse_interval
-	pulse_interval=$(jq -r '.supervisor.pulse_interval_seconds // 0' "$SETTINGS_FILE" 2>/dev/null)
+	# Read orchestration.pulse_interval_seconds canonically; fall back to
+	# supervisor.pulse_interval_seconds for legacy settings files (t2946).
+	local pulse_interval has_orchestration_interval has_supervisor_interval
+	has_orchestration_interval=$(jq -r 'if .orchestration.pulse_interval_seconds != null then "yes" else "no" end' "$SETTINGS_FILE" 2>/dev/null)
+	has_supervisor_interval=$(jq -r 'if .supervisor.pulse_interval_seconds != null then "yes" else "no" end' "$SETTINGS_FILE" 2>/dev/null)
+	pulse_interval=$(jq -r '.orchestration.pulse_interval_seconds // .supervisor.pulse_interval_seconds // 0' "$SETTINGS_FILE" 2>/dev/null)
+	if [[ "$has_supervisor_interval" == "yes" && "$has_orchestration_interval" == "no" ]]; then
+		print_warning "supervisor.pulse_interval_seconds is deprecated — migrate to orchestration.pulse_interval_seconds"
+		print_info "  Run: aidevops update  (auto-migrates on next update)"
+	elif [[ "$has_supervisor_interval" == "yes" && "$has_orchestration_interval" == "yes" ]]; then
+		local sv_val orch_val
+		sv_val=$(jq -r '.supervisor.pulse_interval_seconds' "$SETTINGS_FILE" 2>/dev/null)
+		orch_val=$(jq -r '.orchestration.pulse_interval_seconds' "$SETTINGS_FILE" 2>/dev/null)
+		if [[ "$sv_val" != "$orch_val" ]]; then
+			print_warning "Both orchestration.pulse_interval_seconds ($orch_val) and supervisor.pulse_interval_seconds ($sv_val) are set with different values"
+			print_info "  orchestration.pulse_interval_seconds wins — remove the stale supervisor.* key"
+		else
+			print_warning "supervisor.pulse_interval_seconds is deprecated — remove it (orchestration.pulse_interval_seconds already set)"
+		fi
+	fi
 	if [[ "$pulse_interval" -lt 30 || "$pulse_interval" -gt 3600 ]]; then
-		print_warning "supervisor.pulse_interval_seconds ($pulse_interval) should be 30-3600"
+		print_warning "orchestration.pulse_interval_seconds ($pulse_interval) should be 30-3600"
 		errors=$((errors + 1))
 	fi
 
@@ -508,7 +526,8 @@ SETTINGS KEYS (dot-notation):
     auto_update.openclaw_auto_update     OpenClaw auto-update (default: true)
     auto_update.openclaw_freshness_hours Hours between OpenClaw checks (default: 24)
     supervisor.pulse_enabled             Supervisor pulse on/off (default: true)
-    supervisor.pulse_interval_seconds    Pulse interval (default: 180)
+    orchestration.pulse_interval_seconds Pulse interval in seconds (default: 180) [canonical]
+    supervisor.pulse_interval_seconds    DEPRECATED: use orchestration.pulse_interval_seconds
     supervisor.stale_threshold_seconds   Stale worker threshold (default: 1800)
     supervisor.circuit_breaker_max_failures  Max failures before pause (default: 3)
     supervisor.strategic_review_hours    Hours between strategic reviews (default: 4)
