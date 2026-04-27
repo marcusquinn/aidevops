@@ -127,6 +127,77 @@ The helper: `.agents/scripts/knowledge-helper.sh`.
 
 ---
 
+## Corpus Index (t2850)
+
+The pulse-driven `r042` routine runs hourly, incrementally rebuilds per-source
+PageIndex trees and aggregates them into a corpus-wide tree for vectorless RAG.
+
+### How It Works
+
+1. **Per-source tree** (`build-source <id>`): reads `_knowledge/sources/<id>/text.txt`,
+   calls `pageindex-generator.py` with the source's sensitivity-based LLM tier, writes
+   `_knowledge/sources/<id>/tree.json`.
+2. **Corpus aggregation** (`build`): groups source trees by kind (invoices, contracts, …),
+   builds a meta-tree with root `corpus` and children grouped by kind, writes
+   `_knowledge/index/tree.json`.
+3. **Incremental rebuild**: hashes source IDs + tree.json mtimes; skips if hash matches
+   `_knowledge/index/.tree-hash`. Only newly-added or changed sources are rebuilt.
+4. **LLM routing**: each source's sensitivity field maps to an `llm-routing-helper.sh`
+   tier (`public/internal/sensitive/privileged`). Routing decisions are audited to
+   `_knowledge/index/llm-audit.log` (JSONL, hashed — no raw content).
+
+### Query
+
+```bash
+# Query via CLI
+aidevops knowledge search "all invoices over £5k"
+
+# Direct invocation
+knowledge-index-helper.sh query "all invoices over £5k"
+```
+
+Returns JSON: `{"matches": [{"source_id": "…", "score": 4, "anchor": "…", "excerpt": "…"}]}`
+
+`aidevops knowledge search` auto-routes to `knowledge-index-helper.sh query` when the
+corpus tree exists; falls back to grep over `text.txt` files otherwise.
+
+### Routine r042
+
+```
+- [x] r042 Knowledge index build — incremental PageIndex tree across corpus repeat:cron(*/60 * * * *) ~2m run:scripts/knowledge-index-helper.sh build
+```
+
+To disable: change `[x]` to `[ ]` in `TODO.md` and commit.
+
+### Helper CLI
+
+```bash
+# Build corpus index (same as r042 routine)
+~/.aidevops/agents/scripts/knowledge-index-helper.sh build
+
+# Build tree for one source
+~/.aidevops/agents/scripts/knowledge-index-helper.sh build-source <source-id>
+
+# Query the corpus
+~/.aidevops/agents/scripts/knowledge-index-helper.sh query "invoice 2026"
+
+# Show index state
+~/.aidevops/agents/scripts/knowledge-index-helper.sh status
+```
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `.agents/scripts/knowledge-index-helper.sh` | Shell orchestrator — build, query, status |
+| `.agents/scripts/knowledge_index_helpers.py` | Python helper — aggregate + keyword-score query |
+| `_knowledge/sources/<id>/tree.json` | Per-source PageIndex tree |
+| `_knowledge/index/tree.json` | Corpus meta-tree (aggregated) |
+| `_knowledge/index/.tree-hash` | Incremental rebuild cache |
+| `_knowledge/index/llm-audit.log` | LLM routing audit (JSONL) |
+
+---
+
 ## Review Gate (t2845)
 
 The pulse-driven `r040` routine runs every 15 minutes, scans
