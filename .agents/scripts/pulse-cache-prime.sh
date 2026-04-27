@@ -69,7 +69,7 @@ main() {
 		return 1
 	fi
 
-	local start_t end_t duration
+	local start_t="" end_t="" duration=""
 	start_t=$(date +%s 2>/dev/null) || start_t=0
 
 	_log "Starting cache prime (t2992)..."
