@@ -1130,6 +1130,46 @@ GITATTRSEOF
 	# nesting depth and function length (t2265).
 	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name"
 
+	# ─── Badge initialization (t2975) ────────────────────────────────────────
+	# Install the loc-badge caller workflow and seed the canonical README badge
+	# block in fresh repos. Both operations are idempotent. Skip for local_only
+	# repos (no remote to host SVGs or run GitHub Actions).
+	local _badges_helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+	local _wf_template="$AGENTS_DIR/templates/workflows/loc-badge-caller.yml"
+	local _wf_dest="$project_root/.github/workflows/loc-badge.yml"
+
+	if [[ -n "$repo_slug" ]]; then
+		# Install loc-badge caller workflow if template is available and file is absent
+		if [[ -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
+			mkdir -p "$project_root/.github/workflows"
+			cp "$_wf_template" "$_wf_dest"
+			print_success "Installed .github/workflows/loc-badge.yml (LOC badge workflow)"
+		elif [[ -f "$_wf_dest" ]]; then
+			print_info ".github/workflows/loc-badge.yml already present"
+		fi
+
+		# Seed the canonical badge block in README.md
+		local _readme_path="$project_root/README.md"
+		if [[ -f "$_badges_helper" && -f "$_readme_path" ]]; then
+			if bash "$_badges_helper" inject "$_readme_path" "$repo_slug" 2>/dev/null; then
+				print_success "Seeded canonical badge block in README.md"
+			else
+				print_warning "Badge block injection failed — run manually: aidevops badges sync --repo $repo_slug --apply"
+			fi
+		elif [[ ! -f "$_readme_path" ]]; then
+			print_info "No README.md found — skipping badge block injection (create README.md first)"
+		fi
+
+		# Remind about SYNC_PAT if the repo has a remote and isn't local_only
+		local _is_local_only
+		_is_local_only=$(jq -r --arg s "$repo_slug" \
+			'.initialized_repos // [] | map(select(.slug == $s)) | if length > 0 then .[0].local_only // false else false end' \
+			"$HOME/.config/aidevops/repos.json" 2>/dev/null || echo "false")
+		if [[ "$_is_local_only" != "true" ]]; then
+			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can push badge SVGs — see: aidevops --help sync-pat"
+		fi
+	fi
+
 	# Run security posture assessment if enabled (t1412.11)
 	if [[ "$enable_security" == "true" ]]; then
 		local security_posture_script="$AGENTS_DIR/scripts/security-posture-helper.sh"

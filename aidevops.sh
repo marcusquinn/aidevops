@@ -2009,6 +2009,75 @@ main() {
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
 	check-workflows | workflows) _dispatch_helper "check-workflows-helper.sh" "check-workflows-helper.sh" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
+	badges)
+		# Badge management: render | check | sync | install (t2975)
+		# Bare 'aidevops badges' with no subcommand shows a usage summary.
+		# Subcommands:
+		#   render <slug>               — render canonical badge block for a repo
+		#   check  [--repo SLUG] [--json] [--verbose]  — cross-repo drift check
+		#   sync   [--repo SLUG] [--apply]              — inject badge block + install workflow
+		#   install [--repo SLUG] [--apply]             — install loc-badge caller workflow only
+		local _badges_sub="${1:-help}"
+		local _badges_check_h="badges-check-helper.sh"
+		local _badges_sync_h="badges-sync-helper.sh"
+		case "$_badges_sub" in
+		render)
+			shift
+			local _render_helper
+			_render_helper=$(bash -c '
+				d="$HOME/.aidevops/agents/scripts/readme-badges-helper.sh"
+				l="'"$AGENTS_DIR"'/scripts/readme-badges-helper.sh"
+				[[ -f "$d" ]] && echo "$d" || echo "$l"
+			')
+			if [[ -f "$_render_helper" ]]; then
+				bash "$_render_helper" render "$@"
+			else
+				print_error "readme-badges-helper.sh not found. Run: aidevops update"
+				exit 1
+			fi
+			;;
+		check)
+			shift
+			_dispatch_helper "$_badges_check_h" "$_badges_check_h" "$@"
+			;;
+		sync)
+			shift
+			_dispatch_helper "$_badges_sync_h" "$_badges_sync_h" "$@"
+			;;
+		install)
+			shift
+			_dispatch_helper "$_badges_sync_h" "$_badges_sync_h" --workflow-only "$@"
+			;;
+		help | --help | -h | "")
+			echo ""
+			echo "aidevops badges — README badge block and LOC workflow management (t2975)"
+			echo ""
+			echo "Subcommands:"
+			echo "  render  <slug>                 Print canonical badge block for a repo"
+			echo "  check   [--repo SLUG] [--json]  Detect badge drift across managed repos"
+			echo "  sync    [--repo SLUG] [--apply] Inject badge block + install LOC workflow"
+			echo "  install [--repo SLUG] [--apply] Install loc-badge caller workflow only"
+			echo ""
+			echo "Options (check/sync/install):"
+			echo "  --repo SLUG    Limit to a single repo"
+			echo "  --apply        Actually perform the sync (default: dry-run)"
+			echo "  --json         Machine-readable output"
+			echo "  --verbose      Show diff summaries (check only)"
+			echo ""
+			echo "Examples:"
+			echo "  aidevops badges check                       # scan all repos for badge drift"
+			echo "  aidevops badges check --json | jq '.[]'    # machine-readable output"
+			echo "  aidevops badges render owner/repo           # print badge block"
+			echo "  aidevops badges sync                        # dry-run sync across all repos"
+			echo "  aidevops badges sync --repo owner/r --apply # apply to a single repo"
+			echo ""
+			;;
+		*)
+			print_error "Unknown badges subcommand: $_badges_sub (try render|check|sync|install|help)"
+			exit 1
+			;;
+		esac
+		;;
 	security) _cmd_security "$@" ;;
 	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
 	detect | scan) cmd_detect ;;

@@ -641,7 +641,7 @@ Observed in t2178: Codacy's one-click "Apply fix" / "AutoFix" diffs corrupt mark
 
 ## Quick Reference
 
-- **CLI**: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|knowledge]`
+- **CLI**: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|badges|knowledge]`
 - **Knowledge plane**: `aidevops knowledge [init|status|provision]` — opt-in file staging area for AI-assisted ingestion. Set `"knowledge": "repo"|"personal"` in `repos.json`. Full contract: `aidevops/knowledge-plane.md`.
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). For personal scripts, use `~/.aidevops/agents/custom/scripts/` (survives updates). To fix framework scripts, edit `~/Git/aidevops/.agents/scripts/<name>.sh` and run `setup.sh --non-interactive`. See `reference/customization.md`.
@@ -845,6 +845,15 @@ Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR 
 **Workflow drift detector (t2778):** `aidevops check-workflows` iterates `~/.config/aidevops/repos.json` and classifies each repo's `.github/workflows/issue-sync.yml` against the canonical caller template at `.agents/templates/workflows/issue-sync-caller.yml`. Classifications: `CURRENT/CALLER`, `CURRENT/SELF-CALLER`, `DRIFTED/CALLER`, `NEEDS-MIGRATION`, `NO-WORKFLOW`, `LOCAL-ONLY`, `NO-TEMPLATE`. Exit code 1 if any repo is `DRIFTED/CALLER` or `NEEDS-MIGRATION` (suitable for CI gates). Flags: `--repo OWNER/REPO`, `--json`, `--verbose`.
 
 **Workflow drift resync (t2779):** `aidevops sync-workflows` consumes the detector output and either installs (NEEDS-MIGRATION) or refreshes (DRIFTED/CALLER) the canonical caller template in each target repo. Default is `--dry-run` (report planned actions); pass `--apply` to write, commit, branch, push, and open a PR per repo. Flags: `--repo OWNER/REPO` (single repo), `--ref @vX` (target pin for new installs), `--force-ref` (overwrite existing pins), `--branch NAME` (override default `chore/workflow-sync-YYYYMMDD`), `--json`. Skips repos with dirty working tree or not on default branch. Never touches the aidevops repo itself.
+
+**Badge management (t2975):** `aidevops badges` manages README badge blocks and the LOC badge workflow across all registered repos. Full documentation: `.agents/aidevops/badges.md`.
+
+- **`aidevops badges render <slug>`** — print the canonical badge block for a repo (delegates to `readme-badges-helper.sh render`).
+- **`aidevops badges check [--repo OWNER/REPO] [--json] [--verbose]`** — cross-repo drift detection. Classifies all non-local-only repos as `CURRENT` / `DRIFTED` / `NO-BLOCK` / `NO-README` / `LOCAL-ONLY` / `EXTERNAL`. Exit 1 on drift. Check enumerates all repos; owned-org filter applies only to write operations.
+- **`aidevops badges sync [--repo OWNER/REPO] [--apply]`** — inject the canonical badge block into README.md and install the loc-badge caller workflow. Default is dry-run. `--apply` writes, commits, pushes, and opens a PR per repo. Restricted to owned-org repos (see `badge-orgs.conf`). Helper: `.agents/scripts/badges-sync-helper.sh`.
+- **`aidevops badges install [--repo OWNER/REPO] [--apply]`** — install the loc-badge caller workflow only (skips README badge block injection).
+- **Owned-org filter:** sync/install operations only touch repos whose org is in the owned-orgs list (`marcusquinn`, `awardsapp`, `essentials-com`, `wpallstars`). Override: create `~/.config/aidevops/badge-orgs.conf` with one org per line.
+- **`aidevops init` badge hook:** when initializing a fresh repo with a known `repo_slug`, `cmd_init` automatically installs the loc-badge caller workflow and seeds the canonical badge block in README.md. Also reminds about `SYNC_PAT` for GitHub Actions.
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
