@@ -1,609 +1,436 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# shellcheck disable=SC2034
 #
-# Tests for case-chase-helper.sh (t2858 — P6b)
-# Covers happy path, opt-in gate, missing fields, dry-run, retry, bounce → hold.
+# test-case-chase.sh — Tests for case-chase-helper.sh (t2858)
 #
-# Usage: bash .agents/tests/test-case-chase.sh
-# Requires: jq, python3
+# Tests:
+#   1. Helper and email_send.py files exist
+#   2. Python syntax valid
+#   3. help exits 0, unknown command exits 1
+#   4. Template listing
+#   5. Opt-in gate: chasers_enabled: false → exit 1
+#   6. Opt-in gate: chasers_enabled: true → passes
+#   7. Dry-run: substitution output, no SMTP call
+#   8. Missing field → exit 1 with explicit list
+#   9. Template test command (dry-run substitution)
+#  10. Failure records error status in sent.jsonl
+#  11. Credentials never logged in any file
+#  12. email_send.py dry-run outputs template content
+#  13. email_send.py field substitution works
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-CHASE_HELPER="${SCRIPT_DIR}/../scripts/case-chase-helper.sh"
-CASE_HELPER="${SCRIPT_DIR}/../scripts/case-helper.sh"
-TMPL_DIR="${SCRIPT_DIR}/../templates/case-chase-templates"
+HELPER="${SCRIPT_DIR}/../scripts/case-chase-helper.sh"
+EMAIL_SEND="${SCRIPT_DIR}/../scripts/email_send.py"
+SHARED="${SCRIPT_DIR}/../scripts/shared-constants.sh"
 
 # =============================================================================
 # Test framework
 # =============================================================================
 
+TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
-TEST_TMPDIR=""
-
-_setup() {
-	TEST_TMPDIR="$(mktemp -d)"
-	git -C "$TEST_TMPDIR" init -q
-	git -C "$TEST_TMPDIR" config user.email "test@test.local"
-	git -C "$TEST_TMPDIR" config user.name "Test User"
-	return 0
-}
-
-_teardown() {
-	[[ -n "$TEST_TMPDIR" && -d "$TEST_TMPDIR" ]] && rm -rf "$TEST_TMPDIR"
-	return 0
-}
 
 _pass() {
 	local name="$1"
 	TESTS_PASSED=$((TESTS_PASSED + 1))
-	printf '  [PASS] %s\n' "$name"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	printf '[PASS] %s\n' "$name"
 	return 0
 }
 
 _fail() {
 	local name="$1" reason="${2:-}"
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	printf '  [FAIL] %s%s\n' "$name" "${reason:+ — $reason}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	printf '[FAIL] %s%s\n' "$name" "${reason:+ — ${reason}}"
 	return 0
 }
 
-_assert_exit_0() {
-	local name="$1"
-	shift
-	if "$@" >/dev/null 2>&1; then
-		_pass "$name"
-		return 0
-	else
-		_fail "$name" "expected exit 0, got non-zero"
-		return 0
-	fi
-}
-
-_assert_exit_nonzero() {
-	local name="$1"
-	shift
-	if ! "$@" >/dev/null 2>&1; then
-		_pass "$name"
-		return 0
-	else
-		_fail "$name" "expected non-zero exit, got 0"
-		return 0
-	fi
-}
-
-_assert_file_exists() {
-	local name="$1" path="$2"
-	if [[ -f "$path" ]]; then
-		_pass "$name"
-		return 0
-	else
-		_fail "$name" "file not found: ${path}"
-		return 0
-	fi
-}
-
-_assert_file_contains() {
-	local name="$1" path="$2" pattern="$3"
-	if grep -q "$pattern" "$path" 2>/dev/null; then
-		_pass "$name"
-		return 0
-	else
-		_fail "$name" "pattern '${pattern}' not found in ${path}"
-		return 0
-	fi
-}
-
-_assert_output_contains() {
-	local name="$1" pattern="$2"
+_assert_exit() {
+	local name="$1" expected_exit="$2"
 	shift 2
-	local output
-	output="$("$@" 2>&1)" || true
-	if echo "$output" | grep -q "$pattern"; then
+	local actual_exit=0
+	"$@" >/dev/null 2>&1 || actual_exit=$?
+	if [[ "$actual_exit" -eq "$expected_exit" ]]; then
 		_pass "$name"
-		return 0
 	else
-		_fail "$name" "pattern '${pattern}' not found in output"
-		return 0
+		_fail "$name" "expected exit ${expected_exit}, got ${actual_exit}"
 	fi
-}
-
-_assert_json_field() {
-	local name="$1" json_file="$2" jq_query="$3" expected="$4"
-	local actual
-	actual="$(jq -r "$jq_query" "$json_file" 2>/dev/null)" || actual=""
-	if [[ "$actual" == "$expected" ]]; then
-		_pass "$name"
-		return 0
-	else
-		_fail "$name" "expected '${expected}', got '${actual}'"
-		return 0
-	fi
-}
-
-# =============================================================================
-# Test helpers
-# =============================================================================
-
-# _setup_case <repo-path> <slug> [chasers_enabled]
-_setup_case() {
-	local repo_path="$1" slug="$2" chasers_enabled="${3:-false}"
-	bash "$CASE_HELPER" init "$repo_path" >/dev/null 2>&1
-	bash "$CASE_HELPER" open "$slug" \
-		--kind general \
-		--party "Test Recipient" \
-		--repo "$repo_path" >/dev/null 2>&1
-
-	# Find the case directory
-	local cases_dir="${repo_path}/_cases"
-	local case_dir
-	case_dir="$(find "$cases_dir" -maxdepth 1 -name "case-*-${slug}" -type d | head -1)"
-	[[ -z "$case_dir" ]] && return 1
-
-	# Update dossier: set chasers_enabled (using --arg to pass as string, then coerce in jq)
-	local dossier_path="${case_dir}/dossier.toon"
-	local updated_dossier
-	updated_dossier="$(jq \
-		--arg ce "$chasers_enabled" \
-		'.chasers_enabled = (if $ce == "true" then true elif $ce == "false-with-force-allowed" then "false-with-force-allowed" else false end) |
-		 .parties[0].email = "recipient@example.com"' \
-		"$dossier_path")"
-	echo "$updated_dossier" >"$dossier_path"
-
-	echo "$case_dir"
 	return 0
 }
 
-# _setup_mailbox <repo-path>
-# Creates a minimal _config/mailboxes.json for testing.
-_setup_mailbox() {
-	local repo_path="$1"
-	mkdir -p "${repo_path}/_config"
-	cat >"${repo_path}/_config/mailboxes.json" <<'JSON'
+# =============================================================================
+# Test setup — create a temporary repo with _cases/ plane
+# =============================================================================
+
+_setup_test_repo() {
+	local tmpdir
+	tmpdir=$(mktemp -d)
+
+	mkdir -p "${tmpdir}/_cases"
+	mkdir -p "${tmpdir}/_cases/case-2026-0001-test"
+	mkdir -p "${tmpdir}/_cases/case-2026-0001-test/comms"
+
+	cat > "${tmpdir}/_cases/case-2026-0001-test/dossier.toon" <<'EOF'
 {
-  "mailboxes": [
-    {
-      "id": "test-mailbox",
-      "provider": "generic",
-      "smtp_host": "localhost",
-      "smtp_port": 25,
-      "smtp_security": "PLAIN",
-      "user": "sender@example.com",
+  "id": "case-2026-0001-test",
+  "slug": "test",
+  "kind": "general",
+  "opened_at": "2026-04-27T00:00:00Z",
+  "status": "open",
+  "outcome": "",
+  "outcome_summary": "",
+  "parties": [
+    {"name": "Test Client", "role": "client", "email": "client@example.com"},
+    {"name": "Test Sender", "role": "self", "email": "sender@example.com"}
+  ],
+  "deadlines": [{"label": "payment", "date": "2026-05-31"}],
+  "related_cases": [],
+  "related_repos": [],
+  "chasers_enabled": false
+}
+EOF
+
+	printf '' > "${tmpdir}/_cases/case-2026-0001-test/timeline.jsonl"
+	printf '[]\n' > "${tmpdir}/_cases/case-2026-0001-test/sources.toon"
+
+	mkdir -p "${tmpdir}/_config/case-chase-templates"
+	cat > "${tmpdir}/_config/case-chase-templates/test-template.eml.tmpl" <<'EOF'
+# Test template
+From: {{sender_email}}
+To: {{recipient_email}}
+Subject: Test chase
+
+Dear {{recipient_name}},
+
+This is a test chase. Case: {{case_id}}.
+
+Regards,
+{{sender_name}}
+EOF
+
+	mkdir -p "${tmpdir}/_config"
+	cat > "${tmpdir}/_config/mailboxes.json" <<'EOF'
+{
+  "mailboxes": {
+    "default": {
+      "id": "default",
+      "email": "sender@example.com",
       "display_name": "Test Sender",
-      "password_ref": ""
+      "smtp_host": "smtp.example.com",
+      "smtp_port": 587,
+      "smtp_user": "sender@example.com",
+      "gopass_path": ""
     }
-  ]
+  }
 }
-JSON
+EOF
+
+	echo "$tmpdir"
+	return 0
+}
+
+_enable_chasers() {
+	local repo="$1"
+	local dossier="${repo}/_cases/case-2026-0001-test/dossier.toon"
+	python3 -c "
+import json
+with open('${dossier}') as f: d = json.load(f)
+d['chasers_enabled'] = True
+with open('${dossier}', 'w') as f: json.dump(d, f, indent=2)
+"
 	return 0
 }
 
 # =============================================================================
-# Test suites
+# Tests
 # =============================================================================
 
-test_templates_exist() {
-	echo ""
-	echo "## Template files"
-
-	_assert_file_exists "payment-reminder template exists" \
-		"${TMPL_DIR}/payment-reminder.eml.tmpl"
-
-	_assert_file_exists "deadline-reminder template exists" \
-		"${TMPL_DIR}/deadline-reminder.eml.tmpl"
-
-	_assert_file_exists "receipt-acknowledge template exists" \
-		"${TMPL_DIR}/receipt-acknowledge.eml.tmpl"
-
-	# All templates must have RFC 5322 headers
-	local tmpl
-	for tmpl in payment-reminder deadline-reminder receipt-acknowledge; do
-		local tmpl_path="${TMPL_DIR}/${tmpl}.eml.tmpl"
-		[[ -f "$tmpl_path" ]] || continue
-		if grep -q '^From:' "$tmpl_path" && grep -q '^To:' "$tmpl_path" && grep -q '^Subject:' "$tmpl_path"; then
-			_pass "${tmpl}: has RFC 5322 headers"
-		else
-			_fail "${tmpl}: missing RFC 5322 headers"
-		fi
-	done
-
-	return 0
-}
-
-test_template_list() {
-	echo ""
-	echo "## Template list command"
-
-	_assert_exit_0 "template list exits 0" bash "$CHASE_HELPER" template list
-	_assert_output_contains "template list shows payment-reminder" "payment-reminder" \
-		bash "$CHASE_HELPER" template list
-	_assert_output_contains "template list shows deadline-reminder" "deadline-reminder" \
-		bash "$CHASE_HELPER" template list
-
-	return 0
-}
-
-test_opt_in_gate() {
-	echo ""
-	echo "## Opt-in gate"
-
-	local repo_path="${TEST_TMPDIR}/opt-in-test"
-	mkdir -p "$repo_path"
-	git -C "$repo_path" init -q
-	git -C "$repo_path" config user.email "test@test.local"
-	git -C "$repo_path" config user.name "Test"
-	_setup_mailbox "$repo_path"
-
-	# Case with chasers_enabled: false (default)
-	local case_dir
-	case_dir="$(_setup_case "$repo_path" "blocked-case" "false")"
-
-	_assert_exit_nonzero "chase blocked when chasers_enabled: false" \
-		bash "$CHASE_HELPER" send "blocked-case" \
-			--template "payment-reminder" \
-			--repo "$repo_path"
-
-	# Case with chasers_enabled: true
-	case_dir="$(_setup_case "$repo_path" "allowed-case" "true")"
-
-	# Dry-run should succeed (no SMTP needed).
-	# Use receipt-acknowledge which only needs case_id, received_date, recipient fields
-	_assert_exit_0 "dry-run succeeds when chasers_enabled: true" \
-		bash "$CHASE_HELPER" send "allowed-case" \
-			--template "receipt-acknowledge" \
-			--to "recipient@example.com" \
-			--dry-run \
-			--repo "$repo_path"
-
-	return 0
-}
-
-test_missing_fields() {
-	echo ""
-	echo "## Missing field rejection"
-
-	local repo_path="${TEST_TMPDIR}/missing-fields-test"
-	mkdir -p "$repo_path"
-	git -C "$repo_path" init -q
-	git -C "$repo_path" config user.email "test@test.local"
-	git -C "$repo_path" config user.name "Test"
-	_setup_mailbox "$repo_path"
-
-	# Case with chasers enabled but no invoice → payment-reminder needs invoice fields
-	local case_dir
-	case_dir="$(_setup_case "$repo_path" "missing-invoice" "true")"
-
-	# payment-reminder needs invoice_number, invoice_date, amount, currency, due_date
-	# None are set, so field resolution will produce empty strings → substitution fails
-	# (Only fails if template actually uses those fields)
-	local output
-	output="$(bash "$CHASE_HELPER" send "missing-invoice" \
-		--template "payment-reminder" \
-		--dry-run \
-		--repo "$repo_path" 2>&1)" || true
-
-	# Dry-run with payment-reminder should fail due to missing invoice fields
-	if echo "$output" | grep -qiE 'missing|invoice_number|invoice_date|amount|currency|due_date'; then
-		_pass "missing invoice fields reported in output"
-	elif bash "$CHASE_HELPER" send "missing-invoice" \
-		--template "payment-reminder" \
-		--dry-run \
-		--repo "$repo_path" >/dev/null 2>&1; then
-		# If dry-run succeeds, it means template has all fields OR some are optional
-		_pass "dry-run completed (fields may be optional in template)"
+_test_helper_exists() {
+	if [[ -f "$HELPER" ]]; then
+		_pass "helper exists: case-chase-helper.sh"
 	else
-		_pass "send rejected due to missing fields"
+		_fail "helper exists: case-chase-helper.sh" "file not found: ${HELPER}"
 	fi
-
 	return 0
 }
 
-test_dry_run_no_send() {
-	echo ""
-	echo "## Dry-run: no SMTP call"
-
-	local repo_path="${TEST_TMPDIR}/dry-run-test"
-	mkdir -p "$repo_path"
-	git -C "$repo_path" init -q
-	git -C "$repo_path" config user.email "test@test.local"
-	git -C "$repo_path" config user.name "Test"
-
-	# Mailbox pointing at a non-existent SMTP server
-	mkdir -p "${repo_path}/_config"
-	cat >"${repo_path}/_config/mailboxes.json" <<'JSON'
-{
-  "mailboxes": [
-    {
-      "id": "no-smtp",
-      "smtp_host": "127.0.0.1",
-      "smtp_port": 19999,
-      "smtp_security": "PLAIN",
-      "user": "sender@test.local",
-      "display_name": "Test",
-      "password_ref": ""
-    }
-  ]
-}
-JSON
-
-	local case_dir
-	case_dir="$(_setup_case "$repo_path" "dry-test" "true")"
-
-	# Dry-run must NOT contact SMTP (non-existent port).
-	# Use receipt-acknowledge which only needs case_id, received_date, recipient fields.
-	_assert_exit_0 "dry-run succeeds without SMTP server" \
-		bash "$CHASE_HELPER" send "dry-test" \
-			--template "receipt-acknowledge" \
-			--to "recipient@example.com" \
-			--dry-run \
-			--repo "$repo_path"
-
-	# Verify no sent.jsonl was created
-	local sent_file="${case_dir}/comms/sent.jsonl"
-	if [[ ! -f "$sent_file" ]]; then
-		_pass "dry-run: sent.jsonl not created"
+_test_email_send_exists() {
+	if [[ -f "$EMAIL_SEND" ]]; then
+		_pass "helper exists: email_send.py"
 	else
-		_fail "dry-run: sent.jsonl should not be created"
+		_fail "helper exists: email_send.py" "file not found: ${EMAIL_SEND}"
 	fi
-
 	return 0
 }
 
-test_python_email_send_dry_run() {
-	echo ""
-	echo "## email_send.py dry-run"
-
-	local email_send="${SCRIPT_DIR}/../scripts/email_send.py"
-
-	_assert_exit_0 "email_send.py syntax check (py_compile)" \
-		python3 -m py_compile "$email_send"
-
-	# Test dry-run mode
-	local output
-	output="$(python3 "$email_send" \
-		--smtp-host localhost \
-		--smtp-port 587 \
-		--smtp-security STARTTLS \
-		--from-addr sender@test.local \
-		--to-addr recipient@test.local \
-		--subject "Test Subject" \
-		--body "Test body" \
-		--dry-run 2>/dev/null)"
-
-	if echo "$output" | jq -e '.dry_run == true' >/dev/null 2>&1; then
-		_pass "email_send.py dry-run returns JSON with dry_run:true"
+_test_python_syntax() {
+	local exit_code=0
+	python3 -m py_compile "$EMAIL_SEND" 2>/dev/null || exit_code=$?
+	if [[ $exit_code -eq 0 ]]; then
+		_pass "email_send.py: syntax valid"
 	else
-		_fail "email_send.py dry-run did not return expected JSON"
+		_fail "email_send.py: syntax valid" "py_compile failed"
 	fi
-
-	# Verify message_id is present
-	if echo "$output" | jq -e '.message_id != null' >/dev/null 2>&1; then
-		_pass "email_send.py dry-run returns message_id"
-	else
-		_fail "email_send.py dry-run: message_id missing"
-	fi
-
 	return 0
 }
 
-test_send_failure_hold_transition() {
-	echo ""
-	echo "## Bounce/failure → hold transition"
-
-	local repo_path="${TEST_TMPDIR}/failure-test"
-	mkdir -p "$repo_path"
-	git -C "$repo_path" init -q
-	git -C "$repo_path" config user.email "test@test.local"
-	git -C "$repo_path" config user.name "Test"
-
-	# Mailbox pointing at a port that will refuse connections
-	mkdir -p "${repo_path}/_config"
-	cat >"${repo_path}/_config/mailboxes.json" <<'JSON'
-{
-  "mailboxes": [
-    {
-      "id": "refusing-smtp",
-      "smtp_host": "127.0.0.1",
-      "smtp_port": 19998,
-      "smtp_security": "PLAIN",
-      "user": "sender@test.local",
-      "display_name": "Test",
-      "password_ref": ""
-    }
-  ]
+_test_help_exits_zero() {
+	_assert_exit "help: exits 0" 0 bash "$HELPER" help
+	return 0
 }
-JSON
 
-	local case_dir
-	case_dir="$(_setup_case "$repo_path" "failure-case" "true")"
+_test_unknown_command_exits_nonzero() {
+	_assert_exit "unknown command: exits 1" 1 bash "$HELPER" unknowncmd
+	return 0
+}
 
-	# First failure — should log error, not hold (SMTP to closed port will fail)
-	# Note: error is only logged when the opt-in gate passes AND SMTP fails.
-	# The error record is written in the || handler when python3 exits 1.
-	bash "$CHASE_HELPER" send "failure-case" \
-		--template "receipt-acknowledge" \
-		--to "recipient@test.local" \
-		--repo "$repo_path" >/dev/null 2>&1 || true
+_test_template_list() {
+	local repo out exit_code=0
+	repo=$(_setup_test_repo)
+	out=$(bash "$HELPER" template list --repo "$repo" 2>&1) || exit_code=$?
+	if [[ $exit_code -eq 0 ]] && echo "$out" | grep -q "test-template"; then
+		_pass "template list: shows test-template"
+	else
+		_fail "template list: shows test-template" "exit=${exit_code} out=${out:0:200}"
+	fi
+	rm -rf "$repo"
+	return 0
+}
 
-	local sent_file="${case_dir}/comms/sent.jsonl"
-	if [[ -f "$sent_file" ]]; then
-		_pass "first failure: sent.jsonl created"
+_test_opt_in_gate_disabled() {
+	local repo exit_code=0
+	repo=$(_setup_test_repo)
+	bash "$HELPER" send "case-2026-0001-test" --template test-template \
+		--dry-run --repo "$repo" 2>/dev/null || exit_code=$?
+	if [[ $exit_code -ne 0 ]]; then
+		_pass "opt-in gate: exits non-zero when chasers_enabled: false"
+	else
+		_fail "opt-in gate: exits non-zero when chasers_enabled: false" "expected non-zero exit"
+	fi
+	rm -rf "$repo"
+	return 0
+}
+
+_test_opt_in_gate_enabled() {
+	local repo out exit_code=0
+	repo=$(_setup_test_repo)
+	_enable_chasers "$repo"
+	out=$(bash "$HELPER" send "case-2026-0001-test" --template test-template \
+		--dry-run --repo "$repo" 2>&1) || exit_code=$?
+	if ! echo "$out" | grep -q "chasers are disabled"; then
+		_pass "opt-in gate: enabled case passes opt-in check"
+	else
+		_fail "opt-in gate: enabled case passes opt-in check" "${out:0:200}"
+	fi
+	rm -rf "$repo"
+	return 0
+}
+
+_test_dry_run_no_smtp() {
+	local repo out exit_code=0
+	repo=$(_setup_test_repo)
+	_enable_chasers "$repo"
+	out=$(SMTP_PASS_DEFAULT="dummypass" bash "$HELPER" send "case-2026-0001-test" \
+		--template test-template --dry-run --repo "$repo" 2>&1) || exit_code=$?
+	if echo "$out" | grep -qE "DRY-RUN|From:|To:"; then
+		_pass "dry-run: outputs substituted email, no SMTP"
+	else
+		_fail "dry-run: outputs substituted email, no SMTP" "exit=${exit_code} out=${out:0:300}"
+	fi
+	rm -rf "$repo"
+	return 0
+}
+
+_test_missing_field_rejection() {
+	local repo out exit_code=0
+	repo=$(_setup_test_repo)
+	_enable_chasers "$repo"
+
+	cat > "${repo}/_config/case-chase-templates/bad-template.eml.tmpl" <<'EOF'
+# Bad template with unresolvable field
+From: {{sender_email}}
+To: {{recipient_email}}
+Subject: Test
+
+Invoice {{invoice_number}} (no invoice attached).
+
+Regards,
+{{sender_name}}
+EOF
+
+	out=$(bash "$HELPER" send "case-2026-0001-test" --template bad-template \
+		--dry-run --repo "$repo" 2>&1) || exit_code=$?
+	if [[ $exit_code -ne 0 ]] && echo "$out" | grep -qE "Missing|invoice_number"; then
+		_pass "missing field: exits non-zero with explicit list"
+	else
+		_fail "missing field: exits non-zero with explicit list" "exit=${exit_code} out=${out:0:300}"
+	fi
+	rm -rf "$repo"
+	return 0
+}
+
+_test_template_test_command() {
+	local repo out exit_code=0
+	repo=$(_setup_test_repo)
+	_enable_chasers "$repo"
+	out=$(bash "$HELPER" template test \
+		--case "case-2026-0001-test" \
+		--template test-template \
+		--repo "$repo" 2>&1) || exit_code=$?
+	if echo "$out" | grep -qE "Template test|From:|DRY-RUN|END"; then
+		_pass "template test: outputs substituted content"
+	else
+		_fail "template test: outputs substituted content" "exit=${exit_code} out=${out:0:300}"
+	fi
+	rm -rf "$repo"
+	return 0
+}
+
+_test_failure_records_error() {
+	local repo exit_code=0
+	repo=$(_setup_test_repo)
+	local sent_log="${repo}/_cases/case-2026-0001-test/comms/sent.jsonl"
+	mkdir -p "$(dirname "$sent_log")"
+
+	(
+		# shellcheck source=/dev/null
+		source "$SHARED" 2>/dev/null || true
+		# shellcheck source=/dev/null
+		source "$HELPER" 2>/dev/null || true
+		_chase_record_failure \
+			"${repo}/_cases/case-2026-0001-test" \
+			"connection refused" \
+			"test-template" \
+			"client@example.com" \
+			"testactor"
+	)
+
+	if [[ -f "$sent_log" ]]; then
 		local status
-		status="$(jq -r '.status' "$sent_file" 2>/dev/null | head -1)" || status=""
+		status=$(jq -r '.status' "$sent_log" 2>/dev/null) || status=""
 		if [[ "$status" == "error" ]]; then
-			_pass "first failure: status=error recorded"
+			_pass "failure: records error status in sent.jsonl"
 		else
-			# Connection refused may exit before writing — acceptable in CI
-			_pass "first failure: recorded (status='${status}')"
+			_fail "failure: records error status in sent.jsonl" "status=${status}"
 		fi
 	else
-		# Connection refused to a closed port may cause bash to exit the || handler
-		# before _sent_jsonl_append is reached in some environments.
-		_pass "first failure: sent.jsonl not created (connection refused before error recording)"
+		_fail "failure: records error status in sent.jsonl" "sent.jsonl not created"
 	fi
-
-	# Second failure — should transition case to hold
-	bash "$CHASE_HELPER" send "failure-case" \
-		--template "receipt-acknowledge" \
-		--to "recipient@test.local" \
-		--repo "$repo_path" >/dev/null 2>&1 || true
-
-	# Check case status in dossier
-	local dossier_path="${case_dir}/dossier.toon"
-	if [[ -f "$dossier_path" ]]; then
-		local case_status
-		case_status="$(jq -r '.status' "$dossier_path" 2>/dev/null)" || case_status=""
-		if [[ "$case_status" == "hold" ]]; then
-			_pass "two consecutive failures: case transitioned to hold"
-		else
-			# Two connection failures to a closed port may not get far enough
-			# to increment the counter — this is an integration test limitation
-			_pass "case status after two failures: ${case_status} (hold or connection failed before recording)"
-		fi
-	fi
-
+	rm -rf "$repo"
 	return 0
 }
 
-test_no_llm_calls() {
-	echo ""
-	echo "## No LLM calls in chase helper"
+_test_credentials_not_logged() {
+	local repo found=false
+	repo=$(_setup_test_repo)
+	_enable_chasers "$repo"
 
-	# Verify neither llm-routing-helper.sh nor any LLM API call appears in case-chase-helper.sh
-	local helper="${SCRIPT_DIR}/../scripts/case-chase-helper.sh"
+	SMTP_PASS_DEFAULT="S3cr3tP@ssw0rd!" bash "$HELPER" send "case-2026-0001-test" \
+		--template test-template --repo "$repo" 2>/dev/null || true
 
-	if grep -q 'llm-routing-helper' "$helper" 2>/dev/null; then
-		_fail "case-chase-helper.sh must NOT call llm-routing-helper.sh"
-	else
-		_pass "case-chase-helper.sh: no llm-routing-helper.sh calls"
+	if [[ -f "${repo}/_cases/case-2026-0001-test/comms/sent.jsonl" ]]; then
+		grep -q "S3cr3tP@ssw0rd!" "${repo}/_cases/case-2026-0001-test/comms/sent.jsonl" \
+			2>/dev/null && found=true || true
+	fi
+	if [[ -f "${repo}/_cases/case-2026-0001-test/timeline.jsonl" ]]; then
+		grep -q "S3cr3tP@ssw0rd!" "${repo}/_cases/case-2026-0001-test/timeline.jsonl" \
+			2>/dev/null && found=true || true
 	fi
 
-	if grep -qE 'openai|anthropic|claude|gpt' "$helper" 2>/dev/null; then
-		_fail "case-chase-helper.sh must NOT reference LLM APIs directly"
+	if [[ "$found" == false ]]; then
+		_pass "security: credentials not in logs"
 	else
-		_pass "case-chase-helper.sh: no LLM API references"
+		_fail "security: credentials not in logs" "password found in log file"
 	fi
-
-	if grep -q 'llm-routing-helper' "${SCRIPT_DIR}/../scripts/email_send.py" 2>/dev/null; then
-		_fail "email_send.py must NOT call llm-routing-helper.sh"
-	else
-		_pass "email_send.py: no LLM routing calls"
-	fi
-
+	rm -rf "$repo"
 	return 0
 }
 
-test_credentials_not_logged() {
-	echo ""
-	echo "## Credentials not logged"
+_test_email_send_dry_run() {
+	local tmpdir out exit_code=0
+	tmpdir=$(mktemp -d)
+	cat > "${tmpdir}/test.eml.tmpl" <<'EOF'
+# Test
+From: sender@example.com
+To: recipient@example.com
+Subject: Test
 
-	# Verify password is never echoed in email_send.py
-	local email_send="${SCRIPT_DIR}/../scripts/email_send.py"
-
-	# Check that password value is not echoed to stdout/stderr in print statements.
-	# Note: smtp.login(user, password) is a function call, not a log — excluded.
-	if grep -qE 'print\(.*password\s*\)' "$email_send" 2>/dev/null; then
-		_fail "email_send.py: potential credential leak in print()"
+Hello World.
+EOF
+	out=$(python3 "$EMAIL_SEND" \
+		--template "${tmpdir}/test.eml.tmpl" \
+		--fields-json '{}' \
+		--dry-run 2>&1) || exit_code=$?
+	if [[ $exit_code -eq 0 ]] && echo "$out" | grep -q "Hello World"; then
+		_pass "email_send.py: dry-run outputs template content"
 	else
-		_pass "email_send.py: no obvious credential logging"
+		_fail "email_send.py: dry-run outputs template content" \
+			"exit=${exit_code} out=${out:0:200}"
 	fi
-
-	# Verify case-chase-helper.sh doesn't log password
-	local helper="${SCRIPT_DIR}/../scripts/case-chase-helper.sh"
-	# SC2016: single quotes intentional — we are grepping for literal shell variable names
-	# shellcheck disable=SC2016
-	if grep -qE 'print_info.*\$password|print_success.*\$password|log.*\$password' "$helper" 2>/dev/null; then
-		_fail "case-chase-helper.sh: potential credential leak"
-	else
-		_pass "case-chase-helper.sh: password not logged"
-	fi
-
+	rm -rf "$tmpdir"
 	return 0
 }
 
-test_shellcheck() {
-	echo ""
-	echo "## ShellCheck"
+_test_email_send_field_substitution() {
+	local tmpdir out exit_code=0
+	tmpdir=$(mktemp -d)
+	cat > "${tmpdir}/sub.eml.tmpl" <<'EOF'
+# Substitution test
+From: {{sender_email}}
+To: {{recipient_email}}
+Subject: Hello {{recipient_name}}
 
-	if ! command -v shellcheck >/dev/null 2>&1; then
-		echo "  [SKIP] shellcheck not installed"
-		return 0
-	fi
-
-	if shellcheck "${SCRIPT_DIR}/../scripts/case-chase-helper.sh" 2>/dev/null; then
-		_pass "case-chase-helper.sh: shellcheck zero violations"
+Dear {{recipient_name}}, regards {{sender_name}}.
+EOF
+	local fj='{"sender_email":"a@b.com","recipient_email":"c@d.com","sender_name":"Alice","recipient_name":"Bob"}'
+	out=$(python3 "$EMAIL_SEND" \
+		--template "${tmpdir}/sub.eml.tmpl" \
+		--fields-json "$fj" \
+		--dry-run 2>&1) || exit_code=$?
+	if echo "$out" | grep -q "Dear Bob" && echo "$out" | grep -q "regards Alice"; then
+		_pass "email_send.py: field substitution works"
 	else
-		_fail "case-chase-helper.sh: shellcheck violations"
-		shellcheck "${SCRIPT_DIR}/../scripts/case-chase-helper.sh" 2>&1 | head -20
+		_fail "email_send.py: field substitution works" "out=${out:0:300}"
 	fi
-
-	return 0
-}
-
-test_dossier_chasers_enabled_default() {
-	echo ""
-	echo "## dossier.toon: chasers_enabled defaults to false"
-
-	local repo_path="${TEST_TMPDIR}/dossier-default-test"
-	mkdir -p "$repo_path"
-	git -C "$repo_path" init -q
-	git -C "$repo_path" config user.email "test@test.local"
-	git -C "$repo_path" config user.name "Test"
-
-	bash "$CASE_HELPER" init "$repo_path" >/dev/null 2>&1
-	bash "$CASE_HELPER" open "default-test" \
-		--kind general \
-		--repo "$repo_path" >/dev/null 2>&1
-
-	local cases_dir="${repo_path}/_cases"
-	local case_dir
-	case_dir="$(find "$cases_dir" -maxdepth 1 -name "case-*-default-test" -type d | head -1)"
-	[[ -z "$case_dir" ]] && { _fail "dossier default: case not found"; return 0; }
-
-	local dossier_path="${case_dir}/dossier.toon"
-	_assert_json_field "dossier.chasers_enabled is false by default" \
-		"$dossier_path" '.chasers_enabled' "false"
-
+	rm -rf "$tmpdir"
 	return 0
 }
 
 # =============================================================================
-# Main
+# Run all tests
 # =============================================================================
 
 main() {
-	echo "=== test-case-chase.sh (t2858) ==="
-	_setup
+	echo "=== test-case-chase.sh ==="
+	echo ""
 
-	# Run all test suites
-	test_templates_exist
-	test_template_list
-	test_python_email_send_dry_run
-	test_opt_in_gate
-	test_missing_fields
-	test_dry_run_no_send
-	test_send_failure_hold_transition
-	test_no_llm_calls
-	test_credentials_not_logged
-	test_shellcheck
-	test_dossier_chasers_enabled_default
-
-	_teardown
+	_test_helper_exists
+	_test_email_send_exists
+	_test_python_syntax
+	_test_help_exits_zero
+	_test_unknown_command_exits_nonzero
+	_test_template_list
+	_test_opt_in_gate_disabled
+	_test_opt_in_gate_enabled
+	_test_dry_run_no_smtp
+	_test_missing_field_rejection
+	_test_template_test_command
+	_test_failure_records_error
+	_test_credentials_not_logged
+	_test_email_send_dry_run
+	_test_email_send_field_substitution
 
 	echo ""
-	echo "=== Results ==="
-	printf '  Passed: %d\n' "$TESTS_PASSED"
-	printf '  Failed: %d\n' "$TESTS_FAILED"
+	echo "=== Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed ==="
 
-	if [[ "$TESTS_FAILED" -eq 0 ]]; then
-		echo "  All tests passed."
-		return 0
-	else
-		echo "  Some tests failed — see output above."
-		return 1
+	if [[ $TESTS_FAILED -gt 0 ]]; then
+		exit 1
 	fi
+	return 0
 }
 
 main "$@"

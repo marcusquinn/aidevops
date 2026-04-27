@@ -1372,6 +1372,8 @@ main() {
 	deadline | dl) cmd_deadline "$@" ;;
 	party) cmd_party "$@" ;;
 	comm | comms) cmd_comm "$@" ;;
+	chase) bash "${SCRIPT_DIR}/case-chase-helper.sh" send "$@" ;;
+	chase-template) bash "${SCRIPT_DIR}/case-chase-helper.sh" template "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		print_error "Unknown command: ${command}"
