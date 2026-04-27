@@ -449,6 +449,81 @@ else
 	fi
 fi
 
+# =============================================================================
+# privacy_scan_text tests (GH#21004 — review feedback on PR #20974)
+# =============================================================================
+
+TEXT_SLUGS_FILE="${TMP}/text-slugs.txt"
+printf 'testorg/private-mirror\ntestorg/local-only\n' >"$TEXT_SLUGS_FILE"
+
+# Test: full slug match in text body → returns 1 with slug on stdout
+hits=$(privacy_scan_text "See testorg/private-mirror for details" "$TEXT_SLUGS_FILE")
+rc=$?
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -qF 'testorg/private-mirror'; then
+	pass "scan_text: full slug in text → flagged"
+else
+	fail "scan_text: full slug in text should be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test: clean text → returns 0, no hits
+hits=$(privacy_scan_text "See testorg/public-repo for details" "$TEXT_SLUGS_FILE")
+rc=$?
+if [[ "$rc" -eq 0 && -z "$hits" ]]; then
+	pass "scan_text: clean text → not flagged"
+else
+	fail "scan_text: clean text should not be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test: bare basename word-boundary match → returns 1
+hits=$(privacy_scan_text "Syncing private-mirror with upstream" "$TEXT_SLUGS_FILE")
+rc=$?
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -q 'private-mirror'; then
+	pass "scan_text: bare basename with word boundaries → flagged"
+else
+	fail "scan_text: bare basename should be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test: bare basename embedded inside a longer token → NOT flagged (word boundary)
+hits=$(privacy_scan_text "syncing myprivate-mirrorcopy with upstream" "$TEXT_SLUGS_FILE")
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	pass "scan_text: basename embedded in longer token → not flagged (word boundary guard)"
+else
+	fail "scan_text: basename embedded in longer token should not be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test: GH#21004 — repo name with '.' (ERE metachar) does not false-positive
+# "local.only" should not match "local-only" or any arbitrary char.
+DOTSLUG_FILE="${TMP}/dot-slug.txt"
+printf 'testorg/my.project\n' >"$DOTSLUG_FILE"
+hits=$(privacy_scan_text "discussing myXproject integration" "$DOTSLUG_FILE")
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	pass "scan_text: dot in repo name escaped — no false-positive on non-dot char"
+else
+	fail "scan_text: dot in repo name must be escaped to prevent false-positive (rc=$rc hits=$hits)"
+fi
+
+# Test: GH#21004 — repo name with '.' correctly matches literal dot
+hits=$(privacy_scan_text "discussing my.project integration" "$DOTSLUG_FILE")
+rc=$?
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -q 'my\.project\|my.project'; then
+	pass "scan_text: dot in repo name escaped — literal dot still matches"
+else
+	fail "scan_text: literal dot in repo name should still match (rc=$rc hits=$hits)"
+fi
+
+# Test: GH#21004 — last-line handling (slugs file without trailing newline)
+NONL_FILE="${TMP}/no-newline-slugs.txt"
+printf 'testorg/no-newline-slug' >"$NONL_FILE"   # intentionally no trailing \n
+hits=$(privacy_scan_text "see testorg/no-newline-slug for details" "$NONL_FILE")
+rc=$?
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -qF 'testorg/no-newline-slug'; then
+	pass "scan_text: last line without trailing newline is processed"
+else
+	fail "scan_text: last line without trailing newline should be processed (rc=$rc hits=$hits)"
+fi
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------

@@ -275,8 +275,34 @@ privacy_scan_text() {
 	fi
 
 	local hits=0
-	local slug owner basename
-	while IFS= read -r slug; do
+	local matched_full_slugs=""
+
+	# Phase 1: Full-slug fixed-string matching — single grep -F -f pass over all
+	# owner/repo entries at once. Reduces O(N) grep forks (one per slug) to one
+	# call regardless of slug count. Only lines with '/' are full slugs; single-
+	# token (legacy) entries are handled exclusively in Phase 2 below.
+	local full_slugs_tmp
+	full_slugs_tmp=$(mktemp) || return 2
+	grep '/' "$slugs_file" 2>/dev/null >"$full_slugs_tmp" || true
+	if [[ -s "$full_slugs_tmp" ]]; then
+		matched_full_slugs=$(printf '%s' "$text" | grep -oF -f "$full_slugs_tmp" 2>/dev/null | sort -u || true)
+		if [[ -n "$matched_full_slugs" ]]; then
+			local match
+			while IFS= read -r match; do
+				[[ -z "$match" ]] && continue
+				printf '%s\n' "$match"
+				hits=$((hits + 1))
+			done <<< "$matched_full_slugs"
+		fi
+	fi
+	rm -f "$full_slugs_tmp"
+
+	# Phase 2: Bare-basename word-boundary matching — per-slug loop.
+	# Word-boundary patterns are slug-specific (variable basename length guard,
+	# per-slug output format) and require per-slug ERE calls. Full slugs already
+	# emitted in Phase 1 are skipped to prevent duplicate hits.
+	local slug owner basename escaped_basename
+	while IFS= read -r slug || [[ -n "$slug" ]]; do
 		# Skip blanks and comment lines.
 		[[ -z "$slug" || "$slug" == \#* ]] && continue
 		# Trim leading/trailing whitespace.
@@ -293,18 +319,21 @@ privacy_scan_text() {
 		fi
 		[[ -z "$basename" ]] && continue
 
-		# Form 1: full slug fixed-string match (only if owner present).
-		if [[ -n "$owner" ]] && printf '%s' "$text" | grep -qF "$slug" 2>/dev/null; then
-			printf '%s\n' "$slug"
-			hits=$((hits + 1))
+		# If the full slug was already matched in Phase 1, skip to avoid duplicate output.
+		if [[ -n "$owner" && -n "$matched_full_slugs" ]] &&
+			printf '%s\n' "$matched_full_slugs" | grep -qF "$slug" 2>/dev/null; then
 			continue
 		fi
 
 		# Form 2: bare basename with word boundaries — only for distinctive lengths.
 		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			# Escape regex metacharacters in basename for ERE. GitHub repo names can
+			# contain '.' (e.g. "my.project"), which is a special char in ERE —
+			# escaping prevents false positives from matching unintended characters.
+			escaped_basename=$(printf '%s' "$basename" | sed 's/\./\\./g')
 			# Word boundary regex: must NOT be flanked by [a-zA-Z0-9_-].
 			# Note: we use grep -E (POSIX ERE), not PCRE, so \b is unreliable.
-			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
 				if [[ -n "$owner" ]]; then
 					printf '%s (basename of %s)\n' "$basename" "$slug"
 				else
