@@ -3427,3 +3427,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2993 fix(task-id-guard): word-boundary regex to avoid false positives on subagent names like context7 #auto-dispatch ref:GH#21402
 
 - [x] t2994 move pulse cache priming hook into pulse-wrapper.sh boot path #auto-dispatch #bug #enhancement #framework ref:GH#21404 pr:#21405 completed:2026-04-27
+
+- [ ] t2995 Scanner intermittently creates duplicate file-size-debt issues despite dedup logic #auto-dispatch #bug #framework ref:GH#21406
