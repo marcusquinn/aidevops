@@ -2301,14 +2301,27 @@ reconcile_issues_single_pass() {
 	# normalize_active_issue_assignments) from running for the rest of the
 	# cycle. Root cause: _action_oimp_single makes 2 gh API calls per
 	# non-parent issue × ~200 issues across all pulse-enabled repos.
-	# Returning success at 540s preserves cycle progress; the issues
+	# Returning success at budget preserves cycle progress; the issues
 	# skipped this cycle are picked up next cycle.
 	# Override: RECONCILE_TIME_BUDGET_SECS env var.
 	# Disable: RECONCILE_TIME_BUDGET_SECS=0 (unbounded — restore pre-t2984 behaviour).
+	#
+	# GH#21380: budget reduced from 540s to 360s.
+	# This function runs INSIDE _preflight_ownership_reconcile, which has its
+	# own PRE_RUN_STAGE_TIMEOUT (600s) outer wrapper. normalize_active_issue_
+	# assignments runs before us and takes 55-109s (observed). With budget=540
+	# the available time for this function is only 600-100=~500s < 540s, so
+	# the budget NEVER fires — the outer wrapper kills this function first,
+	# every cycle, producing the same rc=124 outcome as before t2984.
+	# With budget=360: total pipeline = ~100s (normalize) + 360s + ~15s
+	# (auto_approve) = ~475s, comfortably within the 600s outer timeout.
+	# Variables initialised here at function entry (local scope, not module
+	# scope) so each invocation gets a fresh start timestamp independent of
+	# any prior call.
 	local _t2984_start_ts _t2984_budget _t2984_aborted=0
 	_t2984_start_ts=$(date +%s 2>/dev/null) || _t2984_start_ts=0
-	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-540}"
-	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=540
+	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
+	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
