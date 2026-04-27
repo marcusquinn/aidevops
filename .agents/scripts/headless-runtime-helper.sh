@@ -1464,6 +1464,16 @@ _cmd_run_prepare() {
 	local session_key="$1"
 	local work_dir="$2"
 
+	# t2983 Fix C: Worker-role guard — WORKER_WORKTREE_PATH must be set.
+	# After GH#21353 (Fix A), the dispatcher never launches a worker when
+	# pre-creation fails. If WORKER_WORKTREE_PATH is somehow unset here despite
+	# WORKER_ISSUE_NUMBER being set, a dispatcher bug bypassed pre-creation.
+	# Abort immediately rather than proceeding in the canonical repo on main.
+	if [[ -n "${WORKER_ISSUE_NUMBER:-}" && -z "${WORKER_WORKTREE_PATH:-}" ]]; then
+		printf '[fatal] WORKER_WORKTREE_PATH unset — pre-creation skipped or failed silently; aborting per t2980 Fix C\n' >&2
+		return 1
+	fi
+
 	# GH#20542: Export DISPATCH_REPO_SLUG BEFORE arming the EXIT trap so
 	# _release_dispatch_claim always has a non-empty slug, even when the
 	# process exits between prepare and _execute_run_attempt (e.g. under
