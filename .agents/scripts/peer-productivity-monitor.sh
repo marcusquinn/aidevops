@@ -29,9 +29,9 @@
 #   peer-productivity-monitor.sh reset <peer>   # reset hysteresis state for a peer
 #
 # Decision rules per peer:
-#   - 0 worker PRs merged in 24h + 1+ active claims = vote `ignore` (peer broken)
+#   - 0 worker PRs merged in 24h + 2+ origin:worker claims = vote `ignore` (peer broken)
 #   - 1+ worker PRs merged in 24h = vote `honour` (peer healthy)
-#   - 0 of each = vote `keep` (insufficient signal, no change)
+#   - 0 merged PRs + 0–1 worker claims = vote `keep` (insufficient signal, no change)
 #
 # Default for unknown peers: ignore (compete-by-default — safer for new peers
 # until they prove productivity).
@@ -171,10 +171,12 @@ _observe_peer() {
 	local worker_prs=0
 	local interactive_prs=0
 
-	# Active claims: open issues currently assigned to peer.
-	# (We don't filter by label here — any open assignment is the signal.)
+	# Active worker claims: open issues with origin:worker label assigned to peer.
+	# Filtering by label ensures interactive work never counts as a broken-pulse
+	# signal — only automated worker claims matter for productivity assessment.
 	local claims_json
 	claims_json=$(gh issue list --repo "$repo" --assignee "$login" --state open \
+		--label origin:worker \
 		--limit 100 --json number 2>/dev/null || echo '[]')
 	active_claims=$(printf '%s' "$claims_json" | jq 'length' 2>/dev/null || echo 0)
 
@@ -296,13 +298,18 @@ discover_and_observe() {
 # ============================================================================
 
 # Compute vote for a peer: ignore | honour | keep
+#
+# Ratio-based decision:
+#   - merges >= 1                        → honour  (peer is productive)
+#   - merges == 0 && claims >= 2         → ignore  (peer is broken: claims but never delivers)
+#   - merges == 0 && claims 0–1          → keep    (insufficient data; 1 in-flight task is normal)
 _vote_for_peer() {
 	local active_claims="$1"
 	local worker_prs="$2"
 
 	if [[ "$worker_prs" -ge 1 ]]; then
 		printf '%s' "$ACTION_HONOUR"
-	elif [[ "$active_claims" -ge 1 ]]; then
+	elif [[ "$active_claims" -ge 2 ]]; then
 		printf '%s' "$ACTION_IGNORE"
 	else
 		printf '%s' "$ACTION_KEEP"
