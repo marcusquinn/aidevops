@@ -1577,7 +1577,7 @@ _help_commands() {
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
-	echo "  campaign <cmd>     Campaign plane: init/status/ls (P1) + launch/promote/feedback (P6)"
+	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + new/list/status/archive (P2) + launch/promote (P6)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
@@ -1669,13 +1669,15 @@ _help_detailed_sections() {
 	echo ""
 	echo "Campaign Plane:"
 	echo "  aidevops campaign init [<path>]          # Provision _campaigns/ directory contract (P1)"
-	echo "  aidevops campaign provision [<path>]     # Re-provision / repair (idempotent)"
-	echo "  aidevops campaign status [<path>]        # Show provisioning state + campaign counts"
-	echo "  aidevops campaign ls [--active|--launched|--all] [<path>]  # List campaigns"
-	echo "  aidevops campaign launch <id>            # Move active/<id> → launched/ (P6)"
-	echo "  aidevops campaign promote <id> --results # Push metrics to _performance/marketing/<id>.md (P6)"
-	echo "  aidevops campaign promote <id> --learnings # Promote insights to _knowledge/insights/marketing/ (P6)"
-	echo "  aidevops campaign feedback [<id>]        # Surface _feedback/ insights for campaign research (P6)"
+	echo "  aidevops campaign provision [<path>]     # Re-provision / repair (idempotent, P1)"
+	echo "  aidevops campaign ls [--active|--launched|--all] [<path>]  # Directory listing (P1)"
+	echo "  aidevops campaign new <name> [--channel <ch>]  # Scaffold active/<id>/ (P2)"
+	echo "  aidevops campaign list                         # Show all campaigns (P2)"
+	echo "  aidevops campaign status <id>                  # Detailed dossier for a campaign (P2)"
+	echo "  aidevops campaign archive <id>                 # Move launched/<id> → archive/ (P2)"
+	echo "  aidevops campaign launch <id>                  # Move active/<id> → launched/, create templates (P6)"
+	echo "  aidevops campaign promote <id> [--results|--learnings] # Cross-plane promotion (P6)"
+	echo "  aidevops campaign feedback [<id>]              # Surface _feedback/ insights for research (P6)"
 	echo ""
 	echo "LLM Stats:"
 	echo "  aidevops stats               # Show usage summary (last 30 days)"
@@ -2131,11 +2133,11 @@ main() {
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
 	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
 	campaign | campaigns)
-		# Route P1 provisioning commands to campaigns-provision-helper.sh;
-		# P6 commands (launch, promote, feedback) go to campaign-helper.sh.
+		# P1 provisioning: init/provision/ls → campaigns-provision-helper.sh
+		# P2+P6: all other subcommands → campaign-helper.sh
 		local _camp_cmd="${1:-help}"
 		case "$_camp_cmd" in
-		init | provision | status | ls | list)
+		init | provision | ls)
 			_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
 			;;
 		*)

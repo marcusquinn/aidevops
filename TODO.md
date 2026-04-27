@@ -831,7 +831,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t2962 Establishes the _campaigns/ directory contract as a peer-level user-data plane. Creates lib/, intel/, active/, launched/ sub-folder structure. Defines the CAMPAIGNS.md contract file, per-repo provisioning script extension, and aidevops campaign ls/status commands for directory introspection. Blocked by t2840 (knowledge/cases MVP must land first to establish directory contract pattern). Part of _campaigns/ plane (parent: #20929). #feat #framework ref:GH#21250
 
-- [ ] t2963 Implements the campaign CLI surface. Commands: aidevops campaign new <name> [--channel <ch>] (scaffold active/<id>/), aidevops campaign list (show status), aidevops campaign status <id> (detailed dossier), aidevops campaign launch <id> (move active → launched, stamp dates), aidevops campaign archive <id> (move launched → archive). Campaign IDs auto-provisioned via sequential counter similar to task-counter pattern. Blocked by t2840 (needs P0-P1 knowledge plane CLI pattern as reference). Part of _campaigns/ plane (parent: #20929). #feat #framework ref:GH#21251
+- [x] t2963 Implements the campaign CLI surface. Commands: aidevops campaign new <name> [--channel <ch>] (scaffold active/<id>/), aidevops campaign list (show status), aidevops campaign status <id> (detailed dossier), aidevops campaign launch <id> (move active → launched, stamp dates), aidevops campaign archive <id> (move launched → archive). Campaign IDs auto-provisioned via sequential counter similar to task-counter pattern. Blocked by t2840 (needs P0-P1 knowledge plane CLI pattern as reference). Part of _campaigns/ plane (parent: #20929). #feat #framework ref:GH#21251 pr:#21393 completed:2026-04-27
 
 - [ ] t2964 Integrates the 'competitive' sensitivity tier into the P0.5a sensitivity classifier (t2846). Adds intel sub-folder enforcement: any file under _campaigns/intel/ is auto-classified as competitive-tier regardless of front-matter, enforcing local-LLM-only routing (Ollama, no cloud). Competitive tier definition: retention months not years, campaign-scoped retrieval, distinct from knowledge/competitive/. Blocked by t2840 P0.5a (sensitivity schema) and P0.5c (Ollama integration). Part of _campaigns/ plane (parent: #20929). #feat #framework ref:GH#21252
 
@@ -3412,8 +3412,12 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2984 chunked or time-budgeted reconcile_issues_single_pass to stop preflight_ownership_reconcile timing out #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21373 pr:#21374 completed:2026-04-27
 
-- [ ] t2985 batch _action_oimp_single search per-repo to eliminate per-issue gh API calls #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21375
+- [x] t2985 batch _action_oimp_single search per-repo to eliminate per-issue gh API calls #auto-dispatch #bug #enhancement #framework #model:opus-4-7 ref:GH#21375 pr:#21392 completed:2026-04-27
 
 - [x] t2986 fix shellcheck false positives blocking release preflight (SC2027 + SC2154) #bug #framework ref:GH#21377 pr:#21378 completed:2026-04-27
 
 - [ ] t2989 preflight stages: missing per-iteration timeouts cause cycle cadence collapse on dispatch-path regressions #auto-dispatch #bug #enhancement #framework ref:GH#21383
+
+- [ ] t2992 post-update cache priming routine to eliminate first-cycle stage cost #auto-dispatch #enhancement #framework ref:GH#21395
+
+- [ ] t2991 fix subagent permission.task entries (4 broken keys + missing Product allowlist) #auto-dispatch ref:GH#21394

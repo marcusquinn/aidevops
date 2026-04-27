@@ -532,23 +532,41 @@ _action_rsd_single() {
 # Stage 3 action: close an open issue whose linked PR has already merged.
 # (Per-issue body of reconcile_open_issues_with_merged_prs — no slug loop.)
 #
-# Args: $1=slug, $2=issue_num, $3=verify_helper
+# t2985: looks up the merged PR via the per-repo prefetched lookup string
+# (built once by _build_oimp_lookup_for_slug). Replaces the previous
+# per-issue gh search + gh pr view body-recheck pair, which was the
+# dominant cost driver in reconcile_issues_single_pass (~600s/cycle at
+# steady-state, the t2984 budget threshold). Body-keyword filtering is
+# built into the lookup builder itself, so the redundant body-grep is
+# also gone.
+#
+# Args:
+#   $1 = slug
+#   $2 = issue_num
+#   $3 = verify_helper (path to verify-issue-close-helper.sh)
+#   $4 = oimp_lookup (pipe-delimited |num=pr|...| string from
+#        _build_oimp_lookup_for_slug; may be empty if prefetch failed)
 # Returns: 0 if closed, 1 otherwise
 #######################################
 _action_oimp_single() {
 	local slug="$1" issue_num="$2" verify_helper="$3"
+	local oimp_lookup="${4:-}"
 
+	# t2985: lookup PR number locally instead of `gh pr list --search`.
+	# Empty lookup → no merged PR found → return 1 (next-cycle retry).
 	local merged_pr_num=""
-	merged_pr_num=$(_gh_pr_list_merged --repo "$slug" --state merged \
-		--search "Resolves #${issue_num} OR Closes #${issue_num} OR Fixes #${issue_num}" \
-		--json number --jq '.[0].number // ""' --limit 1 2>/dev/null) || merged_pr_num=""
+	if [[ -n "$oimp_lookup" ]]; then
+		merged_pr_num=$(printf '%s' "$oimp_lookup" \
+			| grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null \
+			| head -1 \
+			| cut -d= -f2) || merged_pr_num=""
+	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
 
-	local pr_body
-	pr_body=$(gh pr view "$merged_pr_num" --repo "$slug" --json body --jq '.body // ""' 2>/dev/null) || pr_body=""
-	if ! printf '%s' "$pr_body" | grep -qiE "(Resolves|Closes|Fixes)\s+#${issue_num}\b"; then
-		return 1
-	fi
+	# Body keyword check is built into the lookup builder — the jq scan
+	# only emits pairs from PR bodies actually containing
+	# Resolves|Closes|Fixes #N. The previous `gh pr view ... body` re-grep
+	# is now redundant and removed (t2985).
 
 	if [[ -x "$verify_helper" ]]; then
 		if ! "$verify_helper" check "$issue_num" "$merged_pr_num" "$slug" >/dev/null 2>&1; then
