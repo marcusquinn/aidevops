@@ -17,7 +17,7 @@ subagents:
   - keyword-research
   - serper
   - dataforseo
-  - bird
+  - social-bird
   - google-search-console
   - google-analytics
   - general
