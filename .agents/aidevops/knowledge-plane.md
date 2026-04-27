@@ -116,26 +116,95 @@ Override per-repo by editing `_knowledge/_config/knowledge.json` after provision
 ## CLI
 
 ```bash
+# Provisioning
 aidevops knowledge init repo           # Provision _knowledge/ in current repo
 aidevops knowledge init personal       # Provision at ~/.aidevops/.agent-workspace/knowledge/
 aidevops knowledge init off            # Disable knowledge plane for current repo
 aidevops knowledge status              # Show provisioning state + item counts
 aidevops knowledge provision [path]    # Re-provision / repair (idempotent)
 
-# Ingest a file (auto-classifies sensitivity)
-knowledge-helper.sh add path/to/file.pdf
+# Ingest a local file (auto-classifies sensitivity)
+aidevops knowledge add path/to/file.pdf
 
-# Ingest with explicit sensitivity override
-knowledge-helper.sh add path/to/file.pdf --sensitivity privileged
+# Ingest from a URL (downloads to inbox, moves to sources)
+aidevops knowledge add https://example.com/report.pdf
+
+# Ingest large file (>30MB) — routed to blob store, stub in _knowledge/sources/
+aidevops knowledge add https://example.com/large-dataset.zip --allow-large
+
+# Ingest with explicit ID and sensitivity override
+aidevops knowledge add path/to/file.pdf --id my-doc --sensitivity privileged
+
+# List all known sources (inbox + staging + sources)
+aidevops knowledge list
+
+# Filter by state or kind
+aidevops knowledge list --state staging
+aidevops knowledge list --state sources --kind document
+
+# Search across sources
+aidevops knowledge search "invoice 2026"
 
 # Manual sensitivity correction after ingestion
-knowledge-helper.sh sensitivity override <source-id> privileged --reason "Legal advice per review"
+aidevops knowledge sensitivity override <source-id> privileged --reason "Legal advice per review"
 
 # Show current tier + audit trail for a source
-knowledge-helper.sh sensitivity show <source-id>
+aidevops knowledge sensitivity show <source-id>
 ```
 
 The helper: `.agents/scripts/knowledge-helper.sh`.
+
+## Platform Abstraction (t2843)
+
+All operations that interact with a remote platform (create issues, comment,
+create PRs) are routed through `platform-helper.sh` — a thin abstraction layer
+that dispatches to `gh` (GitHub), `glab` (GitLab), `tea` (Gitea), or a local
+no-op logger.
+
+Platform detection order:
+
+1. `repos.json` `"platform"` field for the repo path (explicit override)
+2. `repos.json` `"local_only": true` → `local`
+3. Remote URL of `origin` (github.com → `github`, gitlab.com → `gitlab`, etc.)
+4. No remote found → `local`
+
+### Available Functions
+
+| Function | Description |
+|----------|-------------|
+| `platform_detect <repo_path>` | Prints `github\|gitea\|gitlab\|local` |
+| `platform_create_issue <slug> <title> <body_file> <labels>` | Creates an issue |
+| `platform_get_issue <slug> <num>` | Returns issue as JSON |
+| `platform_comment_issue <slug> <num> <body_file>` | Posts a comment |
+| `platform_create_pr <slug> <title> <body_file> <base> <head>` | Creates a PR |
+
+### Platform Status
+
+| Platform | Status |
+|----------|--------|
+| `github` | Fully implemented via `gh` CLI |
+| `gitea` | P9 stub — exits 1 with "adapter not implemented" |
+| `gitlab` | P9 stub — exits 1 with "adapter not implemented" |
+| `local` | No-op — operations logged to `~/.aidevops/logs/platform-local-ops.log` |
+
+### Usage
+
+```bash
+# Source and use directly
+source ~/.aidevops/agents/scripts/platform-helper.sh
+
+platform=$(platform_detect /path/to/repo)
+echo "Platform: $platform"
+
+# CLI invocation
+platform-helper.sh detect /path/to/repo
+platform-helper.sh create-issue owner/repo "Title" /tmp/body.md "label1,label2"
+platform-helper.sh get-issue owner/repo 123
+platform-helper.sh comment-issue owner/repo 123 /tmp/comment.md
+platform-helper.sh create-pr owner/repo "Title" /tmp/body.md main feature/branch
+```
+
+The helper: `.agents/scripts/platform-helper.sh`.
 
 ---
 
