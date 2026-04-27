@@ -1279,17 +1279,22 @@ _handle_worker_branch_orphan() {
 	# target_branch is the branch the worker was DISPATCHED to operate on
 	# (set by the dispatch path via WORKER_TARGET_BRANCH env if present);
 	# final_head is the HEAD SHA the worker exited on; ahead_count is commits
-	# ahead of origin/main (or origin/master); work_dir is the worktree path.
+	# ahead of origin/$base_branch (DISPATCH_REPO_DEFAULT_BRANCH, fallback to
+	# origin/master when the primary ref is missing); work_dir is the worktree path.
 	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
 	local final_head=""
 	final_head=$(git -C "$work_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '<unreadable>')
 	local ahead_count=0
-	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
-	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
-	if [[ "$ahead_count" -eq 0 ]]; then
-		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+	local base_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+	local rev_output=""
+	# Fallback to master only when the primary ref is MISSING (non-zero exit),
+	# not when the count happens to be zero (worker exited on default branch).
+	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..HEAD" 2>/dev/null); then
+		ahead_count=$rev_output
+	else
+		ahead_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || echo 0)
 	fi
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
 
 	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
 
