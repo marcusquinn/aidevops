@@ -182,6 +182,78 @@ Paper-trail entry — full email content attaches via P5 (inbox-to-case filter).
 
 All read-side commands (`list`, `show`) and all mutating commands support `--json` for machine consumption. Use for scripting, P5 filter integration, and P4c alarming.
 
+## Drafting (P6a — t2857)
+
+The drafting subsystem generates strategic communication drafts using RAG over case knowledge sources. All drafts are **human-gated** — they write to `_cases/<id>/drafts/` and never auto-send.
+
+### Draft command
+
+```bash
+aidevops case draft <case-id> --intent "request payment of overdue invoice" \
+    [--tone neutral|formal|conciliatory|firm] \
+    [--length short|medium|long] \
+    [--cite strict|loose] \
+    [--include-case <other-case-id>] \
+    [--dry-run] [--json]
+```
+
+### Revise command
+
+```bash
+aidevops case draft <case-id> --revise <draft-file> --feedback "soften paragraph 3"
+```
+
+Produces a new revision file (`-rev2.md`, `-rev3.md`, etc.) preserving the citation standard.
+
+### Draft output
+
+Drafts are written to `_cases/<case-id>/drafts/<timestamp>-<intent-slug>.md` with:
+
+- **YAML frontmatter:** `case_id`, `intent`, `tone`, `length`, `model`, `generated_at`, `sources_consulted`, `cross_case_includes`
+- **Body:** LLM output with `[source-id]` citation anchors
+- **Provenance footer:** explicit list of source IDs with kind, sensitivity, and sha — always appended even if the model omits it
+
+### Sensitivity-tier routing
+
+The draft helper reads `meta.json` from each attached source to determine sensitivity. The **maximum sensitivity** across all sources determines the LLM routing tier:
+
+| Source sensitivity | LLM routing tier | Provider |
+|---|---|---|
+| `public` | `public` | Any (default: Anthropic) |
+| `internal` | `internal` | Cloud or local |
+| `confidential` | `sensitive` | Local only (Ollama) |
+| `restricted` | `privileged` | Local only; hard-fail if unavailable |
+
+When any attached source is `restricted` (privileged tier), the draft **must** route through the local LLM (Ollama). If Ollama is not running, the draft fails rather than sending privileged content to a cloud provider.
+
+### Cross-case privilege firewall
+
+By default, each case's draft sees **only its own** `sources.toon`. Cross-case retrieval requires explicit opt-in:
+
+```bash
+aidevops case draft <case-id> --intent "..." --include-case <other-case-id>
+```
+
+Every cross-case access is:
+
+1. **Audited** — appended to `_cases/<case-id>/comms/cross-case-access.jsonl`:
+
+   ```json
+   {"at":"2026-04-27T10:00:00Z","included_case":"case-2026-0002-related","included_by":"user","reason":"Draft intent: ..."}
+   ```
+
+2. **Logged in timeline** — a `cross-case-access` event records the inclusion
+
+This ensures cross-case knowledge bleed is always a deliberate, traceable act — critical for matters with multiple unrelated cases where discovery concerns apply.
+
+### Tone library
+
+Four built-in tones: `neutral`, `formal`, `conciliatory`, `firm`. Custom tones can be added by copying `.agents/templates/draft-tones-config.json` to `_config/draft-tones.json` in the repo.
+
+### No auto-send enforcement
+
+The drafting helper has **no** `--send` or `--auto-send` flag. Drafts are written to the `drafts/` directory (gitignored by default) for human review. Sending is a separate, deliberate act outside the draft workflow.
+
 ## Dependencies
 
 - **Provisioned by:** `aidevops case init`
@@ -189,5 +261,6 @@ All read-side commands (`list`, `show`) and all mutating commands support `--jso
 - **Alarming reads:** `dossier.deadlines` (t2853 P4c)
 - **Comms agent operates on:** cases (P6)
 - **Filter→case-attach:** uses `aidevops case attach` (P5c)
+- **Drafting uses:** `llm-routing-helper.sh` (t2847), `knowledge-index-helper.sh` (t2850)
 
 <!-- AI-CONTEXT-END -->
