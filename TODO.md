@@ -3260,7 +3260,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2912 Detect wedged auto-update lock holder and force-release after stale threshold #auto-dispatch #bug #framework #reliability ref:GH#21061 pr:#21108 completed:2026-04-26
 
-- [ ] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060
+- [x] t2911 Add structured per-stage timing log to setup.sh non-interactive path #auto-dispatch #enhancement #framework #observability #setup ref:GH#21060 pr:#21158 completed:2026-04-27
 
 - [x] t2914 ensure pulse running after every aidevops update via idempotent start #bug ref:GH#21069 pr:#21071 completed:2026-04-26
 
