@@ -355,6 +355,8 @@ _PULSE_HEALTH_PREFETCH_ERRORS=0
 _PULSE_HEALTH_IDLE_REPO_SKIPS=0 # GH#18984 (t2098): repos skipped due to cache-hit idle detection
 _PULSE_HEALTH_BATCH_SEARCH_CALLS=0 # GH#19963: Search API calls made by batch prefetch
 _PULSE_HEALTH_BATCH_CACHE_HITS=0   # GH#19963: per-repo batch cache hits (avoided GraphQL calls)
+_PULSE_HEALTH_EVENTS_TICKLE_FRESH=0 # GH#20868 (t2830): owners skipped via L1 ETag tickle (304 hits)
+_PULSE_HEALTH_EVENTS_TICKLE_STALE=0 # GH#20868 (t2830): owners that had event changes (200 responses)
 
 # t2433/GH#20071: Cycle-scoped repo refresh sentinel.
 # Keyed by repo_path; set to "1" once the repo has been pulled this cycle.

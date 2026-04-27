@@ -62,6 +62,25 @@ if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
 	source "${SCRIPT_DIR}/shared-constants.sh"
 fi
 
+# Source L1 events ETag tickle helper (t2830, GH#20868).
+# Provides events_tickle <owner> — skips batch search on 304 ETag match.
+# Fail-open: if the file is absent, events_tickle is a no-op stub below.
+# shellcheck source=./pulse-events-tickle.sh
+# shellcheck disable=SC1091
+if [[ -f "${SCRIPT_DIR}/pulse-events-tickle.sh" ]]; then
+	source "${SCRIPT_DIR}/pulse-events-tickle.sh"
+elif ! declare -F events_tickle >/dev/null 2>&1; then
+	# Stub: always returns "unknown" (exit 2) so the batch search runs.
+	events_tickle() { return 2; }
+fi
+
+# Source pulse-stats-helper for persistent counter recording (fail-open).
+# shellcheck source=./pulse-stats-helper.sh
+# shellcheck disable=SC1091
+if [[ -f "${SCRIPT_DIR}/pulse-stats-helper.sh" ]]; then
+	source "${SCRIPT_DIR}/pulse-stats-helper.sh" 2>/dev/null || true
+fi
+
 # --- Configuration ---
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 BATCH_CACHE_DIR="${PULSE_BATCH_PREFETCH_CACHE_DIR:-${HOME}/.aidevops/logs/batch-prefetch}"
@@ -500,14 +519,33 @@ _cmd_refresh() {
 	local _graphql_remaining=""
 	_graphql_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _graphql_remaining=""
 
+	# L1 tickle counters — reset per refresh cycle (module globals from
+	# pulse-events-tickle.sh; may already be 0 if sourced fresh, but
+	# explicit reset ensures correct totals when _cmd_refresh is called
+	# multiple times within the same process).
+	_PULSE_EVENTS_TICKLE_FRESH=0
+	_PULSE_EVENTS_TICKLE_STALE=0
+
 	local owner slugs
 	while IFS='|' read -r owner slugs; do
 		[[ -n "$owner" ]] || continue
+
+		# L1 events ETag tickle (t2830, GH#20868): cheap conditional GET
+		# via REST core bucket. On 304 (ETag unchanged), skip the 2 Search
+		# API calls for this owner entirely. On error (exit 2), fail-open
+		# and let the normal batch search proceed.
+		local _tickle_rc=0
+		events_tickle "$owner" || _tickle_rc=$?
+		if [[ "$_tickle_rc" -eq 0 ]]; then
+			_log "events tickle fresh for owner=${owner} — skipping search calls"
+			continue
+		fi
+
 		_refresh_owner_issues "$owner" "$slugs" "$_graphql_remaining" || true
 		_refresh_owner_prs "$owner" "$slugs" "$_graphql_remaining" || true
 	done <<<"$owner_groups"
 
-	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS}"
+	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS} tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH} tickle_stale=${_PULSE_EVENTS_TICKLE_STALE}"
 
 	# t2902: aggregate gh API call records to JSON report at the end of each
 	# refresh cycle. Fail-open: if gh-api-instrument.sh isn't sourced, the
@@ -516,10 +554,30 @@ _cmd_refresh() {
 	gh_aggregate_calls 2>/dev/null || true
 	gh_trim_log 2>/dev/null || true
 
-	# Export counters for health instrumentation
+	# Record tickle counters to pulse-stats.json (one timestamp entry per
+	# fresh/stale owner). Fail-open: pulse_stats_increment is sourced from
+	# pulse-stats-helper.sh above; if it was not sourced, the declare -F
+	# guard is a no-op and the batch search continues unaffected.
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		local _fi=0
+		while [[ "$_fi" -lt "$_PULSE_EVENTS_TICKLE_FRESH" ]]; do
+			pulse_stats_increment "pulse_events_tickle_fresh" 2>/dev/null || true
+			_fi=$((_fi + 1))
+		done
+		local _si=0
+		while [[ "$_si" -lt "$_PULSE_EVENTS_TICKLE_STALE" ]]; do
+			pulse_stats_increment "pulse_events_tickle_stale" 2>/dev/null || true
+			_si=$((_si + 1))
+		done
+	fi
+
+	# Export counters for health instrumentation (parsed by _prefetch_batch_refresh
+	# in pulse-prefetch.sh and added to per-cycle health totals).
 	echo "search_calls=${_OWNER_SEARCH_CALLS}"
 	echo "cache_writes=${_OWNER_CACHE_WRITES}"
 	echo "errors=${_OWNER_ERRORS}"
+	echo "events_tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH}"
+	echo "events_tickle_stale=${_PULSE_EVENTS_TICKLE_STALE}"
 	return 0
 }
 
