@@ -3312,3 +3312,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2939 feat(pulse): defense-in-depth restart reliability — KeepAlive dict + watchdog plist #auto-dispatch #enhancement ref:GH#21148
 
 - [ ] t2940 scrub identifying details from t2933 incident artifacts #security ref:GH#21149
+
+- [ ] t2941 redact bad-actor usernames from committed files and live artifacts #auto-dispatch #refactor #security ref:GH#21150
