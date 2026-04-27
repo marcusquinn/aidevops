@@ -864,7 +864,10 @@ cmd_search() {
 		local found=0
 		local src_id
 		for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-			local txt="${sources_dir}/${src_id}/text.txt"
+			# Backwards-compat reader: prefer source.md (Markdoc-tagged, t2971),
+			# fall back to text.txt (P0a contract) when source.md is absent.
+			local txt="${sources_dir}/${src_id}/source.md"
+			[[ -f "$txt" ]] || txt="${sources_dir}/${src_id}/text.txt"
 			[[ -f "$txt" ]] || continue
 			if grep -qi "$query" "$txt" 2>/dev/null; then
 				local excerpt
