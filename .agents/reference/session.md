@@ -45,7 +45,7 @@ worktree-helper.sh add feature/x  # Fallback
 
 ## Idle Interactive PR Handover (t2189)
 
-When an `origin:interactive` PR sits >24h with a failing required check, a conflict, or an idle review, and the human session has demonstrably ended — no active `status:*` label on the linked issue AND no live claim stamp in `$CLAIM_STAMP_DIR` — the deterministic merge pass:
+When an `origin:interactive` PR sits >4h with a failing required check, a conflict, or an idle review, and the human session has demonstrably ended — no active `status:*` label on the linked issue AND no live claim stamp in `$CLAIM_STAMP_DIR` — the deterministic merge pass:
 
 1. Applies the `origin:worker-takeover` label
 2. Posts a one-time handover comment (`<!-- pulse-interactive-handover -->`)
@@ -59,7 +59,7 @@ When an `origin:interactive` PR sits >24h with a failing required check, a confl
 
 Env controls:
 - `AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=off|detect|enforce` (default `detect` — logs `would-handover` without acting). Flip to `enforce` after 2-3 pulse cycles of clean `detect` telemetry.
-- `AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS` (default 24)
+- `IDLE_INTERACTIVE_HANDOVER_SECONDS` (default 14400 = 4h; t2948 reduced from 86400 = 24h). Set to 86400 to restore the prior 24h behaviour.
 
 ## Browser Automation
 

@@ -795,7 +795,7 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 - **Offline `gh`:** the helper warns and continues (exit 0). A collision with a worker is harmless — the interactive work naturally becomes its own issue/PR.
 - **`sudo aidevops approve issue <N>`** (crypto-approval flow for contributor-filed NMR issues) also clears `status:in-review` idempotently when present — no new user-facing command, it's a passive side effect of the already-required approval step.
 - `/release-issue <N>` and `aidevops issue release <N>` exist as fallbacks only.
-- **Idle interactive PR handover (t2189):** `origin:interactive` PRs idle >24h with no active claim stamp auto-transfer to `origin:worker-takeover` for CI-fix/conflict pipelines. Apply `no-takeover` to opt out. Full detail and env controls: `reference/session.md`.
+- **Idle interactive PR handover (t2189):** `origin:interactive` PRs idle >4h with no active claim stamp auto-transfer to `origin:worker-takeover` for CI-fix/conflict pipelines. Apply `no-takeover` to opt out. Override via `IDLE_INTERACTIVE_HANDOVER_SECONDS` env var (default 14400). Full detail and env controls: `reference/session.md`.
 
 **Traceability and signature footer:** Hard rules: see "Framework Rules > Git Workflow > Traceability" and "Framework Rules > Signature footer hallucination" above. Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 

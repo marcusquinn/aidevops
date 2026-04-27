@@ -45,6 +45,11 @@ _PULSE_MERGE_CONFLICT_LOADED=1
 # is sourced outside the pulse-wrapper.sh bootstrap context.
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+# t2948: Idle interactive PR handover threshold in seconds (default 4h).
+# Override via IDLE_INTERACTIVE_HANDOVER_SECONDS env var.
+# See _interactive_pr_is_stale / _interactive_pr_trigger_handover.
+: "${IDLE_INTERACTIVE_HANDOVER_SECONDS:=14400}"
+
 #######################################
 # GH#18650 (Fix 4): Post a one-time rebase nudge on an origin:interactive
 # CONFLICTING PR that the pulse is about to skip.
@@ -201,7 +206,7 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 #      in-review, claimed) — an active status means a human is driving it
 #   3. No live claim stamp file in $CLAIM_STAMP_DIR for the linked issue
 #      (session is gone; no interactive-session-helper.sh claim active)
-#   4. PR updatedAt older than AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS (24h)
+#   4. PR updatedAt older than IDLE_INTERACTIVE_HANDOVER_SECONDS (default 14400 = 4h)
 #   5. Linked issue is open (don't touch PRs whose issue was already closed)
 #
 # Env controls:
@@ -209,7 +214,7 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 #     off:     returns 1 unconditionally (feature disabled)
 #     detect:  evaluates signal and logs would-handover decisions; still returns signal
 #     enforce: evaluates signal and returns it; caller acts
-#   AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS — age threshold hours, default 24
+#   IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 14400 (4h; t2948)
 #
 # Args: $1 = pr_number, $2 = repo_slug
 # Returns: 0 if stale (handover-eligible), 1 otherwise
@@ -242,13 +247,13 @@ _interactive_pr_is_stale() {
 	fi
 
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
-	local threshold_hours updated_at now_epoch updated_epoch pr_age_hours
-	threshold_hours="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+	local threshold_secs updated_at now_epoch updated_epoch pr_age_secs
+	threshold_secs="${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}"  # default 4h (t2948; was 24h)
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
-	# A non-numeric value (e.g. "24h", empty, negative) triggers bash
+	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
 	# "value too great for base" and silently breaks stale detection.
-	if [[ ! "$threshold_hours" =~ ^[0-9]+$ ]] || [[ "$threshold_hours" -eq 0 ]]; then
-		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS='${threshold_hours}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
+	if [[ ! "$threshold_secs" =~ ^[0-9]+$ ]] || [[ "$threshold_secs" -eq 0 ]]; then
+		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
 	updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
@@ -258,8 +263,8 @@ _interactive_pr_is_stale() {
 	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
 		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
 		return 1
-	pr_age_hours=$(( (now_epoch - updated_epoch) / 3600 ))
-	[[ "$pr_age_hours" -lt "$threshold_hours" ]] && return 1
+	pr_age_secs=$(( now_epoch - updated_epoch ))
+	[[ "$pr_age_secs" -lt "$threshold_secs" ]] && return 1
 
 	# Gate 2 + 5: resolve linked issue, verify open, check status labels
 	local linked_issue
@@ -283,7 +288,7 @@ _interactive_pr_is_stale() {
 
 	# All gates passed — PR is stale. Log in detect mode.
 	if [[ "$mode" == "detect" ]]; then
-		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle ${pr_age_hours}h >= ${threshold_hours}h, linked issue #${linked_issue})" >>"$LOGFILE"
+		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h >= $((threshold_secs / 3600))h, linked issue #${linked_issue})" >>"$LOGFILE"
 	fi
 	return 0
 }
@@ -348,10 +353,10 @@ _interactive_pr_trigger_handover() {
 	# Post one-time handover comment via _gh_idempotent_comment
 	if declare -F _gh_idempotent_comment >/dev/null 2>&1; then
 		local marker="<!-- pulse-interactive-handover -->"
-		local threshold="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS:-24}"
+		local threshold_h=$(( ${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400} / 3600 ))
 		local body
 		body="${marker}
-## Worker takeover — no interactive session activity for ${threshold}h
+## Worker takeover — no interactive session activity for ${threshold_h}h
 
 This \`origin:interactive\` PR has been idle past the handover threshold. The pulse is now routing it through the worker pipeline to drive it to merge:
 

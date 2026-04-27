@@ -113,7 +113,7 @@ pw-route-review-fix|pulse-merge-feedback.sh|574|_dispatch_pr_fix_worker: routed 
 pw-route-review-empty|pulse-merge-feedback.sh|536|_dispatch_pr_fix_worker: PR #.*CHANGES_REQUESTED but no substantive|Review fix skipped — CHANGES_REQUESTED but no substantive review content
 pw-feedback-routed|pulse-merge-feedback.sh|153|already has routed feedback marker|Feedback routing skipped — already routed for this PR
 pw-feedback-body-fail|pulse-merge-feedback.sh|145|failed to fetch issue.*body.*skipping body edit|Feedback routing skipped — failed to fetch issue body
-pmc-handover|pulse-merge-conflict.sh|308|handover: PR #.*handed over to worker pipeline|Interactive PR handed over to worker pipeline (idle >24h)
+pmc-handover|pulse-merge-conflict.sh|308|handover: PR #.*handed over to worker pipeline|Interactive PR handed over to worker pipeline (idle >IDLE_INTERACTIVE_HANDOVER_SECONDS, default 4h)
 pmc-would-handover|pulse-merge-conflict.sh|212|would-handover: PR #|Would-handover detected (detect mode — not acting)
 pmc-handover-no-takeover|pulse-merge-conflict.sh|166|_interactive_pr_is_stale: PR #.*has no-takeover label|Handover skipped — PR has no-takeover label
 pmc-skip-interactive-close|pulse-merge-conflict.sh|583|Deterministic merge: skipping auto-close of origin:interactive PR|Skipped auto-close of origin:interactive PR — maintainer work never auto-closed
