@@ -980,9 +980,11 @@ _search_compute_allowed_ids() {
 # _search_grep_sources <sources_dir> <query> <allowed_ids> <filters_active>
 # Grep for <query> across sources in <sources_dir>, filtered to <allowed_ids>
 # when <filters_active> is 1.  Outputs JSON per-match line to stdout.
+# Strips Markdoc tags from excerpts when markdoc-render-gh.sh is available.
 _search_grep_sources() {
 	local sources_dir="$1" query="$2" allowed_ids="$3" filters_active="$4"
 	local found=0 src_id
+	local _render_sh="${SCRIPT_DIR}/markdoc-render-gh.sh"
 	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
 		if [[ $filters_active -eq 1 ]]; then
 			echo "$allowed_ids" | grep -qxF "$src_id" 2>/dev/null || continue
@@ -993,10 +995,18 @@ _search_grep_sources() {
 		local match_lines
 		match_lines=$(_grep_source_file "$query" "$src_file" || true)
 		if [[ -n "$match_lines" ]]; then
-			local excerpt
-			excerpt="${match_lines%%$'\n'*}"
+			local excerpt raw_excerpt
+			raw_excerpt="${match_lines%%$'\n'*}"
+			raw_excerpt="${raw_excerpt:0:200}"
+			# Strip Markdoc tags so raw {% %} syntax never leaks into GH output
+			if [[ -x "$_render_sh" ]]; then
+				excerpt="$(printf '%s' "$raw_excerpt" | "$_render_sh" render - --strip 2>/dev/null)" \
+					|| excerpt="$raw_excerpt"
+			else
+				excerpt="$raw_excerpt"
+			fi
 			printf '{"source_id":"%s","excerpt":"%s"}\n' \
-				"$src_id" "${excerpt:0:200}"
+				"$src_id" "$excerpt"
 			found=$((found + 1))
 		fi
 	done
