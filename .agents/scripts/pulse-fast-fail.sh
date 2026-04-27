@@ -528,7 +528,7 @@ _fast_fail_age_out_locked() {
 	fi
 
 	# Quiet-period check: last failure must be >= AGE_OUT_SECONDS ago.
-	local age_out_secs="${FAST_FAIL_AGE_OUT_SECONDS:-86400}"
+	local age_out_secs="${FAST_FAIL_AGE_OUT_SECONDS:-3600}"
 	local age
 	age=$((now - existing_ts))
 	if [[ "$age" -lt "$age_out_secs" ]]; then
