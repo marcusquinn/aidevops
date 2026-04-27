@@ -116,7 +116,7 @@ _is_running_short_circuit() {
 	if [[ "$_ir_pid" =~ ^[0-9]+$ ]] && [[ "$_ir_pid" != "$$" ]] && kill -0 "$_ir_pid" 2>/dev/null; then
 		# t2829: age check
 		local _ir_age _ir_max
-		_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || echo 0)
+		_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || true)
 		_ir_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
 		if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then
 			echo "[pulse-wrapper] Pulse already running (PID: ${_ir_pid}, age ${_ir_age}s), skipping" >>"$WRAPPER_LOGFILE"
@@ -469,6 +469,37 @@ test_dry_run_mode_bypasses() {
 }
 
 #######################################
+# Test 12: _get_process_age exits non-zero (helper failure)
+# With || echo 0 the result was age=0 → skip cycle (wrong: treats failure
+# as "process is young"). With || echo "unknown" the regex guard kicks in
+# and we fall through to reclaim — the safe failure mode. GH#20962.
+#######################################
+test_age_helper_failure_falls_through() {
+	reset_state
+
+	local live_pid
+	_spawn_live_pid
+	live_pid="$_SPAWNED_PID"
+
+	mkdir -p "$LOCKDIR"
+	echo "$live_pid" >"${LOCKDIR}/pid"
+
+	# Override stub to simulate _get_process_age exiting non-zero with no output
+	_get_process_age() { return 1; }
+
+	PULSE_LOCK_MAX_AGE_S=1800
+
+	local result=0
+	_is_running_short_circuit || result=$?
+
+	# Restore default stub so subsequent tests are unaffected
+	_get_process_age() { echo "$STUB_PROCESS_AGE"; return 0; }
+
+	assert_equals "age helper failure: returns 1 (fall through to reclaim)" "1" "$result"
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -489,6 +520,7 @@ main() {
 	test_log_marker_format
 	test_canary_mode_bypasses
 	test_dry_run_mode_bypasses
+	test_age_helper_failure_falls_through
 
 	teardown_sandbox
 
