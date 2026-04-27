@@ -305,8 +305,8 @@ _lfi_check_dedup() {
 		local existing
 		existing=$(gh issue list --repo "$slug" \
 			--state open --search "$search_terms" \
-			--json number,url --limit 1 -q '.[0].url' 2>/dev/null || echo "")
-		if [[ -n "$existing" && "$existing" != "null" ]]; then
+			--json number,url --limit 1 -q '.[0].url // ""' || echo "")
+		if [[ -n "$existing" ]]; then
 			log_info "Duplicate found (search): $existing"
 			_LFI_DEDUP_URL="$existing"
 			return 2
@@ -329,7 +329,7 @@ _lfi_create_and_record() {
 
 	# Append signature footer for API call (body without sig used for fingerprinting)
 	local sig_footer=""
-	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
+	sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --body "$body" || true)
 	local body_for_api="${body}${sig_footer}"
 
 	local issue_url

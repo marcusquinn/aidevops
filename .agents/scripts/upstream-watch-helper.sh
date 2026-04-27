@@ -709,7 +709,7 @@ _report_github_repo_update() {
 _probe_github_release() {
 	local slug="$1"
 	local api_stderr
-	api_stderr=$(mktemp)
+	api_stderr=$(mktemp -t upstream-watch-err.XXXXXX)
 	local release_json=""
 
 	if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
@@ -743,7 +743,7 @@ _probe_github_release() {
 _probe_github_commit() {
 	local slug="$1"
 	local api_stderr
-	api_stderr=$(mktemp)
+	api_stderr=$(mktemp -t upstream-watch-err.XXXXXX)
 	local commit_json=""
 
 	if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
