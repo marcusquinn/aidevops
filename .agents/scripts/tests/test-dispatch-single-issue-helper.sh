@@ -110,8 +110,8 @@ test_ceremony_applies_default() {
 	print_result "ceremony returns 0 on success" 0
 
 	# Assert exactly one set_issue_status call recorded.
-	# t2763: the `grep -c PAT FILE || echo "0"` form is BANNED — it stacks
-	# "0\n0" on the zero-match path. Use the inline guard pattern instead.
+	# t2763: the unsafe grep-c-then-fallback idiom stacks two zeros on the
+	# zero-match path. Use the inline guard pattern instead (see counter-stack-check).
 	local call_count
 	call_count=$(grep -c '^set_issue_status' "$SET_ISSUE_STATUS_LOG" 2>/dev/null || true)
 	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0

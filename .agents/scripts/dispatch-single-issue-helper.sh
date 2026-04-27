@@ -641,7 +641,27 @@ cmd_dispatch() {
 	# Step 6: pre-create worktree
 	_dsi_create_worktree "$issue_number" || return 1
 
-	# Step 7: launch (gets back the LAUNCH wrapper PID — short-lived)
+	# Steps 7-9 + report: launch worker, resolve real PID, register ledger,
+	# print success summary. Extracted to keep cmd_dispatch under the 100-line
+	# function-complexity gate (t3000).
+	_dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"
+}
+
+# Steps 7-9 of cmd_dispatch: launch the headless runtime, resolve the real
+# worker PID from its log header, register it in the dispatch ledger with
+# that PID (so liveness checks reflect the actual worker, not the wrapper),
+# and emit the human-facing success summary.
+# Args:
+#   $1 issue_number
+#   $2 repo_slug
+#   $3 session_key
+# Reads: _DSI_ISSUE_URL, _DSI_LOG_DIR, _DSI_WORKTREE_PATH, _DSI_ISSUE_TITLE,
+#        _DSI_TIER, _DSI_SELECTED_MODEL.
+_dsi_launch_and_report() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
 	worker_log="${_DSI_LOG_DIR}/manual-dispatch-${issue_number}-$(date +%Y%m%d-%H%M%S).log"
@@ -651,13 +671,9 @@ cmd_dispatch() {
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
 		"$worker_log" "$issue_number") || return 1
 
-	# Step 8: resolve REAL worker PID from log (headless-runtime-helper
-	# prints "Dispatched PID: <pid>" before its subshell takes over).
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")
 
-	# Step 9: register in ledger with the real PID (so check-issue PID
-	# liveness checks reflect the actual worker, not the dead wrapper).
 	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key" "$worker_pid"
 
 	_dsi_ok "Worker launched"
