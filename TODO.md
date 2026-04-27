@@ -3325,3 +3325,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t2944 hotfix: bash 3.2 syntax error in bounty-spam-detector.sh blocks all macOS CI #auto-dispatch #bug #framework ref:GH#21162 pr:#21165 completed:2026-04-27
 
 - [ ] t2946 settings namespace divergence: orchestration.* schema completely unread, supervisor.* read but undocumented #auto-dispatch #bug #enhancement #framework ref:GH#21180
+
+- [ ] t2950 raise MAX_WORKERS_CAP ceiling 32→64 in pulse-wrapper-config.sh #auto-dispatch #enhancement #framework ref:GH#21185
+
+- [ ] t2949 reduce parent-task advisory nudge threshold 24h→4h #auto-dispatch #enhancement #framework ref:GH#21184
+
+- [ ] t2948 reduce idle interactive PR handover threshold 24h→4h (AGENTS.md t2189) #auto-dispatch #enhancement #framework ref:GH#21183
+
+- [ ] t2947 reduce pulse-fast-fail FAST_FAIL_AGE_OUT_SECONDS default 86400→3600 (1h) #auto-dispatch #enhancement #framework ref:GH#21182
+
+- [ ] t2951 bounty-spam-auto-close.yml never fires close: cmd_score rc=0 contract collides with workflow rc=1 gate #auto-dispatch #bug #security ref:GH#21181
