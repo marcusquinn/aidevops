@@ -2253,6 +2253,26 @@ reconcile_issues_single_pass() {
 	fi
 	local pbf_total_run=0 pbf_max_per_cycle=10
 
+	# t2877: periodic cross-phase blocked-by backfill — gated by a separate
+	# interval state file (same default 3600s as t2838 sub-issue backfill).
+	# The backfill is idempotent (addBlockedBy swallows duplicates) so this
+	# is purely a cost-control gate, not a correctness requirement. Shares
+	# _pbf_now as the "current epoch" to avoid a second date(1) call.
+	local _cbb_state_file="${HOME}/.aidevops/state/cross-phase-blocked-by-last-run.epoch"
+	local _cbb_interval="${AIDEVOPS_CROSS_PHASE_BLOCKED_BY_INTERVAL_SECS:-3600}"
+	[[ "$_cbb_interval" =~ ^[1-9][0-9]*$ ]] || _cbb_interval=3600
+	local _cbb_this_cycle=0 _cbb_last_run=0
+	if [[ -r "$_cbb_state_file" ]]; then
+		_cbb_last_run=$(cat "$_cbb_state_file" 2>/dev/null || echo 0)
+		[[ "$_cbb_last_run" =~ ^[0-9]+$ ]] || _cbb_last_run=0
+	fi
+	if [[ "$_pbf_now" -gt 0 ]] && \
+		[[ $((_pbf_now - _cbb_last_run)) -ge "$_cbb_interval" ]] && \
+		[[ -n "$issue_sync_helper" ]]; then
+		_cbb_this_cycle=1
+	fi
+	local cbb_total_run=0 cbb_max_per_cycle=10
+
 	# Cycle-wide counters for log summary
 	local ciw_closed=0 rsd_closed=0 rsd_reset=0 lia_fixed=0
 
@@ -2366,21 +2386,32 @@ reconcile_issues_single_pass() {
 					[[ "$_SP_CPT_NUDGED" -eq 1 ]] && cpt_total_nudged=$((cpt_total_nudged + 1))
 					[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && cpt_total_escalated=$((cpt_total_escalated + 1))
 				fi
-				# t2838: periodic sub-issue backfill — only if cycle-gate fired
-				# AND parent didn't just close (no point linking to closed parent).
-				# Idempotent and silent on no-op (already-linked children).
-				# Counter increments only on success — failed backfills (rate
-				# limit, network error) leave the gate state for next cycle's
-				# retry rather than advancing the clock on broken work.
-				if [[ "$_pbf_this_cycle" -eq 1 ]] && \
-					[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
-					[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]]; then
-					if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
-						--issue "$issue_num" >/dev/null 2>&1; then
-						pbf_total_run=$((pbf_total_run + 1))
-					fi
+			# t2838: periodic sub-issue backfill — only if cycle-gate fired
+			# AND parent didn't just close (no point linking to closed parent).
+			# Idempotent and silent on no-op (already-linked children).
+			# Counter increments only on success — failed backfills (rate
+			# limit, network error) leave the gate state for next cycle's
+			# retry rather than advancing the clock on broken work.
+			if [[ "$_pbf_this_cycle" -eq 1 ]] && \
+				[[ "$pbf_total_run" -lt "$pbf_max_per_cycle" ]] && \
+				[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]]; then
+				if "$issue_sync_helper" backfill-sub-issues --repo "$slug" \
+					--issue "$issue_num" >/dev/null 2>&1; then
+					pbf_total_run=$((pbf_total_run + 1))
 				fi
-				continue  # parent-task issues do not flow to stage 5
+			fi
+			# t2877: periodic cross-phase blocked-by backfill — mirrors t2838
+			# gate pattern. Only runs if the parent didn't just close and the
+			# cycle-gate fired. Idempotent (addBlockedBy swallows duplicates).
+			if [[ "$_cbb_this_cycle" -eq 1 ]] && \
+				[[ "$cbb_total_run" -lt "$cbb_max_per_cycle" ]] && \
+				[[ "${_SP_CPT_CLOSED:-0}" -ne 1 ]]; then
+				if "$issue_sync_helper" backfill-cross-phase-blocked-by \
+					--repo "$slug" --issue "$issue_num" >/dev/null 2>&1; then
+					cbb_total_run=$((cbb_total_run + 1))
+				fi
+			fi
+			continue  # parent-task issues do not flow to stage 5
 			fi
 
 			# Stage 5: backfill labelless aidevops-shaped issues (per-repo cap)
@@ -2401,10 +2432,16 @@ reconcile_issues_single_pass() {
 		printf '%s\n' "$_pbf_now" >"$_pbf_state_file" 2>/dev/null || true
 	fi
 
+	# t2877: persist last-run epoch for cross-phase blocked-by backfill.
+	if [[ "$_cbb_this_cycle" -eq 1 ]] && [[ "$cbb_total_run" -gt 0 ]]; then
+		mkdir -p "$(dirname "$_cbb_state_file")" 2>/dev/null || true
+		printf '%s\n' "$_pbf_now" >"$_cbb_state_file" 2>/dev/null || true
+	fi
+
 	local _total_actions
-	_total_actions=$((ciw_closed + rsd_closed + rsd_reset + oimp_total_closed + cpt_total_closed + cpt_total_nudged + cpt_total_escalated + lia_fixed + pbf_total_run))
+	_total_actions=$((ciw_closed + rsd_closed + rsd_reset + oimp_total_closed + cpt_total_closed + cpt_total_nudged + cpt_total_escalated + lia_fixed + pbf_total_run + cbb_total_run))
 	if [[ "$_total_actions" -gt 0 ]]; then
-		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run}" >>"$LOGFILE"
+		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	fi
 	return 0
 }

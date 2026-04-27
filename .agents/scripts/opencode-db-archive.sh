@@ -178,7 +178,8 @@ CREATE TABLE IF NOT EXISTS `project` (
 	`time_updated` integer NOT NULL,
 	`time_initialized` integer,
 	`sandboxes` text NOT NULL,
-	`commands` text
+	`commands` text,
+	`icon_url_override` text
 );
 
 CREATE TABLE IF NOT EXISTS `session` (
@@ -255,6 +256,18 @@ CREATE TABLE IF NOT EXISTS `session_share` (
 -- WAL mode for the archive too (better read concurrency)
 PRAGMA journal_mode=WAL;
 SCHEMA_SQL
+
+	# Migrate existing archive DBs that predate the icon_url_override column.
+	# CREATE TABLE IF NOT EXISTS won't update an already-existing table, so we
+	# use ALTER TABLE ADD COLUMN guarded by a column-existence check.
+	local has_icon_url_override
+	has_icon_url_override=$(sqlite3 "$archive_db" \
+		"SELECT COUNT(*) FROM pragma_table_info('project') WHERE name='icon_url_override';")
+	if [[ "$has_icon_url_override" -eq 0 ]]; then
+		sqlite3 "$archive_db" "ALTER TABLE project ADD COLUMN icon_url_override text;"
+		print_info "Migrated archive.project schema: added icon_url_override column"
+	fi
+
 	return 0
 }
 

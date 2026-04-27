@@ -8,5 +8,16 @@
   "ingest_policy": {
     "auto_sha256": true,
     "require_meta": true
+  },
+  "trust": {
+    "auto_promote": {
+      "from_paths": [],
+      "from_emails": [],
+      "from_bots": []
+    },
+    "review_gate": {
+      "from_emails": []
+    },
+    "untrusted": "*"
   }
 }

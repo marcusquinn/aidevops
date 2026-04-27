@@ -369,13 +369,28 @@ approve_collaborator_pr() {
 		fi
 	fi
 
-	# Approve the PR
+	# Defense-in-depth: refuse to approve when the PR author is not a
+	# collaborator on this repo. The merge cycle's _check_pr_merge_gates
+	# already short-circuits on this condition (line ~1060), but a future
+	# refactor could remove that gate. Self-protecting at the function
+	# boundary closes the regression window. (GH#17671 post-mortem,
+	# t2933.) The misleading "collaborator PR" approval body shipped for
+	# years until the surrounding gates landed; a lone caller would
+	# re-introduce the supply-chain hole.
+	if [[ -n "$pr_author" ]] && [[ "$pr_author" != "unknown" ]] && ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+		echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is not a collaborator on $repo_slug — refusing to auto-approve (GH#17671 defense-in-depth, t2933)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Approve the PR — body now states the actual checks performed
+	# (author confirmed collaborator + pulse runner has write access),
+	# not just the misleading "collaborator PR" claim.
 	local approve_output
-	approve_output=$(gh pr review "$pr_number" --repo "$repo_slug" --approve --body "Auto-approved by pulse — collaborator PR (author: @${pr_author}). All pre-merge checks passed." 2>&1)
+	approve_output=$(gh pr review "$pr_number" --repo "$repo_slug" --approve --body "Auto-approved by pulse runner @${current_user:-unknown} — author @${pr_author} confirmed collaborator, pre-merge gates passed." 2>&1)
 	local approve_exit=$?
 
 	if [[ $approve_exit -eq 0 ]]; then
-		echo "[pulse-wrapper] approve_collaborator_pr: approved PR #$pr_number in $repo_slug (author: $pr_author)" >>"$LOGFILE"
+		echo "[pulse-wrapper] approve_collaborator_pr: approved PR #$pr_number in $repo_slug (author: $pr_author, runner: ${current_user:-unknown})" >>"$LOGFILE"
 		return 0
 	fi
 

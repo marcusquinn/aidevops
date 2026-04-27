@@ -85,6 +85,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 ## Routines
 
 - [x] r-gh-audit-scan Scan gh-audit.log for anomalies repeat:daily(@09:00) run:scripts/gh-audit-anomaly-helper.sh scan
+- [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
 - [x] r044 IMAP mailbox polling — fetch new emails to _knowledge/inbox/ repeat:cron(*/10 * * * *) ~1m run:scripts/email-poll-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 
@@ -3128,11 +3129,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2844 P0a: knowledge plane directory contract + provisioning #enhancement #framework ref:GH#20896 pr:#21107 completed:2026-04-26
 
-- [ ] t2845 P0c: knowledge review gate routine + NMR integration #enhancement #framework ref:GH#20897
+- [x] t2845 P0c: knowledge review gate routine + NMR integration #enhancement #framework ref:GH#20897 pr:#21140 completed:2026-04-26
 
 - [ ] t2846 P0.5a: sensitivity classification schema + detector #enhancement #framework ref:GH#20899 blocked-by:t2844
 
-- [ ] t2847 P0.5b: LLM routing helper + audit log #enhancement #framework ref:GH#20900 blocked-by:t2844
+- [x] t2847 P0.5b: LLM routing helper + audit log #enhancement #framework ref:GH#20900 blocked-by:t2844 pr:#21138 completed:2026-04-26
 
 - [ ] t2848 P0.5c: Ollama integration + local LLM substrate #enhancement #framework ref:GH#20901 blocked-by:t2844
 
@@ -3190,7 +3191,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2876 gh PATH shim: privacy-scan layer to fail-closed on private-slug references when posting to public repos #auto-dispatch #framework #security ref:GH#20970 pr:#20974 completed:2026-04-26
 
-- [ ] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972
+- [x] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972 pr:#21141 completed:2026-04-26
 
 - [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
 
@@ -3290,7 +3291,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2929 perf(pulse): preflight_cleanup_and_ledger 60-133s — stagger and parallelize git fetches #auto-dispatch #enhancement #framework #performance #pulse ref:GH#21105
 
-- [ ] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104
+- [x] t2928 fix(observability): SQLite archive.project schema column-count mismatch in pulse log #auto-dispatch #bug #framework #observability ref:GH#21104 pr:#21143 completed:2026-04-26
 
 - [x] t2927 fix(pulse): FOOTPRINT_OVERLAP cache leaks closed-issue defers — invalidate when issue closes #auto-dispatch #bug #framework #pulse ref:GH#21103 pr:#21117 completed:2026-04-26
 
@@ -3298,4 +3299,18 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2932 feat(dispatch): peer-productivity-monitor for adaptive compete/collaborate switching ref:GH#21125 pr:#21128 completed:2026-04-26
 
-- [ ] t2933 harden approve_collaborator_pr: defense-in-depth + regression test (GH#17671 follow-up) #auto-dispatch #security ref:GH#21132
+- [x] t2933 harden approve_collaborator_pr: defense-in-depth + regression test (GH#17671 follow-up) #auto-dispatch #security ref:GH#21132 pr:#21133 completed:2026-04-26
+
+- [ ] t2934 harden pulse-merge against admin --admin bypass on external-contributor PRs #auto-dispatch #bug #security ref:GH#21134
+
+- [ ] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147
+
+- [ ] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146
+
+- [ ] t2935 Block GitHub user internet-dot — drive-by spam author of GH#17671 #security ref:GH#21145
+
+- [ ] t2939 feat(pulse): defense-in-depth restart reliability — KeepAlive dict + watchdog plist #auto-dispatch #enhancement ref:GH#21148
+
+- [ ] t2940 scrub identifying details from t2933 incident artifacts #security ref:GH#21149
+
+- [ ] t2941 redact bad-actor usernames from committed files and live artifacts #auto-dispatch #refactor #security ref:GH#21150

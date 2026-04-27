@@ -127,6 +127,103 @@ The helper: `.agents/scripts/knowledge-helper.sh`.
 
 ---
 
+## Review Gate (t2845)
+
+The pulse-driven `r040` routine runs every 15 minutes, scans
+`_knowledge/inbox/` for pending sources, and classifies them using the trust
+ladder defined in `_knowledge/_config/knowledge.json`.
+
+### Trust Ladder
+
+Three trust classes determine what happens to each inbox item:
+
+| Class | Trigger | Action |
+|-------|---------|--------|
+| `auto_promote` | `meta.json` `trust: "trusted"\|"authoritative"`, OR `ingested_by` matches a configured bot/email, OR `source_uri` starts with a trusted path | Direct promotion: inbox → staging → sources + audit entry |
+| `review_gate` | `ingested_by` matches `trust.review_gate.from_emails` | Staged + `kind:knowledge-review` issue filed with `auto-dispatch` (light review, worker-handled) |
+| `untrusted` | Default (`"*"`) | Staged + `kind:knowledge-review` issue filed with `needs-maintainer-review` (requires crypto-approval) |
+
+### Trust Config
+
+Defined in `_knowledge/_config/knowledge.json` (written at provision time from
+`.agents/templates/knowledge-config.json`):
+
+```json
+{
+  "trust": {
+    "auto_promote": {
+      "from_paths": ["~/Drops/maintainer-knowledge/"],
+      "from_emails": ["you@yourdomain.com"],
+      "from_bots":   ["my-internal-bot"]
+    },
+    "review_gate": {
+      "from_emails": ["partner@example.com"]
+    },
+    "untrusted": "*"
+  }
+}
+```
+
+Override per-repo after provisioning: edit `_knowledge/_config/knowledge.json`
+directly. The config is versioned in `sources/` — changes are tracked in git.
+
+### NMR Issues
+
+Untrusted and review_gate sources produce `kind:knowledge-review` GitHub
+issues. Each issue body includes:
+
+- Source ID, kind, SHA256, size, ingested_by, sensitivity
+- Trust class and review instructions
+- Text preview (first 500 chars) of the source content
+
+**Untrusted**: issues carry `needs-maintainer-review`. Approve with:
+
+```bash
+sudo aidevops approve issue <N>
+```
+
+This triggers `knowledge-review-helper.sh promote <source-id>`, which moves
+the source from `_knowledge/staging/` to `_knowledge/sources/`, updates
+`meta.json` with `state: "promoted"`, and closes the issue.
+
+**Review-gate**: issues carry `auto-dispatch`. A worker reviews and can promote
+by calling the same `promote` subcommand.
+
+### Audit Log
+
+Every action is appended to `_knowledge/index/audit.log` (JSONL):
+
+```json
+{"ts":"2026-04-27T00:00:00Z","action":"auto_promoted","source_id":"my-doc","actor":"tick","extra":"actor:tick"}
+{"ts":"2026-04-27T00:01:00Z","action":"nmr_filed","source_id":"ext-doc","actor":"tick","extra":"issue:https://github.com/… trust_class:untrusted"}
+{"ts":"2026-04-27T12:00:00Z","action":"promoted","source_id":"ext-doc","actor":"maintainer","extra":"actor:maintainer path:approve_hook"}
+```
+
+`_knowledge/index/` is gitignored — the audit log is local only.
+
+### Routine r040
+
+```
+- [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
+```
+
+To disable: change `[x]` to `[ ]` in `TODO.md` and commit.
+
+### Helper CLI
+
+```bash
+# Manual tick (same as r040 routine)
+~/.aidevops/agents/scripts/knowledge-review-helper.sh tick
+
+# Explicit promotion (called automatically by approve hook)
+~/.aidevops/agents/scripts/knowledge-review-helper.sh promote <source-id>
+
+# Manual audit entry
+~/.aidevops/agents/scripts/knowledge-review-helper.sh audit-log <action> <source-id> [extra]
+```
+
+---
+
 ## IMAP Polling (t2855)
 
 The pulse-driven `r044` routine polls configured IMAP mailboxes every 10 minutes,
@@ -305,3 +402,102 @@ aidevops email filter test   <rule-name> [knowledge-root] # Dry-run against last
 ```
 
 Helper: `.agents/scripts/email-filter-helper.sh`.
+
+## LLM Routing
+
+All LLM calls in the framework are centralised behind `llm-routing-helper.sh`. Direct invocations of `claude`, `ollama`, or any other LLM CLI are prohibited in new helpers — route through this layer instead.
+
+### Sensitivity Tiers
+
+Every LLM call is assigned a sensitivity tier that controls which providers are allowed:
+
+| Tier | Allowed providers | Default | Notes |
+|------|-------------------|---------|-------|
+| `public` | any | anthropic | No restrictions |
+| `internal` | cloud or local | anthropic | Normal framework data |
+| `pii` | local preferred; cloud with redaction | ollama | Redaction applied before cloud calls |
+| `sensitive` | local only | ollama | No cloud fallback |
+| `privileged` | local only | ollama | Hard-fail if Ollama is not running |
+
+**Hard-fail rule:** when `tier=privileged` and no local provider is available, `llm-routing-helper.sh` exits 1 with "no compliant provider for tier=privileged". There is no silent fallback to cloud.
+
+### Routing Decision Tree
+
+```
+route --tier <t> --prompt-file <p>
+  │
+  ├─ tier = public/internal?
+  │     └─ use default_provider from config (anthropic)
+  │
+  ├─ tier = pii?
+  │     ├─ Ollama running? → use Ollama (no redaction needed)
+  │     └─ cloud provider? → call redaction-helper.sh first, then cloud
+  │
+  ├─ tier = sensitive?
+  │     ├─ Ollama running? → use Ollama
+  │     └─ Ollama down? → exit 1 (no cloud fallback)
+  │
+  └─ tier = privileged?
+        ├─ Ollama running? → use Ollama
+        └─ Ollama down? → EXIT 1 (hard-fail, policy enforced)
+```
+
+### Audit Log
+
+Every LLM call appends a JSONL record to `_knowledge/index/llm-audit.log`:
+
+```json
+{
+  "timestamp": "2026-04-27T12:00:00Z",
+  "tier": "public",
+  "task": "summarise",
+  "provider": "anthropic",
+  "redaction_applied": false,
+  "prompt_sha256": "<sha256 of prompt — not raw content>",
+  "response_sha256": "<sha256 of response — not raw content>",
+  "tokens": 512,
+  "cost": "0"
+}
+```
+
+Raw prompts and responses are **never** stored in the audit log. Only SHA-256 hashes are recorded, providing provenance ("this call happened") without leaking content.
+
+### Cost Tracking
+
+Per-day per-provider costs are accumulated at `~/.aidevops/.agent-workspace/llm-costs.json`:
+
+```bash
+llm-routing-helper.sh costs --since 2026-04-01
+llm-routing-helper.sh costs --provider ollama
+```
+
+### Configuration
+
+Policy lives in `_config/llm-routing.json` (copy from `.agents/templates/llm-routing-config.json` on init). Key fields:
+
+- `tiers.<name>.hard_fail_if_unavailable` — if true, exit 1 instead of falling back
+- `tiers.<name>.redaction_required_for_cloud` — if true, call `redaction-helper.sh` before any cloud call
+- `providers.<name>.kind` — `"local"` or `"cloud"`
+
+### Redaction
+
+`redaction-helper.sh redact <input> <output>` is called automatically for `pii` tier cloud calls. The MVP implementation is a pass-through stub — it copies the file unchanged and logs a warning. Real PII entity recognition is tracked as a post-MVP TODO in `redaction-helper.sh`.
+
+### Usage
+
+```bash
+# Public tier — uses anthropic by default
+llm-routing-helper.sh route --tier public --task summarise \
+    --prompt-file /tmp/prompt.txt
+
+# Privileged tier — uses Ollama; fails if not running
+llm-routing-helper.sh route --tier privileged --task draft \
+    --prompt-file /tmp/prompt.txt --max-tokens 4096
+
+# Dry-run (no real LLM call — useful in tests)
+LLM_ROUTING_DRY_RUN=1 llm-routing-helper.sh route \
+    --tier pii --task classify --prompt-file /tmp/data.txt
+
+# Check provider availability
+llm-routing-helper.sh status
+```
