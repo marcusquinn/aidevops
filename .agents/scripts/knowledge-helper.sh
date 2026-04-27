@@ -817,9 +817,46 @@ cmd_help() {
 }
 
 # ---------------------------------------------------------------------------
+# source.md backwards-compat reader helpers (t2971)
+# Prefer source.md (Markdoc-tagged layout) over text.txt when both exist.
+# ---------------------------------------------------------------------------
+
+# _get_source_text_file <source-dir>
+# Prints the path to the best available text content file.
+# Returns source.md if present (Markdoc-tagged layout, t2971),
+# falls back to text.txt (P0a layout), or empty string if neither exists.
+_get_source_text_file() {
+	local source_dir="$1"
+	local source_md="${source_dir}/source.md"
+	local text_txt="${source_dir}/text.txt"
+	if [[ -f "$source_md" ]]; then
+		printf '%s\n' "$source_md"
+	elif [[ -f "$text_txt" ]]; then
+		printf '%s\n' "$text_txt"
+	fi
+	return 0
+}
+
+# _grep_source_file <query> <source-file>
+# Searches source-file for query (case-insensitive).  When source-file is a
+# .md (source.md), Markdoc tags are stripped before matching so tags are not
+# treated as content.  Prints matching lines to stdout; exits 1 on no match.
+_grep_source_file() {
+	local query="$1"
+	local src_file="$2"
+	if [[ "$src_file" == *.md ]]; then
+		# Strip {% ... %} Markdoc tag patterns before grepping
+		sed 's/{%[^%]*%}//g' "$src_file" 2>/dev/null | grep -i "$query" 2>/dev/null
+	else
+		grep -i "$query" "$src_file" 2>/dev/null
+	fi
+	return $?
+}
+
+# ---------------------------------------------------------------------------
 # search: keyword search across knowledge sources
 # Routes to knowledge-index-helper.sh query when corpus tree exists;
-# falls back to grep over text.txt files otherwise.
+# falls back to grep over source.md (preferred) or text.txt files otherwise.
 # ---------------------------------------------------------------------------
 
 cmd_search() {
@@ -854,7 +891,7 @@ cmd_search() {
 		KNOWLEDGE_ROOT="$knowledge_root" \
 			bash "$index_helper" query "$query"
 	else
-		# Fallback: grep text.txt files in sources/
+		# Fallback: grep source.md (preferred) or text.txt files in sources/
 		local sources_dir="${knowledge_root}/sources"
 		if [[ ! -d "$sources_dir" ]]; then
 			print_warning "search: no sources directory found at $sources_dir"
@@ -864,11 +901,14 @@ cmd_search() {
 		local found=0
 		local src_id
 		for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-			local txt="${sources_dir}/${src_id}/text.txt"
-			[[ -f "$txt" ]] || continue
-			if grep -qi "$query" "$txt" 2>/dev/null; then
+			local src_file
+			src_file=$(_get_source_text_file "${sources_dir}/${src_id}")
+			[[ -z "$src_file" ]] && continue
+			local match_lines
+			match_lines=$(_grep_source_file "$query" "$src_file" || true)
+			if [[ -n "$match_lines" ]]; then
 				local excerpt
-				excerpt=$(grep -i "$query" "$txt" 2>/dev/null | head -1 || true)
+				excerpt="${match_lines%%$'\n'*}"
 				printf '{"source_id":"%s","excerpt":"%s"}\n' \
 					"$src_id" "${excerpt:0:200}"
 				found=$((found + 1))
