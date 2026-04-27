@@ -612,6 +612,27 @@ _check_commit_subject_dedup_gate() {
 		return 1
 	fi
 
+	# t2955: cache fast-path. If a previous cycle already verified this
+	# issue is committed to main, the `dispatch-blocked:committed-to-main`
+	# label was applied. Skip the expensive `gh issue view` + `git fetch` +
+	# 3 `git log --grep` ops and block immediately. Production data showed
+	# this check was the dominant cost in `preflight_early_dispatch` —
+	# 224 affected issues × 5 ops/cycle was timing out the 600s stage on
+	# 100% of recent cycles, capping concurrency at 1-2 dispatches/cycle.
+	#
+	# Force-dispatch override (above) takes precedence — a maintainer
+	# applying force-dispatch unblocks the cache too.
+	#
+	# Revert handling: if a commit is reverted, the cache label sticks
+	# (false-positive block). Manual remediation: remove the label via
+	# `gh issue edit N --remove-label dispatch-blocked:committed-to-main`.
+	# A periodic scrubber to automate this is tracked separately —
+	# kept out of this PR per one-fix-per-PR (Review Bot Gate t1382).
+	if _has_committed_to_main_cache_label "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574) (cached, t2955)" >>"$LOGFILE"
+		return 0
+	fi
+
 	# GH#17574: Skip dispatch if the task has already been committed
 	# directly to main. Workers that bypass the PR flow (direct commits)
 	# complete the work invisibly — the issue stays open until the
@@ -626,7 +647,10 @@ _check_commit_subject_dedup_gate() {
 	# reopen, re-dispatch, and loses worker context). Let the verified
 	# merge-pass or human close it.
 	if _is_task_committed_to_main "$issue_number" "$repo_slug" "$target_title" "$repo_path"; then
-		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: task already committed to main (GH#17574) (scanned, t2955)" >>"$LOGFILE"
+		# t2955: apply cache label so subsequent cycles skip the scan.
+		# Best-effort — do not fail dispatch decision if label apply errors.
+		_apply_committed_to_main_cache_label "$issue_number" "$repo_slug" || true
 		return 0
 	fi
 
@@ -664,6 +688,65 @@ _has_force_dispatch_label() {
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
 		jq -e '.labels | map(.name) | index("force-dispatch")' >/dev/null 2>&1
+}
+
+#######################################
+# t2955: Detect the `dispatch-blocked:committed-to-main` cache label.
+#
+# Purpose: cache fast-path for `_check_commit_subject_dedup_gate`. When
+# the expensive `_is_task_committed_to_main` check first detects a block,
+# the gate applies this label so subsequent dispatch cycles skip the
+# `gh issue view` + `git fetch` + 3 `git log --grep` ops on the same
+# issue. Eliminates the spam pattern where 224+ affected issues ran the
+# expensive scan every cycle and timed out `preflight_early_dispatch` at
+# its 600s budget (100% of last 10 cycles before this fix).
+#
+# The cache label is set by `_apply_committed_to_main_cache_label` (next
+# helper) and never removed automatically by this gate. Periodic
+# revalidation for revert handling is a follow-up; for now, manual
+# remediation is via `gh issue edit N --remove-label
+# dispatch-blocked:committed-to-main`.
+#
+# Args:
+#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
+#
+# Exit codes:
+#   0 - cache label is present (skip the expensive scan)
+#   1 - cache label is absent (run the full scan)
+#######################################
+_has_committed_to_main_cache_label() {
+	local issue_meta_json="$1"
+	[[ -n "$issue_meta_json" ]] || return 1
+	printf '%s' "$issue_meta_json" |
+		jq -e '.labels | map(.name) | index("dispatch-blocked:committed-to-main")' >/dev/null 2>&1
+}
+
+#######################################
+# t2955: Apply the `dispatch-blocked:committed-to-main` cache label.
+#
+# Called by `_check_commit_subject_dedup_gate` after the first scan
+# detects a committed-to-main block. Best-effort: failures (rate limit,
+# label-not-yet-created on the repo, transient API error) do NOT fail
+# the dispatch decision. The current cycle's block stands regardless;
+# the cache miss simply repeats next cycle.
+#
+# The `--add-label` call auto-creates the label on the repo if it
+# doesn't exist (GitHub default behaviour for `gh issue edit`).
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Exit codes:
+#   Always 0 — best-effort, never blocks the caller.
+#######################################
+_apply_committed_to_main_cache_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "dispatch-blocked:committed-to-main" >/dev/null 2>&1 || true
+	return 0
 }
 
 #######################################

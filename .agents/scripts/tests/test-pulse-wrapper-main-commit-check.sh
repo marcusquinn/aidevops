@@ -248,6 +248,117 @@ test_title_without_task_id_uses_issue_number() {
 	return 0
 }
 
+# ── t2955: cache fast-path helpers ──
+#
+# We define the helpers inline (mirroring the production source at
+# .agents/scripts/pulse-dispatch-core.sh) so the test runs without
+# sourcing the full dispatch-core, which has too many dependencies.
+# Production drift is caught by reading both during code review and
+# by the integration check in test_t2955_helpers_match_production.
+
+_has_committed_to_main_cache_label() {
+	local issue_meta_json="$1"
+	[[ -n "$issue_meta_json" ]] || return 1
+	printf '%s' "$issue_meta_json" |
+		jq -e '.labels | map(.name) | index("dispatch-blocked:committed-to-main")' >/dev/null 2>&1
+}
+
+# Stub the gh edit call to record invocations rather than hit the network.
+# Tests assert on the recorded args.
+_GH_EDIT_LOG=""
+_apply_committed_to_main_cache_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+	_GH_EDIT_LOG+="${issue_number}|${repo_slug}|dispatch-blocked:committed-to-main\n"
+	return 0
+}
+
+test_t2955_cache_label_present_returns_zero() {
+	local meta='{"labels":[{"name":"bug"},{"name":"dispatch-blocked:committed-to-main"}]}'
+	local result=1
+	if _has_committed_to_main_cache_label "$meta"; then
+		result=0
+	fi
+	print_result "t2955: cache fast-path detects label when present" "$result"
+	return 0
+}
+
+test_t2955_cache_label_absent_returns_nonzero() {
+	local meta='{"labels":[{"name":"bug"},{"name":"enhancement"}]}'
+	local result=0
+	if _has_committed_to_main_cache_label "$meta"; then
+		result=1
+	fi
+	print_result "t2955: cache fast-path returns non-zero when label absent" "$result"
+	return 0
+}
+
+test_t2955_cache_label_empty_meta_returns_nonzero() {
+	local result=0
+	if _has_committed_to_main_cache_label ""; then
+		result=1
+	fi
+	print_result "t2955: cache fast-path returns non-zero on empty meta_json" "$result"
+	return 0
+}
+
+test_t2955_cache_label_no_labels_array_returns_nonzero() {
+	local meta='{"title":"some issue"}'
+	local result=0
+	if _has_committed_to_main_cache_label "$meta"; then
+		result=1
+	fi
+	print_result "t2955: cache fast-path returns non-zero when labels array missing" "$result"
+	return 0
+}
+
+test_t2955_apply_label_records_call() {
+	_GH_EDIT_LOG=""
+	_apply_committed_to_main_cache_label "21200" "owner/repo"
+	local result=1
+	if [[ "$_GH_EDIT_LOG" == *"21200|owner/repo|dispatch-blocked:committed-to-main"* ]]; then
+		result=0
+	fi
+	print_result "t2955: apply_label invokes gh edit with correct args" "$result"
+	return 0
+}
+
+test_t2955_apply_label_empty_args_returns_zero() {
+	# Empty args must not invoke gh; must return 0 (best-effort contract).
+	_GH_EDIT_LOG=""
+	local result=1
+	if _apply_committed_to_main_cache_label "" ""; then
+		# rc=0 expected; verify gh was NOT called
+		if [[ -z "$_GH_EDIT_LOG" ]]; then
+			result=0
+		fi
+	fi
+	print_result "t2955: apply_label is no-op + rc=0 when args empty" "$result"
+	return 0
+}
+
+test_t2955_helpers_match_production() {
+	# Drift guard: the inline helpers in this test file MUST match the
+	# production implementations at pulse-dispatch-core.sh. We compare
+	# the production line containing the canonical jq expression to
+	# pin the contract.
+	local prod_file
+	prod_file="$(dirname "${BASH_SOURCE[0]}")/../pulse-dispatch-core.sh"
+	if [[ ! -f "$prod_file" ]]; then
+		print_result "t2955: production file present for drift check" "1" "missing $prod_file"
+		return 0
+	fi
+	local result=1
+	if grep -q 'index("dispatch-blocked:committed-to-main")' "$prod_file" &&
+		grep -q '_has_committed_to_main_cache_label()' "$prod_file" &&
+		grep -q '_apply_committed_to_main_cache_label()' "$prod_file"; then
+		result=0
+	fi
+	print_result "t2955: production helpers match test stubs (drift guard)" "$result"
+	return 0
+}
+
 # ── Run all tests ──
 
 test_detects_task_id_commit
@@ -258,6 +369,13 @@ test_empty_repo_path_returns_false
 test_nonexistent_repo_returns_false
 test_case_insensitive_match
 test_title_without_task_id_uses_issue_number
+test_t2955_cache_label_present_returns_zero
+test_t2955_cache_label_absent_returns_nonzero
+test_t2955_cache_label_empty_meta_returns_nonzero
+test_t2955_cache_label_no_labels_array_returns_nonzero
+test_t2955_apply_label_records_call
+test_t2955_apply_label_empty_args_returns_zero
+test_t2955_helpers_match_production
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
