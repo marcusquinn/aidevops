@@ -1,0 +1,22 @@
+{
+  "name": "case-attach",
+  "description": "Links content to a legal or business case, establishing the relationship between the tagged content and the case record.",
+  "attributes": {
+    "case-id": {
+      "type": "string",
+      "required": true,
+      "description": "Unique case identifier (e.g. docket number, internal case reference, matter ID)."
+    },
+    "relation": {
+      "type": "string",
+      "required": false,
+      "enum": ["evidence", "timeline", "exhibit", "correspondence"],
+      "description": "Nature of the relationship. evidence = supporting fact; timeline = chronological event; exhibit = formal attachment; correspondence = communication record."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["section", "inline"],
+    "description": "Section-level attaches a block of content to a case. Inline attaches a specific reference or mention."
+  },
+  "example": "{% case-attach case-id=\"CASE-2026-0042\" relation=\"exhibit\" %}\nEmail thread between parties dated 2026-01-10.\n{% /case-attach %}"
+}

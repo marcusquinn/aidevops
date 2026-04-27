@@ -546,11 +546,23 @@ _run_activity_watchdog() {
 	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
 	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=60
 
+	# t2956 / Issue #21231: Hard-kill threshold (default 1500s = 25 min).
+	# When stall is detected AND total elapsed since watchdog start ≥ this,
+	# escalate from passive kill (78 / continue) to proactive hard-kill
+	# (79 / killed) — slot freed for re-dispatch instead of held through
+	# repeated continuations. Set 0 to disable (legacy behaviour).
+	local hard_kill_seconds="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
+	[[ "$hard_kill_seconds" =~ ^[0-9]+$ ]] || hard_kill_seconds=1500
+
 	local poll_interval=10
 	local phase1_passed=0
 	local phase1_elapsed=0
 	local last_size=0
 	local stall_seconds=0
+	# t2956: Wall-clock start so hard_kill_seconds is measured against the
+	# total time the watchdog has been monitoring this worker.
+	local start_epoch
+	start_epoch=$(date +%s)
 
 	while true; do
 		# Worker exited on its own -- watchdog not needed
@@ -593,8 +605,20 @@ _run_activity_watchdog() {
 		fi
 
 		if [[ "$stall_seconds" -ge "$stall_timeout" ]]; then
+			# t2956: Decide between passive kill (legacy → exit 78 →
+			# continuation) vs. proactive hard-kill (new → exit 79 → no
+			# continuation, slot freed) based on total elapsed time.
+			local now_epoch elapsed_total
+			now_epoch=$(date +%s)
+			elapsed_total=$((now_epoch - start_epoch))
+			if [[ "$hard_kill_seconds" -gt 0 && "$elapsed_total" -ge "$hard_kill_seconds" ]]; then
+				_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${hard_kill_seconds}s (stuck at ${current_size}b) -- slot freed for re-dispatch" \
+					"$session_key" "stall_killed"
+				return 0
+			fi
 			_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
-				"stall: no output growth for ${stall_timeout}s (stuck at ${current_size}b)" "$session_key"
+				"stall: no output growth for ${stall_timeout}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
 			return 0
 		fi
 
@@ -611,6 +635,19 @@ _run_activity_watchdog() {
 #   $2 - exit code file
 #   $3 - output file
 #   $4 - reason string (logged)
+#   $5 - session key (optional)
+#   $6 - kill kind (optional): "stall_killed" emits the additional
+#        .watchdog_stall_killed sentinel for hard-kill classification
+#        (exit 79 / watchdog_stall_killed) per t2956 / Issue #21231.
+#        Empty/anything else preserves the legacy 78 / watchdog_stall_continue
+#        path so callers that don't pass a kill kind keep working.
+#
+# Exit code conventions consumed by `headless-runtime-helper.sh`:
+#   - exit_code_file always written as 124 (timeout convention).
+#   - .watchdog_killed sentinel always written before SIGTERM (race-safe).
+#   - .watchdog_stall_killed sentinel ONLY written when $kill_kind ==
+#     "stall_killed" — caller maps to helper exit 79 (no continuation,
+#     slot freed) instead of 78 (stall-continue retry).
 #######################################
 _watchdog_kill() {
 	local worker_pid="$1"
@@ -618,12 +655,20 @@ _watchdog_kill() {
 	local output_file="$3"
 	local reason="$4"
 	local session_key="${5:-}"
+	local kill_kind="${6:-}"
 
 	print_warning "Activity watchdog: ${reason} -- killing worker (PID $worker_pid)"
 	# Write the marker BEFORE killing -- the dying subshell may overwrite
 	# exit_code_file with its own exit code (race condition). The marker
 	# file survives because only the watchdog writes to it.
 	touch "${exit_code_file}.watchdog_killed"
+	# t2956 / Issue #21231: Hard-kill sentinel for proactive elapsed-time
+	# kills. Helper reads this and returns 79 instead of 78 — no continuation,
+	# slot freed for re-dispatch. The .watchdog_killed sentinel is still
+	# written above so existing exit-code-124 detection paths keep working.
+	if [[ "$kill_kind" == "stall_killed" ]]; then
+		touch "${exit_code_file}.watchdog_stall_killed"
+	fi
 	# Kill child processes first (pipeline members: opencode, tee), then
 	# the subshell itself. pkill -P walks the process tree by PPID.
 	pkill -P "$worker_pid" 2>/dev/null || true

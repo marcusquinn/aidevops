@@ -1,0 +1,22 @@
+{
+  "name": "link",
+  "description": "Typed link to an external or internal resource. Extends standard markdown links with a semantic kind attribute for classification and indexing.",
+  "attributes": {
+    "target": {
+      "type": "string",
+      "required": true,
+      "description": "URI, file path, or resource identifier that the link points to."
+    },
+    "kind": {
+      "type": "string",
+      "required": false,
+      "enum": ["brand-asset", "reference", "source", "exhibit"],
+      "description": "Semantic type of the linked resource. brand-asset = logo/trademark; reference = background reading; source = primary source material; exhibit = formal case exhibit."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["inline"],
+    "description": "Links are always inline — they annotate a specific reference point within running text."
+  },
+  "example": "See the original filing {% link target=\"exhibits/filing-2026-001.pdf\" kind=\"exhibit\" /%} for full details."
+}
