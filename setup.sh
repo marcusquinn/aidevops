@@ -1246,6 +1246,12 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_supervisor_pulse; then
 		setup_supervisor_pulse "$os"
 	fi
+	# t2939: pulse-watchdog (independent revival mechanism). Always installed
+	# alongside the pulse — it is a no-op when pulse is disabled. Skipping the
+	# `_should_setup_noninteractive_*` guard intentionally: this is layered
+	# defense, the cost of installing it is one plist file, and the user opts
+	# in by enabling the pulse itself.
+	setup_pulse_watchdog "${PULSE_ENABLED:-}"
 	# Regenerate other schedulers if already installed (GH#17695 Finding B).
 	# Stats wrapper is a pulse dependency — also install on first run when
 	# the supervisor pulse is consented (t2418, GH#20016).
@@ -1331,6 +1337,8 @@ _setup_post_setup_steps() {
 	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
 	setup_auto_update
 	setup_supervisor_pulse "$os"
+	# t2939: pulse-watchdog — independent revival mechanism, layered defense.
+	setup_pulse_watchdog "${PULSE_ENABLED:-}"
 	setup_stats_wrapper "${PULSE_ENABLED:-}"
 	setup_failure_miner "${PULSE_ENABLED:-}"
 	setup_repo_sync

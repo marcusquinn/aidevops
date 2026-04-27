@@ -14,6 +14,11 @@ PULSE_STALE_THRESHOLD_SECONDS=1800
 # future cadence shift only touches one place.
 CRON_HOURLY="0 * * * *"
 
+# Cron expression: every minute. Shared by process-guard, memory-pressure
+# monitor, and pulse-watchdog schedulers (cron's minimum granularity).
+# Kept DRY for the same reason as CRON_HOURLY.
+CRON_EVERY_MINUTE="* * * * *"
+
 # Resolve the modern bash binary path for use in launchd ProgramArguments.
 # Launchd bypasses the shebang when ProgramArguments specifies an explicit
 # interpreter, so we must resolve the path at plist generation time.
@@ -668,7 +673,12 @@ ${_env_overrides_xml}	</dict>
 	<key>RunAtLoad</key>
 	<true/>
 	<key>KeepAlive</key>
-	<false/>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
 </dict>
 </plist>
 PLIST
@@ -727,6 +737,161 @@ _install_pulse_launchd() {
 		_log_plist_env_overrides "$pulse_label"
 	else
 		print_warning "Failed to load supervisor pulse LaunchAgent"
+	fi
+	return 0
+}
+
+# Generate the pulse-watchdog launchd plist XML content.
+# Args: $1=label, $2=tick_script, $3=bash_bin
+# Prints the complete plist XML to stdout.
+#
+# The watchdog is an independent launchd job that runs every 60s and revives
+# pulse if it has been dead longer than (StartInterval + grace). Layered
+# defense alongside the pulse plist's KeepAlive=<dict><SuccessfulExit=false>
+# (auto-restart on crash) and StartInterval (scheduled cadence). Catches the
+# "clean exit + lost launchd schedule" failure mode that no other layer covers.
+# (t2939)
+_generate_pulse_watchdog_plist_content() {
+	local watchdog_label="$1"
+	local tick_script="$2"
+	local bash_bin="$3"
+
+	local _xml_label _xml_tick _xml_bash _xml_home _xml_path
+	_xml_label=$(_xml_escape "$watchdog_label")
+	_xml_tick=$(_xml_escape "$tick_script")
+	_xml_bash=$(_xml_escape "$bash_bin")
+	_xml_home=$(_xml_escape "$HOME")
+	_xml_path=$(_xml_escape "$PATH")
+
+	cat <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${_xml_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>${_xml_bash}</string>
+		<string>${_xml_tick}</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>60</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_home}/.aidevops/logs/pulse-watchdog-launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_home}/.aidevops/logs/pulse-watchdog-launchd.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>${_xml_path}</string>
+		<key>HOME</key>
+		<string>${_xml_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+</dict>
+</plist>
+PLIST
+	return 0
+}
+
+# Install the pulse-watchdog via launchd (macOS).
+# t2939: independent revival mechanism — see _generate_pulse_watchdog_plist_content
+# header for the layering rationale.
+_install_pulse_watchdog_launchd() {
+	local watchdog_label="sh.aidevops.pulse-watchdog"
+	local tick_script="$HOME/.aidevops/agents/scripts/pulse-watchdog-tick.sh"
+	local watchdog_plist="$HOME/Library/LaunchAgents/${watchdog_label}.plist"
+
+	# Refuse to install if the tick script is missing — the watchdog would
+	# fire-and-fail every 60s, polluting logs without doing useful work.
+	if [[ ! -x "$tick_script" ]]; then
+		print_warning "Pulse watchdog tick script missing or non-executable: $tick_script"
+		return 1
+	fi
+
+	local _xml_bash_bin
+	_xml_bash_bin=$(_resolve_modern_bash)
+
+	local watchdog_plist_content
+	watchdog_plist_content=$(_generate_pulse_watchdog_plist_content "$watchdog_label" "$tick_script" "$_xml_bash_bin")
+
+	if [[ -z "$watchdog_plist_content" ]]; then
+		print_warning "Pulse watchdog plist generation produced empty content — skipping"
+		return 1
+	fi
+
+	# shell-portability: ignore next — _install_pulse_watchdog_launchd is macOS-only
+	if _launchd_install_if_changed "$watchdog_label" "$watchdog_plist" "$watchdog_plist_content"; then
+		print_info "Pulse watchdog enabled (launchd, every 60s)"
+	else
+		print_warning "Failed to load pulse watchdog LaunchAgent"
+	fi
+	return 0
+}
+
+# Install the pulse-watchdog via systemd (Linux).
+# t2939: parallels _install_pulse_watchdog_launchd for systems with systemd --user.
+_install_pulse_watchdog_systemd() {
+	local tick_script="$HOME/.aidevops/agents/scripts/pulse-watchdog-tick.sh"
+	local watchdog_systemd="aidevops-pulse-watchdog"
+	local watchdog_log="$HOME/.aidevops/logs/pulse-watchdog-launchd.log"
+
+	if [[ ! -x "$tick_script" ]]; then
+		print_warning "Pulse watchdog tick script missing or non-executable: $tick_script"
+		return 1
+	fi
+
+	# Reuse the standard scheduler installer (cron-fallback aware).
+	# StartInterval=60 maps to every-minute cron schedule.
+	# shell-portability: ignore next — _install_scheduler_linux is Linux-only
+	_install_scheduler_linux \
+		"$watchdog_systemd" \
+		"aidevops: pulse-watchdog" \
+		"$CRON_EVERY_MINUTE" \
+		"\"${tick_script}\"" \
+		"60" \
+		"$watchdog_log" \
+		"" \
+		"Pulse watchdog enabled (every 60s)" \
+		"Failed to install pulse watchdog scheduler" \
+		"true" \
+		"false"
+	return 0
+}
+
+# Setup the pulse-watchdog scheduler (parallels setup_supervisor_pulse).
+# t2939: layered defense — only installs when supervisor pulse is enabled,
+# since a watchdog without a pulse to watch is a no-op every 60s.
+#
+# Args: $1 = pulse effective state ("true"/"false")
+setup_pulse_watchdog() {
+	local _pulse_effective="$1"
+	local watchdog_label="sh.aidevops.pulse-watchdog"
+	local watchdog_systemd="aidevops-pulse-watchdog"
+
+	if [[ "$_pulse_effective" != "true" ]]; then
+		# Pulse disabled — uninstall the watchdog if present.
+		_uninstall_scheduler \
+			"$(uname -s)" \
+			"$watchdog_label" \
+			"$watchdog_systemd" \
+			"aidevops: pulse-watchdog" \
+			"Pulse watchdog disabled (pulse is off)"
+		return 0
+	fi
+
+	mkdir -p "$HOME/.aidevops/logs"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_pulse_watchdog_launchd
+	else
+		_install_pulse_watchdog_systemd
 	fi
 	return 0
 }
@@ -1352,7 +1517,7 @@ GUARD_PLIST
 		_install_scheduler_linux \
 			"$guard_systemd" \
 			"aidevops: process-guard" \
-			"* * * * *" \
+			"$CRON_EVERY_MINUTE" \
 			"\"${guard_script}\" kill-runaways" \
 			"30" \
 			"$guard_log" \
@@ -1444,7 +1609,7 @@ MONITOR_PLIST
 		_install_scheduler_linux \
 			"$monitor_systemd" \
 			"aidevops: memory-pressure-monitor" \
-			"* * * * *" \
+			"$CRON_EVERY_MINUTE" \
 			"\"${monitor_script}\"" \
 			"60" \
 			"$monitor_log" \
