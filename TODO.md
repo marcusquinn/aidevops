@@ -3423,3 +3423,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t2991 fix subagent permission.task entries (4 broken keys + missing Product allowlist) #auto-dispatch ref:GH#21394
 
 - [ ] t2993 fix(task-id-guard): word-boundary regex to avoid false positives on subagent names like context7 #auto-dispatch ref:GH#21402
+
+- [ ] t2994 move pulse cache priming hook into pulse-wrapper.sh boot path #auto-dispatch #bug #enhancement #framework ref:GH#21404
