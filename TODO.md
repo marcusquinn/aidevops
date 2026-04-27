@@ -3315,7 +3315,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t2941 redact bad-actor usernames from committed files and live artifacts #auto-dispatch #refactor #security ref:GH#21150
 
-- [ ] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154
+- [x] t2937 make maintainer-gate.yml reusable + propagate via aidevops sync-workflows #auto-dispatch #enhancement #security ref:GH#21154 pr:#21178 completed:2026-04-27
 
 - [ ] t2942 reduce STAMPLESS_INTERACTIVE_AGE_THRESHOLD default from 24h to 1h to recover pulse productivity faster #auto-dispatch #enhancement ref:GH#21157
 

@@ -292,13 +292,24 @@ _normalize_reassign_self() {
 # dedup rule (t1996) no longer blocks on label alone, so the pulse can
 # pick up the issue on the next cycle.
 #
-# Threshold rationale (24h default):
-#   - longer than status-based stale (1h) because there's no PID to
-#     verify liveness — we rely on time-based expiry alone
+# Threshold rationale (1h default — t2942):
+#   - matches status-based stale recovery (1h) because the absence of
+#     a stamp file is itself the liveness signal: a genuine interactive
+#     session that calls `interactive-session-helper.sh claim` creates
+#     a stamp; sessions that only self-assigned via `claim-task-id.sh`
+#     (per t1970) and never invoked the formal claim helper produce no
+#     stamp, indicating the session was ad-hoc and almost certainly ended.
 #   - shorter than scan-stale Phase 2 (14d) because this is a more
 #     targeted signal (assignee + label + no stamp)
-#   - gives genuine long-running interactive work a full day before
-#     reclaim — override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD env var
+#   - history (t2148): the original default was 24h to "protect genuine
+#     long-running interactive work". In practice every interactive
+#     session starts stampless until/unless the formal claim helper runs,
+#     and most never do — so 24h became a productivity tax that blocked
+#     pulse dispatch for up to a full day per abandoned claim. The pulse
+#     interval is ~10min, so 1h still gives 6 cycles of grace plus the
+#     proactive session-start `scan-stale` Phase 1a is the primary
+#     cleanup mechanism. Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
+#     env var (set to 86400 to restore the t2148 24h behaviour).
 #
 # Args:
 #   $1 runner_user            — GH login of current runner
@@ -702,11 +713,14 @@ normalize_active_issue_assignments() {
 	# Closes the leak where `claim-task-id.sh` auto-assigns on creation
 	# (per t1970) but the interactive session never runs the formal
 	# claim flow, leaving an `origin:interactive + assignee` pair that
-	# blocks pulse dispatch forever via `_has_active_claim`. The 24h
-	# threshold protects genuine long-running interactive work; shorter
-	# than `scan-stale` Phase 2 (14d) but longer than status-based
-	# stale recovery (1h) because there's no PID to verify liveness.
-	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-86400}"
+	# blocks pulse dispatch forever via `_has_active_claim`. The 1h
+	# default (t2942) matches status-based stale recovery — the absence
+	# of a stamp file is itself the liveness signal: a real interactive
+	# session creates a stamp via `interactive-session-helper.sh claim`,
+	# while ad-hoc self-assigns from `claim-task-id.sh` (per t1970)
+	# never produce one. Override via STAMPLESS_INTERACTIVE_AGE_THRESHOLD
+	# (set to 86400 to restore the original 24h behaviour from t2148).
+	local stampless_age_threshold="${STAMPLESS_INTERACTIVE_AGE_THRESHOLD:-3600}"
 	_normalize_unassign_stampless_interactive "$runner_user" "$repos_json" "$now_epoch" "$stampless_age_threshold"
 
 	# Pass 3 (t2040): enforce label invariants (at most one status:*, at most one tier:*).

@@ -27,6 +27,7 @@ The reusable pattern solves all three at once:
 |---|---|---|---|
 | `issue-sync.yml` | `issue-sync-reusable.yml` | `issue-sync-caller.yml` | t2770 (PR #20662) |
 | `review-bot-gate.yml` | `review-bot-gate-reusable.yml` | `review-bot-gate-caller.yml` | GH#20727 |
+| `maintainer-gate.yml` | `maintainer-gate-reusable.yml` | `maintainer-gate-caller.yml` | GH#21154 |
 
 ## Architecture
 
@@ -40,9 +41,15 @@ aidevops repo (source of truth):
                                                      All gate logic. Helper runtime-fetched.
   .github/workflows/review-bot-gate.yml           ← thin caller for aidevops's own CI
                                                      (uses: ./.github/workflows/review-bot-gate-reusable.yml)
+  .github/workflows/maintainer-gate-reusable.yml  ← on: workflow_call: (GH#21154)
+                                                     All 5 gate jobs. Self-contained (no helper scripts).
+                                                     Layer 1 of the GH#17671 defense-in-depth.
+  .github/workflows/maintainer-gate.yml           ← thin caller for aidevops's own CI
+                                                     (uses: ./.github/workflows/maintainer-gate-reusable.yml)
   .agents/templates/workflows/
     issue-sync-caller.yml                         ← canonical downstream template (issue-sync)
     review-bot-gate-caller.yml                    ← canonical downstream template (review-bot-gate)
+    maintainer-gate-caller.yml                    ← canonical downstream template (maintainer-gate)
   .agents/scripts/issue-sync-helper.sh            ← framework shell (source of truth)
   .agents/scripts/review-bot-gate-helper.sh       ← gate helper (source of truth, GH#20727)
   .agents/scripts/shared-constants.sh
@@ -53,7 +60,9 @@ downstream repo (thin callers):
                                                      uses: marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@<ref>
   .github/workflows/review-bot-gate.yml           ← ~50 lines, declares triggers + concurrency,
                                                      uses: marcusquinn/aidevops/.github/workflows/review-bot-gate-reusable.yml@<ref>
-  (no .agents/scripts/ needed — fetched at runtime via __aidevops/)
+  .github/workflows/maintainer-gate.yml           ← ~45 lines, declares triggers + permissions ceiling,
+                                                     uses: marcusquinn/aidevops/.github/workflows/maintainer-gate-reusable.yml@<ref>
+  (no .agents/scripts/ needed — maintainer-gate is self-contained; issue-sync/review-bot-gate fetched via __aidevops/)
 ```
 
 ### How a run flows
@@ -153,4 +162,6 @@ To make a new aidevops workflow reusable by downstream repos:
 - Issue [#20648](https://github.com/marcusquinn/aidevops/issues/20648) — Phase 1 drift detector
 - Issue [#20649](https://github.com/marcusquinn/aidevops/issues/20649) — Phase 2 opt-in resync
 - Issue [#20727](https://github.com/marcusquinn/aidevops/issues/20727) — review-bot-gate migration (SHA-pin stale drift)
+- Issue [#21154](https://github.com/marcusquinn/aidevops/issues/21154) — maintainer-gate migration (layer-1 defense-in-depth propagation)
+- Reference [incident-gh17671-supply-chain.md](incident-gh17671-supply-chain.md) — postmortem that motivated maintainer-gate propagation
 - GitHub docs: [Reusing workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)

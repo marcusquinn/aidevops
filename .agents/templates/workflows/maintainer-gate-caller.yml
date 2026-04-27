@@ -1,0 +1,43 @@
+name: Maintainer Gate
+
+# Managed by aidevops framework.
+# Upstream logic lives in: marcusquinn/aidevops/.github/workflows/maintainer-gate-reusable.yml
+# This caller is tiny on purpose — all the logic is centralised upstream.
+# Update this caller only to change the trigger filters below. For logic fixes,
+# run `aidevops update` to get the latest framework version; your caller will
+# pick up the change automatically (if pinned to @main) or on the next version
+# bump + resync (if pinned to @v3.9.0 style).
+#
+# To manage this file:
+#   aidevops check-workflows       # detect drift vs canonical template
+#   aidevops sync-workflows        # preview resync plan
+#   aidevops sync-workflows --apply
+#
+# To enforce: add "maintainer-gate" as a required status check in
+# GitHub branch protection settings for this repo.
+#
+# Pinning options:
+#   @main           ← auto-update; what this template uses by default
+#   @v3.9.0         ← pin to a specific aidevops version for stability
+#                     (bump via aidevops sync-workflows after upgrades)
+
+# Permissions ceiling for downstream repos with default_workflow_permissions: read.
+# Reusable workflow job-level permissions cannot exceed the caller's ceiling.
+# This block sets the union of all job-level permissions used by maintainer-gate-reusable.yml.
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+  statuses: write
+  actions: write
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
+  issues:
+    types: [unlabeled, labeled, assigned, unassigned]
+
+jobs:
+  gate:
+    uses: marcusquinn/aidevops/.github/workflows/maintainer-gate-reusable.yml@main
+    secrets: inherit
