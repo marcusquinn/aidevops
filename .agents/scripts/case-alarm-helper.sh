@@ -341,6 +341,111 @@ _timeline_append_alarm() {
 }
 
 # =============================================================================
+# Internal tick helpers
+# =============================================================================
+
+# _resolve_gh_slug <repo-path> — print GH owner/repo slug or empty string
+_resolve_gh_slug() {
+	local repo_path="$1"
+	if ! command -v git >/dev/null 2>&1; then
+		echo ""
+		return 0
+	fi
+	local remote_url
+	remote_url="$(git -C "$repo_path" remote get-url origin 2>/dev/null)" || true
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
+		echo "${BASH_REMATCH[1]}"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# _dispatch_alarm_channels <case-id> <dl-label> <dl-date> <days> <stage> <channels> <slug> <ntfy-topic>
+# Fires configured channels; prints comma-joined list of channels fired.
+_dispatch_alarm_channels() {
+	local case_id="$1" dl_label="$2" dl_date="$3" days="$4" stage="$5"
+	local channels="$6" slug="$7" ntfy_topic="$8"
+	local fired_channels=""
+	if echo "$channels" | grep -q "${ALARM_CHANNEL_GH_ISSUE}" && [[ -n "$slug" ]]; then
+		_alarm_gh_issue "$case_id" "$dl_label" "$dl_date" "$days" "$stage" "$slug" >/dev/null
+		fired_channels="${fired_channels}${ALARM_CHANNEL_GH_ISSUE},"
+	fi
+	if echo "$channels" | grep -q "${ALARM_CHANNEL_NTFY}" && [[ -n "$ntfy_topic" ]]; then
+		_alarm_ntfy "$case_id" "$dl_label" "$dl_date" "$days" "$stage" "$ntfy_topic"
+		fired_channels="${fired_channels}${ALARM_CHANNEL_NTFY},"
+	fi
+	if echo "$channels" | grep -q "${ALARM_CHANNEL_EMAIL}"; then
+		_alarm_email "$case_id" "$dl_label" "$days" "$stage"
+		fired_channels="${fired_channels}${ALARM_CHANNEL_EMAIL},"
+	fi
+	echo "${fired_channels%,}"
+	return 0
+}
+
+# _process_one_deadline — evaluate a single (case, deadline) pair; fire if stage escalates.
+# Args: case_id case_dir dl_label dl_date stages_json slug channels ntfy_topic dry_run
+#       alarm_state_varname fired_varname
+# Uses bash namerefs to update caller's alarm_state and fired counter in-place.
+_process_one_deadline() {
+	local case_id="$1" case_dir="$2" dl_label="$3" dl_date="$4"
+	local stages_json="$5" slug="$6" channels="$7" ntfy_topic="$8" dry_run="$9"
+	local -n _alarm_state_ref="${10}"
+	local -n _fired_ref="${11}"
+
+	local days_until computed_stage
+	days_until="$(_days_until_date "$dl_date")"
+	computed_stage="$(_classify_stage "$days_until" "$stages_json")"
+
+	local recorded_stage
+	recorded_stage="$(echo "$_alarm_state_ref" | \
+		jq -r --arg cid "$case_id" --arg lbl "$dl_label" '.[$cid][$lbl] // "none"')"
+
+	# Auto-close GH alarm when deadline has passed
+	if [[ "$computed_stage" == "${ALARM_STAGE_PASSED}" ]]; then
+		if [[ "$recorded_stage" != "none" && "$recorded_stage" != "${ALARM_STAGE_PASSED}" ]]; then
+			print_info "Deadline passed: ${case_id}/${dl_label} — closing alarm"
+			if [[ "$dry_run" == false && -n "$slug" ]]; then
+				_close_alarm_gh_issue "$case_id" "$dl_label" "$slug" \
+					"Deadline ${dl_date} has passed."
+			fi
+			if [[ "$dry_run" == false ]]; then
+				_alarm_state_ref="$(echo "$_alarm_state_ref" | jq \
+					--arg cid "$case_id" --arg lbl "$dl_label" \
+					--arg sp "${ALARM_STAGE_PASSED}" \
+					'.[$cid] //= {} | .[$cid][$lbl] = $sp')"
+				_timeline_append_alarm "$case_dir" "$dl_label" \
+					"${ALARM_STAGE_PASSED}" "auto-close"
+			fi
+		fi
+		return 0
+	fi
+
+	[[ "$computed_stage" == "green" ]] && return 0
+
+	local computed_sev recorded_sev
+	computed_sev="$(_stage_severity "$computed_stage")"
+	recorded_sev="$(_stage_severity "$recorded_stage")"
+
+	if [[ $computed_sev -gt $recorded_sev ]]; then
+		print_info "Alarm: ${case_id} / ${dl_label} stage=${computed_stage} days=${days_until}"
+		_fired_ref=$((_fired_ref + 1))
+		if [[ "$dry_run" == false ]]; then
+			local fired_channels
+			fired_channels="$(_dispatch_alarm_channels "$case_id" "$dl_label" "$dl_date" \
+				"$days_until" "$computed_stage" "$channels" "$slug" "$ntfy_topic")"
+			_alarm_state_ref="$(echo "$_alarm_state_ref" | jq \
+				--arg cid "$case_id" --arg lbl "$dl_label" --arg stage "$computed_stage" \
+				'.[$cid] //= {} | .[$cid][$lbl] = $stage')"
+			_timeline_append_alarm "$case_dir" "$dl_label" "$computed_stage" "$fired_channels"
+		fi
+	else
+		print_info "No change: ${case_id}/${dl_label} stage=${computed_stage} (already recorded)"
+	fi
+	return 0
+}
+
+# =============================================================================
 # cmd_tick — main routine: scan all open cases and fire alarms as needed
 # =============================================================================
 
@@ -370,15 +475,8 @@ cmd_tick() {
 	local alarm_state
 	alarm_state="$(_load_alarm_state "$cases_dir")"
 
-	# Determine GH repo slug for alarm issues
-	local slug=""
-	if command -v git >/dev/null 2>&1; then
-		local remote_url
-		remote_url="$(git -C "$repo_path" remote get-url origin 2>/dev/null)" || true
-		if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
-			slug="${BASH_REMATCH[1]}"
-		fi
-	fi
+	local slug
+	slug="$(_resolve_gh_slug "$repo_path")"
 
 	local channels
 	channels="$(echo "$config" | jq -r '.channels | join(",")')"
@@ -399,7 +497,6 @@ cmd_tick() {
 		local dossier
 		dossier="$(jq '.' "$dossier_path" 2>/dev/null)" || continue
 
-		# Skip non-open cases
 		local case_status
 		case_status="$(echo "$dossier" | jq -r '.status')"
 		[[ "$case_status" != "open" ]] && { skipped=$((skipped + 1)); continue; }
@@ -407,95 +504,23 @@ cmd_tick() {
 		local case_id
 		case_id="$(echo "$dossier" | jq -r '.id')"
 
-		# Determine stages for this case (honour per_case_overrides)
 		local stages_json
 		stages_json="$(echo "$config" | jq \
 			--arg cid "$case_id" \
 			'.per_case_overrides[$cid].stages_days // .stages_days | sort | reverse')"
 
-		# Iterate deadlines
 		local deadline_count i
 		deadline_count="$(echo "$dossier" | jq '.deadlines | length')"
 		for ((i = 0; i < deadline_count; i++)); do
-			local dl_label dl_date days_until computed_stage
+			local dl_label dl_date
 			dl_label="$(echo "$dossier" | jq -r ".deadlines[$i].label")"
 			dl_date="$(echo "$dossier" | jq -r ".deadlines[$i].date")"
-			days_until="$(_days_until_date "$dl_date")"
-			computed_stage="$(_classify_stage "$days_until" "$stages_json")"
-
-			# Get last recorded stage for this (case, deadline)
-			local recorded_stage
-			recorded_stage="$(echo "$alarm_state" | \
-				jq -r --arg cid "$case_id" --arg lbl "$dl_label" \
-				'.[$cid][$lbl] // "none"')"
-
-			local computed_sev recorded_sev
-			computed_sev="$(_stage_severity "$computed_stage")"
-			recorded_sev="$(_stage_severity "$recorded_stage")"
-
-			# Auto-close GH alarm when deadline has passed
-			if [[ "$computed_stage" == "${ALARM_STAGE_PASSED}" ]]; then
-				if [[ "$recorded_stage" != "none" && "$recorded_stage" != "${ALARM_STAGE_PASSED}" ]]; then
-					print_info "Deadline passed: ${case_id}/${dl_label} — closing alarm"
-					if [[ "$dry_run" == false && -n "$slug" ]]; then
-						_close_alarm_gh_issue "$case_id" "$dl_label" "$slug" \
-							"Deadline ${dl_date} has passed."
-					fi
-					# Update state to passed, append timeline
-					if [[ "$dry_run" == false ]]; then
-						alarm_state="$(echo "$alarm_state" | jq \
-							--arg cid "$case_id" --arg lbl "$dl_label" \
-							--arg sp "${ALARM_STAGE_PASSED}" \
-							'.[$cid] //= {} | .[$cid][$lbl] = $sp')"
-						_timeline_append_alarm "$case_dir" "$dl_label" \
-							"${ALARM_STAGE_PASSED}" "auto-close"
-					fi
-				fi
-				continue
-			fi
-
-			# Green stage — no alarm needed
-			[[ "$computed_stage" == "green" ]] && continue
-
-			# Fire if new stage is more severe than recorded (escalation)
-			if [[ $computed_sev -gt $recorded_sev ]]; then
-				print_info "Alarm: ${case_id} / ${dl_label} stage=${computed_stage} days=${days_until}"
-				fired=$((fired + 1))
-
-				if [[ "$dry_run" == false ]]; then
-				local fired_channels=""
-				# gh-issue channel
-				if echo "$channels" | grep -q "${ALARM_CHANNEL_GH_ISSUE}" && [[ -n "$slug" ]]; then
-					_alarm_gh_issue "$case_id" "$dl_label" "$dl_date" \
-						"$days_until" "$computed_stage" "$slug" >/dev/null
-					fired_channels="${fired_channels}${ALARM_CHANNEL_GH_ISSUE},"
-				fi
-				# ntfy channel
-				if echo "$channels" | grep -q "${ALARM_CHANNEL_NTFY}" && [[ -n "$ntfy_topic" ]]; then
-					_alarm_ntfy "$case_id" "$dl_label" "$dl_date" \
-						"$days_until" "$computed_stage" "$ntfy_topic"
-					fired_channels="${fired_channels}${ALARM_CHANNEL_NTFY},"
-				fi
-				# email channel (stub)
-				if echo "$channels" | grep -q "${ALARM_CHANNEL_EMAIL}"; then
-					_alarm_email "$case_id" "$dl_label" "$days_until" "$computed_stage"
-					fired_channels="${fired_channels}${ALARM_CHANNEL_EMAIL},"
-				fi
-
-					# Record new stage
-					alarm_state="$(echo "$alarm_state" | jq \
-						--arg cid "$case_id" --arg lbl "$dl_label" --arg stage "$computed_stage" \
-						'.[$cid] //= {} | .[$cid][$lbl] = $stage')"
-					_timeline_append_alarm "$case_dir" "$dl_label" "$computed_stage" \
-						"${fired_channels%,}"
-				fi
-			else
-				print_info "No change: ${case_id}/${dl_label} stage=${computed_stage} (already recorded)"
-			fi
+			_process_one_deadline "$case_id" "$case_dir" "$dl_label" "$dl_date" \
+				"$stages_json" "$slug" "$channels" "$ntfy_topic" "$dry_run" \
+				alarm_state fired
 		done
 	done
 
-	# Persist updated alarm state
 	if [[ "$dry_run" == false ]]; then
 		echo "$alarm_state" | _save_alarm_state "$cases_dir"
 	fi
@@ -558,14 +583,8 @@ cmd_alarm_test() {
 	local config
 	config="$(_load_alarm_config "$cases_dir")"
 
-	local slug=""
-	if command -v git >/dev/null 2>&1; then
-		local remote_url
-		remote_url="$(git -C "$repo_path" remote get-url origin 2>/dev/null)" || true
-		if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
-			slug="${BASH_REMATCH[1]}"
-		fi
-	fi
+	local slug
+	slug="$(_resolve_gh_slug "$repo_path")"
 
 	local channels
 	channels="$(echo "$config" | jq -r '.channels | join(",")')"
@@ -592,21 +611,8 @@ cmd_alarm_test() {
 		computed_stage="$(_classify_stage "$days_until" "$stages_json")"
 
 		print_info "alarm-test: ${resolved_case_id}/${dl_label} stage=${computed_stage} days=${days_until}"
-
-		# gh-issue channel
-		if echo "$channels" | grep -q "${ALARM_CHANNEL_GH_ISSUE}" && [[ -n "$slug" ]]; then
-			_alarm_gh_issue "$resolved_case_id" "$dl_label" "$dl_date" \
-				"$days_until" "$computed_stage" "$slug" >/dev/null
-		fi
-		# ntfy channel
-		if echo "$channels" | grep -q "${ALARM_CHANNEL_NTFY}" && [[ -n "$ntfy_topic" ]]; then
-			_alarm_ntfy "$resolved_case_id" "$dl_label" "$dl_date" \
-				"$days_until" "$computed_stage" "$ntfy_topic"
-		fi
-		# email stub
-		if echo "$channels" | grep -q "${ALARM_CHANNEL_EMAIL}"; then
-			_alarm_email "$resolved_case_id" "$dl_label" "$days_until" "$computed_stage"
-		fi
+		_dispatch_alarm_channels "$resolved_case_id" "$dl_label" "$dl_date" \
+			"$days_until" "$computed_stage" "$channels" "$slug" "$ntfy_topic" >/dev/null
 	done
 
 	print_success "alarm-test complete for: ${resolved_case_id} (${deadline_count} deadline(s) tested)"
