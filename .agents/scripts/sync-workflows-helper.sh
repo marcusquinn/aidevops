@@ -12,6 +12,7 @@
 # Currently managed workflows (synced by default):
 #   - issue-sync.yml         (template: issue-sync-caller.yml)
 #   - review-bot-gate.yml    (template: review-bot-gate-caller.yml, GH#20727)
+#   - maintainer-gate.yml    (template: maintainer-gate-caller.yml, GH#21154)
 #
 # Default mode is --dry-run. Pass --apply to actually write, commit, push, and
 # open a PR in each target repo.
@@ -69,9 +70,11 @@ readonly CHECK_HELPER="$SELF_DIR/check-workflows-helper.sh"
 # Known managed workflows — each entry is workflow_file:template_file.
 # Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
 # GH#20727: review-bot-gate added.
+# GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
 readonly _SYNC_KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-caller.yml"
+	"maintainer-gate.yml:maintainer-gate-caller.yml"
 )
 
 # Output mode constants.
@@ -115,7 +118,8 @@ sync-workflows-helper.sh — resync drifted framework workflows (t2779, GH#20649
 
 Reads classifications from check-workflows-helper.sh and, per repo × workflow,
 installs (NEEDS-MIGRATION) or refreshes (DRIFTED/CALLER) the canonical caller
-template. Managed workflows: issue-sync.yml, review-bot-gate.yml (GH#20727).
+template. Managed workflows: issue-sync.yml, review-bot-gate.yml (GH#20727),
+maintainer-gate.yml (GH#21154).
 
 Default is --dry-run. Pass --apply to write, commit, push, and open PRs.
 

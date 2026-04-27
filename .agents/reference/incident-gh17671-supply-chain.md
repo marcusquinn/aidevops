@@ -69,6 +69,8 @@ gh pr merge --admin
 
 Each layer is independently sufficient to block a non-collaborator PR. The layered design is intentional: any single layer can be removed by future work without re-opening the hole.
 
+**Layer 1 propagation (GH#21154):** `maintainer-gate.yml` is now a reusable workflow (`maintainer-gate-reusable.yml`) distributed to all `pulse: true` repos via `aidevops sync-workflows`. Previously only the aidevops repo carried this workflow; downstream repos relied on layers 3-4 alone. With GH#21154, layer 1 coverage extends to all managed repos.
+
 ## Test pinning
 
 `.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh` pins the function-level contract with four cases:
@@ -95,4 +97,4 @@ This is one specific application of the broader "Worker scope enforcement" rule 
 - Function-level fix: t2933, `pulse-merge.sh:331-399`, `_is_collaborator_author` at `pulse-merge.sh:1544-1558`.
 - Regression test: `.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh`.
 - CI registration: `.github/workflows/code-quality.yml` ("Approve Collaborator Author Guard" step).
-- Public-repo coverage gap: 13 pulse-enabled public repos still lack `maintainer-gate.yml` (see `aidevops check-workflows`). Tracking issue to make `maintainer-gate.yml` reusable and add to `aidevops sync-workflows` is filed separately.
+- Layer-1 generalisation (GH#21154): `maintainer-gate.yml` is now a reusable workflow (`maintainer-gate-reusable.yml`) distributed to all `pulse: true` repos via `aidevops sync-workflows`. Run `aidevops check-workflows --workflow maintainer-gate` to see per-repo status. Full architecture: `.agents/reference/reusable-workflows.md`.
