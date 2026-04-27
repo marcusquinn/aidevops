@@ -645,3 +645,133 @@ LLM_ROUTING_DRY_RUN=1 llm-routing-helper.sh route \
 # Check provider availability
 llm-routing-helper.sh status
 ```
+
+---
+
+## Ollama Integration (t2848)
+
+The `ollama-helper.sh` provides the local LLM substrate used by `llm-routing-helper.sh`
+for `pii`, `sensitive`, and `privileged` tiers. The helper is the canonical interface
+to Ollama — direct `ollama` CLI calls in new helpers are prohibited.
+
+### Setup
+
+**1. Install Ollama:**
+
+```bash
+# macOS (Homebrew)
+brew install ollama
+
+# Or download from https://ollama.com
+```
+
+**2. Pull the recommended bundle:**
+
+```bash
+# Pull all three models (fast + reasoning + embed)
+ollama-helper.sh pull llama3.1:8b       # ~4.9 GB — required for pii/sensitive tiers
+ollama-helper.sh pull nomic-embed-text  # ~274 MB — required for vector embeddings
+# Optional (for privileged drafts requiring high-quality reasoning):
+ollama-helper.sh pull llama3.1:70b     # ~39 GB — requires 48+ GB RAM
+```
+
+**3. Verify health:**
+
+```bash
+ollama-helper.sh health
+# Output: Ollama healthy: server up, 2 model(s) installed
+```
+
+### Recommended Bundle
+
+The default model bundle is at `.agents/templates/ollama-bundle.json` (deployed to
+`~/.aidevops/configs/ollama-bundle.json`). Three tiers:
+
+| Bundle key | Model | Purpose | Size |
+|------------|-------|---------|------|
+| `fast` | `llama3.1:8b` | classify, short-form summary — `pii`/`sensitive` | ~4.9 GB |
+| `reasoning` | `llama3.1:70b` | drafts, structured extraction — `privileged` | ~39 GB |
+| `embed` | `nomic-embed-text` | vector embeddings for semantic search | ~274 MB |
+
+The `fast` model is the minimum required for the routing layer to route `pii`/`sensitive`
+tiers to a local provider. The `reasoning` model is required for `privileged` tier — if
+absent, `llm-routing-helper.sh` exits 1 (hard-fail by policy).
+
+### Subcommands Added (t2848)
+
+| Subcommand | Purpose |
+|------------|---------|
+| `health` | Exit 0 if daemon running + ≥1 model installed; exit 1 otherwise |
+| `chat --model <m> --prompt-file <f>` | Run inference; auto-starts daemon; auto-pulls model |
+| `embed --model <m> --text-file <f>` | Get vector embeddings as JSON |
+| `privacy-check` | Best-effort check for external connections during inference |
+
+```bash
+# Run inference
+ollama-helper.sh chat --model llama3.1:8b --prompt-file /tmp/prompt.txt
+ollama-helper.sh chat --model llama3.1:8b --prompt-file /tmp/p.txt \
+    --max-tokens 512 --temperature 0.7
+
+# Vector embeddings
+ollama-helper.sh embed --model nomic-embed-text --text-file /tmp/doc.txt
+
+# Health check
+ollama-helper.sh health
+
+# Privacy verification
+ollama-helper.sh privacy-check
+```
+
+### Privacy Guarantee
+
+Ollama runs models entirely on the local host. No data is sent to external servers
+**during normal operation**. However:
+
+- **Model downloads** (`ollama pull`) contact `ollama.com` to fetch model weights.
+  These happen once per model. After pulling, inference is fully offline.
+- **`privacy-check`** verifies this at runtime by inspecting TCP connections during
+  a test inference via `lsof`. It is a **best-effort check** — it cannot detect:
+  - DNS queries (name resolution only, no data)
+  - UDP traffic
+  - Connections that open and close between lsof snapshots
+- For **high-assurance offline operation** (e.g. `privileged` tier with extremely
+  sensitive content), use a network-level firewall or run on an airgapped host.
+
+The `privacy-check` subcommand documents its limitations in `--help` output and in
+its exit summary. Users relying on Ollama for `privileged` content should understand
+that the guarantee is architectural (no cloud API calls in the inference path) rather
+than technically enforced at every layer.
+
+### Auto-Start
+
+`chat` and `embed` automatically start the Ollama daemon if it is not running:
+
+1. `_ensure_running` calls `ollama serve` in the background.
+2. Polls `health` every 1 second for up to 30 seconds.
+3. If still not up after 30s, exits 2 with a clear error message.
+4. Once running, the daemon persists for the session (not killed on helper exit).
+
+This means users can call `ollama-helper.sh chat ...` without manually running
+`ollama serve` first. The daemon stays running in the background for subsequent calls.
+
+### Routing Layer Integration
+
+`llm-routing-helper.sh` calls `ollama-helper.sh chat` for local tiers:
+
+```json
+// llm-routing-config.json (template)
+{
+  "providers": {
+    "ollama": {
+      "kind": "local",
+      "command": "ollama-helper.sh",
+      "subcommand": "chat"
+    }
+  }
+}
+```
+
+The routing layer passes `--model` (resolved from the sensitivity tier config),
+`--prompt-file`, and optionally `--max-tokens`. The `health` subcommand is called
+before dispatching to Ollama — if it fails for `privileged` tier, the hard-fail
+policy kicks in immediately.

@@ -1256,6 +1256,7 @@ _setup_run_interactive() {
 	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
 	confirm_step "Setup browser automation tools" && setup_browser_tools
 	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
+	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
 	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
 	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
