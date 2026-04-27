@@ -1,0 +1,28 @@
+{
+  "name": "citation",
+  "description": "Inline citation linking a claim or quote to its source document, with optional page reference and confidence score.",
+  "attributes": {
+    "source-id": {
+      "type": "string",
+      "required": true,
+      "description": "Identifier of the cited source (matches a provenance source-id or an external reference key)."
+    },
+    "page": {
+      "type": "string",
+      "required": false,
+      "description": "Page, section, or paragraph locator within the source (e.g. \"p.12\", \"s.3.1\", \"para.7\")."
+    },
+    "confidence": {
+      "type": "number",
+      "required": false,
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Confidence that the citation accurately represents the source (0.0 = paraphrased loosely, 1.0 = verbatim quote)."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["inline"],
+    "description": "Citations are always inline — they annotate a specific claim or quote within running text."
+  },
+  "example": "The contract requires delivery by Q3 {% citation source-id=\"exhibit-A-contract.pdf\" page=\"p.4\" confidence=1.0 /%}"
+}

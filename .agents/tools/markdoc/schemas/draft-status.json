@@ -1,0 +1,22 @@
+{
+  "name": "draft-status",
+  "description": "Tracks the editorial lifecycle status of a document or section. Used to gate publication, flag review needs, and record approval state.",
+  "attributes": {
+    "status": {
+      "type": "string",
+      "required": true,
+      "enum": ["draft", "review", "approved", "archived"],
+      "description": "Current lifecycle stage. draft = work in progress; review = awaiting sign-off; approved = cleared for use; archived = superseded or withdrawn."
+    },
+    "assignee": {
+      "type": "string",
+      "required": false,
+      "description": "Person or role responsible for the current status transition (e.g. reviewer username, approver name)."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["file", "section"],
+    "description": "File-level sets the status for the entire document. Section-level allows different parts of a document to be at different lifecycle stages."
+  },
+  "example": "{% draft-status status=\"review\" assignee=\"jane.doe\" %}\nThis analysis is pending legal review before client distribution.\n{% /draft-status %}"
+}

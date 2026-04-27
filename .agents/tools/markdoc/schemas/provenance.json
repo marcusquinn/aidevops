@@ -1,0 +1,29 @@
+{
+  "name": "provenance",
+  "description": "Records the origin of extracted or ingested content — which source document it came from, when it was extracted, and the extraction confidence score.",
+  "attributes": {
+    "source-id": {
+      "type": "string",
+      "required": true,
+      "description": "Unique identifier for the source document (e.g. filename, URL, case exhibit ID)."
+    },
+    "extracted-at": {
+      "type": "string",
+      "required": true,
+      "format": "iso-date",
+      "description": "ISO 8601 date (YYYY-MM-DD or full datetime) when the content was extracted from the source."
+    },
+    "confidence": {
+      "type": "number",
+      "required": false,
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Extraction confidence score (0.0 = uncertain, 1.0 = verbatim). Omit when extraction is manual/verified."
+    }
+  },
+  "scope_rules": {
+    "allowed": ["file", "section"],
+    "description": "File-level marks the entire document as originating from one source. Section-level marks a block extracted from a specific source within a multi-source document."
+  },
+  "example": "{% provenance source-id=\"exhibit-A-contract.pdf\" extracted-at=\"2026-03-15\" confidence=0.95 %}\nThe vendor agrees to deliver by Q3 2026.\n{% /provenance %}"
+}
