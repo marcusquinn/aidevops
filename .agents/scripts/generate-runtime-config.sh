@@ -84,14 +84,31 @@ RUNTIME_CACHE_HASH_FILE_PREFIX="${AGENTS_DIR}/.runtime-config-source-hash"
 # Includes: the script itself + all source .md/.toml/.json files under AGENTS_DIR.
 # Uses file metadata (name/size/mtime) for speed (~10ms for 1600 files)
 # rather than content hashing (~80s per runtime).
-# NOTE: stat -f is macOS/BSD syntax; on Linux it silently fails (2>/dev/null)
-# producing an empty hash, which forces regeneration — acceptable behaviour.
+# Portable: stat -f is macOS/BSD; stat -c is Linux/GNU. Detected via uname.
+# If metadata collection fails entirely, returns a unique no-cache sentinel so
+# the cache is safely bypassed rather than producing a stale constant hash.
 compute_runtime_source_hash() {
-	{
-		stat -f '%N %z %m' "${BASH_SOURCE[0]}" 2>/dev/null
-		find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
-			-exec stat -f '%N %z %m' {} + 2>/dev/null
-	} | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
+	local metadata
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		metadata=$({
+			stat -f '%N %z %m' "${BASH_SOURCE[0]}"
+			find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+				-exec stat -f '%N %z %m' {} + 2>/dev/null
+		})
+	else
+		# Linux/GNU stat uses -c instead of -f
+		metadata=$({
+			stat -c '%n %s %Y' "${BASH_SOURCE[0]}"
+			find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+				-exec stat -c '%n %s %Y' {} + 2>/dev/null
+		})
+	fi
+
+	# If metadata collection failed entirely, return a unique sentinel so the
+	# cache is bypassed rather than storing a false constant-hash cache hit.
+	[[ -z "$metadata" ]] && { echo "no-cache-${RANDOM}"; return 0; }
+
+	echo "$metadata" | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
 	return 0
 }
 
@@ -1404,10 +1421,10 @@ _generate_for_runtime() {
 
 	# Write the source hash after successful generation so the next invocation
 	# can skip regeneration when inputs are unchanged.
+	# Reuse current_hash computed at the top of this function — avoids a
+	# redundant stat scan across 1600+ files.
 	if [[ "$_SKIP_CACHE" == false ]]; then
-		local new_hash
-		new_hash=$(compute_runtime_source_hash)
-		echo "$new_hash" >"${RUNTIME_CACHE_HASH_FILE_PREFIX}-${runtime_id}"
+		echo "$current_hash" >"${RUNTIME_CACHE_HASH_FILE_PREFIX}-${runtime_id}"
 	fi
 
 	return 0
