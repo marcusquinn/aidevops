@@ -3280,7 +3280,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2906 setup.sh leaves 0-byte pulse plist when _generate_pulse_plist_content is interrupted #auto-dispatch #bug #framework #setup ref:GH#21054 pr:#21062 completed:2026-04-26
 
-- [ ] t2907 Audit and instrument all worktree-removal code paths after silent destruction of an actively-claimed worktree #bug #parent ref:GH#21055
+- [x] t2907 Audit and instrument all worktree-removal code paths after silent destruction of an actively-claimed worktree #bug #parent ref:GH#21055 pr:#21278 completed:2026-04-27
 
 - [ ] t2973 t2907 Phase 1: Audit all worktree-removal call sites and classify each path #auto-dispatch #bug #framework ref:GH#21272
 
