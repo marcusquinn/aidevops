@@ -650,6 +650,17 @@ _cmd_check_perform_update() {
 	local _setup_exit=0
 	bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1 || _setup_exit=$?
 
+	# GH#21060 / t2911: Log slowest 5 stages from this run so that
+	# "tail -50 ~/.aidevops/logs/auto-update.log | grep Slowest" is
+	# sufficient to diagnose which stage hung, without bash -x re-runs.
+	local _stl="$HOME/.aidevops/logs/setup-stage-timings.log"
+	if [[ -f "$_stl" ]]; then
+		log_info "Slowest stages this cycle:"
+		sort -k3 -t$'\t' -rn "$_stl" | head -5 | while IFS=$'\t' read -r _ts _name _dur _exit_code; do
+			log_info "  ${_dur}s ${_name} (exit=${_exit_code})"
+		done
+	fi
+
 	# GH#18492 / t2026: verify the completion sentinel regardless of exit
 	# code. "exit non-zero AND no sentinel" is the t2022-class silent
 	# termination (e.g., a sourced helper's set -e propagates a readonly

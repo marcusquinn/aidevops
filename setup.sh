@@ -142,6 +142,31 @@ _cron_escape() {
 	return 0
 }
 
+# GH#21060 / t2911: Per-stage timing helper for non-interactive setup runs.
+# Wraps a function call, records start/end time, and appends one TSV line to
+# $HOME/.aidevops/logs/setup-stage-timings.log:
+#   iso8601_utc <TAB> stage_name <TAB> duration_seconds <TAB> exit_code
+# Usage: _time_step "stage_name" function_name [args...]
+# ShellCheck: $@ is used deliberately (SC2068 not applicable; no word-splitting
+# issue since we shift the stage-name arg first and pass the rest as a command).
+_time_step() {
+	local _ts_stage="$1"
+	shift
+	local _ts_start _ts_end _ts_duration _ts_exit
+	_ts_start=$(date +%s.%N 2>/dev/null || date +%s)
+	_ts_exit=0
+	"$@" || _ts_exit=$?
+	_ts_end=$(date +%s.%N 2>/dev/null || date +%s)
+	_ts_duration=$(awk -v a="$_ts_start" -v b="$_ts_end" 'BEGIN { printf "%.2f", b - a }')
+	printf '%s\t%s\t%s\t%s\n' \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		"$_ts_stage" \
+		"$_ts_duration" \
+		"$_ts_exit" \
+		>>"$HOME/.aidevops/logs/setup-stage-timings.log" 2>/dev/null || true
+	return "$_ts_exit"
+}
+
 # Resolve the canonical main worktree path for the current repo.
 # When setup.sh is run from a linked worktree, launchd/cron should still point
 # autonomous services at the main repo checkout, not the feature worktree.
@@ -1028,61 +1053,82 @@ setup_knowledge_planes() {
 }
 
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
+# GH#21060 / t2911: Every direct function call is wrapped with _time_step so
+# that a one-line-per-stage TSV timing record is appended to
+# $HOME/.aidevops/logs/setup-stage-timings.log for post-run diagnostics.
 _setup_run_non_interactive() {
 	print_info "Non-interactive mode: deploying agents and running safe migrations only"
-	verify_location
-	check_requirements
+
+	# GH#21060: Initialise per-stage timing log; rotate if over 10K lines / 1MB.
+	local _stl
+	_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
+	mkdir -p "$(dirname "$_stl")" 2>/dev/null || true
+	if [[ -f "$_stl" ]]; then
+		local _stl_lines _stl_bytes
+		_stl_lines=$(wc -l <"$_stl" 2>/dev/null || echo "0")
+		_stl_bytes=$(wc -c <"$_stl" 2>/dev/null || echo "0")
+		# Strip whitespace that wc adds on some platforms
+		_stl_lines="${_stl_lines//[[:space:]]/}"
+		_stl_bytes="${_stl_bytes//[[:space:]]/}"
+		if [[ "${_stl_lines:-0}" -gt 10000 ]] || [[ "${_stl_bytes:-0}" -gt 1048576 ]]; then
+			: >"$_stl" 2>/dev/null || true
+			print_info "setup-stage-timings.log rotated (was ${_stl_lines} lines / ${_stl_bytes} bytes)"
+		fi
+	fi
+
+	_time_step "verify_location" verify_location
+	_time_step "check_requirements" check_requirements
 	# Run quality tool detection in non-interactive mode too (warn-only path).
-	check_quality_tools
+	_time_step "check_quality_tools" check_quality_tools
 	# Check setsid availability; auto-install util-linux on macOS if missing
 	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
-	setup_setsid_advisory
-	check_python_upgrade_available
-	set_permissions
-	migrate_old_backups
-	migrate_loop_state_directories
-	migrate_agent_to_agents_folder
-	migrate_mcp_env_to_credentials
-	migrate_pulse_repos_to_repos_json
-	cleanup_deprecated_paths
-	migrate_orphaned_supervisor
-	backfill_issue_relationships
-	cleanup_deprecated_mcps
-	cleanup_stale_bun_opencode
-	cleanup_stale_health_issue_caches
-	cleanup_worktree_entries_in_repos_json
-	_cleanup_legacy_model_config
+	_time_step "setup_setsid_advisory" setup_setsid_advisory
+	_time_step "check_python_upgrade_available" check_python_upgrade_available
+	_time_step "set_permissions" set_permissions
+	_time_step "migrate_old_backups" migrate_old_backups
+	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
+	_time_step "migrate_agent_to_agents_folder" migrate_agent_to_agents_folder
+	_time_step "migrate_mcp_env_to_credentials" migrate_mcp_env_to_credentials
+	_time_step "migrate_pulse_repos_to_repos_json" migrate_pulse_repos_to_repos_json
+	_time_step "cleanup_deprecated_paths" cleanup_deprecated_paths
+	_time_step "migrate_orphaned_supervisor" migrate_orphaned_supervisor
+	_time_step "backfill_issue_relationships" backfill_issue_relationships
+	_time_step "cleanup_deprecated_mcps" cleanup_deprecated_mcps
+	_time_step "cleanup_stale_bun_opencode" cleanup_stale_bun_opencode
+	_time_step "cleanup_stale_health_issue_caches" cleanup_stale_health_issue_caches
+	_time_step "cleanup_worktree_entries_in_repos_json" cleanup_worktree_entries_in_repos_json
+	_time_step "_cleanup_legacy_model_config" _cleanup_legacy_model_config
 	# t2888: install/heal opencode-ai. Companion to t2887's runtime canary
 	# fail-fast -- t2887 detects when $OPENCODE_BIN_DEFAULT is wrong, this
 	# one fixes it by reinstalling opencode-ai@latest (overwriting any bin
 	# collision with @anthropic-ai/claude-code or similar). Skipping this
 	# in non-interactive mode is the bug PR #20189 introduced and what
 	# alex-solovyev's runner spam stemmed from.
-	setup_opencode_cli
-	validate_opencode_config
-	deploy_aidevops_agents
-	_setup_install_pulse_plist_early
-	_deploy_hotfix_config
-	sync_agent_sources
-	install_aidevops_cli
-	setup_shellcheck_wrapper
+	_time_step "setup_opencode_cli" setup_opencode_cli
+	_time_step "validate_opencode_config" validate_opencode_config
+	_time_step "deploy_aidevops_agents" deploy_aidevops_agents
+	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
+	_time_step "_deploy_hotfix_config" _deploy_hotfix_config
+	_time_step "sync_agent_sources" sync_agent_sources
+	_time_step "install_aidevops_cli" install_aidevops_cli
+	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
-		setup_safety_hooks
+		_time_step "setup_safety_hooks" setup_safety_hooks
 	fi
-	init_settings_json
+	_time_step "init_settings_json" init_settings_json
 
 	# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
 	# generate_agent_skills must complete before create_skill_symlinks (symlinks
 	# depend on generated SKILL.md files). scan_imported_skills is independent.
 	local _pid_symlinks=""
-	if generate_agent_skills; then
-		create_skill_symlinks &
+	if _time_step "generate_agent_skills" generate_agent_skills; then
+		_time_step "create_skill_symlinks" create_skill_symlinks &
 		_pid_symlinks=$!
 	else
 		print_warning "Agent skills generation failed — skipping skill symlinks"
 	fi
 
-	scan_imported_skills &
+	_time_step "scan_imported_skills" scan_imported_skills &
 	local _pid_scan=$!
 
 	if [[ -n "$_pid_symlinks" ]]; then
@@ -1090,42 +1136,42 @@ _setup_run_non_interactive() {
 	fi
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
-	inject_agents_reference
-	deploy_agents_to_runtimes
-	update_opencode_config
-	update_claude_config
-	update_codex_config
-	update_cursor_config
-	disable_ondemand_mcps
+	_time_step "inject_agents_reference" inject_agents_reference
+	_time_step "deploy_agents_to_runtimes" deploy_agents_to_runtimes
+	_time_step "update_opencode_config" update_opencode_config
+	_time_step "update_claude_config" update_claude_config
+	_time_step "update_codex_config" update_codex_config
+	_time_step "update_cursor_config" update_cursor_config
+	_time_step "disable_ondemand_mcps" disable_ondemand_mcps
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
-	setup_routines
+	_time_step "setup_routines" setup_routines
 	# Install/refresh the privacy-guard pre-push hook in every initialized
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).
-	setup_privacy_guard
+	_time_step "setup_privacy_guard" setup_privacy_guard
 	# Install/refresh the complexity-regression pre-push hook in every
 	# initialized repo so pushes that introduce new function-complexity,
 	# nesting-depth, or file-size violations are caught before CI (t2198).
-	setup_complexity_guard
+	_time_step "setup_complexity_guard" setup_complexity_guard
 	# Install/refresh the canonical-on-main post-checkout hook in every
 	# initialized repo so branch switches away from main in the canonical
 	# directory are warned against (t1995). Complements pre-edit-check.sh's
 	# t1990 edit-time check by catching the branch switch itself.
-	setup_canonical_guard
+	_time_step "setup_canonical_guard" setup_canonical_guard
 	# Install/refresh the task-id collision guard commit-msg hook in every
 	# initialized repo so invented t-IDs in commit subjects are rejected
 	# at commit time (t2047). Belt-and-braces with the CI check in
-	# .github/workflows/ta[redacted-credential].yml.
-	setup_task_id_guard
+	# .github/workflows/task-id-collision-check.yml.
+	_time_step "setup_task_id_guard" setup_task_id_guard
 	# Apply Spotlight + Time Machine exclusions to every worktree across
 	# registered repos so the backup/index cascade triggered by node_modules
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
 	# indexers tracked separately.
-	setup_worktree_exclusions
+	_time_step "setup_worktree_exclusions" setup_worktree_exclusions
 	# Provision knowledge planes for repos where knowledge != "off" (idempotent).
-	setup_knowledge_planes
+	_time_step "setup_knowledge_planes" setup_knowledge_planes
 	return 0
 }
 
