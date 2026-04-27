@@ -927,7 +927,8 @@ _c4ai_generate_xlsx() {
 	"$PYTHON_CMD" -c "import openpyxl" 2>/dev/null || return 0
 
 	local xlsx_script
-	xlsx_script=$(mktemp /tmp/xlsx_gen_XXXXXX.py)
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	xlsx_script=$(mktemp /tmp/xlsx_gen-XXXXXX)
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${xlsx_script}'"
@@ -1459,7 +1460,8 @@ _do_crawl_run_python() {
 	print_info "Using: $PYTHON_CMD"
 
 	local crawler_script
-	crawler_script=$(mktemp /tmp/site_crawler_XXXXXX.py)
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	crawler_script=$(mktemp /tmp/site_crawler-XXXXXX)
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${crawler_script}'"

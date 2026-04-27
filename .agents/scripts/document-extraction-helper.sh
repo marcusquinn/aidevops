@@ -458,7 +458,9 @@ with open('${text_file}', 'w') as f:
 		elif [[ "$ext" == "pdf" ]]; then
 			# Convert first page to image for classification
 			local tmp_img
-			tmp_img="$(mktemp /tmp/classify-XXXXXX.png)"
+			# t2997: drop .png — image classifiers detect format from magic bytes,
+			# not filename extension. XXXXXX must be at end for BSD mktemp.
+			tmp_img="$(mktemp /tmp/classify-XXXXXX)"
 			if command -v magick &>/dev/null; then
 				magick -density 150 "${input_file}[0]" -quality 80 "$tmp_img" 2>/dev/null
 			elif command -v convert &>/dev/null; then

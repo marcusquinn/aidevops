@@ -224,7 +224,9 @@ _resolve_model_tiers_in_frontmatter() {
 	#   model: sonnet        → model: anthropic/claude-sonnet-4-6
 	#   model: sonnet  # ... → model: anthropic/claude-sonnet-4-6  # ...
 	local sed_file
-	sed_file=$(mktemp "${TMPDIR:-/tmp}/model-resolve-XXXXXX.sed")
+	# t2997: drop .sed — XXXXXX must be at end for BSD mktemp; sed -f reads
+	# script content regardless of extension.
+	sed_file=$(mktemp "${TMPDIR:-/tmp}/model-resolve-XXXXXX")
 	if [[ -f "$custom_table" ]]; then
 		# Merge: custom tiers override default tiers (jq * operator)
 		jq -r -s '

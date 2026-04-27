@@ -1452,7 +1452,8 @@ _record_invocation_source() {
 	[[ -d "$_dir" ]] || mkdir -p "$_dir" 2>/dev/null || return 0
 	[[ -f "$stats_file" ]] || printf '{"counters":{}}\n' >"$stats_file" 2>/dev/null || return 0
 
-	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-src-XXXXXX.json") || return 0
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-src-XXXXXX") || return 0
 	jq --arg src "$source" \
 		'.invocation_sources[$src] = ((.invocation_sources[$src] // 0) + 1)' \
 		"$stats_file" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }

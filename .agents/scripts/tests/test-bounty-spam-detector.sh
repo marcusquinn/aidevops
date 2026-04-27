@@ -212,7 +212,8 @@ test_score_rc0_contract_on_spam() {
 	# verdict string is correct; this test asserts the rc difference.
 
 	local tmp rc_scan=0
-	tmp=$(mktemp -t bsd-test-score-rc.XXXXXX.md) || {
+	# t2997: drop .md — XXXXXX must be at end for BSD mktemp.
+	tmp=$(mktemp -t bsd-test-score-rc.XXXXXX) || {
 		print_result "score rc=0 contract: cmd_score returns 0 on spam-likely content" 1 "could not mktemp"
 		return 0
 	}
@@ -261,7 +262,8 @@ test_score_json_well_formed() {
 	# command via fixture-based test produces parseable JSON when --json
 	# is implied through manual invocation.
 	local tmp
-	tmp=$(mktemp -t bsd-test.XXXXXX.md) || {
+	# t2997: drop .md — XXXXXX must be at end for BSD mktemp.
+	tmp=$(mktemp -t bsd-test.XXXXXX) || {
 		print_result "json: well-formed output" 1 "could not mktemp"
 		return 0
 	}

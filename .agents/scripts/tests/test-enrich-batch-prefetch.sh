@@ -222,7 +222,8 @@ STUB
 chmod +x "${STUB_DIR4}/gh"
 
 # Create a valid prefetch file with issue 123
-PREFETCH_FILE=$(mktemp /tmp/test-prefetch-XXXXXX.json)
+# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+PREFETCH_FILE=$(mktemp /tmp/test-prefetch-XXXXXX)
 printf '[{"number":123,"title":"t9999: Test issue","body":"original body","labels":[{"name":"bug"}],"state":"OPEN","assignees":[]}]\n' \
 	>"$PREFETCH_FILE"
 

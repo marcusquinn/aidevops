@@ -1115,7 +1115,8 @@ _enrich_prefetch_issues_map() {
 	fi
 	# Write to temp file so the enrich loop can read it per-task without
 	# passing a large string through every subshell invocation.
-	ENRICH_PREFETCH_FILE=$(mktemp /tmp/enrich-prefetch-XXXXXX.json 2>/dev/null || echo "")
+	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
+	ENRICH_PREFETCH_FILE=$(mktemp /tmp/enrich-prefetch-XXXXXX 2>/dev/null || echo "")
 	if [[ -z "$ENRICH_PREFETCH_FILE" ]]; then
 		return 1
 	fi

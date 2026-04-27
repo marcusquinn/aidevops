@@ -102,7 +102,8 @@ extract_function() {
 # Stub out command -v to return 1 (no tools installed) so the check function
 # populates _SETUP_TOOLS_LINUX_MISSING with all four packages.
 
-TMPFILE=$(mktemp "${TMPDIR:-/tmp}/t2719-zsh-snippet.XXXXXX.sh")
+# t2997: drop .sh — XXXXXX must be at end for BSD mktemp.
+TMPFILE=$(mktemp "${TMPDIR:-/tmp}/t2719-zsh-snippet.XXXXXX")
 trap 'rm -f "$TMPFILE"' EXIT
 
 {

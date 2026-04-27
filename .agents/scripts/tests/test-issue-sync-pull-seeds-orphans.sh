@@ -50,7 +50,8 @@ check() {
 
 make_todo() {
 	local f
-	f=$(mktemp /tmp/test-todo-XXXXXX.md)
+	# t2997: drop .md — XXXXXX must be at end for BSD mktemp.
+	f=$(mktemp /tmp/test-todo-XXXXXX)
 	cat >"$f" <<'EOF'
 # Tasks
 

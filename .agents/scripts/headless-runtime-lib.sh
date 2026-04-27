@@ -207,7 +207,9 @@ _log_empty_result_gaps() {
 	mkdir -p "$(dirname "$diag_log")" 2>/dev/null || true
 
 	local _py_script
-	_py_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-empty-gaps.XXXXXX.py") || return 0
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp; python doesn't
+	# need .py to execute via `python "$path"`.
+	_py_script=$(mktemp "${TMPDIR:-/tmp}/aidevops-empty-gaps-XXXXXX") || return 0
 	cat >"$_py_script" <<'EMPTYPY'
 import json, sys, os, datetime
 from pathlib import Path

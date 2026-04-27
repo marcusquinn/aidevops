@@ -877,7 +877,8 @@ deploy_sieve() {
 
 	# Write Python helper to temp file
 	local helper_tmp
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX.py)"
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
 	# Ensure cleanup on exit
 	trap 'rm -f "$helper_tmp"' EXIT
 
@@ -910,7 +911,8 @@ list_scripts() {
 	fi
 
 	local helper_tmp
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX.py)"
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
 	trap 'rm -f "$helper_tmp"' EXIT
 
 	write_managesieve_helper "$helper_tmp"
@@ -939,7 +941,8 @@ show_script() {
 	fi
 
 	local helper_tmp
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX.py)"
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
 	trap 'rm -f "$helper_tmp"' EXIT
 
 	write_managesieve_helper "$helper_tmp"
@@ -968,7 +971,8 @@ delete_script() {
 	fi
 
 	local helper_tmp
-	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX.py)"
+	# t2997: drop .py — XXXXXX must be at end for BSD mktemp.
+	helper_tmp="$(mktemp /tmp/aidevops-managesieve-XXXXXX)"
 	trap 'rm -f "$helper_tmp"' EXIT
 
 	write_managesieve_helper "$helper_tmp"
