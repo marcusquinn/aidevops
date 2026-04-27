@@ -45,6 +45,13 @@ _PULSE_DISPATCH_ENGINE_LOADED=1
 : "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
 : "${PIDFILE:=${HOME}/.aidevops/logs/pulse.pid}"
 : "${PRE_RUN_STAGE_TIMEOUT:=600}"
+# t2989: per-candidate cap inside dispatch_deterministic_fill_floor so a single
+# hung dispatch_with_dedup call cannot consume the parent stage's full 600s
+# budget. Canonical failure: preflight_early_dispatch 0/8 success rate after
+# 07:00Z 2026-04-27 — single hung iter consumed the whole stage; cycle
+# cadence collapsed from ~2min to ~40min. 30s is generous: dedup check +
+# nohup worker spawn normally completes in <5s.
+: "${FILL_FLOOR_PER_CANDIDATE_TIMEOUT:=30}"
 : "${PULSE_ACTIVE_REFILL_INTERVAL:=120}"
 : "${PULSE_ACTIVE_REFILL_IDLE_MIN:=60}"
 : "${PULSE_ACTIVE_REFILL_STALL_MIN:=120}"
@@ -518,28 +525,40 @@ _dff_process_candidate() {
 	# within a single dispatch_deterministic_fill_floor subshell execution.
 	_pulse_refresh_repo "$repo_path"
 
-	# GH#18804 follow-up #3: isolate dispatch_with_dedup in an explicit
-	# subshell. PR #18823 added entry/exit logging that proved the silent
-	# abort happens INSIDE dispatch_with_dedup — even with set +e wrapping
-	# the parent _dff_process_candidate. The abort is NOT a set -e issue
-	# (the entry log shows save_e=none, meaning set -e was already off);
-	# something deeper in the call chain (likely a nested function that
-	# does an unguarded `local var=$(cmd)` where cmd dies, or a `read`
-	# from a closed pipe) is killing the parent subshell silently.
+	# GH#18804 follow-up #3 + t2989: isolate AND time-bound dispatch_with_dedup.
 	#
-	# Wrapping the call in `(...)` creates a NEW subshell whose abort
-	# cannot propagate back to dispatch_deterministic_fill_floor. The exit
-	# code is captured normally via `||`. dispatch_with_dedup has no
-	# shared-variable contract with the caller — it only mutates GitHub
-	# state via `gh` API and fork-execs the worker via nohup, both of
-	# which survive subshell isolation. Same defensive pattern as
-	# `( set -e; ... )` from GH#18770/GH#18794.
+	# Subshell isolation rationale (GH#18804 / PR #18823): entry/exit logging
+	# proved the silent abort happens INSIDE dispatch_with_dedup, not via
+	# set -e propagation (the entry log shows save_e=none). Something deeper
+	# in the call chain — likely an unguarded `local var=$(cmd)` where cmd
+	# dies, or a `read` from a closed pipe — was killing the parent subshell
+	# silently. dispatch_with_dedup has no shared-variable contract with the
+	# caller; it only mutates GitHub state via `gh` API and fork-execs the
+	# worker via nohup, both of which survive subshell isolation.
+	#
+	# Per-candidate timeout rationale (t2989): on 2026-04-27 07:00Z the
+	# preflight_early_dispatch stage went 0/8 success because a single hung
+	# `dispatch_with_dedup` call (likely gh API stall or lock contention)
+	# consumed the parent stage's full 600s budget. With the loop processing
+	# ~21 candidates per cycle, one hang per cycle was enough to collapse
+	# cycle cadence from ~2min to ~40min. run_stage_with_timeout backgrounds
+	# the call and kills the entire process tree on overrun, returning 124,
+	# which we surface as a per-candidate skip rather than a stage failure.
+	# 30s default is generous — normal dedup-check + nohup spawn completes
+	# in <5s.
 	local dispatch_rc=0
-	(
+	run_stage_with_timeout "fill_floor_candidate_${issue_number}" "$FILL_FLOOR_PER_CANDIDATE_TIMEOUT" \
 		dispatch_with_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-			"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override"
-	) || dispatch_rc=$?
+		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number}" >>"$LOGFILE"
+	if [[ "$dispatch_rc" -eq 124 ]]; then
+		# t2989: per-candidate timeout — log distinctly + bump observability
+		# counter so cadence regressions are visible in pulse-stats.json.
+		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${FILL_FLOOR_PER_CANDIDATE_TIMEOUT}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "fill_floor_per_candidate_timeout" 2>/dev/null || true
+		fi
+	fi
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 		return 1
