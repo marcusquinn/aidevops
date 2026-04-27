@@ -17,12 +17,22 @@ import json
 import os
 import re
 import sys
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+@dataclass
+class _WalkContext:
+    """Bundled search context for _walk_tree to reduce parameter count."""
+
+    terms: List[str]
+    results: List[Dict[str, Any]] = field(default_factory=list)
+    max_depth: int = 5
 
 
 def _score_text(text: str, terms: List[str]) -> int:
@@ -44,17 +54,15 @@ def _score_node(node: Dict[str, Any], terms: List[str]) -> int:
 def _walk_tree(
     node: Dict[str, Any],
     source_id: str,
-    terms: List[str],
-    results: List[Dict[str, Any]],
+    ctx: _WalkContext,
     depth: int = 0,
-    max_depth: int = 5,
 ) -> None:
     """Recursively walk tree nodes, collecting keyword-scored matches."""
-    if depth > max_depth:
+    if depth > ctx.max_depth:
         return
-    score = _score_node(node, terms)
+    score = _score_node(node, ctx.terms)
     if score > 0:
-        results.append({
+        ctx.results.append({
             'source_id': source_id,
             'score': score,
             'anchor': node.get('title', ''),
@@ -63,7 +71,7 @@ def _walk_tree(
             'level': node.get('level', depth + 1),
         })
     for child in node.get('children', []):
-        _walk_tree(child, source_id, terms, results, depth + 1, max_depth)
+        _walk_tree(child, source_id, ctx, depth + 1)
 
 
 def _extract_top_levels(tree_node: Dict[str, Any], max_depth: int = 2) -> Dict[str, Any]:
@@ -194,15 +202,15 @@ def query_corpus_tree(
     if not terms:
         return []
 
-    results: List[Dict[str, Any]] = []
+    ctx = _WalkContext(terms=terms)
 
     for kind_group in corpus_tree.get('children', []):
         for source_node in kind_group.get('children', []):
             source_id = source_node.get('source_id', '')
-            _walk_tree(source_node, source_id, terms, results)
+            _walk_tree(source_node, source_id, ctx)
 
-    results.sort(key=lambda x: (-x['score'], x.get('level', 0)))
-    return results[:max_results]
+    ctx.results.sort(key=lambda x: (-x['score'], x.get('level', 0)))
+    return ctx.results[:max_results]
 
 
 # ---------------------------------------------------------------------------
@@ -244,33 +252,45 @@ def _cmd_query(corpus_path: str, intent: str, max_results: int = 10) -> int:
     return 0
 
 
+def _run_aggregate() -> int:
+    """Parse aggregate CLI args, validate, and dispatch."""
+    if len(sys.argv) < 4:
+        print('aggregate requires: <sources_dir> <output_json>', file=sys.stderr)
+        return 1
+    return _cmd_aggregate(sys.argv[2], sys.argv[3])
+
+
+def _run_query() -> int:
+    """Parse query CLI args, validate, and dispatch."""
+    if len(sys.argv) < 4:
+        print('query requires: <corpus_json> <intent>', file=sys.stderr)
+        return 1
+    max_r = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4].isdigit() else 10
+    return _cmd_query(sys.argv[2], sys.argv[3], max_r)
+
+
+_USAGE = (
+    'Usage: knowledge_index_helpers.py aggregate <sources_dir> <output_json>\n'
+    '       knowledge_index_helpers.py query <corpus_json> <intent> [max_results]'
+)
+
+_COMMAND_HANDLERS: Dict[str, Callable[[], int]] = {
+    'aggregate': _run_aggregate,
+    'query': _run_query,
+}
+
+
 def main() -> int:
     """CLI dispatcher."""
     if len(sys.argv) < 2:
-        print(
-            'Usage: knowledge_index_helpers.py aggregate <sources_dir> <output_json>\n'
-            '       knowledge_index_helpers.py query <corpus_json> <intent> [max_results]',
-            file=sys.stderr,
-        )
+        print(_USAGE, file=sys.stderr)
         return 1
-
     command = sys.argv[1]
-
-    if command == 'aggregate':
-        if len(sys.argv) < 4:
-            print('aggregate requires: <sources_dir> <output_json>', file=sys.stderr)
-            return 1
-        return _cmd_aggregate(sys.argv[2], sys.argv[3])
-
-    if command == 'query':
-        if len(sys.argv) < 4:
-            print('query requires: <corpus_json> <intent>', file=sys.stderr)
-            return 1
-        max_r = int(sys.argv[4]) if len(sys.argv) > 4 and sys.argv[4].isdigit() else 10
-        return _cmd_query(sys.argv[2], sys.argv[3], max_r)
-
-    print(f'Unknown command: {command}', file=sys.stderr)
-    return 1
+    handler = _COMMAND_HANDLERS.get(command)
+    if handler is None:
+        print(f'Unknown command: {command}', file=sys.stderr)
+        return 1
+    return handler()
 
 
 if __name__ == '__main__':
