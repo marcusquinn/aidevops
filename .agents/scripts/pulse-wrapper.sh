@@ -933,6 +933,148 @@ is_no_work_rate_acceptable() {
 }
 
 # ---------------------------------------------------------------------------
+# _pulse_check_idle_backoff_gate (t3027 / GH#21584)
+#
+# Consults pulse-idle-backoff-helper.sh to decide whether this cycle should
+# be skipped due to accumulated consecutive idle cycles. Operates as an
+# ADDITIVE gate AFTER the rate-limit floor at L1257-1290 — at idle=0..4 the
+# effective interval is identical to PULSE_MIN_INTERVAL_S (90s, no-op);
+# only at idle≥5 does the gate extend the interval (180s/300s/600s/1800s).
+#
+# Reuses the existing rate-limit timestamp file as the single source of
+# truth for "last cycle ran at".
+#
+# Returns:
+#   0 — proceed with cycle (no backoff active OR interval elapsed)
+#   1 — skip cycle (caller should return 0 from main())
+#
+# Bypass: AIDEVOPS_SKIP_PULSE_IDLE_BACKOFF=1
+#
+# Counter side effect: increments _PULSE_HEALTH_IDLE_CYCLE_SKIPPED on skip.
+# ---------------------------------------------------------------------------
+_pulse_check_idle_backoff_gate() {
+	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
+	[[ -x "$_ib_helper" ]] || return 0
+	local _ib_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
+	local _ib_last=0
+	if [[ -f "$_ib_ts_file" ]]; then
+		read -r _ib_last <"$_ib_ts_file" || _ib_last=0
+		[[ "$_ib_last" =~ ^[0-9]+$ ]] || _ib_last=0
+	fi
+	# Helper convention: exit 0 = "skip this cycle", exit 1 = "proceed".
+	# Mirrors should-skip semantics so the helper composes naturally with
+	# `if helper should-skip; then return; fi` at the call site.
+	if "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
+		local _ib_state _ib_count _ib_interval
+		_ib_state=$("$_ib_helper" state 2>/dev/null || echo '{}')
+		_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
+		_ib_interval=$(echo "$_ib_state" | jq -r '.current_effective_interval_s // 90' 2>/dev/null || echo "90")
+		echo "[pulse-wrapper] Idle backoff: skipping cycle (consecutive_idle=${_ib_count}, effective_interval=${_ib_interval}s) (t3027)" >>"$WRAPPER_LOGFILE"
+		_PULSE_HEALTH_IDLE_CYCLE_SKIPPED=$((_PULSE_HEALTH_IDLE_CYCLE_SKIPPED + 1))
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_idle_cycle_skipped" 2>/dev/null || true
+		fi
+		return 1
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_drain_prefetch_counters (t3027 / GH#21584)
+#
+# Drains the prefetch counter temp file written by pulse-prefetch.sh::
+# _prefetch_batch_refresh and accumulates into the cycle-scoped
+# _PULSE_HEALTH_* vars. Required because prefetch_state runs inside a
+# run_stage_with_timeout subshell — direct shell-var updates are lost
+# at subshell exit. Counterpart: pulse-prefetch.sh:246-264 (writer).
+#
+# File format (single line, 4 space-separated integers, fixed positional
+# order — DO NOT change without updating the writer):
+#   search_calls cache_hits tickle_fresh tickle_stale
+# ---------------------------------------------------------------------------
+_pulse_drain_prefetch_counters() {
+	local _pf_file="${TMPDIR:-/tmp}/pulse-health-prefetch-$$.tmp"
+	[[ -f "$_pf_file" ]] || return 0
+	local _pf_search=0 _pf_hits=0 _pf_fresh=0 _pf_stale=0
+	read -r _pf_search _pf_hits _pf_fresh _pf_stale <"$_pf_file" || true
+	[[ "$_pf_search" =~ ^[0-9]+$ ]] || _pf_search=0
+	[[ "$_pf_hits" =~ ^[0-9]+$ ]] || _pf_hits=0
+	[[ "$_pf_fresh" =~ ^[0-9]+$ ]] || _pf_fresh=0
+	[[ "$_pf_stale" =~ ^[0-9]+$ ]] || _pf_stale=0
+	# Replace rather than add: prefetch_state writes its own running totals
+	# (cumulative within the call), and these vars were 0-initialised at
+	# cycle start with prefetch_state as the sole writer this cycle.
+	_PULSE_HEALTH_BATCH_SEARCH_CALLS="$_pf_search"
+	_PULSE_HEALTH_BATCH_CACHE_HITS="$_pf_hits"
+	_PULSE_HEALTH_EVENTS_TICKLE_FRESH="$_pf_fresh"
+	_PULSE_HEALTH_EVENTS_TICKLE_STALE="$_pf_stale"
+	rm -f "$_pf_file" || true
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_record_cycle_outcome (t3027 / GH#21584)
+#
+# Determines whether this cycle was active (did meaningful work) or idle
+# (no merges, no closes, no new dispatches) and records the outcome with
+# pulse-idle-backoff-helper.sh. The helper accumulates consecutive_idle,
+# which the next cycle's _pulse_check_idle_backoff_gate consults.
+#
+# Active definition (any one suffices):
+#   - merged ≥ 1 PR (_PULSE_HEALTH_PRS_MERGED)
+#   - closed ≥ 1 conflicting PR (_PULSE_HEALTH_PRS_CLOSED_CONFLICTING)
+#   - dispatched ≥ 1 new worker (ledger_after > ledger_before)
+#
+# Workers completing without new dispatches counts as IDLE — bookkeeping
+# alone is not "useful work".
+#
+# Arguments:
+#   $1 — ledger_count_before (captured at cycle start)
+# ---------------------------------------------------------------------------
+_pulse_record_cycle_outcome() {
+	local _ledger_before="${1:-0}"
+	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
+	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
+	[[ -x "$_ib_helper" ]] || return 0
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	local _ledger_after=0
+	if [[ -x "$_ledger_helper" ]]; then
+		local _lc
+		_lc=$("$_ledger_helper" count 2>/dev/null || echo "0")
+		[[ "$_lc" =~ ^[0-9]+$ ]] && _ledger_after="$_lc"
+	fi
+	local _outcome="idle"
+	if [[ "$_PULSE_HEALTH_PRS_MERGED" -gt 0 ]] \
+		|| [[ "$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" -gt 0 ]] \
+		|| [[ "$_ledger_after" -gt "$_ledger_before" ]]; then
+		_outcome="active"
+	fi
+	"$_ib_helper" record-cycle "$_outcome" >/dev/null 2>&1 || true
+	echo "[pulse-wrapper] Cycle outcome: ${_outcome} (merged=${_PULSE_HEALTH_PRS_MERGED} closed=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} ledger=${_ledger_before}→${_ledger_after}) (t3027)" >>"$LOGFILE"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_capture_ledger_count (t3027 / GH#21584)
+#
+# Returns current dispatch ledger count via stdout. Caller captures with $().
+# Used by main() to snapshot ledger state at cycle start for outcome detection.
+# ---------------------------------------------------------------------------
+_pulse_capture_ledger_count() {
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
+	if [[ -x "$_ledger_helper" ]]; then
+		local _lc
+		_lc=$("$_ledger_helper" count 2>/dev/null || echo "0")
+		if [[ "$_lc" =~ ^[0-9]+$ ]]; then
+			printf '%d\n' "$_lc"
+			return 0
+		fi
+	fi
+	printf '0\n'
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _pulse_run_deterministic_pipeline
 #
 # Deterministic cycle stages: merge pass, dependency graph, blocked-status
@@ -942,16 +1084,23 @@ is_no_work_rate_acceptable() {
 #
 # Arguments:
 #   $1 — cycle_start_epoch (seconds since epoch, captured in main())
+#   $2 — ledger_count_before (snapshot at cycle start, used by t3027 outcome
+#        detection — defaults to 0 if not supplied for back-compat)
 #
 # Side effects:
 #   - merges ready PRs across all repos
 #   - writes health snapshot and cycle index JSONL record
 #   - releases the instance lock so the LLM session runs lock-free
+#   - records cycle outcome to pulse-idle-backoff-helper.sh (t3027)
 #
 # Exit code: always 0
 # ---------------------------------------------------------------------------
 _pulse_run_deterministic_pipeline() {
 	local cycle_start_epoch="$1"
+	local _ledger_before="${2:-0}"
+	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
+
+	_pulse_drain_prefetch_counters # t3027: bridge subshell counters
 
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
@@ -1112,6 +1261,8 @@ _pulse_run_deterministic_pipeline() {
 	local _cycle_duration=$((_cycle_end_epoch - cycle_start_epoch))
 	append_cycle_index "$_cycle_duration" || true
 
+	_pulse_record_cycle_outcome "$_ledger_before" # t3027: drives next-cycle backoff
+
 	# Release the instance lock BEFORE the LLM session so the next 2-min
 	# cycle can run deterministic ops (merge pass + fill floor) concurrently.
 	# The LLM session is protected by its own stall/daily-sweep gating,
@@ -1255,6 +1406,9 @@ main() {
 	# held by a real running pulse) is unchanged. Pattern mirrors the
 	# kill -0 lock check at lines ~1208-1234 above.
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" && "${PULSE_CANARY_MODE:-0}" != "1" ]]; then
+		# t3027 (GH#21584): idle-backoff gate (helper has full docs).
+		_pulse_check_idle_backoff_gate || return 0
+
 		local _rl_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 		local _rl_now
 		local _rl_last
@@ -1374,10 +1528,14 @@ main() {
 		return 0
 	fi
 
+	# t3027: snapshot ledger for idle/active outcome detection.
+	local _cycle_ledger_before
+	_cycle_ledger_before=$(_pulse_capture_ledger_count)
+
 	# Run deterministic pipeline: merge pass, dep graph, blocked-status
 	# refresh, fill floor, routine evaluation, health snapshot, cycle index,
 	# and instance lock release. GH#18689: extracted to helper.
-	_pulse_run_deterministic_pipeline "$_cycle_start_epoch"
+	_pulse_run_deterministic_pipeline "$_cycle_start_epoch" "$_cycle_ledger_before"
 
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
