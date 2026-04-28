@@ -490,19 +490,74 @@ _dff_dispatch_with_timeout() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local dispatch_rc=0
-	run_stage_with_timeout "fill_floor_candidate_${issue_number}" "$FILL_FLOOR_PER_CANDIDATE_TIMEOUT" \
+	# t3003: adaptive per-candidate timeout. When DISPATCH_TIMING_ADAPTIVE=1
+	# (default), dispatch-timing-helper.sh recommends a budget based on the
+	# EWMA + p95 of recent successful dispatches; on timeouts it switches to
+	# probe mode (2x last_timeout). Old fixed FILL_FLOOR_PER_CANDIDATE_TIMEOUT
+	# is preserved as the legacy fallback when the helper is unavailable or
+	# DISPATCH_TIMING_ADAPTIVE=0.
+	local timeout_seconds="$FILL_FLOOR_PER_CANDIDATE_TIMEOUT"
+	local timeout_ms=$((timeout_seconds * 1000))
+	if [[ "${DISPATCH_TIMING_ADAPTIVE:-1}" == "1" ]] && command -v dispatch-timing-helper.sh >/dev/null 2>&1; then
+		local recommended_ms
+		recommended_ms=$(dispatch-timing-helper.sh recommend --repo "$repo_slug" 2>/dev/null || echo "")
+		if [[ "$recommended_ms" =~ ^[0-9]+$ ]] && ((recommended_ms > 0)); then
+			timeout_ms="$recommended_ms"
+			timeout_seconds=$((recommended_ms / 1000))
+			((timeout_seconds < 1)) && timeout_seconds=1
+		fi
+	fi
+
+	local start_ms dispatch_rc=0 outcome elapsed_ms
+	start_ms=$(_dff_now_ms)
+	run_stage_with_timeout "fill_floor_candidate_${issue_number}" "$timeout_seconds" \
 		dispatch_with_dedup "$@" || dispatch_rc=$?
-	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number}" >>"$LOGFILE"
+	elapsed_ms=$(($(_dff_now_ms) - start_ms))
+	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number} elapsed_ms=${elapsed_ms} timeout_used_ms=${timeout_ms}" >>"$LOGFILE"
+
 	if [[ "$dispatch_rc" -eq 124 ]]; then
-		# t2989: per-candidate timeout — log distinctly + bump observability
-		# counter so cadence regressions are visible in pulse-stats.json.
-		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${FILL_FLOOR_PER_CANDIDATE_TIMEOUT}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
+		outcome="timeout"
+		# t2989 + t3003: per-candidate timeout — log distinctly, bump counter,
+		# record outcome so the next recommendation enters probe mode.
+		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "fill_floor_per_candidate_timeout" 2>/dev/null || true
 		fi
+	elif [[ "$dispatch_rc" -eq 0 ]]; then
+		outcome="success"
+	else
+		outcome="skip"
 	fi
+
+	# t3003: record outcome for adaptive timing. Non-fatal — never block the
+	# dispatch loop on a recording failure.
+	if command -v dispatch-timing-helper.sh >/dev/null 2>&1; then
+		dispatch-timing-helper.sh record \
+			--repo "$repo_slug" --issue "$issue_number" --outcome "$outcome" \
+			--elapsed-ms "$elapsed_ms" --timeout-used-ms "$timeout_ms" \
+			>/dev/null 2>&1 || true
+	fi
+
 	return "$dispatch_rc"
+}
+
+#######################################
+# t3003: bash 3.2-compatible millisecond timestamp.
+# GNU date supports %N (nanoseconds); macOS BSD date does not. We strip the
+# trailing 6 digits to convert ns→ms when GNU date is present, otherwise fall
+# back to seconds×1000 (sufficient resolution for ≥1s timeouts).
+#######################################
+_dff_now_ms() {
+	local ns
+	ns=$(date +%s%N 2>/dev/null)
+	if [[ "$ns" =~ ^[0-9]+$ ]] && ((${#ns} >= 13)); then
+		# GNU date: epoch_seconds + 9-digit nanoseconds → strip 6 → ms
+		echo "${ns%??????}"
+	else
+		# BSD date or unsupported %N — fall back to second resolution
+		echo $(($(date +%s) * 1000))
+	fi
+	return 0
 }
 
 #######################################
