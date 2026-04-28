@@ -652,56 +652,60 @@ source "${SCRIPT_DIR}/document-creation-email-lib.sh"
 # ============================================================================
 
 # Helpers for cmd_convert - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _convert_parse_args() {
-	local -n input_ref=$1 to_ext_ref=$2 output_ref=$3 force_tool_ref=$4
-	local -n template_ref=$5 extra_args_ref=$6 ocr_provider_ref=$7
-	local -n run_normalise_ref=$8 dedup_registry_ref=$9
+	local _input_var="$1" _to_ext_var="$2" _output_var="$3" _force_tool_var="$4"
+	local _template_var="$5" _extra_args_var="$6" _ocr_provider_var="$7"
+	local _run_normalise_var="$8" _dedup_registry_var="$9"
 	shift 9
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--to)
-			to_ext_ref="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+			local _to_ext_val
+			_to_ext_val="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+			printf -v "$_to_ext_var" '%s' "$_to_ext_val"
 			shift 2
 			;;
 		--output | -o)
-			output_ref="$2"
+			printf -v "$_output_var" '%s' "$2"
 			shift 2
 			;;
 		--tool)
-			force_tool_ref="$2"
+			printf -v "$_force_tool_var" '%s' "$2"
 			shift 2
 			;;
 		--template)
-			template_ref="$2"
+			printf -v "$_template_var" '%s' "$2"
 			shift 2
 			;;
 		--engine)
-			extra_args_ref="--pdf-engine=$2"
+			printf -v "$_extra_args_var" '%s' "--pdf-engine=$2"
 			shift 2
 			;;
 		--dedup-registry)
-			dedup_registry_ref="$2"
+			printf -v "$_dedup_registry_var" '%s' "$2"
 			shift 2
 			;;
 		--ocr)
-			ocr_provider_ref="${2:-auto}"
+			printf -v "$_ocr_provider_var" '%s' "${2:-auto}"
 			shift
 			[[ $# -gt 0 && "$1" != --* ]] && {
-				ocr_provider_ref="$1"
+				printf -v "$_ocr_provider_var" '%s' "$1"
 				shift
 			}
 			;;
 		--no-normalise | --no-normalize)
-			run_normalise_ref=false
+			eval "${_run_normalise_var}=false"
 			shift
 			;;
 		--*)
-			extra_args_ref="${extra_args_ref} $1"
+			local _cur_extra="${!_extra_args_var}"
+			printf -v "$_extra_args_var" '%s' "${_cur_extra} $1"
 			shift
 			;;
 		*)
-			[[ -z "${input_ref}" ]] && input_ref="$1"
+			[[ -z "${!_input_var}" ]] && printf -v "$_input_var" '%s' "$1"
 			shift
 			;;
 		esac
@@ -710,27 +714,28 @@ _convert_parse_args() {
 }
 
 # Helpers for cmd_create - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _create_parse_args() {
-	local -n template_ref=$1 data_ref=$2 output_ref=$3 script_ref=$4
+	local _template_var="$1" _data_var="$2" _output_var="$3" _script_var="$4"
 	shift 4
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--data)
-			data_ref="$2"
+			printf -v "$_data_var" '%s' "$2"
 			shift 2
 			;;
 		--output | -o)
-			output_ref="$2"
+			printf -v "$_output_var" '%s' "$2"
 			shift 2
 			;;
 		--script)
-			script_ref="$2"
+			printf -v "$_script_var" '%s' "$2"
 			shift 2
 			;;
 		--*) shift ;;
 		*)
-			[[ -z "${template_ref}" ]] && template_ref="$1"
+			[[ -z "${!_template_var}" ]] && printf -v "$_template_var" '%s' "$1"
 			shift
 			;;
 		esac
@@ -739,18 +744,19 @@ _create_parse_args() {
 }
 
 # Helpers for cmd_import_emails - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _import_parse_args() {
-	local -n input_path_ref=$1 output_dir_ref=$2 skip_contacts_ref=$3
+	local _input_path_var="$1" _output_dir_var="$2" _skip_contacts_var="$3"
 	shift 3
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output | -o)
-			output_dir_ref="$2"
+			printf -v "$_output_dir_var" '%s' "$2"
 			shift 2
 			;;
 		--skip-contacts)
-			skip_contacts_ref=true
+			eval "${_skip_contacts_var}=true"
 			shift
 			;;
 		--*)
@@ -758,7 +764,7 @@ _import_parse_args() {
 			shift
 			;;
 		*)
-			[[ -z "${input_path_ref}" ]] && input_path_ref="$1"
+			[[ -z "${!_input_path_var}" ]] && printf -v "$_input_path_var" '%s' "$1"
 			shift
 			;;
 		esac
@@ -767,35 +773,36 @@ _import_parse_args() {
 }
 
 # Helpers for cmd_template - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes (no local -n).
 _template_parse_args() {
-	local -n doc_type_ref=$1 format_ref=$2 fields_ref=$3
-	local -n header_logo_ref=$4 footer_text_ref=$5 output_ref=$6
+	local _doc_type_var="$1" _format_var="$2" _fields_var="$3"
+	local _header_logo_var="$4" _footer_text_var="$5" _output_var="$6"
 	shift 6
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--type)
-			doc_type_ref="$2"
+			printf -v "$_doc_type_var" '%s' "$2"
 			shift 2
 			;;
 		--format)
-			format_ref="$2"
+			printf -v "$_format_var" '%s' "$2"
 			shift 2
 			;;
 		--fields)
-			fields_ref="$2"
+			printf -v "$_fields_var" '%s' "$2"
 			shift 2
 			;;
 		--header-logo)
-			header_logo_ref="$2"
+			printf -v "$_header_logo_var" '%s' "$2"
 			shift 2
 			;;
 		--footer-text)
-			footer_text_ref="$2"
+			printf -v "$_footer_text_var" '%s' "$2"
 			shift 2
 			;;
 		--output)
-			output_ref="$2"
+			printf -v "$_output_var" '%s' "$2"
 			shift 2
 			;;
 		*) shift ;;
@@ -805,32 +812,33 @@ _template_parse_args() {
 }
 
 # Helpers for cmd_normalise - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _normalise_parse_args() {
-	local -n input_ref=$1 output_ref=$2 inplace_ref=$3
-	local -n generate_pageindex_ref=$4 email_mode_ref=$5
+	local _input_var="$1" _output_var="$2" _inplace_var="$3"
+	local _generate_pageindex_var="$4" _email_mode_var="$5"
 	shift 5
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output | -o)
-			output_ref="$2"
+			printf -v "$_output_var" '%s' "$2"
 			shift 2
 			;;
 		--inplace | -i)
-			inplace_ref=true
+			eval "${_inplace_var}=true"
 			shift
 			;;
 		--pageindex)
-			generate_pageindex_ref=true
+			eval "${_generate_pageindex_var}=true"
 			shift
 			;;
 		--email | -e)
-			email_mode_ref=true
+			eval "${_email_mode_var}=true"
 			shift
 			;;
 		--*) shift ;;
 		*)
-			[[ -z "${input_ref}" ]] && input_ref="$1"
+			[[ -z "${!_input_var}" ]] && printf -v "$_input_var" '%s' "$1"
 			shift
 			;;
 		esac
@@ -839,27 +847,28 @@ _normalise_parse_args() {
 }
 
 # Helpers for cmd_pageindex - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _pageindex_parse_args() {
-	local -n input_ref=$1 output_ref=$2 source_pdf_ref=$3 ollama_model_ref=$4
+	local _input_var="$1" _output_var="$2" _source_pdf_var="$3" _ollama_model_var="$4"
 	shift 4
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--output | -o)
-			output_ref="$2"
+			printf -v "$_output_var" '%s' "$2"
 			shift 2
 			;;
 		--source-pdf)
-			source_pdf_ref="$2"
+			printf -v "$_source_pdf_var" '%s' "$2"
 			shift 2
 			;;
 		--ollama-model)
-			ollama_model_ref="$2"
+			printf -v "$_ollama_model_var" '%s' "$2"
 			shift 2
 			;;
 		--*) shift ;;
 		*)
-			[[ -z "${input_ref}" ]] && input_ref="$1"
+			[[ -z "${!_input_var}" ]] && printf -v "$_input_var" '%s' "$1"
 			shift
 			;;
 		esac
@@ -868,8 +877,9 @@ _pageindex_parse_args() {
 }
 
 # Helpers for cmd_generate_manifest - extract argument parsing
+# Bash 3.2 compatible: uses printf -v for scalar writes, ${!var} for reads (no local -n).
 _manifest_parse_args() {
-	local -n output_dir_ref=$1
+	local _output_dir_var="$1"
 	shift
 
 	while [[ $# -gt 0 ]]; do
@@ -879,7 +889,7 @@ _manifest_parse_args() {
 			shift
 			;;
 		*)
-			[[ -z "${output_dir_ref}" ]] && output_dir_ref="$1"
+			[[ -z "${!_output_dir_var}" ]] && printf -v "$_output_dir_var" '%s' "$1"
 			shift
 			;;
 		esac

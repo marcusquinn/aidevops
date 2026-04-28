@@ -184,13 +184,14 @@ list_provider_models() {
 # Check if a provider is available (has valid API key)
 _discover_check_provider() {
 	local provider="$1"
-	local -n found_ref="$2"
-	local -n source_ref="$3"
-	local -n active_key_ref="$4"
+	local _found_var="$2"
+	local _source_var="$3"
+	local _active_key_var="$4"
 
-	found_ref=false
-	source_ref=""
-	active_key_ref=""
+	# Bash 3.2 compatible: use printf -v for indirect scalar writes (no local -n namerefs)
+	printf -v "$_found_var" '%s' "false"
+	printf -v "$_source_var" '%s' ""
+	printf -v "$_active_key_var" '%s' ""
 
 	local key_names
 	key_names=$(echo "$PROVIDER_ENV_KEYS" | grep "^${provider}|" | cut -d'|' -f2)
@@ -200,9 +201,9 @@ _discover_check_provider() {
 	IFS=',' read -ra keys <<<"$key_names"
 	for key_name in "${keys[@]}"; do
 		if check_provider_key "$key_name"; then
-			found_ref=true
-			source_ref="$FOUND_SOURCE"
-			active_key_ref="$key_name"
+			printf -v "$_found_var" '%s' "true"
+			printf -v "$_source_var" '%s' "$FOUND_SOURCE"
+			printf -v "$_active_key_var" '%s' "$key_name"
 			return 0
 		fi
 	done
@@ -446,30 +447,33 @@ SQL
 #        --strengths "Fast, accurate" --weaknesses "Verbose" \
 #        [--model "gpt-4.1" --correctness 8 ...]
 
-# Flush current model state into entries array (nameref).
-# Args: arg1=nameref:entries arg2=model arg3=correct arg4=complete arg5=quality
+# Flush current model state into entries array (variable name pass-through).
+# Args: arg1=varname:entries arg2=model arg3=correct arg4=complete arg5=quality
 #       arg6=clarity arg7=adherence arg8=latency arg9=tokens arg10=strengths arg11=weaknesses arg12=response
+# Bash 3.2 compatible: uses eval for array append (no local -n namerefs).
 _score_flush_model() {
-	local -n _sf_entries="$1"
+	local _sf_entries_var="$1"
 	local model="$2" correct="$3" complete="$4" quality="$5"
 	local clarity="$6" adherence="$7" latency="$8" tokens="$9"
 	local strengths="${10}" weaknesses="${11}" response="${12}"
 	[[ -z "$model" ]] && return 0
 	local overall=$(((correct + complete + quality + clarity + adherence) / 5))
-	_sf_entries+=("${model}|${correct}|${complete}|${quality}|${clarity}|${adherence}|${overall}|${latency}|${tokens}|${strengths}|${weaknesses}|${response}")
+	local _sf_entry="${model}|${correct}|${complete}|${quality}|${clarity}|${adherence}|${overall}|${latency}|${tokens}|${strengths}|${weaknesses}|${response}"
+	eval "${_sf_entries_var}+=(\"\${_sf_entry}\")"
 	return 0
 }
 
-# Parse score CLI arguments into named namerefs and entries array.
-# Args: arg1...arg7 = namerefs (task type eval winner pv pf entries), then remaining argv
+# Parse score CLI arguments into named variable refs and entries array.
+# Args: arg1...arg7 = variable names (task type eval winner pv pf entries), then remaining argv
+# Bash 3.2 compatible: uses printf -v for scalar writes, passes var names for array (no local -n).
 _score_parse_args() {
-	local -n _spa_task="$1"
-	local -n _spa_type="$2"
-	local -n _spa_eval="$3"
-	local -n _spa_winner="$4"
-	local -n _spa_pv="$5"
-	local -n _spa_pf="$6"
-	local -n _spa_entries="$7"
+	local _spa_task_var="$1"
+	local _spa_type_var="$2"
+	local _spa_eval_var="$3"
+	local _spa_winner_var="$4"
+	local _spa_pv_var="$5"
+	local _spa_pf_var="$6"
+	local _spa_entries_var="$7"
 	shift 7
 
 	local cur_model="" cur_correct=0 cur_complete=0 cur_quality=0
@@ -479,31 +483,31 @@ _score_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--task)
-			_spa_task="$2"
+			printf -v "$_spa_task_var" '%s' "$2"
 			shift 2
 			;;
 		--type)
-			_spa_type="$2"
+			printf -v "$_spa_type_var" '%s' "$2"
 			shift 2
 			;;
 		--evaluator)
-			_spa_eval="$2"
+			printf -v "$_spa_eval_var" '%s' "$2"
 			shift 2
 			;;
 		--winner)
-			_spa_winner="$2"
+			printf -v "$_spa_winner_var" '%s' "$2"
 			shift 2
 			;;
 		--prompt-version)
-			_spa_pv="$2"
+			printf -v "$_spa_pv_var" '%s' "$2"
 			shift 2
 			;;
 		--prompt-file)
-			_spa_pf="$2"
+			printf -v "$_spa_pf_var" '%s' "$2"
 			shift 2
 			;;
 		--model)
-			_score_flush_model _spa_entries "$cur_model" "$cur_correct" "$cur_complete" \
+			_score_flush_model "$_spa_entries_var" "$cur_model" "$cur_correct" "$cur_complete" \
 				"$cur_quality" "$cur_clarity" "$cur_adherence" "$cur_latency" "$cur_tokens" \
 				"$cur_strengths" "$cur_weaknesses" "$cur_response"
 			cur_model="$2" cur_correct=0 cur_complete=0 cur_quality=0
@@ -554,23 +558,25 @@ _score_parse_args() {
 		*) shift ;;
 		esac
 	done
-	_score_flush_model _spa_entries "$cur_model" "$cur_correct" "$cur_complete" \
+	_score_flush_model "$_spa_entries_var" "$cur_model" "$cur_correct" "$cur_complete" \
 		"$cur_quality" "$cur_clarity" "$cur_adherence" "$cur_latency" "$cur_tokens" \
 		"$cur_strengths" "$cur_weaknesses" "$cur_response"
 	return 0
 }
 
 # Parse score arguments and build model entries (orchestrator).
+# Bash 3.2 compatible: forwards variable names directly to _score_parse_args (no local -n).
 _score_parse_and_build() {
-	local -n sp_task="$1"
-	local -n sp_type="$2"
-	local -n sp_eval="$3"
-	local -n sp_winner="$4"
-	local -n sp_pv="$5"
-	local -n sp_pf="$6"
-	local -n sp_entries="$7"
+	local _sp_task_var="$1"
+	local _sp_type_var="$2"
+	local _sp_eval_var="$3"
+	local _sp_winner_var="$4"
+	local _sp_pv_var="$5"
+	local _sp_pf_var="$6"
+	local _sp_entries_var="$7"
 	shift 7
-	_score_parse_args sp_task sp_type sp_eval sp_winner sp_pv sp_pf sp_entries "$@"
+	_score_parse_args "$_sp_task_var" "$_sp_type_var" "$_sp_eval_var" "$_sp_winner_var" \
+		"$_sp_pv_var" "$_sp_pf_var" "$_sp_entries_var" "$@"
 	return 0
 }
 
