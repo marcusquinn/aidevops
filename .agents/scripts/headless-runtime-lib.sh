@@ -890,6 +890,9 @@ CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
 #######################################
 _validate_opencode_binary() {
 	local bin="${1:-}"
+	# GH#21505: clear side-effect variable first so callers never see a stale
+	# version from a previous successful call when this invocation returns early.
+	_VALIDATE_OC_VERSION=""
 	[[ -n "$bin" ]] || return 2
 	command -v "$bin" >/dev/null 2>&1 || return 2
 
@@ -1199,8 +1202,8 @@ _run_canary_test() {
 
 	# Canary failed -- log diagnostics (capture enough output to surface API errors,
 	# not just startup hooks which is all head -5 typically showed)
-	local oc_version
-	oc_version=$("$_effective_opencode_bin" --version 2>/dev/null || echo "unknown")
+	# GH#21505: reuse _VALIDATE_OC_VERSION set earlier instead of a redundant --version call.
+	local oc_version="${_VALIDATE_OC_VERSION:-unknown}"
 	print_warning "Canary test FAILED (exit=$canary_exit, model=$canary_model, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
 	print_warning "Output (last 20 lines): $(tail -20 "$canary_output" 2>/dev/null || echo '<empty>')"
 	# t2814 (Phase 3, fix #4): Stamp the negative cache so subsequent
