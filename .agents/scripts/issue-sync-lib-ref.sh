@@ -1,0 +1,461 @@
+#!/bin/bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# Using /bin/bash directly (not #!/usr/bin/env bash) for compatibility with
+# headless environments where a stripped PATH can prevent env from finding bash.
+# See issue #2610. This is an intentional exception to the repo's env-bash standard (t135.14).
+# =============================================================================
+# Issue Sync Library — Ref Management Sub-Library
+# =============================================================================
+# TODO.md ref:GH# and pr:# management, GitHub issue relationships,
+# tier extraction/validation, and orphan TODO seeding functions extracted
+# from issue-sync-lib.sh for file-size compliance.
+#
+# Covers:
+#   - ref:GH# field fixing, adding, and pr:# backfill in TODO.md
+#   - GitHub issue relationship resolution (task ID → issue number, node ID)
+#   - Tier extraction and validation from brief files
+#   - Parent task ID detection
+#   - Orphan TODO seeding helpers (reverse sync from GitHub)
+#
+# Usage: source "${SCRIPT_DIR}/issue-sync-lib-ref.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (print_error, print_info, log_verbose, sed_inplace,
+#     print_success)
+#   - issue-sync-lib-parse.sh (_escape_ere, strip_code_fences)
+#   - bash 3.2+, awk, sed, grep, jq (for _labels_json_to_tags)
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_ISSUE_SYNC_LIB_REF_LOADED:-}" ]] && return 0
+_ISSUE_SYNC_LIB_REF_LOADED=1
+
+# Defensive SCRIPT_DIR fallback
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	# Pure-bash dirname replacement — avoids external binary dependency
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
+
+# =============================================================================
+# Ref Management — TODO.md ref:GH# and pr:# fields
+# =============================================================================
+
+# Fix a mismatched ref:GH# in TODO.md (t179.1).
+# Replaces old_number with new_number for the given task.
+# Arguments:
+#   $1 - task_id
+#   $2 - old_number
+#   $3 - new_number
+#   $4 - todo_file path
+fix_gh_ref_in_todo() {
+	local task_id="$1"
+	local old_number="$2"
+	local new_number="$3"
+	local todo_file="$4"
+
+	if [[ -z "$old_number" || -z "$new_number" || "$old_number" == "$new_number" ]]; then
+		return 0
+	fi
+
+	# Find line number outside code fences, then replace only that line.
+	# NOTE: regex escapes must be doubled in the dynamic `pat` string (t1983) —
+	# BSD awk (macOS default) interprets `\[` in `$0 ~ pat` as literal `\` + `[`
+	# rather than a single literal `[`, causing the match to silently miss. The
+	# `\\[` / `\\]` form is correct on both BSD awk and gawk: awk's dynamic regex
+	# compiler reads `\\` as `\` and `\[` as literal `[`.
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} .*ref:GH#${old_number}" \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id with ref:GH#$old_number not found outside code fences"
+		return 0
+	}
+	sed_inplace "${line_num}s|ref:GH#${old_number}|ref:GH#${new_number}|" "$todo_file"
+	log_verbose "Fixed ref:GH#$old_number -> ref:GH#$new_number for $task_id"
+	return 0
+}
+
+# Add ref:GH#NNN to a task line in TODO.md.
+# Idempotent — skips if ref already exists.
+# Arguments:
+#   $1 - task_id
+#   $2 - issue_number
+#   $3 - todo_file path
+add_gh_ref_to_todo() {
+	local task_id="$1"
+	local issue_number="$2"
+	local todo_file="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	# Check if ref already exists outside code fences
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#${issue_number}"; then
+		return 0
+	fi
+
+	# Check if any GH ref exists outside code fences (might be different number)
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#"; then
+		log_verbose "$task_id already has a GH ref, skipping"
+		return 0
+	fi
+
+	# Find the line number of the task OUTSIDE code fences, then apply sed to that specific line.
+	# This prevents modifying format examples inside code-fenced blocks.
+	# NOTE: double-backslash escapes in the dynamic `pat` string — required for
+	# BSD awk dynamic-regex semantics (t1983). See _fix_gh_ref_in_todo for
+	# the detailed explanation.
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id not found outside code fences"
+		return 0
+	}
+
+	# Read the target line and insert ref
+	local target_line
+	target_line=$(sed -n "${line_num}p" "$todo_file")
+	local new_line
+	if echo "$target_line" | grep -qE 'logged:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
+	else
+		new_line="${target_line} ref:GH#${issue_number}"
+	fi
+
+	# Replace only the specific line
+	local new_line_escaped
+	new_line_escaped=$(printf '%s' "$new_line" | sed 's/[|&\\]/\\&/g')
+	sed_inplace "${line_num}s|.*|${new_line_escaped}|" "$todo_file"
+
+	log_verbose "Added ref:GH#$issue_number to $task_id"
+	return 0
+}
+
+# Add pr:#NNN to a task line in TODO.md (t280).
+# Called when a closing PR is discovered that isn't already recorded.
+# Ensures the proof-log is complete.
+# Arguments:
+#   $1 - task_id
+#   $2 - pr_number
+#   $3 - todo_file path
+add_pr_ref_to_todo() {
+	local task_id="$1"
+	local pr_number="$2"
+	local todo_file="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	# Check if pr: ref already exists outside code fences
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*pr:#${pr_number}"; then
+		return 0
+	fi
+
+	# Check if any pr: ref already exists outside code fences (don't duplicate)
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*pr:#"; then
+		log_verbose "$task_id already has a pr: ref, skipping"
+		return 0
+	fi
+
+	# Find line number outside code fences, then modify only that line.
+	# NOTE: double-backslash escapes in the dynamic `pat` string — required for
+	# BSD awk dynamic-regex semantics (t1983).
+	local line_num
+	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " \
+		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	[[ -z "$line_num" ]] && {
+		log_verbose "$task_id not found outside code fences for pr: ref"
+		return 0
+	}
+
+	local target_line
+	target_line=$(sed -n "${line_num}p" "$todo_file")
+	local new_line
+	if echo "$target_line" | grep -qE ' logged:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ pr:#${pr_number}\1/")
+	elif echo "$target_line" | grep -qE ' completed:'; then
+		new_line=$(echo "$target_line" | sed -E "s/( completed:)/ pr:#${pr_number}\1/")
+	else
+		new_line="${target_line} pr:#${pr_number}"
+	fi
+
+	local new_line_escaped
+	new_line_escaped=$(printf '%s' "$new_line" | sed 's/[|&\\]/\\&/g')
+	sed_inplace "${line_num}s|.*|${new_line_escaped}|" "$todo_file"
+
+	log_verbose "Added pr:#$pr_number to $task_id (t280: backfill proof-log)"
+	return 0
+}
+
+# =============================================================================
+# Relationships — GitHub Issue Relationships (t1889)
+# =============================================================================
+# Syncs TODO.md dependency metadata (blocked-by:, blocks:, subtask hierarchy)
+# to GitHub's native issue relationships via GraphQL mutations:
+#   - addBlockedBy / removeBlockedBy — dependency tracking
+#   - addSubIssue / removeSubIssue — parent-child hierarchy
+#
+# These mutations are NOT idempotent — duplicates return validation errors.
+# All functions suppress "already taken" / "duplicate sub-issues" errors.
+
+# Resolve a task ID to its GitHub issue number from TODO.md.
+# Looks up the ref:GH#NNN field for the given task ID.
+# Arguments:
+#   $1 - task_id (e.g. t1873.1)
+#   $2 - todo_file path
+# Returns: issue number on stdout, or empty string if not found
+resolve_task_gh_number() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	local ref
+	ref=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 |
+		grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	echo "$ref"
+	return 0
+}
+
+# Resolve a GitHub issue number to its GraphQL node ID.
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo slug (owner/repo)
+# Returns: node ID on stdout, or empty string on failure
+resolve_gh_node_id() {
+	local issue_number="$1"
+	local repo="$2"
+	local owner="${repo%%/*}"
+	local name="${repo##*/}"
+
+	local node_id
+	node_id=$(gh api graphql \
+		-f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){id}}}' \
+		-f owner="$owner" -f name="$name" -F num="$issue_number" \
+		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	echo "$node_id"
+	return 0
+}
+
+# Extract the selected tier from a brief file.
+# Looks for "**Selected tier:** `tier:XXX`" in the brief.
+# Arguments:
+#   $1 - brief file path
+# Returns: tier label on stdout (e.g., "tier:simple"), or empty string if not found
+#
+# t2012: parse the explicit `**Selected tier:**` line first. The previous
+# implementation grep-anywhere'd the whole brief and took `head -1`, which
+# matched commentary like "use `tier:standard` or higher" or rank-order text
+# (`tier:thinking` > `tier:standard` > `tier:simple`) before the actual
+# **Selected tier:** line — returning the wrong tier and creating tier label
+# collisions with `_validate_tier_checklist`'s override path.
+_extract_tier_from_brief() {
+	local brief_path="$1"
+
+	if [[ ! -f "$brief_path" ]]; then
+		return 0
+	fi
+
+	# PRIMARY: parse the explicit `**Selected tier:**` line. The brief
+	# template requires this exact prefix; search for it specifically rather
+	# than grepping the whole document.
+	local selected_line
+	selected_line=$(grep -m1 -E '^\*\*Selected tier:\*\*' "$brief_path" 2>/dev/null || true)
+	if [[ -n "$selected_line" ]]; then
+		local tier
+		tier=$(printf '%s' "$selected_line" | grep -oE 'tier:(simple|standard|thinking)' | head -1 || true)
+		if [[ -n "$tier" ]]; then
+			printf '%s' "$tier"
+			return 0
+		fi
+	fi
+
+	# FALLBACK: grep-anywhere for briefs that don't follow the template.
+	# Logged as a warning to stderr so we can chase non-conforming briefs.
+	local fallback
+	fallback=$(grep -oE 'tier:(simple|standard|thinking)' "$brief_path" 2>/dev/null | head -1 || true)
+	if [[ -n "$fallback" ]]; then
+		echo "[WARN] _extract_tier_from_brief: brief at $brief_path missing **Selected tier:** line, falling back to first tier mention ($fallback)" >&2
+		printf '%s' "$fallback"
+	fi
+	return 0
+}
+
+# Validate tier:simple briefs have all checklist boxes checked AND contain
+# actual prescriptive content (oldString/newString blocks). Without
+# prescriptive content, Haiku cannot execute the task — it needs exact
+# copy-pasteable replacement blocks, not descriptions of what to change.
+# Arguments:
+#   $1 - brief file path
+#   $2 - selected tier label (e.g., "tier:simple")
+# Returns: the validated tier label on stdout
+# Exit: 0 always (validation is advisory, not blocking)
+_validate_tier_checklist() {
+	local brief_path="$1"
+	local selected_tier="$2"
+
+	# Only validate tier:simple — standard and thinking don't have hard checklist gates
+	if [[ "$selected_tier" != "tier:simple" ]]; then
+		printf '%s' "$selected_tier"
+		return 0
+	fi
+
+	# Check if brief file exists
+	if [[ ! -f "$brief_path" ]]; then
+		printf '%s' "$selected_tier"
+		return 0
+	fi
+
+	# Gate 1: Count unchecked boxes in the tier checklist section
+	# Pattern: lines between "### Tier checklist" and "**Selected tier:**"
+	local unchecked_count
+	unchecked_count=$(sed -n '/^### Tier checklist/,/^\*\*Selected tier/p' "$brief_path" |
+		grep -c '^\- \[ \]' || true)
+
+	if [[ "$unchecked_count" -gt 0 ]]; then
+		echo "[WARN] tier:simple selected but $unchecked_count checklist box(es) unchecked in $brief_path — overriding to tier:standard" >&2
+		printf '%s' "tier:standard"
+		return 0
+	fi
+
+	# Gate 2: Verify the brief contains actual oldString/newString blocks.
+	# tier:simple requires exact, copy-pasteable replacement content — not
+	# descriptions of what to change. Without these markers, the task requires
+	# the worker to read surrounding code and invent the edit, which is
+	# judgment work (tier:standard). Matches both **oldString:** and
+	# ### Edit N: patterns from brief/tier-simple.md.
+	local has_prescriptive_content
+	has_prescriptive_content=$(grep -cE '^\*\*oldString:\*\*|^### Edit [0-9]+:' "$brief_path" || true)
+
+	if [[ "$has_prescriptive_content" -eq 0 ]]; then
+		echo "[WARN] tier:simple selected but brief lacks oldString/newString blocks in $brief_path — overriding to tier:standard (Haiku needs exact replacement content, not descriptions)" >&2
+		printf '%s' "tier:standard"
+		return 0
+	fi
+
+	printf '%s' "$selected_tier"
+	return 0
+}
+
+# Detect the parent task ID from a subtask ID.
+# t1873.2 → t1873, t1873.2.1 → t1873.2, t1873 → "" (no parent)
+# Arguments:
+#   $1 - task_id
+# Returns: parent task ID on stdout, or empty string if top-level
+detect_parent_task_id() {
+	local task_id="$1"
+	if [[ "$task_id" == *"."* ]]; then
+		echo "${task_id%.*}"
+	fi
+	return 0
+}
+
+# =============================================================================
+# t2698: Orphan TODO seeding helpers
+# =============================================================================
+
+# Convert a GitHub labels JSON array to space-separated #tag tokens.
+# Skips system/operational labels (tier:*, status:*, origin:*, source:*, etc.).
+# Applies reverse mapping where needed (e.g. parent-task → #parent).
+#
+# Arguments:
+#   $1 - JSON array of label objects, e.g. [{"name":"enhancement"},...]
+# Prints:
+#   Space-separated sorted #tag tokens, e.g. "#auto-dispatch #enhancement"
+#   Empty string if no mappable labels.
+_labels_json_to_tags() {
+	local labels_json="$1"
+	[[ -z "$labels_json" || "$labels_json" == "[]" ]] && return 0
+
+	local names
+	names=$(printf '%s' "$labels_json" | jq -r '.[].name' 2>/dev/null || echo "")
+	[[ -z "$names" ]] && return 0
+
+	local tags="" label tag
+	while IFS= read -r label; do
+		[[ -z "$label" ]] && continue
+
+		# Skip system/operational labels — not part of TODO source-of-truth
+		case "$label" in
+			tier:* | status:* | origin:* | source:* | needs-* | priority:*) continue ;;
+			hold-for-review | no-auto-dispatch | no-takeover) continue ;;
+			coderabbit-nits-ok | new-file-smell-ok | complexity-bump-ok) continue ;;
+			workflow-cascade-ok | ratchet-bump) continue ;;
+		esac
+
+		# Reverse map known label → canonical TODO tag
+		tag="$label"
+		case "$label" in
+			parent-task) tag="parent" ;;
+		esac
+
+		tags="${tags:+$tags }#${tag}"
+	done <<< "$names"
+
+	[[ -z "$tags" ]] && return 0
+	# Sort deterministically (stable) so test assertions are not order-sensitive
+	printf '%s' "$tags" | tr ' ' '\n' | sort -u | paste -sd ' ' -
+	return 0
+}
+
+# Seed a new TODO.md entry for an open orphan GitHub issue.
+# Idempotent: no-ops if any entry for the task_id already exists.
+# Dry-run aware: emits "would seed: ..." to stderr and returns 0 without writing.
+#
+# Arguments:
+#   $1 - issue_num    (e.g. 20327)
+#   $2 - task_id      (e.g. t2698)
+#   $3 - title_raw    (full issue title, e.g. "t2698: enhance ...")
+#   $4 - labels_json  (JSON array of label objects from gh issue list)
+#   $5 - todo_file    (path to TODO.md)
+#   $6 - dry_run      ("true" or "")
+# Returns:
+#   0 = seeded (or dry-run would-seed)
+#   1 = skipped (already exists or malformed)
+_seed_orphan_todo_line() {
+	local num="$1" task_id="$2" title_raw="$3" labels_json="$4"
+	local todo_file="$5" dry_run="${6:-}"
+
+	# Guard: empty task_id cannot produce a valid TODO line
+	[[ -z "$task_id" ]] && return 1
+
+	# Idempotency check: skip if any entry for this task_id already exists
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} "; then
+		{ log_verbose "ORPHAN already seeded: $task_id (ref:GH#$num) — skipping" || true; }
+		return 1
+	fi
+
+	# Strip the task_id prefix from title (e.g. "t2698: enhance ..." → "enhance ...")
+	local title_body
+	title_body=$(printf '%s' "$title_raw" | sed "s|^${task_id}:[[:space:]]*||")
+
+	# Build space-separated #tag tokens from labels
+	local tags_str=""
+	tags_str=$(_labels_json_to_tags "$labels_json" || true)
+
+	# Compose the TODO line
+	local todo_line="- [ ] ${task_id} ${title_body}"
+	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
+	todo_line="${todo_line} ref:GH#${num}"
+
+	if [[ "$dry_run" == "true" ]]; then
+		printf 'would seed: %s\n' "$todo_line" >&2
+		return 0
+	fi
+
+	# Append after the last non-empty line (chronological tail)
+	printf '\n%s\n' "$todo_line" >> "$todo_file"
+	print_success "Seeded orphan TODO: $todo_line"
+	return 0
+}
