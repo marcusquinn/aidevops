@@ -78,7 +78,7 @@ _lock_dir_age() {
 		echo "0"
 		return 0
 	fi
-	now=$(date -u '+%s')
+	now=$(_now_epoch)
 	echo "$((now - mtime))"
 	return 0
 }
@@ -127,22 +127,27 @@ _ledger_lock_is_stale() {
 		lock_age=$(_lock_dir_age "$lock_dir")
 		if [[ "$lock_age" -gt "$max_age" ]]; then
 			rm -rf "$lock_dir" 2>/dev/null || true
-			return 0
+			# Only return 0 if the directory was actually removed — if rm -rf
+			# failed silently the caller would loop indefinitely via `continue`.
+			[[ ! -d "$lock_dir" ]] && return 0
 		fi
 		return 1
 	fi
 
 	# Tier 2: owner PID is dead → stale (SIGKILL, OOM, crash)
-	if ! ps -p "$lock_pid" >/dev/null 2>&1; then
+	# Use kill -0 for consistency with cmd_check/cmd_check_issue/cmd_expire.
+	if ! kill -0 "$lock_pid" 2>/dev/null; then
 		rm -rf "$lock_dir" 2>/dev/null || true
-		return 0
+		[[ ! -d "$lock_dir" ]] && return 0
+		return 1
 	fi
 
 	# Tier 3: owner alive but lock too old → hung holder, steal lock
 	lock_age=$(_lock_dir_age "$lock_dir")
 	if [[ "$lock_age" -gt "$max_age" ]]; then
 		rm -rf "$lock_dir" 2>/dev/null || true
-		return 0
+		[[ ! -d "$lock_dir" ]] && return 0
+		return 1
 	fi
 
 	return 1
