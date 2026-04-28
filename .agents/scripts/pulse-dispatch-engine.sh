@@ -52,6 +52,14 @@ _PULSE_DISPATCH_ENGINE_LOADED=1
 # cadence collapsed from ~2min to ~40min. 30s is generous: dedup check +
 # nohup worker spawn normally completes in <5s.
 : "${FILL_FLOOR_PER_CANDIDATE_TIMEOUT:=30}"
+# t3005: parallel dispatch concurrency for dispatch_deterministic_fill_floor.
+# Each successful dispatch takes ~100s (most in worktree-helper.sh add) so the
+# previous serial loop capped throughput at ~1 dispatch per pulse cycle.
+# 6 concurrent dispatches × ~100s = full 24-slot pool reachable in ~1 cycle.
+# Set to 1 to retain the legacy serial behavior (regression escape hatch).
+# Capped at _effective_slots inside the function so parallelism never exceeds
+# the slot budget.
+: "${DISPATCH_FILL_FLOOR_PARALLEL:=6}"
 : "${PULSE_ACTIVE_REFILL_INTERVAL:=120}"
 : "${PULSE_ACTIVE_REFILL_IDLE_MIN:=60}"
 : "${PULSE_ACTIVE_REFILL_STALL_MIN:=120}"
@@ -689,11 +697,287 @@ _dff_maybe_engage_throttle() {
 }
 
 #######################################
+# t3005: Decide the parallelism level for the deterministic fill-floor loop.
+#
+# Defaults to DISPATCH_FILL_FLOOR_PARALLEL (env, default 6). Capped at the
+# effective slot budget — never schedule more concurrent dispatches than
+# slots we'd consume. Forced to 1 when the adaptive throttle file is present
+# (degraded runtime — the existing serial throttle behavior is preserved as
+# the regression escape hatch and the "test the waters" semantics).
+#
+# Arguments:
+#   $1 - effective_slots (already throttle-aware: 1 in throttle mode)
+# Stdout: integer parallelism level (>= 1)
+#######################################
+_dff_compute_max_parallel() {
+	local effective_slots="$1"
+	local max_parallel="${DISPATCH_FILL_FLOOR_PARALLEL:-6}"
+	[[ "$max_parallel" =~ ^[1-9][0-9]*$ ]] || max_parallel=6
+	if ((max_parallel > effective_slots)); then
+		max_parallel="$effective_slots"
+	fi
+	# In throttle mode, _effective_slots is already 1 → max_parallel=1 (serial).
+	# Defensive: also short-circuit on direct file presence in case caller
+	# passes a non-throttled effective_slots while throttle is active.
+	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
+		max_parallel=1
+	fi
+	((max_parallel < 1)) && max_parallel=1
+	printf '%d\n' "$max_parallel"
+	return 0
+}
+
+#######################################
+# t3005: Serial dispatch loop (original behavior, refactored into a helper).
+#
+# Iterates candidates one at a time, calling _dff_process_candidate inline.
+# Module-global state mutations (_DFF_ROUND_DISPATCHED, _DFF_THROTTLE_CLEARED,
+# _PULSE_LAST_LAUNCH_FAILURE, _DFF_CONSECUTIVE_NO_WORKER) propagate normally
+# because the loop runs in the parent shell, not a backgrounded subshell.
+#
+# Arguments:
+#   $1 - candidate_file (one JSON candidate per line)
+#   $2 - effective_slots (slot budget at loop start, may be throttled to 1)
+#   $3 - available_slots (unthrottled slot budget — restored if throttle clears)
+#   $4 - self_login (GitHub login for dedup)
+# Stdout: "<dispatched_count> <processed_count>"
+#######################################
+_dff_dispatch_loop_serial() {
+	local candidate_file="$1"
+	local effective_slots="$2"
+	local available_slots="$3"
+	local self_login="$4"
+
+	local dispatched_count=0 processed_count=0 candidate_json
+	while IFS= read -r candidate_json; do
+		[[ -n "$candidate_json" ]] || continue
+		processed_count=$((processed_count + 1))
+		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — entering body" >>"$LOGFILE"
+		if [[ "$dispatched_count" -ge "$effective_slots" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
+			break
+		fi
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
+			break
+		fi
+		local _dff_proc_rc=0
+		_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dff_proc_rc=$?
+		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dff_process_candidate rc=${_dff_proc_rc}" >>"$LOGFILE"
+		if [[ "$_dff_proc_rc" -eq 0 ]]; then
+			dispatched_count=$((dispatched_count + 1))
+			# Throttle cleared mid-round by a successful launch — restore
+			# the unthrottled slot budget so subsequent iterations dispatch.
+			if [[ "$_DFF_THROTTLE_CLEARED" -eq 1 ]]; then
+				effective_slots="$available_slots"
+			fi
+		fi
+	done <"$candidate_file"
+	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# t3005: Parallel dispatch loop with bounded concurrency and outcomes file.
+#
+# Each candidate is dispatched in a backgrounded subshell. Module-global
+# mutations inside _dff_process_candidate are isolated to the subshell and
+# lost — we re-derive aggregate state from an outcomes file written by each
+# subshell on completion. POSIX O_APPEND guarantees atomic short-line writes
+# (lines are <100 bytes, well under PIPE_BUF=512 on macOS / 4096 on Linux).
+#
+# Concurrency cap is enforced via `wait -n` (bash 4.3+). A modern bash is
+# guaranteed at runtime by setup.sh's bash-upgrade-helper.sh + the
+# shared-constants.sh re-exec guard.
+#
+# Each candidate's outcome line format:
+#   success|<issue>           — dispatched + launch validated
+#   fail|<issue>|rc=<n>|<reason>  — pre-skip, dispatch failure, or launch failure
+#
+# Arguments:
+#   $1 - candidate_file
+#   $2 - effective_slots (slot budget — never throttled in this path)
+#   $3 - available_slots (passed through to _dff_process_candidate)
+#   $4 - self_login
+#   $5 - max_parallel (bounded concurrency level)
+#   $6 - outcomes_file (created by caller, parent reads it post-loop)
+# Stdout: "<dispatched_count> <processed_count>"
+#######################################
+_dff_dispatch_loop_parallel() {
+	local candidate_file="$1"
+	local effective_slots="$2"
+	local available_slots="$3"
+	local self_login="$4"
+	local max_parallel="$5"
+	local outcomes_file="$6"
+
+	local processed_count=0 candidate_json pid
+	local _pids=()
+	local _alive_pids=()
+	while IFS= read -r candidate_json; do
+		[[ -n "$candidate_json" ]] || continue
+		processed_count=$((processed_count + 1))
+		echo "[pulse-wrapper] Deterministic fill floor: parallel iter=${processed_count} — entering body" >>"$LOGFILE"
+
+		# Reap finished pids so the array reflects current in-flight count.
+		# Bash 3.2-safe: while-read via process substitution avoids SC2207
+		# (no array splitting) and handles empty input cleanly.
+		_alive_pids=()
+		while IFS= read -r pid; do
+			[[ -n "$pid" ]] && _alive_pids+=("$pid")
+		done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
+		_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
+
+		# Wait for one to finish if we're at the concurrency cap
+		while ((${#_pids[@]} >= max_parallel)); do
+			wait -n 2>/dev/null || true
+			_alive_pids=()
+			while IFS= read -r pid; do
+				[[ -n "$pid" ]] && _alive_pids+=("$pid")
+			done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
+			_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
+		done
+
+		# Budget check: successes already recorded + currently in flight
+		# must stay below effective_slots. Reading the file is cheap (<1KB).
+		local successes_so_far
+		successes_so_far=$(_dff_count_outcomes "$outcomes_file")
+		if ((successes_so_far + ${#_pids[@]} >= effective_slots)); then
+			echo "[pulse-wrapper] Deterministic fill floor: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${#_pids[@]} >= effective_slots=${effective_slots})" >>"$LOGFILE"
+			break
+		fi
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
+			break
+		fi
+
+		# Background dispatch with outcomes-file write.
+		# The subshell isolates _dff_process_candidate's module-global
+		# mutations; only the file system mutations (throttle removal,
+		# canary cache) and the outcomes file write propagate.
+		(
+			local _rc=0
+			_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _rc=$?
+			local issue_num
+			issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+			if [[ "$_rc" -eq 0 ]]; then
+				printf 'success|%s\n' "$issue_num" >>"$outcomes_file"
+			else
+				printf 'fail|%s|rc=%d|reason=%s\n' "$issue_num" "$_rc" "${_PULSE_LAST_LAUNCH_FAILURE:-none}" >>"$outcomes_file"
+			fi
+		) &
+		_pids+=($!)
+	done <"$candidate_file"
+
+	# Wait for all in-flight dispatches to complete
+	wait
+	local dispatched_count
+	dispatched_count=$(_dff_count_outcomes "$outcomes_file")
+	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# t3005: Count outcome lines of a given type in the parallel-dispatch
+# outcomes file. Extracted to avoid repeating the awk literal across
+# call sites (the pre-commit string-literal validator counts "success"
+# inside awk scripts as a shell-level repeated literal).
+#
+# Arguments:
+#   $1 - outcomes_file
+#   $2 - outcome type to count (literal match on field 1, default "success")
+# Stdout: integer count (0 if file missing or empty)
+#######################################
+_dff_count_outcomes() {
+	local outcomes_file="$1"
+	local outcome_type="${2:-success}"
+	local count
+	count=$(awk -F'|' -v t="$outcome_type" '$1==t{c++} END{print c+0}' "$outcomes_file" 2>/dev/null)
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%d\n' "$count"
+	return 0
+}
+
+#######################################
+# t3005: Reap completed pids — return only those still alive.
+#
+# Bash 3.2-safe array passing: handles empty input via the
+# "${arr[@]+${arr[@]}}" idiom (set -u safe). Echoes alive pids one per line.
+#
+# Arguments: $@ - pids to check
+# Stdout: alive pids (whitespace-separated)
+#######################################
+_dff_reap_pids() {
+	local pid
+	for pid in "$@"; do
+		[[ -n "$pid" ]] || continue
+		if kill -0 "$pid" 2>/dev/null; then
+			printf '%s\n' "$pid"
+		fi
+	done
+	return 0
+}
+
+#######################################
+# t3005: Aggregate parallel-dispatch outcomes into module-global counters.
+#
+# After the parallel loop returns, _DFF_ROUND_DISPATCHED and
+# _DFF_ROUND_NO_WORKER_FAILURES are still 0 because the subshells couldn't
+# mutate them. Re-derive both from the outcomes file.
+#
+# Also handles canary-cache invalidation (parallel approximation of the
+# serial path's "3 consecutive no_worker_process" rule — uses total count
+# in the round). Idempotent file removal: invalidating an already-gone
+# cache is a no-op.
+#
+# Arguments:
+#   $1 - outcomes_file
+# Side effects:
+#   - Sets _DFF_ROUND_DISPATCHED, _DFF_ROUND_NO_WORKER_FAILURES
+#   - Removes _DFF_CANARY_CACHE if no_worker_failures >= 3
+#   - Removes _DFF_THROTTLE_FILE if any successes (parallel can only run when
+#     throttle was already off, but defensive cleanup is cheap)
+#######################################
+_dff_aggregate_outcomes() {
+	local outcomes_file="$1"
+	local successes fails no_worker_failures
+	successes=$(_dff_count_outcomes "$outcomes_file" "success")
+	fails=$(_dff_count_outcomes "$outcomes_file" "fail")
+	# no_worker_process is identified via the reason field embedded in the
+	# fail line — match the substring rather than adding another field.
+	no_worker_failures=$(awk -F'|' -v t="fail" '$1==t && /no_worker_process/{c++} END{print c+0}' "$outcomes_file" 2>/dev/null)
+	[[ "$no_worker_failures" =~ ^[0-9]+$ ]] || no_worker_failures=0
+
+	_DFF_ROUND_DISPATCHED=$((successes + fails))
+	_DFF_ROUND_NO_WORKER_FAILURES="$no_worker_failures"
+
+	if ((no_worker_failures >= 3)); then
+		if [[ -f "$_DFF_CANARY_CACHE" ]]; then
+			rm -f "$_DFF_CANARY_CACHE"
+			echo "[pulse-wrapper] Canary cache invalidated after ${no_worker_failures} no_worker_process failures in parallel round — next dispatch will re-run canary" >>"$LOGFILE"
+		fi
+	fi
+
+	if ((successes > 0)) && [[ -f "$_DFF_THROTTLE_FILE" ]]; then
+		rm -f "$_DFF_THROTTLE_FILE"
+		echo "[pulse-wrapper] Dispatch throttle CLEARED: parallel round had ${successes} successful launches" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
 # Deterministic fill floor for obvious backlog.
 #
 # This is intentionally narrow: it only materializes already-eligible issues
 # and fills empty local slots. Ranking remains simple and auditable; judgment
 # stays with the pulse LLM for merges, blockers, and unusual edge cases.
+#
+# t3005: Loop body extracted into _dff_dispatch_loop_serial /
+# _dff_dispatch_loop_parallel — the orchestrator picks one based on
+# DISPATCH_FILL_FLOOR_PARALLEL (default 6) and adaptive throttle state.
+# Throttle mode forces serial (1 dispatch per round) to preserve the existing
+# "test the waters" recovery semantics; otherwise parallel is preferred so
+# the 24-slot pool fills in 1-2 cycles instead of 40 minutes.
 #
 # Returns: dispatched worker count via stdout
 #######################################
@@ -733,13 +1017,6 @@ dispatch_deterministic_fill_floor() {
 
 	echo "[pulse-wrapper] Deterministic fill floor: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
 
-	# GH#18804: Guard the prepass capture against `set -e` kill propagating
-	# from nested helpers (dispatch_triage_reviews / dispatch_enrichment_workers
-	# can run gh/jq/MODEL_AVAILABILITY_HELPER subprocesses whose failures
-	# would otherwise abort this entire subshell silently — the `||` fallback
-	# keeps the function alive and surfaces the failure in pulse.log instead.
-	# Same set-e-in-subshell bug class as GH#18770. The fallback "$slots 0"
-	# preserves the pre-prepass slot count and assumes 0 triage dispatches.
 	local prepass_line=""
 	local triage_dispatched=0
 	if ! prepass_line=$(_dff_run_prepasses "$available_slots" 2>>"$LOGFILE"); then
@@ -756,37 +1033,25 @@ dispatch_deterministic_fill_floor() {
 	_DFF_ROUND_NO_WORKER_FAILURES=0
 	_DFF_CONSECUTIVE_NO_WORKER=0
 	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	# Use same env-var fallback as headless-runtime-helper.sh:32 for path consistency
 	_DFF_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
 
-	local dispatched_count=0
 	# Honour adaptive batch throttle — limit to 1 when runtime is degraded.
-	# A successful launch in throttled mode clears the flag immediately.
 	local _effective_slots="$available_slots"
 	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
 		_effective_slots=1
 		echo "[pulse-wrapper] Dispatch throttle active: limiting implementation batch to 1 (runtime degraded)" >>"$LOGFILE"
 	fi
 
-	# GH#18804: fence-post log so operators can see the loop entered. Without
-	# this, a silent exit between the prepass capture and the loop body was
-	# indistinguishable from "everything was skipped" — both produced the
-	# same observable symptom (`Adaptive settle wait: 0 dispatches`).
-	echo "[pulse-wrapper] Deterministic fill floor: entering candidate loop with effective_slots=${_effective_slots}, candidates=${candidate_count}" >>"$LOGFILE"
+	# t3005: pick parallelism level (1 = serial, >1 = parallel via wait -n).
+	local _dff_max_parallel
+	_dff_max_parallel=$(_dff_compute_max_parallel "$_effective_slots")
 
-	# GH#18804 follow-up: dump the first candidate JSON line to LOGFILE so
-	# operators can see what the loop is actually iterating over. Truncated
-	# to 240 bytes to avoid log churn for long titles/labels.
+	echo "[pulse-wrapper] Deterministic fill floor: entering candidate loop with effective_slots=${_effective_slots}, max_parallel=${_dff_max_parallel}, candidates=${candidate_count}" >>"$LOGFILE"
 	local _dff_first_candidate_preview
 	_dff_first_candidate_preview=$(printf '%s' "$candidates_json" | jq -c '.[0]' 2>/dev/null || echo "<jq error>")
 	echo "[pulse-wrapper] Deterministic fill floor: first candidate preview (240 bytes): ${_dff_first_candidate_preview:0:240}" >>"$LOGFILE"
 
-	local processed_count=0
-	# GH#18804 follow-up: feed candidates from a tempfile rather than process
-	# substitution. Process substitution failures are invisible to set -e and
-	# the parent subshell, but a tempfile is observable: we can log the line
-	# count BEFORE the loop runs, so a "loop entered but never iterated"
-	# state is now diagnosable.
+	# GH#18804 follow-up: feed candidates from a tempfile rather than process substitution.
 	local _dff_candidate_file=""
 	_dff_candidate_file=$(mktemp 2>/dev/null || echo "/tmp/aidevops-dff-candidates.$$")
 	if ! printf '%s' "$candidates_json" | jq -c '.[]' >"$_dff_candidate_file" 2>>"$LOGFILE"; then
@@ -801,40 +1066,24 @@ dispatch_deterministic_fill_floor() {
 	_dff_line_count=$(wc -l <"$_dff_candidate_file" 2>/dev/null | tr -d ' ' || echo 0)
 	echo "[pulse-wrapper] Deterministic fill floor: candidate enumeration produced ${_dff_line_count} lines in ${_dff_candidate_file}" >>"$LOGFILE"
 
-	while IFS= read -r candidate_json; do
-		[[ -n "$candidate_json" ]] || continue
-		processed_count=$((processed_count + 1))
-		# GH#18804 follow-up: per-iteration fence-post log (unconditional).
-		# This proves the loop body is executing and pinpoints the exact
-		# iteration where a silent exit occurs.
-		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — entering body" >>"$LOGFILE"
-		if [[ "$dispatched_count" -ge "$_effective_slots" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${_effective_slots})" >>"$LOGFILE"
-			break
-		fi
-		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
-			break
-		fi
-
-		# GH#18804 follow-up: capture the rc explicitly using set-e-safe
-		# capture idiom INSIDE the if-test position. Belt-and-braces against
-		# any future refactor that might lose the if-context masking.
-		local _dff_proc_rc=0
-		_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dff_proc_rc=$?
-		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dff_process_candidate rc=${_dff_proc_rc}" >>"$LOGFILE"
-		if [[ "$_dff_proc_rc" -eq 0 ]]; then
-			dispatched_count=$((dispatched_count + 1))
-			# Throttle was cleared mid-round by a successful launch — restore
-			# the unthrottled slot budget so subsequent iterations can dispatch.
-			if [[ "$_DFF_THROTTLE_CLEARED" -eq 1 ]]; then
-				_effective_slots="$available_slots"
-			fi
-		fi
-	done <"$_dff_candidate_file"
+	# Branch: serial (legacy / throttle / DISPATCH_FILL_FLOOR_PARALLEL=1) vs parallel.
+	local dispatched_count=0 processed_count=0 loop_output=""
+	local _dff_outcomes_file=""
+	if ((_dff_max_parallel <= 1)); then
+		loop_output=$(_dff_dispatch_loop_serial "$_dff_candidate_file" "$_effective_slots" "$available_slots" "$self_login")
+	else
+		_dff_outcomes_file=$(mktemp 2>/dev/null || echo "/tmp/aidevops-dff-outcomes.$$")
+		: >"$_dff_outcomes_file"
+		loop_output=$(_dff_dispatch_loop_parallel "$_dff_candidate_file" "$_effective_slots" "$available_slots" "$self_login" "$_dff_max_parallel" "$_dff_outcomes_file")
+		_dff_aggregate_outcomes "$_dff_outcomes_file"
+		rm -f "$_dff_outcomes_file"
+	fi
+	read -r dispatched_count processed_count <<<"$loop_output"
+	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
+	[[ "$processed_count" =~ ^[0-9]+$ ]] || processed_count=0
 	rm -f "$_dff_candidate_file"
 
-	echo "[pulse-wrapper] Deterministic fill floor: loop body finished — processed=${processed_count} dispatched=${dispatched_count}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Deterministic fill floor: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dff_max_parallel <= 1)) && echo serial || echo "parallel(${_dff_max_parallel})")" >>"$LOGFILE"
 	_dff_maybe_engage_throttle
 
 	local total_dispatched=$((dispatched_count + triage_dispatched))
