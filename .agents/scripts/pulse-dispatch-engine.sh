@@ -498,13 +498,20 @@ _dff_dispatch_with_timeout() {
 	# DISPATCH_TIMING_ADAPTIVE=0.
 	local timeout_seconds="$FILL_FLOOR_PER_CANDIDATE_TIMEOUT"
 	local timeout_ms=$((timeout_seconds * 1000))
+	local probe_mode="false"
 	if [[ "${DISPATCH_TIMING_ADAPTIVE:-1}" == "1" ]] && command -v dispatch-timing-helper.sh >/dev/null 2>&1; then
-		local recommended_ms
-		recommended_ms=$(dispatch-timing-helper.sh recommend --repo "$repo_slug" 2>/dev/null || echo "")
+		local recommended_output
+		recommended_output=$(dispatch-timing-helper.sh recommend --repo "$repo_slug" 2>/dev/null || echo "")
+		# Output is two lines: timeout_ms and probe_bool
+		local recommended_ms probe_bool
+		mapfile -t -n 2 < <(printf '%s\n' "$recommended_output")
+		recommended_ms="${MAPFILE[0]:-}"
+		probe_bool="${MAPFILE[1]:-false}"
 		if [[ "$recommended_ms" =~ ^[0-9]+$ ]] && ((recommended_ms > 0)); then
 			timeout_ms="$recommended_ms"
 			timeout_seconds=$((recommended_ms / 1000))
 			((timeout_seconds < 1)) && timeout_seconds=1
+			probe_mode="$probe_bool"
 		fi
 	fi
 
@@ -530,11 +537,12 @@ _dff_dispatch_with_timeout() {
 	fi
 
 	# t3003: record outcome for adaptive timing. Non-fatal — never block the
-	# dispatch loop on a recording failure.
+	# dispatch loop on a recording failure. Pass --probe flag when escalated.
 	if command -v dispatch-timing-helper.sh >/dev/null 2>&1; then
 		dispatch-timing-helper.sh record \
 			--repo "$repo_slug" --issue "$issue_number" --outcome "$outcome" \
 			--elapsed-ms "$elapsed_ms" --timeout-used-ms "$timeout_ms" \
+			--probe "$probe_mode" \
 			>/dev/null 2>&1 || true
 	fi
 
