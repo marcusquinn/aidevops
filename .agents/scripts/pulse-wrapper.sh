@@ -1468,6 +1468,20 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)
 # without triggering the full pulse lifecycle.
-if ! _pulse_is_sourced; then
+#
+# t3014/t3016 (GH#21551, GH#21557): The source check MUST be evaluated
+# inline at top-level here — not delegated to _pulse_is_sourced() in
+# pulse-wrapper-cycle.sh. Inside that function, ${BASH_SOURCE[0]} resolves
+# to the function's *defining* file (pulse-wrapper-cycle.sh), not the
+# entry script. PR #21553 moved the function into the sourced library and
+# silently broke the gate: the comparison `BASH_SOURCE[0] != $0` always
+# evaluated TRUE (cycle.sh != pulse-wrapper.sh), main() never ran, and
+# `pulse-wrapper.sh --canary` returned exit 0 with no output. Production
+# survived only because the deployed copy predated the merge — the next
+# `aidevops update` would have bricked the pulse loop. Fix: do the check
+# at file-scope here, where ${BASH_SOURCE[0]} correctly references this
+# very file. Keep _pulse_is_sourced() in cycle.sh for callers that need a
+# function-shaped helper.
+if [[ "${BASH_SOURCE[0]:-}" == "${0:-}" ]]; then
 	main "$@"
 fi

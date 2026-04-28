@@ -34,6 +34,17 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 WRAPPER_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper.sh"
+# t3016: _pulse_setup_canary_mode was relocated into pulse-wrapper-bootstrap.sh
+# by GH#21311 (the pulse-wrapper.sh split — PR #21553). The canary entrypoint
+# is still pulse-wrapper.sh (which sources bootstrap), but Test 3's static
+# grep needs to look in the new location.
+BOOTSTRAP_SCRIPT="${SCRIPT_DIR}/../pulse-wrapper-bootstrap.sh"
+# t3016: pulse-wrapper-bootstrap.sh::_load_config requires the canonical
+# defaults file to be present at $HOME/.aidevops/agents/configs/. The
+# sandboxed HOME used by Tests 1 and 2 must seed this file or the bootstrap
+# emits "[config] Failed to parse defaults — config system unavailable" and
+# the canary checkpoint never prints.
+DEFAULTS_SOURCE="${SCRIPT_DIR}/../../configs/aidevops.defaults.jsonc"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -41,6 +52,17 @@ readonly TEST_RESET='\033[0m'
 
 TESTS_RUN=0
 TESTS_FAILED=0
+
+# t3016: Seed a sandbox HOME with the canonical aidevops defaults config so
+# pulse-wrapper-bootstrap.sh::_load_config succeeds. Mirrors what setup.sh
+# does at install time. Idempotent — safe to call repeatedly.
+seed_sandbox_config() {
+	local sandbox_home="$1"
+	mkdir -p "${sandbox_home}/.aidevops/agents/configs"
+	cp "$DEFAULTS_SOURCE" \
+		"${sandbox_home}/.aidevops/agents/configs/aidevops.defaults.jsonc"
+	return 0
+}
 
 print_result() {
 	local test_name="$1"
@@ -72,6 +94,8 @@ test_canary_exits_zero() {
 	local sandbox rc output
 	sandbox=$(mktemp -d)
 	mkdir -p "${sandbox}/home"
+	# t3016: seed canonical defaults so bootstrap's _load_config succeeds
+	seed_sandbox_config "${sandbox}/home"
 
 	output=$(
 		HOME="${sandbox}/home" \
@@ -100,6 +124,8 @@ test_canary_prints_checkpoint() {
 	local sandbox rc output
 	sandbox=$(mktemp -d)
 	mkdir -p "${sandbox}/home"
+	# t3016: seed canonical defaults so bootstrap's _load_config succeeds
+	seed_sandbox_config "${sandbox}/home"
 
 	output=$(
 		HOME="${sandbox}/home" \
@@ -118,17 +144,21 @@ test_canary_prints_checkpoint() {
 	return 0
 }
 
-# Test 3: Static check — _pulse_setup_canary_mode function exists in the wrapper.
+# Test 3: Static check — _pulse_setup_canary_mode function exists in bootstrap.
 #
 # Guards against the function being accidentally removed during refactoring.
 # Catches the regression before runtime.
+#
+# t3016: Function relocated from pulse-wrapper.sh to pulse-wrapper-bootstrap.sh
+# by GH#21311 (PR #21553). pulse-wrapper.sh now only contains the call site
+# (`_pulse_setup_canary_mode "$@"`); the definition lives in bootstrap.
 test_canary_function_exists() {
-	if grep -q "^_pulse_setup_canary_mode()" "$WRAPPER_SCRIPT"; then
-		print_result "_pulse_setup_canary_mode() defined in pulse-wrapper.sh" 0
+	if grep -q "^_pulse_setup_canary_mode()" "$BOOTSTRAP_SCRIPT"; then
+		print_result "_pulse_setup_canary_mode() defined in pulse-wrapper-bootstrap.sh" 0
 		return 0
 	fi
-	print_result "_pulse_setup_canary_mode() defined in pulse-wrapper.sh" 1 \
-		"Function _pulse_setup_canary_mode() not found in $WRAPPER_SCRIPT"
+	print_result "_pulse_setup_canary_mode() defined in pulse-wrapper-bootstrap.sh" 1 \
+		"Function _pulse_setup_canary_mode() not found in $BOOTSTRAP_SCRIPT"
 	return 0
 }
 
