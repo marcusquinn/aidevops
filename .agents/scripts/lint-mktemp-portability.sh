@@ -32,7 +32,7 @@
 #   --no-exit-code  always exit 0 (advisory mode)
 #   --help          show this help
 #
-# With no FILES: scans all git-tracked .sh files via `git ls-files '*.sh'`.
+# With no FILES: scans all git-tracked .sh, .bash, and .zsh files.
 #
 # Output format: file:line: <offending mktemp template>
 # Exit codes: 0=clean, 1=violations found
@@ -141,8 +141,8 @@ if [[ ${#TARGET_FILES[@]} -eq 0 ]]; then
 		printf 'mktemp-portability: git not found and no FILES given\n' >&2
 		exit 2
 	fi
-	# shellcheck disable=SC2207
-	TARGET_FILES=($(git ls-files '*.sh' 2>/dev/null || true))
+	while IFS= read -r _f; do TARGET_FILES+=("$_f"); done \
+		< <(git ls-files '*.sh' '*.bash' '*.zsh' 2>/dev/null || true)
 fi
 
 if [[ ${#TARGET_FILES[@]} -eq 0 ]]; then
@@ -155,7 +155,8 @@ fi
 # ---------------------------------------------------------------------------
 # The detection regex:
 #   - mktemp                 — the command
-#   - (?!\s+-[duqQ]\b)       — NOT followed by -d / -u / -q / -Q (file-form only)
+#   - (?!-[a-zA-Z]*[duqQ][a-zA-Z]*[[:space:]]) — NOT if first flag contains
+#                              d/u/q/Q (handles combined flags like -dq, -qu).
 #                              NOTE: -t (template prefix) is fine — its template
 #                              still goes through the same X-placement rule.
 #   - .*X{6,}\.[a-zA-Z]      — XXXXXX (or more) followed by `.<letter>` extension
@@ -170,8 +171,8 @@ violation_lines=()
 
 # Build the search pattern. Use a literal-X form to avoid pattern-detection
 # hitting the lint script itself.
-_pattern='mktemp[[:space:]]+(?!-[duqQ][[:space:]])[^|;&)`]*'
-_pattern+='X{6}\.[a-zA-Z]'
+_pattern='mktemp[[:space:]]+(?!-[a-zA-Z]*[duqQ][a-zA-Z]*[[:space:]])[^|;&)`]*'
+_pattern+='X{6,}\.[a-zA-Z]'
 
 scan_file() {
 	local file="$1"
