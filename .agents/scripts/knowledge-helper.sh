@@ -866,16 +866,10 @@ _grep_source_file() {
 _search_ids_by_sensitivity() {
 	local sources_dir="$1" tier="$2"
 	_require_jq || return 1
-	local src_id
-	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-		[[ -d "${sources_dir}/${src_id}" ]] || continue
-		local meta="${sources_dir}/${src_id}/meta.json"
-		[[ -f "$meta" ]] || continue
-		local sens
-		sens=$(jq -r --arg d "$META_DEFAULT_SENSITIVITY" \
-			'.sensitivity // $d' "$meta" 2>/dev/null) || sens="$META_DEFAULT_SENSITIVITY"
-		[[ "$sens" == "$tier" ]] && echo "$src_id"
-	done
+	find "$sources_dir" -maxdepth 2 -name "meta.json" \
+		-exec jq -r --arg tier "$tier" --arg def "$META_DEFAULT_SENSITIVITY" \
+		'select((.sensitivity // $def) == $tier) | .id' {} + \
+		| sort
 	return 0
 }
 
@@ -912,16 +906,12 @@ _search_ids_by_case() {
 # Returns source IDs whose source.md has a draft-status tag matching <draft_status>.
 _search_ids_by_status() {
 	local sources_dir="$1" draft_status="$2"
-	local src_id
-	for src_id in $(ls "$sources_dir" 2>/dev/null | sort); do
-		[[ -d "${sources_dir}/${src_id}" ]] || continue
-		local src_md="${sources_dir}/${src_id}/source.md"
-		[[ -f "$src_md" ]] || continue
-		# Match Markdoc draft-status tag: {% draft-status status="<value>" ... %}
-		if grep -qiE "\{%\s*draft-status\b[^%]*status\s*=\s*[\"']?${draft_status}[\"']?" "$src_md" 2>/dev/null; then
-			echo "$src_id"
-		fi
-	done
+	# Match Markdoc draft-status tag: {% draft-status status="<value>" ... %}
+	local pattern="\\{%\\s*draft-status\\b[^%]*status\\s*=\\s*[\"']?${draft_status}[\"']?"
+	find "$sources_dir" -maxdepth 2 -name "source.md" \
+		-exec grep -liE "$pattern" {} + \
+		| while read -r path; do basename "$(dirname "$path")"; done \
+		| sort || true
 	return 0
 }
 
