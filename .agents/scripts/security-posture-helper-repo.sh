@@ -1,0 +1,940 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# Security Posture Helper -- Per-Repo Audit Sub-Library
+# =============================================================================
+# Per-repo security posture checks (t1412.11): workflow security, branch
+# protection, review-bot-gate, dependency scanning, collaborator access,
+# repository security basics, and SYNC_PAT detection.
+#
+# Usage: source "${SCRIPT_DIR}/security-posture-helper-repo.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (print_error, print_info, etc.)
+#   - security-posture-helper.sh orchestrator (utility functions, constants)
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_SECURITY_POSTURE_REPO_LIB_LOADED:-}" ]] && return 0
+_SECURITY_POSTURE_REPO_LIB_LOADED=1
+
+# Defensive SCRIPT_DIR fallback
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
+
+# --- Functions ---
+
+# Phase 1: Scan .github/workflows/ for unsafe AI patterns
+# Checks for:
+#   - shell + credentials + untrusted input (injection risk)
+#   - allowed_non_write_users: "*" (overly permissive)
+#   - cached long-lived tokens
+check_workflow_security() {
+	local repo_path="$1"
+	local workflows_dir="$repo_path/.github/workflows"
+
+	print_header "Phase 1: GitHub Actions Workflow Security"
+
+	if [[ ! -d "$workflows_dir" ]]; then
+		print_skip "No .github/workflows/ directory found"
+		add_finding "$SEVERITY_INFO" "$CAT_WORKFLOWS" "No .github/workflows/ directory"
+		return 0
+	fi
+
+	local workflow_files
+	workflow_files=$(find "$workflows_dir" -name "*.yml" -o -name "*.yaml" 2>/dev/null)
+
+	if [[ -z "$workflow_files" ]]; then
+		print_skip "No workflow files found"
+		add_finding "$SEVERITY_INFO" "$CAT_WORKFLOWS" "No workflow YAML files found"
+		return 0
+	fi
+
+	local file_count
+	file_count=$(echo "$workflow_files" | wc -l | tr -d ' ')
+	print_info "Scanning $file_count workflow file(s)..."
+
+	local unsafe_found=false
+
+	while IFS= read -r wf; do
+		[[ -z "$wf" ]] && continue
+		local wf_name
+		wf_name=$(basename "$wf")
+
+		# Check 1: Shell commands using github.event context (injection vector)
+		# Pattern: run: ... ${{ github.event.issue.title }} or similar
+		if grep -qE '\$\{\{\s*github\.event\.(issue|pull_request|comment)\.' "$wf" 2>/dev/null; then
+			if grep -qE '^\s*run:' "$wf" 2>/dev/null; then
+				print_crit "$wf_name: Uses github.event context in shell run step (injection risk)"
+				add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: github.event context in shell run step"
+				unsafe_found=true
+			fi
+		fi
+
+		# Check 2: Overly permissive allowed_non_write_users or permissions
+		if grep -qE 'allowed_non_write_users:\s*"\*"' "$wf" 2>/dev/null; then
+			print_crit "$wf_name: allowed_non_write_users set to wildcard '*'"
+			add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: allowed_non_write_users wildcard"
+			unsafe_found=true
+		fi
+
+		# Check 3: Workflow uses pull_request_target with checkout of PR head
+		# This is the classic "pwn request" pattern
+		if grep -qE 'pull_request_target' "$wf" 2>/dev/null; then
+			if grep -qE 'ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(ref|sha)' "$wf" 2>/dev/null; then
+				print_crit "$wf_name: pull_request_target with PR head checkout (pwn request risk)"
+				add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: pull_request_target with PR head checkout"
+				unsafe_found=true
+			else
+				print_warn "$wf_name: Uses pull_request_target (review checkout refs carefully)"
+				add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: uses pull_request_target"
+			fi
+		fi
+
+		# Check 4: Long-lived tokens cached or stored in artifacts
+		if grep -qE 'actions/cache.*token|save-state.*token|GITHUB_TOKEN.*>>.*GITHUB_ENV' "$wf" 2>/dev/null; then
+			print_warn "$wf_name: Possible token caching pattern detected"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: possible token caching"
+		fi
+
+		# Check 5: Overly broad permissions
+		if grep -qE '^\s*permissions:\s*write-all' "$wf" 2>/dev/null; then
+			print_warn "$wf_name: Uses write-all permissions (prefer least-privilege)"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: write-all permissions"
+		fi
+
+		# Check 6: Third-party actions pinned to branch instead of SHA
+		local unpinned_actions
+		unpinned_actions=$(grep -oE 'uses:\s+[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+@(main|master|v[0-9]+)' "$wf" 2>/dev/null | head -5) || true
+		if [[ -n "$unpinned_actions" ]]; then
+			local unpinned_count
+			unpinned_count=$(echo "$unpinned_actions" | wc -l | tr -d ' ')
+			print_warn "$wf_name: $unpinned_count action(s) pinned to branch/tag instead of SHA"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: $unpinned_count actions not SHA-pinned"
+		fi
+
+	done <<<"$workflow_files"
+
+	if [[ "$unsafe_found" == "false" ]]; then
+		print_pass "No critical workflow security issues found"
+		add_finding "$SEVERITY_PASS" "$CAT_WORKFLOWS" "No critical issues"
+	fi
+
+	return 0
+}
+
+# Phase 2: Check branch protection
+check_branch_protection() {
+	local repo_path="$1"
+
+	print_header "Phase 2: Branch Protection"
+
+	# Need gh CLI and a GitHub remote
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI (gh) not installed — cannot check branch protection"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "gh CLI not available"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "No GitHub remote — branch protection check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "No GitHub remote"
+		return 0
+	fi
+
+	# Detect default branch
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+	if [[ -z "$default_branch" ]]; then
+		default_branch="main"
+	fi
+
+	# Query branch protection rules via gh API
+	local protection_json
+	protection_json=$(gh api "repos/$slug/branches/$default_branch/protection" 2>/dev/null) || true
+
+	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
+		print_crit "Default branch '$default_branch' has NO branch protection"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No branch protection on $default_branch"
+		return 0
+	fi
+
+	# Check: require PR reviews
+	local required_reviews
+	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
+
+	if [[ "$required_reviews" -gt 0 ]]; then
+		print_pass "PR reviews required ($required_reviews approving review(s))"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "PR reviews required: $required_reviews"
+	else
+		print_warn "PR reviews not required on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
+	fi
+
+	# Check: require status checks
+	local required_checks
+	required_checks=$(echo "$protection_json" | jq -r '.required_status_checks.contexts // [] | length' 2>/dev/null) || required_checks="0"
+
+	if [[ "$required_checks" -gt 0 ]]; then
+		print_pass "Required status checks configured ($required_checks check(s))"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Status checks configured: $required_checks"
+	else
+		print_warn "No required status checks on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "No required status checks"
+	fi
+
+	# Check: enforce for admins
+	local enforce_admins
+	enforce_admins=$(echo "$protection_json" | jq -r '.enforce_admins.enabled // false' 2>/dev/null) || enforce_admins="false"
+
+	if [[ "$enforce_admins" == "true" ]]; then
+		print_pass "Branch protection enforced for admins"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Enforced for admins"
+	else
+		print_info "Branch protection not enforced for admins (common for solo repos)"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
+	fi
+
+	return 0
+}
+
+# Phase 3: Check review-bot-gate
+check_review_bot_gate() {
+	local repo_path="$1"
+
+	print_header "Phase 3: Review Bot Gate"
+
+	# Check if review-bot-gate workflow exists locally
+	local gate_workflow="$repo_path/.github/workflows/review-bot-gate.yml"
+	if [[ -f "$gate_workflow" ]]; then
+		print_pass "review-bot-gate.yml workflow present"
+		add_finding "$SEVERITY_PASS" "$CAT_REVIEW_BOT_GATE" "Workflow file present"
+	else
+		print_warn "No review-bot-gate.yml workflow — AI review bots may not be gated"
+		add_finding "$SEVERITY_WARNING" "$CAT_REVIEW_BOT_GATE" "No review-bot-gate.yml workflow"
+		print_info "  Suggestion: Copy from aidevops repo or add review-bot-gate as required check"
+	fi
+
+	# Check if review-bot-gate is a required status check (via branch protection)
+	if ! command -v gh &>/dev/null; then
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		return 0
+	fi
+
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+	default_branch="${default_branch:-main}"
+
+	local check_contexts
+	check_contexts=$(gh api "repos/$slug/branches/$default_branch/protection/required_status_checks" 2>/dev/null | jq -r '.contexts[]? // empty' 2>/dev/null) || true
+
+	if echo "$check_contexts" | grep -q "review-bot-gate" 2>/dev/null; then
+		print_pass "review-bot-gate is a required status check"
+		add_finding "$SEVERITY_PASS" "$CAT_REVIEW_BOT_GATE" "Required status check configured"
+	else
+		if [[ -f "$gate_workflow" ]]; then
+			print_warn "review-bot-gate workflow exists but is not a required status check"
+			add_finding "$SEVERITY_WARNING" "$CAT_REVIEW_BOT_GATE" "Not configured as required status check"
+			print_info "  Add 'review-bot-gate' to branch protection required checks"
+		fi
+	fi
+
+	return 0
+}
+
+# Phase 4: Dependency scanning — helpers
+
+# Check npm/Node.js dependencies via npm audit
+# Usage: _check_npm_deps <repo-path>
+# Sets has_deps=true if package.json found; emits findings directly.
+_check_npm_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/package.json" ]] || return 0
+	# Signal to caller that at least one manifest was found
+	has_deps=true
+	print_info "Found package.json — checking npm dependencies..."
+
+	if [[ ! -f "$repo_path/package-lock.json" ]]; then
+		print_warn "package.json exists but no package-lock.json — cannot run npm audit"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "Missing package-lock.json"
+		return 0
+	fi
+
+	if ! command -v npm &>/dev/null; then
+		print_skip "npm not installed — cannot audit Node.js dependencies"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm not available"
+		return 0
+	fi
+
+	local audit_output
+	audit_output=$(npm audit --json --prefix "$repo_path" 2>/dev/null) || true
+
+	if [[ -z "$audit_output" ]]; then
+		print_skip "npm audit returned no output"
+		return 0
+	fi
+
+	local vuln_total vuln_critical vuln_high
+	vuln_total=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.total // 0' 2>/dev/null) || vuln_total="0"
+	vuln_critical=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.critical // 0' 2>/dev/null) || vuln_critical="0"
+	vuln_high=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.high // 0' 2>/dev/null) || vuln_high="0"
+
+	if [[ "$vuln_critical" -gt 0 ]]; then
+		print_crit "npm audit: $vuln_critical critical, $vuln_high high ($vuln_total total vulnerabilities)"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_DEPENDENCIES" "npm: $vuln_critical critical, $vuln_high high vulnerabilities"
+	elif [[ "$vuln_high" -gt 0 ]]; then
+		print_warn "npm audit: $vuln_high high ($vuln_total total vulnerabilities)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "npm: $vuln_high high vulnerabilities"
+	elif [[ "$vuln_total" -gt 0 ]]; then
+		print_info "npm audit: $vuln_total low/moderate vulnerabilities"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm: $vuln_total low/moderate vulnerabilities"
+	else
+		print_pass "npm audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "npm: clean audit"
+	fi
+
+	return 0
+}
+
+# Check Python dependencies via pip-audit
+# Usage: _check_pip_deps <repo-path>
+_check_pip_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/requirements.txt" ]] || [[ -f "$repo_path/pyproject.toml" ]] || return 0
+	has_deps=true
+	print_info "Found Python project — checking dependencies..."
+
+	if ! command -v pip-audit &>/dev/null; then
+		print_skip "pip-audit not installed — install with: pip install pip-audit"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "pip-audit not available"
+		return 0
+	fi
+
+	local pip_output
+	pip_output=$(pip-audit --requirement "$repo_path/requirements.txt" --format json 2>/dev/null) || true
+
+	if [[ -z "$pip_output" ]]; then
+		return 0
+	fi
+
+	local pip_vulns
+	pip_vulns=$(echo "$pip_output" | jq 'length' 2>/dev/null) || pip_vulns="0"
+
+	if [[ "$pip_vulns" -gt 0 ]]; then
+		print_warn "pip-audit: $pip_vulns vulnerable package(s)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "pip: $pip_vulns vulnerable packages"
+	else
+		print_pass "pip-audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "pip: clean audit"
+	fi
+
+	return 0
+}
+
+# Check Rust dependencies via cargo audit
+# Usage: _check_cargo_deps <repo-path>
+_check_cargo_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/Cargo.toml" ]] || return 0
+	has_deps=true
+
+	if ! command -v cargo-audit &>/dev/null; then
+		print_skip "cargo-audit not installed — install with: cargo install cargo-audit"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "cargo-audit not available"
+		return 0
+	fi
+
+	print_info "Found Cargo.toml — running cargo audit..."
+	local cargo_output
+	cargo_output=$(cargo audit --json 2>/dev/null) || true
+
+	if [[ -z "$cargo_output" ]]; then
+		return 0
+	fi
+
+	local cargo_vulns
+	cargo_vulns=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null) || cargo_vulns="0"
+
+	if [[ "$cargo_vulns" -gt 0 ]]; then
+		print_warn "cargo audit: $cargo_vulns vulnerability(ies)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "cargo: $cargo_vulns vulnerabilities"
+	else
+		print_pass "cargo audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "cargo: clean audit"
+	fi
+
+	return 0
+}
+
+# Phase 4: Dependency scanning — orchestrator
+check_dependencies() {
+	local repo_path="$1"
+
+	print_header "Phase 4: Dependency Security"
+
+	local has_deps=false
+
+	_check_npm_deps "$repo_path"
+	_check_pip_deps "$repo_path"
+	_check_cargo_deps "$repo_path"
+
+	if [[ "$has_deps" == "false" ]]; then
+		print_skip "No dependency manifests found (package.json, requirements.txt, Cargo.toml)"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "No dependency manifests found"
+	fi
+
+	return 0
+}
+
+# Phase 5: Check collaborators (per-repo, never cached globally)
+check_collaborators() {
+	local repo_path="$1"
+
+	print_header "Phase 5: Collaborator Access"
+
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI (gh) not installed"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "gh CLI not available"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "No GitHub remote"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "No GitHub remote"
+		return 0
+	fi
+
+	# Per-repo collaborator check — never use a global cache (t1412.11: must paginate)
+	local collab_json
+	collab_json=$(gh api --paginate "repos/$slug/collaborators?per_page=100" --jq '.[] | {login: .login, role: .role_name}' 2>/dev/null) || true
+
+	if [[ -z "$collab_json" ]]; then
+		print_skip "Cannot access collaborator list (may require admin permissions)"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "Cannot access collaborator list"
+		return 0
+	fi
+
+	local admin_count
+	admin_count=$(echo "$collab_json" | jq -s '[.[] | select(.role == "admin")] | length' 2>/dev/null) || admin_count="0"
+	local write_count
+	write_count=$(echo "$collab_json" | jq -s '[.[] | select(.role == "write" or .role == "maintain")] | length' 2>/dev/null) || write_count="0"
+	local total_count
+	total_count=$(echo "$collab_json" | jq -s 'length' 2>/dev/null) || total_count="0"
+
+	print_info "Collaborators: $total_count total ($admin_count admin, $write_count write)"
+	add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "$total_count collaborators ($admin_count admin, $write_count write)"
+
+	if [[ "$admin_count" -gt 5 ]]; then
+		print_warn "High number of admin collaborators ($admin_count) — review access levels"
+		add_finding "$SEVERITY_WARNING" "$CAT_COLLABORATORS" "High admin count: $admin_count"
+	else
+		print_pass "Admin collaborator count is reasonable ($admin_count)"
+		add_finding "$SEVERITY_PASS" "$CAT_COLLABORATORS" "Admin count OK: $admin_count"
+	fi
+
+	return 0
+}
+
+# Phase 6: General repo security checks
+check_repo_security() {
+	local repo_path="$1"
+
+	print_header "Phase 6: Repository Security"
+
+	# Check for SECURITY.md
+	if [[ -f "$repo_path/SECURITY.md" ]]; then
+		print_pass "SECURITY.md present"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "SECURITY.md present"
+	else
+		print_warn "No SECURITY.md — add a security policy for vulnerability reporting"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "Missing SECURITY.md"
+	fi
+
+	# Check for .gitignore with common secret patterns
+	if [[ -f "$repo_path/.gitignore" ]]; then
+		local missing_patterns=()
+		for pattern in ".env" "*.pem" "*.key" "credentials.json"; do
+			if ! grep -qF "$pattern" "$repo_path/.gitignore" 2>/dev/null; then
+				missing_patterns+=("$pattern")
+			fi
+		done
+
+		if [[ ${#missing_patterns[@]} -gt 0 ]]; then
+			print_warn ".gitignore missing common secret patterns: ${missing_patterns[*]}"
+			add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "gitignore missing: ${missing_patterns[*]}"
+		else
+			print_pass ".gitignore covers common secret file patterns"
+			add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "gitignore covers secret patterns"
+		fi
+	else
+		print_warn "No .gitignore file"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "No .gitignore"
+	fi
+
+	# Check for committed secrets (quick scan of tracked files)
+	local secret_files
+	secret_files=$(git -C "$repo_path" ls-files '*.env' '*.pem' '*.key' 'credentials.json' '.env.*' 2>/dev/null) || true
+
+	if [[ -n "$secret_files" ]]; then
+		local secret_count
+		secret_count=$(echo "$secret_files" | wc -l | tr -d ' ')
+		print_crit "$secret_count potential secret file(s) tracked by git"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_REPO_SECURITY" "$secret_count secret files tracked: $(echo "$secret_files" | head -3 | tr '\n' ', ')"
+	else
+		print_pass "No obvious secret files tracked by git"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "No secret files tracked"
+	fi
+
+	# Check for Dependabot or Renovate config
+	if [[ -f "$repo_path/.github/dependabot.yml" ]] || [[ -f "$repo_path/.github/dependabot.yaml" ]]; then
+		print_pass "Dependabot configured"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "Dependabot configured"
+	elif [[ -f "$repo_path/renovate.json" ]] || [[ -f "$repo_path/.github/renovate.json" ]] || [[ -f "$repo_path/renovate.json5" ]]; then
+		print_pass "Renovate configured"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "Renovate configured"
+	else
+		print_warn "No automated dependency update tool (Dependabot/Renovate)"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "No dependency update automation"
+	fi
+
+	return 0
+}
+
+# Phase 7: SYNC_PAT detection helpers (t2374)
+
+# Emit a SYNC_PAT advisory file for a repo that needs it.
+# Usage: _emit_sync_pat_advisory <slug> <slug_sanitised> <advisory_file> <protection_desc>
+# protection_desc is a human-readable description of the detected protection,
+# e.g. "requiring 1 approving review(s)" (classic) or "rulesets-based
+# protection" (t2806, rulesets path).
+_emit_sync_pat_advisory() {
+	local slug="$1"
+	local slug_sanitised="$2"
+	local advisory_file="$3"
+	local protection_desc="$4"
+
+	local advisory_dir
+	advisory_dir="$(dirname "$advisory_file")"
+	mkdir -p "$advisory_dir"
+
+	cat >"$advisory_file" <<ADVISORY_EOF
+[ADVISORY] SYNC_PAT not set for ${slug}
+
+This repo uses issue-sync.yml and has protection on the default branch
+(${protection_desc}).
+Without SYNC_PAT, TODO.md auto-completion silently fails on PR merge
+(github-actions[bot] cannot push to a protected default branch).
+
+For a guided fix across all affected repos, run \`/setup-git\` in
+your AI assistant (OpenCode or Claude Code). It walks you through
+each repo with the correct pre-filled token-creation URL.
+
+To fix this single repo manually (run in a separate terminal, NOT in AI chat):
+
+1. Create a fine-grained PAT (pre-filled URL):
+   https://github.com/settings/personal-access-tokens/new?name=aidevops-sync-pat&description=SYNC_PAT+for+aidevops+TODO+auto-completion&expires_in=none&target_name=${slug}&permissions=contents:write,metadata:read
+
+2. Set the secret:
+   gh secret set SYNC_PAT --repo ${slug}
+   (interactive prompt — safer than --body which lands in shell history)
+
+Verify:
+   gh secret list --repo ${slug} | grep SYNC_PAT
+
+Dismiss once fixed:
+   aidevops security dismiss sync-pat-${slug_sanitised}
+
+See AGENTS.md "Known limitation — issue-sync TODO auto-completion" for background.
+ADVISORY_EOF
+
+	print_info "  Advisory written to: $advisory_file"
+	return 0
+}
+
+# Check whether the default branch is protected via repository rulesets
+# (the modern replacement for classic branch-protection rules, see t2806).
+# Returns 0 if any active ruleset targets the default branch with a
+# meaningful protection rule; 1 otherwise (including API errors).
+# Usage: _branch_is_rulesets_protected <slug> <default_branch>
+#
+# Fail-open: empty/errored rulesets API returns 1 (not protected). A
+# false negative here loses the advisory; a false positive just results
+# in an advisory the user can dismiss. Per t2806, we prefer the former
+# because classic detection already covers the review-requiring cases.
+_branch_is_rulesets_protected() {
+	local slug="$1"
+	local default_branch="$2"
+
+	local rulesets_json
+	rulesets_json=$(gh api "repos/${slug}/rulesets" 2>/dev/null) || return 1
+	[[ -z "$rulesets_json" || "$rulesets_json" == "[]" ]] && return 1
+
+	# Extract active ruleset IDs (enforcement == "active")
+	local active_ids
+	active_ids=$(echo "$rulesets_json" | jq -r '.[] | select(.enforcement == "active") | .id' 2>/dev/null) || return 1
+	[[ -z "$active_ids" ]] && return 1
+
+	local id detail include_patterns rule_types
+	while IFS= read -r id; do
+		[[ -z "$id" ]] && continue
+		detail=$(gh api "repos/${slug}/rulesets/${id}" 2>/dev/null) || continue
+
+		# Include patterns can be specific refs ("refs/heads/main") or
+		# GitHub wildcards ("~DEFAULT_BRANCH", "~ALL").
+		include_patterns=$(echo "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || continue
+
+		local matches_default="no"
+		while IFS= read -r pattern; do
+			[[ -z "$pattern" ]] && continue
+			case "$pattern" in
+			"refs/heads/${default_branch}" | "~DEFAULT_BRANCH" | "~ALL" | "refs/heads/*")
+				matches_default="yes"
+				break
+				;;
+			esac
+		done <<<"$include_patterns"
+
+		[[ "$matches_default" == "yes" ]] || continue
+
+		# Protection signals: pull_request review requirement OR
+		# required_status_checks. Either blocks direct bot pushes via
+		# the PR-required or checks-required gate, and is a strong
+		# signal that SYNC_PAT is needed downstream (t2449 author
+		# association chain, t2806).
+		rule_types=$(echo "$detail" | jq -r '.rules[].type' 2>/dev/null) || continue
+		if echo "$rule_types" | grep -qE '^(pull_request|required_status_checks)$'; then
+			return 0
+		fi
+	done <<<"$active_ids"
+
+	return 1
+}
+
+# Check whether a repo requires SYNC_PAT based on workflow + branch protection.
+# Writes result to global SYNC_PAT_NEED_RESULT: "needed:<desc>" | "not_needed".
+# Side effect: prints findings and cleans stale advisories.
+#
+# NOTE (t2806): earlier versions returned the result via stdout capture
+# (`$()`), which was broken because `print_pass` / `add_finding` also
+# write to stdout — the captured result included ANSI-wrapped "[PASS]"
+# lines and the equality check against "not_needed" failed. Using a
+# dedicated global eliminates the capture conflict entirely.
+#
+# Usage: _check_sync_pat_need <repo_path> <slug> <advisory_file>
+_check_sync_pat_need() {
+	local repo_path="$1"
+	local slug="$2"
+	local advisory_file="$3"
+
+	SYNC_PAT_NEED_RESULT=""
+
+	# Step 1: Does the repo use issue-sync.yml?
+	if ! gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" &>/dev/null 2>&1; then
+		print_pass "No issue-sync.yml — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml in $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		SYNC_PAT_NEED_RESULT="not_needed"
+		return 0
+	fi
+
+	# Step 2: Does the repo have branch protection?
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+	default_branch="${default_branch:-main}"
+
+	# Step 2a: Classic branch-protection endpoint (legacy path).
+	local protection_json
+	protection_json=$(gh api "repos/${slug}/branches/${default_branch}/protection" 2>/dev/null) || true
+
+	local protected_kind="none"
+	local protection_desc=""
+
+	if [[ -n "$protection_json" && "$protection_json" != *"Not Found"* && "$protection_json" != *"Branch not protected"* ]]; then
+		protected_kind="classic"
+	elif _branch_is_rulesets_protected "$slug" "$default_branch"; then
+		# Step 2b: Rulesets-based protection (t2806). Modern repos
+		# return 404 on the classic endpoint but carry rulesets via
+		# /repos/{slug}/rulesets — the legacy detector silently
+		# skipped these. See GH#20745.
+		protected_kind="rulesets"
+		protection_desc="rulesets-based protection"
+	fi
+
+	if [[ "$protected_kind" == "none" ]]; then
+		print_pass "No branch protection — SYNC_PAT not needed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No branch protection in $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		SYNC_PAT_NEED_RESULT="not_needed"
+		return 0
+	fi
+
+	# For classic protection, keep the required_reviews -eq 0 optimisation.
+	# For rulesets, we assume reviews are effectively required — the
+	# rulesets API shape doesn't expose a simple "0 approvals" state, and
+	# a false positive here only produces an advisory the user can dismiss.
+	if [[ "$protected_kind" == "classic" ]]; then
+		local required_reviews
+		required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
+
+		if [[ "$required_reviews" -eq 0 ]]; then
+			print_pass "PR reviews not required — SYNC_PAT not needed for $slug"
+			add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No review requirement in $slug"
+			[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+			SYNC_PAT_NEED_RESULT="not_needed"
+			return 0
+		fi
+		protection_desc="requiring ${required_reviews} approving review(s)"
+	fi
+
+	# Step 3: Is SYNC_PAT set?
+	local secret_check
+	secret_check=$(gh secret list --repo "$slug" --json name -q '.[] | select(.name == "SYNC_PAT") | .name' 2>/dev/null) || true
+
+	if [[ -n "$secret_check" ]]; then
+		print_pass "SYNC_PAT is set for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
+		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
+		SYNC_PAT_NEED_RESULT="not_needed"
+		return 0
+	fi
+
+	# Needs SYNC_PAT — return the protection description for the advisory
+	SYNC_PAT_NEED_RESULT="needed:${protection_desc}"
+	return 0
+}
+
+# Phase 7: Check SYNC_PAT secret for repos using issue-sync.yml (t2374)
+# Detects repos that need SYNC_PAT but don't have it set, and emits
+# per-repo advisories via ~/.aidevops/advisories/sync-pat-<slug>.advisory.
+check_sync_pat() {
+	local repo_path="$1"
+
+	print_header "Phase 7: SYNC_PAT Detection (issue-sync)"
+
+	# Need gh CLI
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI (gh) not installed — cannot check SYNC_PAT"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh CLI not available"
+		return 0
+	fi
+
+	# Need authenticated gh — fail open on auth failure
+	if ! gh auth status &>/dev/null 2>&1; then
+		print_skip "gh not authenticated — SYNC_PAT check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh not authenticated"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "No GitHub remote — SYNC_PAT check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "No GitHub remote"
+		return 0
+	fi
+
+	local slug_sanitised
+	slug_sanitised="${slug//\//-}"
+
+	local advisory_dir="$HOME/.aidevops/advisories"
+	local advisory_file="$advisory_dir/sync-pat-${slug_sanitised}.advisory"
+	local dismissed_file="$advisory_dir/.dismissed-sync-pat-${slug_sanitised}"
+
+	# If already dismissed, skip silently
+	if [[ -f "$dismissed_file" ]]; then
+		print_pass "SYNC_PAT advisory dismissed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "Advisory dismissed for $slug"
+		return 0
+	fi
+
+	# Check need via helper. Result is written to SYNC_PAT_NEED_RESULT — NOT
+	# returned via stdout, because `print_pass` / `add_finding` inside the
+	# helper also write to stdout and would pollute a `$()` capture (t2806).
+	_check_sync_pat_need "$repo_path" "$slug" "$advisory_file"
+
+	if [[ "$SYNC_PAT_NEED_RESULT" == "not_needed" ]]; then
+		return 0
+	fi
+
+	# Extract protection description from "needed:<description>" result.
+	# For classic protection this is e.g. "requiring 1 approving review(s)";
+	# for rulesets-based protection (t2806) it is "rulesets-based protection".
+	local protection_desc
+	protection_desc="${SYNC_PAT_NEED_RESULT#needed:}"
+
+	print_warn "SYNC_PAT not set for $slug — TODO.md auto-completion will silently fail on PR merge"
+	add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "SYNC_PAT not set for $slug"
+
+	_emit_sync_pat_advisory "$slug" "$slug_sanitised" "$advisory_file" "$protection_desc"
+
+	return 0
+}
+
+# Store security posture in .aidevops.json
+store_posture() {
+	local repo_path="$1"
+	local config_file="$repo_path/.aidevops.json"
+
+	if [[ ! -f "$config_file" ]]; then
+		print_info "No .aidevops.json found — skipping posture storage"
+		return 0
+	fi
+
+	if ! command -v jq &>/dev/null; then
+		print_warn "jq not installed — cannot store posture in .aidevops.json"
+		return 0
+	fi
+
+	local timestamp
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	local total_findings
+	total_findings=$((FINDINGS_CRITICAL + FINDINGS_WARNING + FINDINGS_INFO + FINDINGS_PASS))
+
+	local posture_status="unknown"
+	if [[ "$FINDINGS_CRITICAL" -gt 0 ]]; then
+		posture_status="$SEVERITY_CRITICAL"
+	elif [[ "$FINDINGS_WARNING" -gt 0 ]]; then
+		posture_status="$SEVERITY_WARNING"
+	elif [[ "$FINDINGS_INFO" -gt 0 && "$FINDINGS_PASS" -eq 0 ]]; then
+		posture_status="partial"
+	elif [[ "$total_findings" -gt 0 ]]; then
+		posture_status="good"
+	fi
+
+	local temp_file="${config_file}.tmp"
+	jq --arg status "$posture_status" \
+		--arg ts "$timestamp" \
+		--argjson critical "$FINDINGS_CRITICAL" \
+		--argjson warnings "$FINDINGS_WARNING" \
+		--argjson info "$FINDINGS_INFO" \
+		--argjson passed "$FINDINGS_PASS" \
+		--argjson findings "$FINDINGS_JSON" \
+		'.security_posture = {
+			"status": $status,
+			"last_audit": $ts,
+			"critical": $critical,
+			"warnings": $warnings,
+			"info": $info,
+			"passed": $passed,
+			"findings": $findings
+		}' "$config_file" >"$temp_file" && mv "$temp_file" "$config_file"
+
+	print_info "Security posture stored in .aidevops.json (status: $posture_status)"
+	return 0
+}
+
+# Print summary (one-line for greeting — per-repo)
+print_summary() {
+	local repo_path="$1"
+
+	# Try to read from stored posture first
+	local config_file="$repo_path/.aidevops.json"
+	if [[ -f "$config_file" ]] && command -v jq &>/dev/null; then
+		local stored_status
+		stored_status=$(jq -r '.security_posture.status // empty' "$config_file" 2>/dev/null) || true
+
+		if [[ -n "$stored_status" ]]; then
+			local stored_critical
+			stored_critical=$(jq -r '.security_posture.critical // 0' "$config_file" 2>/dev/null) || stored_critical="0"
+			local stored_warnings
+			stored_warnings=$(jq -r '.security_posture.warnings // 0' "$config_file" 2>/dev/null) || stored_warnings="0"
+			local stored_ts
+			stored_ts=$(jq -r '.security_posture.last_audit // "unknown"' "$config_file" 2>/dev/null) || stored_ts="unknown"
+
+			case "$stored_status" in
+			critical)
+				echo "Security: $stored_critical critical issue(s), $stored_warnings warning(s) — run \`aidevops security audit\` (last: $stored_ts)"
+				;;
+			warning)
+				echo "Security: $stored_warnings warning(s) — run \`aidevops security audit\` for details (last: $stored_ts)"
+				;;
+			partial)
+				echo "Security: audit completed with skipped checks — review findings (last: $stored_ts)"
+				;;
+			good)
+				echo "Security: all checks passed (last: $stored_ts)"
+				;;
+			*)
+				echo "Security: run \`aidevops security audit\` for baseline assessment"
+				;;
+			esac
+			return 0
+		fi
+	fi
+
+	echo "Security: not yet audited — run \`aidevops security audit\`"
+	return 0
+}
+
+# Print final report
+print_report() {
+	echo ""
+	echo -e "${BOLD}═══════════════════════════════════════${NC}"
+	echo -e "${BOLD}  Security Posture Summary${NC}"
+	echo -e "${BOLD}═══════════════════════════════════════${NC}"
+	echo ""
+
+	if [[ "$FINDINGS_CRITICAL" -gt 0 ]]; then
+		echo -e "  ${RED}Critical:${NC}  $FINDINGS_CRITICAL"
+	fi
+	if [[ "$FINDINGS_WARNING" -gt 0 ]]; then
+		echo -e "  ${YELLOW}Warnings:${NC}  $FINDINGS_WARNING"
+	fi
+	echo -e "  ${GREEN}Passed:${NC}    $FINDINGS_PASS"
+	echo -e "  ${CYAN}Info/Skip:${NC} $FINDINGS_INFO"
+	echo ""
+
+	local total_issues=$((FINDINGS_CRITICAL + FINDINGS_WARNING))
+	if [[ "$total_issues" -eq 0 ]]; then
+		echo -e "  ${GREEN}${BOLD}Overall: GOOD${NC} — no critical or warning findings"
+	elif [[ "$FINDINGS_CRITICAL" -gt 0 ]]; then
+		echo -e "  ${RED}${BOLD}Overall: CRITICAL${NC} — $FINDINGS_CRITICAL critical issue(s) need attention"
+	else
+		echo -e "  ${YELLOW}${BOLD}Overall: WARNING${NC} — $FINDINGS_WARNING issue(s) to review"
+	fi
+	echo ""
+
+	return 0
+}
+
+# Run all per-repo checks
+run_all_checks() {
+	local repo_path="$1"
+
+	echo -e "${CYAN}"
+	echo "╔═══════════════════════════════════════════════════════════╗"
+	echo "║         Per-Repo Security Posture Assessment             ║"
+	echo "╚═══════════════════════════════════════════════════════════╝"
+	echo -e "${NC}"
+
+	print_info "Repository: $repo_path"
+
+	check_workflow_security "$repo_path"
+	check_branch_protection "$repo_path"
+	check_review_bot_gate "$repo_path"
+	check_dependencies "$repo_path"
+	check_collaborators "$repo_path"
+	check_repo_security "$repo_path"
+	check_sync_pat "$repo_path"
+	print_report
+
+	return 0
+}
