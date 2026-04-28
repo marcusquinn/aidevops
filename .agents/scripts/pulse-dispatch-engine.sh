@@ -503,7 +503,7 @@ _dff_dispatch_with_timeout() {
 		local recommended_output
 		recommended_output=$(dispatch-timing-helper.sh recommend --repo "$repo_slug" 2>/dev/null || echo "")
 		# Output is two lines: timeout_ms and probe_bool
-		local recommended_ms probe_bool
+		local recommended_ms="" probe_bool="false"
 		mapfile -t -n 2 < <(printf '%s\n' "$recommended_output")
 		recommended_ms="${MAPFILE[0]:-}"
 		probe_bool="${MAPFILE[1]:-false}"
