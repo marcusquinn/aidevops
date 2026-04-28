@@ -940,7 +940,7 @@ _dff_reap_pids() {
 #######################################
 _dff_aggregate_outcomes() {
 	local outcomes_file="$1"
-	local successes fails no_worker_failures
+	local successes="" fails="" no_worker_failures=""
 	successes=$(_dff_count_outcomes "$outcomes_file" "success")
 	fails=$(_dff_count_outcomes "$outcomes_file" "fail")
 	# no_worker_process is identified via the reason field embedded in the
