@@ -574,7 +574,7 @@ builtwith_reverse_lookup() {
 	print_info "Querying BuiltWith API for: $technology"
 
 	local encoded_tech
-	encoded_tech=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$technology'))" 2>/dev/null || echo "$technology")
+	encoded_tech=$(TECH="$technology" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ.get('TECH', '')))" 2>/dev/null || echo "$technology")
 
 	local result curl_stderr
 	curl_stderr=$(mktemp)
