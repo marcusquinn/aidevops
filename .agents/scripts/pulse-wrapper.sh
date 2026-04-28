@@ -327,6 +327,20 @@ fi
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
 
+# Cycle-running helpers + bootstrap helpers extracted to two sub-libraries
+# (GH#21311 / t2936-child). Order matters only insofar as
+# pulse-wrapper-config.sh must be sourced first (already done above) so
+# LOGFILE/PULSE_DIR/_PULSE_REFRESHED_THIS_CYCLE are in scope when the
+# cycle library declares its functions. Bash's lazy function resolution
+# handles cross-module calls (e.g. _pulse_handle_self_check →
+# _pulse_execute_self_check) regardless of source order.
+# shellcheck source=./pulse-wrapper-cycle.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-cycle.sh"
+# shellcheck source=./pulse-wrapper-bootstrap.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/pulse-wrapper-bootstrap.sh"
+
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
 	exit 1
@@ -338,163 +352,12 @@ fi
 mkdir -p "$(dirname "$PIDFILE")"
 mkdir -p "$PULSE_DIR"
 
-# Process lifecycle functions (_kill_tree, _force_kill_tree, _get_process_age,
-# _get_pid_cpu, _get_process_tree_cpu) provided by worker-lifecycle-common.sh
-
-#######################################
-# Delta prefetch cache helpers (GH#15286)
-#
-# The cache file is a JSON object keyed by repo slug:
-#   {
-#     "owner/repo": {
-#       "last_prefetch": "2026-04-01T12:00:00Z",
-#       "last_full_sweep": "2026-04-01T00:00:00Z",
-#       "issues": [...],   # full issue list from last full sweep
-#       "prs": [...]       # full PR list from last full sweep
-#     }
-#   }
-#
-# Delta cycle: fetch only items with updatedAt > last_prefetch, merge into
-# cached full list, update last_prefetch timestamp.
-# Full sweep: fetch everything, replace cached list, update both timestamps.
-# Fallback: if delta fetch fails or cache is corrupt, fall back to full fetch.
-#######################################
-
-# _compute_struggle_ratio provided by worker-lifecycle-common.sh
-
-# check_session_count: now provided by worker-lifecycle-common.sh (sourced above).
-# Removed from pulse-wrapper.sh to eliminate the duplicate. The shared version
-# returns the count; callers handle warning logs independently.
-
-#######################################
-# t2433/GH#20071: Refresh a repo from remote before the large-file gate
-# measures it. Without this, stale local checkouts (post-split-PR) cause
-# the gate to fire on pre-split line counts, creating spurious file-size-debt
-# issues every cycle until a worker dispatch triggers a pull independently.
-#
-# Idempotent within a process: uses _PULSE_REFRESHED_THIS_CYCLE (associative
-# array declared at module scope) as a cycle-scoped sentinel keyed by
-# repo_path. The first call for a given path fetches + fast-forwards;
-# subsequent calls in the same process are no-ops. The array is inherited
-# empty by every subshell (dispatch subshell, run_stage_with_timeout fork)
-# so each independent context starts fresh — this is intentional: each
-# context needs at most one pull per repo.
-#
-# Uses --ff-only to avoid catastrophic rebase conflicts in the pulse checkout.
-# Uses git fetch before pull so the local is always in sync with origin/HEAD.
-#
-# GH#17584 context preserved: the original motivation for pulling before
-# worker dispatch (workers close issues as "Invalid — file does not exist"
-# on stale checkouts) is covered here at the EARLIER point — before any
-# gate evaluation — rather than the later worker-launch point.
-#
-# Arguments:
-#   $1 - repo_path: absolute path to the git working tree to refresh
-# Returns: always 0 (failures are logged but never fatal — callers proceed
-#   with current checkout, same as the previous git pull || { warn; } pattern)
-#######################################
-_pulse_refresh_repo() {
-	local repo_path="$1"
-	[[ -n "$repo_path" ]] || return 0
-
-	# Sentinel: already refreshed this repo in this process context.
-	if [[ "${_PULSE_REFRESHED_THIS_CYCLE[$repo_path]+_}" ]]; then
-		return 0
-	fi
-	# Mark immediately so concurrent callers in the same process don't double-pull.
-	_PULSE_REFRESHED_THIS_CYCLE[$repo_path]=1
-
-	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-		echo "[pulse-wrapper] _pulse_refresh_repo: ${repo_path} is not a git work-tree — skipping" >>"$LOGFILE"
-		return 0
-	fi
-
-	git -C "$repo_path" fetch --quiet origin >>"$LOGFILE" 2>&1 || {
-		echo "[pulse-wrapper] _pulse_refresh_repo: git fetch failed for ${repo_path} — proceeding with current checkout" >>"$LOGFILE"
-		return 0
-	}
-	if ! git -C "$repo_path" pull --ff-only --no-rebase >>"$LOGFILE" 2>&1; then
-		# t2865 (GH#20922): pull may fail because of unmerged files (UU state)
-		# or local uncommitted changes that would be overwritten. Try
-		# canonical-recovery (stash + retry pull + pop) before giving up so the
-		# repo doesn't silently degrade across pulse cycles. Recovery is
-		# content-safe (no auto-resolve); on persistent failure it files an
-		# advisory issue and we proceed with the current checkout.
-		echo "[pulse-wrapper] _pulse_refresh_repo: git pull --ff-only failed for ${repo_path} — attempting canonical-recovery" >>"$LOGFILE"
-		if declare -F pulse_canonical_recover >/dev/null 2>&1; then
-			pulse_canonical_recover "$repo_path" >>"$LOGFILE" 2>&1 \
-				|| echo "[pulse-wrapper] _pulse_refresh_repo: canonical-recovery did not heal ${repo_path} — proceeding with current checkout (advisory filed)" >>"$LOGFILE"
-		else
-			echo "[pulse-wrapper] _pulse_refresh_repo: pulse_canonical_recover unavailable — proceeding with current checkout" >>"$LOGFILE"
-		fi
-	fi
-	return 0
-}
-
-run_pulse() {
-	local underfilled_mode="${1:-0}"
-	local underfill_pct="${2:-0}"
-	# trigger_mode: "daily_sweep" uses /pulse-sweep (full edge-case agent);
-	# "stall" and "first_run" use /pulse (lightweight dispatch+merge agent).
-	local trigger_mode="${3:-stall}"
-	local effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
-	if [[ "$underfilled_mode" == "1" ]]; then
-		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT_UNDERFILLED"
-	fi
-	[[ "$underfill_pct" =~ ^[0-9]+$ ]] || underfill_pct=0
-	if [[ "$effective_cold_start_timeout" -gt "$PULSE_COLD_START_TIMEOUT" ]]; then
-		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
-	fi
-
-	local start_epoch
-	start_epoch=$(date +%s)
-	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ) (trigger=${trigger_mode})" >>"$WRAPPER_LOGFILE"
-	echo "[pulse-wrapper] Watchdog cold-start timeout: ${effective_cold_start_timeout}s (underfilled_mode=${underfilled_mode}, underfill_pct=${underfill_pct})" >>"$LOGFILE"
-
-	# Select agent prompt based on trigger mode:
-	#   daily_sweep → /pulse-sweep (full edge-case triage, quality review, mission awareness)
-	#   stall / first_run → /pulse (lightweight dispatch+merge, unblocks the stall faster)
-	# The state is NOT inlined into the prompt — on Linux, execve() enforces
-	# MAX_ARG_STRLEN (128KB per argument) and the state routinely exceeds this,
-	# causing "Argument list too long" on every pulse invocation. The agent
-	# reads the file via its Read tool instead. See: #4257
-	local pulse_command="/pulse"
-	if [[ "$trigger_mode" == "daily_sweep" ]]; then
-		pulse_command="/pulse-sweep"
-	fi
-	local prompt="$pulse_command"
-	if [[ -f "$STATE_FILE" ]]; then
-		prompt="${pulse_command}
-
-Pre-fetched state file: ${STATE_FILE}
-Read this file before proceeding — it contains the current repo/PR/issue state
-gathered by pulse-wrapper.sh BEFORE this session started."
-	fi
-
-	# Run the provider-aware headless wrapper in background.
-	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt" --tier sonnet)
-	if [[ -n "$PULSE_MODEL" ]]; then
-		pulse_cmd+=(--model "$PULSE_MODEL")
-	fi
-	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 &
-
-	local opencode_pid=$!
-	echo "$opencode_pid" >"$PIDFILE"
-
-	echo "[pulse-wrapper] opencode PID: $opencode_pid" >>"$LOGFILE"
-
-	# Run the watchdog loop (checks stale/idle/progress, guards children)
-	_run_pulse_watchdog "$opencode_pid" "$start_epoch" "$effective_cold_start_timeout"
-
-	# Write IDLE sentinel — never delete the PID file (GH#4324).
-	echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
-
-	local end_epoch
-	end_epoch=$(date +%s)
-	local duration=$((end_epoch - start_epoch))
-	echo "[pulse-wrapper] Pulse completed at $(date -u +%Y-%m-%dT%H:%M:%SZ) (ran ${duration}s)" >>"$LOGFILE"
-	return 0
-}
+# Provided by worker-lifecycle-common.sh: _kill_tree, _force_kill_tree,
+# _get_process_age, _get_pid_cpu, _get_process_tree_cpu,
+# _compute_struggle_ratio, check_session_count.
+# Provided by pulse-prefetch.sh (GH#15286): delta prefetch cache helpers.
+# Provided by pulse-wrapper-cycle.sh (GH#21311 / t2936-child):
+# _pulse_refresh_repo, run_pulse.
 
 #######################################
 # Check if the pulse is allowed to run.
@@ -1278,272 +1141,12 @@ _pulse_run_deterministic_pipeline() {
 # Extracted from main() (GH#18689) to reduce function length.
 # Exit code: always 0
 # ---------------------------------------------------------------------------
-_pulse_maybe_run_llm_supervisor() {
-	local skip_llm=false
-	local llm_trigger_mode="stall"
-	if [[ "${PULSE_FORCE_LLM:-0}" != "1" ]] && ! _should_run_llm_supervisor; then
-		skip_llm=true
-		echo "[pulse-wrapper] Skipping LLM supervisor (backlog progressing, daily sweep not due)" >>"$LOGFILE"
-	else
-		if [[ -f "${PULSE_DIR}/llm_trigger_mode" ]]; then
-			llm_trigger_mode=$(cat "${PULSE_DIR}/llm_trigger_mode" 2>/dev/null) || llm_trigger_mode="stall"
-		fi
-		if [[ "${PULSE_FORCE_LLM:-0}" == "1" && "$llm_trigger_mode" == "stall" ]]; then
-			llm_trigger_mode="daily_sweep"
-		fi
-	fi
-
-	if [[ "$skip_llm" == "false" ]]; then
-		# Use a separate LLM lock so only one LLM session runs at a time,
-		# without blocking the deterministic 2-min cycle.
-		local llm_lockdir="${LOCKDIR}.llm"
-		local _llm_lock_acquired=false
-
-		if mkdir "$llm_lockdir" 2>/dev/null; then
-			_llm_lock_acquired=true
-		elif _handle_stale_llm_lock "$llm_lockdir"; then
-			# GH#20613: stale lock reclaimed — we now own it
-			_llm_lock_acquired=true
-		fi
-
-		if [[ "$_llm_lock_acquired" == "true" ]]; then
-			echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
-			# shellcheck disable=SC2064
-			trap "rm -rf '$llm_lockdir' 2>/dev/null; release_instance_lock" EXIT
-
-			local underfill_output
-			underfill_output=$(_compute_initial_underfill)
-			local initial_underfilled_mode initial_underfill_pct
-			initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
-			initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
-
-			local pulse_start_epoch
-			pulse_start_epoch=$(date +%s)
-			run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode"
-			local pulse_end_epoch
-			pulse_end_epoch=$(date +%s)
-			local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
-
-			date +%s >"${PULSE_DIR}/last_llm_run_epoch"
-			_run_early_exit_recycle_loop "$pulse_duration"
-			rm -rf "$llm_lockdir" 2>/dev/null || true
-		fi
-	fi
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_handle_self_check
-#
-# Phase 0 (t1963, GH#18357): --self-check short-circuit for CI, pre-edit
-# verification, and post-install smoke testing. Runs before any lock,
-# state mutation, or side effect. Sources are already in place (the
-# wrapper sources its helpers before main() is called), so by the time
-# control reaches here every function the wrapper claims to define has
-# been parsed.
-#
-# Scans "$@" for --self-check (GH#18614: position-independent).
-# Extracted from main() (GH#18689) to reduce function length.
-#
-# Returns:
-#   0 — --self-check found and all symbols verified (self-check passed)
-#   1 — --self-check found but one or more symbols missing (self-check failed)
-#   2 — --self-check not present; caller should continue normally
-# ---------------------------------------------------------------------------
-_pulse_handle_self_check() {
-	local _sc_flag=0
-	local _arg
-	for _arg in "$@"; do
-		if [[ "$_arg" == "--self-check" ]]; then
-			_sc_flag=1
-			break
-		fi
-	done
-	unset _arg
-	[[ "$_sc_flag" -eq 0 ]] && return 2
-	_pulse_execute_self_check
-	return $?
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_setup_dry_run_mode
-#
-# Phase 0 (t1963, GH#18357): --dry-run flag sets PULSE_DRY_RUN=1 so the
-# cycle can short-circuit before touching destructive operations. This
-# smoke-tests bootstrap, sourcing, config validation, lock acquisition,
-# and the main() prelude without dispatching workers, merging PRs,
-# writing GitHub state, or removing worktrees.
-#
-# Phase 0 scope is narrow by design: --dry-run runs up to (but not
-# through) _run_preflight_stages. Later phases may widen --dry-run by
-# shimming individual destructive call sites with a _dry_run_log() helper.
-#
-# USAGE NOTE: --dry-run still runs acquire_instance_lock, session_gate,
-# and dedup. For CI/smoke tests, run in a sandboxed $HOME:
-#   SANDBOX=$(mktemp -d)
-#   HOME="$SANDBOX/home" PULSE_JITTER_MAX=0 pulse-wrapper.sh --dry-run
-#
-# Scans "$@" for --dry-run (GH#18614: position-independent).
-# Extracted from main() (GH#18689) to reduce function length.
-# Exit code: always 0
-# ---------------------------------------------------------------------------
-_pulse_setup_dry_run_mode() {
-	local _dr_arg
-	for _dr_arg in "$@"; do
-		if [[ "$_dr_arg" == "--dry-run" ]]; then
-			export PULSE_DRY_RUN=1
-			break
-		fi
-	done
-	unset _dr_arg
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _pulse_setup_canary_mode
-#
-# Phase 0 (GH#18790): --canary flag sets PULSE_CANARY_MODE=1 so main()
-# can short-circuit after acquire_instance_lock. This exercises:
-#   1. Script sourcing under set -euo pipefail (all top-level declarations)
-#   2. _pulse_handle_self_check — the exact function GH#18770 broke
-#   3. acquire_instance_lock — the next downstream function
-# and exits 0 without entering the pulse loop, dispatching workers, or
-# making any GitHub API calls.
-#
-# Scans "$@" for --canary (position-independent).
-# Exit code: always 0
-# ---------------------------------------------------------------------------
-_pulse_setup_canary_mode() {
-	local _can_arg
-	for _can_arg in "$@"; do
-		if [[ "$_can_arg" == "--canary" ]]; then
-			export PULSE_CANARY_MODE=1
-			break
-		fi
-	done
-	unset _can_arg
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _detect_invocation_source (GH#20580)
-#
-# Detects how pulse-wrapper.sh was invoked. Writes the detected source into
-# the caller-scoped variable named by the first argument (default:
-# _invocation_source). Order: most-specific check first.
-#
-# Sources:
-#   lifecycle-helper  AIDEVOPS_PULSE_SOURCE=lifecycle-helper (set by _start())
-#   launchd           PPID=1 or parent command contains "launchd"
-#   cron              parent command contains "cron"
-#   manual            stdin is a TTY or PULSE_MANUAL=1
-#   unknown           none of the above
-# ---------------------------------------------------------------------------
-_detect_invocation_source() {
-	local _parent_cmd
-	_parent_cmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
-
-	if [[ "${AIDEVOPS_PULSE_SOURCE:-}" == "lifecycle-helper" ]]; then
-		_invocation_source="lifecycle-helper"
-	elif [[ "$PPID" -eq 1 ]] || [[ "$_parent_cmd" == *"launchd"* ]]; then
-		_invocation_source="launchd"
-	elif [[ "$_parent_cmd" == *"cron"* ]]; then
-		_invocation_source="cron"
-	elif [[ "${PULSE_MANUAL:-0}" == "1" ]] || [[ -t 0 ]]; then
-		_invocation_source="manual"
-	else
-		_invocation_source="unknown"
-	fi
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# _record_invocation_source (GH#20580)
-#
-# Logs the invocation source to the pulse log and increments the per-source
-# integer counter in pulse-stats.json under the top-level
-# "invocation_sources" object, e.g.:
-#   {"counters":{...},"invocation_sources":{"launchd":5,"manual":1,...}}
-#
-# Args:
-#   $1 - invocation source string (launchd/cron/manual/lifecycle-helper/unknown)
-#
-# Non-fatal: any jq or file failure is ignored — never blocks the pulse.
-# ---------------------------------------------------------------------------
-_record_invocation_source() {
-	local source="${1:-unknown}"
-	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
-	local log_dest="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
-
-	# Log entry (ISO-8601 UTC to match pulse-logging.sh conventions)
-	local _ts _pcmd
-	_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
-	_pcmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
-	printf '[%s] pulse-wrapper invoked: pid=%d ppid=%d source=%s parent_cmd=%s\n' \
-		"$_ts" "$$" "$PPID" "$source" "$_pcmd" \
-		>>"$log_dest" 2>/dev/null || true
-
-	# Increment invocation_sources.{source} as a plain integer counter.
-	# Uses tmp-file + mv for atomicity (same pattern as pulse_stats_increment).
-	local _dir _tmp
-	_dir="$(dirname "$stats_file")"
-	[[ -d "$_dir" ]] || mkdir -p "$_dir" 2>/dev/null || return 0
-	[[ -f "$stats_file" ]] || printf '{"counters":{}}\n' >"$stats_file" 2>/dev/null || return 0
-
-	# t2997: drop .json — XXXXXX must be at end for BSD mktemp.
-	_tmp=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-src-XXXXXX") || return 0
-	jq --arg src "$source" \
-		'.invocation_sources[$src] = ((.invocation_sources[$src] // 0) + 1)' \
-		"$stats_file" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
-	mv "$_tmp" "$stats_file" 2>/dev/null || rm -f "$_tmp"
-	return 0
-}
-
-# t2994: cache priming with staleness gate. Called from main() once per
-# launchd invocation, but only fires if the sentinel is missing or older
-# than $_prime_max_age seconds (default 1800 = 30 min, override via
-# AIDEVOPS_PULSE_PRIME_MAX_AGE). Steady-state launchd respawns (every 120s)
-# hit a fresh sentinel and skip — prefetch_state inside the cycle keeps
-# caches warm naturally. Post-deploy first invocations and long quiet
-# periods trigger an actual prime. Non-fatal — a prime failure must not
-# abort the cycle. Honours AIDEVOPS_SKIP_CACHE_PRIME=1 for debug.
-#
-# Moved here from pulse-lifecycle-helper.sh::_start (t2992) because
-# launchd's KeepAlive bypasses the helper — auto-respawn within the
-# helper's stop→sleep→start window means _start's _is_running early-return
-# skips priming entirely, and the original t2992 hook never fired during
-# launchd-managed restarts (the canonical path on macOS).
-_pulse_prime_caches_if_stale() {
-	[[ "${AIDEVOPS_SKIP_CACHE_PRIME:-0}" == "1" ]] && return 0
-
-	local _prime_helper=""
-	local _prime_sentinel=""
-	local _prime_max_age=""
-	_prime_helper="${SCRIPT_DIR}/pulse-cache-prime.sh"
-	_prime_sentinel="${HOME}/.aidevops/cache/pulse-cache-prime-last-run"
-	_prime_max_age="${AIDEVOPS_PULSE_PRIME_MAX_AGE:-1800}"
-	[[ "$_prime_max_age" =~ ^[0-9]+$ ]] || _prime_max_age=1800
-
-	mkdir -p "$(dirname "$_prime_sentinel")"
-	[[ ! -x "$_prime_helper" ]] && return 0
-
-	local _should_prime=0
-	if [[ ! -f "$_prime_sentinel" ]]; then
-		_should_prime=1
-	else
-		local _now_epoch="" _stamp_epoch="" _age_s=""
-		_now_epoch=$(date +%s 2>/dev/null)
-		_stamp_epoch=$(stat -f %m "$_prime_sentinel" 2>/dev/null || stat -c %Y "$_prime_sentinel" 2>/dev/null)
-		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
-		[[ "$_age_s" -gt "$_prime_max_age" ]] && _should_prime=1
-	fi
-
-	if [[ "$_should_prime" == "1" ]]; then
-		printf '[pulse-wrapper] Pre-warming pulse caches (t2992 + t2994 stale-gate)...\n' >&2
-		"$_prime_helper" >/dev/null 2>&1 || printf '[pulse-wrapper] WARN: cache prime returned non-zero (non-fatal — first cycle may be slow)\n' >&2
-	fi
-	return 0
-}
+# _pulse_maybe_run_llm_supervisor and _pulse_prime_caches_if_stale
+# provided by pulse-wrapper-cycle.sh.
+# _pulse_handle_self_check, _pulse_setup_dry_run_mode,
+# _pulse_setup_canary_mode, _detect_invocation_source, and
+# _record_invocation_source provided by pulse-wrapper-bootstrap.sh
+# (GH#21311 / t2936-child).
 
 main() {
 	# GH#18670: declare this process as headless BEFORE anything else runs
@@ -1858,40 +1461,13 @@ ENRICHMENT_MAX_PER_CYCLE="${ENRICHMENT_MAX_PER_CYCLE:-2}"
 #
 # Exit code: always 0
 #######################################
-sync_todo_refs_for_repo() {
-	local repo_slug="$1"
-	local repo_path="$2"
-	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
-
-	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" 2>&1 || true
-	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
-		git -C "$repo_path" add TODO.md &&
-			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
-			git -C "$repo_path" push
-	} 2>/dev/null || true
-	return 0
-}
+# sync_todo_refs_for_repo and _pulse_is_sourced provided by
+# pulse-wrapper-cycle.sh (GH#21311 / t2936-child).
 
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)
 # without triggering the full pulse lifecycle.
-#
-# Shell-portable source detection (GH#3931):
-#   bash: BASH_SOURCE[0] differs from $0 when sourced
-#   zsh:  BASH_SOURCE is undefined; use ZSH_EVAL_CONTEXT instead
-#         (contains "file" when sourced, "toplevel" when executed)
-_pulse_is_sourced() {
-	if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
-		[[ "${BASH_SOURCE[0]}" != "${0}" ]]
-	elif [[ -n "${ZSH_EVAL_CONTEXT:-}" ]]; then
-		[[ ":${ZSH_EVAL_CONTEXT}:" == *":file:"* ]]
-	else
-		return 1
-	fi
-}
 if ! _pulse_is_sourced; then
 	main "$@"
 fi
