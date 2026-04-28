@@ -3440,7 +3440,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3001 Add gh-status-helper for incident detection + incident recovery runbook #auto-dispatch #enhancement ref:GH#21431 pr:#21432 completed:2026-04-27
 
-- [ ] t3002 pulse-wrapper singleton lock fails across launchd / aidevops-update concurrency #auto-dispatch #bug #pulse ref:GH#21433
+- [x] t3002 pulse-wrapper singleton lock fails across launchd / aidevops-update concurrency #auto-dispatch #bug #pulse ref:GH#21433 pr:#21437 completed:2026-04-28
 
 - [x] t3003 adaptive per-candidate dispatch timeout based on rolling-window measurement #auto-dispatch #bug #pulse ref:GH#21434 pr:#21435 completed:2026-04-28
 
