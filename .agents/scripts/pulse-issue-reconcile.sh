@@ -1508,6 +1508,11 @@ reconcile_issues_single_pass() {
 
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
+		# GH#21470: per-slug timing so slow repos are identifiable in the
+		# substage timing log. The _log_substage_timing helper (pulse-watchdog.sh)
+		# writes to PULSE_STAGE_TIMINGS_LOG with the same TSV format as outer
+		# run_stage_with_timeout records.
+		local _slug_start=$SECONDS
 
 		# t2984: per-slug budget gate (cheap — runs once per repo, ~8 times/cycle)
 		if [[ "$_t2984_budget" -gt 0 ]] && [[ "$_t2984_start_ts" -gt 0 ]]; then
@@ -1684,6 +1689,10 @@ reconcile_issues_single_pass() {
 				fi
 			fi
 		done <<< "$issues_tsv"
+		# GH#21470: log per-repo elapsed time so slow slugs are identifiable.
+		# Slash in slug would break log parsing; replace with underscore.
+		local _slug_safe="${slug//\//_}"
+		_log_substage_timing "substage:reconcile_sp/repo:${_slug_safe}" "$_slug_start" 0
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
 
 	# t2838: persist last-run epoch when backfill actually ran this cycle.

@@ -1574,26 +1574,46 @@ _preflight_cleanup_and_ledger() {
 # and priority allocations are current.
 #######################################
 _preflight_capacity_and_labels() {
+	# GH#21470: per-substage timing so slow callers are identifiable in
+	# pulse-stage-timings.log. Each _log_substage_timing call writes one TSV
+	# record with the same format as run_stage_with_timeout outer records.
+	local _ss0=$SECONDS
 	calculate_max_workers
+	_log_substage_timing "substage:cap_labels/calculate_max_workers" "$_ss0" 0
+
+	local _ss1=$SECONDS
 	calculate_priority_allocations
+	_log_substage_timing "substage:cap_labels/calculate_priority_allocations" "$_ss1" 0
+
+	local _ss2=$SECONDS
 	local _session_ct
 	_session_ct=$(check_session_count)
 	if [[ "${_session_ct:-0}" -gt "$SESSION_COUNT_WARN" ]]; then
 		echo "[pulse-wrapper] Session warning: $_session_ct interactive sessions open (threshold: $SESSION_COUNT_WARN). Each consumes 100-440MB + language servers. Consider closing unused tabs." >>"$LOGFILE"
 	fi
+	_log_substage_timing "substage:cap_labels/check_session_count" "$_ss2" 0
 
 	# Re-evaluate needs-consolidation labels before dispatch. Issues labeled
 	# by an earlier (less precise) filter may no longer trigger under the
 	# current filter. Auto-clearing here makes them dispatchable immediately
 	# instead of stuck forever behind a label that list_dispatchable_issue_candidates_json
 	# filters out (needs-* exclusion at line 6703).
+	local _ss3=$SECONDS
 	_reevaluate_consolidation_labels
+	_log_substage_timing "substage:cap_labels/reevaluate_consolidation_labels" "$_ss3" 0
+
 	# t1982: Backfill pass for stuck needs-consolidation issues that never
 	# got a consolidation-task child created (pre-t1982 dispatches just
 	# labelled and returned). Dispatches a child retroactively so the
 	# parent can actually be consolidated instead of sitting forever.
+	local _ss4=$SECONDS
 	_backfill_stale_consolidation_labels
+	_log_substage_timing "substage:cap_labels/backfill_consolidation_labels" "$_ss4" 0
+
+	local _ss5=$SECONDS
 	_reevaluate_simplification_labels
+	_log_substage_timing "substage:cap_labels/reevaluate_simplification_labels" "$_ss5" 0
+
 	return 0
 }
 
@@ -1634,8 +1654,13 @@ _preflight_early_dispatch() {
 # stuck states, and auto-approves maintainer-created issues.
 #######################################
 _preflight_ownership_reconcile() {
+	# GH#21470: per-substage timing for the unwrapped prefetch_contribution_watch
+	# call. The three run_stage_with_timeout calls below are already individually
+	# timed by that wrapper; prefetch_contribution_watch was the blind spot.
+	local _ss0=$SECONDS
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	prefetch_contribution_watch
+	_log_substage_timing "substage:ownership_reconcile/prefetch_contribution_watch" "$_ss0" 0
 
 	# Ensure active labels reflect ownership to prevent multi-worker overlap.
 	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true

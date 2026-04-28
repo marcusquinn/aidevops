@@ -255,6 +255,42 @@ run_stage_with_timeout() {
 }
 
 #######################################
+# Log per-substage timing to PULSE_STAGE_TIMINGS_LOG and LOGFILE. (GH#21470)
+#
+# Used inside functions that run under run_stage_with_timeout (i.e. in a
+# backgrounded subshell). Captures the elapsed time between a $SECONDS
+# snapshot taken before the substage call and the current $SECONDS value.
+#
+# Usage:
+#   local _ss0=$SECONDS
+#   some_function
+#   _log_substage_timing "substage:parent_name/substage_name" "$_ss0" "$?"
+#
+# Writes the same TSV format as run_stage_with_timeout so both outer stage
+# and substage records land in one log and can be analysed uniformly:
+#   ISO-timestamp <TAB> stage_name <TAB> duration_s <TAB> exit_code <TAB> pid
+#
+# Returns: 0 (always — never fails the caller)
+#######################################
+_log_substage_timing() {
+	local substage_name="$1"
+	local start_secs="${2:-0}"
+	local exit_code="${3:-0}"
+	local duration=$(( SECONDS - start_secs ))
+	[[ "$duration" =~ ^[0-9]+$ ]] || duration=0
+	echo "[pulse-wrapper] Substage: ${substage_name} (${exit_code}, ${duration}s)" >>"${LOGFILE:-/dev/null}"
+	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
+		printf '%s\t%s\t%d\t%d\t%d\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"$substage_name" \
+			"$duration" \
+			"$exit_code" \
+			"$$" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
 # Run the pulse — with internal watchdog timeout (t1397, t1398, t1398.3, GH#2958)
 #
 # The pulse runs until opencode exits naturally. A watchdog loop checks
