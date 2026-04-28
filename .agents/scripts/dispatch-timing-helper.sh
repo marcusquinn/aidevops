@@ -284,22 +284,27 @@ _dt_cmd_recommend() {
 }
 
 # Extract value of $field from a single JSONL record on stdin.
-# Uses a simple regex-based extractor — avoids jq for hot-path speed.
+# Uses grep -oE to isolate the specific key-value pair, which avoids the
+# greedy-prefix issue where sed's .* can match a field name that appears as
+# a substring inside a preceding field's value.  Bash 3.2 compatible — no
+# jq dependency.
 # Args: $1 = field name (string-valued or numeric).
 _dt_json_field() {
 	local field="$1"
 	local line
 	IFS= read -r line
-	# Match "field":"value" (string) OR "field":NUMBER (numeric)
+	# Match "field":"value" (string) OR "field":NUMBER (numeric).
+	# grep -oE emits only the matching text; tail -1 handles the rare
+	# duplicate-key edge case by preferring the last occurrence.
 	# Try string first
 	local val
-	val=$(printf '%s' "$line" | sed -nE "s/.*\"${field}\":\"([^\"]*)\".*/\1/p")
+	val=$(printf '%s' "$line" | grep -oE "\"${field}\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" | tail -1 | cut -d'"' -f4)
 	if [[ -n "$val" ]]; then
 		echo "$val"
 		return 0
 	fi
 	# Try numeric
-	val=$(printf '%s' "$line" | sed -nE "s/.*\"${field}\":([0-9]+).*/\1/p")
+	val=$(printf '%s' "$line" | grep -oE "\"${field}\"[[:space:]]*:[[:space:]]*[0-9]+" | tail -1 | cut -d: -f2 | tr -d ' ')
 	echo "$val"
 	return 0
 }
