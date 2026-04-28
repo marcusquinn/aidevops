@@ -733,7 +733,7 @@ _is_assigned_check_cost_budget() {
 
 	local _t2007_tier
 	_t2007_tier=$(printf '%s' "$meta_json" |
-		jq -r '[(.labels // [])[].name] | map(select(startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
+		jq -r '[(.labels // [])[].name] | map(select(. != null and startswith("tier:"))) | .[0] // "tier:standard"' 2>/dev/null)
 	[[ -z "$_t2007_tier" || "$_t2007_tier" == "null" ]] && _t2007_tier="tier:standard"
 
 	local _t2007_signal _t2007_rc=0
@@ -1270,7 +1270,7 @@ has_dispatch_comment() {
 	# Find the most recent dispatch comment (newest first)
 	local last_dispatch_json
 	last_dispatch_json=$(printf '%s' "$comments_json" | jq -c '
-		[.[] | select(.body_start | startswith("Dispatching worker"))]
+		[.[] | select((.body_start // "") | startswith("Dispatching worker"))]
 		| sort_by(.created_at) | reverse | first // empty
 	' 2>/dev/null) || last_dispatch_json=""
 
