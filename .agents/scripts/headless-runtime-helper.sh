@@ -1471,7 +1471,7 @@ _cmd_run_prepare() {
 	# WORKER_ISSUE_NUMBER being set, a dispatcher bug bypassed pre-creation.
 	# Abort immediately rather than proceeding in the canonical repo on main.
 	if [[ -n "${WORKER_ISSUE_NUMBER:-}" && -z "${WORKER_WORKTREE_PATH:-}" ]]; then
-		printf '[fatal] WORKER_WORKTREE_PATH unset — pre-creation skipped or failed silently; aborting per t2980 Fix C\n' >&2
+		printf '[fatal] WORKER_WORKTREE_PATH unset — pre-creation skipped or failed silently; aborting per t2983 Fix C\n' >&2
 		return 1
 	fi
 
