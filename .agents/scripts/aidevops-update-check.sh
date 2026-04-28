@@ -513,7 +513,7 @@ _check_hotfix_available() {
 
 	# Fetch the latest hotfix tag from the remote repo
 	local latest_hotfix_tag latest_hotfix_version
-	latest_hotfix_tag=$(gh api "repos/${slug}/tags" --jq '[.[] | select(.name | startswith("hotfix-v"))] | sort_by(.name) | last | .name // empty' 2>/dev/null || echo "")
+	latest_hotfix_tag=$(gh api "repos/${slug}/tags" --jq '[.[] | select((.name // "") | startswith("hotfix-v"))] | sort_by(.name) | last | .name // empty' 2>/dev/null || echo "")
 
 	if [[ -z "$latest_hotfix_tag" ]]; then
 		echo ""

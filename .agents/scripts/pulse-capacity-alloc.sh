@@ -432,7 +432,7 @@ _count_dispatchable_product_repos() {
 				pr_json="[]"
 			fi
 			rm -f "$pr_alloc_err"
-			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select(.createdAt | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
+			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select((.createdAt // "") | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
 			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
 				dispatchable=$((dispatchable + 1))

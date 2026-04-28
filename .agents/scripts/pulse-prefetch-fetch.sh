@@ -292,7 +292,7 @@ _prefetch_repo_daily_cap() {
 	rm -f "$daily_cap_err"
 	local daily_pr_count
 	daily_pr_count=$(echo "$daily_cap_json" | jq --arg today "$today_utc" \
-		'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
+		'[.[] | select((.createdAt // "") | startswith($today))] | length') || daily_pr_count=0
 	[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 	local daily_pr_remaining=$((DAILY_PR_CAP - daily_pr_count))
 	if [[ "$daily_pr_remaining" -lt 0 ]]; then

@@ -135,7 +135,7 @@ _backfill_priority_labels() {
 	issues_to_label=$(gh issue list --repo "$repo_slug" \
 		--label "quality-debt" --state open --limit 500 \
 		--json number,title,labels \
-		--jq '.[] | select([.labels[].name] | any(startswith("priority:")) | not) | "\(.number)|\(.title)"' ||
+		--jq '.[] | select([.labels[].name // ""] | any(startswith("priority:")) | not) | "\(.number)|\(.title)"' ||
 		echo "")
 
 	[[ -z "$issues_to_label" ]] && return 0
@@ -530,7 +530,7 @@ _create_or_append_file_issue() {
 	local existing_file_issue=""
 	if [[ "$file" != "general" ]]; then
 		existing_file_issue=$(echo "$existing_open_issues_json" | jq -r --arg f "$file" \
-			'[.[] | select(.title | startswith("quality-debt: \($f) —"))] | .[0].number // empty' ||
+			'[.[] | select((.title // "") | startswith("quality-debt: \($f) —"))] | .[0].number // empty' ||
 			echo "")
 	fi
 
