@@ -1,0 +1,604 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# Interactive Session Commands -- claim, lockdown, unlock, release, status, write-stamp
+# =============================================================================
+# Core subcommand implementations for interactive issue ownership.
+# Extracted from interactive-session-helper.sh (GH#21320).
+#
+# Usage: source "${SCRIPT_DIR}/interactive-session-helper-commands.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (set_issue_status, gh_issue_comment)
+#   - interactive-session-helper-stamp.sh (_isc_write_stamp, _isc_delete_stamp, _isc_post_claim_comment)
+#   - Logging/utility functions from orchestrator (_isc_info, _isc_warn, _isc_err,
+#     _isc_gh_reachable, _isc_current_user, _isc_has_in_review, _isc_has_label,
+#     _isc_carve_out_required, _isc_cmd_help)
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_ISC_COMMANDS_LIB_LOADED:-}" ]] && return 0
+_ISC_COMMANDS_LIB_LOADED=1
+
+# Defensive SCRIPT_DIR fallback
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
+
+# -----------------------------------------------------------------------------
+# Subcommand: claim
+# -----------------------------------------------------------------------------
+# Apply status:in-review, self-assign, and write a stamp.
+#
+# SCOPE: blocks pulse DISPATCH only. Does NOT block enrich, completion-sweep,
+# or other non-dispatch pulse operations that modify issue state. For full
+# insulation from all pulse paths, use `lockdown` instead. (GH#19861)
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--worktree PATH] = optional worktree path to record in the stamp
+#   [--implementing] = opt in to claim an `auto-dispatch`-tagged issue
+#                      that the caller intends to implement themselves.
+#                      Without this flag, the helper refuses to claim
+#                      auto-dispatch issues so the pulse can dispatch a
+#                      worker (see auto-dispatch carve-out below).
+#
+# Auto-dispatch carve-out (GH#20946):
+#   Calling claim on an `auto-dispatch`-tagged issue WITHOUT `--implementing`
+#   is a no-op — it warns and exits 0. Three creation-time entry points already
+#   skip self-assign on auto-dispatch (t2218, t2132, t2157/t2406); this probe
+#   extends the same invariant to the manual `claim` subcommand. Without the
+#   probe, claim would create the (origin:interactive + assignee + status:in-review)
+#   combination that `_has_active_claim` in dispatch-dedup-helper.sh treats as an
+#   active claim, permanently blocking pulse dispatch (t1996/GH#18352).
+#
+#   `parent-task` issues are exempt from the probe — they're decomposition
+#   trackers the maintainer needs to own, and `parent-task` already blocks
+#   dispatch via `PARENT_TASK_BLOCKED` upstream of the auto-dispatch path.
+#
+#   Use `--implementing` when the AGENTS.md "Implementing a #auto-dispatch
+#   task interactively" mandate applies — i.e. when the agent legitimately
+#   intends to take the issue itself instead of letting a worker pick it up.
+#
+# Behaviour:
+#   - Offline gh: warn-and-continue (exit 0). A collision with a pulse worker
+#     is harmless — the interactive work naturally becomes its own issue/PR.
+#   - Idempotent: re-calling on an already-claimed issue refreshes the stamp
+#     timestamp but does not re-transition the label (saves an API round-trip).
+#   - Non-blocking on gh failures: best-effort label transition; all gh
+#     errors are swallowed so the caller's interactive workflow never stalls.
+#
+# Exit: 0 always (warn-and-continue contract).
+_isc_cmd_claim() {
+	local issue="" slug="" worktree_path="" implementing=0
+
+	# Parse positional + flags
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--worktree)
+			worktree_path="${2:-}"
+			shift 2
+			;;
+		--worktree=*)
+			worktree_path="${arg#--worktree=}"
+			shift
+			;;
+		--implementing)
+			implementing=1
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "claim: <issue> and <slug> are required"
+		_isc_err "usage: interactive-session-helper.sh claim <issue> <slug> [--worktree PATH] [--implementing]"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "claim: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Offline gate — warn and exit 0 so the caller continues
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline or not authenticated — skipping claim on #$issue ($slug)"
+		_isc_warn "a collision with a worker is harmless; the interactive work will become its own issue/PR"
+		return 0
+	fi
+
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — skipping claim on #$issue"
+		return 0
+	fi
+
+	# Idempotency: if already in-review, refresh stamp and exit. The `if`
+	# conditional consumes any non-zero return so set -e doesn't propagate
+	# rc=2 (lookup failed) up the call stack — see _isc_has_in_review header
+	# for the full set -e foot-gun (GH#18770/GH#18784/GH#18786 sibling class).
+	if _isc_has_in_review "$issue" "$slug"; then
+		_isc_info "claim: #$issue already has status:in-review — refreshing stamp"
+		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
+		return 0
+	fi
+
+	# Auto-dispatch carve-out (GH#20946): refuse to claim auto-dispatch issues
+	# unless --implementing was passed or the issue is also a parent-task.
+	# `_isc_carve_out_required` does both label checks in one gh round-trip and
+	# fails OPEN on rc=2 (lookup failed) — the `&&` short-circuit only enters
+	# the skip branch on rc=0, so rc=1 (no carve-out) and rc=2 (lookup failed)
+	# both fall through to the normal claim path. See PR #20977 review thread
+	# (augmentcode rc=2 + gemini consolidation findings) for context.
+	if [[ $implementing -eq 0 ]] && _isc_carve_out_required "$issue" "$slug"; then
+		_isc_warn "claim: #$issue carries 'auto-dispatch' without 'parent-task' — skipping to avoid permanent dispatch block (t2218 invariant; GH#20946)"
+		_isc_warn "if you intend to implement #$issue yourself instead of letting a worker pick it up, re-run with: claim $issue $slug --implementing"
+		return 0
+	fi
+
+	# Transition to in-review with atomic self-assign. Uses set_issue_status
+	# from shared-constants.sh which removes all sibling core status labels
+	# in the same gh call — preserves the t2033 mutual-exclusivity invariant.
+	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
+		_isc_info "claim: #$issue in $slug → status:in-review + assigned $user"
+		_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
+		# Post a claim comment for audit trail visibility (like worker dispatch
+		# comments but for interactive sessions). Best-effort — swallow errors.
+		_isc_post_claim_comment "$issue" "$slug" "$user" "$worktree_path"
+		return 0
+	fi
+
+	# Fallback: gh failed. Warn but don't block the caller.
+	_isc_warn "claim: gh failed on #$issue — continuing without lock (collision is harmless)"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: lockdown (GH#19861)
+# -----------------------------------------------------------------------------
+# Stricter protection than `claim`. Applies ALL of:
+#   1. `no-auto-dispatch` label — blocks the pulse enrich path from modifying
+#      issue state and prevents any auto-dispatch.
+#   2. `status:in-review` + self-assignment — blocks pulse dispatch (same as claim).
+#   3. GitHub conversation lock — prevents non-collaborator edits.
+#   4. Audit-trail comment — visible marker explaining the lockdown.
+#   5. Crash-recovery stamp — same as claim.
+#
+# Use this when investigating a pulse bug or when you need maximum insulation
+# from ALL pulse operations, not just dispatch.
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--worktree PATH] = optional worktree path to record in the stamp
+#
+# Exit: 0 always (warn-and-continue contract).
+_isc_cmd_lockdown() {
+	local issue="" slug="" worktree_path=""
+
+	# Parse positional + flags
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--worktree)
+			worktree_path="${2:-}"
+			shift 2
+			;;
+		--worktree=*)
+			worktree_path="${arg#--worktree=}"
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "lockdown: <issue> and <slug> are required"
+		_isc_err "usage: interactive-session-helper.sh lockdown <issue> <slug> [--worktree PATH]"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "lockdown: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Offline gate
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline or not authenticated — skipping lockdown on #$issue ($slug)"
+		return 0
+	fi
+
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — skipping lockdown on #$issue"
+		return 0
+	fi
+
+	# Step 1: Apply status:in-review + self-assign (same as claim)
+	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → status:in-review + assigned $user"
+	else
+		_isc_warn "lockdown: status transition failed on #$issue — continuing"
+	fi
+
+	# Step 2: Apply no-auto-dispatch label (blocks enrich + dispatch paths)
+	if gh issue edit "$issue" --repo "$slug" --add-label "no-auto-dispatch" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → no-auto-dispatch label applied"
+	else
+		_isc_warn "lockdown: could not apply no-auto-dispatch label on #$issue"
+	fi
+
+	# Step 3: Lock the conversation
+	if gh issue lock "$issue" --repo "$slug" --reason "resolved" >/dev/null 2>&1; then
+		_isc_info "lockdown: #$issue → conversation locked"
+	else
+		_isc_warn "lockdown: could not lock conversation on #$issue — continuing"
+	fi
+
+	# Step 4: Write crash-recovery stamp
+	_isc_write_stamp "$issue" "$slug" "$worktree_path" "$user"
+
+	# Step 5: Post audit-trail comment
+	local body
+	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
+	body="$(printf '<!-- lockdown-marker -->\n**Lockdown applied** by `%s` (interactive session).\n\nThis issue is under active human investigation. All pulse operations (dispatch, enrich, completion-sweep) are blocked via `no-auto-dispatch` + `status:in-review` + conversation lock.\n\nTo release: `interactive-session-helper.sh unlock %s %s`' "$user" "$issue" "$slug")"
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "lockdown: audit comment failed on #$issue — continuing"
+	}
+
+	_isc_info "lockdown: #$issue in $slug fully locked down"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: unlock (GH#19861)
+# -----------------------------------------------------------------------------
+# Reverse a lockdown: remove no-auto-dispatch, transition to available,
+# unlock conversation, delete stamp.
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--unassign] = also remove self from assignees
+#
+# Exit: 0 always.
+_isc_cmd_unlock() {
+	local issue="" slug="" unassign=0
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--unassign)
+			unassign=1
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "unlock: <issue> and <slug> are required"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "unlock: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Delete local stamp regardless of gh state
+	_isc_delete_stamp "$issue" "$slug"
+
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline — stamp deleted locally, lockdown unchanged on #$issue"
+		return 0
+	fi
+
+	# Step 1: Unlock conversation
+	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → conversation unlocked"
+	else
+		_isc_warn "unlock: could not unlock conversation on #$issue — continuing"
+	fi
+
+	# Step 2: Remove no-auto-dispatch label
+	if gh issue edit "$issue" --repo "$slug" --remove-label "no-auto-dispatch" >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → no-auto-dispatch label removed"
+	else
+		_isc_warn "unlock: could not remove no-auto-dispatch label on #$issue"
+	fi
+
+	# Step 3: Transition status:in-review -> status:available
+	local -a extra_flags=()
+	if [[ $unassign -eq 1 ]]; then
+		local user
+		user=$(_isc_current_user)
+		if [[ -n "$user" ]]; then
+			extra_flags+=(--remove-assignee "$user")
+		fi
+	fi
+
+	if set_issue_status "$issue" "$slug" "available" ${extra_flags[@]+"${extra_flags[@]}"} >/dev/null 2>&1; then
+		_isc_info "unlock: #$issue → status:available"
+	else
+		_isc_warn "unlock: status transition failed on #$issue"
+	fi
+
+	# Step 4: Post audit comment
+	local user
+	user=$(_isc_current_user) || true
+	local body
+	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
+	body="$(printf '<!-- unlock-marker -->\n**Lockdown released** by `%s`. Issue returned to normal pulse operation.' "${user:-unknown}")"
+	gh_issue_comment "$issue" --repo "$slug" --body "$body" >/dev/null 2>&1 || {
+		_isc_warn "unlock: audit comment failed on #$issue — continuing"
+	}
+
+	_isc_info "unlock: #$issue in $slug fully unlocked"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: release
+# -----------------------------------------------------------------------------
+# Transition status:in-review -> status:available and delete the stamp.
+#
+# Arguments:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   [--unassign] = also remove self from assignees
+#
+# Behaviour:
+#   - Idempotent: no-op when the label is not set.
+#   - Offline gh: warn and exit 0. The stamp is still deleted so local state
+#     matches the caller's intent.
+#
+# Exit: 0 always.
+_isc_cmd_release() {
+	local issue="" slug="" unassign=0
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--unassign)
+			unassign=1
+			shift
+			;;
+		-h | --help)
+			_isc_cmd_help
+			return 0
+			;;
+		*)
+			if [[ -z "$issue" ]]; then
+				issue="$arg"
+			elif [[ -z "$slug" ]]; then
+				slug="$arg"
+			else
+				_isc_warn "unexpected argument: $arg (ignored)"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "release: <issue> and <slug> are required"
+		return 2
+	fi
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "release: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Always delete the stamp so local state reflects caller intent
+	_isc_delete_stamp "$issue" "$slug"
+
+	if ! _isc_gh_reachable; then
+		_isc_warn "gh offline — stamp deleted locally, label unchanged on #$issue"
+		return 0
+	fi
+
+	# Idempotency: skip label work if not in-review. `_isc_has_in_review`
+	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
+	# so we need the actual rc — but a bare call under `set -e` propagates
+	# non-zero returns before `rc=$?` can capture them. Use `|| rc=$?` which
+	# is a tested condition that `set -e` does not propagate. Default to 0
+	# so the "present" branch (rc=0) falls through to the transition below.
+	local has_rc=0
+	_isc_has_in_review "$issue" "$slug" || has_rc=$?
+	if [[ $has_rc -eq 1 ]]; then
+		_isc_info "release: #$issue not in status:in-review — no-op"
+		return 0
+	fi
+	if [[ $has_rc -eq 2 ]]; then
+		_isc_warn "release: could not read labels for #$issue — skipping label transition"
+		return 0
+	fi
+
+	# Transition in-review -> available. Build the flag list as a plain
+	# array and expand it with the `${arr[@]+"${arr[@]}"}` guard so an
+	# empty array doesn't trip `set -u` on bash 3.2 (macOS default). This
+	# is the idiom documented in reference/bash-compat.md "empty array
+	# expansion". Fourth latent bug found alongside GH#18786: previously
+	# masked because the broken jq query made this branch unreachable.
+	local -a extra_flags=()
+	if [[ $unassign -eq 1 ]]; then
+		local user
+		user=$(_isc_current_user)
+		if [[ -n "$user" ]]; then
+			extra_flags+=(--remove-assignee "$user")
+		fi
+	fi
+
+	# Capture stderr so failures surface with the actual gh error message
+	# rather than being silently swallowed. Previously >/dev/null 2>&1 hid
+	# the root cause of stuck-claim incidents (GH#21057).
+	local _set_status_err
+	_set_status_err=$(set_issue_status "$issue" "$slug" "available" \
+		${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
+	local _set_status_rc=$?
+	if [[ $_set_status_rc -eq 0 ]]; then
+		_isc_info "release: #$issue → status:available"
+		return 0
+	fi
+	_isc_warn "release: gh failed on #$issue (rc=$_set_status_rc): $_set_status_err"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: status
+# -----------------------------------------------------------------------------
+# Print active claims from the stamp directory. With <issue>: exit 0 if this
+# user holds a claim on that issue, 1 otherwise.
+#
+# Output is human-readable on stdout so the agent can parse it.
+_isc_cmd_status() {
+	local target_issue="${1:-}"
+
+	if [[ ! -d "$CLAIM_STAMP_DIR" ]]; then
+		if [[ -n "$target_issue" ]]; then
+			return 1
+		fi
+		printf 'No active interactive claims.\n'
+		return 0
+	fi
+
+	local found=0
+	local stamp
+	for stamp in "$CLAIM_STAMP_DIR"/*.json; do
+		[[ -f "$stamp" ]] || continue
+		local issue slug worktree claimed pid hostname user
+		issue=$(jq -r '.issue // empty' "$stamp" 2>/dev/null || echo "")
+		slug=$(jq -r '.slug // empty' "$stamp" 2>/dev/null || echo "")
+		worktree=$(jq -r '.worktree_path // empty' "$stamp" 2>/dev/null || echo "")
+		claimed=$(jq -r '.claimed_at // empty' "$stamp" 2>/dev/null || echo "")
+		pid=$(jq -r '.pid // empty' "$stamp" 2>/dev/null || echo "")
+		hostname=$(jq -r '.hostname // empty' "$stamp" 2>/dev/null || echo "")
+		user=$(jq -r '.user // empty' "$stamp" 2>/dev/null || echo "")
+
+		if [[ -z "$issue" || -z "$slug" ]]; then
+			continue
+		fi
+
+		if [[ -n "$target_issue" && "$issue" != "$target_issue" ]]; then
+			continue
+		fi
+
+		found=1
+		printf '#%s in %s\n' "$issue" "$slug"
+		printf '  user:     %s\n' "${user:-unknown}"
+		printf '  worktree: %s\n' "${worktree:-unknown}"
+		printf '  claimed:  %s\n' "${claimed:-unknown}"
+		printf '  pid:      %s on %s\n' "${pid:-unknown}" "${hostname:-unknown}"
+	done
+
+	if [[ $found -eq 0 ]]; then
+		if [[ -n "$target_issue" ]]; then
+			return 1
+		fi
+		printf 'No active interactive claims.\n'
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: write-stamp (t2943)
+# -----------------------------------------------------------------------------
+# Write a crash-recovery stamp WITHOUT performing any GitHub status transitions.
+#
+# Used by `_auto_assign_issue` in claim-task-id-issue.sh to atomically record
+# a stamp at the moment of self-assign, closing the gap where `_auto_assign_issue`
+# self-assigned but the subsequent `_interactive_session_auto_claim_new_task`
+# call failed before writing the stamp (API error, carve-out mismatch, etc.).
+#
+# The full `claim` subcommand still runs afterwards and overwrites the stamp
+# with the status:in-review transition, worktree path, etc. — this is the
+# safety-net write that ensures no stampless claim exists if `claim` fails.
+#
+# Arguments:
+#   <issue> — GitHub issue number (numeric)
+#   <slug>  — owner/repo slug
+#
+# worktree_path is left empty; the subsequent `claim` call overwrites the stamp
+# with full lifecycle info (status:in-review, worktree, etc.).
+#
+# Returns 0 always (best-effort, non-blocking).
+_isc_cmd_write_stamp() {
+	# Require exactly <issue> and <slug>. Check arg count before using $1/$2
+	# so set -u does not trigger on positional params when called with no args.
+	if [[ $# -lt 2 ]]; then
+		_isc_err "write-stamp: <issue> and <slug> are required"
+		return 2
+	fi
+	local issue="$1"
+	local slug="$2"
+
+	if [[ ! "$issue" =~ ^[0-9]+$ ]]; then
+		_isc_err "write-stamp: <issue> must be numeric (got: $issue)"
+		return 2
+	fi
+
+	# Resolve the current user — best-effort; stamp is still useful without it.
+	local user
+	user=$(_isc_current_user 2>/dev/null || echo "")
+
+	# worktree_path is always empty for the primary write-stamp caller
+	# (_auto_assign_issue) — the full `claim` that follows records the path.
+	_isc_write_stamp "$issue" "$slug" "" "$user"
+	return 0
+}
