@@ -1568,6 +1568,7 @@ _help_commands() {
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
+	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) — alias: cb"
 	echo "  issue <cmd>        Interactive issue ownership (claim/release/status/scan-stale)"
 	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  contributions      External contributions inbox (bare: status | seed/scan/stop/restart/install/uninstall)"
@@ -1694,6 +1695,17 @@ _help_detailed_sections() {
 	echo "  aidevops stats trend         # Usage trends over time"
 	echo "  aidevops stats ingest        # Parse new Claude JSONL log entries"
 	echo "  aidevops stats sync-budget   # Sync to budget tracker (t1100)"
+	echo ""
+	echo "Supervisor Circuit Breaker (t1331):"
+	echo "  aidevops circuit-breaker             # Show breaker state (alias: cb)"
+	echo "  aidevops circuit-breaker status      # Show breaker state"
+	echo "  aidevops circuit-breaker reset       # Manually reset (resumes worker dispatch)"
+	echo "  aidevops circuit-breaker check       # Exit 0 if dispatch allowed, 1 if paused"
+	echo "  aidevops circuit-breaker trip        # Manually trip (testing)"
+	echo "  aidevops cb reset                    # Short alias for reset"
+	echo ""
+	echo "  When the breaker trips (auto-filed GH issue), copy/paste:"
+	echo "    aidevops circuit-breaker reset"
 	echo ""
 	_help_management_sections
 	return 0
@@ -2108,6 +2120,12 @@ main() {
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
+	circuit-breaker | circuit_breaker | cb)
+		# Supervisor circuit breaker control (t1331). Bare invocation defaults to status.
+		# Subcommands forward verbatim: check | status | record-failure | record-success | reset | trip | help
+		[[ $# -eq 0 ]] && set -- status
+		_dispatch_helper "circuit-breaker-helper.sh" "circuit-breaker-helper.sh" "$@"
+		;;
 	issue) _dispatch_helper "interactive-session-helper.sh" "interactive-session-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	contributions | contrib)

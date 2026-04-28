@@ -3471,4 +3471,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3016 test-pulse-wrapper-canary.sh fails 2/4 after #21553 split (Code Quality Analysis red on main) #auto-dispatch #bug ref:GH#21557
 
-- [ ] t3017 Add 'aidevops circuit-breaker' CLI subcommand for one-line copy/paste reset #auto-dispatch #enhancement ref:GH#21567
+- [x] t3017 Add 'aidevops circuit-breaker' CLI subcommand for one-line copy/paste reset #auto-dispatch #enhancement ref:GH#21567 pr:#21569 completed:2026-04-28
+
+- [ ] t3018 Self-heal stale rate-limit stamp when no live pulse lock holder (post-#21557 defense in depth) #auto-dispatch #bug #enhancement ref:GH#21570
