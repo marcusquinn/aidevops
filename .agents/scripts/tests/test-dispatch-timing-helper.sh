@@ -26,8 +26,10 @@ if [[ ! -x "$HELPER" ]]; then
 	exit 1
 fi
 
-# Isolate state to a temp file so we don't pollute production state
-TEST_STATE_FILE="$(mktemp -t t3003-test.XXXXXX.jsonl)"
+# Isolate state to a temp file so we don't pollute production state.
+# Note: extension dropped — mktemp portability rule (t2997) requires XXXXXX
+# at the end of the template. The helper accepts any path via env var.
+TEST_STATE_FILE="$(mktemp "${TMPDIR:-/tmp}/t3003-test-XXXXXX")"
 export DISPATCH_TIMING_STATE_FILE="$TEST_STATE_FILE"
 export DISPATCH_TIMING_BOOTSTRAP_MS=90000
 export DISPATCH_TIMING_MIN_TIMEOUT_MS=30000
