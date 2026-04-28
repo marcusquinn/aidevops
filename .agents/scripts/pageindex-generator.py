@@ -224,6 +224,7 @@ def build_headingless_result(
     frontmatter: Dict[str, str],
     content_lines: List[str],
     ctx: TreeContext,
+    source_pdf: str = '',
 ) -> Dict[str, Any]:
     """Build a single-node result when the document has no headings.
 
@@ -240,7 +241,7 @@ def build_headingless_result(
     return {
         "version": "1.0",
         "generator": "aidevops/document-creation-helper",
-        "source_file": frontmatter.get('source_file', ''),
+        "source_file": frontmatter.get('source_file', source_pdf),
         "content_hash": frontmatter.get('content_hash', ''),
         "page_count": ctx.page_count,
         "tree": {
@@ -289,7 +290,7 @@ def build_pageindex_tree(
     sections = parse_sections(content_lines)
 
     if not sections:
-        result = build_headingless_result(frontmatter, content_lines, ctx)
+        result = build_headingless_result(frontmatter, content_lines, ctx, source_pdf)
         root_node = result['tree']
         for tag_rec in open_tags:
             _inject_tag_record(root_node, tag_rec)
@@ -328,7 +329,7 @@ def build_pageindex_tree(
     result = {
         "version": "1.0",
         "generator": "aidevops/document-creation-helper",
-        "source_file": frontmatter.get('source_file', source_pdf if source_pdf else ''),
+        "source_file": frontmatter.get('source_file', source_pdf),
         "content_hash": content_hash,
         "page_count": page_count,
         "tree": tree,
