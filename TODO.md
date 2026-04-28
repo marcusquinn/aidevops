@@ -3445,3 +3445,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3003 adaptive per-candidate dispatch timeout based on rolling-window measurement #auto-dispatch #bug #pulse ref:GH#21434 pr:#21435 completed:2026-04-28
 
 - [ ] t3004 fix: dispatch-timing-helper records probe:false even on escalated probe-mode attempts #auto-dispatch #enhancement #pulse ref:GH#21436
+
+- [ ] t3005 fill_floor parallel dispatch — serial loop caps concurrency at 1-2 workers/cycle #auto-dispatch #bug #pulse ref:GH#21438
