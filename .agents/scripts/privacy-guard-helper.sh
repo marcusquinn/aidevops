@@ -320,9 +320,12 @@ privacy_scan_text() {
 		[[ -z "$basename" ]] && continue
 
 		# If the full slug was already matched in Phase 1, skip to avoid duplicate output.
-		if [[ -n "$owner" && -n "$matched_full_slugs" ]] &&
-			printf '%s\n' "$matched_full_slugs" | grep -qF "$slug" 2>/dev/null; then
-			continue
+		# Use native Bash pattern match with newline padding for exact line matching —
+		# grep -qF would substring-match (e.g. "org/repo" matches "myorg/repo").
+		if [[ -n "$owner" && -n "$matched_full_slugs" ]]; then
+			if [[ $'\n'"${matched_full_slugs}"$'\n' == *$'\n'"${slug}"$'\n'* ]]; then
+				continue
+			fi
 		fi
 
 		# Form 2: bare basename with word boundaries — only for distinctive lengths.
@@ -330,7 +333,7 @@ privacy_scan_text() {
 			# Escape regex metacharacters in basename for ERE. GitHub repo names can
 			# contain '.' (e.g. "my.project"), which is a special char in ERE —
 			# escaping prevents false positives from matching unintended characters.
-			escaped_basename=$(printf '%s' "$basename" | sed 's/\./\\./g')
+			escaped_basename="${basename//./\\.}"
 			# Word boundary regex: must NOT be flanked by [a-zA-Z0-9_-].
 			# Note: we use grep -E (POSIX ERE), not PCRE, so \b is unreliable.
 			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
