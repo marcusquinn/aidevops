@@ -510,17 +510,29 @@ if m:
 
 # Parse command-line arguments for cmd_bench
 # Sets: prompt, dataset_file, max_tokens, dry_run, judge_flag, history_flag, history_limit, prompt_version, model_args
+# Bash 3.2 compatible: uses ${!var} for indirect reads, printf -v for scalar writes, eval for array ops.
 _bench_parse_args() {
-	local -n args_prompt="$1"
-	local -n args_dataset="$2"
-	local -n args_max_tokens="$3"
-	local -n args_dry_run="$4"
-	local -n args_judge="$5"
-	local -n args_history="$6"
-	local -n args_limit="$7"
-	local -n args_version="$8"
-	local -n args_models="$9"
+	local _r_prompt="$1"
+	local _r_dataset="$2"
+	local _r_max_tokens="$3"
+	local _r_dry_run="$4"
+	local _r_judge="$5"
+	local _r_history="$6"
+	local _r_limit="$7"
+	local _r_version="$8"
+	local _r_models="$9"
 	shift 9
+
+	# Local working copies initialised from caller's current values
+	local _prompt="${!_r_prompt}"
+	local _dataset="${!_r_dataset}"
+	local _max_tokens="${!_r_max_tokens}"
+	local _dry_run="${!_r_dry_run}"
+	local _judge="${!_r_judge}"
+	local _history="${!_r_history}"
+	local _limit="${!_r_limit}"
+	local _version="${!_r_version}"
+	local -a _models=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -529,11 +541,11 @@ _bench_parse_args() {
 				print_error "--dataset requires a file path"
 				return 1
 			}
-			args_dataset="$2"
+			_dataset="$2"
 			shift 2
 			;;
 		--judge)
-			args_judge=true
+			_judge=true
 			shift
 			;;
 		--max-tokens)
@@ -541,15 +553,15 @@ _bench_parse_args() {
 				print_error "--max-tokens requires a value"
 				return 1
 			}
-			args_max_tokens="$2"
+			_max_tokens="$2"
 			shift 2
 			;;
 		--dry-run)
-			args_dry_run=true
+			_dry_run=true
 			shift
 			;;
 		--history)
-			args_history=true
+			_history=true
 			shift
 			;;
 		--limit)
@@ -557,7 +569,7 @@ _bench_parse_args() {
 				print_error "--limit requires a value"
 				return 1
 			}
-			args_limit="$2"
+			_limit="$2"
 			shift 2
 			;;
 		--version)
@@ -565,7 +577,7 @@ _bench_parse_args() {
 				print_error "--version requires a value"
 				return 1
 			}
-			args_version="$2"
+			_version="$2"
 			shift 2
 			;;
 		--*)
@@ -573,30 +585,51 @@ _bench_parse_args() {
 			return 1
 			;;
 		*)
-			if [[ -z "$args_prompt" && -z "$args_dataset" ]]; then
-				args_prompt="$1"
+			if [[ -z "$_prompt" && -z "$_dataset" ]]; then
+				_prompt="$1"
 			else
-				args_models+=("$1")
+				_models+=("$1")
 			fi
 			shift
 			;;
 		esac
+	done
+
+	# Write back results to caller's variables (bash 3.2: printf -v for scalars, eval for arrays)
+	printf -v "$_r_prompt" '%s' "$_prompt"
+	printf -v "$_r_dataset" '%s' "$_dataset"
+	printf -v "$_r_max_tokens" '%s' "$_max_tokens"
+	printf -v "$_r_dry_run" '%s' "$_dry_run"
+	printf -v "$_r_judge" '%s' "$_judge"
+	printf -v "$_r_history" '%s' "$_history"
+	printf -v "$_r_limit" '%s' "$_limit"
+	printf -v "$_r_version" '%s' "$_version"
+	eval "${_r_models}=()"
+	local _elem
+	for _elem in "${_models[@]}"; do
+		eval "${_r_models}+=(\"\$_elem\")"
 	done
 	return 0
 }
 
 # Validate bench inputs and build prompts list
 # Returns: 0 on success, 1 on error
+# Bash 3.2 compatible: uses ${!var} for indirect reads, eval for array ops.
 _bench_validate_and_build() {
-	local -n val_prompt="$1"
-	local -n val_dataset="$2"
-	local -n val_max_tokens="$3"
-	local -n val_models="$4"
-	local -n val_prompts="$5"
-	local -n val_valid_models="$6"
+	local _r_prompt="$1"
+	local _r_dataset="$2"
+	local _r_max_tokens="$3"
+	local _r_models="$4"
+	local _r_prompts="$5"
+	local _r_valid_models="$6"
+
+	# Read scalar values via indirect expansion (bash 3.2 compatible)
+	local _prompt="${!_r_prompt}"
+	local _dataset="${!_r_dataset}"
+	local _max_tokens="${!_r_max_tokens}"
 
 	# Validate inputs
-	if [[ -z "$val_prompt" && -z "$val_dataset" ]]; then
+	if [[ -z "$_prompt" && -z "$_dataset" ]]; then
 		print_error "Usage: compare-models-helper.sh bench \"prompt\" model1 model2 [model3...]"
 		echo "       compare-models-helper.sh bench --dataset file.jsonl model1 model2"
 		echo "       compare-models-helper.sh bench --history [--limit N]"
@@ -611,53 +644,59 @@ _bench_validate_and_build() {
 		return 1
 	fi
 
-	if [[ ${#val_models[@]} -lt 1 ]]; then
+	local _models_cnt
+	eval "_models_cnt=\${#${_r_models}[@]}"
+	if [[ "${_models_cnt}" -lt 1 ]]; then
 		print_error "At least 1 model required for benchmarking"
 		return 1
 	fi
 
-	if [[ -n "$val_dataset" && ! -f "$val_dataset" ]]; then
-		print_error "Dataset file not found: $val_dataset"
+	if [[ -n "$_dataset" && ! -f "$_dataset" ]]; then
+		print_error "Dataset file not found: $_dataset"
 		return 1
 	fi
 
-	if ! [[ "$val_max_tokens" =~ ^[0-9]+$ ]]; then
-		print_error "Invalid --max-tokens value: $val_max_tokens"
+	if ! [[ "$_max_tokens" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid --max-tokens value: $_max_tokens"
 		return 1
 	fi
 
 	# Build prompts list
-	if [[ -n "$val_dataset" ]]; then
+	local p
+	if [[ -n "$_dataset" ]]; then
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
-			local p
 			p=$(printf '%s' "$line" | jq -r '(.input // .prompt) // empty' || true)
 			if [[ -n "$p" ]]; then
-				val_prompts+=("$p")
+				eval "${_r_prompts}+=(\"\$p\")"
 			fi
-		done <"$val_dataset"
-		if [[ ${#val_prompts[@]} -eq 0 ]]; then
+		done <"$_dataset"
+		local _prompts_cnt
+		eval "_prompts_cnt=\${#${_r_prompts}[@]}"
+		if [[ "${_prompts_cnt}" -eq 0 ]]; then
 			print_error "No valid prompts found in dataset (expected JSONL with {\"input\":\"...\"} or {\"prompt\":\"...\"})"
 			return 1
 		fi
 	else
-		val_prompts+=("$val_prompt")
+		eval "${_r_prompts}+=(\"\$_prompt\")"
 	fi
 
 	# Validate models exist in MODEL_DATA
-	for m in "${val_models[@]}"; do
-		local info
+	local _i m info actual_id
+	for (( _i=0; _i<_models_cnt; _i++ )); do
+		eval "m=\${${_r_models}[$_i]}"
 		info=$(_model_provider_info "$m")
 		if [[ -z "$info" ]]; then
 			print_warning "Unknown model: $m (skipping)"
 		else
-			local actual_id
 			actual_id=$(echo "$info" | cut -d'|' -f3)
-			val_valid_models+=("$actual_id")
+			eval "${_r_valid_models}+=(\"\$actual_id\")"
 		fi
 	done
 
-	if [[ ${#val_valid_models[@]} -lt 1 ]]; then
+	local _valid_cnt
+	eval "_valid_cnt=\${#${_r_valid_models}[@]}"
+	if [[ "${_valid_cnt}" -lt 1 ]]; then
 		print_error "No valid models found"
 		return 1
 	fi
