@@ -510,104 +510,41 @@ if m:
 
 # Parse command-line arguments for cmd_bench
 # Sets: prompt, dataset_file, max_tokens, dry_run, judge_flag, history_flag, history_limit, prompt_version, model_args
-# Bash 3.2 compatible: uses ${!var} for indirect reads, printf -v for scalar writes, eval for array ops.
+# Bash 3.2 compatible: printf -v for scalar writes, ${!var} for reads, eval for array appends.
 _bench_parse_args() {
-	local _r_prompt="$1"
-	local _r_dataset="$2"
-	local _r_max_tokens="$3"
-	local _r_dry_run="$4"
-	local _r_judge="$5"
-	local _r_history="$6"
-	local _r_limit="$7"
-	local _r_version="$8"
-	local _r_models="$9"
+	local _r_prompt="$1" _r_dataset="$2" _r_max_tokens="$3" _r_dry_run="$4"
+	local _r_judge="$5" _r_history="$6" _r_limit="$7" _r_version="$8" _r_models="$9"
 	shift 9
-
-	# Local working copies initialised from caller's current values
-	local _prompt="${!_r_prompt}"
-	local _dataset="${!_r_dataset}"
-	local _max_tokens="${!_r_max_tokens}"
-	local _dry_run="${!_r_dry_run}"
-	local _judge="${!_r_judge}"
-	local _history="${!_r_history}"
-	local _limit="${!_r_limit}"
-	local _version="${!_r_version}"
-	local -a _models=()
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--dataset)
-			[[ $# -lt 2 ]] && {
-				print_error "--dataset requires a file path"
-				return 1
-			}
-			_dataset="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--dataset requires a file path"; return 1; }
+			printf -v "$_r_dataset" '%s' "$2"; shift 2 ;;
 		--judge)
-			_judge=true
-			shift
-			;;
+			printf -v "$_r_judge" '%s' true; shift ;;
 		--max-tokens)
-			[[ $# -lt 2 ]] && {
-				print_error "--max-tokens requires a value"
-				return 1
-			}
-			_max_tokens="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--max-tokens requires a value"; return 1; }
+			printf -v "$_r_max_tokens" '%s' "$2"; shift 2 ;;
 		--dry-run)
-			_dry_run=true
-			shift
-			;;
+			printf -v "$_r_dry_run" '%s' true; shift ;;
 		--history)
-			_history=true
-			shift
-			;;
+			printf -v "$_r_history" '%s' true; shift ;;
 		--limit)
-			[[ $# -lt 2 ]] && {
-				print_error "--limit requires a value"
-				return 1
-			}
-			_limit="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--limit requires a value"; return 1; }
+			printf -v "$_r_limit" '%s' "$2"; shift 2 ;;
 		--version)
-			[[ $# -lt 2 ]] && {
-				print_error "--version requires a value"
-				return 1
-			}
-			_version="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--version requires a value"; return 1; }
+			printf -v "$_r_version" '%s' "$2"; shift 2 ;;
 		--*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
+			print_error "Unknown option: $1"; return 1 ;;
 		*)
-			if [[ -z "$_prompt" && -z "$_dataset" ]]; then
-				_prompt="$1"
+			if [[ -z "${!_r_prompt}" && -z "${!_r_dataset}" ]]; then
+				printf -v "$_r_prompt" '%s' "$1"
 			else
-				_models+=("$1")
+				eval "${_r_models}+=(\"\$1\")"
 			fi
-			shift
-			;;
+			shift ;;
 		esac
-	done
-
-	# Write back results to caller's variables (bash 3.2: printf -v for scalars, eval for arrays)
-	printf -v "$_r_prompt" '%s' "$_prompt"
-	printf -v "$_r_dataset" '%s' "$_dataset"
-	printf -v "$_r_max_tokens" '%s' "$_max_tokens"
-	printf -v "$_r_dry_run" '%s' "$_dry_run"
-	printf -v "$_r_judge" '%s' "$_judge"
-	printf -v "$_r_history" '%s' "$_history"
-	printf -v "$_r_limit" '%s' "$_limit"
-	printf -v "$_r_version" '%s' "$_version"
-	eval "${_r_models}=()"
-	local _elem
-	for _elem in "${_models[@]}"; do
-		eval "${_r_models}+=(\"\$_elem\")"
 	done
 	return 0
 }

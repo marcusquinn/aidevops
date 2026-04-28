@@ -391,121 +391,48 @@ _cross_review_judge_score() {
 #######################################
 
 # Parse arguments for cmd_cross_review
-# Bash 3.2 compatible: uses ${!var} for indirect reads, printf -v for scalar writes.
+# Bash 3.2 compatible: printf -v for scalar writes, ${!var} for reads.
 _cross_review_parse_args() {
-	local _r_prompt="$1"
-	local _r_models="$2"
-	local _r_workdir="$3"
-	local _r_timeout="$4"
-	local _r_output="$5"
-	local _r_score="$6"
-	local _r_judge="$7"
-	local _r_version="$8"
-	local _r_file="$9"
+	local _r_prompt="$1" _r_models="$2" _r_workdir="$3" _r_timeout="$4"
+	local _r_output="$5" _r_score="$6" _r_judge="$7" _r_version="$8" _r_file="$9"
 	shift 9
-
-	# Local working copies initialised from caller's current values
-	local _prompt="${!_r_prompt}"
-	local _models="${!_r_models}"
-	local _workdir="${!_r_workdir}"
-	local _timeout="${!_r_timeout}"
-	local _output="${!_r_output}"
-	local _score="${!_r_score}"
-	local _judge="${!_r_judge}"
-	local _version="${!_r_version}"
-	local _file="${!_r_file}"
-
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--prompt)
-			[[ $# -lt 2 ]] && {
-				print_error "--prompt requires a value"
-				return 1
-			}
-			_prompt="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--prompt requires a value"; return 1; }
+			printf -v "$_r_prompt" '%s' "$2"; shift 2 ;;
 		--models)
-			[[ $# -lt 2 ]] && {
-				print_error "--models requires a value"
-				return 1
-			}
-			_models="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--models requires a value"; return 1; }
+			printf -v "$_r_models" '%s' "$2"; shift 2 ;;
 		--workdir)
-			[[ $# -lt 2 ]] && {
-				print_error "--workdir requires a value"
-				return 1
-			}
-			_workdir="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--workdir requires a value"; return 1; }
+			printf -v "$_r_workdir" '%s' "$2"; shift 2 ;;
 		--timeout)
-			[[ $# -lt 2 ]] && {
-				print_error "--timeout requires a value"
-				return 1
-			}
-			_timeout="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--timeout requires a value"; return 1; }
+			printf -v "$_r_timeout" '%s' "$2"; shift 2 ;;
 		--output)
-			[[ $# -lt 2 ]] && {
-				print_error "--output requires a value"
-				return 1
-			}
-			_output="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--output requires a value"; return 1; }
+			printf -v "$_r_output" '%s' "$2"; shift 2 ;;
 		--score)
-			_score=true
-			shift
-			;;
+			printf -v "$_r_score" '%s' true; shift ;;
 		--judge)
-			[[ $# -lt 2 ]] && {
-				print_error "--judge requires a value"
-				return 1
-			}
-			_judge="$2"
-			if [[ ! "$_judge" =~ ^[A-Za-z0-9._-]+$ ]]; then
-				print_error "Invalid judge model identifier: $_judge (only alphanumeric, dots, hyphens, underscores)"
+			[[ $# -lt 2 ]] && { print_error "--judge requires a value"; return 1; }
+			local _judge_val="$2"
+			if [[ ! "$_judge_val" =~ ^[A-Za-z0-9._-]+$ ]]; then
+				print_error "Invalid judge model identifier: $_judge_val (only alphanumeric, dots, hyphens, underscores)"
 				return 1
 			fi
-			shift 2
-			;;
+			printf -v "$_r_judge" '%s' "$_judge_val"; shift 2 ;;
 		--prompt-version)
-			[[ $# -lt 2 ]] && {
-				print_error "--prompt-version requires a value"
-				return 1
-			}
-			_version="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--prompt-version requires a value"; return 1; }
+			printf -v "$_r_version" '%s' "$2"; shift 2 ;;
 		--prompt-file)
-			[[ $# -lt 2 ]] && {
-				print_error "--prompt-file requires a value"
-				return 1
-			}
-			_file="$2"
-			shift 2
-			;;
+			[[ $# -lt 2 ]] && { print_error "--prompt-file requires a value"; return 1; }
+			printf -v "$_r_file" '%s' "$2"; shift 2 ;;
 		*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
+			print_error "Unknown option: $1"; return 1 ;;
 		esac
 	done
-
-	# Write back results to caller's variables (bash 3.2: printf -v for scalars)
-	printf -v "$_r_prompt" '%s' "$_prompt"
-	printf -v "$_r_models" '%s' "$_models"
-	printf -v "$_r_workdir" '%s' "$_workdir"
-	printf -v "$_r_timeout" '%s' "$_timeout"
-	printf -v "$_r_output" '%s' "$_output"
-	printf -v "$_r_score" '%s' "$_score"
-	printf -v "$_r_judge" '%s' "$_judge"
-	printf -v "$_r_version" '%s' "$_version"
-	printf -v "$_r_file" '%s' "$_file"
 	return 0
 }
 
