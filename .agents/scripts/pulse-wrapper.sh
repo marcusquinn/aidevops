@@ -1241,6 +1241,19 @@ main() {
 	# manual restarts). A single stat-equivalent read is the entire cost of
 	# a rate-limited invocation instead of mkdir attempt + stale-lock check
 	# + PID file read. --canary and --dry-run bypass (diagnostic modes).
+	#
+	# t3018 (GH#21570) self-healing: the timestamp is written BEFORE the
+	# cycle does any real work (line below). If the cycle then crashes
+	# silently (mid-stage exit, set -e abort, source-gate regression like
+	# GH#21557), the stamp persists but no live cycle exists — and every
+	# launchd respawn for the next PULSE_MIN_INTERVAL_S seconds short-circuits
+	# here ("Rate-limited: last run 30s ago"), masking the dead pulse as
+	# "rate-limited" instead of "broken". Defense-in-depth: when the rate
+	# limit fires, also peek at the instance lock. Stamp present + no live
+	# lock holder = stale stamp from a crashed cycle. Clear it and proceed
+	# rather than perpetuating the lockout. Steady-state behaviour (lock
+	# held by a real running pulse) is unchanged. Pattern mirrors the
+	# kill -0 lock check at lines ~1208-1234 above.
 	if [[ "${PULSE_DRY_RUN:-0}" != "1" && "${PULSE_CANARY_MODE:-0}" != "1" ]]; then
 		local _rl_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 		local _rl_now
@@ -1255,8 +1268,23 @@ main() {
 		fi
 		_rl_elapsed=$(( _rl_now - _rl_last ))
 		if (( _rl_elapsed < PULSE_MIN_INTERVAL_S )); then
-			echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
-			return 0
+			# t3018: peek at instance lock. No live holder = stale stamp.
+			local _rl_lock_pid=""
+			if [[ -f "${LOCKDIR}/pid" ]]; then
+				read -r _rl_lock_pid < "${LOCKDIR}/pid" 2>/dev/null || _rl_lock_pid=""
+			fi
+			if [[ "$_rl_lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$_rl_lock_pid" 2>/dev/null; then
+				echo "[pulse-wrapper] Rate-limited: last run ${_rl_elapsed}s ago < ${PULSE_MIN_INTERVAL_S}s threshold — skipping cycle (GH#20578)" >>"$WRAPPER_LOGFILE"
+				return 0
+			fi
+			# Stale stamp recovery: no live lock holder. Clear stamp and
+			# fall through to acquire the lock and run a real cycle.
+			# Failsafe: any I/O error here defaults to "proceed", since the
+			# cost of a false-proceed (occasional tighter cycle interval)
+			# is far smaller than the cost of false-skip (the bug being fixed).
+			echo "[pulse-wrapper] Rate-limit stamp ${_rl_elapsed}s old but no live lock holder (pid='${_rl_lock_pid:-<missing>}') — clearing stale stamp and proceeding (GH#21570 self-heal)" >>"$WRAPPER_LOGFILE"
+			: > "$_rl_ts_file" 2>/dev/null || true
+			_rl_elapsed=$(( _rl_now - 0 ))
 		fi
 		printf '%s\n' "$_rl_now" > "$_rl_ts_file" || true
 	fi
