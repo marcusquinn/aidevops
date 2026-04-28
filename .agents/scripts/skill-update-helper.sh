@@ -29,11 +29,15 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-# t2976: canonical audit logger for worktree-removal events
-if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
-	# shellcheck source=audit-worktree-removal-helper.sh
-	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
-fi
+# t2976: canonical audit logger for worktree-removal events.
+# Provide fallbacks so variables and the function are defined even if the
+# helper is absent (guards against 'unbound variable' errors under set -u
+# when sub-libraries reference these symbols after set -euo pipefail).
+_WTAR_REMOVED="${_WTAR_REMOVED:-removed}"
+_WTAR_SKIPPED="${_WTAR_SKIPPED:-skipped}"
+log_worktree_removal_event() { return 0; }
+# shellcheck source=audit-worktree-removal-helper.sh
+source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" || true
 # Caller ID constant (avoids repeated literals).
 _WTAR_SU_CALLER="skill-update-helper.sh"
 
