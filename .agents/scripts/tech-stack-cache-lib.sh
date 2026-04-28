@@ -103,8 +103,10 @@ sqlite3_param() {
 		local pname="$1"
 		local pval="$2"
 		shift 2
-		# Double-quote values for .param set — sqlite3 handles escaping internally
-		param_cmds+=".param set ${pname} \"${pval//\"/\\\"}\""$'\n'
+		# Escape backslashes first, then double-quotes for .param set
+		local escaped_pval="${pval//\\/\\\\}"
+		escaped_pval="${escaped_pval//\"/\\\"}"
+		param_cmds+=".param set ${pname} \"${escaped_pval}\""$'\n'
 	done
 
 	sqlite3 "$db" <<EOSQL
