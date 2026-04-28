@@ -6,6 +6,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 SOURCE_HELPER="${SCRIPT_DIR}/../profile-readme-helper.sh"
+SOURCE_DATA_LIB="${SCRIPT_DIR}/../profile-readme-data-lib.sh"
+SOURCE_RENDER_LIB="${SCRIPT_DIR}/../profile-readme-render-lib.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -35,6 +37,16 @@ print_result() {
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 	fi
 
+	return 0
+}
+
+install_helper_with_libs() {
+	local helper_dir="$1"
+	local helper_path="${helper_dir}/profile-readme-helper.sh"
+	cp "${SOURCE_HELPER}" "${helper_path}"
+	chmod +x "${helper_path}"
+	cp "${SOURCE_DATA_LIB}" "${helper_dir}/profile-readme-data-lib.sh"
+	cp "${SOURCE_RENDER_LIB}" "${helper_dir}/profile-readme-render-lib.sh"
 	return 0
 }
 
@@ -150,8 +162,7 @@ test_update_preserves_manual_sections() {
 	local helper_path="${helper_dir}/profile-readme-helper.sh"
 
 	mkdir -p "${helper_dir}" "${fixture_home}"
-	cp "${SOURCE_HELPER}" "${helper_path}"
-	chmod +x "${helper_path}"
+	install_helper_with_libs "${helper_dir}"
 
 	write_stub_dependencies "${helper_dir}"
 	create_profile_repo_fixture "${fixture_home}" "${fixture_repo}" "${fixture_remote}"
@@ -206,8 +217,7 @@ test_inject_markers_into_existing_readme() {
 
 	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
 	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
-	cp "${SOURCE_HELPER}" "${helper_path}"
-	chmod +x "${helper_path}"
+	install_helper_with_libs "${helper_dir}"
 	write_stub_dependencies "${helper_dir}"
 
 	# Create a bare remote and local clone with NO markers
@@ -292,8 +302,7 @@ test_diverged_history_recovery() {
 
 	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
 	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
-	cp "${SOURCE_HELPER}" "${helper_path}"
-	chmod +x "${helper_path}"
+	install_helper_with_libs "${helper_dir}"
 	write_stub_dependencies "${helper_dir}"
 
 	# Create initial remote and local clone with markers
@@ -385,8 +394,7 @@ test_default_template_replaced_with_rich_readme() {
 	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
 	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
 	mkdir -p "${fixture_home}/.aidevops/cache"
-	cp "${SOURCE_HELPER}" "${helper_path}"
-	chmod +x "${helper_path}"
+	install_helper_with_libs "${helper_dir}"
 	write_stub_dependencies "${helper_dir}"
 
 	# Create a bare remote and local clone with the default GitHub template
@@ -478,8 +486,7 @@ test_default_template_with_existing_markers_replaced() {
 	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
 	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
 	mkdir -p "${fixture_home}/.aidevops/cache"
-	cp "${SOURCE_HELPER}" "${helper_path}"
-	chmod +x "${helper_path}"
+	install_helper_with_libs "${helper_dir}"
 	write_stub_dependencies "${helper_dir}"
 
 	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
