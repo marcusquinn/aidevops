@@ -175,6 +175,39 @@ _test_copy_shared_deps() {
 		fi
 	done <<<"$deps"
 
+	# Second pass: discover sub-library deps from each first-level dep.
+	# Sub-libraries (e.g. shared-gh-wrappers-session.sh) are sourced from
+	# their parent via `source "$_SHARED_GH_WRAPPERS_DIR/<filename>.sh"` or
+	# similar runtime-resolved patterns. Match unconditional source lines
+	# that reference a shared-gh-wrappers-*.sh basename.
+	local sub_deps=""
+	while IFS= read -r sibling; do
+		[[ -z "$sibling" ]] && continue
+		local _sub_dep_list
+		_sub_dep_list=$(awk '
+			/source.*shared-gh-wrappers-[a-z]/ {
+				line = $0
+				sub(/.*\//, "", line)
+				sub(/".*/, "", line)
+				if (line != "" && line ~ /^shared-gh-wrappers-/) print line
+			}
+		' "${dest_dir}/${sibling}" 2>/dev/null || true)
+		[[ -n "$_sub_dep_list" ]] && sub_deps="${sub_deps}${sub_deps:+
+}${_sub_dep_list}"
+	done <<<"$deps"
+
+	# Copy sub-library deps (skip already-copied files).
+	while IFS= read -r sibling; do
+		[[ -z "$sibling" ]] && continue
+		[[ -f "${dest_dir}/${sibling}" ]] && continue
+		if [[ -f "${src_dir}/${sibling}" ]]; then
+			if ! cp "${src_dir}/${sibling}" "${dest_dir}/${sibling}"; then
+				printf 'FAIL: could not copy sub-dep %s to %s\n' "$sibling" "$dest_dir" >&2
+				return 1
+			fi
+		fi
+	done <<<"$sub_deps"
+
 	return 0
 }
 
