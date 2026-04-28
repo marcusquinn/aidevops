@@ -67,7 +67,7 @@ readonly CAMPAIGNS_CONFIG_FILE="campaigns.json"
 readonly CAMPAIGNS_GITIGNORE_FILE=".gitignore"
 readonly CAMPAIGNS_CONTRACT_FILE="CAMPAIGNS.md"
 
-readonly CAMPAIGNS_LIB_DIRS=(lib/brand lib/swipe)
+readonly CAMPAIGNS_LIB_DIRS=(lib/brand lib/swipe lib/assets)
 readonly CAMPAIGNS_DATA_DIRS=(intel active launched)
 
 SCRIPT_TEMPLATES_DIR="${SCRIPT_DIR%/scripts}/templates"
@@ -218,7 +218,8 @@ _campaigns/
 │   └── campaigns.json     ← sensitivity policy, blob threshold, cross-plane paths
 ├── lib/
 │   ├── brand/             ← logos, colour palette, fonts, voice/tone guides
-│   └── swipe/             ← inspiration: saved ads, landing pages, email examples
+│   ├── swipe/             ← inspiration: saved ads, landing pages, email examples
+│   └── assets/            ← binary asset manifest + previews (P4)
 ├── intel/                 ← competitive research (GITIGNORED — sensitive tier)
 ├── active/                ← in-flight campaigns (GITIGNORED by default)
 │   └── <campaign-id>/
@@ -249,9 +250,15 @@ aidevops campaign provision   # Re-provision / repair
 aidevops campaign status      # Show provisioning state + counts
 aidevops campaign ls          # List active + launched campaigns
 aidevops campaign ls --active # List active campaigns only
+
+# Asset binary management (P4):
+aidevops campaign asset add <file> [--target lib-brand|lib-swipe|campaign] [--campaign <id>]
+aidevops campaign asset list [--type image|video|audio|pdf|all]
+aidevops campaign asset preview <file> [--size 640]
+aidevops campaign asset manifest <asset-id>
 ```
 
-Managed by: aidevops campaigns-provision-helper.sh (t2962)
+Managed by: aidevops campaigns-provision-helper.sh (t2962), campaign-asset-helper.sh (t2965)
 CONTRACT
 	return 0
 }
@@ -460,7 +467,7 @@ campaigns-provision-helper.sh — _campaigns/ plane P1: directory contract + pro
 Commands:
   init [<repo-path>]
       Provision _campaigns/ directory structure in the given repo (default: pwd).
-      Creates: lib/brand/, lib/swipe/, intel/, active/, launched/, _config/,
+      Creates: lib/brand/, lib/swipe/, lib/assets/, intel/, active/, launched/, _config/,
                .gitignore, CAMPAIGNS.md, _config/campaigns.json
 
   provision [<repo-path>]
@@ -487,13 +494,14 @@ Examples:
 Directory contract:
   _campaigns/lib/brand/    Brand identity files (logos, colours, fonts) — versioned
   _campaigns/lib/swipe/    Inspiration swipe files — versioned
+  _campaigns/lib/assets/   Asset binary manifest (manifest.json, previews) — versioned
   _campaigns/intel/        Competitive research — GITIGNORED (sensitive tier)
   _campaigns/active/       In-flight campaigns — GITIGNORED by default
   _campaigns/launched/     Post-launch campaigns — versioned
   _campaigns/_config/      Plane config — versioned
 
 See: .agents/aidevops/campaigns-plane.md for full contract.
-     t2962 / GH#21250
+     t2962 / GH#21250 (P1), t2965 / GH#21253 (P4 — asset binary integration)
 HELP
 	return 0
 }

@@ -1578,7 +1578,7 @@ _help_commands() {
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
-	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6)"
+	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + asset (P4) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6)"
 	echo "  stats <cmd>        LLM usage analytics (summary/models/projects/costs/trend)"
 	echo "  tabby <cmd>        Manage Tabby terminal profiles (sync/status/zshrc/help)"
 	echo "  parent-status <N>  Show decomposition state of parent-task issue #N (alias: ps)"
@@ -1676,6 +1676,10 @@ _help_detailed_sections() {
 	echo "  aidevops campaign list                         # Show all campaigns (P2)"
 	echo "  aidevops campaign status <id>                  # Detailed dossier for a campaign (P2)"
 	echo "  aidevops campaign archive <id>                 # Move launched/<id> → archive/ (P2)"
+	echo "  aidevops campaign asset add <file> [--target lib-brand|lib-swipe|campaign]  # Ingest asset (P4)"
+	echo "  aidevops campaign asset list [--type image|video|audio|pdf|all]             # List assets (P4)"
+	echo "  aidevops campaign asset preview <file> [--size 640]                         # Generate preview PNG (P4)"
+	echo "  aidevops campaign asset manifest <asset-id>                                 # Show asset manifest entry (P4)"
 	echo "  aidevops campaign draft <id> --channel <ch>    # AI-generated content draft (P5)"
 	echo "  aidevops campaign launch <id>                  # Move active/<id> → launched/, create templates (P6)"
 	echo "  aidevops campaign promote <id> [--results|--learnings] # Cross-plane promotion (P6)"
@@ -2136,11 +2140,16 @@ main() {
 	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
 	campaign | campaigns)
 		# P1 provisioning: init/provision/ls → campaigns-provision-helper.sh
+		# P4 asset binary: asset → campaign-asset-helper.sh
 		# P2+P6: all other subcommands → campaign-helper.sh
 		local _camp_cmd="${1:-help}"
 		case "$_camp_cmd" in
 		init | provision | ls)
 			_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+			;;
+		asset | assets)
+			shift
+			_dispatch_helper "campaign-asset-helper.sh" "campaign-asset-helper.sh" "$@"
 			;;
 		*)
 			_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"

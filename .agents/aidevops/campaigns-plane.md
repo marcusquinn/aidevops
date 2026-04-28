@@ -33,7 +33,8 @@ _campaigns/
 │   └── campaigns.json     # Plane config: sensitivity policy, blob threshold, cross-plane paths
 ├── lib/                   # Reusable brand assets + swipe files (versioned)
 │   ├── brand/             # Logos, colour palette, fonts, voice/tone guides
-│   └── swipe/             # Inspiration: saved ads, landing pages, email examples
+│   ├── swipe/             # Inspiration: saved ads, landing pages, email examples
+│   └── assets/            # Binary asset manifest + preview thumbnails (P4)
 ├── intel/                 # Competitive research (gitignored — sensitive tier)
 │   └── README.md          # Schema for intel entries (written at provision time)
 ├── active/                # In-flight campaigns (gitignored by default)
@@ -60,6 +61,7 @@ _campaigns/
 |--------|-----------|-------------|---------|
 | `lib/brand/` | Yes | `internal` | Reusable brand identity files (logos, colours, voice) |
 | `lib/swipe/` | Yes | `internal` | Inspiration files: saved ads, landing pages, email examples |
+| `lib/assets/` | Yes | `internal` | Binary asset manifest + 640px preview thumbnails (P4) |
 | `intel/` | **No** (gitignored) | `sensitive` | Competitive intel — local-LLM-only, never committed |
 | `active/<id>/` | **No** (gitignored) | `internal` | In-progress campaign creative (drafts, briefs, schedules) |
 | `launched/<id>/` | Yes | varies | Post-launch directory: results + learnings are versioned |
@@ -159,16 +161,43 @@ aidevops campaign status [<repo-path>]
 aidevops campaign ls [--active|--launched|--all] [<repo-path>]
 ```
 
-**Phase 2 CLI (t2963):** `campaign new`, `campaign list`,
+**Phase 2 CLI (t2963 — shipped):** `campaign new`, `campaign list`,
 `campaign launch`, `campaign archive`, and sequential campaign IDs.
 
-**Phase 5 CLI (t2967):** `campaign draft <id> --channel <ch> [--tone <tone>] [--variant N]`
+**Phase 4 CLI (t2965 — shipped):** `campaign asset` — asset binary management.
+
+```bash
+# Ingest a binary asset (routes large files >=30MB to knowledge-blobs store)
+aidevops campaign asset add <file> [--target lib-brand|lib-swipe|campaign]
+                                   [--campaign <id>] [--sensitivity <tier>]
+                                   [--no-preview] [--repo <path>]
+
+# Generate a 640px-wide PNG preview thumbnail for AI review
+aidevops campaign asset preview <file> [--size <px>] [--output <path>]
+
+# List all ingested assets from the manifest
+aidevops campaign asset list [--type image|video|audio|pdf|all] [--campaign <id>]
+
+# Show full JSON manifest entry for an asset
+aidevops campaign asset manifest <asset-id>
+```
+
+Asset manifest lives at `_campaigns/lib/assets/manifest.json`. Preview thumbnails
+go to `<target-dir>/.previews/<filename>_preview.png`. Requires ImageMagick (`convert`)
+for image/PDF previews and `ffmpeg` for video first-frame extraction. Max preview
+size is 640px per side (safe below the 1568px crash limit in `reference/screenshot-limits.md`).
+
+Large files (>=30MB) are stored in `~/.aidevops/.agent-workspace/knowledge-blobs/<repo>/campaigns/<asset-id>/`
+with a symlink in the target directory. This keeps large binaries out of the repo while
+preserving addressability via the manifest.
+
+**Phase 5 CLI (t2967 — shipped):** `campaign draft <id> --channel <ch> [--tone <tone>] [--variant N]`
 — AI creative agent for channel-aware content drafting. RAG-grounded in `lib/brand/`
 (voice/tone) and `lib/swipe/` (inspiration). Output: `active/<id>/drafts/<channel>-v<N>.md`
 with provenance metadata. Human-gated: drafts require manual review before promotion.
 Channel specs: `.agents/configs/campaign-channel-specs.json`.
 
-**Phase 6 CLI (t2969):** `campaign launch`, `campaign promote`,
+**Phase 6 CLI (t2969 — shipped):** `campaign launch`, `campaign promote`,
 `campaign feedback` — cross-plane promotion of results and learnings.
 
 ## CAMPAIGNS.md Contract File
@@ -200,5 +229,6 @@ Promotion is handled by `campaign-helper.sh promote` (t2969). Integration with
 ## Helper
 
 `.agents/scripts/campaigns-provision-helper.sh` — provisioning and introspection.
+`.agents/scripts/campaign-asset-helper.sh` — asset binary management (P4).
 
 <!-- AI-CONTEXT-END -->
