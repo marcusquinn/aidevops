@@ -39,13 +39,13 @@ trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
 # SCRIPT_DIR — resolves to the setup-modules/ directory so sub-library
-# source calls work regardless of the caller's working directory.
-if [[ -z "${SCRIPT_DIR:-}" ]]; then
-	_sched_orch_lib_path="${BASH_SOURCE[0]%/*}"
-	[[ "$_sched_orch_lib_path" == "${BASH_SOURCE[0]}" ]] && _sched_orch_lib_path="."
-	SCRIPT_DIR="$(cd "$_sched_orch_lib_path" && pwd)"
-	unset _sched_orch_lib_path
-fi
+# source calls work regardless of the caller's working directory or any
+# inherited SCRIPT_DIR from parent scripts. Always derive from ${BASH_SOURCE[0]}
+# to ensure sub-libraries load from the correct location.
+_sched_orch_lib_path="${BASH_SOURCE[0]%/*}"
+[[ "$_sched_orch_lib_path" == "${BASH_SOURCE[0]}" ]] && _sched_orch_lib_path="."
+SCRIPT_DIR="$(cd "$_sched_orch_lib_path" && pwd)"
+unset _sched_orch_lib_path
 
 # Source sub-libraries. Each carries its own include guard so double-sourcing
 # is safe. SC1091 suppressed per reference/large-file-split.md §5.1 — paths
