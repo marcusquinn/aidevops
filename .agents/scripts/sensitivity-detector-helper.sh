@@ -23,7 +23,7 @@
 #   internal    Internal business docs — not public, not personal
 #   pii         Personal data — names, addresses, ID/payment numbers
 #   sensitive   Sensitive business — board minutes, strategy, HR
-#   competitive Competitive intel — _campaigns/intel/ enforced, local-LLM-only (Ollama), never cloud, retention months not years
+#   competitive Competitive intel — _campaigns/intel/ enforced, local-LLM-only (Ollama), never cloud, 1-year retention
 #   privileged  Legally privileged — attorney-client, court filings
 #
 # Audit log: <knowledge-root>/index/sensitivity-audit.log (JSONL)
@@ -148,9 +148,9 @@ _tier_rank() {
 		fi
 		rank=$((rank + 1))
 	done
-	# Unknown tier — treat as internal (rank 3)
-	echo "3"
-	return 0
+	# Unknown tier — treat as internal (dynamic rank, not hardcoded)
+	_tier_rank "internal"
+	return $?
 }
 
 _higher_tier() {

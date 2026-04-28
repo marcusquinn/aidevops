@@ -28,7 +28,7 @@
     "competitive": {
       "redact": true,
       "llm": "local-only-hard-fail",
-      "retention_months": 12,
+      "retention_years": 1,
       "description": "Competitive intel — campaign-scoped, local-LLM-only (Ollama), never cloud, short retention"
     },
     "privileged": {
