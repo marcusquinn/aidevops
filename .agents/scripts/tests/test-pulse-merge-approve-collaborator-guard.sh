@@ -34,6 +34,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# _is_collaborator_author was extracted to pulse-merge-author-checks.sh (GH#21426)
+AUTHOR_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-author-checks.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -152,24 +154,26 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract approve_collaborator_pr AND its dependency _is_collaborator_author
-# from pulse-merge.sh. Both are needed; the guard calls the helper.
+# Extract approve_collaborator_pr from pulse-merge.sh AND its dependency
+# _is_collaborator_author from pulse-merge-author-checks.sh (GH#21426 split).
+# Both are needed; the guard calls the helper.
 define_helpers_under_test() {
 	local approve_src
 	local collab_src
 	approve_src=$(awk '
 		/^approve_collaborator_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
+	# _is_collaborator_author was extracted to pulse-merge-author-checks.sh (GH#21426)
 	collab_src=$(awk '
 		/^_is_collaborator_author\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$AUTHOR_CHECKS_SCRIPT")
 
 	if [[ -z "$approve_src" ]]; then
 		printf 'ERROR: could not extract approve_collaborator_pr from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 	if [[ -z "$collab_src" ]]; then
-		printf 'ERROR: could not extract _is_collaborator_author from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _is_collaborator_author from %s\n' "$AUTHOR_CHECKS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
