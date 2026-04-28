@@ -1,0 +1,236 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# localdev-routes-lib.sh -- Certificate generation and Traefik route management
+# =============================================================================
+# Handles mkcert wildcard certificate generation/removal, Traefik conf.d route
+# file creation/removal, and /etc/hosts entry management.
+#
+# Usage: source "${SCRIPT_DIR}/localdev-routes-lib.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (print_error, print_info, etc.)
+#   - localdev-init-lib.sh (ensure_mkcert)
+#   - localdev-helper.sh exports: CERTS_DIR, CONFD_DIR
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_LOCALDEV_ROUTES_LIB_LOADED:-}" ]] && return 0
+_LOCALDEV_ROUTES_LIB_LOADED=1
+
+# Defensive SCRIPT_DIR fallback (in case sourced without the orchestrator)
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
+
+# =============================================================================
+# Certificate Generation
+# =============================================================================
+
+# Generate mkcert wildcard cert for a domain
+# Creates: ~/.local-ssl-certs/{name}.local+1.pem and {name}.local+1-key.pem
+generate_cert() {
+	local name="$1"
+	local domain="${name}.local"
+	local wildcard="*.${domain}"
+
+	# Ensure mkcert is available (auto-install if missing, GH#6415)
+	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+		print_error "mkcert is required to generate SSL certificates"
+		return 1
+	fi
+
+	mkdir -p "$CERTS_DIR"
+
+	print_info "Generating mkcert wildcard cert for $wildcard and $domain..."
+
+	# mkcert generates files named after the first domain arg
+	# Output: {domain}+1.pem and {domain}+1-key.pem (wildcard is second arg)
+	(cd "$CERTS_DIR" && mkcert "$domain" "$wildcard")
+
+	# Verify cert was created
+	local cert_file="$CERTS_DIR/${domain}+1.pem"
+	local key_file="$CERTS_DIR/${domain}+1-key.pem"
+
+	if [[ ! -f "$cert_file" ]] || [[ ! -f "$key_file" ]]; then
+		print_error "mkcert failed to generate cert files"
+		print_info "  Expected: $cert_file"
+		print_info "  Expected: $key_file"
+		return 1
+	fi
+
+	print_success "Generated cert: $cert_file"
+	print_success "Generated key:  $key_file"
+	return 0
+}
+
+# Remove mkcert cert files for a domain
+remove_cert() {
+	local name="$1"
+	local domain="${name}.local"
+	local cert_file="$CERTS_DIR/${domain}+1.pem"
+	local key_file="$CERTS_DIR/${domain}+1-key.pem"
+
+	local removed=0
+	if [[ -f "$cert_file" ]]; then
+		rm -f "$cert_file"
+		print_success "Removed cert: $cert_file"
+		removed=1
+	fi
+	if [[ -f "$key_file" ]]; then
+		rm -f "$key_file"
+		print_success "Removed key:  $key_file"
+		removed=1
+	fi
+
+	if [[ "$removed" -eq 0 ]]; then
+		print_info "No cert files found for $domain (already removed?)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Traefik Route File
+# =============================================================================
+
+# Create Traefik conf.d/{name}.yml route file
+create_traefik_route() {
+	local name="$1"
+	local port="$2"
+	local domain="${name}.local"
+	local route_file="$CONFD_DIR/${name}.yml"
+
+	mkdir -p "$CONFD_DIR"
+
+	cat >"$route_file" <<YAML
+http:
+  routers:
+    ${name}:
+      rule: "Host(\`${domain}\`) || Host(\`*.${domain}\`)"
+      entryPoints:
+        - websecure
+      service: ${name}
+      tls: {}
+
+  services:
+    ${name}:
+      loadBalancer:
+        servers:
+          - url: "http://host.docker.internal:${port}"
+        responseForwarding:
+          flushInterval: "100ms"
+        serversTransport: "default@internal"
+
+  serversTransports:
+    default:
+      forwardingTimeouts:
+        dialTimeout: "30s"
+        responseHeaderTimeout: "30s"
+
+tls:
+  certificates:
+    - certFile: /certs/${domain}+1.pem
+      keyFile: /certs/${domain}+1-key.pem
+YAML
+
+	# Validate: reject files containing ANSI escape codes or non-parseable YAML
+	if command -v python3 >/dev/null 2>&1; then
+		local py_err
+		py_err="$(
+			python3 - "$route_file" 2>&1 <<'PYEOF'
+import sys, yaml
+path = sys.argv[1]
+with open(path, 'rb') as fh:
+    raw = fh.read()
+if b'\x1b[' in raw:
+    print("ANSI escape codes detected")
+    sys.exit(1)
+try:
+    yaml.safe_load(raw)
+except yaml.YAMLError as e:
+    print(f"YAML parse error: {e}")
+    sys.exit(2)
+PYEOF
+		)"
+		local py_exit=$?
+		if [[ "$py_exit" -ne 0 ]]; then
+			print_error "YAML corruption in $route_file ($py_err) — removing"
+			rm -f "$route_file"
+			return 1
+		fi
+	fi
+	print_success "Created Traefik route: $route_file"
+	return 0
+}
+
+# Remove Traefik conf.d/{name}.yml route file
+remove_traefik_route() {
+	local name="$1"
+	local route_file="$CONFD_DIR/${name}.yml"
+
+	if [[ -f "$route_file" ]]; then
+		rm -f "$route_file"
+		print_success "Removed Traefik route: $route_file"
+	else
+		print_info "No Traefik route file found for $name (already removed?)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# /etc/hosts Entry (Primary DNS for Browsers)
+# =============================================================================
+
+# Add /etc/hosts entry for a domain (REQUIRED for .local in browsers)
+# macOS reserves .local for mDNS (Bonjour), which intercepts resolution before
+# /etc/resolver/local. Only /etc/hosts reliably overrides mDNS for browsers.
+add_hosts_entry() {
+	local domain="$1"
+	local marker="# localdev: $domain"
+
+	# Check if already present
+	if grep -q "$marker" /etc/hosts 2>/dev/null; then
+		print_info "/etc/hosts entry for $domain already exists — skipping"
+		return 0
+	fi
+
+	print_info "Adding /etc/hosts entry for $domain (required for browser resolution)..."
+	printf '\n127.0.0.1 %s %s # localdev: %s\n' "$domain" "*.$domain" "$domain" | sudo tee -a /etc/hosts >/dev/null
+	print_success "Added /etc/hosts entry: 127.0.0.1 $domain *.$domain"
+	return 0
+}
+
+# Remove /etc/hosts entry for a domain
+remove_hosts_entry() {
+	local domain="$1"
+	local marker="# localdev: $domain"
+
+	if ! grep -q "$marker" /etc/hosts 2>/dev/null; then
+		print_info "No /etc/hosts entry found for $domain (already removed?)"
+		return 0
+	fi
+
+	print_info "Removing /etc/hosts entry for $domain..."
+	# Use a temp file to avoid in-place sed issues on macOS
+	local tmp
+	tmp="$(mktemp)"
+	grep -v "$marker" /etc/hosts >"$tmp"
+	sudo cp "$tmp" /etc/hosts
+	rm -f "$tmp"
+	print_success "Removed /etc/hosts entry for $domain"
+	return 0
+}
+
+# Check if dnsmasq resolver is configured (determines if hosts fallback is needed)
+is_dnsmasq_configured() {
+	[[ -f "/etc/resolver/local" ]] && grep -q 'nameserver 127.0.0.1' /etc/resolver/local 2>/dev/null
+	return $?
+}
