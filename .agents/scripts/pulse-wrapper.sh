@@ -129,6 +129,44 @@ else
 	done
 	unset _pulse_arg
 fi
+
+# GH#21471: Pre-jitter fast-fail (t3010).
+# If another pulse instance holds the lock, exit 0 BEFORE sleeping the
+# jitter. Prevents launchd-respawn pile-up when cycles exceed StartInterval:
+# each new instance was sleeping 0-30s of jitter before the is-running
+# check in main(), causing 5+ queued instances during long cycles.
+# Uses hardcoded paths — pulse-wrapper-config.sh is not yet sourced here.
+# Biased toward false negatives: if PID file is absent, stat fails, or the
+# holder exceeds the max-age ceiling, fall through to main() where
+# acquire_instance_lock handles stale-lock reclaim properly.
+if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
+	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
+	_pw_ffjit_pid_file="${_pw_ffjit_lockdir}/pid"
+	if [[ -f "$_pw_ffjit_pid_file" ]]; then
+		_pw_ffjit_pid=$(cat "$_pw_ffjit_pid_file" 2>/dev/null || true)
+		if [[ "$_pw_ffjit_pid" =~ ^[0-9]+$ ]] && kill -0 "$_pw_ffjit_pid" 2>/dev/null; then
+			# Age check mirrors main()'s is-running short-circuit (t2829).
+			# Use lockdir mtime as lock-acquired timestamp (mkdir is atomic).
+			# BSD stat (macOS): -f '%m'; GNU stat (Linux): -c '%Y'.
+			_pw_ffjit_mtime=$(stat -f '%m' "$_pw_ffjit_lockdir" 2>/dev/null \
+				|| stat -c '%Y' "$_pw_ffjit_lockdir" 2>/dev/null \
+				|| echo "0")
+			_pw_ffjit_now=$(date +%s)
+			[[ "$_pw_ffjit_mtime" =~ ^[0-9]+$ ]] || _pw_ffjit_mtime=0
+			_pw_ffjit_age=$(( _pw_ffjit_now - _pw_ffjit_mtime ))
+			if [[ "$_pw_ffjit_age" -le "${PULSE_LOCK_MAX_AGE_S:-1800}" ]]; then
+				printf '[pulse-wrapper] another instance running (PID %s, age %ss), skipping\n' \
+					"$_pw_ffjit_pid" "$_pw_ffjit_age" \
+					>>"${HOME}/.aidevops/logs/pulse-wrapper.log" 2>/dev/null || true
+				exit 0
+			fi
+			# Holder exceeds age ceiling — fall through to main() for stale-lock reclaim.
+		fi
+	fi
+	unset _pw_ffjit_lockdir _pw_ffjit_pid_file _pw_ffjit_pid \
+		_pw_ffjit_mtime _pw_ffjit_now _pw_ffjit_age
+fi
+
 if [[ "$_pulse_skip_jitter" -eq 0 && "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
 	# $RANDOM is 0-32767; modulo gives 0 to PULSE_JITTER_MAX
 	jitter_seconds=$((RANDOM % (PULSE_JITTER_MAX + 1)))
