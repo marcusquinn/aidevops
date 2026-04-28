@@ -309,7 +309,7 @@ _dsi_apply_dispatch_ceremony() {
 	while IFS= read -r _prev_login; do
 		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] \
 			&& _extra_flags+=(--remove-assignee "$_prev_login")
-	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login' 2>/dev/null)
+	done < <(printf '%s' "$issue_meta_json" | jq -r '.assignees[].login // ""')
 
 	if ! set_issue_status "$issue_number" "$repo_slug" "queued" "${_extra_flags[@]}" >/dev/null 2>&1; then
 		_dsi_warn "Dispatch ceremony failed (non-fatal — worker will still launch; fix labels manually if needed)"
