@@ -17,6 +17,12 @@
 # written. Tests do not require git or gh — they exercise the logging functions
 # directly via sourcing with stub dependencies.
 #
+# Scope note (t2976): The issue spec listed two additional EDIT targets —
+#   cleanup_worktrees.sh and orphan-defaultbranch-guard.sh — but neither file
+#   exists in this repository. All instrumented callers that DO exist are covered:
+#   worktree-helper.sh, pulse-cleanup.sh, and skill-update-core-lib.sh
+#   (sourced via skill-update-helper.sh). No test coverage is omitted for live code.
+#
 # Usage:
 #   bash .agents/scripts/tests/test-worktree-removal-audit.sh
 
