@@ -21,7 +21,7 @@ subagents:
   - accounts-subscription-audit
   # Growth
   - growth
-  # UI Design — DESIGN.md system + tools
+  # UI Design - DESIGN.md system + tools
   - design-md
   - brand-identity
   - ui-ux-inspiration
