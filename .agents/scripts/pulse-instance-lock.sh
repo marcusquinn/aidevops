@@ -71,6 +71,35 @@ _handle_existing_lock() {
 	local lock_pid
 	lock_pid=$(_read_lock_pid)
 
+	# GH#21433 (t3002): Race-window grace period.
+	# acquire_instance_lock writes the PID file AFTER the mkdir succeeds.
+	# If we observe LOCKDIR existing but its PID file is empty/missing, the
+	# owner may simply be in the brief window between mkdir success and the
+	# `echo $$ >LOCKDIR/pid` write. Without this grace period, an empty PID
+	# file falls through to the "stale → clear and re-acquire" path below,
+	# which destroys a freshly-acquired-but-not-yet-stamped owner's LOCKDIR
+	# and lets a second instance acquire its own — yielding two pulses that
+	# both believe they hold the singleton lock.
+	#
+	# Wait briefly (~2s) for the PID to appear before declaring stale.
+	# A genuine SIGKILL/OOM-orphaned LOCKDIR will still have an empty PID
+	# file after the grace expires; live owners stamp the PID well within
+	# this window in practice.
+	if [[ -z "$lock_pid" ]]; then
+		local _grace=0
+		while ((_grace < 20)); do
+			# Fractional sleep on BSD/coreutils sleep; fall back to 1s on
+			# stripped-down shells without decimal sleep support.
+			sleep 0.1 2>/dev/null || sleep 1
+			lock_pid=$(_read_lock_pid)
+			[[ -n "$lock_pid" ]] && break
+			_grace=$((_grace + 1))
+		done
+		if [[ -n "$lock_pid" ]]; then
+			echo "[pulse-wrapper] _handle_existing_lock: PID file appeared after ${_grace} grace iterations (PID ${lock_pid}) — GH#21433 race window observed" >>"$WRAPPER_LOGFILE"
+		fi
+	fi
+
 	if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ps -p "$lock_pid" >/dev/null 2>&1; then
 		# Lock owner PID is alive — but is it actually a pulse-wrapper?
 		# GH#20025 Phase C: PID reuse guard + age-based force-reclaim.
@@ -239,6 +268,27 @@ acquire_instance_lock() {
 
 	# Write our PID into the lock directory for stale-lock detection
 	echo "$$" >"${LOCKDIR}/pid"
+
+	# GH#21433 (t3002): Post-acquisition ownership verification.
+	# Defence-in-depth against the mkdir-vs-PID-write race even when the
+	# grace period in _handle_existing_lock fails (e.g., grace too short
+	# under heavy load, or a non-pulse process touched LOCKDIR/pid). If
+	# another instance executed _handle_existing_lock during our PID-write
+	# window — saw the empty PID file, exhausted its grace period, removed
+	# our LOCKDIR, mkdir-recreated it, and stamped its own PID — then the
+	# file we just wrote was either re-overwritten by them or sits inside
+	# their LOCKDIR. Re-read after a brief settle and verify the file still
+	# contains $$. If not, the other instance won; abandon this attempt
+	# and exit without removing LOCKDIR (we don't own it any more).
+	sleep 0.2 2>/dev/null || sleep 1
+	local _verify_pid
+	_verify_pid=$(cat "${LOCKDIR}/pid" 2>/dev/null || echo "")
+	if [[ "$_verify_pid" != "$$" ]]; then
+		echo "[pulse-wrapper] Lock verification failed — LOCKDIR/pid contains '${_verify_pid:-empty}' instead of $$ — another instance won the race, exiting (GH#21433)" >>"$WRAPPER_LOGFILE"
+		# Do NOT remove LOCKDIR — the other instance owns it now.
+		# Leave _LOCK_OWNED=false so release_instance_lock is a no-op.
+		return 1
+	fi
 
 	echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$)" >>"$WRAPPER_LOGFILE"
 

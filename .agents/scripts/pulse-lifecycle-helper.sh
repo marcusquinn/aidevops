@@ -27,6 +27,7 @@
 #   0  Success (includes no-op cases)
 #   1  Pulse not running (is-running only)
 #   2  Invalid subcommand or missing pulse-wrapper.sh
+#   3  status: multiple pulse PIDs detected (singleton violation, GH#21433)
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -193,7 +194,11 @@ _restart_if_running() {
 	_start
 }
 
-# _status: human-readable PID + age.
+# _status: human-readable PID + age. Reports lock-holder PID and warns when
+# multiple pulse PIDs are alive simultaneously — the singleton invariant
+# (GH#4513, GH#21433) requires exactly one. Multiple PIDs indicate a race
+# escaped the lock (e.g., trap-cleanup vs launchd respawn vs lifecycle-helper
+# concurrent start) and operator intervention is needed.
 _status() {
 	local _pids
 	_pids=$(_pulse_pids)
@@ -202,13 +207,40 @@ _status() {
 		return 0
 	fi
 
-	printf 'Pulse: running\n'
+	# Count PIDs (newline-separated). Use wc -l + tr to be portable.
+	local _pid_count
+	_pid_count=$(printf '%s\n' "$_pids" | wc -l | tr -d ' ')
+	[[ "$_pid_count" =~ ^[0-9]+$ ]] || _pid_count=0
+
+	printf 'Pulse: running (%s instance%s)\n' "$_pid_count" "$([[ $_pid_count -eq 1 ]] || printf 's')"
+
+	# Read lock-holder PID for cross-reference (GH#21433 acceptance criterion).
+	local _lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
+	local _lock_pid=""
+	if [[ -f "${_lockdir}/pid" ]]; then
+		_lock_pid=$(cat "${_lockdir}/pid" 2>/dev/null || echo "")
+	fi
+	if [[ -n "$_lock_pid" ]]; then
+		printf '  Lock holder PID: %s\n' "$_lock_pid"
+	else
+		printf '  Lock holder PID: (LOCKDIR/pid missing or empty)\n'
+	fi
+
 	local _pid
 	while IFS= read -r _pid; do
 		local _etime
 		_etime=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ')
-		printf '  PID %s (uptime %s)\n' "$_pid" "${_etime:-unknown}"
+		local _marker=""
+		[[ "$_pid" == "$_lock_pid" ]] && _marker=" (lock holder)"
+		printf '  PID %s%s (uptime %s)\n' "$_pid" "$_marker" "${_etime:-unknown}"
 	done <<<"$_pids"
+
+	if [[ "$_pid_count" -gt 1 ]]; then
+		_pl_warn "MULTIPLE pulse instances detected (GH#21433) — singleton invariant violated"
+		_pl_warn "Recommendation: $(basename "$0") restart    # full stop+start to recover"
+		# Exit non-zero so callers (scripts, monitoring) can detect the anomaly.
+		return 3
+	fi
 	return 0
 }
 
@@ -234,6 +266,7 @@ Exit codes:
   0  Success
   1  Pulse not running (is-running only) / pulse failed to start
   2  Invalid subcommand or missing pulse-wrapper.sh
+  3  status: multiple pulse PIDs detected (singleton violation, GH#21433)
 EOF
 	return 0
 }
