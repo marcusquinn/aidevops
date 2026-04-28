@@ -535,6 +535,24 @@ _dff_dispatch_with_timeout() {
 		fi
 	fi
 
+	# t3026: floor per-candidate timeout to cover full ceremony cost.
+	# Pulse dispatch ceremony (gh issue view + brief check + eligibility +
+	# pre-dispatch validators + CLAIM_WON audit comment + body composition
+	# with footer + worker spawn / npm install / node startup) takes ~75-160s
+	# baseline; with backpressure it adds 20-40s. The adaptive helper's MIN
+	# (DISPATCH_TIMING_MIN_TIMEOUT_MS, default 30s) is sized for the simplest
+	# case (dedup-skip path that returns in <5s) and is too low for the full
+	# ceremony — when adaptive recommended drops below ceremony cost, EVERY
+	# candidate timeouts at rc=124 and dispatched=0/N. Canonical failure:
+	# 2026-04-28 fill_floor cycle iter=62, 148 candidates, dispatched=0,
+	# adaptive timeout collapsed to 180s. Floor at 360s gives ceremony +
+	# backpressure margin without inflating fast-path probe budget.
+	local floor_seconds="${FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-360}"
+	if [[ "$floor_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds < floor_seconds)); then
+		timeout_seconds="$floor_seconds"
+		timeout_ms=$((floor_seconds * 1000))
+	fi
+
 	local start_ms dispatch_rc=0 outcome elapsed_ms
 	start_ms=$(_dff_now_ms)
 	run_stage_with_timeout "fill_floor_candidate_${issue_number}" "$timeout_seconds" \
