@@ -219,7 +219,7 @@ _dsi_resolve_model() {
 # Pre-create the worker worktree. Sets _DSI_WORKTREE_PATH and _DSI_WORKTREE_BRANCH.
 # Args:
 #   $1 - issue number
-# Returns: 0 success, 1 failure (worktree creation failed)
+# Returns: 0 success, 1 failure (worktree creation failed after all retries)
 #######################################
 _dsi_create_worktree() {
 	local issue_number="$1"
@@ -227,28 +227,39 @@ _dsi_create_worktree() {
 	ts=$(date -u +%Y%m%d-%H%M%S)
 	local branch="auto-${ts}-gh${issue_number}"
 
-	# worktree-helper.sh add: outputs creation messages to stderr; the
-	# branch name is what we passed in.
-	if ! AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
-		--base "origin/$(_dsi_default_branch)" --issue "$issue_number" >&2; then
-		_dsi_err "Failed to create worktree for branch ${branch}"
-		return 1
-	fi
+	local attempt max_attempts
+	max_attempts=3
 
-	# Query git for the actual worktree path. worktree-helper.sh uses its
-	# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
-	# that here is fragile. Read it back from `git worktree list` instead.
-	# Awk inlined to one line to avoid tripping the positional-ratchet (its
-	# single-quote-strip is line-local; multi-line awk scripts get false-positives).
-	_DSI_WORKTREE_PATH=$(git worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
-	_DSI_WORKTREE_BRANCH="$branch"
+	# Retry loop: handles .git/config lock contention under concurrent creation
+	# (GH#21469). git cleans up partial state on a failed add, so retrying the
+	# same branch name is safe. Backoff: 0.5s after attempt 1, 1s after attempt 2.
+	for attempt in 1 2 3; do
+		# worktree-helper.sh add: outputs creation messages to stderr; the
+		# branch name is what we passed in.
+		if AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
+			--base "origin/$(_dsi_default_branch)" --issue "$issue_number" >&2; then
+			# Query git for the actual worktree path. worktree-helper.sh uses its
+			# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
+			# that here is fragile. Read it back from `git worktree list` instead.
+			# Awk inlined to one line to avoid tripping the positional-ratchet (its
+			# single-quote-strip is line-local; multi-line awk scripts get false-positives).
+			_DSI_WORKTREE_PATH=$(git worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
+			_DSI_WORKTREE_BRANCH="$branch"
+			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
+				return 0
+			fi
+			_dsi_warn "Worktree path unresolvable after add (attempt ${attempt}/${max_attempts}, branch=${branch})"
+		else
+			_dsi_warn "worktree-helper.sh add failed (attempt ${attempt}/${max_attempts}, possible .git/config lock, branch=${branch})"
+		fi
+		if [[ "$attempt" -eq 1 ]]; then sleep 0.5
+		elif [[ "$attempt" -eq 2 ]]; then sleep 1
+		fi
+	done
 
-	if [[ -z "$_DSI_WORKTREE_PATH" || ! -d "$_DSI_WORKTREE_PATH" ]]; then
-		_dsi_err "Worktree created but path could not be resolved (branch=${branch})"
-		_dsi_info "  Inspect: git worktree list --porcelain | grep -A1 ${branch}"
-		return 1
-	fi
-	return 0
+	_dsi_err "Failed to create worktree for branch ${branch} after ${max_attempts} attempts"
+	_dsi_info "  Inspect: git worktree list --porcelain | grep -A1 ${branch}"
+	return 1
 }
 
 #######################################
