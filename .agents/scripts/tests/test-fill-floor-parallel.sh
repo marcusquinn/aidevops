@@ -61,19 +61,20 @@ source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # Test 1: _dff_compute_max_parallel honours DISPATCH_FILL_FLOOR_PARALLEL
 # =============================================================================
 test_compute_max_parallel_default() {
+	# t3014: when DISPATCH_FILL_FLOOR_PARALLEL is unset, default is now
+	# effective_slots (full slot budget), not the historical 6. Pre-t3014
+	# the default capped throughput at 6/cycle even with a 24-slot budget,
+	# leaving ~17 slots idle per cycle under adaptive-timeout regimes.
 	unset DISPATCH_FILL_FLOOR_PARALLEL || true
-	# Re-source to pick up default — but the guard prevents that. Instead
-	# re-init the var manually using the same default.
-	: "${DISPATCH_FILL_FLOOR_PARALLEL:=6}"
 	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
 	rm -f "$_DFF_THROTTLE_FILE"
 	local result
-	# effective_slots=24 → expect 6 (capped at default)
+	# effective_slots=24 → expect 24 (full budget, t3014 default)
 	result=$(_dff_compute_max_parallel 24)
-	if [[ "$result" == "6" ]]; then
-		print_result "compute_max_parallel: default=6 with slots=24" 0
+	if [[ "$result" == "24" ]]; then
+		print_result "compute_max_parallel: default=effective_slots(24) when unset" 0
 	else
-		print_result "compute_max_parallel: default=6 with slots=24" 1 "got=${result}"
+		print_result "compute_max_parallel: default=effective_slots(24) when unset" 1 "got=${result}"
 	fi
 	return 0
 }
@@ -106,17 +107,19 @@ test_compute_max_parallel_throttle_forces_serial() {
 }
 
 test_compute_max_parallel_invalid_var() {
+	# t3014: invalid value falls back to effective_slots (was 6 pre-t3014).
+	# This keeps the validator graceful — a typo'd env var doesn't trap the
+	# pulse at degraded throughput; it gets the safe full-budget default.
 	export DISPATCH_FILL_FLOOR_PARALLEL="not-a-number"
 	rm -f "$_DFF_THROTTLE_FILE"
 	local result
 	result=$(_dff_compute_max_parallel 24)
-	# Invalid → falls back to default 6
-	if [[ "$result" == "6" ]]; then
-		print_result "compute_max_parallel: invalid env falls back to 6" 0
+	if [[ "$result" == "24" ]]; then
+		print_result "compute_max_parallel: invalid env falls back to effective_slots(24)" 0
 	else
-		print_result "compute_max_parallel: invalid env falls back to 6" 1 "got=${result}"
+		print_result "compute_max_parallel: invalid env falls back to effective_slots(24)" 1 "got=${result}"
 	fi
-	export DISPATCH_FILL_FLOOR_PARALLEL=6
+	unset DISPATCH_FILL_FLOOR_PARALLEL || true
 	return 0
 }
 

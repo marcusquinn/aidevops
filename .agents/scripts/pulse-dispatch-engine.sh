@@ -52,14 +52,26 @@ _PULSE_DISPATCH_ENGINE_LOADED=1
 # cadence collapsed from ~2min to ~40min. 30s is generous: dedup check +
 # nohup worker spawn normally completes in <5s.
 : "${FILL_FLOOR_PER_CANDIDATE_TIMEOUT:=30}"
-# t3005: parallel dispatch concurrency for dispatch_deterministic_fill_floor.
-# Each successful dispatch takes ~100s (most in worktree-helper.sh add) so the
-# previous serial loop capped throughput at ~1 dispatch per pulse cycle.
-# 6 concurrent dispatches × ~100s = full 24-slot pool reachable in ~1 cycle.
-# Set to 1 to retain the legacy serial behavior (regression escape hatch).
-# Capped at _effective_slots inside the function so parallelism never exceeds
-# the slot budget.
-: "${DISPATCH_FILL_FLOOR_PARALLEL:=6}"
+# t3005/t3014: parallel dispatch concurrency for dispatch_deterministic_fill_floor.
+# Each successful dispatch takes ~30-180s (gh API ceremony + worktree-helper.sh
+# add + worker spawn) so the previous serial loop capped throughput at ~1
+# dispatch per pulse cycle.
+#
+# Default (t3014): unset → max_parallel = _effective_slots (typically 24, the
+# full slot budget). The cap inside _dff_compute_max_parallel still clamps at
+# _effective_slots, so the default never exceeds capacity. Setting an explicit
+# integer overrides the default. Set to 1 to retain the legacy serial behavior
+# (regression escape hatch); set to a smaller integer to ration concurrency.
+#
+# Pre-t3014 default was 6 — too low to saturate the 24-slot budget under the
+# adaptive-timeout / probe-mode regime where each dispatch retries through gh
+# rate-limit backoff. Measured failure mode (cycle 21126, 2026-04-28): 10
+# candidates dispatched in parallel, only 3/10 succeeded; steady-state worker
+# count = 4 against 24-slot budget. Raising the default to _effective_slots
+# allows the 24-slot pool to fill in 1-2 cycles instead of 6+.
+#
+# Intentionally left as soft default (`:-` form, no `:=` global default) so
+# the variable stays unset for callers that read it for diagnostics.
 : "${PULSE_ACTIVE_REFILL_INTERVAL:=120}"
 : "${PULSE_ACTIVE_REFILL_IDLE_MIN:=60}"
 : "${PULSE_ACTIVE_REFILL_STALL_MIN:=120}"
@@ -697,13 +709,20 @@ _dff_maybe_engage_throttle() {
 }
 
 #######################################
-# t3005: Decide the parallelism level for the deterministic fill-floor loop.
+# t3005/t3014: Decide the parallelism level for the deterministic fill-floor loop.
 #
-# Defaults to DISPATCH_FILL_FLOOR_PARALLEL (env, default 6). Capped at the
-# effective slot budget — never schedule more concurrent dispatches than
-# slots we'd consume. Forced to 1 when the adaptive throttle file is present
-# (degraded runtime — the existing serial throttle behavior is preserved as
-# the regression escape hatch and the "test the waters" semantics).
+# Defaults to DISPATCH_FILL_FLOOR_PARALLEL when set to a positive integer.
+# When unset, empty, or non-numeric, defaults to effective_slots — i.e. the
+# full slot budget — so the parallel loop saturates the worker pool in one
+# cycle (t3014). The pre-t3014 default of 6 capped throughput at 6 dispatches
+# per cycle even when the slot budget was 24, leaving ~17 idle slots per cycle
+# under adaptive-timeout / probe-mode regimes that produce 30-180s per-candidate
+# dispatch latency.
+#
+# Always capped at the effective slot budget — never schedule more concurrent
+# dispatches than slots we'd consume. Forced to 1 when the adaptive throttle
+# file is present (degraded runtime — the existing serial throttle behavior is
+# preserved as the regression escape hatch and the "test the waters" semantics).
 #
 # Arguments:
 #   $1 - effective_slots (already throttle-aware: 1 in throttle mode)
@@ -711,8 +730,13 @@ _dff_maybe_engage_throttle() {
 #######################################
 _dff_compute_max_parallel() {
 	local effective_slots="$1"
-	local max_parallel="${DISPATCH_FILL_FLOOR_PARALLEL:-6}"
-	[[ "$max_parallel" =~ ^[1-9][0-9]*$ ]] || max_parallel=6
+	# t3014: when unset/empty/invalid, default to effective_slots (full budget)
+	# instead of the historical 6. Env override still wins when set to a valid
+	# positive integer; the cap below still clamps at effective_slots.
+	local max_parallel="${DISPATCH_FILL_FLOOR_PARALLEL:-}"
+	if ! [[ "$max_parallel" =~ ^[1-9][0-9]*$ ]]; then
+		max_parallel="$effective_slots"
+	fi
 	if ((max_parallel > effective_slots)); then
 		max_parallel="$effective_slots"
 	fi
@@ -972,12 +996,12 @@ _dff_aggregate_outcomes() {
 # and fills empty local slots. Ranking remains simple and auditable; judgment
 # stays with the pulse LLM for merges, blockers, and unusual edge cases.
 #
-# t3005: Loop body extracted into _dff_dispatch_loop_serial /
+# t3005/t3014: Loop body extracted into _dff_dispatch_loop_serial /
 # _dff_dispatch_loop_parallel — the orchestrator picks one based on
-# DISPATCH_FILL_FLOOR_PARALLEL (default 6) and adaptive throttle state.
-# Throttle mode forces serial (1 dispatch per round) to preserve the existing
-# "test the waters" recovery semantics; otherwise parallel is preferred so
-# the 24-slot pool fills in 1-2 cycles instead of 40 minutes.
+# DISPATCH_FILL_FLOOR_PARALLEL (t3014 default = effective_slots when unset)
+# and adaptive throttle state. Throttle mode forces serial (1 dispatch per
+# round) to preserve the existing "test the waters" recovery semantics;
+# otherwise parallel is preferred so the 24-slot pool fills in 1 cycle.
 #
 # Returns: dispatched worker count via stdout
 #######################################
@@ -1066,7 +1090,7 @@ dispatch_deterministic_fill_floor() {
 	_dff_line_count=$(wc -l <"$_dff_candidate_file" 2>/dev/null | tr -d ' ' || echo 0)
 	echo "[pulse-wrapper] Deterministic fill floor: candidate enumeration produced ${_dff_line_count} lines in ${_dff_candidate_file}" >>"$LOGFILE"
 
-	# Branch: serial (legacy / throttle / DISPATCH_FILL_FLOOR_PARALLEL=1) vs parallel.
+	# Branch: serial (throttle / DISPATCH_FILL_FLOOR_PARALLEL=1 / effective_slots=1) vs parallel.
 	local dispatched_count=0 processed_count=0 loop_output=""
 	local _dff_outcomes_file=""
 	if ((_dff_max_parallel <= 1)); then
