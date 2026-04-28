@@ -694,8 +694,12 @@ _rest_issue_view() {
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
 		--json) shift 2 ;;
 		--json=*) shift ;;
-		--jq) jq_expr="${2:-}"; shift 2 ;;
-		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		# t3027: accept -q as gh's documented shorthand for --jq. Without this,
+		# callers using `gh issue view ... -q '.field'` (the idiomatic gh form)
+		# silently lost the jq filter on REST fallback and got the full issue
+		# object, breaking downstream string assignments.
+		--jq | -q) jq_expr="${2:-}"; shift 2 ;;
+		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
 		*) shift ;;
 		esac
 	done

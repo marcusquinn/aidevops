@@ -1479,6 +1479,28 @@ main() {
 		return 0
 	fi
 
+	# t3027: orchestration-level GraphQL-aware idle skip. is_graphql_budget_sufficient
+	# (sourced via pulse-dispatch-engine.sh → pulse-rate-limit-circuit-breaker.sh)
+	# returns 1 when GraphQL remaining is at or below the configured threshold
+	# (default 30% via .agents/configs/pulse-rate-limit.conf). Hoisting this
+	# check above prefetch_state and the LLM run prevents the cycle from
+	# burning a doomed ~210s prefetch + multi-minute LLM run + dispatch
+	# ceremony when budget is exhausted — the canonical t2690 invocation
+	# sits inside the deterministic fill floor and only stops dispatch, not
+	# the upstream API consumers. Fail-open (rc=2) proceeds so a flaky
+	# rate_limit endpoint can't wedge the pulse permanently.
+	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
+		local _t3027_rl_rc=0
+		is_graphql_budget_sufficient || _t3027_rl_rc=$?
+		if [[ "$_t3027_rl_rc" -eq 1 ]]; then
+			echo "[pulse-wrapper] Cycle skipped: GraphQL budget below circuit-breaker threshold (t3027 — orchestration-level skip; saves prefetch + LLM run cost)" >>"$LOGFILE"
+			if declare -F pulse_stats_increment >/dev/null 2>&1; then
+				pulse_stats_increment "pulse_cycle_skipped_graphql_low" 2>/dev/null || true
+			fi
+			return 0
+		fi
+	fi
+
 	# t2994: pre-warm L3 caches when sentinel is stale. Runs after lock,
 	# canary, session, and dedup gates have all passed (so a real cycle is
 	# about to run) and BEFORE prefetch_state inside the cycle. Steady-state

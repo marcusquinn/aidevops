@@ -813,10 +813,14 @@ _is_task_committed_to_main() {
 
 	[[ -n "$issue_number" && -n "$repo_slug" && -n "$repo_path" ]] || return 1
 
-	# Get the issue creation date for --since filtering
+	# Get the issue creation date for --since filtering.
+	# t3027: route through gh_issue_view wrapper for REST fallback under
+	# GraphQL exhaustion. The `// .created_at` jq fallback handles both
+	# camelCase (gh native) and snake_case (REST) field names — the REST
+	# endpoint /repos/.../issues/N returns `created_at`, gh returns `createdAt`.
 	local created_at
-	created_at=$(gh issue view "$issue_number" --repo "$repo_slug" \
-		--json createdAt -q '.createdAt' 2>/dev/null) || created_at=""
+	created_at=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json createdAt --jq '.createdAt // .created_at' 2>/dev/null) || created_at=""
 	if [[ -z "$created_at" ]]; then
 		return 1
 	fi
@@ -1108,8 +1112,16 @@ dispatch_with_dedup() {
 	# fetch + the large-file labels/title fetches + the brief-freshness body
 	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
 	# "gh API call budget" for the full inventory.
+	#
+	# t3027: route through gh_issue_view wrapper for REST fallback under
+	# GraphQL exhaustion. Without this, every per-candidate dedup check in a
+	# 100+ candidate cycle fails identically with "unable to load issue
+	# metadata" once GraphQL hits 0/5000, burning ceremony cost (claim
+	# acquisition, advisory comments) for zero dispatches. Downstream consumers
+	# of this JSON access only .number, .title, .state, .labels[].name,
+	# .assignees, .body — all of which exist in REST shape unchanged.
 	local issue_meta_json
-	issue_meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json number,title,state,labels,assignees,body 2>/dev/null) || issue_meta_json=""
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
@@ -1230,7 +1242,10 @@ _ensure_issue_body_has_brief() {
 		&& printf '%s' "$pre_fetched_json" | jq -e '.body' >/dev/null 2>&1; then
 		current_body=$(printf '%s' "$pre_fetched_json" | jq -r '.body // ""' 2>/dev/null) || current_body=""
 	else
-		current_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body -q .body 2>/dev/null || echo "")
+		# t3027: route through gh_issue_view wrapper for REST fallback under
+		# GraphQL exhaustion. The `body` field name is identical between gh
+		# native and REST shape, so --jq '.body' works on both paths.
+		current_body=$(gh_issue_view "$issue_number" --repo "$repo_slug" --json body --jq '.body' 2>/dev/null || echo "")
 	fi
 	if [[ "$current_body" == *"## Task Brief"* ]] || [[ "$current_body" == *"## Worker Guidance"* ]]; then
 		return 0
