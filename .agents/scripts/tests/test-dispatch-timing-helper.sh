@@ -98,6 +98,12 @@ _record() {
 	return $?
 }
 
+# Helper to extract just the timeout_ms from recommend output (first line)
+_recommend_timeout() {
+	"$HELPER" recommend | head -n 1
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Test 1: Bootstrap default (no records)
 # ---------------------------------------------------------------------------
@@ -105,7 +111,7 @@ test_bootstrap_no_records() {
 	echo "Test 1: bootstrap with no records"
 	_reset_state
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	_assert_eq "no records → bootstrap default" "$result" "90000"
 	return 0
 }
@@ -119,7 +125,7 @@ test_bootstrap_insufficient_successes() {
 	_record success 5000
 	_record success 5500
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	_assert_eq "2 successes → bootstrap default" "$result" "90000"
 	return 0
 }
@@ -137,7 +143,7 @@ test_ewma_low_avg_clamped_to_floor() {
 	_record success 4800
 	_record success 5200
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	_assert_eq "5 successes ~5s → clamped to MIN floor 30000" "$result" "30000"
 	return 0
 }
@@ -155,7 +161,7 @@ test_ewma_high_avg_above_floor() {
 	_record success 25500
 	_record success 24500
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# Expected range: EWMA*2 should be ~50000, p95 ~26000, max → ~50000
 	# Allow wide range since EWMA depends on order
 	_assert_in_range "5 successes ~25s → ~50000ms" "$result" "40000" "65000"
@@ -177,7 +183,7 @@ test_probe_mode_after_timeout() {
 	# Then timeout at 30s
 	_record timeout 30000 30000
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# Probe mode: max(recommended, last_timeout × 2) = max(~30s, 60s) = 60000
 	_assert_eq "timeout → probe = 2×timeout = 60000" "$result" "60000"
 	return 0
@@ -196,7 +202,7 @@ test_probe_mode_escalation() {
 	_record success 5000
 	_record timeout 60000 60000
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# Last timeout used 60000 → probe = 60000 × 2 = 120000
 	_assert_eq "60s timeout → probe = 120000" "$result" "120000"
 	return 0
@@ -215,7 +221,7 @@ test_max_timeout_clamp() {
 	_record success 200000
 	_record success 200000
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# EWMA*2 = 400000, but MAX = 300000 → clamped
 	_assert_eq "EWMA above MAX → clamped to 300000" "$result" "300000"
 	return 0
@@ -235,7 +241,7 @@ test_corruption_recovery() {
 	_record success 4800
 	_record success 5200
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# Should still produce a valid recommendation, not crash.
 	_assert_in_range "corruption tolerated → valid output" "$result" "30000" "300000"
 	return 0
@@ -270,7 +276,7 @@ test_concurrent_writes() {
 	_assert_eq "no malformed lines from concurrent writes" "$malformed_count" "0"
 	# Recommend should still produce valid output
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	_assert_in_range "post-concurrent recommend valid" "$result" "30000" "300000"
 	return 0
 }
@@ -319,7 +325,7 @@ test_reset() {
 	_record success 5000
 	"$HELPER" reset >/dev/null
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	_assert_eq "after reset → bootstrap default" "$result" "90000"
 	return 0
 }
@@ -340,9 +346,52 @@ test_window_limit() {
 		_record success 5000 >/dev/null 2>&1
 	done
 	local result
-	result=$("$HELPER" recommend)
+	result=$(_recommend_timeout)
 	# Only last 20 small records → EWMA ~5000 → *2 = 10000 → clamped to MIN 30000
 	_assert_eq "window=20 ignores oldest 5 huge records" "$result" "30000"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 13: Probe-flag roundtrip — recommend outputs probe flag, record accepts it
+# ---------------------------------------------------------------------------
+test_probe_flag_roundtrip() {
+	echo "Test 13: probe-flag roundtrip (recommend outputs flag, record accepts it)"
+	_reset_state
+	# Establish baseline successes
+	_record success 5000
+	_record success 5000
+	_record success 5000
+	_record success 5000
+	_record success 5000
+	# Timeout at 30s
+	_record timeout 30000 30000
+	# Recommend should output two lines: timeout_ms and probe_bool
+	local recommend_output
+	recommend_output=$("$HELPER" recommend)
+	local timeout_ms probe_bool
+	mapfile -t -n 2 < <(printf '%s\n' "$recommend_output")
+	timeout_ms="${MAPFILE[0]:-}"
+	probe_bool="${MAPFILE[1]:-}"
+	_assert_eq "probe-flag line 1: timeout_ms" "$timeout_ms" "60000"
+	_assert_eq "probe-flag line 2: probe_bool" "$probe_bool" "true"
+	# Now record with the probe flag and verify it's stored
+	"$HELPER" record \
+		--repo "owner/repo" --issue "2" --outcome "success" \
+		--elapsed-ms "5000" --timeout-used-ms "60000" \
+		--probe "$probe_bool" \
+		>/dev/null 2>&1
+	# Verify the record was written with probe:true
+	local last_record
+	last_record=$(tail -n 1 "$DISPATCH_TIMING_STATE_FILE")
+	if printf '%s' "$last_record" | grep -q '"probe":true'; then
+		PASS=$((PASS + 1))
+		printf '  PASS: probe-flag stored in JSONL\n'
+	else
+		FAIL=$((FAIL + 1))
+		FAILURES+=("probe-flag stored in JSONL: expected probe:true in record")
+		printf '  FAIL: probe-flag stored in JSONL — expected probe:true, got: %s\n' "$last_record"
+	fi
 	return 0
 }
 
@@ -364,6 +413,7 @@ _run_tests() {
 	test_stats_output
 	test_reset
 	test_window_limit
+	test_probe_flag_roundtrip
 
 	echo ""
 	echo "===== Summary ====="

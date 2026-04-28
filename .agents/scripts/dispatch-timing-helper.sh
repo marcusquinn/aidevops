@@ -253,7 +253,7 @@ _dt_cmd_recommend() {
 	fi
 
 	# Probe mode: if LAST record is a timeout, recommend at least 2× last_timeout_used
-	local last_outcome last_timeout_used
+	local last_outcome last_timeout_used probe_mode="false"
 	last_outcome=$(printf '%s\n' "$window" | tail -n 1 | _dt_json_field "$_DT_FIELD_OUTCOME")
 	if [[ "$last_outcome" == "timeout" ]]; then
 		last_timeout_used=$(printf '%s\n' "$window" | tail -n 1 | _dt_json_field "$_DT_FIELD_TIMEOUT_USED_MS")
@@ -261,6 +261,7 @@ _dt_cmd_recommend() {
 			local probe_recommended=$(((last_timeout_used * DISPATCH_TIMING_PROBE_MULT_PCT) / 100))
 			if ((probe_recommended > recommended)); then
 				recommended="$probe_recommended"
+				probe_mode="true"
 			fi
 		fi
 	fi
@@ -276,7 +277,9 @@ _dt_cmd_recommend() {
 	# Round to nearest 1000 (whole seconds)
 	recommended=$(((recommended + 500) / 1000 * 1000))
 
+	# Output two lines: timeout_ms and probe_bool
 	echo "$recommended"
+	echo "$probe_mode"
 	return 0
 }
 
