@@ -248,6 +248,28 @@ _prefetch_batch_refresh() {
 	_PULSE_HEALTH_EVENTS_TICKLE_FRESH=$((_PULSE_HEALTH_EVENTS_TICKLE_FRESH + _tickle_fresh))
 	_PULSE_HEALTH_EVENTS_TICKLE_STALE=$((_PULSE_HEALTH_EVENTS_TICKLE_STALE + _tickle_stale))
 	echo "[pulse-wrapper] Batch prefetch: search_calls=${_batch_search_calls} cache_writes=${_batch_cache_writes} tickle_fresh=${_tickle_fresh} tickle_stale=${_tickle_stale}" >>"$LOGFILE"
+
+	# t3027 (GH#21584): Bridge counters across run_stage_with_timeout subshell.
+	# prefetch_state runs inside a subshell created by run_stage_with_timeout
+	# in _run_preflight_stages, so updates to _PULSE_HEALTH_* shell vars die
+	# when the subshell exits. The pulse-wrapper.sh deterministic pipeline
+	# reads this temp file after the subshell returns and accumulates the
+	# counters into the cycle-scoped totals. Pattern mirrors the merge
+	# counter bridge at pulse-wrapper.sh:996-1008 (GH#18571).
+	#
+	# Format: single line of 4 space-separated integers in fixed positional
+	# order: search_calls cache_hits tickle_fresh tickle_stale. Cumulative
+	# within this prefetch_state invocation (we accumulate here rather than
+	# requiring the reader to sum across multiple files). The reader
+	# `read -r` parses positionally — DO NOT change column order without
+	# updating pulse-wrapper.sh::_pulse_drain_prefetch_counters.
+	local _pf_counters_file="${TMPDIR:-/tmp}/pulse-health-prefetch-$$.tmp"
+	printf '%d %d %d %d\n' \
+		"$_PULSE_HEALTH_BATCH_SEARCH_CALLS" \
+		"$_PULSE_HEALTH_BATCH_CACHE_HITS" \
+		"$_PULSE_HEALTH_EVENTS_TICKLE_FRESH" \
+		"$_PULSE_HEALTH_EVENTS_TICKLE_STALE" \
+		>"$_pf_counters_file" 2>/dev/null || true
 	return 0
 }
 
