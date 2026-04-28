@@ -195,7 +195,7 @@ cmd_incidents() {
 	fi
 
 	if [[ "$ARG_JSON" -eq 1 ]]; then
-		jq '{incidents: [.incidents[] | {name, impact, started_at, latest_update: (.incident_updates[0].body // ""), components: [.components[].name]}]}' "$CACHE_INCIDENTS"
+		jq '{incidents: [.incidents[]? | {name, impact, started_at, latest_update: (.incident_updates[0].body // ""), components: [.components[].name]}]}' "$CACHE_INCIDENTS"
 	else
 		# Human-readable listing. Empty list = healthy.
 		local count
@@ -233,7 +233,7 @@ cmd_correlate() {
 		count=$(jq '.incidents | length' "$CACHE_INCIDENTS")
 		if [[ "$count" -gt 0 ]]; then
 			printf 'Active incidents:\n\n'
-			jq -r '.incidents[] | "- **[\(.impact)]** \(.name) — components: \([.components[].name] | join(", ")) (started \(.started_at))"' "$CACHE_INCIDENTS"
+			jq -r '.incidents[]? | "- **[\(.impact)]** \(.name) — components: \([.components[].name] | join(", ")) (started \(.started_at))"' "$CACHE_INCIDENTS"
 			printf '\n'
 		fi
 	fi
