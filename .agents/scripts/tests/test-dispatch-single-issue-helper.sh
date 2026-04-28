@@ -29,6 +29,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 SET_ISSUE_STATUS_LOG=""
+SET_ORIGIN_LABEL_LOG=""
 
 print_result() {
 	local test_name="$1"
@@ -81,8 +82,30 @@ _install_mock_set_issue_status() {
 	return 0
 }
 
+# t3007: Override set_origin_label (also from shared-gh-wrappers.sh) with a
+# mock that logs every call to SET_ORIGIN_LABEL_LOG. The ceremony now calls
+# set_origin_label separately for origin label mutual exclusion instead of
+# embedding bare --add/--remove-label flags in the set_issue_status call.
+MOCK_SET_ORIGIN_LABEL_MODE="success"
+
+# shellcheck disable=SC2317
+set_origin_label() {
+	printf 'set_origin_label %s\n' "$*" >>"$SET_ORIGIN_LABEL_LOG"
+	case "$MOCK_SET_ORIGIN_LABEL_MODE" in
+	success) return 0 ;;
+	failure) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+_install_mock_set_origin_label() {
+	MOCK_SET_ORIGIN_LABEL_MODE="${1:-success}"
+	return 0
+}
+
 reset_test_state() {
 	: >"$SET_ISSUE_STATUS_LOG"
+	: >"$SET_ORIGIN_LABEL_LOG"
 	return 0
 }
 
@@ -93,14 +116,16 @@ reset_test_state() {
 test_ceremony_applies_default() {
 	reset_test_state
 	_install_mock_set_issue_status success
+	_install_mock_set_origin_label success
 
 	# Issue meta with one prior assignee that ceremony should remove.
 	local issue_meta='{"assignees":[{"login":"prior-author"}]}'
 	local rc=0
 	_dsi_apply_dispatch_ceremony 12345 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
 
-	local logged
-	logged=$(cat "$SET_ISSUE_STATUS_LOG")
+	local status_logged origin_logged
+	status_logged=$(cat "$SET_ISSUE_STATUS_LOG")
+	origin_logged=$(cat "$SET_ORIGIN_LABEL_LOG")
 
 	# Assert ceremony returned success
 	if [[ "$rc" -ne 0 ]]; then
@@ -123,23 +148,44 @@ test_ceremony_applies_default() {
 
 	# Assert status:queued positional
 	local status_check=1
-	[[ "$logged" == *"set_issue_status 12345 owner/repo queued"* ]] && status_check=0
+	[[ "$status_logged" == *"set_issue_status 12345 owner/repo queued"* ]] && status_check=0
 	print_result "ceremony passes status:queued (not in-progress)" "$status_check" \
-		"expected 'set_issue_status 12345 owner/repo queued' in: $logged"
+		"expected 'set_issue_status 12345 owner/repo queued' in: $status_logged"
 
-	# Assert origin label flip flags
-	local origin_add=1 origin_rm_int=1 origin_rm_take=1
-	[[ "$logged" == *"--add-label origin:worker"* ]] && origin_add=0
-	[[ "$logged" == *"--remove-label origin:interactive"* ]] && origin_rm_int=0
-	[[ "$logged" == *"--remove-label origin:worker-takeover"* ]] && origin_rm_take=0
-	print_result "ceremony adds origin:worker" "$origin_add"
-	print_result "ceremony removes origin:interactive" "$origin_rm_int"
-	print_result "ceremony removes origin:worker-takeover" "$origin_rm_take"
+	# t3007: Assert origin label flip is handled by set_origin_label (NOT bare
+	# flags in set_issue_status). set_origin_label atomically strips all sibling
+	# origin:* labels and calls ensure_origin_labels_exist before adding
+	# origin:worker — preventing dual-label state on re-dispatched interactive issues.
+	local origin_call_count
+	origin_call_count=$(grep -c '^set_origin_label' "$SET_ORIGIN_LABEL_LOG" 2>/dev/null || true)
+	[[ "$origin_call_count" =~ ^[0-9]+$ ]] || origin_call_count=0
+	if [[ "$origin_call_count" -ne 1 ]]; then
+		print_result "ceremony emits exactly one set_origin_label call" 1 "got $origin_call_count calls"
+		return 0
+	fi
+	print_result "ceremony emits exactly one set_origin_label call" 0
 
-	# Assert assignee normalization
+	local origin_worker=1
+	[[ "$origin_logged" == *"set_origin_label 12345 owner/repo worker"* ]] && origin_worker=0
+	print_result "ceremony calls set_origin_label with origin:worker" "$origin_worker" \
+		"expected 'set_origin_label 12345 owner/repo worker' in: $origin_logged"
+
+	# Assert origin:worker NOT embedded in set_issue_status flags (t3007 regression guard)
+	local no_bare_add=0 no_bare_rm_int=0 no_bare_rm_take=0
+	[[ "$status_logged" == *"--add-label origin:worker"* ]] && no_bare_add=1
+	[[ "$status_logged" == *"--remove-label origin:interactive"* ]] && no_bare_rm_int=1
+	[[ "$status_logged" == *"--remove-label origin:worker-takeover"* ]] && no_bare_rm_take=1
+	print_result "origin:worker not embedded in set_issue_status (t3007)" "$no_bare_add" \
+		"bare --add-label origin:worker found in set_issue_status call — should use set_origin_label"
+	print_result "origin:interactive removal not in set_issue_status (t3007)" "$no_bare_rm_int" \
+		"bare --remove-label origin:interactive found — should use set_origin_label"
+	print_result "origin:worker-takeover removal not in set_issue_status (t3007)" "$no_bare_rm_take" \
+		"bare --remove-label origin:worker-takeover found — should use set_origin_label"
+
+	# Assert assignee normalization still in set_issue_status
 	local add_assignee=1 rm_prior=1
-	[[ "$logged" == *"--add-assignee runner-self"* ]] && add_assignee=0
-	[[ "$logged" == *"--remove-assignee prior-author"* ]] && rm_prior=0
+	[[ "$status_logged" == *"--add-assignee runner-self"* ]] && add_assignee=0
+	[[ "$status_logged" == *"--remove-assignee prior-author"* ]] && rm_prior=0
 	print_result "ceremony adds runner-self as assignee" "$add_assignee"
 	print_result "ceremony removes prior assignee" "$rm_prior"
 
@@ -149,6 +195,7 @@ test_ceremony_applies_default() {
 test_ceremony_skip_when_self_assigned() {
 	reset_test_state
 	_install_mock_set_issue_status success
+	_install_mock_set_origin_label success
 
 	# When the only existing assignee IS runner-self, no --remove-assignee
 	# should be emitted (don't unassign yourself).
@@ -175,6 +222,7 @@ test_ceremony_skip_when_self_assigned() {
 test_ceremony_handles_empty_assignees() {
 	reset_test_state
 	_install_mock_set_issue_status success
+	_install_mock_set_origin_label success
 
 	# Empty assignees array — no --remove-assignee flags should appear.
 	local issue_meta='{"assignees":[]}'
@@ -200,6 +248,7 @@ test_ceremony_handles_empty_assignees() {
 test_ceremony_handles_empty_self_login() {
 	reset_test_state
 	_install_mock_set_issue_status success
+	_install_mock_set_origin_label success
 
 	local issue_meta='{"assignees":[]}'
 	local rc=0
@@ -228,6 +277,7 @@ test_ceremony_handles_empty_self_login() {
 test_ceremony_handles_set_issue_status_failure() {
 	reset_test_state
 	_install_mock_set_issue_status failure
+	_install_mock_set_origin_label success
 
 	local issue_meta='{"assignees":[]}'
 	local rc=0
@@ -238,6 +288,35 @@ test_ceremony_handles_set_issue_status_failure() {
 	local rc_check=1
 	[[ "$rc" -eq 1 ]] && rc_check=0
 	print_result "ceremony returns 1 when set_issue_status fails" "$rc_check"
+
+	return 0
+}
+
+# t3007: Verify that a failing set_origin_label is non-fatal — the ceremony
+# still returns 0 and the worker launches. This mirrors the best-effort design
+# of the ceremony itself (gh API flakiness must not block dispatch).
+test_ceremony_origin_label_failure_is_nonfatal() {
+	reset_test_state
+	_install_mock_set_issue_status success
+	_install_mock_set_origin_label failure
+
+	local issue_meta='{"assignees":[]}'
+	local rc=0
+	_dsi_apply_dispatch_ceremony 42 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
+
+	# Ceremony must return 0 even when set_origin_label fails.
+	local rc_check=1
+	[[ "$rc" -eq 0 ]] && rc_check=0
+	print_result "ceremony returns 0 when set_origin_label fails (non-fatal)" "$rc_check" \
+		"expected rc=0, got rc=$rc"
+
+	# Verify set_origin_label was still called (the attempt was made).
+	local origin_call_count
+	origin_call_count=$(grep -c '^set_origin_label' "$SET_ORIGIN_LABEL_LOG" 2>/dev/null || true)
+	[[ "$origin_call_count" =~ ^[0-9]+$ ]] || origin_call_count=0
+	local attempted=1
+	[[ "$origin_call_count" -ge 1 ]] && attempted=0
+	print_result "set_origin_label was attempted despite subsequent failure" "$attempted"
 
 	return 0
 }
@@ -290,13 +369,15 @@ test_no_ceremony_flag_parses_correctly() {
 
 _run_tests() {
 	SET_ISSUE_STATUS_LOG=$(mktemp)
-	trap 'rm -f "$SET_ISSUE_STATUS_LOG"' EXIT
+	SET_ORIGIN_LABEL_LOG=$(mktemp)
+	trap 'rm -f "$SET_ISSUE_STATUS_LOG" "$SET_ORIGIN_LABEL_LOG"' EXIT
 
 	test_ceremony_applies_default
 	test_ceremony_skip_when_self_assigned
 	test_ceremony_handles_empty_assignees
 	test_ceremony_handles_empty_self_login
 	test_ceremony_handles_set_issue_status_failure
+	test_ceremony_origin_label_failure_is_nonfatal
 	test_no_ceremony_flag_parses_correctly
 
 	echo

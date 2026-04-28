@@ -267,8 +267,9 @@ _dsi_default_branch() {
 #
 #   1. Atomic transition to status:queued (clears sibling status:* labels
 #      via set_issue_status).
-#   2. Add origin:worker; remove origin:interactive + origin:worker-takeover
-#      (t2200 mutual exclusion in the same gh edit).
+#   2. Apply origin:worker via set_origin_label (t2200 / t3007 mutual
+#      exclusion — atomically strips ALL sibling origin:* labels and calls
+#      ensure_origin_labels_exist before adding origin:worker).
 #   3. Add runner as assignee; remove any prior assignees so dedup layer 6
 #      sees a clean single-owner state.
 #
@@ -298,13 +299,9 @@ _dsi_apply_dispatch_ceremony() {
 		return 1
 	fi
 
-	# t2200: origin label mutual exclusion — atomic flip in the same edit.
 	# Assignee normalization: add self, remove any prior assignees (e.g. the
 	# issue creator) so dedup is unambiguous.
-	local -a _extra_flags=(--add-assignee "$self_login"
-		--add-label "origin:worker"
-		--remove-label "origin:interactive"
-		--remove-label "origin:worker-takeover")
+	local -a _extra_flags=(--add-assignee "$self_login")
 	local _prev_login
 	while IFS= read -r _prev_login; do
 		[[ -n "$_prev_login" && "$_prev_login" != "$self_login" ]] \
@@ -315,6 +312,17 @@ _dsi_apply_dispatch_ceremony() {
 		_dsi_warn "Dispatch ceremony failed (non-fatal — worker will still launch; fix labels manually if needed)"
 		return 1
 	fi
+
+	# t2200 / t3007: use set_origin_label to atomically strip ALL sibling
+	# origin:* labels (including any origin:interactive left from an interactive
+	# session) and ensure origin:worker exists before adding it. The former bare
+	# --add-label/--remove-label approach only removed known siblings and skipped
+	# ensure_origin_labels_exist, producing dual-label issues when re-dispatching
+	# an origin:interactive issue (observed: t3005 session, PRs #21451–#21455).
+	if ! set_origin_label "$issue_number" "$repo_slug" "worker" >/dev/null 2>&1; then
+		_dsi_warn "Origin label update failed (non-fatal — worker will still launch; fix origin label manually if needed)"
+	fi
+
 	_dsi_info "Ceremony applied — status:queued, origin:worker, assignee=${self_login}"
 	return 0
 }
