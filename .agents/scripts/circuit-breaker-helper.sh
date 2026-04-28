@@ -564,10 +564,12 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 ### Resolution
 1. Investigate the recent failures (check worker logs)
 2. Fix the underlying issue
-3. Reset the circuit breaker:
+3. Reset the circuit breaker (one-line copy/paste):
    \`\`\`bash
-   circuit-breaker-helper.sh reset
+   aidevops circuit-breaker reset
    \`\`\`
+   Or use the short alias: \`aidevops cb reset\`.
+   Direct helper path (if \`aidevops\` CLI unavailable): \`circuit-breaker-helper.sh reset\`.
    Or wait for auto-reset after ${CIRCUIT_BREAKER_COOLDOWN_SECS}s cooldown.
 
 ### Recent failure context
@@ -713,7 +715,10 @@ _cb_close_issue() {
 cmd_help() {
 	echo "circuit-breaker-helper.sh — Supervisor circuit breaker (t1331)"
 	echo ""
-	echo "Usage:"
+	echo "Preferred CLI (one-line copy/paste):"
+	echo "  aidevops circuit-breaker [status|reset|check|trip]   (alias: cb)"
+	echo ""
+	echo "Direct helper usage:"
 	echo "  circuit-breaker-helper.sh check                         Check if dispatch is allowed (exit 0=yes, 1=no)"
 	echo "  circuit-breaker-helper.sh status                        Show circuit breaker state"
 	echo "  circuit-breaker-helper.sh record-failure <task> [reason] Record a task failure"

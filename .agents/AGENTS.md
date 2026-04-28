@@ -681,7 +681,7 @@ Observed in t2178: Codacy's one-click "Apply fix" / "AutoFix" diffs corrupt mark
 
 ## Quick Reference
 
-- **CLI**: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|badges|knowledge]`
+- **CLI**: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|badges|knowledge|circuit-breaker]`
 - **Knowledge plane**: `aidevops knowledge [init|status|provision]` — opt-in file staging area for AI-assisted ingestion. Set `"knowledge": "repo"|"personal"` in `repos.json`. Full contract: `aidevops/knowledge-plane.md`.
 - **Scripts**: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`
 - **Scripts (editing)**: `~/.aidevops/agents/scripts/` is a **deployed copy** — edits there are overwritten by `aidevops update` (every ~10 min). For personal scripts, use `~/.aidevops/agents/custom/scripts/` (survives updates). To fix framework scripts, edit `~/Git/aidevops/.agents/scripts/<name>.sh` and run `setup.sh --non-interactive`. See `reference/customization.md`.
