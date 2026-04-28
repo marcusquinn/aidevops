@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# campaign-helper.sh — _campaigns/ plane CLI surface (P2) + performance/learnings (P6)
+# campaign-helper.sh — _campaigns/ plane CLI surface (P2) + creative drafting (P5) + performance/learnings (P6)
 #
 # P2 commands (campaign lifecycle management):
 #   campaign-helper.sh new <name> [--channel <ch>] [--repo <path>]
@@ -13,6 +13,13 @@
 #       Detailed dossier for a campaign (brief + file inventory + lifecycle state).
 #   campaign-helper.sh archive <id> [--repo <path>]
 #       Move _campaigns/launched/<id>/ → archive/<id>/
+#
+# P5 commands (AI creative agent):
+#   campaign-helper.sh draft <id> --channel <ch> [--tone <tone>] [--variant N] [--model <m>]
+#       AI-generated content draft grounded in brief + brand + swipe context.
+#       Channels: facebook, instagram, linkedin, twitter, email, blog.
+#       Output: _campaigns/active/<id>/drafts/<channel>-v<N>.md
+#       Human-gated: requires manual review before promotion to creative/.
 #
 # P6 commands (post-launch cross-plane integration):
 #   campaign-helper.sh launch <id> [--repo <path>]
@@ -28,6 +35,7 @@
 #       Show this help.
 #
 # Prerequisites: _campaigns/ plane (P1 — t2962 #21250). Graceful error if absent.
+#                ANTHROPIC_API_KEY for draft command (gopass or env var).
 
 set -euo pipefail
 
@@ -49,6 +57,9 @@ readonly CAMPAIGNS_COUNTER_FILE=".campaign-counter"
 readonly CAMPAIGNS_BRIEF_FILE="brief.md"
 readonly CAMPAIGNS_RESULTS_FILE="results.md"
 readonly CAMPAIGNS_LEARNINGS_FILE="learnings.md"
+readonly CAMPAIGNS_DRAFTS_DIR="drafts"
+readonly CAMPAIGNS_CHANNEL_SPECS="${SCRIPT_DIR}/../configs/campaign-channel-specs.json"
+readonly CAMPAIGNS_VALID_CHANNELS="facebook instagram linkedin twitter email blog"
 
 # ---------------------------------------------------------------------------
 # Error helpers — centralise repeated messages to satisfy string-literal ratchet
@@ -58,6 +69,17 @@ _err_opt_unknown() {
 	local _o="${1:-}"
 	print_error "Unknown option: ${_o}"
 	return 1
+}
+
+_err_active_not_found() {
+	local campaign_id="${1:-}"
+	print_error "Active campaign not found: ${campaign_id}"
+	return 0
+}
+
+_print_next_steps() {
+	echo "Next steps:"
+	return 0
 }
 
 _err_results_missing() {
@@ -237,7 +259,7 @@ cmd_new() {
 	echo "  Brief:   ${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
 	echo "  Channel: ${channel:-unset}"
 	echo ""
-	echo "Next steps:"
+	_print_next_steps
 	echo "  1. Edit brief:   ${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
 	echo "  2. Status:       aidevops campaign status ${dir_name}"
 	echo "  3. Launch:       aidevops campaign launch ${dir_name}"
@@ -528,7 +550,7 @@ cmd_launch() {
 
 	local active_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
 	if [[ ! -d "$active_dir" ]]; then
-		print_error "Active campaign not found: ${campaign_id}"
+		_err_active_not_found "$campaign_id"
 		print_error "Path checked: ${active_dir}"
 		return 1
 	fi
@@ -568,7 +590,7 @@ cmd_launch() {
 	echo "  Results:         ${results_file}"
 	echo "  Learnings:       ${learnings_file}"
 	echo ""
-	echo "Next steps:"
+	_print_next_steps
 	echo "  1. Fill in ${CAMPAIGNS_RESULTS_FILE} with post-launch metrics"
 	echo "  2. Run: aidevops campaign promote ${campaign_id} --results"
 	echo "  3. Fill in ${CAMPAIGNS_LEARNINGS_FILE} with retrospective insights"
@@ -702,7 +724,7 @@ cmd_feedback() {
 	campaigns_dir="$(_resolve_campaigns_dir "$repo_path")"
 	local active_campaign_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
 	if [[ ! -d "$active_campaign_dir" ]]; then
-		print_error "Active campaign not found: ${campaign_id}"
+		_err_active_not_found "$campaign_id"
 		return 1
 	fi
 
@@ -728,12 +750,327 @@ cmd_feedback() {
 }
 
 # ---------------------------------------------------------------------------
+# Draft helpers — channel-aware AI content generation (P5)
+# ---------------------------------------------------------------------------
+
+_validate_channel() {
+	local channel="${1:-}"
+	local valid
+	for valid in $CAMPAIGNS_VALID_CHANNELS; do
+		[[ "$channel" == "$valid" ]] && return 0
+	done
+	print_error "Invalid channel: ${channel}"
+	print_error "Valid channels: ${CAMPAIGNS_VALID_CHANNELS}"
+	return 1
+}
+
+_get_channel_spec() {
+	local channel="${1:-}" field="${2:-}"
+	if [[ ! -f "$CAMPAIGNS_CHANNEL_SPECS" ]]; then
+		print_error "Channel specs not found: ${CAMPAIGNS_CHANNEL_SPECS}"
+		return 1
+	fi
+	jq -r ".channels.\"${channel}\".${field} // empty" "$CAMPAIGNS_CHANNEL_SPECS"
+	return 0
+}
+
+_get_channel_sections() {
+	local channel="${1:-}"
+	if [[ ! -f "$CAMPAIGNS_CHANNEL_SPECS" ]]; then
+		return 1
+	fi
+	jq -r ".channels.\"${channel}\".sections[]? // empty" "$CAMPAIGNS_CHANNEL_SPECS"
+	return 0
+}
+
+_gather_brand_context() {
+	local campaigns_dir="${1:-}"
+	local brand_dir="${campaigns_dir}/lib/brand"
+	local context=""
+	if [[ ! -d "$brand_dir" ]]; then
+		echo ""
+		return 0
+	fi
+	local f
+	while IFS= read -r -d '' f; do
+		# Only read text-based files (md, txt, json, yaml)
+		case "$f" in
+		*.md | *.txt | *.json | *.yaml | *.yml)
+			local basename_f
+			basename_f="$(basename "$f")"
+			local content
+			content="$(head -c 4096 "$f" 2>/dev/null || true)"
+			if [[ -n "$content" ]]; then
+				context="${context}--- ${basename_f} ---
+${content}
+
+"
+			fi
+			;;
+		esac
+	done < <(find "$brand_dir" -type f -print0 2>/dev/null || true)
+	echo "$context"
+	return 0
+}
+
+_gather_swipe_context() {
+	local campaigns_dir="${1:-}" channel="${2:-}"
+	local swipe_dir="${campaigns_dir}/lib/swipe"
+	local context=""
+	if [[ ! -d "$swipe_dir" ]]; then
+		echo ""
+		return 0
+	fi
+	# Prefer channel-specific swipe, fall back to general
+	local search_dirs=()
+	[[ -d "${swipe_dir}/${channel}" ]] && search_dirs+=("${swipe_dir}/${channel}")
+	search_dirs+=("$swipe_dir")
+
+	local count=0
+	local max_swipe=3
+	local dir f
+	for dir in "${search_dirs[@]}"; do
+		[[ $count -ge $max_swipe ]] && break
+		while IFS= read -r -d '' f; do
+			[[ $count -ge $max_swipe ]] && break
+			case "$f" in
+			*.md | *.txt)
+				local basename_f
+				basename_f="$(basename "$f")"
+				local content
+				content="$(head -c 2048 "$f" 2>/dev/null || true)"
+				if [[ -n "$content" ]]; then
+					context="${context}--- swipe: ${basename_f} ---
+${content}
+
+"
+					count=$((count + 1))
+				fi
+				;;
+			esac
+		done < <(find "$dir" -maxdepth 1 -type f -print0 2>/dev/null || true)
+	done
+	echo "$context"
+	return 0
+}
+
+_build_draft_prompt() {
+	local channel="${1:-}" brief_content="${2:-}" brand_context="${3:-}"
+	local swipe_context="${4:-}" tone="${5:-professional}"
+
+	local max_words guidelines display_name
+	max_words="$(_get_channel_spec "$channel" "max_words")"
+	guidelines="$(_get_channel_spec "$channel" "guidelines")"
+	display_name="$(_get_channel_spec "$channel" "display_name")"
+	local sections
+	sections="$(_get_channel_sections "$channel")"
+
+	local sections_list=""
+	if [[ -n "$sections" ]]; then
+		sections_list="Structure the draft with these sections:
+$(echo "$sections" | sed 's/^/- /')"
+	fi
+
+	local prompt="You are a creative marketing copywriter drafting content for ${display_name}.
+
+## Campaign Brief
+${brief_content}
+
+## Channel Constraints
+- Channel: ${display_name}
+- Maximum words: ${max_words:-500}
+- Tone: ${tone}
+- ${guidelines:-Write clear, compelling content appropriate for this channel.}
+
+${sections_list}
+
+## Brand Context
+${brand_context:-No brand assets available. Use a neutral professional voice.}
+
+## Inspiration / Swipe Reference
+${swipe_context:-No swipe files available. Create original content based on the brief.}
+
+## Instructions
+Write a single draft for this campaign on ${display_name}. Follow the channel constraints exactly. Match the brand voice if brand context is provided. Output ONLY the draft content — no meta-commentary, no explanations, no markdown headers like '## Draft'. Just the content itself, ready to post/send."
+
+	echo "$prompt"
+	return 0
+}
+
+_write_draft_file() {
+	local dest="${1:-}" channel="${2:-}" variant="${3:-}" campaign_id="${4:-}"
+	local tone="${5:-}" content="${6:-}" model_used="${7:-}"
+
+	local draft_date
+	draft_date="$(_current_date)"
+	local display_name
+	display_name="$(_get_channel_spec "$channel" "display_name")"
+	local max_words
+	max_words="$(_get_channel_spec "$channel" "max_words")"
+
+	cat >"$dest" <<DRAFT
+---
+channel: ${channel}
+display_name: ${display_name:-${channel}}
+variant: ${variant}
+campaign: ${campaign_id}
+tone: ${tone}
+max_words: ${max_words:-500}
+generated_at: ${draft_date}
+model: ${model_used}
+status: draft
+reviewed: false
+promoted: false
+---
+
+${content}
+
+---
+
+_Draft generated by aidevops campaign draft on ${draft_date}._
+_Model: ${model_used} | Channel: ${display_name} | Variant: ${variant}_
+_Status: **draft** — requires human review before promotion to creative/._
+_Promote: copy approved content to \`creative/${channel}/\` after review._
+DRAFT
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_draft — AI creative agent for campaign content drafting (P5)
+# ---------------------------------------------------------------------------
+
+cmd_draft() {
+	local campaign_id='' channel='' tone='professional' variant='1' repo_path='' model='sonnet'
+
+	while [[ $# -gt 0 ]]; do
+		local _cur="${1:-}" _nxt="${2:-}"
+		case "$_cur" in
+		--channel) channel="$_nxt"; shift 2 ;;
+		--tone) tone="$_nxt"; shift 2 ;;
+		--variant) variant="$_nxt"; shift 2 ;;
+		--repo) repo_path="$_nxt"; shift 2 ;;
+		--model) model="$_nxt"; shift 2 ;;
+		-*) _err_opt_unknown "$_cur"; return 1 ;;
+		*) campaign_id="$_cur"; shift ;;
+		esac
+	done
+
+	if [[ -z "$campaign_id" ]] || [[ -z "$channel" ]]; then
+		print_error "Usage: campaign draft <id> --channel <channel> [--tone <tone>] [--variant N]"
+		print_error "Channels: ${CAMPAIGNS_VALID_CHANNELS}"
+		return 1
+	fi
+
+	_validate_channel "$channel" || return 1
+
+	[[ -z "$repo_path" ]] && repo_path="$(pwd)"
+
+	local campaigns_dir
+	campaigns_dir="$(_resolve_campaigns_dir "$repo_path")"
+	_require_campaigns_plane "$campaigns_dir" || return 1
+
+	# Locate campaign in active/
+	local campaign_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
+	if [[ ! -d "$campaign_dir" ]]; then
+		_err_active_not_found "$campaign_id"
+		print_error "Path checked: ${campaign_dir}"
+		print_error "Draft generation only works on active campaigns."
+		return 1
+	fi
+
+	# Read campaign brief
+	local brief_file="${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
+	if [[ ! -f "$brief_file" ]]; then
+		print_error "Campaign brief not found: ${brief_file}"
+		print_error "Create a brief first: edit ${brief_file}"
+		return 1
+	fi
+	local brief_content
+	brief_content="$(cat "$brief_file")"
+
+	# Gather RAG context
+	print_info "Gathering brand context from lib/brand/..."
+	local brand_context
+	brand_context="$(_gather_brand_context "$campaigns_dir")"
+
+	print_info "Gathering swipe inspiration from lib/swipe/..."
+	local swipe_context
+	swipe_context="$(_gather_swipe_context "$campaigns_dir" "$channel")"
+
+	# Build the prompt
+	local prompt
+	prompt="$(_build_draft_prompt "$channel" "$brief_content" "$brand_context" "$swipe_context" "$tone")"
+
+	# Resolve AI helper
+	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
+	if [[ ! -x "$ai_helper" ]]; then
+		print_error "ai-research-helper.sh not found or not executable."
+		print_error "The draft command requires the AI research helper for content generation."
+		return 1
+	fi
+
+	# API key is resolved internally by ai-research-helper.sh (env / gopass / credentials.sh).
+	# We let it fail naturally with a clear error if unavailable.
+
+	# Determine max tokens based on channel
+	local max_words
+	max_words="$(_get_channel_spec "$channel" "max_words")"
+	# Rough estimate: 1 word ~ 1.5 tokens, plus overhead for formatting
+	local max_tokens=$(( (${max_words:-500} * 2) + 200 ))
+
+	# Create drafts directory
+	local drafts_dir="${campaign_dir}/${CAMPAIGNS_DRAFTS_DIR}"
+	mkdir -p "$drafts_dir"
+
+	local draft_file="${drafts_dir}/${channel}-v${variant}.md"
+	if [[ -f "$draft_file" ]]; then
+		print_warning "Draft already exists: ${draft_file}"
+		print_warning "Use --variant N to create a different variant."
+	fi
+
+	local display_name
+	display_name="$(_get_channel_spec "$channel" "display_name")"
+	print_info "Generating ${display_name} draft (variant ${variant}, tone: ${tone}, model: ${model})..."
+
+	# Call AI research helper
+	local draft_content
+	draft_content="$(echo "$prompt" | "$ai_helper" --stdin --model "$model" --max-tokens "$max_tokens" 2>/dev/null)" || {
+		print_error "AI content generation failed. Check API key and model availability."
+		return 1
+	}
+
+	if [[ -z "$draft_content" ]]; then
+		print_error "AI returned empty content. Try a different model or check the brief."
+		return 1
+	fi
+
+	# Write draft file with provenance metadata
+	_write_draft_file "$draft_file" "$channel" "$variant" "$campaign_id" \
+		"$tone" "$draft_content" "$model"
+
+	print_success "Draft created: ${draft_file}"
+	echo "  Campaign:  ${campaign_id}"
+	echo "  Channel:   ${display_name}"
+	echo "  Variant:   ${variant}"
+	echo "  Tone:      ${tone}"
+	echo "  Model:     ${model}"
+	echo "  Status:    draft (requires human review)"
+	echo ""
+	_print_next_steps
+	echo "  1. Review:  cat ${draft_file}"
+	echo "  2. Edit:    refine the draft as needed"
+	echo "  3. Variant: aidevops campaign draft ${campaign_id} --channel ${channel} --variant $((variant + 1))"
+	echo "  4. Promote: copy approved content to ${campaign_dir}/creative/${channel}/"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # cmd_help
 # ---------------------------------------------------------------------------
 
 cmd_help() {
 	cat <<HELP
-campaign-helper.sh — _campaigns/ plane CLI (P2) + performance integration (P6)
+campaign-helper.sh — _campaigns/ plane CLI (P2) + creative drafting (P5) + performance (P6)
 
 P2 Commands (lifecycle management):
   new <name> [--channel <ch>] [--repo <path>]
@@ -748,6 +1085,15 @@ P2 Commands (lifecycle management):
 
   archive <id> [--repo <path>]
       Move _campaigns/launched/<id>/ → archive/<id>/.
+
+P5 Commands (AI creative agent):
+  draft <id> --channel <ch> [--tone <tone>] [--variant N] [--model <m>] [--repo <path>]
+      AI-generated content draft grounded in campaign brief, brand assets, and swipe files.
+      Channels: facebook, instagram, linkedin, twitter, email, blog.
+      Tone defaults to 'professional'. Variant defaults to 1.
+      Model defaults to 'sonnet' (haiku|sonnet|opus).
+      Output: _campaigns/active/<id>/drafts/<channel>-v<N>.md
+      Human-gated: drafts require manual review before promotion to creative/.
 
 P6 Commands (post-launch cross-plane):
   launch <id> [--repo <path>]
@@ -770,12 +1116,15 @@ Examples:
   campaign-helper.sh new "Q2 Brand Awareness" --channel paid-social
   campaign-helper.sh list
   campaign-helper.sh status c001-q2-brand-awareness
+  campaign-helper.sh draft c001-q2-brand-awareness --channel linkedin --tone conversational
+  campaign-helper.sh draft c001-q2-brand-awareness --channel email --variant 2
   campaign-helper.sh launch c001-q2-brand-awareness
   campaign-helper.sh promote c001-q2-brand-awareness --results --learnings
   campaign-helper.sh archive c001-q2-brand-awareness
 
 Prerequisites:
   _campaigns/ plane (P1 — aidevops t2962 #21250)
+  ANTHROPIC_API_KEY for draft command (gopass or env var)
 HELP
 	return 0
 }
@@ -793,6 +1142,7 @@ main() {
 	list | ls) cmd_list "$@" ;;
 	status | show) cmd_status "$@" ;;
 	archive) cmd_archive "$@" ;;
+	draft) cmd_draft "$@" ;;
 	launch) cmd_launch "$@" ;;
 	promote) cmd_promote "$@" ;;
 	feedback) cmd_feedback "$@" ;;

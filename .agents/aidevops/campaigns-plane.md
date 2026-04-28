@@ -39,7 +39,8 @@ _campaigns/
 ├── active/                # In-flight campaigns (gitignored by default)
 │   └── <campaign-id>/     # One directory per active campaign
 │       ├── brief.md       # Campaign brief: goal, channels, target, dates
-│       ├── creative/      # Copy, images, video assets
+│       ├── creative/      # Approved copy, images, video assets
+│       ├── drafts/        # AI-generated drafts (P5) — human review before creative/
 │       ├── research/      # Audience research, competitor notes
 │       └── schedule.md    # Publication schedule
 └── launched/              # Post-launch campaigns (versioned — audit trail)
@@ -158,10 +159,16 @@ aidevops campaign status [<repo-path>]
 aidevops campaign ls [--active|--launched|--all] [<repo-path>]
 ```
 
-**Phase 2 CLI (t2963 — not yet implemented):** `campaign new`, `campaign list`,
+**Phase 2 CLI (t2963):** `campaign new`, `campaign list`,
 `campaign launch`, `campaign archive`, and sequential campaign IDs.
 
-**Phase 6 CLI (t2969 — already implemented):** `campaign launch`, `campaign promote`,
+**Phase 5 CLI (t2967):** `campaign draft <id> --channel <ch> [--tone <tone>] [--variant N]`
+— AI creative agent for channel-aware content drafting. RAG-grounded in `lib/brand/`
+(voice/tone) and `lib/swipe/` (inspiration). Output: `active/<id>/drafts/<channel>-v<N>.md`
+with provenance metadata. Human-gated: drafts require manual review before promotion.
+Channel specs: `.agents/configs/campaign-channel-specs.json`.
+
+**Phase 6 CLI (t2969):** `campaign launch`, `campaign promote`,
 `campaign feedback` — cross-plane promotion of results and learnings.
 
 ## CAMPAIGNS.md Contract File
