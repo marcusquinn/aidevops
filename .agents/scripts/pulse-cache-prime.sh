@@ -42,7 +42,8 @@ mkdir -p "$LOG_DIR" "$CACHE_DIR" 2>/dev/null || true
 
 _log() {
 	local msg="$1"
-	printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$msg" >>"$LOG_FILE" 2>/dev/null || true
+	local timestamp; timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ') || timestamp="unknown"
+	printf '[%s] %s\n' "$timestamp" "$msg" >>"$LOG_FILE" || true
 	return 0
 }
 
