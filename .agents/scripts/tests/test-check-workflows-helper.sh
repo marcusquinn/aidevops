@@ -277,7 +277,10 @@ else
 fi
 rm -rf "$TMPDIR_9"
 
-# Test 10: --repo filter narrows to one
+# Test 10: --repo + --workflow filters narrow to exactly one row
+# Note: --repo alone returns one row per known workflow type (N rows for N
+# managed workflows). Adding --workflow narrows to a single (repo×workflow)
+# row — this tests both filter flags working in concert.
 TMPDIR_10="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_10"
 _make_repo_with_workflow "$TMPDIR_10/repos/a"
@@ -289,11 +292,11 @@ _write_repos_json "$TMPDIR_10" \
 		--arg pa "$TMPDIR_10/repos/a" \
 		--arg pb "$TMPDIR_10/repos/b" \
 		'{initialized_repos: [{slug: "x/a", path: $pa, local_only: false}, {slug: "x/b", path: $pb, local_only: false}]}')"
-count=$(HOME="$TMPDIR_10" bash "$HELPER" --json --repo "x/a" 2>/dev/null | wc -l | tr -d ' ')
+count=$(HOME="$TMPDIR_10" bash "$HELPER" --json --repo "x/a" --workflow "issue-sync" 2>/dev/null | wc -l | tr -d ' ')
 if [[ "$count" == "1" ]]; then
-	_pass "--repo filter narrows to single row"
+	_pass "--repo + --workflow filters narrow to single row"
 else
-	_fail "--repo filter narrows to single row" "expected 1 row, got $count"
+	_fail "--repo + --workflow filters narrow to single row" "expected 1 row, got $count"
 fi
 rm -rf "$TMPDIR_10"
 

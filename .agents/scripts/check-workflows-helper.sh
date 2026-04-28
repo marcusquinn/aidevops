@@ -400,20 +400,27 @@ _classify_row() {
 	return 0
 }
 
-# _resolve_wf_canonical <template_file> <reusable_file>
-# Emits tab-separated: canonical_path\tcanon_norm (canon_norm may be empty)
+# _resolve_wf_canonical <template_file>
+# Emits the canonical template path on stdout (single line).
+#
+# GH#21477: the previous version emitted a TSV of "canonical_path\tcanon_norm"
+# so that callers could pre-compute the normalised canonical content once per
+# workflow type (loop-invariant optimisation from PR #20809 / GH#20794).
+# The transport was fatally broken: `IFS=$'\t' read -r` reads exactly one line,
+# so _canon_norm was silently truncated to the first line of the multi-line YAML
+# (~50 bytes vs ~2 KB for the full content). _classify_workflow's equality check
+# at line 199 therefore always failed → every caller-pattern workflow was reported
+# as DRIFTED/CALLER regardless of actual content.
+#
+# Fix: emit only the canonical path. _classify_workflow's built-in fallback at
+# lines 195-197 recomputes _canon_norm per-repo via _normalize_wf_for_compare,
+# which is the verified-correct path. Cost: ~150 extra sed pipelines per full
+# run (3 workflows × <50 repos); negligible vs multi-second gh enumeration.
 _resolve_wf_canonical() {
 	local _template_file="$1"
-	local _reusable_file="$2"
 	local _canonical=""
 	_canonical=$(_resolve_canonical_template "$_template_file") || _canonical=""
-	local _canon_norm=""
-	if [[ -n "$_canonical" ]]; then
-		local _reusable_escaped
-		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
-		_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
-	fi
-	printf '%s\t%s\n' "$_canonical" "$_canon_norm"
+	printf '%s\n' "$_canonical"
 	return 0
 }
 
@@ -450,8 +457,8 @@ _process_rows() {
 			[[ "$_workflow_name" != "$_fw_norm" ]] && continue
 		fi
 
-		local _canonical _canon_norm
-		IFS=$'\t' read -r _canonical _canon_norm < <(_resolve_wf_canonical "$_template_file" "$_reusable_file")
+		local _canonical
+		_canonical=$(_resolve_wf_canonical "$_template_file")
 		# Pre-compute once per workflow (loop-invariant); avoids a subshell per repo.
 		local _reusable_escaped
 		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
@@ -468,7 +475,7 @@ _process_rows() {
 			local _class _note
 			IFS=$'\t' read -r _class _note < <(_classify_row \
 				"$_path" "$_local_only_flag" "$_canonical" \
-				"$_reusable_escaped" "$_workflow_file" "$_canon_norm")
+				"$_reusable_escaped" "$_workflow_file" "")
 
 			case "$_class" in
 			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
