@@ -674,9 +674,37 @@ _extract_github_slug() {
 	return 0
 }
 
+# _auto_create_blocked_by_label — create a missing blocked-by:tNNN or blocked-by:#NNN
+# label in the repo when it does not yet exist. Updates the session label cache on success.
+# Args: $1 repo_slug (owner/repo), $2 label name (e.g. "blocked-by:t324"), $3 cache_file path.
+# Returns: 0 = label created (or already exists), 1 = creation failed (rate limit / permission).
+_auto_create_blocked_by_label() {
+	local repo_slug="$1"
+	local label="$2"
+	local cache_file="$3"
+	local predecessor="${label#blocked-by:}"
+
+	if gh label create "$label" --repo "$repo_slug" \
+		--color "5319E7" \
+		--description "Blocked by predecessor task ${predecessor}" \
+		>/dev/null 2>&1; then
+		# Append to session cache so subsequent lookups in this invocation hit
+		printf '%s\n' "$label" >>"$cache_file" 2>/dev/null || true
+		log_info "Auto-created label '${label}' in ${repo_slug} (t2823/t2800 auto-create exception)"
+		return 0
+	else
+		log_warn "Could not auto-create label '${label}' in ${repo_slug} (rate limit or permission) — proceeding without it"
+		return 1
+	fi
+}
+
 # _validate_labels_exist — check that every label in $2 exists in repo $1.
 # Args: $1 repo_slug (owner/repo), $2 comma-separated label names.
 # Returns: 0 = all valid (or fail-open), 1 = invalid labels found.
+#
+# Auto-create exception (GH#21474): labels matching ^blocked-by:(t[0-9]+|#[0-9]+)$
+# are auto-created when missing — they are a deterministic function of the predecessor
+# task ID and safe to create on demand. All other invalid labels still abort (exit 3).
 _validate_labels_exist() {
 	local repo_slug="$1"
 	local labels_csv="$2"
@@ -706,6 +734,10 @@ _validate_labels_exist() {
 		fi
 	fi
 
+	# Regex for the auto-create exception class (blocked-by:tNNN or blocked-by:#NNN).
+	# These labels are auto-created when missing — all other invalid labels still abort.
+	local _BLOCKED_BY_AUTO_CREATE_REGEX='^blocked-by:(t[0-9]+|#[0-9]+)$'
+
 	# Check each label against the cache
 	local invalid_labels=""
 	local label
@@ -721,6 +753,15 @@ _validate_labels_exist() {
 		label="${label%"${label##*[![:space:]]}"}"  # trim trailing whitespace
 		[[ -z "$label" ]] && continue
 		if ! grep -Fxq "$label" "$cache_file" 2>/dev/null; then
+			# Auto-create exception: blocked-by:tNNN / blocked-by:#NNN labels are
+			# synthesised by t2823 from description text and may not exist yet in fresh
+			# consumer repos. Create them on demand and continue — best-effort (t2800/GH#21474).
+			if [[ "$label" =~ $_BLOCKED_BY_AUTO_CREATE_REGEX ]]; then
+				_auto_create_blocked_by_label "$repo_slug" "$label" "$cache_file" || true
+				# Whether creation succeeded or not, don't abort — body text still records
+				# the dependency for pulse-dep-graph.sh and pulse-issue-reconcile-actions.sh.
+				continue
+			fi
 			if [[ -n "$invalid_labels" ]]; then
 				invalid_labels="${invalid_labels}, '${label}'"
 			else
@@ -730,8 +771,15 @@ _validate_labels_exist() {
 	done
 
 	if [[ -n "$invalid_labels" ]]; then
-		log_error "Pre-flight label validation failed — invalid label(s): ${invalid_labels}"
-		log_error "  Run: gh label list --repo \"${repo_slug}\" | grep -i '<name>'"
+		log_error "Pre-flight label validation failed — label(s) do not exist in this repo: ${invalid_labels}"
+		log_error ""
+		log_error "Each invalid label must be created before claiming, OR use one of these options:"
+		log_error "  (a) Create the label and re-run:"
+		log_error "        gh label create '<name>' --repo \"${repo_slug}\" --color '0075ca' --description '...'"
+		log_error "  (b) If the label was auto-emitted from a --description predecessor reference,"
+		log_error "      skip it: re-run with --no-blocked-by (dependency still recorded in body text)"
+		log_error "  (c) Use a different blocking label that already exists, e.g. 'status:blocked'"
+		log_error ""
 		log_error "  Claim aborted — counter NOT advanced."
 		return 1
 	fi
