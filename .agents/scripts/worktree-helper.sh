@@ -44,6 +44,11 @@ if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
 fi
 
 # t2976: canonical audit logger for worktree-removal events (removed / skipped).
+# Fallback definitions guard against set -u failures when the helper is absent
+# (e.g. older deployments). The source block below overrides these when the file exists.
+_WTAR_REMOVED="${_WTAR_REMOVED:-removed}"
+_WTAR_SKIPPED="${_WTAR_SKIPPED:-skipped}"
+log_worktree_removal_event() { :; }
 if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
 	# shellcheck source=audit-worktree-removal-helper.sh
 	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
