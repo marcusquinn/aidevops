@@ -1501,8 +1501,7 @@ reconcile_issues_single_pass() {
 	# Variables initialised here at function entry (local scope, not module
 	# scope) so each invocation gets a fresh start timestamp independent of
 	# any prior call.
-	local _t2984_start_ts _t2984_budget _t2984_aborted=0
-	_t2984_start_ts=$(date +%s 2>/dev/null) || _t2984_start_ts=0
+	local _t2984_start_ts=$SECONDS _t2984_budget _t2984_aborted=0
 	_t2984_budget="${RECONCILE_TIME_BUDGET_SECS:-360}"
 	[[ "$_t2984_budget" =~ ^[0-9]+$ ]] || _t2984_budget=360
 
@@ -1514,12 +1513,9 @@ reconcile_issues_single_pass() {
 		# run_stage_with_timeout records.
 		local _slug_start=$SECONDS
 
-		# t2984: per-slug budget gate (cheap — runs once per repo, ~8 times/cycle)
-		if [[ "$_t2984_budget" -gt 0 ]] && [[ "$_t2984_start_ts" -gt 0 ]]; then
-			local _t2984_now_outer=0 _t2984_elapsed_outer=0
-			_t2984_now_outer=$(date +%s 2>/dev/null) || _t2984_now_outer=0
-			_t2984_elapsed_outer=$((_t2984_now_outer - _t2984_start_ts))
-			if [[ "$_t2984_elapsed_outer" -ge "$_t2984_budget" ]]; then
+		# t2984: per-slug budget gate (cheap — uses Bash builtin SECONDS)
+		if [[ "$_t2984_budget" -gt 0 ]]; then
+			if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 				_t2984_aborted=1
 				break
 			fi
@@ -1582,12 +1578,9 @@ reconcile_issues_single_pass() {
 		while IFS='|' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
-			# t2984: per-issue budget gate (cheap — date(1) call ~1ms)
-			if [[ "$_t2984_budget" -gt 0 ]] && [[ "$_t2984_start_ts" -gt 0 ]]; then
-				local _t2984_now_inner=0 _t2984_elapsed_inner=0
-				_t2984_now_inner=$(date +%s 2>/dev/null) || _t2984_now_inner=0
-				_t2984_elapsed_inner=$((_t2984_now_inner - _t2984_start_ts))
-				if [[ "$_t2984_elapsed_inner" -ge "$_t2984_budget" ]]; then
+			# t2984: per-issue budget gate (cheap — uses Bash builtin SECONDS)
+			if [[ "$_t2984_budget" -gt 0 ]]; then
+				if [[ $((SECONDS - _t2984_start_ts)) -ge "$_t2984_budget" ]]; then
 					_t2984_aborted=1
 					break 2
 				fi
@@ -1715,9 +1708,8 @@ reconcile_issues_single_pass() {
 	# can correlate with stage-timing log entries. Always logs (not gated
 	# on _total_actions) because budget aborts ARE the diagnostic signal.
 	if [[ "$_t2984_aborted" -eq 1 ]]; then
-		local _t2984_now_end=0 _t2984_elapsed_end=0
-		_t2984_now_end=$(date +%s 2>/dev/null) || _t2984_now_end=0
-		_t2984_elapsed_end=$((_t2984_now_end - _t2984_start_ts))
+		local _t2984_elapsed_end
+		_t2984_elapsed_end=$((SECONDS - _t2984_start_ts))
 		echo "[pulse-wrapper] reconcile_issues_single_pass: time-budget abort at ${_t2984_elapsed_end}s (budget=${_t2984_budget}s) — actions completed: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
 	elif [[ "$_total_actions" -gt 0 ]]; then
 		echo "[pulse-wrapper] reconcile_issues_single_pass: ciw_closed=${ciw_closed} rsd_closed=${rsd_closed} rsd_reset=${rsd_reset} oimp_closed=${oimp_total_closed} cpt_closed=${cpt_total_closed} cpt_nudged=${cpt_total_nudged} cpt_escalated=${cpt_total_escalated} lia_fixed=${lia_fixed} pbf_run=${pbf_total_run} cbb_run=${cbb_total_run}" >>"$LOGFILE"
