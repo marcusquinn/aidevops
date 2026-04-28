@@ -54,9 +54,9 @@
 #   - _release_interactive_claim_on_merge  (t2413, extracted to shared-claim-lifecycle.sh in t2429)
 #   - _handle_post_merge_actions
 #   - _process_single_ready_pr
-#   - _is_collaborator_author
-#   - _is_owner_or_member_author
-#   - _check_interactive_pr_gates            (t2411)
+#   - _is_collaborator_author           (pulse-merge-author-checks.sh, GH#21426)
+#   - _is_owner_or_member_author        (pulse-merge-author-checks.sh, GH#21426)
+#   - _check_interactive_pr_gates       (pulse-merge-author-checks.sh, GH#21426, t2411)
 #   - _attempt_worker_briefed_auto_merge     (t2449)
 #   - _check_required_checks_passing         (t2922)
 #   - _extract_linked_issue
@@ -105,6 +105,12 @@ source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 # from _handle_post_merge_actions to auto-file the next phase child issue
 # when a phase child PR merges for a parent-task issue.
 source "${_PULSE_MERGE_DIR}/shared-phase-filing.sh"
+
+# Source author permission check helpers (GH#21426 — extracted to bring
+# pulse-merge.sh below the 2000-line file-size-debt threshold).
+# shellcheck source=./pulse-merge-author-checks.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/pulse-merge-author-checks.sh"
 
 #######################################
 # Check and flag external-contributor PRs (t1391)
@@ -1630,78 +1636,6 @@ _process_single_ready_pr() {
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
 		return 3
 	fi
-}
-
-#######################################
-# Check if a PR author is a collaborator (admin/maintain/write).
-# Args: $1=author login, $2=repo slug
-# Returns: 0=collaborator, 1=not collaborator or error
-#######################################
-_is_collaborator_author() {
-	local author="$1"
-	local repo_slug="$2"
-	local perm_url="repos/${repo_slug}/collaborators/${author}/permission"
-	local perm_response
-	perm_response=$(gh api -i "$perm_url" 2>/dev/null | head -1)
-	if [[ "$perm_response" == *"200"* ]]; then
-		local perm
-		perm=$(gh api "$perm_url" --jq '.permission' 2>/dev/null)
-		case "$perm" in
-		admin | maintain | write) return 0 ;;
-		esac
-	fi
-	return 1
-}
-
-#######################################
-# Check if a PR author is an OWNER or org MEMBER (admin or maintain level).
-# Stricter than _is_collaborator_author — does NOT accept write-only
-# collaborators (outside contributors). Used by the origin:interactive
-# auto-merge gate (t2411).
-# Args: $1=author login, $2=repo slug
-# Returns: 0=owner or member, 1=collaborator/not collaborator or error
-#######################################
-_is_owner_or_member_author() {
-	local author="$1"
-	local repo_slug="$2"
-	local perm_url="repos/${repo_slug}/collaborators/${author}/permission"
-	local perm_response
-	perm_response=$(gh api -i "$perm_url" 2>/dev/null | head -1)
-	if [[ "$perm_response" == *"200"* ]]; then
-		local perm
-		perm=$(gh api "$perm_url" --jq '.permission' 2>/dev/null)
-		case "$perm" in
-		admin | maintain) return 0 ;;
-		esac
-	fi
-	return 1
-}
-
-#######################################
-# Check origin:interactive-specific gates (t2411): draft status and the
-# hold-for-review opt-out label. Called from _check_pr_merge_gates when
-# the PR carries origin:interactive. These checks apply regardless of
-# author role — OWNER, MEMBER, and COLLABORATOR interactive PRs are all
-# subject to draft and hold-for-review blocking.
-#
-# Args: $1=pr_number, $2=repo_slug, $3=labels_str, $4=is_draft
-# Returns: 0=gates pass (continue to review bot gate), 1=blocked (skip PR)
-#######################################
-_check_interactive_pr_gates() {
-	local pr_number="$1"
-	local repo_slug="$2"
-	local labels_str="$3"
-	local is_draft="$4"
-
-	if [[ "$is_draft" == "true" ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive draft PR not eligible for auto-merge (t2411)" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR has hold-for-review opt-out label (t2411)" >>"$LOGFILE"
-		return 1
-	fi
-	return 0
 }
 
 #######################################
