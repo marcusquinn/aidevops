@@ -581,22 +581,23 @@ _insert_todo_line() {
 	return 0
 }
 
-# _ensure_todo_entry_written TASK_ID ISSUE_NUM DESCRIPTION LABELS REPO_PATH
+# _ensure_todo_entry_written TASK_ID ISSUE_NUM TITLE LABELS REPO_PATH
 # t2548: Idempotently appends a TODO.md entry after verified GitHub issue
 # creation. Closes the orphan gap where both create_github_issue() paths
 # created issues without writing a corresponding TODO.md line.
 #
 # - If TODO.md already has a matching entry, delegates to add_gh_ref_to_todo
 #   to stamp the ref:GH#NNN if missing (idempotent).
-# - Otherwise appends `- [ ] <task_id> <description> <tags> ref:GH#<num>`
+# - Otherwise appends `- [ ] <task_id> <title> <tags> ref:GH#<num>`
 #   to the `## Backlog` section (falls back to EOF if absent).
 # - Labels with status:, tier:, origin:, dispatched:, implemented: prefixes
 #   are skipped — they are not TODO-file-format tags.
+# GH#21473: 3rd arg is TITLE (one-line summary), not DESCRIPTION (full body).
 # Returns 0 always (non-fatal; the issue is already created).
 _ensure_todo_entry_written() {
 	local task_id="$1"
 	local issue_num="$2"
-	local description="$3"
+	local title="$3"
 	local labels="$4"
 	local repo_path="$5"
 
@@ -634,9 +635,11 @@ _ensure_todo_entry_written() {
 		IFS="$_saved_ifs"
 	fi
 
-	# Build the TODO line.
+	# Build the TODO line. Use title (one-line summary), not description
+	# (full issue body). GH#21473: passing description here produced a
+	# multi-KB mega-line in TODO.md when callers passed a worker-ready body.
 	local safe_desc
-	safe_desc=$(printf '%s' "$description" \
+	safe_desc=$(printf '%s' "$title" \
 		| tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[[ -z "$safe_desc" ]] && safe_desc="(no description)"
 	local todo_line="- [ ] ${task_id} ${safe_desc}"

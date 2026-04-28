@@ -469,7 +469,7 @@ create_github_issue() {
 		# when the task line is absent from TODO.md — issue is created but
 		# TODO never written. This call closes that gap idempotently.
 		_ensure_todo_entry_written \
-			"$_task_id_for_todo" "$issue_num" "$description" "$labels" "$repo_path"
+			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"
 		# t2442: warn if parent-task label applied but body has no markers.
 		# The delegation path creates the issue via issue-sync-helper.sh
 		# cmd_push which ALREADY fires this warn — so we skip here to
@@ -583,8 +583,9 @@ create_github_issue() {
 	# path creates the issue via `gh issue create` directly and never goes
 	# through issue-sync-helper.sh, so _push_process_task never runs and
 	# the TODO entry is never written. This call closes that gap idempotently.
+	# GH#21473: pass $title (one-liner), not $description (full body).
 	_ensure_todo_entry_written \
-		"$_task_id_for_todo" "$issue_num" "$description" "$labels" "$repo_path"
+		"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"
 
 	echo "$issue_num"
 	return 0
