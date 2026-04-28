@@ -1797,11 +1797,45 @@ _run_preflight_stages() {
 		fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
 		_preflight_ownership_reconcile || true
+	# t3027 (GH#21584): GraphQL budget gate.
+	# prefetch_state is the largest single GraphQL consumer in the pulse
+	# cycle (~170s avg, 3 calls per repo × 13 repos). When budget is
+	# critically low (< AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD points,
+	# default 1250 = 25% of the 5000/hr GraphQL floor), defer prefetch
+	# entirely and let the cycle proceed with stale STATE_FILE rather
+	# than burn the remaining budget on what may be an idle cycle anyway.
+	# Complementary to the t2690 dispatch breaker (5% floor): t2690 stops
+	# new dispatches; this gate stops the prefetch that PRECEDES dispatch.
+	# Bypass: AIDEVOPS_SKIP_PULSE_PREFETCH_BUDGET_GATE=1.
+	# Counter incremented: _PULSE_HEALTH_PREFETCH_THROTTLED.
+	local _budget_gate_skip=0
+	if [[ "${AIDEVOPS_SKIP_PULSE_PREFETCH_BUDGET_GATE:-0}" != "1" ]]; then
+		local _bg_threshold="${AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD:-1250}"
+		local _bg_remaining
+		_bg_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null || echo "5000")
+		[[ "$_bg_remaining" =~ ^[0-9]+$ ]] || _bg_remaining=5000
+		if [[ "$_bg_remaining" -lt "$_bg_threshold" ]]; then
+			echo "[pulse-wrapper] prefetch_budget_gate: GraphQL remaining=${_bg_remaining} < threshold=${_bg_threshold} — deferring prefetch_state, using stale STATE_FILE (t3027)" >>"$LOGFILE"
+			_PULSE_HEALTH_PREFETCH_THROTTLED=$((_PULSE_HEALTH_PREFETCH_THROTTLED + 1))
+			if declare -F pulse_stats_increment >/dev/null 2>&1; then
+				pulse_stats_increment "pulse_prefetch_budget_throttled" 2>/dev/null || true
+			fi
+			_budget_gate_skip=1
+		fi
+	fi
+
 	# prefetch_and_scope is the only preflight stage whose failure aborts
 	# the cycle — preserve the non-zero return so main() skips run_pulse().
-	if ! run_stage_with_timeout "preflight_prefetch_and_scope" "$_pflt_timeout" \
-		_preflight_prefetch_and_scope; then
-		return 1
+	# When the budget gate fires we skip the call but return 0; the cycle
+	# proceeds with whatever STATE_FILE was written by the previous cycle.
+	# If STATE_FILE is missing entirely (cold start + budget gate firing on
+	# first cycle), downstream stages handle it gracefully (LLM session
+	# sees empty state, deterministic merges/cleanup degrade quietly).
+	if [[ "$_budget_gate_skip" -eq 0 ]]; then
+		if ! run_stage_with_timeout "preflight_prefetch_and_scope" "$_pflt_timeout" \
+			_preflight_prefetch_and_scope; then
+			return 1
+		fi
 	fi
 	return 0
 }
