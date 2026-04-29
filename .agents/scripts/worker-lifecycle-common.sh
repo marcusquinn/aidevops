@@ -289,13 +289,59 @@ _get_pid_cpu() {
 }
 
 #######################################
-# Get CPU usage percentage for a process tree (t1398.3)
+# Walk a process tree breadth-first and emit all descendant PIDs (t3059)
 #
-# Iteratively walks the full descendant tree (BFS) using pgrep -P at
-# each level. Previous implementation only checked direct children,
-# missing grandchildren and deeper descendants — this caused incorrect
-# CPU calculations when active processes were nested deeper than one
-# level (e.g., node -> shell -> language-server).
+# Iteratively walks the full descendant tree using pgrep -P at each
+# level. The root PID itself is NOT emitted — only its descendants
+# (children, grandchildren, …). Output is one PID per line, deduped
+# via sort -u. Returns nothing (zero lines) for a leaf process.
+#
+# pgrep -P only returns DIRECT children. A naive one-level pgrep
+# undercounts when active processes are nested deeper than one level
+# (e.g., parent shell → opencode wrapper → node runtime → language
+# server). Walking BFS preserves the full tree.
+#
+# Used by:
+#   _get_process_tree_cpu (t1398.3) — sum CPU% across whole tree
+#   _watchdog_tree_cpu    (t3059)   — same primitive in worker-activity-watchdog.sh
+#
+# Arguments:
+#   arg1 - root PID
+# Returns: descendant PIDs, one per line, sorted+deduped, via stdout
+#######################################
+_get_descendant_pids() {
+	local root_pid="$1"
+	[[ "$root_pid" =~ ^[0-9]+$ ]] || return 0
+
+	local pids_to_scan=("$root_pid")
+	local descendants=()
+	local i=0
+	while [[ $i -lt ${#pids_to_scan[@]} ]]; do
+		local current_pid="${pids_to_scan[$i]}"
+		local child
+		while IFS= read -r child; do
+			if [[ -n "$child" ]]; then
+				pids_to_scan+=("$child")
+				descendants+=("$child")
+			fi
+		done < <(pgrep -P "$current_pid" 2>/dev/null || true)
+		i=$((i + 1))
+	done
+
+	# Bash 3.2: guard against expanding an empty array under set -u.
+	if [[ ${#descendants[@]} -gt 0 ]]; then
+		printf "%s\n" "${descendants[@]}" | sort -u
+	fi
+	return 0
+}
+
+#######################################
+# Get CPU usage percentage for a process tree (t1398.3, refactored t3059)
+#
+# Walks the full descendant tree (BFS) via _get_descendant_pids, then
+# sums per-PID CPU% (root + descendants) via _get_pid_cpu. Previous
+# inline-BFS implementation was duplicated in worker-activity-watchdog.sh's
+# _watchdog_tree_cpu (one-level pgrep -P only); both now share the helper.
 #
 # Arguments:
 #   arg1 - PID
@@ -303,30 +349,16 @@ _get_pid_cpu() {
 #######################################
 _get_process_tree_cpu() {
 	local pid="$1"
-	local total_cpu=0
+	local total_cpu
+	total_cpu=$(_get_pid_cpu "$pid")
 
-	# Iteratively find the initial PID and all its descendants (BFS).
-	# pgrep -P only returns direct children, so we expand level by level.
-	local pids_to_scan=("$pid")
-	local all_pids=()
-	local i=0
-	while [[ $i -lt ${#pids_to_scan[@]} ]]; do
-		local current_pid="${pids_to_scan[$i]}"
-		all_pids+=("$current_pid")
-		local child
-		while IFS= read -r child; do
-			[[ -n "$child" ]] && pids_to_scan+=("$child")
-		done < <(pgrep -P "$current_pid" 2>/dev/null || true)
-		i=$((i + 1))
-	done
-
-	# Sum CPU for all unique PIDs in the process tree.
-	local p
-	for p in $(printf "%s\n" "${all_pids[@]}" | sort -u); do
+	local descendant
+	while IFS= read -r descendant; do
+		[[ -n "$descendant" ]] || continue
 		local cpu
-		cpu=$(_get_pid_cpu "$p")
+		cpu=$(_get_pid_cpu "$descendant")
 		total_cpu=$((total_cpu + cpu))
-	done
+	done < <(_get_descendant_pids "$pid")
 
 	echo "$total_cpu"
 	return 0
