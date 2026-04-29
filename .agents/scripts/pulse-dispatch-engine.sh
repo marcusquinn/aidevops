@@ -899,7 +899,7 @@ _dff_dispatch_loop_parallel() {
 		# canary cache) and the outcomes file write propagate.
 		(
 			local _rc=0
-			_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _rc=$?
+			_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
 			local issue_num
 			issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
 			if [[ "$_rc" -eq 0 ]]; then
