@@ -245,6 +245,10 @@ source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
 source "${SCRIPT_DIR}/pulse-cleanup.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-issue-reconcile.sh"
+# GH#21604 (t3035): orphan worker reaper — detects and reattaches workers that
+# survived a pulse restart. Called once per cycle in _pulse_run_deterministic_pipeline.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/orphan-worker-reaper.sh"
 # Phase 6 (t1974, GH#18382): simplification cluster extracted (largest single extraction).
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-simplification.sh"
@@ -1101,6 +1105,15 @@ _pulse_run_deterministic_pipeline() {
 	[[ "$_ledger_before" =~ ^[0-9]+$ ]] || _ledger_before=0
 
 	_pulse_drain_prefetch_counters # t3027: bridge subshell counters
+
+	# GH#21604 (t3035): Orphan worker reaper — runs at the start of every cycle
+	# to detect workers that survived a pulse restart (no ledger entry) and
+	# either reattach them to the new pulse instance or kill stuck ones (>2h).
+	# Non-fatal: a failure here never blocks the pulse cycle.
+	if [[ ! -f "$STOP_FLAG" ]]; then
+		run_stage_with_timeout "reap_orphan_workers" "$PRE_RUN_STAGE_TIMEOUT" \
+			reap_orphan_workers || true
+	fi
 
 	# Deterministic merge pass: approve and merge all ready PRs across pulse
 	# repos. This runs BEFORE the LLM session because merging is free (no
