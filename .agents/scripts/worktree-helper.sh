@@ -46,9 +46,13 @@ fi
 # t2976: canonical audit logger for worktree-removal events (removed / skipped).
 # Fallback definitions guard against set -u failures when the helper is absent
 # (e.g. older deployments). The source block below overrides these when the file exists.
+# The stub uses command -v so it is only defined when the real function is not yet
+# loaded — prevents unconditional overwrite when audit-worktree-removal-helper.sh was
+# already sourced by a caller (e.g. pulse-cleanup.sh) before worktree-helper.sh is
+# re-sourced; the double-source guard in that helper would otherwise prevent restore.
 _WTAR_REMOVED="${_WTAR_REMOVED:-removed}"
 _WTAR_SKIPPED="${_WTAR_SKIPPED:-skipped}"
-log_worktree_removal_event() { :; }
+command -v log_worktree_removal_event >/dev/null 2>&1 || log_worktree_removal_event() { :; }
 if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
 	# shellcheck source=audit-worktree-removal-helper.sh
 	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
