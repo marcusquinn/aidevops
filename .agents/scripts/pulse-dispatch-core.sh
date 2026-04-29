@@ -1112,14 +1112,6 @@ dispatch_with_dedup() {
 	# fetch + the large-file labels/title fetches + the brief-freshness body
 	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
 	# "gh API call budget" for the full inventory.
-	#
-	# t3027: route through gh_issue_view wrapper for REST fallback under
-	# GraphQL exhaustion. Without this, every per-candidate dedup check in a
-	# 100+ candidate cycle fails identically with "unable to load issue
-	# metadata" once GraphQL hits 0/5000, burning ceremony cost (claim
-	# acquisition, advisory comments) for zero dispatches. Downstream consumers
-	# of this JSON access only .number, .title, .state, .labels[].name,
-	# .assignees, .body — all of which exist in REST shape unchanged.
 	local issue_meta_json
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json number,title,state,labels,assignees,body 2>/dev/null) || issue_meta_json=""
