@@ -485,8 +485,16 @@ create_github_issue() {
 		return 0
 	fi
 
-	# Fallback: bare issue creation with structured body
-	local gh_args=(issue create --title "$title")
+	# Fallback: bare issue creation with structured body.
+	# t3039: use gh_create_issue (REST-aware wrapper, from shared-gh-wrappers.sh sourced
+	# transitively via shared-constants.sh) instead of raw gh issue create so that issue
+	# creation succeeds even when GraphQL is exhausted (the "fallback also uses GraphQL"
+	# failure mode observed at GraphQL=0/5000).
+	local create_args=(--title "$title")
+	# Pass --repo explicitly so the REST fallback path inside gh_create_issue
+	# can build the /repos/{owner}/{repo}/issues endpoint without relying on cwd
+	# (t3039: _gh_issue_create_rest requires --repo).
+	[[ -n "$_slug_for_warn" ]] && create_args+=(--repo "$_slug_for_warn")
 
 	local body=""
 	local compose_rc=0
@@ -497,7 +505,7 @@ create_github_issue() {
 		log_warn "Skipping issue creation — no description available. Task ID is secured."
 		return 1
 	fi
-	gh_args+=(--body "$body")
+	create_args+=(--body "$body")
 
 	# t2789: Ensure new issues are immediately dispatchable by applying
 	# status:available when the caller did not specify any status:* label.
@@ -514,17 +522,12 @@ create_github_issue() {
 		fi
 	fi
 
-	# Append session origin label (origin:worker or origin:interactive)
-	local origin_label
-	origin_label=$(session_origin_label)
-	if [[ -n "$labels" ]]; then
-		gh_args+=(--label "${labels},${origin_label}")
-	else
-		gh_args+=(--label "$origin_label")
-	fi
+	# Pass labels to gh_create_issue; origin label is appended automatically by
+	# the wrapper (avoids duplicate-label injection, t3039).
+	[[ -n "$labels" ]] && create_args+=(--label "$labels")
 
 	local issue_url
-	if ! issue_url=$(gh "${gh_args[@]}" 2>&1); then
+	if ! issue_url=$(gh_create_issue "${create_args[@]}" 2>&1); then
 		log_warn "Failed to create GitHub issue: $issue_url"
 		return 1
 	fi
