@@ -74,7 +74,10 @@ setup_camoufox() {
 
 	# Install camoufox + browserforge
 	# shellcheck source=/dev/null
-	source "$VENV_DIR/bin/activate"
+	source "$VENV_DIR/bin/activate" || {
+		echo -e "${RED}Error: Failed to activate venv at $VENV_DIR${NC}" >&2
+		return 1
+	}
 	pip install --quiet --upgrade camoufox browserforge 2>/dev/null || {
 		echo -e "${YELLOW}Warning: pip install failed. Trying with --break-system-packages...${NC}"
 		pip install --quiet --upgrade --break-system-packages camoufox browserforge 2>/dev/null || true
