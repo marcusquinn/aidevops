@@ -943,10 +943,10 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 
-	# GH#17574/GH#18644: commit-subject dedup gate with force-dispatch override.
-	if _check_commit_subject_dedup_gate "$issue_number" "$repo_slug" "$target_title" "$repo_path" "$issue_meta_json"; then
-		return 1
-	fi
+	# t3040: commit-subject dedup gate REMOVED from dispatch hot path
+	# (cost 100-156s/candidate). Workers do their own t2046 duplicate
+	# discovery; helpers retained for diagnostic use. Regression guard:
+	# tests/test-pulse-dispatch-core-t3040-gate-removed.sh.
 
 	# t1927: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
 	# Parses issue body for "blocked-by:tNNN" or "Blocked by #NNN".
