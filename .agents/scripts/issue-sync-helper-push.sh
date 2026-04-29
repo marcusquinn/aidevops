@@ -130,7 +130,7 @@ _push_create_issue() {
 	# combined output for diagnostics without requiring a temp file.
 	local url gh_exit combined
 	{
-		combined=$(gh issue create "${args[@]}" 2>&1)
+		combined=$(gh issue create "${args[@]}" 2>&1) # aidevops-allow: raw-gh-wrapper
 		gh_exit=$?
 	} || true
 	# t3039: REST fallback when GraphQL is exhausted.
