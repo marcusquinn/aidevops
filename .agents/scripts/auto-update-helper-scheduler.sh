@@ -258,6 +258,10 @@ _cmd_enable_systemd() {
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
 	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; ${script_path} kept inside outer double quotes for safe expansion
+	# Set WorkingDirectory to the canonical agents dir so skill writes land in
+	# ~/.aidevops/agents/ not $HOME when the unit is started by systemd (#21542).
+	local agents_dir
+	agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 	printf '%s' "[Unit]
 Description=aidevops auto-update
 After=network.target
@@ -266,6 +270,7 @@ After=network.target
 Type=oneshot
 KillMode=process
 ExecStart=/bin/bash -lc '${script_path} check'
+WorkingDirectory=${agents_dir}
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle

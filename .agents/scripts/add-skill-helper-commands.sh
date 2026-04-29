@@ -28,6 +28,10 @@
 [[ -n "${_ADD_SKILL_COMMANDS_LIB_LOADED:-}" ]] && return 0
 _ADD_SKILL_COMMANDS_LIB_LOADED=1
 
+# Canonical install root — inherited from orchestrator; guard for standalone sourcing.
+# All skill files are written to this location regardless of cwd (#21542).
+AGENTS_DIR="${AGENTS_DIR:-${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}}"
+
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"
@@ -255,15 +259,15 @@ _cmd_add_github() {
 
 	if [[ "$dry_run" == true ]]; then
 		log_info "DRY RUN - Would create:"
-		echo "  .agents/${target_path}.md"
+		echo "  ${AGENTS_DIR}/${target_path}.md"
 		if [[ -d "$skill_source_dir/scripts" || -d "$skill_source_dir/references" ]]; then
-			echo "  .agents/${target_path}/"
+			echo "  ${AGENTS_DIR}/${target_path}/"
 		fi
 		return 0
 	fi
 
 	# Convert and install files
-	local target_file=".agents/${target_path}.md"
+	local target_file="${AGENTS_DIR}/${target_path}.md"
 	if ! _convert_and_install_files "$format" "$source_dir" "$skill_source_dir" "$target_file" "$skill_name" "$target_path"; then
 		return 1
 	fi
@@ -278,7 +282,7 @@ _cmd_add_github() {
 	if ! _finalize_import "$skill_source_dir" "$skill_name" "$skip_security" \
 		"$target_file" "$target_path" \
 		"https://github.com/$owner/$repo${subpath:+/$subpath}" \
-		".agents/${target_path}.md" "$format" "$commit_hash" \
+		"${AGENTS_DIR}/${target_path}.md" "$format" "$commit_hash" \
 		"added" "" "" "" "" "$TEMP_DIR"; then
 		return 1
 	fi
@@ -340,9 +344,9 @@ _convert_url_to_skill() {
 	local description="$4"
 	local url="$5"
 
-	# Create target directory
+	# Create target directory (target_file is already an absolute path via AGENTS_DIR)
 	local target_dir
-	target_dir=".agents/$(dirname "${target_file#.agents/}")"
+	target_dir="$(dirname "$target_file")"
 	mkdir -p "$target_dir"
 
 	# Check if the fetched file has SKILL.md frontmatter
@@ -407,9 +411,9 @@ _fetch_and_convert_clawdhub() {
 		return 1
 	fi
 
-	# Create target directory and convert to aidevops format
+	# Create target directory and convert to aidevops format (target_file is absolute via AGENTS_DIR)
 	local target_dir
-	target_dir=".agents/$(dirname "${target_file#.agents/}")"
+	target_dir="$(dirname "$target_file")"
 	mkdir -p "$target_dir"
 
 	local safe_summary
@@ -487,7 +491,7 @@ cmd_add_url() {
 
 	if [[ "$dry_run" == true ]]; then
 		log_info "DRY RUN - Would create:"
-		echo "  .agents/${target_path}.md"
+		echo "  ${AGENTS_DIR}/${target_path}.md"
 		echo "  Source: $url"
 		echo "  Format: url"
 		echo "  Content hash: ${content_hash:-<unavailable>}"
@@ -496,7 +500,7 @@ cmd_add_url() {
 	fi
 
 	# Convert URL content to aidevops format
-	local target_file=".agents/${target_path}.md"
+	local target_file="${AGENTS_DIR}/${target_path}.md"
 	if ! _convert_url_to_skill "$fetch_file" "$target_file" "$skill_name" "$description" "$url"; then
 		rm -rf "$fetch_dir"
 		return 1
@@ -505,7 +509,7 @@ cmd_add_url() {
 	# Finalize: security scan, register, cleanup
 	if ! _finalize_import "$fetch_dir" "$skill_name" "$skip_security" \
 		"$target_file" "$target_path" \
-		"$url" ".agents/${target_path}.md" "url" "" \
+		"$url" "${AGENTS_DIR}/${target_path}.md" "url" "" \
 		"added" "Imported from URL" \
 		"$content_hash" "$resp_etag" "$resp_last_modified" "$fetch_dir"; then
 		return 1
@@ -578,13 +582,13 @@ cmd_add_clawdhub() {
 
 	if [[ "$dry_run" == true ]]; then
 		log_info "DRY RUN - Would create:"
-		echo "  .agents/${target_path}.md"
+		echo "  ${AGENTS_DIR}/${target_path}.md"
 		return 0
 	fi
 
 	# Fetch and convert ClawdHub content
 	local fetch_dir="${TMPDIR:-/tmp}/clawdhub-fetch/${slug}"
-	local target_file=".agents/${target_path}.md"
+	local target_file="${AGENTS_DIR}/${target_path}.md"
 	if ! _fetch_and_convert_clawdhub "$slug" "$fetch_dir" "$target_file" "$display_name" "$skill_name" "$summary" "$version"; then
 		return 1
 	fi
@@ -593,7 +597,7 @@ cmd_add_clawdhub() {
 	local upstream_url="https://clawdhub.com/${owner_handle}/${slug}"
 	if ! _finalize_import "$fetch_dir" "$skill_name" "$skip_security" \
 		"$target_file" "$target_path" \
-		"$upstream_url" ".agents/${target_path}.md" "clawdhub" "$version" \
+		"$upstream_url" "${AGENTS_DIR}/${target_path}.md" "clawdhub" "$version" \
 		"added" "ClawdHub v${version} by @${owner_handle}" \
 		"" "" "" "$fetch_dir"; then
 		return 1

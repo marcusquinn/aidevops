@@ -25,6 +25,10 @@
 [[ -n "${_ADD_SKILL_IMPORT_LIB_LOADED:-}" ]] && return 0
 _ADD_SKILL_IMPORT_LIB_LOADED=1
 
+# Canonical install root — inherited from orchestrator; guard for standalone sourcing.
+# All skill files are written to this location regardless of cwd (#21542).
+AGENTS_DIR="${AGENTS_DIR:-${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}}"
+
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"
@@ -362,7 +366,8 @@ _finalize_import() {
 	# Security scan before registration
 	if ! scan_skill_security "$scan_dir" "$skill_name" "$skip_security"; then
 		rm -f "$target_file"
-		local skill_resource_dir=".agents/${target_path}"
+		# Derive companion resource dir from target_file (which is canonical-path via AGENTS_DIR)
+		local skill_resource_dir="${AGENTS_DIR}/${target_path}"
 		[[ -d "$skill_resource_dir" ]] && rm -rf "$skill_resource_dir"
 		[[ -n "$cleanup_dir" ]] && rm -rf "$cleanup_dir"
 		return 1
