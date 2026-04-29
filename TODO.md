@@ -3528,7 +3528,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3045 Migrate auto-update-helper-check.sh stat -f calls to _file_mtime_epoch (Linux crash regression missed by #21689) #auto-dispatch #bug ref:GH#21745
 
-- [ ] t3046 CI gate: block stat -f %m (BSD-only) outside _file_mtime_epoch helper and platform-guarded branches #auto-dispatch #enhancement ref:GH#21746
+- [x] t3046 CI gate: block stat -f %m (BSD-only) outside _file_mtime_epoch helper and platform-guarded branches #auto-dispatch #enhancement ref:GH#21746 pr:#21777 completed:2026-04-29
 
 - [ ] t3047 claim-task-id.sh issue_num parser captures stderr digit-noise (causes 2157 prefix and 'awk: newline in string' on every issue creation) #auto-dispatch #bug ref:GH#21747
 

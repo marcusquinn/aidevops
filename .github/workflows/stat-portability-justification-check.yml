@@ -1,0 +1,137 @@
+name: Stat Portability Justification Check
+
+# GH#21746 (t3046): Validates that the `stat-portability-ok` label is
+# accompanied by a `## Stat Portability Justification` section in the PR body
+# with at least one file:line reference and a rationale for why the BSD-only
+# stat usage is acceptable in this specific context.
+#
+# Mirrors the `complexity-bump-ok` + justification-section pattern from
+# complexity-bump-justification-check.yml.
+#
+# Trigger: `pull_request_target` on `labeled` — only fires when a label is
+# added, not on every push. Uses `pull_request_target` because:
+# 1. We only read event metadata (PR body, labels) — never checkout PR code
+# 2. We need write access to remove labels and post comments on fork PRs
+#
+# On fail: removes the label and posts a remediation comment.
+# On pass: label stays; stat-portability-check.yml gate accepts it.
+
+on:
+  pull_request_target:
+    types: [labeled]
+
+jobs:
+  validate-justification:
+    name: Stat Portability Justification
+    # Only run when the specific label is applied
+    if: github.event.label.name == 'stat-portability-ok'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - name: Validate justification section
+        id: validate
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          MISSING=""
+
+          # Check 1: PR body contains a ## Stat Portability Justification heading
+          if ! printf '%s' "$PR_BODY" | grep -qE '^##+[[:space:]]+Stat Portability Justification'; then
+            MISSING="${MISSING}- Missing \`## Stat Portability Justification\` section in PR body\n"
+          fi
+
+          # Check 2: At least one file:line reference (e.g. helper.sh:225, src/lib.ts:42)
+          if ! printf '%s' "$PR_BODY" | grep -qE '[a-zA-Z0-9_/.-]+\.[a-zA-Z]+:[0-9]+'; then
+            MISSING="${MISSING}- Missing file:line reference (e.g. \`my-script.sh:42\`)\n"
+          fi
+
+          # Check 3: At least one rationale keyword that indicates intentional BSD-only usage
+          # Acceptable keywords: Darwin, macOS, BSD, platform-guard, uname, FreeBSD
+          if ! printf '%s' "$PR_BODY" | grep -qiE '(darwin|macos|bsd|platform.guard|uname|freebsd|portable.stat|platform.specific)'; then
+            MISSING="${MISSING}- Missing rationale: explain why BSD-only stat is acceptable here\n"
+            MISSING="${MISSING}  (include one of: Darwin, macOS, BSD, platform-guard, uname, FreeBSD)\n"
+          fi
+
+          if [ -n "$MISSING" ]; then
+            echo "valid=false" >> "$GITHUB_OUTPUT"
+            # Write missing items to file for the comment step
+            printf '%b' "$MISSING" > /tmp/missing-items.txt
+            echo "::error::Stat portability justification is incomplete. See PR comment."
+          else
+            echo "valid=true" >> "$GITHUB_OUTPUT"
+            echo "Justification section validated: has heading, file:line reference, and rationale."
+          fi
+
+      - name: Remove label and post remediation comment on failure
+        if: steps.validate.outputs.valid == 'false'
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          # Remove the label — justification is insufficient
+          gh pr edit "$PR_NUMBER" --repo "$REPO" \
+            --remove-label "stat-portability-ok" 2>/dev/null || true
+
+          MISSING=$(cat /tmp/missing-items.txt)
+
+          # Post or update a remediation comment
+          MARKER="<!-- stat-portability-justification-check -->"
+          BODY="${MARKER}
+          **Stat Portability Justification: INCOMPLETE**
+
+          The \`stat-portability-ok\` label was removed because the PR body is missing required justification:
+
+          ${MISSING}
+
+          **To re-apply the label**, update the PR body with a \`## Stat Portability Justification\` section containing:
+
+          1. **File:line reference** — where the \`stat -f %m\` appears (e.g. \`my-script.sh:42\`)
+          2. **Rationale** — why BSD-only stat is acceptable here (mention at least one of: Darwin, macOS, BSD, platform-guard, uname, FreeBSD)
+
+          **Example section:**
+          \`\`\`markdown
+          ## Stat Portability Justification
+
+          \`stat-portability-ok\` label applied. The usage at \`my-script.sh:42\` is inside
+          a \`case \"\$(uname)\" in Darwin*)\` platform-guarded branch. The scanner's
+          Darwin-guard heuristic did not fire because the case structure is split across
+          a sourced function boundary. This code only runs on macOS/BSD; Linux takes
+          a separate code path that uses \`_file_mtime_epoch\`.
+          \`\`\`
+
+          Then re-apply the \`stat-portability-ok\` label. This check will re-run automatically.
+
+          _See [GH#21746](https://github.com/marcusquinn/aidevops/issues/21746) for full documentation._"
+
+          # Check for existing comment, update or create
+          EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"stat-portability-justification-check\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing comment $EXISTING"
+            gh api "repos/${REPO}/issues/comments/${EXISTING}" \
+              --method PATCH -F body="$BODY" >/dev/null 2>&1 || true
+          else
+            echo "Creating new comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Gate result
+        if: steps.validate.outputs.valid == 'false'
+        run: |
+          echo "::error::stat-portability-ok label removed — justification incomplete. See PR comment."
+          exit 1
