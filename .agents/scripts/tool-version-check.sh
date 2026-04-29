@@ -525,7 +525,7 @@ _check_all_categories() {
 		if [[ ${#NPM_TOOLS[@]} -gt 0 ]]; then
 			check_category "NPM" "${NPM_TOOLS[@]}"
 		fi
-		if command -v brew &>/dev/null && [[ ${#BREW_TOOLS[@]} -gt 0 ]]; then
+		if [[ ${#BREW_TOOLS[@]} -gt 0 ]]; then
 			check_category "Homebrew" "${BREW_TOOLS[@]}"
 		fi
 		if command -v pip &>/dev/null && [[ ${#PIP_TOOLS[@]} -gt 0 ]]; then
