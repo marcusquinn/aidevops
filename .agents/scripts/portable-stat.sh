@@ -59,10 +59,9 @@ unset _ps_test_val
 #                   %a (octal perms), %U (owner username)
 #
 # Usage: _stat_batch '%n %s %Y' file1 file2 ...
-#        find ... -print0 | xargs -0 bash -c '_stat_batch "%n %s %Y" "$@"' _
 #
-# For find -exec integration, use the companion script portable-stat-exec.sh:
-#        find ... -exec portable-stat-exec.sh '%n %s %Y' {} +
+# For find integration (handles ARG_MAX automatically):
+#        find ... -print0 | xargs -0 bash -c 'source portable-stat.sh; _stat_batch "%n %s %Y" "$@"' _
 # =============================================================================
 _stat_batch() {
 	local fmt="$1"; shift
@@ -88,8 +87,10 @@ _stat_batch() {
 # =============================================================================
 
 # _file_mtime_epoch PATH — modification time as epoch seconds (fallback: 0)
+# On unknown variant: propagates error (fail loud, not silent zeros).
 _file_mtime_epoch() {
 	local file_path="$1"
+	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
 	_stat_batch '%Y' "$file_path" || echo 0
 	return 0
 }
@@ -97,6 +98,7 @@ _file_mtime_epoch() {
 # _file_size_bytes PATH — file size in bytes (fallback: 0)
 _file_size_bytes() {
 	local file_path="$1"
+	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
 	_stat_batch '%s' "$file_path" || echo 0
 	return 0
 }
@@ -104,6 +106,7 @@ _file_size_bytes() {
 # _file_perms PATH — octal permissions, e.g. "644" (fallback: "000")
 _file_perms() {
 	local file_path="$1"
+	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
 	_stat_batch '%a' "$file_path" || echo "000"
 	return 0
 }
@@ -111,6 +114,7 @@ _file_perms() {
 # _file_owner PATH — owner username (fallback: "unknown")
 _file_owner() {
 	local file_path="$1"
+	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
 	_stat_batch '%U' "$file_path" || echo "$_PORTABLE_STAT_UNKNOWN"
 	return 0
 }
