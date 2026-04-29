@@ -200,8 +200,7 @@ prune_execute() {
 	db "$MAIL_DB" "VACUUM;"
 
 	local new_size_bytes
-	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
-	new_size_bytes=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
+	new_size_bytes=$(_file_size_bytes "$MAIL_DB")
 	local new_size_kb=$((new_size_bytes / 1024))
 	local saved_kb=$((db_size_kb - new_size_kb))
 
@@ -251,8 +250,7 @@ cmd_prune() {
 	ensure_db
 
 	local db_size_bytes
-	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
-	db_size_bytes=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
+	db_size_bytes=$(_file_size_bytes "$MAIL_DB")
 	local db_size_kb=$((db_size_bytes / 1024))
 
 	local report_output prunable archivable

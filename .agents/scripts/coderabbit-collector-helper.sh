@@ -921,11 +921,7 @@ cmd_status() {
 
 		# DB file size
 		local db_size
-		if [[ "$(uname)" == "Darwin" ]]; then
-			db_size=$(stat -f %z "$COLLECTOR_DB" 2>/dev/null || echo "0")
-		else
-			db_size=$(stat -c %s "$COLLECTOR_DB" 2>/dev/null || echo "0")
-		fi
+		db_size=$(_file_size_bytes "$COLLECTOR_DB")
 		echo "  DB size: $((db_size / 1024)) KB"
 	else
 		echo ""

@@ -40,17 +40,13 @@ _models_get_size_human() {
 	local model_path="$1"
 	local size_human=""
 
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local size_bytes
-		size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		size_human="$(echo "$size_bytes" | awk '{
-			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
-			else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
-			else printf "%.0f KB", $1/1024;
-		}')"
-	else
-		size_human="$(du -h "$model_path" 2>/dev/null | awk '{print $1}')"
-	fi
+	local size_bytes
+	size_bytes="$(_file_size_bytes "$model_path")"
+	size_human="$(echo "$size_bytes" | awk '{
+		if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
+		else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
+		else printf "%.0f KB", $1/1024;
+	}')"
 
 	echo "$size_human"
 	return 0
@@ -135,11 +131,7 @@ cmd_models() {
 		while IFS= read -r model_path; do
 			local name size_bytes last_used
 			name="$(basename "$model_path")"
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-			else
-				size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-			fi
+			size_bytes="$(_file_size_bytes "$model_path")"
 			last_used="$(_models_get_last_used "$name")"
 			[[ "$first" == "true" ]] || echo ","
 			first=false
@@ -289,11 +281,7 @@ cmd_download() {
 	local downloaded_path="${LOCAL_MODELS_STORE}/${filename}"
 	if [[ -f "$downloaded_path" ]]; then
 		local size_human size_bytes_dl
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes_dl="$(stat -f%z "$downloaded_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes_dl="$(stat -c%s "$downloaded_path" 2>/dev/null || echo "0")"
-		fi
+		size_bytes_dl="$(_file_size_bytes "$downloaded_path")"
 		size_human="$(echo "$size_bytes_dl" | awk '{
 			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
 			else printf "%.0f MB", $1/1048576;

@@ -346,7 +346,7 @@ execute_wp_via_ssh() {
 
 		# Warn if password file has insecure permissions (should be 600)
 		local file_perms
-		file_perms=$(stat -c "%a" "$expanded_password_file" 2>/dev/null || stat -f "%OLp" "$expanded_password_file" 2>/dev/null || echo "")
+		file_perms=$(_file_perms "$expanded_password_file")
 		if [[ -n "$file_perms" && "$file_perms" != "600" ]]; then
 			print_warning "Password file has insecure permissions ($file_perms): $expanded_password_file"
 			print_info "Fix with: chmod 600 $expanded_password_file"

@@ -72,12 +72,7 @@ _lock_dir_age() {
 		echo "0"
 		return 0
 	fi
-	# BSD stat (macOS) first, then GNU stat (Linux)
-	mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "")
-	if [[ -z "$mtime" ]] || [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
-		echo "0"
-		return 0
-	fi
+	mtime=$(_file_mtime_epoch "$dir")
 	now=$(_now_epoch)
 	echo "$((now - mtime))"
 	return 0

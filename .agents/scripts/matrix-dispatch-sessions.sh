@@ -133,8 +133,7 @@ _sessions_stats_entity_aware() {
 	active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM matrix_room_sessions WHERE session_id != '';" 2>/dev/null || echo "0")
 	matrix_interactions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM interactions WHERE channel = 'matrix';" 2>/dev/null || echo "0")
 	entity_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM entity_channels WHERE channel = 'matrix';" 2>/dev/null || echo "0")
-	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
-	db_size=$(stat -c%s "$db_path" 2>/dev/null || stat -f%z "$db_path" 2>/dev/null || echo "0")
+	db_size=$(_file_size_bytes "$db_path")
 
 	echo "Total sessions:       ${total_sessions:-0}"
 	echo "Active sessions:      ${active_sessions:-0}"
@@ -155,8 +154,7 @@ _sessions_stats_legacy() {
 	active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM sessions WHERE session_id != '';" 2>/dev/null || echo "0")
 	total_messages=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM message_log;" 2>/dev/null || echo "0")
 	context_bytes=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COALESCE(SUM(length(compacted_context)), 0) FROM sessions;" 2>/dev/null || echo "0")
-	# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
-	db_size=$(stat -c%s "$db_path" 2>/dev/null || stat -f%z "$db_path" 2>/dev/null || echo "0")
+	db_size=$(_file_size_bytes "$db_path")
 
 	echo "Total sessions:    ${total_sessions:-0} (legacy store)"
 	echo "Active sessions:   ${active_sessions:-0}"
