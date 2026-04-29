@@ -545,9 +545,14 @@ _dff_dispatch_with_timeout() {
 	# ceremony — when adaptive recommended drops below ceremony cost, EVERY
 	# candidate timeouts at rc=124 and dispatched=0/N. Canonical failure:
 	# 2026-04-28 fill_floor cycle iter=62, 148 candidates, dispatched=0,
-	# adaptive timeout collapsed to 180s. Floor at 360s gives ceremony +
-	# backpressure margin without inflating fast-path probe budget.
-	local floor_seconds="${FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-360}"
+	# adaptive timeout collapsed to 180s. Floor at 360s was insufficient
+	# (post-t3040 evidence: ceremony_total avg=341s, max=341s — every
+	# candidate hit rc=124 timeout). t3043 raises to 600s to give the
+	# 419s avg ceremony (gh_issue_view 3s + dedup_check 134s + assign 35s
+	# + precreate_worktree 75s + lock 7s + eligibility 11s + predispatch 8s
+	# + tier 4s + worker_launch 142s) ~50% headroom for tail variance.
+	# Follow-up t3043 (#21659) targets reducing per-stage cost to <60s.
+	local floor_seconds="${FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
 	if [[ "$floor_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds < floor_seconds)); then
 		timeout_seconds="$floor_seconds"
 		timeout_ms=$((floor_seconds * 1000))

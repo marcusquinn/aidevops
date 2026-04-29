@@ -19,7 +19,9 @@
 #
 # Contract pinned by this test:
 #   1. The function declares a `floor_seconds` local sourced from
-#      FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR with a default of 360.
+#      FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR with a default of 600
+#      (raised from 360 in t3043 — see ceremony breakdown in
+#      pulse-dispatch-engine.sh comment block).
 #   2. The floor block runs AFTER the adaptive helper has populated
 #      timeout_seconds — i.e., it sits between the `dispatch-timing-helper.sh
 #      recommend` block and the run_stage_with_timeout call.
@@ -91,8 +93,8 @@ echo "Engine: $ENGINE"
 echo ""
 
 assert_grep \
-	"1: env var FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR is consulted with default 360" \
-	'\$\{FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-360\}' \
+	"1: env var FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR is consulted with default 600" \
+	'\$\{FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-600\}' \
 	"$ENGINE"
 
 assert_grep \
