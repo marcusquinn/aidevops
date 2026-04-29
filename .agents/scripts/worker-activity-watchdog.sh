@@ -567,10 +567,17 @@ _monitor() {
 			tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
 			if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
 				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-				printf '[WATCHDOG_STALL_DEFERRED] timestamp=%s cpu=%s%% stall=%ss deferred_total=%ss elapsed=%ss\n' \
-					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tree_cpu" "$stall_seconds" \
-					"$deferred_stall_seconds" "$elapsed_total" \
-					>>"$OUTPUT_FILE" 2>/dev/null || true
+				# t3058 / GH#21786: write defer marker to LIFECYCLE_LOG, NOT
+				# OUTPUT_FILE. Writing to OUTPUT_FILE grew the monitored file
+				# and falsely advanced last_size, defeating the stall counter
+				# and silently neutering STALL_TIMEOUT (only HARD_KILL_SECONDS
+				# at 1500s remained as a real cap). Format aligned with the
+				# `[lifecycle] worker_killed` line emitted by _kill_worker so
+				# Phase 2 aggregation can join defer events alongside kills.
+				printf '[lifecycle] worker_stall_deferred pid=%s cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+					"$WORKER_PID" "$tree_cpu" "$stall_seconds" \
+					"$deferred_stall_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					>>"$LIFECYCLE_LOG" 2>/dev/null || true
 				stall_seconds=0
 				sleep "$POLL_INTERVAL"
 				continue

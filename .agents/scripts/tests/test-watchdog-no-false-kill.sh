@@ -127,8 +127,8 @@ assert_contains \
 	'STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"' \
 	"$watchdog_source"
 assert_contains \
-	"4b. CPU check defers kill (WATCHDOG_STALL_DEFERRED marker)" \
-	"WATCHDOG_STALL_DEFERRED" \
+	"4b. CPU check defers kill (worker_stall_deferred lifecycle marker)" \
+	"worker_stall_deferred" \
 	"$watchdog_source"
 
 #######################################
