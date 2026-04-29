@@ -569,6 +569,11 @@ _dff_dispatch_with_timeout() {
 		outcome="timeout"
 		# t2989 + t3003: per-candidate timeout — log distinctly, bump counter,
 		# record outcome so the next recommendation enters probe mode.
+		# t3056 / GH#21781: Structured lifecycle line for kill-reason telemetry
+		printf '[lifecycle] worker_killed pid=dispatch reason=wait_loop_timeout_%ss trigger_age=%sms session=issue-%s ts=%s\n' \
+			"$timeout_seconds" "$elapsed_ms" "$issue_number" \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "fill_floor_per_candidate_timeout" 2>/dev/null || true
@@ -1902,8 +1907,27 @@ _run_preflight_stages() {
 		_preflight_cleanup_and_ledger || true
 	run_stage_with_timeout "preflight_capacity_and_labels" "$_pflt_timeout" \
 		_preflight_capacity_and_labels || true
-	run_stage_with_timeout "preflight_early_dispatch" "$_pflt_timeout" \
-		_preflight_early_dispatch || true
+	# t3054: preflight_early_dispatch does NOT use run_stage_with_timeout.
+	# Unlike other preflight stages (single-step operations), this stage
+	# wraps apply_deterministic_fill_floor which iterates N candidates, each
+	# independently protected by run_stage_with_timeout "fill_floor_candidate_*"
+	# (600s per candidate). A 600s GROUP timeout killed in-progress candidates
+	# that were still within their individual budgets (92 timeouts in 1079 runs =
+	# 8.5% failure rate). The group timeout is redundant — per-candidate timeouts
+	# provide the safety net. Timing is still logged for observability.
+	local _pflt_ed_start=$SECONDS
+	local _pflt_ed_rc=0
+	_preflight_early_dispatch || _pflt_ed_rc=$?
+	local _pflt_ed_elapsed=$(( SECONDS - _pflt_ed_start ))
+	echo "[pulse-wrapper] Stage: preflight_early_dispatch (rc=${_pflt_ed_rc}, ${_pflt_ed_elapsed}s)" >>"$LOGFILE"
+	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
+		printf '%s\t%s\t%d\t%d\t%d\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"preflight_early_dispatch" \
+			"$_pflt_ed_elapsed" \
+			"$_pflt_ed_rc" \
+			"$$" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
+	fi
 	# t2443: Daily scans promoted to independent top-level stages so each
 	# scanner gets its own timeout budget. Previously wrapped in a single
 	# _preflight_daily_scans() group with a shared 600s budget — a slow

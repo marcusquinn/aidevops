@@ -456,8 +456,14 @@ is_worktree_owned_by_others() {
 	# No owner registered
 	[[ -z "$owner_pid" ]] && return 1
 
-	# We own it
-	[[ "$owner_pid" == "$$" ]] && return 1
+	# We own it — use the same PID resolution as register_worktree so that
+	# transient bash subprocess PIDs ($$) match the stored stable AI runtime PID.
+	# GH#21740: previously compared against raw $$ which is always a transient
+	# bash subprocess PID in AI runtime sessions (OpenCode, Claude Code), and
+	# can never match the OPENCODE_PID/grandparent PID stored at registration.
+	local my_pid
+	my_pid=$(_resolve_worktree_owner_pid "")
+	[[ "$owner_pid" == "$my_pid" ]] && return 1
 
 	# Owner process is dead — stale entry, safe to remove
 	if ! kill -0 "$owner_pid" 2>/dev/null; then

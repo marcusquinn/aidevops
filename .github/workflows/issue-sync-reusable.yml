@@ -286,6 +286,146 @@ jobs:
             exit 1
           fi
 
+  # =========================================================================
+  # GH#21744: Server-side issue dedup (t3044)
+  # =========================================================================
+  # When a new issue is opened, compute its fingerprint and compare with
+  # other open issues by the same author filed within the dedup window.
+  # If a match is found, close the new issue as a duplicate.
+  #
+  # This catches the two failure modes that bypass the client-side dedup in
+  # log-issue-helper.sh: workflow-bypass (direct gh issue create calls) and
+  # same-session double-fire (transient retries inside an AI session).
+  #
+  # Algorithm: _compute_issue_fingerprint from lib/issue-fingerprint.sh
+  # (SHA-256 of "<title>|<normalised_body>" with sig footer stripped).
+  # State lives in GitHub itself — no per-runner state file needed.
+  #
+  # Env: ISSUE_SYNC_DEDUP_WINDOW_SECONDS (default 120)
+  dedup-on-issue-open:
+    name: Server-Side Issue Dedup
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: issue-dedup-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    permissions:
+      issues: write
+
+    steps:
+      - name: Checkout aidevops framework scripts
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Check for duplicate issue and close if found
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
+          REPO: ${{ github.repository }}
+          ISSUE_SYNC_DEDUP_WINDOW_SECONDS: '120'
+        run: |
+          set -euo pipefail
+
+          # Source the shared fingerprint algorithm (extracted from log-issue-helper.sh)
+          # shellcheck source=__aidevops/.agents/scripts/lib/issue-fingerprint.sh
+          source __aidevops/.agents/scripts/lib/issue-fingerprint.sh
+
+          WINDOW="${ISSUE_SYNC_DEDUP_WINDOW_SECONDS:-120}"
+          echo "[dedup] Checking issue #${ISSUE_NUMBER} by @${ISSUE_AUTHOR} (window: ${WINDOW}s)"
+
+          # Fetch the full issue title and body via API (avoids env-var size limits
+          # and injection risks from untrusted content in the event payload).
+          issue_json=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '{title:.title,body:(.body//""),createdAt:.created_at}' 2>/dev/null || echo '{}')
+          ISSUE_TITLE=$(printf '%s' "$issue_json" | jq -r '.title // ""')
+          ISSUE_BODY=$(printf '%s' "$issue_json" | jq -r '.body // ""')
+          ISSUE_CREATED_AT_RESOLVED=$(printf '%s' "$issue_json" | jq -r '.createdAt // ""')
+
+          if [[ -z "$ISSUE_TITLE" ]]; then
+            echo "[dedup] Could not fetch issue #${ISSUE_NUMBER} — skipping dedup check"
+            exit 0
+          fi
+
+          # Compute fingerprint of the newly opened issue
+          new_fingerprint=$(_compute_issue_fingerprint "$ISSUE_TITLE" "$ISSUE_BODY")
+          echo "[dedup] Fingerprint: ${new_fingerprint}"
+
+          # Parse creation epoch for window comparison (GNU date on ubuntu-latest)
+          new_epoch=$(date -d "${ISSUE_CREATED_AT_RESOLVED:-$ISSUE_CREATED_AT}" +%s 2>/dev/null || echo "0")
+          if [[ "$new_epoch" -eq 0 ]]; then
+            echo "[dedup] Cannot parse creation time — skipping dedup check"
+            exit 0
+          fi
+
+          echo "[dedup] Fetching recent open issues by @${ISSUE_AUTHOR}..."
+          issues_json=$(gh issue list --repo "$REPO" \
+            --author "$ISSUE_AUTHOR" --state open \
+            --limit 20 --json number,title,body,createdAt 2>/dev/null || echo "[]")
+
+          cand_count=$(printf '%s' "$issues_json" | jq 'length')
+          echo "[dedup] Found ${cand_count} open issue(s) by @${ISSUE_AUTHOR}"
+
+          canonical_num=""
+          for i in $(seq 0 $((cand_count - 1))); do
+            cand_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number")
+
+            # Skip self
+            if [[ "$cand_num" == "$ISSUE_NUMBER" ]]; then continue; fi
+
+            cand_created=$(printf '%s' "$issues_json" | jq -r ".[$i].createdAt // empty")
+            [[ -z "$cand_created" ]] && continue
+
+            cand_epoch=$(date -d "$cand_created" +%s 2>/dev/null || echo "0")
+            [[ "$cand_epoch" -eq 0 ]] && continue
+
+            # Only close the new issue when the candidate is strictly older and
+            # within the dedup window. Positive time_diff = candidate is older.
+            time_diff=$((new_epoch - cand_epoch))
+            if [[ "$time_diff" -le 0 ]] || [[ "$time_diff" -gt "$WINDOW" ]]; then
+              echo "[dedup] Issue #${cand_num} not a prior duplicate (gap: ${time_diff}s) — skipping"
+              continue
+            fi
+
+            cand_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title")
+            cand_body=$(printf '%s' "$issues_json" | jq -r ".[$i].body // \"\"")
+
+            cand_fingerprint=$(_compute_issue_fingerprint "$cand_title" "$cand_body")
+
+            if [[ "$cand_fingerprint" == "$new_fingerprint" ]]; then
+              canonical_num="$cand_num"
+              echo "[dedup] Match: #${ISSUE_NUMBER} fingerprint matches #${canonical_num} (${time_diff}s apart)"
+              break
+            fi
+          done
+
+          if [[ -z "$canonical_num" ]]; then
+            echo "[dedup] No duplicate found — issue is unique"
+            exit 0
+          fi
+
+          echo "[dedup] Closing #${ISSUE_NUMBER} as duplicate of #${canonical_num}"
+
+          # Ensure duplicate label exists before applying it
+          gh label create "duplicate" --color "cfd3d7" \
+            --description "This issue or pull request already exists" \
+            --repo "$REPO" --force 2>/dev/null || true
+
+          gh issue comment "$ISSUE_NUMBER" --repo "$REPO" \
+            --body "This issue appears to be a duplicate of #${canonical_num}, filed within ${WINDOW}s with identical content. Closing automatically — please continue the discussion in #${canonical_num}.
+
+          <!-- issue-dedup:auto-closed -->"
+
+          gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "duplicate" 2>/dev/null || true
+          gh issue close "$ISSUE_NUMBER" --repo "$REPO" --reason "not planned" 2>/dev/null || true
+
+          echo "[dedup] Done — issue #${ISSUE_NUMBER} closed as duplicate of #${canonical_num}"
+
   manual-sync:
     name: Manual Sync
     if: github.event_name == 'workflow_dispatch'

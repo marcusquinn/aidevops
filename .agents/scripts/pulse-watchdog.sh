@@ -108,6 +108,11 @@ guard_child_processes() {
 			# crafted process names containing control characters. (GH#2892)
 			local safe_cmd_base
 			safe_cmd_base=$(_sanitize_log_field "$cmd_base")
+			# t3056 / GH#21781: Structured lifecycle line for kill-reason telemetry
+			printf '[lifecycle] worker_killed pid=%s reason=process_guard_%s trigger_age=%ss session=pulse ts=%s\n' \
+				"$pid" "$safe_cmd_base" "$age_seconds" \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+				>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 			echo "[pulse-wrapper] Process guard: killing PID $pid ($safe_cmd_base) — $violation" >>"$LOGFILE"
 			_kill_tree "$pid" || true
 			sleep 1
@@ -207,6 +212,11 @@ run_stage_with_timeout() {
 		now=$(date +%s)
 		local elapsed=$((now - stage_start))
 		if [[ "$elapsed" -gt "$timeout_seconds" ]]; then
+			# t3056 / GH#21781: Structured lifecycle line for kill-reason telemetry
+			printf '[lifecycle] worker_killed pid=%s reason=stage_timeout_%ss trigger_age=%ss session=%s ts=%s\n' \
+				"$stage_pid" "$timeout_seconds" "$elapsed" "$stage_name" \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+				>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 			echo "[pulse-wrapper] Stage timeout: ${stage_name} exceeded ${timeout_seconds}s (pid ${stage_pid})" >>"$LOGFILE"
 			_kill_tree "$stage_pid" || true
 			sleep 2
@@ -514,6 +524,20 @@ _run_pulse_watchdog() {
 
 		# Single kill block — avoids duplicating the kill+force-kill sequence.
 		if [[ -n "$kill_reason" ]]; then
+			# t3056 / GH#21781: Classify kill reason for structured telemetry.
+			local _pw_reason_class="pulse_unknown"
+			case "$kill_reason" in
+			*"stale threshold"*) _pw_reason_class="wall_clock_stale" ;;
+			*"cold-start stalled"*) _pw_reason_class="cold_start_timeout" ;;
+			*"stalled for"*) _pw_reason_class="progress_timeout" ;;
+			*"idle for"*) _pw_reason_class="idle_timeout" ;;
+			*"Stop flag"*) _pw_reason_class="stop_flag" ;;
+			esac
+			local _pw_elapsed=$(( $(date +%s) - start_epoch ))
+			printf '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss session=pulse ts=%s\n' \
+				"$opencode_pid" "$_pw_reason_class" "$_pw_elapsed" \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+				>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 			echo "[pulse-wrapper] ${kill_reason} — killing" >>"$LOGFILE"
 			_kill_tree "$opencode_pid" || true
 			sleep 2
