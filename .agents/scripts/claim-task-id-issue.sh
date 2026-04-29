@@ -642,6 +642,14 @@ _ensure_todo_entry_written() {
 	safe_desc=$(printf '%s' "$title" \
 		| tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	[[ -z "$safe_desc" ]] && safe_desc="(no title)"
+	# GH#21723: strip the tNNN: prefix if the caller passed the GitHub issue
+	# title (which has the task-ID prepended as "tNNN: description"). The TODO
+	# line already carries task_id as a separate leading field, so the prefix
+	# would otherwise produce "- [ ] tNNN tNNN: description" doubling.
+	if [[ -n "$task_id" && "$safe_desc" == "${task_id}: "* ]]; then
+		safe_desc="${safe_desc#"${task_id}: "}"
+		[[ -z "$safe_desc" ]] && safe_desc="(no title)"
+	fi
 	local todo_line="- [ ] ${task_id} ${safe_desc}"
 	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
 	# GH#20834: append blocked-by tag when predecessor refs were auto-detected.
