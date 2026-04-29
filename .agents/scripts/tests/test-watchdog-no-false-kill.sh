@@ -272,6 +272,38 @@ assert_contains \
 	"$pulse_wd_source"
 
 #######################################
+# Tests 14-17: t3057 / GH#21785 — interval-sampled CPU (false-defer fix)
+#
+# Verify that _watchdog_tree_cpu uses two-sample ps -o time= delta instead
+# of lifetime-average ps -o %cpu=. A frozen worker that was hot historically
+# must be detected within STALL_TIMEOUT, not allowed to survive to HARD_KILL.
+#######################################
+assert_contains \
+	"14. _parse_ps_cpu_time helper exists (t3057)" \
+	"_parse_ps_cpu_time()" \
+	"$watchdog_source"
+
+assert_contains \
+	"15. _watchdog_tree_cpu uses ps -o time= (interval sampling, t3057)" \
+	"ps -p" \
+	"$watchdog_source"
+
+assert_not_contains \
+	"15b. _watchdog_tree_cpu does NOT use ps -o %cpu= (lifetime avg removed, t3057)" \
+	"ps -p \"\$pid\" -o %cpu=" \
+	"$watchdog_source"
+
+assert_contains \
+	"16. _watchdog_tree_cpu sleeps for sample interval (t3057)" \
+	"sleep \"\$sample_interval\"" \
+	"$watchdog_source"
+
+assert_contains \
+	"17. _watchdog_tree_cpu calls _parse_ps_cpu_time (t3057)" \
+	"_parse_ps_cpu_time" \
+	"$watchdog_source"
+
+#######################################
 # Summary
 #######################################
 echo ""

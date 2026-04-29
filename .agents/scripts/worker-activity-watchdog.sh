@@ -179,32 +179,104 @@ _worker_alive() {
 }
 
 #######################################
-# Get CPU usage of the worker's process tree (t3056 / GH#21781)
+# Parse a 'ps -o time=' cumulative CPU time string to integer seconds.
+# Handles the two platform formats:
+#   macOS BSD ps:   HH:MM:SS.ss  (decimal fraction after seconds)
+#   Linux procps:   HH:MM:SS  or  DD-HH:MM:SS  (day prefix)
 #
-# Checks the worker PID and its direct children for CPU activity.
-# Used to distinguish "worker stuck" (0% CPU) from "worker alive but
-# not writing output" (>0% CPU) — e.g., API roundtrip, shellcheck run,
-# large file read.
+# Arguments:
+#   $1 - time string from ps -o time=
+# Output: integer seconds via stdout
+#######################################
+_parse_ps_cpu_time() {
+	local t="$1"
+	# Strip decimal fraction (.ss) — macOS BSD ps only
+	t="${t%%.*}"
+	# Strip leading DD- day prefix — Linux procps extended format
+	local days=0
+	if [[ "$t" == *-* ]]; then
+		days="${t%%-*}"
+		t="${t#*-}"
+	fi
+	# Split HH:MM:SS without relying on IFS changes
+	local hours minutes seconds
+	hours="${t%%:*}"
+	t="${t#*:}"
+	minutes="${t%%:*}"
+	seconds="${t#*:}"
+	[[ "$days"    =~ ^[0-9]+$ ]] || days=0
+	[[ "$hours"   =~ ^[0-9]+$ ]] || hours=0
+	[[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
+	[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+	echo $(( days * 86400 + hours * 3600 + minutes * 60 + seconds ))
+	return 0
+}
+
+#######################################
+# Get recent interval CPU usage for the worker's process tree (t3057 / GH#21785)
+#
+# Measures CPU consumed over a ~5-second window by sampling cumulative CPU
+# time (ps -o time=) at T=0 and T=5, then computing the delta. This gives
+# RECENT activity, not a lifetime average.
+#
+# Why NOT ps -o %cpu= (original t3056 / GH#21781 approach):
+#   ps %cpu = total_cpu_time / total_elapsed_lifetime — a LIFETIME AVERAGE.
+#   A worker hot for 10 min then frozen at 0% still reports ~30% lifetime CPU,
+#   defeating the stall-defer check. The delta approach measures only the last
+#   ~5 seconds, correctly detecting frozen workers regardless of history.
+#
+# Cross-platform: ps -o time= emits HH:MM:SS.ss on macOS BSD ps and
+# HH:MM:SS or DD-HH:MM:SS on Linux procps. _parse_ps_cpu_time handles both.
 #
 # Arguments:
 #   $1 - root PID to check
-# Output: integer CPU percentage (summed across tree) via stdout
+# Output: integer CPU percentage (recent ~5s interval, summed across tree)
 #######################################
 _watchdog_tree_cpu() {
 	local root_pid="$1"
-	local total=0
+	local sample_interval=5
+
+	# Collect PID list: root + direct children.
+	# One level deep covers the typical opencode worker chain
+	# (bash → node → opencode binary).
+	local pid_list=()
 	local pid
-	# Check root pid and all direct children. One level deep covers the
-	# typical opencode worker chain (bash → node → opencode binary).
-	for pid in $(pgrep -P "$root_pid" 2>/dev/null) "$root_pid"; do
+	for pid in "$root_pid" $(pgrep -P "$root_pid" 2>/dev/null); do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
-		local cpu_str
-		cpu_str=$(ps -p "$pid" -o %cpu= 2>/dev/null | tr -d ' ') || continue
-		local cpu_int="${cpu_str%%.*}"
-		[[ "$cpu_int" =~ ^[0-9]+$ ]] || cpu_int=0
-		total=$((total + cpu_int))
+		pid_list+=("$pid")
 	done
-	echo "$total"
+
+	# Sample 1: record cumulative CPU seconds per PID into parallel arrays
+	local t0_pids=() t0_secs_arr=()
+	local t0_str t0_val
+	for pid in "${pid_list[@]}"; do
+		t0_str=$(ps -p "$pid" -o time= 2>/dev/null | tr -d ' ') || continue
+		[[ -n "$t0_str" ]] || continue
+		t0_val=$(_parse_ps_cpu_time "$t0_str")
+		t0_pids+=("$pid")
+		t0_secs_arr+=("$t0_val")
+	done
+
+	sleep "$sample_interval"
+
+	# Sample 2: compute per-PID delta and accumulate
+	local total_delta=0
+	local idx=0
+	local t5_str t5_val delta entry_pid entry_t0
+	while [[ "$idx" -lt "${#t0_pids[@]}" ]]; do
+		entry_pid="${t0_pids[$idx]}"
+		entry_t0="${t0_secs_arr[$idx]}"
+		idx=$(( idx + 1 ))
+		t5_str=$(ps -p "$entry_pid" -o time= 2>/dev/null | tr -d ' ') || continue
+		[[ -n "$t5_str" ]] || continue
+		t5_val=$(_parse_ps_cpu_time "$t5_str")
+		delta=$(( t5_val - entry_t0 ))
+		[[ "$delta" -lt 0 ]] && delta=0
+		total_delta=$(( total_delta + delta ))
+	done
+
+	# cpu_seconds_in_window / window_duration * 100 = recent CPU percentage
+	echo $(( total_delta * 100 / sample_interval ))
 	return 0
 }
 
