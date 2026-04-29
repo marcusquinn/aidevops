@@ -462,6 +462,15 @@ _process_rows() {
 		# Pre-compute once per workflow (loop-invariant); avoids a subshell per repo.
 		local _reusable_escaped
 		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
+		# Pre-compute normalised canonical content once per workflow type (not once per
+		# repo). Passes _canon_norm to _classify_row → _classify_workflow, activating
+		# the pre-computed path at _classify_workflow:193-194 and skipping the per-repo
+		# _normalize_wf_for_compare subshell. Guard for empty _canonical (template not
+		# found) — _classify_row handles that path; _canon_norm is not needed there.
+		local _canon_norm=""
+		if [[ -n "$_canonical" ]]; then
+			_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
+		fi
 
 		local _path _local_only_flag _slug
 		while IFS=$'\t' read -r _path _local_only_flag _slug; do
@@ -475,7 +484,7 @@ _process_rows() {
 			local _class _note
 			IFS=$'\t' read -r _class _note < <(_classify_row \
 				"$_path" "$_local_only_flag" "$_canonical" \
-				"$_reusable_escaped" "$_workflow_file" "")
+				"$_reusable_escaped" "$_workflow_file" "$_canon_norm")
 
 			case "$_class" in
 			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
