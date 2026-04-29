@@ -886,7 +886,11 @@ _dispatch_dedup_check_layers() {
 	local _dss_t0
 
 	local target_state target_title
-	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null)
+	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
+	# while GraphQL returns enum "OPEN"/"CLOSED". The comparison at line 921 is
+	# case-sensitive, so without normalization every issue appears non-OPEN when
+	# GraphQL is exhausted, silently blocking all dispatch for 30+ min.
+	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
 	# GH#18987: Disk-space pre-check — refuse dispatch if /home filesystem
