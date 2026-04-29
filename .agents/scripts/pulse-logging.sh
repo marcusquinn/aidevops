@@ -89,7 +89,7 @@ rotate_pulse_log() {
 	# Prune cold archive to stay within PULSE_LOG_COLD_MAX_BYTES
 	# Sum archive sizes; remove oldest (lexicographic = chronological) until under cap.
 	local total_cold=0
-	local archive_file archive_size
+	local archive_file="" archive_size=0
 	# Build sorted list (oldest first via lexicographic sort on timestamp-named files)
 	local -a archive_files=()
 	while IFS= read -r archive_file; do
