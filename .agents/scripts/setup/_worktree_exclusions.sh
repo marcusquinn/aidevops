@@ -2,19 +2,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Setup module: worktree exclusions (t2885).
+# Setup module: worktree exclusions (t2885, GH#20990).
 #
 # Worktrees are ephemeral working copies — persistent state lives on the git
 # remote. Backing them up duplicates work the remote already does, and
-# indexing them inflates fseventsd/mds load when workers cp node_modules.
-# This module:
+# indexing them inflates fseventsd/mds/tracker/baloo load when workers cp
+# node_modules. This module:
 #
-#   1. Runs `worktree-exclusions-helper.sh backfill` to apply Spotlight +
-#      Time Machine exclusions to every existing worktree across registered
-#      repos. Idempotent — fast no-op when already applied.
-#   2. If Backblaze is detected, posts a one-time advisory pointing to the
-#      `setup-backblaze` subcommand for the manual sudo step (root-owned
-#      config — never auto-applied from setup).
+#   1. Runs `worktree-exclusions-helper.sh backfill` to apply exclusions to
+#      every existing worktree across registered repos. Idempotent — fast
+#      no-op when already applied.
+#      macOS: Spotlight (.metadata_never_index) + Time Machine (tmutil).
+#      Linux: tracker3 (gsettings + reset) + baloo (baloofilerc + restart).
+#   2. macOS only: if Backblaze is detected, posts a one-time advisory
+#      pointing to the `setup-backblaze` subcommand (root-owned config).
 #
 # Sourced by setup.sh — do not execute directly.
 #
@@ -27,12 +28,6 @@ setup_worktree_exclusions() {
 	if [[ "${AIDEVOPS_WORKTREE_EXCLUSIONS_INSTALL:-true}" == "false" ]]; then
 		print_info "$label disabled via AIDEVOPS_WORKTREE_EXCLUSIONS_INSTALL=false"
 		setup_track_skipped "$label" "opted out via env var"
-		return 0
-	fi
-
-	# Linux + others: helper short-circuits, just record the skip.
-	if [[ "$(uname -s)" != "Darwin" ]]; then
-		setup_track_skipped "$label" "non-macOS — see GH#<linux-followup>"
 		return 0
 	fi
 

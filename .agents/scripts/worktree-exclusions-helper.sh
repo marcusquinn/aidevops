@@ -24,7 +24,8 @@
 #                             prefixes (root-only config file).
 #   help                    - print usage.
 #
-# Linux: subcommands print "not implemented" and exit 0. See GH#<linux-followup>.
+# Linux: tracker3 (GNOME) and baloo (KDE Plasma) exclusions are supported.
+#        Per-tool detection replaces the prior Darwin-only short-circuit.
 
 set -euo pipefail
 
@@ -100,6 +101,31 @@ _we_has_backblaze() {
 }
 
 ###############################################################################
+# Linux platform detection helpers.
+###############################################################################
+_we_is_linux() {
+	[[ "$(uname -s)" == "Linux" ]]
+}
+
+_we_has_tracker3() {
+	command -v tracker3 >/dev/null 2>&1
+}
+
+_we_has_baloo() {
+	command -v balooctl6 >/dev/null 2>&1 || command -v balooctl >/dev/null 2>&1
+}
+
+# Return the first available balooctl binary name (balooctl6 preferred).
+_we_balooctl_bin() {
+	if command -v balooctl6 >/dev/null 2>&1; then
+		printf 'balooctl6'
+	elif command -v balooctl >/dev/null 2>&1; then
+		printf 'balooctl'
+	fi
+	return 0
+}
+
+###############################################################################
 # Apply Spotlight exclusion (touch .metadata_never_index inside the worktree).
 # Idempotent. Returns 0 even if it could not write — best-effort.
 ###############################################################################
@@ -141,6 +167,121 @@ _we_apply_timemachine() {
 }
 
 ###############################################################################
+# Apply tracker3 exclusion (GNOME / freedesktop.org file indexer).
+# Adds wt_path to the ignored-directories GSettings key (persistent exclusion)
+# and resets the path from the live index. Idempotent. Returns 0 on failure.
+###############################################################################
+_we_apply_tracker3() {
+	local wt_path="$1"
+	[[ -d "$wt_path" ]] || return 0
+	_we_has_tracker3 || return 0
+
+	# --- Persistent exclusion via gsettings ----------------------------------
+	# Requires gsettings and the Tracker3 Miner.Files schema.
+	if command -v gsettings >/dev/null 2>&1; then
+		local schema="org.freedesktop.Tracker3.Miner.Files"
+		local key="ignored-directories"
+		local current=""
+		current=$(gsettings get "$schema" "$key" 2>/dev/null || true)
+		# current is a GVariant array: '@as []' (empty) or ['path1', 'path2'].
+		# Only proceed when the schema is installed (non-empty output).
+		if [[ -n "$current" && "$current" != *"${wt_path}"* ]]; then
+			local new_value=""
+			if [[ "$current" == "@as []" || "$current" == "[]" ]]; then
+				new_value="['${wt_path}']"
+			else
+				# Strip trailing ] then append the new path.
+				new_value="${current%]}, '${wt_path}']"
+			fi
+			gsettings set "$schema" "$key" "$new_value" 2>/dev/null || true
+		fi
+	fi
+
+	# --- Remove existing index entries for this path -------------------------
+	# Best-effort; signals tracker3 to forget prior index data for the path.
+	tracker3 reset --files "$wt_path" >/dev/null 2>&1 || true
+
+	return 0
+}
+
+###############################################################################
+# Apply baloo exclusion (KDE Plasma file indexer).
+# Appends wt_path to the 'exclude folders[$e]' key in ~/.config/baloofilerc
+# and restarts baloo to pick up the change. Idempotent. Returns 0 on failure.
+###############################################################################
+_we_apply_baloo() {
+	local wt_path="$1"
+	local balooctl=""
+	local baloofilerc=""
+	local changed=0
+	local current_excludes=""
+	local tmpfile=""
+
+	[[ -d "$wt_path" ]] || return 0
+	balooctl="$(_we_balooctl_bin)"
+	[[ -n "$balooctl" ]] || return 0
+
+	baloofilerc="${HOME}/.config/baloofilerc"
+
+	if [[ ! -f "$baloofilerc" ]]; then
+		# No existing config — create a minimal file with the exclusion.
+		mkdir -p "${HOME}/.config" 2>/dev/null || true
+		printf "[General]\nexclude folders[\$e]=%s\n" "$wt_path" \
+			> "$baloofilerc" 2>/dev/null || true
+		changed=1
+	else
+		# Read the existing exclude-folders line (if any).
+		current_excludes=$(grep '^exclude folders\[' "$baloofilerc" 2>/dev/null || true)
+
+		if [[ -z "$current_excludes" ]]; then
+			# No exclusion line yet — insert one into the config.
+			if grep -q '^\[General\]' "$baloofilerc" 2>/dev/null; then
+				# [General] section exists — insert exclude line right after it.
+				tmpfile=$(mktemp 2>/dev/null) || return 0
+				awk -v path="$wt_path" \
+					'/^\[General\]/{print; print "exclude folders[$e]=" path; next}1' \
+					"$baloofilerc" > "$tmpfile" 2>/dev/null \
+					&& mv "$tmpfile" "$baloofilerc" 2>/dev/null \
+					|| { rm -f "$tmpfile" 2>/dev/null || true; return 0; }
+			else
+				# No [General] section — append one with the exclusion.
+				printf "\n[General]\nexclude folders[\$e]=%s\n" "$wt_path" \
+					>> "$baloofilerc" 2>/dev/null || true
+			fi
+			changed=1
+		elif [[ "$current_excludes" != *"${wt_path}"* ]]; then
+			# Exclusion line exists but path is not listed — append with comma.
+			tmpfile=$(mktemp 2>/dev/null) || return 0
+			awk -v old="$current_excludes" -v wt="$wt_path" \
+				'$0 == old {print $0 "," wt; next}1' \
+				"$baloofilerc" > "$tmpfile" 2>/dev/null \
+				&& mv "$tmpfile" "$baloofilerc" 2>/dev/null \
+				|| { rm -f "$tmpfile" 2>/dev/null || true; return 0; }
+			changed=1
+		fi
+		# else: path already excluded — idempotent, no change needed.
+	fi
+
+	# Restart baloo only when something changed so it picks up the new config.
+	if (( changed )); then
+		"$balooctl" disable >/dev/null 2>&1 || true
+		"$balooctl" enable >/dev/null 2>&1 || true
+	fi
+
+	return 0
+}
+
+###############################################################################
+# Apply Plasma file indexer exclusion.
+# On KDE Plasma the file indexer IS baloo — delegate to avoid duplication.
+###############################################################################
+_we_apply_plasma_indexer() {
+	local wt_path="$1"
+	_we_apply_baloo "$wt_path"
+	return 0
+}
+
+###############################################################################
 # cmd_apply <worktree-path>
 # Apply all in-scope exclusions to a single worktree path. Always exits 0.
 ###############################################################################
@@ -155,15 +296,21 @@ cmd_apply() {
 		return 0
 	fi
 
-	if ! _we_is_macos; then
-		# Linux indexers (tracker, baloo) tracked separately. Silent skip.
+	if _we_is_macos; then
+		_we_apply_spotlight "$wt_path"
+		_we_apply_timemachine "$wt_path"
+		# Backblaze is glob-based and root-only — applied via setup-backblaze, not
+		# per-worktree.
 		return 0
 	fi
 
-	_we_apply_spotlight "$wt_path"
-	_we_apply_timemachine "$wt_path"
-	# Backblaze is glob-based and root-only — applied via setup-backblaze, not
-	# per-worktree.
+	if _we_is_linux; then
+		_we_apply_tracker3 "$wt_path"
+		_we_apply_baloo "$wt_path"
+		# _we_apply_plasma_indexer delegates to baloo — already covered above.
+		return 0
+	fi
+
 	return 0
 }
 
@@ -212,11 +359,6 @@ cmd_backfill() {
 		esac
 	done
 
-	if ! _we_is_macos; then
-		_we_warn "backfill: non-macOS — Linux indexers not supported yet (see GH#<linux-followup>)"
-		return 0
-	fi
-
 	local count=0
 	local wt=""
 	while IFS= read -r wt; do
@@ -242,37 +384,62 @@ cmd_backfill() {
 # cmd_detect — report which tools are installed and which require manual setup.
 ###############################################################################
 cmd_detect() {
-	if ! _we_is_macos; then
-		_we_info "Platform: $(uname -s) — exclusions not implemented yet on non-macOS"
-		_we_info "See GH#<linux-followup>"
+	if _we_is_macos; then
+		_we_info "Platform: macOS"
+
+		# Spotlight — no detection needed; .metadata_never_index works on any macOS.
+		_we_ok "Spotlight: scriptable via .metadata_never_index marker file"
+
+		# Time Machine — tmutil exists on every macOS; we report whether it has a
+		# destination configured (informational only).
+		if _we_has_tmutil; then
+			local tm_dest=""
+			tm_dest=$(tmutil destinationinfo 2>/dev/null | head -5 || true)
+			if [[ -n "$tm_dest" ]]; then
+				_we_ok "Time Machine: scriptable via tmutil addexclusion (destination configured)"
+			else
+				_we_ok "Time Machine: scriptable via tmutil addexclusion (no destination yet — exclusions still apply)"
+			fi
+		else
+			_we_warn "Time Machine: tmutil not found (unexpected on macOS)"
+		fi
+
+		# Backblaze — manual setup only (root-only XML config).
+		if _we_has_backblaze; then
+			_we_warn "Backblaze: detected — requires manual setup (run 'worktree-exclusions-helper.sh setup-backblaze')"
+		else
+			_we_info "Backblaze: not installed — skipping"
+		fi
 		return 0
 	fi
 
-	_we_info "Platform: macOS"
+	if _we_is_linux; then
+		_we_info "Platform: Linux"
 
-	# Spotlight — no detection needed; .metadata_never_index works on any macOS.
-	_we_ok "Spotlight: scriptable via .metadata_never_index marker file"
-
-	# Time Machine — tmutil exists on every macOS; we report whether it has a
-	# destination configured (informational only).
-	if _we_has_tmutil; then
-		local tm_dest=""
-		tm_dest=$(tmutil destinationinfo 2>/dev/null | head -5 || true)
-		if [[ -n "$tm_dest" ]]; then
-			_we_ok "Time Machine: scriptable via tmutil addexclusion (destination configured)"
+		# tracker3 (GNOME / freedesktop.org file indexer)
+		if _we_has_tracker3; then
+			if command -v gsettings >/dev/null 2>&1; then
+				_we_ok "tracker3: scriptable via gsettings org.freedesktop.Tracker3.Miner.Files + tracker3 reset"
+			else
+				_we_warn "tracker3: present but gsettings unavailable — only tracker3 reset applied (no persistent config exclusion)"
+			fi
 		else
-			_we_ok "Time Machine: scriptable via tmutil addexclusion (no destination yet — exclusions still apply)"
+			_we_info "tracker3: not found — skipping"
 		fi
-	else
-		_we_warn "Time Machine: tmutil not found (unexpected on macOS)"
+
+		# baloo (KDE Plasma file indexer; balooctl6 preferred over balooctl)
+		if command -v balooctl6 >/dev/null 2>&1; then
+			_we_ok "baloo (balooctl6): scriptable via ~/.config/baloofilerc — Plasma file indexer"
+		elif command -v balooctl >/dev/null 2>&1; then
+			_we_ok "baloo (balooctl): scriptable via ~/.config/baloofilerc — Plasma file indexer"
+		else
+			_we_info "baloo: not found — skipping"
+		fi
+
+		return 0
 	fi
 
-	# Backblaze — manual setup only (root-only XML config).
-	if _we_has_backblaze; then
-		_we_warn "Backblaze: detected — requires manual setup (run 'worktree-exclusions-helper.sh setup-backblaze')"
-	else
-		_we_info "Backblaze: not installed — skipping"
-	fi
+	_we_info "Platform: $(uname -s) — no indexer exclusions implemented"
 	return 0
 }
 
@@ -354,7 +521,7 @@ EOF
 ###############################################################################
 cmd_help() {
 	cat <<'EOF'
-worktree-exclusions-helper.sh - exclude worktrees from macOS indexers/backup
+worktree-exclusions-helper.sh - exclude worktrees from OS indexers and backup
 
 Usage:
   worktree-exclusions-helper.sh apply <worktree-path>
@@ -364,12 +531,14 @@ Usage:
   worktree-exclusions-helper.sh help
 
 Subcommands:
-  apply           Apply Spotlight + Time Machine exclusions to one worktree.
-                  Idempotent. Best-effort (always exits 0).
+  apply           Apply indexer exclusions to one worktree. Idempotent.
+                  macOS: Spotlight (.metadata_never_index) + Time Machine (tmutil).
+                  Linux: tracker3 (gsettings + reset) + baloo (baloofilerc restart).
+                  Best-effort (always exits 0).
   backfill        Apply to every worktree across registered repos.
                   Use --dry-run to preview without writing.
   detect          Report which tools are installed and scriptable.
-  setup-backblaze Print the sudo command for the manual Backblaze step.
+  setup-backblaze Check/print the manual Backblaze setup step (macOS only).
   help            This message.
 
 Environment:
