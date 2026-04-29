@@ -24,7 +24,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# _retarget_stacked_children was moved to pulse-merge-process.sh (GH#21595, t3030).
+# _process_single_ready_pr stays in pulse-merge.sh — the static check below
+# (test_retarget_called_before_merge) reads it from $MERGE_SCRIPT.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -63,6 +67,12 @@ setup_test_env() {
 	LAST_GH_ARGS_FILE="${TEST_ROOT}/gh-args.log"
 	export LAST_GH_ARGS_FILE
 	: >"$LAST_GH_ARGS_FILE"
+
+	# Shim gh_pr_list (from shared-gh-wrappers.sh) → forward to the gh stub.
+	# _retarget_stacked_children was refactored to use the wrapper post-GH#21595
+	# so the test must surface the same args through the gh-args.log path.
+	gh_pr_list() { gh pr list "$@"; }
+	export -f gh_pr_list 2>/dev/null || true
 	return 0
 }
 
@@ -136,14 +146,15 @@ STUB_EOF
 	return 0
 }
 
-# Extract `_retarget_stacked_children` from pulse-merge.sh and eval it.
+# Extract `_retarget_stacked_children` from pulse-merge-process.sh (post-GH#21595)
+# and eval it.
 define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_retarget_stacked_children\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$PROCESS_SCRIPT")
 	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _retarget_stacked_children from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _retarget_stacked_children from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090

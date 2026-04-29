@@ -25,7 +25,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# _extract_linked_issue still lives in pulse-merge.sh; the three other
+# helpers (_external_pr_has_linked_issue, _external_pr_linked_issue_crypto_approved,
+# _pulse_merge_admin_safety_check) were moved to pulse-merge-gates.sh by
+# GH#21595, t3030.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+GATES_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -131,24 +136,35 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract the function under test plus its delegates from pulse-merge.sh.
-# The function calls _external_pr_has_linked_issue and
-# _external_pr_linked_issue_crypto_approved, which themselves call
-# _extract_linked_issue. All four are pure functions — no module-level state.
+# Extract the function under test plus its delegates. After GH#21595, the
+# functions live in two modules:
+#   - _extract_linked_issue                       → pulse-merge.sh ($MERGE_SCRIPT)
+#   - _external_pr_has_linked_issue              → pulse-merge-gates.sh ($GATES_SCRIPT)
+#   - _external_pr_linked_issue_crypto_approved  → pulse-merge-gates.sh ($GATES_SCRIPT)
+#   - _pulse_merge_admin_safety_check            → pulse-merge-gates.sh ($GATES_SCRIPT)
+# All four are pure functions — no module-level state.
 define_helpers_under_test() {
-	local src
-	src=$(awk '
+	local merge_src gates_src
+	merge_src=$(awk '
 		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	gates_src=$(awk '
 		/^_external_pr_has_linked_issue\(\) \{/,/^}$/ { print }
 		/^_external_pr_linked_issue_crypto_approved\(\) \{/,/^}$/ { print }
 		/^_pulse_merge_admin_safety_check\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$src" ]]; then
-		printf 'ERROR: could not extract helpers from %s\n' "$MERGE_SCRIPT" >&2
+	' "$GATES_SCRIPT")
+	if [[ -z "$merge_src" ]]; then
+		printf 'ERROR: could not extract _extract_linked_issue from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	if [[ -z "$gates_src" ]]; then
+		printf 'ERROR: could not extract gates helpers from %s\n' "$GATES_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
-	eval "$src"
+	eval "$merge_src"
+	# shellcheck disable=SC1090
+	eval "$gates_src"
 	return 0
 }
 

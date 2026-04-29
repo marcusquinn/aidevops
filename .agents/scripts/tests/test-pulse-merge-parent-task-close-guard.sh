@@ -89,10 +89,23 @@ exit 0
 EOF
 	chmod +x "${TEST_ROOT}/bin/gh"
 
-	# Stub external helpers the function calls
+	# Stub external helpers the function calls. _release_interactive_claim_on_merge
+	# lives in shared-claim-lifecycle.sh (added to the call chain by t2413, and now
+	# unguarded — no `|| true` — so the test must stub it explicitly).
+	# auto_file_next_phase has `|| true` and invalidate_footprint_cache_for_issue
+	# is gated on `declare -F`, so neither needs stubbing.
 	unlock_issue_after_worker() { return 0; }
 	fast_fail_reset() { return 0; }
-	export -f unlock_issue_after_worker fast_fail_reset 2>/dev/null || true
+	_release_interactive_claim_on_merge() { return 0; }
+	export -f unlock_issue_after_worker fast_fail_reset _release_interactive_claim_on_merge 2>/dev/null || true
+
+	# Shim shared-gh-wrappers.sh wrappers → gh binary stub. The function was
+	# refactored post-GH#21595 to use gh_pr_comment / gh_issue_comment instead
+	# of `gh pr comment` / `gh issue comment` directly. Without these shims,
+	# wrapper calls vanish into "command not found" and never reach $GH_CALL_LOG.
+	gh_pr_comment() { gh pr comment "$@"; }
+	gh_issue_comment() { gh issue comment "$@"; }
+	export -f gh_pr_comment gh_issue_comment 2>/dev/null || true
 
 	# gh-signature-helper.sh is invoked via $_sig_helper — stub it to empty.
 	export AGENTS_DIR="${TEST_ROOT}"
@@ -115,10 +128,15 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract the function under test from pulse-merge.sh and eval it.
+# Extract the function under test (and its _pm_issue_api dependency, also
+# in pulse-merge.sh) and eval them. _pm_issue_api is the module-level helper
+# that _handle_post_merge_actions calls to fetch issue metadata; without it
+# the eval'd function fails with "_pm_issue_api: command not found"
+# (post-GH#21595 helper introduction, t3030).
 define_function_under_test() {
 	local fn_src
 	fn_src=$(awk '
+		/^_pm_issue_api\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	if [[ -z "$fn_src" ]]; then
