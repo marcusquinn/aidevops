@@ -115,9 +115,12 @@ check_single_conversation_idle() {
 	local esc_id
 	esc_id=$(conv_sql_escape "$conv_id")
 
-	# Get conversation metadata
-	local last_activity
-	last_activity=$(conv_db "$CONV_MEMORY_DB" "SELECT last_interaction_at FROM conversations WHERE id = '$esc_id';" 2>/dev/null || echo "")
+	# Get conversation metadata in a single query instead of two round-trips.
+	# Columns: last_interaction_at | interaction_count
+	local _conv_row last_activity interaction_count
+	_conv_row=$(conv_db "$CONV_MEMORY_DB" "SELECT last_interaction_at, interaction_count FROM conversations WHERE id = '$esc_id';" 2>/dev/null || echo "")
+	IFS='|' read -r last_activity interaction_count <<<"$_conv_row"
+	interaction_count="${interaction_count:-0}"
 
 	if [[ -z "$last_activity" ]]; then
 		echo "idle"
@@ -167,8 +170,7 @@ Respond with ONLY one word: 'idle' or 'active'"
 	# - Medium conversations (5-20 messages): idle after 30 minutes
 	# - Long conversations (> 20 messages): idle after 1 hour
 	# - If last message looks like a farewell/acknowledgment: idle after 5 minutes
-	local interaction_count
-	interaction_count=$(conv_db "$CONV_MEMORY_DB" "SELECT interaction_count FROM conversations WHERE id = '$esc_id';" 2>/dev/null || echo "0")
+	# interaction_count already fetched in the combined query at the top of this function.
 
 	# Check for farewell patterns in last message
 	local last_message
@@ -377,8 +379,11 @@ _add_message_direct_log() {
 
 	log_warn "entity-helper.sh not found — logging interaction directly"
 
-	# Privacy filter
-	content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+	# Privacy filter — single sed invocation with multiple -e expressions
+	content=$(echo "$content" | sed \
+		-e 's/<private>[^<]*<\/private>//g' \
+		-e 's/  */ /g' \
+		-e 's/^ *//;s/ *$//')
 	if echo "$content" | grep -qE '(sk-[a-zA-Z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36})'; then
 		log_error "Content appears to contain secrets. Refusing to log."
 		return 1
@@ -471,25 +476,20 @@ cmd_add_message() {
 	local esc_id
 	esc_id=$(conv_sql_escape "$conv_id")
 
-	# Get conversation details
-	local conv_entity_id channel channel_id
-	conv_entity_id=$(conv_db "$CONV_MEMORY_DB" "SELECT entity_id FROM conversations WHERE id = '$esc_id';" 2>/dev/null || echo "")
-	if [[ -z "$conv_entity_id" ]]; then
+	# Get all conversation details in a single query instead of 4 round-trips.
+	# Columns: entity_id | channel | channel_id | status
+	local _conv_row conv_entity_id channel channel_id status
+	_conv_row=$(conv_db "$CONV_MEMORY_DB" "SELECT entity_id, channel, channel_id, status FROM conversations WHERE id = '$esc_id';" 2>/dev/null || echo "")
+	if [[ -z "$_conv_row" ]]; then
 		log_error "Conversation not found: $conv_id"
 		return 1
 	fi
-
-	channel=$(conv_db "$CONV_MEMORY_DB" "SELECT channel FROM conversations WHERE id = '$esc_id';")
-	channel_id=$(conv_db "$CONV_MEMORY_DB" "SELECT channel_id FROM conversations WHERE id = '$esc_id';")
+	IFS='|' read -r conv_entity_id channel channel_id status <<<"$_conv_row"
 
 	# Use provided entity_id or fall back to conversation's entity
 	if [[ -z "$entity_id" ]]; then
 		entity_id="$conv_entity_id"
 	fi
-
-	# If conversation is idle/closed, resume it
-	local status
-	status=$(conv_db "$CONV_MEMORY_DB" "SELECT status FROM conversations WHERE id = '$esc_id';")
 	if [[ "$status" != "active" ]]; then
 		log_info "Resuming $status conversation $conv_id"
 		cmd_resume "$conv_id" >/dev/null
