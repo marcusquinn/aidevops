@@ -141,7 +141,7 @@ list_exports() {
 			local size
 			size=$(du -h "$file" | cut -f1)
 			local modified
-			modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$file" 2>/dev/null || stat -c "%y" "$file" 2>/dev/null | cut -d' ' -f1-2)
+			modified=$(_stat_batch '%y' "$file" | cut -d' ' -f1-2)
 			echo "$filename  ($size)  $modified"
 			count=$((count + 1))
 		fi

@@ -726,16 +726,8 @@ fast_cp() {
 
 # shellcheck source=./portable-stat.sh
 source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
-
-_file_size_bytes() {
-	local file_path="$1"
-	stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null || echo 0
-}
-
-_file_perms() {
-	local file_path="$1"
-	stat -c %a "$file_path" 2>/dev/null || stat -f %Lp "$file_path" 2>/dev/null || echo "000"
-}
+# _file_size_bytes, _file_perms, _file_mtime_epoch, _file_owner, _stat_batch,
+# _stat_translate_fmt are now provided by portable-stat.sh (GH#21742).
 
 # =============================================================================
 # Stderr Logging Utilities

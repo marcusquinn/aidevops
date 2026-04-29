@@ -705,7 +705,7 @@ cmd_status() {
 	echo ""
 	if [[ -d "$APPROVAL_PRIVATE_DIR" ]]; then
 		local owner perms
-		owner=$(stat -f '%Su' "$APPROVAL_PRIVATE_DIR" 2>/dev/null || stat -c '%U' "$APPROVAL_PRIVATE_DIR" 2>/dev/null || echo "unknown")
+		owner=$(_file_owner "$APPROVAL_PRIVATE_DIR")
 		perms=$(_file_perms "$APPROVAL_PRIVATE_DIR")
 		if [[ "$owner" == "root" && "$perms" == "700" ]]; then
 			_print_ok "Private key directory is root-protected (owner=$owner, mode=$perms)"

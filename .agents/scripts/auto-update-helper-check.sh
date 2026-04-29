@@ -61,11 +61,7 @@ _lock_holder_is_wedged() {
 	local _log_mtime
 	local _now
 	local _idle
-	if [[ "$(uname)" == Darwin ]]; then
-		_log_mtime=$(stat -f '%m' "$_log" 2>/dev/null || echo "0")
-	else
-		_log_mtime=$(stat -c '%Y' "$_log" 2>/dev/null || echo "0")
-	fi
+	_log_mtime=$(_file_mtime_epoch "$_log")
 	_now=$(date +%s)
 	_idle=$(( _now - _log_mtime ))
 
@@ -111,11 +107,7 @@ acquire_lock() {
 		# Check lock age (safety net for orphaned locks)
 		if [[ -d "$LOCK_FILE" ]]; then
 			local lock_age
-			if [[ "$(uname)" == "Darwin" ]]; then
-				lock_age=$(($(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || echo "0")))
-			else
-				lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo "0")))
-			fi
+			lock_age=$(($(date +%s) - $(_file_mtime_epoch "$LOCK_FILE")))
 			if [[ $lock_age -gt 300 ]]; then
 				log_warn "Removing stale lock (age ${lock_age}s > 300s)"
 				rm -rf "$LOCK_FILE"
