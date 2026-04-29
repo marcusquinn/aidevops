@@ -198,7 +198,14 @@ preview_proxy_auto_allocate() {
 
 	# Determine repo slug from git remote
 	local repo_slug=""
-	repo_slug="$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|')" || repo_slug=""
+	local remote_url
+	remote_url="$(git remote get-url origin 2>/dev/null)" || remote_url=""
+	if [[ -n "$remote_url" ]]; then
+		# Extract owner/repo from git remote URL (portable bash, no sed needed)
+		# Handles: https://github.com/owner/repo.git, git@github.com:owner/repo.git, etc.
+		remote_url="${remote_url##*[:/]}"  # Strip everything up to last : or /
+		repo_slug="${remote_url%.git}"      # Strip .git suffix if present
+	fi
 	[[ -z "$repo_slug" ]] && return 0
 
 	local alloc_json=""
@@ -223,15 +230,22 @@ preview_proxy_auto_allocate() {
 	return 0
 }
 
-# Auto-free a preview port + deregister proxy route on worktree removal.
-# Called from _remove_cleanup_and_execute. Non-fatal — missing helper → silent skip.
-preview_proxy_auto_free() {
-	local branch="$1"
-	[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
+	# Auto-free a preview port + deregister proxy route on worktree removal.
+	# Called from _remove_cleanup_and_execute. Non-fatal — missing helper → silent skip.
+	preview_proxy_auto_free() {
+		local branch="$1"
+		[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
 
-	local repo_slug=""
-	repo_slug="$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|')" || repo_slug=""
-	[[ -z "$repo_slug" ]] && return 0
+		local repo_slug=""
+		local remote_url
+		remote_url="$(git remote get-url origin 2>/dev/null)" || remote_url=""
+		if [[ -n "$remote_url" ]]; then
+			# Extract owner/repo from git remote URL (portable bash, no sed needed)
+			# Handles: https://github.com/owner/repo.git, git@github.com:owner/repo.git, etc.
+			remote_url="${remote_url##*[:/]}"  # Strip everything up to last : or /
+			repo_slug="${remote_url%.git}"      # Strip .git suffix if present
+		fi
+		[[ -z "$repo_slug" ]] && return 0
 
 	"$PREVIEW_PROXY_HELPER" free "$repo_slug" "$branch" 2>/dev/null || true
 	return 0
