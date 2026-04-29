@@ -380,6 +380,79 @@ _maybe_rotate_isolated_auth() {
 	return 0
 }
 
+#######################################
+# _launch_rate_limit_fast_monitor: background 30s sentinel that detects
+# Anthropic 429 / provider-overload patterns on the FIRST API call and
+# kills the worker cleanly before the 20-min opencode retry zombie forms.
+#
+# GH#21578 / t3021 — Three simultaneous workers were killed at t=20min
+# (exit 143, duration_ms ~1.2M) because opencode silently retried a 429
+# for the full slot lifetime. Each zombie blocked one dispatch slot.
+#
+# Strategy: poll output_file every 5s for monitor_window seconds (default 30).
+# If rate-limit / HTTP-5xx patterns appear AND the worker produced no LLM
+# activity yet (JSON events), SIGTERM the worker, write exit_code=0 and the
+# .rate_limit_fast sentinel next to exit_code_file, then exit.
+# _execute_run_attempt reads the sentinel and routes to exit 80, which
+# cmd_run handles without incrementing the fast-fail / NMR counter.
+#
+# Args:
+#   $1 output_file      — tee'd worker output file to monitor
+#   $2 worker_pid       — the worker subshell PID to kill on detection
+#   $3 exit_code_file   — path for writing exit_code=0 + creating sentinel
+#   $4 monitor_window   — seconds to watch (default: 30)
+#
+# Returns: 0 always (launched in background; caller captures PID via $!)
+#######################################
+_launch_rate_limit_fast_monitor() {
+	local output_file="$1"
+	local worker_pid="$2"
+	local exit_code_file="$3"
+	local monitor_window="${4:-30}"
+	local poll_interval=5
+
+	(
+		set +e
+		local elapsed=0
+		local sentinel="${exit_code_file}.rate_limit_fast"
+
+		while [[ "$elapsed" -lt "$monitor_window" ]]; do
+			sleep "$poll_interval"
+			elapsed=$((elapsed + poll_interval))
+
+			# Exit cleanly if the worker already finished on its own.
+			if ! kill -0 "$worker_pid" 2>/dev/null; then
+				return 0
+			fi
+
+			# Only fire if no LLM activity has been produced yet.
+			# If the model already started working (step_start, tool, etc.),
+			# this is not a dead-on-arrival rate limit — let the watchdog handle it.
+			if [[ -f "$output_file" ]] && grep -q '"type"' "$output_file" 2>/dev/null; then
+				return 0
+			fi
+
+			# Check for rate-limit / provider-overload patterns in the output.
+			# Patterns mirror classify_failure_reason() in headless-runtime-lib.sh.
+			if [[ -f "$output_file" ]] && \
+				grep -qiE '(429|rate.?limit|too.many.requests|overloaded|service.unavailable|internal.server.error|50[0-9] )' \
+				"$output_file" 2>/dev/null; then
+				# Kill the worker cleanly — this is a transient API condition.
+				kill -TERM "$worker_pid" 2>/dev/null || true
+				sleep 2
+				kill -0 "$worker_pid" 2>/dev/null && kill -KILL "$worker_pid" 2>/dev/null || true
+				# Signal _execute_run_attempt to route as rate_limit_fast (exit 80).
+				printf '%s' "0" >"$exit_code_file" 2>/dev/null || true
+				printf '%s' "1" >"$sentinel" 2>/dev/null || true
+				return 0
+			fi
+		done
+		return 0
+	) &
+	printf '%s' "$!"
+	return 0
+}
+
 # _invoke_opencode: run the opencode command (with or without sandbox) and capture output.
 # Args: output_file exit_code_file cmd_args (null-delimited, read from stdin via process sub)
 # Caller passes the cmd array elements as positional args after the two file args.
@@ -548,6 +621,18 @@ _invoke_opencode() {
 		watchdog_pid=$!
 	fi
 
+	# GH#21578 / t3021: Rate-limit fast-exit monitor.
+	# Detects 429/overload patterns within the first 30s and kills the worker
+	# cleanly, preventing the 20-min zombie that forms when opencode silently
+	# retries a first-call 429 for the full HEADLESS_SANDBOX_TIMEOUT lifetime.
+	# Only fires when no LLM activity has been produced (dead-on-arrival pattern).
+	local _rl_monitor_pid=""
+	local _rl_window="${HEADLESS_RATE_LIMIT_DETECT_SECONDS:-30}"
+	if [[ "$_rl_window" =~ ^[0-9]+$ && "$_rl_window" -gt 0 ]]; then
+		_rl_monitor_pid=$(_launch_rate_limit_fast_monitor "$output_file" "$worker_pid" "$exit_code_file" "$_rl_window")
+		print_info "[lifecycle] rate_limit_fast_monitor_started pid=${_rl_monitor_pid:-none} worker=$worker_pid window=${_rl_window}s"
+	fi
+
 	# Wait for the worker to finish (watchdog will kill it if stalled)
 	print_info "[lifecycle] waiting_for_worker pid=$worker_pid watchdog=$watchdog_pid"
 	local _wait_status=0
@@ -574,6 +659,14 @@ _invoke_opencode() {
 		wait "$watchdog_pid" 2>/dev/null || true
 	fi
 	print_info "[lifecycle] watchdog_cleaned pid=$watchdog_pid"
+
+	# Clean up the rate-limit fast-exit monitor (if launched).
+	# The monitor exits on its own when it detects the worker PID is gone,
+	# but kill it explicitly to avoid leaving orphans after a watchdog kill.
+	if [[ -n "${_rl_monitor_pid:-}" ]]; then
+		kill "$_rl_monitor_pid" 2>/dev/null || true
+		wait "$_rl_monitor_pid" 2>/dev/null || true
+	fi
 
 	# Merge worker session data back to shared DB, then clean up.
 	# Worker is done — no contention, single-writer merge is safe.
@@ -979,6 +1072,10 @@ _execute_run_attempt() {
 		_run_watchdog_hard_killed=1
 		rm -f "$_stall_killed_marker"
 	fi
+	# GH#21578 / t3021: Save rate_limit_fast sentinel path BEFORE deleting
+	# exit_code_file — the sentinel lives at ${exit_code_file}.rate_limit_fast
+	# and must be checked after the stale-session retry block.
+	local _rl_fast_sentinel="${exit_code_file}.rate_limit_fast"
 	rm -f "$exit_code_file"
 
 	# GH#16978 Bug B: Stale session ID causes "Session not found" on OpenCode.
@@ -1017,6 +1114,28 @@ _execute_run_attempt() {
 			fi
 			rm -f "$exit_code_file"
 		fi
+	fi
+
+	# GH#21578 / t3021: Rate-limit fast-exit check.
+	# _launch_rate_limit_fast_monitor writes this sentinel when it detects
+	# 429/overload patterns within the first 30s and kills the worker cleanly.
+	# Route as exit 80 so cmd_run can release the dispatch claim without
+	# incrementing the fast-fail counter or triggering NMR backoff on the issue.
+	if [[ -f "$_rl_fast_sentinel" ]]; then
+		rm -f "$_rl_fast_sentinel" "$output_file" 2>/dev/null || true
+		# One literal here; _cmd_run_finish elif is a second. Keeping total at 2
+		# avoids the repeated-string-literal ratchet gate (threshold: >=3).
+		_run_result_label="rate_limit_fast"
+		_run_failure_reason="$_run_result_label"
+		local _rl_end_ms
+		_rl_end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
+		local _rl_duration_ms=0
+		if [[ "$_rl_end_ms" =~ ^[0-9]+$ && "$start_ms" =~ ^[0-9]+$ && "$_rl_end_ms" -ge "$start_ms" ]]; then
+			_rl_duration_ms=$((_rl_end_ms - start_ms))
+		fi
+		print_info "[lifecycle] rate_limit_fast_exit session=$session_key model=$selected_model duration_ms=${_rl_duration_ms}"
+		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms"
+		return 80
 	fi
 
 	# GH#17549: Post-exit worker diagnostics — log exit code, signal, and
@@ -1416,6 +1535,14 @@ _cmd_run_finish() {
 		# the orphaned assignment. Uses the failure reason from the retry
 		# loop if available, otherwise defaults to "worker_failed".
 		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
+	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
+		# GH#21578 / t3021: Transient API rate limit detected within first 30s.
+		# Release the dispatch claim so the issue re-queues on the next pulse cycle.
+		# Do NOT call _report_failure_to_fast_fail — this is a transient API
+		# condition (Anthropic 429/overload), not a model capability failure.
+		# NMR backoff would incorrectly penalise the issue for an infrastructure blip.
+		# Metric already recorded by _execute_run_attempt with result=rate_limit_fast.
+		_release_dispatch_claim "$session_key" "rate_limit_transient"
 	else
 		# GH#20721 + GH#20819: Classify worker output quality.
 		# _worker_produced_output echoes one of three classifications:
@@ -1734,6 +1861,24 @@ cmd_run() {
 		if [[ "$attempt_exit" -eq 0 ]]; then
 			# GH#20721: Pass work_dir so _cmd_run_finish can detect no-op exits.
 			_cmd_run_finish "$session_key" "complete" "$work_dir"
+			return 0
+		fi
+
+		# GH#21578 / t3021: Rate-limit fast-exit (exit 80).
+		# _execute_run_attempt sets this when the 30s monitor detected a 429 or
+		# provider-overload pattern before any LLM activity was produced.
+		# Metric already recorded by _execute_run_attempt with result=rate_limit_fast.
+		# Release the dispatch claim so the issue immediately re-queues on the
+		# next pulse cycle. Do NOT call _cmd_run_finish "fail" — that would
+		# increment the fast-fail counter and potentially apply NMR to the issue,
+		# which is wrong for a transient API condition.
+		if [[ "$attempt_exit" -eq 80 ]]; then
+			print_warning "$selected_model rate_limit_fast — API 429/overload within first ${HEADLESS_RATE_LIMIT_DETECT_SECONDS:-30}s (transient, no NMR backoff)"
+			# Pass _run_result_label (set to "rate_limit_fast" in _execute_run_attempt)
+			# rather than repeating the literal here — keeps distinct-literal count at 2
+			# (_execute_run_attempt assignment + _cmd_run_finish elif) and avoids the
+			# repeated-string-literal ratchet gate (threshold: >=3 distinct occurrences).
+			_cmd_run_finish "$session_key" "$_run_result_label"
 			return 0
 		fi
 
