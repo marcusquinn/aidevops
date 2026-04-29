@@ -126,12 +126,13 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _attempt_worker_briefed_auto_merge and its dependency _pm_issue_api
-# from the merge scripts and eval them into the test shell.
+# Extract _attempt_worker_briefed_auto_merge and its dependencies from the
+# merge scripts and eval them into the test shell.
 # _pm_issue_api lives in pulse-merge.sh (module-level helper).
-# _attempt_worker_briefed_auto_merge lives in pulse-merge-process.sh (post-split).
+# _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
+# pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
 define_helpers_under_test() {
-	local src_worker_briefed src_issue_api
+	local src_worker_briefed src_issue_api src_trusted_author
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -140,6 +141,9 @@ define_helpers_under_test() {
 	if [[ -f "$PROCESS_SCRIPT" ]]; then
 		extract_from="$PROCESS_SCRIPT"
 	fi
+	src_trusted_author=$(awk '
+		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
@@ -149,6 +153,8 @@ define_helpers_under_test() {
 	fi
 	# shellcheck disable=SC1090
 	eval "$src_issue_api"
+	# shellcheck disable=SC1090
+	eval "$src_trusted_author"
 	# shellcheck disable=SC1090
 	eval "$src_worker_briefed"
 	return 0

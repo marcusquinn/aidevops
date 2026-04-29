@@ -516,6 +516,33 @@ _retarget_stacked_children() {
 }
 
 #######################################
+# Check if a GitHub login appears in the trusted-issue-author allowlist (t3062).
+#
+# Peer runners with COLLABORATOR association can be added to the allowlist to
+# bypass the OWNER/MEMBER author_association gate without requiring per-issue
+# cryptographic approval (sudo aidevops approve issue N).
+#
+# Config: AIDEVOPS_TRUSTED_AUTHORS_CONF env var (override) or
+#         <_PULSE_MERGE_DIR>/../configs/trusted-issue-authors.conf (default).
+# Empty/missing config = no trusted authors = returns 1 (not trusted).
+#
+# Args: $1=github_login
+# Returns: 0=login is trusted, 1=not trusted
+#######################################
+_is_trusted_issue_author() {
+	local login="$1"
+	[[ -z "$login" ]] && return 1
+	local _trusted_conf="${AIDEVOPS_TRUSTED_AUTHORS_CONF:-${_PULSE_MERGE_DIR:+${_PULSE_MERGE_DIR}/../configs/trusted-issue-authors.conf}}"
+	[[ -z "$_trusted_conf" || ! -f "$_trusted_conf" ]] && return 1
+	local _tentry
+	while IFS= read -r _tentry || [[ -n "$_tentry" ]]; do
+		[[ -z "$_tentry" || "$_tentry" == "#"* ]] && continue
+		[[ "$_tentry" == "$login" ]] && return 0
+	done < "$_trusted_conf"
+	return 1
+}
+
+#######################################
 # Check origin:worker worker-briefed auto-merge gates (t2449).
 #
 # Sibling to _check_interactive_pr_gates — validates that an origin:worker
@@ -609,22 +636,7 @@ _attempt_worker_briefed_auto_merge() {
 	# an approval on the issue" is at least as strong as the OWNER/MEMBER
 	# author check — the maintainer personally vouched with their private key.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		# Check trusted-issue-author allowlist (t3062): peer runners whose
-		# authorAssociation is COLLABORATOR but are known trusted operators.
-		# Config: AIDEVOPS_TRUSTED_AUTHORS_CONF or <merge_dir>/../configs/trusted-issue-authors.conf
-		local _trusted_conf="${AIDEVOPS_TRUSTED_AUTHORS_CONF:-${_PULSE_MERGE_DIR:+${_PULSE_MERGE_DIR}/../configs/trusted-issue-authors.conf}}"
-		local _is_trusted=0
-		if [[ -n "$issue_author_login" && -n "$_trusted_conf" && -f "$_trusted_conf" ]]; then
-			local _tentry
-			while IFS= read -r _tentry || [[ -n "$_tentry" ]]; do
-				[[ -z "$_tentry" || "$_tentry" == "#"* ]] && continue
-				if [[ "$_tentry" == "$issue_author_login" ]]; then
-					_is_trusted=1
-					break
-				fi
-			done < "$_trusted_conf"
-		fi
-		if [[ "$_is_trusted" -eq 1 ]]; then
+		if _is_trusted_issue_author "$issue_author_login"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "true" ]]; then
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
