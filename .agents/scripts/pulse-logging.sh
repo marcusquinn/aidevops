@@ -79,6 +79,7 @@ _rotate_single_log() {
 _prune_cold_archive() {
 	local total_cold=0
 	local archive_file="" archive_size=0
+	# Build sorted list (oldest first via lexicographic sort on timestamp-named files)
 	local -a archive_files=()
 	while IFS= read -r archive_file; do
 		archive_files+=("$archive_file")
