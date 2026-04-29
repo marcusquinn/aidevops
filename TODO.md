@@ -3549,3 +3549,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3054 bug(pulse): preflight_early_dispatch stage timeout (600s SIGTERM rc=143) on managed private webapp issue #auto-dispatch #bug #framework #pulse ref:GH#21763 pr:#21769 completed:2026-04-29
 
 - [ ] t3056 investigate 94% headless worker kill rate (vs 100% interactive success rate) #auto-dispatch #bug #framework #pulse ref:GH#21781
+
+- [ ] t3057 add interval-sampled CPU to _watchdog_tree_cpu (lifetime-avg false-defer fix) #auto-dispatch #bug #framework ref:GH#21785
