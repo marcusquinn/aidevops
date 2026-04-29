@@ -263,6 +263,8 @@ Reference code as `file_path:line_number` for easy navigation.
 
 Images >8000px crash session irrecoverably. NEVER `fullPage: true` for AI review. Max 1568px longest side. Use `browser-qa-helper.sh screenshot` (only guarded path). Full rules: `reference/screenshot-limits.md`.
 
+**macOS screenshot filename bug (U+202F):** macOS inserts a narrow no-break space (U+202F, UTF-8: `e2 80 af`) before AM/PM in screenshot filenames. The Read tool truncates paths at this character and returns `File not found: /Users`. If this happens, run `screenshot-import-helper.sh sanitize <path>` — it copies the file to a clean temp path and prints it. Full details: `reference/screenshot-limits.md` "macOS Filename Hygiene".
+
 ### Error Prevention (top recurring patterns)
 
 **1. webfetch failures (46.8% failure rate — 94% are guessed URLs)**
