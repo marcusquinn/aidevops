@@ -178,18 +178,23 @@ gh_issue_comment() {
 }
 export -f gh_issue_comment
 
-# Extract the function under test from the source file.
+# Extract the functions under test from the source file.
 define_helper_under_test() {
-	local func_src
-	func_src=$(awk '
+	local finder_src notify_src
+	finder_src=$(awk '
+		/^_find_qualifying_pr_for_stale_recovery\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	notify_src=$(awk '
 		/^_notify_stale_recovery_resolved_by_pr\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
-	if [[ -z "$func_src" ]]; then
-		printf 'ERROR: could not extract _notify_stale_recovery_resolved_by_pr from %s\n' "$NMR_SCRIPT" >&2
+	if [[ -z "$finder_src" || -z "$notify_src" ]]; then
+		printf 'ERROR: could not extract helpers from %s\n' "$NMR_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
-	eval "$func_src"
+	eval "$finder_src"
+	# shellcheck disable=SC1090
+	eval "$notify_src"
 	return 0
 }
 

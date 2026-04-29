@@ -24,6 +24,7 @@
 #   - issue_has_required_approval
 #   - _nmr_applied_by_maintainer
 #   - notify_ever_nmr_without_approval
+#   - _find_qualifying_pr_for_stale_recovery
 #   - _notify_stale_recovery_resolved_by_pr
 #   - auto_approve_maintainer_issues
 #
@@ -582,6 +583,87 @@ notify_ever_nmr_without_approval() {
 }
 
 #######################################
+# t3049: Evaluate linked OPEN PRs against the trust boundary gates and return
+# the number of the first qualifying PR, or empty string if none qualifies.
+#
+# <!-- aidevops:trust-boundary -->
+# Self-validates each gate: PR createdAt > NMR labelledAt, APPROVED review,
+# OWNER/MEMBER authorAssociation, origin:worker or origin:interactive label,
+# all non-maintainer-gate CI SUCCESS.
+#
+# Arguments:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - nmr_at     : ISO8601 timestamp when NMR was applied
+#
+# Outputs: PR number on stdout (empty if no match).
+# Returns: 0 always.
+#######################################
+_find_qualifying_pr_for_stale_recovery() {
+	local issue_num="$1"
+	local slug="$2"
+	local nmr_at="$3"
+
+	local pr_json
+	pr_json=$(gh pr list --search "Resolves #${issue_num} in:body" --state open \
+		--repo "$slug" --json number,reviewDecision,statusCheckRollup,authorAssociation,labels,createdAt \
+		--limit 10 2>/dev/null) || pr_json="[]"
+	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
+
+	local pr_count
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" -gt 0 ]] || return 0
+
+	local j=0
+	while [[ "$j" -lt "$pr_count" ]]; do
+		local pr_num pr_review pr_author_assoc pr_created_at
+		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
+		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
+		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
+		pr_created_at=$(printf '%s' "$pr_json" | jq -r ".[$j].createdAt // empty" 2>/dev/null) || pr_created_at=""
+		j=$((j + 1))
+
+		# PR must be created AFTER NMR was applied.
+		if [[ -n "$pr_created_at" && -n "$nmr_at" ]]; then
+			local pr_after_nmr
+			pr_after_nmr=$(jq -n --arg p "$pr_created_at" --arg n "$nmr_at" \
+				'(($p | fromdateiso8601) > ($n | fromdateiso8601))' 2>/dev/null) || pr_after_nmr="false"
+			[[ "$pr_after_nmr" == "true" ]] || continue
+		else
+			continue
+		fi
+
+		# reviewDecision must be APPROVED.
+		[[ "$pr_review" == "APPROVED" ]] || continue
+
+		# authorAssociation must be OWNER or MEMBER (not COLLABORATOR/external).
+		[[ "$pr_author_assoc" == "OWNER" || "$pr_author_assoc" == "MEMBER" ]] || continue
+
+		# PR must have origin:worker or origin:interactive label.
+		local has_valid_origin
+		has_valid_origin=$(printf '%s' "$pr_json" | jq -r \
+			"[.[$((j - 1))].labels[]?.name] | map(select(. == \"origin:worker\" or . == \"origin:interactive\")) | length" \
+			2>/dev/null) || has_valid_origin=0
+		[[ "$has_valid_origin" =~ ^[0-9]+$ ]] || has_valid_origin=0
+		[[ "$has_valid_origin" -gt 0 ]] || continue
+
+		# All non-maintainer-gate CI checks must have a passing conclusion.
+		local failing_checks
+		failing_checks=$(printf '%s' "$pr_json" | jq -r \
+			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\")] | length" \
+			2>/dev/null) || failing_checks=0
+		[[ "$failing_checks" =~ ^[0-9]+$ ]] || failing_checks=0
+		[[ "$failing_checks" -le 0 ]] || continue
+
+		# All gates passed — output the PR number.
+		printf '%s' "$pr_num"
+		return 0
+	done
+
+	return 0
+}
+
+#######################################
 # t3049: Post a one-shot notification when a stale-recovery NMR is resolved
 # by a subsequent worker producing an APPROVED PR.
 #
@@ -647,80 +729,10 @@ _notify_stale_recovery_resolved_by_pr() {
 		return 0
 	fi
 
-	# Gate 3: Find linked OPEN PRs with Resolves #N in body.
-	local pr_json
-	pr_json=$(gh pr list --search "Resolves #${issue_num} in:body" --state open \
-		--repo "$slug" --json number,reviewDecision,statusCheckRollup,authorAssociation,labels,createdAt \
-		--limit 10 2>/dev/null) || pr_json="[]"
-	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
-
-	local pr_count
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" -gt 0 ]] || return 0
-
-	# Evaluate each candidate PR against the trust boundary gates.
-	local j=0
-	local matching_pr=""
-	while [[ "$j" -lt "$pr_count" ]]; do
-		local pr_num pr_review pr_author_assoc pr_created_at
-		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
-		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
-		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
-		pr_created_at=$(printf '%s' "$pr_json" | jq -r ".[$j].createdAt // empty" 2>/dev/null) || pr_created_at=""
-		j=$((j + 1))
-
-		# Gate 3a: PR must be created AFTER NMR was applied.
-		if [[ -n "$pr_created_at" && -n "$nmr_at" ]]; then
-			local pr_after_nmr
-			pr_after_nmr=$(jq -n --arg p "$pr_created_at" --arg n "$nmr_at" \
-				'(($p | fromdateiso8601) > ($n | fromdateiso8601))' 2>/dev/null) || pr_after_nmr="false"
-			if [[ "$pr_after_nmr" != "true" ]]; then
-				continue
-			fi
-		else
-			continue
-		fi
-
-		# Gate 3b: reviewDecision must be APPROVED.
-		if [[ "$pr_review" != "APPROVED" ]]; then
-			continue
-		fi
-
-		# Gate 3c: authorAssociation must be OWNER or MEMBER (not COLLABORATOR/external).
-		if [[ "$pr_author_assoc" != "OWNER" && "$pr_author_assoc" != "MEMBER" ]]; then
-			continue
-		fi
-
-		# Gate 3d: PR must have origin:worker or origin:interactive label.
-		local has_valid_origin
-		has_valid_origin=$(printf '%s' "$pr_json" | jq -r \
-			"[.[$((j - 1))].labels[]?.name] | map(select(. == \"origin:worker\" or . == \"origin:interactive\")) | length" \
-			2>/dev/null) || has_valid_origin=0
-		[[ "$has_valid_origin" =~ ^[0-9]+$ ]] || has_valid_origin=0
-		if [[ "$has_valid_origin" -le 0 ]]; then
-			continue
-		fi
-
-		# Gate 3e: All non-maintainer-gate CI checks must have a passing conclusion.
-		# A check passes if conclusion is SUCCESS, NEUTRAL, or SKIPPED.
-		# Anything else (FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STALE,
-		# or still in-progress with no conclusion yet) counts as failing.
-		local failing_checks
-		failing_checks=$(printf '%s' "$pr_json" | jq -r \
-			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\")] | length" \
-			2>/dev/null) || failing_checks=0
-		[[ "$failing_checks" =~ ^[0-9]+$ ]] || failing_checks=0
-		if [[ "$failing_checks" -gt 0 ]]; then
-			continue
-		fi
-
-		# All gates passed — this PR qualifies.
-		matching_pr="$pr_num"
-		break
-	done
-
+	# Gate 3: Find a qualifying linked PR via the extracted helper.
+	local matching_pr
+	matching_pr=$(_find_qualifying_pr_for_stale_recovery "$issue_num" "$slug" "$nmr_at")
 	if [[ -z "$matching_pr" ]]; then
-		# No qualifying PR found — silent no-op.
 		return 0
 	fi
 
