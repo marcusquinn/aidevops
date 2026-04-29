@@ -74,6 +74,14 @@ set -euo pipefail
 readonly LOCALDEV_PORTS_FILE="$HOME/.local-dev-proxy/ports.json"
 readonly LOCALDEV_HELPER="${SCRIPT_DIR}/localdev-helper.sh"
 
+# =============================================================================
+# Preview Proxy Integration (GH#21560)
+# =============================================================================
+# Per-worktree preview subdomains via local proxy. On worktree add, allocate a
+# port + register a proxy route. On remove, free the port + deregister. Both
+# best-effort, non-fatal — missing helper or config → silent skip.
+readonly PREVIEW_PROXY_HELPER="${SCRIPT_DIR}/preview-proxy-helper.sh"
+
 # Detect if the current repo is registered as a localdev project.
 # Matches repo directory name against registered app names in ports.json.
 # Outputs the app name if found, empty string otherwise.
@@ -171,6 +179,57 @@ localdev_auto_branch_rm() {
 	echo -e "${BLUE}Localdev integration: removing branch route for $project/$branch...${NC}"
 	"$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>&1 ||
 		echo -e "${YELLOW}Localdev branch route removal failed (non-fatal)${NC}"
+	return 0
+}
+
+# =============================================================================
+# Preview Proxy Integration Functions (GH#21560)
+# =============================================================================
+
+# Auto-allocate a preview port + register proxy route after worktree creation.
+# Called from cmd_add. Non-fatal — missing helper → silent skip.
+preview_proxy_auto_allocate() {
+	local branch="$1"
+	[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
+
+	# Determine repo slug from git remote
+	local repo_slug=""
+	repo_slug="$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|')" || repo_slug=""
+	[[ -z "$repo_slug" ]] && return 0
+
+	local alloc_json=""
+	alloc_json="$("$PREVIEW_PROXY_HELPER" allocate "$repo_slug" "$branch" 2>/dev/null)" || {
+		# Non-fatal: allocation failed (no jq, no free ports, etc.)
+		return 0
+	}
+
+	if [[ -n "$alloc_json" ]] && command -v jq >/dev/null 2>&1; then
+		local port url hint
+		port="$(echo "$alloc_json" | jq -r '.port // empty' 2>/dev/null)" || port=""
+		url="$(echo "$alloc_json" | jq -r '.url // empty' 2>/dev/null)" || url=""
+		hint="$(echo "$alloc_json" | jq -r '.start_hint // empty' 2>/dev/null)" || hint=""
+
+		if [[ -n "$port" ]]; then
+			echo ""
+			echo -e "${BLUE}Preview proxy: port ${port} allocated${NC}"
+			[[ -n "$url" ]] && echo -e "  Preview:  ${BOLD}${url}${NC}"
+			[[ -n "$hint" ]] && echo -e "  Start:    ${hint}"
+		fi
+	fi
+	return 0
+}
+
+# Auto-free a preview port + deregister proxy route on worktree removal.
+# Called from _remove_cleanup_and_execute. Non-fatal — missing helper → silent skip.
+preview_proxy_auto_free() {
+	local branch="$1"
+	[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
+
+	local repo_slug=""
+	repo_slug="$(git remote get-url origin 2>/dev/null | sed -E 's|.*[:/]([^/]+/[^/]+?)(\.git)?$|\1|')" || repo_slug=""
+	[[ -z "$repo_slug" ]] && return 0
+
+	"$PREVIEW_PROXY_HELPER" free "$repo_slug" "$branch" 2>/dev/null || true
 	return 0
 }
 
@@ -1106,6 +1165,9 @@ cmd_add() {
 	# Localdev integration (t1224.8): auto-create branch subdomain route
 	localdev_auto_branch "$branch"
 
+	# Preview proxy integration (GH#21560): allocate port + register proxy route
+	preview_proxy_auto_allocate "$branch"
+
 	return 0
 }
 
@@ -1246,6 +1308,11 @@ _remove_cleanup_and_execute() {
 	# Localdev integration (t1224.8): auto-remove branch subdomain route
 	if [[ -n "$removed_branch" ]]; then
 		localdev_auto_branch_rm "$removed_branch"
+	fi
+
+	# Preview proxy integration (GH#21560): free port + deregister proxy route
+	if [[ -n "$removed_branch" ]]; then
+		preview_proxy_auto_free "$removed_branch"
 	fi
 
 	return 0
