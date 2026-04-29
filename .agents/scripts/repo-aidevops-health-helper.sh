@@ -224,11 +224,7 @@ acquire_lock() {
 		# Safety net: remove locks older than 10 minutes
 		if [[ -d "$LOCK_FILE" ]]; then
 			local lock_age
-			if [[ "$(uname)" == "Darwin" ]]; then
-				lock_age=$(($(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || echo "0")))
-			else
-				lock_age=$(($(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo "0")))
-			fi
+			lock_age=$(($(date +%s) - $(_file_mtime_epoch "$LOCK_FILE")))
 			if [[ $lock_age -gt 600 ]]; then
 				log_warn "Removing stale lock (age ${lock_age}s > 600s)"
 				rm -rf "$LOCK_FILE"

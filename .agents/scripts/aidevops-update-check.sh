@@ -488,8 +488,7 @@ _check_hotfix_available() {
 	# Rate-limit: only check every 5 minutes
 	if [[ -f "$hotfix_stamp" ]]; then
 		local stamp_mtime now_epoch age_seconds
-		# Portable mtime: try GNU stat, fall back to BSD stat
-		stamp_mtime=$(stat -c '%Y' "$hotfix_stamp" 2>/dev/null || stat -f '%m' "$hotfix_stamp" 2>/dev/null) || stamp_mtime=0
+		stamp_mtime=$(_file_mtime_epoch "$hotfix_stamp")
 		now_epoch=$(date +%s)
 		age_seconds=$((now_epoch - stamp_mtime))
 		if [[ "$age_seconds" -lt "$hotfix_poll_interval" ]]; then
@@ -838,11 +837,7 @@ _check_pulse_health() {
 	fi
 
 	local health_mtime now_epoch age_seconds
-	if [[ "$(uname)" == "Darwin" ]]; then
-		health_mtime=$(stat -f '%m' "$health_file" 2>/dev/null) || health_mtime=0
-	else
-		health_mtime=$(stat -c '%Y' "$health_file" 2>/dev/null) || health_mtime=0
-	fi
+	health_mtime=$(_file_mtime_epoch "$health_file")
 	now_epoch=$(date +%s)
 	age_seconds=$((now_epoch - health_mtime))
 

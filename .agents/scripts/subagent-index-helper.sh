@@ -179,9 +179,8 @@ cmd_check() {
 			{ if (in_block && NF > 0) { count++ } }
 			END { print count }')
 
-	# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 	local index_mtime
-	index_mtime=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || stat -f %m "$INDEX_FILE" 2>/dev/null || echo "0")
+	index_mtime=$(_file_mtime_epoch "$INDEX_FILE")
 	local index_age=$(($(date +%s) - index_mtime))
 
 	echo "Index: ${INDEX_FILE}"

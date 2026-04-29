@@ -147,12 +147,8 @@ if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 		if [[ "$_pw_ffjit_pid" =~ ^[0-9]+$ ]] && kill -0 "$_pw_ffjit_pid" 2>/dev/null; then
 			# Age check mirrors main()'s is-running short-circuit (t2829).
 			# Use lockdir mtime as lock-acquired timestamp (mkdir is atomic).
-			# BSD stat (macOS): -f '%m'; GNU stat (Linux): -c '%Y'.
-			_pw_ffjit_mtime=$(stat -f '%m' "$_pw_ffjit_lockdir" 2>/dev/null \
-				|| stat -c '%Y' "$_pw_ffjit_lockdir" 2>/dev/null \
-				|| echo "0")
+			_pw_ffjit_mtime=$(_file_mtime_epoch "$_pw_ffjit_lockdir")
 			_pw_ffjit_now=$(date +%s)
-			[[ "$_pw_ffjit_mtime" =~ ^[0-9]+$ ]] || _pw_ffjit_mtime=0
 			_pw_ffjit_age=$(( _pw_ffjit_now - _pw_ffjit_mtime ))
 			if [[ "$_pw_ffjit_age" -le "${PULSE_LOCK_MAX_AGE_S:-1800}" ]]; then
 				printf '[pulse-wrapper] another instance running (PID %s, age %ss), skipping\n' \
@@ -1332,9 +1328,7 @@ main() {
 	# (-c '%Y'), consistent with the pre-jitter fast-fail stat calls at line ~151.
 	local _pw_self="${BASH_SOURCE[0]:-$0}"
 	local _pw_mtime_loaded
-	_pw_mtime_loaded=$(stat -f '%m' "$_pw_self" 2>/dev/null \
-		|| stat -c '%Y' "$_pw_self" 2>/dev/null \
-		|| echo 0)
+	_pw_mtime_loaded=$(_file_mtime_epoch "$_pw_self")
 
 	# GH#18689: --self-check and --dry-run arg scanning extracted to helpers.
 	# GH#18770: the `_sc_rc=$?` capture MUST be guarded by `|| _sc_rc=$?`
@@ -1617,9 +1611,7 @@ main() {
 	# Opt-out: AIDEVOPS_SKIP_SOURCE_REEXEC=1 (debugging / testing).
 	if [[ "${AIDEVOPS_SKIP_SOURCE_REEXEC:-0}" != "1" ]]; then
 		local _pw_mtime_now
-		_pw_mtime_now=$(stat -f '%m' "$_pw_self" 2>/dev/null \
-			|| stat -c '%Y' "$_pw_self" 2>/dev/null \
-			|| echo 0)
+		_pw_mtime_now=$(_file_mtime_epoch "$_pw_self")
 		if [[ "$_pw_mtime_now" =~ ^[0-9]+$ ]] \
 			&& [[ "$_pw_mtime_loaded" =~ ^[0-9]+$ ]] \
 			&& [[ "$_pw_mtime_now" -gt 0 ]] \

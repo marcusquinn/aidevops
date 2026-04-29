@@ -261,7 +261,7 @@ _worktree_creation_epoch() {
 	local wt_created=0
 
 	if [[ -f "$wt_path/.git" ]]; then
-		wt_created=$(stat -c '%Y' "$wt_path/.git" 2>/dev/null || stat -f '%m' "$wt_path/.git" 2>/dev/null) || wt_created=0
+		wt_created=$(_file_mtime_epoch "$wt_path/.git")
 	fi
 
 	if [[ "$wt_created" -eq 0 ]]; then
