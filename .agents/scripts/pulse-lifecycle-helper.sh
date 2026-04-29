@@ -79,9 +79,34 @@ _pl_err() {
 	return 0
 }
 
-# _pulse_pids: print all pulse PIDs (one per line). Empty output = none running.
-_pulse_pids() {
+# _pulse_pids_raw: print ALL matching pulse PIDs including subshells of the
+# pulse cycle (one per line). Used by _stop_all which must SIGTERM every
+# pulse process — not just the top-level one (GH#21549).
+_pulse_pids_raw() {
 	pgrep -f "$_PULSE_PATTERN" 2>/dev/null || true
+	return 0
+}
+
+# _pulse_pids: print only top-level pulse PIDs (one per line). Subshells of a
+# running pulse cycle inherit the parent's argv so naive pgrep over-counts.
+# This function filters to PIDs whose PARENT command is NOT itself
+# pulse-wrapper.sh, eliminating the subshell false positives that trigger
+# spurious "MULTIPLE pulse instances detected" warnings (GH#21549).
+# Empty output = none running.
+# _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
+# all pulse processes including subshells.
+_pulse_pids() {
+	local _pids _pid _ppid _ppid_cmd
+	_pids=$(_pulse_pids_raw)
+	[[ -z "$_pids" ]] && return 0
+	while read -r _pid; do
+		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
+		# Skip PIDs whose parent IS another pulse-wrapper (= subshell of pulse)
+		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		printf '%s\n' "$_pid"
+	done <<< "$_pids"
 	return 0
 }
 
@@ -94,9 +119,11 @@ _is_running() {
 
 # _stop_all: terminate every pulse PID. SIGTERM first, escalate to SIGKILL
 # if any survive after _PULSE_SIGTERM_WAIT seconds. Idempotent.
+# Uses _pulse_pids_raw (not _pulse_pids) so that subshells of the pulse cycle
+# are included in both the display list and the survivor check (GH#21549).
 _stop_all() {
 	local _pids
-	_pids=$(_pulse_pids)
+	_pids=$(_pulse_pids_raw)
 	if [[ -z "$_pids" ]]; then
 		return 0
 	fi
@@ -107,18 +134,20 @@ _stop_all() {
 	pkill -TERM -f "$_PULSE_PATTERN" 2>/dev/null || true
 	sleep "$_PULSE_SIGTERM_WAIT"
 
-	# Escalate if any survived.
+	# Escalate if any survived — check ALL processes including subshells.
 	local _survivors
-	_survivors=$(_pulse_pids)
+	_survivors=$(_pulse_pids_raw)
 	if [[ -n "$_survivors" ]]; then
 		_pl_warn "SIGTERM timeout, escalating to SIGKILL: $(echo "$_survivors" | tr '\n' ' ')"
 		pkill -KILL -f "$_PULSE_PATTERN" 2>/dev/null || true
 		sleep 1
 	fi
 
-	# Final check.
-	if _is_running; then
-		_pl_err "Failed to stop pulse after SIGKILL — residual PIDs: $(_pulse_pids | tr '\n' ' ')"
+	# Final check — use raw to catch any residual including subshells.
+	local _residual
+	_residual=$(_pulse_pids_raw)
+	if [[ -n "$_residual" ]]; then
+		_pl_err "Failed to stop pulse after SIGKILL — residual PIDs: $(echo "$_residual" | tr '\n' ' ')"
 		return 1
 	fi
 	return 0
