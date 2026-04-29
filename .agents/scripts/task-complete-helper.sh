@@ -345,9 +345,23 @@ complete_task() {
 	local today
 	today=$(date +%Y-%m-%d)
 
-	# Ensure ## Done section exists before attempting the move
-	if ! grep -q "^## Done$" "$todo_file"; then
-		log_error "## Done section not found in $todo_file — cannot move completed task"
+	# Ensure a completion section exists (accept multiple heading variants)
+	# Supported: ## Done, ## Completed, ## Complete, ## Finished (case-insensitive)
+	local done_heading=""
+	if grep -qi "^## Done$" "$todo_file"; then
+		done_heading="## Done"
+	elif grep -qi "^## Completed$" "$todo_file"; then
+		done_heading="## Completed"
+		log_warn "Using '## Completed' heading (consider migrating to canonical '## Done' for consistency)"
+	elif grep -qi "^## Complete$" "$todo_file"; then
+		done_heading="## Complete"
+		log_warn "Using '## Complete' heading (consider migrating to canonical '## Done' for consistency)"
+	elif grep -qi "^## Finished$" "$todo_file"; then
+		done_heading="## Finished"
+		log_warn "Using '## Finished' heading (consider migrating to canonical '## Done' for consistency)"
+	else
+		log_error "No completion section found in $todo_file"
+		log_error "Expected one of: ## Done, ## Completed, ## Complete, ## Finished"
 		return 1
 	fi
 
@@ -400,13 +414,14 @@ END {
 		return 1
 	fi
 
-	# Pass 2: Insert the transformed block at the top of ## Done (after the blank line
-	# that follows the header per markdown convention).
+	# Pass 2: Insert the transformed block at the top of the completion section
+	# (after the blank line that follows the header per markdown convention).
+	# The heading is case-insensitive, so we match it with a regex.
 	# shellcheck disable=SC2016
 	awk -v bf="$tmp_block" '
 BEGIN { seen_done=0; inserted=0 }
 
-/^## Done$/ { print; seen_done=1; next }
+/^## (Done|Completed|Complete|Finished)$/ { print; seen_done=1; next }
 
 seen_done && !inserted && /^[[:space:]]*$/ {
     print
@@ -450,23 +465,23 @@ END {
 		return 1
 	fi
 
-	# Verify the task now lives in the ## Done section
+	# Verify the task now lives in the completion section
 	local in_done_section
 	in_done_section=$(awk -v tid="$task_id" '
-		/^## Done$/ { in_done=1; next }
+		/^## (Done|Completed|Complete|Finished)$/ { in_done=1; next }
 		/^## /      { in_done=0; next }
 		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid "([[:space:]]|$)") { found=1 }
 		END { print found+0 }
 	' "$todo_file")
 
 	if [[ "$in_done_section" != "1" ]]; then
-		log_error "Task $task_id was not placed in ## Done section"
+		log_error "Task $task_id was not placed in completion section"
 		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
 	rm -f "${todo_file}.bak"
-	log_success "Marked $task_id complete and moved to ## Done with proof-log: $proof_log"
+	log_success "Marked $task_id complete and moved to $done_heading with proof-log: $proof_log"
 	return 0
 }
 
