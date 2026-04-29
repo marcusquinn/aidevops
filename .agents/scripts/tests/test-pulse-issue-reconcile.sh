@@ -281,24 +281,34 @@ test_should_predicates() {
 # Test 9: reconcile_issues_single_pass wired in pulse-dispatch-engine.sh
 # ---------------------------------------------------------------------------
 test_single_pass_wired_in_engine() {
+	# GH#21738: pulse-dispatch-engine.sh was split into orchestrator +
+	# fill-floor lib + preflight lib. The preflight helpers (which carry
+	# the run_stage_with_timeout reconcile call) now live in
+	# pulse-dispatch-preflight-lib.sh. Search both files so the test stays
+	# faithful to the underlying contract: reconcile is wired in the
+	# dispatch engine module group.
 	local engine_sh="${SCRIPT_DIR}/../pulse-dispatch-engine.sh"
-	if [[ ! -f "$engine_sh" ]]; then
-		_pass "single-pass engine wiring: pulse-dispatch-engine.sh not found (skip)"
+	local preflight_lib="${SCRIPT_DIR}/../pulse-dispatch-preflight-lib.sh"
+	local files=()
+	[[ -f "$engine_sh" ]] && files+=("$engine_sh")
+	[[ -f "$preflight_lib" ]] && files+=("$preflight_lib")
+	if [[ ${#files[@]} -eq 0 ]]; then
+		_pass "single-pass engine wiring: dispatch-engine module group not found (skip)"
 		return 0
 	fi
 
 	# Verify the single-pass is called (not the five legacy functions)
 	local sp_calls legacy_calls
-	sp_calls=$(grep -c 'reconcile_issues_single_pass' "$engine_sh" 2>/dev/null || true)
+	sp_calls=$(grep -c 'reconcile_issues_single_pass' "${files[@]}" 2>/dev/null | awk -F: '{s+=$2} END{print s+0}')
 	[[ "$sp_calls" =~ ^[0-9]+$ ]] || sp_calls=0
 
 	# Legacy functions should NOT be direct run_stage_with_timeout targets anymore
 	legacy_calls=$(grep -E 'run_stage_with_timeout.*(close_issues_with_merged_prs|reconcile_stale_done_issues|reconcile_open_issues_with_merged_prs|reconcile_completed_parent_tasks|reconcile_labelless_aidevops_issues)' \
-		"$engine_sh" 2>/dev/null | grep -vc '^\s*#' || true)
+		"${files[@]}" 2>/dev/null | grep -vc '^\s*#' || true)
 	[[ "$legacy_calls" =~ ^[0-9]+$ ]] || legacy_calls=0
 
 	if [[ "$sp_calls" -ge 1 && "$legacy_calls" -eq 0 ]]; then
-		_pass "single-pass engine: wired in pulse-dispatch-engine.sh (sp_calls=${sp_calls}, legacy_direct=${legacy_calls})"
+		_pass "single-pass engine: wired in dispatch-engine module group (sp_calls=${sp_calls}, legacy_direct=${legacy_calls})"
 	else
 		_fail "single-pass engine: sp_calls=${sp_calls}, legacy_direct=${legacy_calls} (expected sp≥1, legacy=0)"
 	fi
