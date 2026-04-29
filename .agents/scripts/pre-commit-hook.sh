@@ -371,6 +371,47 @@ validate_string_literals() {
 	return $violations
 }
 
+# ABSOLUTE gate (not ratchet): raw stat -c / stat -f in .agents/scripts/ is
+# always wrong after the portable-stat.sh migration (GH#21742). Use
+# _file_mtime_epoch, _file_size_bytes, _file_perms, _file_owner, _stat_batch,
+# or _stat_translate_fmt instead.
+# Allowlist: portable-stat.sh (defines the wrappers), lint-shell-portability.sh
+# (detects raw stat in other repos), and test files.
+validate_portable_stat() {
+	local violations=0
+
+	print_info "Validating portable-stat usage (absolute)..."
+
+	for file in "$@"; do
+		[[ ! -f "$file" ]] && continue
+		local base
+		base=$(basename "$file")
+		# Allowlisted files that legitimately reference raw stat
+		case "$base" in
+			portable-stat.sh|lint-shell-portability.sh|test-*) continue ;;
+		esac
+
+		local raw_count
+		# Match stat -c or stat -f in code lines (skip comments)
+		raw_count=$(grep -cE '(^|[[:space:]])stat[[:space:]]+-[cf][[:space:]%]' "$file" 2>/dev/null || true)
+		# Subtract comment lines
+		local comment_count
+		comment_count=$(grep -cE '^[[:space:]]*#.*stat[[:space:]]+-[cf]' "$file" 2>/dev/null || true)
+		[[ -z "$raw_count" ]] && raw_count=0
+		[[ -z "$comment_count" ]] && comment_count=0
+		local code_count=$((raw_count - comment_count))
+		[[ "$code_count" =~ ^[0-9]+$ ]] || code_count=0
+
+		if ((code_count > 0)); then
+			print_error "Raw stat -c/-f in $file ($code_count call(s)). Use portable-stat.sh wrappers instead."
+			grep -nE '(^|[[:space:]])stat[[:space:]]+-[cf][[:space:]%]' "$file" | grep -v '^[[:space:]]*#' >&2 || true
+			((++violations))
+		fi
+	done
+
+	return $violations
+}
+
 run_shellcheck() {
 	local violations=0
 
@@ -949,6 +990,9 @@ main_pre_commit() {
 	echo "" >&2
 
 	run_shellcheck "${modified_files[@]}" || ((total_violations += $?))
+	echo "" >&2
+
+	validate_portable_stat "${modified_files[@]}" || ((total_violations += $?))
 	echo "" >&2
 
 	# Final decision

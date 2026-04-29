@@ -38,7 +38,7 @@ _PULSE_LOGGING_LOADED=1
 #   - Atomic: uses a tmp file + mv to avoid partial archives.
 #   - Non-fatal: any failure is logged to WRAPPER_LOGFILE and silently
 #     ignored so the pulse cycle is never blocked by log housekeeping.
-#   - macOS compatible: uses stat -f %z (BSD stat) with fallback to wc -c.
+#   - Cross-platform: uses _file_size_bytes from portable-stat.sh.
 #   - No external deps beyond gzip (standard on macOS and Linux).
 #######################################
 rotate_pulse_log() {
