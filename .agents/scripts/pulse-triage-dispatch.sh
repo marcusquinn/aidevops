@@ -9,6 +9,7 @@
 # (parent: GH#21146, child: GH#21326).
 #
 # Functions in this sub-library:
+#   - _consolidation_skip_if_resolved (t3050 — pre-flight resolved-parent gate)
 #   - _compose_consolidation_worker_instructions
 #   - _compose_consolidation_child_body
 #   - _ensure_consolidation_labels
@@ -678,4 +679,136 @@ _backfill_stale_consolidation_labels() {
 		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_locks_expired} stale consolidation-in-progress lock(s) (t2151 TTL)" >>"$LOGFILE"
 	fi
 	return 0
+}
+
+#######################################
+# t3050: Pre-flight gate for _dispatch_issue_consolidation.
+# Aborts consolidation silently when the parent issue's work is already
+# resolved, without acquiring the cross-runner lock or creating any child.
+#
+# Three abort conditions (checked in order, cheapest first):
+#
+#   1. Parent carries `dispatch-blocked:committed-to-main` (t2955 cache
+#      label) — work is committed to main. Abort.
+#   2. Parent is CLOSED with stateReason=NOT_PLANNED — maintainer declined
+#      it as "won't do". Abort.
+#   3. ≥80% of #NNN refs in the parent body are merged PRs — substantive
+#      children already delivered. Abort.
+#
+# Each abort path posts a one-shot <!-- consolidation-skipped --> marker
+# comment via _gh_idempotent_comment (won't double-post on re-trigger) and
+# emits a log line. The idempotency marker survives across pulse cycles so
+# a re-evaluation of the parent won't generate duplicate noise.
+#
+# Fail-open: on API errors the function returns 1 (proceed), letting the
+# normal flow decide. A missed skip is preferable to a false block.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Returns:
+#   0 — skip: caller MUST abort consolidation for this parent
+#   1 — proceed: no resolved-parent condition detected, dispatch may continue
+#######################################
+_consolidation_skip_if_resolved() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Idempotency marker shared by all three abort paths. Declared once so
+	# the string-literal ratchet sees a single instance rather than three.
+	local skip_marker="<!-- consolidation-skipped -->"
+
+	# Fetch parent state, stateReason, labels, and body in one gh call.
+	# stateReason is a GitHub GraphQL enum: NOT_PLANNED, COMPLETED, REOPENED.
+	local parent_json
+	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,stateReason,labels,body 2>/dev/null) || parent_json=""
+
+	if [[ -z "$parent_json" ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: API error for #${issue_number} in ${repo_slug} — failing open (t3050)" >>"$LOGFILE"
+		return 1
+	fi
+
+	local parent_state parent_state_reason parent_labels_csv parent_body
+	parent_state=$(printf '%s' "$parent_json" \
+		| jq -r '.state // "OPEN"' 2>/dev/null) || parent_state="OPEN"
+	parent_state_reason=$(printf '%s' "$parent_json" \
+		| jq -r '.stateReason // ""' 2>/dev/null) || parent_state_reason=""
+	parent_labels_csv=$(printf '%s' "$parent_json" \
+		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || parent_labels_csv=""
+	parent_body=$(printf '%s' "$parent_json" \
+		| jq -r '.body // ""' 2>/dev/null) || parent_body=""
+
+	local skip_msg
+
+	# --- Gate 1: dispatch-blocked:committed-to-main label (t2955) ---
+	if printf ',%s,' "$parent_labels_csv" \
+		| grep -qF ",dispatch-blocked:committed-to-main,"; then
+		skip_msg="${skip_marker}
+Skipping consolidation — parent work already committed to main (t2955 cache label)."
+		_gh_idempotent_comment "$issue_number" "$repo_slug" \
+			"$skip_marker" "$skip_msg"
+		echo "[pulse-wrapper] Consolidation pre-flight: #${issue_number} in ${repo_slug} — dispatch-blocked:committed-to-main → skip (t3050)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Gate 2: CLOSED with stateReason=NOT_PLANNED ---
+	if [[ "$parent_state" == "CLOSED" && "$parent_state_reason" == "NOT_PLANNED" ]]; then
+		skip_msg="${skip_marker}
+Skipping consolidation — parent closed as not_planned. If consolidation is genuinely needed, reopen the parent or file a fresh issue."
+		_gh_idempotent_comment "$issue_number" "$repo_slug" \
+			"$skip_marker" "$skip_msg"
+		echo "[pulse-wrapper] Consolidation pre-flight: #${issue_number} in ${repo_slug} — CLOSED/NOT_PLANNED → skip (t3050)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# --- Gate 3: ≥80% of #NNN refs in body are merged PRs ---
+	# Extract unique numeric values from all #NNN patterns in the body.
+	# Exclude the parent issue itself to avoid self-references.
+	local child_refs_raw
+	child_refs_raw=$(printf '%s' "$parent_body" \
+		| grep -oE '#[0-9]+' \
+		| grep -oE '[0-9]+' \
+		| grep -v "^${issue_number}$" \
+		| sort -un 2>/dev/null) || child_refs_raw=""
+
+	if [[ -z "$child_refs_raw" ]]; then
+		# No child refs found — nothing to check.
+		return 1
+	fi
+
+	local total_refs=0 merged_count=0 merged_list=""
+	local ref merged_at
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		total_refs=$((total_refs + 1))
+		# Try as a PR: non-zero merged_at → this ref is a merged PR.
+		merged_at=$(gh api "repos/${repo_slug}/pulls/${ref}" \
+			--jq '.merged_at // ""' 2>/dev/null) || merged_at=""
+		if [[ -n "$merged_at" ]]; then
+			merged_count=$((merged_count + 1))
+			if [[ -z "$merged_list" ]]; then
+				merged_list="#${ref}"
+			else
+				merged_list="${merged_list}, #${ref}"
+			fi
+		fi
+	done <<<"$child_refs_raw"
+
+	if [[ "$total_refs" -gt 0 ]]; then
+		# Integer-only arithmetic: (merged * 100 / total) >= 80
+		local pct
+		pct=$(( merged_count * 100 / total_refs ))
+		if [[ "$pct" -ge 80 ]]; then
+			skip_msg="${skip_marker}
+Skipping consolidation — ${merged_count} of ${total_refs} child issues resolved via merged PRs (${merged_list})."
+			_gh_idempotent_comment "$issue_number" "$repo_slug" \
+				"$skip_marker" "$skip_msg"
+			echo "[pulse-wrapper] Consolidation pre-flight: #${issue_number} in ${repo_slug} — ${merged_count}/${total_refs} child PRs merged → skip (t3050)" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	return 1
 }

@@ -217,6 +217,16 @@ _dispatch_issue_consolidation() {
 	# Ensure labels exist on this repo up front. Idempotent (--force).
 	_ensure_consolidation_labels "$repo_slug"
 
+	# t3050: Pre-flight gate — abort before any lock acquisition or child
+	# creation when the parent's work is already resolved. Covers three cases:
+	#   (a) dispatch-blocked:committed-to-main label (t2955 cache)
+	#   (b) parent CLOSED as NOT_PLANNED
+	#   (c) ≥80% of child issue refs have merged PRs
+	# Fail-open: returns 1 on API errors so normal flow decides.
+	if _consolidation_skip_if_resolved "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
 	# t2161: skip if a resolving PR already exists — defence-in-depth vs
 	# cross-runner version drift; cheaper than child_exists, runs first.
 	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
