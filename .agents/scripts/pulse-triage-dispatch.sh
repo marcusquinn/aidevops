@@ -715,12 +715,9 @@ _consolidation_skip_if_resolved() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	# Idempotency marker shared by all three abort paths. Declared once so
-	# the string-literal ratchet sees a single instance rather than three.
+	# Shared idempotency marker (declared once — avoids string-literal ratchet).
 	local skip_marker="<!-- consolidation-skipped -->"
-
-	# Fetch parent state, stateReason, labels, and body in one gh call.
-	# stateReason is a GitHub GraphQL enum: NOT_PLANNED, COMPLETED, REOPENED.
+	# Fetch state, stateReason (NOT_PLANNED/COMPLETED/REOPENED), labels, body.
 	local parent_json
 	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,stateReason,labels,body 2>/dev/null) || parent_json=""
@@ -730,7 +727,7 @@ _consolidation_skip_if_resolved() {
 		return 1
 	fi
 
-	local parent_state parent_state_reason parent_labels_csv parent_body
+	local parent_state="" parent_state_reason="" parent_labels_csv="" parent_body=""
 	parent_state=$(printf '%s' "$parent_json" \
 		| jq -r '.state // "OPEN"' 2>/dev/null) || parent_state="OPEN"
 	parent_state_reason=$(printf '%s' "$parent_json" \
@@ -779,7 +776,7 @@ Skipping consolidation — parent closed as not_planned. If consolidation is gen
 	fi
 
 	local total_refs=0 merged_count=0 merged_list=""
-	local ref merged_at
+	local ref="" merged_at=""
 	while IFS= read -r ref; do
 		[[ -n "$ref" ]] || continue
 		total_refs=$((total_refs + 1))
