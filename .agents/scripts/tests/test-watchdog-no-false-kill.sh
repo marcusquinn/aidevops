@@ -304,6 +304,83 @@ assert_contains \
 	"$watchdog_source"
 
 #######################################
+# Test 18: t3060 / GH#21788 — enum-prefix kill_reason coupling
+#######################################
+# The classifier in _run_pulse_watchdog extracts via ${kill_reason%%:*} and
+# matches against UPPERCASE enum literals. Setter sites must emit a matching
+# enum prefix or the classifier silently falls back to pulse_unknown. These
+# assertions pin the contract: setter prefix ↔ classifier enum case.
+
+# 18a-18e: Each setter site emits its enum prefix. Match the WD_KILL_REASON
+# assignment with the prefix attached so a future refactor that drops the
+# prefix is caught immediately.
+# shellcheck disable=SC2016  # Literal string for grep match — not variable expansion
+assert_contains \
+	"18a. WALL_CLOCK_STALE setter has enum prefix" \
+	'WD_KILL_REASON="WALL_CLOCK_STALE:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18b. COLD_START_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="COLD_START_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18c. PROGRESS_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="PROGRESS_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18d. IDLE_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="IDLE_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18e. STOP_FLAG setter has enum prefix" \
+	'WD_KILL_REASON="STOP_FLAG:' \
+	"$pulse_wd_source"
+
+# 18f: Classifier extracts via ${kill_reason%%:*} (deterministic) — not via
+# prose substring matching that drifts when the message is reworded.
+# shellcheck disable=SC2016
+assert_contains \
+	"18f. Classifier extracts enum prefix via parameter expansion" \
+	'_pw_reason_prefix="${kill_reason%%:*}"' \
+	"$pulse_wd_source"
+
+# 18g: Classifier dispatches on the prefix variable, not on the full
+# kill_reason string. This is the structural anti-regression check —
+# `case "$_pw_reason_prefix" in` proves the prose-substring classifier
+# is gone.
+# shellcheck disable=SC2016
+assert_contains \
+	"18g. Classifier case dispatches on prefix variable" \
+	'case "$_pw_reason_prefix" in' \
+	"$pulse_wd_source"
+
+# 18h-18i: The pre-t3060 prose-substring patterns must NOT reappear in the
+# classifier. If a future refactor reverts to "*"stale threshold"*) ..."
+# the coupling breaks again. Pin negation.
+assert_not_contains \
+	"18h. Prose-substring classifier 'stale threshold' is gone" \
+	'*"stale threshold"*) _pw_reason_class=' \
+	"$pulse_wd_source"
+assert_not_contains \
+	"18i. Prose-substring classifier 'cold-start stalled' is gone" \
+	'*"cold-start stalled"*) _pw_reason_class=' \
+	"$pulse_wd_source"
+
+# 18j: pulse_unknown remains as the defensive default — a setter added
+# without its enum mapping must surface as pulse_unknown, not a wrong
+# class. This catches the failure mode where a developer adds a 6th
+# kill site but forgets to extend the case statement.
+# shellcheck disable=SC2016
+assert_contains \
+	"18j. pulse_unknown default preserved as classifier safety net" \
+	'_pw_reason_class="pulse_unknown"' \
+	"$pulse_wd_source"
+
+#######################################
 # Summary
 #######################################
 echo ""
