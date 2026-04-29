@@ -304,7 +304,8 @@ _dt_json_field() {
 		return 0
 	fi
 	# Try numeric
-	val=$(printf '%s' "$line" | grep -oE "\"${field}\"[[:space:]]*:[[:space:]]*[0-9]+" | tail -1 | cut -d: -f2 | tr -d ' ')
+	val=$(printf '%s' "$line" | grep -oE "\"${field}\"[[:space:]]*:[[:space:]]*[0-9]+" | tail -1 | cut -d: -f2)
+	val=${val// /}
 	echo "$val"
 	return 0
 }

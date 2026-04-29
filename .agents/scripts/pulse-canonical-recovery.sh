@@ -466,13 +466,45 @@ pulse_canonical_recover() {
 	_pcr_record_attempt "$repo_path"
 	_pcr_log "recovering ${repo_path} (state=${state})"
 
-	# Step 1: clear unmerged state if present (safe; no-op if no merge active).
+	# Step 1: clear unmerged state if present.
 	if [[ "$state" == "unmerged" ]]; then
-		git -C "$repo_path" merge --abort 2>/dev/null || true
+		# Detect stale-UU: unmerged index entries with no active merge operation.
+		# This occurs when git crashes mid-merge-resolve, leaving UU entries in
+		# the index but no .git/MERGE_HEAD / CHERRY_PICK_HEAD / REBASE_HEAD
+		# sentinel file.  In that case `git merge --abort` fails with "no merge
+		# to abort" (exit 1) — the fallback `git reset --merge HEAD` clears the
+		# stale conflict entries while preserving unrelated working-tree edits.
+		# Without this path the code falls through to `stash push` which also
+		# fails on unresolved conflicts, escalating unnecessarily to an advisory
+		# (GH#20935).
+		local is_stale_uu=0
+		if [[ ! -e "${repo_path}/.git/MERGE_HEAD" \
+		   && ! -e "${repo_path}/.git/CHERRY_PICK_HEAD" \
+		   && ! -e "${repo_path}/.git/REBASE_HEAD" ]]; then
+			is_stale_uu=1
+			_pcr_log "stale-UU detected (no active merge/cherry-pick/rebase) for $repo_path"
+			_pcr_audit "stale-uu-detect" "$repo_path" "attempting"
+			# merge --abort is a no-op without an active merge but is safe to
+			# try — it may succeed in edge cases where the HEAD file was
+			# manually removed.  If it fails, reset --merge HEAD is the
+			# definitive fix for stale index conflict entries.
+			git -C "$repo_path" merge --abort 2>/dev/null \
+				|| git -C "$repo_path" reset --merge HEAD 2>/dev/null \
+				|| true
+		else
+			# Active merge / cherry-pick / rebase — abort it cleanly.
+			git -C "$repo_path" merge --abort 2>/dev/null || true
+		fi
+
 		state=$(_pcr_detect_state "$repo_path")
 		if [[ "$state" == "clean" ]]; then
-			_pcr_audit "merge-abort" "$repo_path" "success"
-			_pcr_log "merge --abort cleaned working tree for $repo_path"
+			if [[ "$is_stale_uu" -eq 1 ]]; then
+				_pcr_audit "stale-uu-recover" "$repo_path" "ok:index-reset"
+				_pcr_log "stale-UU cleared via index reset for $repo_path"
+			else
+				_pcr_audit "merge-abort" "$repo_path" "success"
+				_pcr_log "merge --abort cleaned working tree for $repo_path"
+			fi
 			return 0
 		fi
 	fi

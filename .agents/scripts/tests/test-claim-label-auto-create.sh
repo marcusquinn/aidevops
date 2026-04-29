@@ -258,7 +258,9 @@ STUB
 }
 
 # ---------------------------------------------------------------------------
-# Test 4: blocked-by:#999 (issue-number variant), gh create succeeds → returns 0
+# Test 4: blocked-by:GH#999 (normalised GitHub issue ref), gh create succeeds → returns 0
+# _normalise_ref() in _detect_predecessor_refs produces GH#NNN (not bare #NNN), so
+# the regex must match the GH# prefix — this test covers that path (GH#21633).
 # ---------------------------------------------------------------------------
 _run_test4() {
 	local stub_dir
@@ -287,16 +289,16 @@ STUB
 	unset AIDEVOPS_LABEL_CACHE_FILE
 
 	local rc=0
-	_validate_labels_exist "owner/repo" "bug,blocked-by:#999" 2>/dev/null || rc=$?
+	_validate_labels_exist "owner/repo" "bug,blocked-by:GH#999" 2>/dev/null || rc=$?
 
 	PATH="$saved_path"
 	[[ -n "$saved_cache" ]] && export AIDEVOPS_LABEL_CACHE_FILE="$saved_cache" || true
 
-	assert_return "test4_blocked_by_hash_variant_returns_0" "$rc" "0"
+	assert_return "test4_blocked_by_gh_hash_variant_returns_0" "$rc" "0"
 
 	local create_called=""
 	[[ -f "$create_called_file" ]] && create_called="$(cat "$create_called_file")"
-	assert_eq "test4_gh_label_create_was_called_for_hash_variant" "$create_called" "called"
+	assert_eq "test4_gh_label_create_was_called_for_gh_hash_variant" "$create_called" "called"
 
 	return 0
 }

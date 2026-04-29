@@ -228,6 +228,20 @@ assert_eq "multiword_title_preserved" \
 	"$result7" \
 	"- [ ] t400 fix the frobnicator bug ref:GH#111"
 
+# 8. GH#21723 regression: tNNN: prefix in title must NOT be doubled in TODO line.
+# create_github_issue passes the GitHub issue title (which has "tNNN: " prepended)
+# to _ensure_todo_entry_written — the TODO line must strip it to avoid
+# "- [ ] tNNN tNNN: description".
+result8="$(run_ensure "t3041" "21656" "t3041: investigate pulse-merge-routine hang" "")"
+assert_eq "no_doubled_task_id_prefix" \
+	"$result8" \
+	"- [ ] t3041 investigate pulse-merge-routine hang ref:GH#21656"
+
+# 9. GH#21723: Verify the stripped desc is still correct when labels are present.
+result9="$(run_ensure "t500" "99999" "t500: add new feature" "auto-dispatch,bug")"
+assert_contains "no_doubled_prefix_with_labels_task_id" "$result9" "- [ ] t500 add new feature"
+assert_not_contains "no_doubled_prefix_with_labels_t500" "$result9" "t500: add new feature"
+
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------

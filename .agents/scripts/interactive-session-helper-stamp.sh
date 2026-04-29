@@ -31,6 +31,14 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Resolve the local hostname, returning a single canonical fallback when the
+# `hostname` command is unavailable. Centralised so the fallback literal lives
+# in one place (avoids the t2763-style repeated-string-literal ratchet).
+_isc_hostname_or_fallback() {
+	hostname 2>/dev/null || printf '%s' "unknown"
+	return 0
+}
+
 # Write a stamp JSON file for a claim. Idempotent — overwrites on re-call so
 # the `claimed_at` timestamp refreshes for crash-recovery tie-breaks.
 _isc_write_stamp() {
@@ -49,7 +57,7 @@ _isc_write_stamp() {
 
 	local timestamp hostname
 	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	hostname=$(hostname 2>/dev/null || echo "unknown")
+	hostname=$(_isc_hostname_or_fallback)
 
 	# t2421: compute argv hash for PID-reuse-resistant liveness checks.
 	# Stored in the stamp so scan-stale can verify PID identity later.
@@ -165,6 +173,171 @@ _isc_list_stampless_interactive_claims() {
 	return 0
 }
 
+# -----------------------------------------------------------------------------
+# Branch → issue extraction (t2916/GH#21074)
+# -----------------------------------------------------------------------------
+# Map a worktree branch name to a GitHub issue number using the same patterns
+# the framework uses elsewhere (see worktree-helper.sh::_interactive_session_auto_claim
+# and pulse-cleanup.sh::_record_orphan_crash_classification).
+#
+# Patterns accepted (first-match wins, evaluated in priority order):
+#   <prefix>/gh<NNN>[-_]<rest>      e.g. bugfix/gh18700-foo
+#   <prefix>/gh-<NNN>[-_]<rest>     e.g. feature/gh-21074-active-claim-guard
+#   <prefix>/auto-*-gh<NNN>         e.g. feature/auto-20260429-062620-gh21074
+#   <prefix>/t<NNN>[-_]<rest>       e.g. feature/t2916-foo (no TODO.md lookup —
+#                                   the dispatch-time priority-3 lookup in
+#                                   worktree-helper.sh covers that path; this
+#                                   helper is called from cleanup paths where
+#                                   we want a cheap structural-only check)
+#
+# Stdout: issue number on success (numeric, no newline beyond printf).
+# Exit:   0 on match, 1 on no match.
+#
+# Why no TODO.md fallback: this helper is called from cleanup paths that may
+# run mid-pulse-cycle on branches whose corresponding TODO entry has already
+# been completion-stripped. A structural-only match is the safe behaviour —
+# false negatives mean we fall through to the existing 4 safety checks (no
+# regression); false positives could surface a wrong issue (we'd skip the
+# wrong worktree). Branch-name patterns are unambiguous structurally.
+_isc_extract_issue_from_branch() {
+	local branch="${1:-}"
+	[[ -z "$branch" ]] && return 1
+
+	# Priority 1: explicit gh<NNN> or gh-<NNN> in any path segment
+	if [[ "$branch" =~ /gh-?([0-9]+)[-_] ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	# Priority 2: trailing -gh<NNN> (auto-dispatch branch naming, GH#19042)
+	if [[ "$branch" =~ -gh-?([0-9]+)$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	# Priority 3: t<NNN> in any path segment — but we cannot resolve to an
+	# issue number without a TODO.md lookup. Return 1 (no match) so the
+	# caller falls through to the existing safety checks.
+	return 1
+}
+
+# Check whether a branch has an active interactive-session claim — i.e., a
+# stamp file exists for the issue derived from the branch AND the stamp's
+# pid field references a live process matching the worker pattern.
+#
+# Same source of truth as the dispatch-dedup gate (`_has_active_claim` in
+# dispatch-dedup-helper.sh) and the scan-stale Phase 1 logic.
+#
+# Arguments:
+#   $1 = branch ref (e.g. "feature/gh-21074-active-claim-guard")
+#   [--worktree PATH] = optional worktree path; when supplied, the slug is
+#                       derived from `git -C <path> remote get-url origin`.
+#                       When omitted, the helper falls back to the current
+#                       working directory's git remote.
+#
+# Slug derivation strategy: a single branch name can map to one issue across
+# all repos that happen to use compatible naming, so we cannot derive slug
+# from branch alone. The cleanup path always knows the worktree path, so
+# pass it via --worktree.
+#
+# Exit:
+#   0 — active claim exists (stamp present, PID alive, hostname matches)
+#   1 — no active claim (no stamp, or stamp is stale/cross-host/dead-PID)
+#
+# Fail-open contract: any error in slug derivation, branch parsing, or
+# stamp parsing returns 1 (no claim). The caller treats "no claim" as
+# "fall through to existing safety checks" — never as "skip cleanup". A
+# transient error must not freeze worktree cleanup forever.
+_isc_branch_has_active_claim() {
+	local branch=""
+	local worktree_path=""
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+			--worktree)
+				worktree_path="${2:-}"
+				shift 2
+				;;
+			--worktree=*)
+				worktree_path="${_arg#--worktree=}"
+				shift
+				;;
+			-*)
+				# Unknown flag — ignore for forward-compat
+				shift
+				;;
+			*)
+				if [[ -z "$branch" ]]; then
+					branch="$_arg"
+				fi
+				shift
+				;;
+		esac
+	done
+
+	[[ -z "$branch" ]] && return 1
+
+	local issue
+	issue=$(_isc_extract_issue_from_branch "$branch") || return 1
+	[[ -z "$issue" ]] && return 1
+
+	# Derive slug from worktree-path remote when supplied, else from CWD.
+	local slug=""
+	if [[ -n "$worktree_path" && -d "$worktree_path" ]]; then
+		slug=$(git -C "$worktree_path" remote get-url origin 2>/dev/null \
+			| sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	fi
+	if [[ -z "$slug" ]]; then
+		slug=$(git remote get-url origin 2>/dev/null \
+			| sed 's|.*github\.com[:/]||;s|\.git$||' || echo "")
+	fi
+	[[ -z "$slug" ]] && return 1
+
+	local stamp_file
+	stamp_file=$(_isc_stamp_path "$issue" "$slug")
+	[[ -f "$stamp_file" ]] || return 1
+
+	# Read stamp fields. Treat any jq error as "no claim" (fail-open).
+	local pid hostname stored_hash
+	pid=$(jq -r '.pid // empty' "$stamp_file" 2>/dev/null || echo "")
+	hostname=$(jq -r '.hostname // empty' "$stamp_file" 2>/dev/null || echo "")
+	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp_file" 2>/dev/null || echo "")
+
+	# Cross-host stamps cannot have their PID verified. Other hosts are
+	# assumed to be the authority for their own claims — if a remote
+	# session is alive on a different machine, we still want to skip
+	# cleanup of its worktree; if it's dead, scan-stale on that host
+	# will reap it. Trust the stamp existence.
+	local local_host
+	local_host=$(_isc_hostname_or_fallback)
+	if [[ -n "$hostname" && "$hostname" != "$local_host" ]]; then
+		return 0
+	fi
+
+	# Local host: verify PID is alive AND matches a runtime pattern.
+	# `_is_process_alive_and_matches` is in shared-constants.sh.
+	if [[ -z "$pid" ]]; then
+		# Stamp without a pid — fail-OPEN. Treat as no claim so the
+		# regular safety checks decide. A stamp predating the t2421
+		# pid+hash columns shouldn't permanently freeze cleanup.
+		return 1
+	fi
+
+	if command -v _is_process_alive_and_matches >/dev/null 2>&1; then
+		if _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-opencode|claude|Claude}" "$stored_hash"; then
+			return 0
+		fi
+		return 1
+	fi
+
+	# Fallback when shared-constants.sh is unavailable: bare kill -0.
+	# Less precise (PID reuse risk) but still safer than skipping the
+	# check entirely on a degraded environment.
+	if kill -0 "$pid" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 # Post a claim comment on the issue for audit trail visibility.
 # Mirrors worker dispatch comments but for interactive sessions.
 # Best-effort — all errors are swallowed so the caller never stalls.
@@ -178,7 +351,7 @@ _isc_post_claim_comment() {
 	local worktree_path="$4"
 
 	local hostname
-	hostname=$(hostname 2>/dev/null || echo "unknown")
+	hostname=$(_isc_hostname_or_fallback)
 	local worktree_note=""
 	if [[ -n "$worktree_path" ]]; then
 		worktree_note=" in \`${worktree_path##*/}\`"

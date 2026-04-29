@@ -610,3 +610,11 @@ log lines alongside classifications. Use `--json` for programmatic consumption.
   is a candidate follow-up (`pulse-diagnose-helper.sh issue <N>`).
 - Log lines without timestamps are sorted lexically (best effort).
 - Rotated `.gz` logs require `zcat` to be available.
+
+## Stage Timeout: rc=143 (SIGTERM) in Dispatch Stages (t3054)
+
+When a preflight stage wrapped in `run_stage_with_timeout` exceeds its budget, the watchdog sends SIGTERM to the process tree. In-progress child stages receive rc=143 (signal 15). Prior to t3054, `preflight_early_dispatch` used a 600s group timeout while internally dispatching N candidates (each with its own 600s per-candidate timeout). When cumulative candidate time exceeded the group budget, the group kill terminated in-progress candidates that were still within their individual budgets.
+
+**Fix (t3054):** `preflight_early_dispatch` no longer uses `run_stage_with_timeout`. Per-candidate timeouts (`fill_floor_candidate_*`) provide the safety net; the stage logs timing to `PULSE_STAGE_TIMINGS_LOG` for observability without imposing a hard kill.
+
+**Diagnosis:** If `fill_floor_candidate_*` stages show rc=143 without a corresponding per-candidate timeout log (`Stage timeout: fill_floor_candidate_*`), check whether a parent stage's group timeout fired instead — the parent kill propagates SIGTERM to children. Post-t3054, this should no longer occur for `preflight_early_dispatch`.

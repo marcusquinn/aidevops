@@ -18,7 +18,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# _attempt_pr_update_branch was moved to pulse-merge-process.sh (GH#21595, t3030).
+# _process_single_ready_pr stays in pulse-merge.sh — the static checks below
+# (test_nmr_guard_exists_before_close, test_mergeable_refetch_after_update_branch)
+# read it from $MERGE_SCRIPT.
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -84,16 +89,16 @@ EOF
 	return 0
 }
 
-# Extract `_attempt_pr_update_branch` from pulse-merge.sh and eval it into
-# the test shell. Matches the define_helper_under_test pattern used by
-# test-pulse-merge-rebase-nudge.sh.
+# Extract `_attempt_pr_update_branch` from pulse-merge-process.sh (post-GH#21595)
+# and eval it into the test shell. Matches the define_helper_under_test
+# pattern used by test-pulse-merge-rebase-nudge.sh.
 define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$PROCESS_SCRIPT")
 	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _attempt_pr_update_branch from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _attempt_pr_update_branch from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090

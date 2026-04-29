@@ -249,22 +249,61 @@ has_open_pr() {
 		return 1
 	fi
 
-	# Check 1: open PRs whose commits reference this issue.
-	_has_open_pr_check_open_commits "$issue_number" "$repo_slug" && return 0
+	# t3043: parallelise the 4 sub-checks. Previously serial (4x 3-10s =
+	# 12-40s); now concurrent via temp files and background jobs. The common
+	# case is "no PR evidence" where all 4 checks run — parallelising turns
+	# 12-40s into max(3-10s) ≈ 3-10s (4x faster). When evidence IS found
+	# early, the wasted parallel calls don't affect the critical path (the
+	# candidate is blocked regardless).
+	local _pr_tmpdir
+	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
+	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
 
-	# Check 1b (t2085): open PRs with closing-keyword in body. Required because
-	# the framework convention writes `Resolves #NNN` in the PR body, not in
-	# commit subjects — so Check 1's commit-subject matcher misses every
-	# routine implementation PR. Without this, Layer 4 dedup is blind to
-	# in-flight work and produces cross-runner duplicate dispatch (the
-	# marcusquinn-vs-alex-solovyev race on issue #18779 → PR #18906).
-	_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" && return 0
+	# Launch all 4 checks in parallel, each writing exit code + output to a file
+	(
+		_result=$(_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check1.out" || true
+	) &
+	local _pr_pid1=$!
 
-	# Check 2: merged PRs with closing-keyword in body.
-	_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" && return 0
+	(
+		_result=$(_has_open_pr_check_open_body_keyword "$issue_number" "$repo_slug" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check1b.out" || true
+	) &
+	local _pr_pid2=$!
 
-	# Check 3: task-ID title match on merged PRs (planning-aware).
-	_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" && return 0
+	(
+		_result=$(_has_open_pr_check_merged_keywords "$issue_number" "$repo_slug" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check2.out" || true
+	) &
+	local _pr_pid3=$!
 
+	(
+		_result=$(_has_open_pr_check_task_id_title "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check3.out" || true
+	) &
+	local _pr_pid4=$!
+
+	# Wait for all to complete
+	wait "$_pr_pid1" 2>/dev/null || true
+	wait "$_pr_pid2" 2>/dev/null || true
+	wait "$_pr_pid3" 2>/dev/null || true
+	wait "$_pr_pid4" 2>/dev/null || true
+
+	# Check results — any hit means PR evidence exists
+	local _check_file _check_output
+	for _check_file in "${_pr_tmpdir}/check1.out" "${_pr_tmpdir}/check1b.out" \
+		"${_pr_tmpdir}/check2.out" "${_pr_tmpdir}/check3.out"; do
+		if [[ -f "$_check_file" ]]; then
+			_check_output=$(cat "$_check_file" 2>/dev/null) || _check_output=""
+			if [[ -n "$_check_output" ]]; then
+				printf '%s\n' "$_check_output"
+				rm -rf "$_pr_tmpdir" 2>/dev/null || true
+				return 0
+			fi
+		fi
+	done
+
+	rm -rf "$_pr_tmpdir" 2>/dev/null || true
 	return 1
 }

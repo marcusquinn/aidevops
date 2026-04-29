@@ -864,7 +864,7 @@ _cmd_enable_systemd() {
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
-	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; ${script_path} kept inside outer double quotes for safe expansion
+	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; \"${script_path}\" expands to "path" in the service file, preserving space-safe quoting
 	printf '%s' "[Unit]
 Description=aidevops auto-update
 After=network.target
@@ -872,7 +872,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -lc '${script_path} check'
+ExecStart=/bin/bash -lc '\"${script_path}\" check'
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle
@@ -1209,9 +1209,19 @@ _cmd_status_scheduler() {
 			local enabled_state
 			enabled_state=$(systemctl --user is-enabled "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || echo "unknown")
 			local timer_props next_elapse last_trigger
-			timer_props=$(systemctl --user show -p NextElapse,LastTriggerUSec "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
-			next_elapse=$(echo "$timer_props" | grep '^NextElapse=' | cut -d= -f2-)
-			last_trigger=$(echo "$timer_props" | grep '^LastTriggerUSec=' | cut -d= -f2-)
+			# Request all NextElapse variants: NextElapse (pre-255) and
+			# NextElapseUSecRealtime/NextElapseUSecMonotonic (systemd 255+)
+			timer_props=$(systemctl --user show -p NextElapse,NextElapseUSecRealtime,NextElapseUSecMonotonic,LastTriggerUSec "${SYSTEMD_UNIT_NAME}.timer" 2>/dev/null || true)
+			# Guard each grep with || true — under set -euo pipefail a no-match
+			# exit 1 propagates and kills the entire script (GH#21541)
+			next_elapse=$(echo "$timer_props" | grep '^NextElapse=' | cut -d= -f2- || true)
+			if [[ -z "$next_elapse" ]]; then
+				next_elapse=$(echo "$timer_props" | grep '^NextElapseUSecRealtime=' | cut -d= -f2- || true)
+			fi
+			if [[ -z "$next_elapse" ]]; then
+				next_elapse=$(echo "$timer_props" | grep '^NextElapseUSecMonotonic=' | cut -d= -f2- || true)
+			fi
+			last_trigger=$(echo "$timer_props" | grep '^LastTriggerUSec=' | cut -d= -f2- || true)
 			echo -e "  Scheduler: systemd (user timer)"
 			if [[ "$enabled_state" == "enabled" ]] || [[ "$enabled_state" == "enabled-runtime" ]]; then
 				echo -e "  Status:    ${GREEN}${enabled_state}${NC}"

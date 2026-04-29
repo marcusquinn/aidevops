@@ -209,6 +209,115 @@ test_unknown_command_returns_error() {
 }
 
 # -----------------------------------------------------------------------------
+# Test cases: cross-account-inherit debt class (t2880)
+# These tests use advisory files created manually (no live gh API calls).
+# They mirror how test-sync-pat-detection.sh tests the sync-pat advisory files
+# by treating the advisory file as the source of truth for the aggregator.
+# -----------------------------------------------------------------------------
+
+# (a) cross-account caller advisory is detected by list-cross-account-inherit
+test_cross_account_advisory_detected() {
+	_setup_sandbox
+	echo "[ADVISORY] Cross-account secrets:inherit detected for org/repo" \
+		>"$HOME/.aidevops/advisories/cross-account-inherit-org-repo.advisory"
+	local out
+	out="$("$HELPER" list-cross-account-inherit)"
+	if [[ "$out" != *"org/repo"* ]]; then
+		echo "    expected slug in output, got: '$out'" >&2
+		return 1
+	fi
+	return 0
+}
+
+# (b) Same-account caller (different prefix) is NOT returned by list-cross-account-inherit
+test_same_account_advisory_not_detected() {
+	_setup_sandbox
+	# sync-pat advisory should NOT appear in list-cross-account-inherit
+	echo "[ADVISORY] SYNC_PAT not set for sameorg/repo" \
+		>"$HOME/.aidevops/advisories/sync-pat-sameorg-repo.advisory"
+	local out
+	out="$("$HELPER" list-cross-account-inherit)"
+	_assert_empty "$out" "sync-pat advisory should not appear in list-cross-account-inherit"
+}
+
+# (c) Explicit SYNC_PAT mapping (post-#20976 caller) — no advisory → empty list
+test_explicit_mapping_no_advisory() {
+	_setup_sandbox
+	# No cross-account-inherit-*.advisory file means no advisory → empty
+	local out
+	out="$("$HELPER" list-cross-account-inherit)"
+	_assert_empty "$out" "no advisory should produce empty list"
+}
+
+# (d) Missing workflow file → no false positive, list is empty
+test_missing_workflow_no_false_positive() {
+	_setup_sandbox
+	# Advisories dir exists but contains no cross-account-inherit files
+	touch "$HOME/.aidevops/advisories/unrelated.txt"
+	local out
+	out="$("$HELPER" list-cross-account-inherit)"
+	_assert_empty "$out" "missing workflow should not produce cross-account advisory"
+}
+
+# (e) summary aggregation reports both sync-pat and cross-account-inherit classes
+test_summary_aggregates_both_classes() {
+	_setup_sandbox
+	echo "[ADVISORY] SYNC_PAT not set for org/a" \
+		>"$HOME/.aidevops/advisories/sync-pat-org-a.advisory"
+	echo "[ADVISORY] Cross-account detected for org/b" \
+		>"$HOME/.aidevops/advisories/cross-account-inherit-org-b.advisory"
+
+	local out_human
+	out_human="$("$HELPER" summary --format=human)"
+	# Both lines must appear
+	if [[ "$out_human" != *"SYNC_PAT"* ]]; then
+		echo "    human format missing SYNC_PAT line; got: '$out_human'" >&2
+		return 1
+	fi
+	if [[ "$out_human" != *"cross-account-inherit"* ]]; then
+		echo "    human format missing cross-account-inherit line; got: '$out_human'" >&2
+		return 1
+	fi
+
+	local out_toast
+	out_toast="$("$HELPER" summary --format=toast)"
+	# Must include both [WARN] lines
+	if [[ "$out_toast" != *"SYNC_PAT setup"* ]]; then
+		echo "    toast missing SYNC_PAT line; got: '$out_toast'" >&2
+		return 1
+	fi
+	if [[ "$out_toast" != *"workflow re-sync"* ]]; then
+		echo "    toast missing workflow re-sync line; got: '$out_toast'" >&2
+		return 1
+	fi
+
+	if command -v jq >/dev/null 2>&1; then
+		local out_json
+		out_json="$("$HELPER" summary --format=json)"
+		local sp_count ca_count total
+		sp_count="$(printf '%s' "$out_json" | jq -r '.count')"
+		ca_count="$(printf '%s' "$out_json" | jq -r '.cross_account_count')"
+		total="$(printf '%s' "$out_json" | jq -r '.total_count')"
+		_assert_eq "1" "$sp_count" "json sync_pat count" || return 1
+		_assert_eq "1" "$ca_count" "json cross_account_count" || return 1
+		_assert_eq "2" "$total" "json total_count" || return 1
+	fi
+
+	return 0
+}
+
+# dismissed cross-account advisory excluded from list
+test_cross_account_dismissed_excluded() {
+	_setup_sandbox
+	echo "[ADVISORY] Cross-account detected for org/repo" \
+		>"$HOME/.aidevops/advisories/cross-account-inherit-org-repo.advisory"
+	echo "cross-account-inherit-org-repo" >"$HOME/.aidevops/advisories/dismissed.txt"
+	local out
+	out="$("$HELPER" list-cross-account-inherit)"
+	_assert_empty "$out" "dismissed cross-account advisory should be excluded"
+}
+
+# -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
 
@@ -225,6 +334,13 @@ _run_test "list returns reconstructed slugs" test_list_returns_slugs
 _run_test "json format has expected structure" test_json_format_structure
 _run_test "help command emits banner" test_help_command
 _run_test "unknown command returns error" test_unknown_command_returns_error
+# cross-account-inherit class (t2880)
+_run_test "[t2880] cross-account advisory detected by list-cross-account-inherit" test_cross_account_advisory_detected
+_run_test "[t2880] sync-pat advisory not returned by list-cross-account-inherit" test_same_account_advisory_not_detected
+_run_test "[t2880] no advisory (explicit mapping) produces empty list" test_explicit_mapping_no_advisory
+_run_test "[t2880] missing workflow produces no false positive" test_missing_workflow_no_false_positive
+_run_test "[t2880] summary aggregates both sync-pat and cross-account classes" test_summary_aggregates_both_classes
+_run_test "[t2880] dismissed cross-account advisory excluded from list" test_cross_account_dismissed_excluded
 
 echo ""
 echo "PASS: $PASS"

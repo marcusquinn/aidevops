@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  pulse-merge webhook receiver (t3038)
+
+  Long-running background service that listens for GitHub webhook events
+  (check_suite.completed, pull_request_review.submitted, pull_request.labeled)
+  and dispatches affected PRs to pulse-merge.sh::process_pr immediately —
+  cutting CI-green-to-merged latency from 4-12 min down to seconds.
+
+  Backstop: pulse-merge-routine.sh's 120s polling loop is the safety net.
+  This service is an optimization, not a replacement.
+
+  Install:
+    sed -e "s|{{HOME}}|$HOME|g" \
+        -e "s|{{BASH_BIN}}|$(command -v bash)|g" \
+        -e "s|{{AIDEVOPS_AGENTS_SCRIPTS}}|$HOME/.aidevops/agents/scripts|g" \
+        .agents/templates/launchd/sh.aidevops.merge-webhook-receiver.plist.tmpl \
+      > ~/Library/LaunchAgents/sh.aidevops.merge-webhook-receiver.plist
+    launchctl load ~/Library/LaunchAgents/sh.aidevops.merge-webhook-receiver.plist
+
+  Pre-flight (validate config + secret without starting):
+    pulse-merge-webhook-receiver.sh --check
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.aidevops.merge-webhook-receiver</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>{{BASH_BIN}}</string>
+		<string>{{AIDEVOPS_AGENTS_SCRIPTS}}/pulse-merge-webhook-receiver.sh</string>
+		<string>run</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+		<key>Crashed</key>
+		<true/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>StandardOutPath</key>
+	<string>{{HOME}}/.aidevops/logs/merge-webhook-receiver.log</string>
+	<key>StandardErrorPath</key>
+	<string>{{HOME}}/.aidevops/logs/merge-webhook-receiver.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>{{HOME}}</string>
+	</dict>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>5</integer>
+</dict>
+</plist>

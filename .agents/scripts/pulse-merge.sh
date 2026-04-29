@@ -616,6 +616,66 @@ _process_single_ready_pr() {
 }
 
 #######################################
+# Process a single PR by (slug, pr_number) tuple. Webhook entry point (t3038).
+#
+# Fetches the PR JSON for the given (slug, pr_number) and delegates to
+# _process_single_ready_pr. Used by pulse-merge-webhook-receiver.sh to
+# fire merge attempts immediately on GitHub webhook events
+# (check_suite.completed, pull_request_review.submitted, pull_request.labeled)
+# instead of waiting for the next pulse-merge-routine cycle.
+#
+# The 120s polling loop in pulse-merge-routine.sh remains as backstop —
+# webhook-driven merges are an optimization, not a replacement.
+#
+# Args:
+#   $1 - repo slug (owner/repo)
+#   $2 - PR number
+# Returns:
+#   0 = merged successfully
+#   1 = skipped (gate failure, non-mergeable, or PR not found)
+#   2 = closed conflicting
+#   3 = merge failed
+#######################################
+process_pr() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	if [[ -z "$repo_slug" || -z "$pr_number" ]]; then
+		echo "[pulse-merge] process_pr: missing slug or PR number (slug='${repo_slug}', pr='${pr_number}')" >>"$LOGFILE"
+		return 1
+	fi
+	if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-merge] process_pr: invalid PR number '${pr_number}' for ${repo_slug}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Fetch the PR JSON in the same shape _merge_ready_prs_for_repo uses
+	# (number, mergeable, reviewDecision, author, title) and synthesize a
+	# single-PR object. _process_single_ready_pr expects a compact JSON object.
+	local pr_obj
+	pr_obj=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json number,mergeable,reviewDecision,author,title 2>/dev/null) || pr_obj=""
+
+	if [[ -z "$pr_obj" || "$pr_obj" == "null" ]]; then
+		echo "[pulse-merge] process_pr: gh pr view failed for ${repo_slug}#${pr_number}" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Verify state is OPEN — closed/merged PRs should not be re-processed.
+	local pr_state
+	pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null) || pr_state=""
+	if [[ "$pr_state" != "OPEN" ]]; then
+		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-merge] process_pr: webhook-triggered merge attempt for ${repo_slug}#${pr_number} (t3038)" >>"$LOGFILE"
+	_process_single_ready_pr "$repo_slug" "$pr_obj"
+	return $?
+}
+
+#######################################
 # Extract linked issue number from PR title or body.
 # Looks for: GitHub-native close keywords in PR body, "GH#NNN:" prefix in title.
 #

@@ -136,6 +136,28 @@ export PULSE_START_EPOCH
 STOP_FLAG="${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 
+# Hard ceiling on routine runtime (t3041, GH#21708). The merge routine has
+# historically hung for 30+ hours with green PRs sitting unmerged. Root cause
+# could not be reliably reproduced on the canonical marcusquinn/aidevops repo
+# (Phase 1, PR #21643), so a defence-in-depth timeout ceiling is the
+# durability fix: whatever the underlying hang site (gh API call without
+# timeout, flock deadlock, infinite retry loop on transient network error,
+# wait on dead PID), the routine cannot run longer than this ceiling.
+#
+# Default: 600s (10 min). Typical run on a healthy aidevops state with 5+ open
+# PRs completes in <60s. Set higher only if you have repos with many PRs
+# requiring extended remote ops; set lower for testing/CI.
+#
+# Watchdog interaction: launchd respawns the routine every 120s. If a single
+# invocation runs longer than 120s the next launchd tick will short-circuit
+# on the lock owned by the still-running PID — only one runner is ever active.
+# A 600s ceiling is well below the 30+ hour symptom and well above the
+# typical run duration, leaving headroom for slow remote round-trips.
+PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS="${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-600}"
+# Validate — non-numeric or zero means a config error; clamp to default.
+[[ "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]] || PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=600
+[[ "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" -lt 1 ]] && PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=600
+
 # =============================================================================
 # Runner-level state files
 # =============================================================================
@@ -169,6 +191,82 @@ _pmr_log() {
 _pmr_release_lock() {
 	rm -rf "$LOCK_DIR" 2>/dev/null || true
 	return 0
+}
+
+# =============================================================================
+# Hard timeout ceiling (t3041, GH#21708)
+# =============================================================================
+# Background a function/command in a subshell and kill its process tree if it
+# exceeds $1 seconds. Returns:
+#   0   — child completed successfully
+#   124 — timeout exceeded (matches GNU coreutils `timeout` exit convention)
+#   N>0 — child's own non-zero exit
+#
+# Uses _kill_tree / _force_kill_tree from worker-lifecycle-common.sh (already
+# sourced by this routine on line 87). Polling at 2s — same cadence as
+# run_stage_with_timeout in pulse-watchdog.sh, which is the reference pattern
+# this implementation mirrors. Inlined here (rather than sourcing
+# pulse-watchdog.sh) to keep the routine's dependency graph minimal — the
+# watchdog module pulls in PRE_RUN_STAGE_TIMEOUT, PULSE_STAGE_TIMINGS_LOG,
+# and several pulse-cycle-specific globals this standalone routine doesn't
+# need.
+#
+# Args:
+#   $1 — timeout in seconds (positive integer)
+#   $@ — command and arguments (after shift); may be a function name
+_pmr_run_with_timeout() {
+	local timeout_seconds="$1"
+	shift
+	if [[ -z "${1:-}" ]]; then
+		_pmr_log ERROR "_pmr_run_with_timeout: missing command"
+		return 2
+	fi
+	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=600
+	[[ "$timeout_seconds" -lt 1 ]] && timeout_seconds=1
+
+	local _start_epoch
+	_start_epoch=$(date +%s)
+
+	# Background the function/command in a subshell.
+	"$@" &
+	local _child_pid=$!
+
+	# Poll for child completion or timeout. sleep 2 keeps the loop cheap;
+	# overshoot is bounded by 2s.
+	while kill -0 "$_child_pid" 2>/dev/null; do
+		local _now="" _elapsed=""
+		_now=$(date +%s)
+		_elapsed=$((_now - _start_epoch))
+		if [[ "$_elapsed" -gt "$timeout_seconds" ]]; then
+			_pmr_log ERROR "Merge routine body timed out after ${_elapsed}s (ceiling=${timeout_seconds}s, pid=${_child_pid}); killing process tree"
+			# Use _kill_tree if available (sourced from worker-lifecycle-common.sh);
+			# fall back to direct kill if the helper is missing (e.g. test harness
+			# that didn't source the full chain).
+			if command -v _kill_tree >/dev/null 2>&1; then
+				_kill_tree "$_child_pid" || true
+				sleep 2
+				if kill -0 "$_child_pid" 2>/dev/null; then
+					if command -v _force_kill_tree >/dev/null 2>&1; then
+						_force_kill_tree "$_child_pid" || true
+					else
+						kill -9 "$_child_pid" 2>/dev/null || true
+					fi
+				fi
+			else
+				kill "$_child_pid" 2>/dev/null || true
+				sleep 2
+				if kill -0 "$_child_pid" 2>/dev/null; then
+					kill -9 "$_child_pid" 2>/dev/null || true
+				fi
+			fi
+			wait "$_child_pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 2
+	done
+
+	wait "$_child_pid"
+	return $?
 }
 
 _pmr_acquire_lock() {
@@ -205,18 +303,28 @@ _pmr_acquire_lock() {
 # =============================================================================
 
 cmd_run() {
-	_pmr_log INFO "Starting merge routine (pid=$$)"
+	_pmr_log INFO "Starting merge routine (pid=$$, timeout=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
 
+	# Wrap merge_ready_prs_all_repos with a hard timeout ceiling (t3041, GH#21708).
+	# Whatever the underlying hang site (gh API call, flock deadlock, infinite
+	# retry loop, dead-PID wait), the routine cannot exceed this ceiling. On
+	# timeout, _pmr_run_with_timeout returns 124 (matching GNU `timeout`).
 	local merge_exit=0
-	merge_ready_prs_all_repos || merge_exit=$?
+	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" merge_ready_prs_all_repos || merge_exit=$?
 
-	# Write epoch to last-run marker so pulse-wrapper.sh short-circuit can
-	# compare elapsed time via cat (consistent with DIRTY_PR_SWEEP_LAST_RUN pattern).
+	# Always write the last-run marker so pulse-wrapper.sh short-circuit can
+	# compare elapsed time (consistent with DIRTY_PR_SWEEP_LAST_RUN pattern).
+	# This runs even on timeout — we still completed our scheduled tick.
 	date +%s >"$PULSE_MERGE_ROUTINE_LAST_RUN" 2>/dev/null || true
-	_pmr_log INFO "Merge routine completed (exit=${merge_exit})"
+
+	if [[ "$merge_exit" -eq 124 ]]; then
+		_pmr_log ERROR "Merge routine completed via TIMEOUT (exit=124, ceiling=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
+	else
+		_pmr_log INFO "Merge routine completed (exit=${merge_exit})"
+	fi
 	return "$merge_exit"
 }
 
@@ -245,8 +353,10 @@ pulse-enabled repos from REPOS_JSON (${REPOS_JSON}). The in-cycle merge call
 in pulse-wrapper.sh short-circuits when this routine ran within the last 60s.
 
 Env overrides:
-  PULSE_MERGE_BATCH_LIMIT=50   Max PRs fetched per repo per run.
-  DRY_RUN=1                    Same as --dry-run.
+  PULSE_MERGE_BATCH_LIMIT=50              Max PRs fetched per repo per run.
+  PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=600 Hard ceiling on routine runtime (t3041).
+                                          Process tree killed on overrun. Min 1s.
+  DRY_RUN=1                               Same as --dry-run.
 EOF
 	return 0
 }
@@ -256,14 +366,20 @@ EOF
 # the shared wrapper helpers.
 cmd_dry_run() {
 	export DRY_RUN=1
-	_pmr_log INFO "DRY-RUN mode: merge routine (pid=$$)"
+	_pmr_log INFO "DRY-RUN mode: merge routine (pid=$$, timeout=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
 
+	# Same timeout protection as cmd_run (t3041, GH#21708).
 	local merge_exit=0
-	merge_ready_prs_all_repos || merge_exit=$?
-	_pmr_log INFO "DRY-RUN merge routine completed (exit=${merge_exit})"
+	_pmr_run_with_timeout "$PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS" merge_ready_prs_all_repos || merge_exit=$?
+
+	if [[ "$merge_exit" -eq 124 ]]; then
+		_pmr_log ERROR "DRY-RUN merge routine TIMED OUT (exit=124, ceiling=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
+	else
+		_pmr_log INFO "DRY-RUN merge routine completed (exit=${merge_exit})"
+	fi
 	return "$merge_exit"
 }
 

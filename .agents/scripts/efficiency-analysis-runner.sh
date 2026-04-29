@@ -42,7 +42,8 @@ LOG_PREFIX="EFFICIENCY-RUNNER"
 # Constants
 # =============================================================================
 
-readonly LOGS_DIR="${HOME}/.aidevops/logs"
+LOGS_DIR=$(_resolve_log_dir)
+readonly LOGS_DIR
 readonly AGENT_WORKSPACE="${HOME}/.aidevops/.agent-workspace"
 readonly COLLECTOR_SCRIPT="${SCRIPT_DIR}/orchestration-efficiency-collector.sh"
 readonly HEADLESS_RUNTIME="${SCRIPT_DIR}/headless-runtime-helper.sh"

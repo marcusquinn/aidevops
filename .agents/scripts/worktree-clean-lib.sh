@@ -124,6 +124,52 @@ branch_has_zero_commits_ahead() {
 	return 1
 }
 
+# Check whether a worktree's branch has an active interactive-session claim.
+# Returns 0 (true) if an active claim exists (stamp present, PID alive),
+# 1 otherwise. Fail-OPEN: any error in branch parsing, slug derivation, or
+# subprocess invocation returns 1 so the caller falls through to the existing
+# 4 safety checks (no regression on degraded environments).
+#
+# t2916/GH#21074: Two worktree-loss incidents on 2026-04-26 motivated this
+# check. Pre-existing safety checks (PID-ownership, 4h grace, open-PR list,
+# zero-commit-dirty) all have known failure modes that let active interactive
+# work through. The interactive-session claim-stamp directory at
+# `~/.aidevops/.agent-workspace/interactive-claims/` is the canonical "an
+# interactive session owns this work right now" signal — same source the
+# dispatch-dedup gate (`_has_active_claim` in dispatch-dedup-helper.sh) trusts.
+#
+# Implementation: subprocess-call to interactive-session-helper.sh subcommand
+# `branch-has-active-claim` rather than sourcing. Sourcing would drag in the
+# full helper graph (orchestrator + 4 sub-libs, ~1500 lines) and reset
+# SCRIPT_DIR. Subprocess cost is ~10ms per worktree — for typical sweeps of
+# 5-20 worktrees this is negligible vs the source-time parse cost.
+_branch_has_active_interactive_claim() {
+	local wt_path="$1"
+	local wt_branch="$2"
+
+	[[ -z "$wt_branch" ]] && return 1
+
+	# Locate the helper. Prefer the deployed copy (runtime source of truth);
+	# fall back to the in-repo copy when running from the canonical repo
+	# pre-deploy. Same priority order as worktree-helper.sh:_interactive_session_auto_claim.
+	local helper=""
+	if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+	elif [[ -n "${SCRIPT_DIR:-}" && -x "${SCRIPT_DIR}/interactive-session-helper.sh" ]]; then
+		helper="${SCRIPT_DIR}/interactive-session-helper.sh"
+	else
+		# No helper available — fail OPEN, fall through to existing checks.
+		return 1
+	fi
+
+	# Subprocess call. Exit 0 = active claim, exit 1 = no claim, any other
+	# exit = error (treated as no claim — fail OPEN).
+	if "$helper" branch-has-active-claim "$wt_branch" --worktree "$wt_path" >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 # Check if a worktree should be skipped during cleanup due to safety constraints.
 # Returns 0 (true) if worktree should be skipped, 1 (false) if safe to remove.
 # Args: $1=worktree_path, $2=worktree_branch, $3=default_branch, $4=open_pr_branches, $5=force_merged
@@ -134,6 +180,20 @@ should_skip_cleanup() {
 	local default_br="$3"
 	local open_pr_list="$4"
 	local force_merged_flag="$5"
+
+	# t2916/GH#21074: Active interactive-session claim check.
+	# Consults the same canonical claim-stamp directory the dispatch-dedup
+	# gate uses. Placed BEFORE the 4h grace cliff so claim-stamp wins on
+	# stale work too — a >4h interactive session is still legitimately
+	# owned, but the grace cliff would otherwise let cleanup through.
+	if _branch_has_active_interactive_claim "$wt_path" "$wt_branch"; then
+		echo -e "  ${RED}$wt_branch${NC} (active interactive claim - skipping)"
+		echo "    $wt_path"
+		echo ""
+		# t2976: audit log — cleanup skipped, interactive claim active
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "active-claim"
+		return 0
+	fi
 
 	# Ownership check (t189): skip if owned by another active session
 	if is_worktree_owned_by_others "$wt_path"; then

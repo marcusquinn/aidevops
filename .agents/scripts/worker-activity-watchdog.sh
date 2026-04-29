@@ -67,7 +67,7 @@ EXIT_CODE_FILE=""
 SESSION_KEY=""
 REPO_SLUG=""
 WORKTREE_PATH=""
-STALL_TIMEOUT=300
+STALL_TIMEOUT="${WORKER_STALL_TIMEOUT:-600}"
 PHASE1_TIMEOUT=30
 POLL_INTERVAL=10
 # t2956 / Issue #21231: Hard-kill threshold (default 1500s = 25 min).
@@ -75,6 +75,14 @@ POLL_INTERVAL=10
 # flag overrides the env var. Set to 0 to disable hard-kill (stall continues
 # indefinitely up to the runtime's wall-clock cap — legacy behaviour).
 HARD_KILL_SECONDS="${WORKER_STALL_HARD_KILL_SECONDS:-1500}"
+# t3056 / GH#21781: CPU threshold below which a stalled worker is considered
+# truly stuck (vs just not writing output). Process tree CPU >= this value
+# defers the stall kill — the worker is alive but doing non-output work
+# (API roundtrip, shellcheck, file read). Default 2% matches PULSE_IDLE_CPU_THRESHOLD.
+STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"
+# t3056: Lifecycle log for structured kill-reason telemetry. Aggregatable
+# across all workers. Default: pulse-dispatch.log (same file the pulse reads).
+LIFECYCLE_LOG="${WORKER_LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
 
 #######################################
 # Parse arguments
@@ -171,6 +179,108 @@ _worker_alive() {
 }
 
 #######################################
+# Parse a 'ps -o time=' cumulative CPU time string to integer seconds.
+# Handles the two platform formats:
+#   macOS BSD ps:   HH:MM:SS.ss  (decimal fraction after seconds)
+#   Linux procps:   HH:MM:SS  or  DD-HH:MM:SS  (day prefix)
+#
+# Arguments:
+#   $1 - time string from ps -o time=
+# Output: integer seconds via stdout
+#######################################
+_parse_ps_cpu_time() {
+	local t="$1"
+	# Strip decimal fraction (.ss) — macOS BSD ps only
+	t="${t%%.*}"
+	# Strip leading DD- day prefix — Linux procps extended format
+	local days=0
+	if [[ "$t" == *-* ]]; then
+		days="${t%%-*}"
+		t="${t#*-}"
+	fi
+	# Split HH:MM:SS without relying on IFS changes
+	local hours minutes seconds
+	hours="${t%%:*}"
+	t="${t#*:}"
+	minutes="${t%%:*}"
+	seconds="${t#*:}"
+	[[ "$days"    =~ ^[0-9]+$ ]] || days=0
+	[[ "$hours"   =~ ^[0-9]+$ ]] || hours=0
+	[[ "$minutes" =~ ^[0-9]+$ ]] || minutes=0
+	[[ "$seconds" =~ ^[0-9]+$ ]] || seconds=0
+	echo $(( days * 86400 + hours * 3600 + minutes * 60 + seconds ))
+	return 0
+}
+
+#######################################
+# Get recent interval CPU usage for the worker's process tree (t3057 / GH#21785)
+#
+# Measures CPU consumed over a ~5-second window by sampling cumulative CPU
+# time (ps -o time=) at T=0 and T=5, then computing the delta. This gives
+# RECENT activity, not a lifetime average.
+#
+# Why NOT ps -o %cpu= (original t3056 / GH#21781 approach):
+#   ps %cpu = total_cpu_time / total_elapsed_lifetime — a LIFETIME AVERAGE.
+#   A worker hot for 10 min then frozen at 0% still reports ~30% lifetime CPU,
+#   defeating the stall-defer check. The delta approach measures only the last
+#   ~5 seconds, correctly detecting frozen workers regardless of history.
+#
+# Cross-platform: ps -o time= emits HH:MM:SS.ss on macOS BSD ps and
+# HH:MM:SS or DD-HH:MM:SS on Linux procps. _parse_ps_cpu_time handles both.
+#
+# Arguments:
+#   $1 - root PID to check
+# Output: integer CPU percentage (recent ~5s interval, summed across tree)
+#######################################
+_watchdog_tree_cpu() {
+	local root_pid="$1"
+	local sample_interval=5
+
+	# Collect PID list: root + direct children.
+	# One level deep covers the typical opencode worker chain
+	# (bash → node → opencode binary).
+	local pid_list=()
+	local pid
+	for pid in "$root_pid" $(pgrep -P "$root_pid" 2>/dev/null); do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		pid_list+=("$pid")
+	done
+
+	# Sample 1: record cumulative CPU seconds per PID into parallel arrays
+	local t0_pids=() t0_secs_arr=()
+	local t0_str t0_val
+	for pid in "${pid_list[@]}"; do
+		t0_str=$(ps -p "$pid" -o time= 2>/dev/null | tr -d ' ') || continue
+		[[ -n "$t0_str" ]] || continue
+		t0_val=$(_parse_ps_cpu_time "$t0_str")
+		t0_pids+=("$pid")
+		t0_secs_arr+=("$t0_val")
+	done
+
+	sleep "$sample_interval"
+
+	# Sample 2: compute per-PID delta and accumulate
+	local total_delta=0
+	local idx=0
+	local t5_str t5_val delta entry_pid entry_t0
+	while [[ "$idx" -lt "${#t0_pids[@]}" ]]; do
+		entry_pid="${t0_pids[$idx]}"
+		entry_t0="${t0_secs_arr[$idx]}"
+		idx=$(( idx + 1 ))
+		t5_str=$(ps -p "$entry_pid" -o time= 2>/dev/null | tr -d ' ') || continue
+		[[ -n "$t5_str" ]] || continue
+		t5_val=$(_parse_ps_cpu_time "$t5_str")
+		delta=$(( t5_val - entry_t0 ))
+		[[ "$delta" -lt 0 ]] && delta=0
+		total_delta=$(( total_delta + delta ))
+	done
+
+	# cpu_seconds_in_window / window_duration * 100 = recent CPU percentage
+	echo $(( total_delta * 100 / sample_interval ))
+	return 0
+}
+
+#######################################
 # Get current size of the output file in bytes
 # Output: size in bytes (0 if file doesn't exist)
 #######################################
@@ -252,6 +362,25 @@ _push_wip_before_kill() {
 _kill_worker() {
 	local reason="$1"
 	local kill_kind="${2:-}"
+
+	# t3056 / GH#21781: Classify the kill reason for structured telemetry.
+	# Maps the human-readable reason string to a machine-readable class.
+	local reason_class="unknown"
+	case "$reason" in
+	phase1:*) reason_class="phase1_zero_output" ;;
+	hard_kill:*) reason_class="hard_kill_stall" ;;
+	stall:*) reason_class="no_output_stall" ;;
+	*) reason_class="other" ;;
+	esac
+
+	# t3056: Emit structured lifecycle line for kill-reason telemetry.
+	# Format matches the t3056 spec so aggregation scripts can classify kills.
+	local _trigger_age=0
+	_trigger_age=$(( $(date +%s) - _WATCHDOG_START_EPOCH ))
+	printf '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss session=%s ts=%s\n' \
+		"$WORKER_PID" "$reason_class" "$_trigger_age" "${SESSION_KEY:-none}" \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>>"$LIFECYCLE_LOG" 2>/dev/null || true
 
 	# t2923: Push WIP commits before killing so the work is reachable on origin.
 	# Must happen before SIGTERM so git operations complete cleanly.
@@ -359,6 +488,10 @@ _monitor() {
 	local phase1_elapsed=0
 	local last_size=0
 	local stall_seconds=0
+	# t3056: Track cumulative deferred stall seconds — how long the watchdog
+	# has deferred kills due to CPU activity. Logged on eventual kill for
+	# Phase 2 analysis.
+	local deferred_stall_seconds=0
 	# t2956: Wall-clock start so HARD_KILL_SECONDS is measured against the
 	# total time the watchdog has been monitoring this worker — not just the
 	# duration of the current stall window. A worker that's been alternately
@@ -366,6 +499,8 @@ _monitor() {
 	# that's been silent the whole time.
 	local start_epoch
 	start_epoch=$(date +%s)
+	# t3056: Export start epoch for _kill_worker's trigger_age calculation
+	_WATCHDOG_START_EPOCH="$start_epoch"
 
 	while true; do
 		# Worker exited on its own — watchdog not needed
@@ -412,13 +547,43 @@ _monitor() {
 			local now_epoch elapsed_total
 			now_epoch=$(date +%s)
 			elapsed_total=$((now_epoch - start_epoch))
+
+			# t3056 / GH#21781: Hard-kill always fires at the cumulative
+			# threshold — safety net regardless of CPU activity.
 			if [[ "$HARD_KILL_SECONDS" -gt 0 && "$elapsed_total" -ge "$HARD_KILL_SECONDS" ]]; then
 				_kill_worker \
-					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b) — slot freed for re-dispatch" \
+					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b, deferred=${deferred_stall_seconds}s) — slot freed for re-dispatch" \
 					"stall_killed"
 				return 0
 			fi
-			_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)"
+
+			# t3056 / GH#21781: Semantic stall check — before killing,
+			# check if the worker's process tree has CPU activity. Workers
+			# doing API roundtrips, shellcheck runs, or large file reads
+			# consume CPU but produce no log output. Killing them is a
+			# false positive. Defer the kill and reset the stall counter.
+			# The hard-kill threshold above is the absolute safety net.
+			local tree_cpu
+			tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
+			if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
+				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
+				# t3058 / GH#21786: write defer marker to LIFECYCLE_LOG, NOT
+				# OUTPUT_FILE. Writing to OUTPUT_FILE grew the monitored file
+				# and falsely advanced last_size, defeating the stall counter
+				# and silently neutering STALL_TIMEOUT (only HARD_KILL_SECONDS
+				# at 1500s remained as a real cap). Format aligned with the
+				# `[lifecycle] worker_killed` line emitted by _kill_worker so
+				# Phase 2 aggregation can join defer events alongside kills.
+				printf '[lifecycle] worker_stall_deferred pid=%s cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+					"$WORKER_PID" "$tree_cpu" "$stall_seconds" \
+					"$deferred_stall_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					>>"$LIFECYCLE_LOG" 2>/dev/null || true
+				stall_seconds=0
+				sleep "$POLL_INTERVAL"
+				continue
+			fi
+
+			_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s, cpu=${tree_cpu}%, deferred=${deferred_stall_seconds}s)"
 			return 0
 		fi
 
@@ -436,6 +601,11 @@ main() {
 	if ! _worker_alive; then
 		return 0
 	fi
+
+	# t3056: Initialize start epoch for lifecycle line trigger_age.
+	# Set here (not in _monitor) so _kill_worker can reference it
+	# from any context.
+	_WATCHDOG_START_EPOCH=$(date +%s)
 
 	_monitor
 	return 0

@@ -135,13 +135,23 @@ launch_camoufox_run() {
 	local target_url="$5"
 	local disposable="$6"
 
-	python3 - <<PYEOF 2>&1
-import json, os.path
+	CAMOUFOX_PROFILE_DIR="$profile_dir" \
+	CAMOUFOX_CONFIG_FILE="$config_arg" \
+	CAMOUFOX_PROXY_FILE="$proxy_arg" \
+	CAMOUFOX_HEADLESS="$headless_flag" \
+	CAMOUFOX_TARGET_URL="$target_url" \
+	CAMOUFOX_DISPOSABLE="$disposable" \
+	python3 - <<'PYEOF' 2>&1
+import json, os, os.path
 from camoufox.sync_api import Camoufox
 
 profile_config, proxy = {}, None
-headless = $headless_flag
-config_file, proxy_file = '$config_arg', '$proxy_arg'
+headless = os.environ.get('CAMOUFOX_HEADLESS', 'False') == 'True'
+config_file = os.environ.get('CAMOUFOX_CONFIG_FILE', '')
+proxy_file = os.environ.get('CAMOUFOX_PROXY_FILE', '')
+target_url = os.environ.get('CAMOUFOX_TARGET_URL', 'https://www.browserscan.net/bot-detection')
+profile_dir = os.environ.get('CAMOUFOX_PROFILE_DIR', '')
+disposable = os.environ.get('CAMOUFOX_DISPOSABLE', '') == 'true'
 
 if config_file:
     with open(config_file) as f:
@@ -168,11 +178,10 @@ if proxy:
 print(f'Launching Camoufox (headless={headless})...')
 with Camoufox(**kwargs) as browser:
     page = browser.new_page()
-    page.goto('$target_url', timeout=30000)
+    page.goto(target_url, timeout=30000)
     print(f'Navigated to: {page.url}')
     print(f'Title: {page.title()}')
-    profile_dir = '$profile_dir'
-    if profile_dir and '$disposable' != 'true':
+    if profile_dir and not disposable:
         profile_type = os.path.basename(os.path.dirname(profile_dir))
         if profile_type in ('persistent', 'warmup'):
             context = browser.contexts[0]
@@ -201,11 +210,12 @@ launch_camoufox() {
 		return 1
 	}
 
-	local config_lines profile_dir config_arg proxy_arg
-	config_lines=$(camoufox_load_profile_config "$profile_name")
-	profile_dir=$(printf '%s' "$config_lines" | sed -n '1p')
-	config_arg=$(printf '%s' "$config_lines" | sed -n '2p')
-	proxy_arg=$(printf '%s' "$config_lines" | sed -n '3p')
+	local profile_dir config_arg proxy_arg
+	{
+		read -r profile_dir
+		read -r config_arg
+		read -r proxy_arg
+	} <<< "$(camoufox_load_profile_config "$profile_name")"
 
 	local headless_flag="True"
 	[[ "$headless" != "true" ]] && headless_flag="False"
@@ -263,33 +273,25 @@ launch_mullvad() {
 	echo -e "${YELLOW}Note: Mullvad Browser uses Tor Browser's uniform fingerprint (no rotation).${NC}"
 	echo -e "${YELLOW}For fingerprint rotation, use --engine firefox (Camoufox) instead.${NC}"
 
-	# Use Node.js with Playwright Firefox driver
-	node -e "
+	# Use Node.js with Playwright Firefox driver; env vars prevent shell injection
+	BROWSER_PATH="$mullvad_path" BROWSER_HEADLESS="$headless_flag" \
+	BROWSER_URL="$target_url" BROWSER_PROXY="$proxy_server" \
+	BROWSER_DATA="$user_data_dir" BROWSER_DISP="$disposable" \
+	node - 2>&1 <<'NODEOF'
 const { firefox } = require('playwright');
-
 (async () => {
-    const launchOpts = {
-        executablePath: '$mullvad_path',
-        headless: $headless_flag,
-    };
-
-    const contextOpts = {
-        viewport: { width: 1280, height: 800 },  // Mullvad default
-    };
-
-    const proxyServer = '$proxy_server';
-    if (proxyServer) {
-        launchOpts.proxy = { server: proxyServer };
-    }
-
-    const userDataDir = '$user_data_dir';
+    const execPath = process.env.BROWSER_PATH;
+    const headless = process.env.BROWSER_HEADLESS === 'true';
+    const launchOpts = { executablePath: execPath, headless: headless };
+    const contextOpts = { viewport: { width: 1280, height: 800 } };
+    const proxyServer = process.env.BROWSER_PROXY || '';
+    if (proxyServer) { launchOpts.proxy = { server: proxyServer }; }
+    const userDataDir = process.env.BROWSER_DATA || '';
+    const disposable = process.env.BROWSER_DISP === 'true';
     let browser, context, page;
-
-    if (userDataDir && '$disposable' !== 'true') {
-        // Persistent context for Mullvad
+    if (userDataDir && !disposable) {
         browser = await firefox.launchPersistentContext(userDataDir, {
-            ...launchOpts,
-            ...contextOpts,
+            ...launchOpts, ...contextOpts,
         });
         page = browser.pages()[0] || await browser.newPage();
     } else {
@@ -297,19 +299,14 @@ const { firefox } = require('playwright');
         context = await browser.newContext(contextOpts);
         page = await context.newPage();
     }
-
     console.log('Mullvad Browser launched');
-    await page.goto('$target_url', { timeout: 30000 });
+    await page.goto(process.env.BROWSER_URL, { timeout: 30000 });
     console.log('Navigated to:', page.url());
     console.log('Title:', await page.title());
-
-    if (!$headless_flag) {
-        await new Promise(r => setTimeout(r, 60000));
-    }
-
+    if (!headless) { await new Promise(r => setTimeout(r, 60000)); }
     await browser.close();
 })().catch(e => { console.error(e.message); process.exit(1); });
-" 2>&1
+NODEOF
 
 	return 0
 }
@@ -344,42 +341,42 @@ launch_chromium_stealth() {
 
 	local target_url="${url:-https://www.browserscan.net/bot-detection}"
 
-	# Use Node.js with patched Playwright
-	node -e "
+	# Use Node.js with patched Playwright; env vars prevent shell injection
+	BROWSER_HEADLESS="$headless_flag" BROWSER_URL="$target_url" \
+	BROWSER_PROXY="$proxy_server" BROWSER_PROXY_USER="${proxy_username:-}" \
+	BROWSER_PROXY_PASS="${proxy_password:-}" BROWSER_DATA="$user_data_dir" \
+	BROWSER_DISP="$disposable" \
+	node - 2>&1 <<'NODEOF'
 const { chromium } = require('playwright');
-
 (async () => {
+    const headless = process.env.BROWSER_HEADLESS === 'true';
     const launchOpts = {
-        headless: $headless_flag,
+        headless: headless,
         args: [
             '--disable-blink-features=AutomationControlled',
             '--no-first-run',
             '--no-default-browser-check',
         ],
     };
-
     const contextOpts = {
         viewport: { width: 1920, height: 1080 },
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     };
-
-    const proxyServer = '$proxy_server';
-    const proxyUsername = '${proxy_username:-}';
-    const proxyPassword = '${proxy_password:-}';
+    const proxyServer = process.env.BROWSER_PROXY || '';
+    const proxyUsername = process.env.BROWSER_PROXY_USER || '';
+    const proxyPassword = process.env.BROWSER_PROXY_PASS || '';
     if (proxyServer) {
         const proxyConfig = { server: proxyServer };
         if (proxyUsername) proxyConfig.username = proxyUsername;
         if (proxyPassword) proxyConfig.password = proxyPassword;
         launchOpts.proxy = proxyConfig;
     }
-
-    const userDataDir = '$user_data_dir';
+    const userDataDir = process.env.BROWSER_DATA || '';
+    const disposable = process.env.BROWSER_DISP === 'true';
     let browser, page;
-
-    if (userDataDir && '$disposable' !== 'true') {
+    if (userDataDir && !disposable) {
         browser = await chromium.launchPersistentContext(userDataDir, {
-            ...launchOpts,
-            ...contextOpts,
+            ...launchOpts, ...contextOpts,
         });
         page = browser.pages()[0] || await browser.newPage();
     } else {
@@ -387,19 +384,14 @@ const { chromium } = require('playwright');
         const context = await browser.newContext(contextOpts);
         page = await context.newPage();
     }
-
     console.log('Launching Chromium (stealth patched)...');
-    await page.goto('$target_url', { timeout: 30000 });
+    await page.goto(process.env.BROWSER_URL, { timeout: 30000 });
     console.log('Navigated to:', page.url());
     console.log('Title:', await page.title());
-
-    if (!$headless_flag) {
-        await new Promise(r => setTimeout(r, 60000));
-    }
-
+    if (!headless) { await new Promise(r => setTimeout(r, 60000)); }
     await browser.close();
 })().catch(e => { console.error(e.message); process.exit(1); });
-" 2>&1
+NODEOF
 
 	return 0
 }

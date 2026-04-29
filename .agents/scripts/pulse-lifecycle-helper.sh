@@ -91,7 +91,18 @@ _pulse_pids_raw() {
 # running pulse cycle inherit the parent's argv so naive pgrep over-counts.
 # This function filters to PIDs whose PARENT command is NOT itself
 # pulse-wrapper.sh, eliminating the subshell false positives that trigger
-# spurious "MULTIPLE pulse instances detected" warnings (GH#21549).
+# spurious "MULTIPLE pulse instances detected" warnings (GH#21549, GH#21581).
+#
+# Two-layer filter (GH#21581):
+#   Layer 1 (fast path): if PPID=1 (init/launchd), the process is a canonical
+#     top-level instance — include directly. Subshells always have PPID = the
+#     pulse PID (> 1), so PPID=1 is a reliable signal for production instances
+#     started by the system process manager (launchd on macOS, systemd/init
+#     on Linux).
+#   Layer 2 (fallback): for manually-started instances (PPID != 1), check
+#     whether the parent command itself contains pulse-wrapper.sh. If it does,
+#     the process is a subshell of a running pulse — skip it.
+#
 # Empty output = none running.
 # _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
 # all pulse processes including subshells.
@@ -102,8 +113,16 @@ _pulse_pids() {
 	while read -r _pid; do
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		# Layer 1 (fast path): process started by init/launchd (PPID=1) is the
+		# canonical top-level instance. Subshells of pulse always have PPID = the
+		# pulse PID itself (> 1), never 1.
+		if [[ "$_ppid" == "1" ]]; then
+			printf '%s\n' "$_pid"
+			continue
+		fi
+		# Layer 2 (fallback for manually-started instances): skip PIDs whose
+		# parent command contains pulse-wrapper.sh (= direct subshell of pulse).
 		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
-		# Skip PIDs whose parent IS another pulse-wrapper (= subshell of pulse)
 		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
 		printf '%s\n' "$_pid"
 	done <<< "$_pids"
@@ -244,13 +263,22 @@ _status() {
 	printf 'Pulse: running (%s instance%s)\n' "$_pid_count" "$([[ $_pid_count -eq 1 ]] || printf 's')"
 
 	# Read lock-holder PID for cross-reference (GH#21433 acceptance criterion).
-	local _lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
+	# AIDEVOPS_PULSE_LOCK_DIR overrides the default path — useful for tests
+	# that must isolate from the real user lockdir (GH#21581).
+	local _lockdir="${AIDEVOPS_PULSE_LOCK_DIR:-${HOME}/.aidevops/logs/pulse-wrapper.lockdir}"
 	local _lock_pid=""
 	if [[ -f "${_lockdir}/pid" ]]; then
 		_lock_pid=$(cat "${_lockdir}/pid" 2>/dev/null || echo "")
 	fi
 	if [[ -n "$_lock_pid" ]]; then
 		printf '  Lock holder PID: %s\n' "$_lock_pid"
+	elif [[ -n "$_pids" ]]; then
+		# The instance lock is intentionally released BEFORE the LLM dispatch
+		# session (pulse-wrapper.sh calls release_instance_lock before exec'ing
+		# the LLM supervisor) so the next launchd respawn finds no lock and exits
+		# immediately. An empty lockdir/pid while a pulse process is alive is
+		# therefore expected during active LLM dispatch — it is NOT an error.
+		printf '  Lock holder PID: (none — lock released for LLM dispatch; process alive)\n'
 	else
 		printf '  Lock holder PID: (LOCKDIR/pid missing or empty)\n'
 	fi

@@ -485,8 +485,16 @@ create_github_issue() {
 		return 0
 	fi
 
-	# Fallback: bare issue creation with structured body
-	local gh_args=(issue create --title "$title")
+	# Fallback: bare issue creation with structured body.
+	# t3039: use gh_create_issue (REST-aware wrapper, from shared-gh-wrappers.sh sourced
+	# transitively via shared-constants.sh) instead of raw gh issue create so that issue
+	# creation succeeds even when GraphQL is exhausted (the "fallback also uses GraphQL"
+	# failure mode observed at GraphQL=0/5000).
+	local create_args=(--title "$title")
+	# Pass --repo explicitly so the REST fallback path inside gh_create_issue
+	# can build the /repos/{owner}/{repo}/issues endpoint without relying on cwd
+	# (t3039: _gh_issue_create_rest requires --repo).
+	[[ -n "$_slug_for_warn" ]] && create_args+=(--repo "$_slug_for_warn")
 
 	local body=""
 	local compose_rc=0
@@ -497,7 +505,7 @@ create_github_issue() {
 		log_warn "Skipping issue creation — no description available. Task ID is secured."
 		return 1
 	fi
-	gh_args+=(--body "$body")
+	create_args+=(--body "$body")
 
 	# t2789: Ensure new issues are immediately dispatchable by applying
 	# status:available when the caller did not specify any status:* label.
@@ -514,17 +522,12 @@ create_github_issue() {
 		fi
 	fi
 
-	# Append session origin label (origin:worker or origin:interactive)
-	local origin_label
-	origin_label=$(session_origin_label)
-	if [[ -n "$labels" ]]; then
-		gh_args+=(--label "${labels},${origin_label}")
-	else
-		gh_args+=(--label "$origin_label")
-	fi
+	# Pass labels to gh_create_issue; origin label is appended automatically by
+	# the wrapper (avoids duplicate-label injection, t3039).
+	[[ -n "$labels" ]] && create_args+=(--label "$labels")
 
 	local issue_url
-	if ! issue_url=$(gh "${gh_args[@]}" 2>&1); then
+	if ! issue_url=$(gh_create_issue "${create_args[@]}" 2>&1); then
 		log_warn "Failed to create GitHub issue: $issue_url"
 		return 1
 	fi
@@ -675,10 +678,12 @@ _extract_github_slug() {
 	return 0
 }
 
-# _auto_create_blocked_by_label — create a missing blocked-by:tNNN or blocked-by:#NNN
-# label in the repo when it does not yet exist. Updates the session label cache on success.
+# _auto_create_blocked_by_label — create a missing blocked-by:tNNN / blocked-by:GH#NNN /
+# blocked-by:#NNN label in the repo when it does not yet exist.
+# Updates the session label cache on success.
 # Args: $1 repo_slug (owner/repo), $2 label name (e.g. "blocked-by:t324"), $3 cache_file path.
 # Returns: 0 = label created (or already exists), 1 = creation failed (rate limit / permission).
+# Callers MUST treat a non-zero return as a validation error — do NOT use || true (GH#21633).
 _auto_create_blocked_by_label() {
 	local repo_slug="$1"
 	local label="$2"
@@ -703,9 +708,10 @@ _auto_create_blocked_by_label() {
 # Args: $1 repo_slug (owner/repo), $2 comma-separated label names.
 # Returns: 0 = all valid (or fail-open), 1 = invalid labels found.
 #
-# Auto-create exception (GH#21474): labels matching ^blocked-by:(t[0-9]+|#[0-9]+)$
+# Auto-create exception (GH#21474): labels matching ^blocked-by:(t[0-9]+|GH#[0-9]+|#[0-9]+)$
 # are auto-created when missing — they are a deterministic function of the predecessor
-# task ID and safe to create on demand. All other invalid labels still abort (exit 3).
+# task ID and safe to create on demand. Creation failure aborts the claim (GH#21633).
+# All other invalid labels still abort (exit 3).
 _validate_labels_exist() {
 	local repo_slug="$1"
 	local labels_csv="$2"
@@ -735,9 +741,11 @@ _validate_labels_exist() {
 		fi
 	fi
 
-	# Regex for the auto-create exception class (blocked-by:tNNN or blocked-by:#NNN).
-	# These labels are auto-created when missing — all other invalid labels still abort.
-	local _BLOCKED_BY_AUTO_CREATE_REGEX='^blocked-by:(t[0-9]+|#[0-9]+)$'
+	# Regex for the auto-create exception class (blocked-by:tNNN / blocked-by:GH#NNN / blocked-by:#NNN).
+	# _normalise_ref() in _detect_predecessor_refs produces GH#NNN for GitHub issue refs,
+	# so the GH# prefix must be included or those normalised labels fail the check and abort.
+	# All other invalid labels still abort.
+	local _BLOCKED_BY_AUTO_CREATE_REGEX='^blocked-by:(t[0-9]+|GH#[0-9]+|#[0-9]+)$'
 
 	# Check each label against the cache
 	local invalid_labels=""
@@ -754,14 +762,20 @@ _validate_labels_exist() {
 		label="${label%"${label##*[![:space:]]}"}"  # trim trailing whitespace
 		[[ -z "$label" ]] && continue
 		if ! grep -Fxq "$label" "$cache_file" 2>/dev/null; then
-			# Auto-create exception: blocked-by:tNNN / blocked-by:#NNN labels are
-			# synthesised by t2823 from description text and may not exist yet in fresh
-			# consumer repos. Create them on demand and continue — best-effort (t2800/GH#21474).
+			# Auto-create exception: blocked-by:tNNN / blocked-by:GH#NNN / blocked-by:#NNN
+			# labels are synthesised by t2823 from description text and may not exist yet in
+			# fresh consumer repos. Create them on demand (t2800/GH#21474).
+			# If creation fails (e.g. insufficient permissions), treat the label as invalid
+			# so the claim aborts BEFORE the counter is advanced — preserves atomic-claim
+			# guarantee (GH#21633: stranded task ID on failed auto-create).
 			if [[ "$label" =~ $_BLOCKED_BY_AUTO_CREATE_REGEX ]]; then
-				_auto_create_blocked_by_label "$repo_slug" "$label" "$cache_file" || true
-				# Whether creation succeeded or not, don't abort — body text still records
-				# the dependency for pulse-dep-graph.sh and pulse-issue-reconcile-actions.sh.
-				continue
+				if ! _auto_create_blocked_by_label "$repo_slug" "$label" "$cache_file"; then
+					# Creation failed — fall through to the invalid_labels accumulator below.
+					: # (intentional — do not continue, let the guard below record the label)
+				else
+					# Creation succeeded — skip normal validation for this label.
+					continue
+				fi
 			fi
 			if [[ -n "$invalid_labels" ]]; then
 				invalid_labels="${invalid_labels}, '${label}'"

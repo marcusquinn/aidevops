@@ -118,7 +118,9 @@ _push_create_issue() {
 		return 1
 	fi
 
-	local -a args=("issue" "create" "--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
+	# t3039: args without the "issue create" sub-command prefix so the same
+	# array can be passed to both gh issue create and _gh_issue_create_rest.
+	local -a args=("--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
 	[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
 
 	# GH#15234 Fix 1: gh issue create may return empty stdout (e.g. when label
@@ -128,9 +130,19 @@ _push_create_issue() {
 	# combined output for diagnostics without requiring a temp file.
 	local url gh_exit combined
 	{
-		combined=$(gh "${args[@]}" 2>&1)
+		combined=$(gh issue create "${args[@]}" 2>&1) # aidevops-allow: raw-gh-wrapper
 		gh_exit=$?
 	} || true
+	# t3039: REST fallback when GraphQL is exhausted.
+	# _gh_should_fallback_to_rest and _gh_issue_create_rest are provided by
+	# shared-gh-wrappers-rest-fallback.sh, sourced transitively via shared-constants.sh.
+	if [[ $gh_exit -ne 0 ]] && _gh_should_fallback_to_rest 2>/dev/null; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, retrying issue create via REST for $task_id"
+		{
+			combined=$(_gh_issue_create_rest "${args[@]}" 2>&1)
+			gh_exit=$?
+		} || true
+	fi
 	# Extract URL from combined output (stdout URL appears first on success)
 	url=$(echo "$combined" | grep -oE 'https://github\.com/[^ ]+/issues/[0-9]+' | head -1 || echo "")
 

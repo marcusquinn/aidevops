@@ -719,28 +719,15 @@ fast_cp() {
 }
 
 # =============================================================================
-# Portable file mtime (macOS vs GNU/Linux)
-# GNU stat uses -c %Y; BSD stat uses -f %m. On Linux, `stat -f %m` does NOT
-# fail — it prints filesystem info (exit 0), capturing garbage into variables.
-# GNU-first order is mandatory.  See GH#20615.
-# Usage: epoch=$(_file_mtime_epoch "/path/to/file")
-# Returns: modification time as epoch seconds, or 0 if file missing / error.
+# Portable stat wrappers (macOS vs GNU/Linux)
+# Sourced from portable-stat.sh — capability detection at load time.
+# Provides: _file_mtime_epoch, _file_size_bytes, _file_perms, _file_owner.
 # =============================================================================
 
-_file_mtime_epoch() {
-	local file_path="$1"
-	stat -c %Y "$file_path" 2>/dev/null || stat -f %m "$file_path" 2>/dev/null || echo 0
-}
-
-_file_size_bytes() {
-	local file_path="$1"
-	stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null || echo 0
-}
-
-_file_perms() {
-	local file_path="$1"
-	stat -c %a "$file_path" 2>/dev/null || stat -f %Lp "$file_path" 2>/dev/null || echo "000"
-}
+# shellcheck source=./portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+# _file_size_bytes, _file_perms, _file_mtime_epoch, _file_owner, _stat_batch,
+# _stat_translate_fmt are now provided by portable-stat.sh (GH#21742).
 
 # =============================================================================
 # Stderr Logging Utilities
@@ -756,13 +743,32 @@ _file_perms() {
 #   - sqlite3, gh, curl, git push/merge: use log_stderr (errors matter)
 #   - rm, mkdir with || true: keep 2>/dev/null (race conditions)
 
+# Resolve the canonical aidevops log directory at runtime.
+# Reads paths.log_dir from ~/.aidevops/config/paths.jsonc when config-helper.sh
+# is sourced (provides _jsonc_get), falls back to ~/.aidevops/logs otherwise.
+# Tilde-expansion handled. Prints the resolved absolute path.
+_resolve_log_dir() {
+	local resolved
+	# shellcheck disable=SC2088  # Tilde is intentionally literal; expanded below
+	if type _jsonc_get >/dev/null 2>&1; then
+		resolved=$(_jsonc_get "paths.log_dir" "~/.aidevops/logs")
+	else
+		resolved="~/.aidevops/logs"
+	fi
+	# Tilde expansion
+	resolved="${resolved/#\~/$HOME}"
+	printf '%s\n' "$resolved"
+	return 0
+}
+
 # Initialize log file for the calling script.
-# Sets AIDEVOPS_LOG_FILE to ~/.aidevops/logs/<script-name>.log
+# Sets AIDEVOPS_LOG_FILE to <log_dir>/<script-name>.log
 # Call once at script start after sourcing shared-constants.sh.
 init_log_file() {
 	local script_name
 	script_name="$(basename "${BASH_SOURCE[1]:-${0:-unknown}}" .sh)"
-	local log_dir="${HOME}/.aidevops/logs"
+	local log_dir
+	log_dir=$(_resolve_log_dir)
 	mkdir -p "$log_dir" 2>/dev/null || true
 	AIDEVOPS_LOG_FILE="${log_dir}/${script_name}.log"
 	export AIDEVOPS_LOG_FILE

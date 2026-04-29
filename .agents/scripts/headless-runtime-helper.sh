@@ -1243,6 +1243,38 @@ cmd_metrics() {
 # =============================================================================
 
 #######################################
+# _discover_actual_worktree_dir — find the worktree a worker actually used (t2982)
+#
+# Scans git worktree list --porcelain from the repo root of <work_dir> for a
+# worktree whose branch ref matches gh-?<issue_number>. Used to fix Mode B/C
+# worker misclassification (work_dir stuck on main after worker moved to own
+# worktree or merged its PR).
+#
+# Args: $1=work_dir  $2=issue_number
+# Echoes the discovered path if found and it is a directory; nothing otherwise.
+# Always returns 0 — caller falls back to work_dir on empty output.
+#######################################
+_discover_actual_worktree_dir() {
+	local work_dir="$1"
+	local issue_n="$2"
+	if [[ -z "$work_dir" || -z "$issue_n" ]]; then
+		return 0
+	fi
+	local repo_root=""
+	repo_root=$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null) || repo_root="$work_dir"
+	local found_path=""
+	# Single-line awk keeps $2 refs inside the single-quote on the same line,
+	# preventing the positional-param ratchet from flagging awk field refs.
+	# shellcheck disable=SC2016
+	found_path=$(git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+		| awk -v n="$issue_n" '/^worktree / { p=$2 } /^branch / && $2 ~ "gh-?" n { print p; exit }')
+	if [[ -n "$found_path" && -d "$found_path" ]]; then
+		printf '%s' "$found_path"
+	fi
+	return 0
+}
+
+#######################################
 # Detect whether a worker produced any tangible output.
 #
 # Checks three independent signals. Returns 0 (true — has output) if ANY
@@ -1298,6 +1330,15 @@ _worker_produced_output() {
 		return 0
 	fi
 
+	# t2982: discover actual worktree; falls back to work_dir if WORKER_ISSUE_NUMBER unset.
+	local actual_dir="$work_dir"
+	local _issue_n="${WORKER_ISSUE_NUMBER:-}"
+	if [[ -n "$_issue_n" ]]; then
+		local _found_path
+		_found_path=$(_discover_actual_worktree_dir "$work_dir" "$_issue_n")
+		[[ -n "$_found_path" ]] && actual_dir="$_found_path"
+	fi
+
 	# Signal 1: commits on feature branch beyond origin/main (fallback: master)
 	local has_commits=0
 	local commit_count=0
@@ -1323,7 +1364,8 @@ _worker_produced_output() {
 	local has_pushed_branch=0
 	local branch_name=""
 	local default_branch=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	# t2982: use actual_dir so Mode B/C workers classify against their feature branch.
+	branch_name=$(git -C "$actual_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null \
 		| sed 's|^origin/||' || true)
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
@@ -1425,8 +1467,19 @@ _handle_worker_branch_orphan() {
 	local session_key="$1"
 	local work_dir="$2"
 
+	# t2982: discover actual worker worktree by issue-number pattern (Mode B/C fix).
+	# Delegates to _discover_actual_worktree_dir; falls back to work_dir.
+	local actual_dir="$work_dir"
+	local _orphan_issue_n="${WORKER_ISSUE_NUMBER:-}"
+	if [[ -n "$_orphan_issue_n" && -d "$work_dir" ]]; then
+		local _orphan_found=""
+		_orphan_found=$(_discover_actual_worktree_dir "$work_dir" "$_orphan_issue_n")
+		[[ -n "$_orphan_found" ]] && actual_dir="$_orphan_found"
+	fi
+
 	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	# t2982: use actual_dir so the branch reflects where the worker actually worked.
+	branch_name=$(git -C "$actual_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
@@ -1453,7 +1506,10 @@ _handle_worker_branch_orphan() {
 	fi
 	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
 
-	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
+	# t2982: include actual_dir in log when discovery found a different worktree.
+	local _orphan_work_dir_field="work_dir=${work_dir:-<unset>}"
+	[[ "$actual_dir" != "$work_dir" ]] && _orphan_work_dir_field="${_orphan_work_dir_field} actual_dir=${actual_dir}"
+	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} ${_orphan_work_dir_field}"
 
 	# Always increment counter — failure or success
 	_increment_orphan_count_stat
