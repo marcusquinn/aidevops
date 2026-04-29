@@ -725,18 +725,27 @@ _dispatch_launch_worker() {
 	local model_override="$9"
 	local issue_meta_json="${10}"
 
+	# t3034: per-stage timing for launch sub-stages
+	local _ds_t0
+
+	_ds_t0=$(_ds_now_ns)
 	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
+	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	local worker_log
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
 
+	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override"
+	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER"
 	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
 	local selected_model="$_DLW_SELECTED_MODEL"
 
 	# t1894/t1934: Lock issue and linked PRs during worker execution
+	_ds_t0=$(_ds_now_ns)
 	lock_issue_for_worker "$issue_number" "$repo_slug"
+	_ds_record "$issue_number" "$repo_slug" "lock_issue" "$_ds_t0"
 
 	# GH#17584 / t2433: The git pull that was here has been moved earlier in
 	# the dispatch path to _pulse_refresh_repo (pulse-wrapper.sh), which is
@@ -749,22 +758,29 @@ _dispatch_launch_worker() {
 
 	# t2981: capture pre-creation return code — skip dispatch on failure
 	# instead of falling back to canonical repo on the default branch.
+	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_precreate_worktree "$issue_number" "$repo_path"; then
+		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
 		return 0
 	fi
+	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
 
+	_ds_t0=$(_ds_now_ns)
 	local worker_pid
 	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
 		"$worker_worktree_path" "$worker_worktree_branch")
+	_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
 
+	_ds_t0=$(_ds_now_ns)
 	_dlw_post_launch_hooks "$issue_number" "$repo_slug" "$self_login" \
 		"$worker_pid" "$session_key" "$dispatch_tier" "$selected_model"
+	_ds_record "$issue_number" "$repo_slug" "post_launch_hooks" "$_ds_t0"
 
 	echo "[dispatch_with_dedup] Dispatched worker PID ${worker_pid} for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0

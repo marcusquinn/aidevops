@@ -75,6 +75,9 @@ source "${BASH_SOURCE[0]%/*}/pre-dispatch-eligibility-helper.sh"
 # t2424/GH#20030: pulse operational counters (pre_dispatch_aborts_24h)
 # shellcheck source=pulse-stats-helper.sh
 source "${BASH_SOURCE[0]%/*}/pulse-stats-helper.sh"
+# t3034: per-stage dispatch ceremony timing instrumentation
+# shellcheck source=dispatch-stage-instrument.sh
+source "${BASH_SOURCE[0]%/*}/dispatch-stage-instrument.sh"
 
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
@@ -1101,6 +1104,10 @@ dispatch_with_dedup() {
 		return 0
 	}
 
+	# t3034: per-stage timing instrumentation — capture ceremony overhead.
+	local _ds_ceremony_t0 _ds_t0
+	_ds_ceremony_t0=$(_ds_now_ns)
+
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
 	# The pulse prompt should already avoid these, but this deterministic
 	# gate prevents dispatch when prompt fallback logic is too permissive.
@@ -1112,9 +1119,11 @@ dispatch_with_dedup() {
 	# fetch + the large-file labels/title fetches + the brief-freshness body
 	# fetch) with a single call. See .agents/reference/dispatch-architecture.md
 	# "gh API call budget" for the full inventory.
+	_ds_t0=$(_ds_now_ns)
 	local issue_meta_json
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json number,title,state,labels,assignees,body 2>/dev/null) || issue_meta_json=""
+	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
 		return 1
@@ -1124,11 +1133,14 @@ dispatch_with_dedup() {
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
 	# _claim_comment_id is set by check_dispatch_dedup inside this call via
 	# bash dynamic scoping — accessible below because it was declared local above.
+	_ds_t0=$(_ds_now_ns)
 	if ! _dispatch_dedup_check_layers \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$issue_meta_json"; then
+		_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
 		return 1
 	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
 
 	# t2063: brief-body freshness guard — defence-in-depth.
 	# If a brief file exists for this issue but the issue body lacks the
@@ -1139,7 +1151,9 @@ dispatch_with_dedup() {
 	# and issue-sync-helper.sh. Non-fatal — dispatch proceeds even if enrich fails.
 	# t2996: thread meta_json so the helper extracts body from JSON instead of
 	# making a 5th `gh issue view --json body` call on the same candidate.
+	_ds_t0=$(_ds_now_ns)
 	_ensure_issue_body_has_brief "$issue_number" "$repo_slug" "$repo_path" "$issue_title" "$issue_meta_json"
+	_ds_record "$issue_number" "$repo_slug" "brief_freshness" "$_ds_t0"
 
 	# t2389: tier:simple body-shape check — auto-downgrade mis-tiered briefs.
 	# Non-blocking: inspects the issue body for 4 high-precision tier:simple
@@ -1147,15 +1161,19 @@ dispatch_with_dedup() {
 	# keywords) and swaps tier:simple → tier:standard + posts feedback on hit.
 	# Always returns 0. Dispatch proceeds at the corrected tier on hit, or
 	# unchanged tier on miss. See .agents/reference/task-taxonomy.md.
+	_ds_t0=$(_ds_now_ns)
 	_run_tier_simple_body_shape_check "$issue_number" "$repo_slug"
+	_ds_record "$issue_number" "$repo_slug" "tier_body_shape" "$_ds_t0"
 
 	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
 	# Checks generator-tagged auto-generated issues to verify the premise is
 	# still true. Exit 0 = dispatch proceeds; exit 10 = premise falsified
 	# (issue already closed by validator); exit 20 = validator error (dispatch
 	# proceeds with warning). Never blocks on validator bugs.
+	_ds_t0=$(_ds_now_ns)
 	_run_predispatch_validator "$issue_number" "$repo_slug"
 	local _validator_rc=$?
+	_ds_record "$issue_number" "$repo_slug" "predispatch_validator" "$_ds_t0"
 	if [[ "$_validator_rc" -eq 10 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator falsified premise for #${issue_number} in ${repo_slug} — issue closed, not dispatching" >>"$LOGFILE"
 		return 1
@@ -1165,15 +1183,23 @@ dispatch_with_dedup() {
 	fi
 
 	# t2424/GH#20030: Generic eligibility gate — final check BEFORE worker spawn.
+	_ds_t0=$(_ds_now_ns)
 	if ! _run_eligibility_gate_or_abort "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
 		return 1
 	fi
+	_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
 
 	# All checks passed — launch the worker.
+	_ds_t0=$(_ds_now_ns)
 	_dispatch_launch_worker \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" \
 		"$model_override" "$issue_meta_json"
+	_ds_record "$issue_number" "$repo_slug" "worker_launch_total" "$_ds_t0"
+
+	# t3034: record total ceremony time
+	_ds_record "$issue_number" "$repo_slug" "ceremony_total" "$_ds_ceremony_t0"
 }
 
 #######################################
