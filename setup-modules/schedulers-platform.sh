@@ -47,27 +47,22 @@ fi
 # --- Functions ---
 
 # Resolve and validate the log directory from config for contribution watch.
-# Reads paths.log_dir from jsonc config, validates characters, expands tilde.
+# Delegates resolution to _resolve_log_dir (shared-constants.sh), then applies
+# install-time character validation (safe for shell paths and cron lines).
 # Prints the resolved absolute path. Returns 1 on invalid characters.
 _resolve_cw_log_dir() {
 	local _cw_log_dir
-	# shellcheck disable=SC2088  # Tilde is intentionally literal here; expanded below via ${/#\~/$HOME}
-	if type _jsonc_get &>/dev/null; then
-		_cw_log_dir=$(_jsonc_get "paths.log_dir" "~/.aidevops/logs")
-	else
-		_cw_log_dir="~/.aidevops/logs"
-	fi
+	_cw_log_dir=$(_resolve_log_dir)
 	# Whitelist: only allow characters safe in shell paths and cron lines.
-	# Reject anything outside [A-Za-z0-9_./ ~-] (tilde allowed before expansion).
+	# Reject anything outside [A-Za-z0-9_./ -] (tilde already expanded by _resolve_log_dir).
 	# Store regex in variable — bash [[ =~ ]] requires unquoted RHS for regex,
 	# and a variable avoids quoting issues with special chars in the pattern.
-	local _cw_log_dir_re='^[A-Za-z0-9_./ ~-]+$'
+	local _cw_log_dir_re='^[A-Za-z0-9_./ -]+$'
 	if ! [[ "$_cw_log_dir" =~ $_cw_log_dir_re ]]; then
 		# Redirect to stderr so $() captures only the path result
-		print_error "Invalid characters in paths.log_dir (only [A-Za-z0-9_./ ~-] allowed): $_cw_log_dir" >&2
+		print_error "Invalid characters in paths.log_dir (only [A-Za-z0-9_./ -] allowed): $_cw_log_dir" >&2
 		return 1
 	fi
-	_cw_log_dir="${_cw_log_dir/#\~/$HOME}"
 	printf '%s' "$_cw_log_dir"
 	return 0
 }

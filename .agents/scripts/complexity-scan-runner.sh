@@ -78,7 +78,8 @@ source "${SCRIPT_DIR}/pulse-simplification-state.sh"
 # Runner-level state files
 # =============================================================================
 
-RUNNER_LOG_FILE="${HOME}/.aidevops/logs/complexity-scan-runner.log"
+RUNNER_LOG_DIR=$(_resolve_log_dir)
+RUNNER_LOG_FILE="${RUNNER_LOG_DIR}/complexity-scan-runner.log"
 LOCK_DIR="${HOME}/.aidevops/.agent-workspace/locks/complexity-scan.lock"
 
 mkdir -p "$(dirname "$RUNNER_LOG_FILE")" "$(dirname "$LOCK_DIR")"

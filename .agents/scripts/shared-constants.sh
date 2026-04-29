@@ -756,13 +756,32 @@ _file_perms() {
 #   - sqlite3, gh, curl, git push/merge: use log_stderr (errors matter)
 #   - rm, mkdir with || true: keep 2>/dev/null (race conditions)
 
+# Resolve the canonical aidevops log directory at runtime.
+# Reads paths.log_dir from ~/.aidevops/config/paths.jsonc when config-helper.sh
+# is sourced (provides _jsonc_get), falls back to ~/.aidevops/logs otherwise.
+# Tilde-expansion handled. Prints the resolved absolute path.
+_resolve_log_dir() {
+	local resolved
+	# shellcheck disable=SC2088  # Tilde is intentionally literal; expanded below
+	if type _jsonc_get >/dev/null 2>&1; then
+		resolved=$(_jsonc_get "paths.log_dir" "~/.aidevops/logs")
+	else
+		resolved="~/.aidevops/logs"
+	fi
+	# Tilde expansion
+	resolved="${resolved/#\~/$HOME}"
+	printf '%s\n' "$resolved"
+	return 0
+}
+
 # Initialize log file for the calling script.
-# Sets AIDEVOPS_LOG_FILE to ~/.aidevops/logs/<script-name>.log
+# Sets AIDEVOPS_LOG_FILE to <log_dir>/<script-name>.log
 # Call once at script start after sourcing shared-constants.sh.
 init_log_file() {
 	local script_name
 	script_name="$(basename "${BASH_SOURCE[1]:-${0:-unknown}}" .sh)"
-	local log_dir="${HOME}/.aidevops/logs"
+	local log_dir
+	log_dir=$(_resolve_log_dir)
 	mkdir -p "$log_dir" 2>/dev/null || true
 	AIDEVOPS_LOG_FILE="${log_dir}/${script_name}.log"
 	export AIDEVOPS_LOG_FILE
