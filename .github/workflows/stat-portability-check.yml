@@ -1,0 +1,180 @@
+name: Stat Portability Check
+
+# GH#21746 (t3046): CI lint gate detecting BSD-only `stat -f %m` usage in
+# .agents/scripts/** outside documented exemptions.
+#
+# Bug class: `stat -f %m` is a BSD/macOS-only flag (GNU stat uses `stat -c %Y`).
+# Scripts using the BSD form fail silently on Linux CI runners and production
+# environments. PR #21689 (#21623) migrated 58 scripts to `_file_mtime_epoch`
+# but a live regression in auto-update-helper-check.sh shows the pattern can
+# re-enter on new scripts or file splits. This gate makes regression visible.
+#
+# Diff-scoped (Option A): only changed .sh files under .agents/scripts/**
+# are checked, so pre-existing violations on main don't block unrelated PRs.
+#
+# Override: apply label `stat-portability-ok` AND add a
+# `## Stat Portability Justification` section to the PR body (with a file:line
+# reference and rationale) to bypass this gate. The validator job in
+# stat-portability-justification-check.yml strips the label if justification
+# is missing.
+#
+# Exemptions (checked inside stat-portability-check.sh):
+#   - .agents/scripts/portable-stat.sh     (helper body)
+#   - .agents/scripts/shared-constants.sh  (_file_mtime_epoch definition)
+#   - .agents/scripts/auto-update-helper-check.sh  (TEMPORARY)
+#   - tests/ subdirectories
+#   - Comment lines
+#   - Darwin*/FreeBSD* platform-guarded case branches
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.agents/scripts/**/*.sh'
+      - '.agents/scripts/*.sh'
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Stat Portability Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for override label
+        id: override
+        env:
+          LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          if printf '%s' "$LABELS" | grep -q '"stat-portability-ok"'; then
+            echo "Label stat-portability-ok present — gate bypassed."
+            echo "bypassed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "bypassed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get changed .agents/scripts shell files
+        if: steps.override.outputs.bypassed == 'false'
+        id: changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changed=$(git diff --name-only --diff-filter=ACMR "$BASE_SHA" "$HEAD_SHA" -- \
+            '.agents/scripts/*.sh' \
+            '.agents/scripts/**/*.sh' || true)
+          if [ -z "$changed" ]; then
+            echo "No .agents/scripts/ shell files changed."
+            echo "has_files=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf 'Changed files:\n%s\n' "$changed"
+          echo "has_files=true" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$changed" > /tmp/changed-stat-files.txt
+
+      - name: Run stat portability check
+        if: steps.override.outputs.bypassed == 'false' && steps.changed.outputs.has_files == 'true'
+        id: scan
+        run: |
+          set +e
+          # shellcheck disable=SC2046
+          output=$(bash .agents/scripts/stat-portability-check.sh \
+            --scan-files \
+            $(tr '\n' ' ' < /tmp/changed-stat-files.txt) 2>&1)
+          exit_code=$?
+          set -e
+          echo "exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          printf '%s\n' "$output"
+          printf '%s\n' "$output" > /tmp/stat-portability-report.txt
+
+      - name: Post PR comment on failure
+        if: >-
+          steps.override.outputs.bypassed == 'false' &&
+          steps.changed.outputs.has_files == 'true' &&
+          steps.scan.outputs.exit_code == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          report=$(cat /tmp/stat-portability-report.txt)
+          marker="<!-- stat-portability-check -->"
+          body=$(cat <<'HEREDOC'
+          <!-- stat-portability-check -->
+          ## Stat Portability Violations (`stat -f %m`)
+
+          The following files introduce `stat -f %m` (BSD/macOS-only). This
+          pattern fails on Linux CI runners and production environments where
+          GNU `stat` is used. PR #21689 migrated 58 scripts to `_file_mtime_epoch`
+          to fix this class of bug (GH#21617, GH#21746).
+
+          REPORT_PLACEHOLDER
+
+          **Fix:** Replace `stat -f %m` with `_file_mtime_epoch`:
+
+          ```bash
+          # Source shared-constants.sh to get _file_mtime_epoch
+          # shellcheck source=.agents/scripts/shared-constants.sh
+          source "$(dirname "$0")/shared-constants.sh"
+
+          # Before (BSD-only):
+          mtime=$(stat -f %m "$file")
+
+          # After (portable):
+          mtime=$(_file_mtime_epoch "$file")
+          ```
+
+          See: `.agents/scripts/shared-constants.sh` (`_file_mtime_epoch`)
+          and `.agents/scripts/portable-stat.sh` for details.
+
+          **Override (if justified):** Apply the `stat-portability-ok` label
+          AND add a `## Stat Portability Justification` section to the PR body
+          with a `file:line` reference and rationale. The validator
+          (`stat-portability-justification-check.yml`) will remove the label
+          if justification is missing.
+
+          Related: GH#21617, GH#21746, PR#21689.
+          HEREDOC
+          )
+          body="${body//REPORT_PLACEHOLDER/$report}"
+
+          existing=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq "[.[] | select(.body | contains(\"$marker\")) | .id] | .[0] // empty" \
+            2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh api "repos/${REPO}/issues/comments/${existing}" \
+              --method PATCH -F body="$body" >/dev/null 2>&1 || true
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$body" \
+              >/dev/null 2>&1 || true
+          fi
+
+      - name: Enforce gate
+        if: steps.override.outputs.bypassed == 'false' && steps.changed.outputs.has_files == 'true'
+        env:
+          EXIT_CODE: ${{ steps.scan.outputs.exit_code }}
+        run: |
+          set -euo pipefail
+          if [ "${EXIT_CODE:-0}" = "0" ]; then
+            echo "Stat portability check: clean."
+            exit 0
+          fi
+          if [ "$EXIT_CODE" = "1" ]; then
+            echo "::error::stat -f %m violations found. Replace with _file_mtime_epoch. See PR comment for details."
+            exit 1
+          fi
+          echo "::error::Stat portability check failed with unexpected exit code: $EXIT_CODE"
+          exit 1
