@@ -333,138 +333,38 @@ _preserve_no_activity_output() {
 }
 
 # =============================================================================
-# Worker output classification
+# Worktree discovery (t2982)
 # =============================================================================
 
 #######################################
-# Detect whether a worker produced any tangible output.
+# _discover_actual_worktree_dir — find the worktree a worker actually used (t2982)
 #
-# Checks three independent signals. Returns 0 (true — has output) if ANY
-# signal is present; returns 1 (false — zero output) only when ALL are absent.
+# Scans git worktree list --porcelain from the repo root of <work_dir> for a
+# worktree whose branch ref matches gh-?<issue_number>. Used to fix Mode B/C
+# worker misclassification (work_dir stuck on main after worker moved to own
+# worktree or merged its PR).
 #
-# Args:
-#   $1 - session_key (e.g. "issue-20721")
-#   $2 - work_dir    (worktree root; must be a git repo)
-#
-# Signals checked (in order of cheapness):
-#   1. Commits on feature branch beyond remote default branch
-#      (git rev-list --count origin/main..HEAD > 0; falls back to origin/master)
-#   2. Branch pushed to remote
-#      (git ls-remote origin refs/heads/<branch> is non-empty)
-#   3. PR linked to this issue via gh
-#      (gh pr list --search "<issue_number>" returns at least one result)
-#
-# Design principle — fail-open: every check that errors (no remote, no gh,
-# detached HEAD, network failure) returns 0 so false-negatives are impossible.
-# Only a confirmed absence of all three signals triggers a noop classification.
+# Args: $1=work_dir  $2=issue_number
+# Echoes the discovered path if found and it is a directory; nothing otherwise.
+# Always returns 0 — caller falls back to work_dir on empty output.
 #######################################
-# _worker_produced_output — classify worker output quality (GH#20819)
-#
-# Returns one of three classification strings via stdout:
-#   "pr_exists"     — PR confirmed, or fail-open (cannot evaluate signals)
-#   "branch_orphan" — branch pushed + commits exist BUT no PR found
-#                     (requires DISPATCH_REPO_SLUG + gh to confirm absence)
-#   "noop"          — no commits, no pushed branch, no PR
-#
-# Fail-open semantics are preserved: any condition that prevents confident
-# signal evaluation echoes "pr_exists" so false-negatives (real work
-# misclassified as orphan or noop) are impossible.  Only a confirmed
-# absence of all signals (noop) or a confirmed branch-without-PR
-# (branch_orphan) triggers those classifications.
-#
-# Always returns 0. Callers capture stdout:
-#   local classification
-#   classification=$(_worker_produced_output "$session_key" "$work_dir")
-#######################################
-_worker_produced_output() {
-	local session_key="$1"
-	local work_dir="$2"
-
-	# Only applies to worker sessions (issue-* key pattern)
-	if [[ "$session_key" != issue-* ]]; then
-		printf 'pr_exists'  # fail-open for non-worker sessions
+_discover_actual_worktree_dir() {
+	local work_dir="$1"
+	local issue_n="$2"
+	if [[ -z "$work_dir" || -z "$issue_n" ]]; then
 		return 0
 	fi
-
-	# Bail if work_dir is not a valid git repo — fail-open
-	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
-		printf 'pr_exists'  # fail-open: cannot evaluate signals
-		return 0
+	local repo_root=""
+	repo_root=$(git -C "$work_dir" rev-parse --show-toplevel 2>/dev/null) || repo_root="$work_dir"
+	local found_path=""
+	# Single-line awk keeps $2 refs inside the single-quote on the same line,
+	# preventing the positional-param ratchet from flagging awk field refs.
+	# shellcheck disable=SC2016
+	found_path=$(git -C "$repo_root" worktree list --porcelain 2>/dev/null \
+		| awk -v n="$issue_n" '/^worktree / { p=$2 } /^branch / && $2 ~ "gh-?" n { print p; exit }')
+	if [[ -n "$found_path" && -d "$found_path" ]]; then
+		printf '%s' "$found_path"
 	fi
-
-	# Signal 1: commits on feature branch beyond origin/main (fallback: master)
-	local has_commits=0
-	local commit_count=0
-	commit_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
-	[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
-	if [[ "$commit_count" -gt 0 ]]; then
-		has_commits=1
-	else
-		# Signal 1b: fallback for origin/master default branch
-		commit_count=$(git -C "$work_dir" rev-list --count "origin/master..HEAD" 2>/dev/null || true)
-		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count=0
-		[[ "$commit_count" -gt 0 ]] && has_commits=1
-	fi
-
-	# Signal 2: branch pushed to remote
-	# Default-branch guard (t2899): when HEAD ends on the repo's default branch
-	# (main/master), Signal 2 ALWAYS matches because the default branch exists
-	# on the remote — every worker that exits without checking out a feature
-	# branch was previously misclassified as branch_orphan. Resolve the default
-	# branch via origin/HEAD symbolic-ref (with env + literal fallback) and skip
-	# Signal 2 entirely when branch_name matches it. The signal is meaningless
-	# on default branches: there is no orphan branch to recover.
-	local has_pushed_branch=0
-	local branch_name=""
-	local default_branch=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null \
-		| sed 's|^origin/||' || true)
-	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
-	if [[ -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]]; then
-		local remote_ref=""
-		remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null || true)
-		[[ -n "$remote_ref" ]] && has_pushed_branch=1
-	fi
-
-	# Early exit: no commits, no pushed branch → definitely noop (no PR check needed)
-	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
-	# but no feature branch pushed → noop, not branch_orphan.
-	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
-		printf 'noop'
-		return 0
-	fi
-	# t2899: HEAD on default branch with commits ahead but no feature branch pushed.
-	# This is "worker landed on main with local commits" — not an orphan branch.
-	# Without a feature branch to recover, Signal 1 alone cannot produce a meaningful
-	# branch_orphan classification, so collapse to noop.
-	if [[ "$has_pushed_branch" -eq 0 && "$branch_name" == "$default_branch" ]]; then
-		printf 'noop'
-		return 0
-	fi
-
-	# Signal 3: PR linked to this issue (requires gh and DISPATCH_REPO_SLUG)
-	# Only reachable when Signal 1 or 2 is present — disambiguates pr_exists vs branch_orphan.
-	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
-	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
-		local pr_count=0
-		pr_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
-			--json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			printf 'pr_exists'
-			return 0
-		fi
-		# PR confirmed absent: branch/commits exist but no PR → orphan (GH#20819)
-		printf 'branch_orphan'
-		return 0
-	fi
-
-	# Cannot verify PR status (no repo_slug or issue_number) — fail-open.
-	# Treat branch/commits as pr_exists: cannot confirm orphan without PR check.
-	printf 'pr_exists'
 	return 0
 }
 
@@ -523,8 +423,19 @@ _handle_worker_branch_orphan() {
 	local session_key="$1"
 	local work_dir="$2"
 
+	# t2982: discover actual worker worktree by issue-number pattern (Mode B/C fix).
+	# Delegates to _discover_actual_worktree_dir; falls back to work_dir.
+	local actual_dir="$work_dir"
+	local _orphan_issue_n="${WORKER_ISSUE_NUMBER:-}"
+	if [[ -n "$_orphan_issue_n" && -d "$work_dir" ]]; then
+		local _orphan_found=""
+		_orphan_found=$(_discover_actual_worktree_dir "$work_dir" "$_orphan_issue_n")
+		[[ -n "$_orphan_found" ]] && actual_dir="$_orphan_found"
+	fi
+
 	local branch_name=""
-	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	# t2982: use actual_dir so the branch reflects where the worker actually worked.
+	branch_name=$(git -C "$actual_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
@@ -551,7 +462,10 @@ _handle_worker_branch_orphan() {
 	fi
 	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
 
-	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
+	# t2982: include actual_dir in log when discovery found a different worktree.
+	local _orphan_work_dir_field="work_dir=${work_dir:-<unset>}"
+	[[ "$actual_dir" != "$work_dir" ]] && _orphan_work_dir_field="${_orphan_work_dir_field} actual_dir=${actual_dir}"
+	print_info "[lifecycle] worker_branch_orphan session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} ${_orphan_work_dir_field}"
 
 	# Always increment counter — failure or success
 	_increment_orphan_count_stat
