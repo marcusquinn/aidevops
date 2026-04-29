@@ -5,10 +5,17 @@
 Git/filesystem safety guard for Claude Code (PreToolUse hook).
 
 Blocks destructive commands that can lose uncommitted work or delete files.
-Also enforces the main-branch file allowlist (t1712): Edit and Write tool calls
-targeting non-allowlisted paths on main/master are blocked.
+Also enforces the canonical-workspace protection rule (t1712/t1990):
+  - Edit/Write on the default branch: only allowlisted paths permitted
+    (README.md, TODO.md, todo/**) without a linked worktree.
+  - Edit/Write on any non-default branch in the canonical workspace: always
+    denied unless inside a linked worktree. Default branch is auto-detected
+    from origin/HEAD (with fallbacks to init.defaultBranch then "main") so
+    repos using develop/trunk/etc. are covered equally.
 
 This hook runs before Bash/Edit/Write tool calls execute and can deny dangerous operations.
+It is registered under BOTH the 'Bash' AND 'Edit|Write' PreToolUse matchers so that
+the Edit/Write protection branch is reachable (see GH#21814).
 
 Installed by: aidevops setup (setup.sh) or install-hooks-helper.sh
 Location: ~/.aidevops/hooks/git_safety_guard.py
@@ -20,6 +27,10 @@ Adapted for aidevops framework (https://aidevops.sh)
 Exit behavior:
   - Exit 0 with JSON {"hookSpecificOutput": {"permissionDecision": "deny", ...}} = block
   - Exit 0 with no output = allow
+
+Environment overrides:
+  AIDEVOPS_SKIP_CANONICAL_GUARD=1  — bypass the off-default-branch canonical guard
+                                     (use sparingly; document reason at call site)
 """
 import json
 import os
@@ -266,12 +277,98 @@ def _is_main_allowlisted(file_path: str, repo_root: str) -> bool:
     return True
 
 
+def _get_default_branch(repo_root: str) -> str:
+    """Return the default branch name for the repo at repo_root.
+
+    Detection order (first success wins):
+    1. git symbolic-ref --short refs/remotes/origin/HEAD  (strips "origin/" prefix)
+    2. git config --get init.defaultBranch
+    3. literal "main"
+
+    Each step is fail-soft — exceptions and non-zero exits fall through to the next.
+    Result is NOT cached between invocations (the hook runs once per tool call).
+    """
+    # 1. Try origin/HEAD
+    try:
+        result = subprocess.run(
+            ["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            ref = result.stdout.strip()
+            # Strip "origin/" prefix that git symbolic-ref adds
+            if ref.startswith("origin/"):
+                ref = ref[len("origin/"):]
+            if ref:
+                return ref
+    except Exception:
+        pass
+
+    # 2. Try git config init.defaultBranch
+    try:
+        result = subprocess.run(
+            ["git", "config", "--get", "init.defaultBranch"],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            if branch:
+                return branch
+    except Exception:
+        pass
+
+    # 3. Hard fallback
+    return "main"
+
+
+def _build_canonical_off_default_deny(
+    file_path: str, branch: str, default_branch: str
+) -> dict:
+    """Return a deny dict for writes to the canonical workspace on a non-default branch.
+
+    This enforces the t1990 rule: ALL work goes through a linked worktree.
+    The canonical repo directory must stay on the default branch.
+    """
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                f"BLOCKED by git_safety_guard.py (aidevops t1990)\n\n"
+                f"Reason: Canonical workspace is on '{branch}' "
+                f"(default branch is '{default_branch}').\n\n"
+                f"Per t1990, ALL work goes through a linked worktree. "
+                f"The canonical repo directory must stay on '{default_branch}'.\n\n"
+                f"Options:\n"
+                f"  (a) Use a linked worktree for this work:\n"
+                f"        wt switch -c feature/your-task-name\n\n"
+                f"  (b) Reset canonical to the default branch:\n"
+                f"        git switch {default_branch}\n\n"
+                f"  (c) Override for this operation (RARE — document reason):\n"
+                f"        AIDEVOPS_SKIP_CANONICAL_GUARD=1 <your-command>"
+            ),
+        }
+    }
+
+
 def _check_main_branch_allowlist(file_path: str) -> "dict | None":
     """Check if an Edit/Write to file_path is allowed on the current branch.
 
+    Enforces two related rules:
+      t1712 — On the default branch: only allowlisted paths may be written
+               without a linked worktree (README.md, TODO.md, todo/**).
+      t1990 — Off the default branch in the canonical workspace: all writes
+               are denied unless inside a linked worktree.
+
     Returns a deny dict if the write should be blocked, None if allowed.
     """
-    # Early exit: invalid inputs or not on protected branch
+    # Early exit: invalid inputs
     if not file_path:
         return None
 
@@ -284,29 +381,46 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
         return None  # Not in a git repo — allow
 
     branch = _get_current_branch(repo_root)
-    if branch not in ("main", "master"):
-        return None  # Not on a protected branch — allow
+    if not branch:
+        return None  # Cannot determine branch — allow
 
-    # On main/master: check if this is a linked worktree (allowed) or main worktree (restricted)
-    if _is_linked_worktree(repo_root) or _is_main_allowlisted(file_path, repo_root):
-        return None  # Linked worktrees or allowlisted paths are allowed
+    # Linked worktrees are always allowed, regardless of branch
+    if _is_linked_worktree(repo_root):
+        return None
 
-    # Deny: not allowlisted
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": (
-                f"BLOCKED by git_safety_guard.py (aidevops t1712)\n\n"
-                f"Reason: '{file_path}' is not in the main-branch write allowlist.\n\n"
-                f"Allowlisted paths (writable on main without a worktree): "
-                f"README.md, TODO.md, todo/**\n\n"
-                f"All other edits must be made in a linked worktree:\n"
-                f"  wt switch -c feature/your-task-name\n\n"
-                f"This enforces the canonical-repo-on-main policy (t1712)."
-            ),
+    # Explicit escape valve (use sparingly — document reason at call site)
+    if os.environ.get("AIDEVOPS_SKIP_CANONICAL_GUARD"):
+        return None
+
+    # Detect default branch dynamically (replaces hardcoded "main"/"master" check)
+    default_branch = _get_default_branch(repo_root)
+
+    if branch == default_branch:
+        # On the default branch: allowlist governs
+        if _is_main_allowlisted(file_path, repo_root):
+            return None  # Allowlisted path — allow
+
+        # Deny: non-allowlisted path on default branch in canonical workspace
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    f"BLOCKED by git_safety_guard.py (aidevops t1712)\n\n"
+                    f"Reason: '{file_path}' is not in the default-branch write allowlist.\n\n"
+                    f"Allowlisted paths (writable on '{default_branch}' without a worktree): "
+                    f"README.md, TODO.md, todo/**\n\n"
+                    f"All other edits must be made in a linked worktree:\n"
+                    f"  wt switch -c feature/your-task-name\n\n"
+                    f"This enforces the canonical-repo-on-{default_branch} policy (t1712)."
+                ),
+            }
         }
-    }
+    else:
+        # Off the default branch in the canonical workspace: always deny
+        # (workers operate in their own linked worktrees; an off-default canonical
+        # means a prior session left the canonical in a dirty state)
+        return _build_canonical_off_default_deny(file_path, branch, default_branch)
 
 
 def _normalize_absolute_paths(cmd):
