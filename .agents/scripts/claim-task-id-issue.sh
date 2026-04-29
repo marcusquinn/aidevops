@@ -641,7 +641,7 @@ _ensure_todo_entry_written() {
 	local safe_desc
 	safe_desc=$(printf '%s' "$title" \
 		| tr '\n\t' '  ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
-	[[ -z "$safe_desc" ]] && safe_desc="(no description)"
+	[[ -z "$safe_desc" ]] && safe_desc="(no title)"
 	local todo_line="- [ ] ${task_id} ${safe_desc}"
 	[[ -n "$tags_str" ]] && todo_line="${todo_line} ${tags_str}"
 	# GH#20834: append blocked-by tag when predecessor refs were auto-detected.

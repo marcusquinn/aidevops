@@ -182,8 +182,6 @@ run_ensure() {
 # Test cases
 # ---------------------------------------------------------------------------
 
-LONG_DESC="$(printf '## Task\n\nUpdate 6 downstream briefs.\n\n## Why\n\nThe enum counts changed.\n\n## How\n\nEdit each brief file.\n')"
-
 # 1. GH#21473 regression: title used, not multi-paragraph description
 result1="$(run_ensure "t344" "2107" "align 6 downstream briefs" "" )"
 assert_eq "title_not_description_in_todo_line" \
@@ -207,11 +205,11 @@ assert_eq "title_whitespace_trimmed" \
 	"$result3" \
 	"- [ ] t100 spaced title ref:GH#999"
 
-# 4. Empty title falls back to (no description)
+# 4. Empty title falls back to (no title)
 result4="$(run_ensure "t101" "888" "" "")"
 assert_eq "empty_title_fallback" \
 	"$result4" \
-	"- [ ] t101 (no description) ref:GH#888"
+	"- [ ] t101 (no title) ref:GH#888"
 
 # 5. Labels are appended as #tags, reserved prefixes skipped
 result5="$(run_ensure "t200" "777" "my task title" "auto-dispatch,status:available,tier:standard,bug")"
