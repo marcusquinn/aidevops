@@ -99,13 +99,21 @@ _stat_batch() {
 # =============================================================================
 # Convenience wrappers — single-file, single-field with safe fallbacks.
 # All delegate to _stat_batch for the actual platform dispatch.
+# On unknown variant: propagates error (fail loud, not silent zeros).
+# Fallback values (0, "000", "unknown") only apply when the file is missing
+# but the stat variant is known.
 # =============================================================================
 
+_stat_assert_variant() {
+	[[ "$_STAT_VARIANT" != "$_PORTABLE_STAT_UNKNOWN" ]] && return 0
+	echo "$_PORTABLE_STAT_FATAL" >&2
+	return 1
+}
+
 # _file_mtime_epoch PATH — modification time as epoch seconds (fallback: 0)
-# On unknown variant: propagates error (fail loud, not silent zeros).
 _file_mtime_epoch() {
 	local file_path="$1"
-	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
+	_stat_assert_variant || return 1
 	_stat_batch '%Y' "$file_path" || echo 0
 	return 0
 }
@@ -113,7 +121,7 @@ _file_mtime_epoch() {
 # _file_size_bytes PATH — file size in bytes (fallback: 0)
 _file_size_bytes() {
 	local file_path="$1"
-	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
+	_stat_assert_variant || return 1
 	_stat_batch '%s' "$file_path" || echo 0
 	return 0
 }
@@ -121,7 +129,7 @@ _file_size_bytes() {
 # _file_perms PATH — octal permissions, e.g. "644" (fallback: "000")
 _file_perms() {
 	local file_path="$1"
-	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
+	_stat_assert_variant || return 1
 	_stat_batch '%a' "$file_path" || echo "000"
 	return 0
 }
@@ -129,7 +137,7 @@ _file_perms() {
 # _file_owner PATH — owner username (fallback: "unknown")
 _file_owner() {
 	local file_path="$1"
-	[[ "$_STAT_VARIANT" == "$_PORTABLE_STAT_UNKNOWN" ]] && { echo "$_PORTABLE_STAT_FATAL" >&2; return 1; }
+	_stat_assert_variant || return 1
 	_stat_batch '%U' "$file_path" || echo "$_PORTABLE_STAT_UNKNOWN"
 	return 0
 }
