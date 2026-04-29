@@ -319,6 +319,14 @@ USAGE:
       review transition) later failed. The subsequent `claim` subcommand
       overwrites the stamp with full lifecycle info. (t2943)
 
+  interactive-session-helper.sh branch-has-active-claim <branch> [--worktree PATH]
+      Exit 0 if an active interactive-session claim exists for the branch's
+      issue (stamp present, PID alive, hostname matches). Exit 1 otherwise.
+      Used by worktree cleanup paths (worktree-clean-lib.sh::should_skip_cleanup,
+      pulse-cleanup.sh::_worktree_owner_alive) to honour active claims without
+      sourcing the helper. Same source of truth as the dispatch-dedup gate.
+      (t2916/GH#21074)
+
   interactive-session-helper.sh help
       Print this message.
 
@@ -378,6 +386,9 @@ main() {
 		;;
 	write-stamp)
 		_isc_cmd_write_stamp "$@" || rc=$?
+		;;
+	branch-has-active-claim)
+		_isc_cmd_branch_has_active_claim "$@" || rc=$?
 		;;
 	help | -h | --help)
 		_isc_cmd_help || rc=$?

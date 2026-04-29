@@ -602,3 +602,31 @@ _isc_cmd_write_stamp() {
 	_isc_write_stamp "$issue" "$slug" "" "$user"
 	return 0
 }
+
+# -----------------------------------------------------------------------------
+# Subcommand: branch-has-active-claim (t2916/GH#21074)
+# -----------------------------------------------------------------------------
+# Thin CLI wrapper around the sourceable `_isc_branch_has_active_claim` helper
+# in interactive-session-helper-stamp.sh. Lets shell consumers (worktree
+# cleanup paths, pulse-cleanup) check claim state via subprocess invocation
+# without sourcing the entire orchestrator graph.
+#
+# Stdout: silent (exit code carries the answer).
+# Stderr: silent on success; one warn line on parse failure.
+# Exit:
+#   0 — branch's issue has an active claim (stamp present, PID alive)
+#   1 — no active claim (no stamp, no parseable issue, or stamp is stale)
+#   2 — usage error (no branch supplied)
+_isc_cmd_branch_has_active_claim() {
+	if [[ $# -lt 1 ]]; then
+		_isc_err "branch-has-active-claim: <branch> is required"
+		return 2
+	fi
+	# Delegate to the sourceable helper. It does its own arg parsing
+	# (--worktree PATH, --worktree=PATH) and exit-code contract, so we
+	# pass through verbatim.
+	if _isc_branch_has_active_claim "$@"; then
+		return 0
+	fi
+	return 1
+}

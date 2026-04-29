@@ -204,12 +204,18 @@ _cleanup_merged_prs_for_all_repos() {
 #######################################
 # Check whether a worktree has an active owner (process or registry).
 #
-# Two checks in priority order:
+# Three checks in priority order:
 #   1. pgrep: any process with the worktree path in its argv.
 #   2. Registry: is_worktree_owned_by_others() — covers interactive
 #      runtimes (e.g. Claude Code) where the path never appears in argv.
+#   3. Interactive claim stamp (t2916/GH#21074): consults
+#      ~/.aidevops/.agent-workspace/interactive-claims/<slug>-<issue>.json.
+#      Same source of truth as the dispatch-dedup gate. Catches active work
+#      that pgrep + registry both miss (e.g. claim stamp written but the
+#      worktree-registry entry was pruned, or an interactive runtime whose
+#      argv doesn't contain the worktree path).
 #
-# Both silent-skip paths log a diagnostic message (GH#18346 fix):
+# All silent-skip paths log a diagnostic message (GH#18346 fix):
 # previously these paths produced zero log output, making it impossible
 # to diagnose why eligible orphan worktrees survived cleanup.
 #
@@ -237,6 +243,29 @@ _worktree_owner_alive() {
 		# t2976: audit log — orphan cleanup blocked, registry owner is alive
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip"
 		return 0
+	fi
+
+	# Interactive claim stamp check (t2916/GH#21074): consults the canonical
+	# claim-stamp directory used by the dispatch-dedup gate. Catches the
+	# failure modes that defeat pgrep + registry: stale registry entries,
+	# argv-less runtimes, manual `git worktree add` recoveries that bypass
+	# `register_worktree`, etc. Subprocess call to interactive-session-helper.sh
+	# rather than sourcing — keeps pulse-cleanup.sh's call graph small and
+	# isolates a transient helper-graph error from the cleanup pass.
+	if [[ -n "$wt_branch" ]]; then
+		local _isc_helper=""
+		if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+			_isc_helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+		elif [[ -x "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/interactive-session-helper.sh" ]]; then
+			_isc_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/interactive-session-helper.sh"
+		fi
+		if [[ -n "$_isc_helper" ]]; then
+			if "$_isc_helper" branch-has-active-claim "$wt_branch" --worktree "$wt_path" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Orphan cleanup: skipping $wt_branch ($wt_path) — active interactive claim stamp" >>"$LOGFILE"
+				log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "active-claim"
+				return 0
+			fi
+		fi
 	fi
 
 	return 1
