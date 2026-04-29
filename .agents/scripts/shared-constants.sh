@@ -733,6 +733,34 @@ _file_mtime_epoch() {
 }
 
 # =============================================================================
+# Portable file size (macOS vs GNU/Linux)
+# GNU stat uses -c %s; BSD stat uses -f %z. On Linux, `stat -f %z` does NOT
+# fail — it prints filesystem info (exit 0), capturing garbage into variables.
+# GNU-first order is mandatory.  See GH#21618 / GH#21623.
+# Usage: bytes=$(_file_size_bytes "/path/to/file")
+# Returns: file size in bytes, or 0 if file missing / error.
+# =============================================================================
+
+_file_size_bytes() {
+	local file_path="$1"
+	stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null || echo 0
+}
+
+# =============================================================================
+# Portable file permissions (macOS vs GNU/Linux)
+# GNU stat uses -c %a; BSD stat uses -f %Lp. On Linux, `stat -f %Lp` does NOT
+# fail — it prints filesystem info (exit 0), capturing garbage into variables.
+# GNU-first order is mandatory.  See GH#21618 / GH#21623.
+# Usage: perms=$(_file_perms "/path/to/file")
+# Returns: octal permissions (e.g. "600"), or "000" if file missing / error.
+# =============================================================================
+
+_file_perms() {
+	local file_path="$1"
+	stat -c %a "$file_path" 2>/dev/null || stat -f %Lp "$file_path" 2>/dev/null || echo 000
+}
+
+# =============================================================================
 # Stderr Logging Utilities
 # =============================================================================
 # Replace blanket 2>/dev/null with targeted stderr handling.
