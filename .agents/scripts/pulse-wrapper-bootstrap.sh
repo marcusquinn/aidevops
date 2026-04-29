@@ -226,6 +226,11 @@ _pulse_run_merge_only() {
 	local _mo_saved_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	LOGFILE="$_mo_log"
 
+	# t3068 / GH#21806: drain trigger file before the full merge pass so
+	# approval-triggered PRs are processed immediately (not after the full
+	# merge_ready_prs_all_repos scan). Fail-open: never blocks the merge pass.
+	_drain_merge_trigger_file_if_present >>"$_mo_log" 2>&1 || true
+
 	# Call the merge entry point (defined in pulse-merge.sh, sourced above).
 	# All PULSE_* configuration constants are already set by the full bootstrap.
 	merge_ready_prs_all_repos >>"$_mo_log" 2>&1 || true
@@ -241,6 +246,92 @@ _pulse_run_merge_only() {
 	_mo_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
 	printf '[%s] pulse-wrapper --merge-only: done\n' "$_mo_ts" >>"$_mo_log" 2>/dev/null || true
 
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _drain_merge_trigger_file_if_present (t3068 / GH#21806)
+#
+# Called at the top of each pulse cycle (and inside _pulse_run_merge_only)
+# to process any entries written by approval-helper.sh after a maintainer
+# runs `sudo aidevops approve issue|pr <N>`.
+#
+# Without this drain, the next pulse-merge cycle is up to ~120s away.
+# With it, the approval takes effect within seconds.
+#
+# Trigger file: ~/.aidevops/cache/pulse-merge-trigger.txt
+# Format (one entry per line, tab-delimited):
+#   TYPE<TAB>SLUG<TAB>NUM
+#   TYPE = "pr"    → NUM is a PR number; call process_pr() directly.
+#   TYPE = "issue" → NUM is an issue number; find linked open PRs and
+#                    call process_pr() for each.
+#
+# Atomically renames the file to a drain-$$-suffixed copy so concurrent
+# writes during the drain land in the re-created original and are handled
+# by the next cycle (no entries are lost, no double-processing occurs).
+#
+# Fail-open: any I/O error, malformed line, or process_pr failure is logged
+# and skipped. Never blocks the normal pulse cycle.
+# ---------------------------------------------------------------------------
+_drain_merge_trigger_file_if_present() {
+	local trigger_file="${HOME}/.aidevops/cache/pulse-merge-trigger.txt"
+	local log_dest="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	[[ -f "$trigger_file" ]] || return 0
+
+	# Atomically move file to a drain copy. Any concurrent appends after this
+	# mv land in the re-created original file and are handled next cycle.
+	local tmp_file="${trigger_file}.drain-$$"
+	mv "$trigger_file" "$tmp_file" 2>/dev/null || {
+		rm -f "$tmp_file" 2>/dev/null || true
+		return 0
+	}
+
+	local line_type slug num
+	while IFS=$'\t' read -r line_type slug num || [[ -n "$line_type" ]]; do
+		# Skip blank lines (e.g. trailing newline produces an empty read).
+		[[ -z "$line_type" && -z "$slug" && -z "$num" ]] && continue
+		# Validate: slug must contain '/', num must be numeric.
+		if [[ -z "$slug" || "$slug" != *"/"* || ! "$num" =~ ^[0-9]+$ ]]; then
+			printf '[pulse-wrapper] t3068 trigger drain: skipping malformed line type=%s slug=%s num=%s\n' \
+				"${line_type:-?}" "${slug:-?}" "${num:-?}" \
+				>>"$log_dest" 2>/dev/null || true
+			continue
+		fi
+		printf '[pulse-wrapper] t3068 trigger drain: processing type=%s %s#%s\n' \
+			"$line_type" "$slug" "$num" >>"$log_dest" 2>/dev/null || true
+
+		if [[ "$line_type" == "pr" ]]; then
+			# Direct PR number — process immediately.
+			if declare -F process_pr >/dev/null 2>&1; then
+				process_pr "$slug" "$num" >>"$log_dest" 2>&1 || true
+			fi
+		elif [[ "$line_type" == "issue" ]]; then
+			# Issue approval — find linked open PRs and process each.
+			local linked_prs pr_n
+			linked_prs=$(gh pr list --repo "$slug" --state open \
+				--json number,body \
+				--jq "[.[] | select(.body | test(\"(closes?|fixe[sd]?|resolve[sd]?)\\\\s+#${num}\"; \"i\")) | .number] | .[]" \
+				2>/dev/null) || linked_prs=""
+			if [[ -z "$linked_prs" ]]; then
+				printf '[pulse-wrapper] t3068 trigger drain: no open PRs linked to %s#%s — skipping\n' \
+					"$slug" "$num" >>"$log_dest" 2>/dev/null || true
+			else
+				while IFS= read -r pr_n; do
+					[[ "$pr_n" =~ ^[0-9]+$ ]] || continue
+					printf '[pulse-wrapper] t3068 trigger drain: processing linked PR %s#%s for issue #%s\n' \
+						"$slug" "$pr_n" "$num" >>"$log_dest" 2>/dev/null || true
+					if declare -F process_pr >/dev/null 2>&1; then
+						process_pr "$slug" "$pr_n" >>"$log_dest" 2>&1 || true
+					fi
+				done <<< "$linked_prs"
+			fi
+		else
+			# Unknown type — warn and skip (fail-open).
+			printf '[pulse-wrapper] t3068 trigger drain: unknown type %s for %s#%s — skipping\n' \
+				"$line_type" "$slug" "$num" >>"$log_dest" 2>/dev/null || true
+		fi
+	done < "$tmp_file"
+	rm -f "$tmp_file" 2>/dev/null || true
 	return 0
 }
 

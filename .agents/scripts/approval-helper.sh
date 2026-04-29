@@ -463,6 +463,17 @@ _approve_target() {
 	fi
 
 	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
+
+	# t3068 / GH#21806: write trigger file so the next pulse-merge cycle fires
+	# immediately on this PR/issue instead of waiting up to 120s.
+	# Format: TYPE<TAB>SLUG<TAB>NUM — three columns, one entry per line.
+	# The pulse drain reads this, atomically clears it, and calls process_pr()
+	# for each entry. Fail-open: any I/O error is non-fatal.
+	local _trigger_file="${_APPROVAL_HOME}/.aidevops/cache/pulse-merge-trigger.txt"
+	mkdir -p "$(dirname "$_trigger_file")" 2>/dev/null || true
+	printf '%s\t%s\t%s\n' "$target_type" "$slug" "$target_number" >> "$_trigger_file" 2>/dev/null || true
+	_print_info "Trigger file written — pulse-merge cycle will re-evaluate within seconds (GH#21806)"
+
 	# Bash 3.2 compat: ${var^} (uppercase first) requires Bash 4+. Use printf + tr.
 	local target_type_cap
 	target_type_cap="$(printf '%s' "${target_type:0:1}" | tr '[:lower:]' '[:upper:]')${target_type:1}"

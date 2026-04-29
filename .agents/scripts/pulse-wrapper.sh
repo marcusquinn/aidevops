@@ -722,6 +722,7 @@ _pulse_execute_self_check() {
 		_pulse_setup_dry_run_mode
 		_pulse_run_deterministic_pipeline
 		_pulse_maybe_run_llm_supervisor
+		_drain_merge_trigger_file_if_present
 		_carry_forward_pr_diff
 		_dispatch_pr_fix_worker
 		_close_conflicting_pr
@@ -1548,6 +1549,13 @@ main() {
 	# (or after a long quiet period) primes once. See helper comment for
 	# the launchd-bypass rationale.
 	_pulse_prime_caches_if_stale || true
+
+	# t3068 / GH#21806: drain trigger file written by approval-helper.sh when
+	# a maintainer runs `sudo aidevops approve issue|pr <N>`. Fires targeted
+	# process_pr() calls immediately, eliminating the 0-120s latency between
+	# a crypto-approval and the pulse acting on it. Fail-open: never blocks
+	# the normal cycle path.
+	_drain_merge_trigger_file_if_present || true
 
 	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
 	# growing at MB/s from tight error loops (the GH#21729 failure mode).

@@ -117,6 +117,29 @@ done
 
 **Bypass:** apply `hold-for-review` to opt out of all auto-merge paths (this gate is upstream of t3070 — a held PR never reaches the native-auto call site). For per-repo opt-out, set `allow_auto_merge=false` via `gh api -X PATCH repos/<slug> -f allow_auto_merge=false`.
 
+## Approve-Triggered Immediate Merge (t3068 / GH#21806)
+
+`sudo aidevops approve issue|pr <N>` now writes a touch-file immediately after posting the signed approval comment:
+
+```
+~/.aidevops/cache/pulse-merge-trigger.txt
+```
+
+Format: `TYPE<TAB>SLUG<TAB>NUM` (one entry per line). The pulse drains this file at the **top of every cycle** (both the main dispatch cycle in `pulse-wrapper.sh::main()` and the 60s merge-only cycle in `_pulse_run_merge_only()`):
+
+- `TYPE=pr`: calls `process_pr(slug, num)` directly.
+- `TYPE=issue`: resolves linked open PRs via `gh pr list` and calls `process_pr` for each.
+
+**Latency improvement:** from up to 120s wait (next poll cycle) to **<5s** (drained on the next merge-only launchd tick, or immediately if the main pulse fires first).
+
+**Implementation:**
+- `approval-helper.sh::_approve_target()` — writes the touch-file after `_post_issue_approval_updates`.
+- `pulse-wrapper-bootstrap.sh::_drain_merge_trigger_file_if_present()` — drain function (atomic mv, fail-open, malformed-line guard).
+- `pulse-wrapper.sh::main()` — drain called after `_pulse_prime_caches_if_stale || true`.
+- `pulse-wrapper-bootstrap.sh::_pulse_run_merge_only()` — drain called before `merge_ready_prs_all_repos`.
+
+**Test coverage:** `.agents/scripts/tests/test-approve-kicks-pulse.sh` (7 cases — write format, pr drain, issue drain, file cleared, malformed skip, no-op absent, concurrent write).
+
 ## Webhook-Driven Auto-Merge (t3038)
 
 The 120s `pulse-merge-routine.sh` polling loop is the **backstop**. The fast path is a webhook receiver that fires `pulse-merge.sh::process_pr` within seconds of a GitHub event:
