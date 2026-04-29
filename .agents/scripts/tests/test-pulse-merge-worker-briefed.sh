@@ -4,7 +4,7 @@
 #
 # Tests for origin:worker worker-briefed auto-merge gates (t2449).
 #
-# Verifies the 10 coverage cases from GH#20204 §How:
+# Verifies the 10 coverage cases from GH#20204 §How, plus t3052 and t3062:
 #   Case (a): origin:worker + issue-author=OWNER + green CI + no NMR → auto-merges
 #   Case (b): origin:worker + issue-author=MEMBER + green + no NMR → auto-merges
 #   Case (c): origin:worker + issue-author=CONTRIBUTOR → does NOT auto-merge
@@ -15,6 +15,11 @@
 #   Case (h): origin:worker + draft PR → does NOT auto-merge
 #   Case (i): origin:worker-takeover label → does NOT auto-merge
 #   Case (j): Bot review in placeholder window → waits, doesn't merge yet
+#   Case (k): origin:worker + NONE author + crypto approval → passes (t3052)
+#   Case (l): origin:worker + NONE author + no crypto → blocked (t3052)
+#   Case (m): origin:worker + OWNER author + no crypto → still passes (t3052)
+#   Case (n): COLLABORATOR author + login in trusted-issue-author allowlist → passes (t3062)
+#   Case (o): COLLABORATOR author + login NOT in allowlist + no crypto → blocked (t3062)
 #
 # No real repository is touched. The gh binary is replaced with a mock stub
 # that serves canned responses from TEST_ROOT fixture files.
@@ -121,12 +126,13 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _attempt_worker_briefed_auto_merge and its dependency _pm_issue_api
-# from the merge scripts and eval them into the test shell.
+# Extract _attempt_worker_briefed_auto_merge and its dependencies from the
+# merge scripts and eval them into the test shell.
 # _pm_issue_api lives in pulse-merge.sh (module-level helper).
-# _attempt_worker_briefed_auto_merge lives in pulse-merge-process.sh (post-split).
+# _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
+# pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
 define_helpers_under_test() {
-	local src_worker_briefed src_issue_api
+	local src_worker_briefed src_issue_api src_trusted_author
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -135,6 +141,9 @@ define_helpers_under_test() {
 	if [[ -f "$PROCESS_SCRIPT" ]]; then
 		extract_from="$PROCESS_SCRIPT"
 	fi
+	src_trusted_author=$(awk '
+		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
@@ -144,6 +153,8 @@ define_helpers_under_test() {
 	fi
 	# shellcheck disable=SC1090
 	eval "$src_issue_api"
+	# shellcheck disable=SC1090
+	eval "$src_trusted_author"
 	# shellcheck disable=SC1090
 	eval "$src_worker_briefed"
 	return 0
@@ -526,6 +537,80 @@ test_case_m_owner_no_crypto_still_passes() {
 }
 
 # =============================================================================
+# Case (n): COLLABORATOR author + login in trusted-issue-author allowlist → passes (t3062)
+# Peer runner filed the issue; their login is in the allowlist.
+# =============================================================================
+test_case_n_trusted_author_allowlist_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	# COLLABORATOR with a known login
+	printf '{"author_association":"COLLABORATOR","user":{"login":"test-peer-runner"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	# Trusted-authors conf pointing to a temp file containing the login
+	local _conf="${TEST_ROOT}/trusted-authors.conf"
+	printf 'test-peer-runner\n' >"$_conf"
+	export AIDEVOPS_TRUSTED_AUTHORS_CONF="$_conf"
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "113" "owner/repo" "origin:worker" "false" "55" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (n): COLLABORATOR + login in allowlist → passes (t3062)" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		if grep -q "passes via trusted-issue-author allowlist (t3062)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (n): COLLABORATOR + login in allowlist → passes (t3062)" 0
+		else
+			print_result "Case (n): COLLABORATOR + login in allowlist → passes (t3062)" 1 \
+				"Exit was 0 but expected t3062 allowlist log message not found"
+		fi
+	fi
+	unset AIDEVOPS_TRUSTED_AUTHORS_CONF
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (o): COLLABORATOR author + login NOT in allowlist + no crypto → blocked
+# Peer runner filed the issue but is not in the allowlist and no crypto sig.
+# =============================================================================
+test_case_o_trusted_author_not_in_allowlist_blocked() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	# COLLABORATOR with a login that is NOT in the allowlist
+	printf '{"author_association":"COLLABORATOR","user":{"login":"unknown-runner"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	# Trusted-authors conf containing a different login (not unknown-runner)
+	local _conf="${TEST_ROOT}/trusted-authors.conf"
+	printf 'alex-solovyev\n' >"$_conf"
+	export AIDEVOPS_TRUSTED_AUTHORS_CONF="$_conf"
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "114" "owner/repo" "origin:worker" "false" "56" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case (o): COLLABORATOR + login NOT in allowlist + no crypto → blocked" 1 \
+			"Expected non-zero exit, got 0 (unlisted COLLABORATOR should block)"
+	else
+		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (o): COLLABORATOR + login NOT in allowlist + no crypto → blocked" 0
+		else
+			print_result "Case (o): COLLABORATOR + login NOT in allowlist + no crypto → blocked" 1 \
+				"Exit was non-zero but expected block log message not found"
+		fi
+	fi
+	unset AIDEVOPS_TRUSTED_AUTHORS_CONF
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -547,6 +632,8 @@ main() {
 	test_case_k_non_owner_with_crypto_passes
 	test_case_l_non_owner_without_crypto_blocked
 	test_case_m_owner_no_crypto_still_passes
+	test_case_n_trusted_author_allowlist_passes
+	test_case_o_trusted_author_not_in_allowlist_blocked
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
