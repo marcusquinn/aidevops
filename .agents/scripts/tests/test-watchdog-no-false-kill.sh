@@ -127,8 +127,8 @@ assert_contains \
 	'STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"' \
 	"$watchdog_source"
 assert_contains \
-	"4b. CPU check defers kill (WATCHDOG_STALL_DEFERRED marker)" \
-	"WATCHDOG_STALL_DEFERRED" \
+	"4b. CPU check defers kill ([lifecycle] worker_stall_deferred marker)" \
+	"[lifecycle] worker_stall_deferred" \
 	"$watchdog_source"
 
 #######################################
@@ -270,6 +270,18 @@ assert_contains \
 	"13e. pulse-watchdog maps stop_flag" \
 	"stop_flag" \
 	"$pulse_wd_source"
+
+#######################################
+# Test 14: Defer marker written to LIFECYCLE_LOG, not OUTPUT_FILE
+#######################################
+assert_contains \
+	"14a. Defer marker writes to LIFECYCLE_LOG" \
+	'>>"$LIFECYCLE_LOG"' \
+	"$watchdog_source"
+assert_not_contains \
+	"14b. Defer marker does NOT write to OUTPUT_FILE" \
+	'[lifecycle] worker_stall_deferred.*>>"$OUTPUT_FILE"' \
+	"$watchdog_source"
 
 #######################################
 # Summary
