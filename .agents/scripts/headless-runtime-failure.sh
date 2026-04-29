@@ -182,6 +182,92 @@ classify_worker_exit() {
 }
 
 #######################################
+# Classify worker kill_reason for the [lifecycle] worker_exited log line.
+#
+# t3063: surfaces the kill PATH on the same line as wait_status so Phase 2
+# log aggregation finds the reason class without a PID-join across scripts.
+# Complementary to classify_worker_exit (which classifies CRASH vs CLEAN);
+# this answers "if killed, which kill path fired the SIGTERM/SIGKILL?".
+#
+# Sentinel precedence (highest to lowest):
+#   1. ${exit_code_file}.kill_reason — explicit class written by kill site
+#      (PR #21784/t3056 sites: hard_kill_stall, no_output_stall,
+#      phase1_zero_output, wall_clock_stale, cold_start_timeout,
+#      progress_timeout, idle_timeout, stop_flag, stage_timeout_*,
+#      process_guard_*, wait_loop_timeout_*).
+#   2. ${exit_code_file}.watchdog_stall_killed → hard_kill_stall
+#      (worker exceeded HARD_KILL_SECONDS, t2956 / Issue #21231).
+#   3. ${exit_code_file}.watchdog_killed → no_output_stall
+#      (legacy passive watchdog kill — output file silent).
+#   4. ${exit_code_file}.rate_limit_fast → rate_limit_fast
+#      (30s fast-exit monitor caught 429/overload, GH#21578 / t3021).
+#   5. wait_status > 128 with no sentinel → unknown
+#      (signal-killed but kill path unidentified — acceptance target: 0%).
+#   6. otherwise → natural
+#      (clean exit or voluntary failure exit).
+#
+# The .kill_reason sentinel is the forward-compatible extension point: any
+# kill site that adds a new class only needs to write its class string to
+# ${exit_code_file}.kill_reason; this classifier picks it up without code
+# changes here.
+#
+# Args:
+#   $1 = exit_code_file path (sentinel files are checked at ${path}.<class>)
+#   $2 = wait_status integer ($? from `wait`)
+#
+# Returns 0 always; outputs kill_reason class string on stdout.
+#######################################
+classify_worker_kill_reason() {
+	local exit_code_file="${1:-}"
+	local wait_status="${2:-0}"
+
+	# Highest-precedence path: explicit class written by a kill site.
+	if [[ -n "$exit_code_file" && -f "${exit_code_file}.kill_reason" ]]; then
+		local _explicit
+		_explicit=$(<"${exit_code_file}.kill_reason")
+		# Strip CR/LF; bail to inference path if file is empty or whitespace-only.
+		_explicit="${_explicit//$'\r'/}"
+		_explicit="${_explicit//$'\n'/}"
+		# Trim leading/trailing spaces and tabs (bash 3.2 compatible).
+		_explicit="${_explicit#"${_explicit%%[![:space:]]*}"}"
+		_explicit="${_explicit%"${_explicit##*[![:space:]]}"}"
+		if [[ -n "$_explicit" ]]; then
+			printf '%s' "$_explicit"
+			return 0
+		fi
+	fi
+
+	# Inferred classification from existing watchdog sentinels.
+	# Precedence: stall_killed (hard kill) → watchdog_killed (passive stall)
+	# → rate_limit_fast. The watchdog writes both .watchdog_killed and
+	# .watchdog_stall_killed on a hard kill, so stall_killed must be checked first.
+	if [[ -n "$exit_code_file" ]]; then
+		if [[ -f "${exit_code_file}.watchdog_stall_killed" ]]; then
+			printf '%s' "hard_kill_stall"
+			return 0
+		fi
+		if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
+			printf '%s' "no_output_stall"
+			return 0
+		fi
+		if [[ -f "${exit_code_file}.rate_limit_fast" ]]; then
+			printf '%s' "rate_limit_fast"
+			return 0
+		fi
+	fi
+
+	# No sentinel — signal-killed (wait_status > 128) is "unknown"
+	# (acceptance target: 0% of these); voluntary exits are "natural".
+	if [[ "$wait_status" =~ ^[0-9]+$ ]] && (( wait_status > 128 )); then
+		printf '%s' "unknown"
+		return 0
+	fi
+
+	printf '%s' "natural"
+	return 0
+}
+
+#######################################
 # Push any local-only WIP commits to origin before worker exits.
 # Best-effort, fail-open — never blocks claim release or shutdown.
 #
