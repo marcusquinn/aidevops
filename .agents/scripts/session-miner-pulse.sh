@@ -24,6 +24,10 @@ set -euo pipefail
 _smp_dir="${BASH_SOURCE[0]%/*}"
 [[ "$_smp_dir" == "${BASH_SOURCE[0]}" ]] && _smp_dir="."
 SCRIPT_DIR="$(cd "$_smp_dir" && pwd)"
+
+# Source shared-constants.sh for portable stat functions
+# shellcheck source=shared-constants.sh
+[[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 MINER_DIR="${HOME}/.aidevops/.agent-workspace/work/session-miner"
 # Shipped with aidevops; copied to workspace on first run
 EXTRACTOR_SRC="${SCRIPT_DIR}/session-miner/extract.py"
@@ -56,11 +60,8 @@ log_error() {
 check_lock() {
 	if [[ -f "${LOCK_FILE}" ]]; then
 		local lock_age
-		# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 		local lock_mtime
-		lock_mtime=$(stat -c %Y "${LOCK_FILE}" 2>/dev/null || stat -f %m "${LOCK_FILE}" 2>/dev/null || echo 0)
-		# Guard: ensure numeric (stat -f on Linux produces multi-line text, not a number)
-		[[ "${lock_mtime}" =~ ^[0-9]+$ ]] || lock_mtime=0
+		lock_mtime=$(_file_mtime_epoch "${LOCK_FILE}")
 		lock_age=$(($(date +%s) - lock_mtime))
 		# Stale lock (>1 hour)
 		if [[ "${lock_age}" -gt 3600 ]]; then
@@ -690,10 +691,7 @@ sync_scripts() {
 validate_db_size() {
 	local db_path="$1"
 	local db_size
-	# Cross-platform file size: Linux (stat -c) first, macOS (stat -f) fallback
-	db_size=$(stat -c %s "${db_path}" 2>/dev/null || stat -f %z "${db_path}" 2>/dev/null || echo 0)
-	# Guard: ensure numeric (stat -f on Linux produces multi-line text, not a number)
-	[[ "${db_size}" =~ ^[0-9]+$ ]] || db_size=0
+	db_size=$(_file_size_bytes "${db_path}")
 	if [[ "${db_size}" -lt 1000 ]]; then
 		log_info "Database too small (${db_size} bytes). Nothing to mine."
 		return 1

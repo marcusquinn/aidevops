@@ -113,11 +113,7 @@ report_finding() {
 
 get_perms() {
 	local file="$1"
-	if [[ "$(uname)" == "Darwin" ]]; then
-		stat -f %Lp "$file" 2>/dev/null || echo "000"
-	else
-		stat -c %a "$file" 2>/dev/null || echo "000"
-	fi
+	_file_perms "$file"
 }
 
 # Scan aidevops credentials.sh (check 1)

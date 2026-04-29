@@ -88,8 +88,7 @@ _latest_sandbox() {
 			local ver
 			ver=$(basename "$dir")
 			local mtime
-			# Linux stat -c first (stat -f '%m' on Linux outputs filesystem info to stdout)
-			mtime=$(stat -c '%Y' "$dir" 2>/dev/null || stat -f '%m' "$dir" 2>/dev/null || echo "0")
+			mtime=$(_file_mtime_epoch "$dir")
 			if [[ "$mtime" -gt "$latest_time" ]]; then
 				latest_time="$mtime"
 				latest="$ver"

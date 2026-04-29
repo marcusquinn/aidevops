@@ -815,7 +815,7 @@ auto_prune() {
 	# Check if we should run
 	if [[ -f "$prune_marker" ]]; then
 		local last_prune
-		last_prune=$(stat -c %Y "$prune_marker" 2>/dev/null || stat -f %m "$prune_marker" 2>/dev/null || echo "0")
+		last_prune=$(_file_mtime_epoch "$prune_marker")
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - last_prune))

@@ -76,7 +76,7 @@ fix_return_statements() {
 		local temp_file
 		temp_file=$(mktemp)
 		local file_mode=""
-		file_mode=$(stat -f "%Lp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null || true)
+		file_mode=$(_file_perms "$file")
 		local in_function=false
 		local function_name=""
 		local brace_count=0

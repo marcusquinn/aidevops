@@ -314,9 +314,7 @@ _read_worker_log_tail_classified() {
 			# created at spawn and written-to throughout execution).
 			local now mtime
 			now=$(date +%s 2>/dev/null) || now=""
-			mtime=$(stat -c '%Y' "$log_file" 2>/dev/null \
-				|| stat -f '%m' "$log_file" 2>/dev/null \
-				|| echo "")
+			mtime=$(_file_mtime_epoch "$log_file")
 			if [[ -n "$now" && -n "$mtime" && "$mtime" =~ ^[0-9]+$ ]]; then
 				_WORKER_LOG_TAIL_AGE_SECS=$((now - mtime))
 				# Defensive: clamp negatives to 0 (clock skew / FS race)

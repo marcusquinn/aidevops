@@ -14,6 +14,8 @@
 # configurable TTL (default 60 min) or are marked completed/failed by
 # the worker on exit.
 #
+# Source shared-constants.sh for portable stat functions
+#
 # Storage: JSONL file at ~/.aidevops/.agent-workspace/tmp/dispatch-ledger.jsonl
 # Each line is a JSON object with fields:
 #   session_key  - unique worker session key (e.g., "issue-42")
@@ -41,6 +43,10 @@
 #   dispatch-ledger-helper.sh help
 
 set -euo pipefail
+
+# shellcheck source=shared-constants.sh
+_dlh_dir="${BASH_SOURCE[0]%/*}"
+[[ -f "${_dlh_dir}/shared-constants.sh" ]] && source "${_dlh_dir}/shared-constants.sh"
 
 LEDGER_DIR="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 LEDGER_FILE="${LEDGER_DIR}/dispatch-ledger.jsonl"
@@ -72,12 +78,7 @@ _lock_dir_age() {
 		echo "0"
 		return 0
 	fi
-	# BSD stat (macOS) first, then GNU stat (Linux)
-	mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "")
-	if [[ -z "$mtime" ]] || [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
-		echo "0"
-		return 0
-	fi
+	mtime=$(_file_mtime_epoch "$dir")
 	now=$(_now_epoch)
 	echo "$((now - mtime))"
 	return 0

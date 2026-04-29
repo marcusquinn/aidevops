@@ -221,11 +221,11 @@ _get_merged_config() {
 	# Check if cache is still valid (based on file mtimes)
 	local current_mtime=""
 	if [[ -f "$JSONC_DEFAULTS" ]]; then
-		current_mtime=$(stat -c %Y "$JSONC_DEFAULTS" 2>/dev/null || stat -f %m "$JSONC_DEFAULTS" 2>/dev/null || echo "0")
+		current_mtime=$(_file_mtime_epoch "$JSONC_DEFAULTS")
 	fi
 	if [[ -f "$JSONC_USER" ]]; then
 		local user_mtime
-		user_mtime=$(stat -c %Y "$JSONC_USER" 2>/dev/null || stat -f %m "$JSONC_USER" 2>/dev/null || echo "0")
+		user_mtime=$(_file_mtime_epoch "$JSONC_USER")
 		current_mtime="${current_mtime}:${user_mtime}"
 	fi
 

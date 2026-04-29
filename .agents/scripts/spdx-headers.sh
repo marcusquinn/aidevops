@@ -9,6 +9,10 @@
 
 set -euo pipefail
 
+# shellcheck source=shared-constants.sh
+_spdx_dir="${BASH_SOURCE[0]%/*}"
+[[ -f "${_spdx_dir}/shared-constants.sh" ]] && source "${_spdx_dir}/shared-constants.sh"
+
 readonly COPYRIGHT_HOLDER="Marcus Quinn"
 readonly COPYRIGHT_YEARS="2025-2026"
 readonly LICENSE_ID="MIT"
@@ -28,7 +32,7 @@ _safe_replace() {
 	local tmp_file="$1"
 	local target_file="$2"
 	chmod --reference="$target_file" "$tmp_file" 2>/dev/null ||
-		chmod "$(stat -f '%Lp' "$target_file" 2>/dev/null || echo '644')" "$tmp_file" 2>/dev/null ||
+		chmod "$(_file_perms "$target_file")" "$tmp_file" 2>/dev/null ||
 		true
 	mv "$tmp_file" "$target_file"
 	return 0

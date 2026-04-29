@@ -51,9 +51,7 @@ rotate_pulse_log() {
 	# Check hot log size — skip if under cap or log doesn't exist
 	local hot_size=0
 	if [[ -f "$LOGFILE" ]]; then
-		hot_size=$(stat -f %z "$LOGFILE" 2>/dev/null || wc -c <"$LOGFILE" 2>/dev/null || echo "0")
-		hot_size="${hot_size//[[:space:]]/}"
-		[[ "$hot_size" =~ ^[0-9]+$ ]] || hot_size=0
+		hot_size=$(_file_size_bytes "$LOGFILE")
 	fi
 
 	if [[ "$hot_size" -lt "$PULSE_LOG_HOT_MAX_BYTES" ]]; then
@@ -99,18 +97,14 @@ rotate_pulse_log() {
 	done < <(ls -1 "${PULSE_LOG_ARCHIVE_DIR}"/pulse-*.log.gz 2>/dev/null | sort)
 
 	for archive_file in "${archive_files[@]}"; do
-		archive_size=$(stat -f %z "$archive_file" 2>/dev/null || wc -c <"$archive_file" 2>/dev/null || echo "0")
-		archive_size="${archive_size//[[:space:]]/}"
-		[[ "$archive_size" =~ ^[0-9]+$ ]] || archive_size=0
+		archive_size=$(_file_size_bytes "$archive_file")
 		total_cold=$((total_cold + archive_size))
 	done
 
 	if [[ "$total_cold" -gt "$PULSE_LOG_COLD_MAX_BYTES" ]]; then
 		for archive_file in "${archive_files[@]}"; do
 			[[ "$total_cold" -le "$PULSE_LOG_COLD_MAX_BYTES" ]] && break
-			archive_size=$(stat -f %z "$archive_file" 2>/dev/null || wc -c <"$archive_file" 2>/dev/null || echo "0")
-			archive_size="${archive_size//[[:space:]]/}"
-			[[ "$archive_size" =~ ^[0-9]+$ ]] || archive_size=0
+			archive_size=$(_file_size_bytes "$archive_file")
 			rm -f "$archive_file" && {
 				total_cold=$((total_cold - archive_size))
 				echo "[pulse-wrapper] rotate_pulse_log: pruned cold archive $(basename "$archive_file") (${archive_size}B)" >>"$WRAPPER_LOGFILE"
@@ -123,9 +117,7 @@ rotate_pulse_log() {
 	# so 1MB ≈ 12,500 entries ≈ weeks of data). Archive the old content first.
 	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]] && [[ -f "$PULSE_STAGE_TIMINGS_LOG" ]]; then
 		local timings_size=0
-		timings_size=$(stat -f %z "$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || wc -c <"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || echo "0")
-		timings_size="${timings_size//[[:space:]]/}"
-		[[ "$timings_size" =~ ^[0-9]+$ ]] || timings_size=0
+		timings_size=$(_file_size_bytes "$PULSE_STAGE_TIMINGS_LOG")
 		if [[ "$timings_size" -gt 1048576 ]]; then
 			local timings_archive="${PULSE_LOG_ARCHIVE_DIR}/pulse-stage-timings-${ts}.log.gz"
 			if gzip -c "$PULSE_STAGE_TIMINGS_LOG" >"$timings_archive" 2>/dev/null; then

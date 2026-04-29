@@ -496,11 +496,7 @@ _score_check_image_properties() {
 	fi
 
 	local file_size_mb
-	if [[ "$OSTYPE" == "darwin"* ]]; then
-		file_size_mb=$(stat -f%z "$image_path" | awk '{print $1/1024/1024}')
-	else
-		file_size_mb=$(stat -c%s "$image_path" | awk '{print $1/1024/1024}')
-	fi
+	file_size_mb=$(_file_size_bytes "$image_path" | awk '{print $1/1024/1024}')
 	print_info "File size: ${file_size_mb}MB (max: ${THUMBNAIL_MAX_SIZE_MB}MB)"
 
 	return 0

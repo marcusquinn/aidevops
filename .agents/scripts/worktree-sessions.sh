@@ -167,12 +167,7 @@ get_branch_start_date() {
 		echo "$first_commit_date"
 	else
 		# No unique commits, use worktree creation time (directory mtime)
-		# Portable stat (BSD: -f "%m", GNU: -c "%Y")
-		if stat --version &>/dev/null 2>&1; then
-			stat -c "%Y" "$worktree_path" 2>/dev/null || echo ""
-		else
-			stat -f "%m" "$worktree_path" 2>/dev/null || echo ""
-		fi
+		_file_mtime_epoch "$worktree_path"
 	fi
 }
 

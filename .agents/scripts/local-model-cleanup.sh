@@ -59,18 +59,10 @@ _get_days_unused() {
 	fi
 
 	# Fall back to mtime
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local mod_epoch
-		mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
-		if [[ "$mod_epoch" -gt 0 ]]; then
-			days_unused="$(((now_epoch - mod_epoch) / 86400))"
-		fi
-	else
-		local mod_epoch
-		mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
-		if [[ "$mod_epoch" -gt 0 ]]; then
-			days_unused="$(((now_epoch - mod_epoch) / 86400))"
-		fi
+	local mod_epoch
+	mod_epoch="$(_file_mtime_epoch "$model_path")"
+	if [[ "$mod_epoch" -gt 0 ]]; then
+		days_unused="$(((now_epoch - mod_epoch) / 86400))"
 	fi
 
 	echo "$days_unused"
@@ -139,11 +131,7 @@ _cleanup_report_models() {
 		local name size_bytes size_human last_used_str status_str days_unused
 		name="$(basename "$model_path")"
 
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-		fi
+		size_bytes="$(_file_size_bytes "$model_path")"
 		total_size_bytes=$((total_size_bytes + size_bytes))
 
 		size_human="$(echo "$size_bytes" | awk '{
@@ -252,14 +240,9 @@ cmd_cleanup() {
 	if [[ -n "$remove_model" ]]; then
 		local target="${LOCAL_MODELS_STORE}/${remove_model}"
 		if [[ -f "$target" ]]; then
-			local size_human
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				local size_bytes
-				size_bytes="$(stat -f%z "$target" 2>/dev/null || echo "0")"
-				size_human="$(echo "$size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
-			else
-				size_human="$(du -h "$target" | awk '{print $1}')"
-			fi
+			local size_human size_bytes
+			size_bytes="$(_file_size_bytes "$target")"
+			size_human="$(echo "$size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
 			_remove_model_file "$target" "$remove_model" "$size_human"
 		else
 			print_error "Model not found: ${remove_model}"
@@ -407,11 +390,7 @@ _nudge_calculate_stale() {
 		name="$(basename "$model_path")"
 		days_unused="$(_get_days_unused "$model_path" "$now_epoch")"
 
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-		fi
+		size_bytes="$(_file_size_bytes "$model_path")"
 
 		if [[ "$days_unused" -gt "$threshold" ]]; then
 			stale_size_bytes=$((stale_size_bytes + size_bytes))

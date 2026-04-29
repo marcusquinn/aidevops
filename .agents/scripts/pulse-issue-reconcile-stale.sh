@@ -209,8 +209,7 @@ _normalize_stale_should_skip_reset() {
 	local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
 	if [[ -f "$worker_log" ]]; then
 		local log_mtime
-		# Linux stat -c first (stat -f '%m' on macOS outputs file info in a different format)
-		log_mtime=$(stat -c '%Y' "$worker_log" 2>/dev/null || stat -f '%m' "$worker_log" 2>/dev/null) || log_mtime=0
+		log_mtime=$(_file_mtime_epoch "$worker_log")
 		if [[ $((now_epoch - log_mtime)) -lt 600 ]]; then
 			return 0
 		fi

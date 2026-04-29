@@ -178,10 +178,7 @@ _ff_with_lock() {
 		if [[ -z "$_ff_owner_pid" ]]; then
 			local _orphan_age_threshold="" _lock_mtime="" _lock_now="" _lock_age=""
 			_orphan_age_threshold="${FAST_FAIL_LOCK_ORPHAN_AGE_SECONDS:-5}"
-			# stat -c %Y (GNU/Linux) before stat -f %m (BSD/macOS) to avoid
-			# GNU stat printing filesystem info to stdout when -f is used.
-			_lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null || stat -f %m "$lock_dir" 2>/dev/null || echo 0)
-			[[ "$_lock_mtime" =~ ^[0-9]+$ ]] || _lock_mtime=0
+			_lock_mtime=$(_file_mtime_epoch "$lock_dir")
 			_lock_now=$(date +%s)
 			_lock_age=$((_lock_now - _lock_mtime))
 			if [[ "$_lock_age" -ge "$_orphan_age_threshold" ]]; then

@@ -732,6 +732,16 @@ _file_mtime_epoch() {
 	stat -c %Y "$file_path" 2>/dev/null || stat -f %m "$file_path" 2>/dev/null || echo 0
 }
 
+_file_size_bytes() {
+	local file_path="$1"
+	stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null || echo 0
+}
+
+_file_perms() {
+	local file_path="$1"
+	stat -c %a "$file_path" 2>/dev/null || stat -f %Lp "$file_path" 2>/dev/null || echo "000"
+}
+
 # =============================================================================
 # Stderr Logging Utilities
 # =============================================================================

@@ -1356,11 +1356,7 @@ cmd_status() {
 		echo "  Last audit:     $last_run"
 
 		local db_size
-		if [[ "$(uname)" == "Darwin" ]]; then
-			db_size=$(stat -f %z "$AUDIT_DB" 2>/dev/null || echo "0")
-		else
-			db_size=$(stat -c %s "$AUDIT_DB" 2>/dev/null || echo "0")
-		fi
+		db_size=$(_file_size_bytes "$AUDIT_DB")
 		echo "  DB size:        $((db_size / 1024)) KB"
 	else
 		echo "Database: not created yet"

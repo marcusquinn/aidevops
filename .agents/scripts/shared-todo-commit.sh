@@ -119,11 +119,7 @@ _todo_acquire_lock() {
 		# Check lock age (safety net for orphaned locks)
 		if [[ -d "$TODO_LOCK_PATH" ]]; then
 			local lock_age
-			if [[ "$(uname)" == "Darwin" ]]; then
-				lock_age=$(($(date +%s) - $(stat -f %m "$TODO_LOCK_PATH" 2>/dev/null || echo "0")))
-			else
-				lock_age=$(($(date +%s) - $(stat -c %Y "$TODO_LOCK_PATH" 2>/dev/null || echo "0")))
-			fi
+			lock_age=$(($(date +%s) - $(_file_mtime_epoch "$TODO_LOCK_PATH")))
 			if [[ $lock_age -gt $TODO_STALE_LOCK_AGE ]]; then
 				echo "[todo_lock] Removing stale lock (age ${lock_age}s > ${TODO_STALE_LOCK_AGE}s)" >>"$log_target"
 				rm -rf "$TODO_LOCK_PATH"

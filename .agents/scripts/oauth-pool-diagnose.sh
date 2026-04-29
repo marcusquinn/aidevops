@@ -134,7 +134,7 @@ _diag_check_pool() {
 		return 1
 	fi
 	local perms
-	perms=$(stat -f '%Lp' "$POOL_FILE" 2>/dev/null || stat -c '%a' "$POOL_FILE" 2>/dev/null || echo "unknown")
+	perms=$(_file_perms "$POOL_FILE")
 	if [[ "$perms" != "600" ]]; then
 		_diag_print "Pool file permissions" "WARN" "$perms (expected 600)"
 	else

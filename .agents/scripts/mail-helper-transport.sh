@@ -533,8 +533,7 @@ cmd_transport_status() {
 	echo "    Database:  $MAIL_DB"
 	if [[ -f "$MAIL_DB" ]]; then
 		local db_size
-		# Linux stat -c first (stat -f%z on Linux outputs filesystem info to stdout)
-		db_size=$(stat -c%s "$MAIL_DB" 2>/dev/null || stat -f%z "$MAIL_DB" 2>/dev/null || echo "0")
+		db_size=$(_file_size_bytes "$MAIL_DB")
 		echo "    Size:      $((db_size / 1024))KB"
 	else
 		echo "    Size:      (not initialized)"

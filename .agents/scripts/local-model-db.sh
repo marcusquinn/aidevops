@@ -445,11 +445,7 @@ sync_model_inventory() {
 		local name size_bytes quant
 		name="$(basename "$model_path")"
 
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-		fi
+		size_bytes="$(_file_size_bytes "$model_path")"
 
 		# Extract quantization from filename
 		quant="$(echo "$name" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"

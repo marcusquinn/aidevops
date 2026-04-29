@@ -378,11 +378,7 @@ cmd_status() {
 	local file_mtime
 
 	now="$(date +%s)"
-	if [[ "$(uname)" == "Darwin" ]]; then
-		file_mtime="$(stat -f %m "$CHECKPOINT_FILE")"
-	else
-		file_mtime="$(stat -c %Y "$CHECKPOINT_FILE")"
-	fi
+	file_mtime="$(_file_mtime_epoch "$CHECKPOINT_FILE")"
 	file_age_seconds=$((now - file_mtime))
 
 	local age_display

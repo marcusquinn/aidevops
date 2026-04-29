@@ -9,6 +9,11 @@
 
 set -euo pipefail
 
+# Source shared-constants.sh for portable stat functions
+_dch_dir="${BASH_SOURCE[0]%/*}"
+# shellcheck source=shared-constants.sh
+[[ -f "${_dch_dir}/shared-constants.sh" ]] && source "${_dch_dir}/shared-constants.sh"
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -72,11 +77,7 @@ has_cmd() {
 human_filesize() {
 	local file="$1"
 	local bytes
-	if [[ "$(uname)" == "Darwin" ]]; then
-		bytes=$(stat -f%z -- "$file" || echo "0")
-	else
-		bytes=$(stat -c%s -- "$file" || echo "0")
-	fi
+	bytes=$(_file_size_bytes "$file")
 	if [[ "$bytes" -ge 1073741824 ]]; then
 		printf '%s.%sG' "$((bytes / 1073741824))" "$(((bytes % 1073741824) * 10 / 1073741824))"
 	elif [[ "$bytes" -ge 1048576 ]]; then

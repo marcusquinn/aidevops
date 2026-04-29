@@ -107,7 +107,7 @@ _dt_acquire_lock() {
 		# Check for stale lock (>30s old → assume crashed)
 		if [[ -d "$LOCK_DIR" ]]; then
 			local lock_mtime now_epoch age_s
-			lock_mtime=$(stat -f %m "$LOCK_DIR" 2>/dev/null || stat -c %Y "$LOCK_DIR" 2>/dev/null || echo "0")
+			lock_mtime=$(_file_mtime_epoch "$LOCK_DIR")
 			now_epoch=$(date +%s)
 			age_s=$((now_epoch - lock_mtime))
 			if ((age_s > 30)); then

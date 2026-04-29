@@ -528,7 +528,7 @@ cmd_status() {
 				| xargs -0 ls -t1 2>/dev/null | tail -1 || true)"
 			if [[ -n "$oldest_file" ]]; then
 				local file_ts now_ts diff_secs
-				file_ts="$(date -r "$oldest_file" +%s 2>/dev/null || stat -c '%Y' "$oldest_file" 2>/dev/null || echo 0)"
+				file_ts="$(date -r "$oldest_file" +%s 2>/dev/null || _file_mtime_epoch "$oldest_file")"
 				now_ts="$(date +%s)"
 				diff_secs=$(( now_ts - file_ts ))
 				if [[ "$diff_secs" -lt 3600 ]]; then
@@ -931,7 +931,7 @@ _triage_route_to_plane() {
 _file_age_days() {
 	local filepath="$1"
 	local file_ts now_ts
-	file_ts="$(date -r "$filepath" +%s 2>/dev/null || stat -c '%Y' "$filepath" 2>/dev/null || echo 0)"
+	file_ts="$(date -r "$filepath" +%s 2>/dev/null || _file_mtime_epoch "$filepath")"
 	now_ts="$(date +%s)"
 	echo $(( (now_ts - file_ts) / 86400 ))
 	return 0
