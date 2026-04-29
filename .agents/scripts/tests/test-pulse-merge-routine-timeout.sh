@@ -173,7 +173,7 @@ printf '\n=== Behavioural tests ===\n'
 #  - defines a hang stub
 #  - calls _pmr_run_with_timeout with a 2s ceiling
 #  - exits with the helper's return code
-HARNESS=$(mktemp /tmp/pmr-timeout-harness.XXXXXX.sh)
+HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-timeout-harness-XXXXXX")
 trap 'rm -f "$HARNESS"' EXIT
 
 cat >"$HARNESS" <<HARNESS_EOF
@@ -235,7 +235,7 @@ fi
 # =============================================================================
 # Test 3: Behavioural — successful sub-shell returns normally
 # =============================================================================
-HARNESS3=$(mktemp /tmp/pmr-timeout-harness3.XXXXXX.sh)
+HARNESS3=$(mktemp "${TMPDIR:-/tmp}/pmr-timeout-harness3-XXXXXX")
 trap 'rm -f "$HARNESS" "$HARNESS3"' EXIT
 
 cat >"$HARNESS3" <<HARNESS3_EOF

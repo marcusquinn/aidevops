@@ -234,7 +234,7 @@ _pmr_run_with_timeout() {
 	# Poll for child completion or timeout. sleep 2 keeps the loop cheap;
 	# overshoot is bounded by 2s.
 	while kill -0 "$_child_pid" 2>/dev/null; do
-		local _now _elapsed
+		local _now="" _elapsed=""
 		_now=$(date +%s)
 		_elapsed=$((_now - _start_epoch))
 		if [[ "$_elapsed" -gt "$timeout_seconds" ]]; then
