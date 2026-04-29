@@ -148,11 +148,7 @@ check_secret_storage() {
 	# Fallback: credentials.sh with correct permissions
 	if [[ -f "$CREDENTIALS_FILE" ]]; then
 		local perms
-		if [[ "$(uname)" == "Darwin" ]]; then
-			perms=$(stat -f %Lp "$CREDENTIALS_FILE" || echo "000")
-		else
-			perms=$(stat -c %a "$CREDENTIALS_FILE" || echo "000")
-		fi
+		perms=$(_file_perms "$CREDENTIALS_FILE")
 		if [[ "$perms" == "600" ]]; then
 			CHECK_LABEL="$label (credentials.sh, 600)"
 			return 0

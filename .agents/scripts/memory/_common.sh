@@ -11,6 +11,15 @@
 [[ -n "${_MEMORY_COMMON_LOADED:-}" ]] && return 0
 _MEMORY_COMMON_LOADED=1
 
+# Portable stat helpers — source shared-constants.sh if not already loaded.
+if ! declare -f _file_mtime_epoch >/dev/null 2>&1; then
+	_mc_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$_mc_dir" == "${BASH_SOURCE[0]}" ]] && _mc_dir="."
+	# shellcheck source=../shared-constants.sh
+	source "$(cd "$_mc_dir/.." && pwd)/shared-constants.sh"
+	unset _mc_dir
+fi
+
 #######################################
 # Print colored message
 #######################################
@@ -815,7 +824,7 @@ auto_prune() {
 	# Check if we should run
 	if [[ -f "$prune_marker" ]]; then
 		local last_prune
-		last_prune=$(stat -c %Y "$prune_marker" 2>/dev/null || stat -f %m "$prune_marker" 2>/dev/null || echo "0")
+		last_prune=$(_file_mtime_epoch "$prune_marker")
 		local now
 		now=$(date +%s)
 		local elapsed=$((now - last_prune))

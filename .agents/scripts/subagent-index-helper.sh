@@ -23,6 +23,13 @@
 
 set -euo pipefail
 
+_sih_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_sih_dir" == "${BASH_SOURCE[0]}" ]] && _sih_dir="."
+SCRIPT_DIR="$(cd "$_sih_dir" && pwd)"
+# shellcheck source=./shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+unset _sih_dir
+
 AGENTS_DIR="${HOME}/.aidevops/agents"
 INDEX_FILE="${AGENTS_DIR}/subagent-index.toon"
 
@@ -179,9 +186,8 @@ cmd_check() {
 			{ if (in_block && NF > 0) { count++ } }
 			END { print count }')
 
-	# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 	local index_mtime
-	index_mtime=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || stat -f %m "$INDEX_FILE" 2>/dev/null || echo "0")
+	index_mtime=$(_file_mtime_epoch "$INDEX_FILE")
 	local index_age=$(($(date +%s) - index_mtime))
 
 	echo "Index: ${INDEX_FILE}"

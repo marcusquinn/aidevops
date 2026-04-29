@@ -49,6 +49,15 @@
 [[ -n "${_SHARED_CLAIM_LIFECYCLE_LOADED:-}" ]] && return 0
 _SHARED_CLAIM_LIFECYCLE_LOADED=1
 
+# Portable stat helpers — source shared-constants.sh if not already loaded.
+if ! declare -f _file_mtime_epoch >/dev/null 2>&1; then
+	_scl_dir="${BASH_SOURCE[0]%/*}"
+	[[ "$_scl_dir" == "${BASH_SOURCE[0]}" ]] && _scl_dir="."
+	# shellcheck source=./shared-constants.sh
+	source "$(cd "$_scl_dir" && pwd)/shared-constants.sh"
+	unset _scl_dir
+fi
+
 #######################################
 # Release the interactive claim for a linked issue after a PR merge.
 #
@@ -314,10 +323,8 @@ _read_worker_log_tail_classified() {
 			# created at spawn and written-to throughout execution).
 			local now mtime
 			now=$(date +%s 2>/dev/null) || now=""
-			mtime=$(stat -c '%Y' "$log_file" 2>/dev/null \
-				|| stat -f '%m' "$log_file" 2>/dev/null \
-				|| echo "")
-			if [[ -n "$now" && -n "$mtime" && "$mtime" =~ ^[0-9]+$ ]]; then
+			mtime=$(_file_mtime_epoch "$log_file")
+			if [[ -n "$now" && "$mtime" -gt 0 ]]; then
 				_WORKER_LOG_TAIL_AGE_SECS=$((now - mtime))
 				# Defensive: clamp negatives to 0 (clock skew / FS race)
 				[[ "$_WORKER_LOG_TAIL_AGE_SECS" -lt 0 ]] && _WORKER_LOG_TAIL_AGE_SECS=0

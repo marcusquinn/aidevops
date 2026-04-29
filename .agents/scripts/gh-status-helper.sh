@@ -68,15 +68,7 @@ _cache_age() {
 	}
 	local now mtime
 	now=$(date +%s)
-	# stat -c on Linux, stat -f on macOS
-	if mtime=$(stat -f %m "$file" 2>/dev/null); then
-		:
-	elif mtime=$(stat -c %Y "$file" 2>/dev/null); then
-		:
-	else
-		printf '99999\n'
-		return 0
-	fi
+	mtime=$(_file_mtime_epoch "$file")
 	printf '%d\n' "$((now - mtime))"
 	return 0
 }

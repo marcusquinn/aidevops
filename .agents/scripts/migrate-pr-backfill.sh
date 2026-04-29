@@ -27,6 +27,12 @@
 
 set -euo pipefail
 
+_mpb_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_mpb_dir" == "${BASH_SOURCE[0]}" ]] && _mpb_dir="."
+# shellcheck source=./shared-constants.sh
+source "$(cd "$_mpb_dir" && pwd)/shared-constants.sh"
+unset _mpb_dir
+
 # --- Configuration -----------------------------------------------------------
 
 readonly SUPERVISOR_DIR="${HOME}/.aidevops/.agent-workspace/supervisor"
@@ -210,7 +216,7 @@ fetch_merged_prs() {
 	# Use cache if less than 5 minutes old
 	if [[ -f "$cache_file" ]]; then
 		local cache_age
-		cache_age=$(($(date +%s) - $(stat -c %Y "$cache_file" 2>/dev/null || stat -f %m "$cache_file" 2>/dev/null || echo 0)))
+		cache_age=$(($(date +%s) - $(_file_mtime_epoch "$cache_file")))
 		if ((cache_age < 300)); then
 			log "Using cached PR list (${cache_age}s old)"
 			cat "$cache_file"

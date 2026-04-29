@@ -211,9 +211,7 @@ _compute_corpus_hash() {
 		if [[ -d "${sources_dir}/${src_id}" ]]; then
 			local mtime="0"
 			if [[ -f "$tree_path" ]]; then
-				mtime=$(stat -f '%m' "$tree_path" 2>/dev/null \
-					|| stat --format='%Y' "$tree_path" 2>/dev/null \
-					|| echo "0")
+				mtime=$(_file_mtime_epoch "$tree_path")
 			fi
 			hash_input="${hash_input}${src_id}:${mtime}|"
 		fi

@@ -42,6 +42,12 @@
 
 set -euo pipefail
 
+_dlh_dir="${BASH_SOURCE[0]%/*}"
+[[ "$_dlh_dir" == "${BASH_SOURCE[0]}" ]] && _dlh_dir="."
+# shellcheck source=./shared-constants.sh
+source "$(cd "$_dlh_dir" && pwd)/shared-constants.sh"
+unset _dlh_dir
+
 LEDGER_DIR="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 LEDGER_FILE="${LEDGER_DIR}/dispatch-ledger.jsonl"
 LEDGER_LOCK="${LEDGER_DIR}/dispatch-ledger.lock"
@@ -72,8 +78,7 @@ _lock_dir_age() {
 		echo "0"
 		return 0
 	fi
-	# BSD stat (macOS) first, then GNU stat (Linux)
-	mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "")
+	mtime=$(_file_mtime_epoch "$dir")
 	if [[ -z "$mtime" ]] || [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
 		echo "0"
 		return 0

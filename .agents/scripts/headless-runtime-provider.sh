@@ -72,10 +72,7 @@ file_mtime() {
 		printf '%s' "missing"
 		return 0
 	fi
-	# Linux first (stat -c), then macOS (stat -f). On Linux, stat -f '%m'
-	# returns filesystem metadata (free blocks), not file mtime -- causing
-	# auth signatures to change between calls and clearing backoff state.
-	stat -c '%Y' "$path" 2>/dev/null || stat -f '%m' "$path" 2>/dev/null || printf '%s' "unknown"
+	_file_mtime_epoch "$path"
 	return 0
 }
 

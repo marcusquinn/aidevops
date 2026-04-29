@@ -269,7 +269,7 @@ cmd_status() {
 
 	if [[ -f "$SCHEMA_CACHE" ]]; then
 		local cache_age
-		cache_age=$((($(date +%s) - $(stat -c %Y "$SCHEMA_CACHE" 2>/dev/null || stat -f %m "$SCHEMA_CACHE" 2>/dev/null || echo 0)) / 3600))
+		cache_age=$((($(date +%s) - $(_file_mtime_epoch "$SCHEMA_CACHE")) / 3600))
 		print_success "Schema cache: ${cache_age}h old (24h TTL)"
 	else
 		print_info "Schema cache: not yet fetched (will download on first run)"

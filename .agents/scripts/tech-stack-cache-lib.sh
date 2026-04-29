@@ -60,15 +60,7 @@ is_cache_valid() {
 	fi
 
 	local file_age_days
-	if [[ "$(uname)" == "Darwin" ]]; then
-		local file_mod
-		file_mod=$(stat -f %m "$cache_file")
-		local now
-		now=$(date +%s)
-		file_age_days=$(((now - file_mod) / 86400))
-	else
-		file_age_days=$((($(date +%s) - $(stat -c %Y "$cache_file")) / 86400))
-	fi
+	file_age_days=$((($(date +%s) - $(_file_mtime_epoch "$cache_file")) / 86400))
 
 	if [[ "$file_age_days" -lt "$ttl_days" ]]; then
 		return 0

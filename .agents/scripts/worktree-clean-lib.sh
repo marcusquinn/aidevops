@@ -76,15 +76,7 @@ worktree_is_in_grace_period() {
 	now_epoch=$(date +%s 2>/dev/null) || return 1
 
 	local dir_mtime
-	# macOS: stat -f %m; Linux: stat -c %Y
-	if stat -f %m "$wt_path" >/dev/null 2>&1; then
-		dir_mtime=$(stat -f %m "$wt_path" 2>/dev/null) || return 1
-	elif stat -c %Y "$wt_path" >/dev/null 2>&1; then
-		dir_mtime=$(stat -c %Y "$wt_path" 2>/dev/null) || return 1
-	else
-		# Cannot determine mtime — fail safe (treat as in grace period)
-		return 0
-	fi
+	dir_mtime=$(_file_mtime_epoch "$wt_path")
 
 	local age_seconds=$((now_epoch - dir_mtime))
 	local grace_seconds=$((grace_hours * 3600))
