@@ -165,7 +165,11 @@ _append_feedback_to_issue() {
 
 ${marker}
 ${feedback_section}"
-	gh issue edit "$linked_issue" --repo "$repo_slug" \
+	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
+	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
+	# Bare `gh issue edit` always uses GraphQL and silently fails the body
+	# update when the 5000/hr GraphQL budget is exhausted. PR #21733 model.
+	gh_issue_edit_safe "$linked_issue" --repo "$repo_slug" \
 		--body "$new_body" >/dev/null 2>&1 || {
 		echo "[pulse-wrapper] ${caller}: failed to update issue #${linked_issue} body — aborting" >>"$LOGFILE"
 		return 1

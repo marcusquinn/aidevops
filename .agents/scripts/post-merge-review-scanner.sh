@@ -811,7 +811,11 @@ _refresh_one_issue() {
 		return 0
 	fi
 
-	if gh issue edit "$issue_number" --repo "$repo" \
+	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
+	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
+	# Bare `gh issue edit` always uses GraphQL and silently fails the body
+	# update when the 5000/hr GraphQL budget is exhausted. PR #21733 model.
+	if gh_issue_edit_safe "$issue_number" --repo "$repo" \
 		--body "$new_body_with_sig" >/dev/null 2>&1; then
 		log "issue #${issue_number}: body updated"
 		return 0
