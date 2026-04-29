@@ -22,6 +22,7 @@
 #   _file_size_bytes  PATH  — file size in bytes
 #   _file_perms       PATH  — octal permissions (e.g. "644")
 #   _file_owner       PATH  — owner username
+#   _stat_translate_fmt FMT — sets _STAT_FLAG + _STAT_FMT for use with xargs/find
 #   _stat_batch FMT FILE... — batch stat with GNU-style format (auto-translated for BSD)
 
 [[ -n "${_PORTABLE_STAT_LOADED:-}" ]] && return 0
@@ -50,35 +51,49 @@ fi
 unset _ps_test_val
 
 # =============================================================================
+# _stat_translate_fmt GNU_FMT — translate GNU format tokens to platform-native.
+# Sets two variables in caller scope: _STAT_FLAG and _STAT_FMT
+# Usage:
+#   _stat_translate_fmt '%n %s %Y'
+#   find ... -print0 | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT"
+# =============================================================================
+_stat_translate_fmt() {
+	local fmt="$1"
+	case "$_STAT_VARIANT" in
+		gnu) _STAT_FLAG="-c"; _STAT_FMT="$fmt" ;;
+		bsd)
+			_STAT_FLAG="-f"
+			_STAT_FMT="$fmt"
+			_STAT_FMT="${_STAT_FMT//'%n'/%N}"
+			_STAT_FMT="${_STAT_FMT//'%Y'/%m}"
+			_STAT_FMT="${_STAT_FMT//'%s'/%z}"
+			_STAT_FMT="${_STAT_FMT//'%a'/%Lp}"
+			_STAT_FMT="${_STAT_FMT//'%U'/%Su}"
+			_STAT_FMT="${_STAT_FMT//'%y'/%Sm}"
+			;;
+		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
+	esac
+	return 0
+}
+
+# =============================================================================
 # _stat_batch — batch stat with GNU-style format, auto-translated for BSD
 #
-# Accepts a GNU stat format string and one or more file paths. Translates
-# common GNU format tokens to BSD equivalents automatically.
+# Accepts a GNU stat format string and one or more file paths.
 #
 # Supported tokens: %n (name), %s (size), %Y (mtime epoch), %y (mtime human),
 #                   %a (octal perms), %U (owner username)
 #
 # Usage: _stat_batch '%n %s %Y' file1 file2 ...
 #
-# For find integration (handles ARG_MAX automatically):
-#        find ... -print0 | xargs -0 bash -c 'source portable-stat.sh; _stat_batch "%n %s %Y" "$@"' _
+# For find/xargs integration (handles ARG_MAX automatically):
+#   _stat_translate_fmt '%n %s %Y'
+#   find ... -print0 | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT"
 # =============================================================================
 _stat_batch() {
 	local fmt="$1"; shift
-	case "$_STAT_VARIANT" in
-		gnu) command stat -c "$fmt" "$@" 2>/dev/null ;;
-		bsd)
-			local bsd_fmt="$fmt"
-			bsd_fmt="${bsd_fmt//'%n'/%N}"
-			bsd_fmt="${bsd_fmt//'%Y'/%m}"
-			bsd_fmt="${bsd_fmt//'%s'/%z}"
-			bsd_fmt="${bsd_fmt//'%a'/%Lp}"
-			bsd_fmt="${bsd_fmt//'%U'/%Su}"
-			bsd_fmt="${bsd_fmt//'%y'/%Sm}"
-			command stat -f "$bsd_fmt" "$@" 2>/dev/null
-			;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_translate_fmt "$fmt" || return 1
+	command stat "$_STAT_FLAG" "$_STAT_FMT" "$@" 2>/dev/null
 }
 
 # =============================================================================
