@@ -42,27 +42,23 @@ _context_output_json() {
 	local esc_entity="$2"
 	local recent_messages="$3"
 
-	echo "{"
+	# Capture each query result; sqlite3 -json may return empty string (not [])
+	# for zero-row results on some SQLite builds — guard with ${var:-[]} to
+	# ensure the hand-assembled JSON object is always valid.
+	local _conv_json _profile_json _summary_json _messages_json
 
-	# Conversation metadata
-	echo "\"conversation\":"
-	conv_db -json "$CONV_MEMORY_DB" "SELECT id, entity_id, channel, channel_id, topic, status, interaction_count, last_interaction_at FROM conversations WHERE id = '$esc_id';"
-	echo ","
+	_conv_json=$(conv_db -json "$CONV_MEMORY_DB" "SELECT id, entity_id, channel, channel_id, topic, status, interaction_count, last_interaction_at FROM conversations WHERE id = '$esc_id';")
 
-	# Entity profile (current, non-superseded entries)
-	echo "\"entity_profile\":"
-	conv_db -json "$CONV_MEMORY_DB" <<EOF
+	_profile_json=$(conv_db -json "$CONV_MEMORY_DB" <<EOF
 SELECT profile_key, profile_value, confidence
 FROM entity_profiles
 WHERE entity_id = '$esc_entity'
   AND id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
 ORDER BY profile_key;
 EOF
-	echo ","
+)
 
-	# Latest summary
-	echo "\"latest_summary\":"
-	conv_db -json "$CONV_MEMORY_DB" <<EOF
+	_summary_json=$(conv_db -json "$CONV_MEMORY_DB" <<EOF
 SELECT cs.id, cs.summary, cs.source_range_start, cs.source_range_end,
     cs.source_interaction_count, cs.tone_profile, cs.pending_actions, cs.created_at
 FROM conversation_summaries cs
@@ -71,18 +67,29 @@ WHERE cs.conversation_id = '$esc_id'
 ORDER BY cs.created_at DESC
 LIMIT 1;
 EOF
-	echo ","
+)
 
-	# Recent messages
-	echo "\"recent_messages\":"
-	conv_db -json "$CONV_MEMORY_DB" <<EOF
+	_messages_json=$(conv_db -json "$CONV_MEMORY_DB" <<EOF
 SELECT i.id, i.direction, i.content, i.created_at
 FROM interactions i
 WHERE i.conversation_id = '$esc_id'
 ORDER BY i.created_at DESC
 LIMIT $recent_messages;
 EOF
+)
 
+	echo "{"
+	echo "\"conversation\":"
+	echo "${_conv_json:-[]}"
+	echo ","
+	echo "\"entity_profile\":"
+	echo "${_profile_json:-[]}"
+	echo ","
+	echo "\"latest_summary\":"
+	echo "${_summary_json:-[]}"
+	echo ","
+	echo "\"recent_messages\":"
+	echo "${_messages_json:-[]}"
 	echo "}"
 	return 0
 }
@@ -180,9 +187,10 @@ EOF
 		echo "  (no messages yet)"
 	else
 		if [[ "$privacy_filter" == true ]]; then
-			messages=$(echo "$messages" | sed 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g')
-			messages=$(echo "$messages" | sed 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g')
-			messages=$(echo "$messages" | sed 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g')
+			messages=$(echo "$messages" | sed \
+				-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
+				-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
+				-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g')
 		fi
 		echo "$messages"
 	fi
@@ -287,12 +295,11 @@ EOF
 		return 1
 	fi
 
-	local entity_id entity_name entity_type channel topic
-	entity_id=$(conv_db "$CONV_MEMORY_DB" "SELECT entity_id FROM conversations WHERE id = '$esc_id';")
-	entity_name=$(conv_db "$CONV_MEMORY_DB" "SELECT e.name FROM conversations c JOIN entities e ON c.entity_id = e.id WHERE c.id = '$esc_id';")
-	entity_type=$(conv_db "$CONV_MEMORY_DB" "SELECT e.type FROM conversations c JOIN entities e ON c.entity_id = e.id WHERE c.id = '$esc_id';")
-	channel=$(conv_db "$CONV_MEMORY_DB" "SELECT channel FROM conversations WHERE id = '$esc_id';")
-	topic=$(conv_db "$CONV_MEMORY_DB" "SELECT topic FROM conversations WHERE id = '$esc_id';")
+	# Parse all required fields from conv_data (already fetched above) instead
+	# of issuing 5 more round-trips to SQLite.
+	# SELECT order: entity_id | channel | channel_id | topic | status | interaction_count | entity_name | entity_type
+	local entity_id channel topic entity_name entity_type _channel_id _status _int_count
+	IFS='|' read -r entity_id channel _channel_id topic _status _int_count entity_name entity_type <<<"$conv_data"
 
 	local esc_entity
 	esc_entity=$(conv_sql_escape "$entity_id")
@@ -597,11 +604,11 @@ EOF
 	)
 
 	# Generate summary via AI (with heuristic fallback)
+	# _summarise_call_ai prints exactly 3 newline-separated lines; parse with
+	# read instead of spawning 3 sed processes.
 	local ai_output summary tone_profile pending_actions
 	ai_output=$(_summarise_call_ai "$entity_name" "$int_count" "$formatted_interactions" "$interaction_data")
-	summary=$(echo "$ai_output" | sed -n '1p')
-	tone_profile=$(echo "$ai_output" | sed -n '2p')
-	pending_actions=$(echo "$ai_output" | sed -n '3p')
+	{ read -r summary; read -r tone_profile; read -r pending_actions; } <<<"$ai_output"
 
 	# Store and return the new summary ID
 	_summarise_store "$esc_id" "$conv_id" "$summary" "$tone_profile" "$pending_actions" \
