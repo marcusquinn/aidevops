@@ -3492,3 +3492,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3027 P0 — pulse burns GraphQL budget on idle cycles (1456/2065 today, 70%) — add orchestration-level idle backoff + budget-aware throttle #auto-dispatch #bug ref:GH#21584
 
 - [x] t3028 fix: setup.sh fails when caller exports SCRIPT_DIR (schedulers.sh module path bug) #auto-dispatch #bug ref:GH#21586 pr:#21588 completed:2026-04-28
+- [ ] t3030 fix: 8 pulse-merge regression tests broken by sub-module split (PR #21595) — update MERGE_SCRIPT paths to point at pulse-merge-gates.sh / pulse-merge-process.sh, extract _pm_issue_api dependency in parent-task-close-guard, shim gh_pr_list/gh_pr_comment/gh_issue_comment wrappers in tests that need them. Test-only change, no runtime impact. #interactive #bug ref:GH#21599 assignee:marcusquinn started:2026-04-29

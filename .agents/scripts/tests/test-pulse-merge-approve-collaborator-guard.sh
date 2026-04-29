@@ -33,7 +33,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# approve_collaborator_pr was moved to pulse-merge-gates.sh (GH#21595, t3030)
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
 # _is_collaborator_author was extracted to pulse-merge-author-checks.sh (GH#21426)
 AUTHOR_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-author-checks.sh"
 
@@ -154,9 +155,9 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract approve_collaborator_pr from pulse-merge.sh AND its dependency
-# _is_collaborator_author from pulse-merge-author-checks.sh (GH#21426 split).
-# Both are needed; the guard calls the helper.
+# Extract approve_collaborator_pr from pulse-merge-gates.sh (post-GH#21595 split)
+# AND its dependency _is_collaborator_author from pulse-merge-author-checks.sh
+# (post-GH#21426 split). Both are needed; the guard calls the helper.
 define_helpers_under_test() {
 	local approve_src
 	local collab_src

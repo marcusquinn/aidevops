@@ -16,7 +16,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# _pulse_merge_dismiss_coderabbit_nits was moved to pulse-merge-process.sh
+# (GH#21595, t3030).
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
