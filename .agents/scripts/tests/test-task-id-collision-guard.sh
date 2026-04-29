@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 16 acceptance criteria cases:
+# Covers all 18 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -21,6 +21,8 @@
 #  14. Allow: PR title tNNN confirmed via PR body Resolves #NNN with matching issue title (GH#19987)
 #  15. Allow: t-ID ≤ counter when claimed in repo history (GH#20291)
 #  16. Allow: check-pr skips merge commits via --no-merges regardless of subject (t2895)
+#  17. Allow: subagent/library name with t<digits> substring not extracted as t-ID (GH#21402 / t2993)
+#  18. Allow: multiple product names with embedded t<digits> cause no false positives (GH#21402 / t2993)
 
 set -u
 
@@ -878,6 +880,51 @@ test_check_pr_skips_merge_commits_via_no_merges() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 17: Allow — subagent/library name containing t<digits> is not a t-ID
+#           (GH#21402 / t2993 — context7 false-positive class)
+# ---------------------------------------------------------------------------
+test_no_false_positive_subagent_name() {
+	local name="case-17: allows commit body containing context7 without false t7 extraction"
+	# t2991 is legitimately claimed on the branch (counter=3000, so t2991 <= 3000).
+	# The body also contains "context7" which the OLD regex extracted as "t7".
+	# With the fix, "t7" must NOT be extracted from "context7" — only "t2991" is.
+	local msg
+	msg="t2991: fix subagent permission task using context7"$'\n\n'"Resolves #9999"
+	local rc
+	_run_with_counter "$msg" "3000" "no" "t2991"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (allow — context7 must not yield false t7); got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Case 18: Allow — multiple subagent names with t<digits> substrings, no false positives
+#           (GH#21402 / t2993 — broader false-positive coverage)
+# ---------------------------------------------------------------------------
+test_no_false_positive_multiple_subagent_names() {
+	local name="case-18: allows body with gpt4, next13, wp7-cms without false t-ID extraction"
+	# Counter = 50 so any t-ID > 50 would be rejected unless cross-referenced.
+	# The body contains only library/product names with embedded digit sequences
+	# (gpt4 → t4, next13 → t13, wp7-cms → no t match) but NO legitimate t-ID.
+	# With fix: no t-IDs extracted → allowed.
+	# Without fix: t4 and t13 extracted → rejected as > counter without cross-ref.
+	local msg="chore: update product list with gpt4, next13, and wp7-cms integrations"
+	local rc
+	_run_with_counter "$msg" "50"
+	rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (allow — gpt4/next13 must not yield false t4/t13); got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -899,6 +946,8 @@ main() {
 	test_check_pr_allows_pr_title_tid_confirmed_via_body
 	test_repo_wide_claim_in_prose
 	test_check_pr_skips_merge_commits_via_no_merges
+	test_no_false_positive_subagent_name
+	test_no_false_positive_multiple_subagent_names
 
 	printf '\n'
 	printf 'Results: %s passed, %s failed\n' "$PASS" "$FAIL"

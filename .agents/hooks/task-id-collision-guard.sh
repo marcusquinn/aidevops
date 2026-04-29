@@ -319,8 +319,13 @@ _repo_has_claim() {
 # ---------------------------------------------------------------------------
 _extract_tids() {
 	local text="${1:-}"
-	# Match t followed by one or more digits (word-boundary aware via grep -o)
-	printf '%s' "$text" | grep -oE 't[0-9]+' | sort -u
+	# Match t followed by one or more digits only when NOT preceded by an
+	# alphanumeric character (prevents false positives from subagent or library
+	# names like context7→t7, gpt4→t4, next13→t13).
+	# POSIX ERE lacks \b so we use a two-step approach: first grep anchors the
+	# leading boundary via (^|[^[:alnum:]]), then a second grep strips the
+	# captured leading non-alnum character.  GNU and BSD grep both support this.
+	printf '%s' "$text" | grep -oE '(^|[^[:alnum:]])t[0-9]+' | grep -oE 't[0-9]+' | sort -u
 	return 0
 }
 
