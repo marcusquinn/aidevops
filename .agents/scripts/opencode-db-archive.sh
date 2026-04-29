@@ -21,6 +21,11 @@
 
 set -Eeuo pipefail
 
+# Source shared-constants.sh for portable stat functions
+_oda_dir="${BASH_SOURCE[0]%/*}"
+# shellcheck source=shared-constants.sh
+[[ -f "${_oda_dir}/shared-constants.sh" ]] && source "${_oda_dir}/shared-constants.sh"
+
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="opencode-db-archive"

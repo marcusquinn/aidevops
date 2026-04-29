@@ -17,6 +17,8 @@ fi
 # Shared version-finding logic (avoids duplication with log-issue-helper.sh)
 # shellcheck source=lib/version.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
+# shellcheck source=shared-constants.sh
+source "$(dirname "${BASH_SOURCE[0]}")/shared-constants.sh"
 
 get_version() {
 	aidevops_find_version

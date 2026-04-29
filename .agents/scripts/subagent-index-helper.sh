@@ -18,10 +18,16 @@
 #   - build-agent workflow (after agent create/promote)
 #
 # Scans: shared agents, custom/, draft/ (all tiers)
+#
+# Source shared-constants.sh for portable stat functions
 # Performance: pure find + awk pipeline, no per-file reads
 # =============================================================================
 
 set -euo pipefail
+
+# shellcheck source=shared-constants.sh
+_sih_dir="${BASH_SOURCE[0]%/*}"
+[[ -f "${_sih_dir}/shared-constants.sh" ]] && source "${_sih_dir}/shared-constants.sh"
 
 AGENTS_DIR="${HOME}/.aidevops/agents"
 INDEX_FILE="${AGENTS_DIR}/subagent-index.toon"

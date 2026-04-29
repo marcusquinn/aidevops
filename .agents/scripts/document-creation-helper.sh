@@ -9,6 +9,11 @@
 
 set -euo pipefail
 
+# Source shared-constants.sh for portable stat functions
+_dch_dir="${BASH_SOURCE[0]%/*}"
+# shellcheck source=shared-constants.sh
+[[ -f "${_dch_dir}/shared-constants.sh" ]] && source "${_dch_dir}/shared-constants.sh"
+
 # ============================================================================
 # Configuration
 # ============================================================================

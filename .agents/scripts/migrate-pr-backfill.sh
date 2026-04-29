@@ -18,6 +18,8 @@
 #
 # Options:
 #   --dry-run   Show what would be updated without making changes
+#
+# Sources shared-constants.sh for portable stat functions.
 #   --verbose   Show detailed output for each task
 #   --task <id> Process only a specific task ID (for testing)
 #
@@ -26,6 +28,10 @@
 #   1 — Fatal error (DB not found, GitHub CLI unavailable)
 
 set -euo pipefail
+
+# shellcheck source=shared-constants.sh
+_mpb_dir="${BASH_SOURCE[0]%/*}"
+[[ -f "${_mpb_dir}/shared-constants.sh" ]] && source "${_mpb_dir}/shared-constants.sh"
 
 # --- Configuration -----------------------------------------------------------
 
