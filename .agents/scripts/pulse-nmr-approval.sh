@@ -616,7 +616,7 @@ _find_qualifying_pr_for_stale_recovery() {
 
 	local j=0
 	while [[ "$j" -lt "$pr_count" ]]; do
-		local pr_num pr_review pr_author_assoc pr_created_at
+		local pr_num="" pr_review="" pr_author_assoc="" pr_created_at=""
 		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
 		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
 		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
