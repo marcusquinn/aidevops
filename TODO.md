@@ -3572,7 +3572,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3069 harden issue_num extraction against multi-line gh_create_issue output (TODO.md append silently fails) #auto-dispatch #bug #framework ref:GH#21807
 
-- [ ] t3070 switch pulse-merge to GitHub native auto-merge for sub-30s green-to-merged latency #auto-dispatch #enhancement ref:GH#21810
+- [x] t3070 switch pulse-merge to GitHub native auto-merge for sub-30s green-to-merged latency #auto-dispatch #enhancement ref:GH#21810 pr:#21812 completed:2026-04-29
 
 - [ ] t3067 interactive-session-helper.sh release applies status:available to CLOSED issues #auto-dispatch #bug #framework ref:GH#21805
 
