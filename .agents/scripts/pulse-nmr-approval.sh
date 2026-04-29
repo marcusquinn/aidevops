@@ -24,6 +24,8 @@
 #   - issue_has_required_approval
 #   - _nmr_applied_by_maintainer
 #   - notify_ever_nmr_without_approval
+#   - _find_qualifying_pr_for_stale_recovery
+#   - _notify_stale_recovery_resolved_by_pr
 #   - auto_approve_maintainer_issues
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
@@ -479,6 +481,10 @@ _nmr_applied_by_maintainer() {
 		# scanner labels persist for the issue's lifetime.
 		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
 			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386/GH#20758)" >>"$LOGFILE"
+			# t3049: check if a subsequent worker produced a clean approved PR
+			# that resolves the stale-recovery false positive. Posts a one-shot
+			# notification to the maintainer if so. Does NOT clear NMR.
+			_notify_stale_recovery_resolved_by_pr "$issue_num" "$slug" "$nmr_at" || true
 			return 0
 		fi
 		if _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
@@ -571,6 +577,179 @@ notify_ever_nmr_without_approval() {
 > This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
 		2>/dev/null || {
 		echo "[pulse-wrapper] notify_ever_nmr_without_approval: #${issue_number} in ${repo_slug} — failed to post remediation comment" >>"$LOGFILE"
+	}
+
+	return 0
+}
+
+#######################################
+# t3049: Evaluate linked OPEN PRs against the trust boundary gates and return
+# the number of the first qualifying PR, or empty string if none qualifies.
+#
+# <!-- aidevops:trust-boundary -->
+# Self-validates each gate: PR createdAt > NMR labelledAt, APPROVED review,
+# OWNER/MEMBER authorAssociation, origin:worker or origin:interactive label,
+# all non-maintainer-gate CI SUCCESS.
+#
+# Arguments:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - nmr_at     : ISO8601 timestamp when NMR was applied
+#
+# Outputs: PR number on stdout (empty if no match).
+# Returns: 0 always.
+#######################################
+_find_qualifying_pr_for_stale_recovery() {
+	local issue_num="$1"
+	local slug="$2"
+	local nmr_at="$3"
+
+	local pr_json
+	pr_json=$(gh pr list --search "Resolves #${issue_num} in:body" --state open \
+		--repo "$slug" --json number,reviewDecision,statusCheckRollup,authorAssociation,labels,createdAt \
+		--limit 10 2>/dev/null) || pr_json="[]"
+	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
+
+	local pr_count
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" -gt 0 ]] || return 0
+
+	local j=0
+	while [[ "$j" -lt "$pr_count" ]]; do
+		local pr_num="" pr_review="" pr_author_assoc="" pr_created_at=""
+		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
+		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
+		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
+		pr_created_at=$(printf '%s' "$pr_json" | jq -r ".[$j].createdAt // empty" 2>/dev/null) || pr_created_at=""
+		j=$((j + 1))
+
+		# PR must be created AFTER NMR was applied.
+		if [[ -n "$pr_created_at" && -n "$nmr_at" ]]; then
+			local pr_after_nmr
+			pr_after_nmr=$(jq -n --arg p "$pr_created_at" --arg n "$nmr_at" \
+				'(($p | fromdateiso8601) > ($n | fromdateiso8601))' 2>/dev/null) || pr_after_nmr="false"
+			[[ "$pr_after_nmr" == "true" ]] || continue
+		else
+			continue
+		fi
+
+		# reviewDecision must be APPROVED.
+		[[ "$pr_review" == "APPROVED" ]] || continue
+
+		# authorAssociation must be OWNER or MEMBER (not COLLABORATOR/external).
+		[[ "$pr_author_assoc" == "OWNER" || "$pr_author_assoc" == "MEMBER" ]] || continue
+
+		# PR must have origin:worker or origin:interactive label.
+		local has_valid_origin
+		has_valid_origin=$(printf '%s' "$pr_json" | jq -r \
+			"[.[$((j - 1))].labels[]?.name] | map(select(. == \"origin:worker\" or . == \"origin:interactive\")) | length" \
+			2>/dev/null) || has_valid_origin=0
+		[[ "$has_valid_origin" =~ ^[0-9]+$ ]] || has_valid_origin=0
+		[[ "$has_valid_origin" -gt 0 ]] || continue
+
+		# All non-maintainer-gate CI checks must have a passing conclusion.
+		local failing_checks
+		failing_checks=$(printf '%s' "$pr_json" | jq -r \
+			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\")] | length" \
+			2>/dev/null) || failing_checks=0
+		[[ "$failing_checks" =~ ^[0-9]+$ ]] || failing_checks=0
+		[[ "$failing_checks" -le 0 ]] || continue
+
+		# All gates passed — output the PR number.
+		printf '%s' "$pr_num"
+		return 0
+	done
+
+	return 0
+}
+
+#######################################
+# t3049: Post a one-shot notification when a stale-recovery NMR is resolved
+# by a subsequent worker producing an APPROVED PR.
+#
+# When stale-recovery applies NMR (via stale-recovery-tick:escalated), a
+# subsequent worker may still produce a clean PR. If that PR is APPROVED with
+# all non-maintainer-gate CI green and authored by OWNER/MEMBER with
+# origin:worker or origin:interactive, the maintainer only needs to run
+# `sudo aidevops approve issue N` to unblock the merge — but has no signal.
+# This function posts exactly that signal, once.
+#
+# <!-- aidevops:trust-boundary -->
+# Self-validates: PR author association (OWNER/MEMBER only), PR origin label
+# (origin:worker or origin:interactive only), PR createdAt > NMR labelledAt,
+# reviewDecision==APPROVED, all non-maintainer-gate CI SUCCESS.
+# Does NOT trust upstream checks — each gate is evaluated at invocation time.
+#
+# SECURITY: NMR is NOT auto-cleared. The notification only prompts the
+# maintainer to run the cryptographic approval command. The bypass surface
+# is closed because:
+#   - Only OWNER/MEMBER-authored PRs qualify (no contributor injection)
+#   - Only origin:worker/origin:interactive PRs qualify (no takeover)
+#   - Maintainer-gate is not auto-cleared — human must run crypto approval
+#
+# Arguments:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - nmr_at     : ISO8601 timestamp when NMR was applied
+#
+# Returns: 0 always (fail-open — a missed notification is better than a broken
+#          approval loop).
+#######################################
+_notify_stale_recovery_resolved_by_pr() {
+	local issue_num="$1"
+	local slug="$2"
+	local nmr_at="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$nmr_at" ]] || return 0
+
+	# Shared API path — constructed via printf to avoid string-literal ratchet regression
+	local comments_api
+	printf -v comments_api 'repos/%s/issues/%s/comments' "$slug" "$issue_num"
+
+	# Gate 1: Only act on stale-recovery-tick:escalated breaker trips.
+	# Cost-circuit-breaker:fired and cost-circuit-breaker:no_work_loop indicate
+	# budget/infra problems where merging is itself unsafe.
+	local has_stale_recovery
+	has_stale_recovery=$(gh api "$comments_api" --paginate \
+		--jq "[.[] | select(.body | test(\"stale-recovery-tick:escalated\")) | select(.body | test(\"cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop\") | not)] | length" \
+		2>/dev/null) || has_stale_recovery=0
+	[[ "$has_stale_recovery" =~ ^[0-9]+$ ]] || has_stale_recovery=0
+	if [[ "$has_stale_recovery" -le 0 ]]; then
+		return 0
+	fi
+
+	# Gate 2: Idempotency — never post twice.
+	local already_notified
+	already_notified=$(gh api "$comments_api" --paginate \
+		--jq '[.[] | select(.body | test("nmr-stale-recovery-resolution-notice"))] | length' \
+		2>/dev/null) || already_notified=0
+	[[ "$already_notified" =~ ^[0-9]+$ ]] || already_notified=0
+	if [[ "$already_notified" -gt 0 ]]; then
+		echo "[pulse-wrapper] _notify_stale_recovery_resolved_by_pr: #${issue_num} in ${slug} — notification already posted, skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Gate 3: Find a qualifying linked PR via the extracted helper.
+	local matching_pr
+	matching_pr=$(_find_qualifying_pr_for_stale_recovery "$issue_num" "$slug" "$nmr_at")
+	if [[ -z "$matching_pr" ]]; then
+		return 0
+	fi
+
+	# Post the one-shot notification.
+	echo "[pulse-wrapper] _notify_stale_recovery_resolved_by_pr: #${issue_num} in ${slug} — PR #${matching_pr} qualifies, posting notification" >>"$LOGFILE"
+
+	gh_issue_comment "$issue_num" --repo "$slug" \
+		--body "<!-- nmr-stale-recovery-resolution-notice -->
+PR #${matching_pr} is APPROVED with all quality/security gates green. To merge, run:
+
+\`\`\`
+sudo aidevops approve issue ${issue_num}
+\`\`\`
+
+This issue's NMR was applied by stale-recovery (t2008) — the cryptographic approval clears it and the merge gate flips to PASS." \
+		2>/dev/null || {
+		echo "[pulse-wrapper] _notify_stale_recovery_resolved_by_pr: #${issue_num} in ${slug} — failed to post notification" >>"$LOGFILE"
 	}
 
 	return 0

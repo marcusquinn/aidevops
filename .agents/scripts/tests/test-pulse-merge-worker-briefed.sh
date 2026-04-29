@@ -25,6 +25,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -121,17 +122,24 @@ teardown_test_env() {
 }
 
 # Extract _attempt_worker_briefed_auto_merge and its dependency _pm_issue_api
-# from the merge script and eval them into the test shell.
+# from the merge scripts and eval them into the test shell.
+# _pm_issue_api lives in pulse-merge.sh (module-level helper).
+# _attempt_worker_briefed_auto_merge lives in pulse-merge-process.sh (post-split).
 define_helpers_under_test() {
 	local src_worker_briefed src_issue_api
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
+	# Post GH#21301 refactor: function moved to pulse-merge-process.sh
+	local extract_from="$MERGE_SCRIPT"
+	if [[ -f "$PROCESS_SCRIPT" ]]; then
+		extract_from="$PROCESS_SCRIPT"
+	fi
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$extract_from")
 	if [[ -z "$src_worker_briefed" || -z "$src_issue_api" ]]; then
-		printf 'ERROR: could not extract helpers from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract helpers from %s / %s\n' "$MERGE_SCRIPT" "$extract_from" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -208,6 +216,9 @@ test_case_c_contributor_issue_blocked() {
 			"Expected non-zero exit, got 0 (CONTRIBUTOR should not pass)"
 	else
 		if grep -q "not OWNER/MEMBER" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (c): CONTRIBUTOR-filed issue → blocked" 0
+		elif grep -q "no cryptographic approval signature found" "$LOGFILE" 2>/dev/null; then
+			# t3052: log message updated to include crypto check info
 			print_result "Case (c): CONTRIBUTOR-filed issue → blocked" 0
 		else
 			print_result "Case (c): CONTRIBUTOR-filed issue → blocked" 1 \
@@ -429,6 +440,92 @@ test_case_j_feature_flag_off_blocked() {
 }
 
 # =============================================================================
+# Case (k): issue-author=NONE + crypto approval signature → passes (t3052)
+# Maintainer cryptographically approved a contributor-filed issue.
+# =============================================================================
+test_case_k_non_owner_with_crypto_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"NONE"}' >"${TEST_ROOT}/issue.json"
+	# Comments contain crypto approval signature — maintainer vouched
+	printf '[{"body":"aidevops:approval-signature: SHA256:abc123"}]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "110" "owner/repo" "origin:worker" "false" "52" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (k): NONE author + crypto approval → passes (t3052)" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		if grep -q "cryptographic approval signature present, proceeding (t3052)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (k): NONE author + crypto approval → passes (t3052)" 0
+		else
+			print_result "Case (k): NONE author + crypto approval → passes (t3052)" 1 \
+				"Exit was 0 but expected t3052 log message not found"
+		fi
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (l): issue-author=NONE + NO crypto approval → blocked (t3052 preserves)
+# Contributor-filed issue without maintainer approval stays blocked.
+# =============================================================================
+test_case_l_non_owner_without_crypto_blocked() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"NONE"}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "111" "owner/repo" "origin:worker" "false" "53" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case (l): NONE author + no crypto → blocked (t3052)" 1 \
+			"Expected non-zero exit, got 0 (NONE without crypto should block)"
+	else
+		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (l): NONE author + no crypto → blocked (t3052)" 0
+		else
+			print_result "Case (l): NONE author + no crypto → blocked (t3052)" 1 \
+				"Exit was non-zero but expected log message not found"
+		fi
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (m): OWNER author + no crypto → passes (t3052 preserves existing)
+# Verifies that OWNER issues still pass without crypto approval.
+# =============================================================================
+test_case_m_owner_no_crypto_still_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"OWNER"}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "112" "owner/repo" "origin:worker" "false" "54" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (m): OWNER + no crypto → still passes (t3052)" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		print_result "Case (m): OWNER + no crypto → still passes (t3052)" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -447,6 +544,9 @@ main() {
 	test_case_h_draft_pr_blocked
 	test_case_i_worker_takeover_excluded
 	test_case_j_feature_flag_off_blocked
+	test_case_k_non_owner_with_crypto_passes
+	test_case_l_non_owner_without_crypto_blocked
+	test_case_m_owner_no_crypto_still_passes
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

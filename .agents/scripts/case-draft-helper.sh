@@ -355,24 +355,15 @@ _collect_excerpts_via_search() {
 		--case "$case_id" --repo-path "$repo_path" "$intent" 2>/dev/null)" || search_out=""
 	[[ -z "$search_out" ]] && return 0
 
-	local excerpts="" count=0 line
-	# Parse each output line as JSON: supports grep-fallback format
-	# {"source_id":...,"excerpt":...} and tree-walk .matches[] entries.
-	local _jq_sid_expr _jq_exc_expr
-	_jq_sid_expr='.source_id // empty'
-	_jq_exc_expr='.excerpt // .anchor // empty'
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		[[ $count -ge $max_sources ]] && break
-		local sid excerpt
-		sid="$(echo "$line" | jq -r "$_jq_sid_expr" 2>/dev/null)" || sid=""
-		[[ -z "$sid" ]] && continue
-		excerpt="$(echo "$line" | jq -r "$_jq_exc_expr" 2>/dev/null)" || excerpt=""
-		excerpts="${excerpts}[${sid}]: \"${excerpt}\"
-
-"
-		count=$((count + 1))
-	done <<<"$search_out"
+	# Single jq --slurp pass: handles both NDJSON lines and multi-line JSON objects.
+	# Expands .matches[] for tree-walk format; limits to max_sources results.
+	# Uses --argjson for the numeric limit to avoid syntax errors on special chars.
+	local excerpts=""
+	excerpts="$(printf '%s\n' "$search_out" | jq -s -r --argjson max "$max_sources" '
+		[ .[] | if type == "object" and has("matches") then .matches[] else . end ] |
+		.[:$max] | .[] |
+		"[\(.source_id // .id // \"unknown\")]: \"\(.excerpt // .anchor // \"\")\"\n\n"
+	')" || excerpts=""
 
 	printf '%s' "$excerpts"
 	return 0

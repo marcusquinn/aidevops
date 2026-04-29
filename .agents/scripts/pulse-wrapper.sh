@@ -142,6 +142,9 @@ fi
 # Biased toward false negatives: if PID file is absent, stat fails, or the
 # holder exceeds the max-age ceiling, fall through to main() where
 # acquire_instance_lock handles stale-lock reclaim properly.
+# Early source: _file_mtime_epoch needed before shared-constants.sh is loaded.
+# shellcheck source=./portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
 if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 	_pw_ffjit_pid_file="${_pw_ffjit_lockdir}/pid"
@@ -1545,6 +1548,12 @@ main() {
 	# (or after a long quiet period) primes once. See helper comment for
 	# the launchd-bypass rationale.
 	_pulse_prime_caches_if_stale || true
+
+	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
+	# growing at MB/s from tight error loops (the GH#21729 failure mode).
+	# Sentinel-gated (every 5 min) — modelled on cache-prime pattern (t2994).
+	# Fail-open: never blocks the pulse cycle.
+	_pulse_check_runaway_log || true
 
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.

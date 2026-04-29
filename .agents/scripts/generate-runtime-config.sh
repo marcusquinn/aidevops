@@ -102,27 +102,17 @@ RUNTIME_CACHE_HASH_FILE_PREFIX="${AGENTS_DIR}/.runtime-config-source-hash"
 # Includes: the script itself + all source .md/.toml/.json files under AGENTS_DIR.
 # Uses file metadata (name/size/mtime) for speed (~10ms for 1600 files)
 # rather than content hashing (~80s per runtime).
-# Portable: stat -f is macOS/BSD; stat -c is Linux/GNU. Detected via uname.
+# Portable: uses _stat_translate_fmt from portable-stat.sh.
 # If metadata collection fails entirely, returns a unique no-cache sentinel so
 # the cache is safely bypassed rather than producing a stale constant hash.
 compute_runtime_source_hash() {
 	local metadata
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		metadata=$({
-			stat -f '%N %z %m' "${BASH_SOURCE[0]}"
-			find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
-				-exec stat -f '%N %z %m' {} + 2>/dev/null
-		})
-	else
-		# Linux/GNU stat uses -c instead of -f; guarded by uname branch above.
-		local script_meta find_meta
-		# shell-portability: ignore next
-		script_meta=$(stat -c '%n %s %Y' "${BASH_SOURCE[0]}" 2>/dev/null || true)
-		# shell-portability: ignore next
-		find_meta=$(find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
-			-exec stat -c '%n %s %Y' {} + 2>/dev/null || true)
-		metadata="${script_meta}"$'\n'"${find_meta}"
-	fi
+	_stat_translate_fmt '%n %s %Y' || { echo "no-cache-${RANDOM}"; return 0; }
+	metadata=$({
+		stat "$_STAT_FLAG" "$_STAT_FMT" "${BASH_SOURCE[0]}" 2>/dev/null || true
+		find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+			-print0 2>/dev/null | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT" 2>/dev/null || true
+	})
 
 	# If metadata collection failed entirely, return a unique sentinel so the
 	# cache is bypassed rather than storing a false constant-hash cache hit.

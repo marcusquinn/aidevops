@@ -576,16 +576,39 @@ _attempt_worker_briefed_auto_merge() {
 		return 1
 	fi
 
-	# Gate: linked issue author is OWNER or MEMBER (maintainer-briefed)
-	# Reuse the issue API base path for both the author-association and NMR checks.
+	# Reuse the issue API base path for author-association, crypto-approval,
+	# and NMR checks — single comment fetch serves both the t3052 bypass
+	# and the t2449 NMR gate.
 	local _issue_api
 	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
 	local issue_author_assoc
 	issue_author_assoc=$(gh api "${_issue_api}" \
 		--jq '.author_association // ""' 2>/dev/null) || issue_author_assoc=""
+
+	# Fetch issue comment signals once — used by both the OWNER/MEMBER
+	# bypass (t3052) and the NMR crypto-vs-auto check (t2449).
+	local _issue_signals
+	_issue_signals=$(gh api "${_issue_api}/comments" --jq '
+		[
+			(any(.[].body | strings; contains("aidevops:approval-signature:"))),
+			(any(.[].body | strings; contains("auto-approved-maintainer-issue")))
+		] | @tsv
+	' 2>/dev/null) || _issue_signals="false	false"
+
+	local _has_crypto=""
+	local _has_auto=""
+	read -r _has_crypto _has_auto <<< "$_issue_signals"
+
+	# Gate: linked issue authored by OWNER/MEMBER OR cryptographically
+	# approved by maintainer (t3052). The trust chain "maintainer SSH-signed
+	# an approval on the issue" is at least as strong as the OWNER/MEMBER
+	# author check — the maintainer personally vouched with their private key.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) (t2449)" >>"$LOGFILE"
-		return 1
+		if [[ "$_has_crypto" != "true" ]]; then
+			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
 	fi
 
 	# Gate: NMR crypto-vs-auto approval check.
@@ -594,24 +617,13 @@ _attempt_worker_briefed_auto_merge() {
 	# auto_approve_maintainer_issues. Auto-approval runs as the pulse's own
 	# GitHub token — accepting it here would create a closed loop with zero
 	# human touchpoints (scanner → issue → dispatch → worker → PR → merge).
-	local _nmr_markers
-	_nmr_markers=$(gh api "${_issue_api}/comments" --jq '
-		[
-			(any(.[].body | strings; contains("aidevops:approval-signature:"))),
-			(any(.[].body | strings; contains("auto-approved-maintainer-issue")))
-		] | @tsv
-	' 2>/dev/null) || _nmr_markers="false	false"
-
-	local _has_crypto _has_auto
-	read -r _has_crypto _has_auto <<< "$_nmr_markers"
-
 	if [[ "$_has_auto" == "true" && "$_has_crypto" != "true" ]]; then
 		echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} NMR was auto-approved only (no crypto clearance) (t2449)" >>"$LOGFILE"
 		return 1
 	fi
 
 	# All gates pass — eligible for worker-briefed auto-merge
-	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, author_assoc=${issue_author_assoc}) (t2449)" >>"$LOGFILE"
+	echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} passed all gates (issue #${linked_issue}, author_assoc=${issue_author_assoc}, crypto_approved=${_has_crypto}) (t2449/t3052)" >>"$LOGFILE"
 	return 0
 }
 

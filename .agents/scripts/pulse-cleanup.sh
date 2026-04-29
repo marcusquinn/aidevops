@@ -274,7 +274,7 @@ _worktree_owner_alive() {
 #######################################
 # Get worktree creation epoch from the .git file's mtime.
 #
-# Linux uses `stat -c '%Y'`; macOS uses `stat -f '%m'`. Writes 0 to stdout
+# Uses _file_mtime_epoch from portable-stat.sh. Writes 0 to stdout
 # when the .git file is missing or stat fails, and logs a diagnostic in
 # that case (GH#18346: this path was previously a silent continue).
 #

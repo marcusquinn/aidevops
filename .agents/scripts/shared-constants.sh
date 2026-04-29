@@ -719,28 +719,15 @@ fast_cp() {
 }
 
 # =============================================================================
-# Portable file mtime (macOS vs GNU/Linux)
-# GNU stat uses -c %Y; BSD stat uses -f %m. On Linux, `stat -f %m` does NOT
-# fail — it prints filesystem info (exit 0), capturing garbage into variables.
-# GNU-first order is mandatory.  See GH#20615.
-# Usage: epoch=$(_file_mtime_epoch "/path/to/file")
-# Returns: modification time as epoch seconds, or 0 if file missing / error.
+# Portable stat wrappers (macOS vs GNU/Linux)
+# Sourced from portable-stat.sh — capability detection at load time.
+# Provides: _file_mtime_epoch, _file_size_bytes, _file_perms, _file_owner.
 # =============================================================================
 
-_file_mtime_epoch() {
-	local file_path="$1"
-	stat -c %Y "$file_path" 2>/dev/null || stat -f %m "$file_path" 2>/dev/null || echo 0
-}
-
-_file_size_bytes() {
-	local file_path="$1"
-	stat -c %s "$file_path" 2>/dev/null || stat -f %z "$file_path" 2>/dev/null || echo 0
-}
-
-_file_perms() {
-	local file_path="$1"
-	stat -c %a "$file_path" 2>/dev/null || stat -f %Lp "$file_path" 2>/dev/null || echo "000"
-}
+# shellcheck source=./portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+# _file_size_bytes, _file_perms, _file_mtime_epoch, _file_owner, _stat_batch,
+# _stat_translate_fmt are now provided by portable-stat.sh (GH#21742).
 
 # =============================================================================
 # Stderr Logging Utilities

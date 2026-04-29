@@ -206,7 +206,7 @@ _handle_stale_llm_lock() {
 	fi
 
 	# Tier 3: Owner alive — check PID reuse + age-based ceiling
-	# Use _get_process_age (portable ps-etime) instead of stat -c '%Y' (GNU-only)
+	# Use _get_process_age (portable ps-etime) for lock holder age
 	local lock_age
 	lock_age=$(_get_process_age "$lock_pid")
 	local owner_cmd=""

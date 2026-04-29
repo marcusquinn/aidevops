@@ -160,6 +160,7 @@ INSTALLED_COUNT=0
 NOT_INSTALLED_COUNT=0
 TIMEOUT_COUNT=0
 UNKNOWN_COUNT=0
+SUDO_SKIP_COUNT=0
 declare -a OUTDATED_PACKAGES=()
 declare -a JSON_RESULTS=()
 
@@ -591,31 +592,61 @@ _output_summary_and_updates() {
 		if [[ "$AUTO_UPDATE" == "true" ]]; then
 			echo -e "${BLUE}Updating outdated tools...${NC}"
 			echo ""
-			for update_cmd in "${OUTDATED_PACKAGES[@]}"; do
-				echo "  Running: $update_cmd"
-				# Run update command directly (not via eval for security)
-				# Commands are hardcoded in tool definitions, not user input
-				# Timeout prevents hangs on slow registries/network issues
-				# Use timeout_sec for macOS compatibility (no native timeout)
-				# NOTE: Do NOT pipe timeout_sec output to tail/head — on macOS the
-				# perl alarm fallback doesn't close the pipe's write end on SIGALRM,
-				# causing tail to block forever. Use a temp file instead.
-				local _update_log
-				if ! _update_log=$(mktemp "${TMPDIR:-/tmp}/tool-update.XXXXXX"); then
-					echo -e "  ${RED}✗ Failed to create temp log${NC}"
+		for update_cmd in "${OUTDATED_PACKAGES[@]}"; do
+			echo "  Running: $update_cmd"
+			# Sudo safety gate (GH#21734): commands routed through apt-get/dnf/yum
+			# require sudo. Probe for passwordless sudo first; if not available,
+			# skip and print the manual command instead of hanging on an
+			# interactive password prompt during unattended `aidevops update`.
+			if [[ "$update_cmd" == *" sudo "* ]]; then
+				if ! sudo -n true 2>/dev/null; then
+					local _manual_cmd
+					_manual_cmd=""
+					if command -v apt-get >/dev/null 2>&1; then
+						_manual_cmd=$(grep -oE 'sudo apt-get[^;]+' <<<"$update_cmd" | head -1)
+					elif command -v dnf >/dev/null 2>&1; then
+						_manual_cmd=$(grep -oE 'sudo dnf[^;]+' <<<"$update_cmd" | head -1)
+					elif command -v yum >/dev/null 2>&1; then
+						_manual_cmd=$(grep -oE 'sudo yum[^;]+' <<<"$update_cmd" | head -1)
+					fi
+					echo -e "  ${YELLOW}⊘ Skipped: requires sudo. Run manually:${NC}"
+					if [[ -n "$_manual_cmd" ]]; then
+						echo "    ${_manual_cmd}"
+					else
+						echo "    $update_cmd"
+					fi
+					((++SUDO_SKIP_COUNT))
+					echo ""
 					continue
 				fi
-				if timeout_sec 120 bash -c "$update_cmd" >"$_update_log" 2>&1; then
-					tail -2 "$_update_log"
-					echo -e "  ${GREEN}✓ Updated${NC}"
-				else
-					tail -2 "$_update_log"
-					echo -e "  ${RED}✗ Failed${NC}"
-				fi
-				rm -f "$_update_log"
-				echo ""
-			done
+			fi
+			# Run update command directly (not via eval for security)
+			# Commands are hardcoded in tool definitions, not user input
+			# Timeout prevents hangs on slow registries/network issues
+			# Use timeout_sec for macOS compatibility (no native timeout)
+			# NOTE: Do NOT pipe timeout_sec output to tail/head — on macOS the
+			# perl alarm fallback doesn't close the pipe's write end on SIGALRM,
+			# causing tail to block forever. Use a temp file instead.
+			local _update_log
+			if ! _update_log=$(mktemp "${TMPDIR:-/tmp}/tool-update.XXXXXX"); then
+				echo -e "  ${RED}✗ Failed to create temp log${NC}"
+				continue
+			fi
+			if timeout_sec 120 bash -c "$update_cmd" >"$_update_log" 2>&1; then
+				tail -2 "$_update_log"
+				echo -e "  ${GREEN}✓ Updated${NC}"
+			else
+				tail -2 "$_update_log"
+				echo -e "  ${RED}✗ Failed${NC}"
+			fi
+			rm -f "$_update_log"
+			echo ""
+		done
+		if [[ $SUDO_SKIP_COUNT -gt 0 ]]; then
+			echo -e "${GREEN}Updates complete (${SUDO_SKIP_COUNT} skipped — manual sudo required).${NC}"
+		else
 			echo -e "${GREEN}Updates complete. Re-run to verify.${NC}"
+		fi
 		else
 			echo "To update all outdated tools, run:"
 			echo "  tool-version-check.sh --update"

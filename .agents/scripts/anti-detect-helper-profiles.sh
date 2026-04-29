@@ -227,18 +227,13 @@ profile_create() {
 		echo "$proxy_json" >"$profile_dir/proxy.json"
 	fi
 
-	# Save metadata
-	cat >"$profile_dir/metadata.json" <<METADATA
-{
-  "name": "$name",
-  "type": "$profile_type",
-  "browser": "$browser_type",
-  "target_os": "$target_os",
-  "created": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-  "last_used": null,
-  "notes": "$notes"
-}
-METADATA
+	# Save metadata using jq to prevent injection via user-supplied variables
+	jq -n \
+		--arg name "$name" --arg type "$profile_type" \
+		--arg browser "$browser_type" --arg os "$target_os" \
+		--arg created "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg notes "$notes" \
+		'{name:$name,type:$type,browser:$browser,target_os:$os,created:$created,last_used:null,notes:$notes}' \
+		>"$profile_dir/metadata.json"
 
 	# Update profiles index
 	update_profiles_index "$name" "$profile_type" "add"
