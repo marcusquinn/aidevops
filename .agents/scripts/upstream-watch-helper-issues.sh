@@ -73,13 +73,20 @@ _compose_upstream_issue_body() {
 	local affects="$6"
 	local compare_url="$7"
 
-	# Build affects section
+	# Build affects section using real newlines to avoid printf %b backslash expansion
+	# on user/config-provided data (e.g. Windows paths with \t would be misinterpreted).
 	local affects_section="See relevance text above."
 	if [[ -n "$affects" ]]; then
 		affects_section=""
 		while IFS= read -r af; do
-			[[ -n "$af" ]] && affects_section="${affects_section}\n- \`${af}\`"
+			[[ -n "$af" ]] || continue
+			if [[ -z "$affects_section" ]]; then
+				affects_section="- \`${af}\`"
+			else
+				affects_section="${affects_section}"$'\n'"- \`${af}\`"
+			fi
 		done <<<"$affects"
+		[[ -z "$affects_section" ]] && affects_section="See relevance text above."
 	fi
 
 	cat <<ISSUEEOF
@@ -99,7 +106,7 @@ $(if [[ -n "$compare_url" ]]; then echo "| Compare | [view diff](${compare_url})
 
 ## Affects
 
-$(printf '%b' "$affects_section")
+${affects_section}
 
 ## Action
 
@@ -148,11 +155,14 @@ _file_upstream_update_issue() {
 	local title="upstream: ${slug_or_name} ${kind} -> ${new_value_short} (review adoption)"
 
 	# --- Dedup: check for existing open issue ---
+	# Quote the search term to handle slugs/names with special characters or spaces.
+	# Use --paginate to ensure all results are retrieved (avoids missed dedup on busy repos).
 	local existing_number=""
 	existing_number=$(gh issue list --repo "$aidevops_slug" --state open \
 		--label "$UPSTREAM_WATCH_LABEL" \
-		--search "in:title upstream: ${slug_or_name}" \
-		--json number --jq '.[0].number // empty' 2>/dev/null) || existing_number=""
+		--search "in:title \"upstream: ${slug_or_name}\"" \
+		--paginate \
+		--json number --jq '.[0].number // empty') || existing_number=""
 
 	# Extract relevance, affects, and upstream URL from config entry
 	local relevance="" affects="" upstream_url=""
@@ -240,12 +250,15 @@ _close_upstream_update_issue() {
 	local aidevops_slug
 	aidevops_slug=$(_get_aidevops_slug)
 
-	# Find matching open issue
+	# Find matching open issue.
+	# Quote the search term to handle slugs/names with special characters or spaces.
+	# Use --paginate to ensure all results are retrieved.
 	local issue_number=""
 	issue_number=$(gh issue list --repo "$aidevops_slug" --state open \
 		--label "$UPSTREAM_WATCH_LABEL" \
-		--search "in:title upstream: ${slug_or_name}" \
-		--json number --jq '.[0].number // empty' 2>/dev/null) || issue_number=""
+		--search "in:title \"upstream: ${slug_or_name}\"" \
+		--paginate \
+		--json number --jq '.[0].number // empty') || issue_number=""
 
 	if [[ -z "$issue_number" ]]; then
 		_log_info "No open upstream-watch issue found for ${slug_or_name} -- nothing to close"
