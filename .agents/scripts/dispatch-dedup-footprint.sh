@@ -130,24 +130,39 @@ _footprint_get_inflight() {
 		return 0
 	fi
 
-	# Cache miss — rebuild
-	# Query for issues with active worker labels
-	local inflight_issues
-	inflight_issues=$(gh issue list --repo "$repo_slug" \
-		--label "status:in-progress" --state open \
-		--json number,body --limit 50 2>/dev/null) || inflight_issues="[]"
+	# Cache miss — rebuild.
+	# t3043: parallelise the 3 gh issue list calls. Previously serial
+	# (3x 5-15s = 15-45s on cold cache); now concurrent via temp files
+	# and background jobs (max(5-15s) ≈ 5-15s — 3x faster on cache miss).
+	local _fp_tmpdir
+	_fp_tmpdir=$(mktemp -d 2>/dev/null) || _fp_tmpdir="/tmp/fp-$$"
+	mkdir -p "$_fp_tmpdir" 2>/dev/null || true
 
-	# Also include status:in-review (worker still running, PR opened)
-	local review_issues
-	review_issues=$(gh issue list --repo "$repo_slug" \
-		--label "status:in-review" --state open \
-		--json number,body --limit 50 2>/dev/null) || review_issues="[]"
+	# Launch all 3 queries in parallel
+	(gh issue list --repo "$repo_slug" --label "status:in-progress" --state open \
+		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-progress.json" &
+	local _fp_pid1=$!
 
-	# Also include status:claimed (just dispatched, worker starting)
-	local claimed_issues
-	claimed_issues=$(gh issue list --repo "$repo_slug" \
-		--label "status:claimed" --state open \
-		--json number,body --limit 50 2>/dev/null) || claimed_issues="[]"
+	(gh issue list --repo "$repo_slug" --label "status:in-review" --state open \
+		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-review.json" &
+	local _fp_pid2=$!
+
+	(gh issue list --repo "$repo_slug" --label "status:claimed" --state open \
+		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/claimed.json" &
+	local _fp_pid3=$!
+
+	# Wait for all to complete
+	wait "$_fp_pid1" 2>/dev/null || true
+	wait "$_fp_pid2" 2>/dev/null || true
+	wait "$_fp_pid3" 2>/dev/null || true
+
+	local inflight_issues review_issues claimed_issues
+	inflight_issues=$(cat "${_fp_tmpdir}/in-progress.json" 2>/dev/null) || inflight_issues="[]"
+	review_issues=$(cat "${_fp_tmpdir}/in-review.json" 2>/dev/null) || review_issues="[]"
+	claimed_issues=$(cat "${_fp_tmpdir}/claimed.json" 2>/dev/null) || claimed_issues="[]"
+
+	# Cleanup temp files
+	rm -rf "$_fp_tmpdir" 2>/dev/null || true
 
 	# Merge all three lists into one (jq handles dedup by number)
 	local all_inflight
