@@ -142,6 +142,9 @@ fi
 # Biased toward false negatives: if PID file is absent, stat fails, or the
 # holder exceeds the max-age ceiling, fall through to main() where
 # acquire_instance_lock handles stale-lock reclaim properly.
+# Early source: _file_mtime_epoch needed before shared-constants.sh is loaded.
+# shellcheck source=./portable-stat.sh
+source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
 if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 	_pw_ffjit_pid_file="${_pw_ffjit_lockdir}/pid"
