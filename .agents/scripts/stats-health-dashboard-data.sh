@@ -1,0 +1,812 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# =============================================================================
+# Stats Health Dashboard — Data Gathering & Body Formatting Sub-Library
+# =============================================================================
+# Functions for scanning active workers, gathering system resources,
+# computing stats, formatting the health issue body markdown, and
+# refreshing person-stats caches.
+#
+# Usage: source "${SCRIPT_DIR}/stats-health-dashboard-data.sh"
+#
+# Dependencies:
+#   - shared-constants.sh (gh_issue_list, gh_issue_view, gh_issue_edit_safe, etc.)
+#   - worker-lifecycle-common.sh (list_active_worker_processes, check_session_count)
+#   - stats-shared.sh (_get_runner_role)
+#
+# Globals read:
+#   - LOGFILE, REPOS_JSON, PERSON_STATS_INTERVAL, PERSON_STATS_LAST_RUN,
+#     PERSON_STATS_CACHE_DIR, SESSION_COUNT_WARN
+#
+# Part of aidevops framework: https://aidevops.sh
+
+# Apply strict mode only when executed directly (not when sourced)
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
+
+# Include guard
+[[ -n "${_STATS_HEALTH_DASHBOARD_DATA_LOADED:-}" ]] && return 0
+_STATS_HEALTH_DASHBOARD_DATA_LOADED=1
+
+# Defensive SCRIPT_DIR fallback
+if [[ -z "${SCRIPT_DIR:-}" ]]; then
+	_lib_path="${BASH_SOURCE[0]%/*}"
+	[[ "$_lib_path" == "${BASH_SOURCE[0]}" ]] && _lib_path="."
+	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
+	unset _lib_path
+fi
+
+# --- Functions ---
+
+#######################################
+# Scan active headless worker processes for a repo.
+#
+# Uses the shared list_active_worker_processes (worker-lifecycle-common.sh)
+# as the single source of truth for worker discovery, then filters by
+# repo path and formats as markdown for the health issue body.
+#
+# Arguments:
+#   $1 - repo path (used to filter workers by --dir)
+# Output: NUL-delimited "workers_md\0worker_count\0"
+#######################################
+_scan_active_workers() {
+	local repo_path="$1"
+
+	local workers_md=""
+	local worker_count=0
+
+	# Get deduplicated, zombie-filtered worker list from shared function
+	local worker_lines
+	worker_lines=$(list_active_worker_processes || true)
+
+	if [[ -n "$worker_lines" ]]; then
+		local worker_table=""
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			local w_pid w_etime w_cmd
+			read -r w_pid w_etime w_cmd <<<"$line"
+
+			# Extract dir if present — filter to this repo only
+			local w_dir=""
+			if [[ "$w_cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+				w_dir="${BASH_REMATCH[1]}"
+			fi
+
+			# Only include workers for this repo (or all if dir not detectable)
+			if [[ -n "$w_dir" && -n "$repo_path" && "$w_dir" != "$repo_path"* ]]; then
+				continue
+			fi
+
+			# Extract title if present (--title "...")
+			local w_title="headless"
+			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+				w_title="${BASH_REMATCH[1]}"
+			fi
+
+			local w_title_short="${w_title:0:60}"
+			[[ ${#w_title} -gt 60 ]] && w_title_short="${w_title_short}..."
+			worker_table="${worker_table}| ${w_pid} | ${w_etime} | ${w_title_short} |
+"
+			worker_count=$((worker_count + 1))
+		done <<<"$worker_lines"
+
+		if [[ "$worker_count" -gt 0 ]]; then
+			workers_md="| PID | Uptime | Title |
+| --- | --- | --- |
+${worker_table}"
+		fi
+	fi
+
+	if [[ "$worker_count" -eq 0 ]]; then
+		workers_md="_No active workers_"
+	fi
+
+	# NUL-delimited output preserves multiline workers_md markdown
+	printf '%s\0%s\0' "$workers_md" "$worker_count"
+	return 0
+}
+
+#######################################
+# Collect system resource metrics (CPU, memory, processes).
+#
+# Output: "sys_load_ratio|sys_cpu_cores|sys_load_1m|sys_load_5m|sys_memory|sys_procs"
+#######################################
+_gather_system_resources() {
+	local _mem_unknown="unknown"
+	local sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
+	sys_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
+	sys_procs=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local load_str
+		load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0 0 0 }")
+		sys_load_1m=$(echo "$load_str" | awk '{print $2}')
+		sys_load_5m=$(echo "$load_str" | awk '{print $3}')
+
+		local page_size vm_free vm_inactive
+		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "16384")
+		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
+		[[ "$vm_free" =~ ^[0-9]+$ ]] || vm_free=0
+		[[ "$vm_inactive" =~ ^[0-9]+$ ]] || vm_inactive=0
+		if [[ -n "$vm_free" ]]; then
+			local avail_mb=$(((${vm_free:-0} + ${vm_inactive:-0}) * page_size / 1048576))
+			if [[ "$avail_mb" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${avail_mb}MB free)"
+			elif [[ "$avail_mb" -lt 4096 ]]; then
+				sys_memory="medium (${avail_mb}MB free)"
+			else
+				sys_memory="low (${avail_mb}MB free)"
+			fi
+		else
+			sys_memory="$_mem_unknown"
+		fi
+	elif [[ -f /proc/loadavg ]]; then
+		read -r sys_load_1m sys_load_5m _ </proc/loadavg
+		local mem_avail
+		mem_avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "")
+		if [[ -n "$mem_avail" ]]; then
+			if [[ "$mem_avail" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${mem_avail}MB free)"
+			elif [[ "$mem_avail" -lt 4096 ]]; then
+				sys_memory="medium (${mem_avail}MB free)"
+			else
+				sys_memory="low (${mem_avail}MB free)"
+			fi
+		else
+			sys_memory="$_mem_unknown"
+		fi
+	else
+		sys_load_1m="?"
+		sys_load_5m="?"
+		sys_memory="$_mem_unknown"
+	fi
+
+	local sys_load_ratio="?"
+	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
+		if [[ "$sys_load_1m" =~ ^[0-9]+\.?[0-9]*$ ]] && [[ "$sys_cpu_cores" =~ ^[0-9]+$ ]]; then
+			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" || echo "?")
+		fi
+	fi
+
+	printf '%s|%s|%s|%s|%s|%s' \
+		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" "$sys_memory" "$sys_procs"
+	return 0
+}
+
+#######################################
+# Gather live stats for the health issue body.
+#
+# Collects PR counts, issue counts, active workers, system resources,
+# worktree count, max workers, and session count for a single repo.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+#   $3 - runner user
+# Output: newline-delimited fields:
+#   pr_count, prs_md, assigned_issue_count, total_issue_count,
+#   workers_md, worker_count, sys_load_ratio, sys_cpu_cores,
+#   sys_load_1m, sys_load_5m, sys_memory, sys_procs,
+#   wt_count, max_workers, session_count, session_warning
+#######################################
+_gather_health_stats() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local runner_user="$3"
+
+	# Open PRs — limit 100 for accurate count + table display.
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
+		--limit 100 2>/dev/null) || pr_json="[]"
+	local pr_count
+	pr_count=$(echo "$pr_json" | jq 'length')
+
+	# Open issues — assigned to this runner (actionable) vs total.
+	local assigned_issue_count
+	assigned_issue_count=$(gh_issue_list --repo "$repo_slug" --state open \
+		--assignee "$runner_user" --limit 500 \
+		--json number --jq 'length' 2>/dev/null || echo "0")
+	local total_issue_count
+	total_issue_count=$(gh_issue_list --repo "$repo_slug" --state open \
+		--limit 500 \
+		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
+
+	# Active headless workers — parse NUL-delimited output from _scan_active_workers.
+	local workers_md="" worker_count=0
+	{
+		local _worker_fields=()
+		while IFS= read -r -d '' _wf; do
+			_worker_fields+=("$_wf")
+		done < <(_scan_active_workers "$repo_path")
+		workers_md="${_worker_fields[0]:-_No active workers_}"
+		worker_count="${_worker_fields[1]:-0}"
+	}
+
+	# System resources
+	local sys_raw sys_load_ratio sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
+	sys_raw=$(_gather_system_resources)
+	IFS='|' read -r sys_load_ratio sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs <<<"$sys_raw"
+
+	# Worktree count for this repo
+	local wt_count=0
+	if [[ -d "${repo_path}/.git" ]]; then
+		wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
+	# Max workers — validate as integer.
+	local max_workers="?"
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	if [[ -f "$max_workers_file" ]]; then
+		max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "?")
+		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers="?"
+	fi
+
+	# Interactive session count (t1398)
+	local session_count
+	session_count=$(check_session_count)
+	local session_warning=""
+	if [[ "$session_count" -gt "$SESSION_COUNT_WARN" ]]; then
+		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
+		echo "[stats] Session warning: $session_count interactive sessions open (threshold: $SESSION_COUNT_WARN)" >>"$LOGFILE"
+	fi
+
+	# PRs table
+	local prs_md=""
+	if [[ "$pr_count" -gt 0 ]]; then
+		prs_md="| # | Title | Branch | Checks | Review | Updated |
+| --- | --- | --- | --- | --- | --- |
+"
+		prs_md="${prs_md}$(echo "$pr_json" | jq -r '.[] | "| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end) | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"')"
+	else
+		prs_md="_No open PRs_"
+	fi
+
+	# Output all stats as NUL-delimited fields.
+	printf '%s\0' \
+		"$pr_count" \
+		"$prs_md" \
+		"$assigned_issue_count" \
+		"$total_issue_count" \
+		"$workers_md" \
+		"$worker_count" \
+		"$sys_load_ratio" \
+		"$sys_cpu_cores" \
+		"$sys_load_1m" \
+		"$sys_load_5m" \
+		"$sys_memory" \
+		"$sys_procs" \
+		"$wt_count" \
+		"$max_workers" \
+		"$session_count" \
+		"$session_warning"
+	return 0
+}
+
+#######################################
+# Format the Worker Success Rate section markdown.
+#
+# Arguments:
+#   $1 - rate_24h   (display string: "X% (M/T)" or "—")
+#   $2 - rate_7d    (display string: "X% (M/T)" or "—")
+#   $3 - total_24h  (numeric total run count for 24h window)
+#   $4 - total_7d   (numeric total run count for 7d window)
+# Output: markdown block to stdout
+#######################################
+_format_worker_rate_section() {
+	local rate_24h="$1"
+	local rate_7d="$2"
+	local total_24h="$3"
+	local total_7d="$4"
+	printf '| Window | Success Rate |\n| --- | --- |\n| 24h | %s |\n| 7d | %s |\n\n<!-- worker-success-rate: 24h_total=%s 7d_total=%s -->' \
+		"$rate_24h" "$rate_7d" "$total_24h" "$total_7d"
+	return 0
+}
+
+#######################################
+# Compute worker success rates for a given time window.
+#
+# Arguments:
+#   $1 - runner_login  (GitHub username of the runner)
+#   $2 - window_hours  (look-back window in hours, e.g. 24 or 168)
+# Output: "<merged_count>\t<total_count>\t<rate_display>" to stdout
+#######################################
+_compute_worker_success_rates() {
+	local runner_login="$1"
+	local window_hours="$2"
+	local _iso_fmt="%Y-%m-%dT%H:%M:%SZ"
+	local window_epoch window_start
+	if [[ "$(uname)" == "Darwin" ]]; then
+		window_epoch=$(date -u -v-"${window_hours}"H +"%s")
+		window_start=$(date -u -v-"${window_hours}"H +"$_iso_fmt")
+	else
+		window_epoch=$(date -u -d "${window_hours} hours ago" +"%s")
+		window_start=$(date -u -d "${window_hours} hours ago" +"$_iso_fmt")
+	fi
+	local merged_count=0 closed_unmerged_count=0 killed_count=0
+	local repos_file="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_file" ]]; then
+		local slug
+		while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
+			local m cu
+			m=$(gh pr list \
+				--repo "$slug" \
+				--author "$runner_login" \
+				--label "origin:worker" \
+				--state merged \
+				--search "created:>${window_start}" \
+				--json number \
+				--jq 'length' \
+				--limit 500 2>/dev/null || echo "0")
+			merged_count=$(( merged_count + ${m:-0} ))
+			cu=$(gh pr list \
+				--repo "$slug" \
+				--author "$runner_login" \
+				--label "origin:worker" \
+				--state closed \
+				--search "created:>${window_start}" \
+				--json mergedAt \
+				--jq '[.[] | select(.mergedAt == null)] | length' \
+				--limit 500 2>/dev/null || echo "0")
+			closed_unmerged_count=$(( closed_unmerged_count + ${cu:-0} ))
+		done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only != true)) | .slug' "$repos_file" 2>/dev/null)
+	fi
+	local metrics_file="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+	if [[ -f "$metrics_file" ]]; then
+		killed_count=$(METRICS_PATH="$metrics_file" EPOCH="$window_epoch" \
+			python3 - 2>/dev/null <<'PY'
+import json, os
+metrics_path = os.environ["METRICS_PATH"]
+epoch = int(os.environ["EPOCH"])
+count = 0
+with open(metrics_path) as f:
+    for line in f:
+        try:
+            d = json.loads(line)
+            if d.get("ts", 0) >= epoch and d.get("exit_code") == 124:
+                count += 1
+        except Exception:
+            pass
+print(count)
+PY
+		)
+		killed_count="${killed_count:-0}"
+	fi
+	local total_count=$(( merged_count + closed_unmerged_count + killed_count ))
+	local rate_display
+	if [[ "$total_count" -lt 5 ]]; then
+		rate_display="—"
+	else
+		local rate_int=$(( 100 * merged_count / total_count ))
+		rate_display="${rate_int}% (${merged_count}/${total_count})"
+	fi
+	printf '%d\t%d\t%s\n' "$merged_count" "$total_count" "$rate_display"
+	return 0
+}
+
+#######################################
+# Build the health issue body markdown.
+#
+# Arguments: 31 positional parameters (see inline locals below)
+# Output: body markdown to stdout
+#######################################
+_build_health_issue_body() {
+	local now_iso="$1"
+	local role_display="$2"
+	local runner_user="$3"
+	local repo_slug="$4"
+	local pr_count="$5"
+	local assigned_issue_count="$6"
+	local total_issue_count="$7"
+	local worker_count="$8"
+	local max_workers="$9"
+	local wt_count="${10}"
+	local session_count="${11}"
+	local session_warning="${12}"
+	local prs_md="${13}" workers_md="${14}"
+	local person_stats_md="${15}" cross_repo_person_stats_md="${16}"
+	local session_time_md="${17}" cross_repo_session_time_md="${18}"
+	local activity_md="${19}" cross_repo_md="${20}"
+	local sys_load_ratio="${21}"
+	local sys_cpu_cores="${22}"
+	local sys_load_1m="${23}"
+	local sys_load_5m="${24}"
+	local sys_memory="${25}"
+	local sys_procs="${26}"
+	local runner_role="${27}"
+	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
+	local worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
+	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
+		"$worker_success_rate_24h" "$worker_success_rate_7d" \
+		"$worker_total_runs_24h" "$worker_total_runs_7d")
+
+	cat <<BODY
+## Queue Health Dashboard
+
+**Last pulse**: \`${now_iso}\`
+**${role_display}**: \`${runner_user}\`
+**Repo**: \`${repo_slug}\`
+
+<!-- aidevops:dashboard-freshness -->
+last_refresh: ${now_iso}
+
+### Summary
+
+| Metric | Count |
+| --- | --- |
+| Open PRs | ${pr_count} |
+| Assigned Issues | ${assigned_issue_count} |
+| Total Issues | ${total_issue_count} |
+| Active Workers | ${worker_count} |
+| Max Workers | ${max_workers} |
+| Worktrees | ${wt_count} |
+| Interactive Sessions | ${session_count}${session_warning} |
+
+### Open PRs
+
+${prs_md}
+
+### Active Workers
+
+${workers_md}
+
+### Worker Success Rate
+
+${_worker_rate_section}
+
+### GitHub activity on this project (last 30 days)
+
+${person_stats_md:-_Person stats unavailable._}
+
+### GitHub activity on all projects (last 30 days)
+
+${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
+
+### Work with AI sessions on this project (${runner_user})
+
+${session_time_md}
+
+### Work with AI sessions on all projects (${runner_user})
+
+${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
+
+### Commits to this project (last 30 days)
+
+${activity_md}
+
+### Commits to all projects (last 30 days)
+
+${cross_repo_md:-_Single repo or cross-repo data unavailable._}
+
+### System Resources
+
+| Metric | Value |
+| --- | --- |
+| CPU | ${sys_load_ratio}% used (${sys_cpu_cores} cores, load: ${sys_load_1m}/${sys_load_5m}) |
+| Memory | ${sys_memory} |
+| Processes | ${sys_procs} |
+
+---
+_Auto-updated by ${runner_role} stats process. Do not edit manually._
+BODY
+	return 0
+}
+
+#######################################
+# Update the health issue title if the stats have changed.
+#
+# Arguments:
+#   $1 - health_issue_number
+#   $2 - repo_slug
+#   $3 - runner_prefix
+#   $4 - pr_count
+#   $5 - pr_label
+#   $6 - assigned_issue_count
+#   $7 - worker_count
+#   $8 - worker_label
+#######################################
+_update_health_issue_title() {
+	local health_issue_number="$1"
+	local repo_slug="$2"
+	local runner_prefix="$3"
+	local pr_count="$4"
+	local pr_label="$5"
+	local assigned_issue_count="$6"
+	local worker_count="$7"
+	local worker_label="$8"
+
+	local title_parts="${pr_count} ${pr_label}, ${assigned_issue_count} assigned, ${worker_count} ${worker_label}"
+	local title_time
+	title_time=$(date -u +"%H:%M")
+	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
+
+	local current_title=""
+	local view_output
+	view_output=$(gh_issue_view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
+	local view_exit_code=$?
+	if [[ $view_exit_code -eq 0 ]]; then
+		current_title="$view_output"
+	else
+		echo "[stats] Health issue: failed to view title for #${health_issue_number}: ${view_output}" >>"$LOGFILE"
+	fi
+
+	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	if [[ "$current_stats" != "$new_stats" ]]; then
+		local title_edit_stderr
+		title_edit_stderr=$(gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
+		local title_edit_exit_code=$?
+		if [[ $title_edit_exit_code -ne 0 ]]; then
+			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Gather commit activity markdown for a single repo.
+#
+# Arguments:
+#   $1 - repo path
+#   $2 - slug_safe (slug with / replaced by -)
+# Output: activity_md to stdout
+#######################################
+_gather_activity_stats_for_repo() {
+	local repo_path="$1"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._"
+	else
+		echo "_Activity helper not installed._"
+	fi
+	return 0
+}
+
+#######################################
+# Gather session-time markdown for a single repo.
+#
+# Arguments:
+#   $1 - repo path
+# Output: session_time_md to stdout
+#######################################
+_gather_session_time_for_repo() {
+	local repo_path="$1"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._"
+	else
+		echo "_Activity helper not installed._"
+	fi
+	return 0
+}
+
+#######################################
+# Read person-stats from the hourly cache for a repo.
+#
+# Arguments:
+#   $1 - slug_safe (slug with / replaced by -)
+# Output: person_stats_md to stdout
+#######################################
+_read_person_stats_cache() {
+	local slug_safe="$1"
+	local ps_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
+	if [[ -f "$ps_cache" ]]; then
+		cat "$ps_cache"
+	else
+		echo "_Person stats not yet cached._"
+	fi
+	return 0
+}
+
+#######################################
+# Gather all stats and assemble the health issue body markdown.
+#
+# Arguments:
+#   $1  - repo_slug
+#   $2  - repo_path
+#   $3  - runner_user
+#   $4  - slug_safe
+#   $5  - now_iso
+#   $6  - role_display
+#   $7  - runner_role
+#   $8  - cross_repo_md
+#   $9  - cross_repo_session_time_md
+#   $10 - cross_repo_person_stats_md
+# Output: body markdown to stdout
+#######################################
+_assemble_health_issue_body() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local runner_user="$3"
+	local slug_safe="$4"
+	local now_iso="$5"
+	local role_display="$6"
+	local runner_role="$7"
+	local cross_repo_md="$8"
+	local cross_repo_session_time_md="$9"
+	local cross_repo_person_stats_md="${10}"
+
+	# Gather live stats via temp file (avoids subshell variable loss)
+	local stats_tmp
+	stats_tmp=$(mktemp)
+	_gather_health_stats "$repo_slug" "$repo_path" "$runner_user" >"$stats_tmp"
+
+	local pr_count prs_md assigned_issue_count total_issue_count
+	local workers_md worker_count sys_load_ratio sys_cpu_cores
+	local sys_load_1m sys_load_5m sys_memory sys_procs
+	local wt_count max_workers session_count session_warning
+	local stats_field
+	local -a stats_fields=()
+	while IFS= read -r -d '' stats_field; do
+		stats_fields+=("$stats_field")
+	done <"$stats_tmp"
+
+	pr_count="${stats_fields[0]:-0}"
+	prs_md="${stats_fields[1]:-_No open PRs_}"
+	assigned_issue_count="${stats_fields[2]:-0}"
+	total_issue_count="${stats_fields[3]:-0}"
+	workers_md="${stats_fields[4]:-_No active workers_}"
+	worker_count="${stats_fields[5]:-0}"
+	sys_load_ratio="${stats_fields[6]:-0}"
+	sys_cpu_cores="${stats_fields[7]:-0}"
+	sys_load_1m="${stats_fields[8]:-0.00}"
+	sys_load_5m="${stats_fields[9]:-0.00}"
+	sys_memory="${stats_fields[10]:-unknown}"
+	sys_procs="${stats_fields[11]:-0}"
+	wt_count="${stats_fields[12]:-0}"
+	max_workers="${stats_fields[13]:-?}"
+	session_count="${stats_fields[14]:-0}"
+	session_warning="${stats_fields[15]:-}"
+	rm -f "$stats_tmp"
+
+	local activity_md session_time_md person_stats_md
+	activity_md=$(_gather_activity_stats_for_repo "$repo_path" "$slug_safe")
+	session_time_md=$(_gather_session_time_for_repo "$repo_path")
+	person_stats_md=$(_read_person_stats_cache "$slug_safe")
+
+	local sr24h_raw sr7d_raw
+	sr24h_raw=$(_compute_worker_success_rates "$runner_user" "24")
+	sr7d_raw=$(_compute_worker_success_rates "$runner_user" "168")
+	local worker_success_rate_24h worker_total_runs_24h
+	worker_success_rate_24h=$(printf '%s' "$sr24h_raw" | cut -f3)
+	worker_total_runs_24h=$(printf '%s' "$sr24h_raw" | cut -f2)
+	local worker_success_rate_7d worker_total_runs_7d
+	worker_success_rate_7d=$(printf '%s' "$sr7d_raw" | cut -f3)
+	worker_total_runs_7d=$(printf '%s' "$sr7d_raw" | cut -f2)
+
+	_build_health_issue_body \
+		"$now_iso" "$role_display" "$runner_user" "$repo_slug" \
+		"$pr_count" "$assigned_issue_count" "$total_issue_count" \
+		"$worker_count" "$max_workers" "$wt_count" \
+		"$session_count" "$session_warning" \
+		"$prs_md" "$workers_md" \
+		"$person_stats_md" "$cross_repo_person_stats_md" \
+		"$session_time_md" "$cross_repo_session_time_md" \
+		"$activity_md" "$cross_repo_md" \
+		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" \
+		"$sys_memory" "$sys_procs" "$runner_role" \
+		"$worker_success_rate_24h" "$worker_success_rate_7d" \
+		"$worker_total_runs_24h" "$worker_total_runs_7d"
+	return 0
+}
+
+#######################################
+# Extract headline counts from a rendered health issue body.
+#
+# Arguments:
+#   $1 - body (multiline markdown string)
+# Output: "pr_count|assigned_issue_count|worker_count"
+#######################################
+_extract_body_counts() {
+	local body="$1"
+
+	local pr_count=0
+	local assigned_issue_count=0
+	local worker_count=0
+
+	local body_line
+	while IFS= read -r body_line; do
+		if [[ "$body_line" =~ ^\|\ Open\ PRs\ \|\ ([0-9]+)\ \|$ ]]; then
+			pr_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Assigned\ Issues\ \|\ ([0-9]+)\ \|$ ]]; then
+			assigned_issue_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Active\ Workers\ \|\ ([0-9]+)\ \|$ ]]; then
+			worker_count="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$body"
+
+	printf '%s|%s|%s' "$pr_count" "$assigned_issue_count" "$worker_count"
+	return 0
+}
+
+#######################################
+# Refresh person-stats cache (t1426)
+#
+# Runs at most once per PERSON_STATS_INTERVAL (default 1h).
+# Computes per-repo and cross-repo person-stats, writes markdown
+# to cache files. Health issue updates read from cache.
+#######################################
+_refresh_person_stats_cache() {
+	if [[ -f "$PERSON_STATS_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$PERSON_STATS_LAST_RUN" 2>/dev/null || echo "0")
+		last_run="${last_run//[^0-9]/}"
+		last_run="${last_run:-0}"
+		local now
+		now=$(date +%s)
+		if [[ $((now - last_run)) -lt "$PERSON_STATS_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	[[ -x "$activity_helper" ]] || return 0
+
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	mkdir -p "$PERSON_STATS_CACHE_DIR"
+
+	local search_remaining
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+
+	local repo_entries
+	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
+
+	local repo_count=0
+	local search_api_cost_per_contributor=4
+	while IFS='|' read -r _slug _path; do
+		[[ -z "$_slug" ]] && continue
+		repo_count=$((repo_count + 1))
+	done <<<"$repo_entries"
+
+	local min_budget_needed=$((repo_count * search_api_cost_per_contributor))
+	if [[ "$search_remaining" -lt "$min_budget_needed" ]]; then
+		echo "[stats] Person stats cache refresh skipped: Search API budget ${search_remaining} < estimated cost ${min_budget_needed} (${repo_count} repos × ${search_api_cost_per_contributor} queries/contributor)" >>"$LOGFILE"
+		return 0
+	fi
+
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+
+		search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+		if [[ "$search_remaining" -lt "$search_api_cost_per_contributor" ]]; then
+			echo "[stats] Person stats cache refresh stopped mid-run: Search API budget exhausted (${search_remaining} remaining)" >>"$LOGFILE"
+			break
+		fi
+
+		local slug_safe="${slug//\//-}"
+		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
+		local md
+		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md=""
+		if [[ -n "$md" ]]; then
+			echo "$md" >"$cache_file"
+		fi
+	done <<<"$repo_entries"
+
+	# Cross-repo person-stats
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+	local all_repo_paths
+	all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+	if [[ -n "$all_repo_paths" && "$search_remaining" -ge "$search_api_cost_per_contributor" ]]; then
+		local -a cross_args=()
+		while IFS= read -r rp; do
+			[[ -n "$rp" ]] && cross_args+=("$rp")
+		done <<<"$all_repo_paths"
+		if [[ ${#cross_args[@]} -gt 1 ]]; then
+			local cross_md
+			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_md=""
+			if [[ -n "$cross_md" ]]; then
+				echo "$cross_md" >"${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
+			fi
+		fi
+	fi
+
+	date +%s >"$PERSON_STATS_LAST_RUN"
+	echo "[stats] Person stats cache refreshed" >>"$LOGFILE"
+	return 0
+}
