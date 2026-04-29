@@ -176,7 +176,12 @@ _update_health_issue_for_repo() {
 		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md")
 
 	local body_edit_stderr
-	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" \
+	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
+	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
+	# Bare `gh issue edit` always uses GraphQL and silently fails the body
+	# update when the 5000/hr GraphQL budget is exhausted, leaving the
+	# dashboard stale until the budget resets (up to 1h). GH#33.
+	body_edit_stderr=$(gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
 		--body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
 			>>"$LOGFILE"

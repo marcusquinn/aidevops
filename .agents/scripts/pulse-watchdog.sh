@@ -393,10 +393,13 @@ _watchdog_check_progress() {
 		return 0
 	fi
 
+	# t3060: Enum prefix (UPPERCASE_CLASS:prose) replaces prose substring matching
+	# in the classifier below. Refactoring the prose body cannot silently break
+	# the classifier — only an explicit prefix change can.
 	if [[ "$WD_HAS_SEEN_PROGRESS" == false ]]; then
-		WD_KILL_REASON="Pulse cold-start stalled for ${WD_PROGRESS_STALL_SECONDS}s — no first output (log size: ${current_log_size} bytes, threshold: ${effective_cold_start_timeout}s)"
+		WD_KILL_REASON="COLD_START_TIMEOUT:Pulse cold-start stalled for ${WD_PROGRESS_STALL_SECONDS}s — no first output (log size: ${current_log_size} bytes, threshold: ${effective_cold_start_timeout}s)"
 	else
-		WD_KILL_REASON="Pulse stalled for ${WD_PROGRESS_STALL_SECONDS}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
+		WD_KILL_REASON="PROGRESS_TIMEOUT:Pulse stalled for ${WD_PROGRESS_STALL_SECONDS}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
 	fi
 	return 0
 }
@@ -428,7 +431,8 @@ _watchdog_check_idle() {
 
 	WD_IDLE_SECONDS=$((WD_IDLE_SECONDS + 60))
 	if [[ "$WD_IDLE_SECONDS" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
-		WD_KILL_REASON="Pulse idle for ${WD_IDLE_SECONDS}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
+		# t3060: Enum prefix — see _watchdog_check_progress for rationale.
+		WD_KILL_REASON="IDLE_TIMEOUT:Pulse idle for ${WD_IDLE_SECONDS}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
 	fi
 	return 0
 }
@@ -454,11 +458,12 @@ _check_watchdog_conditions() {
 	WD_IDLE_SECONDS="$idle_seconds"
 
 	# Check 0: Stop flag — user ran `aidevops pulse stop` during this cycle (t2943)
+	# t3060: Enum prefix — see _watchdog_check_progress for rationale.
 	if [[ -f "$STOP_FLAG" ]]; then
-		WD_KILL_REASON="Stop flag detected during active pulse — user requested stop"
+		WD_KILL_REASON="STOP_FLAG:Stop flag detected during active pulse — user requested stop"
 	# Check 1: Wall-clock stale threshold (hard ceiling)
 	elif [[ "$elapsed" -gt "$PULSE_STALE_THRESHOLD" ]]; then
-		WD_KILL_REASON="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
+		WD_KILL_REASON="WALL_CLOCK_STALE:Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
 	# Skip checks 2 and 3 during the first 3 minutes to allow startup/init.
 	elif [[ "$elapsed" -ge 180 ]]; then
 		_watchdog_check_progress "$effective_cold_start_timeout"
@@ -525,13 +530,19 @@ _run_pulse_watchdog() {
 		# Single kill block — avoids duplicating the kill+force-kill sequence.
 		if [[ -n "$kill_reason" ]]; then
 			# t3056 / GH#21781: Classify kill reason for structured telemetry.
+			# t3060 / GH#21788: Setters in _watchdog_check_progress, _watchdog_check_idle,
+			# and _check_watchdog_conditions emit "<UPPER_CLASS>:<prose>". We extract
+			# the prefix via ${var%%:*} (deterministic — no substring drift) and map to
+			# the canonical lowercase class. Default `pulse_unknown` defends against
+			# missing/unknown prefixes (a setter added without its enum mapping here).
+			local _pw_reason_prefix="${kill_reason%%:*}"
 			local _pw_reason_class="pulse_unknown"
-			case "$kill_reason" in
-			*"stale threshold"*) _pw_reason_class="wall_clock_stale" ;;
-			*"cold-start stalled"*) _pw_reason_class="cold_start_timeout" ;;
-			*"stalled for"*) _pw_reason_class="progress_timeout" ;;
-			*"idle for"*) _pw_reason_class="idle_timeout" ;;
-			*"Stop flag"*) _pw_reason_class="stop_flag" ;;
+			case "$_pw_reason_prefix" in
+			WALL_CLOCK_STALE) _pw_reason_class="wall_clock_stale" ;;
+			COLD_START_TIMEOUT) _pw_reason_class="cold_start_timeout" ;;
+			PROGRESS_TIMEOUT) _pw_reason_class="progress_timeout" ;;
+			IDLE_TIMEOUT) _pw_reason_class="idle_timeout" ;;
+			STOP_FLAG) _pw_reason_class="stop_flag" ;;
 			esac
 			local _pw_elapsed=$(( $(date +%s) - start_epoch ))
 			printf '[lifecycle] worker_killed pid=%s reason=%s trigger_age=%ss session=pulse ts=%s\n' \

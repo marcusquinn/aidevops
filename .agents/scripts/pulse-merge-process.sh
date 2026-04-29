@@ -516,6 +516,33 @@ _retarget_stacked_children() {
 }
 
 #######################################
+# Check if a GitHub login appears in the trusted-issue-author allowlist (t3062).
+#
+# Peer runners with COLLABORATOR association can be added to the allowlist to
+# bypass the OWNER/MEMBER author_association gate without requiring per-issue
+# cryptographic approval (sudo aidevops approve issue N).
+#
+# Config: AIDEVOPS_TRUSTED_AUTHORS_CONF env var (override) or
+#         <_PULSE_MERGE_DIR>/../configs/trusted-issue-authors.conf (default).
+# Empty/missing config = no trusted authors = returns 1 (not trusted).
+#
+# Args: $1=github_login
+# Returns: 0=login is trusted, 1=not trusted
+#######################################
+_is_trusted_issue_author() {
+	local login="$1"
+	[[ -z "$login" ]] && return 1
+	local _trusted_conf="${AIDEVOPS_TRUSTED_AUTHORS_CONF:-${_PULSE_MERGE_DIR:+${_PULSE_MERGE_DIR}/../configs/trusted-issue-authors.conf}}"
+	[[ -z "$_trusted_conf" || ! -f "$_trusted_conf" ]] && return 1
+	local _tentry
+	while IFS= read -r _tentry || [[ -n "$_tentry" ]]; do
+		[[ -z "$_tentry" || "$_tentry" == "#"* ]] && continue
+		[[ "$_tentry" == "$login" ]] && return 0
+	done < "$_trusted_conf"
+	return 1
+}
+
+#######################################
 # Check origin:worker worker-briefed auto-merge gates (t2449).
 #
 # Sibling to _check_interactive_pr_gates — validates that an origin:worker
@@ -581,9 +608,13 @@ _attempt_worker_briefed_auto_merge() {
 	# and the t2449 NMR gate.
 	local _issue_api
 	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
-	local issue_author_assoc
-	issue_author_assoc=$(gh api "${_issue_api}" \
-		--jq '.author_association // ""' 2>/dev/null) || issue_author_assoc=""
+	# Fetch author_association and user.login in one API call (t3062 needs login).
+	local _issue_meta
+	_issue_meta=$(gh api "${_issue_api}" \
+		--jq '[.author_association // "", .user.login // ""] | @tsv' 2>/dev/null) || _issue_meta="	"
+	local issue_author_assoc=""
+	local issue_author_login=""
+	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 
 	# Fetch issue comment signals once — used by both the OWNER/MEMBER
 	# bypass (t3052) and the NMR crypto-vs-auto check (t2449).
@@ -599,16 +630,20 @@ _attempt_worker_briefed_auto_merge() {
 	local _has_auto=""
 	read -r _has_crypto _has_auto <<< "$_issue_signals"
 
-	# Gate: linked issue authored by OWNER/MEMBER OR cryptographically
-	# approved by maintainer (t3052). The trust chain "maintainer SSH-signed
+	# Gate: linked issue authored by OWNER/MEMBER, OR login is in the
+	# trusted-issue-author allowlist (t3062), OR cryptographically approved
+	# by maintainer (t3052). The trust chain "maintainer SSH-signed
 	# an approval on the issue" is at least as strong as the OWNER/MEMBER
 	# author check — the maintainer personally vouched with their private key.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		if [[ "$_has_crypto" != "true" ]]; then
+		if _is_trusted_issue_author "$issue_author_login"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
+		elif [[ "$_has_crypto" != "true" ]]; then
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"
 			return 1
+		else
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
 		fi
-		echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} but cryptographic approval signature present, proceeding (t3052)" >>"$LOGFILE"
 	fi
 
 	# Gate: NMR crypto-vs-auto approval check.

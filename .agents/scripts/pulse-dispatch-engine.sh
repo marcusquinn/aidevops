@@ -969,14 +969,32 @@ _dff_dispatch_loop_parallel() {
 		done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
 		_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
 
-		# Wait for one to finish if we're at the concurrency cap
+		# Wait for one to finish if we're at the concurrency cap.
+		# GH#21729: reap dead PIDs BEFORE calling wait -n, and handle the
+		# PID-reuse scenario where kill -0 succeeds (PID recycled by OS for
+		# a different process) but wait -n fails ("not a child of this shell").
+		# Without this guard, the loop spins millions of times per minute,
+		# growing pulse-wrapper.log to hundreds of GB.
 		while ((${#_pids[@]} >= max_parallel)); do
-			wait -n 2>/dev/null || true
+			# Reap finished PIDs first — may drop below cap without blocking.
 			_alive_pids=()
 			while IFS= read -r pid; do
 				[[ -n "$pid" ]] && _alive_pids+=("$pid")
 			done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
 			_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
+
+			# Re-check after reaping — may have dropped below cap.
+			((${#_pids[@]} >= max_parallel)) || break
+
+			# Block until the next child exits. If wait -n fails, all
+			# remaining PIDs in _pids are stale (PID reuse: kill -0 succeeds
+			# because the OS recycled the PID for a different process, but
+			# it's not a child of this shell). Purge them to break the loop.
+			if ! wait -n 2>/dev/null; then
+				echo "[pulse-wrapper] Deterministic fill floor: wait -n found no children, purging ${#_pids[@]} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
+				_pids=()
+				sleep 1
+			fi
 		done
 
 		# Budget check: successes already recorded + currently in flight

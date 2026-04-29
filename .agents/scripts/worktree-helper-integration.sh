@@ -126,28 +126,70 @@ localdev_auto_branch_rm() {
 
 # --- Preview Proxy Integration (GH#21560) ---
 
-# Allocate a preview port + register a proxy route for a new worktree.
-# Called after git worktree add. Best-effort: never fails cmd_add.
+# Auto-allocate a preview port + register a proxy route on worktree creation.
+# Called from cmd_add after git worktree add succeeds. Non-fatal — missing
+# helper or unresolvable repo slug → silent skip.
 # Args: $1=branch name
+# t3065: extract repo slug via portable bash parameter expansion (no sed),
+# avoiding BSD-vs-GNU regex incompatibility.
 preview_proxy_auto_allocate() {
 	local branch="$1"
-
-	# Only run if preview proxy helper is available
 	[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
 
-	"$PREVIEW_PROXY_HELPER" allocate "$branch" >/dev/null 2>&1 || true
+	# Determine repo slug from git remote
+	local repo_slug=""
+	local remote_url
+	remote_url="$(git remote get-url origin 2>/dev/null)" || remote_url=""
+	if [[ -n "$remote_url" ]]; then
+		# Extract owner/repo from git remote URL (portable bash, no sed needed)
+		# Handles: https://github.com/owner/repo.git, git@github.com:owner/repo.git, etc.
+		remote_url="${remote_url##*[:/]}" # Strip everything up to last : or /
+		repo_slug="${remote_url%.git}"    # Strip .git suffix if present
+	fi
+	[[ -z "$repo_slug" ]] && return 0
+
+	local alloc_json=""
+	alloc_json="$("$PREVIEW_PROXY_HELPER" allocate "$repo_slug" "$branch" 2>/dev/null)" || {
+		# Non-fatal: allocation failed (no jq, no free ports, etc.)
+		return 0
+	}
+
+	if [[ -n "$alloc_json" ]] && command -v jq >/dev/null 2>&1; then
+		local port url hint
+		port="$(echo "$alloc_json" | jq -r '.port // empty' 2>/dev/null)" || port=""
+		url="$(echo "$alloc_json" | jq -r '.url // empty' 2>/dev/null)" || url=""
+		hint="$(echo "$alloc_json" | jq -r '.start_hint // empty' 2>/dev/null)" || hint=""
+
+		if [[ -n "$port" ]]; then
+			echo ""
+			echo -e "${BLUE}Preview proxy: port ${port} allocated${NC}"
+			[[ -n "$url" ]] && echo -e "  Preview:  ${BOLD}${url}${NC}"
+			[[ -n "$hint" ]] && echo -e "  Start:    ${hint}"
+		fi
+	fi
 	return 0
 }
 
-# Free preview port + deregister proxy route when a worktree is removed.
-# Called during cmd_remove. Best-effort.
+# Auto-free a preview port + deregister proxy route on worktree removal.
+# Called from _remove_cleanup_and_execute. Non-fatal — missing helper or
+# unresolvable repo slug → silent skip.
 # Args: $1=branch name
+# t3065: extract repo slug via portable bash parameter expansion (no sed).
 preview_proxy_auto_free() {
 	local branch="$1"
-
-	# Only run if preview proxy helper is available
 	[[ ! -x "$PREVIEW_PROXY_HELPER" ]] && return 0
 
-	"$PREVIEW_PROXY_HELPER" free "$branch" >/dev/null 2>&1 || true
+	local repo_slug=""
+	local remote_url
+	remote_url="$(git remote get-url origin 2>/dev/null)" || remote_url=""
+	if [[ -n "$remote_url" ]]; then
+		# Extract owner/repo from git remote URL (portable bash, no sed needed)
+		# Handles: https://github.com/owner/repo.git, git@github.com:owner/repo.git, etc.
+		remote_url="${remote_url##*[:/]}" # Strip everything up to last : or /
+		repo_slug="${remote_url%.git}"    # Strip .git suffix if present
+	fi
+	[[ -z "$repo_slug" ]] && return 0
+
+	"$PREVIEW_PROXY_HELPER" free "$repo_slug" "$branch" 2>/dev/null || true
 	return 0
 }

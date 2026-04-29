@@ -26,12 +26,12 @@ Merge typically happens within one pulse cycle (4-10 minutes) after all checks g
 
 ## t2449 — `origin:worker` (Worker-Briefed) Auto-Merge
 
-`pulse-merge.sh` also auto-merges `origin:worker` PRs when the underlying issue was **maintainer-briefed** (filed by `OWNER`/`MEMBER`) OR **cryptographically approved** by a maintainer (`sudo aidevops approve issue N`). Trust chain is equivalent to interactive: maintainer brief (or explicit cryptographic vouching) + worker implementation + CI verification + no human objection.
+`pulse-merge.sh` also auto-merges `origin:worker` PRs when the underlying issue was **maintainer-briefed** (filed by `OWNER`/`MEMBER`) OR authored by a **trusted peer runner** in the allowlist (t3062) OR **cryptographically approved** by a maintainer (`sudo aidevops approve issue N`). Trust chain is equivalent to interactive: maintainer brief (or explicit vouching) + worker implementation + CI verification + no human objection.
 
 ALL criteria must hold:
 
 1. PR carries the `origin:worker` label.
-2. Linked issue (via `Resolves #NNN` / `Closes #NNN` / `Fixes #NNN`) was authored by a user with `OWNER` or `MEMBER` association — **OR** the linked issue has a cryptographic approval signature (`aidevops:approval-signature:` in a comment body), proving a maintainer has personally vouched for the work with their SSH key (t3052).
+2. Linked issue (via `Resolves #NNN` / `Closes #NNN` / `Fixes #NNN`) was authored by a user with `OWNER` or `MEMBER` association — **OR** the issue author's GitHub login is listed in `.agents/configs/trusted-issue-authors.conf` (t3062: peer runners trusted as operators, not external contributors) — **OR** the linked issue has a cryptographic approval signature (`aidevops:approval-signature:` in a comment body), proving a maintainer has personally vouched for the work with their SSH key (t3052).
 3. Linked issue never carried `needs-maintainer-review` OR NMR was cleared via **cryptographic** approval (`sudo aidevops approve issue N`), not via `auto_approve_maintainer_issues`.
 4. All required status checks PASS or SKIPPED.
 5. No `CHANGES_REQUESTED` review from any reviewer with non-bot association.
@@ -44,7 +44,19 @@ Feature flag: `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE` (default `1`=on). Set to `0` 
 
 Audit log: `[pulse-merge] auto-merged origin:worker (worker-briefed) PR #N (author=<login>, linked_issue=#M)`.
 
-Test coverage: `.agents/scripts/tests/test-pulse-merge-worker-briefed.sh` (13 cases).
+Test coverage: `.agents/scripts/tests/test-pulse-merge-worker-briefed.sh` (15 cases: a–o).
+
+### Trusted-Issue-Author Allowlist (t3062, Criterion 2 extension)
+
+The allowlist allows peer runners (separate machine/account, `COLLABORATOR` association) to file issues that workers can then auto-merge without per-issue crypto ceremony.
+
+**Config file:** `.agents/configs/trusted-issue-authors.conf` — one GitHub login per line; `#` comments and blank lines ignored. Deployed copy: `~/.aidevops/agents/configs/trusted-issue-authors.conf`. Override path: `AIDEVOPS_TRUSTED_AUTHORS_CONF` env var.
+
+**What the allowlist bypasses:** the `OWNER`/`MEMBER` `author_association` check only. Everything else still applies: the NMR crypto-vs-auto gate (criterion 3), the feature flag, draft/hold-for-review/CHANGES_REQUESTED gates, and CI checks.
+
+**What it does NOT bypass:** A trusted-author issue that received `needs-maintainer-review` and was auto-approved (not crypto-cleared) still blocks — the closed-loop prevention from t2449 criterion 3 is independent of criterion 2.
+
+**Security posture:** Allowlist entries are local-trust grants from the maintainer of the runner machine. A rogue allowlist entry cannot bypass CI or NMR-crypto gates; it only relaxes the GitHub author_association check which is itself a proxy for maintainer trust.
 
 ### Security Gate: NMR Crypto-vs-Auto Distinction (Criterion 3)
 

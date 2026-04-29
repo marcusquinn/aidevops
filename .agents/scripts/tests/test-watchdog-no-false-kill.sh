@@ -304,6 +304,144 @@ assert_contains \
 	"$watchdog_source"
 
 #######################################
+# Test 18: t3060 / GH#21788 — enum-prefix kill_reason coupling
+#######################################
+# The classifier in _run_pulse_watchdog extracts via ${kill_reason%%:*} and
+# matches against UPPERCASE enum literals. Setter sites must emit a matching
+# enum prefix or the classifier silently falls back to pulse_unknown. These
+# assertions pin the contract: setter prefix ↔ classifier enum case.
+
+# 18a-18e: Each setter site emits its enum prefix. Match the WD_KILL_REASON
+# assignment with the prefix attached so a future refactor that drops the
+# prefix is caught immediately.
+# shellcheck disable=SC2016  # Literal string for grep match — not variable expansion
+assert_contains \
+	"18a. WALL_CLOCK_STALE setter has enum prefix" \
+	'WD_KILL_REASON="WALL_CLOCK_STALE:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18b. COLD_START_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="COLD_START_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18c. PROGRESS_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="PROGRESS_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18d. IDLE_TIMEOUT setter has enum prefix" \
+	'WD_KILL_REASON="IDLE_TIMEOUT:' \
+	"$pulse_wd_source"
+# shellcheck disable=SC2016
+assert_contains \
+	"18e. STOP_FLAG setter has enum prefix" \
+	'WD_KILL_REASON="STOP_FLAG:' \
+	"$pulse_wd_source"
+
+# 18f: Classifier extracts via ${kill_reason%%:*} (deterministic) — not via
+# prose substring matching that drifts when the message is reworded.
+# shellcheck disable=SC2016
+assert_contains \
+	"18f. Classifier extracts enum prefix via parameter expansion" \
+	'_pw_reason_prefix="${kill_reason%%:*}"' \
+	"$pulse_wd_source"
+
+# 18g: Classifier dispatches on the prefix variable, not on the full
+# kill_reason string. This is the structural anti-regression check —
+# `case "$_pw_reason_prefix" in` proves the prose-substring classifier
+# is gone.
+# shellcheck disable=SC2016
+assert_contains \
+	"18g. Classifier case dispatches on prefix variable" \
+	'case "$_pw_reason_prefix" in' \
+	"$pulse_wd_source"
+
+# 18h-18i: The pre-t3060 prose-substring patterns must NOT reappear in the
+# classifier. If a future refactor reverts to "*"stale threshold"*) ..."
+# the coupling breaks again. Pin negation.
+assert_not_contains \
+	"18h. Prose-substring classifier 'stale threshold' is gone" \
+	'*"stale threshold"*) _pw_reason_class=' \
+	"$pulse_wd_source"
+assert_not_contains \
+	"18i. Prose-substring classifier 'cold-start stalled' is gone" \
+	'*"cold-start stalled"*) _pw_reason_class=' \
+	"$pulse_wd_source"
+
+# 18j: pulse_unknown remains as the defensive default — a setter added
+# without its enum mapping must surface as pulse_unknown, not a wrong
+# class. This catches the failure mode where a developer adds a 6th
+# kill site but forgets to extend the case statement.
+# shellcheck disable=SC2016
+assert_contains \
+	"18j. pulse_unknown default preserved as classifier safety net" \
+	'_pw_reason_class="pulse_unknown"' \
+	"$pulse_wd_source"
+
+#######################################
+# Tests 19-22: t3059 / GH#21787 — _watchdog_tree_cpu walks full descendant tree (BFS)
+#
+# Earlier implementation used `pgrep -P "$root_pid"` (one level only),
+# undercounting CPU on deeper trees like `bash → opencode → node → LSP`.
+# These assertions pin the BFS contract: a shared _get_descendant_pids
+# helper lives in worker-lifecycle-common.sh, the watchdog sources it,
+# and a runtime spawn proves grandchildren are visited. The interval-CPU
+# sampling (t3057) is preserved — t3059 only changes which PIDs are sampled.
+#######################################
+lifecycle_source=$(< "${SCRIPT_DIR}/worker-lifecycle-common.sh")
+assert_contains \
+	"19. _get_descendant_pids defined in worker-lifecycle-common.sh (t3059)" \
+	"_get_descendant_pids()" \
+	"$lifecycle_source"
+
+assert_contains \
+	"20. _watchdog_tree_cpu calls _get_descendant_pids (BFS, not pgrep -P) (t3059)" \
+	"_get_descendant_pids" \
+	"$watchdog_source"
+
+assert_contains \
+	"21. worker-activity-watchdog.sh sources worker-lifecycle-common.sh (t3059)" \
+	"worker-lifecycle-common.sh" \
+	"$watchdog_source"
+
+#######################################
+# Test 22: Runtime — _get_descendant_pids returns >=2 PIDs for a 3-level tree
+#######################################
+# Source the lifecycle helpers in this test shell.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
+
+# Spawn parent_bash → middle_bash → sleep (grandchild). The trailing
+# `; :` in the inner command prevents bash's tail-call exec optimization
+# (otherwise middle_bash would execve into sleep and the tree would
+# collapse to two levels). 30s sleep gives a stable tree; cleanup
+# below kills it deterministically.
+bash -c 'bash -c "sleep 30; :" & wait' >/dev/null 2>&1 &
+test_root_pid=$!
+sleep 1 # let fork+exec settle so pgrep sees the children
+
+descendants=$(_get_descendant_pids "$test_root_pid" 2>/dev/null || true)
+descendant_count=$(echo "$descendants" | grep -c '^[0-9]\+$' 2>/dev/null || true)
+[[ "$descendant_count" =~ ^[0-9]+$ ]] || descendant_count=0
+
+if [[ "$descendant_count" -ge 2 ]]; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 22. _get_descendant_pids walks BFS (descendants=$descendant_count, expected >=2 for parent->child->grandchild) (t3059)"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 22. _get_descendant_pids returned $descendant_count descendants, expected >=2 for 3-level tree (t3059)"
+fi
+
+# Cleanup the spawned tree
+for cleanup_pid in $descendants "$test_root_pid"; do
+	kill "$cleanup_pid" 2>/dev/null || true
+done
+wait 2>/dev/null || true
+
+#######################################
 # Summary
 #######################################
 echo ""

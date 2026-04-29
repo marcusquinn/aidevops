@@ -532,7 +532,13 @@ create_github_issue() {
 		return 1
 	fi
 
-	issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
+	# Extract issue number from the GitHub URL pattern (/issues/NNN).
+	# gh_create_issue captures stderr via 2>&1, so $issue_url may contain
+	# log lines like "[INFO] ... per t2157" whose trailing digits would
+	# match a naive '[0-9]+$' pattern, producing phantom numbers. Anchoring
+	# to the URL shape (/issues/NNN) is immune to log message contamination.
+	# tail -1 defends against any future multi-line URL output (t3039/GH#21770).
+	issue_num=$(echo "$issue_url" | grep -oE '/issues/[0-9]+' | tail -1 | grep -oE '[0-9]+')
 
 	if [[ -z "$issue_num" ]]; then
 		log_warn "Failed to extract issue number from: $issue_url"

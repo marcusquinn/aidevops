@@ -58,6 +58,14 @@
 
 set -euo pipefail
 
+# t3059 / GH#21787: Source shared lifecycle helpers for _get_descendant_pids.
+# Avoids inline one-level `pgrep -P` BFS that previously lived in
+# _watchdog_tree_cpu and undercounted CPU when the worker process tree
+# was deeper than one level (e.g., bash → opencode → node → LSP).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
+
 #######################################
 # Configuration (from args, with defaults)
 #######################################
@@ -234,17 +242,22 @@ _parse_ps_cpu_time() {
 #######################################
 _watchdog_tree_cpu() {
 	local root_pid="$1"
+	[[ "$root_pid" =~ ^[0-9]+$ ]] || {
+		echo "0"
+		return 0
+	}
 	local sample_interval=5
 
-	# Collect PID list: root + direct children.
-	# One level deep covers the typical opencode worker chain
-	# (bash → node → opencode binary).
-	local pid_list=()
+	# t3059: Collect root + ALL descendants via BFS (not just direct children).
+	# The previous one-level `pgrep -P` undercounted recent CPU on deeper
+	# chains (bash → opencode → node → LSP). _get_descendant_pids walks the
+	# full tree using the same primitive _get_process_tree_cpu uses.
+	local pid_list=("$root_pid")
 	local pid
-	for pid in "$root_pid" $(pgrep -P "$root_pid" 2>/dev/null); do
+	while IFS= read -r pid; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		pid_list+=("$pid")
-	done
+	done < <(_get_descendant_pids "$root_pid")
 
 	# Sample 1: record cumulative CPU seconds per PID into parallel arrays
 	local t0_pids=() t0_secs_arr=()

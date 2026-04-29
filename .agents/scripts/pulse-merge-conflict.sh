@@ -1016,7 +1016,11 @@ ${fence}
 
 ${new_section}"
 
-	if gh issue edit "$linked_issue" --repo "$repo_slug" \
+	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
+	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
+	# Bare `gh issue edit` always uses GraphQL and silently fails the body
+	# update when the 5000/hr GraphQL budget is exhausted. PR #21733 model.
+	if gh_issue_edit_safe "$linked_issue" --repo "$repo_slug" \
 		--body "$new_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] _carry_forward_pr_diff: appended diff from PR #${pr_number} to issue #${linked_issue} in ${repo_slug} (t2118)" >>"$LOGFILE"
 	else
