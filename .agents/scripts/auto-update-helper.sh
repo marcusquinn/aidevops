@@ -872,7 +872,7 @@ _cmd_enable_systemd() {
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
-	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; ${script_path} kept inside outer double quotes for safe expansion
+	# shellcheck disable=SC1078,SC1079  # multi-line printf with single quotes inside a double-quoted string; \"${script_path}\" expands to "path" in the service file, preserving space-safe quoting
 	printf '%s' "[Unit]
 Description=aidevops auto-update
 After=network.target
@@ -880,7 +880,7 @@ After=network.target
 [Service]
 Type=oneshot
 KillMode=process
-ExecStart=/bin/bash -lc '${script_path} check'
+ExecStart=/bin/bash -lc '\"${script_path}\" check'
 TimeoutStartSec=120
 Nice=10
 IOSchedulingClass=idle
