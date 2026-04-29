@@ -71,8 +71,7 @@ main() {
 		# Debounce: check modification time
 		local file_mtime
 		file_mtime="$(date -r "$file_path" +%s 2>/dev/null \
-			|| stat -c '%Y' "$file_path" 2>/dev/null \
-			|| echo 0)"
+			|| _file_mtime_epoch "$file_path")"
 		local age=$(( now_ts - file_mtime ))
 
 		if [[ "$age" -lt "$DEBOUNCE_SECS" ]]; then

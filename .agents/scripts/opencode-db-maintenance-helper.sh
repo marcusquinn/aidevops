@@ -180,13 +180,7 @@ _db_size_bytes() {
 		echo 0
 		return 0
 	}
-	if stat -f%z "$path" >/dev/null 2>&1; then
-		# macOS/BSD
-		stat -f%z "$path"
-	else
-		# GNU
-		stat -c%s "$path"
-	fi
+	_file_size_bytes "$path"
 }
 
 # _db_size_human <bytes> — portable human-readable byte formatter.

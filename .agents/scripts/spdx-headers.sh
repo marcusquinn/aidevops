@@ -28,7 +28,7 @@ _safe_replace() {
 	local tmp_file="$1"
 	local target_file="$2"
 	chmod --reference="$target_file" "$tmp_file" 2>/dev/null ||
-		chmod "$(stat -f '%Lp' "$target_file" 2>/dev/null || echo '644')" "$tmp_file" 2>/dev/null ||
+		chmod "$(_file_perms "$target_file")" "$tmp_file" 2>/dev/null ||
 		true
 	mv "$tmp_file" "$target_file"
 	return 0
