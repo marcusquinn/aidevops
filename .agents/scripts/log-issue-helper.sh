@@ -13,6 +13,10 @@ set -euo pipefail
 # shellcheck source=lib/version.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
+# Shared fingerprint algorithm (also used by issue-sync-reusable.yml server-side dedup)
+# shellcheck source=lib/issue-fingerprint.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/issue-fingerprint.sh"
+
 # -----------------------------------------------------------------------------
 # Diagnostic Information Gathering
 # -----------------------------------------------------------------------------
@@ -204,48 +208,9 @@ _log_issue_dedup_window() {
 	return 0
 }
 
-_normalize_body_for_fingerprint() {
-	local body="$1"
-	# Strip aidevops sig footer (everything from <!-- aidevops:sig --> to end)
-	body=$(printf '%s' "$body" | awk '/<!-- aidevops:sig -->/{exit} {print}')
-	# Strip "*Detected by ... in `...`.*" source-context trailer lines
-	# shellcheck disable=SC2016
-	body=$(printf '%s' "$body" | sed '/^\*Detected by .*\*[[:space:]]*$/d')
-	# Strip trailing blank lines and standalone "---" separator lines
-	body=$(printf '%s' "$body" | awk '
-		{lines[NR]=$0}
-		END {
-			n=NR
-			while (n>0 && (lines[n]=="" || lines[n]=="---")) n--
-			for (i=1; i<=n; i++) print lines[i]
-		}
-	')
-	printf '%s' "$body"
-	return 0
-}
-
-_compute_issue_fingerprint() {
-	local title="$1"
-	local body="$2"
-	local normalized_body
-	normalized_body=$(_normalize_body_for_fingerprint "$body")
-	local input="${title}|${normalized_body}"
-	local hash=""
-
-	if command -v shasum &>/dev/null; then
-		hash=$(printf '%s' "$input" | shasum -a 256 | awk '{print $1}')
-	elif command -v sha256sum &>/dev/null; then
-		hash=$(printf '%s' "$input" | sha256sum | awk '{print $1}')
-	elif command -v openssl &>/dev/null; then
-		hash=$(printf '%s' "$input" | openssl dgst -sha256 | awk '{print $NF}')
-	else
-		# Fallback: cksum — not cryptographic but sufficient for dedup within a session
-		hash=$(printf '%s' "$input" | cksum | awk '{print $1}')
-	fi
-
-	echo "$hash"
-	return 0
-}
+# _normalize_body_for_fingerprint and _compute_issue_fingerprint are now provided
+# by lib/issue-fingerprint.sh (sourced above). This single source of truth is
+# shared with the issue-sync-reusable.yml server-side dedup workflow (GH#21744).
 
 # check_recent_filing <title> <body>
 # Exits 0 and prints "OK" if no duplicate is found within the dedup window.
