@@ -105,7 +105,7 @@ _dff_compute_capacity() {
 		# _cb_rc == 2 means API error — fail-open, proceed with dispatch.
 	fi
 
-	local max_workers active_workers available_slots
+	local max_workers="" active_workers="" available_slots=""
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
@@ -523,7 +523,7 @@ _dff_process_candidate() {
 	local available_slots="$3"
 	_DFF_THROTTLE_CLEARED=0
 
-	local issue_number repo_slug repo_path issue_url issue_title dispatch_title prompt labels_csv model_override
+	local issue_number="" repo_slug="" repo_path="" issue_url="" issue_title="" dispatch_title="" prompt="" labels_csv="" model_override=""
 	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
 	repo_slug=$(printf '%s' "$candidate_json" | jq -r '.repo_slug // empty' 2>/dev/null)
 	repo_path=$(printf '%s' "$candidate_json" | jq -r '.repo_path // empty' 2>/dev/null)
