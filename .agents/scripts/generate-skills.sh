@@ -259,8 +259,13 @@ CACHE_HASH_FILE="${AGENTS_DIR}/.skills-source-hash"
 compute_source_hash() {
 	# Hash the listing of all source .md files with their sizes and mtimes.
 	# This is fast (~10ms for 1600 files) vs regenerating (~56s).
-	find "$AGENTS_DIR" -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" \
-		-not -name "README.md" -type f -exec stat -f '%N %z %m' {} + 2>/dev/null |
+	local files=()
+	while IFS= read -r -d '' f; do files+=("$f"); done < <(
+		find "$AGENTS_DIR" -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" \
+			-not -name "README.md" -type f -print0 2>/dev/null
+	)
+	[[ ${#files[@]} -eq 0 ]] && { echo "empty"; return 0; }
+	_stat_batch '%n %s %Y' "${files[@]}" |
 		LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
 	return 0
 }

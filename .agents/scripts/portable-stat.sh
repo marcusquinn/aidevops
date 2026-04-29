@@ -22,6 +22,7 @@
 #   _file_size_bytes  PATH  — file size in bytes
 #   _file_perms       PATH  — octal permissions (e.g. "644")
 #   _file_owner       PATH  — owner username
+#   _stat_batch FMT FILE... — batch stat with GNU-style format (auto-translated for BSD)
 
 [[ -n "${_PORTABLE_STAT_LOADED:-}" ]] && return 0
 _PORTABLE_STAT_LOADED=1
@@ -49,57 +50,67 @@ fi
 unset _ps_test_val
 
 # =============================================================================
-# _file_mtime_epoch — modification time as epoch seconds
-# Usage: epoch=$(_file_mtime_epoch "/path/to/file")
-# Returns: epoch seconds, or 0 on stat failure. Errors on unknown variant.
+# _stat_batch — batch stat with GNU-style format, auto-translated for BSD
+#
+# Accepts a GNU stat format string and one or more file paths. Translates
+# common GNU format tokens to BSD equivalents automatically.
+#
+# Supported tokens: %n (name), %s (size), %Y (mtime epoch), %y (mtime human),
+#                   %a (octal perms), %U (owner username)
+#
+# Usage: _stat_batch '%n %s %Y' file1 file2 ...
+#        find ... -print0 | xargs -0 bash -c '_stat_batch "%n %s %Y" "$@"' _
+#
+# For find -exec integration, use the companion script portable-stat-exec.sh:
+#        find ... -exec portable-stat-exec.sh '%n %s %Y' {} +
 # =============================================================================
+_stat_batch() {
+	local fmt="$1"; shift
+	case "$_STAT_VARIANT" in
+		gnu) command stat -c "$fmt" "$@" 2>/dev/null ;;
+		bsd)
+			local bsd_fmt="$fmt"
+			bsd_fmt="${bsd_fmt//'%n'/%N}"
+			bsd_fmt="${bsd_fmt//'%Y'/%m}"
+			bsd_fmt="${bsd_fmt//'%s'/%z}"
+			bsd_fmt="${bsd_fmt//'%a'/%Lp}"
+			bsd_fmt="${bsd_fmt//'%U'/%Su}"
+			bsd_fmt="${bsd_fmt//'%y'/%Sm}"
+			command stat -f "$bsd_fmt" "$@" 2>/dev/null
+			;;
+		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
+	esac
+}
+
+# =============================================================================
+# Convenience wrappers — single-file, single-field with safe fallbacks.
+# All delegate to _stat_batch for the actual platform dispatch.
+# =============================================================================
+
+# _file_mtime_epoch PATH — modification time as epoch seconds (fallback: 0)
 _file_mtime_epoch() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %Y "$file_path" 2>/dev/null || echo 0 ;;
-		bsd) stat -f %m "$file_path" 2>/dev/null || echo 0 ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_batch '%Y' "$file_path" || echo 0
+	return 0
 }
 
-# =============================================================================
-# _file_size_bytes — file size in bytes
-# Usage: bytes=$(_file_size_bytes "/path/to/file")
-# Returns: size in bytes, or 0 on stat failure. Errors on unknown variant.
-# =============================================================================
+# _file_size_bytes PATH — file size in bytes (fallback: 0)
 _file_size_bytes() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %s "$file_path" 2>/dev/null || echo 0 ;;
-		bsd) stat -f %z "$file_path" 2>/dev/null || echo 0 ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_batch '%s' "$file_path" || echo 0
+	return 0
 }
 
-# =============================================================================
-# _file_perms — octal permission string
-# Usage: mode=$(_file_perms "/path/to/file")
-# Returns: octal string (e.g. "644"), or "000" on stat failure.
-# =============================================================================
+# _file_perms PATH — octal permissions, e.g. "644" (fallback: "000")
 _file_perms() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %a "$file_path" 2>/dev/null || echo "000" ;;
-		bsd) stat -f %Lp "$file_path" 2>/dev/null || echo "000" ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_batch '%a' "$file_path" || echo "000"
+	return 0
 }
 
-# =============================================================================
-# _file_owner — owner username
-# Usage: owner=$(_file_owner "/path/to/file")
-# Returns: username string, or "unknown" on stat failure.
-# =============================================================================
+# _file_owner PATH — owner username (fallback: "unknown")
 _file_owner() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %U "$file_path" 2>/dev/null || echo "$_PORTABLE_STAT_UNKNOWN" ;;
-		bsd) stat -f %Su "$file_path" 2>/dev/null || echo "$_PORTABLE_STAT_UNKNOWN" ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_batch '%U' "$file_path" || echo "$_PORTABLE_STAT_UNKNOWN"
+	return 0
 }
