@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Tests for native GitHub auto-merge fast-track (t3070).
+#
+# Verifies the 4 decision-tree branches of _set_native_auto_merge_or_skip
+# from `_repo_allows_auto_merge` + `_set_native_auto_merge_or_skip`
+# (pulse-merge-process.sh):
+#
+#   Case (A): CI pending + repo allows auto-merge
+#             → returns 0; `gh pr merge --auto --squash` invoked
+#   Case (B): CI green (no required-bucket pending)
+#             → returns 1; no `gh pr merge --auto` invocation (caller
+#               falls through to immediate --admin merge for speed)
+#   Case (C): PR already has autoMergeRequest set
+#             → returns 0; no new `gh pr merge --auto` invocation
+#               (deferred to GitHub)
+#   Case (D): Repo allow_auto_merge=false
+#             → returns 1; no `gh pr merge --auto` invocation
+#
+# No real repository is touched. The `gh` binary is replaced with a mock
+# stub that serves canned responses from TEST_ROOT fixture files and logs
+# every invocation so we can assert on call shape.
+#
+# Pattern mirrors: test-pulse-merge-worker-briefed.sh (helper extraction
+# via awk + eval into the test shell, gh mocking via PATH manipulation).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_RESET='\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+TEST_ROOT=""
+GH_LOG=""
+
+print_result() {
+	local test_name="$1"
+	local passed="$2"
+	local message="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$passed" -eq 0 ]]; then
+		printf '%bPASS%b %s\n' "$TEST_GREEN" "$TEST_RESET" "$test_name"
+		return 0
+	fi
+	printf '%bFAIL%b %s\n' "$TEST_RED" "$TEST_RESET" "$test_name"
+	if [[ -n "$message" ]]; then
+		printf '       %s\n' "$message"
+	fi
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+setup_test_env() {
+	TEST_ROOT=$(mktemp -d)
+	mkdir -p "${TEST_ROOT}/bin"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export LOGFILE="${TEST_ROOT}/pulse.log"
+	: >"$LOGFILE"
+	GH_LOG="${TEST_ROOT}/gh-calls.log"
+	: >"$GH_LOG"
+	export TEST_ROOT GH_LOG
+
+	# Default fixtures. Overridden per-test before invocation.
+	#  * auto_merge_request: empty (PR does not have auto-merge set)
+	#  * allow_auto_merge:   true  (repo allows it)
+	#  * pending_count:      1     (one required check pending)
+	printf '' >"${TEST_ROOT}/auto_merge_request.txt"
+	printf 'true' >"${TEST_ROOT}/allow_auto_merge.txt"
+	printf '1' >"${TEST_ROOT}/pending_count.txt"
+
+	# Cache dir is keyed on PID — wipe between tests so allow_auto_merge
+	# fixture changes are honoured (otherwise Case D inherits Case A).
+	rm -rf "${TMPDIR:-/tmp}/aidevops-pulse-allow-auto-merge-$$" 2>/dev/null || true
+
+	# Mock gh: logs every call, dispatches by argument shape.
+	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
+#!/usr/bin/env bash
+printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
+
+# `gh pr view <N> --repo <slug> --json autoMergeRequest --jq ...`
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"autoMergeRequest"* ]]; then
+	cat "${TEST_ROOT}/auto_merge_request.txt"
+	echo
+	exit 0
+fi
+
+# `gh api repos/<slug> --jq '.allow_auto_merge // false'`
+if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"allow_auto_merge"* ]]; then
+	cat "${TEST_ROOT}/allow_auto_merge.txt"
+	echo
+	exit 0
+fi
+
+# `gh pr checks <N> --repo <slug> --required --json bucket --jq '...'`
+if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
+	cat "${TEST_ROOT}/pending_count.txt"
+	echo
+	exit 0
+fi
+
+# `gh pr merge <N> --repo <slug> --auto --squash`
+if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
+	exit 0
+fi
+
+# Default: succeed silently for any other call shape.
+exit 0
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+teardown_test_env() {
+	# Wipe cache dir for next test.
+	rm -rf "${TMPDIR:-/tmp}/aidevops-pulse-allow-auto-merge-$$" 2>/dev/null || true
+	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
+		rm -rf "$TEST_ROOT"
+	fi
+	return 0
+}
+
+# Extract _repo_allows_auto_merge and _set_native_auto_merge_or_skip from
+# pulse-merge-process.sh and eval them into the test shell.
+define_helpers_under_test() {
+	local src_repo_allow src_set_native
+	src_repo_allow=$(awk '
+		/^_repo_allows_auto_merge\(\) \{/,/^\}$/ { print }
+	' "$PROCESS_SCRIPT")
+	src_set_native=$(awk '
+		/^_set_native_auto_merge_or_skip\(\) \{/,/^\}$/ { print }
+	' "$PROCESS_SCRIPT")
+	if [[ -z "$src_repo_allow" || -z "$src_set_native" ]]; then
+		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090
+	eval "$src_repo_allow"
+	# shellcheck disable=SC1090
+	eval "$src_set_native"
+	return 0
+}
+
+assert_gh_call_shape() {
+	local pattern="$1"
+	local should_match="$2"  # 0=must match, 1=must NOT match
+	local description="$3"
+
+	if grep -qE "$pattern" "$GH_LOG"; then
+		if [[ "$should_match" -eq 0 ]]; then
+			return 0
+		fi
+		printf '       gh log: %s\n' "$(cat "$GH_LOG")" >&2
+		print_result "${description} (expected NO match for: ${pattern})" 1
+		return 1
+	fi
+	if [[ "$should_match" -eq 1 ]]; then
+		return 0
+	fi
+	printf '       gh log: %s\n' "$(cat "$GH_LOG")" >&2
+	print_result "${description} (expected match for: ${pattern})" 1
+	return 1
+}
+
+# =============================================================================
+# Case (A): CI pending + repo allows auto-merge → set --auto, return 0
+# =============================================================================
+test_case_a_pending_ci_sets_auto_merge() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	# Defaults already match: auto_merge_request empty, allow_auto_merge=true,
+	# pending_count=1.
+
+	local result=0
+	_set_native_auto_merge_or_skip "100" "owner/repo" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (A): CI pending + repo allows → returns 0" 1 \
+			"Expected exit 0, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'gh pr merge 100 --repo owner/repo --auto --squash' "$GH_LOG"; then
+		print_result "Case (A): CI pending + repo allows → invokes gh pr merge --auto" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'native auto-merge set.*t3070' "$LOGFILE"; then
+		print_result "Case (A): CI pending → audit log line written" 1 \
+			"pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (A): CI pending + repo allows → returns 0 + invokes --auto" 0
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (B): CI green (no pending bucket) → returns 1, no --auto invocation
+# =============================================================================
+test_case_b_ci_green_falls_through() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '0' >"${TEST_ROOT}/pending_count.txt"
+
+	local result=0
+	_set_native_auto_merge_or_skip "200" "owner/repo" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "Case (B): CI green → returns 1 (fall-through)" 1 \
+			"Expected exit 1, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if grep -qE 'gh pr merge 200 .*--auto' "$GH_LOG"; then
+		print_result "Case (B): CI green → no gh pr merge --auto invocation" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (B): CI green → returns 1, no --auto invocation" 0
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (C): PR already has autoMergeRequest → returns 0, no new --auto call
+# =============================================================================
+test_case_c_already_set_no_op() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	# Non-empty autoMergeRequest payload — what GitHub returns when --auto
+	# was previously requested. The `// empty` filter passes the value
+	# through unchanged, so any non-empty string triggers the no-op branch.
+	printf '{"enabledAt":"2026-04-30T12:00:00Z"}' >"${TEST_ROOT}/auto_merge_request.txt"
+
+	local result=0
+	_set_native_auto_merge_or_skip "300" "owner/repo" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (C): auto_merge already set → returns 0 (no-op)" 1 \
+			"Expected exit 0, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if grep -qE 'gh pr merge 300 .*--auto' "$GH_LOG"; then
+		print_result "Case (C): auto_merge already set → no NEW --auto invocation" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'auto_merge already set.*t3070' "$LOGFILE"; then
+		print_result "Case (C): already-set audit log line written" 1 \
+			"pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (C): auto_merge already set → returns 0 (deferred to GitHub)" 0
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (D): allow_auto_merge=false → returns 1, no --auto call
+# =============================================================================
+test_case_d_repo_disallows_falls_through() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf 'false' >"${TEST_ROOT}/allow_auto_merge.txt"
+
+	local result=0
+	_set_native_auto_merge_or_skip "400" "owner/repo" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "Case (D): allow_auto_merge=false → returns 1 (fall-through)" 1 \
+			"Expected exit 1, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if grep -qE 'gh pr merge 400 .*--auto' "$GH_LOG"; then
+		print_result "Case (D): allow_auto_merge=false → no --auto invocation" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (D): allow_auto_merge=false → returns 1, no --auto invocation" 0
+	teardown_test_env
+	return 0
+}
+
+main() {
+	test_case_a_pending_ci_sets_auto_merge
+	test_case_b_ci_green_falls_through
+	test_case_c_already_set_no_op
+	test_case_d_repo_disallows_falls_through
+
+	printf '\n=================================\n'
+	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
+	printf '=================================\n'
+
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		exit 1
+	fi
+	exit 0
+}
+
+main "$@"

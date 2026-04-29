@@ -762,3 +762,130 @@ _check_required_checks_passing() {
 	echo "[pulse-merge] _check_required_checks_passing: all required contexts passing for PR #${pr_number} in ${repo_slug} (t2922)" >>"$LOGFILE"
 	return 0
 }
+
+#######################################
+# Cached check: does the repo have allow_auto_merge enabled (t3070)?
+#
+# Caches per repo slug in a tempdir keyed on PID for the lifetime of the
+# calling process. allow_auto_merge is a repo-level setting that rarely
+# changes; a stale cache at worst falls through to the existing immediate-
+# merge path on the next pulse cycle.
+#
+# Args: $1=repo slug
+# Returns: 0=enabled, 1=disabled or query error (fail-closed)
+#######################################
+_repo_allows_auto_merge() {
+	local repo_slug="$1"
+	local cache_dir="${TMPDIR:-/tmp}/aidevops-pulse-allow-auto-merge-$$"
+	local cache_key
+	cache_key=$(printf '%s' "$repo_slug" | tr '/' '_')
+	local cache_file="${cache_dir}/${cache_key}"
+
+	if [[ -f "$cache_file" ]]; then
+		local cached
+		cached=$(<"$cache_file")
+		case "$cached" in
+			true) return 0 ;;
+			false) return 1 ;;
+		esac
+	fi
+
+	mkdir -p "$cache_dir" 2>/dev/null || true
+
+	local _flag _f_exit
+	_flag=$(gh api "repos/${repo_slug}" --jq '.allow_auto_merge // false' 2>/dev/null)
+	_f_exit=$?
+	if [[ $_f_exit -ne 0 ]]; then
+		# Fail-closed: don't try native auto-merge if we can't verify.
+		echo "[pulse-merge] _repo_allows_auto_merge: gh api failed for ${repo_slug} (exit ${_f_exit}), treating as disabled (t3070)" >>"$LOGFILE"
+		printf '%s' "false" >"$cache_file" 2>/dev/null || true
+		return 1
+	fi
+
+	if [[ "$_flag" == "true" ]]; then
+		printf '%s' "true" >"$cache_file" 2>/dev/null || true
+		return 0
+	fi
+	printf '%s' "false" >"$cache_file" 2>/dev/null || true
+	return 1
+}
+
+#######################################
+# Conditionally hand a PR off to GitHub native auto-merge (t3070).
+#
+# Eliminates the ~120s pulse poll-cycle latency between CI green and merge
+# call. When the repo has allow_auto_merge enabled and at least one
+# required check is currently pending, ask GitHub to merge as soon as CI
+# turns green via `gh pr merge --auto --squash`. GitHub then merges within
+# seconds of the last required check completing instead of waiting for the
+# next pulse cycle to detect green.
+#
+# Decision tree:
+#   * PR already has auto_merge set    → return 0 (no-op, GitHub handles)
+#   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
+#   * No required check pending        → return 1 (caller --admin path —
+#                                                  immediate merge fastest)
+#   * gh pr merge --auto succeeds      → return 0 (caller skips merge)
+#   * gh pr merge --auto fails         → return 1 (caller --admin fallback)
+#
+# Caller MUST verify all other merge gates (review, maintainer, scope,
+# review-bot-gate, complexity) BEFORE invoking. This helper only chooses
+# between native-auto and immediate-merge — it does not gate trust.
+#
+# Native auto-merge respects branch protection (no --admin bypass). Repos
+# bypass-merging through pending checks should keep the immediate-merge
+# fallback (returns 1 path) — this trade-off is acceptable for owned-org
+# repos where allow_auto_merge=true is bulk-enabled and CI is fast.
+#
+# Args: $1=pr_number, $2=repo_slug
+# Returns: 0=native-auto requested (caller skips merge), 1=fall through
+#######################################
+_set_native_auto_merge_or_skip() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	# Skip if PR already has auto_merge set — let GitHub finish the job.
+	local _existing_auto
+	_existing_auto=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json autoMergeRequest --jq '.autoMergeRequest // empty' 2>/dev/null)
+	if [[ -n "$_existing_auto" ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge already set, deferring to GitHub (t3070)" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Skip if repo does not allow auto-merge — fall through to immediate merge.
+	if ! _repo_allows_auto_merge "$repo_slug"; then
+		return 1
+	fi
+
+	# Determine if any required check is currently pending. If everything is
+	# already done (success/skipped — failures filtered upstream by
+	# _pr_required_checks_pass), the immediate --admin path is faster than
+	# round-tripping through GitHub's auto-merge engine.
+	local pending_count _pc_exit
+	pending_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
+		--jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null)
+	_pc_exit=$?
+	if [[ $_pc_exit -ne 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: gh pr checks --required failed (exit ${_pc_exit}), falling through to immediate merge (t3070)" >>"$LOGFILE"
+		return 1
+	fi
+	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
+
+	if [[ "$pending_count" -eq 0 ]]; then
+		# No pending required checks — immediate --admin merge is faster.
+		return 1
+	fi
+
+	# CI in flight — ask GitHub to merge on green.
+	local _auto_output _auto_exit
+	_auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
+	_auto_exit=$?
+	if [[ $_auto_exit -eq 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: native auto-merge set (CI ${pending_count} pending), GitHub merges on green (t3070)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: gh pr merge --auto failed (exit ${_auto_exit}): ${_auto_output} — falling through to immediate merge (t3070)" >>"$LOGFILE"
+	return 1
+}

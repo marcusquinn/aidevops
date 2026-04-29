@@ -583,6 +583,15 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
+	# Native auto-merge fast-track (t3070): if CI is still pending and the
+	# repo has allow_auto_merge enabled, hand the merge over to GitHub —
+	# it merges within seconds of green instead of waiting for the next
+	# pulse poll cycle (~120s). Falls through to --admin immediate merge
+	# when CI is already green, repo opts out, or the API call fails.
+	if _set_native_auto_merge_or_skip "$pr_number" "$repo_slug"; then
+		return 0
+	fi
+
 	# Merge
 	local merge_output _merge_exit
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)

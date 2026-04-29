@@ -76,6 +76,47 @@ The pulse runs as the maintainer's GitHub token, so `needs-maintainer-review` la
 
 Two helpers enforce the split: `_nmr_application_has_automation_signature` (creation defaults only) and `_nmr_application_is_circuit_breaker_trip` (breaker trips only). Regression test: `.agents/scripts/tests/test-pulse-nmr-automation-signature.sh::test_19756_loop_prevention_breaker_trip_preserves_nmr`.
 
+## t3070 — Native Auto-Merge Fast-Track
+
+**Trigger:** every PR that reaches the merge call site in `_process_single_ready_pr` after passing all gates (review, maintainer, scope, review-bot-gate, complexity, admin safety check).
+
+**What it does:** instead of unconditionally calling `gh pr merge --squash --admin` against pending CI, the pulse asks GitHub to merge the PR as soon as the last required check turns green via `gh pr merge --auto --squash`. GitHub then schedules the merge server-side and fires it within seconds of CI green — no further pulse-cycle wait required.
+
+**Decision tree** (`_set_native_auto_merge_or_skip` in `pulse-merge-process.sh`):
+
+| Condition | Action | Caller behaviour |
+|-----------|--------|------------------|
+| PR already has `autoMergeRequest` set | No-op | Caller returns success — GitHub finishes the merge |
+| Repo `allow_auto_merge=false` | Fall through | Caller invokes `gh pr merge --squash --admin` |
+| All required checks already done (no `pending` bucket) | Fall through | Caller invokes `gh pr merge --squash --admin` (immediate is faster than round-tripping through GitHub's auto-merge engine) |
+| At least one required check pending | `gh pr merge --auto --squash` | Caller returns success — GitHub merges on green |
+| `gh pr merge --auto` exits non-zero | Fall through with audit log | Caller invokes `gh pr merge --squash --admin` |
+
+**Repo prerequisite:** `allow_auto_merge=true` on the repo. Bulk-enable across all owned repos:
+
+```bash
+jq -r '.initialized_repos[] | select(.local_only != true) | .slug' \
+    ~/.config/aidevops/repos.json | while read -r slug; do
+  gh api -X PATCH "repos/${slug}" -f allow_auto_merge=true >/dev/null \
+    && printf 'enabled %s\n' "$slug"
+done
+```
+
+**Latency improvement:** baseline measurement on owner/peer green PR push→merged was 3-22 min — dominated by the 120s polling cycle plus per-cycle gate evaluation. With native auto-merge, GitHub fires the merge within ~5-30s of the last required check finishing, regardless of when the next pulse cycle would have polled.
+
+**Trade-offs:**
+
+- **No `--admin` bypass on the auto-scheduled merge.** Native auto-merge respects branch protection. If the repo has required checks that ultimately fail, GitHub will hold the PR indefinitely instead of merging — exactly the safety property branch protection exists to provide. The pulse still falls back to `--admin` for repos that opted out (`allow_auto_merge=false`), preserving the historical bypass-pending behaviour for those repos.
+- **No `_handle_post_merge_actions` invocation on the native-auto path.** The "Merged via PR #N" comment with `merge_summary` is NOT posted on the linked issue when GitHub completes the merge later. GitHub's `Resolves #NNN` keyword still auto-closes the issue — only the structured closing comment is lost. Acceptable for the speedup; users who need the comment can apply `hold-for-review` to opt out.
+
+**Audit log:** `[pulse-merge] PR #N in slug: native auto-merge set (CI K pending), GitHub merges on green (t3070)`.
+
+**Caching:** `_repo_allows_auto_merge` caches the per-repo `allow_auto_merge` flag in a tempdir keyed on PID for the lifetime of the pulse cycle. Avoids repeated `gh api repos/<slug>` calls when iterating multiple PRs from the same repo.
+
+**Test coverage:** `.agents/scripts/tests/test-pulse-merge-native-auto.sh` (4 cases — pending/green/already-set/repo-disallows).
+
+**Bypass:** apply `hold-for-review` to opt out of all auto-merge paths (this gate is upstream of t3070 — a held PR never reaches the native-auto call site). For per-repo opt-out, set `allow_auto_merge=false` via `gh api -X PATCH repos/<slug> -f allow_auto_merge=false`.
+
 ## Webhook-Driven Auto-Merge (t3038)
 
 The 120s `pulse-merge-routine.sh` polling loop is the **backstop**. The fast path is a webhook receiver that fires `pulse-merge.sh::process_pr` within seconds of a GitHub event:
