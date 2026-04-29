@@ -33,7 +33,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+# approve_collaborator_pr was extracted to pulse-merge-gates.sh during the
+# pulse-merge split. The test extracts it via awk for isolated execution under
+# a mock gh stub, so the source file must point at where the function actually
+# lives — not the orchestrator that only calls it. Without this repoint the
+# extraction returns empty and the test exits FATAL, blocking every PR via the
+# Framework Validation required check (t3032).
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-gates.sh"
 # _is_collaborator_author was extracted to pulse-merge-author-checks.sh (GH#21426)
 AUTHOR_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-author-checks.sh"
 
