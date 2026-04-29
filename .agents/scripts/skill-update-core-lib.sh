@@ -467,10 +467,13 @@ _check_url_skill() {
 		if [[ "$AUTO_UPDATE" == true ]]; then
 			log_info "Auto-updating $name..."
 			local add_exit=0
+			# Pass --name to preserve the registry name (#21542: bonus bug — upstream repo
+			# self-name may differ from the registry name, causing a filename mismatch and
+			# infinite re-import every freshness cycle).
 			if [[ "$NON_INTERACTIVE" == true ]]; then
-				"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+				"$ADD_SKILL_HELPER" add "$upstream_url" --name "$name" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
 			else
-				"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+				"$ADD_SKILL_HELPER" add "$upstream_url" --name "$name" --force || add_exit=$?
 			fi
 			if [[ "$add_exit" -eq 0 ]]; then
 				update_upstream_hash "$name" "$latest_hash"
@@ -543,10 +546,13 @@ _check_github_skill() {
 		if [[ "$AUTO_UPDATE" == true ]]; then
 			log_info "Auto-updating $name..."
 			local add_exit=0
+			# Pass --name to preserve the registry name (#21542: bonus bug — upstream repo
+			# self-name may differ from the registry name, causing a filename mismatch and
+			# infinite re-import every freshness cycle).
 			if [[ "$NON_INTERACTIVE" == true ]]; then
-				"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+				"$ADD_SKILL_HELPER" add "$upstream_url" --name "$name" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
 			else
-				"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+				"$ADD_SKILL_HELPER" add "$upstream_url" --name "$name" --force || add_exit=$?
 			fi
 			if [[ "$add_exit" -eq 0 ]]; then
 				log_success "Updated $name"
@@ -663,7 +669,9 @@ cmd_update() {
 		fi
 
 		log_info "Updating $skill_name from $upstream_url"
-		"$ADD_SKILL_HELPER" add "$upstream_url" --force
+		# Pass --name to preserve the registry name (#21542: bonus bug — upstream repo
+		# self-name may differ from the registry name, causing a filename mismatch).
+		"$ADD_SKILL_HELPER" add "$upstream_url" --name "$skill_name" --force
 
 		# For URL-sourced skills, update the stored hash and cache headers after re-import (t1415.2, t1415.3)
 		local format
