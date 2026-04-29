@@ -495,10 +495,10 @@ _monitor() {
 			tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
 			if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
 				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-				printf '[WATCHDOG_STALL_DEFERRED] timestamp=%s cpu=%s%% stall=%ss deferred_total=%ss elapsed=%ss\n' \
-					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tree_cpu" "$stall_seconds" \
-					"$deferred_stall_seconds" "$elapsed_total" \
-					>>"$OUTPUT_FILE" 2>/dev/null || true
+				printf '[lifecycle] worker_stall_deferred pid=%s cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+					"$WORKER_PID" "$tree_cpu" "$stall_seconds" \
+					"$deferred_stall_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					>>"$LIFECYCLE_LOG" 2>/dev/null || true
 				stall_seconds=0
 				sleep "$POLL_INTERVAL"
 				continue
