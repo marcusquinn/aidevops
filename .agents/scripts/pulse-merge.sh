@@ -182,10 +182,18 @@ _check_pr_merge_gates() {
 		fi
 	fi
 
-	# Skip external contributor PRs (non-collaborator)
+	# Skip external contributor PRs (non-collaborator).
+	# t3063 crypto-approval bypass: a verified maintainer signature on the PR
+	# or its linked issue is a stronger trust signal than author-association
+	# (requires root-owned SSH key that workers cannot forge). Symmetric with
+	# t3052 which extended the worker-briefed gate the same way (PR #21767).
 	if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
-		return 1
+		if _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator but has maintainer crypto-approval, proceeding (t3063)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
+			return 1
+		fi
 	fi
 
 	# Skip PRs modifying workflow files when we lack the scope
