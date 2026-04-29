@@ -178,6 +178,91 @@ _collect_cross_account_slugs() {
 # Subcommand: summary
 # -----------------------------------------------------------------------------
 
+# _fmt_slug_list: render comma-separated slug list capped at 3, with "+N more".
+# Args: $1 = newline-separated slug list, $2 = count
+_fmt_slug_list() {
+	local slugs="$1"
+	local count="$2"
+	local list
+	list="$(printf '%s\n' "$slugs" | head -3 | tr '\n' ',' | sed 's/,$//;s/,/, /g')"
+	if [[ "$count" -gt 3 ]]; then
+		list="${list}, +$((count - 3)) more"
+	fi
+	printf '%s' "$list"
+	return 0
+}
+
+# _summary_human: emit human-readable lines for both debt classes.
+_summary_human() {
+	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4"
+	[[ "$count" -eq 0 && "$ca_count" -eq 0 ]] && return 0
+	if [[ "$count" -gt 0 ]]; then
+		local slug_list
+		slug_list="$(_fmt_slug_list "$slugs" "$count")"
+		printf '%d SYNC_PAT advisor%s (%s)\n' \
+			"$count" "$([[ "$count" -eq 1 ]] && echo "y" || echo "ies")" "$slug_list"
+	fi
+	if [[ "$ca_count" -gt 0 ]]; then
+		local ca_list
+		ca_list="$(_fmt_slug_list "$ca_slugs" "$ca_count")"
+		printf '%d cross-account-inherit advisor%s (%s)\n' \
+			"$ca_count" "$([[ "$ca_count" -eq 1 ]] && echo "y" || echo "ies")" "$ca_list"
+	fi
+	return 0
+}
+
+# _summary_toast: emit [WARN] lines for both debt classes.
+_summary_toast() {
+	local count="$1" ca_count="$2"
+	[[ "$count" -eq 0 && "$ca_count" -eq 0 ]] && return 0
+	# Each non-zero class emits its own [WARN] line so greeting.mjs
+	# classifyLines buckets each into the warning tier independently.
+	if [[ "$count" -gt 0 ]]; then
+		if [[ "$count" -eq 1 ]]; then
+			printf '[WARN] 1 repo needs SYNC_PAT setup — run /setup-git in OpenCode or Claude Code\n'
+		else
+			printf '[WARN] %d repos need SYNC_PAT setup — run /setup-git in OpenCode or Claude Code\n' "$count"
+		fi
+	fi
+	if [[ "$ca_count" -gt 0 ]]; then
+		if [[ "$ca_count" -eq 1 ]]; then
+			printf '[WARN] 1 repo needs workflow re-sync — run /setup-git in OpenCode or Claude Code\n'
+		else
+			printf '[WARN] %d repos need workflow re-sync — run /setup-git in OpenCode or Claude Code\n' "$ca_count"
+		fi
+	fi
+	return 0
+}
+
+# _summary_json: emit JSON object covering both debt classes.
+_summary_json() {
+	local slugs="$1" count="$2" ca_slugs="$3" ca_count="$4"
+	if ! command -v jq >/dev/null 2>&1; then
+		print_error "--format=json requires jq"
+		return 1
+	fi
+	local slugs_json ca_slugs_json total_count
+	if [[ -n "$slugs" ]]; then
+		slugs_json="$(printf '%s\n' "$slugs" | jq -R . | jq -s .)"
+	else
+		slugs_json="[]"
+	fi
+	if [[ -n "$ca_slugs" ]]; then
+		ca_slugs_json="$(printf '%s\n' "$ca_slugs" | jq -R . | jq -s .)"
+	else
+		ca_slugs_json="[]"
+	fi
+	total_count=$((count + ca_count))
+	jq -n \
+		--argjson slugs "$slugs_json" \
+		--argjson count "$count" \
+		--argjson ca_slugs "$ca_slugs_json" \
+		--argjson ca_count "$ca_count" \
+		--argjson total "$total_count" \
+		'{sync_pat_missing: $slugs, count: $count, cross_account_inherit: $ca_slugs, cross_account_count: $ca_count, total_count: $total}'
+	return 0
+}
+
 _cmd_summary() {
 	local format="human"
 	local -a args=("$@")
@@ -207,97 +292,19 @@ _cmd_summary() {
 		i=$((i + 1))
 	done
 
-	local slugs
+	local slugs count ca_slugs ca_count
 	slugs="$(_collect_sync_pat_slugs)"
+	count=0
+	[[ -n "$slugs" ]] && count=$(printf '%s\n' "$slugs" | wc -l | tr -d ' ')
 
-	local count=0
-	if [[ -n "$slugs" ]]; then
-		count=$(printf '%s\n' "$slugs" | wc -l | tr -d ' ')
-	fi
-
-	# Collect cross-account-inherit debt class (t2880)
-	local ca_slugs
 	ca_slugs="$(_collect_cross_account_slugs)"
-
-	local ca_count=0
-	if [[ -n "$ca_slugs" ]]; then
-		ca_count=$(printf '%s\n' "$ca_slugs" | wc -l | tr -d ' ')
-	fi
+	ca_count=0
+	[[ -n "$ca_slugs" ]] && ca_count=$(printf '%s\n' "$ca_slugs" | wc -l | tr -d ' ')
 
 	case "$format" in
-	human)
-		if [[ "$count" -eq 0 && "$ca_count" -eq 0 ]]; then
-			# Suppress on zero-debt: empty stdout, exit 0
-			return 0
-		fi
-		if [[ "$count" -gt 0 ]]; then
-			# Comma-separated slug list, capped at 3 with " ..."
-			local slug_list
-			slug_list="$(printf '%s\n' "$slugs" | head -3 | tr '\n' ',' | sed 's/,$//;s/,/, /g')"
-			if [[ "$count" -gt 3 ]]; then
-				slug_list="${slug_list}, +$((count - 3)) more"
-			fi
-			printf '%d SYNC_PAT advisor%s (%s)\n' "$count" "$([[ "$count" -eq 1 ]] && echo "y" || echo "ies")" "$slug_list"
-		fi
-		if [[ "$ca_count" -gt 0 ]]; then
-			local ca_slug_list
-			ca_slug_list="$(printf '%s\n' "$ca_slugs" | head -3 | tr '\n' ',' | sed 's/,$//;s/,/, /g')"
-			if [[ "$ca_count" -gt 3 ]]; then
-				ca_slug_list="${ca_slug_list}, +$((ca_count - 3)) more"
-			fi
-			printf '%d cross-account-inherit advisor%s (%s)\n' "$ca_count" "$([[ "$ca_count" -eq 1 ]] && echo "y" || echo "ies")" "$ca_slug_list"
-		fi
-		;;
-	toast)
-		if [[ "$count" -eq 0 && "$ca_count" -eq 0 ]]; then
-			# Suppress on zero-debt: empty stdout, exit 0. The plugin will
-			# omit the warning-tier line when nothing is emitted here.
-			return 0
-		fi
-		# Each non-zero class emits its own [WARN] line so greeting.mjs
-		# classifyLines buckets each into the warning tier independently.
-		# Singular: "1 repo needs"; plural: "N repos need"
-		if [[ "$count" -gt 0 ]]; then
-			if [[ "$count" -eq 1 ]]; then
-				printf '[WARN] 1 repo needs SYNC_PAT setup — run /setup-git in OpenCode or Claude Code\n'
-			else
-				printf '[WARN] %d repos need SYNC_PAT setup — run /setup-git in OpenCode or Claude Code\n' "$count"
-			fi
-		fi
-		if [[ "$ca_count" -gt 0 ]]; then
-			if [[ "$ca_count" -eq 1 ]]; then
-				printf '[WARN] 1 repo needs workflow re-sync — run /setup-git in OpenCode or Claude Code\n'
-			else
-				printf '[WARN] %d repos need workflow re-sync — run /setup-git in OpenCode or Claude Code\n' "$ca_count"
-			fi
-		fi
-		;;
-	json)
-		if ! command -v jq >/dev/null 2>&1; then
-			print_error "--format=json requires jq"
-			return 1
-		fi
-		local slugs_json
-		if [[ -n "$slugs" ]]; then
-			slugs_json="$(printf '%s\n' "$slugs" | jq -R . | jq -s .)"
-		else
-			slugs_json="[]"
-		fi
-		local ca_slugs_json
-		if [[ -n "$ca_slugs" ]]; then
-			ca_slugs_json="$(printf '%s\n' "$ca_slugs" | jq -R . | jq -s .)"
-		else
-			ca_slugs_json="[]"
-		fi
-		local total_count=$((count + ca_count))
-		jq -n \
-			--argjson slugs "$slugs_json" \
-			--argjson count "$count" \
-			--argjson ca_slugs "$ca_slugs_json" \
-			--argjson ca_count "$ca_count" \
-			--argjson total "$total_count" \
-			'{sync_pat_missing: $slugs, count: $count, cross_account_inherit: $ca_slugs, cross_account_count: $ca_count, total_count: $total}'
-		;;
+	human)   _summary_human "$slugs" "$count" "$ca_slugs" "$ca_count" ;;
+	toast)   _summary_toast "$count" "$ca_count" ;;
+	json)    _summary_json  "$slugs" "$count" "$ca_slugs" "$ca_count" ;;
 	*)
 		print_error "Unknown format: $format (expected: human, toast, json)"
 		return 1
