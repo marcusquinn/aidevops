@@ -521,6 +521,90 @@ _update_check_setsid() {
 	return 0
 }
 
+# GH#21735: Notify operator when framework workflow templates change.
+# When .agents/templates/workflows/*.yml or *-reusable.yml workflows change
+# in a framework update, downstream repos that use these as workflow_call
+# callers may have drifted from the new template. Detection and remediation
+# both already exist (`aidevops check-workflows`, `aidevops sync-workflows
+# --apply`); the gap was the notification surface — operators only learned
+# of drift when downstream CI failed (canonical incident: a managed
+# downstream repo's issue-sync.yml failed silently after the upstream
+# template added a new input).
+#
+# This check inspects the SHA-window diff for changes to workflow caller
+# templates and reusable workflows, prints a warning, and emits a daily
+# advisory so the next session greeting surfaces it if the operator
+# misses the inline output.
+#
+# Args: $1=old_sha, $2=new_sha
+# Returns: 0 (always — informational only, never breaks update)
+_update_check_workflow_drift() {
+	local old_sha="$1"
+	local new_sha="$2"
+	[[ -z "$old_sha" || -z "$new_sha" || "$old_sha" == "$new_sha" ]] && return 0
+	# `.git` is a directory in a regular repo and a file in a worktree;
+	# `-e` covers both so the helper is testable from a worktree.
+	[[ ! -e "$INSTALL_DIR/.git" ]] && return 0
+
+	# Files that propagate to downstream caller workflows OR are themselves
+	# reusable workflow definitions referenced by downstream callers.
+	# Internal .github/workflows/*.yml hotfixes (e.g. self-test runs) are
+	# intentionally skipped to avoid false-positive nags.
+	local relevant_files
+	relevant_files=$(git -C "$INSTALL_DIR" diff --name-only "$old_sha" "$new_sha" -- \
+		'.agents/templates/workflows/' \
+		'.github/workflows/' \
+		2>/dev/null \
+		| grep -E '(\.agents/templates/workflows/.*\.ya?ml$|\.github/workflows/.*-reusable\.ya?ml$)' \
+		|| true)
+	[[ -z "$relevant_files" ]] && return 0
+
+	local file_count
+	file_count=$(printf '%s\n' "$relevant_files" | wc -l | tr -d ' ')
+	echo ""
+	print_warning "Workflow templates updated ($file_count file(s)) — downstream callers may have drifted."
+	print_info "  Detect drift: aidevops check-workflows"
+	print_info "  Apply fix:    aidevops sync-workflows --apply [--repo OWNER/REPO]"
+
+	# Persist as advisory so the next session greeting surfaces it even if
+	# the operator misses the inline warning. Day-stamped ID makes repeated
+	# updates within the same day idempotent (one advisory per day);
+	# 'aidevops security dismiss <id>' silences a specific day's advisory.
+	_update_emit_workflow_drift_advisory "$relevant_files" || true
+	return 0
+}
+
+# Companion to _update_check_workflow_drift — separated for testability.
+# Args: $1=relevant_files (newline-separated)
+# Returns: 0 (always — fail-open; advisory write must never break update)
+_update_emit_workflow_drift_advisory() {
+	local relevant_files="$1"
+	local advisories_dir="${HOME}/.aidevops/advisories"
+	local adv_id
+	adv_id="workflow-drift-$(date +%Y%m%d)"
+	local dismissed_file="$advisories_dir/dismissed.txt"
+
+	# Skip if today's advisory was already dismissed.
+	if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
+		return 0
+	fi
+
+	mkdir -p "$advisories_dir" 2>/dev/null || return 0
+	local adv_file="$advisories_dir/${adv_id}.advisory"
+
+	{
+		printf 'Workflow templates changed — downstream caller workflows may have drifted.\n'
+		printf '\n'
+		printf 'Files changed in this update:\n'
+		printf '%s\n' "$relevant_files" | sed 's|^|  |'
+		printf '\n'
+		printf 'Detect drift: aidevops check-workflows\n'
+		printf 'Apply fix:    aidevops sync-workflows --apply [--repo OWNER/REPO]\n'
+		printf 'Background:   reference/reusable-workflows.md\n'
+	} >"$adv_file" 2>/dev/null || return 0
+	return 0
+}
+
 # Verify supply chain signature after pulling framework updates.
 # Checks that the HEAD commit is signed by the trusted maintainer key.
 # Non-blocking: warns on failure, does not abort the update.
@@ -687,6 +771,11 @@ cmd_update() {
 							print_info "Re-running setup to deploy latest scripts..."
 							bash "$INSTALL_DIR/setup.sh" --non-interactive
 						fi
+						# GH#21735: workflow templates can change between
+						# releases without triggering has_code_drift (templates
+						# live outside the deploy-affecting paths). Check the
+						# template subset separately and surface drift.
+						_update_check_workflow_drift "$deployed_sha" "$local_hash"
 					fi
 				fi
 			fi
@@ -717,6 +806,9 @@ cmd_update() {
 					git log --oneline "$old_hash..$new_hash" | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' | head -20
 					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 				fi
+				# GH#21735: surface workflow template drift so the
+				# operator can resync downstream callers before CI bites.
+				_update_check_workflow_drift "$old_hash" "$new_hash"
 			fi
 			echo ""
 			# Verify supply chain integrity before applying changes

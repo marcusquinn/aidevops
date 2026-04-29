@@ -63,6 +63,30 @@ fi
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 init_log_file 2>/dev/null || true
 
+# t2976 / GH#21699: canonical-guard + audit logger for ephemeral worktree
+# cleanup. Defence-in-depth: even though _dps_rebase_in_ephemeral creates its
+# worktree under /tmp via mktemp (never a canonical path), an
+# is_registered_canonical check before `git worktree remove --force` prevents
+# any future refactor that swaps the path source from accidentally pointing at
+# a registered canonical repo. Provide fallback stubs so set -u doesn't trip
+# when the helpers are absent.
+_WTAR_REMOVED="${_WTAR_REMOVED:-removed}"
+_WTAR_SKIPPED="${_WTAR_SKIPPED:-skipped}"
+command -v log_worktree_removal_event >/dev/null 2>&1 || log_worktree_removal_event() { :; }
+command -v is_registered_canonical >/dev/null 2>&1 || is_registered_canonical() { return 1; }
+if [[ -f "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" ]]; then
+	# shellcheck source=audit-worktree-removal-helper.sh
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh" 2>/dev/null || true
+fi
+if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
+	# shellcheck source=canonical-guard-helper.sh
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/canonical-guard-helper.sh" 2>/dev/null || true
+fi
+# Caller ID constant (avoids repeated literals in audit log lines).
+_WTAR_DPS_CALLER="pulse-dirty-pr-sweep.sh"
+
 # -----------------------------------------------------------------------------
 # Configuration constants
 # -----------------------------------------------------------------------------
@@ -643,9 +667,20 @@ _dps_rebase_in_ephemeral() {
 	fi
 
 	# Cleanup ephemeral worktree regardless of outcome.
-	git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
-	git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
-	rm -rf "$ephemeral" 2>/dev/null || true
+	# t2976 / GH#21699: canonical guard before destructive removal. The
+	# ephemeral path is created via mktemp under /tmp and can never legitimately
+	# match a registered canonical repo — so a hit here means a refactor or
+	# environment override has redirected the path. Skip + audit instead of
+	# destroying, and log the skip so the unexpected state is visible.
+	if is_registered_canonical "$ephemeral"; then
+		_dps_log "PR #$pr_number ($repo_slug): refusing to remove canonical path $ephemeral — registry hit"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip"
+	else
+		git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
+		git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
+		rm -rf "$ephemeral" 2>/dev/null || true
+		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture"
+	fi
 
 	if [[ "$rebase_ok" -ne 0 ]]; then
 		return 1

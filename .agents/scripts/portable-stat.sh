@@ -22,6 +22,8 @@
 #   _file_size_bytes  PATH  — file size in bytes
 #   _file_perms       PATH  — octal permissions (e.g. "644")
 #   _file_owner       PATH  — owner username
+#   _stat_translate_fmt FMT — sets _STAT_FLAG + _STAT_FMT for use with xargs/find
+#   _stat_batch FMT FILE... — batch stat with GNU-style format (auto-translated for BSD)
 
 [[ -n "${_PORTABLE_STAT_LOADED:-}" ]] && return 0
 _PORTABLE_STAT_LOADED=1
@@ -49,57 +51,93 @@ fi
 unset _ps_test_val
 
 # =============================================================================
-# _file_mtime_epoch — modification time as epoch seconds
-# Usage: epoch=$(_file_mtime_epoch "/path/to/file")
-# Returns: epoch seconds, or 0 on stat failure. Errors on unknown variant.
+# _stat_translate_fmt GNU_FMT — translate GNU format tokens to platform-native.
+# Sets two variables in caller scope: _STAT_FLAG and _STAT_FMT
+# Usage:
+#   _stat_translate_fmt '%n %s %Y'
+#   find ... -print0 | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT"
 # =============================================================================
+_stat_translate_fmt() {
+	local fmt="$1"
+	case "$_STAT_VARIANT" in
+		gnu) _STAT_FLAG="-c"; _STAT_FMT="$fmt" ;;
+		bsd)
+			_STAT_FLAG="-f"
+			_STAT_FMT="$fmt"
+			_STAT_FMT="${_STAT_FMT//'%n'/%N}"
+			_STAT_FMT="${_STAT_FMT//'%Y'/%m}"
+			_STAT_FMT="${_STAT_FMT//'%s'/%z}"
+			_STAT_FMT="${_STAT_FMT//'%a'/%Lp}"
+			_STAT_FMT="${_STAT_FMT//'%U'/%Su}"
+			_STAT_FMT="${_STAT_FMT//'%y'/%Sm}"
+			;;
+		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
+	esac
+	return 0
+}
+
+# =============================================================================
+# _stat_batch — batch stat with GNU-style format, auto-translated for BSD
+#
+# Accepts a GNU stat format string and one or more file paths.
+#
+# Supported tokens: %n (name), %s (size), %Y (mtime epoch), %y (mtime human),
+#                   %a (octal perms), %U (owner username)
+#
+# Usage: _stat_batch '%n %s %Y' file1 file2 ...
+#
+# For find/xargs integration (handles ARG_MAX automatically):
+#   _stat_translate_fmt '%n %s %Y'
+#   find ... -print0 | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT"
+# =============================================================================
+_stat_batch() {
+	local fmt="$1"; shift
+	_stat_translate_fmt "$fmt" || return 1
+	command stat "$_STAT_FLAG" "$_STAT_FMT" "$@" 2>/dev/null
+}
+
+# =============================================================================
+# Convenience wrappers — single-file, single-field with safe fallbacks.
+# All delegate to _stat_batch for the actual platform dispatch.
+# On unknown variant: propagates error (fail loud, not silent zeros).
+# Fallback values (0, "000", "unknown") only apply when the file is missing
+# but the stat variant is known.
+# =============================================================================
+
+_stat_assert_variant() {
+	[[ "$_STAT_VARIANT" != "$_PORTABLE_STAT_UNKNOWN" ]] && return 0
+	echo "$_PORTABLE_STAT_FATAL" >&2
+	return 1
+}
+
+# _file_mtime_epoch PATH — modification time as epoch seconds (fallback: 0)
 _file_mtime_epoch() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %Y "$file_path" 2>/dev/null || echo 0 ;;
-		bsd) stat -f %m "$file_path" 2>/dev/null || echo 0 ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_assert_variant || return 1
+	_stat_batch '%Y' "$file_path" || echo 0
+	return 0
 }
 
-# =============================================================================
-# _file_size_bytes — file size in bytes
-# Usage: bytes=$(_file_size_bytes "/path/to/file")
-# Returns: size in bytes, or 0 on stat failure. Errors on unknown variant.
-# =============================================================================
+# _file_size_bytes PATH — file size in bytes (fallback: 0)
 _file_size_bytes() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %s "$file_path" 2>/dev/null || echo 0 ;;
-		bsd) stat -f %z "$file_path" 2>/dev/null || echo 0 ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_assert_variant || return 1
+	_stat_batch '%s' "$file_path" || echo 0
+	return 0
 }
 
-# =============================================================================
-# _file_perms — octal permission string
-# Usage: mode=$(_file_perms "/path/to/file")
-# Returns: octal string (e.g. "644"), or "000" on stat failure.
-# =============================================================================
+# _file_perms PATH — octal permissions, e.g. "644" (fallback: "000")
 _file_perms() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %a "$file_path" 2>/dev/null || echo "000" ;;
-		bsd) stat -f %Lp "$file_path" 2>/dev/null || echo "000" ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_assert_variant || return 1
+	_stat_batch '%a' "$file_path" || echo "000"
+	return 0
 }
 
-# =============================================================================
-# _file_owner — owner username
-# Usage: owner=$(_file_owner "/path/to/file")
-# Returns: username string, or "unknown" on stat failure.
-# =============================================================================
+# _file_owner PATH — owner username (fallback: "unknown")
 _file_owner() {
 	local file_path="$1"
-	case "$_STAT_VARIANT" in
-		gnu) stat -c %U "$file_path" 2>/dev/null || echo "$_PORTABLE_STAT_UNKNOWN" ;;
-		bsd) stat -f %Su "$file_path" 2>/dev/null || echo "$_PORTABLE_STAT_UNKNOWN" ;;
-		*) echo "$_PORTABLE_STAT_FATAL" >&2; return 1 ;;
-	esac
+	_stat_assert_variant || return 1
+	_stat_batch '%U' "$file_path" || echo "$_PORTABLE_STAT_UNKNOWN"
+	return 0
 }

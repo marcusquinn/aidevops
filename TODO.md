@@ -918,6 +918,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 
 ## Done
 
+- [x] t3058 separate WATCHDOG_STALL_DEFERRED marker from monitored OUTPUT_FILE #auto-dispatch #bug #framework ref:GH#21786 pr:#21797 testing:runtime-verified completed:2026-04-29
 - [x] t3005 ## Task The `_dispatch_fill_floor` loop in `pulse-dispatch-engine.sh` processes candidates **serially** — each `_dff_process_candidate` call blocks until completion before the next iteration starts. With ~100s per successful dispatch (most of it in `worktree-helper.sh add`), 24 worker slots take 40 minutes of wall-clock time to fill. With pulse cycle interval of ~7-15min, we never reach the concurrency ceiling. ## Why (incident evidence) Direct measurements 2026-04-28T01:21Z (after deploying t3003 adaptive timeout v3.13.5): - `Stage complete: fill_floor_candidate_21436 (0, 109s)` — single dispatch took 109 seconds - 24 worker slots available, only 2 workers running steady-state - 132 dispatchable issues across 2 repos, 80% of pulse cycles dispatch 0-1 workers - Root cause: serial loop at `pulse-dispatch-engine.sh:816` — `_dff_process_candidate` blocks the loop body The 109s dispatch breakdown: - `Stage start` → `Pre-created worktree`: ~100s (worktree-helper.sh add) - `Pre-created worktree` → `Stage complete`: ~5-9s (gh API ops + nohup spawn) With serial dispatch: - Best case: 1 successful dispatch per pulse cycle (~7min) = 8/hour - Required for 24 concurrency: 48/hour (assuming 30min worker duration) - **Throughput gap: 6x** ## How ### Files Scope - EDIT: `.agents/scripts/pulse-dispatch-engine.sh::_dispatch_fill_floor` — parallelize the candidate loop with bounded concurrency (lines ~750-836) - EDIT: `.agents/scripts/pulse-dispatch-engine.sh::_dff_process_candidate` — make safe for concurrent invocation (state mutations) - NEW: `.agents/scripts/tests/test-fill-floor-parallel.sh` — regression test for parallel dispatch ### Approach **Bounded parallelism with shared state file:** ```bash local _dff_max_parallel=6 # tunable: 6 concurrent dispatches × ~100s each = 1 cycle of 24 local _pids=() while IFS= read -r candidate_json; do if [[ "${#_pids[@]}" -ge "$_dff_max_parallel" ]]; then wait -n # bash 4+: wait for any one to finish _pids=("${_pids[@]/$!}") # remove finished pid fi if [[ "$dispatched_count" -ge "$_effective_slots" ]]; then break; fi # Background dispatch + record outcome via shared state file ( _dff_proc_rc=0 _dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dff_proc_rc=$? if [[ "$_dff_proc_rc" -eq 0 ]]; then echo "success" >> "$_dff_outcomes_file" fi ) & _pids+=($!) done <"$_dff_candidate_file" wait # for remaining dispatched_count=$(wc -l < "$_dff_outcomes_file" 2>/dev/null || echo 0) ``` **State mutation safety:** `_dff_process_candidate` mutates module globals (`_DFF_ROUND_DISPATCHED`, `_DFF_THROTTLE_CLEARED`, `_DFF_CONSECUTIVE_NO_WORKER`, `_PULSE_LAST_LAUNCH_FAILURE`). In a backgrounded subshell, these mutations are isolated and lost. Solutions: 1. **Outcomes file** (preferred): aggregate state via shared file, post-loop reconciliation 2. **Drop throttle tracking**: if throttle is rare-path, simpler to remove 3. **flock-based mutex**: atomic increments via `flock` + arithmetic Outcomes file is simplest: each backgrounded dispatch appends one line indicating success/skip/timeout, post-loop sums. Loses real-time throttle decisions but throttle only matters for SUCCESSIVE-failure detection, which can run on completed batch. ### Reference patterns - `.agents/scripts/pulse-batch-prefetch-helper.sh::_refresh_owner_*` — already uses backgrounded gh search calls with `wait` for parallel I/O - `.agents/scripts/dispatch-timing-helper.sh::_acquire_lock` — mkdir-lock pattern for concurrent state writes - `.agents/scripts/cleanup-worktrees-async-helper.sh` — fire-and-forget background pattern with PID tracking ### Configuration New env var: `DISPATCH_FILL_FLOOR_PARALLEL` (default 6). Override in plist via `EnvironmentVariables`. - Set to `1` to retain serial behavior (regression escape hatch). - Set to `12` for aggressive (~50% utilization while preserving slot accounting). - Cap at `_effective_slots` (don't dispatch more concurrent attempts than slots). ### Verification - `tests/test-fill-floor-parallel.sh` regression: launch N=6 mock candidates, all should complete via `wait`, dispatched_count should match success count - Live: after deploy, observe `pulse-stage-timings.log` — `_dispatch_fill_floor` total duration should drop from ~10min to ~2min when queue has dispatchable candidates - Live: workers should ramp from 2 to 24 within 1-2 pulse cycles (currently takes hours) ## Acceptance - [ ] Fill floor processes ≥ 6 candidates in parallel by default - [ ] State mutations (throttle, dispatched_count) preserved across parallel dispatch - [ ] No regression: serial mode (`DISPATCH_FILL_FLOOR_PARALLEL=1`) still works - [ ] Regression test added covering parallel dispatch + outcome aggregation - [ ] ShellCheck zero new violations - [ ] Function-complexity gate: `_dispatch_fill_floor` stays under 100 lines (or refactor to sub-function) - [ ] Live verification: workers reach 12+ concurrent within 2 pulse cycles after deployment ## Files Scope - .agents/scripts/pulse-dispatch-engine.sh - .agents/scripts/tests/test-fill-floor-parallel.sh ## Complexity Impact - `_dispatch_fill_floor`: currently ~120 lines, projected ~140 lines after adding parallel loop. May need extraction to `_dff_dispatch_one_parallel` helper to stay under 100-line gate. Plan refactor pre-implementation. ## Session Origin Discovered during v3.13.5 verification (t3003 follow-up). Adaptive timeout (180s budget) successfully unblocked individual launches, but serial fill_floor caps total throughput at 8-15 workers/hour. With 24-slot pool and 132 dispatchable issues, the system is structurally incapable of reaching max concurrency. Demo tomorrow requires immediate fix. #auto-dispatch #bug #priority:critical #pulse #auto-dispatch #bug #priority:critical #pulse ref:GH#21438 pr:#21450 testing:runtime-verified completed:2026-04-28
 - [x] t2899 Fix branch_orphan false-positive: workers complete on main, work discarded #bug #parent ref:GH#21040 pr:#21045 testing:runtime-verified completed:2026-04-26
 - [x] t2693 ES `export { X } from "./Y"` is a re-export only and does NOT create a local binding for X. quality-hooks.mjs (introduced by t2685/PR #20307) called checkSignatureFooterGate locally at handleToolAfter while only re-exporting it, throwing `ReferenceError: checkSignatureFooterGate is not defined` on every Bash tool call in OpenCode and Claude Code sessions. Same latent bug in google-proxy.mjs for discoverGoogleModels and persistGoogleProvider. #bug #hotfix ref:GH#20319 pr:#20320 completed:2026-04-21
@@ -3523,3 +3524,42 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3043 Locate dispatch_with_dedup hot spot post-t3040 (target dedup_check <60s) #auto-dispatch #enhancement #model:opus-4-7 #pulse ref:GH#21659 pr:#21660 completed:2026-04-29
 
 - [ ] t3042 fix: claim-task-id.sh emits doubled task-ID prefix in TODO.md line #auto-dispatch #bug ref:GH#21658
+
+- [x] t3044 bug(log-issue): client-side fingerprint dedup bypassed by direct gh issue create — server-side guard needed #auto-dispatch #bug ref:GH#21744 pr:#21775 completed:2026-04-29
+
+- [ ] t3045 Migrate auto-update-helper-check.sh stat -f calls to _file_mtime_epoch (Linux crash regression missed by #21689) #auto-dispatch #bug ref:GH#21745
+
+- [x] t3046 CI gate: block stat -f %m (BSD-only) outside _file_mtime_epoch helper and platform-guarded branches #auto-dispatch #enhancement ref:GH#21746 pr:#21777 completed:2026-04-29
+
+- [ ] t3047 claim-task-id.sh issue_num parser captures stderr digit-noise (causes 2157 prefix and 'awk: newline in string' on every issue creation) #auto-dispatch #bug ref:GH#21747
+
+- [ ] t3048 fix claim-task-id.sh phantom issue number from stderr capture (root cause for #21736, #21737) #auto-dispatch #bug ref:GH#21748
+
+- [x] t3049 auto-clear stale-recovery NMR when a subsequent worker produces an approved PR #auto-dispatch #bug ref:GH#21752 pr:#21768 completed:2026-04-29
+
+- [ ] t3050 consolidator must skip parents whose work is already merged via children #auto-dispatch #bug ref:GH#21753
+
+- [ ] t3051 fix worker exit classifier so SIGTERM/zero-session kills don't masquerade as clean (root cause for #21707 cycle) #auto-dispatch #bug #refactor ref:GH#21754
+
+- [x] t3052 extend t2449 worker-briefed auto-merge gate to honour cryptographic approval as OWNER/MEMBER bypass #auto-dispatch #bug ref:GH#21755 pr:#21767 completed:2026-04-29
+
+- [ ] t3053 bug(pulse): pulse.log polluted with OpenCode tool_use JSON blobs from parallel interactive sessions #auto-dispatch #bug #framework #pulse ref:GH#21761
+
+- [ ] t3055 bug(pulse): worker dispatched but no [lifecycle] worker_exited line emitted on detach-path termination #auto-dispatch #bug #framework #pulse ref:GH#21762
+
+- [x] t3054 bug(pulse): preflight_early_dispatch stage timeout (600s SIGTERM rc=143) on managed private webapp issue #auto-dispatch #bug #framework #pulse ref:GH#21763 pr:#21769 completed:2026-04-29
+
+- [ ] t3056 investigate 94% headless worker kill rate (vs 100% interactive success rate) #auto-dispatch #bug #framework #pulse ref:GH#21781
+
+- [x] t3057 add interval-sampled CPU to _watchdog_tree_cpu (lifetime-avg false-defer fix) #auto-dispatch #bug #framework ref:GH#21785 pr:#21792 completed:2026-04-29
+
+
+- [ ] t3060 enum-prefix kill_reason setters in pulse-watchdog.sh classifier #auto-dispatch #bug #framework ref:GH#21788
+
+- [ ] t3059 walk full descendant tree in _watchdog_tree_cpu (BFS, not one-level) #auto-dispatch #bug #framework ref:GH#21787
+
+- [ ] t3063 add kill_reason field to [lifecycle] worker_exited line #auto-dispatch #bug #framework ref:GH#21790
+
+- [ ] t3062 add trusted-issue-author allowlist to bypass t2449 gate for peer-runner-filed issues #auto-dispatch #enhancement ref:GH#21789
+
+- [ ] t3064 extend PR #21733 fix — use gh_issue_edit_safe in remaining hot-path body updates #auto-dispatch #bug ref:GH#21798

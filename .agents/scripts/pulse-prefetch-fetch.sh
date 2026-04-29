@@ -150,9 +150,11 @@ _prefetch_prs_format_output() {
 
 	echo "### Open PRs ($pr_count)"
 	if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
-		echo "$pr_json" | jq -r --argjson checks "${checks_json:-[]}" '
-			($checks | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
-			.[] |
+		# GH#21774: checks_json (~245KB+) overflows jq ARG_MAX via --argjson.
+		# Pass checks through stdin (unlimited), pr_json (~14KB) via --argjson.
+		echo "$checks_json" | jq -r --argjson prs "$pr_json" '
+			(. | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
+			$prs[] |
 			(.number | tostring) as $num |
 			($check_map[$num] // null) as $rolls |
 			"- PR #\(.number): \(.title) [checks: \(

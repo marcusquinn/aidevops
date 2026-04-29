@@ -150,7 +150,18 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
-	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 &
+	# t3053: Route supervisor stdout to /dev/null to prevent OpenCode's
+	# --format json event stream from contaminating pulse.log. The JSON
+	# events from the supervisor were flowing: opencode --format json →
+	# tee "$output_file" → stdout → >>"$LOGFILE", polluting pulse.log
+	# with multi-KB tool_use JSON blobs that break line-oriented log
+	# analysis (grep, pulse-diagnose-helper.sh). Diagnostic messages from
+	# headless-runtime-helper.sh still reach pulse.log via stderr (2>>),
+	# and worker dispatch log lines continue to write via explicit
+	# >>"$LOGFILE" calls. The watchdog's progress detection is unaffected
+	# because worker dispatches (echo "[dispatch_with_dedup] Dispatched
+	# worker..." >>"$LOGFILE") keep pulse.log growing during active cycles.
+	"${pulse_cmd[@]}" >/dev/null 2>>"$LOGFILE" &
 
 	local opencode_pid=$!
 	echo "$opencode_pid" >"$PIDFILE"
@@ -276,6 +287,49 @@ _pulse_prime_caches_if_stale() {
 	if [[ "$_should_prime" == "1" ]]; then
 		printf '[pulse-wrapper] Pre-warming pulse caches (t2992 + t2994 stale-gate)...\n' >&2
 		"$_prime_helper" >/dev/null 2>&1 || printf '[pulse-wrapper] WARN: cache prime returned non-zero (non-fatal — first cycle may be slow)\n' >&2
+	fi
+	return 0
+}
+
+#######################################
+# _pulse_check_runaway_log — sentinel-gated runaway-log detector (GH#21756)
+#
+# Calls pulse-log-runaway-detector.sh check-and-heal every 5 minutes
+# (configurable via PULSE_RUNAWAY_LOG_CHECK_INTERVAL). Catches wrapper
+# log growing at MB/s from tight error loops before disk fills.
+# Modelled on _pulse_prime_caches_if_stale (t2994).
+#
+# Fail-open: any internal error returns 0. Never blocks the pulse cycle.
+#######################################
+_pulse_check_runaway_log() {
+	[[ "${AIDEVOPS_SKIP_RUNAWAY_LOG_CHECK:-0}" == "1" ]] && return 0
+
+	local _detector_helper=""
+	local _detector_sentinel=""
+	local _detector_max_age=""
+	_detector_helper="${SCRIPT_DIR}/pulse-log-runaway-detector.sh"
+	_detector_sentinel="${HOME}/.aidevops/cache/pulse-runaway-log-check-last-run"
+	_detector_max_age="${PULSE_RUNAWAY_LOG_CHECK_INTERVAL:-300}"
+	[[ "$_detector_max_age" =~ ^[0-9]+$ ]] || _detector_max_age=300
+
+	mkdir -p "$(dirname "$_detector_sentinel")" 2>/dev/null || return 0
+	[[ ! -x "$_detector_helper" ]] && return 0
+
+	local _should_check=0
+	if [[ ! -f "$_detector_sentinel" ]]; then
+		_should_check=1
+	else
+		local _now_epoch="" _stamp_epoch="" _age_s=""
+		_now_epoch=$(date +%s 2>/dev/null)
+		_stamp_epoch=$(_file_mtime_epoch "$_detector_sentinel")
+		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		[[ "$_age_s" -gt "$_detector_max_age" ]] && _should_check=1
+	fi
+
+	if [[ "$_should_check" == "1" ]]; then
+		"$_detector_helper" check-and-heal 2>>"$WRAPPER_LOGFILE" || true
+		# Touch sentinel regardless of outcome (fail-open)
+		touch "$_detector_sentinel" 2>/dev/null || true
 	fi
 	return 0
 }

@@ -637,7 +637,14 @@ _invoke_opencode() {
 	print_info "[lifecycle] waiting_for_worker pid=$worker_pid watchdog=$watchdog_pid"
 	local _wait_status=0
 	wait "$worker_pid" 2>/dev/null || _wait_status=$?
-	print_info "[lifecycle] worker_exited pid=$worker_pid wait_status=$_wait_status"
+	# t3063: classify kill_reason on the same line as wait_status so Phase 2
+	# log aggregation does not need to JOIN by PID across scripts. classifier
+	# inspects sentinel files written next to exit_code_file by kill sites
+	# (worker-activity-watchdog hard/soft kill, rate_limit_fast monitor) and
+	# the forward-compatible .kill_reason sentinel for new kill paths.
+	local _kill_reason
+	_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$_wait_status")
+	print_info "[lifecycle] worker_exited pid=$worker_pid wait_status=$_wait_status kill_reason=$_kill_reason"
 
 	# Clean up the watchdog — it should exit on its own when it detects
 	# the worker PID is gone, but kill it explicitly to be safe.

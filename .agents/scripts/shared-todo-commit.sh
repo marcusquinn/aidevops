@@ -47,7 +47,7 @@
 # Dependencies:
 #   - git (must be on PATH).
 #   - bash 4+ (uses `${var:-default}` and trap EXIT).
-#   - GNU coreutils OR macOS BSD coreutils (handles `stat -f` vs `stat -c`).
+#   - portable-stat.sh (cross-platform stat via shared-constants.sh).
 #   - $AIDEVOPS_LOG_FILE (optional — log target for lock + retry diagnostics;
 #     defaults to /dev/null).
 #
