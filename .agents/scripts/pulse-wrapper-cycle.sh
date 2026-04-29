@@ -150,7 +150,18 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi
-	"${pulse_cmd[@]}" >>"$LOGFILE" 2>&1 &
+	# t3053: Route supervisor stdout to /dev/null to prevent OpenCode's
+	# --format json event stream from contaminating pulse.log. The JSON
+	# events from the supervisor were flowing: opencode --format json →
+	# tee "$output_file" → stdout → >>"$LOGFILE", polluting pulse.log
+	# with multi-KB tool_use JSON blobs that break line-oriented log
+	# analysis (grep, pulse-diagnose-helper.sh). Diagnostic messages from
+	# headless-runtime-helper.sh still reach pulse.log via stderr (2>>),
+	# and worker dispatch log lines continue to write via explicit
+	# >>"$LOGFILE" calls. The watchdog's progress detection is unaffected
+	# because worker dispatches (echo "[dispatch_with_dedup] Dispatched
+	# worker..." >>"$LOGFILE") keep pulse.log growing during active cycles.
+	"${pulse_cmd[@]}" >/dev/null 2>>"$LOGFILE" &
 
 	local opencode_pid=$!
 	echo "$opencode_pid" >"$PIDFILE"
