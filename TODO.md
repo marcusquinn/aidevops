@@ -3575,3 +3575,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3070 switch pulse-merge to GitHub native auto-merge for sub-30s green-to-merged latency #auto-dispatch #enhancement ref:GH#21810
 
 - [ ] t3067 interactive-session-helper.sh release applies status:available to CLOSED issues #auto-dispatch #bug #framework ref:GH#21805
+
+- [ ] t3071 audit framework for t3058-class watchdog self-write anti-pattern (monitor X, write marker to X) #auto-dispatch #bug #framework #pulse ref:GH#21811
