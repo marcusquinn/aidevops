@@ -281,6 +281,49 @@ _pulse_prime_caches_if_stale() {
 }
 
 #######################################
+# _pulse_check_runaway_log — sentinel-gated runaway-log detector (GH#21756)
+#
+# Calls pulse-log-runaway-detector.sh check-and-heal every 5 minutes
+# (configurable via PULSE_RUNAWAY_LOG_CHECK_INTERVAL). Catches wrapper
+# log growing at MB/s from tight error loops before disk fills.
+# Modelled on _pulse_prime_caches_if_stale (t2994).
+#
+# Fail-open: any internal error returns 0. Never blocks the pulse cycle.
+#######################################
+_pulse_check_runaway_log() {
+	[[ "${AIDEVOPS_SKIP_RUNAWAY_LOG_CHECK:-0}" == "1" ]] && return 0
+
+	local _detector_helper=""
+	local _detector_sentinel=""
+	local _detector_max_age=""
+	_detector_helper="${SCRIPT_DIR}/pulse-log-runaway-detector.sh"
+	_detector_sentinel="${HOME}/.aidevops/cache/pulse-runaway-log-check-last-run"
+	_detector_max_age="${PULSE_RUNAWAY_LOG_CHECK_INTERVAL:-300}"
+	[[ "$_detector_max_age" =~ ^[0-9]+$ ]] || _detector_max_age=300
+
+	mkdir -p "$(dirname "$_detector_sentinel")" 2>/dev/null || return 0
+	[[ ! -x "$_detector_helper" ]] && return 0
+
+	local _should_check=0
+	if [[ ! -f "$_detector_sentinel" ]]; then
+		_should_check=1
+	else
+		local _now_epoch="" _stamp_epoch="" _age_s=""
+		_now_epoch=$(date +%s 2>/dev/null)
+		_stamp_epoch=$(_file_mtime_epoch "$_detector_sentinel")
+		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		[[ "$_age_s" -gt "$_detector_max_age" ]] && _should_check=1
+	fi
+
+	if [[ "$_should_check" == "1" ]]; then
+		"$_detector_helper" check-and-heal 2>>"$WRAPPER_LOGFILE" || true
+		# Touch sentinel regardless of outcome (fail-open)
+		touch "$_detector_sentinel" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
 # sync_todo_refs_for_repo
 #
 # Pull issue→TODO refs, close completed entries, and reopen entries whose
