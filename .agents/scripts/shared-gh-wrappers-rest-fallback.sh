@@ -730,6 +730,65 @@ _rest_issue_view() {
 }
 
 #######################################
+# _rest_pr_view: GET /repos/{owner}/{repo}/pulls/{N}.  (t3037)
+# Parses gh-style args (--repo, --json, --jq, -q) and returns a single
+# PR object or jq-filtered output via the REST API.
+# Mirrors `gh pr view <N> --repo SLUG [--json FIELDS] [--jq EXPR]`.
+#
+# --json FIELDS is accepted for parity but ignored (the REST endpoint
+# returns the full object; use --jq/-q to select).
+#
+# Returns the underlying gh api exit code.
+#######################################
+_rest_pr_view() {
+	gh_record_call rest 2>/dev/null || true
+	local num_or_url=""
+	local repo=""
+	local jq_expr=""
+
+	local _first="${1:-}"
+	if [[ $# -gt 0 && "$_first" != --* ]]; then
+		num_or_url="$_first"
+		shift
+	fi
+
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--repo) repo="${2:-}"; shift 2 ;;
+		--repo=*) repo="${_arg#--repo=}"; shift ;;
+		--json) shift 2 ;;
+		--json=*) shift ;;
+		--jq | -q) jq_expr="${2:-}"; shift 2 ;;
+		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
+		*) shift ;;
+		esac
+	done
+
+	local num=""
+	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+
+	if [[ -z "$repo" || -z "$num" ]]; then
+		printf '_rest_pr_view: PR number and --repo are required\n' >&2
+		return 1
+	fi
+	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
+		printf '_rest_pr_view: invalid PR number: %s\n' "$num" >&2
+		return 1
+	fi
+
+	local _path="/repos/${repo}/pulls/${num}"
+	local _gh_cmd=(gh api "$_path")
+	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "${_gh_cmd[@]}"
+	else
+		"${_gh_cmd[@]}"
+	fi
+	return $?
+}
+
+#######################################
 # _rest_pr_list: GET /repos/{owner}/{repo}/pulls.  (t2772)
 # Parses gh-style args (--repo, --state, --head, --base, --limit,
 # --json, --jq, -q) and returns a JSON array or jq-filtered output.

@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
 # gh shim — auto-inject signature footer on write commands (t2685)
+#            + GraphQL→REST read rewriting under low budget (t3037)
 # =============================================================================
 #
 # Intercepts `gh issue comment|create` and `gh pr comment|create`, calls
@@ -34,7 +35,8 @@
 #
 # Bypass
 # ------
-#   AIDEVOPS_GH_SHIM_DISABLE=1 gh …   # skip shim, exec real gh directly
+#   AIDEVOPS_GH_SHIM_DISABLE=1 gh …          # skip entire shim
+#   AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 gh …  # skip read-rewrite only (t3037)
 #
 # Runtime-vs-pre-execution split (t2893)
 # --------------------------------------
@@ -97,9 +99,17 @@ _find_real_gh() {
 # Every gh invocation pays this case-match plus one exec.
 # t2876: extended to include issue:edit and pr:edit so privacy-scan layer
 # protects body/title edits the same way create/comment are protected.
+# t3037: read subcommands (pr:view, issue:view, pr:list, issue:list) are
+# intercepted for GraphQL→REST budget-aware rewriting.
 # -----------------------------------------------------------------------------
+_SHIM_READ_REWRITE=""
 case "${1:-}:${2:-}" in
 issue:comment | issue:create | issue:edit | pr:create | pr:comment | pr:edit) ;;
+pr:view | issue:view | pr:list | issue:list)
+	# t3037: read subcommands — may be rewritten to REST when GraphQL budget
+	# is low. Falls through to the read-rewrite handler below.
+	_SHIM_READ_REWRITE="${1}:${2}"
+	;;
 api:*)
 	# `gh api` subcommand — needs further analysis for POST/PATCH write endpoints.
 	# Falls through to the api-specific handling block below.
@@ -138,6 +148,128 @@ REAL_GH="$(_find_real_gh)" || {
 	echo "[aidevops] gh shim: real gh binary not found; aborting" >&2
 	exit 127
 }
+
+# -----------------------------------------------------------------------------
+# t3037: GraphQL→REST budget-aware read rewriting.
+#
+# When GraphQL budget is below threshold, rewrite high-frequency read
+# subcommands (pr view, issue view, pr list, issue list) to use REST API
+# translators from shared-gh-wrappers-rest-fallback.sh. This captures
+# every worker `gh pr view` / `gh issue view` call without requiring
+# workers to source shared-gh-wrappers.sh.
+#
+# Bypass: AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1
+# Fail-open: any error in sourcing, budget check, or REST call falls
+# through to the real gh binary.
+# -----------------------------------------------------------------------------
+if [[ -n "$_SHIM_READ_REWRITE" ]]; then
+	# Bypass — explicit override.
+	if [[ "${AIDEVOPS_GH_SHIM_NO_REST_REWRITE:-0}" == "1" ]]; then
+		exec "$REAL_GH" "$@"
+	fi
+
+	# _shim_extract_repo_and_args: Parse --repo/-R from args and build the
+	# stripped arg array for REST translator delegation. Sets _SHIM_REPO
+	# and _SHIM_REST_ARGS (global-ish, consumed by the caller).
+	# Returns 1 if no repo can be determined.
+	_shim_extract_repo_and_args() {
+		_SHIM_REPO=""
+		_SHIM_REST_ARGS=()
+		local _i=0
+		local _args=("$@")
+		# Extract --repo/-R from args.
+		while [[ $_i -lt ${#_args[@]} ]]; do
+			case "${_args[$_i]}" in
+			--repo)   _SHIM_REPO="${_args[_i + 1]:-}"; _i=$((_i + 2)); continue ;;
+			--repo=*) _SHIM_REPO="${_args[$_i]#--repo=}" ;;
+			-R)       _SHIM_REPO="${_args[_i + 1]:-}"; _i=$((_i + 2)); continue ;;
+			-R*)      _SHIM_REPO="${_args[$_i]#-R}" ;;
+			esac
+			_i=$((_i + 1))
+		done
+		if [[ -z "$_SHIM_REPO" ]]; then
+			_SHIM_REPO=$(gh api repos/:owner/:repo --jq '.full_name' 2>/dev/null) || true
+			[[ -z "$_SHIM_REPO" ]] && return 1
+		fi
+		# Build stripped args: skip first two positional args and --repo/-R.
+		local _positional_count=0 _skip_next=0
+		for (( _i=0; _i < ${#_args[@]}; _i++ )); do
+			if [[ $_skip_next -eq 1 ]]; then _skip_next=0; continue; fi
+			local _a="${_args[$_i]}"
+			if [[ "$_a" != -* && $_positional_count -lt 2 ]]; then
+				_positional_count=$((_positional_count + 1))
+				continue
+			fi
+			case "$_a" in
+			--repo) _skip_next=1; continue ;; --repo=*) continue ;;
+			-R)     _skip_next=1; continue ;; -R*)      continue ;;
+			esac
+			_SHIM_REST_ARGS+=("$_a")
+		done
+		return 0
+	}
+
+	_shim_rest_rewrite_read() {
+		# Source the REST fallback helper (contains _gh_should_fallback_to_rest
+		# and the _rest_* translator functions).
+		local _rest_helper=""
+		local _cand
+		for _cand in \
+			"$_SHIM_DIR/shared-gh-wrappers-rest-fallback.sh" \
+			"$HOME/.aidevops/agents/scripts/shared-gh-wrappers-rest-fallback.sh"; do
+			[[ -f "$_cand" ]] && { _rest_helper="$_cand"; break; }
+		done
+		[[ -z "$_rest_helper" ]] && return 1
+
+		# Source the instrumentation helper for gh_record_call. Fail-open.
+		local _inst_helper=""
+		for _cand in \
+			"$_SHIM_DIR/gh-api-instrument.sh" \
+			"$HOME/.aidevops/agents/scripts/gh-api-instrument.sh"; do
+			[[ -f "$_cand" ]] && { _inst_helper="$_cand"; break; }
+		done
+		# shellcheck source=/dev/null
+		[[ -n "$_inst_helper" ]] && source "$_inst_helper" 2>/dev/null || true
+		# shellcheck source=/dev/null
+		source "$_rest_helper" 2>/dev/null || return 1
+
+		# Check GraphQL budget. If above threshold, return 1 to fall through.
+		_gh_should_fallback_to_rest || return 1
+
+		# Extract repo and build stripped args.
+		_shim_extract_repo_and_args "$@" || return 1
+
+		# Record the call as "rest" with caller "gh-shim".
+		gh_record_call rest gh-shim 2>/dev/null || true
+
+		# Dispatch to the appropriate REST translator.
+		case "$_SHIM_READ_REWRITE" in
+		pr:view)    _rest_pr_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		issue:view) _rest_issue_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		pr:list)    _rest_pr_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		issue:list) _rest_issue_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		*) return 1 ;;
+		esac
+		return $?
+	}
+
+	# Attempt REST rewrite. On success, exit with the translator's status.
+	# On failure (helper missing, budget OK, REST error), fall through to
+	# the real gh binary — fail-open.
+	if _shim_rest_rewrite_read "$@"; then
+		exit 0
+	else
+		_rest_rc=$?
+		# If the REST translator ran but returned non-zero (actual API error
+		# vs. budget-OK/missing-helper), propagate the error rather than
+		# retrying via GraphQL (which would also fail if budget is exhausted).
+		# Budget-OK returns rc=1 from _gh_should_fallback_to_rest; we only
+		# get here when rc=1 from the function wrapper. The translator errors
+		# are already printed to stderr by the _rest_* functions.
+		# Conservative: always fall through to real gh.
+		exec "$REAL_GH" "$@"
+	fi
+fi
 
 # -----------------------------------------------------------------------------
 # Locate signature helper.
