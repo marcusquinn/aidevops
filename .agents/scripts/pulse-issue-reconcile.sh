@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# pulse-issue-reconcile.sh — Issue state reconciliation — assignment normalization, close-on-merged-PR, stale status:done recovery.
+# pulse-issue-reconcile.sh — Issue state reconciliation orchestrator.
 #
 # Extracted from pulse-wrapper.sh in Phase 5 of the phased decomposition
 # (parent: GH#18356, plan: todo/plans/pulse-wrapper-decomposition.md §6).
+# Further split into sub-libraries (GH#21286) to keep below the 1500-line
+# file-size-debt gate.
 #
 # This module is sourced by pulse-wrapper.sh. It MUST NOT be executed
 # directly — it relies on the orchestrator having sourced:
@@ -13,20 +15,25 @@
 # and having defined all PULSE_* configuration constants in the bootstrap
 # section.
 #
-# Functions in this module (in source order):
-#   - _normalize_get_feedback_routed_rows (t2396: find feedback-routed available issues)
-#   - _normalize_reassign_self           (Phase 12: orphaned active issue → self-assign)
+# Functions in this module (orchestrator + large functions that must stay
+# for identity-key preservation — see reference/large-file-split.md §3):
+#   - _read_cache_issues_for_slug       (t2773: prefetch cache reader)
+#   - _gh_pr_list_merged                (t2773: merged PR list wrapper)
+#   - _build_oimp_lookup_for_slug       (t2985: per-repo merged-PR lookup)
+#   - _normalize_get_feedback_routed_rows (t2396: feedback-routed issue detection)
+#   - _normalize_reassign_self          (Phase 12: orphaned active issue → self-assign)
+#   - _normalize_unassign_stampless_interactive (t2148: stampless claim cleanup)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
-#   - close_issues_with_merged_prs
-#   - reconcile_stale_done_issues
-#   - reconcile_labelless_aidevops_issues (t2112 — backfill labelless aidevops-shaped issues)
+#   - reconcile_labelless_aidevops_issues (t2112 — >100 lines, identity key preserved)
+#   - _action_lia_single                (t2776 — >100 lines, identity key preserved)
+#   - reconcile_issues_single_pass      (t2776 — >100 lines, identity key preserved)
 #
-# Stale-recovery helpers (extracted to pulse-issue-reconcile-stale.sh in t2375
-# to keep this file below the 1500-line complexity gate):
-#   - _normalize_clear_status_labels     (Phase 12: reset one stale issue's labels/assignee)
-#   - _normalize_stale_get_dispatch_info (Phase 12: read PID/timestamp/runner from dispatch comment)
-#   - _normalize_stale_should_skip_reset (Phase 12 + t1933 + t2375: gate reset decision)
-#   - _normalize_unassign_stale          (Phase 12: detect + reset stale assignments)
+# Sub-libraries (sourced by this orchestrator):
+#   - pulse-issue-reconcile-stale.sh     (t2375: stale assignment recovery)
+#   - pulse-issue-reconcile-normalize.sh (GH#21376: label invariant normalization)
+#   - pulse-issue-reconcile-actions.sh   (GH#21376: per-issue action helpers + predicates)
+#   - pulse-issue-reconcile-parent.sh    (GH#21286: parent-task nudge/escalation/reconcile)
+#   - pulse-issue-reconcile-close.sh     (GH#21286: close/done/oimp reconciliation)
 
 # Include guard — prevent double-sourcing.
 [[ -n "${_PULSE_ISSUE_RECONCILE_LOADED:-}" ]] && return 0
@@ -199,6 +206,12 @@ source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-normalize.sh"
 # shellcheck source=./pulse-issue-reconcile-actions.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-actions.sh"
+# shellcheck source=./pulse-issue-reconcile-parent.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-parent.sh"
+# shellcheck source=./pulse-issue-reconcile-close.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${_PIR_SCRIPT_DIR}/pulse-issue-reconcile-close.sh"
 
 #######################################
 # (Phase 12 helper) Assign runner to orphaned active issues.
@@ -526,582 +539,13 @@ normalize_active_issue_assignments() {
 	return 0
 }
 
-#######################################
-# Close open issues whose work is already done — a merged PR exists
-# that references the issue via "Closes #N" or matching task ID in
-# the PR title (GH#16851).
-#
-# The dedup guard (Layer 4) detects these and blocks re-dispatch,
-# but the issue stays open forever. This stage closes them with a
-# comment linking to the merged PR, cleaning the backlog.
-#######################################
-close_issues_with_merged_prs() {
-	local repos_json="$REPOS_JSON"
-	[[ -f "$repos_json" ]] || return 0
-
-	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
-	[[ -x "$dedup_helper" ]] || return 0
-
-	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
-
-	local total_closed=0
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-
-		# Only check issues marked available for dispatch. Capped at 20
-		# per repo to limit API calls (dedup helper makes 1 call per issue).
-		# t2773: prefer prefetch cache; fall back to gh_issue_list wrapper on cache miss.
-		# _ciw_lbl: label name variable avoids repeating the string literal (string-literal ratchet).
-		local _ciw_lbl="status:available"
-		local issues_json _cache_issues_ciw
-		if _cache_issues_ciw=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_ciw" | \
-				jq -c --arg lbl "$_ciw_lbl" \
-				'[.[] | select(.labels | map(.name) | index($lbl))] | .[0:20]' \
-				2>/dev/null) || issues_json="[]"
-		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--label "$_ciw_lbl" \
-				--json number,title,labels --limit 20 2>/dev/null) || issues_json="[]"
-		fi
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-
-		local i=0
-		while [[ "$i" -lt "$issue_count" ]]; do
-			local issue_num issue_title
-			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
-			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
-			i=$((i + 1))
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			# t2776: delegate per-issue action to shared helper (_action_ciw_single).
-			if _action_ciw_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"; then
-				total_closed=$((total_closed + 1))
-			fi
-		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
-
-	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Close issues with merged PRs: closed ${total_closed} issue(s)" >>"$LOGFILE"
-	fi
-
-	return 0
-}
-
-#######################################
-# Reconcile status:done issues that are still open.
-#
-# Workers set status:done when they believe work is complete, but the
-# issue may stay open if: (1) PR merged but Closes #N was missing,
-# (2) worker declared done but never created a PR, (3) PR was rejected.
-#
-# Case 1: merged PR found → close the issue (work verified done).
-# Cases 2+3: no merged PR → reset to status:available for re-dispatch.
-#
-# Capped at 20 per repo per cycle to limit API calls.
-#######################################
-reconcile_stale_done_issues() {
-	local repos_json="$REPOS_JSON"
-	[[ -f "$repos_json" ]] || return 0
-
-	local dedup_helper="${HOME}/.aidevops/agents/scripts/dispatch-dedup-helper.sh"
-	[[ -x "$dedup_helper" ]] || return 0
-
-	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
-
-	local total_closed=0
-	local total_reset=0
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-
-		# t2773: prefer prefetch cache; fall back to gh_issue_list wrapper on cache miss.
-		local issues_json _cache_issues_rsd
-		if _cache_issues_rsd=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_rsd" | \
-				jq -c --arg lbl "status:done" \
-				'[.[] | select(.labels | map(.name) | index($lbl))] | .[0:20]' \
-				2>/dev/null) || issues_json="[]"
-		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--label "status:done" \
-				--json number,title --limit 20 2>/dev/null) || issues_json="[]"
-		fi
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-		[[ "$issue_count" -gt 0 ]] || continue
-
-		local i=0
-		while [[ "$i" -lt "$issue_count" ]]; do
-			local issue_num issue_title
-			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
-			issue_title=$(printf '%s' "$issues_json" | jq -r ".[$i].title // empty" 2>/dev/null)
-			i=$((i + 1))
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			# t2776: delegate per-issue action to shared helper (_action_rsd_single).
-			local _rsd_rc
-			_action_rsd_single "$slug" "$issue_num" "$issue_title" "$dedup_helper" "$verify_helper"
-			_rsd_rc=$?
-			if [[ "$_rsd_rc" -eq 0 ]]; then
-				total_closed=$((total_closed + 1))
-			elif [[ "$_rsd_rc" -eq 2 ]]; then
-				total_reset=$((total_reset + 1))
-			fi
-		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
-
-	if [[ "$((total_closed + total_reset))" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile stale done issues: closed=${total_closed}, reset=${total_reset}" >>"$LOGFILE"
-	fi
-
-	return 0
-}
-
-#######################################
-# Close open issues whose linked PR has already merged.
-#
-# Gap: _handle_post_merge_actions only closes issues when the PULSE merges
-# the PR. PRs merged by --admin (interactive sessions), GitHub merge button,
-# or any other mechanism leave the issue open. This reconciliation pass
-# catches those orphans.
-#
-# Scans open issues with active status labels (in-review, in-progress,
-# queued, available) and checks whether a merged PR references them via
-# `Resolves #N`, `Closes #N`, or `Fixes #N`. If found, closes the issue.
-#
-# Rate-limited: max 10 closes per cycle to avoid API abuse.
-#######################################
-reconcile_open_issues_with_merged_prs() {
-	local repos_json="$REPOS_JSON"
-	[[ -f "$repos_json" ]] || return 0
-
-	local verify_helper="${HOME}/.aidevops/agents/scripts/verify-issue-close-helper.sh"
-	local total_closed=0
-	local max_closes=10
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-		[[ "$total_closed" -lt "$max_closes" ]] || break
-
-		# Get open issues — t2773: prefer prefetch cache; fall back to gh_issue_list wrapper.
-		# Include labels in the fallback so the parent-task check below works without a
-		# separate gh api call in either path.
-		local issues_json _cache_issues_oimp
-		if _cache_issues_oimp=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_oimp" | jq -c '.[0:30]' 2>/dev/null) || issues_json="[]"
-		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--json number,title,labels --limit 30 2>/dev/null) || issues_json="[]"
-		fi
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-		[[ "$issue_count" -gt 0 ]] || continue
-
-		# Pre-extract parent-task issue numbers in one jq pass to avoid spawning
-		# jq once per loop iteration (GH#20675: Gemini review feedback on PR #20667).
-		local parent_task_nums
-		parent_task_nums=$(printf '%s' "$issues_json" | \
-			jq -r --arg pt "$_PIR_PT_LABEL" '.[] | select((.labels // []) | map(.name) | index($pt) != null) | .number' \
-			2>/dev/null) || parent_task_nums=""
-
-		# t2985: per-repo merged-PR prefetch (replaces per-issue gh search).
-		# Same pattern as reconcile_issues_single_pass — one gh call here
-		# replaces N per-issue gh search calls in _action_oimp_single.
-		local oimp_lookup=""
-		oimp_lookup=$(_build_oimp_lookup_for_slug "$slug")
-
-		local i=0
-		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
-			local issue_num
-			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
-			i=$((i + 1))
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			# Skip parent-task issues (closing a parent from a child PR is wrong).
-			# Labels pre-extracted above in a single jq pass (GH#20675).
-			_should_oimp "$issue_num" "$parent_task_nums" || continue
-
-			# t2776: delegate per-issue action to shared helper (_action_oimp_single).
-			# t2985: pass oimp_lookup as 4th arg.
-			if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup"; then
-				total_closed=$((total_closed + 1))
-			fi
-		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
-
-	if [[ "$total_closed" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile open issues with merged PRs: closed=${total_closed}" >>"$LOGFILE"
-	fi
-
-	return 0
-}
-
-
-#######################################
-# Close parent-task issues when all child issues are resolved.
-#
-# Parent-task issues block dispatch unconditionally — they exist as
-# planning trackers. When all their children are closed, the parent
-# should close automatically with a summary comment listing each child.
-#
-# Child detection (t2138 — preference order):
-#   1. GitHub sub-issue graph (GraphQL `subIssues` field) — authoritative
-#      parent-child relationship when the parent was wired via
-#      `issue-sync-helper.sh backfill-sub-issues` or `_gh_add_sub_issue`.
-#   2. Body section regex (t2244 — fallback for legacy parents with
-#      children listed under a dedicated heading). Requires a
-#      `## Children`, `## Sub-tasks`, or `## Child issues` heading in
-#      the parent body. Only #NNN references WITHIN that section (up to
-#      the next ## heading) are treated as children. Prose #NNN mentions
-#      elsewhere in the body are ignored — this prevents premature close
-#      when a parent cites historical issues as context.
-#   3. Narrow prose patterns (t2442 — fallback for legacy parents that
-#      were partially decomposed but never got a Children heading).
-#      ONLY matches pre-defined phrase shapes (e.g. "Phase N ... #NNNN",
-#      "filed as #NNNN", "tracks #NNNN", "blocked by: #NNNN"). Does NOT
-#      match bare `#NNN` mentions — the t2244 lesson (CodeRabbit review
-#      of #19810) explicitly disqualified that class of false-positive.
-#      Added so that genuine parent-task trackers like #19969 which list
-#      phases in prose (e.g. "Phase 1 split out as #19996") can close
-#      naturally once all phase issues resolve.
-#
-# Either source must yield ≥2 children to avoid single-reference false
-# positives. Checks each against GH API for closed state; only closes
-# if ALL children are closed.
-#
-# Max 5 closes per cycle to limit API usage.
-
-#######################################
-# t2388: post an idempotent decomposition-nudge comment on a parent-task
-# issue that has zero filed children. Without this, undecomposed parents
-# sit silently forever — the parent-task label blocks dispatch, no
-# children exist to do the work, and no signal surfaces to the maintainer.
-#
-# Idempotent via the <!-- parent-needs-decomposition --> marker: re-runs
-# skip any parent already nudged. The marker is checked via the issue
-# comments API before posting; if already present, returns 1 (no-op).
-#
-# Arguments:
-#   arg1 - repo slug (owner/repo)
-#   arg2 - parent issue number
-#   arg3 - parent title (for the comment body)
-# Returns: 0 if the nudge was posted, 1 if skipped (marker present or
-# comment failed).
-#######################################
-_post_parent_decomposition_nudge() {
-	local slug="$1"
-	local parent_num="$2"
-	local parent_title="${3:-}"
-
-	[[ -n "$slug" ]] || return 1
-	[[ "$parent_num" =~ ^[0-9]+$ ]] || return 1
-
-	local marker='<!-- parent-needs-decomposition -->'
-
-	# GH#20219 Factor 2: max-nudge cap. Concurrent pulse runners can race
-	# the idempotency check (both read 0 markers, both post). A hard cap
-	# bounds the damage: if MAX_PARENT_NUDGE_COUNT nudges already exist,
-	# stop posting regardless of race timing. Default 3 — enough to surface
-	# the nudge to a maintainer, bounded enough to prevent the 19-comment
-	# spam observed on #20161.
-	local max_nudge_count="${MAX_PARENT_NUDGE_COUNT:-3}"
-
-	# Idempotency check: skip if marker already present in any comment.
-	#
-	# t2572 + GH#20219: the original --slurp+--jq query was rejected by `gh
-	# api` ("the --slurp option is not supported with --jq or --template"),
-	# silently returning empty and defeating the dedup check — every pulse
-	# cycle posted a fresh nudge (23 on #20001, 19+ on #20161, 4 on
-	# webapp#2546 from two runners in minutes).
-	#
-	# Fix (t2572): streaming --paginate + --jq (no --slurp). Per-page jq
-	# emits matching .id values; wc -l counts across all pages.
-	#
-	# Defence-in-depth (GH#20219): fail-CLOSED on API error (skip the cycle
-	# rather than post) + MAX_PARENT_NUDGE_COUNT cap bounds total nudges
-	# even if the dedup query somehow returns 0 on a populated thread. The
-	# nudge is advisory, not safety-critical; missing a cycle is harmless,
-	# duplicating is not.
-	local existing=""
-	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
-		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
-		2>/dev/null | wc -l | tr -d ' ') || existing=""
-
-	# Fail-closed: if we cannot determine the count, skip this cycle.
-	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
-		echo "[pulse-wrapper] Nudge dedup: API/jq failure for #${parent_num} in ${slug} — skipping nudge (fail-closed, GH#20219)" >>"$LOGFILE"
-		return 1
-	fi
-
-	# Block if any nudge already exists OR if count exceeds the cap.
-	if [[ "$existing" -ge 1 ]]; then
-		if [[ "$existing" -ge "$max_nudge_count" ]]; then
-			echo "[pulse-wrapper] Nudge dedup: #${parent_num} in ${slug} has ${existing} nudges (cap=${max_nudge_count}) — suppressing (GH#20219)" >>"$LOGFILE"
-		fi
-		return 1
-	fi
-
-	# Sanitise title for safe markdown embed.
-	local safe_title="$parent_title"
-	safe_title="${safe_title//\`/}"
-
-	local comment_body="${marker}
-## Parent Task Needs Decomposition
-
-This issue carries the \`parent-task\` label, which unconditionally blocks pulse dispatch (see \`dispatch-dedup-helper.sh\` → \`PARENT_TASK_BLOCKED\`). It also has **zero filed children** — no \`## Children\`, \`## Sub-tasks\`, or \`## Child issues\` section with \`#NNNN\` references, and no GraphQL sub-issue graph.
-
-Under these two conditions the issue cannot make progress on its own. Workers won't pick it up (dispatch blocked), no completion sweep can fire (no children to check), and nothing else nudges it forward. Without decomposition it will sit here silently forever.
-
-**Two paths forward — pick one:**
-
-1. **Decompose into children.** File the specific implementation tasks as separate issues, then edit this parent body to include a section like:
-
-   \`\`\`
-   ## Children
-
-   - t2XXX / #NNNN — first specific task
-   - t2YYY / #MMMM — second specific task
-   \`\`\`
-
-   The next pulse cycle will detect the children via \`reconcile_completed_parent_tasks\` and auto-close this parent once all listed children are closed.
-
-2. **Drop the parent-task label.** If this issue is actually a single unit of work (not a roadmap tracker), remove the \`parent-task\` label so the pulse can dispatch it directly:
-
-   \`\`\`
-   gh issue edit ${parent_num} --repo ${slug} --remove-label parent-task
-   \`\`\`
-
-See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2211) for the full rule. Parent-task is for epics and roadmap trackers that will never be implemented as a single unit — only their children will.
-
-_Automated by \`_post_parent_decomposition_nudge\` in \`pulse-issue-reconcile.sh\` (t2388). Posted once per issue via the \`<!-- parent-needs-decomposition -->\` marker; re-runs are no-ops._"
-
-	gh_issue_comment "$parent_num" --repo "$slug" \
-		--body "$comment_body" >/dev/null 2>&1 || return 1
-
-	echo "[pulse-wrapper] Reconcile parent-task: nudge posted for #${parent_num} in ${slug} (no children filed)" >>"$LOGFILE"
-	return 0
-}
-
-
-#######################################
-# t2442: post an escalation comment on a parent-task issue whose nudge
-# has sat unactioned for >=7 days AND no auto-decomposer child issue is
-# tracking the work. This closes the "nudge black hole" — without this
-# step, a parent with a prior nudge would sit blocked forever because
-# the nudge marker-idempotency keeps firing no-op forever.
-#
-# Behaviour:
-#   1. Idempotency — if the <!-- parent-needs-decomposition-escalated -->
-#      marker is already present in any comment, returns 1 (no-op).
-#   2. Applies `needs-maintainer-review` so the issue surfaces in the
-#      maintainer's review queue on next interactive session start.
-#   3. The comment body must explicitly list the four paths forward
-#      (decompose / drop label / close / file children). This is the
-#      final AI-advisory touch before the maintainer decides.
-#
-# Argument contract matches _post_parent_decomposition_nudge so the
-# two helpers are drop-in compatible in the reconcile call site.
-#
-# Arguments:
-#   arg1 - repo slug
-#   arg2 - parent issue number
-#   arg3 - parent title
-# Returns: 0 if escalation posted, 1 if skipped (marker present, missing
-# args, or API failure).
-#######################################
-_post_parent_decomposition_escalation() {
-	local slug="$1"
-	local parent_num="$2"
-	local parent_title="${3:-}"
-
-	[[ -n "$slug" ]] || return 1
-	[[ "$parent_num" =~ ^[0-9]+$ ]] || return 1
-
-	local marker='<!-- parent-needs-decomposition-escalated -->'
-
-	# GH#20219 Factor 2: fail-closed + max-count cap (same pattern as nudge).
-	# Escalation is rarer than nudging but the same TOCTOU race applies in
-	# multi-runner fleets. Fail-closed: if we cannot determine the count,
-	# skip this cycle (escalation is advisory, not safety-critical).
-	#
-	# t2572: streaming --paginate + --jq (no --slurp — gh api rejects the
-	# combination). See _post_parent_decomposition_nudge for the full story.
-	local max_escalation_count="${MAX_PARENT_ESCALATION_COUNT:-2}"
-	local existing=""
-	existing=$(gh api --paginate "repos/${slug}/issues/${parent_num}/comments" \
-		--jq ".[] | select(.body | contains(\"${marker}\")) | .id" \
-		2>/dev/null | wc -l | tr -d ' ') || existing=""
-	if [[ ! "$existing" =~ ^[0-9]+$ ]]; then
-		echo "[pulse-wrapper] Escalation dedup: API/jq failure for #${parent_num} in ${slug} — skipping (fail-closed, GH#20219)" >>"$LOGFILE"
-		return 1
-	fi
-	if [[ "$existing" -ge 1 ]]; then
-		if [[ "$existing" -ge "$max_escalation_count" ]]; then
-			echo "[pulse-wrapper] Escalation dedup: #${parent_num} in ${slug} has ${existing} escalations (cap=${max_escalation_count}) — suppressing (GH#20219)" >>"$LOGFILE"
-		fi
-		return 1
-	fi
-
-	local safe_title="$parent_title"
-	safe_title="${safe_title//\`/}"
-
-	local comment_body="${marker}
-## Parent Task Decomposition — Escalation
-
-The decomposition nudge on this issue has been open for **7+ days** with no action. This issue still carries \`parent-task\` (dispatch blocked), still has zero filed children, and no auto-decompose worker issue is tracking it. Applying \`needs-maintainer-review\` so it surfaces in the maintainer queue.
-
-**Paths forward — pick one:**
-
-1. **Decompose into children.** File the specific implementation tasks as separate issues, then edit this parent body to add a \`## Children\` section listing them. Next pulse cycle will detect them via \`reconcile_completed_parent_tasks\`.
-
-2. **Drop the parent-task label.** If this is actually a single unit of work (not a roadmap tracker):
-
-   \`\`\`
-   gh issue edit ${parent_num} --repo ${slug} --remove-label parent-task
-   \`\`\`
-
-3. **Close the issue.** If the work is no longer needed or has been superseded.
-
-4. **Let the auto-decomposer handle it.** If you want a \`tier:thinking\` worker to propose a decomposition plan automatically, remove the \`needs-maintainer-review\` label — the next pulse cycle will file a \`<!-- aidevops:generator=auto-decompose -->\` issue that dispatches a worker to decompose this parent.
-
-See \`.agents/AGENTS.md\` → \"Parent / meta tasks\" (t1986 / t2211 / t2442) for the full rule.
-
-_Automated by \`_post_parent_decomposition_escalation\` in \`pulse-issue-reconcile.sh\` (t2442). Posted once per issue via the \`<!-- parent-needs-decomposition-escalated -->\` marker; re-runs are no-ops._"
-
-	# Apply needs-maintainer-review label. Non-fatal — if it fails we still
-	# want the comment posted so the maintainer sees the escalation.
-	gh issue edit "$parent_num" --repo "$slug" \
-		--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
-
-	gh_issue_comment "$parent_num" --repo "$slug" \
-		--body "$comment_body" >/dev/null 2>&1 || return 1
-
-	echo "[pulse-wrapper] Reconcile parent-task: escalation posted for #${parent_num} in ${slug} (nudge >=7d unactioned)" >>"$LOGFILE"
-	return 0
-}
-
-#######################################
-# t2786 / GH#20871: phase-section parsing for the declared-vs-filed close
-# guard now delegates to the structured parser in shared-phase-filing.sh
-# (sourced indirectly via pulse-merge.sh which loads before this module
-# in pulse-wrapper.sh). The structured parser emits one tab-separated row
-# per *declared* phase:
-#
-#   <phase_num>\t<description>\t<marker>\t<child_ref>
-#
-# matching only the canonical list-form (`- Phase N - desc`) and bold-form
-# (`**Phase N — desc**`) declarations. Subsection headings like
-# `### Phase 1 detail` and prose mentions of "Phase N" are correctly
-# ignored — the over-count that GH#20871 surfaced (the very issue that
-# established this auto-close path was its own first victim).
-#
-# Previously this module redefined `_parse_phases_section` locally as a
-# raw section extractor. That local override has been removed; rows are
-# now counted by line-count over the structured parser's output. See
-# `_try_close_parent_tracker` for the count and unfiled-phase extraction
-# logic.
-#######################################
-
-#######################################
-# t2786: post an idempotent "declared phases not yet filed" nudge comment.
-# Called by _try_close_parent_tracker when the parent body's ## Phases
-# section declares more phases than have been filed as child issues.
-# Prevents premature parent close when unfiled phases exist.
-#
-# Idempotent via the <!-- parent-declared-phases-unfiled --> marker:
-# re-runs skip any parent already nudged. Fail-closed on API errors.
-#
-# Arguments:
-#   arg1 - repo slug (owner/repo)
-#   arg2 - parent issue number
-#   arg3 - declared phase count (from ## Phases section)
-#   arg4 - filed child count (child_count already verified via gh api)
-#   arg5 - unfiled phase text (lines without #NNN, for nudge body listing)
-# Returns: 0 if nudge posted, 1 if skipped (marker present, API error,
-#          or comment call failed).
-#######################################
-
-reconcile_completed_parent_tasks() {
-	local repos_json="$REPOS_JSON"
-	[[ -f "$repos_json" ]] || return 0
-
-	local total_closed=0
-	local max_closes=5
-	local total_nudged=0
-	local max_nudges=5
-	# t2442: escalation is rarer than nudging — bound tighter. 3 per cycle
-	# is enough to avoid review-queue spam while still making progress.
-	local total_escalated=0
-	local max_escalations=3
-	# t2442: parent-task escalation threshold — nudge must have sat for
-	# at least this many hours with zero children before we escalate.
-	# 7 days = 168 hours. Override via env for tests / incident response.
-	local escalation_threshold_hours="${PARENT_DECOMPOSITION_ESCALATION_HOURS:-168}"
-
-	while IFS= read -r slug; do
-		[[ -n "$slug" ]] || continue
-		[[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]] || break
-
-		# t2773: prefer prefetch cache (now includes body field); fall back to gh_issue_list.
-		# Use module-level _PIR_PT_LABEL to avoid a second literal (string-literal ratchet).
-		local _cpt_lbl="$_PIR_PT_LABEL"
-		local issues_json _cache_issues_cpt
-		if _cache_issues_cpt=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
-			issues_json=$(printf '%s' "$_cache_issues_cpt" | \
-				jq -c --arg lbl "$_cpt_lbl" \
-				'[.[] | select(.labels | map(.name) | index($lbl))] | .[0:10]' \
-				2>/dev/null) || issues_json="[]"
-		else
-			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--label "$_cpt_lbl" \
-				--json number,title,body --limit 10 2>/dev/null) || issues_json="[]"
-		fi
-		[[ -n "$issues_json" && "$issues_json" != "null" ]] || continue
-
-		local issue_count
-		issue_count=$(printf '%s' "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
-		[[ "$issue_count" -gt 0 ]] || continue
-
-		local i=0
-		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" ]]; do
-			local issue_num issue_body issue_title
-			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
-			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
-			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
-			i=$((i + 1))
-			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
-
-			# t2776: delegate per-issue action to shared helper (_action_cpt_single).
-			local _can_close=0 _can_nudge=0 _can_escalate=0
-			[[ "$total_closed" -lt "$max_closes" ]] && _can_close=1
-			[[ "$total_nudged" -lt "$max_nudges" ]] && _can_nudge=1
-			[[ "$total_escalated" -lt "$max_escalations" ]] && _can_escalate=1
-			# Arithmetic check avoids repeated == "1" pattern (string-literal ratchet)
-			[[ $((_can_close + _can_nudge + _can_escalate)) -gt 0 ]] || continue
-
-			_action_cpt_single "$slug" "$issue_num" "$issue_title" "$issue_body" \
-				"$_can_close" "$_can_nudge" "$_can_escalate" "$escalation_threshold_hours"
-			[[ "$_SP_CPT_CLOSED" -eq 1 ]] && total_closed=$((total_closed + 1))
-			[[ "$_SP_CPT_NUDGED" -eq 1 ]] && total_nudged=$((total_nudged + 1))
-			[[ "$_SP_CPT_ESCALATED" -eq 1 ]] && total_escalated=$((total_escalated + 1))
-		done
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug // ""' "$repos_json" || true)
-
-	if [[ "$total_closed" -gt 0 || "$total_nudged" -gt 0 || "$total_escalated" -gt 0 ]]; then
-		echo "[pulse-wrapper] Reconcile completed parent tasks: closed=${total_closed} nudged=${total_nudged} escalated=${total_escalated}" >>"$LOGFILE"
-	fi
-
-	return 0
-}
+# --- Functions below extracted to sub-libraries (GH#21286) ---
+# close_issues_with_merged_prs       → pulse-issue-reconcile-close.sh
+# reconcile_stale_done_issues        → pulse-issue-reconcile-close.sh
+# reconcile_open_issues_with_merged_prs → pulse-issue-reconcile-close.sh
+# _post_parent_decomposition_nudge   → pulse-issue-reconcile-parent.sh
+# _post_parent_decomposition_escalation → pulse-issue-reconcile-parent.sh
+# reconcile_completed_parent_tasks   → pulse-issue-reconcile-parent.sh
 
 #######################################
 # t2112: backfill labelless aidevops-shaped issues.
