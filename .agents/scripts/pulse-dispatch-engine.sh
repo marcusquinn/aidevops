@@ -569,6 +569,11 @@ _dff_dispatch_with_timeout() {
 		outcome="timeout"
 		# t2989 + t3003: per-candidate timeout — log distinctly, bump counter,
 		# record outcome so the next recommendation enters probe mode.
+		# t3056 / GH#21781: Structured lifecycle line for kill-reason telemetry
+		printf '[lifecycle] worker_killed pid=dispatch reason=wait_loop_timeout_%ss trigger_age=%sms session=issue-%s ts=%s\n' \
+			"$timeout_seconds" "$elapsed_ms" "$issue_number" \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "fill_floor_per_candidate_timeout" 2>/dev/null || true
