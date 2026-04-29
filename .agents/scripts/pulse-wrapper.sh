@@ -1310,6 +1310,19 @@ main() {
 	# inherit the env var.
 	export AIDEVOPS_HEADLESS=true
 
+	# t3033: capture script path and load-time mtime for post-cycle self-respawn.
+	# If the source file changes during a cycle (e.g. aidevops update / setup.sh),
+	# we exec at cycle end so the next iteration runs fresh code without waiting
+	# for the next launchd tick. Captured here — before any cycle work — so the
+	# comparison at cycle end detects changes made DURING the cycle, not changes
+	# that were present before it started. Uses BSD stat (-f '%m') with GNU fallback
+	# (-c '%Y'), consistent with the pre-jitter fast-fail stat calls at line ~151.
+	local _pw_self="${BASH_SOURCE[0]:-$0}"
+	local _pw_mtime_loaded
+	_pw_mtime_loaded=$(stat -f '%m' "$_pw_self" 2>/dev/null \
+		|| stat -c '%Y' "$_pw_self" 2>/dev/null \
+		|| echo 0)
+
 	# GH#18689: --self-check and --dry-run arg scanning extracted to helpers.
 	# GH#18770: the `_sc_rc=$?` capture MUST be guarded by `|| _sc_rc=$?`
 	# on the call itself — otherwise, under `set -euo pipefail` (line 42),
@@ -1570,6 +1583,41 @@ main() {
 	# workers) until the NEXT cycle, even when the LLM supervisor launched
 	# 9-25 workers. Non-fatal — failures are silently ignored.
 	write_pulse_health_file || true
+
+	# t3033: self-respawn when source file was modified during this cycle.
+	#
+	# If aidevops update / setup.sh deployed a new pulse-wrapper.sh while this
+	# cycle was running, exec ourselves at the end of the cycle so the NEXT
+	# cycle runs fresh code immediately — without waiting for the next launchd
+	# tick (up to 180s later). exec preserves PID and launchd attachment so
+	# KeepAlive sees no process exit.
+	#
+	# Lock protocol: we release the instance lock BEFORE exec so the re-exec'd
+	# process can acquire it cleanly. exec does NOT trigger EXIT traps (bash
+	# replaces the process image), so release_instance_lock must be called
+	# explicitly here. The rate-limit t3018 self-heal handles the resulting
+	# state: no live lock holder → stale stamp cleared → proceeds normally.
+	#
+	# In-flight workers: workers are detached via setsid (_dlw_exec_detached)
+	# and survive parent re-exec regardless. No in-flight dispatch is interrupted.
+	#
+	# Opt-out: AIDEVOPS_SKIP_SOURCE_REEXEC=1 (debugging / testing).
+	if [[ "${AIDEVOPS_SKIP_SOURCE_REEXEC:-0}" != "1" ]]; then
+		local _pw_mtime_now
+		_pw_mtime_now=$(stat -f '%m' "$_pw_self" 2>/dev/null \
+			|| stat -c '%Y' "$_pw_self" 2>/dev/null \
+			|| echo 0)
+		if [[ "$_pw_mtime_now" =~ ^[0-9]+$ ]] \
+			&& [[ "$_pw_mtime_loaded" =~ ^[0-9]+$ ]] \
+			&& [[ "$_pw_mtime_now" -gt 0 ]] \
+			&& [[ "$_pw_mtime_now" != "$_pw_mtime_loaded" ]]; then
+			echo "[pulse-wrapper] t3033: source modified (${_pw_mtime_loaded} -> ${_pw_mtime_now}) — releasing lock and re-execing for fresh code" >>"$WRAPPER_LOGFILE"
+			release_instance_lock
+			exec "$_pw_self" "$@"
+			# exec should not return; if it does, log and fall through to normal exit
+			echo "[pulse-wrapper] t3033: exec failed for '${_pw_self}' — continuing with normal exit" >>"$WRAPPER_LOGFILE"
+		fi
+	fi
 
 	return 0
 }
