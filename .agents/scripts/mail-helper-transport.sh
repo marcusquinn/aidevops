@@ -204,6 +204,11 @@ transport_matrix_send() {
 
 	local http_code curl_stderr
 	curl_stderr=$(mktemp) || curl_stderr="/dev/null"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	if [[ "$curl_stderr" != "/dev/null" ]]; then
+		push_cleanup "rm -f '${curl_stderr}'"
+	fi
 	http_code=$(curl -sS -o /dev/null -w '%{http_code}' \
 		-X PUT "$endpoint" \
 		-H "Authorization: Bearer $access_token" \
@@ -212,6 +217,7 @@ transport_matrix_send() {
 	if [[ "$http_code" != "200" && -s "$curl_stderr" ]]; then
 		log_warn "Matrix curl error to endpoint $endpoint: $(cat "$curl_stderr")"
 	fi
+	# Fast-path cleanup — remove as soon as content has been read
 	rm -f "$curl_stderr"
 
 	if [[ "$http_code" == "200" ]]; then

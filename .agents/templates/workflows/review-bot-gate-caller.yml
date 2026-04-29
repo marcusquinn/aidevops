@@ -32,7 +32,7 @@ name: Review Bot Gate
 permissions:
   pull-requests: read
   contents: read
-  statuses: read
+  statuses: write
 
 on:
   pull_request:

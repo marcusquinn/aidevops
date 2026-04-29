@@ -265,9 +265,6 @@ _append_manifest_entry() {
 	actor="${USER:-unknown}"
 	local existing
 	existing=$(_read_manifest "$manifest_path")
-	local bp_arg pp_arg
-	[[ "$blob_path" == "$ASSET_NONE" ]] && bp_arg="$ASSET_NONE" || bp_arg="\"${blob_path}\""
-	[[ "$preview_path" == "$ASSET_NONE" ]] && pp_arg="$ASSET_NONE" || pp_arg="\"${preview_path}\""
 	printf '%s' "$existing" | jq \
 		--arg id "$asset_id" \
 		--arg fn "$filename" \
@@ -276,12 +273,15 @@ _append_manifest_entry() {
 		--arg sens "$sensitivity" \
 		--arg sha "$sha256" \
 		--argjson sz "$size_bytes" \
-		--argjson bp "$bp_arg" \
-		--argjson pp "$pp_arg" \
+		--arg bp "$blob_path" \
+		--arg pp "$preview_path" \
+		--arg none "$ASSET_NONE" \
 		--arg ts "$ts" \
 		--arg by "$actor" \
 		'.assets += [{id:$id,filename:$fn,kind:$kind,target:$tgt,sensitivity:$sens,
-		              sha256:$sha,size_bytes:$sz,blob_path:$bp,preview_path:$pp,
+		              sha256:$sha,size_bytes:$sz,
+		              blob_path:(if $bp == $none then null else $bp end),
+		              preview_path:(if $pp == $none then null else $pp end),
 		              ingested_at:$ts,ingested_by:$by}]' \
 		>"${manifest_path}.tmp" && mv "${manifest_path}.tmp" "$manifest_path"
 	return 0
@@ -431,7 +431,7 @@ _cmd_add() {
 	slug_base=$(_slugify "${filename%.*}")
 	local ts_short
 	ts_short=$(date +%Y%m%d)
-	local asset_id="${ts_short}-${slug_base}"
+	local asset_id="${ts_short}-${slug_base}-${sha256:0:8}"
 	local blob_path="$ASSET_NONE"
 	local repo_name
 	repo_name=$(basename "$repo_path")
@@ -532,10 +532,15 @@ _cmd_list() {
 		return 0
 	fi
 	local jq_filter='.assets[]'
-	[[ "$filter_type" != "all" ]] && jq_filter=".assets[] | select(.kind == \"${filter_type}\")"
-	[[ -n "$campaign_id" ]] && jq_filter+=" | select(.target | test(\"${campaign_id}\"))"
+	if [[ "$filter_type" != "all" ]]; then
+		jq_filter+=" | select(.kind == \$type)"
+	fi
+	if [[ -n "$campaign_id" ]]; then
+		jq_filter+=" | select(.target | contains(\$camp))"
+	fi
 	local count
-	count=$(jq "[${jq_filter}] | length" "$manifest_path" 2>/dev/null || true)
+	count=$(jq --arg type "$filter_type" --arg camp "$campaign_id" \
+		"[${jq_filter}] | length" "$manifest_path" 2>/dev/null || true)
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	if [[ "$count" -eq 0 ]]; then
 		print_info "No assets found matching criteria."
@@ -543,9 +548,11 @@ _cmd_list() {
 	fi
 	printf "%-40s %-8s %-12s %-12s %s\n" "ID" "KIND" "SENSITIVITY" "SIZE" "FILENAME"
 	printf '%0.s-' {1..90}; echo
-	jq -r "${jq_filter} | [.id, .kind, .sensitivity,
-		(if .size_bytes >= 31457280 then \"blob\" else (.size_bytes | tostring) + \"B\" end),
-		.filename] | @tsv" "$manifest_path" 2>/dev/null | \
+	jq -r --arg type "$filter_type" --arg camp "$campaign_id" \
+		--argjson threshold "$BLOB_THRESHOLD_BYTES" \
+		"${jq_filter} | [.id, .kind, .sensitivity,
+		(if .size_bytes >= \$threshold then \"blob\" else (.size_bytes | tostring) + \"B\" end),
+		.filename] | @tsv" "$manifest_path" | \
 		while IFS=$'\t' read -r _id _kind _sens _size _file; do
 			printf "%-40s %-8s %-12s %-12s %s\n" "$_id" "$_kind" "$_sens" "$_size" "$_file"
 		done

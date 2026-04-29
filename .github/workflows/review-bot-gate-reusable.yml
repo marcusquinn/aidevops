@@ -64,7 +64,7 @@ jobs:
     permissions:
       pull-requests: read
       contents: read
-      statuses: read
+      statuses: write
 
     steps:
       - name: Checkout aidevops framework scripts
@@ -180,6 +180,57 @@ jobs:
           echo "  2. This check re-runs automatically when a bot posts or edits a comment"
           echo "  3. If no bots are configured, add 'skip-review-gate' label"
           exit 1
+
+      - name: Post review-bot-gate commit status
+        # GH#21547: reusable-workflow caller-job naming produces "gate / review-bot-gate"
+        # as the CheckRun name (GitHub prefixes with caller job id). Branch protection
+        # requiring the bare "review-bot-gate" name would wait forever.
+        # Mirror the maintainer-gate-reusable.yml pattern (lines 115-128, 213-218):
+        # explicitly POST a StatusContext so branch protection sees "review-bot-gate".
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
+          SKIP_GATE: ${{ steps.skip.outputs.skip }}
+          RESULT: ${{ steps.check.outputs.result }}
+        run: |
+          # Resolve HEAD SHA. pull_request / pull_request_review expose it via
+          # github.event.pull_request.head.sha. issue_comment does not — the event
+          # is issue-scoped, so we fall back to a gh pr view lookup.
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if [[ -z "${HEAD_SHA}" ]]; then
+            HEAD_SHA=$(gh pr view "${PR_NUMBER}" --repo "${REPO}" \
+              --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
+          fi
+          if [[ -z "${HEAD_SHA}" ]]; then
+            echo "::warning::Could not resolve HEAD SHA for PR #${PR_NUMBER} — skipping status post"
+            exit 0
+          fi
+
+          if [[ "${GATE_PASSED}" == "true" ]] || [[ "${SKIP_GATE}" == "true" ]]; then
+            STATE=success
+            DESC="Review bot gate passed (${RESULT:-SKIP})"
+          else
+            STATE=failure
+            DESC="Review bot gate WAITING — no real bot review yet"
+          fi
+
+          gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+            --method POST \
+            -f state="${STATE}" \
+            -f context="review-bot-gate" \
+            -f description="${DESC}" \
+            2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+            --method POST \
+            -f state="${STATE}" \
+            -f context="review-bot-gate" \
+            -f description="${DESC}"; } || {
+            echo "::error::Failed to post review-bot-gate commit status after retry"
+            exit 1
+          }
+          echo "Posted review-bot-gate status: ${STATE} (${DESC})"
 
       - name: Summary
         if: always()

@@ -26,7 +26,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning,
-#     safe_grep_count, _save_cleanup_scope, push_cleanup, _run_cleanups)
+#     safe_grep_count, timeout_sec, _save_cleanup_scope, push_cleanup, _run_cleanups)
 #   - lint-file-discovery.sh (lint_python_files_local, LINT_PY_FILES_LOCAL)
 #   - Constants: MAX_TOTAL_ISSUES, MAX_FUNCTION_LENGTH_WARN, MAX_FUNCTION_LENGTH_BLOCK,
 #     MAX_FUNCTION_LENGTH_VIOLATIONS, MAX_NESTING_DEPTH_WARN, MAX_NESTING_DEPTH_BLOCK,
@@ -876,11 +876,10 @@ check_pulse_canary() {
 
 	local sandbox rc output
 	sandbox=$(mktemp -d)
-	# shell-portability: ignore next — timeout: use _timeout_cmd wrapper (GH#18787)
 	output=$(
 		HOME="${sandbox}/home" \
 			FULL_LOOP_HEADLESS=1 \
-			timeout 30 bash "$wrapper_script" --canary 2>&1
+			timeout_sec 30 bash "$wrapper_script" --canary 2>&1
 	)
 	rc=$?
 	rm -rf "$sandbox"
