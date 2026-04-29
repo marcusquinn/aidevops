@@ -268,7 +268,7 @@ _pulse_prime_caches_if_stale() {
 	else
 		local _now_epoch="" _stamp_epoch="" _age_s=""
 		_now_epoch=$(date +%s 2>/dev/null)
-		_stamp_epoch=$(stat -f %m "$_prime_sentinel" 2>/dev/null || stat -c %Y "$_prime_sentinel" 2>/dev/null)
+		_stamp_epoch=$(stat -c %Y "$_prime_sentinel" 2>/dev/null || stat -f '%m' "$_prime_sentinel" 2>/dev/null)
 		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
 		[[ "$_age_s" -gt "$_prime_max_age" ]] && _should_prime=1
 	fi
