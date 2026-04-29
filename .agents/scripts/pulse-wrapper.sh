@@ -1541,6 +1541,14 @@ main() {
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
 	_pulse_maybe_run_llm_supervisor
 
+	# t3032: post-LLM health snapshot — captures workers dispatched by the
+	# LLM supervisor session, which runs after the deterministic pipeline's
+	# own health write (in _pulse_run_deterministic_pipeline). Without this
+	# second write, the health file would reflect pre-LLM state (often 0
+	# workers) until the NEXT cycle, even when the LLM supervisor launched
+	# 9-25 workers. Non-fatal — failures are silently ignored.
+	write_pulse_health_file || true
+
 	return 0
 }
 

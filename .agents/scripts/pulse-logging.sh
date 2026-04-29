@@ -242,6 +242,12 @@ write_pulse_health_file() {
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+	# t3032: declare ledger helper once — used for both workers reconciliation
+	# and issues_dispatched. The ledger is written synchronously at dispatch
+	# time so it reliably reflects workers just launched, while the process
+	# list (list_active_worker_processes via count_active_workers) has a brief
+	# race window after nohup launch before the process appears in ps.
+	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	local workers_active workers_max
 	workers_active=$(count_active_workers 2>/dev/null || echo "0")
 	[[ "$workers_active" =~ ^[0-9]+$ ]] || workers_active=0
@@ -250,11 +256,20 @@ write_pulse_health_file() {
 
 	# issues_dispatched: in-flight worker count from dispatch ledger
 	local issues_dispatched=0
-	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 	if [[ -x "$_ledger_helper" ]]; then
 		local _ledger_count
 		_ledger_count=$("$_ledger_helper" count 2>/dev/null || echo "0")
 		[[ "$_ledger_count" =~ ^[0-9]+$ ]] && issues_dispatched="$_ledger_count"
+		# Reconcile workers_active with ledger count (t3032): the
+		# _adaptive_launch_settle_wait is skipped when the dispatched
+		# counter is 0 (C2 stdout-pollution bug), so workers just
+		# dispatched via nohup may not yet appear in ps when the health
+		# file is written. Use the higher of the two counts — process
+		# list is more accurate for long-running workers; ledger is more
+		# accurate immediately post-dispatch.
+		if [[ "$_ledger_count" =~ ^[0-9]+$ ]] && [[ "$_ledger_count" -gt "$workers_active" ]]; then
+			workers_active="$_ledger_count"
+		fi
 	fi
 
 	# models_backed_off: count active backoff entries in provider_backoff DB
