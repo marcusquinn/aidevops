@@ -532,7 +532,12 @@ create_github_issue() {
 		return 1
 	fi
 
-	issue_num=$(echo "$issue_url" | grep -oE '[0-9]+$')
+	# Two-stage grep: first anchor to the canonical GitHub issue URL shape
+	# (no log line can match this), then extract the numeric tail. This prevents
+	# stderr log lines (e.g. "skipping self-assignment per t2157") from being
+	# captured as the issue number when gh_create_issue output includes stderr
+	# via 2>&1. See GH#21760 for the root cause analysis.
+	issue_num=$(printf '%s\n' "$issue_url" | grep -oE 'https://github\.com/[^/]+/[^/]+/issues/[0-9]+' | grep -oE '[0-9]+$' | tail -1 || echo "")
 
 	if [[ -z "$issue_num" ]]; then
 		log_warn "Failed to extract issue number from: $issue_url"
