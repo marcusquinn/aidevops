@@ -787,6 +787,158 @@ check_sync_pat() {
 	return 0
 }
 
+# Phase 8: Cross-account secrets:inherit detection helpers (t2880)
+
+# Detect whether a repo's issue-sync.yml uses the cross-account secrets:inherit
+# pattern — i.e., it calls the marcusquinn/aidevops reusable workflow AND relies
+# on secrets:inherit rather than mapping SYNC_PAT explicitly.
+#
+# GitHub policy: secrets:inherit only propagates within the same org/enterprise.
+# A caller in a different org will silently receive no secrets, causing
+# issue-sync to fail with insufficient permissions.
+#
+# Usage: _detect_cross_account_inherit <slug>
+# Returns:
+#   0 — broken pattern detected (caller + secrets:inherit present)
+#   1 — not broken (explicit mapping, OR not a marcusquinn/aidevops caller)
+#   2 — file missing or unfetchable (skip silently)
+_detect_cross_account_inherit() {
+	local slug="$1"
+
+	local workflow_content
+	workflow_content=$(gh api "repos/${slug}/contents/.github/workflows/issue-sync.yml" \
+		--jq '.content' 2>/dev/null) || return 2
+
+	if [[ -z "$workflow_content" ]]; then
+		return 2
+	fi
+
+	local decoded
+	decoded=$(printf '%s' "$workflow_content" | base64 -d 2>/dev/null) || return 2
+
+	# Must be a marcusquinn/aidevops reusable-workflow caller
+	if ! printf '%s' "$decoded" | grep -q 'uses:.*marcusquinn/aidevops/'; then
+		return 1
+	fi
+
+	# Must use secrets:inherit (the broken cross-account pattern)
+	if ! printf '%s' "$decoded" | grep -q 'secrets:[[:space:]]*inherit'; then
+		return 1
+	fi
+
+	return 0
+}
+
+# Emit a cross-account-inherit advisory file for a repo that uses secrets:inherit.
+# Usage: _emit_cross_account_inherit_advisory <slug> <slug_sanitised>
+_emit_cross_account_inherit_advisory() {
+	local slug="$1"
+	local slug_sanitised="$2"
+
+	local advisory_dir="$HOME/.aidevops/advisories"
+	local advisory_file="$advisory_dir/cross-account-inherit-${slug_sanitised}.advisory"
+
+	mkdir -p "$advisory_dir"
+
+	cat >"$advisory_file" <<ADVISORY_EOF
+[ADVISORY] Cross-account secrets:inherit detected for ${slug}
+
+This repo's .github/workflows/issue-sync.yml calls the marcusquinn/aidevops
+reusable workflow with \`secrets: inherit\` instead of an explicit
+\`secrets: SYNC_PAT: \${{ secrets.SYNC_PAT }}\` mapping.
+
+GitHub only propagates secrets:inherit within the same org/enterprise. Callers
+from a different account (org or personal) silently receive no secrets — so
+issue-sync will fail with permission errors on every run without any obvious
+error message pointing at this root cause.
+
+The fix is to re-sync the workflow from the updated canonical template:
+
+  aidevops sync-workflows --apply --repo ${slug}
+
+This replaces the secrets:inherit line with the explicit SYNC_PAT mapping that
+works across org/account boundaries (fix landed in #20976).
+
+For a guided walkthrough across all affected repos, run \`/setup-git\` in
+your AI assistant (OpenCode or Claude Code).
+
+Dismiss once fixed:
+  aidevops security dismiss cross-account-inherit-${slug_sanitised}
+
+See reference/reusable-workflows.md for the cross-account secrets architecture.
+ADVISORY_EOF
+
+	print_info "  Advisory written to: $advisory_file"
+	return 0
+}
+
+# Phase 8: Check for cross-account secrets:inherit in issue-sync.yml (t2880)
+# For each repo using the marcusquinn/aidevops reusable workflow with
+# secrets:inherit, emits a cross-account-inherit advisory so setup-debt-helper.sh
+# can surface it in the toast and /setup-git can walk the operator through the fix.
+check_cross_account_inherit() {
+	local repo_path="$1"
+
+	print_header "Phase 8: Cross-Account secrets:inherit Detection (t2880)"
+
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI (gh) not installed — cannot check cross-account inherit"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh CLI not available (cross-account check)"
+		return 0
+	fi
+
+	if ! gh auth status &>/dev/null 2>&1; then
+		print_skip "gh not authenticated — cross-account inherit check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh not authenticated (cross-account check)"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "No GitHub remote — cross-account inherit check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "No GitHub remote (cross-account check)"
+		return 0
+	fi
+
+	local slug_sanitised
+	slug_sanitised="${slug//\//-}"
+
+	local advisory_dir="$HOME/.aidevops/advisories"
+	local dismissed_file="$advisory_dir/dismissed.txt"
+
+	# If already dismissed, skip silently
+	local adv_id="cross-account-inherit-${slug_sanitised}"
+	if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
+		print_pass "cross-account-inherit advisory dismissed for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "cross-account-inherit advisory dismissed for $slug"
+		return 0
+	fi
+
+	local detect_result=0
+	_detect_cross_account_inherit "$slug" || detect_result=$?
+
+	case "$detect_result" in
+	0)
+		# Broken pattern detected
+		print_warn "Cross-account secrets:inherit detected for $slug — run: aidevops sync-workflows --apply --repo $slug"
+		add_finding "$SEVERITY_WARNING" "$CAT_SYNC_PAT" "Cross-account secrets:inherit in issue-sync.yml for $slug"
+		_emit_cross_account_inherit_advisory "$slug" "$slug_sanitised"
+		;;
+	1)
+		# Not broken
+		print_pass "issue-sync.yml cross-account pattern OK for $slug"
+		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "issue-sync.yml cross-account pattern OK for $slug"
+		;;
+	2)
+		# Missing / unfetchable — skip silently
+		print_skip "issue-sync.yml not found for $slug — cross-account inherit check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "issue-sync.yml missing for $slug"
+		;;
+	esac
+
+	return 0
+}
+
 # Store security posture in .aidevops.json
 store_posture() {
 	local repo_path="$1"
@@ -934,6 +1086,7 @@ run_all_checks() {
 	check_collaborators "$repo_path"
 	check_repo_security "$repo_path"
 	check_sync_pat "$repo_path"
+	check_cross_account_inherit "$repo_path"
 	print_report
 
 	return 0

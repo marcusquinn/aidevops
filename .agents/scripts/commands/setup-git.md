@@ -24,6 +24,7 @@ gate refuses to merge worker PRs.
 **Use `/setup-git` when**:
 
 - The toast shows `[WARN] N repos need SYNC_PAT setup`
+- The toast shows `[WARN] N repos need workflow re-sync` (cross-account secrets:inherit)
 - A worker PR sits BLOCKED with all-green CI
 - You just registered a new repo via `aidevops init` or hand-edited `repos.json`
 - You're onboarding a new operator and want every active repo's secrets right
@@ -66,10 +67,11 @@ Run the aggregator and present the result:
 ~/.aidevops/agents/scripts/setup-debt-helper.sh summary --format=human
 ```
 
-Then list the affected repos:
+Then list both debt classes:
 
 ```bash
 ~/.aidevops/agents/scripts/setup-debt-helper.sh list-sync-pat-missing
+~/.aidevops/agents/scripts/setup-debt-helper.sh list-cross-account-inherit
 ```
 
 For each slug, also fetch the platform from `~/.config/aidevops/repos.json`
@@ -81,6 +83,38 @@ jq -r --arg slug "$SLUG" '.initialized_repos[] | select(.slug == $slug) | .platf
 
 If `setup-debt-helper.sh summary` returns empty, congratulate the operator
 and exit — there is nothing to do.
+
+### Phase 1.5 — Cross-Account secrets:inherit Remediation (t2880)
+
+For each repo returned by `list-cross-account-inherit`, present this template:
+
+```text
+=== Repo: <SLUG> — workflow re-sync needed ===
+
+Why this matters: your .github/workflows/issue-sync.yml was installed before
+#20976 fixed the canonical caller template. It uses `secrets: inherit` instead
+of an explicit SYNC_PAT mapping. GitHub only propagates secrets:inherit within
+the same org/enterprise — callers from a different account receive no secrets,
+so issue-sync silently fails.
+
+Fix (one command — run in a separate terminal):
+
+  aidevops sync-workflows --apply --repo <SLUG>
+
+This replaces the secrets:inherit line in issue-sync.yml with the explicit
+mapping from the updated template and opens a PR in <SLUG> to apply the change.
+
+After the PR merges, verify:
+
+  aidevops check-workflows --repo <SLUG>
+
+The workflow should be classified as CURRENT/CALLER with no drift.
+
+Dismiss without re-syncing (e.g., intentional fork with own secrets):
+  aidevops security dismiss cross-account-inherit-<SLUG_SAFE>
+```
+
+After the operator confirms the re-sync PR is merged, move on.
 
 ### Phase 2 — Per-Repo Walkthrough
 
@@ -192,11 +226,13 @@ walkthrough.
 
 - `aidevops/onboarding.md` — per-account auth (the `/onboarding` command)
 - `reference/sync-pat-platforms.md` — PAT URL templates and scopes per platform
+- `reference/reusable-workflows.md` — cross-account secrets architecture and caller template
 - `prompts/build.txt` "Security Rules" — secret handling principles
 - `tools/credentials/gopass.md` — preferred secret store for AIDEVOPS env vars
 - t2449 (auto-merge.md) — why SYNC_PAT matters for worker auto-merge
 - t2374 (auto-dispatch.md) — original SYNC_PAT advisory infrastructure
 - t2806 / GH#20745 — rulesets-protected repo detection (sibling fix)
+- t2880 / GH#20981 — cross-account secrets:inherit detection (this command's Phase 1.5)
 
 ## Related issues
 
