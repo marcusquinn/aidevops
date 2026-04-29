@@ -595,7 +595,8 @@ _attempt_worker_briefed_auto_merge() {
 		] | @tsv
 	' 2>/dev/null) || _issue_signals="false	false"
 
-	local _has_crypto _has_auto
+	local _has_crypto=""
+	local _has_auto=""
 	read -r _has_crypto _has_auto <<< "$_issue_signals"
 
 	# Gate: linked issue authored by OWNER/MEMBER OR cryptographically
