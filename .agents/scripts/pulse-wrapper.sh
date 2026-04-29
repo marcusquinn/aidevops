@@ -112,9 +112,12 @@ unset _pulse_fd_limit
 #######################################
 PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
 # Phase 0 (t1963): diagnostic flags must return instantly. Skip jitter
-# when --self-check or --dry-run appears anywhere in the argument list
-# (or PULSE_DRY_RUN=1 is set) so CI, post-install verification, and
-# interactive debugging aren't delayed by up to 30 s of random sleep.
+# when --self-check, --dry-run, or --merge-only appears anywhere in the
+# argument list (or PULSE_DRY_RUN=1 is set) so CI, post-install
+# verification, and interactive debugging aren't delayed by up to 30 s of
+# random sleep. --merge-only skips jitter because the 60s plist interval is
+# tight; adding up to 30s jitter would inflate the worst-case merge latency
+# to 90s+, defeating the <=90s PR-landing target (t21247, GH#21247).
 # GH#18614: iterate through all args — not just $1 — so diagnostic
 # flags are detected regardless of their position in the invocation.
 _pulse_skip_jitter=0
@@ -122,7 +125,7 @@ if [[ "${PULSE_DRY_RUN:-0}" == "1" ]]; then
 	_pulse_skip_jitter=1
 else
 	for _pulse_arg in "$@"; do
-		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" ]]; then
+		if [[ "$_pulse_arg" == "--self-check" || "$_pulse_arg" == "--dry-run" || "$_pulse_arg" == "--merge-only" ]]; then
 			_pulse_skip_jitter=1
 			break
 		fi
@@ -1348,6 +1351,20 @@ main() {
 	[[ "$_sc_rc" -ne 2 ]] && return "$_sc_rc"
 	_pulse_setup_dry_run_mode "$@"
 	_pulse_setup_canary_mode "$@"
+
+	# t21247 (GH#21247): --merge-only short-circuit. Bypasses all dispatch
+	# lifecycle phases (is-running, rate-limit, main instance lock, session
+	# gate, dedup, preflight, LLM supervisor) and runs only
+	# merge_ready_prs_all_repos() under its own SEPARATE lockdir. The dedicated
+	# 60s plist (com.aidevops.aidevops-supervisor-merge) fires this path every
+	# minute; the main dispatch cycle remains unaffected. Bootstrap (sourcing
+	# of pulse-merge.sh + all PULSE_* config) is already complete by the time
+	# main() runs, so merge_ready_prs_all_repos() can be called directly.
+	_pulse_setup_merge_only_mode "$@"
+	if [[ "${PULSE_MERGE_ONLY:-0}" == "1" ]]; then
+		_pulse_run_merge_only
+		return $?
+	fi
 
 	# GH#20580: Detect and record invocation source before acquiring the lock
 	# so every invocation — including those that fail the lock — is counted.

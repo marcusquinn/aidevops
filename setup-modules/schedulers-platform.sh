@@ -305,18 +305,35 @@ setup_complexity_scan() {
 	return 0
 }
 
-# Install pulse-merge-routine launchd plist (macOS).
-# Args: $1=label $2=script $3=log_dir
+# Install the dedicated merge-pass launchd plist (macOS).
+# Supersedes the t2862 sh.aidevops.pulse-merge-routine approach (t21247, GH#21247):
+#   - Label: com.aidevops.aidevops-supervisor-merge
+#   - Script: pulse-wrapper.sh --merge-only (full bootstrap + merge only)
+#   - Interval: 60s (down from 120s) — targets <=90s PR-green-to-merged latency
+#   - Log: pulse-merge.log (isolated from main pulse log)
+#
+# Args: $1=label $2=wrapper_script $3=log_dir
 _install_pulse_merge_routine_launchd() {
 	local pmr_label="$1"
 	local pmr_script="$2"
 	local _pmr_log_dir="$3"
 	local pmr_plist="$HOME/Library/LaunchAgents/${pmr_label}.plist"
 
-	local _xml_pmr_script _xml_pmr_home _xml_pmr_log_dir
+	# One-time migration: unload and remove the legacy sh.aidevops.pulse-merge-routine
+	# plist (installed by t2862) to avoid running two merge passes simultaneously.
+	local _legacy_pmr_label="sh.aidevops.pulse-merge-routine"
+	local _legacy_pmr_plist="$HOME/Library/LaunchAgents/${_legacy_pmr_label}.plist"
+	if [[ -f "$_legacy_pmr_plist" ]]; then
+		launchctl unload "$_legacy_pmr_plist" 2>/dev/null || true
+		rm -f "$_legacy_pmr_plist"
+		print_info "Removed legacy pulse-merge-routine plist (superseded by ${pmr_label})"
+	fi
+
+	local _xml_pmr_script _xml_pmr_home _xml_pmr_log_dir _xml_bash_bin
 	_xml_pmr_script=$(_xml_escape "$pmr_script")
 	_xml_pmr_home=$(_xml_escape "$HOME")
 	_xml_pmr_log_dir=$(_xml_escape "$_pmr_log_dir")
+	_xml_bash_bin=$(_xml_escape "$(_resolve_modern_bash)")
 
 	local pmr_plist_content
 	pmr_plist_content=$(
@@ -329,16 +346,16 @@ _install_pulse_merge_routine_launchd() {
 	<string>${pmr_label}</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_bash_bin}</string>
 		<string>${_xml_pmr_script}</string>
-		<string>run</string>
+		<string>--merge-only</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>120</integer>
+	<integer>60</integer>
 	<key>StandardOutPath</key>
-	<string>${_xml_pmr_log_dir}/pulse-merge-routine.log</string>
+	<string>${_xml_pmr_log_dir}/pulse-merge.log</string>
 	<key>StandardErrorPath</key>
-	<string>${_xml_pmr_log_dir}/pulse-merge-routine.log</string>
+	<string>${_xml_pmr_log_dir}/pulse-merge.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
@@ -347,8 +364,6 @@ _install_pulse_merge_routine_launchd() {
 		<string>${_xml_pmr_home}</string>
 	</dict>
 	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
 	<false/>
 	<key>ProcessType</key>
 	<string>Background</string>
@@ -356,50 +371,77 @@ _install_pulse_merge_routine_launchd() {
 	<true/>
 	<key>Nice</key>
 	<integer>10</integer>
+	<key>SoftResourceLimits</key>
+	<dict>
+		<key>NumberOfFiles</key>
+		<integer>4096</integer>
+	</dict>
 </dict>
 </plist>
 PMR_PLIST
 	)
 
 	if _launchd_install_if_changed "$pmr_label" "$pmr_plist" "$pmr_plist_content"; then
-		print_info "Pulse merge routine enabled (launchd, every 2 min)"
+		print_info "Pulse merge pass enabled (launchd, every 60s via --merge-only)"
 	else
-		print_warning "Failed to load pulse merge routine LaunchAgent"
+		print_warning "Failed to load pulse merge pass LaunchAgent"
 	fi
 	return 0
 }
 
-# Install pulse-merge-routine via systemd or cron (Linux).
-# Args: $1=script path, $2=log dir
+# Install the dedicated merge-pass scheduler via systemd or cron (Linux).
+# Supersedes the t2862 aidevops-pulse-merge-routine approach (t21247, GH#21247):
+#   - Command: pulse-wrapper.sh --merge-only
+#   - Interval: every 60s (cron * * * * *, systemd OnUnitActiveSec=60)
+#   - Log: pulse-merge.log
+# Args: $1=wrapper_script $2=log_dir
 _install_pulse_merge_routine_linux() {
 	local pmr_script="$1"
 	local _pmr_log_dir="$2"
-	local pmr_systemd="aidevops-pulse-merge-routine"
+	local pmr_systemd="aidevops-pulse-merge"
+
+	# One-time migration: remove legacy systemd/cron entry for aidevops-pulse-merge-routine.
+	if _systemd_user_available 2>/dev/null; then
+		systemctl --user disable --now "aidevops-pulse-merge-routine.timer" 2>/dev/null || true
+		rm -f "$HOME/.config/systemd/user/aidevops-pulse-merge-routine.service" 2>/dev/null || true
+		rm -f "$HOME/.config/systemd/user/aidevops-pulse-merge-routine.timer" 2>/dev/null || true
+		systemctl --user daemon-reload 2>/dev/null || true
+	fi
+	if crontab -l 2>/dev/null | grep -qF "pulse-merge-routine"; then
+		crontab -l 2>/dev/null | grep -v 'aidevops: pulse-merge-routine' | crontab - 2>/dev/null || true
+	fi
+
 	_install_scheduler_linux \
 		"$pmr_systemd" \
-		"aidevops: pulse-merge-routine" \
-		"*/2 * * * *" \
-		"\"${pmr_script}\" run" \
-		"120" \
-		"${_pmr_log_dir}/pulse-merge-routine.log" \
+		"aidevops: pulse-merge (--merge-only)" \
+		"* * * * *" \
+		"\"${pmr_script}\" --merge-only" \
+		"60" \
+		"${_pmr_log_dir}/pulse-merge.log" \
 		"" \
-		"Pulse merge routine enabled (every 2 min)" \
-		"Failed to install pulse merge routine scheduler" \
+		"Pulse merge pass enabled (every 60s via --merge-only)" \
+		"Failed to install pulse merge pass scheduler" \
 		"true" \
 		"true"
 	return 0
 }
 
-# Setup pulse merge routine (t2862, GH#20919) — runs merge_ready_prs_all_repos()
-# as a fast 120s standalone routine, decoupled from the monolithic pulse cycle.
-# The pulse cycle's preflight stack (60-470s) meant the merge pass ran only ~7
-# times/24h despite ~40+ cycles. This routine ensures green PRs merge within ~3
-# min of CI completion. The in-cycle merge call in pulse-wrapper.sh is kept as
-# defense-in-depth but short-circuits when this routine ran within the last 60s.
+# Setup the dedicated merge-pass scheduler (t21247, GH#21247).
+#
+# Supersedes t2862/GH#20919 (pulse-merge-routine.sh, 120s interval). The new
+# approach runs pulse-wrapper.sh --merge-only every 60s so green PRs merge
+# within <=90s of CI completion regardless of dispatch-cycle length (~23 min
+# average). The full pulse bootstrap ensures all PULSE_* config and repo state
+# are available; the separate lockdir (pulse-merge-instance.lock) prevents
+# overlap with the main dispatch cycle lock.
+#
+# Requires: pulse-wrapper.sh must be installed and executable.
+# The in-cycle merge pass in pulse-wrapper.sh is kept as defense-in-depth —
+# it short-circuits when a merge pass ran within the last 60s.
 setup_pulse_merge_routine() {
-	local pmr_script="$HOME/.aidevops/agents/scripts/pulse-merge-routine.sh"
-	local pmr_label="sh.aidevops.pulse-merge-routine"
-	if ! [[ -x "$pmr_script" ]]; then
+	local pmr_wrapper="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
+	local pmr_label="com.aidevops.aidevops-supervisor-merge"
+	if ! [[ -x "$pmr_wrapper" ]]; then
 		return 0
 	fi
 
@@ -410,9 +452,9 @@ setup_pulse_merge_routine() {
 
 	# Install/update scheduled runner
 	if [[ "$(uname -s)" == "Darwin" ]]; then
-		_install_pulse_merge_routine_launchd "$pmr_label" "$pmr_script" "$_pmr_log_dir"
+		_install_pulse_merge_routine_launchd "$pmr_label" "$pmr_wrapper" "$_pmr_log_dir"
 	else
-		_install_pulse_merge_routine_linux "$pmr_script" "$_pmr_log_dir"
+		_install_pulse_merge_routine_linux "$pmr_wrapper" "$_pmr_log_dir"
 	fi
 	return 0
 }

@@ -131,6 +131,120 @@ _pulse_setup_canary_mode() {
 }
 
 # ---------------------------------------------------------------------------
+# _pulse_setup_merge_only_mode (t21247, GH#21247)
+#
+# Phase 0: --merge-only flag sets PULSE_MERGE_ONLY=1 so main() can
+# short-circuit into _pulse_run_merge_only() before any dispatch lifecycle
+# phase (lock, session gate, dedup, preflight, LLM supervisor).
+#
+# Purpose: enables the dedicated merge plist
+# (com.aidevops.aidevops-supervisor-merge, 60s interval) to invoke the full
+# pulse bootstrap and call merge_ready_prs_all_repos() without interfering
+# with the main dispatch cycle.
+#
+# Scans "$@" for --merge-only (position-independent).
+# Exit code: always 0
+# ---------------------------------------------------------------------------
+_pulse_setup_merge_only_mode() {
+	local _mo_arg
+	for _mo_arg in "$@"; do
+		if [[ "$_mo_arg" == "--merge-only" ]]; then
+			export PULSE_MERGE_ONLY=1
+			break
+		fi
+	done
+	unset _mo_arg
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _pulse_run_merge_only (t21247, GH#21247)
+#
+# Standalone merge-pass execution path for --merge-only invocations.
+# Acquires a SEPARATE lockdir (pulse-merge-instance.lock, distinct from the
+# main pulse's pulse-wrapper.lockdir) so merge ticks and dispatch cycles can
+# run concurrently without deadlock.
+#
+# Execution:
+#   1. Acquire ~/.aidevops/locks/pulse-merge-instance.lock (mkdir-atomic).
+#      If already held by a live process, skip silently ("already in flight").
+#      Stale locks (dead PID) are reclaimed.
+#   2. Override LOGFILE to pulse-merge.log so merge output is isolated from
+#      the main pulse log.
+#   3. Call merge_ready_prs_all_repos() (defined in pulse-merge.sh, sourced
+#      above by the full bootstrap). All PULSE_* config vars are already set.
+#   4. Write pulse-merge-routine-last-run timestamp so the in-cycle merge
+#      pass in _pulse_run_deterministic_pipeline() can short-circuit when
+#      this routine ran recently (defense-in-depth, same file as t2862).
+#   5. Release lock via EXIT trap.
+#
+# Lock:  ~/.aidevops/locks/pulse-merge-instance.lock
+# Log:   ~/.aidevops/logs/pulse-merge.log
+# Stamp: ~/.aidevops/logs/pulse-merge-routine-last-run
+#
+# Exit code: always 0 (non-fatal; merge failures are logged and skipped)
+# ---------------------------------------------------------------------------
+_pulse_run_merge_only() {
+	local _mo_lockdir="${HOME}/.aidevops/locks/pulse-merge-instance.lock"
+	local _mo_log="${HOME}/.aidevops/logs/pulse-merge.log"
+	local _mo_last_run="${HOME}/.aidevops/logs/pulse-merge-routine-last-run"
+
+	mkdir -p "${HOME}/.aidevops/locks" "$(dirname "$_mo_log")" 2>/dev/null || true
+
+	# --- Acquire separate lock (mkdir-atomic, same pattern as main pulse) ---
+	if ! mkdir "$_mo_lockdir" 2>/dev/null; then
+		# Lock exists — check if the holder is still alive.
+		local _mo_pid
+		_mo_pid=$(cat "${_mo_lockdir}/pid" 2>/dev/null || echo "")
+		if [[ "$_mo_pid" =~ ^[0-9]+$ ]] && kill -0 "$_mo_pid" 2>/dev/null; then
+			printf '[%s] pulse-wrapper --merge-only: merge_pass already in flight (PID %s), skipping\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$_mo_pid" >>"$_mo_log" 2>/dev/null || true
+			return 0
+		fi
+		# Stale lock — reclaim and retry once.
+		rm -rf "$_mo_lockdir" 2>/dev/null || true
+		if ! mkdir "$_mo_lockdir" 2>/dev/null; then
+			printf '[%s] pulse-wrapper --merge-only: could not acquire lock after stale reclaim, skipping\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" >>"$_mo_log" 2>/dev/null || true
+			return 0
+		fi
+	fi
+	printf '%s\n' "$$" >"${_mo_lockdir}/pid" 2>/dev/null || true
+
+	# Release lock on exit — EXIT trap fires on normal exit, set -e abort, SIGTERM.
+	# SIGKILL cannot be trapped; stale-PID check above handles that case.
+	# shellcheck disable=SC2064  # intentional: expand _mo_lockdir at definition time
+	trap "rm -rf '${_mo_lockdir}' 2>/dev/null || true" EXIT
+
+	local _mo_ts
+	_mo_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
+	printf '[%s] pulse-wrapper --merge-only: starting merge pass (PID %s)\n' "$_mo_ts" "$$" >>"$_mo_log" 2>/dev/null || true
+
+	# Override LOGFILE so merge_ready_prs_all_repos() logs to pulse-merge.log
+	# rather than the main pulse log. Restore on exit via local variable — the
+	# EXIT trap above fires after function return so the override is scoped here.
+	local _mo_saved_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	LOGFILE="$_mo_log"
+
+	# Call the merge entry point (defined in pulse-merge.sh, sourced above).
+	# All PULSE_* configuration constants are already set by the full bootstrap.
+	merge_ready_prs_all_repos >>"$_mo_log" 2>&1 || true
+
+	# Restore LOGFILE for any teardown code that might run before EXIT trap fires.
+	LOGFILE="$_mo_saved_logfile"
+
+	# Write last-run timestamp — the in-cycle deterministic_merge_pass in
+	# _pulse_run_deterministic_pipeline() reads this file and short-circuits
+	# when a merge pass ran within the last 60s (defense-in-depth).
+	date +%s >"$_mo_last_run" 2>/dev/null || true
+
+	_mo_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
+	printf '[%s] pulse-wrapper --merge-only: done\n' "$_mo_ts" >>"$_mo_log" 2>/dev/null || true
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _detect_invocation_source (GH#20580)
 #
 # Detects how pulse-wrapper.sh was invoked. Writes the detected source into
