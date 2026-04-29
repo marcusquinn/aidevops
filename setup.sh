@@ -419,6 +419,37 @@ _should_setup_noninteractive_stats_wrapper() {
 	return 1
 }
 
+# Pulse-merge-routine is a REQUIRED dependency of the supervisor pulse — it
+# is the merge-side of pulse, running merge_ready_prs_all_repos() on a fast
+# 120s cadence so green PRs land within ~3 min of CI completion instead of
+# waiting for the next full pulse cycle (t2862, GH#20919). Without this
+# escape hatch, auto-update on existing systems never installs the routine
+# (the generic _should_setup_noninteractive_scheduler chicken-and-egg gate
+# returns 0 only when the scheduler is ALREADY installed). The result on
+# the wild was the deterministic_merge_pass running 1-2x/24h instead of
+# every 2 min, leaving green PRs unmerged for 30+ hours (t3036, GH#21616).
+# Mirrors the stats-wrapper escape hatch above (t2418, GH#20016).
+_should_setup_noninteractive_pulse_merge_routine() {
+	if _should_setup_noninteractive_scheduler \
+		"Pulse merge routine" \
+		"sh.aidevops.pulse-merge-routine" \
+		"aidevops: pulse-merge-routine" \
+		"aidevops-pulse-merge-routine"; then
+		return 0
+	fi
+
+	# Pulse-dependency escape hatch: install the merge routine whenever the
+	# supervisor pulse is (or will be) enabled. The routine is layered
+	# defense for the in-cycle merge call in pulse-wrapper.sh, which is
+	# kept as a safety net but short-circuits when this routine ran within
+	# the last 60s.
+	if _should_setup_noninteractive_supervisor_pulse; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -1360,8 +1391,11 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
 		setup_complexity_scan
 	fi
-	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass
-	if _should_setup_noninteractive_scheduler "Pulse merge routine" "sh.aidevops.pulse-merge-routine" "aidevops: pulse-merge-routine" "aidevops-pulse-merge-routine"; then
+	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass.
+	# t3036 (GH#21616): use the pulse-dependency escape hatch instead of the
+	# generic chicken-and-egg gate so the routine installs on existing systems
+	# whenever the supervisor pulse is consented.
+	if _should_setup_noninteractive_pulse_merge_routine; then
 		setup_pulse_merge_routine
 	fi
 	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner

@@ -58,16 +58,26 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 #   4. credentials.sh       — picks up gh tokens / API keys before merge calls gh.
 #   5. pulse-wrapper-config.sh — defines LOGFILE, REPOS_JSON, STOP_FLAG, etc.
 #   6. pulse-repo-meta.sh   — get_repo_role_by_slug, get_repo_path_by_slug.
-#   7. pulse-merge.sh       — merge_ready_prs_all_repos + gate helpers; also
+#   7. pulse-dispatch-core.sh — provides unlock_issue_after_worker (called from
+#                             pulse-merge.sh:338,385 in _handle_post_merge_actions
+#                             and _handle_post_close_actions). Without this,
+#                             stderr emits 'unlock_issue_after_worker: command not
+#                             found' on every merged/closed PR (t3036).
+#   8. pulse-fast-fail.sh   — provides fast_fail_reset (called from pulse-merge.sh:383
+#                             in _handle_post_close_actions). Without this, stderr
+#                             emits 'fast_fail_reset: command not found' on every
+#                             closed PR (t3036).
+#   9. pulse-merge.sh       — merge_ready_prs_all_repos + gate helpers; also
 #                             transitively sources shared-claim-lifecycle.sh and
 #                             shared-phase-filing.sh.
-#   8. pulse-merge-conflict.sh — conflict handling, interactive PR handover.
-#   9. pulse-merge-feedback.sh — CI/conflict/review feedback routing to linked issues.
+#  10. pulse-merge-conflict.sh — conflict handling, interactive PR handover.
+#  11. pulse-merge-feedback.sh — CI/conflict/review feedback routing to linked issues.
 #
-# pulse-merge.sh normally requires PULSE_MERGE_BATCH_LIMIT to be set by the
-# pulse-wrapper.sh bootstrap (line 727). It is initialised here before any
-# function is called (see also the ${VAR:-default} guards added to
-# merge_ready_prs_all_repos itself in t2862 — belt-and-suspenders).
+# pulse-merge.sh normally requires PULSE_MERGE_BATCH_LIMIT and PULSE_START_EPOCH
+# to be set by the pulse-wrapper.sh bootstrap (lines 180, 727). They are
+# initialised below in the env-var defaults section before any function is
+# called (see also the ${VAR:-default} guards added to merge_ready_prs_all_repos
+# itself in t2862 — belt-and-suspenders).
 
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -85,6 +95,15 @@ fi
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
+# t3036 (GH#21616): pulse-dispatch-core defines unlock_issue_after_worker;
+# pulse-fast-fail defines fast_fail_reset. Both are called from
+# _handle_post_merge_actions / _handle_post_close_actions in pulse-merge.sh.
+# Without these, every successful merge/close emits 'command not found'
+# stderr noise. Source defensively before pulse-merge.sh.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-dispatch-core.sh" 2>/dev/null || true
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-fast-fail.sh" 2>/dev/null || true
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-merge.sh"
 # shellcheck source=/dev/null
@@ -99,6 +118,17 @@ source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
 # PULSE_MERGE_BATCH_LIMIT is normally set by pulse-wrapper.sh:727. Set a
 # safe default here so standalone invocation doesn't hit an unbound variable.
 PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
+
+# PULSE_START_EPOCH is normally set by pulse-wrapper.sh:180 (the canonical
+# bootstrap path). It's referenced by pulse-merge.sh:326 inside
+# _handle_post_merge_actions and by pulse-simplification-*.sh. Under
+# `set -euo pipefail` (line 42 of this file), an unset reference is a hard
+# fail — every launchd invocation would crash before doing anything useful
+# (t3036, GH#21616). Initialise to current epoch so elapsed-time math works
+# even when no pulse cycle preceded this invocation. Export so subprocesses
+# (gh-signature-helper.sh, etc.) inherit the value consistently.
+PULSE_START_EPOCH="${PULSE_START_EPOCH:-$(date +%s)}"
+export PULSE_START_EPOCH
 
 # STOP_FLAG / REPOS_JSON: normally set by pulse-wrapper-config.sh; the
 # ${VAR:-default} guards below are defence-in-depth for edge-case sourcing
