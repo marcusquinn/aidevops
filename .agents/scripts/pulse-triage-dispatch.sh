@@ -781,7 +781,9 @@ _consolidation_count_merged_children() {
 _consolidation_skip_if_resolved() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local parent_json state reason labels body counts merged total list pct
+	# t2863: init all multi-var locals at declaration time so set -u is safe.
+	local parent_json="" state="" reason="" labels="" body=""
+	local counts="" merged="" total="" list="" pct=""
 	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
 		--json state,stateReason,labels,body 2>/dev/null) || parent_json=""
 	if [[ -z "$parent_json" ]]; then
