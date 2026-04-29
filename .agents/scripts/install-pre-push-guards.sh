@@ -2,29 +2,35 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# install-pre-push-guards.sh — Install aidevops git pre-push hooks (t2198, t2446, t2458, t2745).
+# install-pre-push-guards.sh — Install aidevops git pre-push/pre-commit hooks (t2198, t2446, t2458, t2745, t3020).
 #
-# Manages five pre-push guards in the current repository:
-#   - privacy-guard      blocks pushes leaking private repo slugs
-#   - complexity-guard   blocks pushes introducing complexity regressions
-#   - scope-guard        blocks pushes touching files outside the brief's Files Scope
-#   - credential-guard   blocks pushes emitting unsanitised remote URLs (t2458)
-#   - dup-todo-guard     blocks pushes where TODO.md has duplicate task-ID checkbox lines (t2745)
+# Manages six guards in the current repository:
+#
+# Pre-push guards (installed to .git/hooks/pre-push):
+#   - privacy-guard        blocks pushes leaking private repo slugs
+#   - complexity-guard     blocks pushes introducing complexity regressions
+#   - scope-guard          blocks pushes touching files outside the brief's Files Scope
+#   - credential-guard     blocks pushes emitting unsanitised remote URLs (t2458)
+#   - dup-todo-guard       blocks pushes where TODO.md has duplicate task-ID checkbox lines (t2745)
+#
+# Pre-commit guards (installed to .git/hooks/pre-commit):
+#   - brief-filename-guard blocks commits adding todo/tasks/tNNN-brief.md with unclaimed t-IDs (t3020)
 #
 # Usage:
 #   install-pre-push-guards.sh install [--guard <name>]
 #         Install (or refresh) guard(s).
-#         --guard: privacy|complexity|scope|credential|dup-todo|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|brief-filename|all (default: all)
 #
 #   install-pre-push-guards.sh uninstall [--guard <name>]
 #         Remove guard entry/entries.
-#         --guard: privacy|complexity|scope|credential|dup-todo|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|brief-filename|all (default: all)
 #
 #   install-pre-push-guards.sh status
 #         Report which guards are present and their hook source locations.
 #
-# The installer writes .git/hooks/pre-push targeting `git rev-parse
+# Pre-push installer writes .git/hooks/pre-push targeting `git rev-parse
 # --git-common-dir` so worktrees share the hook with the parent repo.
+# Pre-commit installer writes .git/hooks/pre-commit (same common-dir logic).
 #
 # Existing hooks NOT managed by aidevops are refused and left untouched.
 #
@@ -33,8 +39,10 @@
 #   COMPLEXITY_GUARD_DISABLE=1       skip complexity check for this push
 #   SCOPE_GUARD_DISABLE=1            skip scope check for this push
 #   CREDENTIAL_GUARD_DISABLE=1       skip credential check for this push
-#   DUP_TODO_GUARD_DISABLE=1          skip duplicate TODO check for this push
-#   git push --no-verify             skip all hooks
+#   DUP_TODO_GUARD_DISABLE=1         skip duplicate TODO check for this push
+#   BRIEF_FILENAME_GUARD_DISABLE=1   skip brief-filename check for this commit
+#   git push --no-verify             skip all pre-push hooks
+#   git commit --no-verify           skip all pre-commit hooks
 
 set -euo pipefail
 
@@ -68,17 +76,20 @@ print_error() {
 
 # Marker strings embedded in the managed hook file — used for detect/update.
 HOOK_MARKER_MANAGED="# aidevops-pre-push-guards"
+HOOK_MARKER_PRECOMMIT_MANAGED="# aidevops-pre-commit-guards"
 HOOK_MARKER_PRIVACY="# guard:privacy"
 HOOK_MARKER_COMPLEXITY="# guard:complexity"
 HOOK_MARKER_SCOPE="# guard:scope"
 HOOK_MARKER_CREDENTIAL="# guard:credential"
 HOOK_MARKER_DUP_TODO="# guard:dup-todo"
+HOOK_MARKER_BRIEF_FILENAME="# guard:brief-filename"
 
 DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
 DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre-push.sh"
 DEPLOYED_SCOPE_HOOK="$HOME/.aidevops/agents/hooks/scope-guard-pre-push.sh"
 DEPLOYED_CREDENTIAL_HOOK="$HOME/.aidevops/agents/hooks/credential-emission-pre-push.sh"
 DEPLOYED_DUP_TODO_HOOK="$HOME/.aidevops/agents/hooks/pre-push-dup-todo-guard.sh"
+DEPLOYED_BRIEF_FILENAME_HOOK="$HOME/.aidevops/agents/hooks/brief-filename-guard.sh"
 
 #######################################
 # Resolve the script's own directory (symlink-safe).
@@ -125,6 +136,10 @@ _find_hook_src() {
 		_repo_hook="${_sd}/../hooks/pre-push-dup-todo-guard.sh"
 		_deployed_hook="$DEPLOYED_DUP_TODO_HOOK"
 		;;
+	brief-filename)
+		_repo_hook="${_sd}/../hooks/brief-filename-guard.sh"
+		_deployed_hook="$DEPLOYED_BRIEF_FILENAME_HOOK"
+		;;
 	*)
 		print_error "_find_hook_src: unknown guard: $_guard"
 		return 1
@@ -153,12 +168,106 @@ _git_common_dir() {
 }
 
 #######################################
-# Return the canonical hook file path.
+# Return the canonical pre-push hook file path.
 #######################################
 _hook_path() {
 	local _cdir
 	_cdir=$(_git_common_dir) || return 1
 	printf '%s/hooks/pre-push' "$_cdir"
+	return 0
+}
+
+#######################################
+# Return the canonical pre-commit hook file path.
+#######################################
+_commit_hook_path() {
+	local _cdir
+	_cdir=$(_git_common_dir) || return 1
+	printf '%s/hooks/pre-commit' "$_cdir"
+	return 0
+}
+
+#######################################
+# Install (or refresh) the pre-commit dispatcher containing the brief-filename guard.
+# Creates .git/hooks/pre-commit managed by aidevops.
+# Returns 1 if an existing unmanaged pre-commit hook is found.
+#######################################
+_install_precommit_brief_filename() {
+	local _chook_path
+	_chook_path=$(_commit_hook_path) || return 1
+
+	# Refuse to overwrite an unmanaged pre-commit hook.
+	if [[ -f "$_chook_path" ]]; then
+		if ! grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null; then
+			print_error "existing pre-commit hook at $_chook_path is NOT managed by aidevops"
+			print_error "Refusing to overwrite. To chain manually, add the guard to your hook:"
+			# shellcheck disable=SC2016
+			print_error '  ${REPO}/.agents/hooks/brief-filename-guard.sh "$@"'
+			return 1
+		fi
+	fi
+
+	local _hook_src
+	if ! _hook_src=$(_find_hook_src brief-filename 2>/dev/null); then
+		print_warning "brief-filename hook source not found — skipping pre-commit guard"
+		return 0
+	fi
+
+	local _repo_rel=".agents/hooks/brief-filename-guard.sh"
+
+	mkdir -p "$(dirname "$_chook_path")"
+
+	# shellcheck disable=SC2016
+	cat >"$_chook_path" <<COMMIT_HOOK
+#!/usr/bin/env bash
+# aidevops-pre-commit-guards
+# Managed by .agents/scripts/install-pre-push-guards.sh — do not edit.
+# Chains installed aidevops pre-commit guards in order.
+# Bypass all:  git commit --no-verify
+# Bypass each: BRIEF_FILENAME_GUARD_DISABLE=1
+
+set -u
+
+_git_root=\$(git rev-parse --show-toplevel 2>/dev/null || true)
+_exit_code=0
+
+# guard:brief-filename
+_brief_filename_hook=""
+if [[ -n "\$_git_root" && -f "\${_git_root}/${_repo_rel}" ]]; then
+  _brief_filename_hook="\${_git_root}/${_repo_rel}"
+elif [[ -f "${_hook_src}" ]]; then
+  _brief_filename_hook="${_hook_src}"
+fi
+if [[ -n "\$_brief_filename_hook" ]]; then
+  "\$_brief_filename_hook" "\$@" || _exit_code=\$?
+else
+  printf '[pre-commit][WARN] brief-filename hook not found -- skipping\n' >&2
+fi
+
+exit "\$_exit_code"
+COMMIT_HOOK
+
+	chmod +x "$_chook_path"
+	return 0
+}
+
+#######################################
+# Uninstall the aidevops-managed pre-commit hook.
+# No-ops if not installed or not managed by us.
+#######################################
+_uninstall_precommit_brief_filename() {
+	local _chook_path
+	_chook_path=$(_commit_hook_path) || return 1
+
+	if [[ ! -f "$_chook_path" ]]; then
+		return 0
+	fi
+	if ! grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null; then
+		print_warning "pre-commit hook at $_chook_path is NOT managed by aidevops — leaving it alone"
+		return 0
+	fi
+	rm -f "$_chook_path"
+	print_success "removed pre-commit hook (brief-filename guard)"
 	return 0
 }
 
@@ -307,6 +416,7 @@ _install_reject_unmanaged_hook() {
 		# shellcheck disable=SC2016
 		print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
 	done
+	print_error "(pre-commit: brief-filename-guard.sh is installed separately to .git/hooks/pre-commit)"
 	return 1
 }
 
@@ -334,15 +444,17 @@ cmd_install() {
 
 	# Determine which guards to add based on filter
 	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0 _want_dup_todo=0
+	local _want_brief_filename=0
 	case "$_guard_filter" in
-	all)        _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1 ;;
-	privacy)    _want_privacy=1 ;;
-	complexity) _want_complexity=1 ;;
-	scope)      _want_scope=1 ;;
-	credential) _want_credential=1 ;;
-	dup-todo)   _want_dup_todo=1 ;;
+	all)            _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1; _want_brief_filename=1 ;;
+	privacy)        _want_privacy=1 ;;
+	complexity)     _want_complexity=1 ;;
+	scope)          _want_scope=1 ;;
+	credential)     _want_credential=1 ;;
+	dup-todo)       _want_dup_todo=1 ;;
+	brief-filename) _want_brief_filename=1 ;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, brief-filename)"
 		return 1
 		;;
 	esac
@@ -398,16 +510,33 @@ cmd_install() {
 		fi
 	fi
 
+	# brief-filename is a pre-commit guard — handled separately from the pre-push dispatcher.
+	if [[ "$_want_brief_filename" -eq 1 ]]; then
+		if _find_hook_src brief-filename >/dev/null 2>&1; then
+			if _install_precommit_brief_filename; then
+				_installed_list="${_installed_list}brief-filename(pre-commit) "
+			fi
+		else
+			print_warning "brief-filename hook source not found — omitting brief-filename guard"
+		fi
+	fi
+
 	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 ]]; then
-		print_warning "no guards to install (sources not found)"
+		# Only brief-filename was requested (or all others were missing): acceptable
+		if [[ -n "${_installed_list:-}" ]]; then
+			print_success "installed guards: ${_installed_list% }"
+		else
+			print_warning "no guards to install (sources not found)"
+		fi
 		return 0
 	fi
 
 	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo"
-	print_success "installed pre-push guards: ${_installed_list% }"
-	print_info "hook: $_hook_path"
-	print_info "bypass all: git push --no-verify"
-	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, or DUP_TODO_GUARD_DISABLE=1"
+	print_success "installed guards: ${_installed_list% }"
+	print_info "pre-push hook: $_hook_path"
+	print_info "bypass pre-push: git push --no-verify"
+	print_info "bypass pre-commit: git commit --no-verify"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, DUP_TODO_GUARD_DISABLE=1, or BRIEF_FILENAME_GUARD_DISABLE=1"
 	return 0
 }
 
@@ -445,10 +574,17 @@ cmd_uninstall() {
 	if [[ "$_guard_filter" == "all" ]]; then
 		rm -f "$_hook_path"
 		print_success "removed pre-push hook"
+		_uninstall_precommit_brief_filename
 		return 0
 	fi
 
-	# Remove one guard: read current state, rebuild without the removed guard
+	# brief-filename is a pre-commit guard — uninstall handled separately.
+	if [[ "$_guard_filter" == "brief-filename" ]]; then
+		_uninstall_precommit_brief_filename
+		return 0
+	fi
+
+	# Remove one pre-push guard: read current state, rebuild without the removed guard
 	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
@@ -463,17 +599,17 @@ cmd_uninstall() {
 	credential) _cur_credential=0 ;;
 	dup-todo)   _cur_dup_todo=0 ;;
 	*)
-		print_error "unknown guard: $_guard_filter"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, brief-filename)"
 		return 1
 		;;
 	esac
 
 	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 && "$_cur_dup_todo" -eq 0 ]]; then
 		rm -f "$_hook_path"
-		print_success "removed last guard — hook deleted"
+		print_success "removed last pre-push guard — hook deleted"
 	else
 		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo"
-		print_success "removed $_guard_filter guard from hook"
+		print_success "removed $_guard_filter guard from pre-push hook"
 	fi
 	return 0
 }
@@ -511,6 +647,24 @@ cmd_status() {
 	_status_report_guard "scope"      "$_has_scope"
 	_status_report_guard "credential" "$_has_credential"
 	_status_report_guard "dup-todo"   "$_has_dup_todo"
+
+	# Pre-commit guards (separate hook file)
+	local _chook_path
+	_chook_path=$(_commit_hook_path) || return 1
+	local _has_brief_filename=0
+	if [[ -f "$_chook_path" ]]; then
+		grep -q "$HOOK_MARKER_BRIEF_FILENAME" "$_chook_path" 2>/dev/null && _has_brief_filename=1
+	fi
+	printf 'pre-commit hook: %s\n' "$(
+		if [[ -f "$_chook_path" ]] && grep -q "$HOOK_MARKER_PRECOMMIT_MANAGED" "$_chook_path" 2>/dev/null; then
+			printf 'installed (aidevops managed)\n  path: %s' "$_chook_path"
+		elif [[ -f "$_chook_path" ]]; then
+			printf 'installed (unknown manager — not managed by aidevops)\n  path: %s' "$_chook_path"
+		else
+			printf 'NOT INSTALLED'
+		fi
+	)"
+	_status_report_guard "brief-filename" "$_has_brief_filename"
 	return 0
 }
 
