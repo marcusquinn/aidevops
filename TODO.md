@@ -3523,3 +3523,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3043 Locate dispatch_with_dedup hot spot post-t3040 (target dedup_check <60s) #auto-dispatch #enhancement #model:opus-4-7 #pulse ref:GH#21659 pr:#21660 completed:2026-04-29
 
 - [ ] t3042 fix: claim-task-id.sh emits doubled task-ID prefix in TODO.md line #auto-dispatch #bug ref:GH#21658
+
+- [ ] t3044 bug(log-issue): client-side fingerprint dedup bypassed by direct gh issue create — server-side guard needed #auto-dispatch #bug ref:GH#21744
