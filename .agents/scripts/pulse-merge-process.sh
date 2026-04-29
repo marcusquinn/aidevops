@@ -792,7 +792,8 @@ _repo_allows_auto_merge() {
 
 	mkdir -p "$cache_dir" 2>/dev/null || true
 
-	local _flag _f_exit
+	local _flag=""
+	local _f_exit=0
 	_flag=$(gh api "repos/${repo_slug}" --jq '.allow_auto_merge // false' 2>/dev/null)
 	_f_exit=$?
 	if [[ $_f_exit -ne 0 ]]; then
@@ -862,7 +863,8 @@ _set_native_auto_merge_or_skip() {
 	# already done (success/skipped — failures filtered upstream by
 	# _pr_required_checks_pass), the immediate --admin path is faster than
 	# round-tripping through GitHub's auto-merge engine.
-	local pending_count _pc_exit
+	local pending_count=""
+	local _pc_exit=0
 	pending_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
 		--jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null)
 	_pc_exit=$?
@@ -878,7 +880,8 @@ _set_native_auto_merge_or_skip() {
 	fi
 
 	# CI in flight — ask GitHub to merge on green.
-	local _auto_output _auto_exit
+	local _auto_output=""
+	local _auto_exit=0
 	_auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
 	_auto_exit=$?
 	if [[ $_auto_exit -eq 0 ]]; then
