@@ -701,10 +701,13 @@ _notify_stale_recovery_resolved_by_pr() {
 			continue
 		fi
 
-		# Gate 3e: All non-maintainer-gate CI checks must be SUCCESS.
+		# Gate 3e: All non-maintainer-gate CI checks must have a passing conclusion.
+		# A check passes if conclusion is SUCCESS, NEUTRAL, or SKIPPED.
+		# Anything else (FAILURE, CANCELLED, TIMED_OUT, ACTION_REQUIRED, STALE,
+		# or still in-progress with no conclusion yet) counts as failing.
 		local failing_checks
 		failing_checks=$(printf '%s' "$pr_json" | jq -r \
-			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\" and .status != \"COMPLETED\")] | length" \
+			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\")] | length" \
 			2>/dev/null) || failing_checks=0
 		[[ "$failing_checks" =~ ^[0-9]+$ ]] || failing_checks=0
 		if [[ "$failing_checks" -gt 0 ]]; then
