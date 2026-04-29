@@ -868,8 +868,8 @@ _search_ids_by_sensitivity() {
 	_require_jq || return 1
 	find "$sources_dir" -maxdepth 2 -name "meta.json" \
 		-exec jq -r --arg tier "$tier" --arg def "$META_DEFAULT_SENSITIVITY" \
-		'select((.sensitivity // $def) == $tier) | .id' {} + \
-		| sort
+		'select((.sensitivity // $def) == $tier) | (.id // empty)' {} + 2>/dev/null \
+		| sort || true
 	return 0
 }
 
@@ -909,8 +909,8 @@ _search_ids_by_status() {
 	# Match Markdoc draft-status tag: {% draft-status status="<value>" ... %}
 	local pattern="\\{%\\s*draft-status\\b[^%]*status\\s*=\\s*[\"']?${draft_status}[\"']?"
 	find "$sources_dir" -maxdepth 2 -name "source.md" \
-		-exec grep -liE "$pattern" {} + \
-		| while read -r path; do basename "$(dirname "$path")"; done \
+		-exec grep -liE "$pattern" {} + 2>/dev/null \
+		| sed 's|/source.md$||; s|.*/||' \
 		| sort || true
 	return 0
 }
