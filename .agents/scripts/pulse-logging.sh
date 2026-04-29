@@ -27,70 +27,58 @@
 _PULSE_LOGGING_LOADED=1
 
 #######################################
-# rotate_pulse_log — hot/cold log sharding (t1886)
+# _rotate_single_log — gzip-compress and truncate a single log file.
+# Extracted from rotate_pulse_log to keep function complexity under 100 lines.
 #
-# Called once per cycle, before any log writes. If pulse.log exceeds
-# PULSE_LOG_HOT_MAX_BYTES, it is gzip-compressed and moved to the cold
-# archive directory. The cold archive is then pruned to stay within
-# PULSE_LOG_COLD_MAX_BYTES by removing the oldest archives first.
-#
-# Design constraints:
-#   - Atomic: uses a tmp file + mv to avoid partial archives.
-#   - Non-fatal: any failure is logged to WRAPPER_LOGFILE and silently
-#     ignored so the pulse cycle is never blocked by log housekeeping.
-#   - Cross-platform: uses _file_size_bytes from portable-stat.sh.
-#   - No external deps beyond gzip (standard on macOS and Linux).
+# Arguments:
+#   $1 — source log file path
+#   $2 — archive file basename (e.g. "pulse-20260429-123456.log.gz")
+#   $3 — label for log messages (e.g. "hot log", "wrapper")
+# Returns: 0 (always — non-fatal on any error)
 #######################################
-rotate_pulse_log() {
-	# Ensure archive directory exists
-	mkdir -p "$PULSE_LOG_ARCHIVE_DIR" 2>/dev/null || {
-		echo "[pulse-wrapper] rotate_pulse_log: cannot create archive dir ${PULSE_LOG_ARCHIVE_DIR}" >>"$WRAPPER_LOGFILE"
-		return 0
-	}
+_rotate_single_log() {
+	local source_file="$1"
+	local archive_name="$2"
+	local label="$3"
 
-	# Check hot log size — skip if under cap or log doesn't exist
-	local hot_size=0
-	if [[ -f "$LOGFILE" ]]; then
-		hot_size=$(_file_size_bytes "$LOGFILE")
-	fi
-
-	if [[ "$hot_size" -lt "$PULSE_LOG_HOT_MAX_BYTES" ]]; then
-		return 0
-	fi
-
-	# Rotate: compress hot log to archive
-	local ts
-	ts=$(date -u +%Y%m%d-%H%M%S)
-	local archive_name="pulse-${ts}.log.gz"
 	local archive_path="${PULSE_LOG_ARCHIVE_DIR}/${archive_name}"
-	local tmp_archive
-	# t2997: drop .gz — XXXXXX must be at end for BSD mktemp.
+	local source_size=0
+	source_size=$(_file_size_bytes "$source_file")
+
+	local tmp_archive=""
+	# t2997: XXXXXX must be at end for BSD mktemp.
 	tmp_archive=$(mktemp "${PULSE_LOG_ARCHIVE_DIR}/.pulse-archive-XXXXXX") || {
-		echo "[pulse-wrapper] rotate_pulse_log: mktemp failed for archive" >>"$WRAPPER_LOGFILE"
+		echo "[pulse-wrapper] rotate_pulse_log: mktemp failed for ${label} archive" >>"$WRAPPER_LOGFILE"
 		return 0
 	}
 
-	if gzip -c "$LOGFILE" >"$tmp_archive" 2>/dev/null; then
+	if gzip -c "$source_file" >"$tmp_archive" 2>/dev/null; then
 		mv "$tmp_archive" "$archive_path" 2>/dev/null || {
 			rm -f "$tmp_archive"
 			echo "[pulse-wrapper] rotate_pulse_log: mv failed for ${archive_name}" >>"$WRAPPER_LOGFILE"
 			return 0
 		}
-		# Truncate hot log (not delete — preserves file descriptor for any
-		# concurrent writers that still have it open)
-		: >"$LOGFILE" 2>/dev/null || true
-		echo "[pulse-wrapper] rotate_pulse_log: rotated ${hot_size}B → ${archive_name}" >>"$WRAPPER_LOGFILE"
+		# Truncate (not delete — preserves file descriptor for concurrent writers)
+		: >"$source_file" 2>/dev/null || true
+		echo "[pulse-wrapper] rotate_pulse_log: rotated ${label} ${source_size}B → ${archive_name}" >>"$WRAPPER_LOGFILE"
 	else
 		rm -f "$tmp_archive"
-		echo "[pulse-wrapper] rotate_pulse_log: gzip failed for ${LOGFILE}" >>"$WRAPPER_LOGFILE"
-		return 0
+		echo "[pulse-wrapper] rotate_pulse_log: gzip failed for ${label} (${source_file})" >>"$WRAPPER_LOGFILE"
 	fi
 
-	# Prune cold archive to stay within PULSE_LOG_COLD_MAX_BYTES
-	# Sum archive sizes; remove oldest (lexicographic = chronological) until under cap.
+	return 0
+}
+
+#######################################
+# _prune_cold_archive — remove oldest archives until total size <= cap.
+# Extracted from rotate_pulse_log to keep function complexity under 100 lines.
+#
+# Arguments: none (uses PULSE_LOG_ARCHIVE_DIR, PULSE_LOG_COLD_MAX_BYTES globals)
+# Returns: 0
+#######################################
+_prune_cold_archive() {
 	local total_cold=0
-	local archive_file archive_size
-	# Build sorted list (oldest first via lexicographic sort on timestamp-named files)
+	local archive_file="" archive_size=0
 	local -a archive_files=()
 	while IFS= read -r archive_file; do
 		archive_files+=("$archive_file")
@@ -112,18 +100,62 @@ rotate_pulse_log() {
 		done
 	fi
 
-	# GH#20025: Rotate stage timings log alongside the main log.
-	# Simpler rotation: just truncate when over 1MB (one TSV line ≈ 80 bytes,
-	# so 1MB ≈ 12,500 entries ≈ weeks of data). Archive the old content first.
+	return 0
+}
+
+#######################################
+# rotate_pulse_log — hot/cold log sharding (t1886)
+#
+# Called once per cycle, before any log writes. If pulse.log exceeds
+# PULSE_LOG_HOT_MAX_BYTES, it is gzip-compressed and moved to the cold
+# archive directory. The cold archive is then pruned to stay within
+# PULSE_LOG_COLD_MAX_BYTES by removing the oldest archives first.
+# GH#21756: also rotates WRAPPER_LOGFILE (pulse-wrapper.log) and
+# stage-timings log when over their respective caps.
+#
+# Design constraints:
+#   - Atomic: uses a tmp file + mv to avoid partial archives.
+#   - Non-fatal: any failure is logged to WRAPPER_LOGFILE and silently
+#     ignored so the pulse cycle is never blocked by log housekeeping.
+#   - Cross-platform: uses _file_size_bytes from portable-stat.sh.
+#   - No external deps beyond gzip (standard on macOS and Linux).
+#######################################
+rotate_pulse_log() {
+	# Ensure archive directory exists
+	mkdir -p "$PULSE_LOG_ARCHIVE_DIR" 2>/dev/null || {
+		echo "[pulse-wrapper] rotate_pulse_log: cannot create archive dir ${PULSE_LOG_ARCHIVE_DIR}" >>"$WRAPPER_LOGFILE"
+		return 0
+	}
+
+	local ts=""
+	ts=$(date -u +%Y%m%d-%H%M%S)
+
+	# Rotate LOGFILE (pulse.log) if over cap
+	local hot_size=0
+	if [[ -f "$LOGFILE" ]]; then
+		hot_size=$(_file_size_bytes "$LOGFILE")
+	fi
+	if [[ "$hot_size" -ge "$PULSE_LOG_HOT_MAX_BYTES" ]]; then
+		_rotate_single_log "$LOGFILE" "pulse-${ts}.log.gz" "hot log"
+		_prune_cold_archive
+	fi
+
+	# GH#20025: Rotate stage timings log (1MB cap).
 	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]] && [[ -f "$PULSE_STAGE_TIMINGS_LOG" ]]; then
 		local timings_size=0
 		timings_size=$(_file_size_bytes "$PULSE_STAGE_TIMINGS_LOG")
 		if [[ "$timings_size" -gt 1048576 ]]; then
-			local timings_archive="${PULSE_LOG_ARCHIVE_DIR}/pulse-stage-timings-${ts}.log.gz"
-			if gzip -c "$PULSE_STAGE_TIMINGS_LOG" >"$timings_archive" 2>/dev/null; then
-				: >"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
-				echo "[pulse-wrapper] rotate_pulse_log: rotated stage-timings ${timings_size}B → $(basename "$timings_archive")" >>"$WRAPPER_LOGFILE"
-			fi
+			_rotate_single_log "$PULSE_STAGE_TIMINGS_LOG" "pulse-stage-timings-${ts}.log.gz" "stage-timings"
+		fi
+	fi
+
+	# GH#21756: Rotate WRAPPER_LOGFILE (pulse-wrapper.log) — same cap as hot log.
+	# This was the gap that allowed GH#21729's 6GB runaway.
+	if [[ -n "${WRAPPER_LOGFILE:-}" ]] && [[ -f "$WRAPPER_LOGFILE" ]]; then
+		local wrapper_size=0
+		wrapper_size=$(_file_size_bytes "$WRAPPER_LOGFILE")
+		if [[ "$wrapper_size" -gt "$PULSE_LOG_HOT_MAX_BYTES" ]]; then
+			_rotate_single_log "$WRAPPER_LOGFILE" "pulse-wrapper-${ts}.log.gz" "wrapper"
 		fi
 	fi
 
