@@ -612,6 +612,86 @@ _dff_now_ms() {
 }
 
 #######################################
+# t3022: Per-model concurrency cap guard.
+#
+# Prevents 429 rate-limit cascades when multiple opus-tier workers are
+# launched simultaneously. A single Anthropic account sustains many
+# concurrent sonnet workers but only ~3-4 concurrent opus before hitting
+# 429s that make workers 20-min zombies (observed: 3 opus-4-6 workers
+# killed at the same minute with rate_limit, ts=1777397345-1777397359).
+#
+# Counts in-flight opus workers by probing the process list for opencode's
+# '-m anthropic/claude-opus' flag (the literal flag opencode receives from
+# _build_run_cmd in headless-runtime-model.sh). Returns 1 (deferred) when
+# the candidate's model is opus and inflight >= cap. Sonnet/haiku and
+# auto-routed candidates (empty model_override) always return 0.
+#
+# Deferred candidates are retried next pulse cycle — they are NOT NMR'd
+# or fast-fail penalised. This is a temporary yield, not a block.
+#
+# Cap resolution order (highest to lowest):
+#   1. AIDEVOPS_OPUS_CONCURRENCY_CAP env var
+#   2. OPUS_CONCURRENCY_CAP in .agents/configs/dispatch-model-caps.conf
+#   3. Built-in default (4)
+#
+# Arguments:
+#   $1 - issue_number (for logging)
+#   $2 - repo_slug (for logging)
+#   $3 - resolved_model (e.g. "anthropic/claude-opus-4-6" or "" for auto)
+# Returns:
+#   0 - proceed with dispatch (not opus, or inflight < cap)
+#   1 - deferred (opus inflight >= cap); caller should `return 1`
+#######################################
+_dff_check_model_concurrency_cap() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local resolved_model="$3"
+
+	# Empty model = auto round-robin (no explicit model:* label) — skip cap check.
+	[[ -z "$resolved_model" ]] && return 0
+
+	# Only cap opus-tier models; sonnet and haiku are unaffected.
+	case "$resolved_model" in
+	*claude-opus*) ;;  # fall through to cap enforcement below
+	*) return 0 ;;
+	esac
+
+	# Load per-model caps from config with inline defaults.
+	# Defaults match the documented values in dispatch-model-caps.conf.
+	local OPUS_CONCURRENCY_CAP=4
+	local _caps_conf="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/../configs/dispatch-model-caps.conf"
+	if [[ -f "$_caps_conf" ]]; then
+		# shellcheck disable=SC1090
+		source "$_caps_conf" 2>/dev/null || true
+	fi
+	# Env var takes highest precedence (overrides both default and conf file).
+	local opus_cap="${AIDEVOPS_OPUS_CONCURRENCY_CAP:-${OPUS_CONCURRENCY_CAP}}"
+
+	# Count in-flight opus workers from the process list.
+	# opencode is launched with '-m anthropic/claude-opus-4-6' (or -4-7) by
+	# _build_run_cmd in headless-runtime-model.sh:412. pgrep -f matches the
+	# full cmdline so it catches both 4-6 and 4-7 variants in one probe.
+	#
+	# pgrep exits 1 with no output when no processes match — perfectly normal.
+	# Assign to a variable first with || true to avoid triggering set -o pipefail.
+	local _opus_pids=""
+	_opus_pids=$(pgrep -f 'opencode.*-m anthropic/claude-opus' 2>/dev/null) || true
+	local opus_inflight=0
+	if [[ -n "$_opus_pids" ]]; then
+		opus_inflight=$(printf '%s\n' "$_opus_pids" | wc -l | tr -d ' ')
+		[[ "$opus_inflight" =~ ^[0-9]+$ ]] || opus_inflight=0
+	fi
+
+	pulse_dispatch_debug_log "#${issue_number}: opus_concurrency_cap check inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model}"
+
+	if ((opus_inflight >= opus_cap)); then
+		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) deferred — opus_concurrency_cap: inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model} (retry next cycle)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Process a single dispatch candidate: extract fields, skip if ineligible,
 # dispatch via dispatch_with_dedup, verify worker launch, and track the
 # outcome for adaptive batch throttling.
@@ -672,6 +752,15 @@ _dff_process_candidate() {
 	fi
 	model_override=$(resolve_dispatch_model_for_labels "$labels_csv")
 	pulse_dispatch_debug_log "#${issue_number}: model_override=${model_override:-<auto>} — calling dispatch_with_dedup"
+
+	# t3022: Defer opus candidates when the per-model concurrency cap is reached.
+	# Prevents 429 cascades from simultaneous opus worker launches. Sonnet/haiku
+	# candidates are unaffected. Deferred candidates retry next pulse cycle.
+	local _concurrency_cap_rc=0
+	_dff_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
+	if [[ "$_concurrency_cap_rc" -ne 0 ]]; then
+		return 1
+	fi
 
 	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
 	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
