@@ -43,9 +43,10 @@ import { initObservability, handleEvent } from "./observability.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
-import { startCursorProxy } from "./cursor-proxy.mjs";
-import { startGoogleProxy } from "./google-proxy.mjs";
+import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
+import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
 import { startClaudeProxy } from "./claude-proxy.mjs";
+import { isHeadless } from "./proxy-lifecycle.mjs";
 
 // ---------------------------------------------------------------------------
 // Directory constants
@@ -78,24 +79,6 @@ function run(cmd, timeout = 5000) {
   } catch {
     return "";
   }
-}
-
-/**
- * Detect headless OpenCode/CI sessions. Headless workers (pulse-spawned,
- * GitHub Actions, full-loop) only ever target anthropic/* via the OAuth
- * pool — they never request claudecli/*, so starting the Claude CLI proxy
- * for them is pure waste and contributes to multi-instance EADDRINUSE
- * races. Canonical env-var set per AGENTS.md "Main-branch planning
- * exception" rule (t1990). See GH#21944.
- * @returns {boolean}
- */
-function isHeadless() {
-  return Boolean(
-    process.env.FULL_LOOP_HEADLESS ||
-    process.env.AIDEVOPS_HEADLESS ||
-    process.env.OPENCODE_HEADLESS ||
-    process.env.GITHUB_ACTIONS,
-  );
 }
 
 /**
@@ -165,20 +148,28 @@ export async function AidevopsPlugin({ directory, client }) {
   // Initialise LLM observability
   initObservability();
 
-  // Cursor gRPC proxy
+  // Cursor gRPC proxy — eagerly discover models + register provider in
+  // opencode.json so the model picker is populated. Listener bind is
+  // LAZY (see systemTransformHook below) — defers `Bun.serve` until the
+  // first cursor/* request. Eliminates the multi-instance EADDRINUSE
+  // race that previously fired when N OpenCode sessions started together.
+  // See GH#21948.
   const cursorAccounts = getAccounts("cursor");
   if (cursorAccounts.length > 0) {
     try {
       const cursorProxyResult = await startCursorProxy(client);
       if (cursorProxyResult) {
-        console.error(`[aidevops] Cursor gRPC proxy started on port ${cursorProxyResult.port} with ${cursorProxyResult.models.length} models`);
+        console.error(`[aidevops] Cursor gRPC proxy registered on port ${cursorProxyResult.port} with ${cursorProxyResult.models.length} models (listener lazy)`);
       }
     } catch (err) {
-      console.error(`[aidevops] Cursor gRPC proxy failed to start: ${err.message}`);
+      console.error(`[aidevops] Cursor gRPC proxy failed to register: ${err.message}`);
     }
   }
 
-  // Google auth-translating proxy
+  // Google auth-translating proxy — same eager/lazy split as Cursor:
+  // eager phase persists the provider entry (URL, models) so the picker
+  // is populated; the `Bun.serve` listener bind defers to the first
+  // google/* request. See GH#21948.
   const googleAccounts = getAccounts("google");
   if (googleAccounts.length > 0) {
     try {
@@ -187,10 +178,10 @@ export async function AidevopsPlugin({ directory, client }) {
         if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
           process.env.GOOGLE_GENERATIVE_AI_API_KEY = "google-pool-proxy";
         }
-        console.error(`[aidevops] Google proxy started on port ${googleProxyResult.port} with ${googleProxyResult.models.length} models`);
+        console.error(`[aidevops] Google proxy registered on port ${googleProxyResult.port} with ${googleProxyResult.models.length} models (listener lazy)`);
       }
     } catch (err) {
-      console.error(`[aidevops] Google proxy failed to start: ${err.message}`);
+      console.error(`[aidevops] Google proxy failed to register: ${err.message}`);
     }
   }
 
@@ -198,9 +189,9 @@ export async function AidevopsPlugin({ directory, client }) {
   // (see systemTransformHook composition below). Eagerly starting on every
   // plugin init wasted resources in headless workers (which use anthropic/*
   // via OAuth pool, never claudecli/*) and caused N-instance EADDRINUSE
-  // races when N OpenCode sessions started simultaneously. See GH#21944.
-  // Headless workers skip startup entirely; interactive sessions defer
-  // startup until they actually request a claudecli model.
+  // races when N OpenCode sessions started simultaneously. See GH#21944
+  // for the original Claude-only fix and GH#21948 for the consolidation
+  // that brought cursor + google onto the same lazy-start pattern.
 
   // Create tools
   const baseTools = createTools(SCRIPTS_DIR, run);
@@ -238,18 +229,36 @@ export async function AidevopsPlugin({ directory, client }) {
     intentField: INTENT_FIELD,
   });
 
-  // Composed system.transform hook: lazy-start the Claude CLI proxy on the
-  // first claudecli/* request, then delegate to TTSR enforcement. See
-  // GH#21944. The proxy module is internally idempotent (proxyPort caching
-  // + adopt-on-EADDRINUSE), so repeat calls per request are cheap. Failures
-  // here are logged but never block the request — the underlying provider
-  // call will surface a clearer error if claudecli is genuinely unreachable.
+  // Lazy-start dispatch table for local proxies. Keys are OpenCode
+  // `model.providerID` values; values are thunks that bring up the
+  // proxy listener on demand via the shared lifecycle helper (which
+  // handles probe-first adoption, EADDRINUSE retry, and idempotent
+  // re-entry — see proxy-lifecycle.mjs). Repeat calls per request are
+  // cheap because the lifecycle caches the bound port. Headless workers
+  // skip dispatch entirely (they only ever target anthropic/* via the
+  // OAuth pool). See GH#21944 (Claude-only original) and GH#21948
+  // (consolidation across all three proxies).
+  const proxyStarters = {
+    claudecli: () => startClaudeProxy(client, directory),
+    cursor: () => ensureCursorProxyServer(),
+    google: () => ensureGoogleProxyServer(),
+  };
+
+  // Composed system.transform hook: lazy-start the appropriate local
+  // proxy on the first request whose providerID matches, then delegate
+  // to TTSR enforcement. Failures here are logged but never block the
+  // request — the underlying provider call will surface a clearer error
+  // if the proxy is genuinely unreachable.
   const systemTransformHook = async (input, output) => {
-    if (!isHeadless() && input?.model?.providerID === "claudecli") {
-      try {
-        await startClaudeProxy(client, directory);
-      } catch (err) {
-        console.error(`[aidevops] Claude proxy lazy-start failed: ${err.message}`);
+    const providerID = input?.model?.providerID;
+    if (providerID && !isHeadless()) {
+      const starter = proxyStarters[providerID];
+      if (starter) {
+        try {
+          await starter();
+        } catch (err) {
+          console.error(`[aidevops] ${providerID} proxy lazy-start failed: ${err.message}`);
+        }
       }
     }
     await ttsrSystemTransformHook(input, output);
