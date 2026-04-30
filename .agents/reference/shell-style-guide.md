@@ -317,6 +317,67 @@ $ mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
 
 GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate enforces the BSD-safe form everywhere so future macOS regressions are caught at PR time.
 
+## Watchdog self-write anti-pattern (t3058 / t3071)
+
+If a script monitors file `X` for activity as a **stall signal** (byte-delta, line-count, or mtime polling), the SAME script MUST NOT write status markers to `X`. Self-writes register as "progress" and silently neuter the timeout — the very condition the marker was meant to instrument becomes unreachable. There is no log line, no exit code, no alert when this happens; the watchdog simply never trips.
+
+### Banned pattern
+
+```bash
+# Watchdog polls $OUTPUT_FILE size in a 60s loop:
+last_size=$(_file_size_bytes "$OUTPUT_FILE")
+# ... later, on stall detection or transition events ...
+echo "[lifecycle] defer marker" >>"$OUTPUT_FILE"   # BANNED — self-write to monitored file
+# Next poll: current_size > last_size → "progress detected" → stall counter zeroed
+```
+
+### Allowed pattern — sibling lifecycle log
+
+```bash
+# Route status markers to a separate file the watchdog never reads:
+echo "[lifecycle] defer marker" >>"$LIFECYCLE_LOG"
+# Canonical destination: ~/.aidevops/logs/pulse-dispatch.log
+```
+
+`$LIFECYCLE_LOG` (defined in `worker-lifecycle-common.sh`, default `~/.aidevops/logs/pulse-dispatch.log`) is the canonical destination for lifecycle markers — defer events, kill events, classification events, recovery events. Pick a different sibling log only when the marker is conceptually distinct from lifecycle telemetry.
+
+### Why it's a silent bug
+
+- **No observable failure.** The timeout becomes a no-op; nothing breaks loudly. Hard kill (`HARD_KILL_SECONDS`) becomes the only effective cap, defeating the purpose of the finer-grained stall timeout.
+- **Cross-function variants are subtler.** If function A writes to `$LOGFILE` and function B's polling loop reads `$LOGFILE`, A's writes register as B's "progress" — even when A had nothing to do with the work B was monitoring. (See `pulse-watchdog.sh:426` — idle-resume echo writes affect progress-check stall counter.)
+- **Bug ships unnoticed.** The canonical t3058 case shipped for ~1 year because there was no test that monitored watchdog firing in the marker-write path. Code review caught nothing; runtime behaviour caught nothing.
+
+### Detection
+
+Find scripts matching BOTH signals:
+
+```bash
+# 1. Polling loops on file size/lines/mtime
+rg -l 'last_size|prev_size|byte_delta|previous_size|file_size_prev' .agents/scripts/
+
+# 2. For each candidate, identify the monitored file variable, then check for writes to it
+for f in $(rg -l 'last_size|prev_size|byte_delta' .agents/scripts/); do
+  rg "(>>|tee|printf.*>).*\$\{?[A-Z_]+\}?" "$f"
+done
+```
+
+### Classification
+
+Any non-empty result requires triage:
+
+- **GENUINE** — same code path writes to the monitored file with no defensive countermeasure → fix by routing to `$LIFECYCLE_LOG`.
+- **DEFENDED** — write happens outside the watch window (e.g., post-kill marker after the monitoring loop has exited), OR a sentinel filter excludes the marker bytes from the count → safe; document the contract in a comment.
+- **UNRELATED** — false positive from the regex (e.g., monitoring tracks growth rate, not stall; or the write is to a completely different file aliased through a similarly-named variable).
+
+### Canonical fix examples
+
+- `worker-activity-watchdog.sh:570-583` — t3058 fix (PR #21797). Defer-marker writes routed to `$LIFECYCLE_LOG` after originally going to `$OUTPUT_FILE`.
+- `pulse-watchdog.sh:378` (progress-resume echo) and `:426` (idle-resume echo) — t3071 audit findings; fix dispatched as separate auto-dispatch issue.
+
+### Originating incident
+
+PR #21797 (t3058) — `worker-activity-watchdog.sh` defer-marker writes to `$OUTPUT_FILE` silently neutered `STALL_TIMEOUT` for any CPU-busy worker. The bug shipped undetected for ~1 year because the failure mode was structural invisibility — the timeout simply never fired, and no test exercised the marker-write path with a co-located stall monitor. Regression test pinning the contract: `tests/test-watchdog-no-false-kill.sh` Test 4b. Anti-pattern audit pass: t3071.
+
 ## Related
 
 - **Originating incident**: PR #18728, GH#18702 (primary), GH#18693 (cascade)
