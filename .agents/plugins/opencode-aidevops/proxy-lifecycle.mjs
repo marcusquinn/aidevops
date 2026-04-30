@@ -217,10 +217,172 @@ export async function probeProxyWithRetry(port, path, timeoutMs, attempts, inter
  *   sibling already did).
  */
 
+// ---------------------------------------------------------------------------
+// Module-level lifecycle helpers
+// ---------------------------------------------------------------------------
+//
+// These are hoisted out of `createProxyLifecycle`'s closure (where they lived
+// in the first cut of GH#21948) and take the lifecycle state object as their
+// first argument. The motivation is purely a quality-gate concern: when these
+// helpers were nested, qlty's `function-complexity` and `return-statements`
+// counters rolled their inner returns up into `createProxyLifecycle`'s totals,
+// pushing the factory over the threshold (cc=20, returns=14). Hoisting drops
+// the factory's effective metrics to ~2/2 without changing observable
+// behaviour or the public API. State is still encapsulated — the lifecycle
+// object is closed over only by the small accessor lambdas the factory
+// returns.
+
+/**
+ * @typedef {Object} LifecycleState
+ * @property {string} name
+ * @property {string} providerID
+ * @property {string} probePath
+ * @property {number} probeTimeoutMs
+ * @property {number} probeRetryAttempts
+ * @property {number} probeRetryIntervalMs
+ * @property {number} targetPort
+ * @property {number | null} port
+ * @property {boolean} starting
+ */
+
+/**
+ * Probe once at the lifecycle's target port and adopt if found.
+ *
+ * @param {LifecycleState} lifecycle
+ * @returns {Promise<EnsureStartedResult | null>}
+ */
+async function tryAdoptExisting(lifecycle) {
+  const existing = await probeProxy(
+    lifecycle.targetPort,
+    lifecycle.probePath,
+    lifecycle.probeTimeoutMs,
+  );
+  if (!existing) return null;
+  lifecycle.port = existing;
+  console.error(
+    `[aidevops] ${lifecycle.name} proxy: adopted existing server on port ${lifecycle.port}`,
+  );
+  return { port: lifecycle.port, adopted: true };
+}
+
+/**
+ * Try to adopt a sibling listener after our own bind raised EADDRINUSE.
+ * Splits the post-EADDRINUSE branch out of `tryLaunch` so the main
+ * function stays under the framework's function-complexity gate.
+ *
+ * @param {LifecycleState} lifecycle
+ * @returns {Promise<EnsureStartedResult | null>}
+ */
+async function attemptEaddrinuseAdoption(lifecycle) {
+  const adoptedPort = await probeProxyWithRetry(
+    lifecycle.targetPort,
+    lifecycle.probePath,
+    lifecycle.probeTimeoutMs,
+    lifecycle.probeRetryAttempts,
+    lifecycle.probeRetryIntervalMs,
+  );
+  if (adoptedPort) {
+    lifecycle.port = adoptedPort;
+    console.error(
+      `[aidevops] ${lifecycle.name} proxy: adopted sibling server on port ${lifecycle.port} after EADDRINUSE`,
+    );
+    return { port: lifecycle.port, adopted: true };
+  }
+  console.error(
+    `[aidevops] ${lifecycle.name} proxy: port ${lifecycle.targetPort} in use but no responsive proxy found after ${lifecycle.probeRetryAttempts} probes — port may be poisoned by another process`,
+  );
+  return null;
+}
+
+/**
+ * Try to launch the proxy via the caller-supplied `launch` callback,
+ * with EADDRINUSE → adopt-with-retry recovery. Caller has already
+ * verified credentials and we are not adopting an existing listener.
+ *
+ * @param {LifecycleState} lifecycle
+ * @param {() => Promise<{port: number}>} launch
+ * @returns {Promise<EnsureStartedResult | null>}
+ */
+async function tryLaunch(lifecycle, launch) {
+  lifecycle.starting = true;
+  try {
+    const result = await launch();
+    lifecycle.port = result.port;
+    return { port: lifecycle.port, adopted: false };
+  } catch (err) {
+    if (isPortInUseError(err)) {
+      // EADDRINUSE between probe and bind = sibling plugin won the
+      // race. Sibling's fetch handler may not be ready yet, so retry-
+      // probe before declaring failure. Collapses the historical
+      // "scary error + fallback succeeds" log pair into either a
+      // clean adoption or a single genuine failure. See GH#21944.
+      return attemptEaddrinuseAdoption(lifecycle);
+    }
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[aidevops] ${lifecycle.name} proxy: failed to start: ${message}`);
+    return null;
+  } finally {
+    lifecycle.starting = false;
+  }
+}
+
+/**
+ * Apply launch preconditions (Bun present, credentials available) and
+ * delegate to `tryLaunch`. Splitting this out of `ensureStarted` keeps
+ * the main entry point's return count under the qlty threshold.
+ *
+ * @param {LifecycleState} lifecycle
+ * @param {EnsureStartedOptions} opts
+ * @returns {Promise<EnsureStartedResult | null>}
+ */
+async function tryLaunchIfPossible(lifecycle, opts) {
+  if (typeof globalThis.Bun === "undefined") {
+    console.error(
+      `[aidevops] ${lifecycle.name} proxy: skipped (not running under Bun and no existing proxy found)`,
+    );
+    return null;
+  }
+  // Caller-defined precondition failed (no accounts / CLI missing).
+  // Silent return; the caller logs context if useful.
+  if (!opts.credentialsAvailable()) return null;
+  return tryLaunch(lifecycle, opts.launch);
+}
+
+/**
+ * Bring the proxy up if it isn't already, with full race-resilience.
+ *
+ * Order of operations:
+ *   1. If we're mid-startup (`starting`), bail — second concurrent
+ *      caller returns null rather than racing.
+ *   2. If we already have a cached port, return it (adopted=false
+ *      because we don't know — the cached value covers both fresh
+ *      bind and prior adoption transparently).
+ *   3. Probe-first: if a sibling already serves the port, adopt it.
+ *   4. Verify Bun is available (we can't bind without it) and the
+ *      caller's credential check passes; then call `launch()`. On
+ *      EADDRINUSE, retry-probe to adopt the sibling that won the race.
+ *
+ * @param {LifecycleState} lifecycle
+ * @param {EnsureStartedOptions} opts
+ * @returns {Promise<EnsureStartedResult | null>}
+ */
+async function ensureStartedImpl(lifecycle, opts) {
+  if (lifecycle.starting) return null;
+  if (lifecycle.port !== null) return { port: lifecycle.port, adopted: false };
+
+  // Probe first — handles plugin hot-reload (module scope reset, but
+  // the previous Bun.serve instance lives on) and adopts any sibling
+  // that's already serving requests.
+  const adopted = await tryAdoptExisting(lifecycle);
+  if (adopted) return adopted;
+
+  return tryLaunchIfPossible(lifecycle, opts);
+}
+
 /**
  * Create a per-proxy lifecycle controller. Call once at module scope in
  * each proxy file; the returned object owns the proxy's port + in-flight
- * state in closure.
+ * state in closure (via the `lifecycle` object).
  *
  * The controller is internally idempotent: parallel `ensureStarted` calls
  * during initial startup short-circuit (the second sees `starting=true`
@@ -235,145 +397,21 @@ export async function probeProxyWithRetry(port, path, timeoutMs, attempts, inter
  * }}
  */
 export function createProxyLifecycle(options) {
-  const {
-    name,
-    defaultPort,
-    envPortVar,
-    providerID,
-    probePath = "/v1/models",
-    probeTimeoutMs = 1500,
-    probeRetryAttempts = 5,
-    probeRetryIntervalMs = 1000,
-  } = options;
-
-  // Closure-private state — one set per proxy instance.
-  /** @type {number | null} */
-  let port = null;
-  /** @type {boolean} */
-  let starting = false;
-
-  const targetPort = resolveProxyPort(envPortVar, defaultPort);
-
-  async function probeOnce() {
-    return probeProxy(targetPort, probePath, probeTimeoutMs);
-  }
-
-  async function probeWithRetry() {
-    return probeProxyWithRetry(
-      targetPort,
-      probePath,
-      probeTimeoutMs,
-      probeRetryAttempts,
-      probeRetryIntervalMs,
-    );
-  }
-
-  /**
-   * Try to adopt a sibling listener after our own bind raised EADDRINUSE.
-   * Splits the post-EADDRINUSE branch out of `ensureStarted` so the main
-   * function stays under the framework's function-complexity gate.
-   *
-   * @returns {Promise<EnsureStartedResult | null>}
-   */
-  async function attemptEaddrinuseAdoption() {
-    const adoptedPort = await probeWithRetry();
-    if (adoptedPort) {
-      port = adoptedPort;
-      console.error(
-        `[aidevops] ${name} proxy: adopted sibling server on port ${port} after EADDRINUSE`,
-      );
-      return { port, adopted: true };
-    }
-    console.error(
-      `[aidevops] ${name} proxy: port ${targetPort} in use but no responsive proxy found after ${probeRetryAttempts} probes — port may be poisoned by another process`,
-    );
-    return null;
-  }
-
-  /**
-   * Try to launch the proxy via the caller-supplied `launch` callback,
-   * with EADDRINUSE → adopt-with-retry recovery. Caller has already
-   * verified credentials and we are not adopting an existing listener.
-   *
-   * @param {() => Promise<{port: number}>} launch
-   * @returns {Promise<EnsureStartedResult | null>}
-   */
-  async function tryLaunch(launch) {
-    starting = true;
-    try {
-      const result = await launch();
-      port = result.port;
-      return { port, adopted: false };
-    } catch (err) {
-      if (isPortInUseError(err)) {
-        // EADDRINUSE between probe and bind = sibling plugin won the
-        // race. Sibling's fetch handler may not be ready yet, so retry-
-        // probe before declaring failure. Collapses the historical
-        // "scary error + fallback succeeds" log pair into either a
-        // clean adoption or a single genuine failure. See GH#21944.
-        return attemptEaddrinuseAdoption();
-      }
-      const message = err instanceof Error ? err.message : String(err);
-      console.error(`[aidevops] ${name} proxy: failed to start: ${message}`);
-      return null;
-    } finally {
-      starting = false;
-    }
-  }
-
-  /**
-   * Bring the proxy up if it isn't already, with full race-resilience.
-   *
-   * Order of operations:
-   *   1. If we're mid-startup (`starting`), bail — second concurrent
-   *      caller returns null rather than racing.
-   *   2. If we already have a cached port, return it (adopted=false
-   *      because we don't know — the cached value covers both fresh
-   *      bind and prior adoption transparently).
-   *   3. Probe-first: if a sibling already serves the port, adopt it.
-   *   4. Verify Bun is available (we can't bind without it) and the
-   *      caller's credential check passes.
-   *   5. Call `launch()`; on EADDRINUSE, retry-probe to adopt the
-   *      sibling that won the race.
-   *
-   * @param {EnsureStartedOptions} opts
-   * @returns {Promise<EnsureStartedResult | null>}
-   */
-  async function ensureStarted(opts) {
-    if (starting) return null;
-    if (port !== null) return { port, adopted: false };
-
-    // Probe first — handles plugin hot-reload (module scope reset, but
-    // the previous Bun.serve instance lives on) and adopts any sibling
-    // that's already serving requests.
-    const existing = await probeOnce();
-    if (existing) {
-      port = existing;
-      console.error(
-        `[aidevops] ${name} proxy: adopted existing server on port ${port}`,
-      );
-      return { port, adopted: true };
-    }
-
-    if (typeof globalThis.Bun === "undefined") {
-      console.error(
-        `[aidevops] ${name} proxy: skipped (not running under Bun and no existing proxy found)`,
-      );
-      return null;
-    }
-
-    if (!opts.credentialsAvailable()) {
-      // Caller-defined precondition failed (no accounts / CLI missing).
-      // Silent return; the caller logs context if useful.
-      return null;
-    }
-
-    return tryLaunch(opts.launch);
-  }
-
+  /** @type {LifecycleState} */
+  const lifecycle = {
+    name: options.name,
+    providerID: options.providerID,
+    probePath: options.probePath ?? "/v1/models",
+    probeTimeoutMs: options.probeTimeoutMs ?? 1500,
+    probeRetryAttempts: options.probeRetryAttempts ?? 5,
+    probeRetryIntervalMs: options.probeRetryIntervalMs ?? 1000,
+    targetPort: resolveProxyPort(options.envPortVar, options.defaultPort),
+    port: null,
+    starting: false,
+  };
   return {
-    providerID,
-    getPort: () => port,
-    ensureStarted,
+    providerID: lifecycle.providerID,
+    getPort: () => lifecycle.port,
+    ensureStarted: (opts) => ensureStartedImpl(lifecycle, opts),
   };
 }
