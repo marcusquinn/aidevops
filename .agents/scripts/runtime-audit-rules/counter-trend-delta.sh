@@ -93,7 +93,7 @@ Counter source: \`${stats_file/#$HOME/\~}\`
 
 ## Why
 
-Sharp counter regressions are the supervisor's structural blind spot — they appear in operational state long before they manifest as failed issues. Each regression cited above warrants investigation: a 3x-or-greater jump on a counter usually means a config change, a new bottleneck, or a regression in a recently-deployed script.
+Sharp counter regressions are the supervisor’s structural blind spot — they appear in operational state long before they manifest as failed issues. Each regression cited above warrants investigation: a 3x-or-greater jump on a counter usually means a config change, a new bottleneck, or a regression in a recently-deployed script.
 
 ## How
 
