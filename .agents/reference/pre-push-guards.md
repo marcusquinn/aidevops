@@ -1,9 +1,9 @@
-# Pre-Push Guards Reference (t1965, t2198, t2745)
+# Pre-Push Guards Reference (t1965, t2198, t2745, t3224)
 
-Four opt-in `pre-push` hooks block common mistakes before they hit CI.
+Five opt-in `pre-push` hooks block common mistakes before they hit CI.
 
 Install all: `install-pre-push-guards.sh install`
-Install individual: `install-pre-push-guards.sh --guard privacy|complexity|scope|credential|dup-todo`
+Install individual: `install-pre-push-guards.sh --guard privacy|complexity|scope|credential|dup-todo|repo-verify`
 Status: `install-pre-push-guards.sh status`
 Bypass all: `git push --no-verify`
 
@@ -60,3 +60,62 @@ Fix: `grep -nE '^[[:space:]]*- \[.\] tNNN([[:space:]]|$)' TODO.md` to find both 
 - Bypass all hooks: `git push --no-verify` (no warning)
 - **Fail-open** when: `TODO.md` is absent from the pushed commit, or `git show` fails
 - Test harness: `.agents/scripts/tests/test-pre-push-dup-todo-guard.sh`
+
+## Repo Verify Guard (t3224)
+
+**File:** `.agents/hooks/repo-verify-pre-push.sh`
+
+Runs the target repo's declared `format`/`lint`/`typecheck` commands BEFORE the push reaches CI. Closes the gap that lets workers ship PRs failing Format/Lint on the next CI cycle and then sit in a CI-feedback loop.
+
+In headless sessions (pulse, CI workers, routines), the guard auto-fixes formatting/lint failures, amends them into HEAD, and re-runs the check. The push proceeds only if the recheck passes — no more "shipped, then failed Format on CI" round-trips. In interactive sessions the guard is fail-closed by default so the user sees and approves the autofix.
+
+### Discovery cascade (first match wins)
+
+1. **`<repo>/.aidevops.json` `.verify` block** (canonical):
+
+   ```json
+   {
+     "verify": {
+       "enabled": true,
+       "format": "pnpm format",
+       "format_fix": "pnpm format:fix",
+       "lint": "pnpm lint",
+       "lint_fix": "pnpm lint:fix",
+       "typecheck": "pnpm typecheck"
+     }
+   }
+   ```
+
+   Set `"enabled": false` to opt the repo out entirely. Omit any `*_fix` slot to disable autofix for that check (it falls through to the mentor message).
+
+2. **`<repo>/package.json` scripts** — auto-detected when no `.aidevops.json .verify` is set. The guard reads `scripts.format`, `scripts.lint`, `scripts.typecheck` (alias: `type-check`), and prefers `scripts."format:fix"` over `scripts.format_fix` (similarly for lint). Package manager is detected from the lockfile (`pnpm-lock.yaml` → `pnpm`, `yarn.lock` → `yarn`, `bun.lock`/`bun.lockb` → `bun`, else `npm`).
+
+3. **`.agents/configs/repo-verify-defaults.conf`** — toolchain auto-detection by sentinel file (`Cargo.toml` → `cargo fmt -- --check`, `go.mod` → `go vet ./...`, etc.). Add new toolchains here.
+
+4. **No match: silent skip (exit 0).** Repo is not verify-eligible; nothing to enforce.
+
+### Auto-fix policy
+
+- `AIDEVOPS_PREPUSH_AUTOFIX=1` (set explicitly): run `*_fix` on failure, `git add -A && git commit --amend --no-edit --no-verify`, re-run the check.
+- `AIDEVOPS_PREPUSH_AUTOFIX=0`: emit a mentoring failure with the exact suggested fix command, exit 1.
+- **Default (when unset):** ON in headless contexts (`FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS`), OFF in interactive sessions. The interactive default keeps the user in the loop on automated commit-amends.
+- **Typecheck never auto-fixes** — semantic failures need code changes regardless of `AUTOFIX`.
+
+### Skip conditions (exit 0 fast)
+
+- `AIDEVOPS_PREPUSH_REPO_VERIFY=0` (per-push bypass)
+- `GITHUB_ACTIONS=true` (CI runs verify itself; redundant)
+- Working tree dirty (a verify run would conflate WIP with the actual push state — warn + skip)
+- No verify config resolved
+- `jq` missing (config parsing requires it)
+
+### Bypass
+
+- One push: `AIDEVOPS_PREPUSH_REPO_VERIFY=0 git push ...`
+- All hooks: `git push --no-verify`
+- Disable autofix only: `AIDEVOPS_PREPUSH_AUTOFIX=0 git push ...`
+- Debug discovery: `AIDEVOPS_PREPUSH_REPO_VERIFY_DEBUG=1 git push ...`
+
+### Test harness
+
+`.agents/scripts/tests/test-repo-verify-pre-push-hook.sh` — 14 hermetic end-to-end scenarios covering bypass paths, all three discovery layers, autofix amend + recheck, and the typecheck-never-autofixes invariant. Run: `bash .agents/scripts/tests/test-repo-verify-pre-push-hook.sh`.
