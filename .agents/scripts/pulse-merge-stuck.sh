@@ -276,10 +276,7 @@ When multiple PRs fail the **same set of checks**, the root cause is typically:
 				--body "$body" \
 				--label "$_STUCK_LABELS" 2>/dev/null || true
 		else
-			gh issue create --repo "$repo_slug" \
-				--title "Merge-stuck: ${count} PRs failing ${fp}" \
-				--body "$body" \
-				--label "$_STUCK_LABELS" 2>/dev/null || true
+			echo "[pulse-merge-stuck] gh_create_issue not available — cannot file pattern outage for ${repo_slug}" >>"$LOGFILE"
 		fi
 		pulse_stats_increment "$_STUCK_COUNTER_ESCALATIONS" 2>/dev/null || true
 		echo "[pulse-merge-stuck] Filed pattern outage issue for fingerprint '${fp}' (${count} PRs) in ${repo_slug}" >>"$LOGFILE"
@@ -643,10 +640,7 @@ The merge pipeline is not making forward progress. Possible causes:
 			--body "$body" \
 			--label "$_STUCK_LABELS" 2>/dev/null || true
 	else
-		gh issue create --repo marcusquinn/aidevops \
-			--title "Merge-stuck: zero-progress for ${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:-5} cycles (${total_stuck} stuck PRs)" \
-			--body "$body" \
-			--label "$_STUCK_LABELS" 2>/dev/null || true
+		echo "[pulse-merge-stuck] gh_create_issue not available — cannot file zero-progress meta-issue" >>"$LOGFILE"
 	fi
 	pulse_stats_increment "$_STUCK_COUNTER_ESCALATIONS" 2>/dev/null || true
 
