@@ -242,6 +242,11 @@ source "${SCRIPT_DIR}/pulse-merge.sh"
 source "${SCRIPT_DIR}/pulse-merge-conflict.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
+# t3193 (GH#21895): stuck-merge detector + zero-progress circuit breaker.
+# Sourced AFTER pulse-merge.sh so its functions can call _extract_linked_issue
+# at runtime via bash lazy resolution (matches the conflict/feedback pattern).
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-stuck.sh"
 # Phase 5 (t1973, GH#18380): cleanup + issue-reconcile extracted into two modules.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-cleanup.sh"

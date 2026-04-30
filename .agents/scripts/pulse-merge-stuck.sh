@@ -1,0 +1,881 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# pulse-merge-stuck.sh — Stuck-merge detector + escalation router (t3193, GH#21895).
+#
+# This module classifies APPROVED + MERGEABLE PRs that have been sitting
+# unmerged past a threshold and either:
+#   (a) escalates them with a one-shot worker-ready comment on the linked
+#       issue (per-PR; dedup'd by HTML marker), or
+#   (b) files an investigation meta-issue when ≥N stuck PRs in the same repo
+#       share an identical failure fingerprint (broken-base outage signal),
+#       dedup'd by fingerprint hash.
+#
+# Sourced by pulse-wrapper.sh AFTER pulse-merge.sh, mirroring the
+# pulse-merge-conflict.sh / pulse-merge-feedback.sh pattern. Bash's lazy
+# function name resolution lets us call _extract_linked_issue (defined in
+# pulse-merge.sh) and _gh_idempotent_comment (defined in pulse-triage-cache.sh)
+# at runtime without source-time ordering constraints.
+#
+# Module entry point (called once per pulse cycle, per repo):
+#   pulse_merge_stuck_run_pass <repo_slug>
+#     Iterates open PRs, increments per-PR/per-cycle counters, fires
+#     individual escalations, and detects pattern outages.
+#
+# Module-internal classifier (returns one of six string outcomes):
+#   _classify_stuck_pr <pr_number> <repo_slug>
+#     STUCK_CHECKS_FAILING            — ≥1 FAILURE in rollup, no conflict
+#     STUCK_CONFLICT_NO_NUDGE_LABEL   — CONFLICTING + no origin:interactive
+#                                       and no origin:worker (gap in existing
+#                                       rebase-nudge family)
+#     STUCK_BRANCHPROTECT_404         — default branch unprotected; the
+#                                       _check_required_checks_passing
+#                                       fail-closed path mis-fires
+#     STUCK_BRANCHPROTECT_API_ERROR   — transient 401/5xx from protection API
+#     STUCK_AUTH                      — gh auth-failed signature
+#     STUCK_OTHER                     — mergeable + approved + idle but no
+#                                       distinct signal
+#
+# Background (t3193):
+#   The pulse had rich deterministic merge gates and two narrow stuck-state
+#   nudges (pulse-merge-conflict.sh::_post_rebase_nudge_on_*) but no general
+#   detector. Operational evidence (managed private webapp repo, 2026-04-30
+#   ~14:00Z) showed 8 PRs stuck 9-29h: 6 sharing identical Setup-step CI
+#   failures (broken-base signal), 2 docs/migration with mergeStateStatus=DIRTY
+#   and no nudge label. No pulse-stats counter trips, no investigation issue
+#   filed, no worker dispatched. This module fills that gap.
+
+# Include guard
+[[ -n "${_PULSE_MERGE_STUCK_LOADED:-}" ]] && return 0
+_PULSE_MERGE_STUCK_LOADED=1
+
+# Module-level variable defaults (set -u guards). When sourced standalone
+# (test harness, pulse-merge-routine.sh) the pulse-wrapper.sh bootstrap has
+# NOT run; guard each bare var so set -u does not abort.
+: "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+
+# Source the pulse-stats helper for gauge/counter writes.
+_PULSE_MERGE_STUCK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./pulse-stats-helper.sh
+# shellcheck disable=SC1091
+source "${_PULSE_MERGE_STUCK_DIR}/pulse-stats-helper.sh"
+
+# Load thresholds from the canonical config file (env vars take precedence).
+# The conf file lives at .agents/configs/pulse-merge-stuck.conf; we resolve
+# from _PULSE_MERGE_STUCK_DIR (../configs/pulse-merge-stuck.conf).
+_PULSE_MERGE_STUCK_CONF="${_PULSE_MERGE_STUCK_DIR}/../configs/pulse-merge-stuck.conf"
+if [[ -f "$_PULSE_MERGE_STUCK_CONF" ]]; then
+	# Only source values for vars that aren't already set by the env.
+	# shellcheck source=/dev/null
+	[[ -z "${AIDEVOPS_MERGE_STUCK_AGE_MINUTES:-}" ]] && \
+		AIDEVOPS_MERGE_STUCK_AGE_MINUTES=$(grep -E '^AIDEVOPS_MERGE_STUCK_AGE_MINUTES=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
+	[[ -z "${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:-}" ]] && \
+		AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=$(grep -E '^AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
+	[[ -z "${AIDEVOPS_MERGE_PATTERN_MIN_PRS:-}" ]] && \
+		AIDEVOPS_MERGE_PATTERN_MIN_PRS=$(grep -E '^AIDEVOPS_MERGE_PATTERN_MIN_PRS=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
+	[[ -z "${AIDEVOPS_MERGE_STUCK_ENABLED:-}" ]] && \
+		AIDEVOPS_MERGE_STUCK_ENABLED=$(grep -E '^AIDEVOPS_MERGE_STUCK_ENABLED=' "$_PULSE_MERGE_STUCK_CONF" 2>/dev/null | tail -1 | cut -d= -f2)
+fi
+
+# Hard defaults for any value the conf didn't supply. Validated as positive
+# integers downstream — non-numeric here would silently break arithmetic.
+: "${AIDEVOPS_MERGE_STUCK_AGE_MINUTES:=240}"
+: "${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:=5}"
+: "${AIDEVOPS_MERGE_PATTERN_MIN_PRS:=3}"
+: "${AIDEVOPS_MERGE_STUCK_ENABLED:=1}"
+
+# ── Constants (literal-dedup) ────────────────────────────────────────────────
+# Counter and gauge names that would otherwise repeat 3+ times in the body
+# and trip the pre-commit string-literal ratchet.
+readonly _PMS_COUNTER_ESCALATIONS_FILED="pulse_merge_stuck_escalations_filed"
+readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
+readonly _PMS_JQ_NULL_GUARD="null"
+# jq filter snippet that selects array elements with a FAILURE rollup
+# conclusion or state. Extracted so the underlying upcase predicate is
+# defined exactly once (via a jq `def`) and reused for both the new-style
+# `.conclusion` and the legacy `.state` field — which is sometimes
+# lower-case for older commit-status checks.
+readonly _PMS_JQ_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.state; "FAILURE"))'
+
+# ── Helpers ──────────────────────────────────────────────────────────────────
+
+# Convert ISO 8601 timestamp to epoch seconds. Bash 3.2 portable; uses GNU
+# date if available, falls back to BSD `date -j`. Echoes "0" on failure.
+_pms_iso_to_epoch() {
+	local iso="$1"
+	local result
+	result=$(date -d "$iso" +%s 2>/dev/null) \
+		|| result=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null) \
+		|| result=0
+	[[ "$result" =~ ^[0-9]+$ ]] || result=0
+	printf '%s' "$result"
+	return 0
+}
+
+# Check whether a PR is "merge-eligible but stuck" — APPROVED + MERGEABLE
+# (or CONFLICTING with a nudge label gap), not draft, no hold-for-review.
+# Echoes "1" if eligible-stuck, "0" otherwise.
+#
+# Args: $1 = compact PR JSON object (number, mergeable, reviewDecision,
+#             isDraft, labels, updatedAt)
+_pms_is_eligible_stuck() {
+	local pr_obj="$1"
+	local mergeable="" review_decision="" is_draft="" labels=""
+	mergeable=$(printf '%s' "$pr_obj" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null)
+	review_decision=$(printf '%s' "$pr_obj" | jq -r '.reviewDecision // ""' 2>/dev/null)
+	is_draft=$(printf '%s' "$pr_obj" | jq -r '.isDraft // false' 2>/dev/null)
+	labels=$(printf '%s' "$pr_obj" | jq -r '[.labels[].name] | join(",")' 2>/dev/null)
+
+	# Skip drafts unconditionally
+	[[ "$is_draft" == "true" ]] && { printf '0'; return 0; }
+	# Skip hold-for-review opt-out
+	[[ "$labels" == *"hold-for-review"* ]] && { printf '0'; return 0; }
+	# CHANGES_REQUESTED is a real review block, not a stuck state
+	[[ "$review_decision" == "CHANGES_REQUESTED" ]] && { printf '0'; return 0; }
+
+	# MERGEABLE + APPROVED is the canonical eligible-stuck path; CONFLICTING
+	# without a nudge-eligible label is the gap case we still want to detect.
+	if [[ "$mergeable" == "MERGEABLE" && "$review_decision" == "APPROVED" ]]; then
+		printf '1'
+		return 0
+	fi
+	if [[ "$mergeable" == "CONFLICTING" ]]; then
+		# If neither origin:interactive (handled by existing nudge) nor
+		# origin:worker (handled by fix-worker dispatch) is present, this
+		# is the no-nudge-label gap.
+		if [[ "$labels" != *"origin:interactive"* && "$labels" != *"origin:worker"* ]]; then
+			printf '1'
+			return 0
+		fi
+	fi
+	printf '0'
+	return 0
+}
+
+# ── Classifier ───────────────────────────────────────────────────────────────
+
+#######################################
+# Classify why a stuck PR is stuck. Echoes one of:
+#   STUCK_CHECKS_FAILING
+#   STUCK_CONFLICT_NO_NUDGE_LABEL
+#   STUCK_BRANCHPROTECT_404
+#   STUCK_BRANCHPROTECT_API_ERROR
+#   STUCK_AUTH
+#   STUCK_OTHER
+#
+# Args: $1 = pr_number, $2 = repo_slug
+# Returns: 0 (always; classification is the stdout)
+#######################################
+_classify_stuck_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	# Cheap fast paths first. Fetch labels + mergeable + checks rollup once.
+	local pr_meta
+	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json labels,mergeable,statusCheckRollup 2>/dev/null) || pr_meta=""
+
+	local mergeable="" labels=""
+	mergeable=$(printf '%s' "$pr_meta" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null)
+	labels=$(printf '%s' "$pr_meta" | jq -r '[.labels[].name] | join(",")' 2>/dev/null)
+
+	# Conflict + no nudge label → that gap.
+	if [[ "$mergeable" == "CONFLICTING" \
+		&& "$labels" != *"origin:interactive"* \
+		&& "$labels" != *"origin:worker"* ]]; then
+		printf 'STUCK_CONFLICT_NO_NUDGE_LABEL'
+		return 0
+	fi
+
+	# Branch protection probe — distinguish 404 from API error.
+	local default_branch
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch=""
+	if [[ -n "$default_branch" ]]; then
+		local protection_resp="" protection_exit=0
+		protection_resp=$(gh api \
+			"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
+			2>&1)
+		protection_exit=$?
+		if [[ $protection_exit -ne 0 ]]; then
+			# 404 = no protection (intentional or accidental — the
+			# rollup-pass path will still gate based on actual checks).
+			if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
+				printf 'STUCK_BRANCHPROTECT_404'
+				return 0
+			fi
+			# 401 / 403 / 5xx etc — transient or auth break.
+			if grep -qi 'HTTP 401\|authentication required\|bad credentials' <<<"$protection_resp"; then
+				printf 'STUCK_AUTH'
+				return 0
+			fi
+			printf 'STUCK_BRANCHPROTECT_API_ERROR'
+			return 0
+		fi
+	fi
+
+	# Rollup contains a FAILURE / FAILED conclusion? Use the shared
+	# selector to keep the jq expression DRY across call sites.
+	local has_failure
+	has_failure=$(printf '%s' "$pr_meta" | jq -r \
+		"[.statusCheckRollup[]? | ${_PMS_JQ_FAILURE_SELECTOR}] | length" \
+		2>/dev/null)
+	[[ "$has_failure" =~ ^[0-9]+$ ]] || has_failure=0
+	if [[ "$has_failure" -gt 0 ]]; then
+		printf 'STUCK_CHECKS_FAILING'
+		return 0
+	fi
+
+	printf 'STUCK_OTHER'
+	return 0
+}
+
+# Compute a deterministic failure fingerprint for a PR — sorted set of
+# FAILURE check names joined by `|`. Used as the dedup key for the outage
+# meta-issue so the same outage signature files exactly one investigation
+# issue per cycle.
+_pms_failure_fingerprint() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local rollup
+	rollup=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json statusCheckRollup --jq '.statusCheckRollup // []' 2>/dev/null) || rollup="[]"
+
+	# Extract names of checks in FAILURE conclusion or state, normalize, sort, join.
+	# Uses the shared _PMS_JQ_FAILURE_SELECTOR to keep the predicate DRY.
+	printf '%s' "$rollup" | jq -r \
+		"[ .[] | ${_PMS_JQ_FAILURE_SELECTOR} | (.name // .context // \"unknown\") ] | sort | unique | join(\",\")" \
+		2>/dev/null
+}
+
+# Hash a fingerprint string to a short hex digest for the dedup marker.
+# Uses sha256sum if available, falls back to shasum or md5 — all produce a
+# stable ASCII hex string suitable for an HTML comment.
+_pms_hash_fingerprint() {
+	local input="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		printf '%s' "$input" | sha256sum | awk '{print substr($1, 1, 16)}'
+	elif command -v shasum >/dev/null 2>&1; then
+		printf '%s' "$input" | shasum -a 256 | awk '{print substr($1, 1, 16)}'
+	else
+		printf '%s' "$input" | md5 | awk '{print substr($1, 1, 16)}'
+	fi
+}
+
+# ── Per-PR escalation (Outcome 3 in brief) ──────────────────────────────────
+
+#######################################
+# Post a one-shot worker-ready escalation comment on the PR's linked issue
+# describing the stuck classification and the failing checks (when any).
+# Idempotent via the <!-- merge-stuck:individual --> marker.
+#
+# Pre-condition: caller has determined the PR is past the age threshold and
+# the classification is STUCK_CHECKS_FAILING (or another individually-
+# escalatable outcome); pattern-cluster outages are handled separately by
+# _detect_pattern_outage.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=classification, $4=linked_issue (may be empty)
+#######################################
+_escalate_individual_stuck_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local classification="$3"
+	local linked_issue="$4"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	# Need either a linked issue (to comment on) OR fall back to the PR
+	# itself — the marker prevents repeat fires either way.
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _escalate_individual_stuck_pr: _gh_idempotent_comment not defined — skipping for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Fetch failing check names for the worker-ready guidance using the
+	# shared FAILURE selector.
+	local failing_checks
+	failing_checks=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json statusCheckRollup --jq \
+		"[.statusCheckRollup[]? | ${_PMS_JQ_FAILURE_SELECTOR} | \"- \" + (.name // .context // \"unknown\")] | join(\"\\n\")" \
+		2>/dev/null)
+	[[ -n "$failing_checks" ]] || failing_checks="- (no FAILURE entries in rollup; check rollup manually)"
+
+	local marker="<!-- merge-stuck:individual -->"
+	# Bash 3.2 cannot parse `body=$(cat <<EOF ... EOF)` (heredoc-in-subshell —
+	# see reference/bash-compat.md). Use the read -r -d '' form instead — the
+	# bash 3.2-portable way to slurp a heredoc into a variable. The trailing
+	# `|| true` is required because read returns non-zero when no NUL is
+	# encountered, which is always (the input is plain text). The variable
+	# is still populated. Confirmed working in /bin/bash 3.2 on macOS.
+	local body=""
+	IFS='' read -r -d '' body <<EOF || true
+${marker}
+## Stuck-merge detector: PR has been merge-eligible but unmerged past the threshold
+
+The pulse merge pass has classified PR #${pr_number} as \`${classification}\` and it has been sitting unmerged longer than \`AIDEVOPS_MERGE_STUCK_AGE_MINUTES\` (currently ${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}m). The deterministic merge gates are evaluated every cycle (~120s) and this PR has consistently failed them.
+
+### Failing checks on PR #${pr_number}
+
+${failing_checks}
+
+### Worker guidance for the next attempt
+
+1. Read PR #${pr_number} body + the latest check run logs:
+   \`\`\`bash
+   gh pr view ${pr_number} --repo ${repo_slug} --json statusCheckRollup
+   gh pr checks ${pr_number} --repo ${repo_slug}
+   \`\`\`
+2. If the failing checks are environment/Setup-step (Format, Lint, Typecheck all FAIL at the same step), the canonical default branch likely has a broken lockfile or a CI infra change — fix at the base, not on this PR. Look for a sibling outage meta-issue in this repo (filed by the same detector) before forking off here.
+3. If the failures are PR-specific (e.g. a Typecheck error introduced by this PR's code), rebase onto the latest default branch and address the diagnosed errors. Use \`full-loop-helper.sh start\` from the linked PR's worktree.
+4. If the linked issue body lacks the worker-ready file paths and verification commands required by t1900, post a comment naming the missing context before dispatching another worker — the next attempt will burn tokens on exploration otherwise.
+
+### Why you're seeing this
+
+Every pulse cycle (~120s) the deterministic merge pass re-evaluates open PRs. PRs that pass APPROVED + MERGEABLE but fail required checks have historically been re-evaluated silently every cycle until a human noticed. The stuck-merge detector (t3193) surfaces them after \`AIDEVOPS_MERGE_STUCK_AGE_MINUTES\` minutes idle. This comment is posted exactly once per linked issue — repeated stuck cycles will NOT spam the thread. If the PR merges and the issue is reopened later with a fresh stuck PR, the marker will allow a second comment.
+
+<sub>Posted automatically by \`pulse-merge-stuck.sh\` (t3193 / GH#21895). Threshold env: \`AIDEVOPS_MERGE_STUCK_AGE_MINUTES=${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}\`.</sub>
+EOF
+
+	# Comment on the linked issue if available, else on the PR itself.
+	local comment_target_kind="issue"
+	local comment_target_num="$linked_issue"
+	if [[ -z "$linked_issue" ]]; then
+		comment_target_kind="pr"
+		comment_target_num="$pr_number"
+	fi
+
+	_gh_idempotent_comment "$comment_target_num" "$repo_slug" "$marker" "$body" "$comment_target_kind" || true
+	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
+	echo "[pulse-merge-stuck] _escalate_individual_stuck_pr: PR #${pr_number} ${classification} (${repo_slug}) — comment posted on ${comment_target_kind}#${comment_target_num}" >>"$LOGFILE"
+	return 0
+}
+
+# ── Branch protection 404 handler ───────────────────────────────────────────
+
+#######################################
+# Increment the 404-skips counter when the detector classified a PR as
+# STUCK_BRANCHPROTECT_404. The actual fix for the t2922 mis-fire lives in
+# pulse-merge-process.sh::_check_required_checks_passing — this function
+# only records the observation so operators can see the rate at which the
+# 404 path is hit. Helpful for confirming the t2922 fix has fully landed.
+#
+# Args: $1=pr_number, $2=repo_slug
+#######################################
+_handle_stuck_branchprotect_404() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	pulse_stats_increment "pulse_merge_branchprotect_404_skips"
+	echo "[pulse-merge-stuck] _handle_stuck_branchprotect_404: PR #${pr_number} in ${repo_slug} — default branch unprotected; counter incremented" >>"$LOGFILE"
+	return 0
+}
+
+# ── Conflict + no-nudge-label handler ───────────────────────────────────────
+
+#######################################
+# Post a label-agnostic rebase nudge for any APPROVED + CONFLICTING PR idle
+# past the threshold that lacks both origin:interactive and origin:worker.
+# Reuses the existing <!-- pulse-rebase-nudge --> marker so it never double-
+# fires alongside _post_rebase_nudge_on_interactive_conflicting.
+#
+# Args: $1=pr_number, $2=repo_slug
+#######################################
+_handle_stuck_conflict_no_nudge_label() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 0
+
+	if ! declare -F _gh_idempotent_comment >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _handle_stuck_conflict_no_nudge_label: _gh_idempotent_comment not defined — skipping nudge for PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	local head_branch
+	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	[[ -n "$head_branch" ]] || head_branch="<branch>"
+
+	# Reuse the existing rebase-nudge marker — _gh_idempotent_comment is
+	# keyed on the marker string, so this nudge is mutually exclusive with
+	# the per-label nudges. (If a label-bearing nudge fired earlier in the
+	# PR's life and this label-agnostic nudge would be the second event,
+	# the marker prevents the duplicate post.)
+	local marker="<!-- pulse-rebase-nudge -->"
+	local body
+	body="${marker}
+## Rebase needed — PR has merge conflicts and no \`origin:*\` label
+
+This PR has merge conflicts against the default branch and lacks both \`origin:interactive\` and \`origin:worker\` labels. The pulse merge pass treats it as the label-agnostic stuck state (t3193) and surfaces it here with a one-shot rebase nudge.
+
+### To resolve
+
+\`\`\`bash
+git fetch origin
+git checkout ${head_branch}
+git rebase origin/main
+# resolve any conflicts, then:
+git push --force-with-lease
+\`\`\`
+
+Or use the GitHub web UI's *Update branch* button if the conflicts are trivial enough.
+
+### Why this PR slipped through the existing nudges
+
+The existing rebase-nudge family (\`_post_rebase_nudge_on_interactive_conflicting\`, \`_post_rebase_nudge_on_contributor_conflicting\`, \`_post_rebase_nudge_on_worker_conflicting\`) keys on the \`origin:*\` labels. PRs created without those labels — typically docs/migration commits made directly via the web UI or via a worker that didn't apply its origin label — were silently re-evaluated every cycle without surfacing.
+
+<sub>Posted automatically by \`pulse-merge-stuck.sh\` (t3193 / GH#21895).</sub>"
+
+	_gh_idempotent_comment "$pr_number" "$repo_slug" "$marker" "$body" "pr" || true
+	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
+	echo "[pulse-merge-stuck] _handle_stuck_conflict_no_nudge_label: PR #${pr_number} in ${repo_slug} — label-agnostic nudge posted" >>"$LOGFILE"
+	return 0
+}
+
+# ── Pattern-cluster outage detector ─────────────────────────────────────────
+
+#######################################
+# Group all stuck PRs in the repo by failure fingerprint. If ≥ AIDEVOPS_MERGE_PATTERN_MIN_PRS
+# share an identical fingerprint, file ONE investigation issue per outage signature.
+# Dedup'd by the fingerprint hash so the same outage doesn't re-file every cycle.
+#
+# Args: $1=repo_slug, $2=newline-separated list of stuck PR numbers
+#######################################
+_detect_pattern_outage() {
+	local repo_slug="$1"
+	local stuck_prs="$2"
+
+	[[ -z "$stuck_prs" ]] && return 0
+
+	# Build "fingerprint <TAB> pr_number" lines, then group by fingerprint.
+	local tmp_lines="" tmp_groups=""
+	tmp_lines=$(mktemp "${TMPDIR:-/tmp}/pms-fp-XXXXXX") || return 0
+	tmp_groups=$(mktemp "${TMPDIR:-/tmp}/pms-grp-XXXXXX") || { rm -f "$tmp_lines"; return 0; }
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_lines' '$tmp_groups'" RETURN
+
+	while IFS= read -r pr_num; do
+		[[ -n "$pr_num" ]] || continue
+		local fp
+		fp=$(_pms_failure_fingerprint "$pr_num" "$repo_slug")
+		# Skip PRs with no FAILURE entries — those aren't part of an outage cluster.
+		[[ -n "$fp" ]] || continue
+		printf '%s\t%s\n' "$fp" "$pr_num" >>"$tmp_lines"
+	done <<<"$stuck_prs"
+
+	# Group by fingerprint. Pure bash 3.2 (avoids multi-line awk so the
+	# pre-commit positional-parameter validator does not false-positive
+	# on awk's `$1`/`$2` field references).
+	if [[ -s "$tmp_lines" ]]; then
+		local _prev_fp="" _cur_count=0 _cur_prs="" _line_fp _line_pr
+		while IFS=$'\t' read -r _line_fp _line_pr; do
+			[[ -n "$_line_fp" ]] || continue
+			if [[ "$_line_fp" == "$_prev_fp" ]]; then
+				_cur_count=$((_cur_count + 1))
+				_cur_prs="${_cur_prs},${_line_pr}"
+			else
+				if [[ -n "$_prev_fp" ]]; then
+					printf '%d\t%s\t%s\n' "$_cur_count" "$_prev_fp" "$_cur_prs" >>"$tmp_groups"
+				fi
+				_prev_fp="$_line_fp"
+				_cur_count=1
+				_cur_prs="$_line_pr"
+			fi
+		done < <(sort "$tmp_lines")
+		# Flush the final group.
+		if [[ -n "$_prev_fp" ]]; then
+			printf '%d\t%s\t%s\n' "$_cur_count" "$_prev_fp" "$_cur_prs" >>"$tmp_groups"
+		fi
+	fi
+
+	# Process each group with count >= threshold.
+	while IFS=$'\t' read -r count fingerprint prs; do
+		[[ "$count" =~ ^[0-9]+$ ]] || continue
+		[[ "$count" -ge "$AIDEVOPS_MERGE_PATTERN_MIN_PRS" ]] || continue
+		_pms_file_outage_issue "$repo_slug" "$count" "$fingerprint" "$prs"
+	done <"$tmp_groups"
+
+	return 0
+}
+
+# Internal: file ONE outage investigation issue (or skip if dedup marker exists).
+_pms_file_outage_issue() {
+	local repo_slug="$1"
+	local count="$2"
+	local fingerprint="$3"
+	local prs="$4"
+
+	local fp_hash
+	fp_hash=$(_pms_hash_fingerprint "$fingerprint")
+	local marker_text="merge-stuck:pattern:${fp_hash}"
+	local marker="<!-- ${marker_text} -->"
+
+	# Dedup: search for an OPEN issue with this marker. If one exists, skip.
+	local existing
+	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
+		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
+	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
+		echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Compose investigation issue body. Use the auto-dispatch + tier:thinking
+	# combination (broken base / CI infra needs reasoning) and the
+	# source:merge-stuck-detector label so workers can recognize the origin.
+	local title="merge-stuck outage: ${count} PRs sharing failure fingerprint in ${repo_slug}"
+	local body
+	body="${marker}
+## What
+
+The pulse stuck-merge detector observed **${count} PRs** in this repo with an identical failure fingerprint:
+
+\`${fingerprint}\`
+
+This is a broken-base outage signal — multiple unrelated PRs failing the same checks at the same step typically means the canonical default branch shipped a regression (broken lockfile, CI infra change, dependency drift, env-var rename). The fix belongs at the base, not on each PR.
+
+## Affected PRs
+
+$(printf '%s' "$prs" | tr ',' '\n' | while read -r p; do printf -- '- #%s\n' "$p"; done)
+
+## Why
+
+When ≥${AIDEVOPS_MERGE_PATTERN_MIN_PRS} PRs share an identical sorted set of FAILURE check names, the cause is overwhelmingly an upstream CI / base-branch break, not a coincidental cluster of PR-specific bugs. Workers re-dispatched against each PR will burn tokens fixing symptoms; this issue routes the diagnosis to the base.
+
+## How
+
+### Files Scope
+
+Investigation only — no \`Files Scope\` declared. The fix file set will be determined by the diagnosis.
+
+### Investigation steps
+
+1. Reproduce the failing check on a fresh worktree off \`origin/main\`:
+   \`\`\`bash
+   wt switch -c chore/diagnose-merge-stuck-${fp_hash:0:8}
+   # Run the same command(s) the failing CI step runs
+   \`\`\`
+2. If the failure reproduces on a clean main, the base is broken — locate the most recent commit on main that introduced the regression (\`git log --since=24h --first-parent main\`) and either revert or fix forward.
+3. If the failure does NOT reproduce on clean main, the cluster is a coincidence (rare) — close this issue with the rationale and let each PR be triaged individually.
+4. Once the base is fixed and pushed, the affected PRs above should auto-merge on their next pulse cycle (or rebase via \`gh pr update-branch\`).
+
+### Verification
+
+- The failing check listed in the fingerprint passes on a fresh worktree off \`origin/main\`.
+- Each affected PR successfully merges or has its remaining failures triaged individually.
+- This issue is closed with the resolution PR linked.
+
+## Acceptance
+
+- [ ] Root cause of the shared failure fingerprint is identified.
+- [ ] Either: a base-fix PR is merged; or: the cluster is conclusively a coincidence and each PR is triaged individually.
+- [ ] All ${count} affected PRs above are unblocked (merged, closed with cause, or have their own follow-up issues).
+
+## Session Origin
+
+Filed automatically by \`pulse-merge-stuck.sh\` (t3193) on detecting a pattern outage of ${count} PRs in ${repo_slug}.
+
+<sub>Source: pulse-merge-stuck-detector. Fingerprint hash: ${fp_hash}. Threshold env: \`AIDEVOPS_MERGE_PATTERN_MIN_PRS=${AIDEVOPS_MERGE_PATTERN_MIN_PRS}\`.</sub>"
+
+	# Use the gh wrapper (auto-injects signature + origin labels). Fail-open
+	# on any error — instrumentation must never break the pulse.
+	local labels="auto-dispatch,tier:thinking,bug,source:merge-stuck-detector"
+	# Wrapper-only — raw `gh issue create` is forbidden by the pre-push
+	# guard and would skip origin labelling + signature footer auto-injection.
+	# If the wrapper is unavailable (sourcing race / smoke test), log and
+	# skip rather than silently file an unlabelled issue.
+	if ! declare -F gh_create_issue >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _pms_file_outage_issue: gh_create_issue wrapper unavailable, skipping outage issue for ${repo_slug} fingerprint=${fp_hash}" >>"$LOGFILE"
+		return 0
+	fi
+	gh_create_issue --repo "$repo_slug" \
+		--title "$title" \
+		--body "$body" \
+		--label "$labels" >/dev/null 2>&1 || true
+	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
+	echo "[pulse-merge-stuck] _pms_file_outage_issue: filed outage issue for fingerprint ${fp_hash} (${count} PRs) in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+# ── Zero-progress meta-issue ────────────────────────────────────────────────
+
+# File ONE meta-issue describing the throughput collapse when consecutive
+# zero-progress cycles cross the threshold. Dedup'd by the fixed marker.
+# Disabled while the GraphQL circuit-breaker is tripped — the breaker
+# already names the root cause and a meta-issue would just be noise.
+_pms_file_zero_progress_meta_issue() {
+	local zero_cycles="$1"
+	local stuck_summary="$2"
+
+	# Skip if the GraphQL circuit-breaker is tripped — its own counter
+	# (pulse_dispatch_circuit_broken) is the authoritative signal.
+	local _cb_24h
+	_cb_24h=$(pulse_stats_get_24h "pulse_dispatch_circuit_broken" 2>/dev/null) || _cb_24h=0
+	[[ "$_cb_24h" =~ ^[0-9]+$ ]] || _cb_24h=0
+	if [[ "$_cb_24h" -gt 0 ]]; then
+		echo "[pulse-merge-stuck] _pms_file_zero_progress_meta_issue: skipped — circuit breaker tripped in last 24h" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Use the framework-routing helper if available — meta-issues belong in
+	# the framework repo (marcusquinn/aidevops), not in the affected project.
+	local meta_repo="marcusquinn/aidevops"
+	local marker="<!-- merge-stuck:zero-progress -->"
+
+	# Dedup: find an OPEN meta-issue with this marker (one is enough — the
+	# meta-issue stays open for human triage). Reset cadence: when the
+	# meta-issue closes (manually) and the underlying cause recurs, a fresh
+	# meta-issue is filed.
+	local existing
+	existing=$(gh issue list --repo "$meta_repo" --state open --search "merge-stuck:zero-progress" \
+		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
+	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
+		echo "[pulse-merge-stuck] _pms_file_zero_progress_meta_issue: meta-issue already open as #${existing} — skipping" >>"$LOGFILE"
+		return 0
+	fi
+
+	local title="merge-stuck: pulse merge throughput collapse (${zero_cycles} consecutive zero-progress cycles)"
+	local body
+	body="${marker}
+## What
+
+The pulse deterministic merge pass has had **${zero_cycles} consecutive cycles** with eligible-unmerged PRs but zero merges. The threshold is \`AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES}\`.
+
+## Why
+
+Eligible-unmerged means \`APPROVED + MERGEABLE + !draft + !hold-for-review\`. When this is non-zero AND the merge count is zero across multiple cycles, the merge pass is structurally blocked — gates failing closed (e.g. branch-protection 404 mis-fire), GraphQL exhaustion, repo-allowlist mismatch, or a regression in the merge gates themselves.
+
+## How
+
+### Files Scope
+
+Investigation only — no \`Files Scope\` declared.
+
+### Snapshot
+
+\`\`\`
+${stuck_summary}
+\`\`\`
+
+### Investigation steps
+
+1. Read \`~/.aidevops/logs/pulse.log\` since the meta-issue was filed (\`grep 'Merge pass: skipping' \`) — the per-PR skip reason is logged for every cycle.
+2. Cross-check \`pulse-stats.json\` for circuit-breaker fires and the \`pulse_merge_branchprotect_404_skips\` counter — if non-zero, the t2922 fail-closed path is mis-firing.
+3. Reproduce the merge gate decision for one stuck PR via \`pulse-diagnose-helper.sh pr <N>\` — it explains what the pulse decided and why.
+4. Apply the fix (often a one-line gate adjustment) and verify the next cycle drops zero-progress to 0.
+
+## Acceptance
+
+- [ ] Root cause of the throughput collapse identified.
+- [ ] At least one of the stuck PRs successfully auto-merges.
+- [ ] \`pulse_merge_zero_progress_cycles\` reads 0 in \`pulse-stats.json\`.
+
+## Session Origin
+
+Filed automatically by \`pulse-merge-stuck.sh\` (t3193). The detector resets the zero-progress counter on any successful merge — if the meta-issue is stale (cause already resolved), close it manually.
+
+<sub>Source: pulse-merge-stuck-detector. Threshold env: \`AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES}\`.</sub>"
+
+	local labels="auto-dispatch,tier:thinking,bug,source:merge-stuck-detector,framework"
+	# Wrapper-only — see _pms_file_outage_issue rationale above.
+	if ! declare -F gh_create_issue >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _pms_file_zero_progress_meta_issue: gh_create_issue wrapper unavailable, skipping meta-issue (${zero_cycles} cycles)" >>"$LOGFILE"
+		return 0
+	fi
+	gh_create_issue --repo "$meta_repo" \
+		--title "$title" \
+		--body "$body" \
+		--label "$labels" >/dev/null 2>&1 || true
+	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
+	echo "[pulse-merge-stuck] _pms_file_zero_progress_meta_issue: filed meta-issue (${zero_cycles} zero-progress cycles)" >>"$LOGFILE"
+	return 0
+}
+
+# ── Module entry point — called once per pulse cycle, per repo ─────────────
+
+#######################################
+# Count PRs in $repo_slug that are eligible-but-unmerged this cycle —
+# APPROVED + MERGEABLE + !draft + !hold-for-review (NOT age-gated).
+# Used by pulse-merge.sh to feed the zero-progress signal across all repos.
+#
+# Distinct from pulse_merge_stuck_run_pass which adds the AIDEVOPS_MERGE_STUCK_AGE_MINUTES
+# age gate — zero-progress detection wants the wider population (any cycle
+# with eligible-unmerged > 0 + zero merges is a candidate, regardless of age).
+#
+# Args: $1 = repo_slug
+# Stdout: integer count
+#######################################
+_pms_count_eligible_unmerged_for_repo() {
+	local repo_slug="$1"
+	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
+
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,mergeable,reviewDecision,isDraft,labels \
+		--limit 50 2>/dev/null) || pr_json="[]"
+	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
+
+	# Count PRs matching the eligibility criteria via jq. .mergeable and
+	# .reviewDecision are already upper-case in the GraphQL response — no
+	# ascii_upcase needed (the FAILURE selector keeps it because legacy
+	# commit-status `.state` values can be lower-case).
+	local count
+	count=$(printf '%s' "$pr_json" | jq -r '
+		[ .[]
+		  | select(
+			(.mergeable // "") == "MERGEABLE"
+			and (.reviewDecision // "") == "APPROVED"
+			and (.isDraft // false) == false
+			and (([.labels[].name] | index("hold-for-review")) == null)
+		  )
+		] | length' 2>/dev/null)
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
+	return 0
+}
+
+#######################################
+# Run the stuck-merge detector pass for one repo.
+#
+# Iterates open PRs, identifies eligible-stuck ones past the age threshold,
+# classifies each, fires individual escalations / nudges, then runs the
+# pattern-cluster outage detector across the full stuck set.
+#
+# Updates the gauge `pulse_merge_eligible_stuck_pr_count` to the count of
+# eligible-stuck PRs observed in this cycle (across all classifications).
+#
+# Args: $1 = repo_slug
+# Returns: 0 always (instrumentation must not break the pulse)
+#######################################
+pulse_merge_stuck_run_pass() {
+	local repo_slug="$1"
+
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$AIDEVOPS_MERGE_STUCK_ENABLED" == "1" ]] || return 0
+
+	# Fetch open PRs with the fields the detector needs.
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,mergeable,reviewDecision,isDraft,labels,updatedAt \
+		--limit 50 2>/dev/null) || pr_json="[]"
+	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
+
+	local pr_count
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ "$pr_count" -gt 0 ]] || return 0
+
+	local now_epoch
+	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
+	local age_threshold_secs=$((AIDEVOPS_MERGE_STUCK_AGE_MINUTES * 60))
+
+	local eligible_stuck_count=0
+	local stuck_pr_numbers=""
+
+	# Iterate each PR — classify, escalate, accumulate fingerprints.
+	local i=0
+	while [[ "$i" -lt "$pr_count" ]]; do
+		local pr_obj="" pr_num="" pr_updated="" pr_age_secs=0 is_stuck=""
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		i=$((i + 1))
+		[[ -n "$pr_obj" ]] || continue
+
+		pr_num=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null)
+		[[ "$pr_num" =~ ^[0-9]+$ ]] || continue
+
+		# Eligibility gate first (cheap)
+		is_stuck=$(_pms_is_eligible_stuck "$pr_obj")
+		[[ "$is_stuck" == "1" ]] || continue
+
+		# Age gate (also cheap — uses cached updatedAt)
+		pr_updated=$(printf '%s' "$pr_obj" | jq -r '.updatedAt // empty' 2>/dev/null)
+		[[ -n "$pr_updated" ]] || continue
+		pr_age_secs=$(( now_epoch - $(_pms_iso_to_epoch "$pr_updated") ))
+		[[ "$pr_age_secs" -ge "$age_threshold_secs" ]] || continue
+
+		eligible_stuck_count=$((eligible_stuck_count + 1))
+		stuck_pr_numbers="${stuck_pr_numbers}${pr_num}\n"
+
+		# Per-PR classification + handler (skip per-PR escalation when the
+		# PR is part of a pattern cluster — detected later in the same pass).
+		local classification
+		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug")
+
+		# Fetch linked issue once for the escalation comment.
+		local linked_issue=""
+		if declare -F _extract_linked_issue >/dev/null 2>&1; then
+			linked_issue=$(_extract_linked_issue "$pr_num" "$repo_slug" 2>/dev/null) || linked_issue=""
+		fi
+
+		case "$classification" in
+			STUCK_BRANCHPROTECT_404)
+				_handle_stuck_branchprotect_404 "$pr_num" "$repo_slug"
+				;;
+			STUCK_CONFLICT_NO_NUDGE_LABEL)
+				_handle_stuck_conflict_no_nudge_label "$pr_num" "$repo_slug"
+				;;
+			STUCK_CHECKS_FAILING|STUCK_BRANCHPROTECT_API_ERROR|STUCK_AUTH|STUCK_OTHER)
+				_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue"
+				;;
+		esac
+	done
+
+	# Update the gauge for this cycle's count.
+	pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "$eligible_stuck_count"
+
+	# Pattern-cluster detector over the full stuck set.
+	if [[ "$eligible_stuck_count" -ge "$AIDEVOPS_MERGE_PATTERN_MIN_PRS" ]]; then
+		_detect_pattern_outage "$repo_slug" "$(printf '%b' "$stuck_pr_numbers")" || true
+	fi
+
+	echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: ${repo_slug} — eligible_stuck=${eligible_stuck_count}, threshold=${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}m" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Increment the zero-progress counter for the current pulse cycle.
+# Called by pulse-merge.sh::merge_ready_prs_all_repos at the END of the
+# merge pass — see the wiring there.
+#
+# When the counter crosses AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES, files a
+# meta-issue (dedup'd by marker) describing the throughput collapse.
+#
+# Reset by a separate call to pulse_merge_zero_progress_reset on any
+# successful merge.
+#
+# Args:
+#   $1 - count of PRs that were eligible-unmerged this cycle (>0 to count)
+#   $2 - count of PRs successfully merged this cycle
+#######################################
+pulse_merge_zero_progress_record() {
+	local eligible_unmerged="${1:-0}"
+	local merged_count="${2:-0}"
+
+	[[ "$eligible_unmerged" =~ ^[0-9]+$ ]] || eligible_unmerged=0
+	[[ "$merged_count" =~ ^[0-9]+$ ]] || merged_count=0
+
+	# Successful merge resets the counter.
+	if [[ "$merged_count" -gt 0 ]]; then
+		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
+		return 0
+	fi
+
+	# No merges + nothing eligible = idle pulse, not a stuck pulse.
+	[[ "$eligible_unmerged" -gt 0 ]] || return 0
+
+	# Increment the gauge by 1.
+	local cur
+	cur=$(pulse_stats_get_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES")
+	[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
+	cur=$((cur + 1))
+	pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "$cur"
+
+	echo "[pulse-merge-stuck] pulse_merge_zero_progress_record: zero_progress_cycles=${cur}/${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES}, eligible_unmerged=${eligible_unmerged}" >>"$LOGFILE"
+
+	# At threshold, file the meta-issue (dedup'd by marker).
+	if [[ "$cur" -ge "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" ]]; then
+		local stuck_summary
+		stuck_summary=$(pulse_stats_get_gauge "pulse_merge_eligible_stuck_pr_count")
+		stuck_summary="eligible_unmerged_this_cycle=${eligible_unmerged}, eligible_stuck_count=${stuck_summary}, zero_progress_cycles=${cur}"
+		_pms_file_zero_progress_meta_issue "$cur" "$stuck_summary"
+	fi
+	return 0
+}

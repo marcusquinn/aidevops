@@ -110,6 +110,10 @@ source "${SCRIPT_DIR}/pulse-merge.sh"
 source "${SCRIPT_DIR}/pulse-merge-conflict.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-merge-feedback.sh"
+# t3193: stuck-merge detector module — sourced after the conflict/feedback
+# downstream modules so its functions resolve via bash lazy lookup.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-merge-stuck.sh"
 
 # =============================================================================
 # Env-var defaults (belt-and-suspenders — also guarded inside the function)

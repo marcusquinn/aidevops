@@ -76,6 +76,10 @@ merge_ready_prs_all_repos() {
 	local total_closed=0
 	local total_failed=0
 
+	# t3193: track eligible-but-unmerged across all repos for the zero-progress
+	# circuit breaker. Eligible = APPROVED + MERGEABLE + !draft + !hold-for-review.
+	local total_eligible_unmerged=0
+
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
 
@@ -89,13 +93,36 @@ merge_ready_prs_all_repos() {
 		total_closed=$((total_closed + repo_closed))
 		total_failed=$((total_failed + repo_failed))
 
+		# t3193: run the stuck-merge detector pass for this repo. Resolves
+		# at runtime via bash lazy lookup — defined in pulse-merge-stuck.sh
+		# which is sourced by pulse-wrapper.sh after pulse-merge.sh.
+		if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
+			pulse_merge_stuck_run_pass "$repo_slug" || true
+		fi
+
+		# t3193: count this repo's eligible-but-unmerged contribution to the
+		# all-repos total. Cheap second pass (uses the same gh pr list cache
+		# that the merge pass already warmed for the iteration window).
+		if declare -F _pms_count_eligible_unmerged_for_repo >/dev/null 2>&1; then
+			local _repo_eligible
+			_repo_eligible=$(_pms_count_eligible_unmerged_for_repo "$repo_slug" 2>/dev/null) || _repo_eligible=0
+			[[ "$_repo_eligible" =~ ^[0-9]+$ ]] || _repo_eligible=0
+			total_eligible_unmerged=$((total_eligible_unmerged + _repo_eligible))
+		fi
+
 		if [[ -f "$_mr_stop_flag" ]]; then
 			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$_mr_logfile"
 			break
 		fi
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null)
 
-	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$_mr_logfile"
+	# t3193: record the zero-progress signal AFTER all repos have been processed.
+	# Resolves at runtime via bash lazy lookup (pulse-merge-stuck.sh).
+	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
+		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" || true
+	fi
+
+	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}, eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
 	# Write health counter deltas to a temp file (GH#18571, GH#15107).
 	# run_stage_with_timeout backgrounds this function in a subshell, so
 	# direct updates to _PULSE_HEALTH_* variables are lost on return.
@@ -684,30 +711,74 @@ _attempt_worker_briefed_auto_merge() {
 # Args: $1=repo_slug, $2=pr_number
 # Returns: 0=all required contexts passing, 1=some not passing or API error
 #######################################
-_check_required_checks_passing() {
+#######################################
+# Resolve the newline-delimited list of required status check contexts
+# for $repo_slug's default branch. Extracted from _check_required_checks_passing
+# (t3193) to keep that function under the 100-line complexity gate.
+#
+# Args: $1=repo_slug
+# Stdout: required contexts (one per line). Empty when the default branch
+#         has no protection (HTTP 404) or no required contexts configured —
+#         BOTH cases are "no enforcement required" and the caller treats them
+#         as PASS (t3193 supersedes t2922 fail-closed for the 404 case).
+# Returns:
+#   0 — contexts resolved (may be empty per above)
+#   1 — real error (default branch resolve failed, or non-404 API error) —
+#       caller MUST fail closed to preserve t2922 invariant.
+#######################################
+_required_contexts_for_default_branch() {
 	local repo_slug="$1"
-	local pr_number="$2"
-
-	# Resolve default branch (required to query branch protection endpoint).
-	local default_branch _db_exit
-	default_branch=$(gh api "repos/${repo_slug}" \
-		--jq '.default_branch' 2>/dev/null)
+	local default_branch="" _db_exit=0
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null)
 	_db_exit=$?
 	if [[ $_db_exit -ne 0 || -z "$default_branch" ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: failed to resolve default branch for ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		echo "[pulse-merge] _required_contexts_for_default_branch: failed to resolve default branch for ${repo_slug} — caller will fail closed (t2922)" >>"$LOGFILE"
 		return 1
 	fi
 
 	# Fetch required contexts from branch protection — authoritative list.
-	local required_contexts _rc_exit
-	required_contexts=$(gh api \
+	# t3193: capture stderr separately so HTTP 404 (no protection on the
+	# default branch) can be distinguished from real API errors (auth fail,
+	# 5xx, network). The collapsed `--jq | 2>/dev/null` form previously
+	# treated 404 the same as 401, causing the caller to fail closed on
+	# intentionally-unprotected default branches and blocking the worker-
+	# briefed merge cascade.
+	local protection_resp="" _rc_exit=0
+	protection_resp=$(gh api \
 		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
-		--jq '.contexts // [] | .[]' 2>/dev/null)
+		2>&1)
 	_rc_exit=$?
 	if [[ $_rc_exit -ne 0 ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: branch protection API failed for ${repo_slug} (exit ${_rc_exit}) — failing closed (t2922)" >>"$LOGFILE"
+		# HTTP 404 = the default branch has no protection rules. Print empty
+		# and return success so the caller's rollup gate runs instead of
+		# fail-closed.
+		if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
+			echo "[pulse-merge] _required_contexts_for_default_branch: no branch protection on ${repo_slug} default branch (HTTP 404) — empty contexts (t3193)" >>"$LOGFILE"
+			printf ''
+			return 0
+		fi
+		# Any other failure (401, 403, 5xx, network) is a real error — keep
+		# the t2922 fail-closed behaviour so an auth break doesn't silently
+		# unblock a stale fork PR.
+		echo "[pulse-merge] _required_contexts_for_default_branch: branch protection API failed for ${repo_slug} (exit ${_rc_exit}) — caller will fail closed (t2922)" >>"$LOGFILE"
 		return 1
 	fi
+
+	# Extract required contexts from the JSON response.
+	printf '%s' "$protection_resp" \
+		| jq -r '.contexts // [] | .[]' 2>/dev/null || true
+	return 0
+}
+
+_check_required_checks_passing() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	# Resolve required contexts (delegates default-branch lookup + branch
+	# protection API + 404 distinction to the helper). Empty stdout + exit 0
+	# means "no enforcement required, treat as PASS"; exit 1 means real error.
+	local required_contexts=""
+	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 1
 
 	# No required contexts → nothing required, treat as passing.
 	if [[ -z "$required_contexts" ]]; then

@@ -148,6 +148,73 @@ pulse_stats_status() {
 }
 
 #######################################
+# Set a named gauge to an absolute integer value (t3193).
+#
+# Gauges are distinct from counters: they store the LATEST observation,
+# not an event stream. Use for "current cycle has N stuck PRs" or
+# "consecutive zero-progress cycles" semantics where the prior value is
+# overwritten, not appended.
+#
+# Stored under .gauges.<name> = {"value": V, "ts": <epoch>} so a reader
+# can both see the value and detect staleness.
+#
+# Args:
+#   $1 - gauge_name
+#   $2 - integer value (must match ^-?[0-9]+$; non-numeric is rejected)
+#
+# Non-fatal: any jq/file failure is logged but does not propagate.
+#######################################
+pulse_stats_set_gauge() {
+	local gauge_name="${1:-unknown}"
+	local gauge_value="${2:-0}"
+
+	# Reject non-integer values rather than silently writing garbage.
+	if [[ ! "$gauge_value" =~ ^-?[0-9]+$ ]]; then
+		return 0
+	fi
+
+	local now_epoch
+	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
+
+	_pulse_stats_ensure_file || return 0
+
+	local tmp_file
+	tmp_file=$(mktemp "${TMPDIR:-/tmp}/pulse-stats-XXXXXX") || return 0
+
+	# Overwrite the gauge value. Create .gauges if absent.
+	jq --arg name "$gauge_name" --argjson v "$gauge_value" --argjson ts "$now_epoch" \
+		'.gauges = (.gauges // {}) | .gauges[$name] = {"value": $v, "ts": $ts}' \
+		"$PULSE_STATS_FILE" >"$tmp_file" 2>/dev/null || { rm -f "$tmp_file"; return 0; }
+
+	mv "$tmp_file" "$PULSE_STATS_FILE" 2>/dev/null || rm -f "$tmp_file"
+	return 0
+}
+
+#######################################
+# Read the current value of a gauge (t3193).
+# Prints the integer to stdout. Returns 0 if found, 0 with "0" output if not.
+#
+# Args:
+#   $1 - gauge_name
+#######################################
+pulse_stats_get_gauge() {
+	local gauge_name="${1:-unknown}"
+
+	if [[ ! -f "$PULSE_STATS_FILE" ]]; then
+		printf '0\n'
+		return 0
+	fi
+
+	local value
+	value=$(jq -r --arg name "$gauge_name" \
+		'(.gauges[$name].value // 0) | tostring' \
+		"$PULSE_STATS_FILE" 2>/dev/null) || value="0"
+
+	printf '%s\n' "${value:-0}"
+	return 0
+}
+
+#######################################
 # Reset (clear) a counter's event history.
 # Args: $1 - counter_name
 #######################################
