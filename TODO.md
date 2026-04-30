@@ -3606,3 +3606,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3085 init pre-existing local-var declarations in pulse-wrapper.sh + bootstrap #auto-dispatch #bug ref:GH#21856
 
 - [ ] t3084 Fix pulse-unbound-var-check false-positives on stale-base PRs #auto-dispatch #bug #ci ref:GH#21855
+
+- [ ] t3088 investigate: PR #21825 had both origin:interactive and origin:worker labels (t2200 violation) #bug #parent ref:GH#21862
+
+- [ ] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861
+
+- [ ] t3086 doc(bash-compat): bash 3.2 apostrophe-in-unquoted-heredoc gotcha #auto-dispatch #documentation ref:GH#21860
