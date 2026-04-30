@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.16] - 2026-04-30
+
+### Changed
+
+- pulse: filter sidecar plists from main-pulse PILE-UP threshold (#21917)
+- Maintenance: sync ref:GH#21923 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21921 to TODO.md [skip ci]
+
+### Fixed
+
+- default auto-release ON for AI agent interactive sessions (t3205) (#21920)
+
 ## [3.13.15] - 2026-04-30
 
 ### Changed
