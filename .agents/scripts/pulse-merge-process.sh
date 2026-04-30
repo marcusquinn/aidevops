@@ -706,19 +706,16 @@ _check_required_checks_passing() {
 	fi
 
 	# Fetch required contexts from branch protection — authoritative list.
-	local required_contexts _rc_exit _rc_stderr
+	# t3193: capture stderr to distinguish HTTP 404 (no protection) from real errors.
+	local required_contexts _rc_exit _rc_stderr _rc_err_msg=""
 	_rc_stderr=$(mktemp "${TMPDIR:-/tmp}/pulse-merge-rc-XXXXXX") || _rc_stderr=""
 	required_contexts=$(gh api \
 		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
 		--jq '.contexts // [] | .[]' 2>"${_rc_stderr:-/dev/null}")
 	_rc_exit=$?
+	[[ -n "$_rc_stderr" && -f "$_rc_stderr" ]] && { _rc_err_msg=$(cat "$_rc_stderr" 2>/dev/null); rm -f "$_rc_stderr"; } || rm -f "$_rc_stderr" 2>/dev/null
 	if [[ $_rc_exit -ne 0 ]]; then
-		local _rc_err_msg=""
-		[[ -n "$_rc_stderr" && -f "$_rc_stderr" ]] && _rc_err_msg=$(cat "$_rc_stderr" 2>/dev/null)
-		rm -f "$_rc_stderr" 2>/dev/null
-		# t3193: HTTP 404 = no branch protection configured for this branch.
-		# This is distinct from a real API error (auth 401, network 5xx).
-		# Repos with no branch protection have no required contexts — allow.
+		# HTTP 404 = no branch protection → no required contexts → allow.
 		if [[ "$_rc_err_msg" == *"404"* || "$_rc_err_msg" == *"Not Found"* ]]; then
 			echo "[pulse-merge] _check_required_checks_passing: no branch protection for ${repo_slug}/${default_branch} (HTTP 404) — allowing (t3193)" >>"$LOGFILE"
 			pulse_stats_increment "pulse_merge_branchprotect_404_skips" 2>/dev/null || true
@@ -727,7 +724,6 @@ _check_required_checks_passing() {
 		echo "[pulse-merge] _check_required_checks_passing: branch protection API failed for ${repo_slug} (exit ${_rc_exit}) — failing closed (t2922)" >>"$LOGFILE"
 		return 1
 	fi
-	rm -f "$_rc_stderr" 2>/dev/null
 
 	# No required contexts → nothing required, treat as passing.
 	if [[ -z "$required_contexts" ]]; then

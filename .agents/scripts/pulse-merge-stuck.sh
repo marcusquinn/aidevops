@@ -148,8 +148,9 @@ _classify_stuck_pr() {
 		fi
 
 		if [[ -n "$pr_sha" ]]; then
-			check_json=$(gh api "repos/${repo_slug}/commits/${pr_sha}/check-runs" \
-				--jq '.check_runs' 2>/dev/null) || check_json="[]"
+			local check_raw
+			check_raw=$(gh api "repos/${repo_slug}/commits/${pr_sha}/check-runs" 2>/dev/null) || check_raw="{}"
+			check_json=$(printf '%s' "$check_raw" | jq '.check_runs // []' 2>/dev/null) || check_json="[]"
 			local failing_count
 			failing_count=$(printf '%s' "$check_json" | jq '[.[] | select(.conclusion == "failure")] | length' 2>/dev/null) || failing_count=0
 			[[ "$failing_count" =~ ^[0-9]+$ ]] || failing_count=0
@@ -185,10 +186,9 @@ _stuck_pr_failure_fingerprint() {
 		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
 	[[ -n "$pr_sha" ]] || { echo ""; return 0; }
 
-	local fingerprint
-	fingerprint=$(gh api "repos/${repo_slug}/commits/${pr_sha}/check-runs" \
-		--jq '[.check_runs[] | select(.conclusion == "failure") | .name] | sort | join(",")' \
-		2>/dev/null) || fingerprint=""
+	local check_raw fingerprint
+	check_raw=$(gh api "repos/${repo_slug}/commits/${pr_sha}/check-runs" 2>/dev/null) || check_raw="{}"
+	fingerprint=$(printf '%s' "$check_raw" | jq -r '[.check_runs[] | select(.conclusion == "failure") | .name] | sort | join(",")' 2>/dev/null) || fingerprint=""
 	echo "$fingerprint"
 	return 0
 }
