@@ -133,8 +133,17 @@ gh_create_issue() {
 		return 1
 	fi
 
-	local origin_label
-	origin_label=$(session_origin_label)
+	# t3088: defence-in-depth — only auto-inject the session origin label when
+	# the caller has NOT already specified one. Prevents the dual-origin-label
+	# bug (t2200 violation) where a caller's --label "origin:X" plus the
+	# wrapper's --label "$session_origin_label" produces two distinct origin
+	# labels on the resulting issue. Mirrors gh_create_pr (canonical failure: PR #21825).
+	local -a _origin_label_args=()
+	if ! _gh_wrapper_args_have_origin_label "$@"; then
+		local origin_label
+		origin_label=$(session_origin_label)
+		_origin_label_args=(--label "$origin_label")
+	fi
 	# Ensure labels exist on the target repo (once per repo per process)
 	_ensure_origin_labels_for_args "$@"
 
@@ -197,11 +206,11 @@ gh_create_issue() {
 			local auto_assignee
 			auto_assignee=$(_gh_wrapper_auto_assignee)
 			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
+				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
 				local rc=$?
 				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
+					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee")
 					rc=$?
 				fi
 				echo "$issue_output"
@@ -211,11 +220,11 @@ gh_create_issue() {
 		fi
 	fi
 
-	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label")
+	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" --label "$origin_label")
+		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
 		rc=$?
 	fi
 	echo "$issue_output"
@@ -411,8 +420,17 @@ gh_create_pr() {
 		return 1
 	fi
 
-	local origin_label
-	origin_label=$(session_origin_label)
+	# t3088: defence-in-depth — only auto-inject the session origin label when
+	# the caller has NOT already specified one. Prevents the dual-origin-label
+	# bug (t2200 violation) where a caller's --label "origin:X" plus the
+	# wrapper's --label "$session_origin_label" produces two distinct origin
+	# labels on the resulting PR. Canonical failure: PR #21825.
+	local -a _origin_label_args=()
+	if ! _gh_wrapper_args_have_origin_label "$@"; then
+		local origin_label
+		origin_label=$(session_origin_label)
+		_origin_label_args=(--label "$origin_label")
+	fi
 	_ensure_origin_labels_for_args "$@"
 
 	# t2115: auto-append signature footer when body lacks one
@@ -420,11 +438,11 @@ gh_create_pr() {
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
 	local pr_output rc
-	pr_output=$(gh pr create "$@" --label "$origin_label")
+	pr_output=$(gh pr create "$@" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
 	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
-		pr_output=$(_rest_pr_create "$@" --label "$origin_label")
+		pr_output=$(_rest_pr_create "$@" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
 		rc=$?
 	fi
 	printf '%s\n' "$pr_output"

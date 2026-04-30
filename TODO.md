@@ -3611,7 +3611,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3084 Fix pulse-unbound-var-check false-positives on stale-base PRs #auto-dispatch #bug #ci ref:GH#21855 pr:#21872 completed:2026-04-30
 
-- [ ] t3088 investigate: PR #21825 had both origin:interactive and origin:worker labels (t2200 violation) #bug #parent ref:GH#21862
+- [ ] t3088 fix dual origin label on worker-dispatched PRs (env-var divergence + redundant --label) #bug ref:GH#21862
 
 - [ ] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861
 

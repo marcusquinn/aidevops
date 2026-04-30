@@ -807,9 +807,19 @@ _create_pr() {
 
 	print_info "Creating PR..."
 	local pr_url="" rc=0
-	# t2115: gh_create_pr auto-appends origin label and signature footer.
-	# The explicit --label "$origin_label" is kept for backward compat (GitHub deduplicates).
-	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body" --label "$origin_label")
+	# t2115/t3088: gh_create_pr auto-appends origin label and signature footer.
+	# Previously we passed --label "$origin_label" here too, with the comment
+	# "GitHub deduplicates". That claim is FALSE for non-identical labels: when
+	# this caller's $origin_label disagreed with gh_create_pr's session-detected
+	# label (env-var divergence — see full-loop-helper.sh t3088 fix), GitHub
+	# applied BOTH labels, producing the t2200 mutual-exclusion violation.
+	# Canonical failure: PR #21825. Origin label is now injected exactly once,
+	# inside gh_create_pr, via session_origin_label(). $origin_label is retained
+	# in the function signature for backward compat with existing callers.
+	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body")
+	# Reference the parameter to avoid shellcheck SC2034 (unused variable).
+	# Intentionally suppressed: $origin_label is the legacy interface — see comment above.
+	: "${origin_label:-}"
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done

@@ -93,10 +93,17 @@ cmd_commit_and_pr() {
 		pr_title="$(_compose_pr_title "$issue_number" "$commit_message")"
 	fi
 
-	local origin_label="origin:interactive"
-	if [[ "${HEADLESS:-}" == "1" || "${FULL_LOOP_HEADLESS:-}" == "true" ]]; then
-		origin_label="origin:worker"
-	fi
+	# t3088: use canonical session_origin_label() instead of hand-rolling the
+	# headless-env check. Previous logic checked only HEADLESS=1 / FULL_LOOP_HEADLESS=true,
+	# while detect_session_origin() (consulted by gh_create_pr's self-injection)
+	# also recognises AIDEVOPS_HEADLESS, OPENCODE_HEADLESS, GITHUB_ACTIONS, and
+	# AIDEVOPS_SESSION_ORIGIN. When the two checks disagreed (e.g., AIDEVOPS_HEADLESS=true
+	# without HEADLESS=1) the worker PR ended up with BOTH origin:interactive and
+	# origin:worker labels — the t2200 mutual-exclusion violation observed on PR #21825.
+	# Single source of truth: session_origin_label() returns "origin:worker" or
+	# "origin:interactive" based on the canonical env-var set.
+	local origin_label
+	origin_label=$(session_origin_label)
 
 	local sig_footer=""
 	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
