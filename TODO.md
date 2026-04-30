@@ -3644,3 +3644,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3204 issue-sync close path drops signature footer + summary on auto-close #auto-dispatch #bug ref:GH#21910
 
 - [ ] t3205 scan-stale: auto-release defaults OFF in AI agent sessions (TTY-only detection misses OpenCode/Claude Code interactive) #auto-dispatch #bug #framework ref:GH#21913
+
+- [ ] t3207 test-scan-stale: Test 2 fails on origin/main due to t2421 worker-pattern PID liveness check #auto-dispatch #bug ref:GH#21922
+
+- [ ] t3206 pulse-unbound-var-check: accumulated-diff false-positive on intra-branch fixes #auto-dispatch #bug ref:GH#21921
+
+- [ ] t3208 Circuit-breaker trip should auto-file sibling root-cause investigation task #auto-dispatch #bug #framework ref:GH#21923
