@@ -3591,7 +3591,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3076 pulse: circuit breaker auto-files root-cause meta-issue and dispatches systemic-fix worker #auto-dispatch #bug #enhancement #framework #model:opus-4-7 #pulse ref:GH#21840 pr:#21863 completed:2026-04-30
 
-- [ ] t3077 pulse: LLM-driven periodic pass detects fix-the-fixer tasks and adds extra observability #auto-dispatch #enhancement #framework #model:opus-4-7 #pulse ref:GH#21841
+- [x] t3077 pulse: LLM-driven periodic pass detects fix-the-fixer tasks and adds extra observability #auto-dispatch #enhancement #framework #model:opus-4-7 #pulse ref:GH#21841 pr:#21878 completed:2026-04-30
 
 - [x] t3082 fix: bash 3.2 heredoc parser fails on apostrophe in counter-trend-delta runtime audit rule #auto-dispatch #bug ref:GH#21849 pr:#21852 completed:2026-04-30
 
