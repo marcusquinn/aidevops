@@ -783,7 +783,8 @@ _init_root_file_allowlist() {
 		"CHANGELOG.md" "LICENSE" "CODE_OF_CONDUCT.md" "CONTRIBUTING.md"
 		"SECURITY.md" "TERMS.md" "MODELS.md" "VERSION"
 		# Config files (dotfiles)
-		".bandit" ".gitignore" ".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
+		".aidevops.json" ".bandit" ".gitattributes" ".gitignore"
+		".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
 		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
 		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
 		".secretlintignore" ".secretlintrc.json"
