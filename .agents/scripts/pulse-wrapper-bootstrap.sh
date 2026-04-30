@@ -286,7 +286,7 @@ _drain_merge_trigger_file_if_present() {
 		return 0
 	}
 
-	local line_type slug num
+	local line_type="" slug="" num=""
 	while IFS=$'\t' read -r line_type slug num || [[ -n "$line_type" ]]; do
 		# Skip blank lines (e.g. trailing newline produces an empty read).
 		[[ -z "$line_type" && -z "$slug" && -z "$num" ]] && continue
@@ -307,7 +307,7 @@ _drain_merge_trigger_file_if_present() {
 			fi
 		elif [[ "$line_type" == "issue" ]]; then
 			# Issue approval — find linked open PRs and process each.
-			local linked_prs pr_n
+			local linked_prs="" pr_n=""
 			linked_prs=$(gh pr list --repo "$slug" --state open \
 				--json number,body \
 				--jq "[.[] | select(.body | test(\"(closes?|fixe[sd]?|resolve[sd]?)\\\\s+#${num}\"; \"i\")) | .number] | .[]" \
