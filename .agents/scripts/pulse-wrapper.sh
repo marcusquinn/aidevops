@@ -785,7 +785,7 @@ _pulse_execute_self_check() {
 		_PULSE_DIRTY_PR_SWEEP_LOADED
 		_PULSE_CANONICAL_RECOVERY_LOADED
 	)
-	local _sc_guard _sc_val
+	local _sc_guard="" _sc_val=""
 	# The `${array[@]+"${array[@]}"}` pattern is safe under `set -u`
 	# when the array is empty — required in Phase 0 where no module
 	# guards exist yet.
@@ -971,7 +971,7 @@ _pulse_check_idle_backoff_gate() {
 	# Mirrors should-skip semantics so the helper composes naturally with
 	# `if helper should-skip; then return; fi` at the call site.
 	if "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
-		local _ib_state _ib_count _ib_interval
+		local _ib_state="" _ib_count="" _ib_interval=""
 		_ib_state=$("$_ib_helper" state 2>/dev/null || echo '{}')
 		_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
 		_ib_interval=$(echo "$_ib_state" | jq -r '.current_effective_interval_s // 90' 2>/dev/null || echo "90")
@@ -1130,7 +1130,7 @@ _pulse_run_deterministic_pipeline() {
 	local _pulse_merge_routine_last_run="${HOME}/.aidevops/logs/pulse-merge-routine-last-run"
 	local _pmr_skip=0
 	if [[ -f "$_pulse_merge_routine_last_run" ]]; then
-		local _pmr_last _pmr_now _pmr_elapsed
+		local _pmr_last="" _pmr_now="" _pmr_elapsed=""
 		_pmr_last=$(cat "$_pulse_merge_routine_last_run" 2>/dev/null || echo "0")
 		_pmr_now=$(date +%s 2>/dev/null || echo "0")
 		[[ "$_pmr_last" =~ ^[0-9]+$ ]] || _pmr_last=0
@@ -1412,7 +1412,7 @@ main() {
 				# ticks all returned 0 here without ever attempting reclaim.
 				# Fix: enforce PULSE_LOCK_MAX_AGE_S as a fall-through trigger so
 				# stale-but-alive locks reach the proper reclaim path below.
-				local _ir_age _ir_max
+				local _ir_age="" _ir_max=""
 				_ir_age=$(_get_process_age "$_ir_pid" 2>/dev/null || true)
 				_ir_max="${PULSE_LOCK_MAX_AGE_S:-1800}"
 				if [[ "$_ir_age" =~ ^[0-9]+$ ]] && [[ "$_ir_age" -le "$_ir_max" ]]; then

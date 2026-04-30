@@ -493,7 +493,7 @@ _record_invocation_source() {
 	local log_dest="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 
 	# Log entry (ISO-8601 UTC to match pulse-logging.sh conventions)
-	local _ts _pcmd
+	local _ts="" _pcmd=""
 	_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
 	_pcmd=$(ps -p "$PPID" -o comm= 2>/dev/null || printf 'unknown')
 	printf '[%s] pulse-wrapper invoked: pid=%d ppid=%d source=%s parent_cmd=%s\n' \
@@ -502,7 +502,7 @@ _record_invocation_source() {
 
 	# Increment invocation_sources.{source} as a plain integer counter.
 	# Uses tmp-file + mv for atomicity (same pattern as pulse_stats_increment).
-	local _dir _tmp
+	local _dir="" _tmp=""
 	_dir="$(dirname "$stats_file")"
 	[[ -d "$_dir" ]] || mkdir -p "$_dir" 2>/dev/null || return 0
 	[[ -f "$stats_file" ]] || printf '{"counters":{}}\n' >"$stats_file" 2>/dev/null || return 0
