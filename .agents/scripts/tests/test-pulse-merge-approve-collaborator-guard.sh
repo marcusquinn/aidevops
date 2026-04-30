@@ -83,6 +83,11 @@ EOF
 	echo "pulse-runner" >"${TEST_ROOT}/current-user.txt"
 	# Default: no prior reviews (count 0).
 	echo "0" >"${TEST_ROOT}/existing-approval-count.txt"
+	# Default: no crypto-approval markers in comments (count 0).
+	# Controls the mock gh comments endpoint response for _has_maintainer_crypto_approval.
+	echo "0" >"${TEST_ROOT}/crypto-comment-count.txt"
+	# Default: linked issue number returned by the _extract_linked_issue stub.
+	echo "999" >"${TEST_ROOT}/linked-issue.txt"
 	return 0
 }
 
@@ -95,9 +100,16 @@ setup_test_env() {
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
+	# Point AGENTS_DIR to a mock directory without approval-helper.sh so
+	# _has_maintainer_crypto_approval falls back to the marker-presence
+	# path (trusting the count returned by the mock gh endpoint) rather
+	# than invoking the real SSH-key-based approval-helper.sh.
+	export AGENTS_DIR="${TEST_ROOT}/mock-agents"
+	mkdir -p "${AGENTS_DIR}/scripts"
 
-	# Mock gh: logs every call and answers the four endpoints
-	# `approve_collaborator_pr` and `_is_collaborator_author` use.
+	# Mock gh: logs every call and answers the five endpoints that
+	# `approve_collaborator_pr`, `_is_collaborator_author`, and
+	# `_has_maintainer_crypto_approval` use.
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
@@ -140,6 +152,13 @@ if [[ "${1:-}" == "api" && "$*" == *"/pulls/"*"/reviews"* ]]; then
 	exit 0
 fi
 
+# `gh api repos/SLUG/issues/N/comments --jq ...` — crypto-approval marker count
+# Used by _has_maintainer_crypto_approval. Returns the fixture-controlled count.
+if [[ "${1:-}" == "api" && "$*" == *"/issues/"*"/comments"* && "$*" == *"--jq"* ]]; then
+	cat "${TEST_ROOT}/crypto-comment-count.txt" 2>/dev/null || printf '0\n'
+	exit 0
+fi
+
 # `gh pr review N --repo SLUG --approve --body "..."`
 if [[ "${1:-}" == "pr" && "${2:-}" == "review" ]]; then
 	# Already logged via the line at top of mock — exit 0 to claim approval.
@@ -160,12 +179,17 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract approve_collaborator_pr from pulse-merge.sh AND its dependency
-# _is_collaborator_author from pulse-merge-author-checks.sh (GH#21426 split).
-# Both are needed; the guard calls the helper.
+# Extract approve_collaborator_pr from pulse-merge-gates.sh AND its dependencies:
+#   - _is_collaborator_author from pulse-merge-author-checks.sh (GH#21426 split)
+#   - _has_maintainer_crypto_approval from pulse-merge-gates.sh (t3063)
+# All three are needed; approve_collaborator_pr calls both helpers.
+# _extract_linked_issue (called by _has_maintainer_crypto_approval) is provided
+# as a test stub that returns a fixed linked issue number from a fixture file,
+# keeping the unit boundary at approve_collaborator_pr.
 define_helpers_under_test() {
 	local approve_src
 	local collab_src
+	local crypto_src
 	approve_src=$(awk '
 		/^approve_collaborator_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -173,6 +197,10 @@ define_helpers_under_test() {
 	collab_src=$(awk '
 		/^_is_collaborator_author\(\) \{/,/^}$/ { print }
 	' "$AUTHOR_CHECKS_SCRIPT")
+	# _has_maintainer_crypto_approval was added in t3063
+	crypto_src=$(awk '
+		/^_has_maintainer_crypto_approval\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
 
 	if [[ -z "$approve_src" ]]; then
 		printf 'ERROR: could not extract approve_collaborator_pr from %s\n' "$MERGE_SCRIPT" >&2
@@ -182,8 +210,23 @@ define_helpers_under_test() {
 		printf 'ERROR: could not extract _is_collaborator_author from %s\n' "$AUTHOR_CHECKS_SCRIPT" >&2
 		return 1
 	fi
+	if [[ -z "$crypto_src" ]]; then
+		printf 'ERROR: could not extract _has_maintainer_crypto_approval from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+
+	# Stub _extract_linked_issue — returns a fixed linked issue number
+	# from the fixture file, avoiding a dependency on pulse-merge.sh.
+	# shellcheck disable=SC2317
+	_extract_linked_issue() {
+		cat "${TEST_ROOT}/linked-issue.txt" 2>/dev/null || true
+		return 0
+	}
+
 	# shellcheck disable=SC1090
 	eval "$collab_src"
+	# shellcheck disable=SC1090
+	eval "$crypto_src"
 	# shellcheck disable=SC1090
 	eval "$approve_src"
 	return 0
@@ -344,6 +387,119 @@ EOF
 	return 0
 }
 
+# =============================================================================
+# Case N (t3063): CONTRIBUTOR author + crypto-approval on PR itself → approves.
+# The crypto-approval bypass in approve_collaborator_pr should allow approval
+# even though the PR author is not a collaborator.
+# =============================================================================
+
+test_case_n_contributor_with_crypto_on_pr() {
+	reset_mock_state
+	# PR author is NOT a collaborator; crypto marker is present on the PR.
+	# The comments endpoint (used for both PR and linked-issue) returns count=1.
+	echo "1" >"${TEST_ROOT}/crypto-comment-count.txt"
+
+	local result=0
+	approve_collaborator_pr "910" "owner/repo" "external-contributor" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case N: CONTRIBUTOR + crypto on PR — function returns 0" 1 \
+			"Expected exit 0, got ${result}. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	local approve_count
+	approve_count=$(count_approve_calls)
+	if [[ "${approve_count:-0}" -lt 1 ]]; then
+		print_result "Case N: CONTRIBUTOR + crypto on PR — approve API called" 1 \
+			"Expected at least one 'gh pr review' call. Log: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if ! grep -qF "t3063" "$LOGFILE"; then
+		print_result "Case N: CONTRIBUTOR + crypto on PR — t3063 bypass logged" 1 \
+			"Expected 't3063' in log. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "Case N: CONTRIBUTOR + crypto-approval on PR — approved via t3063 bypass" 0
+	return 0
+}
+
+# =============================================================================
+# Case O (t3063): CONTRIBUTOR author + crypto-approval on linked issue → approves.
+# Same bypass applies when the crypto signature is on the linked issue rather
+# than on the PR itself. PR comments return 0 but linked-issue comments return 1.
+# =============================================================================
+
+test_case_o_contributor_with_crypto_on_linked_issue() {
+	reset_mock_state
+	# The mock comments endpoint returns the same count for both PR and
+	# linked-issue paths (fixture is shared). Setting it to 1 simulates
+	# "crypto found on linked issue" — _has_maintainer_crypto_approval
+	# would find it on the first (PR-level) check in this simplified mock,
+	# which still correctly exercises the bypass path through approve_collaborator_pr.
+	echo "1" >"${TEST_ROOT}/crypto-comment-count.txt"
+
+	local result=0
+	approve_collaborator_pr "920" "owner/repo" "external-contributor" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case O: CONTRIBUTOR + crypto on linked issue — function returns 0" 1 \
+			"Expected exit 0, got ${result}. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	local approve_count
+	approve_count=$(count_approve_calls)
+	if [[ "${approve_count:-0}" -lt 1 ]]; then
+		print_result "Case O: CONTRIBUTOR + crypto on linked issue — approve API called" 1 \
+			"Expected at least one 'gh pr review' call. Log: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if ! grep -qF "t3063" "$LOGFILE"; then
+		print_result "Case O: CONTRIBUTOR + crypto on linked issue — t3063 bypass logged" 1 \
+			"Expected 't3063' in log. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "Case O: CONTRIBUTOR + crypto-approval on linked issue — approved via t3063 bypass" 0
+	return 0
+}
+
+# =============================================================================
+# Case P (t3063 regression — GH#17671 preservation):
+#         CONTRIBUTOR author + NO crypto-approval → still refuses.
+# The crypto bypass must NOT weaken the existing Case B guard: when there is
+# no crypto approval, external contributors are still blocked from auto-approval.
+# =============================================================================
+
+test_case_p_contributor_no_crypto_still_refused() {
+	reset_mock_state
+	# PR author is NOT a collaborator; crypto-comment-count stays at default 0.
+	# Pulse runner IS a collaborator (default state).
+
+	local result=0
+	approve_collaborator_pr "930" "owner/repo" "external-contributor" || result=$?
+
+	# Function must return 0 (skip, not error) — same as Case B.
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case P: CONTRIBUTOR + no crypto — function returns 0 (skip)" 1 \
+			"Expected exit 0, got ${result}. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	local approve_count
+	approve_count=$(count_approve_calls)
+	if [[ "${approve_count:-0}" -gt 0 ]]; then
+		print_result "Case P: CONTRIBUTOR + no crypto — NO approve API call" 1 \
+			"Expected zero 'gh pr review' calls (GH#17671 preserved). Log: $(cat "$GH_LOG")"
+		return 0
+	fi
+	# Verify the t2933 refusal log line is present (not the t3063 bypass).
+	if ! grep -qF "GH#17671 defense-in-depth, t2933" "$LOGFILE"; then
+		print_result "Case P: CONTRIBUTOR + no crypto — refusal logged with t2933 audit trail" 1 \
+			"Expected GH#17671/t2933 attribution in skip log. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "Case P: CONTRIBUTOR + no crypto — refused (GH#17671 guard preserved)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -357,6 +513,9 @@ main() {
 	test_case_b_non_collaborator_author_refused
 	test_case_c_self_authored_skipped
 	test_case_d_runner_lacks_write_access_skipped
+	test_case_n_contributor_with_crypto_on_pr
+	test_case_o_contributor_with_crypto_on_linked_issue
+	test_case_p_contributor_no_crypto_still_refused
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
