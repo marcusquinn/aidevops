@@ -374,6 +374,124 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 }
 
 #######################################
+# Build a whole-token lookup set for add/add conflict paths (t3199).
+#
+# Args:
+#   $1 - (optional) path to a git repo with an in-flight rebase/merge.
+#
+# Output: space-padded path set suitable for `[[ "$set" == *" $path "* ]]`.
+#######################################
+_conflict_add_add_path_set() {
+	local repo_path="${1:-}"
+	local add_add_files=""
+
+	if [[ -n "$repo_path" ]] && [[ -d "$repo_path/.git" || -f "$repo_path/.git" ]]; then
+		add_add_files=$(git -C "$repo_path" status --porcelain 2>/dev/null \
+			| awk '/^AA / {print $2}' | tr '\n' ' ')
+		add_add_files="${add_add_files% }"
+	fi
+
+	if [[ -n "$add_add_files" ]]; then
+		printf ' %s ' "$add_add_files"
+	else
+		printf ' '
+	fi
+	return 0
+}
+
+#######################################
+# Check whether a path is present in a space-padded lookup set.
+#
+# Args:
+#   $1 - file path
+#   $2 - space-padded lookup set
+#######################################
+_conflict_path_in_set() {
+	local fpath="$1"
+	local lookup_set="$2"
+
+	[[ "$lookup_set" == *" ${fpath} "* ]] || return 1
+	return 0
+}
+
+#######################################
+# Match one conflicting path against the conflict pattern registry.
+#
+# Args:
+#   $1 - file path
+#   $2 - conflict-patterns.conf path
+#
+# Output: matching classification, or CODE.
+#######################################
+_conflict_registry_class_for_path() {
+	local fpath="$1"
+	local conf_file="$2"
+	local fname
+	fname="${fpath##*/}"
+	local matched_class=""
+
+	while IFS='|' read -r class_raw glob_raw _rest; do
+		local class glob
+		class="${class_raw#"${class_raw%%[![:space:]]*}"}"
+		class="${class%"${class##*[![:space:]]}"}"
+		glob="${glob_raw#"${glob_raw%%[![:space:]]*}"}"
+		glob="${glob%"${glob##*[![:space:]]}"}"
+
+		[[ -n "$class" && -n "$glob" ]] || continue
+		[[ "$class" == \#* ]] && continue
+		[[ "$class" == "ADD_ADD_NEW_FILE" ]] && continue
+
+		local did_match=0
+		# shellcheck disable=SC2254  # dynamic glob is intentional
+		case "$fpath" in
+			$glob) did_match=1 ;;
+		esac
+		if [[ $did_match -eq 0 ]]; then
+			# shellcheck disable=SC2254  # dynamic glob is intentional
+			case "$fname" in
+				$glob) did_match=1 ;;
+			esac
+		fi
+
+		if [[ $did_match -eq 1 ]]; then
+			matched_class="$class"
+			break
+		fi
+	done < <(grep -v '^[[:space:]]*#' "$conf_file" | grep -v '^[[:space:]]*$')
+
+	printf '%s\n' "${matched_class:-CODE}"
+	return 0
+}
+
+#######################################
+# Group `CLASS:path` rows into conflict-pattern output lines.
+#
+# Args:
+#   $1 - classified rows, one `CLASS:path` entry per line
+#
+# Output: multi-line classification string.
+#######################################
+_emit_grouped_conflict_classifications() {
+	local classified_lines="$1"
+	local all_classes="ADD_ADD_NEW_FILE DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE"
+	local class
+
+	for class in $all_classes; do
+		local paths_for_class=""
+		while IFS= read -r entry; do
+			[[ "$entry" == "${class}:"* ]] || continue
+			local p="${entry#*:}"
+			paths_for_class="${paths_for_class}${p} "
+		done < <(printf '%s\n' "$classified_lines")
+		paths_for_class="${paths_for_class% }"
+		if [[ -n "$paths_for_class" ]]; then
+			printf '%s %s\n' "$class" "$paths_for_class"
+		fi
+	done
+	return 0
+}
+
+#######################################
 # Classify a list of conflicting file paths against the conflict-patterns.conf
 # registry and return a multi-line classification string (t2987).
 #
@@ -422,104 +540,24 @@ _classify_conflicts_by_pattern() {
 		return 0
 	}
 
-	# t3199: detect add/add files via `git status --porcelain` (`AA` rows)
-	# when a repo_path is supplied. Pulse-context callers pass none, so this
-	# branch is a no-op in production; worker / test contexts opt in.
-	local add_add_files=""
-	if [[ -n "$repo_path" ]] && [[ -d "$repo_path/.git" || -f "$repo_path/.git" ]]; then
-		add_add_files=$(git -C "$repo_path" status --porcelain 2>/dev/null \
-			| awk '/^AA / {print $2}' | tr '\n' ' ')
-		add_add_files="${add_add_files% }"  # trim trailing space
-	fi
+	local add_add_set
+	add_add_set="$(_conflict_add_add_path_set "$repo_path")"
 
-	# Build a lookup string for fast membership tests. Surrounding spaces
-	# let us match whole tokens with `[[ "$set" == *" $path "* ]]`.
-	local add_add_set=" "
-	if [[ -n "$add_add_files" ]]; then
-		add_add_set=" ${add_add_files} "
-	fi
-
-	# Buckets: associative-array-like using declare (bash 4+) or plain
-	# string accumulation (bash 3.2 compat).  We use a temporary approach
-	# that accumulates "CLASS:path" lines and then groups at the end.
 	local classified_lines=""
+	local class
 
-	# Read each conflicting file and match against conf patterns.
 	while IFS= read -r fpath; do
 		[[ -n "$fpath" ]] || continue
 
-		# t3199: if this file is an add/add conflict, classify it that way
-		# unconditionally — bypass glob matching since add/add is structural,
-		# not pattern-based.
-		if [[ "$add_add_set" == *" ${fpath} "* ]]; then
-			classified_lines="${classified_lines}ADD_ADD_NEW_FILE:${fpath}"$'\n'
-			continue
+		if _conflict_path_in_set "$fpath" "$add_add_set"; then
+			class="ADD_ADD_NEW_FILE"
+		else
+			class="$(_conflict_registry_class_for_path "$fpath" "$conf_file")"
 		fi
-
-		local fname
-		fname="${fpath##*/}"  # basename
-
-		local matched_class=""
-		# Iterate conf records (skip comments and blank lines).
-		while IFS='|' read -r class_raw glob_raw _rest; do
-			# Strip leading/trailing whitespace from each field.
-			local class glob
-			class="${class_raw#"${class_raw%%[![:space:]]*}"}"
-			class="${class%"${class##*[![:space:]]}"}"
-			glob="${glob_raw#"${glob_raw%%[![:space:]]*}"}"
-			glob="${glob%"${glob##*[![:space:]]}"}"
-
-			[[ -n "$class" && -n "$glob" ]] || continue
-			[[ "$class" == \#* ]] && continue
-
-			# t3199: skip the ADD_ADD_NEW_FILE sentinel during glob matching.
-			# Detection happens via `git status --porcelain` above, not via
-			# filename — the sentinel exists only so the conf record carries
-			# its guidance text for `_emit_pattern_guidance_blocks` to find.
-			[[ "$class" == "ADD_ADD_NEW_FILE" ]] && continue
-
-			# Match against full relative path first, then basename.
-			# Use bash extended glob (shopt -s extglob already on in
-			# sourcing shells; we use case for portability).
-			local did_match=0
-			# shellcheck disable=SC2254  # dynamic glob is intentional
-			case "$fpath" in
-				$glob) did_match=1 ;;
-			esac
-			if [[ $did_match -eq 0 ]]; then
-				# shellcheck disable=SC2254  # dynamic glob is intentional
-				case "$fname" in
-					$glob) did_match=1 ;;
-				esac
-			fi
-
-			if [[ $did_match -eq 1 ]]; then
-				matched_class="$class"
-				break
-			fi
-		done < <(grep -v '^[[:space:]]*#' "$conf_file" | grep -v '^[[:space:]]*$')
-
-		# Default to CODE if nothing matched.
-		[[ -n "$matched_class" ]] || matched_class="CODE"
-		classified_lines="${classified_lines}${matched_class}:${fpath}"$'\n'
+		classified_lines="${classified_lines}${class}:${fpath}"$'\n'
 	done < <(printf '%s\n' "$file_list")
 
-	# Group by classification: emit one line per class with all paths.
-	# We process each known class in priority order (ADD_ADD first since
-	# it is structural, then non-CODE patterns, then CODE catch-all).
-	local all_classes="ADD_ADD_NEW_FILE DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE"
-	for class in $all_classes; do
-		local paths_for_class=""
-		while IFS= read -r entry; do
-			[[ "$entry" == "${class}:"* ]] || continue
-			local p="${entry#*:}"
-			paths_for_class="${paths_for_class}${p} "
-		done < <(printf '%s\n' "$classified_lines")
-		paths_for_class="${paths_for_class% }"  # trim trailing space
-		if [[ -n "$paths_for_class" ]]; then
-			printf '%s %s\n' "$class" "$paths_for_class"
-		fi
-	done
+	_emit_grouped_conflict_classifications "$classified_lines"
 	return 0
 }
 
