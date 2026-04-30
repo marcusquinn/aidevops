@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-scan-stale-auto-release.sh — t2414 regression guard.
+# test-scan-stale-auto-release.sh — t2414 + t3205 regression guard.
 #
 # Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases stamps ONLY when
 # BOTH conditions hold: dead PID AND missing worktree. Any live signal (live
@@ -15,6 +15,17 @@
 #   session died without cleanup, there is no ambiguity and no false-positive
 #   surface.
 #
+# t3205 (GH#21913): the bare TTY check `[[ -t 0 && -t 1 ]]` collapsed two
+#   distinct concepts (truly-headless vs AI-agent-interactive). OpenCode TUI
+#   and Claude Code CLI agents pipe their bash subprocess from the runtime,
+#   so the TTY check returned false in user-driving-an-agent sessions, leaving
+#   stale stamps unreleased every session-start scan. Tests 8 and 9 lock in
+#   the three-way detection that distinguishes:
+#     - human TTY → ON
+#     - explicit headless markers → OFF (wins over AI-agent markers)
+#     - AI-agent runtime markers → ON
+#     - unknown → OFF (conservative)
+#
 # Tests:
 #   1. dead PID + missing worktree → stamp auto-released (file removed)
 #   2. live PID + missing worktree → stamp preserved
@@ -23,6 +34,8 @@
 #   5. --no-auto-release flag → dead+missing stamp NOT released (report only)
 #   6. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
 #   7. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env + non-TTY → dead+missing released
+#   8. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
+#   9. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -244,6 +257,83 @@ else
 	fail "AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env → dead+missing stamp released" \
 		"stamp still exists despite AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1"
 fi
+
+# =============================================================================
+# Test 8 — AI-agent runtime markers (no TTY, no headless) → auto-released (t3205)
+# =============================================================================
+# t3205: previously, scan-stale defaulted auto-release OFF in OpenCode/Claude
+# Code agent sessions because the agent's bash subprocess is piped from the
+# runtime ([[ -t 0 && -t 1 ]] returns false). Tests 8/9 lock in the new
+# three-way detection: runtime markers count as "interactive enough".
+write_stamp "owner-repo-108.json" "99999" "/nonexistent/path/108" "108" "owner/repo"
+
+# Force off all override paths and headless markers; set AI-agent marker only.
+# Tests run via `bash test.sh`, so [[ -t 0 && -t 1 ]] is already false here.
+unset AIDEVOPS_SCAN_STALE_AUTO_RELEASE
+env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+	-u GITHUB_ACTIONS -u OPENCODE_RUN_ID -u OPENCODE_PID \
+	-u CLAUDECODE -u CLAUDE_CODE -u CLAUDE_SESSION_ID -u CLAUDE_CODE_SSE_PORT \
+	OPENCODE_SESSION_ID=test-session-id \
+	bash -c "
+		set -uo pipefail
+		# Re-source the helper inside this clean env subshell.
+		# shellcheck source=/dev/null
+		source '${SCRIPTS_DIR}/interactive-session-helper.sh' >/dev/null 2>&1 || true
+		_isc_release_claim_by_stamp_path() {
+			rm -f \"\$1\" 2>/dev/null || true
+			return 0
+		}
+		_isc_scan_stampless_phase() { :; return 0; }
+		_isc_scan_closed_pr_orphans() { printf '0'; return 0; }
+		CLAIM_STAMP_DIR='$STAMP_DIR'
+		_isc_cmd_scan_stale >/dev/null 2>/dev/null || true
+	"
+
+if [[ ! -f "${STAMP_DIR}/owner-repo-108.json" ]]; then
+	pass "OPENCODE_SESSION_ID set, no TTY → dead+missing stamp auto-released"
+else
+	fail "OPENCODE_SESSION_ID set, no TTY → dead+missing stamp auto-released" \
+		"stamp still exists despite AI-agent runtime marker — t3205 branch did not fire"
+fi
+# Cleanup
+rm -f "${STAMP_DIR}/owner-repo-108.json"
+
+# =============================================================================
+# Test 9 — Headless wins over AI-agent marker → stamp preserved (t3205)
+# =============================================================================
+# When BOTH AIDEVOPS_HEADLESS and OPENCODE_SESSION_ID are set, the headless
+# marker MUST take precedence. Pulse-spawned workers run inside an OpenCode
+# child process and inherit OPENCODE_SESSION_ID; without this precedence rule,
+# the worker would auto-release stamps owned by other live sessions.
+write_stamp "owner-repo-109.json" "99999" "/nonexistent/path/109" "109" "owner/repo"
+
+env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS -u GITHUB_ACTIONS \
+	-u OPENCODE_RUN_ID -u OPENCODE_PID -u CLAUDECODE -u CLAUDE_CODE \
+	-u CLAUDE_SESSION_ID -u CLAUDE_CODE_SSE_PORT \
+	AIDEVOPS_HEADLESS=1 OPENCODE_SESSION_ID=test-session-id \
+	bash -c "
+		set -uo pipefail
+		unset AIDEVOPS_SCAN_STALE_AUTO_RELEASE
+		# shellcheck source=/dev/null
+		source '${SCRIPTS_DIR}/interactive-session-helper.sh' >/dev/null 2>&1 || true
+		_isc_release_claim_by_stamp_path() {
+			rm -f \"\$1\" 2>/dev/null || true
+			return 0
+		}
+		_isc_scan_stampless_phase() { :; return 0; }
+		_isc_scan_closed_pr_orphans() { printf '0'; return 0; }
+		CLAIM_STAMP_DIR='$STAMP_DIR'
+		_isc_cmd_scan_stale >/dev/null 2>/dev/null || true
+	"
+
+if [[ -f "${STAMP_DIR}/owner-repo-109.json" ]]; then
+	pass "AIDEVOPS_HEADLESS=1 + OPENCODE_SESSION_ID → stamp preserved (headless wins)"
+else
+	fail "AIDEVOPS_HEADLESS=1 + OPENCODE_SESSION_ID → stamp preserved (headless wins)" \
+		"stamp deleted — headless marker must take precedence over AI-agent marker"
+fi
+# Cleanup
+rm -f "${STAMP_DIR}/owner-repo-109.json"
 
 # =============================================================================
 # Summary
