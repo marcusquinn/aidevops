@@ -111,8 +111,11 @@ BUGGY_EOF
 	git -C "$SANDBOX" commit -q -m "commit 1: add buggy local foo bar (no init)"
 
 	# Commit 2: replace the buggy declaration with the correct one.
-	# Use sed to replace the specific line in-place.
-	sed -i 's/	local foo bar$/	local foo="" bar=""/' "$SANDBOX/$PULSE_FILE"
+	# Use sed via temp-file (portable across BSD sed on macOS and GNU sed on Linux —
+	# `sed -i` differs incompatibly between the two: BSD requires `-i ''`, GNU does not).
+	sed 's/	local foo bar$/	local foo="" bar=""/' "$SANDBOX/$PULSE_FILE" \
+		> "$SANDBOX/$PULSE_FILE.new"
+	mv "$SANDBOX/$PULSE_FILE.new" "$SANDBOX/$PULSE_FILE"
 	git -C "$SANDBOX" add "$PULSE_FILE"
 	git -C "$SANDBOX" commit -q -m "commit 2: fix local foo bar -> local foo='' bar=''"
 
@@ -225,7 +228,12 @@ _teardown_sandbox
 
 # --- Test 5: net-diff excludes a line added then entirely deleted ---
 _setup_sandbox
-# Add a commit that adds a line, then a commit that deletes it entirely.
+# Snapshot the file BEFORE adding temp_func — restoring this snapshot in commit 2
+# is the cleanest way to delete every line introduced in commit 1, without relying
+# on regex alternation that varies between BSD grep (macOS) and GNU grep (Linux).
+cp "$SANDBOX/$PULSE_FILE" "$SANDBOX/$PULSE_FILE.pre-temp"
+
+# Commit 1: append a function with an uninitialised local temp_var.
 cat >> "$SANDBOX/$PULSE_FILE" <<'TEMP_EOF'
 _temp_func() {
 	local temp_var
@@ -236,18 +244,9 @@ TEMP_EOF
 git -C "$SANDBOX" add "$PULSE_FILE"
 git -C "$SANDBOX" commit -q -m "commit 1: add temp_func with uninitialised temp_var"
 
-# Remove the whole function (simulate a revert/delete).
-# Strip lines between _temp_func and matching closing brace.
-grep -v '_temp_func\|local temp_var\|echo.*temp_var\|^}$' "$SANDBOX/$PULSE_FILE" \
-	> "$SANDBOX/$PULSE_FILE.tmp" || true
-# Only apply if we actually stripped content.
-if [[ -s "$SANDBOX/$PULSE_FILE.tmp" ]]; then
-	mv "$SANDBOX/$PULSE_FILE.tmp" "$SANDBOX/$PULSE_FILE"
-fi
-# Ensure the file still exists and is non-empty; restore if strip failed.
-if [[ ! -s "$SANDBOX/$PULSE_FILE" ]]; then
-	cp "$SANDBOX/$PULSE_FILE.tmp.bak" "$SANDBOX/$PULSE_FILE" 2>/dev/null || true
-fi
+# Commit 2: restore the pre-temp snapshot — every line added in commit 1 is gone.
+cp "$SANDBOX/$PULSE_FILE.pre-temp" "$SANDBOX/$PULSE_FILE"
+rm -f "$SANDBOX/$PULSE_FILE.pre-temp"
 
 git -C "$SANDBOX" add "$PULSE_FILE"
 git -C "$SANDBOX" commit -q -m "commit 2: remove temp_func entirely"
