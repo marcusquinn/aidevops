@@ -129,7 +129,8 @@ _pq_iso_to_epoch() {
 _pq_iso_add_seconds() {
 	local iso="$1"
 	local seconds="$2"
-	local epoch new_epoch
+	local epoch=""
+	local new_epoch=""
 	epoch=$(_pq_iso_to_epoch "$iso")
 	[[ "$epoch" -eq 0 ]] && {
 		printf '\n'
@@ -281,7 +282,9 @@ _pq_peer_window_expired() {
 	local started
 	started=$(_pq_get_field "$peer" window_started_at)
 	[[ -z "$started" ]] && return 0
-	local started_epoch now_epoch now_iso
+	local started_epoch=""
+	local now_epoch=""
+	local now_iso=""
 	started_epoch=$(_pq_iso_to_epoch "$started")
 	now_iso=$(_pq_now)
 	now_epoch=$(_pq_iso_to_epoch "$now_iso")
@@ -350,7 +353,9 @@ cmd_record_peer_event() {
 	command -v jq >/dev/null 2>&1 || return 0
 	_pq_init_state || return 1
 
-	local now peer_root now_q
+	local now=""
+	local peer_root=""
+	local now_q=""
 	now=$(_pq_now)
 	peer_root=$(_pq_jq_path "$peer")
 	# Pre-quote `${now}` once via the shared helper so call sites can
@@ -414,7 +419,13 @@ _pq_trip_peer() {
 	local peer="$1"
 	local triggering_issue="$2"
 	local reason="$3"
-	local now until_iso peer_root now_q until_q reason_q trig_q
+	local now=""
+	local until_iso=""
+	local peer_root=""
+	local now_q=""
+	local until_q=""
+	local reason_q=""
+	local trig_q=""
 	now=$(_pq_now)
 	until_iso=$(_pq_iso_add_seconds "$now" $((PEER_QUARANTINE_DURATION_HOURS * 3600)))
 	[[ -z "$until_iso" ]] && return 1
@@ -556,17 +567,21 @@ _pq_post_advisory() {
 	local triggering="$4"
 	_pq_ensure_dirs || return 1
 
-	local advisory_file stamp_file
+	local advisory_file=""
+	local stamp_file=""
 	advisory_file="${PEER_QUARANTINE_ADVISORY_DIR}/peer-quarantine-${peer}.advisory"
 	stamp_file="${PEER_QUARANTINE_CACHE_DIR}/peer-quarantine-advisory-${peer}.stamp"
 
-	local now now_epoch
+	local now=""
+	local now_epoch=""
 	now=$(_pq_now)
 	now_epoch=$(_pq_iso_to_epoch "$now")
 	local should_emit=1
 
 	if [[ -f "$stamp_file" ]]; then
-		local prior_until prior_ts prior_epoch
+		local prior_until=""
+		local prior_ts=""
+		local prior_epoch=""
 		prior_until=$(sed -n 1p "$stamp_file" 2>/dev/null || echo "")
 		prior_ts=$(sed -n 2p "$stamp_file" 2>/dev/null || echo "")
 		prior_epoch=$(_pq_iso_to_epoch "$prior_ts")
@@ -639,7 +654,9 @@ cmd_is_quarantined() {
 	local until_iso
 	until_iso=$(_pq_get_field "$peer" quarantine_until)
 	[[ -z "$until_iso" ]] && return 1
-	local until_epoch now_epoch now_iso
+	local until_epoch=""
+	local now_epoch=""
+	local now_iso=""
 	until_epoch=$(_pq_iso_to_epoch "$until_iso")
 	now_iso=$(_pq_now)
 	now_epoch=$(_pq_iso_to_epoch "$now_iso")
@@ -685,7 +702,9 @@ cmd_release() {
 	_pq_init_state || return 1
 	# Reset the peer's record. Pre-compute the JSON-quoted "now" once via
 	# the shared helper so the jq filter interpolates `${now_q}` directly.
-	local peer_root now_q reason_q
+	local peer_root=""
+	local now_q=""
+	local reason_q=""
 	peer_root=$(_pq_jq_path "$peer")
 	now_q=$(_pq_now_q)
 	reason_q="\"${reason}\""
@@ -740,7 +759,8 @@ cmd_status() {
 	fi
 
 	# Human format.
-	local now_epoch now_iso
+	local now_epoch=""
+	local now_iso=""
 	now_iso=$(_pq_now)
 	now_epoch=$(_pq_iso_to_epoch "$now_iso")
 	local peers
@@ -756,7 +776,12 @@ cmd_status() {
 			"$PEER_QUARANTINE_DURATION_HOURS"
 		return 0
 	fi
-	local peer count window until_iso state until_epoch
+	local peer=""
+	local count=""
+	local window=""
+	local until_iso=""
+	local state=""
+	local until_epoch=""
 	while IFS= read -r peer; do
 		[[ -z "$peer" ]] && continue
 		count=$(_pq_get_field "$peer" failure_count)
@@ -833,7 +858,9 @@ cmd_scan_comments() {
 	' 2>/dev/null) || lines=""
 	[[ -z "$lines" ]] && return 0
 
-	local body_and_author body peer
+	local body_and_author=""
+	local body=""
+	local peer=""
 	while IFS= read -r body_and_author; do
 		[[ -z "$body_and_author" ]] && continue
 		body="${body_and_author%|*}"
