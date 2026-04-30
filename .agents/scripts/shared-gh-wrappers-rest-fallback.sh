@@ -54,6 +54,23 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1500}"
 
 #######################################
+# Execute a gh api command with optional wall-clock timeout (t2913).
+# Fail-open: if _gh_with_timeout is not loaded, runs gh api directly.
+#
+# Args: $1=timeout_class (read|write)  $2..=gh api args
+# Returns: exit code of the gh api call.
+#######################################
+_rest_api_call() {
+	local _class="$1"; shift
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout "$_class" "$@"
+	else
+		"$@"
+	fi
+	return $?
+}
+
+#######################################
 # Build the `-F` value for `gh api` that uploads a file's contents as the
 # `body` form field. Centralised so the `body=@...` literal lives in exactly
 # one place; callers use "$(_rest_body_file_arg "$path")".
@@ -507,6 +524,26 @@ _rest_compute_target_set() {
 }
 
 #######################################
+# _rest_apply_labels: POST /repos/{owner}/{repo}/issues/{N}/labels.
+# PRs share GitHub's issues label endpoint. Best-effort — failures are
+# silently ignored (labels are non-critical metadata).
+#
+# Args: $1=repo_slug  $2=issue_or_pr_number  $3..=label names
+# Returns: 0 always
+#######################################
+_rest_apply_labels() {
+	local repo="$1" num="$2"; shift 2
+	[[ $# -eq 0 || -z "$num" ]] && return 0
+	local -a label_args=(-X POST "/repos/${repo}/issues/${num}/labels")
+	local _lbl
+	for _lbl in "$@"; do
+		[[ -n "$_lbl" ]] && label_args+=(-f "labels[]=${_lbl}")
+	done
+	gh api "${label_args[@]}" >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
 # _rest_pr_autodetect_head
 # Returns the current git branch name for use as --head when omitted.
 # Returns empty string when in detached HEAD state or outside a git repo.
@@ -645,18 +682,11 @@ _rest_pr_create() {
 
 	printf '%s\n' "$html_url"
 
-	# PRs share GitHub's issues label endpoint — apply labels if any.
+	# Apply labels via the issues endpoint (PRs share it).
 	if [[ ${#labels[@]} -gt 0 ]]; then
 		local pr_number
 		pr_number=$(printf '%s' "$html_url" | grep -oE '[0-9]+$' || true)
-		if [[ -n "$pr_number" ]]; then
-			local -a label_args=(-X POST "/repos/${repo}/issues/${pr_number}/labels")
-			local _lbl
-			for _lbl in "${labels[@]}"; do
-				[[ -n "$_lbl" ]] && label_args+=(-f "labels[]=${_lbl}")
-			done
-			gh api "${label_args[@]}" >/dev/null 2>&1 || true
-		fi
+		[[ -n "$pr_number" ]] && _rest_apply_labels "$repo" "$pr_number" "${labels[@]}"
 	fi
 	return 0
 }
@@ -717,15 +747,9 @@ _rest_issue_view() {
 	fi
 
 	local _path="/repos/${repo}/issues/${num}"
-	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
-	# Fail-open if helper not loaded — invoke gh api directly.
 	local _gh_cmd=(gh api "$_path")
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "${_gh_cmd[@]}"
-	else
-		"${_gh_cmd[@]}"
-	fi
+	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
 }
 
@@ -780,11 +804,7 @@ _rest_pr_view() {
 	local _path="/repos/${repo}/pulls/${num}"
 	local _gh_cmd=(gh api "$_path")
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "${_gh_cmd[@]}"
-	else
-		"${_gh_cmd[@]}"
-	fi
+	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
 }
 
@@ -851,14 +871,9 @@ _rest_pr_list() {
 	fi
 
 	local _path="/repos/${repo}/pulls?${_query}"
-	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
 	local _gh_cmd=(gh api "$_path")
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "${_gh_cmd[@]}"
-	else
-		"${_gh_cmd[@]}"
-	fi
+	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
 }
 
@@ -934,14 +949,9 @@ _rest_issue_list() {
 	fi
 
 	local _path="/repos/${repo}/issues?${_query}"
-	# t2913: wall-clock timeout via _gh_with_timeout (defined in shared-gh-wrappers.sh).
 	local _gh_cmd=(gh api "$_path")
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "${_gh_cmd[@]}"
-	else
-		"${_gh_cmd[@]}"
-	fi
+	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
 }
 
@@ -1041,10 +1051,6 @@ _rest_issue_search() {
 	fi
 
 	local _gh_cmd=(gh api "$_path" --jq "$_final_jq")
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout read "${_gh_cmd[@]}"
-	else
-		"${_gh_cmd[@]}"
-	fi
+	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
 }
