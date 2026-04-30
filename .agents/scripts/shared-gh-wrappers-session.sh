@@ -214,7 +214,11 @@ _gh_wrapper_args_have_label() {
 		--label)
 			local next_val="${2:-}"
 			label_val="$next_val"
-			shift
+			# Guard the shift: if --label is the last arg, $#=1 here and the
+			# trailing shift below would fail under set -e. Skip the value-
+			# consuming shift in that case so the trailing shift consumes the
+			# flag itself and the loop exits naturally.
+			[[ $# -gt 1 ]] && shift
 			;;
 		--label=*)
 			label_val="${cur#--label=}"
@@ -246,7 +250,11 @@ _gh_wrapper_args_have_origin_label() {
 		case "$cur" in
 		--label)
 			label_val="${2:-}"
-			shift
+			# Guard the shift: if --label is the last arg, $#=1 here and the
+			# trailing shift below would fail under set -e. Skip the value-
+			# consuming shift in that case so the trailing shift consumes the
+			# flag itself and the loop exits naturally.
+			[[ $# -gt 1 ]] && shift
 			;;
 		--label=*)
 			label_val="${cur#--label=}"

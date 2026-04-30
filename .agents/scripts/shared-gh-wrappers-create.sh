@@ -126,6 +126,52 @@ _gh_wrapper_derive_todo_labels() {
 	return 0
 }
 
+# t2436 / t3088: Prepare creation-time labels and a filtered arg list.
+# Extracts --todo-task-id from args, derives labels from TODO.md tags for the
+# embedded task ID, and writes the result to module-level globals so the caller
+# can splice them into the gh issue create invocation. Bash-3.2 / zsh compatible
+# (no nameref); pattern mirrors _gh_wrapper_extract_task_id_from_title.
+#
+# Outputs (set on every call):
+#   _GH_CI_FILTERED_ARGS  — original args minus --todo-task-id and its value
+#   _GH_CI_TODO_LABEL_ARGS — empty array, or (--label "$derived_labels")
+#
+# Non-blocking: every step returns silently on failure.
+_GH_CI_FILTERED_ARGS=()
+_GH_CI_TODO_LABEL_ARGS=()
+_gh_ci_prepare_todo_labels() {
+	_GH_CI_FILTERED_ARGS=()
+	_GH_CI_TODO_LABEL_ARGS=()
+
+	local _todo_task_id=""
+	_todo_task_id=$(_gh_wrapper_extract_task_id_from_title "$@") || true
+
+	# Filter --todo-task-id and its value out of the arg list
+	local _gh_ci_skip_next=false
+	local _gh_ci_arg
+	for _gh_ci_arg in "$@"; do
+		if [[ "$_gh_ci_skip_next" == "true" ]]; then
+			_gh_ci_skip_next=false
+			continue
+		fi
+		if [[ "$_gh_ci_arg" == "--todo-task-id" ]]; then
+			_gh_ci_skip_next=true
+			continue
+		fi
+		_GH_CI_FILTERED_ARGS+=("$_gh_ci_arg")
+	done
+
+	if [[ -n "$_todo_task_id" ]]; then
+		local _todo_derived_labels=""
+		_todo_derived_labels=$(_gh_wrapper_derive_todo_labels "$_todo_task_id") || true
+		if [[ -n "$_todo_derived_labels" ]]; then
+			print_info "[INFO] t2436: Derived labels from TODO.md for ${_todo_task_id}: ${_todo_derived_labels}"
+			_GH_CI_TODO_LABEL_ARGS=(--label "$_todo_derived_labels")
+		fi
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
@@ -151,41 +197,11 @@ gh_create_issue() {
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
-	# t2436: Derive creation-time labels from TODO.md tags for the task ID
-	# embedded in the --title "tNNN: ..." arg (or via explicit --todo-task-id).
-	# This ensures protected labels like parent-task are applied synchronously
-	# at issue creation, closing the race window where async issue-sync would
-	# apply them only after a subsequent TODO.md push.
-	# Strip --todo-task-id from args since it is not a native gh flag.
-	local _todo_task_id=""
-	_todo_task_id=$(_gh_wrapper_extract_task_id_from_title "$@") || true
-
-	# Filter --todo-task-id and its value out of the arg list
-	local -a _gh_ci_filtered_args=()
-	local _gh_ci_skip_next=false
-	local _gh_ci_arg
-	for _gh_ci_arg in "$@"; do
-		if [[ "$_gh_ci_skip_next" == "true" ]]; then
-			_gh_ci_skip_next=false
-			continue
-		fi
-		if [[ "$_gh_ci_arg" == "--todo-task-id" ]]; then
-			_gh_ci_skip_next=true
-			continue
-		fi
-		_gh_ci_filtered_args+=("$_gh_ci_arg")
-	done
-	set -- "${_gh_ci_filtered_args[@]}"
-
-	local -a _todo_label_args=()
-	if [[ -n "$_todo_task_id" ]]; then
-		local _todo_derived_labels=""
-		_todo_derived_labels=$(_gh_wrapper_derive_todo_labels "$_todo_task_id") || true
-		if [[ -n "$_todo_derived_labels" ]]; then
-			print_info "[INFO] t2436: Derived labels from TODO.md for ${_todo_task_id}: ${_todo_derived_labels}"
-			_todo_label_args=(--label "$_todo_derived_labels")
-		fi
-	fi
+	# t2436: Derive creation-time labels from TODO.md tags + filter --todo-task-id.
+	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
+	_gh_ci_prepare_todo_labels "$@"
+	set -- "${_GH_CI_FILTERED_ARGS[@]+"${_GH_CI_FILTERED_ARGS[@]}"}"
+	local -a _todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]+"${_GH_CI_TODO_LABEL_ARGS[@]}"}")
 
 	# t2028: auto-assign to the current user when the session is interactive
 	# and the caller did not pass an explicit --assignee. Reaches parity with
@@ -195,7 +211,7 @@ gh_create_issue() {
 	# t2406: skip self-assignment when auto-dispatch label is present (t2157).
 	# The origin:interactive label is still applied (t2200 — origin and
 	# assignment are independent axes).
-	local issue_output
+	local issue_output rc
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if _gh_wrapper_args_have_label "auto-dispatch" "$@"; then
 			# t2157/t2406: auto-dispatch means "let a worker handle this" —
@@ -206,11 +222,11 @@ gh_create_issue() {
 			local auto_assignee
 			auto_assignee=$(_gh_wrapper_auto_assignee)
 			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
-				local rc=$?
+				issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
+				rc=$?
 				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee")
+					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee")
 					rc=$?
 				fi
 				echo "$issue_output"
@@ -220,11 +236,11 @@ gh_create_issue() {
 		fi
 	fi
 
-	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
-	local rc=$?
+	issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
+	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
+		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
 		rc=$?
 	fi
 	echo "$issue_output"
