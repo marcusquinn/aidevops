@@ -263,6 +263,105 @@ _circuit_breaker_status() {
 }
 
 #######################################
+# Check whether GitHub Actions runner queue is saturated for a repo (t3211, GH#21942).
+#
+# Saturation criteria (BOTH must hold):
+#   - queued > AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN (default 50)
+#   - queued / max(in_progress, 1) > AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN (default 10)
+#
+# Distinct from the GraphQL circuit breaker: GraphQL points and Actions
+# runner-minutes are independent GitHub resource pools. The two breakers
+# do not interact — saturation can occur even when GraphQL budget is healthy,
+# and vice versa.
+#
+# Args: $1 = repo_slug (e.g. "owner/repo")
+#
+# Stdout (KEY=VALUE lines, one per line, parseable by `grep | cut`):
+#   queued=N         (count of queued workflow runs)
+#   in_progress=M    (count of in-progress workflow runs)
+#   ratio=R          (integer queued / max(in_progress,1); use as advisory)
+#   saturated=0|1    (1 iff both threshold conditions hold)
+#
+# Returns:
+#   0 — successful query (saturated may be 0 or 1)
+#   2 — gh api error (fail-open: stdout reports saturated=0)
+#
+# Bypass:
+#   AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION=1 — return saturated=0 unconditionally
+#   QUEUED_MIN=0                              — disable check via threshold
+#######################################
+_check_actions_queue_saturation() {
+	local repo_slug="$1"
+	local queued_min="${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}"
+	local ratio_min="${AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN:-10}"
+
+	# Validate inputs — invalid env values default to safe disabled state.
+	[[ "$queued_min" =~ ^[0-9]+$ ]] || queued_min=50
+	[[ "$ratio_min" =~ ^[0-9]+$ ]] || ratio_min=10
+
+	# Empty repo_slug → cannot query → fail-open with zeros.
+	if [[ -z "$repo_slug" ]]; then
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 0
+	fi
+
+	# Emergency bypass.
+	if [[ "${AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION:-0}" == "1" ]]; then
+		echo "${_CB_RL_LOG_PREFIX} AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION=1 — bypassing actions queue check for ${repo_slug}" >>"$LOGFILE"
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 0
+	fi
+
+	# Disabled if QUEUED_MIN is 0.
+	if [[ "$queued_min" -eq 0 ]]; then
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 0
+	fi
+
+	# Query Actions runs for queued + in_progress states. per_page=1 is
+	# enough — the .total_count field carries the population size without
+	# pulling the run bodies (cheap REST call).
+	local queued_json="" in_progress_json=""
+	queued_json=$(gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" 2>/dev/null) || queued_json=""
+	in_progress_json=$(gh api "repos/${repo_slug}/actions/runs?status=in_progress&per_page=1" 2>/dev/null) || in_progress_json=""
+
+	# Fail-open on any API error — instrumentation must never break the pulse.
+	if [[ -z "$queued_json" || -z "$in_progress_json" ]]; then
+		echo "${_CB_RL_LOG_PREFIX} WARNING: gh api repos/${repo_slug}/actions/runs failed — fail-open with saturated=0" >>"$LOGFILE"
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 2
+	fi
+
+	local queued in_progress
+	queued=$(printf '%s' "$queued_json" | jq -r '.total_count // 0' 2>/dev/null) || queued=0
+	in_progress=$(printf '%s' "$in_progress_json" | jq -r '.total_count // 0' 2>/dev/null) || in_progress=0
+	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
+	[[ "$in_progress" =~ ^[0-9]+$ ]] || in_progress=0
+
+	# Compute integer ratio = queued / max(in_progress, 1). Bash 3.2 has
+	# no floating-point — integer division is appropriate here because the
+	# threshold is itself an integer (10 vs ratio of 36 in the canonical
+	# incident; the precision floor is "ratio≥1", well below threshold).
+	local denom=1
+	[[ "$in_progress" -gt 0 ]] && denom="$in_progress"
+	local ratio=$((queued / denom))
+
+	# Saturation requires BOTH conditions to hold (high absolute queue AND
+	# imbalanced ratio). Either alone is a false-positive — light-load
+	# bursts hit absolute counts; healthy busy periods hit ratio with high
+	# in_progress counts that the runner pool is already serving.
+	local saturated=0
+	if [[ "$queued" -gt "$queued_min" && "$ratio" -gt "$ratio_min" ]]; then
+		saturated=1
+		echo "${_CB_RL_LOG_PREFIX} ${repo_slug} actions queue SATURATED: queued=${queued} in_progress=${in_progress} ratio=${ratio} (thresholds queued>${queued_min} ratio>${ratio_min})" >>"$LOGFILE"
+	fi
+
+	printf 'queued=%s\nin_progress=%s\nratio=%s\nsaturated=%s\n' \
+		"$queued" "$in_progress" "$ratio" "$saturated"
+	return 0
+}
+
+#######################################
 # Standalone CLI entry point.
 #######################################
 _main() {
@@ -274,20 +373,36 @@ _main() {
 			is_graphql_budget_sufficient
 			return $?
 			;;
+		check-actions-queue)
+			# Args: $1=repo_slug. Prints KEY=VALUE lines.
+			local repo_slug="${1:-}"
+			if [[ -z "$repo_slug" ]]; then
+				echo "Usage: pulse-rate-limit-circuit-breaker.sh check-actions-queue <owner/repo>" >&2
+				return 1
+			fi
+			_check_actions_queue_saturation "$repo_slug"
+			return $?
+			;;
 		status)
 			_circuit_breaker_status
 			return 0
 			;;
 		help | --help | -h)
-			echo "pulse-rate-limit-circuit-breaker.sh — Pulse-level GraphQL rate-limit circuit breaker (t2690)"
+			echo "pulse-rate-limit-circuit-breaker.sh — Pulse-level GraphQL rate-limit circuit breaker (t2690) + Actions queue saturation (t3211)"
 			echo ""
 			echo "Usage:"
-			echo "  pulse-rate-limit-circuit-breaker.sh check    # exit 0=OK, 1=tripped, 2=API error"
-			echo "  pulse-rate-limit-circuit-breaker.sh status   # human-readable status line"
+			echo "  pulse-rate-limit-circuit-breaker.sh check                          # exit 0=OK, 1=tripped, 2=API error"
+			echo "  pulse-rate-limit-circuit-breaker.sh check-actions-queue OWNER/REPO # KEY=VALUE: queued/in_progress/ratio/saturated"
+			echo "  pulse-rate-limit-circuit-breaker.sh status                         # human-readable status line"
 			echo ""
-			echo "Environment:"
+			echo "Environment (GraphQL):"
 			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.30 = 30%)"
 			echo "  AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1     emergency bypass"
+			echo ""
+			echo "Environment (Actions queue, t3211):"
+			echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN  min queued runs (default 50; 0 disables)"
+			echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN   min queued/in_progress ratio (default 10)"
+			echo "  AIDEVOPS_SKIP_ACTIONS_QUEUE_SATURATION=1      emergency bypass"
 			return 0
 			;;
 		*)

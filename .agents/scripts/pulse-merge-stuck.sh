@@ -23,8 +23,13 @@
 #     Iterates open PRs, increments per-PR/per-cycle counters, fires
 #     individual escalations, and detects pattern outages.
 #
-# Module-internal classifier (returns one of six string outcomes):
-#   _classify_stuck_pr <pr_number> <repo_slug>
+# Module-internal classifier (returns one of seven string outcomes):
+#   _classify_stuck_pr <pr_number> <repo_slug> [is_saturated]
+#     STUCK_RUNNER_QUEUE_SATURATION   — required check sits QUEUED while the
+#                                       repo's GitHub Actions runner pool is
+#                                       saturated (queued > N AND queued/
+#                                       in_progress > M); detected only when
+#                                       caller passes is_saturated=1 (t3211)
 #     STUCK_CHECKS_FAILING            — ≥1 FAILURE in rollup, no conflict
 #     STUCK_CONFLICT_NO_NUDGE_LABEL   — CONFLICTING + no origin:interactive
 #                                       and no origin:worker (gap in existing
@@ -61,6 +66,17 @@ _PULSE_MERGE_STUCK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_STUCK_DIR}/pulse-stats-helper.sh"
 
+# Source the rate-limit / Actions-queue helper for _check_actions_queue_saturation
+# (t3211, GH#21942). Defined alongside the GraphQL circuit breaker because both
+# concern GitHub-side resource exhaustion. The source is best-effort — if the
+# file is missing (e.g. partial deploy), the saturation detection short-circuits
+# to disabled and the module degrades to its pre-t3211 behaviour.
+if [[ -f "${_PULSE_MERGE_STUCK_DIR}/pulse-rate-limit-circuit-breaker.sh" ]]; then
+	# shellcheck source=./pulse-rate-limit-circuit-breaker.sh
+	# shellcheck disable=SC1091
+	source "${_PULSE_MERGE_STUCK_DIR}/pulse-rate-limit-circuit-breaker.sh"
+fi
+
 # Load thresholds from the canonical config file (env vars take precedence).
 # The conf file lives at .agents/configs/pulse-merge-stuck.conf; we resolve
 # from _PULSE_MERGE_STUCK_DIR (../configs/pulse-merge-stuck.conf).
@@ -89,8 +105,10 @@ fi
 # Counter and gauge names that would otherwise repeat 3+ times in the body
 # and trip the pre-commit string-literal ratchet.
 readonly _PMS_COUNTER_ESCALATIONS_FILED="pulse_merge_stuck_escalations_filed"
+readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_events"
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_JQ_NULL_GUARD="null"
+readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
 # jq filter snippet that selects array elements with a FAILURE rollup
 # conclusion or state. Extracted so the underlying upcase predicate is
 # defined exactly once (via a jq `def`) and reused for both the new-style
@@ -157,6 +175,7 @@ _pms_is_eligible_stuck() {
 
 #######################################
 # Classify why a stuck PR is stuck. Echoes one of:
+#   STUCK_RUNNER_QUEUE_SATURATION  (only when caller passes is_saturated=1)
 #   STUCK_CHECKS_FAILING
 #   STUCK_CONFLICT_NO_NUDGE_LABEL
 #   STUCK_BRANCHPROTECT_404
@@ -164,12 +183,19 @@ _pms_is_eligible_stuck() {
 #   STUCK_AUTH
 #   STUCK_OTHER
 #
-# Args: $1 = pr_number, $2 = repo_slug
+# The is_saturated parameter is computed once per repo per cycle by the
+# caller (pulse_merge_stuck_run_pass) — checking it per-PR would burn
+# REST budget. When set to 1, any PR with a QUEUED check in the rollup
+# is classified as STUCK_RUNNER_QUEUE_SATURATION (highest priority — the
+# QUEUED check would otherwise mask the actual cause).
+#
+# Args: $1 = pr_number, $2 = repo_slug, $3 = is_saturated (0|1, default 0)
 # Returns: 0 (always; classification is the stdout)
 #######################################
 _classify_stuck_pr() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local is_saturated="${3:-0}"
 
 	# Cheap fast paths first. Fetch labels + mergeable + checks rollup once.
 	local pr_meta
@@ -179,6 +205,24 @@ _classify_stuck_pr() {
 	local mergeable="" labels=""
 	mergeable=$(printf '%s' "$pr_meta" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null)
 	labels=$(printf '%s' "$pr_meta" | jq -r '[.labels[].name] | join(",")' 2>/dev/null)
+
+	# Runner queue saturation takes priority when the repo is saturated
+	# AND this PR has a QUEUED check in its rollup. This must come BEFORE
+	# the FAILURE check below, because checks that have not yet started
+	# (.status=QUEUED, .conclusion=null) are not counted as failures by
+	# the FAILURE selector but ARE the proximate cause of the stuck state
+	# during a runner outage. (t3211)
+	if [[ "$is_saturated" == "1" ]]; then
+		local has_queued
+		has_queued=$(printf '%s' "$pr_meta" | jq -r \
+			'[.statusCheckRollup[]? | select((.status // "" | ascii_upcase) == "QUEUED")] | length' \
+			2>/dev/null)
+		[[ "$has_queued" =~ ^[0-9]+$ ]] || has_queued=0
+		if [[ "$has_queued" -gt 0 ]]; then
+			printf 'STUCK_RUNNER_QUEUE_SATURATION'
+			return 0
+		fi
+	fi
 
 	# Conflict + no nudge label → that gap.
 	if [[ "$mergeable" == "CONFLICTING" \
@@ -595,6 +639,172 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3193) on detecting a pattern o
 	return 0
 }
 
+# ── Runner queue saturation meta-issue (t3211, GH#21942) ────────────────────
+
+#######################################
+# File ONE meta-issue describing GitHub Actions runner queue saturation in the
+# repo. Suppression: the caller (pulse_merge_stuck_run_pass) skips per-PR
+# escalations for STUCK_RUNNER_QUEUE_SATURATION classifications when this
+# function fires, so the meta-issue is the only escalation surface.
+# Dedup'd by the fixed marker — saturation is a repo-level signal, not a
+# per-fingerprint signal.
+#
+# Args:
+#   $1 - repo_slug
+#   $2 - queued (count of queued workflow runs at detection time)
+#   $3 - in_progress (count of in-progress workflow runs at detection time)
+#   $4 - ratio (integer queued/max(in_progress,1))
+#   $5 - affected_prs (comma-separated PR numbers blocked by saturation)
+#   $6 - count (length of affected_prs list)
+#######################################
+_pms_file_runner_saturation_issue() {
+	local repo_slug="$1"
+	local queued="$2"
+	local in_progress="$3"
+	local ratio="$4"
+	local affected_prs="$5"
+	local count="$6"
+
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
+	[[ "$in_progress" =~ ^[0-9]+$ ]] || in_progress=0
+	[[ "$ratio" =~ ^[0-9]+$ ]] || ratio=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+
+	local marker_text="${_PMS_RUNNER_SATURATION_MARKER_TEXT}"
+	local marker="<!-- ${marker_text} -->"
+
+	# Dedup: search for an OPEN issue with this marker in the affected repo.
+	# The same repo's saturation events may recur over hours but only one
+	# meta-issue stays open at a time — operators close it after triaging.
+	local existing
+	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
+		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
+	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
+		echo "[pulse-merge-stuck] _pms_file_runner_saturation_issue: marker already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+		# Still increment the events counter — saturation IS happening, even
+		# if the meta-issue dedup prevents a fresh filing. This way operators
+		# can correlate counter spikes with saturation incidents even when
+		# only one meta-issue exists.
+		pulse_stats_increment "$_PMS_COUNTER_QUEUE_SATURATION_EVENTS"
+		return 0
+	fi
+
+	# Compose the meta-issue body. tier:thinking + bug + auto-dispatch matches
+	# the _pms_file_outage_issue convention; source:merge-stuck-detector
+	# routes the issue to operators familiar with the detector module.
+	local title="merge-stuck: GitHub Actions runner queue saturated (${queued} queued / ${in_progress} in-progress) in ${repo_slug}"
+
+	# Use read -r -d '' for bash 3.2 portability — see _escalate_individual_stuck_pr
+	# for the rationale (heredoc-in-subshell is not bash 3.2 compatible).
+	local body=""
+	IFS='' read -r -d '' body <<EOF || true
+${marker}
+## What
+
+The pulse stuck-merge detector observed **GitHub Actions runner queue saturation** in this repo, blocking **${count} PR(s)** with required checks stuck in QUEUED status:
+
+- Queued workflow runs: **${queued}**
+- In-progress workflow runs: **${in_progress}**
+- Saturation ratio (queued / max(in_progress,1)): **${ratio}**
+
+Detection thresholds: queued > \`${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\` AND ratio > \`${AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN:-10}\`. Both conditions held in this cycle.
+
+Per-PR escalation comments are SUPPRESSED for these PRs while saturation persists — the cause is shared (runner pool exhaustion), not per-PR (rebase, fix code). This single meta-issue replaces the N per-PR comments that would otherwise be filed.
+
+## Affected PRs
+
+$(printf '%s' "$affected_prs" | tr ',' '\n' | while read -r p; do [[ -n "$p" ]] && printf -- '- #%s\n' "$p"; done)
+
+## Why
+
+GitHub Actions accounts share a runner pool with rate-limited concurrency. When many workflow runs queue at once (CI cascade triggered by a merge train, bulk push, workflow_dispatch storm, recursive workflow_run trigger), runners are oversubscribed and PRs sit indefinitely with required checks in QUEUED state.
+
+The deterministic merge gate (\`required_status_checks\`) reports these as not-yet-passing — they have not concluded — so PRs that would otherwise auto-merge are blocked. This is distinct from:
+
+- **t2690** (GraphQL points circuit breaker) — GraphQL points and Actions runner-minutes are independent GitHub resource pools.
+- **t2922** (fail-closed required-checks) — concerns API errors fetching protection rules, not runner availability.
+- **t3193** (per-PR stuck classifications) — surfaces individual PRs with FAILURE checks; saturation is about CHECKS THAT NEVER STARTED.
+
+## How
+
+### Files Scope
+
+Investigation only — the fix is operational (reduce runner load, upgrade plan, prune workflows), not code.
+
+### Investigation steps
+
+1. Confirm saturation persists (run a few minutes after this issue was filed):
+
+\`\`\`bash
+gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" --jq '.total_count'
+gh api "repos/${repo_slug}/actions/runs?status=in_progress&per_page=1" --jq '.total_count'
+\`\`\`
+
+2. Identify the source of the queue burst:
+
+\`\`\`bash
+gh run list --repo ${repo_slug} --status queued --limit 30 \\
+  --json workflowName,headBranch,createdAt
+\`\`\`
+
+Group by \`workflowName\` — if one workflow dominates, suspect a runaway loop (workflow_dispatch storm, schedule misfire, recursive \`workflow_run\` trigger, label-cascade — see t2229).
+
+3. Cancel runaway runs if detected:
+
+\`\`\`bash
+gh run cancel <run-id> --repo ${repo_slug}
+# or bulk:
+gh run list --repo ${repo_slug} --status queued --limit 100 \\
+  --json databaseId,workflowName --jq '.[] | select(.workflowName=="<runaway>") | .databaseId' \\
+  | xargs -I{} gh run cancel {} --repo ${repo_slug}
+\`\`\`
+
+4. Check concurrency settings — every workflow that triggers on \`pull_request\` should have a \`concurrency\` block keyed by branch with \`cancel-in-progress: true\` (or \`false\` only when serial execution is required, e.g. Maintainer Gate). Workflows without \`concurrency\` multiply the queue under bursty conditions.
+
+5. If saturation is sustained (recurring across multiple meta-issues), consider:
+
+   - Upgrading the GitHub plan tier (increases runner pool size).
+   - Migrating long-running jobs to self-hosted runners.
+   - Pruning low-value workflows (e.g. duplicate Python lint jobs running in parallel with the same matrix).
+
+### Verification
+
+- \`gh api "repos/${repo_slug}/actions/runs?status=queued&per_page=1" --jq '.total_count'\` returns ≤ \`${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\`.
+- The next pulse cycle does NOT re-fire this meta-issue (saturation cleared).
+- Affected PRs above either auto-merge or have their remaining issues triaged individually.
+
+## Acceptance
+
+- [ ] Source of the runner queue burst identified (specific workflow / event / cause).
+- [ ] Saturation cleared (queue depth recovered below threshold).
+- [ ] All ${count} affected PR(s) above are unblocked (auto-merged, manually merged, or have separate follow-up issues).
+
+## Session Origin
+
+Filed automatically by \`pulse-merge-stuck.sh\` (t3211 / GH#21942) on detecting Actions runner queue saturation in ${repo_slug}. The detector runs once per pulse cycle per repo via \`pulse_merge_stuck_run_pass\`.
+
+<sub>Source: pulse-merge-stuck-detector. Threshold env: \`AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN=${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\`, \`AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN=${AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN:-10}\`.</sub>
+EOF
+
+	# Wrapper-only — see _pms_file_outage_issue rationale above.
+	if ! declare -F gh_create_issue >/dev/null 2>&1; then
+		echo "[pulse-merge-stuck] _pms_file_runner_saturation_issue: gh_create_issue wrapper unavailable, skipping for ${repo_slug} (queued=${queued})" >>"$LOGFILE"
+		return 0
+	fi
+
+	local labels="auto-dispatch,tier:thinking,bug,source:merge-stuck-detector"
+	gh_create_issue --repo "$repo_slug" \
+		--title "$title" \
+		--body "$body" \
+		--label "$labels" >/dev/null 2>&1 || true
+
+	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
+	pulse_stats_increment "$_PMS_COUNTER_QUEUE_SATURATION_EVENTS"
+	echo "[pulse-merge-stuck] _pms_file_runner_saturation_issue: filed saturation issue for ${repo_slug} (queued=${queued}, in_progress=${in_progress}, ratio=${ratio}, affected=${count})" >>"$LOGFILE"
+	return 0
+}
+
 # ── Zero-progress meta-issue ────────────────────────────────────────────────
 
 # File ONE meta-issue describing the throughput collapse when consecutive
@@ -767,8 +977,36 @@ pulse_merge_stuck_run_pass() {
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 	local age_threshold_secs=$((AIDEVOPS_MERGE_STUCK_AGE_MINUTES * 60))
 
+	# ── Compute Actions runner queue saturation ONCE per repo per cycle ──
+	# (t3211, GH#21942). Calling _check_actions_queue_saturation per-PR
+	# would burn REST budget pointlessly — saturation is a repo-wide signal.
+	# Fail-open if the helper is unavailable (partial deploy) — saturation
+	# defaults to 0 and the module degrades to its pre-t3211 behaviour.
+	local sat_queued=0 sat_in_progress=0 sat_ratio=0 is_saturated=0
+	if declare -F _check_actions_queue_saturation >/dev/null 2>&1; then
+		local saturation_output=""
+		saturation_output=$(_check_actions_queue_saturation "$repo_slug" 2>/dev/null) || saturation_output=""
+		if [[ -n "$saturation_output" ]]; then
+			# Parse KEY=VALUE lines emitted by the helper.
+			sat_queued=$(printf '%s\n' "$saturation_output" | grep -E '^queued=' | head -1 | cut -d= -f2)
+			sat_in_progress=$(printf '%s\n' "$saturation_output" | grep -E '^in_progress=' | head -1 | cut -d= -f2)
+			sat_ratio=$(printf '%s\n' "$saturation_output" | grep -E '^ratio=' | head -1 | cut -d= -f2)
+			is_saturated=$(printf '%s\n' "$saturation_output" | grep -E '^saturated=' | head -1 | cut -d= -f2)
+			[[ "$sat_queued" =~ ^[0-9]+$ ]] || sat_queued=0
+			[[ "$sat_in_progress" =~ ^[0-9]+$ ]] || sat_in_progress=0
+			[[ "$sat_ratio" =~ ^[0-9]+$ ]] || sat_ratio=0
+			[[ "$is_saturated" == "1" ]] || is_saturated=0
+		fi
+	fi
+
 	local eligible_stuck_count=0
 	local stuck_pr_numbers=""
+
+	# Saturation-blocked PRs aggregated for the meta-issue body (t3211).
+	# Per-PR escalation comments are SUPPRESSED for these — the meta-issue
+	# replaces them.
+	local saturation_blocked_prs=""
+	local saturation_blocked_count=0
 
 	# Iterate each PR — classify, escalate, accumulate fingerprints.
 	local i=0
@@ -796,8 +1034,10 @@ pulse_merge_stuck_run_pass() {
 
 		# Per-PR classification + handler (skip per-PR escalation when the
 		# PR is part of a pattern cluster — detected later in the same pass).
+		# Pass is_saturated so the classifier can recognise QUEUED checks
+		# during a runner outage.
 		local classification
-		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug")
+		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated")
 
 		# Fetch linked issue once for the escalation comment.
 		local linked_issue=""
@@ -806,6 +1046,12 @@ pulse_merge_stuck_run_pass() {
 		fi
 
 		case "$classification" in
+			STUCK_RUNNER_QUEUE_SATURATION)
+				# Suppress per-PR escalation — aggregate for the meta-issue.
+				saturation_blocked_prs="${saturation_blocked_prs}${pr_num},"
+				saturation_blocked_count=$((saturation_blocked_count + 1))
+				echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: PR #${pr_num} (${repo_slug}) classified STUCK_RUNNER_QUEUE_SATURATION — suppressing per-PR escalation, will aggregate to meta-issue" >>"$LOGFILE"
+				;;
 			STUCK_BRANCHPROTECT_404)
 				_handle_stuck_branchprotect_404 "$pr_num" "$repo_slug"
 				;;
@@ -821,12 +1067,24 @@ pulse_merge_stuck_run_pass() {
 	# Update the gauge for this cycle's count.
 	pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "$eligible_stuck_count"
 
+	# File the runner-queue-saturation meta-issue if saturation was detected
+	# AND at least one stuck PR was classified into that bucket. The
+	# saturated-but-no-affected-PRs case (rare — saturation cleared between
+	# the helper call and the PR iteration) is intentionally a no-op.
+	if [[ "$is_saturated" == "1" && "$saturation_blocked_count" -gt 0 ]]; then
+		# Strip trailing comma from the aggregated PR list.
+		saturation_blocked_prs="${saturation_blocked_prs%,}"
+		_pms_file_runner_saturation_issue "$repo_slug" \
+			"$sat_queued" "$sat_in_progress" "$sat_ratio" \
+			"$saturation_blocked_prs" "$saturation_blocked_count" || true
+	fi
+
 	# Pattern-cluster detector over the full stuck set.
 	if [[ "$eligible_stuck_count" -ge "$AIDEVOPS_MERGE_PATTERN_MIN_PRS" ]]; then
 		_detect_pattern_outage "$repo_slug" "$(printf '%b' "$stuck_pr_numbers")" || true
 	fi
 
-	echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: ${repo_slug} — eligible_stuck=${eligible_stuck_count}, threshold=${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}m" >>"$LOGFILE"
+	echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: ${repo_slug} — eligible_stuck=${eligible_stuck_count}, threshold=${AIDEVOPS_MERGE_STUCK_AGE_MINUTES}m, saturated=${is_saturated} (queued=${sat_queued}, in_progress=${sat_in_progress}, ratio=${sat_ratio}, blocked_by_saturation=${saturation_blocked_count})" >>"$LOGFILE"
 	return 0
 }
 
