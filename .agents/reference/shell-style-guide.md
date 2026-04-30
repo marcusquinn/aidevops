@@ -317,6 +317,39 @@ $ mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
 
 GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate enforces the BSD-safe form everywhere so future macOS regressions are caught at PR time.
 
+## Watchdog Self-Write Anti-Pattern (t3058 + t3071)
+
+If a script monitors file X for activity as a stall signal (byte-delta, line-count, mtime), the SAME script (or any code path invoked during the monitoring loop) MUST NOT write status markers, informational messages, or lifecycle events to X. Self-writes register as "progress" and silently neuter the timeout — the very condition the marker was meant to instrument continues uncapped.
+
+**Route markers to a sibling log** that the watchdog does NOT consult:
+
+```bash
+# BAD — self-write neutering the stall counter:
+echo "[lifecycle] worker_stall_deferred ..." >>"$OUTPUT_FILE"   # OUTPUT_FILE is the monitored file
+
+# GOOD — write to a separate lifecycle log:
+echo "[lifecycle] worker_stall_deferred ..." >>"$LIFECYCLE_LOG"  # never consulted by the byte-delta check
+```
+
+**Canonical destinations:**
+
+- Worker watchdog (`worker-activity-watchdog.sh`): `$LIFECYCLE_LOG` (defaults to `~/.aidevops/logs/pulse-dispatch.log`)
+- Pulse watchdog (`pulse-watchdog.sh`): `$PULSE_WATCHDOG_LOG` (defaults to `~/.aidevops/logs/pulse-watchdog.log`)
+
+**Post-kill writes are safe.** `[WATCHDOG_KILL]` markers written AFTER the monitoring loop exits (e.g., in `_kill_worker`, `_watchdog_kill`) do not trigger the anti-pattern because no subsequent poll will read them. These may remain in the monitored file for downstream classification.
+
+**Severity depends on write frequency:**
+
+- **Self-sustaining** (writes on every poll): timeout is fully neutered — only `HARD_KILL_SECONDS` remains as a cap. This was the t3058 canonical bug (defer markers on every stall check).
+- **One-shot** (writes on state transitions only): timeout delayed by one poll interval per transition. Still incorrect but less catastrophic. This was the t3071 finding in `pulse-watchdog.sh`.
+
+**Canonical examples:**
+
+- `worker-activity-watchdog.sh:570-593` (t3058 / PR GH#21797 fix — defer marker routed to `$LIFECYCLE_LOG`)
+- `pulse-watchdog.sh:378,426` (t3071 / GH#21811 audit — filed as GH#21842 for fix)
+
+**CI gate:** TBD — scan PRs for `>>"$VAR"` where the same file contains a `last_size=$(... "$VAR")` or `wc -c <"$VAR"` polling loop.
+
 ## Related
 
 - **Originating incident**: PR #18728, GH#18702 (primary), GH#18693 (cascade)
@@ -325,3 +358,4 @@ GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate en
 - **Prior art**: Pattern B: `watercrawl-helper.sh:58`, `security-helper.sh:22`, `routine-log-helper.sh:30`. Include-guard: `circuit-breaker-helper.sh:64-70`.
 - **Build-time rule**: `prompts/build.txt` → "Quality Standards"
 - **Architecture pointer**: `aidevops/architecture.md` → "Shell Helper Initialization"
+- **Watchdog anti-pattern**: t3058 (PR GH#21797), t3071 (GH#21811 audit, GH#21842 fix)
