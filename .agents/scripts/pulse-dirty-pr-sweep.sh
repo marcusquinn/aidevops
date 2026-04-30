@@ -102,6 +102,7 @@ DIRTY_PR_REBASE_PLANNING_MAX_AGE="${DIRTY_PR_REBASE_PLANNING_MAX_AGE:-604800}"  
 DIRTY_PR_CLOSE_MIN_AGE="${DIRTY_PR_CLOSE_MIN_AGE:-604800}"                                 # 7d
 DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE="${DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE:-1209600}"       # 14d for origin:interactive + referenced (t2711 Q2)
 DIRTY_PR_CLOSE_IDLE_HUMAN="${DIRTY_PR_CLOSE_IDLE_HUMAN:-259200}"                           # 3d since last human push
+DIRTY_PR_INTERACTIVE_STALE_AGE="${DIRTY_PR_INTERACTIVE_STALE_AGE:-14400}"                 # 4h — interactive session staleness floor (mirrors t2189)
 
 # Max PRs processed per sweep per repo (safety rail — a single run should
 # never thrash hundreds of PRs).
@@ -386,6 +387,66 @@ _dps_pr_body_has_issue_reference() {
 	return 1
 }
 
+# Determine whether the interactive session that opened a PR is likely
+# abandoned, using only server-visible signals (cross-runner safe — local
+# claim stamps at ~/.aidevops/.agent-workspace/interactive-claims/ are not
+# readable on peer runners).
+#
+# Returns 0 (stale) when BOTH of these conditions hold:
+#   - No commits on the head ref in the last DIRTY_PR_INTERACTIVE_STALE_AGE seconds
+#   - No comments from the PR author in that window
+#
+# Returns 1 (live/unknown) otherwise. Fail-safe to "live" on any API error
+# so we never auto-takeover on transient network blips.
+#
+# NOTE: $author is read via bash dynamic scoping from the calling function
+# (_dirty_pr_classify). It is intentionally not a positional parameter.
+#
+# Args: $1=pr_number $2=repo_slug $3=head_ref $4=repo_path (unused but
+#       part of the public signature for future local-stamp reads)
+_dps_interactive_stamp_is_stale() {
+	local pr_number="$1" repo_slug="$2" head_ref="$3"
+	# $4 (repo_path) reserved for future local-stamp integration
+	local threshold_age="${DIRTY_PR_INTERACTIVE_STALE_AGE:-14400}"  # 4h default
+	local now="" last_commit_age="" last_comment_age=""
+
+	now=$(_dps_now_epoch)
+
+	# Last commit on the head ref (server-visible, cross-runner safe).
+	local last_commit_iso
+	last_commit_iso=$(gh api "repos/${repo_slug}/commits/${head_ref}" \
+		--jq '.commit.committer.date' 2>/dev/null) || return 1
+	[[ -n "$last_commit_iso" ]] || return 1
+	local last_commit_epoch
+	last_commit_epoch=$(_dps_iso_to_epoch "$last_commit_iso")
+	[[ "$last_commit_epoch" -gt 0 ]] || return 1
+	last_commit_age=$((now - last_commit_epoch))
+
+	# Last comment from the PR author on the PR (server-visible, cross-runner safe).
+	# $author is visible via bash dynamic scoping from _dirty_pr_classify.
+	local last_author_comment_iso
+	last_author_comment_iso=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments" \
+		--jq "[.[] | select(.user.login == \"${author:-}\")] | last | .created_at // empty" \
+		2>/dev/null) || last_author_comment_iso=""
+	if [[ -n "$last_author_comment_iso" ]]; then
+		local last_comment_epoch
+		last_comment_epoch=$(_dps_iso_to_epoch "$last_author_comment_iso")
+		if [[ "$last_comment_epoch" -gt 0 ]]; then
+			last_comment_age=$((now - last_comment_epoch))
+		else
+			last_comment_age="$last_commit_age"
+		fi
+	else
+		last_comment_age="$last_commit_age"
+	fi
+
+	# Stale only when BOTH ages exceed the threshold.
+	if [[ "$last_commit_age" -gt "$threshold_age" && "$last_comment_age" -gt "$threshold_age" ]]; then
+		return 0  # stale — safe to attempt cross-runner rebase takeover
+	fi
+	return 1      # live (or indeterminate) — leave as notify-only
+}
+
 # Decide whether a rebase path is structurally eligible (author-ok +
 # not parent-task + within age window for the conflict scope).
 # Output on stdout: "rebase|planning-only-conflict" if yes,
@@ -517,6 +578,9 @@ _dirty_pr_classify() {
 		rebase_author_ok=1
 	elif [[ "$has_worker_origin" -eq 1 ]]; then
 		rebase_author_ok=1
+	elif [[ "$has_interactive" -eq 1 ]] && _dps_interactive_stamp_is_stale "$pr_number" "$_repo_slug" "$head_ref" "$repo_path"; then
+		rebase_author_ok=1
+		_dps_log "PR #${pr_number} ${_repo_slug}: origin:interactive but stale — allowing cross-runner rebase takeover"
 	fi
 
 	# Happy path: try rebase first.
@@ -1027,6 +1091,9 @@ Environment:
   DIRTY_PR_CLOSE_MIN_AGE=604800          Close eligibility floor (seconds).
   DIRTY_PR_CLOSE_IDLE_HUMAN=259200       Close idleness floor (seconds).
   DIRTY_PR_SWEEP_BATCH_LIMIT=30          Max PRs per repo per run.
+  DIRTY_PR_INTERACTIVE_STALE_AGE=14400  Interactive session staleness floor (seconds, 4h). PRs with
+                                         origin:interactive are eligible for cross-runner rebase when
+                                         both the head ref and PR-author comments are older than this.
 
 Examples:
   pulse-dirty-pr-sweep.sh --dry-run
