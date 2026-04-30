@@ -39,9 +39,22 @@ const MAX_DIM_PX = 1568;
  * @returns {number} byte size of the decoded image
  */
 function base64ByteSize(b64) {
-  // Remove padding characters before applying the formula.
   const withoutPadding = b64.replace(/=+$/, "");
   return Math.floor((withoutPadding.length * 3) / 4);
+}
+
+/**
+ * Try one downscale command and return true if successful.
+ * @param {string} cmd - shell command to run
+ * @returns {boolean}
+ */
+function trySipsOrMagick(cmd) {
+  try {
+    execSync(cmd, { timeout: 15000, stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -61,47 +74,23 @@ function tryDownscale(b64, mediaType) {
   try {
     writeFileSync(tmpIn, Buffer.from(b64, "base64"));
 
-    let downscaled = false;
+    const sipsCmd = `sips --resampleHeightWidthMax ${MAX_DIM_PX} "${tmpIn}" --out "${tmpOut}"`;
+    const magickCmd = `magick "${tmpIn}" -resize "${MAX_DIM_PX}x${MAX_DIM_PX}>" "${tmpOut}"`;
 
-    // Attempt 1: sips (macOS native — preferred, no extra install required)
-    try {
-      execSync(
-        `sips --resampleHeightWidthMax ${MAX_DIM_PX} "${tmpIn}" --out "${tmpOut}"`,
-        { timeout: 15000, stdio: "pipe" },
-      );
-      downscaled = true;
-    } catch {
-      // sips unavailable or failed — fall through to magick
-    }
-
-    // Attempt 2: ImageMagick (cross-platform fallback)
-    if (!downscaled) {
-      try {
-        execSync(
-          `magick "${tmpIn}" -resize "${MAX_DIM_PX}x${MAX_DIM_PX}>" "${tmpOut}"`,
-          { timeout: 15000, stdio: "pipe" },
-        );
-        downscaled = true;
-      } catch {
-        // magick unavailable or failed
-      }
-    }
-
-    if (!downscaled) {
-      return null;
-    }
+    const downscaled = trySipsOrMagick(sipsCmd) || trySipsOrMagick(magickCmd);
+    if (!downscaled) return null;
 
     return readFileSync(tmpOut).toString("base64");
   } catch {
     return null;
   } finally {
-    try { unlinkSync(tmpIn); } catch { /* best-effort cleanup */ }
-    try { unlinkSync(tmpOut); } catch { /* best-effort cleanup */ }
+    try { unlinkSync(tmpIn); } catch { /* best-effort */ }
+    try { unlinkSync(tmpOut); } catch { /* best-effort */ }
   }
 }
 
 /**
- * Build the replacement text annotation used when an image cannot be
+ * Build the replacement text annotation for an image that cannot be
  * downscaled to fit under the API limit.
  * @param {number} originalBytes
  * @returns {string}
@@ -119,6 +108,73 @@ function rejectionText(originalBytes) {
   );
 }
 
+/**
+ * Apply the size guard to a single oversized image part.
+ * Returns a replacement content part (downscaled image or text rejection).
+ * @param {object} part — original image content part
+ * @param {string} b64 — original base64 data
+ * @param {number} sizeBytes — decoded size
+ * @param {(level: string, message: string) => void} qualityLog
+ * @returns {object} replacement content part
+ */
+function guardOversizedPart(part, b64, sizeBytes, qualityLog) {
+  const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
+  qualityLog("WARN", `[image-size-guard] User image ${sizeMB} MB exceeds 4.5 MB — attempting downscale`);
+
+  const mediaType = part.source.media_type || "image/png";
+  const downscaled = tryDownscale(b64, mediaType);
+
+  if (downscaled !== null) {
+    const newBytes = base64ByteSize(downscaled);
+    const newMB = (newBytes / (1024 * 1024)).toFixed(1);
+
+    if (newBytes <= IMAGE_BYTE_LIMIT) {
+      qualityLog("INFO", `[image-size-guard] Image downscaled ${sizeMB} MB → ${newMB} MB`);
+      return { ...part, source: { ...part.source, data: downscaled } };
+    }
+    qualityLog("WARN", `[image-size-guard] Post-downscale image still ${newMB} MB — replacing with notice`);
+  } else {
+    qualityLog("WARN", `[image-size-guard] Downscale unavailable for ${sizeMB} MB image — replacing with notice`);
+  }
+
+  return { type: "text", text: rejectionText(sizeBytes) };
+}
+
+/**
+ * Check whether a content part needs the size guard.
+ * Returns null if the part can pass through, or the replacement part.
+ * @param {object} part
+ * @param {(level: string, message: string) => void} qualityLog
+ * @returns {object|null} replacement part, or null if no action needed
+ */
+function checkImagePart(part, qualityLog) {
+  if (part?.type !== "image" || part?.source?.type !== "base64") return null;
+
+  const b64 = part.source?.data;
+  if (!b64) return null;
+
+  const sizeBytes = base64ByteSize(b64);
+  if (sizeBytes <= IMAGE_BYTE_LIMIT) return null;
+
+  return guardOversizedPart(part, b64, sizeBytes, qualityLog);
+}
+
+/**
+ * Apply the image size guard to a single user message in place.
+ * @param {object} message
+ * @param {(level: string, message: string) => void} qualityLog
+ */
+function guardUserMessage(message, qualityLog) {
+  if (message.role !== "user" || !Array.isArray(message.content)) return;
+
+  for (let i = 0; i < message.content.length; i++) {
+    const replacement = checkImagePart(message.content[i], qualityLog);
+    if (replacement !== null) {
+      message.content[i] = replacement;
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Exported guard
 // ---------------------------------------------------------------------------
@@ -127,7 +183,7 @@ function rejectionText(originalBytes) {
  * Walk output.messages and apply the image size guard to every user-role
  * message containing base64 image content parts. Mutates output.messages
  * in place — oversized images are either downscaled or replaced with a
- * text rejection notice.
+ * text rejection notice so the session survives the API call.
  *
  * Called from the composed messagesTransformHook in index.mjs.
  *
@@ -138,66 +194,6 @@ export function applyImageSizeGuard(output, qualityLog) {
   if (!output?.messages) return;
 
   for (const message of output.messages) {
-    if (message.role !== "user") continue;
-
-    const content = message.content;
-    if (!Array.isArray(content)) continue;
-
-    for (let i = 0; i < content.length; i++) {
-      const part = content[i];
-
-      // Only handle base64-encoded image parts
-      if (part?.type !== "image") continue;
-      if (part?.source?.type !== "base64") continue;
-
-      const b64 = part.source?.data;
-      if (!b64) continue;
-
-      const sizeBytes = base64ByteSize(b64);
-      if (sizeBytes <= IMAGE_BYTE_LIMIT) continue;
-
-      const sizeMB = (sizeBytes / (1024 * 1024)).toFixed(1);
-      qualityLog(
-        "WARN",
-        `[image-size-guard] User image ${sizeMB} MB exceeds 4.5 MB — attempting downscale`,
-      );
-
-      const mediaType = part.source.media_type || "image/png";
-      const downscaled = tryDownscale(b64, mediaType);
-
-      if (downscaled !== null) {
-        const newBytes = base64ByteSize(downscaled);
-        const newMB = (newBytes / (1024 * 1024)).toFixed(1);
-
-        if (newBytes <= IMAGE_BYTE_LIMIT) {
-          // Success: replace image data in place
-          content[i] = {
-            ...part,
-            source: { ...part.source, data: downscaled },
-          };
-          qualityLog(
-            "INFO",
-            `[image-size-guard] Image downscaled ${sizeMB} MB → ${newMB} MB — sending resized version`,
-          );
-          continue;
-        }
-
-        qualityLog(
-          "WARN",
-          `[image-size-guard] Post-downscale image still ${newMB} MB — replacing with rejection notice`,
-        );
-      } else {
-        qualityLog(
-          "WARN",
-          `[image-size-guard] Downscale unavailable for ${sizeMB} MB image — replacing with rejection notice`,
-        );
-      }
-
-      // Fallback: replace image with text annotation so the session survives
-      content[i] = {
-        type: "text",
-        text: rejectionText(sizeBytes),
-      };
-    }
+    guardUserMessage(message, qualityLog);
   }
 }
