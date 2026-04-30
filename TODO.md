@@ -3619,7 +3619,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3090 Fix 4 pre-existing failures in test-pulse-wrapper-worker-count.sh #auto-dispatch #bug ref:GH#21873 pr:#21884 completed:2026-04-30
 
-- [ ] t3192 extend pulse-merge native auto-merge with stuck-state fallback to --admin direct merge #auto-dispatch #bug #framework ref:GH#21888
+- [x] t3192 extend pulse-merge native auto-merge with stuck-state fallback to --admin direct merge #auto-dispatch #bug #framework ref:GH#21888 pr:#21906 completed:2026-04-30
 
 - [ ] t3199 add ADD_ADD_NEW_FILE classification to t2987 conflict-pattern registry #auto-dispatch #enhancement ref:GH#21894
 
