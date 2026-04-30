@@ -99,6 +99,64 @@ Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine 
 - `local -a arr=()` inside `$()` — `local` in a subshell not inside a function is undefined in 3.2
 - `PIPESTATUS` — available in 3.2 but only for the immediately preceding pipeline. Capture immediately: `cmd1 | cmd2; local ps=("${PIPESTATUS[@]}")`
 
+## Heredoc apostrophe trap (bash 3.2)
+
+**Symptom:** bash 3.2 parser fails with `unexpected EOF while looking for matching '` when an unquoted heredoc body contains ASCII U+0027 apostrophes (e.g., `it's`, `won't`, `supervisor's`). The parser's quote-tracking gets confused and cannot find the closing heredoc tag. bash 4+ does not have this bug.
+
+**Why:** bash 3.2's heredoc parser has a bug in its quote-state machine. When it encounters an apostrophe inside an unquoted heredoc (`<<EOF` or `<<TAG`, not `<<'TAG'`), it incorrectly toggles a quote-tracking flag, causing the parser to expect a matching closing apostrophe before accepting the heredoc terminator. This was fixed in bash 4.0.
+
+**Reproduction (bash 3.2 only):**
+
+```bash
+# WRONG — fails on bash 3.2 with "unexpected EOF while looking for matching '"
+cat <<EOF
+It's a test.
+EOF
+
+# RIGHT — works on all bash versions
+cat <<EOF
+It is a test.
+EOF
+```
+
+Test with `/bin/bash -n` on macOS to catch the error at parse time.
+
+**Three fix patterns:**
+
+1. **Quote the heredoc tag** — `<<'TAG'` (loses `$` variable expansion):
+
+   ```bash
+   cat <<'EOF'
+   It's a test. Variable: $HOME is not expanded.
+   EOF
+   ```
+
+   Use when the heredoc body should NOT expand variables.
+
+2. **Use Unicode U+2019 right single quotation mark** (recommended for typographic correctness):
+
+   ```bash
+   cat <<EOF
+   It's a test. Variable: $HOME is expanded.
+   EOF
+   ```
+
+   Copy-paste the character `'` (U+2019, UTF-8: `e2 80 99`) instead of ASCII `'` (U+0027). Minimum diff, preserves variable expansion, and looks correct in documentation.
+
+3. **Reword to avoid apostrophe:**
+
+   ```bash
+   cat <<EOF
+   This is a test. Variable: $HOME is expanded.
+   EOF
+   ```
+
+   Use when the apostrophe is not essential to meaning.
+
+**Recommendation:** Pattern 2 (Unicode U+2019) for new code. It preserves variable expansion, requires only a 1-character substitution, and maintains typographic correctness. For existing code with pattern 1 or 3, leave it alone unless you're already editing that section.
+
+**Cross-reference:** t3082 / PR #21852 fixed one occurrence in `runtime-audit-rules/counter-trend-delta.sh` after it broke `ShellCheck (macos-latest)` on main.
+
 ## Array passing across process boundaries
 
 Arrays flatten to strings across subshell, `$()`, or pipe boundaries. Pass via `${arr[@]+"${arr[@]}"}` (positional args, safe under `set -u`) or temp file (one element per line, read back with `while IFS= read -r`).
