@@ -44,6 +44,22 @@ setup_test_env() {
 	mkdir -p "${HOME}/.aidevops/logs"
 	# shellcheck source=/dev/null
 	source "$WRAPPER_SCRIPT"
+
+	# Override the gh wrapper functions that pulse-capacity.sh and
+	# pulse-repo-meta.sh call.  The bare gh() mock defined above is
+	# unreachable for these code paths because _gh_with_timeout uses
+	# the external `timeout` command which spawns `gh` as a subprocess,
+	# bypassing shell-function lookup.  Mocking at the wrapper level
+	# is the correct abstraction.
+	gh_issue_list() {
+		printf '%s\n' "$GH_ISSUE_LIST_JSON"
+		return 0
+	}
+	gh_pr_list() {
+		printf '%s\n' "$GH_PR_LIST_JSON"
+		return 0
+	}
+
 	return 0
 }
 
@@ -258,7 +274,9 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	local output
 	output=$(list_dispatchable_issue_candidates "owner/repo" 100)
 
-	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" == *$'9|in progress but runnable'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* ]]; then
+	# t2924: status:in-progress is now filtered at candidate-build time,
+	# so issue #9 must NOT appear alongside needs-*/supervisor issues.
+	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* && "$output" != *$'9|in progress but runnable'* ]]; then
 		print_result "list_dispatchable_issue_candidates is default-open except needs-*" 0
 		return 0
 	fi

@@ -364,6 +364,12 @@ jobs:
         bash .agents/scripts/tests/test-pulse-wrapper-canary.sh
         echo "Pulse wrapper canary test passed"
 
+    - name: Pulse Worker Count Tests (GH#21873)
+      run: |
+        echo "Running pulse worker count / capacity tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
+        echo "Pulse worker count tests passed"
+
     - name: Approve Collaborator Author Guard (GH#17671, t2933)
       run: |
         # Pins the function-level supply-chain defense in approve_collaborator_pr.
