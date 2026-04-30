@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.19] - 2026-04-30
+
+### Added
+
+- classify add/add conflicts as ADD_ADD_NEW_FILE for pattern-aware brief (#21976)
+
+### Changed
+
+- detect runner-only drift in CURRENT/CALLER workflows (#21977)
+- Maintenance: mark t3088 complete (pr:#21914 completed:2026-04-30) [skip ci]
+- eliminate dual origin label on worker-dispatched PRs (Resolves #21862) (#21914)
+- ci-feedback workers prioritize format/lint auto-fix before generic re-implementation (#21978)
+- Maintenance: mark t3199 complete (pr:#21976 completed:2026-04-30) [skip ci]
+- Maintenance: sync ref:GH#21973 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21972 to TODO.md [skip ci]
+- repo-aware pre-push verify hook auto-runs project format/lint/typecheck (#21971)
+- Maintenance: mark t3222 complete (pr:#21969 completed:2026-04-30) [skip ci]
+- detector summary distinguishes classified vs LLM-skipped (#21970)
+- harness rule — productivity questions are current-state queries (#21969)
+- Maintenance: sync ref:GH#21968 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21967 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21966 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21965 to TODO.md [skip ci]
+- Maintenance: mark t3211 complete (pr:#21959 completed:2026-04-30) [skip ci]
+- detect & escalate Actions runner queue saturation in stuck-merge detector (#21959)
+- shared proxy-lifecycle helper for cursor + google + claude (#21962)
+- Maintenance: sync ref:GH#21964 to TODO.md [skip ci]
+
+### Fixed
+
+- allowlist .aidevops.json and .gitattributes in pre-commit-hook (#21974)
+- drop invalid --cwd flag from claude CLI invocation (GH#21886) (#21975)
+
 ## [3.13.18] - 2026-04-30
 
 ### Added
