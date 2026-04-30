@@ -3704,3 +3704,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3234 setup.sh non-interactive hangs after Claude openapi-search MCP registration #auto-dispatch #bug #framework ref:GH#21989
 
 - [ ] t3233 make model override labels availability-aware #auto-dispatch #bug #models ref:GH#21988
+
+- [ ] t3235 exclude unsupported OpenAI pro models from ChatGPT OAuth routing #auto-dispatch #bug #models ref:GH#21990
