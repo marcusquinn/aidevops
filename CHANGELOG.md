@@ -10,6 +10,153 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.11] - 2026-04-30
+
+### Added
+
+- add stat portability CI gate (GH#21746) (#21777)
+- add runaway-log self-healing detector (GH#21756) (#21766)
+- split headless-runtime-helper.sh into focused sub-modules (#21728)
+- add portable-stat.sh with capability detection, wire into shared-constants.sh (#21642)
+- webhook-driven pulse-merge for sub-30s latency (t3038) (#21657)
+- split code-audit-helper.sh into orchestrator + 3 sub-libraries (#21722)
+- split email-agent-helper.sh into focused sub-modules (#21725)
+- split site-crawler-helper.sh into orchestrator + 3 sub-libraries (#21719)
+- t3043 per-sub-stage timing + parallel API calls in dedup_check (#21662)
+- extend gh PATH shim with GraphQL→REST read routing (t3037) (#21648)
+- split keyword-research-helper.sh into orchestrator + 3 sub-libraries (#21684)
+- split ip-reputation-helper.sh into orchestrator + 4 sub-libraries (#21688)
+- extend worktree exclusions to Linux indexers (tracker3, baloo) (#21702)
+- t2916 honour interactive-session claim stamps in worktree sweep (GH#21074) (#21705)
+- add _resolve_log_dir to shared-constants.sh, replace hardcoded log paths in runners (#21701)
+- split memory-embeddings-helper.sh into orchestrator + 2 sub-libraries (#21686)
+
+### Changed
+
+- Maintenance: sync ref:GH#21820 to TODO.md [skip ci]
+- split pulse-dispatch-engine.sh into orchestrator + sub-libraries (recovery) (#21815)
+- split worktree-helper.sh into focused sub-modules (#21741)
+- Maintenance: mark t3070 complete (pr:#21812 completed:2026-04-29) [skip ci]
+- Native GitHub auto-merge fast-track for sub-30s green-to-merged latency (#21812)
+- Maintenance: sync ref:GH#21811 to TODO.md [skip ci]
+- Maintenance: mark t3064 complete (pr:#21800 completed:2026-04-29) [skip ci]
+- Maintenance: mark t3065 complete (pr:#21802 completed:2026-04-29) [skip ci]
+- Maintenance: mark t3062 complete (pr:#21804 completed:2026-04-29) [skip ci]
+- add trusted-issue-author allowlist to bypass t2449 gate for peer-runner-filed issues (#21804)
+- Maintenance: sync ref:GH#21807 to TODO.md [skip ci]
+- Maintenance: mark t3059 complete (pr:#21796 testing:runtime-verified)
+- walk full process-tree (BFS) in _watchdog_tree_cpu (#21796)
+- Maintenance: add TODO entries for t3066/t3068/t3069 (lost to t3069 bug) (#21808)
+- Maintenance: mark t3060 complete (pr:#21794 completed:2026-04-29) [skip ci]
+- enum-prefix kill_reason for deterministic classification (#21794)
+- Maintenance: mark t3063 complete (pr:#21795 completed:2026-04-29) [skip ci]
+- Maintenance: sync ref:GH#21801 to TODO.md [skip ci]
+- add kill_reason field to worker_exited lifecycle line (#21795)
+- Maintenance: mark t3058 complete (pr:#21797 testing:runtime-verified)
+- Maintenance: sync ref:GH#21798 to TODO.md [skip ci]
+- Maintenance: mark t3052 complete (pr:#21767 completed:2026-04-29) [skip ci]
+- extend t2449 worker-briefed auto-merge gate to honour cryptographic approval as OWNER/MEMBER bypass (#21767)
+- fix jq ARG_MAX overflow — pass checks_json via stdin instead of --argjson (#21778)
+- Maintenance: mark t3057 complete (pr:#21792 completed:2026-04-29) [skip ci]
+- replace lifetime-avg CPU with interval-sampled delta in _watchdog_tree_cpu (#21792)
+- Maintenance: sync ref:GH#21789 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21787 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21786 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21785 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21781 to TODO.md [skip ci]
+- fix(pulse): stop OpenCode JSON event stream from contaminating pulse.log (#21780)
+- Maintenance: mark t3046 complete (pr:#21777 completed:2026-04-29) [skip ci]
+- Maintenance: mark t3044 complete (pr:#21775 completed:2026-04-29) [skip ci]
+- add server-side issue dedup to issue-sync-reusable.yml (#21775)
+- Maintenance: mark t3049 complete (pr:#21768 completed:2026-04-29) [skip ci]
+- Maintenance: mark t3054 complete (pr:#21769 completed:2026-04-29) [skip ci]
+- auto-notify stale-recovery NMR when subsequent worker produces approved PR (#21768)
+- clean up stale stat comments, add pre-commit gate for raw stat usage (#21759)
+- Maintenance: sync ref:GH#21763 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21762 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21761 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21755 to TODO.md [skip ci]
+- portable-stat: add _stat_batch, refactor wrappers, fix generate-skills.sh Linux crash (#21743)
+- surface workflow template drift on aidevops update (#21749)
+- Maintenance: sync ref:GH#21754 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21753 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21752 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21748 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21747 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21746 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21745 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21744 to TODO.md [skip ci]
+- Maintenance: mark t2982 complete (pr:#21727 completed:2026-04-29) [skip ci]
+- fix worker output classification to follow worker (Mode B/C) (#21727)
+- Maintenance: mark t3038 complete (pr:#21657 completed:2026-04-29) [skip ci]
+- Refactor: split generate-opencode-commands.sh into orchestrator + 6 sub-libraries (#21721)
+- Refactor: split test-encryption-git-roundtrip.sh into orchestrator + 4 sub-libraries (#21724)
+- Refactor: split self-evolution-helper.sh into 6 focused sub-modules (#21726)
+- harden anti-detect helpers against code injection (#21720)
+- reconcile pulse lock-file paths, improve subshell filter and status message (#21661)
+- Maintenance: mark t2880 complete (pr:#21664 completed:2026-04-29) [skip ci]
+- feat(setup-debt): detect cross-account secrets:inherit in issue-sync.yml (#21664)
+- harden knowledge search find pipelines under pipefail (#21706)
+- Refactor: split pulse-issue-reconcile.sh into focused sub-modules (1718->1162 lines) (#21710)
+- Maintenance: mark t3041 complete (pr:#21711 completed:2026-04-29) [skip ci]
+- add timeout ceiling to pulse-merge-routine (Bug 3 of GH#21616) (#21711)
+- pulse: split merge pass into dedicated 60s launchd plist via --merge-only (#21712)
+- Refactor: split stats-health-dashboard.sh into orchestrator + 2 sub-libraries (#21713)
+- Maintenance: mark t3022 complete (pr:#21715 completed:2026-04-29) [skip ci]
+- cap concurrent opus-4-6 dispatches to prevent rate-limit cascade (#21715)
+- Maintenance: mark t3037 complete (pr:#21648 completed:2026-04-29) [skip ci]
+- Maintenance: mark t3039 complete (pr:#21655 completed:2026-04-29) [skip ci]
+- REST-aware issue creation in claim-task-id.sh and issue-sync-helper-push.sh (#21655)
+- Maintenance: mark t3030 complete (pr:#21663 completed:2026-04-29) [skip ci]
+- fix 7 pulse-merge regression tests broken by sub-module split (#21663)
+- consistent commit-body style in sync-workflows-helper (#21691)
+- fix source_pdf fallback for empty strings and content_hash for headingless docs (#21693)
+- pre-compute _canon_norm once per workflow type in _process_rows (#21694)
+- fix blocked-by:GH#NNN regex, treat failed auto-create as validation error (#21695)
+- Maintenance: mark t2993 complete (pr:#21703 completed:2026-04-29) [skip ci]
+- fix(task-id-guard): word-boundary regex to avoid false positives on subagent names like context7 (#21703)
+- Maintenance: mark t2916 complete (pr:#21705 completed:2026-04-29) [skip ci]
+- add stale-UU recovery branch to pulse-canonical-recovery (#21704)
+- Performance: use bash parameter expansion instead of tr in _dt_json_field numeric path (#21698)
+- Maintenance: mark t2917 complete (pr:#21701 completed:2026-04-29) [skip ci]
+- replace inline stat -f/-c patterns with portable functions across 58 scripts (#21689)
+- fix(claim-task-id): update fallback to (no title), remove dead LONG_DESC
+- split document-creation-helper.sh into focused sub-modules (#21683)
+- split gh-signature-helper.sh into focused sub-modules (#21687)
+- fix conversation-helper review followup — JSON empty guard, query elim, sed combine (#21678)
+- Refactor: split auto-update-helper.sh into focused sub-modules (#21685)
+- Refactor: split browser-qa-helper.sh (1600 lines) into orchestrator + 3 sub-libraries (#21682)
+- replace timeout with timeout_sec in pulse canary check (#21673)
+- use project cleanup pattern for mktemp in transport_matrix_send (#21676)
+- Refactor: split email-health-check-helper.sh into orchestrator + 3 sub-libraries (#21681)
+- harden campaign-helper.sh per gemini review feedback (#21675)
+- fix review-bot-gate commit status posting to restore branch protection contract (#21674)
+- feat: per-worktree preview subdomains via local proxy (#21666)
+
+### Fixed
+
+- skill freshness writes to canonical AGENTS_DIR, not cwd; pass --name on update; fix systemd WorkingDirectory (#21696)
+- GH#21717 normalize issue state to uppercase before dispatch check (#21718)
+- add sleep guard and stale-PID purge to _dff_dispatch_loop_parallel wait -n loop (#21764)
+- extract issue num via URL pattern, immune to stderr log lines (GH#21770) (#21771)
+- use gh_issue_edit_safe in remaining hot-path body updates (GH#21798) (#21800)
+- use gh_issue_edit_safe for body updates (#21733)
+- t3058: route worker stall defer marker to LIFECYCLE_LOG (not OUTPUT_FILE) (#21797)
+- remove redundant group timeout from preflight_early_dispatch (t3054) (#21769)
+- use _resolve_worktree_owner_pid in is_worktree_owned_by_others (#21772)
+- skip sudo-requiring tool updates with manual instructions (GH#21734) (#21773)
+- add is_registered_canonical guard + audit log on ephemeral worktree cleanup (#21716)
+- replace jq-in-loop with single jq --slurp pass in _collect_excerpts_via_search (#21739)
+- source portable-stat.sh before pre-jitter fast-fail in pulse-wrapper.sh (#21732)
+- strip tNNN: prefix in TODO line to prevent doubling (GH#21723) (#21731)
+- relax brew category gate so brew-origin tools check on Linux (#21709)
+- address gemini review feedback on upstream-watch-helper-issues.sh (#21667)
+- wrap script_path in escaped double quotes in systemd ExecStart for space-safe paths (#21672)
+- apply optional operator to nested jq fields in gh-status-helper (#21690)
+- guard NextElapse grep against systemd 255 rename (#21700)
+- guard log_worktree_removal_event stub with command -v check (#21677)
+- campaign-asset-helper.sh jq robustness and asset_id uniqueness (#21680)
+
 ## [3.13.10] - 2026-04-29
 
 ### Changed

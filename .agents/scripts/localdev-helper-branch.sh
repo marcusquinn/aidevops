@@ -175,11 +175,16 @@ tls:
       keyFile: /certs/${app_domain}+1-key.pem
 YAML
 
-	# Validate: reject files containing ANSI escape codes or non-parseable YAML
+	# Validate: reject files containing ANSI escape codes or non-parseable YAML.
+	# PyYAML is required for YAML parse validation; if absent, skip with INFO
+	# (MacOS stdlib python3 does not include PyYAML — GH#21782).
 	if command -v python3 >/dev/null 2>&1; then
-		local py_err
-		py_err="$(
-			python3 - "$route_file" 2>&1 <<'PYEOF'
+		if ! python3 -c "import yaml" 2>/dev/null; then
+			print_info "PyYAML not available — skipping YAML syntax validation for $route_file"
+		else
+			local py_err
+			py_err="$(
+				python3 - "$route_file" 2>&1 <<'PYEOF'
 import sys, yaml
 path = sys.argv[1]
 with open(path, 'rb') as fh:
@@ -193,12 +198,13 @@ except yaml.YAMLError as e:
     print(f"YAML parse error: {e}")
     sys.exit(2)
 PYEOF
-		)"
-		local py_exit=$?
-		if [[ "$py_exit" -ne 0 ]]; then
-			print_error "YAML corruption in $route_file ($py_err) — removing"
-			rm -f "$route_file"
-			return 1
+			)"
+			local py_exit=$?
+			if [[ "$py_exit" -ne 0 ]]; then
+				print_error "YAML corruption in $route_file ($py_err) — removing"
+				rm -f "$route_file"
+				return 1
+			fi
 		fi
 	fi
 	print_success "Created branch route: $route_file"

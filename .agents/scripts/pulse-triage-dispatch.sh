@@ -9,6 +9,9 @@
 # (parent: GH#21146, child: GH#21326).
 #
 # Functions in this sub-library:
+#   - _consolidation_emit_skip (t3050 — pre-flight skip helper)
+#   - _consolidation_count_merged_children (t3050 — pre-flight child PR scanner)
+#   - _consolidation_skip_if_resolved (t3050 — pre-flight resolved-parent gate)
 #   - _compose_consolidation_worker_instructions
 #   - _compose_consolidation_child_body
 #   - _ensure_consolidation_labels
@@ -678,4 +681,146 @@ _backfill_stale_consolidation_labels() {
 		echo "[pulse-wrapper] Consolidation backfill: cleared ${total_locks_expired} stale consolidation-in-progress lock(s) (t2151 TTL)" >>"$LOGFILE"
 	fi
 	return 0
+}
+
+#######################################
+# t3050: Post the one-shot skip-marker comment + log line for an aborted
+# consolidation pre-flight check. Keeps the per-gate emit logic out of the
+# orchestrator so each gate stays a 4-5 line clause and the orchestrator
+# stays under the 100-line function-complexity threshold.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - reason (one-line human description appended to skip marker)
+#   $4 - log_tag (short token included in the log line for grep)
+#
+# Returns: 0 (always — caller treats this as the "skip" signal).
+#######################################
+_consolidation_emit_skip() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local log_tag="$4"
+	local marker="<!-- consolidation-skipped -->"
+	_gh_idempotent_comment "$issue_number" "$repo_slug" "$marker" \
+		"${marker}
+Skipping consolidation — ${reason}"
+	echo "[pulse-wrapper] Consolidation pre-flight: #${issue_number} in ${repo_slug} — ${log_tag} → skip (t3050)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# t3050: Scan a parent issue body for #NNN refs and count which ones are
+# merged PRs. Echoes "<merged> <total> <merged_list>" on stdout (the
+# merged_list is a comma-separated string of #NNN refs, may be empty).
+#
+# Self-references to the parent issue are excluded so the parent's own
+# number doesn't get counted against itself.
+#
+# Args:
+#   $1 - self_num (parent issue number, excluded from refs)
+#   $2 - repo_slug (owner/repo)
+#   $3 - parent_body (raw text)
+#
+# Returns: 0 always. Caller parses stdout via awk/cut.
+#######################################
+_consolidation_count_merged_children() {
+	local self_num="$1"
+	local repo_slug="$2"
+	local parent_body="$3"
+	local refs ref merged_at total=0 merged=0 list=""
+	refs=$(printf '%s' "$parent_body" \
+		| grep -oE '#[0-9]+' \
+		| grep -oE '[0-9]+' \
+		| grep -v "^${self_num}$" \
+		| sort -un 2>/dev/null) || refs=""
+	if [[ -z "$refs" ]]; then
+		printf '0 0 \n'
+		return 0
+	fi
+	while IFS= read -r ref; do
+		[[ -n "$ref" ]] || continue
+		total=$((total + 1))
+		merged_at=$(gh api "repos/${repo_slug}/pulls/${ref}" \
+			--jq '.merged_at // ""' 2>/dev/null) || merged_at=""
+		if [[ -n "$merged_at" ]]; then
+			merged=$((merged + 1))
+			if [[ -z "$list" ]]; then
+				list="#${ref}"
+			else
+				list="${list}, #${ref}"
+			fi
+		fi
+	done <<<"$refs"
+	printf '%s %s %s\n' "$merged" "$total" "$list"
+	return 0
+}
+
+#######################################
+# t3050: Pre-flight gate for _dispatch_issue_consolidation. Aborts when the
+# parent issue's work is already resolved, BEFORE any cross-runner lock is
+# acquired or child created.
+#
+# Three abort conditions (cheapest-first):
+#   1. Parent has `dispatch-blocked:committed-to-main` label (t2955 cache).
+#   2. Parent is CLOSED with stateReason=NOT_PLANNED.
+#   3. ≥80% of #NNN refs in the parent body are merged PRs.
+#
+# Each abort path posts an idempotent <!-- consolidation-skipped --> marker
+# via _consolidation_emit_skip. Fail-open: API errors return 1 (proceed).
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Returns:
+#   0 — skip: caller MUST abort consolidation for this parent.
+#   1 — proceed: no resolved-parent condition detected.
+#######################################
+_consolidation_skip_if_resolved() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	# t2863: init all multi-var locals at declaration time so set -u is safe.
+	local parent_json="" state="" reason="" labels="" body=""
+	local counts="" merged="" total="" list="" pct=""
+	parent_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,stateReason,labels,body 2>/dev/null) || parent_json=""
+	if [[ -z "$parent_json" ]]; then
+		echo "[pulse-wrapper] _consolidation_skip_if_resolved: API error #${issue_number} ${repo_slug} — failing open (t3050)" >>"$LOGFILE"
+		return 1
+	fi
+	state=$(printf '%s' "$parent_json" | jq -r '.state // "OPEN"' 2>/dev/null) || state="OPEN"
+	reason=$(printf '%s' "$parent_json" | jq -r '.stateReason // ""' 2>/dev/null) || reason=""
+	labels=$(printf '%s' "$parent_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || labels=""
+	body=$(printf '%s' "$parent_json" | jq -r '.body // ""' 2>/dev/null) || body=""
+	# Gate 1: dispatch-blocked:committed-to-main label (t2955 cache).
+	if printf ',%s,' "$labels" | grep -qF ",dispatch-blocked:committed-to-main,"; then
+		_consolidation_emit_skip "$issue_number" "$repo_slug" \
+			"parent work already committed to main (t2955 cache label)." \
+			"dispatch-blocked:committed-to-main"
+		return 0
+	fi
+	# Gate 2: CLOSED with stateReason=NOT_PLANNED.
+	if [[ "$state" == "CLOSED" && "$reason" == "NOT_PLANNED" ]]; then
+		_consolidation_emit_skip "$issue_number" "$repo_slug" \
+			"parent closed as not_planned. If consolidation is genuinely needed, reopen the parent or file a fresh issue." \
+			"CLOSED/NOT_PLANNED"
+		return 0
+	fi
+	# Gate 3: ≥80% of #NNN refs in body are merged PRs.
+	counts=$(_consolidation_count_merged_children "$issue_number" "$repo_slug" "$body")
+	merged=$(printf '%s' "$counts" | awk '{print $1}')
+	total=$(printf '%s' "$counts" | awk '{print $2}')
+	list=$(printf '%s' "$counts" | cut -d' ' -f3-)
+	if [[ "$total" -gt 0 ]]; then
+		pct=$(( merged * 100 / total ))
+		if [[ "$pct" -ge 80 ]]; then
+			_consolidation_emit_skip "$issue_number" "$repo_slug" \
+				"${merged} of ${total} child issues resolved via merged PRs (${list})." \
+				"${merged}/${total} child PRs merged"
+			return 0
+		fi
+	fi
+	return 1
 }

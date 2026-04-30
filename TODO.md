@@ -92,6 +92,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - [x] r043 Case deadline alarming — classify open-case deadlines, fire gh-issue + ntfy alarms by stage repeat:cron(*/15 * * * *) ~1m run:scripts/case-alarm-helper.sh tick
 - [x] r045 Email filter tick: auto-attach matched email sources to cases repeat:cron(*/15 * * * *) run:scripts/email-filter-helper.sh tick
 - [x] r046 Canonical-recovery sweep — re-attempt failed git pull/stash for repos with active advisory files (t3027) repeat:cron(*/10 * * * *) ~1m run:scripts/canonical-recovery-routine.sh tick
+- [ ] r-runtime-audit Runtime health audit — surface operational regressions invisible to the supervisor LLM (counter trends, process leaks, deploy mtime drift, log novelty, stuck pulse state) (t3072) repeat:cron(*/30 * * * *) ~2m run:scripts/runtime-health-audit-helper.sh --apply
 
 ## Ready
 
@@ -3538,7 +3539,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3049 auto-clear stale-recovery NMR when a subsequent worker produces an approved PR #auto-dispatch #bug ref:GH#21752 pr:#21768 completed:2026-04-29
 
-- [ ] t3050 consolidator must skip parents whose work is already merged via children #auto-dispatch #bug ref:GH#21753
+- [x] t3050 consolidator must skip parents whose work is already merged via children #auto-dispatch #bug ref:GH#21753 pr:#21816 completed:2026-04-30
 
 - [ ] t3051 fix worker exit classifier so SIGTERM/zero-session kills don't masquerade as clean (root cause for #21707 cycle) #auto-dispatch #bug #refactor ref:GH#21754
 
@@ -3577,3 +3578,27 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3067 interactive-session-helper.sh release applies status:available to CLOSED issues #auto-dispatch #bug #framework ref:GH#21805
 
 - [ ] t3071 audit framework for t3058-class watchdog self-write anti-pattern (monitor X, write marker to X) #auto-dispatch #bug #framework #pulse ref:GH#21811
+
+- [x] t3073 restore +x on worktree-helper.sh orchestrator (post-#21741 split) #auto-dispatch #bug #refactor ref:GH#21821 pr:#21823 completed:2026-04-29
+
+- [x] t3072 runtime-health-audit routine: surface operational bugs the supervisor blind-spots #auto-dispatch #enhancement #framework ref:GH#21820 pr:#21829 completed:2026-04-30
+
+- [ ] t3074 fix duplicate Code Audit Routines dashboard issues — fail-closed dedup + title-prefix fallback + self-healing sweep #auto-dispatch #bug ref:GH#21830
+
+- [ ] t3075 claim-task-id dedup must search OPEN ISSUES not just PRs (4-way duplicate filing of same bug) #auto-dispatch #bug ref:GH#21831
+
+- [ ] t3076 pulse: circuit breaker auto-files root-cause meta-issue and dispatches systemic-fix worker #auto-dispatch #bug #enhancement #framework #model:opus-4-7 #pulse ref:GH#21840
+
+- [ ] t3077 pulse: LLM-driven periodic pass detects fix-the-fixer tasks and adds extra observability #auto-dispatch #enhancement #framework #model:opus-4-7 #pulse ref:GH#21841
+
+- [ ] t3082 fix: bash 3.2 heredoc parser fails on apostrophe in counter-trend-delta runtime audit rule #auto-dispatch #bug ref:GH#21849
+
+- [ ] t3081 document multi-account naming convention for secrets #documentation #enhancement ref:GH#21848
+
+- [ ] t3080 Cross-link meta-ads-tooling-cli.md from strategy docs #auto-dispatch #documentation ref:GH#21847
+
+- [ ] t3079 Add multi-account gopass secret template for Meta Ads CLI #auto-dispatch #documentation #enhancement ref:GH#21846
+
+- [ ] t3078 add Meta Ads CLI tooling doc to meta-ads agent #documentation #enhancement ref:GH#21844
+
+- [ ] t3083 Fix Bash 3.2 heredoc parse error in counter-trend-delta.sh #auto-dispatch #bug #ci ref:GH#21853

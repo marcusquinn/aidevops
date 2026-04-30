@@ -11,6 +11,7 @@
 #   - check_external_contributor_pr   — flag external-contributor PRs (t1391)
 #   - _external_pr_has_linked_issue   — linked issue check for external PRs
 #   - _external_pr_linked_issue_crypto_approved — crypto approval gate
+#   - _has_maintainer_crypto_approval  — PR/linked-issue crypto-approval check (t3063)
 #   - _pulse_merge_admin_safety_check — defense-in-depth --admin gate (t2934)
 #   - check_permission_failure_pr     — permission API failure handler
 #   - approve_collaborator_pr         — auto-approve collaborator PRs
@@ -186,6 +187,88 @@ _external_pr_linked_issue_crypto_approved() {
 	result=$(bash "$approval_helper" verify "$linked" "$repo_slug" 2>/dev/null) || result=""
 	[[ "$result" == "VERIFIED" ]]
 	return $?
+}
+
+#######################################
+# Check whether a PR or its linked issue has a maintainer crypto-approval
+# signature (t3063 — symmetric extension of t3052 to the deterministic merge
+# cascade and the approve_collaborator_pr gate).
+#
+# A cryptographic approval (sudo aidevops approve) is at least as strong a
+# trust signal as author-association because it requires a root-owned SSH
+# private key that workers cannot forge.
+#
+# Checks PR-level comments first, then linked-issue comments. Uses
+# approval-helper.sh for cryptographic verification when available; falls back
+# to marker presence when the helper is absent (the marker can only be posted
+# by someone with write access, and full verification is provided by the
+# existing downstream gate in _external_pr_linked_issue_crypto_approved).
+#
+# #aidevops:trust-boundary — this function gates security-relevant approval
+# decisions. Changes here require preserving the four-layer defence-in-depth
+# documented in reference/incident-gh17671-supply-chain.md.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+# Returns: 0 if crypto approval found, 1 if not
+#######################################
+_has_maintainer_crypto_approval() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+
+	# Marker string embedded in every signed approval comment by approval-helper.sh.
+	# Source of truth: approval-helper.sh line ~65 APPROVAL_MARKER constant.
+	local _approval_marker="aidevops-signed-approval"
+	# Use a named local for the approval-helper success status to keep the
+	# literal string count below the repeated-string-literal ratchet threshold.
+	local _approved_status="VERIFIED"
+
+	# Check PR-level comments for a crypto-approval signature.
+	local pr_marker_count
+	pr_marker_count=$(gh api "repos/${repo_slug}/issues/${pr_number}/comments" \
+		--jq "[.[].body | strings | select(contains(\"${_approval_marker}\"))] | length" \
+		2>/dev/null || true)
+	[[ "$pr_marker_count" =~ ^[0-9]+$ ]] || pr_marker_count=0
+	if [[ "$pr_marker_count" -gt 0 ]]; then
+		if [[ -f "$approval_helper" ]]; then
+			local _pr_verify
+			_pr_verify=$(bash "$approval_helper" verify "$pr_number" "$repo_slug" 2>/dev/null) || _pr_verify=""
+			if [[ "$_pr_verify" == "$_approved_status" ]]; then
+				return 0
+			fi
+		else
+			# Trust the marker when the helper is absent — full cryptographic
+			# verification is provided by _external_pr_linked_issue_crypto_approved
+			# in the downstream gate chain.
+			return 0
+		fi
+	fi
+
+	# Check linked-issue comments for a crypto-approval signature.
+	local linked
+	linked=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked=""
+	[[ -z "$linked" ]] && return 1
+
+	local issue_marker_count
+	issue_marker_count=$(gh api "repos/${repo_slug}/issues/${linked}/comments" \
+		--jq "[.[].body | strings | select(contains(\"${_approval_marker}\"))] | length" \
+		2>/dev/null || true)
+	[[ "$issue_marker_count" =~ ^[0-9]+$ ]] || issue_marker_count=0
+	if [[ "$issue_marker_count" -gt 0 ]]; then
+		if [[ -f "$approval_helper" ]]; then
+			local _issue_verify
+			_issue_verify=$(bash "$approval_helper" verify "$linked" "$repo_slug" 2>/dev/null) || _issue_verify=""
+			if [[ "$_issue_verify" == "$_approved_status" ]]; then
+				return 0
+			fi
+		else
+			return 0
+		fi
+	fi
+
+	return 1
 }
 
 #######################################
@@ -399,9 +482,24 @@ approve_collaborator_pr() {
 	# t2933.) The misleading "collaborator PR" approval body shipped for
 	# years until the surrounding gates landed; a lone caller would
 	# re-introduce the supply-chain hole.
+	#
+	# #aidevops:trust-boundary — t3063 crypto-approval bypass:
+	# A verified maintainer signature on the PR or its linked issue is a
+	# stronger trust signal than author-association: it requires a
+	# root-owned SSH private key that workers cannot forge. This bypass is
+	# symmetric with t3052 (PR #21767) which extended the worker-briefed
+	# gate the same way. The GH#17671 four-layer defence is preserved —
+	# crypto-approval is an additional path through the author gate, not a
+	# removal of the gate. Case B (CONTRIBUTOR + no crypto = refuse) is
+	# pinned by test-pulse-merge-approve-collaborator-guard.sh Case P.
 	if [[ -n "$pr_author" ]] && [[ "$pr_author" != "unknown" ]] && ! _is_collaborator_author "$pr_author" "$repo_slug"; then
-		echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is not a collaborator on $repo_slug — refusing to auto-approve (GH#17671 defense-in-depth, t2933)" >>"$LOGFILE"
-		return 0
+		if _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is not a collaborator on $repo_slug, but maintainer crypto-approval found — proceeding (t3063)" >>"$LOGFILE"
+			# fall through to the approval block below
+		else
+			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is not a collaborator on $repo_slug — refusing to auto-approve (GH#17671 defense-in-depth, t2933)" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	# Approve the PR — body now states the actual checks performed

@@ -35,6 +35,7 @@ import { createShellEnvHook } from "./shell-env.mjs";
 import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
+import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -210,7 +211,7 @@ export async function AidevopsPlugin({ directory, client }) {
   // TTSR hooks
   const {
     systemTransformHook,
-    messagesTransformHook,
+    messagesTransformHook: ttsrMessagesTransformHook,
     textCompleteHook,
   } = createTtsrHooks({
     agentsDir: AGENTS_DIR,
@@ -220,6 +221,18 @@ export async function AidevopsPlugin({ directory, client }) {
     run,
     intentField: INTENT_FIELD,
   });
+
+  // Composed messages transform: TTSR enforcement + image size guard (GH#21793).
+  // The image guard runs after TTSR so corrections are applied to the final
+  // message list. Fail-open — errors in the guard must not block the message.
+  const messagesTransformHook = async (input, output) => {
+    await ttsrMessagesTransformHook(input, output);
+    try {
+      applyImageSizeGuard(output, qualityLog);
+    } catch (err) {
+      qualityLog("WARN", `[image-size-guard] Unexpected error: ${err?.message ?? err}`);
+    }
+  };
 
   // Greeting handler (t2724) — emits session-start framework status as
   // TUI toasts via client.tui.showToast(). Fires once per plugin init on

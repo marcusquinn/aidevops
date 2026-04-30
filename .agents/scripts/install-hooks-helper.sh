@@ -5,6 +5,9 @@
 #
 # install-hooks-helper.sh
 # Installs Claude Code PreToolUse hooks to block destructive git/filesystem commands
+# and enforce the canonical-workspace protection rule (t1712/t1990, GH#21814).
+# git_safety_guard.py is registered under BOTH the 'Bash' AND 'Edit|Write' matchers
+# so the Edit/Write branch of the hook is reachable by Claude Code.
 #
 # Usage:
 #   install-hooks-helper.sh install              # Install hooks (default)
@@ -663,6 +666,10 @@ settings = {
                 'hooks': [
                     {
                         'type': 'command',
+                        'command': '$HOOK_COMMAND'
+                    },
+                    {
+                        'type': 'command',
                         'command': '$COMPLEXITY_ADVISORY_COMMAND'
                     }
                 ]
@@ -706,19 +713,25 @@ os.rename(tmp, path)
 		return 0
 	fi
 
-	# Check if hook is already configured
+	# Check if hook is already configured (including Edit|Write registration — GH#21814)
 	if python3 -c "
 import json, sys
 with open('$CLAUDE_SETTINGS') as f:
     d = json.load(f)
 hooks = d.get('hooks', {})
-has_pre = False
+has_guard_bash = False
+has_guard_edit_write = False
 has_complexity = False
 for h in hooks.get('PreToolUse', []):
+    matcher = h.get('matcher', '')
     for sub in h.get('hooks', []):
-        if 'git_safety_guard' in sub.get('command', ''):
-            has_pre = True
-        if 'complexity_advisory' in sub.get('command', ''):
+        cmd = sub.get('command', '')
+        if 'git_safety_guard' in cmd:
+            if matcher == 'Bash':
+                has_guard_bash = True
+            if 'Edit' in matcher or 'Write' in matcher:
+                has_guard_edit_write = True
+        if 'complexity_advisory' in cmd:
             has_complexity = True
 
 has_post = False
@@ -730,7 +743,7 @@ for h in hooks.get('PostToolUse', []):
         if 'credential-transcript-scrub' in sub.get('command', ''):
             has_scrub = True
 
-if has_pre and has_complexity and has_post and has_scrub:
+if has_guard_bash and has_guard_edit_write and has_complexity and has_post and has_scrub:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -755,6 +768,28 @@ def has_hook(entries, needle):
                 return True
     return False
 
+def has_hook_in_matcher(entries, matcher_value, needle):
+    # Return True if needle is in hooks of the entry with matcher == matcher_value
+    for entry in entries:
+        if entry.get('matcher') == matcher_value:
+            for sub in entry.get('hooks', []):
+                if needle in sub.get('command', ''):
+                    return True
+    return False
+
+def ensure_hook_in_matcher(entries, matcher_value, hook_cmd):
+    # Ensure hook_cmd is present in the entry with matcher_value (create entry if needed)
+    hook_sub = {'type': 'command', 'command': hook_cmd}
+    for entry in entries:
+        if entry.get('matcher') == matcher_value:
+            cmds = [s.get('command', '') for s in entry.get('hooks', [])]
+            if not any(hook_cmd in c for c in cmds):
+                # Insert at position 0 so git_safety_guard runs before complexity_advisory
+                entry['hooks'].insert(0, hook_sub)
+            return
+    # matcher_value entry not found -- create it
+    entries.append({'matcher': matcher_value, 'hooks': [hook_sub]})
+
 hook_entry = {
     'matcher': 'Bash',
     'hooks': [
@@ -768,6 +803,10 @@ hook_entry = {
 complexity_advisory_entry = {
     'matcher': 'Edit|Write',
     'hooks': [
+        {
+            'type': 'command',
+            'command': '$HOOK_COMMAND'
+        },
         {
             'type': 'command',
             'command': '$COMPLEXITY_ADVISORY_COMMAND'
@@ -800,6 +839,8 @@ if 'PreToolUse' not in settings['hooks']:
 else:
     if not has_hook(settings['hooks']['PreToolUse'], 'git_safety_guard'):
         settings['hooks']['PreToolUse'].append(hook_entry)
+    # Also ensure git_safety_guard is in the Edit|Write matcher (GH#21814)
+    ensure_hook_in_matcher(settings['hooks']['PreToolUse'], 'Edit|Write', '$HOOK_COMMAND')
     if not has_hook(settings['hooks']['PreToolUse'], 'complexity_advisory'):
         settings['hooks']['PreToolUse'].append(complexity_advisory_entry)
 
@@ -951,6 +992,30 @@ _check_status_claude_settings() {
 		print_error "Claude settings: $CLAUDE_SETTINGS not found"
 		return 1
 	fi
+	# Verify git_safety_guard is registered under BOTH Bash AND Edit|Write (GH#21814)
+	if python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    d = json.load(f)
+hooks = d.get('hooks', {}).get('PreToolUse', [])
+has_bash = False
+has_edit_write = False
+for h in hooks:
+    matcher = h.get('matcher', '')
+    for sub in h.get('hooks', []):
+        if 'git_safety_guard' in sub.get('command', ''):
+            if matcher == 'Bash':
+                has_bash = True
+            if 'Edit' in matcher or 'Write' in matcher:
+                has_edit_write = True
+if has_bash and has_edit_write:
+    sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+		print_success "Claude settings: hook configured (Bash + Edit|Write)"
+		return 0
+	fi
+	# Partial registration (old install): only in Bash
 	if python3 -c "
 import json, sys
 with open('$CLAUDE_SETTINGS') as f:
@@ -962,10 +1027,10 @@ for h in hooks:
             sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
-		print_success "Claude settings: hook configured"
-		return 0
+		print_warning "Claude settings: hook in Bash only — Edit|Write registration missing (re-run: install-hooks-helper.sh install)"
+		return 1
 	fi
-	print_warning "Claude settings: exists but hook not configured"
+	print_warning "Claude settings: exists but hook not configured (run: install-hooks-helper.sh install)"
 	return 1
 }
 

@@ -6,7 +6,8 @@
 #
 # test-pulse-dispatch-engine-timeout-floor.sh — regression guard for t3026
 #
-# Verifies that _dff_dispatch_with_timeout in pulse-dispatch-engine.sh applies
+# Verifies that _dff_dispatch_with_timeout in pulse-dispatch-fill-floor-lib.sh
+# (extracted from pulse-dispatch-engine.sh in GH#21738 for file-size-debt) applies
 # a floor to the adaptive per-candidate timeout, so the dispatch ceremony
 # (~75-160s baseline, +20-40s under backpressure) cannot be killed by a
 # learned-low timeout from the EWMA+p95 recommender.
@@ -86,7 +87,10 @@ assert_block_ordering() {
 
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+# GH#21738: _dff_dispatch_with_timeout lives in the fill-floor sub-library
+# after the orchestrator + sub-library split. The original engine file is
+# kept as an ordering anchor for the run_stage_with_timeout call.
+ENGINE="$SCRIPT_DIR/pulse-dispatch-fill-floor-lib.sh"
 
 echo "=== t3026: per-candidate timeout floor regression tests ==="
 echo "Engine: $ENGINE"
