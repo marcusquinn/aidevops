@@ -3590,3 +3590,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3076 pulse: circuit breaker auto-files root-cause meta-issue and dispatches systemic-fix worker #auto-dispatch #bug #enhancement #framework #model:opus-4-7 #pulse ref:GH#21840
 
 - [ ] t3077 pulse: LLM-driven periodic pass detects fix-the-fixer tasks and adds extra observability #auto-dispatch #enhancement #framework #model:opus-4-7 #pulse ref:GH#21841
+
+- [ ] t3082 fix: bash 3.2 heredoc parser fails on apostrophe in counter-trend-delta runtime audit rule #auto-dispatch #bug ref:GH#21849
+
+- [ ] t3081 document multi-account naming convention for secrets #documentation #enhancement ref:GH#21848
+
+- [ ] t3080 Cross-link meta-ads-tooling-cli.md from strategy docs #auto-dispatch #documentation ref:GH#21847
+
+- [ ] t3079 Add multi-account gopass secret template for Meta Ads CLI #auto-dispatch #documentation #enhancement ref:GH#21846
+
+- [ ] t3078 add Meta Ads CLI tooling doc to meta-ads agent #documentation #enhancement ref:GH#21844
