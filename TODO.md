@@ -3538,7 +3538,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3049 auto-clear stale-recovery NMR when a subsequent worker produces an approved PR #auto-dispatch #bug ref:GH#21752 pr:#21768 completed:2026-04-29
 
-- [ ] t3050 consolidator must skip parents whose work is already merged via children #auto-dispatch #bug ref:GH#21753
+- [x] t3050 consolidator must skip parents whose work is already merged via children #auto-dispatch #bug ref:GH#21753 pr:#21816 completed:2026-04-30
 
 - [ ] t3051 fix worker exit classifier so SIGTERM/zero-session kills don't masquerade as clean (root cause for #21707 cycle) #auto-dispatch #bug #refactor ref:GH#21754
 
