@@ -93,7 +93,7 @@ _classify_stuck_pr() {
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || { echo "$_STUCK_CLASS_NOT_STUCK"; return 0; }
 
 	# Extract fields from the PR JSON.
-	local mergeable review_decision labels_csv created_at
+	local mergeable="" review_decision="" labels_csv="" created_at=""
 	mergeable=$(printf '%s' "$pr_json" | jq -r '.mergeable // ""' 2>/dev/null) || mergeable=""
 	review_decision=$(printf '%s' "$pr_json" | jq -r 'if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end' 2>/dev/null) || review_decision="NONE"
 	labels_csv=$(printf '%s' "$pr_json" | jq -r '[.labels[]?.name // empty] | join(",")' 2>/dev/null) || labels_csv=""
@@ -108,7 +108,7 @@ _classify_stuck_pr() {
 	# Check PR age against threshold.
 	local age_minutes=0
 	if [[ -n "$created_at" ]]; then
-		local created_epoch now_epoch
+		local created_epoch=0 now_epoch=0
 		created_epoch=$(date -d "$created_at" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$created_at" +%s 2>/dev/null) || created_epoch=0
 		now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 		if [[ "$created_epoch" -gt 0 && "$now_epoch" -gt 0 ]]; then
@@ -140,7 +140,7 @@ _classify_stuck_pr() {
 	# If MERGEABLE but not merged — check for failing checks.
 	if [[ "$mergeable" == "MERGEABLE" ]]; then
 		# Fetch check run status for this PR.
-		local pr_sha check_json
+		local pr_sha="" check_json=""
 		pr_sha=$(printf '%s' "$pr_json" | jq -r '.headRefOid // ""' 2>/dev/null) || pr_sha=""
 		if [[ -z "$pr_sha" ]]; then
 			pr_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
@@ -186,7 +186,7 @@ _stuck_pr_failure_fingerprint() {
 		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
 	[[ -n "$pr_sha" ]] || { echo ""; return 0; }
 
-	local check_raw fingerprint
+	local check_raw="" fingerprint=""
 	check_raw=$(gh api "repos/${repo_slug}/commits/${pr_sha}/check-runs" 2>/dev/null) || check_raw="{}"
 	fingerprint=$(printf '%s' "$check_raw" | jq -r '[.check_runs[] | select(.conclusion == "failure") | .name] | sort | join(",")' 2>/dev/null) || fingerprint=""
 	echo "$fingerprint"
@@ -214,13 +214,13 @@ _detect_pattern_outage() {
 	fp_counts=$(printf '%s\n' "$fingerprint_data" | awk -F'|' '{print $2}' | sort | uniq -c | sort -rn)
 
 	while IFS= read -r line; do
-		local count fp
+		local count="" fp=""
 		count=$(printf '%s' "$line" | awk '{print $1}')
 		fp=$(printf '%s' "$line" | awk '{$1=""; print}' | sed 's/^ *//')
 		[[ -n "$fp" && "$count" -ge "$min_prs" ]] || continue
 
 		# Compute dedup marker.
-		local fp_hash marker
+		local fp_hash="" marker=""
 		fp_hash=$(printf '%s' "$fp" | sha256sum 2>/dev/null | awk '{print $1}') || fp_hash=$(printf '%s' "$fp" | md5sum 2>/dev/null | awk '{print $1}') || fp_hash="unknown"
 		marker="<!-- merge-stuck:pattern:${fp_hash} -->"
 
@@ -435,7 +435,7 @@ _run_stuck_merge_detector() {
 
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj pr_number classification
+		local pr_obj="" pr_number="" classification=""
 		pr_obj=$(printf '%s' "$pr_list" | jq -c ".[$i]" 2>/dev/null)
 		pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // ""' 2>/dev/null)
 		i=$((i + 1))

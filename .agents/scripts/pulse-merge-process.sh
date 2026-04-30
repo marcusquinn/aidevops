@@ -707,7 +707,7 @@ _check_required_checks_passing() {
 
 	# Fetch required contexts from branch protection — authoritative list.
 	# t3193: capture stderr to distinguish HTTP 404 (no protection) from real errors.
-	local required_contexts _rc_exit _rc_stderr _rc_err_msg=""
+	local required_contexts="" _rc_exit=0 _rc_stderr="" _rc_err_msg=""
 	_rc_stderr=$(mktemp "${TMPDIR:-/tmp}/pulse-merge-rc-XXXXXX") || _rc_stderr=""
 	required_contexts=$(gh api \
 		"repos/${repo_slug}/branches/${default_branch}/protection/required_status_checks" \
