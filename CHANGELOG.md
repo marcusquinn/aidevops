@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.22] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3228 complete (pr:#21986 completed:2026-04-30) [skip ci]
+- Maintenance: mark t3210 complete (pr:#21937 completed:2026-04-30) [skip ci]
+- refactor conflict-pattern classifier below function-complexity gate (#21986)
+- pre-canary system overload check (root cause #21919 + sibling trips) (#21937)
+- Maintenance: sync ref:GH#21990 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21988 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21987 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21985 to TODO.md [skip ci]
+
 ## [3.13.21] - 2026-05-01
 
 ### Changed
