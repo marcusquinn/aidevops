@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- t3015: rename `apply_deterministic_fill_floor()` → `apply_dispatch_max()`, add
+  new `dispatch_floor()` public wrapper that forces serial dispatch via the
+  new `_DISPATCH_FORCE_FLOOR` env hint. All `_dff_*` helpers and `_DFF_*` globals
+  renamed to the `_dispatch_*` / `_DISPATCH_*` namespace. Lib file renamed
+  `pulse-dispatch-fill-floor-lib.sh` → `pulse-dispatch-lib.sh`. Test renamed
+  `test-fill-floor-parallel.sh` → `test-dispatch-max-parallel.sh`. Net behaviour
+  change is zero — the default dispatch path (parallel, saturate to slot
+  budget) is unchanged. (#21555)
+- t3015: env vars `FILL_FLOOR_PER_CANDIDATE_TIMEOUT` and
+  `DISPATCH_FILL_FLOOR_PARALLEL` renamed to `DISPATCH_PER_CANDIDATE_TIMEOUT`
+  and `DISPATCH_MAX_PARALLEL`. Both old names still work (one-shot stderr
+  deprecation warning, then bridge value into the new variable). Old names
+  removed in v4.0. (#21555)
+- t3015: log lines emitted by the dispatch loop now report the active path —
+  `Dispatch path=max` (parallel, default) or `Dispatch path=floor` (serial,
+  triggered by adaptive throttle file presence or explicit `dispatch_floor()`
+  caller). Replaces the older `Dispatch_max:` / `Deterministic fill floor:`
+  prefixes for easier grep/correlation against pulse-diagnose-helper rules. (#21555)
+
 ## [3.13.11] - 2026-04-30
 
 ### Added
