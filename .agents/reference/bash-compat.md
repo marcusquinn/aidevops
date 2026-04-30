@@ -105,10 +105,9 @@ A literal ASCII apostrophe (U+0027) inside an unquoted heredoc body (`<<EOF` / `
 
 ```bash
 # WRONG — bash 3.2 fails: "unexpected EOF while looking for matching '"
-body=$(cat <<EOF
+cat <<EOF
 it's a supervisor's blind spot
 EOF
-)
 ```
 
 Three fixes, in order of preference:
