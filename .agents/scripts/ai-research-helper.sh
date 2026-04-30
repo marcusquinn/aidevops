@@ -32,11 +32,18 @@ LOG_PREFIX="AI-RESEARCH"
 #######################################
 resolve_model_id() {
 	local name="${1:-haiku}"
+	# Model IDs MUST match the canonical registry at .agents/configs/model-routing-table.json.
+	# The previous values (claude-haiku-4-20250414 et al.) were hallucinated and 404'd
+	# every API call, returning HTTP 404 from Anthropic for ALL three tiers — the
+	# silent root cause behind 100% LLM-call failure in fix-the-fixer-detector
+	# (Issue #21880). Verify against:
+	#   .agents/configs/model-routing-table.json
+	#   .agents/tools/ai-assistants/models-README.md
 	case "$name" in
-	haiku) echo "claude-haiku-4-20250414" ;;
-	sonnet) echo "claude-sonnet-4-20250514" ;;
-	opus) echo "claude-opus-4-20250514" ;;
-	*) echo "claude-haiku-4-20250414" ;; # default to haiku
+	haiku) echo "claude-haiku-4-5-20251001" ;;
+	sonnet) echo "claude-sonnet-4-6" ;;
+	opus) echo "claude-opus-4-6" ;;
+	*) echo "claude-haiku-4-5-20251001" ;; # default to haiku
 	esac
 	return 0
 }

@@ -445,20 +445,74 @@ _worker_produced_output() {
 
 	# Signal 3: PR linked to this issue (requires gh and DISPATCH_REPO_SLUG)
 	# Only reachable when Signal 1 or 2 is present — disambiguates pr_exists vs branch_orphan.
+	#
+	# Two probes, both with EXPLICIT exit-code capture (Issue #21880):
+	#   a) `gh pr list --head <branch>` — direct DB lookup by head ref. No search-
+	#      index latency, deterministic. Only runs when branch_name is known and
+	#      is not the repo default branch.
+	#   b) `gh pr list --search "<issue>"` — fallback for cases where the worker
+	#      pushed under a different branch name than the one we observe locally,
+	#      or where probe (a) was skipped.
+	#
+	# `--state all` ensures a PR that was created and then closed/merged still
+	# counts as "PR exists" — the worker did its job; closure is a separate concern.
+	#
+	# CRITICAL — fail-open semantics: distinguish gh-success-with-zero-results
+	# (confirmed absence → branch_orphan) from gh-call-failure (auth, network,
+	# rate-limit, transient 5xx → fail-open as pr_exists). The previous
+	# implementation collapsed `2>/dev/null || true` into pr_count=0, which
+	# misclassified every gh failure as branch_orphan. That false-positive
+	# triggered Issue #21880: PR #21883 was correctly created at 05:35Z but the
+	# orphan classifier ran 5 minutes later, observed a transient gh failure,
+	# returned pr_count=0, and posted a noisy WORKER_BRANCH_ORPHAN escalation
+	# against an issue that already had a green PR awaiting merge.
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
-		local pr_count=0
-		pr_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
-			--json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
+		local pr_found=0
+		local any_check_succeeded=0
+		local pr_count=""
+
+		# Probe A: head-ref lookup (preferred — no search-index dependency)
+		if [[ -n "$branch_name" && "$branch_name" != "HEAD" \
+				&& "$branch_name" != "$default_branch" ]]; then
+			if pr_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" \
+					--state all --json number --jq 'length' 2>/dev/null); then
+				any_check_succeeded=1
+				if [[ "$pr_count" =~ ^[0-9]+$ ]] && [[ "$pr_count" -gt 0 ]]; then
+					pr_found=1
+				fi
+			fi
+		fi
+
+		# Probe B: search-by-issue-number fallback
+		if [[ "$pr_found" -eq 0 ]]; then
+			if pr_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
+					--state all --json number --jq 'length' 2>/dev/null); then
+				any_check_succeeded=1
+				if [[ "$pr_count" =~ ^[0-9]+$ ]] && [[ "$pr_count" -gt 0 ]]; then
+					pr_found=1
+				fi
+			fi
+		fi
+
+		if [[ "$pr_found" -eq 1 ]]; then
 			printf 'pr_exists'
 			return 0
 		fi
-		# PR confirmed absent: branch/commits exist but no PR → orphan (GH#20819)
-		printf 'branch_orphan'
+
+		# At least one probe completed cleanly with 0 results → confirmed
+		# orphan (GH#20819): branch/commits exist but no PR was opened.
+		if [[ "$any_check_succeeded" -eq 1 ]]; then
+			printf 'branch_orphan'
+			return 0
+		fi
+
+		# All probes failed (auth, network, rate-limit, 5xx) — fail-open per
+		# docstring. Misclassifying as branch_orphan here is exactly the
+		# false-positive that triggered Issue #21880.
+		printf 'pr_exists'
 		return 0
 	fi
 

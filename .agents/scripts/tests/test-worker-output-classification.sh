@@ -82,13 +82,23 @@ GH_STUB_DIR="${TEST_ROOT}/stubs"
 mkdir -p "$GH_STUB_DIR"
 cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
-# Minimal stub: `gh pr list ... --jq 'length'` returns ${STUB_PR_COUNT:-0}.
+# Minimal stub:
+#   `gh pr list ... --jq 'length'` returns ${STUB_PR_COUNT:-0}.
+#   Exits with ${STUB_GH_EXIT:-0} on `pr list` calls so tests can simulate
+#   gh-call failures (auth, network, rate-limit, transient 5xx). Issue #21880.
 # Other invocations exit 0 silently so source-time `gh api user` calls
 # from sourced helpers don't crash the test.
 case "${1:-}" in
 	pr)
 		case "${2:-}" in
-			list) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
+			list)
+				if [[ "${STUB_GH_EXIT:-0}" -ne 0 ]]; then
+					# Simulate gh failure: print nothing on stdout, error to stderr.
+					printf 'simulated gh failure\n' >&2
+					exit "${STUB_GH_EXIT}"
+				fi
+				printf '%s\n' "${STUB_PR_COUNT:-0}"
+				;;
 			*) ;;
 		esac
 		;;
@@ -267,6 +277,47 @@ test_feature_branch_with_pr_returns_pr_exists() {
 	return 0
 }
 
+test_feature_branch_with_gh_failure_fails_open_to_pr_exists() {
+	# Issue #21880 regression: when `gh pr list` fails (auth, network, rate
+	# limit, transient 5xx), the classifier MUST return pr_exists per its
+	# documented fail-open contract. The previous implementation collapsed
+	# `2>/dev/null || true` into pr_count=0, which misclassified every gh
+	# failure as branch_orphan and triggered a noisy WORKER_BRANCH_ORPHAN
+	# escalation against issues that had legitimate green PRs awaiting merge.
+	#
+	# A real PR was open at PR-creation-time; the gh probe failed transiently;
+	# the classifier MUST NOT escalate. This is the canonical bug pattern.
+	make_repo_pair "case5" || {
+		print_result "case 5: gh failure with feature branch → fail-open pr_exists (#21880)" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t9999-gh-failure
+		echo "feature change" > feature.txt
+		git add feature.txt
+		git commit -q -m "feature commit"
+		git push -q origin feature/t9999-gh-failure
+	) || {
+		print_result "case 5: gh failure with feature branch → fail-open pr_exists (#21880)" 1 "feature branch setup failed"
+		return 0
+	}
+	# Simulate gh failure on BOTH probes (head + search). All probes failing
+	# is the only condition under which the classifier may fail-open.
+	export STUB_PR_COUNT=0
+	export STUB_GH_EXIT=1
+	local got
+	got=$(_worker_produced_output "issue-1005" "$WORK_DIR")
+	unset STUB_GH_EXIT
+	if [[ "$got" == "pr_exists" ]]; then
+		print_result "case 5: gh failure with feature branch → fail-open pr_exists (#21880)" 0
+	else
+		print_result "case 5: gh failure with feature branch → fail-open pr_exists (#21880)" 1 \
+			"got: $got (expected pr_exists — fail-open contract violation)"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -275,6 +326,7 @@ test_main_no_commits_no_pr_returns_noop
 test_main_with_local_commits_no_pr_returns_noop_t2899
 test_feature_branch_pushed_no_pr_returns_branch_orphan
 test_feature_branch_with_pr_returns_pr_exists
+test_feature_branch_with_gh_failure_fails_open_to_pr_exists
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
