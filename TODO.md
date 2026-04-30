@@ -3625,7 +3625,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3198 pulse-runner-health-helper.sh diagnose: cross-check breaker state vs observed pulse log #auto-dispatch #enhancement ref:GH#21893
 
-- [ ] t3197 Per-issue launch-failure cooldown: prevent same-issue tight retry loops after no_worker_process #auto-dispatch #bug ref:GH#21892
+- [x] t3197 Per-issue launch-failure cooldown: prevent same-issue tight retry loops after no_worker_process #auto-dispatch #bug ref:GH#21892 pr:#21907 completed:2026-04-30
 
 - [ ] t3196 stale-stamp-aware takeover for DIRTY origin:interactive PRs #auto-dispatch #bug #enhancement ref:GH#21891
 
