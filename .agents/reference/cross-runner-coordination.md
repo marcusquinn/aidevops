@@ -198,6 +198,15 @@ passively assigned to an issue for bookkeeping does not block dispatch unless
 an active status label is also present. Implements the `is-assigned` combined
 check from t1996.
 
+**Layer 6 sub-step (t2930 ignore filter, extended t3194):** before evaluating
+combined-signal blocking, the assignee list is filtered against
+`~/.config/aidevops/dispatch-override.conf`. Entries with value `ignore`
+(manual, §8) and entries matching `peer-quarantine-until=<future-ISO>`
+(automatic, §9) both strip the listed login from the blocking set. This lets
+healthy runners take over issues claimed by peers known to be broken or
+currently failing, without blocking dispatch indefinitely behind their stale
+claim comments.
+
 ---
 
 ## 4. Race Scenarios and Resolutions
@@ -620,7 +629,158 @@ the per-runner config (e.g., while diagnosing a suspected override bug).
 
 ---
 
-## 9. See Also
+## 9. Automatic Peer Quarantine (t3194)
+
+§8 covered **manual** structured overrides for known-broken peers. t3194 adds
+the **automatic** counterpart: a runner that observes another runner repeatedly
+emitting `CLAIM_RELEASED reason=launch_recovery:no_worker_process` events
+auto-writes a time-bound `peer-quarantine-until=<ISO>` entry into the same
+`dispatch-override.conf` file. While the timestamp is in the future, the
+dispatch-dedup loop treats the peer's claims like a manual `ignore` —
+allowing this runner to take over the contested issue rather than backing off
+indefinitely behind a peer whose worker has died but whose claim comment is
+still on file.
+
+The two systems compose deliberately. §8 is for *durable* operator decisions
+("alex's runner is buggy below 3.8.78"); §9 is for *transient* observed
+failures ("this peer dropped 5 launches in the last hour, take over for the
+next 6h, then resume honouring"). Manual entries always win — the auto path
+never overwrites a non-`peer-quarantine-*` value, even on the same key.
+
+### 9.1 Failure mode caught
+
+`pulse-cleanup.sh::_handle_dead_pulse_workers` (around line 978) emits
+
+```text
+CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<self-login> ts=<iso>
+```
+
+when its launch-recovery sweep finds a worker PID that died before the worker
+process was actually spawned (the canonical "worker comment posted, no shell
+ever started" symptom — fast-fail dispatch, scheduler kill, OOM, dead container,
+etc.). The comment lands on the issue's thread; every healthy peer reading
+that thread sees it.
+
+When the same runner emits this 5+ times in 1h, that's the signal: this peer
+is not just slow, it is structurally failing to launch workers. Honouring its
+claim comments wastes throughput on every other runner. Quarantine for 6h
+gives the operator time to investigate without blocking the rest of the fleet.
+
+### 9.2 Defaults and tunables
+
+| Tunable | Default | Purpose |
+|---|---|---|
+| `PEER_QUARANTINE_FAILURE_THRESHOLD` | `5` | Events in window before tripping |
+| `PEER_QUARANTINE_WINDOW_HOURS` | `1` | Rolling window for counting events |
+| `PEER_QUARANTINE_DURATION_HOURS` | `6` | How long the quarantine lasts |
+| `PEER_QUARANTINE_DISABLED` | `0` | `1` = short-circuit all paths |
+| `PEER_QUARANTINE_LEDGER_CAP` | `20` | Per-peer event ring-buffer size |
+| `PEER_QUARANTINE_TEST_NOW` | (unset) | Override `_pq_now` for deterministic tests |
+| `PEER_QUARANTINE_STATE_FILE` | `~/.aidevops/cache/peer-quarantine.json` | State sandbox knob |
+| `PEER_QUARANTINE_OVERRIDE_CONF` | `~/.config/aidevops/dispatch-override.conf` | Conf file (shared with §8) |
+| `PEER_QUARANTINE_ADVISORY_DIR` | `~/.aidevops/advisories` | Per-peer advisory output |
+| `PEER_QUARANTINE_CACHE_DIR` | `~/.aidevops/cache` | Advisory dedup stamp dir |
+
+### 9.3 Conf entry format
+
+The auto-managed entry uses the same `DISPATCH_OVERRIDE_<LOGIN>` variable name
+as §8, but with a value the manual path never produces:
+
+```bash
+# Auto-managed by pulse-peer-quarantine-helper.sh (t3194)
+DISPATCH_OVERRIDE_BAD_PEER="peer-quarantine-until=2026-04-30T16:00:00Z"
+```
+
+`dispatch-dedup-helper.sh::is_assigned` extends the existing t2930 ignore-filter
+loop: if the value matches `peer-quarantine-until=<ISO>` AND the ISO parses
+to a future timestamp, the assignee is dropped from the blocking set
+identically to a manual `ignore`. Once the timestamp passes, the entry is
+silently ignored — no rewrite, no advisory, no operator action. The next event
+that trips the threshold writes a fresh entry with a new `until`.
+
+### 9.4 Manual entry preservation
+
+`pulse-peer-quarantine-helper.sh::_pq_write_override_entry` reads the existing
+conf line for the same `DISPATCH_OVERRIDE_<LOGIN>` variable before writing.
+If the existing value is **anything other than** `peer-quarantine-until=*`
+(i.e. `ignore`, `honour`, `warn`, `honour-only-above:V`, or any operator
+annotation), the auto path leaves it alone. Only auto-managed values get
+overwritten by the auto path — and `release --peer <name>` only strips
+auto-managed values. This is the single invariant that lets §8 and §9 share
+the same conf file safely.
+
+### 9.5 Detection wiring
+
+The brief originally proposed wiring detection into
+`pulse-batch-prefetch-helper.sh`, but that helper does not currently scan
+issue comment bodies — it fetches issue and PR metadata. The actually-cheapest
+integration point is the comments fetch already inside
+`dispatch-dedup-helper.sh::has_dispatch_comment` (the dispatch-comment TTL
+guard), which loads `body_start | author | created_at` for every comment on
+every issue the dedup chain inspects. After that fetch, the JSON is piped to
+`pulse-peer-quarantine-helper.sh scan-comments --self-login <login>` — zero
+new GitHub API calls, opportunistic per-issue. Self-events are skipped via
+the `--self-login` filter.
+
+This is structural: the only thing the auto path needs is *visibility into
+peer launch-recovery comments*, and the dedup chain already has that.
+
+### 9.6 Operator commands
+
+```bash
+H=~/.aidevops/agents/scripts/pulse-peer-quarantine-helper.sh
+
+# Inspect current quarantine state across all peers (human-readable):
+"$H" status
+
+# Same, JSON for programmatic use:
+"$H" status --json
+
+# Check a single peer:
+"$H" is-quarantined --peer alex-solovyev   # exit 0 if quarantined
+
+# Manually clear a quarantine (rarely needed — auto-expires in 6h):
+"$H" release --peer alex-solovyev --reason "fixed runner, redeployed"
+
+# Disable the whole mechanism for the current shell:
+PEER_QUARANTINE_DISABLED=1 ...
+```
+
+### 9.7 Diagnosis
+
+If a peer is quarantined and you want to know why:
+
+```bash
+# Per-peer event ledger (last 20):
+jq -r '.peers["alex-solovyev"].events[]' \
+  ~/.aidevops/cache/peer-quarantine.json
+
+# Trip context (which issue triggered the quarantine):
+jq -r '.peers["alex-solovyev"] | "until=\(.quarantine_until) reason=\(.reason) trigger=\(.triggering_issue)"' \
+  ~/.aidevops/cache/peer-quarantine.json
+
+# Advisory file written on first trip (24h dedup):
+ls -la ~/.aidevops/advisories/peer-quarantine-alex-solovyev.advisory
+```
+
+If you decide the quarantine is wrong (e.g., the launch-recovery events were
+genuinely transient infrastructure flaps), `release --peer` plus a manual
+`DISPATCH_OVERRIDE_<LOGIN>="honour"` line in the conf gives you a permanent
+override the auto path will then leave alone (per §9.4).
+
+### 9.8 Layer placement
+
+In §3's seven-layer chain, peer-quarantine sits as a **sub-step inside
+Layer 6** (cross-machine assignee guard): the existing assignee fetch happens
+first, then the t2930 ignore-filter loop runs, then the t3194 quarantine check
+extends that same loop with a date-bounded "treat as ignore" branch. No new
+layer is added — the layer count stays at seven. Tests cover both the parser
+shape (so a refactor that drops the `peer-quarantine-until=*` case fails
+loudly) and the date-bound semantics (future ISO honoured, past ISO not).
+
+---
+
+## 10. See Also
 
 - `reference/worker-diagnostics.md` — single-runner worker lifecycle, DB
   isolation, watchdog, canary, recovery checklist
@@ -628,11 +788,15 @@ the per-runner config (e.g., while diagnosing a suspected override bug).
 - `AGENTS.md` "Session origin labels" — `origin:interactive` implications
 - `AGENTS.md` "General dedup rule — combined signal (t1996)"
 - `AGENTS.md` "Parent / meta tasks (#parent tag, t1986)"
-- `scripts/dispatch-dedup-helper.sh` — implementation of Layers 3–7
+- `scripts/dispatch-dedup-helper.sh` — implementation of Layers 3–7 and §9
+  override-loop honouring
+- `scripts/pulse-peer-quarantine-helper.sh` — §9 detection + state machine
 - `scripts/pulse-dispatch-core.sh` — `check_dispatch_dedup()` orchestration
 - `scripts/tests/test-parent-task-guard.sh` — regression coverage for t1986
 - `scripts/tests/test-dispatch-dedup-multi-operator.sh` — multi-operator dedup
   assertions
+- `scripts/tests/test-peer-quarantine.sh` — t3194 threshold, expiry, manual
+  preservation, scan-comments self-skip, parser-shape regression
 
 ### Related Issues and PRs
 
@@ -654,3 +818,4 @@ the per-runner config (e.g., while diagnosing a suspected override bug).
 | GH#19924 (t2400) | Flat `DISPATCH_CLAIM_IGNORE_RUNNERS` for per-login skip (deprecated by t2422) |
 | GH#19995 (t2401) | Global `DISPATCH_CLAIM_MIN_VERSION` version floor + version field in claim body |
 | GH#20028 (t2422) | Structured per-runner overrides with auto-sunset + deterministic tiebreaker + `CLAIM_DEFERRED` |
+| GH#21890 (t3194) | Automatic peer quarantine on repeated `launch_recovery:no_worker_process` events — §9 |
