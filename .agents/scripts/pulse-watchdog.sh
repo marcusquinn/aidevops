@@ -38,6 +38,12 @@ _PULSE_WATCHDOG_LOADED=1
 # per stall cycle. Route these writes to a sibling file the monitor never
 # reads so the progress signal stays clean.
 PULSE_WATCHDOG_LOG="${PULSE_WATCHDOG_LOG:-${HOME}/.aidevops/logs/pulse-watchdog.log}"
+# t3071 / t3089: Canonical lifecycle log for progress/idle resume markers —
+# same log used by worker-activity-watchdog.sh. Lifecycle markers belong here,
+# not in PULSE_WATCHDOG_LOG, so they land alongside other lifecycle events and
+# remain invisible to the byte-delta progress monitor. Mirrors the LIFECYCLE_LOG
+# variable in worker-activity-watchdog.sh:93 (t3058 fix pattern).
+LIFECYCLE_LOG="${LIFECYCLE_LOG:-${HOME}/.aidevops/logs/pulse-dispatch.log}"
 
 #######################################
 # Process guard: kill child processes exceeding RSS or runtime limits (t1398)
@@ -384,10 +390,13 @@ _watchdog_check_progress() {
 	if [[ "$current_log_size" -gt "$WD_LAST_LOG_SIZE" ]]; then
 		WD_HAS_SEEN_PROGRESS=true
 		if [[ "$WD_PROGRESS_STALL_SECONDS" -gt 0 ]]; then
-			# GH#21842: route to PULSE_WATCHDOG_LOG, not $LOGFILE — the byte-delta
-			# monitor above reads $LOGFILE. Self-writing here would falsely
-			# evaluate as progress on the next poll. See file header.
-			echo "[pulse-wrapper] Progress resumed after ${WD_PROGRESS_STALL_SECONDS}s stall (log grew by $((current_log_size - WD_LAST_LOG_SIZE)) bytes)" >>"$PULSE_WATCHDOG_LOG" 2>/dev/null || true
+			# t3071 / t3089: route to LIFECYCLE_LOG (pulse-dispatch.log), not $LOGFILE
+			# or $PULSE_WATCHDOG_LOG. This is a lifecycle marker — it belongs alongside
+			# other per-issue lifecycle events. Writing to $LOGFILE is the t3058-class
+			# self-write anti-pattern: the byte-delta monitor would see the write as
+			# progress on the next poll and falsely reset the stall counter.
+			# Style-guide contract: shell-style-guide.md "Watchdog self-write anti-pattern".
+			echo "[pulse-watchdog] Progress resumed after ${WD_PROGRESS_STALL_SECONDS}s stall (log grew by $((current_log_size - WD_LAST_LOG_SIZE)) bytes)" >>"$LIFECYCLE_LOG" 2>/dev/null || true
 		fi
 		WD_LAST_LOG_SIZE="$current_log_size"
 		WD_PROGRESS_STALL_SECONDS=0
@@ -435,9 +444,11 @@ _watchdog_check_idle() {
 	# Process is active — reset idle counter
 	if [[ "$tree_cpu" -ge "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
 		if [[ "$WD_IDLE_SECONDS" -gt 0 ]]; then
-			# GH#21842: route to PULSE_WATCHDOG_LOG, not $LOGFILE — keeps the
-			# progress byte-delta signal in _watchdog_check_progress clean.
-			echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${WD_IDLE_SECONDS}s idle — resetting idle counter" >>"$PULSE_WATCHDOG_LOG" 2>/dev/null || true
+			# t3071 / t3089: route to LIFECYCLE_LOG (pulse-dispatch.log), not $LOGFILE
+			# or $PULSE_WATCHDOG_LOG. Idle-resume is a lifecycle marker — same rationale
+			# as progress-resume above. Style-guide: shell-style-guide.md "Watchdog
+			# self-write anti-pattern (t3058 / t3071)".
+			echo "[pulse-watchdog] Pulse active again (CPU ${tree_cpu}%) after ${WD_IDLE_SECONDS}s idle — resetting idle counter" >>"$LIFECYCLE_LOG" 2>/dev/null || true
 		fi
 		WD_IDLE_SECONDS=0
 		return 0
