@@ -395,6 +395,17 @@ jobs:
         bash .agents/scripts/tests/test-pulse-wrapper-delta-prefetch.sh
         echo "Delta prefetch regression tests passed"
 
+    - name: Worker Count and Capacity Tests (GH#21873)
+      run: |
+        # Regression guard for list_dispatchable_issue_candidates,
+        # count_runnable_candidates, count_queued_without_worker, and
+        # related capacity/governor functions in pulse-capacity.sh.
+        # Catches the gh_issue_list/gh_pr_list mock bypass via timeout (GH#21873)
+        # and the statusCheckRollup → REST check-runs migration (GH#21799).
+        echo "Running pulse worker count / capacity regression tests..."
+        bash .agents/scripts/tests/test-pulse-wrapper-worker-count.sh
+        echo "Worker count / capacity regression tests passed"
+
   complexity-check:
     # IMPORTANT: This job's `name:` is a required status check on main (GH#18393).
     # Renaming it requires updating branch protection: gh api -X PATCH

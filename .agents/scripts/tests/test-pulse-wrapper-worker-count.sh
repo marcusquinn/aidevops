@@ -16,6 +16,7 @@ TESTS_FAILED=0
 PS_MOCK_OUTPUT=""
 GH_ISSUE_LIST_JSON="[]"
 GH_PR_LIST_JSON="[]"
+GH_PR_CHECK_STATUS_JSON="[]"
 TEST_ROOT=""
 ORIGINAL_HOME="${HOME}"
 
@@ -44,6 +45,30 @@ setup_test_env() {
 	mkdir -p "${HOME}/.aidevops/logs"
 	# shellcheck source=/dev/null
 	source "$WRAPPER_SCRIPT"
+
+	# Override gh wrapper functions AFTER sourcing pulse-wrapper.sh so these
+	# definitions shadow the real implementations.  gh_issue_list and gh_pr_list
+	# call _gh_with_timeout which invokes the external `timeout` binary; that
+	# spawns a new process which cannot see shell-function stubs.  Overriding at
+	# this level bypasses _gh_with_timeout entirely and is the canonical test
+	# pattern (see test-large-file-gate-dedup.sh:94-131).
+	gh_issue_list() {
+		printf '%s\n' "$GH_ISSUE_LIST_JSON"
+		return 0
+	}
+
+	gh_pr_list() {
+		printf '%s\n' "$GH_PR_LIST_JSON"
+		return 0
+	}
+
+	# GH#21799: gh_pr_check_status_rest_batch replaces statusCheckRollup in
+	# count_runnable_candidates.  Return pre-set per-test check status JSON.
+	gh_pr_check_status_rest_batch() {
+		printf '%s\n' "$GH_PR_CHECK_STATUS_JSON"
+		return 0
+	}
+
 	return 0
 }
 
@@ -258,12 +283,15 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	local output
 	output=$(list_dispatchable_issue_candidates "owner/repo" 100)
 
-	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" == *$'9|in progress but runnable'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* ]]; then
-		print_result "list_dispatchable_issue_candidates is default-open except needs-*" 0
+	# t2924: status:in-progress is filtered at candidate-build time to avoid
+	# re-evaluating always-blocked candidates every pulse cycle.  Issue #9
+	# carries status:in-progress and must NOT appear in the output.
+	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* && "$output" != *$'9|in progress but runnable'* ]]; then
+		print_result "list_dispatchable_issue_candidates is default-open except needs-* and active-status labels" 0
 		return 0
 	fi
 
-	print_result "list_dispatchable_issue_candidates is default-open except needs-*" 1 "Unexpected candidate set: ${output}"
+	print_result "list_dispatchable_issue_candidates is default-open except needs-* and active-status labels" 1 "Unexpected candidate set: ${output}"
 	return 0
 }
 
@@ -279,9 +307,15 @@ test_count_runnable_candidates_counts_default_open_backlog() {
 	  {"number":3,"title":"maintainer assigned","updatedAt":"2026-03-31T00:02:00Z","assignees":[{"login":"maintainer-bot"}],"labels":[]},
 	  {"number":4,"title":"runner assigned","updatedAt":"2026-03-31T00:03:00Z","assignees":[{"login":"other-runner"}],"labels":[]}
 	]'
+	# GH#21799: fixtures use headRefOid + REST check status (no statusCheckRollup).
+	# PR 1: CHANGES_REQUESTED → counted. PR 2: APPROVED + FAIL check → counted.
 	GH_PR_LIST_JSON='[
-	  {"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]},
-	  {"reviewDecision":"APPROVED","statusCheckRollup":[{"conclusion":"FAILURE"}]}
+	  {"number":1,"reviewDecision":"CHANGES_REQUESTED","headRefOid":"aaa111"},
+	  {"number":2,"reviewDecision":"APPROVED","headRefOid":"bbb222"}
+	]'
+	GH_PR_CHECK_STATUS_JSON='[
+	  {"number":1,"status":"PASS"},
+	  {"number":2,"status":"FAIL"}
 	]'
 
 	local count
@@ -305,9 +339,11 @@ test_count_runnable_candidates_keeps_stdout_numeric_with_debug() {
 	GH_ISSUE_LIST_JSON='[
 	  {"number":1,"title":"unassigned","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[]}
 	]'
+	# GH#21799: fixtures use headRefOid + REST check status (no statusCheckRollup).
 	GH_PR_LIST_JSON='[
-	  {"reviewDecision":"CHANGES_REQUESTED","statusCheckRollup":[]}
+	  {"number":1,"reviewDecision":"CHANGES_REQUESTED","headRefOid":"aaa111"}
 	]'
+	GH_PR_CHECK_STATUS_JSON='[{"number":1,"status":"PASS"}]'
 
 	local count stderr_file
 	stderr_file="${TEST_ROOT}/count-runnable-debug.stderr"

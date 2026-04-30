@@ -67,9 +67,12 @@ count_runnable_candidates() {
 		issue_count=$(list_dispatchable_issue_candidates "$slug" "$PULSE_RUNNABLE_ISSUE_LIMIT" | wc -l | tr -d ' ') || issue_count=0
 		[[ "$issue_count" =~ ^[0-9]+$ ]] || issue_count=0
 
+		# GH#21799: drop heavy GraphQL statusCheckRollup; fetch headRefOid
+		# instead and resolve PASS/FAIL/PENDING via REST check-suites
+		# (separate budget pool, ~15x smaller payload).
 		local pr_json pr_rc_err
 		pr_rc_err=$(mktemp)
-		pr_json=$(gh_pr_list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_rc_err") || pr_json="[]"
+		pr_json=$(gh_pr_list --repo "$slug" --state open --json number,reviewDecision,headRefOid --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_rc_err") || pr_json="[]"
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local _pr_rc_err_msg
 			_pr_rc_err_msg=$(cat "$pr_rc_err" 2>/dev/null || echo "unknown error")
@@ -77,8 +80,18 @@ count_runnable_candidates() {
 			pr_json="[]"
 		fi
 		rm -f "$pr_rc_err"
+
+		# Enrich with REST check status, then count "runnable" PRs:
+		# CHANGES_REQUESTED OR aggregate check status == FAIL.
+		local pr_checks_json=""
+		pr_checks_json=$(gh_pr_check_status_rest_batch "$slug" "$pr_json" 2>/dev/null) || pr_checks_json="[]"
+		[[ -n "$pr_checks_json" ]] || pr_checks_json="[]"
+
 		local pr_count
-		pr_count=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED" or ((.statusCheckRollup // []) | any((.conclusion // .state) == "FAILURE")))] | length' 2>/dev/null) || pr_count=0
+		pr_count=$(jq -n --argjson prs "$pr_json" --argjson checks "$pr_checks_json" '
+			($checks | map({(.number | tostring): .status}) | add // {}) as $check_map |
+			[$prs[] | (.number | tostring) as $n | select(.reviewDecision == "CHANGES_REQUESTED" or ($check_map[$n] // "none") == "FAIL")] | length
+		' 2>/dev/null) || pr_count=0
 		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 		pulse_count_debug_log "count_runnable_candidates repo=${slug} issues=${issue_count} prs=${pr_count} total=$((issue_count + pr_count))"
 

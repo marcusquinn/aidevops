@@ -108,6 +108,43 @@ aidevops sync-workflows --apply # update pins to current aidevops version
 
 See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (unchanged under the reusable pattern — still per-repo secret).
 
+## Runner override (GH#21877)
+
+All four managed reusable workflows (`issue-sync-reusable.yml`, `maintainer-gate-reusable.yml`, `review-bot-gate-reusable.yml`, `loc-badge-reusable.yml`) accept a `runner` input (type: `string`, default: `ubuntu-latest`). Downstream repos can redirect all managed workflow jobs to an alternative runner — e.g. Ubicloud, self-hosted, or Namespace — without owning their own copies.
+
+### Configuring runner override
+
+Add a `"runner"` field to the repo entry in `~/.config/aidevops/repos.json`:
+
+```json
+{
+  "initialized_repos": [
+    {
+      "slug": "myorg/myrepo",
+      "runner": "ubicloud-standard-2"
+    }
+  ]
+}
+```
+
+Then run `aidevops sync-workflows --apply` — the helper injects `with: runner: ubicloud-standard-2` into the caller YAML and the reusable workflow routes all jobs to that runner. Future syncs preserve the injection; `aidevops check-workflows` treats the injected block as normalised and will not report `DRIFTED/CALLER`.
+
+If you omit the `runner` field (or set it to `"ubuntu-latest"`), callers inherit the reusable workflow default — no `with: runner:` block is injected and behaviour is identical to pre-GH#21877.
+
+### Self-hosted runner groups
+
+GitHub Actions accepts a YAML list or a string for `runs-on`. The `runner` input is typed `string`. For group-scoped self-hosted labels, encode the array as a string:
+
+```json
+"runner": "[self-hosted, linux, x64]"
+```
+
+The caller YAML becomes `with: runner: "[self-hosted, linux, x64]"` and GitHub Actions parses the list at dispatch time.
+
+### Security caveat for maintainer-gate
+
+`maintainer-gate-reusable.yml` enforces PR merge integrity — it blocks PRs that reference issues still needing maintainer review. If you point this workflow at a self-hosted runner you do not fully control, the gate's integrity depends on the trustworthiness of that runner environment. The framework cannot police runner trust; this is a downstream ops concern. For security-sensitive repos, keep `maintainer-gate` on GitHub-hosted runners even if other workflows use self-hosted runners.
+
 ## Security model
 
 - **`secrets: inherit` only works within the same GitHub account/org (GH#20976).** Cross-account callers (every downstream user — `marcusquinn/aidevops` is the only same-account consumer) receive empty values for caller-repo secrets when using `secrets: inherit` against a reusable workflow in a different account. Explicit secret pass-through is required:

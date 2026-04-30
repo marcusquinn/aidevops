@@ -341,6 +341,10 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" ]]; then
 	# shellcheck source=shared-gh-wrappers-status.sh
 	# shellcheck disable=SC1091  # sub-library resolved at runtime via $_SHARED_GH_WRAPPERS_DIR
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-status.sh"
+
+	# shellcheck source=shared-gh-wrappers-checks.sh
+	# shellcheck disable=SC1091  # sub-library resolved at runtime via $_SHARED_GH_WRAPPERS_DIR
+	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-checks.sh"
 fi
 
 #######################################

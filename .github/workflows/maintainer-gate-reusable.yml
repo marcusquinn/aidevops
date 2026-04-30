@@ -50,6 +50,11 @@ on:
         required: false
         type: string
         default: 'main'
+      runner:
+        description: 'Runner label override (e.g. ubicloud-standard-2). Defaults to ubuntu-latest.'
+        required: false
+        default: 'ubuntu-latest'
+        type: string
 
 jobs:
   # =========================================================================
@@ -60,7 +65,7 @@ jobs:
     name: Maintainer Review & Assignee Gate
     if: >-
       github.event_name == 'pull_request_target'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
     concurrency:
       group: maintainer-gate-${{ github.event.pull_request.number }}
@@ -474,7 +479,7 @@ jobs:
       github.event_name == 'issues' &&
       github.event.action == 'unlabeled' &&
       github.event.label.name == 'needs-maintainer-review'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 2
     permissions:
       issues: write
@@ -543,7 +548,7 @@ jobs:
     if: >-
       github.event_name == 'issues' &&
       (github.event.action == 'labeled' || github.event.action == 'unlabeled' || github.event.action == 'assigned' || github.event.action == 'unassigned')
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
     permissions:
       pull-requests: read
@@ -739,7 +744,7 @@ jobs:
       github.event_name == 'pull_request_target' &&
       github.event.action == 'unlabeled' &&
       github.event.label.name == 'needs-maintainer-review'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 2
     permissions:
       pull-requests: write
@@ -818,7 +823,7 @@ jobs:
       github.event_name == 'issues' &&
       (github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
       github.event.label.name == 'origin:worker'
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 2
     permissions:
       issues: write

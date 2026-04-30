@@ -78,6 +78,7 @@ readonly _KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-reusable.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-reusable.yml:review-bot-gate-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-reusable.yml:maintainer-gate-caller.yml"
+	"loc-badge.yml:loc-badge-reusable.yml:loc-badge-caller.yml"
 )
 
 # ─── Path resolution ────────────────────────────────────────────────────────
@@ -133,12 +134,38 @@ _usage() {
 #     `@main` vs `@v3.9.0` doesn't count as drift.
 #   - Replaces `branches: [<name>]` with `branches: [BRANCH]` so repos that
 #     default to `develop` aren't flagged as drifted from a main-defaulting template.
+#   - Strips injected `runner:` keys from `with:` blocks (GH#21877) and removes
+#     any `    with:` block that becomes empty after runner removal, so repos
+#     with a repos.json `runner` override aren't flagged as DRIFTED/CALLER.
 # Emits normalised content on stdout.
 _normalize_wf_for_compare() {
 	local _file="$1"
 	local _reusable_escaped="$2"
+	# Step 1: normalise @ref and branch filter (existing logic).
+	# Step 2: remove injected `      runner: <value>` lines.
+	# Step 3: remove `    with:` block headers that are now empty (runner was
+	#         the only key). Uses awk: buffer the `    with:` line, emit it
+	#         only if the next line is also inside the block (6-space indent);
+	#         otherwise discard the header silently.
 	sed -E "s|(marcusquinn/aidevops/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
-		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|'
+		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
+		| sed -E '/^      runner: /d' \
+		| awk '
+			/^    with:$/ { pending = $0; next }
+			pending {
+				if (/^      /) {
+					print pending
+					pending = ""
+					print
+					next
+				}
+				pending = ""
+				print
+				next
+			}
+			{ print }
+			END { if (pending != "") print pending }
+		'
 	return 0
 }
 
