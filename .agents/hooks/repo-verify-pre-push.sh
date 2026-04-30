@@ -125,7 +125,10 @@ _load_verify_from_aidevops_json() {
 	command -v jq >/dev/null 2>&1 || { _dbg "jq missing — skipping .aidevops.json"; return 1; }
 
 	local enabled
-	enabled=$(jq -r '.verify.enabled // empty' "$cfg" 2>/dev/null || true)
+	# Note: jq's `//` operator triggers on BOTH null AND false — neither
+	# `// empty` nor `// null` round-trip an explicit `"enabled": false`.
+	# Use an explicit equality check so JSON false is preserved correctly.
+	enabled=$(jq -r '(.verify // {}) | if .enabled == false then "false" else "" end' "$cfg" 2>/dev/null || true)
 	if [[ "$enabled" == "false" ]]; then
 		_dbg ".aidevops.json .verify.enabled=false — opting out"
 		VERIFY_SOURCE='aidevops-json-disabled'
@@ -292,11 +295,13 @@ _run_autofix() {
 	# Did autofix change any tracked files?
 	if [[ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]]; then
 		_log INFO "$name autofix modified files — amending HEAD"
-		if ! git -C "$REPO_ROOT" add -A 2>>"${LAST_FAIL_LOG:-/dev/null}"; then
+		# Redirect BOTH streams to the log so the hook never leaks chatter
+		# into git's stdout (which gets surfaced in the calling shell).
+		if ! git -C "$REPO_ROOT" add -A >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
 			_log WARN "$name autofix git add failed"
 			return 1
 		fi
-		if ! git -C "$REPO_ROOT" commit --amend --no-edit --no-verify 2>>"${LAST_FAIL_LOG:-/dev/null}"; then
+		if ! git -C "$REPO_ROOT" commit --amend --no-edit --no-verify >>"${LAST_FAIL_LOG:-/dev/null}" 2>&1; then
 			_log WARN "$name autofix git commit --amend failed"
 			return 1
 		fi
