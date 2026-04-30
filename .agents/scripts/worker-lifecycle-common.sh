@@ -825,6 +825,31 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 }
 
 #######################################
+# t3076: file a root-cause meta-issue with forensics when the no_work
+# breaker fires. Idempotent — second trip on the same original is a
+# no-op (filer self-checks via marker comment). Best-effort: failures
+# are swallowed; NMR remains the canonical block on the original.
+#
+# Args: $1=issue_number, $2=repo_slug, $3=failure_count, $4=reason
+# Returns: 0 always
+#######################################
+_file_circuit_breaker_meta_no_work() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="$4"
+
+	local filer="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/circuit-breaker-meta-filer.sh"
+	[[ -x "$filer" ]] || return 0
+
+	"$filer" file \
+		--issue "$issue_number" --repo "$repo_slug" \
+		--breaker no_work --failure-count "$failure_count" \
+		--reason "$reason" >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
 # Post an idempotent diagnostic comment when tier escalation is skipped
 # because the worker crashed with crash_type=no_work (infrastructure
 # failure — FD exhaustion, plugin init crash, branch naming race, auth
@@ -901,18 +926,8 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker fired for #%s (%s, count=%s)\n' \
 			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
 
-		# t3076: file root-cause meta-issue with forensics and dispatch a
-		# tier:thinking worker against it. Idempotent — second trip on the
-		# same original is a no-op. Best-effort: failures are logged but
-		# never propagate (NMR is the canonical block, the meta-issue is
-		# the self-healing channel).
-		local _cb_meta_filer="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/circuit-breaker-meta-filer.sh"
-		if [[ -x "$_cb_meta_filer" ]]; then
-			"$_cb_meta_filer" file \
-				--issue "$issue_number" --repo "$repo_slug" \
-				--breaker no_work --failure-count "$failure_count" \
-				--reason "$reason" >/dev/null 2>&1 || true
-		fi
+		_file_circuit_breaker_meta_no_work "$issue_number" "$repo_slug" \
+			"$failure_count" "$reason"
 
 		return 0
 	fi

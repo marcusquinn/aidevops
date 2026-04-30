@@ -158,38 +158,15 @@ _cb_meta_stages_slice() {
 #   $7=spent_tokens  (used by cost breaker; may be empty)
 #   $8=budget_tokens (used by cost breaker; may be empty)
 #######################################
-_cb_meta_body() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local breaker_type="$3"
-	local failure_count="$4"
-	local reason="${5:-}"
-	local tier="${6:-}"
-	local spent="${7:-}"
-	local budget="${8:-}"
-
-	local max_lines="${AIDEVOPS_CIRCUIT_BREAKER_META_FORENSIC_LINES:-50}"
-
-	local breaker_label="$_CB_LABEL_NO_WORK" trip_marker='cost-circuit-breaker:no_work_loop'
-	if [[ "$breaker_type" == "$_CB_BREAKER_COST" ]]; then
-		breaker_label="$_CB_LABEL_COST"
-		trip_marker='cost-circuit-breaker:fired'
-	fi
-
-	local log_slice stages_slice
-	log_slice=$(_cb_meta_log_slice "$issue_number" "$max_lines")
-	stages_slice=$(_cb_meta_stages_slice "$issue_number")
-
-	local cost_block=""
-	if [[ "$breaker_type" == "$_CB_BREAKER_COST" && -n "$spent" && -n "$budget" ]]; then
-		cost_block="
-- **Tier**: \`tier:${tier:-standard}\`
-- **Spent**: ${spent} tokens
-- **Budget**: ${budget} tokens"
-	fi
-
-	local safe_reason
-	safe_reason=$(_sanitize_markdown "${reason:-(not provided)}" 2>/dev/null || printf '%s' "${reason:-(not provided)}")
+#######################################
+# Body section: intro (What/Why/Tracking/Hypothesis intro).
+# Args: $1=issue, $2=slug, $3=breaker_label, $4=trip_marker,
+#        $5=failure_count, $6=safe_reason, $7=cost_block
+#######################################
+_cb_meta_body_intro() {
+	local issue_number="$1" repo_slug="$2" breaker_label="$3"
+	local trip_marker="$4" failure_count="$5" safe_reason="$6"
+	local cost_block="$7"
 
 	cat <<EOF
 <!-- aidevops:generator=circuit-breaker-meta-filer -->
@@ -218,8 +195,17 @@ The original (#${issue_number}) gets \`blocked-by:#<this>\` and clears automatic
 The most common root causes for \`${breaker_label}\` trips are:
 
 EOF
+	return 0
+}
 
-	if [[ "$breaker_type" == "no_work" ]]; then
+#######################################
+# Body section: hypothesis bullets specific to the breaker class.
+# Args: $1=breaker_type
+#######################################
+_cb_meta_body_hypothesis() {
+	local breaker_type="$1"
+
+	if [[ "$breaker_type" == "$_CB_BREAKER_NO_WORK" ]]; then
 		cat <<'EOF'
 - **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure.sh::classify_worker_exit` and the wait_status sentinel propagation.
 - **Plugin init crash** — opencode plugin (`opencode-aidevops`) failing during boot due to FD exhaustion, env pollution, or a stale cache. Check the worker's stderr in `~/.aidevops/logs/worker-*-stderr.log`.
@@ -236,6 +222,16 @@ EOF
 - **Breaker firing too early** — calibration problem in `dispatch-cost-budgets.conf`; investigate whether the budget is reasonable for the tier.
 EOF
 	fi
+	return 0
+}
+
+#######################################
+# Body section: How / Forensics / Acceptance / Verification.
+# Args: $1=issue, $2=slug, $3=max_lines, $4=log_slice, $5=stages_slice
+#######################################
+_cb_meta_body_guidance() {
+	local issue_number="$1" repo_slug="$2" max_lines="$3"
+	local log_slice="$4" stages_slice="$5"
 
 	cat <<EOF
 
@@ -286,18 +282,28 @@ gh issue view ${issue_number} --repo ${repo_slug} --json labels --jq '[.labels[]
 # Re-run the regression test:
 bash .agents/scripts/tests/test-circuit-breaker-meta-filer.sh
 \`\`\`
+EOF
+	return 0
+}
+
+#######################################
+# Body section: Files Scope / Tier Checklist / Auto-filed-by tail.
+# Args: (none)
+#######################################
+_cb_meta_body_tail() {
+	cat <<'EOF'
 
 ## Files Scope
 
-- \`.agents/scripts/dispatch-dedup-cost.sh\`
-- \`.agents/scripts/worker-lifecycle-common.sh\`
-- \`.agents/scripts/headless-runtime-failure.sh\`
-- \`.agents/scripts/headless-runtime-helper.sh\`
-- \`.agents/scripts/circuit-breaker-meta-filer.sh\`
-- \`.agents/scripts/pulse-merge.sh\`
-- \`.agents/scripts/pulse-merge-feedback.sh\`
-- \`.agents/scripts/pulse-nmr-approval.sh\`
-- \`.agents/scripts/tests/**\`
+- `.agents/scripts/dispatch-dedup-cost.sh`
+- `.agents/scripts/worker-lifecycle-common.sh`
+- `.agents/scripts/headless-runtime-failure.sh`
+- `.agents/scripts/headless-runtime-helper.sh`
+- `.agents/scripts/circuit-breaker-meta-filer.sh`
+- `.agents/scripts/pulse-merge.sh`
+- `.agents/scripts/pulse-merge-feedback.sh`
+- `.agents/scripts/pulse-nmr-approval.sh`
+- `.agents/scripts/tests/**`
 
 ## Tier Checklist
 
@@ -307,8 +313,51 @@ bash .agents/scripts/tests/test-circuit-breaker-meta-filer.sh
 
 ## Auto-filed by
 
-\`circuit-breaker-meta-filer.sh\` (t3076). To suppress: set \`AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE=1\` in the pulse environment.
+`circuit-breaker-meta-filer.sh` (t3076). To suppress: set `AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE=1` in the pulse environment.
 EOF
+	return 0
+}
+
+_cb_meta_body() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local breaker_type="$3"
+	local failure_count="$4"
+	local reason="${5:-}"
+	local tier="${6:-}"
+	local spent="${7:-}"
+	local budget="${8:-}"
+
+	local max_lines="${AIDEVOPS_CIRCUIT_BREAKER_META_FORENSIC_LINES:-50}"
+
+	local breaker_label="$_CB_LABEL_NO_WORK" trip_marker='cost-circuit-breaker:no_work_loop'
+	if [[ "$breaker_type" == "$_CB_BREAKER_COST" ]]; then
+		breaker_label="$_CB_LABEL_COST"
+		trip_marker='cost-circuit-breaker:fired'
+	fi
+
+	local log_slice stages_slice
+	log_slice=$(_cb_meta_log_slice "$issue_number" "$max_lines")
+	stages_slice=$(_cb_meta_stages_slice "$issue_number")
+
+	local cost_block=""
+	if [[ "$breaker_type" == "$_CB_BREAKER_COST" && -n "$spent" && -n "$budget" ]]; then
+		cost_block="
+- **Tier**: \`tier:${tier:-standard}\`
+- **Spent**: ${spent} tokens
+- **Budget**: ${budget} tokens"
+	fi
+
+	local safe_reason
+	safe_reason=$(_sanitize_markdown "${reason:-(not provided)}" 2>/dev/null || printf '%s' "${reason:-(not provided)}")
+
+	_cb_meta_body_intro "$issue_number" "$repo_slug" "$breaker_label" \
+		"$trip_marker" "$failure_count" "$safe_reason" "$cost_block"
+	_cb_meta_body_hypothesis "$breaker_type"
+	_cb_meta_body_guidance "$issue_number" "$repo_slug" "$max_lines" \
+		"$log_slice" "$stages_slice"
+	_cb_meta_body_tail
+	return 0
 }
 
 #######################################
@@ -373,51 +422,48 @@ _Auto-filed by \`circuit-breaker-meta-filer.sh\` (t3076). Set \`AIDEVOPS_CIRCUIT
 # Stdout: meta-issue URL on success
 # Returns: 0=success or idempotent skip, 1=arg error, 2=gh failure
 #######################################
-cmd_file() {
-	local issue_number="" repo_slug="" breaker_type="" failure_count=""
-	local reason="" tier="" spent="" budget=""
+#######################################
+# Parse `cmd_file` long-options into globals consumed by cmd_file.
+# Sets: _CB_ARG_ISSUE, _CB_ARG_REPO, _CB_ARG_BREAKER, _CB_ARG_FAILURE_COUNT,
+#       _CB_ARG_REASON, _CB_ARG_TIER, _CB_ARG_SPENT, _CB_ARG_BUDGET.
+# Args: $@=cmd_file argv
+# Returns: 0 on success, 1 on unknown flag.
+#######################################
+_cb_meta_parse_file_args() {
+	_CB_ARG_ISSUE="" _CB_ARG_REPO="" _CB_ARG_BREAKER="" _CB_ARG_FAILURE_COUNT=""
+	_CB_ARG_REASON="" _CB_ARG_TIER="" _CB_ARG_SPENT="" _CB_ARG_BUDGET=""
 
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
-		--issue)
-			issue_number="${2:-}"
-			shift 2
-			;;
-		--repo)
-			repo_slug="${2:-}"
-			shift 2
-			;;
-		--breaker)
-			breaker_type="${2:-}"
-			shift 2
-			;;
-		--failure-count)
-			failure_count="${2:-}"
-			shift 2
-			;;
-		--reason)
-			reason="${2:-}"
-			shift 2
-			;;
-		--tier)
-			tier="${2:-}"
-			shift 2
-			;;
-		--spent)
-			spent="${2:-}"
-			shift 2
-			;;
-		--budget)
-			budget="${2:-}"
-			shift 2
-			;;
+		--issue) _CB_ARG_ISSUE="${2:-}"; shift 2 ;;
+		--repo) _CB_ARG_REPO="${2:-}"; shift 2 ;;
+		--breaker) _CB_ARG_BREAKER="${2:-}"; shift 2 ;;
+		--failure-count) _CB_ARG_FAILURE_COUNT="${2:-}"; shift 2 ;;
+		--reason) _CB_ARG_REASON="${2:-}"; shift 2 ;;
+		--tier) _CB_ARG_TIER="${2:-}"; shift 2 ;;
+		--spent) _CB_ARG_SPENT="${2:-}"; shift 2 ;;
+		--budget) _CB_ARG_BUDGET="${2:-}"; shift 2 ;;
 		*)
 			log_error "[circuit-breaker-meta-filer] unknown arg: $arg" >&2
 			return 1
 			;;
 		esac
 	done
+	return 0
+}
+
+cmd_file() {
+	_cb_meta_parse_file_args "$@" || return 1
+
+	local issue_number="$_CB_ARG_ISSUE"
+	local repo_slug="$_CB_ARG_REPO"
+	local breaker_type="$_CB_ARG_BREAKER"
+	local failure_count="$_CB_ARG_FAILURE_COUNT"
+	local reason="$_CB_ARG_REASON"
+	local tier="$_CB_ARG_TIER"
+	local spent="$_CB_ARG_SPENT"
+	local budget="$_CB_ARG_BUDGET"
 
 	if [[ "${AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE:-0}" == "1" ]]; then
 		log_info "[circuit-breaker-meta-filer] disabled via AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE — skip" >&2
