@@ -33,10 +33,10 @@ LOG_PREFIX="AI-RESEARCH"
 resolve_model_id() {
 	local name="${1:-haiku}"
 	case "$name" in
-	haiku) echo "claude-haiku-4-20250414" ;;
-	sonnet) echo "claude-sonnet-4-20250514" ;;
-	opus) echo "claude-opus-4-20250514" ;;
-	*) echo "claude-haiku-4-20250414" ;; # default to haiku
+	haiku) echo "claude-haiku-4-5-20251001" ;;
+	sonnet) echo "claude-sonnet-4-6" ;;
+	opus) echo "claude-opus-4-6" ;;
+	*) echo "claude-haiku-4-5-20251001" ;; # default to haiku
 	esac
 	return 0
 }
