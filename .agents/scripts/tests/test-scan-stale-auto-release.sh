@@ -121,6 +121,17 @@ print_success() { :; return 0; }
 log_verbose() { :; return 0; }
 export -f print_info print_warning print_error print_success log_verbose
 
+# Override WORKER_PROCESS_PATTERN so the test bash process matches when we
+# plant a stamp with pid=$$ (Test 2 / Test 4). The default pattern
+# 'opencode|claude|Claude' (shared-constants.sh:1104) intentionally rejects
+# non-runtime PIDs to defeat macOS PID reuse spoofing (t2421, GH#20027). The
+# test process is bash, so we extend the pattern. Must be `export`ed BEFORE
+# `source` so subshells in Tests 8/9 inherit it; the
+# `[[ -z "${WORKER_PROCESS_PATTERN+x}" ]]` guard in shared-constants.sh
+# preserves our value across `source` calls. Mirrors the precedent in
+# test-worktree-cleanup-claim-guard.sh:75 (t2421 fan-out).
+export WORKER_PROCESS_PATTERN='opencode|claude|Claude|bash'
+
 # shellcheck source=../interactive-session-helper.sh
 source "${SCRIPTS_DIR}/interactive-session-helper.sh" >/dev/null 2>&1 || true
 
