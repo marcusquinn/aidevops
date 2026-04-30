@@ -470,12 +470,8 @@ _isc_cmd_release() {
 		return 0
 	fi
 
-	# Transition in-review -> available. Build the flag list as a plain
-	# array and expand it with the `${arr[@]+"${arr[@]}"}` guard so an
-	# empty array doesn't trip `set -u` on bash 3.2 (macOS default). This
-	# is the idiom documented in reference/bash-compat.md "empty array
-	# expansion". Fourth latent bug found alongside GH#18786: previously
-	# masked because the broken jq query made this branch unreachable.
+	# Build extra_flags array. Bash 3.2 empty-array guard — see
+	# reference/bash-compat.md. Fourth latent bug found alongside GH#18786.
 	local -a extra_flags=()
 	if [[ $unassign -eq 1 ]]; then
 		local user
@@ -485,15 +481,22 @@ _isc_cmd_release() {
 		fi
 	fi
 
+	# GH#21805: apply status:done for closed issues instead of
+	# status:available (meaningless on closed issues). Fail-open on errors.
+	local _target_status="available"
+	if _isc_issue_is_closed "$issue" "$slug"; then
+		_target_status="done"
+	fi
+
 	# Capture stderr so failures surface with the actual gh error message
 	# rather than being silently swallowed. Previously >/dev/null 2>&1 hid
 	# the root cause of stuck-claim incidents (GH#21057).
 	local _set_status_err
-	_set_status_err=$(set_issue_status "$issue" "$slug" "available" \
+	_set_status_err=$(set_issue_status "$issue" "$slug" "$_target_status" \
 		${extra_flags[@]+"${extra_flags[@]}"} 2>&1 >/dev/null)
 	local _set_status_rc=$?
 	if [[ $_set_status_rc -eq 0 ]]; then
-		_isc_info "release: #$issue → status:available"
+		_isc_info "release: #$issue → status:$_target_status"
 		return 0
 	fi
 	_isc_warn "release: gh failed on #$issue (rc=$_set_status_rc): $_set_status_err"
