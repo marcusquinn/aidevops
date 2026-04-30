@@ -309,36 +309,48 @@ _check_pr_merge_gates() {
 # Best-effort — failures are logged but do not propagate.
 # Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary
 #######################################
+#######################################
+# Build the closing comment body for a merged PR (with signature footer).
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary
+# Stdout: closing comment body
+# Returns: 0 always
+#######################################
+_pm_build_closing_comment() {
+	local pr_number="$1" repo_slug="$2" linked_issue="$3" merge_summary="$4"
+	local body
+	if [[ -n "$merge_summary" ]]; then
+		body="${merge_summary}
+
+---
+Merged via PR #${pr_number} to main.
+_Merged by deterministic merge pass (pulse-wrapper.sh)._"
+	else
+		body="Completed via PR #${pr_number}, merged to main.
+
+_Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
+	fi
+
+	local elapsed issue_ref="" footer
+	elapsed=$(($(date +%s) - PULSE_START_EPOCH))
+	[[ -n "$linked_issue" ]] && issue_ref="${repo_slug}#${linked_issue}"
+	local sig_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/gh-signature-helper.sh"
+	footer=$("$sig_helper" footer \
+		--body "$body" --no-session --tokens 0 \
+		--time "$elapsed" --session-type routine \
+		${issue_ref:+--issue "$issue_ref"} --solved 2>/dev/null || true)
+	printf '%s%s' "$body" "$footer"
+	return 0
+}
+
 _handle_post_merge_actions() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
 	local merge_summary="$4"
 
-	# Build closing comment — use worker summary if available, fall back to generic
 	local closing_comment
-	if [[ -n "$merge_summary" ]]; then
-		closing_comment="${merge_summary}
-
----
-Merged via PR #${pr_number} to main.
-_Merged by deterministic merge pass (pulse-wrapper.sh)._"
-	else
-		closing_comment="Completed via PR #${pr_number}, merged to main.
-
-_Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
-	fi
-
-	# Append signature footer (GH#15486) — no-session, routine type.
-	local _merge_sig_footer="" _merge_elapsed="" _merge_issue_ref=""
-	_merge_elapsed=$(($(date +%s) - PULSE_START_EPOCH))
-	[[ -n "$linked_issue" ]] && _merge_issue_ref="${repo_slug}#${linked_issue}"
-	local _sig_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/gh-signature-helper.sh"
-	_merge_sig_footer=$("$_sig_helper" footer \
-		--body "$closing_comment" --no-session --tokens 0 \
-		--time "$_merge_elapsed" --session-type routine \
-		${_merge_issue_ref:+--issue "$_merge_issue_ref"} --solved 2>/dev/null || true)
-	closing_comment="${closing_comment}${_merge_sig_footer}"
+	closing_comment=$(_pm_build_closing_comment "$pr_number" "$repo_slug" \
+		"$linked_issue" "$merge_summary")
 
 	# Post closing comment on PR; unlock the merged PR (t1934)
 	gh_pr_comment "$pr_number" --repo "$repo_slug" \
