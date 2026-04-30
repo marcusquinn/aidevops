@@ -71,10 +71,12 @@ readonly CHECK_HELPER="$SELF_DIR/check-workflows-helper.sh"
 # Mirrors _KNOWN_WORKFLOWS in check-workflows-helper.sh.
 # GH#20727: review-bot-gate added.
 # GH#21154: maintainer-gate added (layer-1 defense-in-depth propagation).
+# GH#21877: loc-badge added (runner input parity).
 readonly _SYNC_KNOWN_WORKFLOWS=(
 	"issue-sync.yml:issue-sync-caller.yml"
 	"review-bot-gate.yml:review-bot-gate-caller.yml"
 	"maintainer-gate.yml:maintainer-gate-caller.yml"
+	"loc-badge.yml:loc-badge-caller.yml"
 )
 
 # Output mode constants.
@@ -215,6 +217,44 @@ _rewrite_content_branch_filter() {
 	_branch_escaped=$(printf '%s' "$_branch" | sed 's/[&|/]/\\&/g')
 	printf '%s\n' "$_content" | \
 		sed -E "s|^([[:space:]]+branches:) \[${_BRANCH_DEFAULT_NAME}\]$|\1 [${_branch_escaped}]|"
+	return 0
+}
+
+# ─── Runner Override Injection ──────────────────────────────────────────────
+
+# _read_runner_field <slug>
+# Reads the optional "runner" field for a slug from repos.json.
+# Emits the runner label on stdout, or nothing if the field is absent.
+_read_runner_field() {
+	local _slug="$1"
+	jq -r --arg s "$_slug" \
+		'.initialized_repos[]? | select(.slug == $s) | .runner // empty' \
+		"$REPOS_JSON" 2>/dev/null
+	return 0
+}
+
+# _inject_runner_in_content <content> <runner_label>
+# Injects `runner: <label>` into the caller template's `with:` block.
+#   - If the template already has a `    with:` block, appends runner as the
+#     first key inside it (so it survives further key additions).
+#   - If no `    with:` block exists, inserts one after the `    uses:` line.
+# Emits the modified content on stdout.
+_inject_runner_in_content() {
+	local _content="$1"
+	local _runner="$2"
+	local _runner_escaped
+	_runner_escaped=$(printf '%s' "$_runner" | sed 's/[&|/]/\\&/g')
+
+	# Does the template already have a `    with:` block?
+	if printf '%s\n' "$_content" | grep -qE '^    with:$'; then
+		# Append runner as the first entry inside the existing with: block.
+		printf '%s\n' "$_content" | \
+			sed -E "s|^(    with:)$|\\1\n      runner: ${_runner_escaped}|"
+	else
+		# No with: block — inject one after the uses: line.
+		printf '%s\n' "$_content" | \
+			sed -E "s|^(    uses:[[:space:]]*marcusquinn/aidevops/.+)$|\\1\n    with:\n      runner: ${_runner_escaped}|"
+	fi
 	return 0
 }
 
@@ -460,6 +500,13 @@ _sync_one_repo() {
 	if ! _target_content=$(_render_template_with_ref "$_template" "$_effective_ref"); then
 		printf '%s\t%s\t%s\ttemplate render failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
+	fi
+
+	# Inject runner override when repos.json carries a "runner" field for this slug.
+	local _runner_override=""
+	_runner_override=$(_read_runner_field "$_slug")
+	if [[ -n "$_runner_override" ]]; then
+		_target_content=$(_inject_runner_in_content "$_target_content" "$_runner_override")
 	fi
 
 	if [[ "$_apply" -eq 0 ]]; then
