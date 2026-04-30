@@ -282,7 +282,7 @@ test_should_predicates() {
 # ---------------------------------------------------------------------------
 test_single_pass_wired_in_engine() {
 	# GH#21738: pulse-dispatch-engine.sh was split into orchestrator +
-	# fill-floor lib + preflight lib. The preflight helpers (which carry
+	# dispatch lib + preflight lib. The preflight helpers (which carry
 	# the run_stage_with_timeout reconcile call) now live in
 	# pulse-dispatch-preflight-lib.sh. Search both files so the test stays
 	# faithful to the underlying contract: reconcile is wired in the

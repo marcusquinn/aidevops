@@ -563,7 +563,7 @@ refresh_blocked_status_from_graph() {
 #      dispatch candidate that reached `is_blocked_by_unresolved`.
 #
 # On macOS default `/bin/bash` (3.2.57), this silently broke the
-# deterministic fill floor for weeks. Contained only by the subshell
+# dispatch_max for weeks. Contained only by the subshell
 # wrapper added in PR #18826 (GH#18804) which isolated the abort
 # without identifying its cause.
 #

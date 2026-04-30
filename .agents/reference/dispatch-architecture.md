@@ -131,7 +131,7 @@ After t2996 deployed, expected observables:
 # Counter should drop from baseline to <5 events / 24h.
 jq '.counters.dispatch_per_candidate_timeout' ~/.aidevops/logs/pulse-stats.json
 
-# Average fill_floor candidate stage duration should drop below 15s.
+# Average dispatch candidate stage duration should drop below 15s.
 awk '/fill_floor_candidate/ {sum+=$3; n++} END {if (n>0) print sum/n}' \
     ~/.aidevops/logs/pulse-stage-timings.log
 ```

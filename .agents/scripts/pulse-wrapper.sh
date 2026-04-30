@@ -608,7 +608,7 @@ SCOPED_RANGE_THRESHOLD="${SCOPED_RANGE_THRESHOLD:-300}"
 # issues getting labeled "stuck".
 
 #######################################
-# Apply deterministic fill floor after a pulse pass.
+# Apply dispatch_max after a pulse pass.
 #######################################
 # Deterministic merge pass: approve and merge all ready PRs.
 #
@@ -656,7 +656,7 @@ PULSE_MERGE_CLOSE_CONFLICTING="${PULSE_MERGE_CLOSE_CONFLICTING:-true}"
 #   ${PULSE_DIR}/backlog_snapshot.txt    — "epoch issues_count prs_count"
 #   ${PULSE_DIR}/llm_trigger_mode        — last trigger reason (daily_sweep|stall|first_run)
 #######################################
-PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-$(config_get "orchestration.llm_stall_threshold" "3600")}" # 1h (was 30 min; deterministic fill floor handles routine dispatch)
+PULSE_LLM_STALL_THRESHOLD="${PULSE_LLM_STALL_THRESHOLD:-$(config_get "orchestration.llm_stall_threshold" "3600")}" # 1h (was 30 min; dispatch_max handles routine dispatch)
 PULSE_LLM_DAILY_INTERVAL="${PULSE_LLM_DAILY_INTERVAL:-86400}"                                                      # 24h
 
 #######################################
@@ -1173,7 +1173,7 @@ _pulse_run_deterministic_pipeline() {
 
 	# Dependency graph cache (t1935): build once per cycle so that
 	# is_blocked_by_unresolved() can resolve blocker state without API calls.
-	# Runs before the fill floor so the cache is warm when dispatch checks run.
+	# Runs before the dispatch so the cache is warm when dispatch checks run.
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dependency graph cache build" >>"$LOGFILE"
 	else
@@ -1191,11 +1191,11 @@ _pulse_run_deterministic_pipeline() {
 			refresh_blocked_status_from_graph || true
 	fi
 
-	# Deterministic fill floor runs EVERY cycle — before the LLM session,
+	# Dispatch_max runs EVERY cycle — before the LLM session,
 	# not after. This ensures workers are dispatched every 2-min cycle
 	# regardless of whether the LLM supervisor is running.
 	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag appeared — skipping deterministic fill floor" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stop flag appeared — skipping dispatch_max" >>"$LOGFILE"
 	else
 		# t2770: cross-issue no_work rate circuit breaker check.
 		# Pauses dispatch when many different issues return no_work in a short
@@ -1215,9 +1215,9 @@ _pulse_run_deterministic_pipeline() {
 			"$_rh_helper" is-paused >/dev/null 2>&1 && _rh_rc=0 || _rh_rc=1
 		fi
 		if [[ "$_nw_rc" -eq 1 ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max skipped: no_work rate circuit breaker tripped (t2770)" >>"$LOGFILE"
 		elif [[ "$_rh_rc" -eq 0 ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
 				pulse_stats_increment "pulse_dispatch_runner_health_breaker_tripped" 2>/dev/null || true
 			fi
@@ -1526,7 +1526,7 @@ main() {
 	# check above prefetch_state and the LLM run prevents the cycle from
 	# burning a doomed ~210s prefetch + multi-minute LLM run + dispatch
 	# ceremony when budget is exhausted — the canonical t2690 invocation
-	# sits inside the deterministic fill floor and only stops dispatch, not
+	# sits inside the dispatch_max and only stops dispatch, not
 	# the upstream API consumers. Fail-open (rc=2) proceeds so a flaky
 	# rate_limit endpoint can't wedge the pulse permanently.
 	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then

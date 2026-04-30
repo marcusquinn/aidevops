@@ -163,15 +163,15 @@ _preflight_capacity_and_labels() {
 # 25-30s to cold-start (sandbox-exec + opencode), so dispatching here lets
 # them boot in parallel with the remaining housekeeping stages
 # (close_issues_with_merged_prs ~260s, prefetch_state ~130s, etc.).
-# The main fill floor at the end of the cycle catches any slots freed by
+# The main dispatch at the end of the cycle catches any slots freed by
 # housekeeping. Without this, workers sit idle for ~7 minutes of cleanup.
 #######################################
 _preflight_early_dispatch() {
 	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Stop flag present — skipping early fill floor" >>"$LOGFILE"
+		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
-		echo "[pulse-wrapper] Early fill floor: dispatching workers before housekeeping" >>"$LOGFILE"
-		apply_deterministic_fill_floor
+		echo "[pulse-wrapper] Early dispatch_max: dispatching workers before housekeeping" >>"$LOGFILE"
+		apply_dispatch_max
 	fi
 
 	# Routine comment responses: scan routine-tracking issues for unanswered

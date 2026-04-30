@@ -56,7 +56,7 @@ _DISPATCH_CANARY_CACHE=""
 _DISPATCH_THROTTLE_CLEARED=0
 
 #######################################
-# Emit per-candidate debug output for the deterministic fill floor (GH#18804).
+# Emit per-candidate debug output for the dispatch_max (GH#18804).
 #
 # Always writes to LOGFILE (so the operator sees it in pulse.log). When
 # PULSE_DEBUG is set to a truthy value, the message is prefixed with DEBUG:
@@ -88,7 +88,7 @@ pulse_dispatch_debug_log() {
 #######################################
 _dispatch_compute_capacity() {
 	if [[ -f "$STOP_FLAG" ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -99,7 +99,7 @@ _dispatch_compute_capacity() {
 		local _cb_rc=0
 		is_graphql_budget_sufficient || _cb_rc=$?
 		if [[ "$_cb_rc" -eq 1 ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor skipped: GraphQL rate-limit circuit breaker tripped (t2690)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max skipped: GraphQL rate-limit circuit breaker tripped (t2690)" >>"$LOGFILE"
 			return 1
 		fi
 		# _cb_rc == 2 means API error — fail-open, proceed with dispatch.
@@ -134,7 +134,7 @@ _dispatch_run_prepasses() {
 	[[ "$triage_remaining" =~ ^[0-9]+$ ]] || triage_remaining="$available_slots"
 	local triage_dispatched=$((available_slots - triage_remaining))
 	if [[ "$triage_dispatched" -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: dispatched ${triage_dispatched} triage review(s), ${triage_remaining} slots remaining for implementation" >>"$LOGFILE"
 	fi
 	available_slots="$triage_remaining"
 
@@ -143,7 +143,7 @@ _dispatch_run_prepasses() {
 	[[ "$enrichment_remaining" =~ ^[0-9]+$ ]] || enrichment_remaining="$available_slots"
 	local enrichment_dispatched=$((available_slots - enrichment_remaining))
 	if [[ "$enrichment_dispatched" -gt 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: dispatched ${enrichment_dispatched} enrichment worker(s), ${enrichment_remaining} slots remaining for implementation" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: dispatched ${enrichment_dispatched} enrichment worker(s), ${enrichment_remaining} slots remaining for implementation" >>"$LOGFILE"
 	fi
 	available_slots="$enrichment_remaining"
 
@@ -190,7 +190,7 @@ _dispatch_should_skip_candidate() {
 	check_terminal_blockers "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || terminal_rc=$?
 	pulse_dispatch_debug_log "#${issue_number}: check_terminal_blockers rc=${terminal_rc}"
 	if [[ "$terminal_rc" -eq 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — terminal blocker detected (check_terminal_blockers rc=0)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — terminal blocker detected (check_terminal_blockers rc=0)" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -201,7 +201,7 @@ _dispatch_should_skip_candidate() {
 	fast_fail_age_out "$issue_number" "$repo_slug" || true
 
 	if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -214,7 +214,7 @@ _dispatch_should_skip_candidate() {
 		local _backoff_output="" _backoff_rc=0
 		_backoff_output=$(check_dispatch_backoff "$issue_number" "$repo_slug" 2>&1 >/dev/null) || _backoff_rc=$?
 		if [[ "$_backoff_rc" -eq 1 ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — ${_backoff_output}" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — ${_backoff_output}" >>"$LOGFILE"
 			# Apply NMR when the backoff helper signals 4th+ failure threshold.
 			if printf '%s' "$_backoff_output" | grep -q 'NMR_REQUIRED'; then
 				local _backoff_count=""
@@ -227,7 +227,7 @@ _dispatch_should_skip_candidate() {
 		fi
 		# rc=2 → error; fail-open (log warning, continue to dispatch)
 		if [[ "$_backoff_rc" -eq 2 ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: backoff check error for #${issue_number} — proceeding (fail-open)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max: backoff check error for #${issue_number} — proceeding (fail-open)" >>"$LOGFILE"
 		fi
 	fi
 
@@ -239,11 +239,11 @@ _dispatch_should_skip_candidate() {
 	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
 	pulse_dispatch_debug_log "#${issue_number}: body length=${#issue_body}"
 	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
 		return 0
 	fi
 	if [[ "$issue_body" == *"no description provided — enrich before dispatch"* ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -343,7 +343,7 @@ _dispatch_with_timeout() {
 	# case (dedup-skip path that returns in <5s) and is too low for the full
 	# ceremony — when adaptive recommended drops below ceremony cost, EVERY
 	# candidate timeouts at rc=124 and dispatched=0/N. Canonical failure:
-	# 2026-04-28 fill_floor cycle iter=62, 148 candidates, dispatched=0,
+	# 2026-04-28 dispatch cycle iter=62, 148 candidates, dispatched=0,
 	# adaptive timeout collapsed to 180s. Floor at 360s was insufficient
 	# (post-t3040 evidence: ceremony_total avg=341s, max=341s — every
 	# candidate hit rc=124 timeout). t3043 raises to 600s to give the
@@ -362,7 +362,7 @@ _dispatch_with_timeout() {
 	run_stage_with_timeout "dispatch_candidate_${issue_number}" "$timeout_seconds" \
 		dispatch_with_dedup "$@" || dispatch_rc=$?
 	elapsed_ms=$(($(_dispatch_now_ms) - start_ms))
-	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number} elapsed_ms=${elapsed_ms} timeout_used_ms=${timeout_ms}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Dispatch_max: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number} elapsed_ms=${elapsed_ms} timeout_used_ms=${timeout_ms}" >>"$LOGFILE"
 
 	if [[ "$dispatch_rc" -eq 124 ]]; then
 		outcome="timeout"
@@ -373,7 +373,7 @@ _dispatch_with_timeout() {
 			"$timeout_seconds" "$elapsed_ms" "$issue_number" \
 			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 			>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
-		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "dispatch_per_candidate_timeout" 2>/dev/null || true
 		fi
@@ -489,7 +489,7 @@ _dispatch_check_model_concurrency_cap() {
 	pulse_dispatch_debug_log "#${issue_number}: opus_concurrency_cap check inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model}"
 
 	if ((opus_inflight >= opus_cap)); then
-		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) deferred — opus_concurrency_cap: inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model} (retry next cycle)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) deferred — opus_concurrency_cap: inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model} (retry next cycle)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -535,11 +535,11 @@ _dispatch_process_candidate() {
 	# logging. Operators saw `candidates=N` but no per-candidate skip lines,
 	# making malformed candidate JSON impossible to diagnose from pulse.log.
 	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping malformed candidate — issue_number='${issue_number}' is not numeric (candidate_json prefix: ${candidate_json:0:120})" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping malformed candidate — issue_number='${issue_number}' is not numeric (candidate_json prefix: ${candidate_json:0:120})" >>"$LOGFILE"
 		return 1
 	fi
 	if [[ -z "$repo_slug" || -z "$repo_path" ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} — missing repo_slug='${repo_slug}' or repo_path='${repo_path}'" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} — missing repo_slug='${repo_slug}' or repo_path='${repo_path}'" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -579,7 +579,7 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 		return 1
 	fi
 
@@ -590,7 +590,7 @@ _dispatch_process_candidate() {
 	local launch_rc=0
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
 		_dispatch_record_launch_failure
 		return 1
 	fi
@@ -625,7 +625,7 @@ _dispatch_maybe_engage_throttle() {
 }
 
 #######################################
-# t3005/t3014: Decide the parallelism level for the deterministic fill-floor loop.
+# t3005/t3014: Decide the parallelism level for the dispatch_max loop.
 #
 # Defaults to DISPATCH_MAX_PARALLEL when set to a positive integer.
 # When unset, empty, or non-numeric, defaults to effective_slots — i.e. the
@@ -646,6 +646,15 @@ _dispatch_maybe_engage_throttle() {
 #######################################
 _dispatch_max_compute_parallel() {
 	local effective_slots="$1"
+	# t3015 back-compat: honour deprecated DISPATCH_FILL_FLOOR_PARALLEL name.
+	# Operators who set the old name in their environment / launchd plist
+	# before upgrading should not silently lose their override. Bridge the
+	# value into DISPATCH_MAX_PARALLEL on first invocation. Removed in v4.0.
+	if [[ -n "${DISPATCH_FILL_FLOOR_PARALLEL:-}" && -z "${DISPATCH_MAX_PARALLEL:-}" ]]; then
+		echo "[pulse-wrapper] WARNING: DISPATCH_FILL_FLOOR_PARALLEL is deprecated — use DISPATCH_MAX_PARALLEL (t3015)" >&2
+		DISPATCH_MAX_PARALLEL="$DISPATCH_FILL_FLOOR_PARALLEL"
+		export DISPATCH_MAX_PARALLEL
+	fi
 	# t3014: when unset/empty/invalid, default to effective_slots (full budget)
 	# instead of the historical 6. Env override still wins when set to a valid
 	# positive integer; the cap below still clamps at effective_slots.
@@ -692,18 +701,18 @@ _dispatch_floor_loop() {
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
-		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — entering body" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — entering body" >>"$LOGFILE"
 		if [[ "$dispatched_count" -ge "$effective_slots" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
 			break
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
 		local _dispatch_proc_rc=0
 		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dispatch_proc_rc=$?
-		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
 		if [[ "$_dispatch_proc_rc" -eq 0 ]]; then
 			dispatched_count=$((dispatched_count + 1))
 			# Throttle cleared mid-round by a successful launch — restore
@@ -757,7 +766,7 @@ _dispatch_max_loop() {
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
-		echo "[pulse-wrapper] Deterministic fill floor: parallel iter=${processed_count} — entering body" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — entering body" >>"$LOGFILE"
 
 		# Reap finished pids so the array reflects current in-flight count.
 		# Bash 3.2-safe: while-read via process substitution avoids SC2207
@@ -790,7 +799,7 @@ _dispatch_max_loop() {
 			# because the OS recycled the PID for a different process, but
 			# it's not a child of this shell). Purge them to break the loop.
 			if ! wait -n 2>/dev/null; then
-				echo "[pulse-wrapper] Deterministic fill floor: wait -n found no children, purging ${#_pids[@]} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Dispatch_max: wait -n found no children, purging ${#_pids[@]} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
 				_pids=()
 				sleep 1
 			fi
@@ -801,11 +810,11 @@ _dispatch_max_loop() {
 		local successes_so_far
 		successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
 		if ((successes_so_far + ${#_pids[@]} >= effective_slots)); then
-			echo "[pulse-wrapper] Deterministic fill floor: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${#_pids[@]} >= effective_slots=${effective_slots})" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${#_pids[@]} >= effective_slots=${effective_slots})" >>"$LOGFILE"
 			break
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
 
