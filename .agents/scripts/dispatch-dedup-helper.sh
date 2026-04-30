@@ -713,6 +713,84 @@ _is_assigned_check_no_auto_dispatch() {
 }
 
 #######################################
+# t3197: is_assigned helper — per-issue dispatch cooldown after launch failure.
+#
+# When `recover_failed_launch_state` records a `no_worker_process` failure,
+# `_post_launch_cooldown_marker` (in pulse-cleanup.sh) writes an audit
+# comment containing the marker:
+#   <!-- dispatch-cooldown-until:<ISO8601-UTC> reason=no_worker_process runner=<login> -->
+#
+# This check fetches the issue's comments, finds the latest unexpired
+# cooldown marker, and short-circuits dispatch with `DISPATCH_COOLDOWN_ACTIVE`.
+# Closes the rapid-retry loop where a broken runtime burns ~5 worker
+# spawns over 3-4 hours per issue with 95-99s lifespans each, repeating
+# across many issues simultaneously when one runner is unhealthy.
+#
+# Complementary to:
+#   - t2769 (per-issue 3-stack circuit breaker → NMR escalation)
+#   - t2897 (per-runner health breaker, 10 events / 6h → runner pause)
+# This guard is per-issue and short (default 30 min), so it absorbs
+# transient runner failures before the longer-horizon breakers fire.
+#
+# Gating:
+#   - Skipped entirely when DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS=0
+#     (saves one gh API call per dispatch decision when the feature is off).
+#   - Fail-open on gh API or jq error — cooldown is an optimization, not a
+#     security gate, so a flaky API call should not permanently block
+#     dispatch the way GUARD_UNCERTAIN does for label/assignee checks.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if active cooldown found (prints DISPATCH_COOLDOWN_ACTIVE),
+#          exit 1 if no cooldown / expired / fetch failure / parse failure
+#######################################
+_is_assigned_check_dispatch_cooldown() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Feature gate. 0 disables; any other non-numeric falls back to default.
+	local cooldown_s="${DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS:-1800}"
+	[[ "$cooldown_s" =~ ^[0-9]+$ ]] || cooldown_s=1800
+	[[ "$cooldown_s" -gt 0 ]] || return 1
+
+	# Fetch comments. GitHub returns ASC (oldest first); the latest marker
+	# wins via jq `last`. Fail-open on API error — cooldown is an
+	# optimisation, not a guarantee.
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" 2>/dev/null) || return 1
+	[[ -n "$comments_json" ]] || return 1
+
+	# Extract the latest cooldown marker timestamp.
+	# `(.body // "")` guards against null bodies; `match` with "g" emits zero
+	# results on no-match (no error), so empty bodies and unrelated comments
+	# fall through cleanly. Fail-open on jq error.
+	local _jq_rc=0
+	local marker_iso
+	marker_iso=$(printf '%s' "$comments_json" |
+		jq -r '[.[] | (.body // "") | match("<!-- dispatch-cooldown-until:([^ ]+) reason=no_worker_process"; "g") | .captures[0].string] | last // ""' \
+			2>/dev/null) || _jq_rc=$?
+	if [[ "$_jq_rc" -ne 0 ]]; then
+		return 1
+	fi
+	[[ -n "$marker_iso" && "$marker_iso" != "null" ]] || return 1
+
+	# Parse ISO8601 → epoch. GNU date first, BSD date fallback for macOS dev.
+	local until_epoch=""
+	until_epoch=$(date -u -d "$marker_iso" +%s 2>/dev/null) ||
+		until_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$marker_iso" +%s 2>/dev/null) ||
+		return 1
+	[[ "$until_epoch" =~ ^[0-9]+$ ]] || return 1
+
+	local now_epoch
+	now_epoch=$(date -u +%s 2>/dev/null) || return 1
+
+	if [[ "$until_epoch" -gt "$now_epoch" ]]; then
+		printf 'DISPATCH_COOLDOWN_ACTIVE (until=%s reason=no_worker_process)\n' "$marker_iso"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # is_assigned helper: cost-per-issue circuit breaker (t2007).
 #
 # Aggregate token spend across all worker attempts; if the cumulative total
@@ -931,6 +1009,14 @@ is_assigned() {
 		return 0
 	fi
 
+	# t3197: per-issue dispatch cooldown after no_worker_process launch failures.
+	# Short-circuits with DISPATCH_COOLDOWN_ACTIVE while the marker is unexpired.
+	# Fail-open: feature-gated by DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS,
+	# returns 1 (allow) on API/jq/date error so it never permanently blocks.
+	if _is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
 	# t2007: cost-per-issue circuit breaker.
 	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 0
@@ -1113,6 +1199,13 @@ enumerate_blockers() {
 
 	# Check 2: no-auto-dispatch unconditional block (t2832).
 	_blocker_out=$(_is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ -n "$_blocker_out" ]]; then
+		printf '%s\n' "$_blocker_out"
+		_found=true
+	fi
+
+	# Check 3: t3197 dispatch cooldown after no_worker_process launch failure.
+	_blocker_out=$(_is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"
 		_found=true
