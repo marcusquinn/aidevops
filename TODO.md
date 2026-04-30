@@ -3629,7 +3629,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3196 stale-stamp-aware takeover for DIRTY origin:interactive PRs #auto-dispatch #bug #enhancement ref:GH#21891
 
-- [ ] t3194 Cross-runner peer quarantine: auto-detect broken peer runners and quarantine their dispatch claims #auto-dispatch #bug ref:GH#21890
+- [x] t3194 Cross-runner peer quarantine: auto-detect broken peer runners and quarantine their dispatch claims #auto-dispatch #bug ref:GH#21890 pr:#21941 completed:2026-04-30
 
 - [x] t3195 fix(pulse): _worker_produced_output uses --head instead of --search to avoid GitHub search-index lag misclassifying workers as branch_orphan #auto-dispatch #bug #framework #pulse ref:GH#21889 pr:#21902 completed:2026-04-30
 
