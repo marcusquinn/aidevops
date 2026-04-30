@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# install-pre-push-guards.sh — Install aidevops git pre-push/pre-commit hooks (t2198, t2446, t2458, t2745, t3020).
+# install-pre-push-guards.sh — Install aidevops git pre-push/pre-commit hooks (t2198, t2446, t2458, t2745, t3020, t3224).
 #
-# Manages six guards in the current repository:
+# Manages seven guards in the current repository:
 #
 # Pre-push guards (installed to .git/hooks/pre-push):
 #   - privacy-guard        blocks pushes leaking private repo slugs
@@ -12,6 +12,7 @@
 #   - scope-guard          blocks pushes touching files outside the brief's Files Scope
 #   - credential-guard     blocks pushes emitting unsanitised remote URLs (t2458)
 #   - dup-todo-guard       blocks pushes where TODO.md has duplicate task-ID checkbox lines (t2745)
+#   - repo-verify-guard    runs the target repo's format/lint/typecheck and (optionally) auto-fixes (t3224)
 #
 # Pre-commit guards (installed to .git/hooks/pre-commit):
 #   - brief-filename-guard blocks commits adding todo/tasks/tNNN-brief.md with unclaimed t-IDs (t3020)
@@ -19,11 +20,11 @@
 # Usage:
 #   install-pre-push-guards.sh install [--guard <name>]
 #         Install (or refresh) guard(s).
-#         --guard: privacy|complexity|scope|credential|dup-todo|brief-filename|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|repo-verify|brief-filename|all (default: all)
 #
 #   install-pre-push-guards.sh uninstall [--guard <name>]
 #         Remove guard entry/entries.
-#         --guard: privacy|complexity|scope|credential|dup-todo|brief-filename|all (default: all)
+#         --guard: privacy|complexity|scope|credential|dup-todo|repo-verify|brief-filename|all (default: all)
 #
 #   install-pre-push-guards.sh status
 #         Report which guards are present and their hook source locations.
@@ -40,6 +41,7 @@
 #   SCOPE_GUARD_DISABLE=1            skip scope check for this push
 #   CREDENTIAL_GUARD_DISABLE=1       skip credential check for this push
 #   DUP_TODO_GUARD_DISABLE=1         skip duplicate TODO check for this push
+#   AIDEVOPS_PREPUSH_REPO_VERIFY=0   skip repo-verify check for this push (also: AIDEVOPS_PREPUSH_AUTOFIX=0|1)
 #   BRIEF_FILENAME_GUARD_DISABLE=1   skip brief-filename check for this commit
 #   git push --no-verify             skip all pre-push hooks
 #   git commit --no-verify           skip all pre-commit hooks
@@ -82,6 +84,7 @@ HOOK_MARKER_COMPLEXITY="# guard:complexity"
 HOOK_MARKER_SCOPE="# guard:scope"
 HOOK_MARKER_CREDENTIAL="# guard:credential"
 HOOK_MARKER_DUP_TODO="# guard:dup-todo"
+HOOK_MARKER_REPO_VERIFY="# guard:repo-verify"
 HOOK_MARKER_BRIEF_FILENAME="# guard:brief-filename"
 
 DEPLOYED_PRIVACY_HOOK="$HOME/.aidevops/agents/hooks/privacy-guard-pre-push.sh"
@@ -89,6 +92,7 @@ DEPLOYED_COMPLEXITY_HOOK="$HOME/.aidevops/agents/hooks/complexity-regression-pre
 DEPLOYED_SCOPE_HOOK="$HOME/.aidevops/agents/hooks/scope-guard-pre-push.sh"
 DEPLOYED_CREDENTIAL_HOOK="$HOME/.aidevops/agents/hooks/credential-emission-pre-push.sh"
 DEPLOYED_DUP_TODO_HOOK="$HOME/.aidevops/agents/hooks/pre-push-dup-todo-guard.sh"
+DEPLOYED_REPO_VERIFY_HOOK="$HOME/.aidevops/agents/hooks/repo-verify-pre-push.sh"
 DEPLOYED_BRIEF_FILENAME_HOOK="$HOME/.aidevops/agents/hooks/brief-filename-guard.sh"
 
 #######################################
@@ -135,6 +139,10 @@ _find_hook_src() {
 	dup-todo)
 		_repo_hook="${_sd}/../hooks/pre-push-dup-todo-guard.sh"
 		_deployed_hook="$DEPLOYED_DUP_TODO_HOOK"
+		;;
+	repo-verify)
+		_repo_hook="${_sd}/../hooks/repo-verify-pre-push.sh"
+		_deployed_hook="$DEPLOYED_REPO_VERIFY_HOOK"
 		;;
 	brief-filename)
 		_repo_hook="${_sd}/../hooks/brief-filename-guard.sh"
@@ -335,6 +343,7 @@ _write_dispatcher() {
 	local _inc_scope="${4:-0}"
 	local _inc_credential="${5:-0}"
 	local _inc_dup_todo="${6:-0}"
+	local _inc_repo_verify="${7:-0}"
 
 	mkdir -p "$(dirname "$_hook_path")"
 
@@ -347,7 +356,7 @@ _write_dispatcher() {
 # Bypass all:  git push --no-verify
 # Bypass each: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1,
 #              SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1,
-#              or DUP_TODO_GUARD_DISABLE=1
+#              DUP_TODO_GUARD_DISABLE=1, or AIDEVOPS_PREPUSH_REPO_VERIFY=0
 
 set -u
 
@@ -370,6 +379,8 @@ HOOK_HEADER
 		"credential" ".agents/hooks/credential-emission-pre-push.sh" "$DEPLOYED_CREDENTIAL_HOOK"
 	[[ "$_inc_dup_todo" -eq 1 ]] && _append_guard_block "$_hook_path" \
 		"dup-todo" ".agents/hooks/pre-push-dup-todo-guard.sh" "$DEPLOYED_DUP_TODO_HOOK"
+	[[ "$_inc_repo_verify" -eq 1 ]] && _append_guard_block "$_hook_path" \
+		"repo-verify" ".agents/hooks/repo-verify-pre-push.sh" "$DEPLOYED_REPO_VERIFY_HOOK"
 
 	# Single-quoted to write literal $-vars into the generated script (not expand here)
 	# shellcheck disable=SC2016
@@ -412,12 +423,33 @@ _install_reject_unmanaged_hook() {
 	print_error "existing pre-push hook at $_hook_path is NOT managed by aidevops"
 	print_error "Refusing to overwrite. To chain manually, add each guard to your hook:"
 	local _gh
-	for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh" "pre-push-dup-todo-guard.sh"; do
+	for _gh in "privacy-guard-pre-push.sh" "complexity-regression-pre-push.sh" "scope-guard-pre-push.sh" "credential-emission-pre-push.sh" "pre-push-dup-todo-guard.sh" "repo-verify-pre-push.sh"; do
 		# shellcheck disable=SC2016
 		print_error '  ${REPO}/.agents/hooks/'"$_gh"' "$@" < /dev/stdin'
 	done
 	print_error "(pre-commit: brief-filename-guard.sh is installed separately to .git/hooks/pre-commit)"
 	return 1
+}
+
+#######################################
+# _install_resolve_guard — verify a guard's source exists; print the kept inc flag.
+# Args: _guard_name _inc_flag
+# Stdout: '0' (drop) or '1' (keep). Stderr: print_warning if requested but missing.
+#######################################
+_install_resolve_guard() {
+	local _name="$1"
+	local _flag="$2"
+	if [[ "$_flag" -ne 1 ]]; then
+		printf '0'
+		return 0
+	fi
+	if _find_hook_src "$_name" >/dev/null 2>&1; then
+		printf '1'
+		return 0
+	fi
+	print_warning "$_name hook source not found — omitting $_name guard" >&2
+	printf '0'
+	return 0
 }
 
 #######################################
@@ -433,82 +465,57 @@ cmd_install() {
 	_install_reject_unmanaged_hook "$_hook_path" || return 1
 
 	# Determine which guards are currently in the hook
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0 _cur_repo_verify=0
 	if [[ -f "$_hook_path" ]]; then
 		grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 		grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 		grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
 		grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
 		grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _cur_dup_todo=1
+		grep -q "$HOOK_MARKER_REPO_VERIFY" "$_hook_path" 2>/dev/null && _cur_repo_verify=1
 	fi
 
 	# Determine which guards to add based on filter
-	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0 _want_dup_todo=0
+	local _want_privacy=0 _want_complexity=0 _want_scope=0 _want_credential=0 _want_dup_todo=0 _want_repo_verify=0
 	local _want_brief_filename=0
 	case "$_guard_filter" in
-	all)            _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1; _want_brief_filename=1 ;;
+	all)            _want_privacy=1; _want_complexity=1; _want_scope=1; _want_credential=1; _want_dup_todo=1; _want_repo_verify=1; _want_brief_filename=1 ;;
 	privacy)        _want_privacy=1 ;;
 	complexity)     _want_complexity=1 ;;
 	scope)          _want_scope=1 ;;
 	credential)     _want_credential=1 ;;
 	dup-todo)       _want_dup_todo=1 ;;
+	repo-verify)    _want_repo_verify=1 ;;
 	brief-filename) _want_brief_filename=1 ;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, brief-filename)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, repo-verify, brief-filename)"
 		return 1
 		;;
 	esac
 
 	# Merge: keep existing + add requested
-	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0 _inc_dup_todo=0
+	local _inc_privacy=0 _inc_complexity=0 _inc_scope=0 _inc_credential=0 _inc_dup_todo=0 _inc_repo_verify=0
 	[[ "$_cur_privacy" -eq 1 || "$_want_privacy" -eq 1 ]] && _inc_privacy=1
 	[[ "$_cur_complexity" -eq 1 || "$_want_complexity" -eq 1 ]] && _inc_complexity=1
 	[[ "$_cur_scope" -eq 1 || "$_want_scope" -eq 1 ]] && _inc_scope=1
 	[[ "$_cur_credential" -eq 1 || "$_want_credential" -eq 1 ]] && _inc_credential=1
 	[[ "$_cur_dup_todo" -eq 1 || "$_want_dup_todo" -eq 1 ]] && _inc_dup_todo=1
+	[[ "$_cur_repo_verify" -eq 1 || "$_want_repo_verify" -eq 1 ]] && _inc_repo_verify=1
 
-	# Verify sources exist; warn and omit guards whose source is missing
+	# Verify sources exist; warn and omit guards whose source is missing.
 	local _installed_list=""
-	if [[ "$_inc_privacy" -eq 1 ]]; then
-		if _find_hook_src privacy >/dev/null 2>&1; then
-			_installed_list="${_installed_list}privacy "
-		else
-			print_warning "privacy hook source not found — omitting privacy guard"
-			_inc_privacy=0
-		fi
-	fi
-	if [[ "$_inc_complexity" -eq 1 ]]; then
-		if _find_hook_src complexity >/dev/null 2>&1; then
-			_installed_list="${_installed_list}complexity "
-		else
-			print_warning "complexity hook source not found — omitting complexity guard"
-			_inc_complexity=0
-		fi
-	fi
-	if [[ "$_inc_scope" -eq 1 ]]; then
-		if _find_hook_src scope >/dev/null 2>&1; then
-			_installed_list="${_installed_list}scope "
-		else
-			print_warning "scope hook source not found — omitting scope guard"
-			_inc_scope=0
-		fi
-	fi
-	if [[ "$_inc_credential" -eq 1 ]]; then
-		if _find_hook_src credential >/dev/null 2>&1; then
-			_installed_list="${_installed_list}credential "
-		else
-			print_warning "credential hook source not found — omitting credential guard"
-			_inc_credential=0
-		fi
-	fi
-	if [[ "$_inc_dup_todo" -eq 1 ]]; then
-		if _find_hook_src dup-todo >/dev/null 2>&1; then
-			_installed_list="${_installed_list}dup-todo "
-		else
-			print_warning "dup-todo hook source not found — omitting dup-todo guard"
-			_inc_dup_todo=0
-		fi
-	fi
+	_inc_privacy=$(_install_resolve_guard privacy "$_inc_privacy")
+	[[ "$_inc_privacy" -eq 1 ]] && _installed_list="${_installed_list}privacy "
+	_inc_complexity=$(_install_resolve_guard complexity "$_inc_complexity")
+	[[ "$_inc_complexity" -eq 1 ]] && _installed_list="${_installed_list}complexity "
+	_inc_scope=$(_install_resolve_guard scope "$_inc_scope")
+	[[ "$_inc_scope" -eq 1 ]] && _installed_list="${_installed_list}scope "
+	_inc_credential=$(_install_resolve_guard credential "$_inc_credential")
+	[[ "$_inc_credential" -eq 1 ]] && _installed_list="${_installed_list}credential "
+	_inc_dup_todo=$(_install_resolve_guard dup-todo "$_inc_dup_todo")
+	[[ "$_inc_dup_todo" -eq 1 ]] && _installed_list="${_installed_list}dup-todo "
+	_inc_repo_verify=$(_install_resolve_guard repo-verify "$_inc_repo_verify")
+	[[ "$_inc_repo_verify" -eq 1 ]] && _installed_list="${_installed_list}repo-verify "
 
 	# brief-filename is a pre-commit guard — handled separately from the pre-push dispatcher.
 	if [[ "$_want_brief_filename" -eq 1 ]]; then
@@ -521,7 +528,7 @@ cmd_install() {
 		fi
 	fi
 
-	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 ]]; then
+	if [[ "$_inc_privacy" -eq 0 && "$_inc_complexity" -eq 0 && "$_inc_scope" -eq 0 && "$_inc_credential" -eq 0 && "$_inc_dup_todo" -eq 0 && "$_inc_repo_verify" -eq 0 ]]; then
 		# Only brief-filename was requested (or all others were missing): acceptable
 		if [[ -n "${_installed_list:-}" ]]; then
 			print_success "installed guards: ${_installed_list% }"
@@ -531,12 +538,12 @@ cmd_install() {
 		return 0
 	fi
 
-	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo"
+	_write_dispatcher "$_hook_path" "$_inc_privacy" "$_inc_complexity" "$_inc_scope" "$_inc_credential" "$_inc_dup_todo" "$_inc_repo_verify"
 	print_success "installed guards: ${_installed_list% }"
 	print_info "pre-push hook: $_hook_path"
 	print_info "bypass pre-push: git push --no-verify"
 	print_info "bypass pre-commit: git commit --no-verify"
-	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, DUP_TODO_GUARD_DISABLE=1, or BRIEF_FILENAME_GUARD_DISABLE=1"
+	print_info "bypass individual: PRIVACY_GUARD_DISABLE=1, COMPLEXITY_GUARD_DISABLE=1, SCOPE_GUARD_DISABLE=1, CREDENTIAL_GUARD_DISABLE=1, DUP_TODO_GUARD_DISABLE=1, AIDEVOPS_PREPUSH_REPO_VERIFY=0, or BRIEF_FILENAME_GUARD_DISABLE=1"
 	return 0
 }
 
@@ -585,30 +592,32 @@ cmd_uninstall() {
 	fi
 
 	# Remove one pre-push guard: read current state, rebuild without the removed guard
-	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0
+	local _cur_privacy=0 _cur_complexity=0 _cur_scope=0 _cur_credential=0 _cur_dup_todo=0 _cur_repo_verify=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _cur_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _cur_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _cur_scope=1
 	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _cur_credential=1
 	grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _cur_dup_todo=1
+	grep -q "$HOOK_MARKER_REPO_VERIFY" "$_hook_path" 2>/dev/null && _cur_repo_verify=1
 
 	case "$_guard_filter" in
-	privacy)    _cur_privacy=0 ;;
-	complexity) _cur_complexity=0 ;;
-	scope)      _cur_scope=0 ;;
-	credential) _cur_credential=0 ;;
-	dup-todo)   _cur_dup_todo=0 ;;
+	privacy)     _cur_privacy=0 ;;
+	complexity)  _cur_complexity=0 ;;
+	scope)       _cur_scope=0 ;;
+	credential)  _cur_credential=0 ;;
+	dup-todo)    _cur_dup_todo=0 ;;
+	repo-verify) _cur_repo_verify=0 ;;
 	*)
-		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, brief-filename)"
+		print_error "unknown guard: $_guard_filter (valid: all, privacy, complexity, scope, credential, dup-todo, repo-verify, brief-filename)"
 		return 1
 		;;
 	esac
 
-	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 && "$_cur_dup_todo" -eq 0 ]]; then
+	if [[ "$_cur_privacy" -eq 0 && "$_cur_complexity" -eq 0 && "$_cur_scope" -eq 0 && "$_cur_credential" -eq 0 && "$_cur_dup_todo" -eq 0 && "$_cur_repo_verify" -eq 0 ]]; then
 		rm -f "$_hook_path"
 		print_success "removed last pre-push guard — hook deleted"
 	else
-		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo"
+		_write_dispatcher "$_hook_path" "$_cur_privacy" "$_cur_complexity" "$_cur_scope" "$_cur_credential" "$_cur_dup_todo" "$_cur_repo_verify"
 		print_success "removed $_guard_filter guard from pre-push hook"
 	fi
 	return 0
@@ -635,18 +644,20 @@ cmd_status() {
 	printf 'pre-push hook: installed (aidevops managed)\n'
 	printf '  path: %s\n' "$_hook_path"
 
-	local _has_privacy=0 _has_complexity=0 _has_scope=0 _has_credential=0 _has_dup_todo=0
+	local _has_privacy=0 _has_complexity=0 _has_scope=0 _has_credential=0 _has_dup_todo=0 _has_repo_verify=0
 	grep -q "$HOOK_MARKER_PRIVACY" "$_hook_path" 2>/dev/null && _has_privacy=1
 	grep -q "$HOOK_MARKER_COMPLEXITY" "$_hook_path" 2>/dev/null && _has_complexity=1
 	grep -q "$HOOK_MARKER_SCOPE" "$_hook_path" 2>/dev/null && _has_scope=1
 	grep -q "$HOOK_MARKER_CREDENTIAL" "$_hook_path" 2>/dev/null && _has_credential=1
 	grep -q "$HOOK_MARKER_DUP_TODO" "$_hook_path" 2>/dev/null && _has_dup_todo=1
+	grep -q "$HOOK_MARKER_REPO_VERIFY" "$_hook_path" 2>/dev/null && _has_repo_verify=1
 
-	_status_report_guard "privacy"    "$_has_privacy"
-	_status_report_guard "complexity" "$_has_complexity"
-	_status_report_guard "scope"      "$_has_scope"
-	_status_report_guard "credential" "$_has_credential"
-	_status_report_guard "dup-todo"   "$_has_dup_todo"
+	_status_report_guard "privacy"     "$_has_privacy"
+	_status_report_guard "complexity"  "$_has_complexity"
+	_status_report_guard "scope"       "$_has_scope"
+	_status_report_guard "credential"  "$_has_credential"
+	_status_report_guard "dup-todo"    "$_has_dup_todo"
+	_status_report_guard "repo-verify" "$_has_repo_verify"
 
 	# Pre-commit guards (separate hook file)
 	local _chook_path
