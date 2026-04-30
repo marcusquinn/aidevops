@@ -72,6 +72,63 @@
 _SHIM_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)" || _SHIM_DIR=""
 
 # -----------------------------------------------------------------------------
+# Source instrumentation helper for gh_record_call (GH#21857 — full visibility).
+# Load once here rather than lazily inside _shim_rest_rewrite_read so ALL gh
+# calls — not just REST-fallback reads — are captured in the log.
+# Fail-open: if the helper is unavailable, define a no-op stub so every
+# gh_record_call site below is unconditionally safe.
+# -----------------------------------------------------------------------------
+_INST_LOADED=0
+for _cand in \
+	"$_SHIM_DIR/gh-api-instrument.sh" \
+	"$HOME/.aidevops/agents/scripts/gh-api-instrument.sh"; do
+	if [[ -f "$_cand" ]]; then
+		# shellcheck source=/dev/null
+		source "$_cand" 2>/dev/null && _INST_LOADED=1
+		break
+	fi
+done
+if [[ $_INST_LOADED -eq 0 ]]; then
+	gh_record_call() { return 0; }
+fi
+unset _cand _INST_LOADED
+
+# _shim_classify_endpoint <sub1> [<sub2>]
+# Classify a gh invocation for instrumentation. Returns one of:
+#   graphql | rest | search-graphql | other
+# Follows the classification from GH#21857:
+#   gh search *        → search-graphql
+#   gh api graphql     → graphql
+#   gh api <other>     → rest  (REST API endpoints)
+#   gh pr|issue|…      → graphql (default for gh CLI commands)
+_shim_classify_endpoint() {
+	local sub1="${1:-}" sub2="${2:-}"
+	case "$sub1" in
+	search)
+		printf 'search-graphql'
+		return 0
+		;;
+	api)
+		if [[ "$sub2" == "graphql" || "$sub2" == graphql/* ]]; then
+			printf 'graphql'
+		else
+			printf 'rest'
+		fi
+		return 0
+		;;
+	*)
+		# gh pr *, gh issue *, gh run *, gh repo *, etc. — all classified
+		# as graphql since the majority of gh CLI commands use the GraphQL
+		# endpoint internally. REST-dominant commands (gh release, gh run)
+		# can be reclassified in a follow-up once usage data confirms the
+		# breakdown.
+		printf 'graphql'
+		return 0
+		;;
+	esac
+}
+
+# -----------------------------------------------------------------------------
 # Locate the REAL gh binary, excluding our own shim directory from PATH lookup
 # so we never recurse into ourselves even if PATH is unusual.
 # -----------------------------------------------------------------------------
@@ -119,6 +176,9 @@ api:*)
 		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
 		exit 127
 	}
+	# GH#21857: instrument every passthrough gh call (pr merge, pr checks,
+	# run list, repo clone, etc.) that previously bypassed all recording.
+	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" gh-shim 2>/dev/null || true
 	exec "$_real_gh" "$@"
 	;;
 esac
@@ -267,6 +327,8 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# get here when rc=1 from the function wrapper. The translator errors
 		# are already printed to stderr by the _rest_* functions.
 		# Conservative: always fall through to real gh.
+		# GH#21857: record the graphql call — the real gh will use GraphQL.
+		gh_record_call graphql gh-shim 2>/dev/null || true
 		exec "$REAL_GH" "$@"
 	fi
 fi
@@ -594,6 +656,8 @@ if [[ "${1:-}" == "api" ]]; then
 			exit 1
 		fi
 	fi
+	# GH#21857: instrument gh api calls — rest or graphql depending on path.
+	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" gh-shim 2>/dev/null || true
 	exec "$REAL_GH" "${_modified_args[@]}"
 fi
 
@@ -711,4 +775,7 @@ if [[ "${SHIM_TEST_MODE:-}" == "1" ]]; then
 	exit 0
 fi
 
+# GH#21857: instrument write commands (issue comment/create/edit, pr create/
+# comment/edit) — these all use the GraphQL endpoint.
+gh_record_call graphql gh-shim 2>/dev/null || true
 exec "$REAL_GH" "${_modified_args[@]}"
