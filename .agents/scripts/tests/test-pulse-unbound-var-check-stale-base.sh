@@ -2,19 +2,30 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-pulse-unbound-var-check-stale-base.sh — Verifies the t3084 fix for
-# pulse-unbound-var-check false positives on stale-base PRs.
+# test-pulse-unbound-var-check-stale-base.sh — Verifies the diff-extraction
+# logic in `.github/workflows/pulse-unbound-var-check.yml` against every
+# false-positive class the gate has shipped to date:
 #
-# Background: when a PR branch lags origin/main by N commits, the original
-# implementation `git diff $BASE_SHA $HEAD_SHA | grep '^+'` extracted ALL
-# line additions in the diff — including lines added on main since the
-# branch diverged. This trained the gate to fire on phantom violations
-# (canonical: PR #21827, 45-commit-stale base, ~15 false positives).
+# Class 1 — Stale-base (t3084):
+#   When a PR branch lags origin/main by N commits, the original
+#   `git diff $BASE_SHA $HEAD_SHA | grep '^+'` extracted ALL line
+#   additions — including lines added on main since divergence. Trained
+#   the gate to fire on phantom violations (canonical: PR #21827,
+#   45-commit-stale base, ~15 false positives). Fix: anchor the LHS of
+#   the diff to `git merge-base(BASE, HEAD)` so we measure from the
+#   actual divergence point, not whatever stale ref GitHub passed in.
 #
-# Fix: switch to `git merge-base` + `git log -p --first-parent
-# MERGE_BASE..HEAD_SHA` so the extraction sees only commits authored by
-# this branch, regardless of how stale the base reference is or whether
-# the branch merged main into itself.
+# Class 2 — Intra-branch reversal (t3206):
+#   When a branch introduces a violation in commit 1 and fixes it in
+#   commit 2, the t3084 implementation (`git log -p --first-parent
+#   MERGE_BASE..HEAD_SHA | grep '^+'`) extracted BOTH the bad lines from
+#   commit 1 AND the corrected lines from commit 2 in the same `+`
+#   stream. The scanner tripped on the bad lines even though they were
+#   reverted within the branch. Forced contributors to squash + force-push
+#   for a clean run (canonical: PR #21912 / t3194). Fix: use `git diff
+#   MERGE_BASE HEAD` (NET tree delta) instead of accumulated commit
+#   history — transient additions that were subsequently removed simply
+#   don't appear in the extraction.
 #
 # Verifies (against a temp git repo simulating each scenario):
 #   1. Stale-base scenario: branch behind main with no .sh changes does NOT
@@ -22,9 +33,13 @@
 #   2. True-positive scenario: branch with a real new violation DOES surface
 #      it as a branch addition.
 #   3. Merge-from-main scenario: branch that merged main into itself does
-#      NOT surface main-side additions (--first-parent skips the merge side).
+#      NOT surface main-side additions (the merge-base advances correctly,
+#      so `git diff` only shows the branch's contribution).
 #   4. Up-to-date scenario: branch tip on top of current main works correctly
 #      (regression check — fix must not break the common case).
+#   5. Intra-branch reversal scenario (t3206): branch introduces a violation
+#      then fixes it within the same branch — the extraction must see only
+#      the corrected (fixed) lines, NOT the transient bad ones.
 #
 # Tests are structural — no live GitHub API calls, no network access.
 
@@ -96,7 +111,11 @@ extract_diff_additions() {
 			[[ -n "$_file" ]] || continue
 			_basename=$(basename "$_file")
 			_diff_file="${_out_dir}/${_basename}"
-			git log -p --first-parent "${_merge_base}..${_head_sha}" -- "$_file" 2>/dev/null \
+			# t3206: use `git diff MERGE_BASE HEAD` (NET tree delta) instead of
+			# `git log -p --first-parent` (accumulated commit history) so
+			# transient additions that were later reverted within the branch
+			# do not appear in the extraction. Mirrors the workflow exactly.
+			git diff "${_merge_base}" "${_head_sha}" -- "$_file" 2>/dev/null \
 				| grep '^+' | grep -v '^+++' | sed 's/^+//' \
 				> "$_diff_file" || true
 		done <<<"$_changed"
@@ -198,6 +217,58 @@ main_violation_function() {
 EOF
 		git add -A
 		git commit -q -m "$_msg"
+	)
+	return 0
+}
+
+# Append two commits that together model the t3206 intra-branch reversal:
+#   - Commit 1: introduces a transient VIOLATION block PLUS a CLEAN block.
+#   - Commit 2: removes ONLY the violation block; the clean block survives.
+# NET tree delta: only the clean block (no violation). The clean block ensures
+# `git diff --name-only MERGE_BASE HEAD` still surfaces the file (otherwise
+# the workflow's first-pass file filter would skip extraction entirely and
+# the test would not exercise the patch-extraction code path). The accumulated
+# `git log -p` extraction would still surface the transient violation as a
+# `+` line; the corrected `git diff` extraction must not.
+add_violation_then_fix_commits() {
+	local _repo="$1"
+	local _intro_msg="$2"
+	local _fix_msg="$3"
+	(
+		cd "$_repo" || exit 1
+		# Commit 1: append the transient violation followed by a clean block.
+		# We use a marker comment to delimit the violation block so commit 2
+		# can remove it surgically while preserving the clean block.
+		cat >>.agents/scripts/pulse-test.sh <<'EOF'
+
+# >>> TRANSIENT VIOLATION (removed in next commit) >>>
+transient_violation() {
+	local _t1 _t2 _t3
+	_t1="introduced"
+	return 0
+}
+# <<< TRANSIENT VIOLATION <<<
+
+# Clean block — survives both commits and forms the NET tree delta.
+clean_branch_addition() {
+	local _surviving=""
+	_surviving="kept"
+	return 0
+}
+EOF
+		git add -A
+		git commit -q -m "$_intro_msg"
+		# Commit 2: remove the violation block, keep the clean block.
+		# Use awk to drop the marker-delimited region in place.
+		awk '
+			/^# >>> TRANSIENT VIOLATION/ { skip=1; next }
+			/^# <<< TRANSIENT VIOLATION/ { skip=0; next }
+			skip { next }
+			{ print }
+		' .agents/scripts/pulse-test.sh >.agents/scripts/pulse-test.sh.tmp
+		mv .agents/scripts/pulse-test.sh.tmp .agents/scripts/pulse-test.sh
+		git add -A
+		git commit -q -m "$_fix_msg"
 	)
 	return 0
 }
@@ -408,6 +479,61 @@ test_up_to_date_branch_works() {
 	return 0
 }
 
+# Test 5: Intra-branch reversal (t3206) — branch introduces a violation in
+# commit N alongside a clean change, then removes only the violation in
+# commit N+1. The NET tree delta is the clean change; the violation is gone.
+# Extraction must surface the clean lines but NOT the transient violation
+# lines. Reproduces the GH#21921 false-positive that the `git log -p`
+# extraction produced even after t3084 — `git log -p` walks both commits'
+# patches and emits the bad `+` lines from commit N regardless of whether
+# they survive in HEAD's tree.
+test_intra_branch_fix_no_phantom() {
+	info "test: intra-branch violation→fix does not surface phantom additions"
+	local _repo
+	_repo=$(init_test_repo)
+
+	(
+		cd "$_repo" || exit 1
+		git checkout -q -b feature/intra-branch-fix
+		add_violation_then_fix_commits "$_repo" \
+			"branch: introduce transient violation" \
+			"branch: fix transient violation"
+		local _head_sha
+		_head_sha=$(git rev-parse HEAD)
+		git checkout -q main
+		local _base_sha
+		_base_sha=$(git rev-parse HEAD)
+		printf '%s\n' "$_base_sha" >/tmp/.puv-test-base-sha
+		printf '%s\n' "$_head_sha" >/tmp/.puv-test-head-sha
+	)
+
+	local _base_sha _head_sha _out_dir
+	_base_sha=$(cat /tmp/.puv-test-base-sha)
+	_head_sha=$(cat /tmp/.puv-test-head-sha)
+	_out_dir=$(extract_diff_additions "$_repo" "$_base_sha" "$_head_sha")
+
+	# The NET tree delta is the clean block (`clean_branch_addition`); the
+	# transient violation block is reverted. The extraction file may exist
+	# and contain the clean block, but it MUST NOT contain the violation
+	# pattern (`local _t1 _t2 _t3`). The clean-block check (positive
+	# assertion) is implicit — test_real_violation_is_surfaced and
+	# test_up_to_date_branch_works already prove the extraction surfaces
+	# real branch additions; this test isolates the negative assertion.
+	local _diff_file="${_out_dir}/pulse-test.sh"
+	if [[ -f "$_diff_file" ]] && grep -q 'local _t1 _t2 _t3' "$_diff_file"; then
+		fail "intra-branch fix extraction surfaced phantom transient violation"
+		printf '  Phantom content:\n'
+		sed 's/^/    /' "$_diff_file"
+	else
+		pass "intra-branch fix extraction does not surface transient violation"
+	fi
+
+	cleanup_repo "$_repo"
+	cleanup_repo "$_out_dir"
+	rm -f /tmp/.puv-test-base-sha /tmp/.puv-test-head-sha
+	return 0
+}
+
 # ── main ─────────────────────────────────────────────────────────────
 
 main() {
@@ -415,6 +541,7 @@ main() {
 	test_real_violation_is_surfaced
 	test_merge_from_main_no_phantoms
 	test_up_to_date_branch_works
+	test_intra_branch_fix_no_phantom
 
 	printf '\n'
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
