@@ -21,6 +21,7 @@
 #   - Global variables from claim-task-id.sh:
 #       REMOTE_NAME, COUNTER_BRANCH, COUNTER_FILE
 #       CAS_MAX_RETRIES, CAS_WALL_TIMEOUT_S, CAS_GIT_CMD_TIMEOUT_S
+#       CAS_HTTPS_TIMEOUT_S, CAS_SSH_FALLBACK_ENABLED  (GH#21904)
 #       CAS_EXHAUSTION_FATAL, OFFLINE_OFFSET
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -83,6 +84,128 @@ _append_claim_audit_log() {
 	printf '%s\t%s\t%s\t%s\t%s\t%ss\n' \
 		"$ts" "$pid" "$sid" "$tid" "$attempt" "$elapsed" >> "$log_file" 2>/dev/null || true
 	return 0
+}
+
+# =============================================================================
+# HTTPS timeout + SSH fallback for CAS git operations (GH#21904)
+# =============================================================================
+# The CAS path (`git fetch`/`git push` against the counter branch) hangs
+# indefinitely when git's HTTPS credential helper stalls — observed with
+# osxkeychain on macOS, libsecret/manager-core on Linux. The existing
+# `http.lowSpeedTime` only fires once bytes start flowing; credential
+# negotiation hangs happen BEFORE the transport is established and bypass it.
+#
+# Mitigation: wrap each call with `timeout_sec` (from shared-constants.sh).
+# On timeout (exit 124) OR other git failure against an HTTPS-GitHub remote,
+# derive the SSH-equivalent URL and retry once via
+# `-c url.<ssh>.insteadOf=<https>` so the original `$REMOTE_NAME` ref-name
+# still resolves. Retrying non-timeout failures lets `GIT_ASKPASS=/bin/false`
+# and stale/broken credential-helper paths recover without waiting for a hang.
+#
+# `gh` CLI authenticates via the ssh-protocol preference by default, so SSH
+# pushes succeed when the gh-managed token (used by HTTPS) is unreachable.
+#
+# Memory: mem_20260430054453_5f0d112e (HTTPS push hung; SSH workaround
+# verified to complete in <10s on the same network).
+
+# Convert a GitHub HTTPS clone URL to its SSH equivalent.
+# Args: $1 — input URL.
+# Stdout: SSH-form URL on conversion, empty on no-conversion.
+# Returns: 0 on conversion (stdout populated), 1 on no-conversion.
+#
+# Examples:
+#   https://github.com/owner/repo.git → git@github.com:owner/repo.git
+#   https://github.com/owner/repo     → git@github.com:owner/repo
+#   git@github.com:owner/repo.git     → "" (already SSH; rc=1)
+#   https://gitlab.com/owner/repo.git → "" (only GitHub for now; rc=1)
+_derive_ssh_url_from_https() {
+	local url="${1:-}"
+	[[ -z "$url" ]] && return 1
+	# Match `https://github.com/<owner>/<repo>` with optional .git suffix.
+	# Bash 3.2 compatible regex (no \K, no lookaheads).
+	if [[ "$url" =~ ^https://github\.com/([^/[:space:]]+/[^/[:space:]]+)(\.git)?$ ]]; then
+		local path="${BASH_REMATCH[1]}"
+		local suffix="${BASH_REMATCH[2]}"
+		# Trim any trailing slashes from path before the (optional) .git suffix
+		path="${path%/}"
+		printf 'git@github.com:%s%s' "$path" "$suffix"
+		return 0
+	fi
+	return 1
+}
+
+# Run a git command with a wall-clock timeout and HTTPS→SSH fallback.
+# Args: $1 — timeout in seconds, $2..$N — git subcommand and its arguments
+#       (do NOT include the leading `git`; this helper adds it).
+# Returns: the git command's exit code on success or non-timeout failure;
+#          124 if both attempts time out (or fallback is disabled / not
+#          applicable after a timeout). On HTTPS failure + successful SSH retry,
+#          returns 0.
+#
+# Behaviour matrix:
+#   HTTPS succeeds within timeout              → return 0
+#   HTTPS fails non-timeout + fallback succeeds → return 0
+#   HTTPS fails non-timeout + fallback fails    → return fallback rc
+#   HTTPS times out, remote NOT https-github    → return 124 (no fallback)
+#   HTTPS times out, fallback disabled          → return 124 (no fallback)
+#   HTTPS times out, fallback runs and succeeds → return 0
+#   HTTPS times out, fallback also times out    → return 124
+_run_git_with_ssh_fallback() {
+	local timeout_s="$1"
+	shift
+	# First attempt — pass through unchanged. Quote "$@" so subcommand args
+	# survive whitespace, glob chars, etc.
+	local rc=0
+	timeout_sec "$timeout_s" git "$@" || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		return $rc
+	fi
+
+	# Failure path. Check whether SSH fallback applies.
+	if [[ "${CAS_SSH_FALLBACK_ENABLED:-1}" != "1" ]]; then
+		if [[ $rc -eq 124 ]]; then
+			log_warn "git timed out after ${timeout_s}s (CAS_SSH_FALLBACK_ENABLED=0 — no retry)"
+		else
+			log_warn "git failed with rc=${rc} (CAS_SSH_FALLBACK_ENABLED=0 — no retry)"
+		fi
+		return $rc
+	fi
+
+	local current_url
+	current_url=$(git remote get-url "${REMOTE_NAME:-origin}" 2>/dev/null) || {
+		if [[ $rc -eq 124 ]]; then
+			log_warn "git timed out after ${timeout_s}s (could not resolve ${REMOTE_NAME:-origin} URL — no fallback)"
+		else
+			log_warn "git failed with rc=${rc} (could not resolve ${REMOTE_NAME:-origin} URL — no fallback)"
+		fi
+		return $rc
+	}
+
+	local ssh_url=""
+	ssh_url=$(_derive_ssh_url_from_https "$current_url") || true
+	if [[ -z "$ssh_url" ]]; then
+		# Already SSH, or non-GitHub HTTPS — no fallback applies.
+		if [[ $rc -eq 124 ]]; then
+			log_warn "git timed out after ${timeout_s}s on ${current_url} (no HTTPS-GitHub → SSH fallback applies)"
+		else
+			log_warn "git failed with rc=${rc} on ${current_url} (no HTTPS-GitHub → SSH fallback applies)"
+		fi
+		return $rc
+	fi
+
+	if [[ $rc -eq 124 ]]; then
+		log_warn "git timed out after ${timeout_s}s on HTTPS — retrying via SSH (${ssh_url})"
+	else
+		log_warn "git failed with rc=${rc} on HTTPS — retrying via SSH (${ssh_url})"
+	fi
+	rc=0
+	timeout_sec "$timeout_s" git -c "url.${ssh_url}.insteadOf=${current_url}" "$@" || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		log_info "SSH fallback succeeded — HTTPS push hang transparent to caller (GH#21904)"
+	elif [[ $rc -eq 124 ]]; then
+		log_warn "SSH fallback also timed out after ${timeout_s}s — both transports unavailable"
+	fi
+	return $rc
 }
 
 # =============================================================================
@@ -291,14 +414,18 @@ bootstrap_remote_counter() {
 		return 1
 	}
 
-	if ! git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
+	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
 		log_warn "BOOTSTRAP_COUNTER: push failed (conflict — another session may have bootstrapped)"
-		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 		# Not a hard failure — the remote may now have a valid counter from the other session
 		return 1
 	fi
 
-	git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
 	# yeah, the counter is seeded and ready for concurrent claims
 	log_info "BOOTSTRAP_COUNTER_OK: counter initialized to ${seed} on ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	echo "BOOTSTRAP_COUNTER_OK"
@@ -311,7 +438,9 @@ read_remote_counter() {
 
 	cd "$repo_path" || return 1
 
-	if ! git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
+	# GH#21904: wrap with timeout + SSH fallback for credential-helper hangs.
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 		return 1
 	fi
@@ -374,7 +503,11 @@ _cas_fetch_and_pin() {
 	# in allocate_online().  Pass via -c so git actually reads them (env vars
 	# GIT_HTTP_LOW_SPEED_LIMIT/TIME are not recognised by git).
 	# GH#20208: redirect stdout to /dev/null (see _cas_build_and_push for details).
-	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+	# GH#21904: wrap with `timeout_sec` + SSH fallback to defeat credential-helper
+	# hangs that fire BEFORE bytes flow (osxkeychain etc.) and so bypass
+	# http.lowSpeedTime.
+	if ! _run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
 		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null; then
 		log_warn "Failed to fetch ${REMOTE_NAME}/${COUNTER_BRANCH}"
 	fi
@@ -392,7 +525,8 @@ _cas_fetch_and_pin() {
 		log_info "Counter missing/invalid — attempting auto-bootstrap (GH#6569)"
 		local bootstrap_result
 		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
-		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
 			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 		pinned_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
 			log_error "BOOTSTRAP_COUNTER_FAILED: cannot resolve ref after bootstrap"
@@ -449,15 +583,29 @@ _cas_build_and_push() {
 	# substitution (allocate_counter_cas → $(...)), any hook stdout bleeds
 	# into the captured result and poisons downstream arithmetic parsing.
 	# Hook stderr stays visible for error diagnosis.
-	if ! git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null; then
-		log_warn "Push failed (conflict — another session claimed an ID)"
-		git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+	#
+	# GH#21904: wrap with `timeout_sec` + SSH fallback so an HTTPS credential-
+	# helper hang (osxkeychain etc.) cannot stall the push.  The SSH fallback
+	# returns the same exit codes as a direct push, so the conflict (rc=1)
+	# vs success (rc=0) handling below is unchanged.
+	local push_rc=0
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	if [[ $push_rc -ne 0 ]]; then
+		if [[ $push_rc -eq 124 ]]; then
+			log_warn "Push timed out (HTTPS + SSH fallback both unavailable) — treating as retriable conflict"
+		else
+			log_warn "Push failed (conflict — another session claimed an ID)"
+		fi
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
 			fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 		return 2
 	fi
 
-	git -c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
 		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 	return 0
 }

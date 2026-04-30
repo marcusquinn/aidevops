@@ -153,6 +153,19 @@ CAS_WALL_TIMEOUT_S=${CAS_WALL_TIMEOUT_S:-30}
 # Per-git-command timeout (seconds).  Wraps git fetch/push in the CAS path
 # to prevent indefinite hangs on index.lock contention or network stalls.
 CAS_GIT_CMD_TIMEOUT_S=${CAS_GIT_CMD_TIMEOUT_S:-10}
+# GH#21904: wall-clock timeout for each individual `git fetch`/`git push` call
+# in the CAS path.  Wraps the call with `timeout_sec` so credential-helper
+# hangs (osxkeychain, libsecret, manager-core) cannot stall a session past
+# this budget.  Distinct from CAS_GIT_CMD_TIMEOUT_S which only sets git's
+# `http.lowSpeedTime` (transport-level, fires only after bytes start flowing
+# — does not catch credential negotiation hangs).
+# Memory: mem_20260430054453_5f0d112e (HTTPS push hung; SSH workaround verified).
+CAS_HTTPS_TIMEOUT_S=${CAS_HTTPS_TIMEOUT_S:-30}
+# GH#21904: when 1 (default), a `git fetch`/`git push` that times out on an
+# HTTPS GitHub remote is retried once via the SSH-equivalent URL.  Set to 0
+# to disable fallback (e.g. on hosts where SSH to github.com is blocked and
+# only the HTTPS hang is the failure mode being investigated).
+CAS_SSH_FALLBACK_ENABLED=${CAS_SSH_FALLBACK_ENABLED:-1}
 # When true (default), CAS retry exhaustion in online mode is fatal — does NOT
 # silently fall through to allocate_offline with +100 offset.  The offline path
 # exists for genuinely-offline scenarios (no network, explicit --offline flag),

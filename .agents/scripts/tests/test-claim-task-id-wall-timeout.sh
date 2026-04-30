@@ -16,6 +16,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CLAIM_SCRIPT="${SCRIPT_DIR}/../claim-task-id.sh"
+COUNTER_LIB="${SCRIPT_DIR}/../claim-task-id-counter.sh"
 
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
@@ -101,7 +102,7 @@ test_git_commands_have_timeout() {
 	local name="source check: git fetch/push in CAS path have http.lowSpeedTime configuration"
 
 	local fetch_body
-	fetch_body=$(sed -n '/^_cas_fetch_and_pin()/,/^}/p' "$CLAIM_SCRIPT")
+	fetch_body=$(sed -n '/^_cas_fetch_and_pin()/,/^}/p' "$COUNTER_LIB")
 	if [[ -z "$fetch_body" ]]; then
 		fail "$name" "_cas_fetch_and_pin function not found"
 		return 0
@@ -113,7 +114,7 @@ test_git_commands_have_timeout() {
 	fi
 
 	local push_body
-	push_body=$(sed -n '/^_cas_build_and_push()/,/^}/p' "$CLAIM_SCRIPT")
+	push_body=$(sed -n '/^_cas_build_and_push()/,/^}/p' "$COUNTER_LIB")
 	if [[ -z "$push_body" ]]; then
 		fail "$name" "_cas_build_and_push function not found"
 		return 0
@@ -135,7 +136,7 @@ test_allocate_online_wall_clock() {
 	local name="source check: allocate_online enforces wall-clock timeout"
 
 	local online_body
-	online_body=$(sed -n '/^allocate_online()/,/^}/p' "$CLAIM_SCRIPT")
+	online_body=$(sed -n '/^allocate_online()/,/^}/p' "$COUNTER_LIB")
 	if [[ -z "$online_body" ]]; then
 		fail "$name" "allocate_online function not found"
 		return 0
@@ -162,7 +163,7 @@ test_offline_commits_locally() {
 	local name="source check: allocate_offline commits .task-counter locally"
 
 	local offline_body
-	offline_body=$(sed -n '/^allocate_offline()/,/^}/p' "$CLAIM_SCRIPT")
+	offline_body=$(sed -n '/^allocate_offline()/,/^}/p' "$COUNTER_LIB")
 	if [[ -z "$offline_body" ]]; then
 		fail "$name" "allocate_offline function not found"
 		return 0
@@ -288,7 +289,7 @@ test_backoff_capped() {
 	local name="source check: CAS backoff capped at 2.0s"
 
 	local online_body
-	online_body=$(sed -n '/^allocate_online()/,/^}/p' "$CLAIM_SCRIPT")
+	online_body=$(sed -n '/^allocate_online()/,/^}/p' "$COUNTER_LIB")
 
 	if ! echo "$online_body" | grep -q '2\.0'; then
 		fail "$name" "allocate_online backoff does not contain 2.0s cap"
