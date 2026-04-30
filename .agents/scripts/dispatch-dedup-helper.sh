@@ -1340,6 +1340,56 @@ _require_args() {
 }
 
 #######################################
+# t3077 — has_fix_the_fixer_label
+#
+# Read-only check: does the issue carry the `fix-the-fixer` label
+# (applied by pulse-fix-the-fixer-detector.sh)? Used by the dispatch
+# path (headless-runtime-helper.sh) to enable extra observability for
+# tasks that touch the worker dispatch system itself.
+#
+# Args:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+# Output (stdout): "labeled" or "unlabeled" (always one of these)
+# Returns: 0 if labeled, 1 if unlabeled OR on API failure (fail-conservative)
+#######################################
+has_fix_the_fixer_label() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		printf 'unlabeled\n'
+		return 1
+	fi
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		printf 'unlabeled\n'
+		return 1
+	fi
+
+	local meta_json
+	meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json labels 2>/dev/null) || meta_json=""
+	if [[ -z "$meta_json" ]]; then
+		printf 'unlabeled\n'
+		return 1
+	fi
+
+	# Use numeric match-count rather than a boolean string token —
+	# the codebase ratchet flags repeated boolean-token literals.
+	local match_count
+	match_count=$(printf '%s' "$meta_json" | \
+		jq -r '[.labels[] | select(.name == "fix-the-fixer")] | length' 2>/dev/null) || match_count="0"
+	[[ "$match_count" =~ ^[0-9]+$ ]] || match_count="0"
+
+	if [[ "$match_count" -gt 0 ]]; then
+		printf 'labeled\n'
+		return 0
+	fi
+	printf 'unlabeled\n'
+	return 1
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -1364,6 +1414,10 @@ Usage:
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
                                                        t2007: aggregate token spend (returns "spent|attempts")
+  dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
+                                                       t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
+                                                       Used by headless-runtime-helper.sh to enable verbose lifecycle,
+                                                       tighter watchdog, and a preflight sentinel for dispatch-path workers.
   dispatch-dedup-helper.sh claim <issue> <slug> [runner-login]
                                                      Cross-machine claim lock (exit 0=won, 1=lost, 2=error)
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
@@ -1498,6 +1552,15 @@ main() {
 		# Not for production use — test files only.
 		_require_args test-recover 4 "$#" "<issue> <repo> <assignees> <reason>" || return 1
 		_recover_stale_assignment "$1" "$2" "$3" "$4"
+		;;
+	has-fix-the-fixer-label)
+		# t3077: read-only check used by headless-runtime-helper.sh to
+		# decide whether to enable verbose lifecycle, tighter watchdog,
+		# and the preflight sentinel write for this worker.
+		_require_args has-fix-the-fixer-label 2 "$#" "<issue> <slug>" || return 1
+		local _hftf_issue="$1"
+		local _hftf_repo="$2"
+		has_fix_the_fixer_label "$_hftf_issue" "$_hftf_repo"
 		;;
 	help | --help | -h)
 		show_help

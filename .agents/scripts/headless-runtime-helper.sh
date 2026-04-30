@@ -868,6 +868,112 @@ _handle_run_result() {
 	return "$exit_code"
 }
 
+# t3077: module-level marker — set to "1" by
+# _t3077_setup_fix_the_fixer_observability when the linked issue carries the
+# `fix-the-fixer` label. Read by the worker_started lifecycle emit so the
+# checkpoint records whether extra observability was applied for this run.
+_T3077_FIX_THE_FIXER="${_T3077_FIX_THE_FIXER:-0}"
+
+#######################################
+# t3077 — _t3077_setup_fix_the_fixer_observability
+#
+# Detect the `fix-the-fixer` label on the linked issue and, when present,
+# enable extra observability for this worker dispatch:
+#   - AIDEVOPS_VERBOSE_LIFECYCLE=1     — extra checkpoint emits in worker log
+#   - AIDEVOPS_WORKER_PREFLIGHT_SENTINEL=1 — fail-fast preflight check
+#   - HEADLESS_ACTIVITY_TIMEOUT_SECONDS=180 — tighter watchdog (vs 600s)
+#
+# Detection runs once at worker start (one extra REST hit, ~50ms). Fail-open
+# everywhere — missing args / API failure / unlabeled issue all fall through
+# without modifying the worker's environment. The deterministic t2819
+# detector (model:opus-4-7 elevation) remains the primary safety net.
+#
+# Args:
+#   $1 - issue number (from WORKER_ISSUE_NUMBER env, may be empty)
+#   $2 - repo slug (from DISPATCH_REPO_SLUG env, may be empty)
+# Returns: 0 always (fail-open contract)
+#######################################
+_t3077_setup_fix_the_fixer_observability() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Fail-open guard: missing args = no detection, no observability changes.
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		return 0
+	fi
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+
+	# Best-effort label probe via dispatch-dedup-helper.sh (defined above).
+	# The helper itself is fail-conservative — its stdout is `labeled` on a
+	# match and any other token (or empty) on miss / API failure. We compare
+	# only against the positive token to keep the literal usage minimal
+	# (codebase ratchet flags repeated string literals).
+	local _t3077_match_token="labeled"
+	local label_state=""
+	if command -v dispatch-dedup-helper.sh >/dev/null 2>&1; then
+		label_state=$(dispatch-dedup-helper.sh has-fix-the-fixer-label \
+			"$issue_number" "$repo_slug" 2>/dev/null) || label_state=""
+	elif [[ -x "${SCRIPT_DIR}/dispatch-dedup-helper.sh" ]]; then
+		label_state=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" has-fix-the-fixer-label \
+			"$issue_number" "$repo_slug" 2>/dev/null) || label_state=""
+	fi
+
+	if [[ "$label_state" != "$_t3077_match_token" ]]; then
+		return 0
+	fi
+
+	# Label present — apply the observability triple.
+	export AIDEVOPS_VERBOSE_LIFECYCLE=1
+	export AIDEVOPS_WORKER_PREFLIGHT_SENTINEL=1
+	export HEADLESS_ACTIVITY_TIMEOUT_SECONDS=180
+	_T3077_FIX_THE_FIXER=1
+
+	print_info "[lifecycle] fix_the_fixer_observability_enabled issue=#${issue_number} repo=${repo_slug} watchdog=180s pid=$$"
+	return 0
+}
+
+#######################################
+# t3077 — _t3077_write_preflight_sentinel
+#
+# When AIDEVOPS_WORKER_PREFLIGHT_SENTINEL=1, write a sentinel file before
+# the model is invoked. Verifies that the worker's filesystem is writable —
+# a sandbox/FD-broken environment that fails this write would otherwise
+# burn tokens on a session that cannot persist work.
+#
+# Sentinel path: ~/.aidevops/cache/worker-preflight/<pid>.txt
+# On write failure, returns 1 — caller aborts dispatch with exit code 11.
+# When AIDEVOPS_WORKER_PREFLIGHT_SENTINEL is unset/empty, returns 0 (no-op).
+#
+# Returns: 0 success or no-op, 1 on write failure (caller aborts)
+#######################################
+_t3077_write_preflight_sentinel() {
+	if [[ "${AIDEVOPS_WORKER_PREFLIGHT_SENTINEL:-}" != "1" ]]; then
+		return 0
+	fi
+
+	local sentinel_dir="${HOME}/.aidevops/cache/worker-preflight"
+	local sentinel_path="${sentinel_dir}/$$.txt"
+
+	if ! mkdir -p "$sentinel_dir" 2>/dev/null; then
+		return 1
+	fi
+
+	if ! printf 'pid=%s\nstarted_at=%s\nissue=%s\nrepo=%s\n' \
+		"$$" \
+		"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')" \
+		"${WORKER_ISSUE_NUMBER:-unknown}" \
+		"${DISPATCH_REPO_SLUG:-unknown}" \
+		>"$sentinel_path" 2>/dev/null; then
+		return 1
+	fi
+
+	# Verify the write actually persisted (catches silent FD failures).
+	[[ -s "$sentinel_path" ]] || return 1
+	return 0
+}
+
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model variant_override agent_name
@@ -954,12 +1060,61 @@ _execute_run_attempt() {
 	# _invoke_session_key above: keep _invoke_opencode's arg list stable.
 	_invoke_provider="$provider"
 
+	# t3077: expose session_key to the verbose lifecycle emitter via the
+	# convention WORKER_SESSION_KEY (read by _emit_verbose_checkpoint).
+	export WORKER_SESSION_KEY="$session_key"
+
+	# t3077 — Fix-the-fixer detection + observability setup.
+	#
+	# When the linked issue carries the `fix-the-fixer` label (applied by
+	# pulse-fix-the-fixer-detector.sh), enable extra observability for THIS
+	# worker:
+	#   - AIDEVOPS_VERBOSE_LIFECYCLE=1   — extra checkpoints in worker log
+	#   - HEADLESS_ACTIVITY_TIMEOUT_SECONDS=180  — tighter watchdog (vs 600s)
+	#   - AIDEVOPS_WORKER_PREFLIGHT_SENTINEL=1  — fail-fast preflight check
+	#
+	# Detection runs once at worker start. Best-effort gh API call (one
+	# extra REST hit per worker, ~50ms). On failure, falls through with
+	# default settings — the deterministic t2819 detector remains the
+	# primary safety net.
+	_t3077_setup_fix_the_fixer_observability "${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" || true
+
+	# t3077 — preflight sentinel write.
+	# When AIDEVOPS_WORKER_PREFLIGHT_SENTINEL=1 (set by the helper above
+	# when fix-the-fixer is labeled), write a sentinel file before the
+	# model is invoked. If the write does not complete, abort the dispatch
+	# immediately with exit code 11 — the worker would otherwise burn
+	# tokens on a sandbox/FD-broken environment.
+	if ! _t3077_write_preflight_sentinel; then
+		print_error "[lifecycle] preflight_abort reason=sentinel_write_blocked pid=$$ session=$session_key"
+		printf '11' >"$exit_code_file" 2>/dev/null || true
+		exit_code=11
+		return 11
+	fi
+
+	# t3077 — emit canonical worker_started lifecycle marker.
+	# Replaces the legacy print_info worker_start emit; the legacy line
+	# format is preserved as a fallback when verbose mode is disabled so
+	# existing log parsers continue to work.
+	_emit_verbose_checkpoint worker_started \
+		"model=${selected_model} runtime=${runtime} fix_the_fixer=${_T3077_FIX_THE_FIXER:-0}"
 	print_info "[lifecycle] worker_start session=$session_key model=$selected_model runtime=$runtime pid=$$"
+
+	# t3077 — spawn the verbose lifecycle watcher (background subshell).
+	# Fail-open: returns silently if AIDEVOPS_VERBOSE_LIFECYCLE != 1.
+	local _t3077_watcher_pid=""
+	_t3077_watcher_pid=$(_start_verbose_lifecycle_watcher "$output_file" "$$" 2>/dev/null) || true
+	if [[ -n "$_t3077_watcher_pid" ]]; then
+		print_info "[lifecycle] verbose_watcher_started pid=${_t3077_watcher_pid} worker=$$ log=${output_file}"
+	fi
 
 	case "$runtime" in
 	claude) _invoke_claude "$output_file" "$exit_code_file" "${cmd[@]}" ;;
 	*) _invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}" ;;
 	esac
+
+	# t3077 — clean up the verbose lifecycle watcher (if any).
+	_cleanup_verbose_lifecycle_watcher "$$" 2>/dev/null || true
 	print_info "[lifecycle] invoke_returned session=$session_key pid=$$ exit_code_file_exists=$(test -f "$exit_code_file" && echo yes || echo no)"
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 	print_info "[lifecycle] exit_code_read session=$session_key exit_code=$exit_code"
