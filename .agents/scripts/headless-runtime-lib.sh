@@ -870,6 +870,25 @@ CANARY_NEGATIVE_TTL_SECONDS="${CANARY_NEGATIVE_TTL_SECONDS:-90}"
 # still allowing recovery within a single pulse-update cycle.
 CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
 
+# t3210: System overload TTL. The canary spawns a fresh `opencode run` that
+# does a one-time DB migration on each invocation; under heavy disk/CPU
+# contention from many concurrent workers (canonical: load avg >> NCPU on
+# a developer macbook), the migration + LLM round-trip exceeds
+# CANARY_TIMEOUT_SECONDS even when opencode, auth, and the API all work
+# in isolation. Treating overload as `transient` (90s TTL) causes the
+# circuit-breaker re-trip cycle (#21919, #21556, #4360, #4318, #2293,
+# #2292): 90s expires → still overloaded → canary times out → 3x
+# no_worker_process → trip → auto-reset → repeat. Overload self-resolves
+# in 5-15 min as concurrent workers complete and exit. 300s default gives
+# load time to subside without wasting canary CPU on doomed attempts.
+CANARY_OVERLOAD_TTL_SECONDS="${CANARY_OVERLOAD_TTL_SECONDS:-300}"
+
+# t3210: Load multiplier for the pre-canary overload check.
+# load_avg_1min > NCPU * MULTIPLIER = system overloaded, skip canary.
+# Default 2 = system is noticeably contending. Lower = more aggressive
+# (skip canary sooner). Set very high (e.g. 100) to effectively disable.
+CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-2}"
+
 #######################################
 # t2887: Validate that an opencode binary path is the real anomalyco/opencode.
 #
@@ -1008,6 +1027,59 @@ _enforce_opencode_version_pin() {
 	return 0
 }
 
+# t3210: Detect system-wide CPU/IO overload before spawning the canary.
+# The canary spawns a fresh `opencode run` that runs a one-time DB migration
+# on each invocation; under heavy disk/CPU contention from many concurrent
+# workers, the migration + LLM round-trip can exceed CANARY_TIMEOUT_SECONDS
+# (default 60s) even when opencode, auth, and the API all work in isolation.
+#
+# This is a *pre-flight* check, not a substitute for the canary -- when the
+# system is healthy this returns 0 instantly and the canary runs as before.
+# When overloaded (load_1min > NCPU * MULTIPLIER), it returns 1 so the caller
+# can skip the canary and stamp `reason=overload` for a longer negative-cache
+# TTL. Without this, the canary fails with exit=124 (timeout), gets stamped
+# `transient` (90s TTL), the negative cache expires while load is still
+# elevated, the next canary times out, ... -> 3x no_worker_process trips
+# the supervisor circuit breaker. Canonical incident: GH#21919, GH#21556,
+# GH#4360, GH#4318, GH#2293, GH#2292.
+#
+# Cost: one `uptime` + one `sysctl`/`nproc` invocation, both <5ms.
+# Threshold: load_1min > NCPU * CANARY_OVERLOAD_LOAD_MULTIPLIER (default 2).
+# Override: set CANARY_OVERLOAD_LOAD_MULTIPLIER very high (e.g. 100) to
+# effectively disable the gate.
+#
+# Returns 0 = system OK (proceed with canary), 1 = overloaded (skip canary).
+# On rc=1, prints a warning with load + ncpu + threshold to stderr.
+_check_system_overload() {
+	local load_1min ncpu threshold
+	# Portable load_1min extraction. On macOS, `uptime` prints
+	# "... load averages: 1.23 2.34 3.45"; on Linux, "... load average:
+	# 1.23, 2.34, 3.45". Both have the 1-min value right after the colon
+	# group; awk on the third-from-last field is reliable on both.
+	load_1min=$(uptime 2>/dev/null | awk -F'[a-z]: ' '{print $2}' | awk '{gsub(/,/, ""); print $1}' 2>/dev/null || echo "")
+	if [[ -z "$load_1min" ]] || ! [[ "$load_1min" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+		# uptime parse failed or returned non-numeric -- fail open.
+		return 0
+	fi
+	# Portable CPU count. nproc on Linux, sysctl on macOS, fallback to 4.
+	ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
+	if ! [[ "$ncpu" =~ ^[0-9]+$ ]] || [[ "$ncpu" -lt 1 ]]; then
+		ncpu=4
+	fi
+	# threshold = ncpu * multiplier, computed in awk to handle non-integer
+	# multipliers (e.g. 0.5 for aggressive, 1.5 for moderate). bash arithmetic
+	# is integer-only so awk is the portable path.
+	threshold=$(awk -v n="$ncpu" -v m="$CANARY_OVERLOAD_LOAD_MULTIPLIER" 'BEGIN{printf "%.2f", n * m}')
+	# Compare load_1min > threshold via awk (floating-point comparison).
+	local is_overloaded
+	is_overloaded=$(awk -v l="$load_1min" -v t="$threshold" 'BEGIN{print (l > t) ? "1" : "0"}')
+	if [[ "$is_overloaded" == "1" ]]; then
+		print_warning "Canary skipped: system overloaded (load_1min=${load_1min}, ncpu=${ncpu}, threshold=${threshold}, multiplier=${CANARY_OVERLOAD_LOAD_MULTIPLIER}) -- canary cold-start cannot complete reliably under contention (t3210)"
+		return 1
+	fi
+	return 0
+}
+
 _run_canary_test() {
 	local requested_model="${1:-}"
 	local cache_file="${STATE_DIR}/canary-last-pass"
@@ -1046,13 +1118,35 @@ _run_canary_test() {
 		neg_now=$(date +%s)
 		neg_age=$((neg_now - last_fail))
 		fail_reason=$(cat "$fail_reason_file" 2>/dev/null || echo "transient")
-		if [[ "$fail_reason" == "config_error" ]]; then
-			active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS"
-		else
-			active_ttl="$CANARY_NEGATIVE_TTL_SECONDS"
-		fi
+		# t2887/t3210: TTL is reason-aware. Each failure class has its own
+		# self-resolution timescale, so a one-size-fits-all TTL either spams
+		# the canary on structural problems (90s on a missing binary) or
+		# delays recovery on transient ones (1h on an auth blip).
+		case "$fail_reason" in
+			config_error) active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS" ;;
+			overload) active_ttl="$CANARY_OVERLOAD_TTL_SECONDS" ;;
+			*) active_ttl="$CANARY_NEGATIVE_TTL_SECONDS" ;;
+		esac
 		if [[ "$last_fail" =~ ^[0-9]+$ ]] && [[ "$neg_age" -ge 0 ]] && [[ "$neg_age" -lt "$active_ttl" ]]; then
-			print_warning "Canary negative cache active (age=${neg_age}s, ttl=${active_ttl}s, reason=${fail_reason}) — failing fast (t2814/t2887)"
+			print_warning "Canary negative cache active (age=${neg_age}s, ttl=${active_ttl}s, reason=${fail_reason}) — failing fast (t2814/t2887/t3210)"
+			return 1
+		fi
+	fi
+
+	# t3210: Pre-canary system overload check. If load_1min > NCPU *
+	# multiplier, skip the canary and stamp reason=overload. The canary's
+	# cold-start DB migration + LLM round-trip cannot reliably complete
+	# within CANARY_TIMEOUT_SECONDS (default 60s) under heavy contention,
+	# so running it just burns CPU on a doomed attempt and trips the
+	# supervisor circuit breaker via cascading no_worker_process failures.
+	# Overload self-resolves on a 5-15 min timescale as concurrent workers
+	# complete, hence the 300s default TTL (CANARY_OVERLOAD_TTL_SECONDS).
+	# Bypass: AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1 (e.g. for testing).
+	if [[ "${AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK:-0}" != "1" ]]; then
+		if ! _check_system_overload; then
+			mkdir -p "${STATE_DIR}" 2>/dev/null || true
+			date +%s >"$fail_cache_file" 2>/dev/null || true
+			printf 'overload\n' >"$fail_reason_file" 2>/dev/null || true
 			return 1
 		fi
 	fi
