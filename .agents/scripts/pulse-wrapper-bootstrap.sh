@@ -317,7 +317,7 @@ _drain_merge_trigger_file_if_present() {
 
 	local _drain_count=0
 	local _drain_failed=0
-	local slug num type ts pr_number
+	local slug="" num="" type="" ts="" pr_number=""
 	while IFS=$'\t' read -r slug num type ts || [[ -n "$slug" ]]; do
 		# Skip blank lines and comment lines.
 		[[ -z "$slug" || "${slug:0:1}" == "#" ]] && continue
