@@ -85,7 +85,7 @@ count_runnable_candidates() {
 		# CHANGES_REQUESTED OR aggregate check status == FAIL.
 		local pr_checks_json=""
 		pr_checks_json=$(gh_pr_check_status_rest_batch "$slug" "$pr_json" 2>/dev/null) || pr_checks_json="[]"
-		[[ -n "$pr_checks_json" ]] || pr_checks_json="[]"
+		[[ -n "$pr_checks_json" && "$pr_checks_json" != "null" ]] || pr_checks_json="[]"
 
 		local pr_count
 		pr_count=$(jq -n --argjson prs "$pr_json" --argjson checks "$pr_checks_json" '

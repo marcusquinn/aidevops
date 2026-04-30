@@ -15,6 +15,7 @@
 #   - shared-gh-wrappers-create.sh        — issue/PR creation, comments, parent linking
 #   - shared-gh-wrappers-safe-edit.sh     — safe edit/close/merge with audit logging
 #   - shared-gh-wrappers-status.sh        — status labels, read wrappers with REST fallback
+#   - shared-gh-wrappers-checks.sh        — PR check status via REST check-suites/check-runs (GH#21799)
 #   - shared-gh-wrappers-rest-fallback.sh — REST fallback translators (pre-existing)
 #
 # Usage: source "${SCRIPT_DIR}/shared-gh-wrappers.sh"

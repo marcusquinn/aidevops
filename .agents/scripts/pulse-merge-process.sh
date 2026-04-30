@@ -715,33 +715,44 @@ _check_required_checks_passing() {
 		return 0
 	fi
 
-	# Fetch PR statusCheckRollup to get actual check states.
-	local rollup_json _ru_exit
-	rollup_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json statusCheckRollup \
-		--jq '.statusCheckRollup // []' 2>/dev/null)
-	_ru_exit=$?
-	if [[ $_ru_exit -ne 0 ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: statusCheckRollup fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+	# GH#21799: replace GraphQL statusCheckRollup with REST check-runs (single
+	# PR, separate budget pool). check-runs is heavier than check-suites
+	# (~111KB/PR) but exposes per-context .name fields needed for matching
+	# branch-protection required_status_checks. Single-PR path → cost is fine.
+	local pr_sha=""
+	pr_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	if [[ -z "$pr_sha" ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922, GH#21799)" >>"$LOGFILE"
 		return 1
 	fi
-	[[ -z "$rollup_json" ]] && rollup_json="[]"
+
+	# REST check-runs returns the granular per-context list with .name +
+	# .conclusion + .status. Need check-runs (not check-suites) because
+	# branch-protection required_status_checks are matched by NAME.
+	local rollup_json=""
+	rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
+	if [[ -z "$rollup_json" || "$rollup_json" == "null" ]]; then
+		echo "[pulse-merge] _check_required_checks_passing: REST check-runs fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922, GH#21799)" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Build JSON array from newline-delimited required_contexts string.
 	local req_json
 	req_json=$(printf '%s' "$required_contexts" \
 		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
 
-	# Count required contexts that are not in a passing state.
+	# Count required contexts that are not in a passing state. check-runs
+	# objects expose `.name`, `.conclusion`, and `.status`. Status
+	# `completed` + conclusion in {success, neutral, skipped} → PASS.
 	local failing_count _fc_exit
 	failing_count=$(jq -n \
 		--argjson req "$req_json" \
 		--argjson checks "$rollup_json" \
 		'$req | map(
 			. as $ctx |
-			($checks | map(select((.name // .context // "") == $ctx)) | last) as $c |
+			($checks | map(select((.name // "") == $ctx)) | last) as $c |
 			if $c == null then "NOT_FOUND"
-			elif (($c.state // "" | ascii_upcase) == "SUCCESS") then "PASS"
 			elif (($c.conclusion // "" | ascii_upcase)
 				| . == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED") then "PASS"
 			else "FAIL"

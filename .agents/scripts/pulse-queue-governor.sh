@@ -51,9 +51,11 @@ _fetch_queue_metrics() {
 	while IFS='|' read -r slug _path; do
 		[[ -n "$slug" ]] || continue
 
+		# GH#21799: drop GraphQL statusCheckRollup; fetch headRefOid + resolve
+		# PASS/FAIL/PENDING via REST check-suites (separate budget pool).
 		local pr_json pr_qm_err
 		pr_qm_err=$(mktemp)
-		pr_json=$(gh_pr_list --repo "$slug" --state open --json reviewDecision,statusCheckRollup --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
+		pr_json=$(gh_pr_list --repo "$slug" --state open --json number,reviewDecision,headRefOid --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local _pr_qm_err_msg
 			_pr_qm_err_msg=$(cat "$pr_qm_err" 2>/dev/null || echo "unknown error")
@@ -61,10 +63,23 @@ _fetch_queue_metrics() {
 			pr_json="[]"
 		fi
 		rm -f "$pr_qm_err"
+
+		# Enrich with REST check status; aggregate counts using the resulting
+		# pre-computed status string per PR.
+		local pr_checks_json=""
+		pr_checks_json=$(gh_pr_check_status_rest_batch "$slug" "$pr_json" 2>/dev/null) || pr_checks_json="[]"
+		[[ -n "$pr_checks_json" && "$pr_checks_json" != "null" ]] || pr_checks_json="[]"
+
 		local repo_pr_total repo_ready repo_failing
 		repo_pr_total=$(echo "$pr_json" | jq 'length' 2>/dev/null) || repo_pr_total=0
-		repo_ready=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "APPROVED" and ((.statusCheckRollup // []) | length > 0) and ((.statusCheckRollup // []) | all((.conclusion // .state) == "SUCCESS")))] | length' 2>/dev/null) || repo_ready=0
-		repo_failing=$(echo "$pr_json" | jq '[.[] | select(.reviewDecision == "CHANGES_REQUESTED" or ((.statusCheckRollup // []) | any((.conclusion // .state) == "FAILURE")))] | length' 2>/dev/null) || repo_failing=0
+		repo_ready=$(jq -n --argjson prs "$pr_json" --argjson checks "$pr_checks_json" '
+			($checks | map({(.number | tostring): .status}) | add // {}) as $check_map |
+			[$prs[] | (.number | tostring) as $n | select(.reviewDecision == "APPROVED" and ($check_map[$n] // "none") == "PASS")] | length
+		' 2>/dev/null) || repo_ready=0
+		repo_failing=$(jq -n --argjson prs "$pr_json" --argjson checks "$pr_checks_json" '
+			($checks | map({(.number | tostring): .status}) | add // {}) as $check_map |
+			[$prs[] | (.number | tostring) as $n | select(.reviewDecision == "CHANGES_REQUESTED" or ($check_map[$n] // "none") == "FAIL")] | length
+		' 2>/dev/null) || repo_failing=0
 
 		local issue_json repo_issue_total issue_qm_err
 		issue_qm_err=$(mktemp)

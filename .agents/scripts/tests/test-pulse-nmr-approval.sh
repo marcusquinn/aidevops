@@ -57,12 +57,15 @@ setup_test_env() {
 	: >"$LOGFILE"
 	COMMENTS_FIXTURE="${TEST_ROOT}/comments.json"
 	PR_LIST_FIXTURE="${TEST_ROOT}/pr-list.json"
+	# GH#21799: REST check-runs fixture, populated by build_pr_json per PR.
+	CHECK_RUNS_FIXTURE="${TEST_ROOT}/check-runs.json"
 	POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
-	export COMMENTS_FIXTURE PR_LIST_FIXTURE POSTED_COMMENT
+	export COMMENTS_FIXTURE PR_LIST_FIXTURE CHECK_RUNS_FIXTURE POSTED_COMMENT
 
 	# gh stub: serves comments from COMMENTS_FIXTURE for 'gh api ...comments',
-	# serves PR list from PR_LIST_FIXTURE for 'gh pr list', and captures
-	# comment posts for 'gh issue comment'.
+	# serves PR list from PR_LIST_FIXTURE for 'gh pr list', serves REST
+	# check-runs from CHECK_RUNS_FIXTURE for 'gh api ...commits/SHA/check-runs'
+	# (GH#21799), and captures comment posts for 'gh issue comment'.
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -82,6 +85,25 @@ if [[ "${1:-}" == "api" ]]; then
 			jq -r "$jq_filter" <"$COMMENTS_FIXTURE" 2>/dev/null || echo "0"
 		else
 			cat "$COMMENTS_FIXTURE"
+		fi
+		exit 0
+	fi
+	# GH#21799: REST check-runs endpoint
+	if [[ "$path" == */check-runs ]]; then
+		if [[ -n "$jq_filter" ]]; then
+			jq -r "$jq_filter" <"$CHECK_RUNS_FIXTURE" 2>/dev/null || echo "[]"
+		else
+			cat "$CHECK_RUNS_FIXTURE"
+		fi
+		exit 0
+	fi
+	# GH#21799: legacy combined-status endpoint — empty (modern repos use
+	# check-runs exclusively).
+	if [[ "$path" == */status ]]; then
+		if [[ -n "$jq_filter" ]]; then
+			jq -r "$jq_filter" <<<'{"statuses":[]}' 2>/dev/null || echo "[]"
+		else
+			echo '{"statuses":[]}'
 		fi
 		exit 0
 	fi
@@ -120,6 +142,7 @@ GHEOF
 	# Seed empty fixtures
 	printf '[]\n' >"$COMMENTS_FIXTURE"
 	printf '[]\n' >"$PR_LIST_FIXTURE"
+	printf '{"check_runs":[]}\n' >"$CHECK_RUNS_FIXTURE"
 	: >"$POSTED_COMMENT"
 
 	return 0
@@ -180,6 +203,17 @@ export -f gh_issue_comment
 
 # Extract the functions under test from the source file.
 define_helper_under_test() {
+	# GH#21799: source the REST check-runs helper sub-library so the extracted
+	# `_find_qualifying_pr_for_stale_recovery` can call `gh_pr_check_runs_rest`.
+	local checks_lib="${SCRIPT_DIR}/../shared-gh-wrappers-checks.sh"
+	if [[ ! -f "$checks_lib" ]]; then
+		printf 'ERROR: shared-gh-wrappers-checks.sh not found at %s\n' \
+			"$checks_lib" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090
+	source "$checks_lib"
+
 	local finder_src notify_src
 	finder_src=$(awk '
 		/^_find_qualifying_pr_for_stale_recovery\(\) \{/,/^}$/ { print }
@@ -199,6 +233,9 @@ define_helper_under_test() {
 }
 
 # --- Helper: build a PR JSON object for the fixture ---
+# GH#21799: PR JSON now carries headRefOid (not statusCheckRollup); the
+# corresponding check-run states are written to CHECK_RUNS_FIXTURE so the
+# mocked `gh api .../check-runs` call returns them.
 build_pr_json() {
 	local num="${1:-100}"
 	local review="${2:-APPROVED}"
@@ -211,15 +248,21 @@ build_pr_json() {
 	local labels_json
 	labels_json=$(jq -n --arg l "$origin_label" '[{"name": $l}]')
 
-	local checks_json
-	checks_json=$(jq -n \
+	# GH#21799: write check-runs to the REST fixture file. Wrapped under
+	# `check_runs` to mirror the real REST response shape; the helper's
+	# `--jq '[.check_runs[]? | {...}]'` filter will unwrap it.
+	jq -n \
 		--arg ci "$ci_status" \
 		--arg mg "$maintainer_gate_status" \
-		'[
-			{"name": "quality / ShellCheck", "conclusion": $ci, "status": "COMPLETED"},
-			{"name": "quality / Codacy", "conclusion": $ci, "status": "COMPLETED"},
-			{"name": "gate / Maintainer Review & Assignee Gate", "conclusion": $mg, "status": "COMPLETED"}
-		]')
+		'{check_runs: [
+			{"name": "quality / ShellCheck", "conclusion": $ci, "status": "completed"},
+			{"name": "quality / Codacy", "conclusion": $ci, "status": "completed"},
+			{"name": "gate / Maintainer Review & Assignee Gate", "conclusion": $mg, "status": "completed"}
+		]}' >"$CHECK_RUNS_FIXTURE"
+
+	# Synthetic SHA derived from PR number — shape mirrors a real OID.
+	local pr_sha
+	pr_sha=$(printf 'sha%036d' "$num")
 
 	jq -n \
 		--argjson num "$num" \
@@ -227,14 +270,14 @@ build_pr_json() {
 		--arg assoc "$author_assoc" \
 		--arg created "$created_at" \
 		--argjson labels "$labels_json" \
-		--argjson checks "$checks_json" \
+		--arg sha "$pr_sha" \
 		'{
 			number: $num,
 			reviewDecision: $review,
 			authorAssociation: $assoc,
 			createdAt: $created,
 			labels: $labels,
-			statusCheckRollup: $checks
+			headRefOid: $sha
 		}'
 	return 0
 }

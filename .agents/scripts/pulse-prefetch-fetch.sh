@@ -66,9 +66,10 @@ _prefetch_prs_try_delta() {
 		return 0
 	fi
 
+	# headRefOid required for REST check-suites lookup (GH#21799).
 	local delta_json=""
 	delta_json=$(gh_pr_list --repo "$slug" --state open \
-		--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+		--json number,title,reviewDecision,updatedAt,headRefName,headRefOid,createdAt,author \
 		--search "updated:>=${last_prefetch}" \
 		--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || delta_json=""
 
@@ -104,29 +105,35 @@ _prefetch_prs_try_delta() {
 }
 
 #######################################
-# Fetch statusCheckRollup enrichment for open PRs (GH#15060).
-# Non-fatal: returns empty string on failure.
-# Arguments: $1=slug, $2=checks_limit
-# Output: JSON array to stdout (or empty string)
+# Compute aggregated check status for a list of open PRs via REST
+# `/commits/{sha}/check-suites` (GH#21799 — replaces the GraphQL
+# `statusCheckRollup` field that was the single heaviest payload in the
+# pulse's GraphQL budget).
+#
+# Non-fatal: returns "[]" on failure (caller treats as "no check info").
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - pr_json (already-fetched PR list with .number and .headRefOid)
+#
+# Output: JSON array `[{"number":N,"status":"PASS|FAIL|PENDING|none"}, ...]`
 #######################################
 _prefetch_prs_enrich_checks() {
 	local slug="$1"
-	local checks_limit="$2"
+	local pr_json="$2"
 
-	local checks_err
-	checks_err=$(mktemp)
+	if [[ -z "$pr_json" || "$pr_json" == "[]" || "$pr_json" == "null" ]]; then
+		printf '[]'
+		return 0
+	fi
+
 	local checks_json=""
-	checks_json=$(gh_pr_list --repo "$slug" --state open \
-		--json number,statusCheckRollup \
-		--limit "$checks_limit" 2>"$checks_err") || checks_json=""
+	checks_json=$(gh_pr_check_status_rest_batch "$slug" "$pr_json" 2>/dev/null) || checks_json=""
 
 	if [[ -z "$checks_json" || "$checks_json" == "null" ]]; then
-		local _checks_err_msg
-		_checks_err_msg=$(cat "$checks_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _prefetch_repo_prs: statusCheckRollup enrichment FAILED for ${slug} (non-fatal, PRs shown without check status): ${_checks_err_msg}" >>"$LOGFILE"
-		checks_json=""
+		echo "[pulse-wrapper] _prefetch_repo_prs: REST check-suites enrichment FAILED for ${slug} (non-fatal, PRs shown without check status)" >>"$LOGFILE"
+		checks_json="[]"
 	fi
-	rm -f "$checks_err"
 
 	printf '%s' "$checks_json"
 	return 0
@@ -150,20 +157,15 @@ _prefetch_prs_format_output() {
 
 	echo "### Open PRs ($pr_count)"
 	if [[ -n "$checks_json" && "$checks_json" != "[]" ]]; then
-		# GH#21774: checks_json (~245KB+) overflows jq ARG_MAX via --argjson.
-		# Pass checks through stdin (unlimited), pr_json (~14KB) via --argjson.
+		# GH#21799: checks_json now contains pre-computed status strings
+		# from REST check-suites (~15KB total vs ~245KB GraphQL rollup).
+		# Stdin keeps the path that handles large pr_json safely.
 		echo "$checks_json" | jq -r --argjson prs "$pr_json" '
-			(. | map({(.number | tostring): .statusCheckRollup}) | add // {}) as $check_map |
+			(. | map({(.number | tostring): .status}) | add // {}) as $check_map |
 			$prs[] |
 			(.number | tostring) as $num |
-			($check_map[$num] // null) as $rolls |
-			"- PR #\(.number): \(.title) [checks: \(
-				if $rolls == null or ($rolls | length) == 0 then "none"
-				elif ($rolls | all((.conclusion // .state) == "SUCCESS")) then "PASS"
-				elif ($rolls | any((.conclusion // .state) == "FAILURE")) then "FAIL"
-				else "PENDING"
-				end
-			)] [review: \(
+			($check_map[$num] // "unknown") as $cs |
+			"- PR #\(.number): \(.title) [checks: \($cs)] [review: \(
 				if .reviewDecision == null or .reviewDecision == "" then "NONE"
 				else .reviewDecision
 				end
@@ -223,10 +225,11 @@ _prefetch_repo_prs() {
 			pr_json="$PREFETCH_PR_RESULT"
 		fi
 
-		# Full fetch: either requested directly or delta fell back
+		# Full fetch: either requested directly or delta fell back.
+		# headRefOid required for REST check-suites lookup (GH#21799).
 		if [[ "$sweep_mode" == "full" ]]; then
 			pr_json=$(gh_pr_list --repo "$slug" --state open \
-				--json number,title,reviewDecision,updatedAt,headRefName,createdAt,author \
+				--json number,title,reviewDecision,updatedAt,headRefName,headRefOid,createdAt,author \
 				--limit "$PULSE_PREFETCH_PR_LIMIT" 2>"$pr_err") || pr_json=""
 
 			if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
@@ -250,10 +253,11 @@ _prefetch_repo_prs() {
 	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
-	# Enrichment: fetch statusCheckRollup separately (GH#15060)
+	# Enrichment: derive PASS/FAIL/PENDING via REST check-suites (GH#21799,
+	# replacing the heavier GraphQL statusCheckRollup originally added in GH#15060).
 	local checks_json=""
 	if [[ "$pr_count" -gt 0 ]]; then
-		checks_json=$(_prefetch_prs_enrich_checks "$slug" 50)
+		checks_json=$(_prefetch_prs_enrich_checks "$slug" "$pr_json")
 	fi
 
 	_prefetch_prs_format_output "$pr_json" "$pr_count" "$checks_json"
@@ -423,13 +427,16 @@ _prefetch_single_repo_idle_skip() {
 	fi
 	echo ""
 
-	# Checks enrichment: always run for repos with cached PRs > 0
+	# Checks enrichment: always run for repos with cached PRs > 0.
+	# Cached PRs may be from a pre-GH#21799 cache that lacks .headRefOid;
+	# the REST batch helper returns "[]" gracefully in that case, and the
+	# next full sweep will repopulate with .headRefOid included.
 	if [[ "$_cached_pr_count" -gt 0 ]]; then
 		local _checks_json=""
-		_checks_json=$(_prefetch_prs_enrich_checks "$slug" 50)
+		_checks_json=$(_prefetch_prs_enrich_checks "$slug" "$_cached_prs")
 		if [[ -n "$_checks_json" && "$_checks_json" != "[]" && "$_checks_json" != "null" ]]; then
 			echo "### PR Check Status (live)"
-			echo "$_checks_json" | jq -r '.[] | "- PR #\(.number): \(.statusCheckRollup // "unknown")"' 2>/dev/null || true
+			echo "$_checks_json" | jq -r '.[] | "- PR #\(.number): \(.status // "unknown")"' 2>/dev/null || true
 			echo ""
 		fi
 	fi

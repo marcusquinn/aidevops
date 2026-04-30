@@ -10,9 +10,10 @@
 # of origin:worker PRs whose branch-protection-required checks all passed.
 #
 # Fix: _check_required_checks_passing fetches required contexts directly from
-# the branch protection API (authoritative), then cross-references the PR
-# statusCheckRollup. If all required-by-protection contexts pass, the function
-# returns 0, allowing the origin:worker bypass path to proceed.
+# the branch protection API (authoritative), then cross-references the PR's
+# REST check-runs (GH#21799 migration). If all required-by-protection contexts
+# pass, the function returns 0, allowing the origin:worker bypass path to
+# proceed.
 #
 # Scenarios tested:
 #   1. all_required_pass — all required contexts SUCCESS → return 0
@@ -22,20 +23,23 @@
 #   5. no_required_contexts — branch protection has empty contexts list → return 0
 #   6. default_branch_api_error — can't get default branch → return 1 (fail-closed)
 #   7. branch_protection_api_error — can't get branch protection → return 1 (fail-closed)
-#   8. rollup_api_error — can't get statusCheckRollup → return 1 (fail-closed)
+#   8. checks_api_error — can't get REST check-runs → return 1 (fail-closed)
 #
-# Strategy: extract _check_required_checks_passing from pulse-merge.sh, eval it,
-# and exercise against a mock `gh` stub keyed on MOCK_GH_MODE.
+# Strategy: source shared-gh-wrappers-checks.sh for `gh_pr_check_runs_rest`,
+# extract _check_required_checks_passing from pulse-merge-process.sh, eval it,
+# and exercise against a mock `gh` stub keyed on MOCK_*_MODE env vars.
 #
-# The mock handles three gh invocations (in order of call):
-#   1. gh api repos/SLUG               → default branch
-#   2. gh api repos/SLUG/branches/...  → required_status_checks
-#   3. gh pr view NUM --json statusCheckRollup → PR check states
+# The mock handles five gh invocations (post GH#21799 migration):
+#   1. gh api repos/SLUG                              → default branch
+#   2. gh api repos/SLUG/branches/.../protection/...  → required_status_checks
+#   3. gh pr view NUM --json headRefOid               → PR HEAD SHA
+#   4. gh api repos/SLUG/commits/SHA/check-runs       → check-run states
+#   5. gh api repos/SLUG/commits/SHA/status           → legacy status contexts
 #
 # Mode variables:
 #   MOCK_REPO_MODE   — controls gh api repos/<slug> response
 #   MOCK_BP_MODE     — controls branch protection required_status_checks response
-#   MOCK_ROLLUP_MODE — controls gh pr view statusCheckRollup response
+#   MOCK_ROLLUP_MODE — controls REST check-runs/status response (legacy name retained)
 
 set -euo pipefail
 
@@ -120,9 +124,12 @@ apply_jq() {
 }
 
 # Match: gh api repos/SLUG  (repo info — default branch)
-# Detected by: $1 == api, $2 starts with "repos/", no "/branches/" in args
+# Detected by: $1 == api, $2 starts with "repos/", no other path segments.
+# Must exclude /commits/ for the GH#21799 REST check-runs/status branches
+# below to be reachable.
 if [[ "$1" == "api" && "$2" == repos/* && "$*" != *"/branches/"* \
-	&& "$*" != *"/issues/"* && "$*" != *"/pulls/"* ]]; then
+	&& "$*" != *"/issues/"* && "$*" != *"/pulls/"* \
+	&& "$*" != *"/commits/"* ]]; then
 	case "${MOCK_REPO_MODE:-ok}" in
 	ok)
 		apply_jq '{"default_branch":"main"}' "$@"
@@ -154,50 +161,70 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	exit 0
 fi
 
-# Match: gh pr view NUM --json statusCheckRollup
-if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"statusCheckRollup"* ]]; then
+# Match: gh pr view NUM --json headRefOid (GH#21799)
+# Returns a fake HEAD SHA so the helper can issue REST check-runs queries.
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
+	local_json='{"headRefOid":"abc123def456789000000000000000000000abcd"}'
+	apply_jq "$local_json" "$@"
+	exit 0
+fi
+
+# Match: gh api repos/SLUG/commits/SHA/check-runs (GH#21799)
+# Returns the GitHub Actions / Apps check-run list. Mock data normalised to
+# the lowercase `conclusion`/`status` shape that GitHub returns.
+if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 	local_json=""
 	case "${MOCK_ROLLUP_MODE:-all_required_pass}" in
 	all_required_pass)
 		# All three required checks pass; no non-required checks.
-		local_json='{"statusCheckRollup":[
-			{"name":"review-bot-gate","state":"SUCCESS"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"SUCCESS","status":"COMPLETED"},
-			{"name":"Complexity Analysis","conclusion":"SUCCESS","status":"COMPLETED"}
+		local_json='{"check_runs":[
+			{"name":"review-bot-gate","conclusion":"success","status":"completed"},
+			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
 	phantom_pending)
 		# Required checks pass; non-required checks report null/pending.
-		local_json='{"statusCheckRollup":[
-			{"name":"review-bot-gate","state":"SUCCESS"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"SUCCESS","status":"COMPLETED"},
-			{"name":"Complexity Analysis","conclusion":"SUCCESS","status":"COMPLETED"},
-			{"name":"coderabbit-review","state":null},
-			{"name":"qlty-check","conclusion":null,"status":"QUEUED"},
-			{"name":"linked-issue-check","state":null},
-			{"name":"url-allowlist","conclusion":null,"status":"IN_PROGRESS"}
+		local_json='{"check_runs":[
+			{"name":"review-bot-gate","conclusion":"success","status":"completed"},
+			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"Complexity Analysis","conclusion":"success","status":"completed"},
+			{"name":"coderabbit-review","conclusion":null,"status":"queued"},
+			{"name":"qlty-check","conclusion":null,"status":"queued"},
+			{"name":"linked-issue-check","conclusion":null,"status":"in_progress"},
+			{"name":"url-allowlist","conclusion":null,"status":"in_progress"}
 		]}'
 		;;
 	one_required_failing)
 		# review-bot-gate is FAILURE; other required checks pass.
-		local_json='{"statusCheckRollup":[
-			{"name":"review-bot-gate","state":"FAILURE"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"SUCCESS","status":"COMPLETED"},
-			{"name":"Complexity Analysis","conclusion":"SUCCESS","status":"COMPLETED"}
+		local_json='{"check_runs":[
+			{"name":"review-bot-gate","conclusion":"failure","status":"completed"},
+			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
 	required_absent)
-		# review-bot-gate is missing from rollup; other required checks pass.
-		local_json='{"statusCheckRollup":[
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"SUCCESS","status":"COMPLETED"},
-			{"name":"Complexity Analysis","conclusion":"SUCCESS","status":"COMPLETED"}
+		# review-bot-gate is missing from check-runs; other required checks pass.
+		local_json='{"check_runs":[
+			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
 	error)
-		printf 'gh: mock statusCheckRollup error\n' >&2
+		printf 'gh: mock REST check-runs error\n' >&2
 		exit 1
 		;;
 	esac
+	apply_jq "$local_json" "$@"
+	exit 0
+fi
+
+# Match: gh api repos/SLUG/commits/SHA/status (GH#21799)
+# Mock data drives ALL checks through /check-runs above; /status returns empty.
+# (Helper merges both endpoints — empty /status is the realistic case for
+# GitHub-Actions-only repos like aidevops.)
+if [[ "$1" == "api" && "$*" == *"/commits/"* && "$*" == *"/status"* ]]; then
+	local_json='{"statuses":[]}'
 	apply_jq "$local_json" "$@"
 	exit 0
 fi
@@ -218,6 +245,18 @@ teardown_test_env() {
 
 # Extract _check_required_checks_passing from pulse-merge.sh and eval it.
 define_function_under_test() {
+	# Source the REST check-runs helper so the extracted function can call
+	# `gh_pr_check_runs_rest` (GH#21799 migration). Sub-library only — avoids
+	# pulling in the full shared-gh-wrappers.sh orchestrator.
+	local checks_lib="${SCRIPT_DIR}/../shared-gh-wrappers-checks.sh"
+	if [[ ! -f "$checks_lib" ]]; then
+		printf 'ERROR: shared-gh-wrappers-checks.sh not found at %s\n' \
+			"$checks_lib" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from sibling lib
+	source "$checks_lib"
+
 	local fn_src
 	fn_src=$(awk '
 		/^_check_required_checks_passing\(\) \{/,/^}$/ { print }
@@ -353,8 +392,8 @@ test_rollup_api_error() {
 	export MOCK_REPO_MODE="ok"
 	export MOCK_BP_MODE="three_required"
 	export MOCK_ROLLUP_MODE="error"
-	assert_returns 1 "statusCheckRollup API error → blocked (fail-closed)"
-	assert_log_contains "statusCheckRollup fetch failed" \
+	assert_returns 1 "REST check-runs API error → blocked (fail-closed)"
+	assert_log_contains "REST check-runs fetch failed" \
 		"rollup_error: fail-closed message logged"
 	return 0
 }

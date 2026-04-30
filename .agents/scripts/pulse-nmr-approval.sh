@@ -609,9 +609,12 @@ _find_qualifying_pr_for_stale_recovery() {
 	local slug="$2"
 	local nmr_at="$3"
 
+	# GH#21799: dropped statusCheckRollup (heaviest GraphQL field). headRefOid
+	# is added so per-PR check-run state can be fetched via REST below — that
+	# call only fires for PRs that pass the cheap gates first.
 	local pr_json
 	pr_json=$(gh pr list --search "Resolves #${issue_num} in:body" --state open \
-		--repo "$slug" --json number,reviewDecision,statusCheckRollup,authorAssociation,labels,createdAt \
+		--repo "$slug" --json number,reviewDecision,headRefOid,authorAssociation,labels,createdAt \
 		--limit 10 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
 
@@ -621,11 +624,12 @@ _find_qualifying_pr_for_stale_recovery() {
 
 	local j=0
 	while [[ "$j" -lt "$pr_count" ]]; do
-		local pr_num="" pr_review="" pr_author_assoc="" pr_created_at=""
+		local pr_num="" pr_review="" pr_author_assoc="" pr_created_at="" pr_sha=""
 		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
 		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
 		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
 		pr_created_at=$(printf '%s' "$pr_json" | jq -r ".[$j].createdAt // empty" 2>/dev/null) || pr_created_at=""
+		pr_sha=$(printf '%s' "$pr_json" | jq -r ".[$j].headRefOid // empty" 2>/dev/null) || pr_sha=""
 		j=$((j + 1))
 
 		# PR must be created AFTER NMR was applied.
@@ -652,10 +656,17 @@ _find_qualifying_pr_for_stale_recovery() {
 		[[ "$has_valid_origin" =~ ^[0-9]+$ ]] || has_valid_origin=0
 		[[ "$has_valid_origin" -gt 0 ]] || continue
 
-		# All non-maintainer-gate CI checks must have a passing conclusion.
+		# GH#21799: All non-maintainer-gate CI checks must have a passing
+		# conclusion. Fetch via REST check-runs (separate from GraphQL pool).
+		# Skip fail-closed if SHA missing (cached PR pre-migration).
+		[[ -n "$pr_sha" ]] || continue
+		local check_runs_json
+		check_runs_json=$(gh_pr_check_runs_rest "$slug" "$pr_sha" 2>/dev/null) || check_runs_json=""
+		# Empty output → /check-runs API failure → fail-closed (skip this PR).
+		[[ -n "$check_runs_json" ]] || continue
 		local failing_checks
-		failing_checks=$(printf '%s' "$pr_json" | jq -r \
-			"[.[$((j - 1))].statusCheckRollup[]? | select(.name != null) | select(.name | test(\"Maintainer Review\"; \"i\") | not) | select(.conclusion != \"SUCCESS\" and .conclusion != \"NEUTRAL\" and .conclusion != \"SKIPPED\")] | length" \
+		failing_checks=$(printf '%s' "$check_runs_json" | jq -r \
+			'[.[]? | select(.name != null) | select(.name | test("Maintainer Review"; "i") | not) | select((.conclusion // "" | ascii_upcase) != "SUCCESS" and (.conclusion // "" | ascii_upcase) != "NEUTRAL" and (.conclusion // "" | ascii_upcase) != "SKIPPED")] | length' \
 			2>/dev/null) || failing_checks=0
 		[[ "$failing_checks" =~ ^[0-9]+$ ]] || failing_checks=0
 		[[ "$failing_checks" -le 0 ]] || continue

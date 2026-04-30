@@ -191,18 +191,52 @@ _gather_system_resources() {
 #   sys_load_1m, sys_load_5m, sys_memory, sys_procs,
 #   wt_count, max_workers, session_count, session_warning
 #######################################
+# Render an open-PR summary table from gh pr list JSON + REST check status array.
+# Outputs a markdown table on stdout, or "_No open PRs_" when the input is empty.
+# GH#21799: extracted from _gather_health_stats so the parent stays under the
+# 100-line function-complexity gate after the REST migration.
+_render_open_pr_table() {
+	local pr_json="$1"
+	local pr_checks_json="$2"
+	local pr_count
+	pr_count=$(echo "$pr_json" | jq 'length')
+	if [[ "$pr_count" -le 0 ]]; then
+		echo "_No open PRs_"
+		return 0
+	fi
+
+	printf '| # | Title | Branch | Checks | Review | Updated |\n'
+	printf '| --- | --- | --- | --- | --- | --- |\n'
+	jq -n --argjson prs "$pr_json" --argjson checks "$pr_checks_json" -r '
+		($checks | map({(.number | tostring): .status}) | add // {}) as $check_map |
+		$prs[] |
+		(.number | tostring) as $n |
+		"| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \($check_map[$n] // "unknown") | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"
+	'
+	return 0
+}
+
 _gather_health_stats() {
 	local repo_slug="$1"
 	local repo_path="$2"
 	local runner_user="$3"
 
 	# Open PRs — limit 100 for accurate count + table display.
+	# GH#21799: drop GraphQL statusCheckRollup; fetch headRefOid + resolve
+	# PASS/FAIL/PENDING via REST check-suites (separate budget pool).
 	local pr_json
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
+		--json number,title,headRefName,headRefOid,updatedAt,reviewDecision \
 		--limit 100 2>/dev/null) || pr_json="[]"
 	local pr_count
 	pr_count=$(echo "$pr_json" | jq 'length')
+
+	# Enrich with REST check status (only when there are PRs to check).
+	local pr_checks_json="[]"
+	if [[ "$pr_count" -gt 0 ]]; then
+		pr_checks_json=$(gh_pr_check_status_rest_batch "$repo_slug" "$pr_json" 2>/dev/null) || pr_checks_json="[]"
+		[[ -n "$pr_checks_json" && "$pr_checks_json" != "null" ]] || pr_checks_json="[]"
+	fi
 
 	# Open issues — assigned to this runner (actionable) vs total.
 	local assigned_issue_count
@@ -253,16 +287,9 @@ _gather_health_stats() {
 		echo "[stats] Session warning: $session_count interactive sessions open (threshold: $SESSION_COUNT_WARN)" >>"$LOGFILE"
 	fi
 
-	# PRs table
-	local prs_md=""
-	if [[ "$pr_count" -gt 0 ]]; then
-		prs_md="| # | Title | Branch | Checks | Review | Updated |
-| --- | --- | --- | --- | --- | --- |
-"
-		prs_md="${prs_md}$(echo "$pr_json" | jq -r '.[] | "| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end) | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"')"
-	else
-		prs_md="_No open PRs_"
-	fi
+	# PRs table — REST-derived check status by PR number (GH#21799).
+	local prs_md
+	prs_md=$(_render_open_pr_table "$pr_json" "$pr_checks_json")
 
 	# Output all stats as NUL-delimited fields.
 	printf '%s\0' \
