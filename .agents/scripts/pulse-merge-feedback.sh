@@ -591,7 +591,8 @@ _classify_ci_failures_by_pattern() {
 
 		local matched_class=
 		while IFS='|' read -r class_raw glob_raw _rest; do
-			local class glob
+			# Both vars initialised to empty for set -u safety (t2863).
+			local class='' glob=''
 			class="${class_raw#"${class_raw%%[![:space:]]*}"}"
 			class="${class%"${class##*[![:space:]]}"}"
 			glob="${glob_raw#"${glob_raw%%[![:space:]]*}"}"

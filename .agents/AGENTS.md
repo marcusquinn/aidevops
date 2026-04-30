@@ -615,6 +615,34 @@ When a worker PR develops merge conflicts that `gh pr update-branch` cannot reso
 
 **Background (t2987):** 3 reroutes on the same Drizzle migration conflict in a managed private repo. The generic brief told each worker "files conflicted, rebuild on develop" — they did, hit the same index-collision conflict, got rerouted again. Pattern-aware briefs turn each reroute into a one-shot fix.
 
+### CI Failure Resolution Patterns (t3225)
+
+When a worker PR develops failing required CI checks, the deterministic merge pass routes the failure to the linked issue via `_dispatch_ci_fix_worker` (in `pulse-merge-feedback.sh`). As of t3225, the routed feedback section includes **pattern-aware guidance** that surfaces auto-fix sequences for the largest CI-failure cost class (format/lint failures), so the next worker tries a one-line fix BEFORE re-implementing the original task.
+
+This is the second-layer fix that complements t3224 (the pre-push verify hook). t3224 prevents new format/lint failures from reaching CI at push time; t3225 unsticks PRs that already have such failures (in-flight backlog or hook-bypassed pushes).
+
+**Pattern registry:** `.agents/configs/ci-failure-patterns.conf` — single source of truth for check-name → classification → guidance text. Format: `CLASSIFICATION | NAME_PATTERN | RESOLUTION_COMMAND | GUIDANCE_TEXT` (one record per line, `#` comments and blank lines ignored). Add new patterns here; the shell code picks them up automatically.
+
+**Supported classifications:**
+
+| Classification | Canonical check names | Resolution |
+|---|---|---|
+| `FORMAT_FAILURE` | `*Format*`, `*Prettier*`, `*Biome*`, `*gofmt*`, `*cargo fmt*`, `*Black*` | Auto-fix via project's format command (`pnpm format --write`, `cargo fmt --all`, `black .`, etc.) → `git commit --amend --no-edit` → `git push --force-with-lease`. |
+| `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Auto-fix via project's lint-fix command (`pnpm lint --fix`, `cargo clippy --fix`, `ruff check --fix`, etc.). Many lint rules auto-fix; remaining findings need code changes. |
+| `TYPECHECK_FAILURE` | `*Typecheck*`, `*tsc*`, `*mypy*` | Read failing-check URL for type errors; fix in code. **Never** auto-suppress with `@ts-ignore`/`as any`/`type: ignore` unless explicitly authorised. |
+| `OTHER` | everything else | Catch-all. No guidance block emitted (falls through to generic worker guidance in the feedback section). |
+
+**How the pattern detection works:** `_classify_ci_failures_by_pattern()` in `pulse-merge-feedback.sh` takes the failing-check names list (from `gh pr checks --bucket fail`), matches each name against conf patterns in order (first match wins), and returns one output line per classification containing all matching names. `_build_ci_feedback_section()` then calls `_emit_ci_failure_guidance_blocks()` which appends a `### Pattern-Specific Resolution Guidance` block per non-`OTHER` pattern, BEFORE the generic `### Worker guidance` block. `OTHER`-only failures receive only the generic guidance.
+
+**Adding a new pattern:**
+
+1. Add a record to `.agents/configs/ci-failure-patterns.conf` (see inline format comments).
+2. Add a test case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`.
+3. Run `bash .agents/scripts/tests/test-ci-failure-pattern-detection.sh` — must pass 0 failures.
+4. Run `shellcheck .agents/scripts/pulse-merge-feedback.sh` — must pass clean.
+
+**Background (t3225):** 12 PRs in a managed private repo were stuck on `Format:FAILURE`, `Lint:FAILURE`, `Typecheck:FAILURE` for 17h+ despite `ci-feedback-routed` dispatch. Workers spent tier:standard or tier:thinking sessions on what was auto-fixable in one bash command. The pre-t3225 brief said "fix the failures" generically; the post-t3225 brief leads with the auto-fix sequence so workers try the cheap fix first. Companion to t3224 (pre-push hook) — together they collapse the dominant non-merge cause class.
+
 ### Quality Standards
 
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
