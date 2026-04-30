@@ -157,18 +157,48 @@ _classify_via_llm() {
 		return 1
 	fi
 
+	# Capture stderr so we can attribute failures (missing API key,
+	# rate-limit, network, etc.) in the run-summary instead of swallowing
+	# them and reporting "processed N" as if classification had happened.
+	# t3223: detector silent failure — LLM outage masqueraded as 100%
+	# verdict=NO output for ~6h before being noticed.
 	local raw=""
-	raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>/dev/null) || {
-		_log_warn "LLM call failed (model=${model}) — treating as NO"
-		return 1
-	}
+	local err_log
+	err_log=$(mktemp -t fix-the-fixer-llm-err.XXXXXX 2>/dev/null) || err_log=""
+	# Note: SKIP paths return 0 (not 1) so set -e doesn't abort cmd_check
+	# before it can propagate the SKIP verdict to the caller. SKIP is a
+	# valid output of this function — "I cannot classify" is itself a
+	# classification result, just a different one from YES/NO.
+	if [[ -n "$err_log" ]]; then
+		raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>"$err_log") || {
+			local helper_rc=$?
+			local err_snippet=""
+			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
+			rm -f "$err_log"
+			RATIONALE="LLM call failed (model=${model}, rc=${helper_rc}): ${err_snippet:-no stderr}"
+			_log_warn "${RATIONALE}"
+			printf 'SKIP\n'
+			return 0
+		}
+		rm -f "$err_log"
+	else
+		# mktemp unavailable — fall back to no stderr capture.
+		raw=$("$AI_RESEARCH_HELPER" --model "$model" --prompt "$prompt" --max-tokens 200 2>/dev/null) || {
+			RATIONALE="LLM call failed (model=${model}) — stderr capture unavailable"
+			_log_warn "${RATIONALE}"
+			printf 'SKIP\n'
+			return 0
+		}
+	fi
 
 	# First non-empty line is the verdict.
 	local first_line
 	first_line=$(printf '%s\n' "$raw" | awk 'NF { print; exit }')
 	if [[ -z "$first_line" ]]; then
-		_log_warn "empty LLM output — treating as NO"
-		return 1
+		RATIONALE="empty LLM output (model=${model}) — cannot classify"
+		_log_warn "${RATIONALE}"
+		printf 'SKIP\n'
+		return 0
 	fi
 
 	# Parse verdict + rationale. Be lenient on whitespace and case.
@@ -310,9 +340,20 @@ cmd_check() {
 	fi
 
 	# Classify.
+	# Return semantics (t3223 — detector silent failure fix):
+	#   exit 0 + verdict=YES  → classified, label applied
+	#   exit 0 + verdict=NO   → classified, no action
+	#   exit 2 + verdict=SKIP → LLM unavailable, NOT classified — caller
+	#                            must surface this in run summary
+	#   exit 0 (other paths)  → skipped pre-classification (closed,
+	#                            already labeled, no body, no auto-dispatch)
 	RATIONALE=""
 	local verdict
 	verdict=$(_classify_via_llm "$title" "$body")
+	if [[ "$verdict" == "SKIP" ]]; then
+		_log_warn "${slug}#${issue_num} classification skipped — ${RATIONALE}"
+		return 2
+	fi
 	if [[ "$verdict" != "YES" ]]; then
 		_log_info "${slug}#${issue_num} verdict=NO ${RATIONALE}"
 		return 0
@@ -370,7 +411,12 @@ cmd_run() {
 		return 0
 	fi
 
+	# Track classified vs skipped separately so a 100% LLM outage doesn't
+	# masquerade as "processed N issues" — the failure mode this whole
+	# fix exists to surface (t3223).
 	local processed=0
+	local classified=0
+	local skipped_llm=0
 	local slug
 	for slug in "${target_repos[@]}"; do
 		[[ "$processed" -ge "$limit" ]] && break
@@ -391,12 +437,25 @@ cmd_run() {
 		while IFS= read -r issue_num; do
 			[[ -z "$issue_num" ]] && continue
 			[[ "$processed" -ge "$limit" ]] && break
-			cmd_check "$issue_num" "$slug" || true
+			# `set -e` is on; capture rc explicitly so cmd_check's
+			# exit 2 (LLM SKIP) doesn't kill the loop.
+			local rc=0
+			cmd_check "$issue_num" "$slug" || rc=$?
+			case "$rc" in
+				2) skipped_llm=$((skipped_llm + 1)) ;;
+				*) classified=$((classified + 1)) ;;
+			esac
 			processed=$((processed + 1))
 		done <<<"$nums"
 	done
 
-	_log_info "processed ${processed} issue(s) across ${#target_repos[@]} repo(s)"
+	if [[ "$skipped_llm" -gt 0 ]]; then
+		# Loud signal — the original t3223 incident was a 6h silent LLM
+		# outage. WARN level so it surfaces in the dashboards/log filters.
+		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:LLM-failure=${skipped_llm} (detector observability degraded; check ai-research-helper.sh / API credentials)"
+	else
+		_log_info "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:LLM-failure=0"
+	fi
 	return 0
 }
 
