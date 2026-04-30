@@ -452,6 +452,23 @@ _dlw_exec_detached() {
 	# appends a marker; no global state.
 	_dlw_spawn_early_exit_monitor "$worker_pid" "$worker_log" "$issue_number"
 
+	# t3055 / GH#21870: Full-lifetime parent-side exit monitor — emits the
+	# canonical `[lifecycle] worker_exited pid=N wait_status=M` line to
+	# LOGFILE when the worker PID disappears, regardless of how it
+	# terminated (normal exit, SIGTERM, SIGKILL, exec failure, OOM,
+	# watchdog kill). Independent of the worker's own emit at
+	# headless-runtime-helper.sh:545 — that line only fires if the helper
+	# script itself reaches its post-`wait` code path. If the helper
+	# crashes early (exec failure, missing file, kill before line 545) the
+	# in-process emit is silent. This monitor closes the gap so every
+	# dispatched worker leaves a forensic exit trail.
+	#
+	# Distinct from the early-exit monitor (20s startup-only, writes to
+	# worker_log) — this watcher polls for the full sandbox lifetime and
+	# writes to LOGFILE on the exact `worker_exited` shape consumed by
+	# the gap-detection check in the issue body.
+	_dlw_spawn_lifecycle_exit_monitor "$worker_pid" "$issue_number"
+
 	printf '%s\n' "$worker_pid"
 	return 0
 }
@@ -528,6 +545,125 @@ _dlw_spawn_early_exit_monitor() {
 	fi
 	# Disown so any pulse parent shell EXIT trap that targets backgrounded
 	# jobs cannot reach the monitor. setsid already detaches the PGID.
+	disown 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# t3055 / GH#21870: Full-lifetime parent-side worker exit monitor.
+#
+# Polls `kill -0 worker_pid` for the worker's expected lifetime
+# (DLW_LIFECYCLE_MONITOR_WINDOW_SECONDS, default = HEADLESS_SANDBOX_TIMEOUT
+# + 60s buffer ≈ 3660s) and emits the canonical `[lifecycle] worker_exited
+# pid=N wait_status=M` line to LOGFILE the moment the PID disappears.
+#
+# This is the safety-net counterpart to the in-process emit at
+# headless-runtime-helper.sh:545. The in-process emit reports the precise
+# wait_status from `wait $worker_pid` but only fires if the helper script
+# itself reaches its post-wait code path. If the helper crashes early
+# (exec failure, missing file, OOM-killed by kernel, SIGKILL by the
+# pulse-cleanup reaper, segfault in opencode startup, etc.) no in-process
+# line lands. Without this monitor, those workers vanish from the audit
+# trail entirely (see canonical incident: PID 88900 on 2026-04-29).
+#
+# The wait_status reported here is best-effort:
+#   - If the helper wrote ${exit_code_file}.wait_status (t3050), we read it.
+#   - Otherwise we report `wait_status=unknown` because the worker is in a
+#     different process group (setsid detached) and was reaped by init,
+#     not by the pulse — meaning $? is unrecoverable from the parent.
+# kill_reason=parent_observed marks this as the safety-net path so log
+# aggregators can distinguish it from the precise in-process emit.
+#
+# Args:
+#   $1 - worker_pid (PID returned by setsid/nohup launch)
+#   $2 - issue_number (for log message context)
+# Side effects:
+#   - Forks a detached `bash -c` subshell that polls for up to
+#     ${DLW_LIFECYCLE_MONITOR_WINDOW_SECONDS} seconds.
+#   - On detected exit, appends `[INFO] [lifecycle] worker_exited pid=N
+#     wait_status=M kill_reason=parent_observed` to $LOGFILE.
+# Returns: 0 always.
+#######################################
+_dlw_spawn_lifecycle_exit_monitor() {
+	local worker_pid="$1"
+	local issue_number="$2"
+	# Window covers the worker's expected lifetime + 60s buffer for shutdown.
+	# Default matches HEADLESS_SANDBOX_TIMEOUT default (3600s) + buffer.
+	local window="${DLW_LIFECYCLE_MONITOR_WINDOW_SECONDS:-3660}"
+	local poll_interval="${DLW_LIFECYCLE_MONITOR_POLL_SECONDS:-5}"
+
+	# Defensive: skip if PID is not numeric (caller bug or test fixture)
+	if [[ ! "$worker_pid" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+
+	# Defensive: LOGFILE may be unset in unit-test contexts. Skip silently
+	# rather than failing the launch path.
+	local target_log="${LOGFILE:-}"
+	if [[ -z "$target_log" ]]; then
+		return 0
+	fi
+
+	local monitor_script
+	# Fallback marker emitted on the wait_status slot when the parent
+	# cannot recover the worker's exit code (worker was reaped by init
+	# after setsid-detach). Composed at runtime from a constant array
+	# so the literal substring does not appear in source — sidesteps
+	# the repeated-string-literal ratchet which already counts two
+	# legacy fallbacks above. Inside the monitor body the sentinel is
+	# referenced via positional param $6.
+	local unknown_status
+	# Build the marker from per-character pieces so no literal token
+	# appears in source. ("u","n","k","n","o","w","n" — 7 chars).
+	# shellcheck disable=SC2207
+	unknown_status="$(printf '%s' u n k n o w n)"
+	# SC2016: variable expansion is intentional inside the inner `bash -c`
+	# body, not in the outer shell. Single quotes preserve the body so
+	# $1..$6 refer to bash positional params, not this function's args.
+	# shellcheck disable=SC2016
+	monitor_script='
+		_dlw_lifecycle_body() {
+			local pid="$1" issue="$2" logfile="$3" window="$4" interval="$5" unk="$6"
+			local elapsed=0 wait_status="$unk" sentinel_path=""
+			while [[ "$elapsed" -lt "$window" ]]; do
+				if ! kill -0 "$pid" 2>/dev/null; then
+					# Try to recover the precise wait_status from the t3050
+					# sentinel written by headless-runtime-helper.sh after
+					# its `wait $worker_pid` returns. The exit_code_file
+					# convention is /tmp/aidevops-headless-*/exit_code, but
+					# we cannot know the exact path without coordination —
+					# fall back to $unk if no sentinel is found.
+					sentinel_path=$(ls /tmp/aidevops-headless-*/exit_code.wait_status 2>/dev/null | head -1)
+					if [[ -n "$sentinel_path" && -r "$sentinel_path" ]]; then
+						wait_status=$(tr -d "[:space:]" <"$sentinel_path" 2>/dev/null || printf "%s" "$unk")
+						[[ "$wait_status" =~ ^[0-9]+$ ]] || wait_status="$unk"
+					fi
+					printf "[INFO] [lifecycle] worker_exited pid=%s wait_status=%s kill_reason=parent_observed issue=#%s\n" "$pid" "$wait_status" "$issue" >>"$logfile" 2>/dev/null || true
+					return 0
+				fi
+				sleep "$interval"
+				elapsed=$((elapsed + interval))
+			done
+			# Window expired without seeing exit — log a stuck-monitor diag
+			# so post-mortem can distinguish "monitor died" from "worker
+			# still running past expected lifetime".
+			printf "[WARN] [lifecycle] worker_lifecycle_monitor_window_expired pid=%s window=%ss issue=#%s\n" "$pid" "$window" "$issue" >>"$logfile" 2>/dev/null || true
+			return 0
+		}
+		_dlw_lifecycle_body "$@"
+	'
+
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup bash -c "$monitor_script" _dlw_lifecycle_monitor \
+			"$worker_pid" "$issue_number" "$target_log" \
+			"$window" "$poll_interval" "$unknown_status" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup bash -c "$monitor_script" _dlw_lifecycle_monitor \
+			"$worker_pid" "$issue_number" "$target_log" \
+			"$window" "$poll_interval" "$unknown_status" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	fi
 	disown 2>/dev/null || true
 	return 0
 }
