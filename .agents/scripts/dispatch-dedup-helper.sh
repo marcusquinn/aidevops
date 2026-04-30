@@ -1050,14 +1050,21 @@ is_assigned() {
 	fi
 
 	# t2930: Honor dispatch-override.conf "ignore" entries at the ASSIGNEE level.
+	# t3194: Also honor "peer-quarantine-until=<ISO>" entries (auto-managed by
+	# pulse-peer-quarantine-helper.sh). When a peer has been quarantined for
+	# emitting too many launch_recovery:no_worker_process events, treat its
+	# claim as if it were on the legacy `ignore` list — strip from blocking
+	# set so this runner can take over instead of backing off behind a known-
+	# broken peer.
+	#
 	# The dispatch-claim-helper filters claim COMMENTS by override config, but
 	# ignored peers can still raw-assign themselves via gh issue edit
 	# --add-assignee — and is_assigned previously honored that unconditionally,
 	# creating a permanent dispatch block. With this filter, an "ignore"-listed
-	# peer is treated as if not assigned, allowing competitive dispatch (winner's
-	# PR closes the issue; loser wastes tokens but doesn't block throughput).
-	# Self-runner and parent-task / no-auto-dispatch / cost circuit-breaker /
-	# hydration window guards above remain in effect.
+	# or quarantined peer is treated as if not assigned, allowing competitive
+	# dispatch (winner's PR closes the issue; loser wastes tokens but doesn't
+	# block throughput). Self-runner and parent-task / no-auto-dispatch / cost
+	# circuit-breaker / hydration window guards above remain in effect.
 	local override_conf="${HOME}/.config/aidevops/dispatch-override.conf"
 	if [[ -f "$override_conf" ]]; then
 		local _filtered_assignees=""
@@ -1065,12 +1072,29 @@ is_assigned() {
 		local -a _override_array=()
 		IFS=',' read -ra _override_array <<<"$assignees"
 		IFS="$_saved_ifs"
-		local _a _upper _override_val
+		local _a _upper _override_val _now_epoch _q_until _q_until_epoch
+		_now_epoch=$(date -u '+%s')
 		for _a in "${_override_array[@]}"; do
-			_upper="$(printf '%s' "$_a" | tr 'a-z-' 'A-Z_')"
+			# Slug normalisation matches pulse-peer-quarantine-helper.sh's
+			# _pq_login_to_var: dash/dot/@ → underscore, uppercase.
+			_upper="$(printf '%s' "$_a" | tr 'a-z\-.@' 'A-Z___')"
 			_override_val=$(grep -E "^DISPATCH_OVERRIDE_${_upper}=" "$override_conf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+			# Legacy: t2930 unconditional ignore.
 			if [[ "$_override_val" == "ignore" ]]; then
 				continue
+			fi
+			# t3194: peer-quarantine-until=<ISO>. Honour as ignore while
+			# the timestamp is in the future; auto-expire silently after.
+			if [[ "$_override_val" == peer-quarantine-until=* ]]; then
+				_q_until="${_override_val#peer-quarantine-until=}"
+				# BSD date (macOS) first, then GNU date (Linux). Both
+				# variants succeed; one returns empty, the OR keeps going.
+				_q_until_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$_q_until" '+%s' 2>/dev/null || true)
+				[[ -z "$_q_until_epoch" ]] && _q_until_epoch=$(date -u -d "$_q_until" '+%s' 2>/dev/null || true)
+				[[ -z "$_q_until_epoch" ]] && _q_until_epoch=0
+				if [[ "$_q_until_epoch" -gt "$_now_epoch" ]]; then
+					continue
+				fi
 			fi
 			if [[ -n "$_filtered_assignees" ]]; then
 				_filtered_assignees="${_filtered_assignees},${_a}"
@@ -1358,6 +1382,33 @@ has_dispatch_comment() {
 
 	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
 		return 1
+	fi
+
+	# t3194: Opportunistic peer-quarantine detection. The comments JSON is
+	# already in hand — feed it to pulse-peer-quarantine-helper.sh's
+	# scan-comments subcommand to record any
+	# `CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<peer>`
+	# events from peers (not self). Zero new API calls; non-fatal on any
+	# failure. The brief originally specified this in
+	# pulse-batch-prefetch-helper.sh but that helper does not currently
+	# scan comments — fetching here is the actually-cheapest integration
+	# point because the JSON is already loaded.
+	local _pq_helper="${PEER_QUARANTINE_HELPER_OVERRIDE:-${HELPER_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}}/pulse-peer-quarantine-helper.sh}"
+	if [[ -x "$_pq_helper" ]]; then
+		# $3 (self_login) was the original arg to has_dispatch_comment;
+		# it's unused for the dispatch check itself but is exactly what
+		# we need to skip self events here.
+		local _pq_self="${3:-}"
+		if [[ -n "$_pq_self" ]]; then
+			printf '%s' "$comments_json" | "$_pq_helper" scan-comments \
+				--self-login "$_pq_self" \
+				--issue-ref "${repo_slug}#${issue_number}" \
+				>/dev/null 2>&1 || true
+		else
+			printf '%s' "$comments_json" | "$_pq_helper" scan-comments \
+				--issue-ref "${repo_slug}#${issue_number}" \
+				>/dev/null 2>&1 || true
+		fi
 	fi
 
 	# Find the most recent dispatch comment (newest first)
