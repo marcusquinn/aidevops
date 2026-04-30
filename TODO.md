@@ -3660,3 +3660,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3212 claude-proxy adopt-on-EADDRINUSE so multi-instance startup stops printing scary error #auto-dispatch #bug ref:GH#21944
 
 - [ ] t3213 maintainer-gate: switch check-pr concurrency to cancel-in-progress: true #auto-dispatch #bug ref:GH#21947
+
+- [ ] t3214 proxy-lifecycle: shared lazy-start helper for cursor + google + claude proxies #auto-dispatch #refactor ref:GH#21948
