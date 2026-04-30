@@ -23,10 +23,13 @@
 #   AIDEVOPS_PULSE_RESTART_WAIT=3     Seconds between stop and start (default 3).
 #   AIDEVOPS_PULSE_SIGTERM_WAIT=2     Seconds before escalating to SIGKILL.
 #   AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=3
-#                                     status: warn only when alive PID count
-#                                     EXCEEDS this threshold (default 3 — see
-#                                     t2774 lock-release window). Set to 1 for
-#                                     legacy strict-singleton check.
+#                                     status: warn only when MAIN pulse PID
+#                                     count exceeds this threshold (default 3 —
+#                                     see t2774 lock-release window). Sidecars
+#                                     (--merge-only / --self-check / --dry-run /
+#                                     --canary, GH#21903) are excluded from the
+#                                     count and reported separately. Set to 1
+#                                     for legacy strict-singleton check.
 #
 # Exit codes:
 #   0  Success (includes no-op cases)
@@ -79,6 +82,24 @@ _PULSE_EXPECTED_MAX_INSTANCES="${AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES:-3}"
 [[ "$_PULSE_EXPECTED_MAX_INSTANCES" =~ ^[0-9]+$ ]] || _PULSE_EXPECTED_MAX_INSTANCES=3
 [[ "$_PULSE_EXPECTED_MAX_INSTANCES" -ge 1 ]] || _PULSE_EXPECTED_MAX_INSTANCES=1
 
+# Sidecar pulse roles (GH#21903 follow-up). pulse-wrapper.sh runs in two distinct
+# modes:
+#   MAIN: full deterministic + LLM cycle (bare invocation, no role flag)
+#   SIDECAR: short-lived deterministic-only roles dispatched by separate
+#     launchd plists. They short-circuit BEFORE acquire_instance_lock and
+#     never enter the LLM phase. Recognised flags:
+#       --merge-only  PR auto-merge sidecar (GH#21247 plist, every 60s)
+#       --self-check  pulse health probe / canary
+#       --dry-run     preview cycle without side effects
+#       --canary      pre-dispatch validator
+#
+# Sidecars MUST NOT count toward the main-pulse PILE-UP threshold above —
+# a single 60s --merge-only sidecar would otherwise permanently consume one
+# of the three threshold slots, leaving only two main pulses for the
+# legitimate t2774 overlap window. _pulse_pids filters them out; status
+# reports them informationally on a separate line.
+_PULSE_SIDECAR_FLAGS_RE='(--merge-only|--self-check|--dry-run|--canary)'
+
 # ANSI colors (guarded — don't collide with shared-constants)
 [[ -z "${_PL_GREEN+x}" ]] && _PL_GREEN='\033[0;32m'
 [[ -z "${_PL_BLUE+x}" ]] && _PL_BLUE='\033[0;34m'
@@ -118,27 +139,33 @@ _pulse_pids_raw() {
 	return 0
 }
 
-# _pulse_pids: print only top-level pulse PIDs (one per line). Subshells of a
-# running pulse cycle inherit the parent's argv so naive pgrep over-counts.
+# _pulse_pids: print only top-level MAIN pulse PIDs (one per line). Subshells
+# of a running pulse cycle inherit the parent's argv so naive pgrep over-counts.
 # This function filters to PIDs whose PARENT command is NOT itself
 # pulse-wrapper.sh, eliminating the subshell false positives that trigger
-# spurious "MULTIPLE pulse instances detected" warnings (GH#21549, GH#21581).
+# spurious "MULTIPLE pulse instances detected" warnings (GH#21549, GH#21581),
+# AND filters out short-lived sidecar roles (--merge-only, --self-check,
+# --dry-run, --canary, GH#21903) so they don't consume threshold slots
+# reserved for legitimate t2774 main-pulse overlap.
 #
-# Two-layer filter (GH#21581):
-#   Layer 1 (fast path): if PPID=1 (init/launchd), the process is a canonical
-#     top-level instance — include directly. Subshells always have PPID = the
-#     pulse PID (> 1), so PPID=1 is a reliable signal for production instances
-#     started by the system process manager (launchd on macOS, systemd/init
-#     on Linux).
-#   Layer 2 (fallback): for manually-started instances (PPID != 1), check
-#     whether the parent command itself contains pulse-wrapper.sh. If it does,
-#     the process is a subshell of a running pulse — skip it.
+# Three-layer filter:
+#   Layer 1 (subshell guard, fast path): if PPID=1 (init/launchd), the process
+#     is a canonical top-level instance — include unless filtered by Layer 3.
+#     Subshells always have PPID = the pulse PID (> 1), so PPID=1 is a reliable
+#     signal for production instances started by the system process manager
+#     (launchd on macOS, systemd/init on Linux).
+#   Layer 2 (subshell guard, fallback): for manually-started instances
+#     (PPID != 1), skip PIDs whose parent command itself contains
+#     pulse-wrapper.sh — the process is a subshell of a running pulse.
+#   Layer 3 (sidecar guard, GH#21903): skip PIDs whose argv contains any
+#     sidecar role flag. Sidecars are categorically different from main
+#     pulse cycles and reported separately by _pulse_pids_sidecar.
 #
-# Empty output = none running.
+# Empty output = no main pulse running.
 # _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
-# all pulse processes including subshells.
+# all pulse processes including subshells AND sidecars on `stop`.
 _pulse_pids() {
-	local _pids _pid _ppid _ppid_cmd
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd=""
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
 	while read -r _pid; do
@@ -148,6 +175,9 @@ _pulse_pids() {
 		# canonical top-level instance. Subshells of pulse always have PPID = the
 		# pulse PID itself (> 1), never 1.
 		if [[ "$_ppid" == "1" ]]; then
+			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
+			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
 			printf '%s\n' "$_pid"
 			continue
 		fi
@@ -155,7 +185,34 @@ _pulse_pids() {
 		# parent command contains pulse-wrapper.sh (= direct subshell of pulse).
 		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
 		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		# Layer 3 (sidecar guard): also skip non-launchd-started sidecars
+		# (manual --merge-only invocations during testing or debugging).
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
 		printf '%s\n' "$_pid"
+	done <<< "$_pids"
+	return 0
+}
+
+# _pulse_pids_sidecar: print only top-level SIDECAR pulse PIDs (one per line).
+# Mirror of _pulse_pids but inverts Layer 3 — emit only PIDs whose argv
+# matches _PULSE_SIDECAR_FLAGS_RE. Used by _status to display sidecars
+# informationally without counting them toward the PILE-UP threshold.
+# Subshell guards (Layers 1 and 2) still apply — sidecars run as top-level
+# launchd-spawned processes (PPID=1), never as subshells of a main pulse.
+_pulse_pids_sidecar() {
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd=""
+	_pids=$(_pulse_pids_raw)
+	[[ -z "$_pids" ]] && return 0
+	while read -r _pid; do
+		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		if [[ "$_ppid" != "1" ]]; then
+			_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
+			[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		fi
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && printf '%s\n' "$_pid"
 	done <<< "$_pids"
 	return 0
 }
@@ -286,19 +343,27 @@ _restart_if_running() {
 #   it. GH#21903 reframes it as PILE-UP detection: warn only when the count
 #   exceeds the threshold (genuine respawn-outpacing-cycle-completion pattern).
 _status() {
-	local _pids
+	local _pids="" _sidecar_pids=""
 	_pids=$(_pulse_pids)
-	if [[ -z "$_pids" ]]; then
+	_sidecar_pids=$(_pulse_pids_sidecar)
+	if [[ -z "$_pids" && -z "$_sidecar_pids" ]]; then
 		printf 'Pulse: not running\n'
 		return 0
 	fi
 
-	# Count PIDs (newline-separated). Use wc -l + tr to be portable.
-	local _pid_count
-	_pid_count=$(printf '%s\n' "$_pids" | wc -l | tr -d ' ')
-	[[ "$_pid_count" =~ ^[0-9]+$ ]] || _pid_count=0
+	# Count MAIN PIDs only (sidecars are listed separately and don't count
+	# toward the PILE-UP threshold, GH#21903).
+	local _pid_count=0
+	if [[ -n "$_pids" ]]; then
+		_pid_count=$(printf '%s\n' "$_pids" | wc -l | tr -d ' ')
+		[[ "$_pid_count" =~ ^[0-9]+$ ]] || _pid_count=0
+	fi
 
-	printf 'Pulse: running (%s instance%s)\n' "$_pid_count" "$([[ $_pid_count -eq 1 ]] || printf 's')"
+	if [[ "$_pid_count" -eq 0 ]]; then
+		printf 'Pulse: not running (sidecar(s) only)\n'
+	else
+		printf 'Pulse: running (%s instance%s)\n' "$_pid_count" "$([[ $_pid_count -eq 1 ]] || printf 's')"
+	fi
 
 	# Read lock-holder PID for cross-reference (GH#21433 acceptance criterion).
 	# AIDEVOPS_PULSE_LOCK_DIR overrides the default path — useful for tests
@@ -322,18 +387,40 @@ _status() {
 	fi
 
 	local _pid
-	while IFS= read -r _pid; do
-		local _etime
-		_etime=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ')
-		local _marker=""
-		[[ "$_pid" == "$_lock_pid" ]] && _marker=" (lock holder)"
-		printf '  PID %s%s (uptime %s)\n' "$_pid" "$_marker" "${_etime:-unknown}"
-	done <<<"$_pids"
+	if [[ -n "$_pids" ]]; then
+		while IFS= read -r _pid; do
+			local _etime
+			_etime=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ')
+			local _marker=""
+			[[ "$_pid" == "$_lock_pid" ]] && _marker=" (lock holder)"
+			printf '  PID %s%s (uptime %s)\n' "$_pid" "$_marker" "${_etime:-unknown}"
+		done <<<"$_pids"
+	fi
 
+	# Sidecar listing (informational only — does NOT count toward PILE-UP).
+	if [[ -n "$_sidecar_pids" ]]; then
+		local _sidecar_count
+		_sidecar_count=$(printf '%s\n' "$_sidecar_pids" | wc -l | tr -d ' ')
+		[[ "$_sidecar_count" =~ ^[0-9]+$ ]] || _sidecar_count=0
+		printf '  Sidecar%s: %s alive (excluded from PILE-UP threshold, GH#21903)\n' \
+			"$([[ $_sidecar_count -eq 1 ]] || printf 's')" "$_sidecar_count"
+		while IFS= read -r _pid; do
+			local _setime="" _scmd="" _srole=""
+			_setime=$(ps -p "$_pid" -o etime= 2>/dev/null | tr -d ' ')
+			_scmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+			# Extract role flag from argv for the display label.
+			_srole=$(printf '%s' "$_scmd" | grep -oE "$_PULSE_SIDECAR_FLAGS_RE" | head -1)
+			printf '    PID %s [%s] (uptime %s)\n' "$_pid" "${_srole:-sidecar}" "${_setime:-unknown}"
+		done <<<"$_sidecar_pids"
+	fi
+
+	# PILE-UP check applies to MAIN count only — sidecars are categorically
+	# different and counted separately above (GH#21903).
 	if [[ "$_pid_count" -gt "$_PULSE_EXPECTED_MAX_INSTANCES" ]]; then
-		_pl_warn "PILE-UP: $_pid_count pulse-wrapper.sh processes alive (threshold $_PULSE_EXPECTED_MAX_INSTANCES, GH#21903)"
+		_pl_warn "PILE-UP: $_pid_count main pulse-wrapper.sh processes alive (threshold $_PULSE_EXPECTED_MAX_INSTANCES, GH#21903)"
 		_pl_warn "Up to $_PULSE_EXPECTED_MAX_INSTANCES is normal post-t2774 (lock released before LLM phase)."
 		_pl_warn "Pile-up beyond that suggests launchd respawn outpacing cycle completion or hung LLM phases."
+		_pl_warn "Sidecars (--merge-only / --self-check / --dry-run / --canary) are excluded from this count."
 		_pl_warn "Recommendation: $(basename "$0") restart    # full stop+start to recover"
 		# Exit non-zero so callers (scripts, monitoring) can detect the anomaly.
 		return 3
@@ -354,16 +441,18 @@ Commands:
   restart-if-running    Restart only if running; no-op otherwise.
 
 Env:
-  AIDEVOPS_SKIP_PULSE_RESTART=1     Skip restart operations.
-  AIDEVOPS_PULSE_RESTART_WAIT=3     Seconds between stop and start.
-  AIDEVOPS_PULSE_SIGTERM_WAIT=2     Seconds before escalating to SIGKILL.
-  AIDEVOPS_AGENTS_DIR=<path>        Override ~/.aidevops/agents.
+  AIDEVOPS_SKIP_PULSE_RESTART=1            Skip restart operations.
+  AIDEVOPS_PULSE_RESTART_WAIT=3            Seconds between stop and start.
+  AIDEVOPS_PULSE_SIGTERM_WAIT=2            Seconds before escalating to SIGKILL.
+  AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=3  Status warn threshold (MAIN only;
+                                           sidecars excluded — GH#21903).
+  AIDEVOPS_AGENTS_DIR=<path>               Override ~/.aidevops/agents.
 
 Exit codes:
   0  Success
   1  Pulse not running (is-running only) / pulse failed to start
   2  Invalid subcommand or missing pulse-wrapper.sh
-  3  status: multiple pulse PIDs detected (singleton violation, GH#21433)
+  3  status: main-pulse pile-up detected (count > threshold, GH#21433/GH#21903)
 EOF
 	return 0
 }
