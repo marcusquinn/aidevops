@@ -106,6 +106,7 @@ _register_validators() {
 	_VALIDATOR_REGISTRY["large-file-simplification-gate"]="_validator_large_file_simplification_gate"
 	_VALIDATOR_REGISTRY["function-complexity-gate"]="_validator_function_complexity_gate"
 	_VALIDATOR_REGISTRY["upstream-watch"]="_validator_upstream_watch"
+	_VALIDATOR_REGISTRY["runtime-audit"]="_validator_runtime_audit"
 	return 0
 }
 
@@ -255,6 +256,62 @@ _validator_function_complexity_gate() {
 		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` has 0 functions exceeding ${CITED_THRESHOLD} lines on HEAD. Premise falsified. Not dispatching."
 		return 10
 	fi
+
+# ---------------------------------------------------------------------------
+# Runtime-audit validator (t3072)
+#
+# Re-runs the cited detector against current local state. Detectors are
+# self-contained and read local files only — no GitHub API calls — so
+# the re-validation cost is seconds and bounded.
+#
+# Expects DETECTOR_ID to be set by cmd_validate() after parsing the
+# detector=<id> attribute from the generator marker. If the detector now
+# returns 0 (no finding), the premise is falsified — the underlying
+# regression has resolved between detection and dispatch.
+# ---------------------------------------------------------------------------
+_validator_runtime_audit() {
+	local slug="$1"
+	# slug is passed for parity with other validators but is unused: the
+	# detectors run against local pulse state, not remote git state.
+	# (lint-friendly no-op assignment to mark intent)
+	: "$slug"
+
+	if [[ -z "${DETECTOR_ID:-}" ]]; then
+		_log "WARN" "runtime-audit validator: missing detector=<id> attribute in marker"
+		return 20
+	fi
+
+	local rules_dir="${RUNTIME_AUDIT_RULES_DIR:-${SCRIPT_DIR}/runtime-audit-rules}"
+	local detector_file="${rules_dir}/${DETECTOR_ID}.sh"
+
+	if [[ ! -f "$detector_file" ]]; then
+		_log "WARN" "runtime-audit validator: detector file not found: ${detector_file}"
+		return 20
+	fi
+
+	# Re-run the detector in a clean subshell so its globals do not leak.
+	local detector_rc=0
+	bash -c "
+		set -u
+		source '${SCRIPT_DIR}/shared-constants.sh'
+		source '${detector_file}'
+		runtime_audit_check >/dev/null
+	" || detector_rc=$?
+
+	if [[ "$detector_rc" -eq 0 ]]; then
+		_log "INFO" "runtime-audit validator: detector=${DETECTOR_ID} now returns clean — premise falsified"
+		VALIDATOR_RATIONALE="Re-running detector \`${DETECTOR_ID}\` against current local state shows no finding. The underlying regression resolved between detection and dispatch."
+		return 10
+	fi
+
+	if [[ "$detector_rc" -eq 1 ]]; then
+		_log "INFO" "runtime-audit validator: detector=${DETECTOR_ID} still firing — premise holds"
+		return 0
+	fi
+
+	_log "WARN" "runtime-audit validator: detector=${DETECTOR_ID} returned rc=${detector_rc} (unexpected) — validator error"
+	return 20
+}
 
 	_log "INFO" "function-complexity-gate validator: ${violation_count} function(s) still exceed ${CITED_THRESHOLD} lines in ${CITED_FILE} — premise holds"
 	return 0
@@ -599,12 +656,13 @@ cmd_validate() {
 		return 0
 	fi
 
-	# Extract optional attributes: cited_file, threshold, upstream_slug
+	# Extract optional attributes: cited_file, threshold, upstream_slug, detector
 	CITED_FILE=$(printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' 2>/dev/null) || CITED_FILE=""
 	CITED_THRESHOLD=$(printf '%s' "$generator_line" | grep -oE 'threshold=[0-9]+' | sed 's/threshold=//' 2>/dev/null) || CITED_THRESHOLD=""
 	UPSTREAM_SLUG=$(printf '%s' "$generator_line" | grep -oE 'upstream_slug=[^ >]+' | sed 's/upstream_slug=//' 2>/dev/null) || UPSTREAM_SLUG=""
+	DETECTOR_ID=$(printf '%s' "$generator_line" | grep -oE 'detector=[a-z0-9_-]+' | sed 's/detector=//' 2>/dev/null) || DETECTOR_ID=""
 
-	_log "INFO" "#${issue_number}: generator=${generator} cited_file=${CITED_FILE:-<none>} threshold=${CITED_THRESHOLD:-<none>}"
+	_log "INFO" "#${issue_number}: generator=${generator} cited_file=${CITED_FILE:-<none>} threshold=${CITED_THRESHOLD:-<none>} detector=${DETECTOR_ID:-<none>}"
 
 	# Look up validator
 	_register_validators
