@@ -18,6 +18,10 @@
 #       (true-positive preserved — runner normalisation must not mask real drift)
 #   E.  Caller with runner AND a develop-branch variant → CURRENT/CALLER
 #       (runner + branch normalisations compose correctly)
+#   F.  Caller with a `with: runner: <label>` block appended at EOF
+#       → CURRENT/CALLER (GH#21899 regression — earlier awk END block
+#       re-emitted the buffered `with:` when it was the last line of the
+#       file, falsely classifying these callers as DRIFTED/CALLER).
 #
 # Strategy: each scenario builds a temporary repo tree, copies the canonical
 # caller template (optionally mutated), runs the helper in --json mode, and
@@ -226,6 +230,34 @@ for _wf_tuple in "${_WF_TUPLES[@]}"; do
 		fi
 		rm -rf "$_TD"
 	fi
+
+	# ── Scenario F: `with: runner: <label>` block at EOF → CURRENT/CALLER ─────
+	# GH#21899: when a caller's runner block ends up as the last content lines
+	# of the file (e.g. the caller is missing `secrets: inherit` after `uses:`,
+	# or some other path leaves runner as the trailing key), the earlier awk
+	# `END { print pending }` resurrected the buffered `with:` and tipped the
+	# byte-comparison into DRIFTED/CALLER. The caller below appends the
+	# runner-block AFTER all canonical content, so after sed deletes the
+	# runner key the `with:` line is genuinely at EOF.
+	_TD="$(mktemp -d)"
+	_setup_fake_home "$_TD"
+	mkdir -p "$_TD/repos/repo-f/.github/workflows"
+	_dest_f="$_TD/repos/repo-f/.github/workflows/${_wf_file}"
+	{
+		cat "$_src_template"
+		printf '    with:\n      runner: %s\n' "$_RUNNER_LABEL"
+	} > "$_dest_f"
+	_write_repos_json "$_TD" \
+		"$(jq -n --arg p "$_TD/repos/repo-f" \
+			'{initialized_repos: [{slug: "x/f", path: $p, local_only: false}]}')"
+	_result=$(_classify_for_workflow "$_TD" "x/f" "$_wf_name")
+	if [[ "$_result" == "CURRENT/CALLER" ]]; then
+		_pass "${_wf_name}: runner block at EOF → CURRENT/CALLER (GH#21899 regression)"
+	else
+		_fail "${_wf_name}: runner block at EOF → CURRENT/CALLER (GH#21899 regression)" \
+			"got: ${_result:-<empty>} — empty \`with:\` survived normalisation at EOF"
+	fi
+	rm -rf "$_TD"
 
 done
 

@@ -147,6 +147,13 @@ _normalize_wf_for_compare() {
 	#         the only key). Uses awk: buffer the `    with:` line, emit it
 	#         only if the next line is also inside the block (6-space indent);
 	#         otherwise discard the header silently.
+	# GH#21899: a pending `    with:` at EOF is also empty (sed step 2 already
+	#         deleted the only `runner:` child). The earlier `END { print pending }`
+	#         resurrected it and made callers where `runner:` was the only `with:`
+	#         entry AND `with:` ended up as the last content line in the file
+	#         (e.g. callers missing `secrets: inherit`) classify as DRIFTED/CALLER.
+	#         Dropping pending at EOF is correct — there is no legitimate scenario
+	#         where a `with:` followed by no children should survive normalisation.
 	sed -E "s|(marcusquinn/aidevops/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
 		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
 		| sed -E '/^      runner: /d' \
@@ -164,7 +171,6 @@ _normalize_wf_for_compare() {
 				next
 			}
 			{ print }
-			END { if (pending != "") print pending }
 		'
 	return 0
 }
