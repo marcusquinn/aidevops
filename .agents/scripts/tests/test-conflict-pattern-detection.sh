@@ -337,6 +337,184 @@ assert_contains "4h3: mixed brief → LOCKFILE guidance" \
 echo ""
 
 # ---------------------------------------------------------------------------
+# Test 4.5: t3199 ADD_ADD_NEW_FILE classification.
+#
+# Build a transient git repo, create a `add/add` rebase conflict, and verify
+# _classify_conflicts_by_pattern surfaces ADD_ADD_NEW_FILE when given the
+# repo path as 3rd arg.
+# ---------------------------------------------------------------------------
+echo "--- Section 4.5: t3199 add/add detection ---"
+
+# Helper: build a tmp git repo with the given conflicts.
+# Args: $1 = how many AA files (n), $2 = whether to also add a content
+# conflict on pnpm-lock.yaml (1=yes).
+_t3199_make_addadd_repo() {
+	local aa_count="$1"
+	local with_lockfile="$2"
+	local repo
+	repo=$(mktemp -d -t t3199-addadd-XXXXXX) || return 1
+
+	(
+		cd "$repo" || exit 1
+		git init -q -b main
+		git config user.email "test@example.com"
+		git config user.name "Test"
+
+		# Initial commit on main. When we want a content (UU) conflict on
+		# pnpm-lock.yaml, seed it on the common ancestor so both branches
+		# MODIFY it (rather than ADD it from nothing — which would be AA).
+		echo "seed" >seed.txt
+		git add seed.txt
+		if [[ "$with_lockfile" == "1" ]]; then
+			printf 'lockfileVersion: 9.0\nfromBase: seed\n' >pnpm-lock.yaml
+			git add pnpm-lock.yaml
+		fi
+		git commit -q -m "seed"
+		local seed_sha
+		seed_sha=$(git rev-list --max-parents=0 HEAD)
+
+		# Branch B (the "merged-first" branch): adds aa-N.sh files and
+		# modifies pnpm-lock.yaml. Merge B into main to make it canonical.
+		git checkout -q -b feat-b
+		local i
+		for ((i = 1; i <= aa_count; i++)); do
+			printf 'echo "from B %d"\n' "$i" >"aa-${i}.sh"
+			git add "aa-${i}.sh"
+		done
+		if [[ "$with_lockfile" == "1" ]]; then
+			printf 'lockfileVersion: 9.0\nfromBranch: B\n' >pnpm-lock.yaml
+			git add pnpm-lock.yaml
+		fi
+		git commit -q -m "feat-b: add aa files and (maybe) modify lockfile"
+		git checkout -q main
+		git merge -q --no-ff feat-b -m "merge feat-b"
+
+		# Branch A (the "to-be-rebased" branch): branched off seed, adds the
+		# same aa-N.sh files with different content, and (optionally) edits
+		# pnpm-lock.yaml differently. Replay onto main to trigger AA on the
+		# new files + UU content conflict on the seeded lockfile.
+		git checkout -q -b feat-a "$seed_sha"
+		for ((i = 1; i <= aa_count; i++)); do
+			printf 'echo "from A %d"\n' "$i" >"aa-${i}.sh"
+			git add "aa-${i}.sh"
+		done
+		if [[ "$with_lockfile" == "1" ]]; then
+			printf 'lockfileVersion: 9.0\nfromBranch: A\n' >pnpm-lock.yaml
+			git add pnpm-lock.yaml
+		fi
+		git commit -q -m "feat-a: add aa files and (maybe) modify lockfile"
+
+		# Trigger rebase to produce conflicts. We expect rebase to halt with
+		# AA rows on aa-N.sh and UU on pnpm-lock.yaml; that is exactly the
+		# state we want to inspect.
+		git rebase main >/dev/null 2>&1 || true
+	)
+	printf '%s\n' "$repo"
+	return 0
+}
+
+# Helper: clean up tmp repo.
+_t3199_rm_repo() {
+	local repo="$1"
+	[[ -n "$repo" && -d "$repo" ]] || return 0
+	rm -rf "$repo" 2>/dev/null || true
+	return 0
+}
+
+# 4.5a: single add/add conflict on a `.sh` file → ADD_ADD_NEW_FILE.
+T3199_REPO_A=$(_t3199_make_addadd_repo 1 0)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -n "$T3199_REPO_A" ]] && [[ -d "$T3199_REPO_A" ]]; then
+	# Sanity: confirm the rebase produced an AA row.
+	aa_check=$(git -C "$T3199_REPO_A" status --porcelain 2>/dev/null \
+		| awk '/^AA / {print $2}' | tr '\n' ' ')
+	if [[ -n "$aa_check" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: 4.5a-pre: tmp repo produced AA conflict (\`$aa_check\`)"
+		# Pass the same file list the pulse would (the path of the AA file).
+		t3199a_out=$(_classify_conflicts_by_pattern "aa-1.sh" "$CONF_FILE" "$T3199_REPO_A")
+		assert_contains "4.5a: single add/add → ADD_ADD_NEW_FILE classification" \
+			"ADD_ADD_NEW_FILE" "$t3199a_out"
+		assert_not_contains "4.5a-2: add/add file NOT also classified as CODE" \
+			"CODE aa-1.sh" "$t3199a_out"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: 4.5a-pre: tmp repo did NOT produce AA conflict — git rebase setup likely failed; skipping 4.5a"
+	fi
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 4.5a: tmp repo creation failed"
+fi
+
+# 4.5b: mixed add/add + lockfile content conflict → BOTH classifications.
+T3199_REPO_B=$(_t3199_make_addadd_repo 1 1)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ -n "$T3199_REPO_B" ]] && [[ -d "$T3199_REPO_B" ]]; then
+	# Pass both files in the input list — pnpm-lock.yaml is NOT in AA state
+	# (it's a content conflict, marked UU), so it should fall through to
+	# the LOCKFILE glob bucket.
+	t3199b_files=$(printf '%s\n' "aa-1.sh" "pnpm-lock.yaml")
+	t3199b_out=$(_classify_conflicts_by_pattern "$t3199b_files" "$CONF_FILE" "$T3199_REPO_B")
+	assert_contains "4.5b: mixed add/add + lockfile → ADD_ADD_NEW_FILE present" \
+		"ADD_ADD_NEW_FILE aa-1.sh" "$t3199b_out"
+	assert_contains "4.5b-2: mixed add/add + lockfile → LOCKFILE present" \
+		"LOCKFILE pnpm-lock.yaml" "$t3199b_out"
+	# Each class on its own line.
+	addadd_line=$(printf '%s\n' "$t3199b_out" | grep '^ADD_ADD_NEW_FILE')
+	lockfile_line=$(printf '%s\n' "$t3199b_out" | grep '^LOCKFILE')
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ -n "$addadd_line" && -n "$lockfile_line" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: 4.5b-3: ADD_ADD_NEW_FILE and LOCKFILE on separate lines"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: 4.5b-3: classes not on separate lines"
+		echo "  output: $(printf '%q' "$t3199b_out")"
+	fi
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 4.5b: tmp repo creation failed"
+fi
+
+# 4.5c: content conflict on existing `.sh` (no AA, no repo_path) → CODE.
+# Existing behaviour, unchanged: when no repo_path is supplied, the function
+# never invokes `git status` and falls through to the glob loop where a
+# generic .sh file matches only the CODE catch-all.
+t3199c_out=$(_classify_conflicts_by_pattern "src/lib/handler.sh" "$CONF_FILE")
+assert_contains "4.5c: content conflict on existing .sh → CODE (no repo_path)" \
+	"CODE src/lib/handler.sh" "$t3199c_out"
+assert_not_contains "4.5c-2: NO ADD_ADD_NEW_FILE classification when repo_path absent" \
+	"ADD_ADD_NEW_FILE" "$t3199c_out"
+
+# 4.5d: ADD_ADD_NEW_FILE entry exists in conf with the sentinel glob.
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE '^ADD_ADD_NEW_FILE \| __SPECIAL_ADD_ADD__' "$CONF_FILE" 2>/dev/null; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 4.5d: conf carries ADD_ADD_NEW_FILE entry with sentinel glob"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 4.5d: conf missing ADD_ADD_NEW_FILE/__SPECIAL_ADD_ADD__ entry"
+fi
+
+# 4.5e: _build_conflict_feedback_section emits ADD_ADD_NEW_FILE guidance
+# when given a repo with an in-flight add/add. The feedback-builder doesn't
+# accept a repo_path today, so we synthesise the classification by exercising
+# _classify directly + _emit_pattern_guidance_blocks.
+if [[ -n "${T3199_REPO_A:-}" ]] && [[ -d "${T3199_REPO_A:-}" ]]; then
+	t3199e_class=$(_classify_conflicts_by_pattern "aa-1.sh" "$CONF_FILE" "$T3199_REPO_A")
+	t3199e_block=$(_emit_pattern_guidance_blocks "$t3199e_class" "main" "$CONF_FILE")
+	assert_contains "4.5e: ADD_ADD_NEW_FILE guidance block emitted" \
+		"Pattern: ADD_ADD_NEW_FILE" "$t3199e_block"
+	assert_contains "4.5e-2: guidance mentions \`--ours\` resolution" \
+		"--ours" "$t3199e_block"
+	assert_contains "4.5e-3: guidance warns against cherry-picking" \
+		"cherry-pick" "$t3199e_block"
+fi
+
+# Cleanup.
+_t3199_rm_repo "${T3199_REPO_A:-}"
+_t3199_rm_repo "${T3199_REPO_B:-}"
+
+echo ""
+
+# ---------------------------------------------------------------------------
 # Test 5: shellcheck cleanliness.
 # ---------------------------------------------------------------------------
 echo "--- Section 5: shellcheck ---"

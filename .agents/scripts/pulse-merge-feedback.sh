@@ -351,16 +351,29 @@ _Closed by deterministic merge pass (pulse-merge.sh)._" \
 # Files that match a non-CODE pattern are collected per-classification.
 # Unmatched files fall through to the CODE bucket.
 #
+# add/add detection (t3199): when a repo_path is supplied AND it contains
+# an in-progress rebase/merge with `AA` rows in `git status --porcelain`,
+# those files are pre-classified as ADD_ADD_NEW_FILE — independent of
+# filename glob. add/add conflicts can occur on any path, so glob matching
+# is not a reliable signal. The pulse caller (`_dispatch_conflict_fix_worker`)
+# does not have a local checkout and passes no repo_path, so its existing
+# classification path is preserved. Worker / test contexts that DO have a
+# checkout pass repo_path to enable the structural detection.
+#
 # Args:
 #   $1 - newline-separated list of conflicting file paths
 #   $2 - (optional) path to conflict-patterns.conf; defaults to the conf
 #        in the same directory as this script's parent configs/ dir.
+#   $3 - (optional, t3199) path to a git repo with an in-flight rebase/merge.
+#        When set and valid, files marked `AA` by `git status --porcelain`
+#        are classified as ADD_ADD_NEW_FILE before glob matching.
 #
 # Output: multi-line classification on stdout (empty if no files given).
 #######################################
 _classify_conflicts_by_pattern() {
 	local file_list="$1"
 	local conf_file="${2:-}"
+	local repo_path="${3:-}"
 
 	# Locate conf file relative to this script if not supplied.
 	if [[ -z "$conf_file" ]]; then
@@ -376,6 +389,23 @@ _classify_conflicts_by_pattern() {
 		return 0
 	}
 
+	# t3199: detect add/add files via `git status --porcelain` (`AA` rows)
+	# when a repo_path is supplied. Pulse-context callers pass none, so this
+	# branch is a no-op in production; worker / test contexts opt in.
+	local add_add_files=""
+	if [[ -n "$repo_path" ]] && [[ -d "$repo_path/.git" || -f "$repo_path/.git" ]]; then
+		add_add_files=$(git -C "$repo_path" status --porcelain 2>/dev/null \
+			| awk '/^AA / {print $2}' | tr '\n' ' ')
+		add_add_files="${add_add_files% }"  # trim trailing space
+	fi
+
+	# Build a lookup string for fast membership tests. Surrounding spaces
+	# let us match whole tokens with `[[ "$set" == *" $path "* ]]`.
+	local add_add_set=" "
+	if [[ -n "$add_add_files" ]]; then
+		add_add_set=" ${add_add_files} "
+	fi
+
 	# Buckets: associative-array-like using declare (bash 4+) or plain
 	# string accumulation (bash 3.2 compat).  We use a temporary approach
 	# that accumulates "CLASS:path" lines and then groups at the end.
@@ -384,6 +414,15 @@ _classify_conflicts_by_pattern() {
 	# Read each conflicting file and match against conf patterns.
 	while IFS= read -r fpath; do
 		[[ -n "$fpath" ]] || continue
+
+		# t3199: if this file is an add/add conflict, classify it that way
+		# unconditionally — bypass glob matching since add/add is structural,
+		# not pattern-based.
+		if [[ "$add_add_set" == *" ${fpath} "* ]]; then
+			classified_lines="${classified_lines}ADD_ADD_NEW_FILE:${fpath}"$'\n'
+			continue
+		fi
+
 		local fname
 		fname="${fpath##*/}"  # basename
 
@@ -399,6 +438,12 @@ _classify_conflicts_by_pattern() {
 
 			[[ -n "$class" && -n "$glob" ]] || continue
 			[[ "$class" == \#* ]] && continue
+
+			# t3199: skip the ADD_ADD_NEW_FILE sentinel during glob matching.
+			# Detection happens via `git status --porcelain` above, not via
+			# filename — the sentinel exists only so the conf record carries
+			# its guidance text for `_emit_pattern_guidance_blocks` to find.
+			[[ "$class" == "ADD_ADD_NEW_FILE" ]] && continue
 
 			# Match against full relative path first, then basename.
 			# Use bash extended glob (shopt -s extglob already on in
@@ -427,8 +472,9 @@ _classify_conflicts_by_pattern() {
 	done < <(printf '%s\n' "$file_list")
 
 	# Group by classification: emit one line per class with all paths.
-	# We process each known class in priority order (non-CODE first).
-	local all_classes="DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE"
+	# We process each known class in priority order (ADD_ADD first since
+	# it is structural, then non-CODE patterns, then CODE catch-all).
+	local all_classes="ADD_ADD_NEW_FILE DRIZZLE_MIGRATION LOCKFILE I18N_JSON GENERATED CODE"
 	for class in $all_classes; do
 		local paths_for_class=""
 		while IFS= read -r entry; do
