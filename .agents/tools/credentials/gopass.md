@@ -71,6 +71,23 @@ aidevops secret set OPENAI_API_KEY
 
 Verify with `aidevops secret list`.
 
+### Naming with multiple accounts
+
+When you hold credentials for multiple accounts on the same provider **at once** (personal + work GitHub, multiple OpenAI projects, several Hetzner projects, prod + staging AWS), suffix the canonical env var with a short account tag. Convention: `<PROVIDER>_<KIND>_<ACCOUNT>`, SCREAMING_SNAKE_CASE, account tag **last** so prefix-grep still groups by provider:
+
+```bash
+aidevops secret set GITHUB_TOKEN_PERSONAL
+aidevops secret set GITHUB_TOKEN_WORK
+aidevops secret set OPENAI_API_KEY_PERSONAL
+aidevops secret set OPENAI_API_KEY_CLIENT_ACME
+aidevops secret set HCLOUD_TOKEN_PROJECT_A
+aidevops secret set HCLOUD_TOKEN_PROJECT_B
+aidevops secret set AWS_ACCESS_KEY_ID_PROD
+aidevops secret set AWS_ACCESS_KEY_ID_STAGING
+```
+
+The bare provider name (`GITHUB_TOKEN`, `OPENAI_API_KEY`) remains the default for the single-account case — only suffix when you actually need to disambiguate. If you instead need one account active **at a time** and want to switch sets between projects, use `multi-tenant.md`.
+
 ### Using Secrets in Commands
 
 ```bash
