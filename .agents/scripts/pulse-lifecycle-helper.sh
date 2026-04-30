@@ -22,12 +22,18 @@
 #   AIDEVOPS_SKIP_PULSE_RESTART=1     Skip restart operations (for debug).
 #   AIDEVOPS_PULSE_RESTART_WAIT=3     Seconds between stop and start (default 3).
 #   AIDEVOPS_PULSE_SIGTERM_WAIT=2     Seconds before escalating to SIGKILL.
+#   AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=3
+#                                     status: warn only when alive PID count
+#                                     EXCEEDS this threshold (default 3 — see
+#                                     t2774 lock-release window). Set to 1 for
+#                                     legacy strict-singleton check.
 #
 # Exit codes:
 #   0  Success (includes no-op cases)
 #   1  Pulse not running (is-running only)
 #   2  Invalid subcommand or missing pulse-wrapper.sh
-#   3  status: multiple pulse PIDs detected (singleton violation, GH#21433)
+#   3  status: pulse-wrapper instance pile-up detected (GH#21433/GH#21903)
+#      — count exceeds AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES (default 3)
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -47,6 +53,31 @@ _PULSE_PATTERN="${AIDEVOPS_PULSE_PROCESS_PATTERN:-(^|/)pulse-wrapper\\.sh( |\$)}
 # Timing
 _PULSE_RESTART_WAIT="${AIDEVOPS_PULSE_RESTART_WAIT:-3}"
 _PULSE_SIGTERM_WAIT="${AIDEVOPS_PULSE_SIGTERM_WAIT:-2}"
+
+# Expected-max coexistence threshold (GH#21903).
+#
+# After the t2774 design change, pulse-wrapper.sh releases the instance lock
+# BEFORE the LLM session (pulse-wrapper.sh::_pulse_run_deterministic_pipeline
+# at line ~1337) so the next launchd cycle can run deterministic ops while
+# the previous wrapper is still in its LLM phase. Multiple alive
+# pulse-wrapper.sh processes are therefore EXPECTED in steady state — not
+# a singleton-invariant violation. Typical counts:
+#   1 — single cycle, no LLM-phase overlap
+#   2 — cycle N's LLM phase + cycle N+1's deterministic phase (most common)
+#   3 — cycle N + N+1 both in LLM phase + cycle N+2 just acquired the lock
+#       (rare; happens when an LLM phase exceeds 2 launchd cycles ~360s)
+#
+# A pile-up beyond this threshold indicates a real problem: launchd
+# respawn outpacing cycle completion, hung LLM phases failing to exit, or
+# the t3002 lock race regressing. _status warns at counts > the threshold.
+#
+# Override: AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=<integer>. Setting to 1
+# restores the legacy strict-singleton check (warn on any coexistence) —
+# only useful for environments where the t2774 lock-release window has
+# been disabled (PULSE_LLM_DISABLED=1 etc.).
+_PULSE_EXPECTED_MAX_INSTANCES="${AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES:-3}"
+[[ "$_PULSE_EXPECTED_MAX_INSTANCES" =~ ^[0-9]+$ ]] || _PULSE_EXPECTED_MAX_INSTANCES=3
+[[ "$_PULSE_EXPECTED_MAX_INSTANCES" -ge 1 ]] || _PULSE_EXPECTED_MAX_INSTANCES=1
 
 # ANSI colors (guarded — don't collide with shared-constants)
 [[ -z "${_PL_GREEN+x}" ]] && _PL_GREEN='\033[0;32m'
@@ -242,11 +273,18 @@ _restart_if_running() {
 	_start
 }
 
-# _status: human-readable PID + age. Reports lock-holder PID and warns when
-# multiple pulse PIDs are alive simultaneously — the singleton invariant
-# (GH#4513, GH#21433) requires exactly one. Multiple PIDs indicate a race
-# escaped the lock (e.g., trap-cleanup vs launchd respawn vs lifecycle-helper
-# concurrent start) and operator intervention is needed.
+# _status: human-readable PID + age. Reports lock-holder PID and warns ONLY
+# when the alive-PID count exceeds AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES
+# (default 3 — see the constant block above for the t2774 design rationale).
+#
+# History note (GH#21433 → GH#21903):
+#   GH#4513/GH#21433 originally framed coexistence of pulse-wrapper.sh PIDs as
+#   a "singleton invariant violation". After t2774 (lock release before LLM
+#   phase) and t3002 (post-write race fix) landed, brief coexistence of 2-3
+#   PIDs is the EXPECTED steady state — not a violation. The warning was
+#   firing on legitimate post-release overlap, training operators to ignore
+#   it. GH#21903 reframes it as PILE-UP detection: warn only when the count
+#   exceeds the threshold (genuine respawn-outpacing-cycle-completion pattern).
 _status() {
 	local _pids
 	_pids=$(_pulse_pids)
@@ -292,8 +330,10 @@ _status() {
 		printf '  PID %s%s (uptime %s)\n' "$_pid" "$_marker" "${_etime:-unknown}"
 	done <<<"$_pids"
 
-	if [[ "$_pid_count" -gt 1 ]]; then
-		_pl_warn "MULTIPLE pulse instances detected (GH#21433) — singleton invariant violated"
+	if [[ "$_pid_count" -gt "$_PULSE_EXPECTED_MAX_INSTANCES" ]]; then
+		_pl_warn "PILE-UP: $_pid_count pulse-wrapper.sh processes alive (threshold $_PULSE_EXPECTED_MAX_INSTANCES, GH#21903)"
+		_pl_warn "Up to $_PULSE_EXPECTED_MAX_INSTANCES is normal post-t2774 (lock released before LLM phase)."
+		_pl_warn "Pile-up beyond that suggests launchd respawn outpacing cycle completion or hung LLM phases."
 		_pl_warn "Recommendation: $(basename "$0") restart    # full stop+start to recover"
 		# Exit non-zero so callers (scripts, monitoring) can detect the anomaly.
 		return 3
