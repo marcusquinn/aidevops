@@ -81,6 +81,24 @@ function run(cmd, timeout = 5000) {
 }
 
 /**
+ * Detect headless OpenCode/CI sessions. Headless workers (pulse-spawned,
+ * GitHub Actions, full-loop) only ever target anthropic/* via the OAuth
+ * pool — they never request claudecli/*, so starting the Claude CLI proxy
+ * for them is pure waste and contributes to multi-instance EADDRINUSE
+ * races. Canonical env-var set per AGENTS.md "Main-branch planning
+ * exception" rule (t1990). See GH#21944.
+ * @returns {boolean}
+ */
+function isHeadless() {
+  return Boolean(
+    process.env.FULL_LOOP_HEADLESS ||
+    process.env.AIDEVOPS_HEADLESS ||
+    process.env.OPENCODE_HEADLESS ||
+    process.env.GITHUB_ACTIONS,
+  );
+}
+
+/**
  * Read a file if it exists, or return empty string.
  * @param {string} filepath
  * @returns {string}
@@ -176,15 +194,13 @@ export async function AidevopsPlugin({ directory, client }) {
     }
   }
 
-  // Claude CLI transport proxy
-  try {
-    const claudeProxyResult = await startClaudeProxy(client, directory);
-    if (claudeProxyResult) {
-      console.error(`[aidevops] Claude proxy started on port ${claudeProxyResult.port} with ${claudeProxyResult.models.length} models`);
-    }
-  } catch (err) {
-    console.error(`[aidevops] Claude proxy failed to start: ${err.message}`);
-  }
+  // Claude CLI transport proxy — lazy-started on first claudecli/* request
+  // (see systemTransformHook composition below). Eagerly starting on every
+  // plugin init wasted resources in headless workers (which use anthropic/*
+  // via OAuth pool, never claudecli/*) and caused N-instance EADDRINUSE
+  // races when N OpenCode sessions started simultaneously. See GH#21944.
+  // Headless workers skip startup entirely; interactive sessions defer
+  // startup until they actually request a claudecli model.
 
   // Create tools
   const baseTools = createTools(SCRIPTS_DIR, run);
@@ -210,7 +226,7 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // TTSR hooks
   const {
-    systemTransformHook,
+    systemTransformHook: ttsrSystemTransformHook,
     messagesTransformHook: ttsrMessagesTransformHook,
     textCompleteHook,
   } = createTtsrHooks({
@@ -221,6 +237,23 @@ export async function AidevopsPlugin({ directory, client }) {
     run,
     intentField: INTENT_FIELD,
   });
+
+  // Composed system.transform hook: lazy-start the Claude CLI proxy on the
+  // first claudecli/* request, then delegate to TTSR enforcement. See
+  // GH#21944. The proxy module is internally idempotent (proxyPort caching
+  // + adopt-on-EADDRINUSE), so repeat calls per request are cheap. Failures
+  // here are logged but never block the request — the underlying provider
+  // call will surface a clearer error if claudecli is genuinely unreachable.
+  const systemTransformHook = async (input, output) => {
+    if (!isHeadless() && input?.model?.providerID === "claudecli") {
+      try {
+        await startClaudeProxy(client, directory);
+      } catch (err) {
+        console.error(`[aidevops] Claude proxy lazy-start failed: ${err.message}`);
+      }
+    }
+    await ttsrSystemTransformHook(input, output);
+  };
 
   // Composed messages transform: TTSR enforcement + image size guard (GH#21793).
   // The image guard runs after TTSR so corrections are applied to the final

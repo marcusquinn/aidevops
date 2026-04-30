@@ -211,29 +211,40 @@ function ensureAgentGuard(config, workspaceDir) {
 }
 
 /**
- * Register Claude CLI proxy models or clean up stale placeholder entries.
+ * Register Claude CLI proxy models when the proxy is already running.
+ *
+ * When the proxy is NOT yet running (lazy-start path, GH#21944), the
+ * `claudecli` provider entry was already eagerly registered by
+ * `registerAnthropicModels` above with the hardcoded default port — leave
+ * it intact so the models stay visible in the picker. The proxy will be
+ * brought up by the system.transform hook on the first claudecli/* request.
+ *
+ * Historical behaviour deleted the entry when the proxy was absent, which
+ * worked under the eager-startup model (the proxy was always running by
+ * the time this hook fired) but would silently strip claudecli/* from the
+ * picker now that startup is deferred. See GH#21944.
+ *
  * @param {object} config - OpenCode Config object (mutable)
  * @returns {number} Number of models registered
  */
 function registerClaudeCliModels(config) {
   const claudeProxyPort = getClaudeProxyPort();
-  if (claudeProxyPort) {
-    const claudeModels = Object.entries(CLAUDECLI_MODELS).map(([id, def]) => ({
-      id,
-      name: def.name,
-      reasoning: def.reasoning !== false,
-      contextWindow: def.limit?.context || 200000,
-      maxTokens: def.limit?.output || 32000,
-    }));
-    return registerClaudeProvider(config, claudeProxyPort, claudeModels)
-      ? claudeModels.length
-      : 0;
+  if (!claudeProxyPort) {
+    // Proxy not running yet — registerAnthropicModels already populated the
+    // provider with the hardcoded default port; lazy-start will bring up
+    // the listener on the same port when needed.
+    return 0;
   }
-  // Proxy not running — remove placeholder entries so dead models don't show
-  if (config.provider?.claudecli) {
-    delete config.provider.claudecli;
-  }
-  return 0;
+  const claudeModels = Object.entries(CLAUDECLI_MODELS).map(([id, def]) => ({
+    id,
+    name: def.name,
+    reasoning: def.reasoning !== false,
+    contextWindow: def.limit?.context || 200000,
+    maxTokens: def.limit?.output || 32000,
+  }));
+  return registerClaudeProvider(config, claudeProxyPort, claudeModels)
+    ? claudeModels.length
+    : 0;
 }
 
 /**

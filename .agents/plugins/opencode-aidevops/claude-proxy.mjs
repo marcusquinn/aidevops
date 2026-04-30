@@ -46,6 +46,20 @@ const CLAUDE_PROVIDER_ID = "claudecli";
 const OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.json");
 /** Opt-in debug request dump — set CLAUDE_PROXY_DEBUG_DUMP=1 to enable. */
 const DEBUG_DUMP_ENABLED = process.env.CLAUDE_PROXY_DEBUG_DUMP === "1";
+
+// Probe-existing-proxy timeout. The historical 1s default was too short when
+// the existing proxy was mid-SSE-stream (verified: a busy proxy on 32125
+// timed out a `curl --max-time 2 /v1/models` request). 1500ms is the new
+// default; override via CLAUDE_PROXY_PROBE_TIMEOUT_MS for slow hosts. See
+// GH#21944 ("multi-instance startup printing scary error") for context.
+const CLAUDE_PROXY_PROBE_TIMEOUT_MS = parseInt(
+  process.env.CLAUDE_PROXY_PROBE_TIMEOUT_MS || "1500",
+  10,
+);
+/** Retry attempts for adopt-on-EADDRINUSE — short by design; if 5 probes
+ * fail to find a server, the port is genuinely poisoned by something else. */
+const CLAUDE_PROXY_PROBE_RETRY_ATTEMPTS = 5;
+const CLAUDE_PROXY_PROBE_RETRY_INTERVAL_MS = 1000;
 const SSE_HEADERS = {
   "Content-Type": "text/event-stream",
   "Cache-Control": "no-cache",
@@ -306,16 +320,24 @@ async function registerProxyAuth(client) {
 
 /**
  * Probe whether a proxy server is already listening on CLAUDE_PROXY_DEFAULT_PORT.
- * Used to adopt an existing server after plugin hot-reload (where the module
- * scope resets but the Bun.serve instance from the previous load lives on) or
- * when the plugin runs in a non-Bun JS runtime that cannot call Bun.serve.
+ * Used in three scenarios:
+ *   1. Pre-launch: avoid double-binding when another OpenCode session already
+ *      runs a proxy on the default port.
+ *   2. After plugin hot-reload: the module scope resets but the Bun.serve
+ *      instance from the previous load lives on.
+ *   3. Adopt-on-EADDRINUSE: when our own `Bun.serve` raises EADDRINUSE, the
+ *      port owner is virtually always a sibling proxy that's still mid-startup
+ *      (its fetch listener may not be ready yet — see probeExistingProxyWithRetry).
+ *
+ * Timeout sourced from CLAUDE_PROXY_PROBE_TIMEOUT_MS (default 1500ms) — a busy
+ * proxy mid-SSE-stream can take >1s to answer a /v1/models request.
  *
  * Returns the port number on success, null if no server is reachable.
  */
 async function probeExistingProxy() {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 1000);
+    const timer = setTimeout(() => controller.abort(), CLAUDE_PROXY_PROBE_TIMEOUT_MS);
     const res = await fetch(
       `http://127.0.0.1:${CLAUDE_PROXY_DEFAULT_PORT}/v1/models`,
       { signal: controller.signal },
@@ -326,6 +348,42 @@ async function probeExistingProxy() {
     // not running or not reachable
   }
   return null;
+}
+
+/**
+ * Probe with bounded retries — used by the EADDRINUSE adoption path. When a
+ * sibling plugin is mid-startup, the port may already be `bind()`ed by Bun
+ * but the fetch listener not yet reachable, so a single probe returns null
+ * even though the owner will be ready in <1s.
+ *
+ * Retries CLAUDE_PROXY_PROBE_RETRY_ATTEMPTS times with
+ * CLAUDE_PROXY_PROBE_RETRY_INTERVAL_MS spacing. Returns the port on first
+ * success, null if every attempt fails.
+ */
+async function probeExistingProxyWithRetry() {
+  for (let attempt = 0; attempt < CLAUDE_PROXY_PROBE_RETRY_ATTEMPTS; attempt++) {
+    const port = await probeExistingProxy();
+    if (port) return port;
+    if (attempt < CLAUDE_PROXY_PROBE_RETRY_ATTEMPTS - 1) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, CLAUDE_PROXY_PROBE_RETRY_INTERVAL_MS),
+      );
+    }
+  }
+  return null;
+}
+
+/**
+ * Heuristic: is this error a port-already-bound failure rather than a deeper
+ * Bun.serve config problem? Bun raises EADDRINUSE; some shims raise
+ * `listen EADDRINUSE`. We check both `code` and `message` so we don't miss
+ * either form.
+ */
+function isPortInUseError(err) {
+  if (!err) return false;
+  if (err.code === "EADDRINUSE") return true;
+  const msg = typeof err.message === "string" ? err.message : "";
+  return /EADDRINUSE|address already in use/i.test(msg);
 }
 
 /**
@@ -388,7 +446,27 @@ export async function startClaudeProxy(client, directory) {
   try {
     result = await launchProxyServer(client, directory);
   } catch (err) {
-    console.error(`[aidevops] Claude proxy: failed to start: ${err.message}`);
+    // EADDRINUSE between probe and bind = sibling plugin won the race. The
+    // sibling's fetch handler may not be ready yet, so retry-probe before
+    // declaring failure. This collapses the historical "scary error +
+    // fallback succeeds" log pair into either a clean adoption or a single
+    // genuine failure. See GH#21944.
+    if (isPortInUseError(err)) {
+      const adoptedPort = await probeExistingProxyWithRetry();
+      if (adoptedPort) {
+        proxyPort = adoptedPort;
+        console.error(
+          `[aidevops] Claude proxy: adopted sibling server on port ${proxyPort} after EADDRINUSE`,
+        );
+        result = { port: proxyPort, models: getClaudeProxyModels() };
+      } else {
+        console.error(
+          `[aidevops] Claude proxy: port ${CLAUDE_PROXY_DEFAULT_PORT} in use but no responsive proxy found after ${CLAUDE_PROXY_PROBE_RETRY_ATTEMPTS} probes — port may be poisoned by another process`,
+        );
+      }
+    } else {
+      console.error(`[aidevops] Claude proxy: failed to start: ${err.message}`);
+    }
   } finally {
     proxyStarting = false;
   }
