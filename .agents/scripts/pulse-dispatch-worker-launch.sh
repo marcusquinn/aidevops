@@ -16,6 +16,8 @@
 #   - _dlw_precreate_worktree
 #   - _dlw_prewarm_opencode_db
 #   - _dlw_exec_detached
+#   - _dlw_spawn_early_exit_monitor
+#   - _dlw_spawn_lifecycle_observer (t3055/GH#21870)
 #   - _dlw_nohup_launch
 #   - _dlw_post_launch_hooks
 #   - _dispatch_launch_worker
@@ -452,6 +454,16 @@ _dlw_exec_detached() {
 	# appends a marker; no global state.
 	_dlw_spawn_early_exit_monitor "$worker_pid" "$worker_log" "$issue_number"
 
+	# t3055/GH#21870: Spawn the parent-side lifecycle observer that polls the
+	# detached worker PID until it terminates and emits a
+	# `[lifecycle] worker_exited pid=N wait_status=M` line to the pulse log.
+	# This is independent of the worker's own emit path (which lives in
+	# headless-runtime-helper.sh::_invoke_opencode and only fires on
+	# graceful, post-`wait` exits). The observer is the safety net for
+	# every other termination mode (early exec failure, SIGKILL/OOM,
+	# setsid-detached vanishing, watchdog kill before child trap installs).
+	_dlw_spawn_lifecycle_observer "$worker_pid" "$issue_number" "$LOGFILE"
+
 	printf '%s\n' "$worker_pid"
 	return 0
 }
@@ -528,6 +540,107 @@ _dlw_spawn_early_exit_monitor() {
 	fi
 	# Disown so any pulse parent shell EXIT trap that targets backgrounded
 	# jobs cannot reach the monitor. setsid already detaches the PGID.
+	disown 2>/dev/null || true
+	return 0
+}
+
+# t3055 / GH#21870: Parent-side lifecycle observer for detached workers.
+#
+# Bug background: `_dlw_exec_detached` launches the worker via
+# `setsid nohup ... &`, captures the PID, and the calling pulse process
+# returns long before the worker terminates. The worker's OWN exit-line
+# emit lives in `headless-runtime-helper.sh::_invoke_opencode` after the
+# `wait "$worker_pid"` call, but only fires when the worker's wrapper
+# script reaches that point. Workers that die earlier — exec failure,
+# SIGKILL/OOM, immediate setsid death, watchdog kill before the
+# wrapper's trap is installed — vanish without a `worker_exited` line,
+# breaking post-mortem (canonical: PID 88900 on 2026-04-29 ~18:37Z).
+#
+# Fix: spawn a tiny detached watcher (mirrors _dlw_spawn_early_exit_monitor)
+# that polls the worker PID and, the moment `kill -0` returns false,
+# appends a `[lifecycle] worker_exited pid=N wait_status=M` line to the
+# pulse log. The observer is the SAFETY NET — if the worker also emits
+# its own line (the happy path), pulse.log will carry both, but `gap` in
+# the empirical baseline check stays near zero either way.
+#
+# Why polling and not `wait`: the observer is forked from a setsid'd
+# pulse subshell that exits immediately; it has no parent-child
+# reaping relationship with the worker (different PGID). `wait` would
+# return -1/ECHILD instantly. `kill -0` only checks process existence.
+#
+# Why no precise wait_status: a non-parent process cannot reap exit
+# codes via `waitpid`. We emit `wait_status=unknown` on observer-side
+# detection. The worker's own emit (when reached) carries the real
+# status. The signal — that the worker died — is the value here.
+#
+# Bounded lifetime: the observer self-terminates after
+# DLW_LIFECYCLE_OBSERVER_MAX_SECONDS (default 6h, matches
+# HEADLESS_SANDBOX_TIMEOUT ceiling) so it cannot leak forever if the
+# PID becomes irreapable.
+#
+# Args:
+#   $1 - worker_pid (PID returned by setsid/nohup launch)
+#   $2 - issue_number (for log message context)
+#   $3 - logfile (absolute path; line is appended here — typically pulse.log)
+# Returns: 0 always.
+_dlw_spawn_lifecycle_observer() {
+	local worker_pid="$1"
+	local issue_number="$2"
+	local logfile="$3"
+	local max_seconds="${DLW_LIFECYCLE_OBSERVER_MAX_SECONDS:-21600}"
+	local poll_interval="${DLW_LIFECYCLE_OBSERVER_POLL_SECONDS:-5}"
+
+	# Defensive: skip if PID is not numeric (caller bug or test fixture)
+	if [[ ! "$worker_pid" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+	if [[ -z "$logfile" ]]; then
+		return 0
+	fi
+
+	# Inner body runs in a detached subshell and outlives the pulse cycle.
+	# Positional args: pid, issue, log, max_seconds, interval.
+	local observer_script
+	# SC2016: variable expansion is intentional inside the inner `bash -c`
+	# body, not in the outer shell. Mirrors the pattern used in
+	# _dlw_spawn_early_exit_monitor above.
+	# shellcheck disable=SC2016
+	observer_script='
+		_dlw_observer_body() {
+			local pid="$1" issue="$2" log="$3" max_s="$4" interval="$5"
+			local elapsed=0 ts="" reason="observed"
+			while [[ "$elapsed" -lt "$max_s" ]]; do
+				if ! kill -0 "$pid" 2>/dev/null; then
+					ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "?")
+					printf "[INFO] [lifecycle] worker_exited pid=%s wait_status=unknown kill_reason=%s observer=parent issue=%s ts=%s\n" \
+						"$pid" "$reason" "$issue" "$ts" >>"$log" 2>/dev/null || true
+					return 0
+				fi
+				sleep "$interval"
+				elapsed=$((elapsed + interval))
+			done
+			# Hit the max-lifetime ceiling without observing termination —
+			# emit a diagnostic so the gap surfaces in audit, but do not
+			# block. The watchdog and pulse-cleanup paths catch true zombies.
+			ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "?")
+			printf "[WARN] [lifecycle] worker_observer_timeout pid=%s elapsed=%ss issue=%s ts=%s\n" \
+				"$pid" "$elapsed" "$issue" "$ts" >>"$log" 2>/dev/null || true
+			return 0
+		}
+		_dlw_observer_body "$@"
+	'
+
+	if command -v setsid >/dev/null 2>&1; then
+		setsid nohup bash -c "$observer_script" _dlw_observer \
+			"$worker_pid" "$issue_number" "$logfile" \
+			"$max_seconds" "$poll_interval" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	else
+		nohup bash -c "$observer_script" _dlw_observer \
+			"$worker_pid" "$issue_number" "$logfile" \
+			"$max_seconds" "$poll_interval" \
+			</dev/null >/dev/null 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+	fi
 	disown 2>/dev/null || true
 	return 0
 }
