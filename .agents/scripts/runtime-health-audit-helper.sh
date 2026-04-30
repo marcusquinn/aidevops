@@ -191,7 +191,7 @@ _apply_finding() {
 	local labels="auto-dispatch,tier:standard,bug,framework,source:runtime-audit"
 	local issue_url
 	issue_url=$(gh_create_issue --repo "$slug" --title "$title" --body "$body" --label "$labels" 2>&1) || {
-		print_error "runtime-audit: gh issue create failed for detector=${detector_id}: $issue_url"
+		print_error "runtime-audit: gh_create_issue wrapper failed for detector=${detector_id}: $issue_url"
 		return 1
 	}
 	print_success "runtime-audit: filed ${issue_url} for detector=${detector_id}"
