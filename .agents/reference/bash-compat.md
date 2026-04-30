@@ -99,6 +99,26 @@ Production failures: pulse dispatch, worktree cleanup, dataset helpers, routine 
 - `local -a arr=()` inside `$()` — `local` in a subshell not inside a function is undefined in 3.2
 - `PIPESTATUS` — available in 3.2 but only for the immediately preceding pipeline. Capture immediately: `cmd1 | cmd2; local ps=("${PIPESTATUS[@]}")`
 
+## Heredoc apostrophe trap (bash 3.2)
+
+A literal ASCII apostrophe (U+0027) inside an unquoted heredoc body (`<<EOF` / `<<TAG`) makes bash 3.2's single-quote tracker scan the body and fail with `unexpected EOF while looking for matching '` at the closing tag — even though the heredoc is well-formed. Fixed in bash 4.0 with lazy heredoc parsing. Distinct from GH#19252 above (fails looking for `)`); the failures share a parser ancestry but the trigger and error message differ. Canonical failure: `runtime-audit-rules/counter-trend-delta.sh` literal `supervisor's structural blind spot` broke `ShellCheck (macos-latest)` on main until t3082 (PR #21852) landed a 1-character fix. macOS `/bin/bash` is bash 3.2 forever (Apple license policy), so this trap will keep recurring on every contributor who writes `it's`, `won't`, or `supervisor's` inside a heredoc.
+
+```bash
+# WRONG — bash 3.2 fails: "unexpected EOF while looking for matching '"
+body=$(cat <<EOF
+it's a supervisor's blind spot
+EOF
+)
+```
+
+Three fixes, in order of preference:
+
+- **(a) Quote the heredoc tag** — `<<'EOF'` (or `<<\EOF`). bash treats the body as a literal string and skips quote tracking entirely. **Side effect: loses `${var}` expansion** — use only when the body has no variables to interpolate.
+- **(b) RECOMMENDED — U+2019** (right single quotation mark, `’`). Minimum diff, typographically correct, parser-safe on bash 3.2 and 4.x. Visually identical to U+0027 in most fonts; readers won't notice. Preserves `${var}` expansion. This is the fix t3082 / PR #21852 applied.
+- **(c) Reword to avoid the apostrophe** — `it is`, `cannot`, `supervisor blind spot`. Zero parser interaction, no expansion tradeoff. Best when natural-language flow allows it.
+
+CI gate: the existing `ShellCheck (macos-latest)` job (the `cross-platform-shellcheck` runner) runs `/bin/bash -n` against bash 3.2 — the canonical detector. Local check: `/bin/bash -n script.sh` on any macOS.
+
 ## Array passing across process boundaries
 
 Arrays flatten to strings across subshell, `$()`, or pipe boundaries. Pass via `${arr[@]+"${arr[@]}"}` (positional args, safe under `set -u`) or temp file (one element per line, read back with `while IFS= read -r`).
