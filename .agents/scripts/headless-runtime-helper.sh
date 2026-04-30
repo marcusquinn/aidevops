@@ -1404,29 +1404,19 @@ _worker_produced_output() {
 		return 0
 	fi
 
-	# Signal 3: PR linked to this issue (requires gh and DISPATCH_REPO_SLUG)
-	# Only reachable when Signal 1 or 2 is present — disambiguates pr_exists vs branch_orphan.
+	# Signal 3 (t3195 / GH#21889): PR linked to this branch/issue. Helper
+	# uses --head primary (no search-index lag), --search fallback. Full
+	# rationale: shared-claim-lifecycle.sh::_pr_exists_for_branch_or_issue.
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
-		local pr_count=0
-		pr_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
-			--json number --jq 'length' 2>/dev/null || true)
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			printf 'pr_exists'
-			return 0
-		fi
-		# PR confirmed absent: branch/commits exist but no PR → orphan (GH#20819)
-		printf 'branch_orphan'
-		return 0
-	fi
-
-	# Cannot verify PR status (no repo_slug or issue_number) — fail-open.
-	# Treat branch/commits as pr_exists: cannot confirm orphan without PR check.
-	printf 'pr_exists'
-	return 0
+	local pr_existence=""
+	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	case "$pr_existence" in
+		found) printf 'pr_exists'; return 0 ;;
+		absent) printf 'branch_orphan'; return 0 ;;
+		*) printf 'pr_exists'; return 0 ;; # unknown -> fail-open
+	esac
 }
 
 #######################################
