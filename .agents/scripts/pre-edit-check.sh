@@ -801,6 +801,18 @@ if [[ -x "$SCRIPT_DIR/session-count-helper.sh" ]]; then
 	fi
 fi
 
+# GH#21900: Shallow clone warning — non-blocking, warn once per session start.
+# A shallow clone will cause add/add conflict cascades if commit-and-pr is run.
+# Auto-unshallow fires inside _rebase_and_push; this is an early advisory so
+# the operator can fix proactively before attempting a rebase.
+_shallow_clone_check=$(git rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+if [[ "$_shallow_clone_check" == "true" ]]; then
+	echo -e "${YELLOW}WARNING: This git clone is shallow (depth-limited).${NC}"
+	echo -e "${YELLOW}  commit-and-pr will attempt auto-unshallow before rebase.${NC}"
+	echo -e "${YELLOW}  To fix now: git fetch --unshallow origin${NC}"
+	echo -e "${YELLOW}  See .agents/reference/git-hygiene.md for details.${NC}"
+fi
+
 # go for it — linked worktree is the correct working context
 echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$current_branch${NC}"
 exit 0

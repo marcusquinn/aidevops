@@ -427,6 +427,47 @@ _run_project_validators() {
 
 # --- Rebase & Push ---
 
+# Detect a shallow git clone and optionally auto-unshallow.
+# A shallow clone lacks intermediate commit objects between the clone-depth
+# boundary and origin/main tip.  Rebasing on a shallow clone fails with
+# hundreds of 'add/add' conflicts that masquerade as a force-push to origin.
+# Recovery sequence (manual): git fetch --unshallow origin
+#
+# Behaviour:
+#   AIDEVOPS_SHALLOW_UNSHALLOW=0  → warn and return 1 (operator must fix)
+#   AIDEVOPS_SHALLOW_UNSHALLOW=1  → attempt git fetch --unshallow and return 0
+#   default (unset)               → auto-unshallow (same as =1)
+#
+# Args: none
+# Returns: 0 if clone is full-depth or was successfully unshallowed
+#          1 if clone is shallow and auto-unshallow is disabled or failed
+_check_and_handle_shallow_clone() {
+	local is_shallow=""
+	is_shallow=$(git rev-parse --is-shallow-repository 2>/dev/null || echo "false")
+	if [[ "$is_shallow" != "true" ]]; then
+		return 0
+	fi
+
+	local opt="${AIDEVOPS_SHALLOW_UNSHALLOW:-1}"
+	if [[ "$opt" == "0" ]]; then
+		print_error "Local clone is shallow; rebase requires full history."
+		print_error "Run: git fetch --unshallow origin"
+		print_error "See .agents/reference/git-hygiene.md for recovery steps."
+		return 1
+	fi
+
+	print_warning "Shallow clone detected — running git fetch --unshallow origin (set AIDEVOPS_SHALLOW_UNSHALLOW=0 to disable)..."
+	if git fetch --unshallow origin 2>/dev/null; then
+		print_info "Unshallow complete — proceeding with rebase."
+		return 0
+	else
+		print_error "git fetch --unshallow failed. Rebase would produce add/add conflicts."
+		print_error "Resolve manually: git fetch --unshallow origin"
+		print_error "See .agents/reference/git-hygiene.md for recovery steps."
+		return 1
+	fi
+}
+
 # Rebase onto origin/main and force-push the current branch.
 # Args: $1=branch $2=skip_hooks (0|1, optional, default 0)
 # Returns 1 on rebase conflict or push failure.
@@ -438,6 +479,8 @@ _rebase_and_push() {
 	if ! git fetch origin main --quiet 2>/dev/null; then
 		print_warning "git fetch origin main failed — proceeding with current state"
 	fi
+	# GH#21900: detect shallow clone before rebase to avoid add/add conflict cascade.
+	_check_and_handle_shallow_clone || return 1
 	if ! git rebase origin/main 2>/dev/null; then
 		print_error "Rebase conflict. Resolve conflicts, then run: git rebase --continue && full-loop-helper.sh commit-and-pr ..."
 		git rebase --abort 2>/dev/null || true
