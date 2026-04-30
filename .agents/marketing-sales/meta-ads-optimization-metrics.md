@@ -143,4 +143,6 @@ Incremental ROAS = Raw ROAS × Incrementality %            (e.g. 3.0x × 60% lif
 | **Lead Gen** | Cost Per Lead, Leads, Lead Conversion Rate, CTR (Link Click), Landing Page Views, CPM, Frequency, Quality Ranking |
 | **Video** | ThruPlay Cost, ThruPlays, 3-Second Video Views, Video Average Watch Time, CTR (All), CPM, Reach, Frequency |
 
+*Daily insights pull and reporting: [Meta Ads CLI](meta-ads-tooling-cli.md)*
+
 *Next: [Scaling Playbook](meta-ads-optimization-scaling.md)*
