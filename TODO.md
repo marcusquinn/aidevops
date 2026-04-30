@@ -3613,7 +3613,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861
 
-- [ ] t3086 doc(bash-compat): bash 3.2 apostrophe-in-unquoted-heredoc gotcha #auto-dispatch #documentation ref:GH#21860
+- [x] t3086 doc(bash-compat): bash 3.2 apostrophe-in-unquoted-heredoc gotcha #auto-dispatch #documentation ref:GH#21860 pr:#21898 completed:2026-04-30
 
 - [x] t3089 fix pulse-watchdog.sh self-writes to monitored log file (t3071 Phase 3) #auto-dispatch #bug ref:GH#21868 pr:#21869 completed:2026-04-30
 
