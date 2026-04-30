@@ -1351,6 +1351,42 @@ _is_dispatch_comment_active() {
 # Outputs:
 #   single-line reason when evidence is found
 #######################################
+
+#######################################
+# t3194: Opportunistic peer-quarantine event detection. Pipes already-
+# fetched comments JSON to pulse-peer-quarantine-helper.sh's scan-comments
+# subcommand to record any
+# `CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<peer>`
+# events from peers (not self). Zero new API calls; non-fatal on any
+# failure. Extracted from has_dispatch_comment to keep that function below
+# the function-complexity gate.
+# Args:
+#   $1 = comments JSON (already fetched in caller)
+#   $2 = repo slug (owner/repo)
+#   $3 = issue number
+#   $4 = self login (optional; used to skip self events)
+#######################################
+_dd_opportunistic_peer_scan() {
+	local comments_json="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local self_login="${4:-}"
+	local pq_helper=""
+	pq_helper="${PEER_QUARANTINE_HELPER_OVERRIDE:-${HELPER_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}}/pulse-peer-quarantine-helper.sh}"
+	[[ -x "$pq_helper" ]] || return 0
+	if [[ -n "$self_login" ]]; then
+		printf '%s' "$comments_json" | "$pq_helper" scan-comments \
+			--self-login "$self_login" \
+			--issue-ref "${repo_slug}#${issue_number}" \
+			>/dev/null 2>&1 || true
+	else
+		printf '%s' "$comments_json" | "$pq_helper" scan-comments \
+			--issue-ref "${repo_slug}#${issue_number}" \
+			>/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
 has_dispatch_comment() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1384,32 +1420,10 @@ has_dispatch_comment() {
 		return 1
 	fi
 
-	# t3194: Opportunistic peer-quarantine detection. The comments JSON is
-	# already in hand — feed it to pulse-peer-quarantine-helper.sh's
-	# scan-comments subcommand to record any
-	# `CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<peer>`
-	# events from peers (not self). Zero new API calls; non-fatal on any
-	# failure. The brief originally specified this in
-	# pulse-batch-prefetch-helper.sh but that helper does not currently
-	# scan comments — fetching here is the actually-cheapest integration
-	# point because the JSON is already loaded.
-	local _pq_helper="${PEER_QUARANTINE_HELPER_OVERRIDE:-${HELPER_DIR:-${SCRIPT_DIR:-$(dirname "${BASH_SOURCE[0]}")}}/pulse-peer-quarantine-helper.sh}"
-	if [[ -x "$_pq_helper" ]]; then
-		# $3 (self_login) was the original arg to has_dispatch_comment;
-		# it's unused for the dispatch check itself but is exactly what
-		# we need to skip self events here.
-		local _pq_self="${3:-}"
-		if [[ -n "$_pq_self" ]]; then
-			printf '%s' "$comments_json" | "$_pq_helper" scan-comments \
-				--self-login "$_pq_self" \
-				--issue-ref "${repo_slug}#${issue_number}" \
-				>/dev/null 2>&1 || true
-		else
-			printf '%s' "$comments_json" | "$_pq_helper" scan-comments \
-				--issue-ref "${repo_slug}#${issue_number}" \
-				>/dev/null 2>&1 || true
-		fi
-	fi
+	# t3194: Opportunistic peer-quarantine event detection — extracted to
+	# _dd_opportunistic_peer_scan to keep this function below the
+	# function-complexity gate. Zero new API calls; non-fatal.
+	_dd_opportunistic_peer_scan "$comments_json" "$repo_slug" "$issue_number" "${3:-}" || true
 
 	# Find the most recent dispatch comment (newest first)
 	local last_dispatch_json

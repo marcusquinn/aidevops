@@ -388,22 +388,39 @@ cmd_record_peer_event() {
 		)
 	" || return 1
 
-	# Trip evaluation. Only count up to threshold; further events past the
-	# trip refresh quarantine_until rather than re-tripping.
-	local count
+	# Trip evaluation extracted to _pq_eval_trip to keep this function below
+	# the function-complexity gate.
+	_pq_eval_trip "$peer" "$now" "$issue_ref" || true
+	return 0
+}
+
+#######################################
+# _pq_eval_trip — evaluate whether the peer's failure_count crossed the
+# threshold and trip (or re-extend) the quarantine if so. Only counts up
+# to the threshold; further events past the trip refresh quarantine_until
+# via _pq_trip_peer rather than re-tripping.
+# Args: $1 = peer login
+#       $2 = current ISO timestamp
+#       $3 = issue ref (audit-only)
+# Returns: 0 always (no-op when below threshold or already covered).
+#######################################
+_pq_eval_trip() {
+	local peer="$1"
+	local now="$2"
+	local issue_ref="$3"
+	local count=""
 	count=$(_pq_get_field "$peer" failure_count)
 	[[ -z "$count" ]] && count=0
-	if [[ "$count" -ge "$PEER_QUARANTINE_FAILURE_THRESHOLD" ]]; then
-		local existing_until
-		existing_until=$(_pq_get_field "$peer" quarantine_until)
-		local now_epoch
-		now_epoch=$(_pq_iso_to_epoch "$now")
-		local until_epoch=0
-		[[ -n "$existing_until" ]] && until_epoch=$(_pq_iso_to_epoch "$existing_until")
-		# Trip (or re-extend) only if not already covering current time.
-		if [[ "$until_epoch" -le "$now_epoch" ]]; then
-			_pq_trip_peer "$peer" "$issue_ref" "failure_count=${count}"
-		fi
+	[[ "$count" -lt "$PEER_QUARANTINE_FAILURE_THRESHOLD" ]] && return 0
+	local existing_until=""
+	existing_until=$(_pq_get_field "$peer" quarantine_until)
+	local now_epoch=""
+	now_epoch=$(_pq_iso_to_epoch "$now")
+	local until_epoch=0
+	[[ -n "$existing_until" ]] && until_epoch=$(_pq_iso_to_epoch "$existing_until")
+	# Trip (or re-extend) only if not already covering current time.
+	if [[ "$until_epoch" -le "$now_epoch" ]]; then
+		_pq_trip_peer "$peer" "$issue_ref" "failure_count=${count}"
 	fi
 	return 0
 }
