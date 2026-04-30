@@ -96,6 +96,13 @@ merge_ready_prs_all_repos() {
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null)
 
 	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}" >>"$_mr_logfile"
+
+	# t3193 (GH#21895): Run stuck-merge detector after the merge pass completes.
+	# Classifies unmerged PRs, detects pattern outages, and tracks zero-progress.
+	if declare -F run_stuck_merge_detector_all_repos >/dev/null 2>&1; then
+		run_stuck_merge_detector_all_repos "$total_merged" 2>/dev/null || true
+	fi
+
 	# Write health counter deltas to a temp file (GH#18571, GH#15107).
 	# run_stage_with_timeout backgrounds this function in a subshell, so
 	# direct updates to _PULSE_HEALTH_* variables are lost on return.
