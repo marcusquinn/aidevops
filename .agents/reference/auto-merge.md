@@ -64,6 +64,21 @@ The allowlist allows peer runners (separate machine/account, `COLLABORATOR` asso
 
 Cryptographic approval (`sudo aidevops approve issue N`) requires the maintainer's root-protected SSH key, which workers cannot access — this is the only reliable human-in-the-loop signal.
 
+### Author-Association Gate Crypto Bypass (t3063)
+
+Symmetric extension of t3052 to the **deterministic merge cascade** — the `_check_pr_merge_gates` collaborator check and the `approve_collaborator_pr` function in `pulse-merge-gates.sh`.
+
+**Background:** t3052 (PR #21767) allowed cryptographic maintainer approval on a linked issue to satisfy the `OWNER`/`MEMBER` author-association gate in the worker-briefed auto-merge path. t3063 extends the same signal to:
+
+1. **`_check_pr_merge_gates`** (`pulse-merge.sh:185-196`) — the gate that short-circuits the merge pass for all non-collaborator PRs. With t3063, a verified crypto signature on the PR or its linked issue (checked by `_has_maintainer_crypto_approval` in `pulse-merge-gates.sh`) allows the PR to proceed through the gate instead of being skipped.
+2. **`approve_collaborator_pr`** (`pulse-merge-gates.sh`) — the function that posts the approval review before merge. With t3063, it accepts the same crypto signal as a bypass for the GH#17671 author guard before refusing to approve.
+
+**Trust chain:** `sudo aidevops approve` requires a root-owned SSH private key that workers cannot forge. The signal is stronger than GitHub author-association, which is a proxy for maintainer trust. The four-layer GH#17671 defence-in-depth is preserved — Case P (CONTRIBUTOR + no crypto = refuse) is pinned by `test-pulse-merge-approve-collaborator-guard.sh`.
+
+**Helper:** `_has_maintainer_crypto_approval "$pr_number" "$repo_slug"` in `pulse-merge-gates.sh`. Checks PR-level comments first, then linked-issue comments, for `<!-- aidevops-signed-approval -->`. Falls back to marker-presence check when `approval-helper.sh` is unavailable (full crypto verification provided by `_external_pr_linked_issue_crypto_approved` downstream).
+
+**Test coverage:** `.agents/scripts/tests/test-pulse-merge-approve-collaborator-guard.sh` cases N, O, P.
+
 ## NMR Automation Signatures (t2386, Split Semantics)
 
 The pulse runs as the maintainer's GitHub token, so `needs-maintainer-review` label events always record the maintainer as actor. `auto_approve_maintainer_issues` in `pulse-nmr-approval.sh` distinguishes three cases by comment markers:
