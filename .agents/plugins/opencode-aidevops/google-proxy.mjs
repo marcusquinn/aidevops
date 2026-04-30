@@ -28,6 +28,7 @@
 import { join } from "path";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 import { jsonResponse, textResponse } from "./response-helpers.mjs";
+import { createProxyLifecycle, resolveProxyPort } from "./proxy-lifecycle.mjs";
 // Import + export: `export { … } from "./module"` is re-export only and
 // does NOT create a local binding. discoverGoogleModels and
 // persistGoogleProvider are both called locally below (see lines ~300 and
@@ -60,7 +61,8 @@ export {
  * Port 32124 chosen to avoid collision with Cursor proxy (32123).
  * Override with GOOGLE_PROXY_PORT env var if needed.
  */
-const GOOGLE_PROXY_DEFAULT_PORT = parseInt(process.env.GOOGLE_PROXY_PORT || "32124", 10);
+const GOOGLE_PROXY_PORT_DEFAULT = 32124;
+const GOOGLE_PROXY_PORT_ENV = "GOOGLE_PROXY_PORT";
 
 const GOOGLE_API_BASE = "https://generativelanguage.googleapis.com";
 
@@ -71,14 +73,36 @@ const RATE_LIMIT_COOLDOWN_MS = 60_000;
 // State
 // ---------------------------------------------------------------------------
 
-/** @type {object | null} Bun.serve server instance */
+/**
+ * Lifecycle factory — owns probe / EADDRINUSE-adopt / retry state for
+ * the Google auth-translating proxy listener bind. The bind is now LAZY
+ * (post GH#21948): plugin init eagerly discovers models and registers
+ * the provider in opencode.json, but defers the `Bun.serve` listener
+ * bind to the first google/* request. Probes `/health` rather than
+ * `/v1/models` because the Google proxy's `/v1/...` paths forward
+ * straight upstream. See proxy-lifecycle.mjs for the full state
+ * machine.
+ */
+const googleLifecycle = createProxyLifecycle({
+  name: "Google",
+  defaultPort: GOOGLE_PROXY_PORT_DEFAULT,
+  envPortVar: GOOGLE_PROXY_PORT_ENV,
+  providerID: "google",
+  probePath: "/health",
+});
+
+/** @type {object | null} Bun.serve server instance — held for stop() */
 let proxyServer = null;
 
-/** @type {number | null} */
-let proxyPort = null;
-
-/** @type {boolean} */
-let proxyStarting = false;
+/**
+ * Cached model list discovered eagerly during plugin init. Currently
+ * informational only (the Google proxy forwards requests transparently
+ * rather than serving a `/v1/models` endpoint), but kept for symmetry
+ * with cursor-proxy.mjs and to support future model-picker refresh.
+ *
+ * @type {Array<{id: string, name: string}> | null}
+ */
+let cachedModels = null;
 
 // activeAccountEmail removed — each request now tracks its own email via
 // getAccessToken() return value to avoid concurrent-request misattribution.
@@ -288,9 +312,87 @@ async function handleGoogleProxyFetch(req) {
 // Proxy server
 // ---------------------------------------------------------------------------
 
+/** Bun.serve error handler for the Google proxy. */
+function handleGoogleProxyServerError(err) {
+  console.error(`[aidevops] Google proxy: server error: ${err.message}`);
+  return textResponse("Internal Server Error", { status: 500 });
+}
+
 /**
- * Start the Google auth-translating proxy.
- * Returns the proxy port and discovered models, or null if no Google accounts.
+ * Discover Google models via the upstream Generative Language API.
+ * Falls back to an empty list on any failure — the lazy listener bind
+ * still happens, but the model picker will be empty until a subsequent
+ * eager refresh succeeds.
+ *
+ * @returns {Promise<Array<{id: string, name: string}>>}
+ */
+async function discoverModelsForGoogleProxy() {
+  let initialToken;
+  try {
+    const result = await getAccessToken();
+    initialToken = result.token;
+  } catch (err) {
+    console.error(`[aidevops] Google proxy: failed to get token for discovery: ${err.message}`);
+    return [];
+  }
+
+  try {
+    return await discoverGoogleModels(initialToken);
+  } catch (err) {
+    console.error(`[aidevops] Google proxy: model discovery failed (${err.message}), using empty list`);
+    return [];
+  }
+}
+
+/**
+ * Eagerly prepare the Google auth-translating proxy: discover models
+ * and register the provider in opencode.json. Does NOT bind the
+ * `Bun.serve` listener — that's deferred to the first google/* request
+ * via `ensureGoogleProxyServer`. Returns `{port, models}` on success or
+ * `null` if no Google accounts are configured.
+ *
+ * Called once during plugin init (in index.mjs). Skips silently when
+ * the pool has no Google accounts; logs and continues on individual
+ * failures (model discovery, persist) so a partial degradation doesn't
+ * block other proxies from starting.
+ *
+ * Multi-instance is safe: every concurrent eager call resolves to the
+ * same deterministic port and the persist side effect is idempotent.
+ * The race-prone `Bun.serve` bind only happens lazily and is protected
+ * by the lifecycle helper's probe-first-then-adopt path.
+ *
+ * @param {any} _client - OpenCode SDK client (currently unused, kept
+ *   for parity with cursor-proxy startCursorProxy signature in case
+ *   future hooks need client access during eager phase)
+ * @returns {Promise<{ port: number, models: Array<{ id: string, name: string }> } | null>}
+ */
+// eslint-disable-next-line no-unused-vars
+export async function startGoogleProxy(_client) {
+  const accounts = getAccounts("google");
+  if (accounts.length === 0) return null;
+
+  cachedModels = await discoverModelsForGoogleProxy();
+
+  const port = resolveProxyPort(GOOGLE_PROXY_PORT_ENV, GOOGLE_PROXY_PORT_DEFAULT);
+
+  if (cachedModels.length > 0) {
+    try {
+      persistGoogleProvider(port, cachedModels);
+    } catch (err) {
+      console.error(`[aidevops] Google proxy: failed to persist provider to opencode.json: ${err.message}`);
+    }
+  }
+
+  return { port, models: cachedModels };
+}
+
+/**
+ * Lazily bind the Google proxy listener. Called from the composed
+ * `experimental.chat.system.transform` hook on the first request whose
+ * `model.providerID === "google"`. The shared lifecycle helper handles
+ * probe-first adoption (sibling OpenCode session already serving),
+ * EADDRINUSE → adopt-with-retry (sibling won the bind race), and
+ * idempotent re-entry (cached port returned without re-binding).
  *
  * The proxy:
  *   1. Accepts requests from @ai-sdk/google (which sends x-goog-api-key)
@@ -300,75 +402,34 @@ async function handleGoogleProxyFetch(req) {
  *   5. Pipes response back (including SSE streams for streamGenerateContent)
  *   6. On 429, rotates to next pool account and retries once
  *
- * @param {any} client - OpenCode SDK client (for provider registration)
- * @returns {Promise<{ port: number, models: Array<{ id: string, name: string }> } | null>}
+ * @returns {Promise<{port: number, adopted: boolean} | null>}
  */
-/** Bun.serve error handler for the Google proxy. */
-function handleGoogleProxyServerError(err) {
-  console.error(`[aidevops] Google proxy: server error: ${err.message}`);
-  return textResponse("Internal Server Error", { status: 500 });
-}
-
-/** Discover models and start proxy; throws on failure (caller wraps in try/catch). */
-async function startGoogleProxyServer() {
-  const { token: initialToken } = await getAccessToken();
-  let models;
-  try {
-    models = await discoverGoogleModels(initialToken);
-  } catch (err) {
-    console.error(`[aidevops] Google proxy: model discovery failed (${err.message}), using empty list`);
-    models = [];
-  }
-  const server = Bun.serve({
-    port: GOOGLE_PROXY_DEFAULT_PORT,
-    hostname: "127.0.0.1",
-    fetch: handleGoogleProxyFetch,
-    error: handleGoogleProxyServerError,
+export async function ensureGoogleProxyServer() {
+  return googleLifecycle.ensureStarted({
+    credentialsAvailable: () => getAccounts("google").length > 0,
+    launch: async () => {
+      const server = Bun.serve({
+        port: resolveProxyPort(GOOGLE_PROXY_PORT_ENV, GOOGLE_PROXY_PORT_DEFAULT),
+        hostname: "127.0.0.1",
+        fetch: handleGoogleProxyFetch,
+        error: handleGoogleProxyServerError,
+      });
+      proxyServer = server;
+      console.error(`[aidevops] Google proxy: started on port ${server.port}`);
+      return { port: server.port };
+    },
   });
-  return { server, models };
-}
-
-export async function startGoogleProxy(client) {
-  const accounts = getAccounts("google");
-  if (accounts.length === 0) return null;
-
-  if (proxyStarting) {
-    console.error("[aidevops] Google proxy: startup already in progress");
-    return null;
-  }
-
-  if (proxyPort) {
-    console.error(`[aidevops] Google proxy: already running on port ${proxyPort}`);
-    return { port: proxyPort, models: [] };
-  }
-
-  proxyStarting = true;
-
-  try {
-    const { server, models } = await startGoogleProxyServer();
-    proxyServer = server;
-    proxyPort = proxyServer.port;
-    console.error(`[aidevops] Google proxy: started on port ${proxyPort}`);
-
-    if (models.length > 0) {
-      try {
-        persistGoogleProvider(proxyPort, models);
-      } catch (err) {
-        console.error(`[aidevops] Google proxy: failed to persist provider to opencode.json: ${err.message}`);
-      }
-    }
-
-    return { port: proxyPort, models };
-  } catch (err) {
-    console.error(`[aidevops] Google proxy: failed to start: ${err.message}`);
-    return null;
-  } finally {
-    proxyStarting = false;
-  }
 }
 
 /**
- * Stop the Google proxy.
+ * Stop the Google proxy listener. Tears down the `Bun.serve` instance
+ * but does NOT clear the lifecycle helper's port cache — re-running
+ * `ensureGoogleProxyServer` after stop will probe, fail, and bind a
+ * fresh listener.
+ *
+ * Currently unused by the plugin (no shutdown hook calls into here);
+ * retained for future cleanup paths and parity with the Google proxy
+ * API surface.
  */
 export function stopGoogleProxy() {
   if (proxyServer) {
@@ -378,17 +439,16 @@ export function stopGoogleProxy() {
       // Server may already be stopped
     }
     proxyServer = null;
-    proxyPort = null;
     console.error("[aidevops] Google proxy: stopped");
   }
 }
 
 /**
- * Get the current proxy port, or null if not running.
+ * Get the current proxy port, or null if not yet bound.
  * @returns {number | null}
  */
 export function getGoogleProxyPort() {
-  return proxyPort;
+  return googleLifecycle.getPort();
 }
 
 // Provider registration and config-persistence are in ./google-proxy-config.mjs
