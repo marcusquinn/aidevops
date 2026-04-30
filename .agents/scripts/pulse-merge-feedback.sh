@@ -73,7 +73,7 @@ _build_review_feedback_section() {
 	local reviews_json="${3:-[]}"
 	local inline_json="${4:-[]}"
 
-	local reviews_count inline_count
+	local reviews_count="" inline_count=""
 	reviews_count=$(printf '%s' "$reviews_json" | jq 'length' 2>/dev/null) || reviews_count=0
 	inline_count=$(printf '%s' "$inline_json" | jq 'length' 2>/dev/null) || inline_count=0
 	[[ "$reviews_count" =~ ^[0-9]+$ ]] || reviews_count=0
@@ -144,7 +144,7 @@ _append_feedback_to_issue() {
 
 	# t2383 Fix 5: fail-safe — skip body edit when issue fetch fails to
 	# prevent clobbering the issue body with only the routed-feedback section.
-	local current_body fetch_rc
+	local current_body="" fetch_rc=""
 	fetch_rc=0
 	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
 		--json body --jq '.body // ""' 2>/dev/null) || fetch_rc=$?
@@ -431,7 +431,7 @@ _conflict_registry_class_for_path() {
 	local matched_class=""
 
 	while IFS='|' read -r class_raw glob_raw _rest; do
-		local class glob
+		local class="" glob=""
 		class="${class_raw#"${class_raw%%[![:space:]]*}"}"
 		class="${class%"${class##*[![:space:]]}"}"
 		glob="${glob_raw#"${glob_raw%%[![:space:]]*}"}"
