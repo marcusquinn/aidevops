@@ -825,6 +825,31 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 }
 
 #######################################
+# t3076: file a root-cause meta-issue with forensics when the no_work
+# breaker fires. Idempotent — second trip on the same original is a
+# no-op (filer self-checks via marker comment). Best-effort: failures
+# are swallowed; NMR remains the canonical block on the original.
+#
+# Args: $1=issue_number, $2=repo_slug, $3=failure_count, $4=reason
+# Returns: 0 always
+#######################################
+_file_circuit_breaker_meta_no_work() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="$4"
+
+	local filer="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/circuit-breaker-meta-filer.sh"
+	[[ -x "$filer" ]] || return 0
+
+	"$filer" file \
+		--issue "$issue_number" --repo "$repo_slug" \
+		--breaker no_work --failure-count "$failure_count" \
+		--reason "$reason" >/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
 # Post an idempotent diagnostic comment when tier escalation is skipped
 # because the worker crashed with crash_type=no_work (infrastructure
 # failure — FD exhaustion, plugin init crash, branch naming race, auth
@@ -845,41 +870,41 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #   arg4 - kill/failure reason (sanitised)
 # Returns: 0 always (best-effort, never fatal)
 #######################################
-_log_no_work_skip_escalation() {
-	local issue_number="$1"
-	local repo_slug="$2"
-	local failure_count="$3"
-	local reason="${4:-worker_exited_before_reading_brief}"
+#######################################
+# Apply the no_work NMR circuit breaker (t2769) when failure_count
+# reaches the threshold: idempotent NMR label + comment with the
+# `cost-circuit-breaker:no_work_loop` marker that
+# `_nmr_application_is_circuit_breaker_trip` recognises (t2386 split
+# semantics — auto-approval preserves NMR), then file the t3076
+# root-cause meta-issue.
+#
+# Args: $1=issue_number, $2=repo_slug, $3=failure_count,
+#        $4=nmr_threshold, $5=reason
+# Returns: 0 always (best-effort, never fatal)
+#######################################
+_apply_no_work_nmr_breaker() {
+	local issue_number="$1" repo_slug="$2" failure_count="$3"
+	local nmr_threshold="$4" reason="$5"
+	local nmr_marker='cost-circuit-breaker:no_work_loop'
 
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
-	[[ -n "$repo_slug" ]] || return 0
+	local existing_nmr=""
+	existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
+		--jq "[.[] | select(.body | contains(\"${nmr_marker}\"))] | length" \
+		2>/dev/null) || existing_nmr=""
+	if [[ "$existing_nmr" =~ ^[1-9][0-9]*$ ]]; then
+		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker already applied for #%s (%s, count=%s)\n' \
+			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+		return 0
+	fi
 
-	local nmr_threshold="${NO_WORK_NMR_THRESHOLD:-3}"
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-maintainer-review" 2>/dev/null || true
 
-	# Circuit-breaker path (t2769): when failure_count reaches the threshold,
-	# apply needs-maintainer-review with a marker that
-	# _nmr_application_is_circuit_breaker_trip recognises, so auto-approval
-	# preserves NMR (t2386 split semantics).
-	if [[ "$failure_count" -ge "$nmr_threshold" ]]; then
-		local nmr_marker='cost-circuit-breaker:no_work_loop'
-		local existing_nmr=""
-		existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
-			--jq "[.[] | select(.body | contains(\"${nmr_marker}\"))] | length" \
-			2>/dev/null) || existing_nmr=""
-		if [[ "$existing_nmr" =~ ^[1-9][0-9]*$ ]]; then
-			printf '[worker-lifecycle][t2769] no_work NMR circuit breaker already applied for #%s (%s, count=%s)\n' \
-				"$issue_number" "$repo_slug" "$failure_count" >&2 || true
-			return 0
-		fi
+	local safe_reason
+	safe_reason=$(_sanitize_markdown "$reason")
 
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-maintainer-review" 2>/dev/null || true
-
-		local safe_reason
-		safe_reason=$(_sanitize_markdown "$reason")
-
-		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- ${nmr_marker} -->
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- ${nmr_marker} -->
 ## no_work Circuit Breaker Fired (t2769)
 
 **Trigger:** ${failure_count} consecutive worker failure(s) classified as \`no_work\` (threshold: ${nmr_threshold}).
@@ -898,8 +923,31 @@ Remove \`needs-maintainer-review\` after investigating the root cause to re-enab
 
 _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is recognised by \`_nmr_application_is_circuit_breaker_trip\` in \`pulse-nmr-approval.sh\` (t2386 split semantics: auto-approval preserves NMR)._" 2>/dev/null || true
 
-		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker fired for #%s (%s, count=%s)\n' \
-			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+	printf '[worker-lifecycle][t2769] no_work NMR circuit breaker fired for #%s (%s, count=%s)\n' \
+		"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+
+	_file_circuit_breaker_meta_no_work "$issue_number" "$repo_slug" \
+		"$failure_count" "$reason"
+	return 0
+}
+
+_log_no_work_skip_escalation() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local failure_count="$3"
+	local reason="${4:-worker_exited_before_reading_brief}"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
+	[[ -n "$repo_slug" ]] || return 0
+
+	local nmr_threshold="${NO_WORK_NMR_THRESHOLD:-3}"
+
+	# Circuit-breaker path (t2769): when failure_count >= threshold,
+	# apply NMR + file root-cause meta-issue. Auto-approval preserves NMR
+	# via the marker (t2386 split semantics).
+	if [[ "$failure_count" -ge "$nmr_threshold" ]]; then
+		_apply_no_work_nmr_breaker "$issue_number" "$repo_slug" \
+			"$failure_count" "$nmr_threshold" "$reason"
 		return 0
 	fi
 

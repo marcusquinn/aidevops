@@ -385,6 +385,142 @@ _evaluate_worktree_removal() {
 }
 
 #######################################
+# Count consecutive trailing CLAIM_RELEASED comments with session_count=0.
+#
+# t3050: drives per-issue infra-failure escalation when an issue repeatedly
+# kills workers in setup (sandbox crash, OpenCode init failure, prompt
+# parse error before tool use). Re-dispatching at the same tier produces
+# the same failure — escalation breaks the loop.
+#
+# Reads recent issue comments (newest first), filters to CLAIM_RELEASED
+# audit lines, and counts how many trailing entries carry `session_count=0`.
+# Stops counting at the first non-zero or missing-session_count comment so
+# a single recovered worker resets the trail.
+#
+# Args:
+#   $1 - issue_number: GitHub issue number
+#   $2 - repo_slug:    owner/repo slug
+#   $3 - threshold:    minimum trailing-zero count to return success
+# Returns: 0 if trailing zero count >= threshold, 1 otherwise (incl. fetch failure)
+#######################################
+_consecutive_zero_session_failures() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local threshold="$3"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+	if [[ ! "$threshold" =~ ^[0-9]+$ ]] || [[ "$threshold" -lt 1 ]]; then
+		return 1
+	fi
+
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate 2>/dev/null) || return 1
+	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
+		return 1
+	fi
+
+	# Newest-first ordering of CLAIM_RELEASED bodies, then walk the trail.
+	# A comment matters only if its first line carries CLAIM_RELEASED;
+	# missing-session_count entries are treated as "non-zero" (unknown)
+	# and break the streak — conservative on the side of NOT escalating.
+	local bodies
+	bodies=$(printf '%s' "$comments_json" | jq -r '
+		[.[] | select((.body // "") | startswith("CLAIM_RELEASED"))]
+		| reverse
+		| .[]
+		| .body
+	' 2>/dev/null) || return 1
+	if [[ -z "$bodies" ]]; then
+		return 1
+	fi
+
+	local zero_run=0
+	# Read each CLAIM_RELEASED body's first line and inspect session_count=N.
+	# IFS-aware loop terminates on the first comment that breaks the streak.
+	local body_first_line
+	while IFS= read -r body_first_line; do
+		[[ -z "$body_first_line" ]] && continue
+		# Ignore non-claim lines (defensive — jq filtered already).
+		[[ "$body_first_line" != CLAIM_RELEASED* ]] && break
+		if [[ "$body_first_line" =~ session_count=([0-9]+) ]]; then
+			if [[ "${BASH_REMATCH[1]}" == "0" ]]; then
+				zero_run=$((zero_run + 1))
+			else
+				break
+			fi
+		else
+			# No session_count token (older comment shape) — break streak.
+			break
+		fi
+	done < <(printf '%s' "$bodies" | awk 'BEGIN{RS=""; FS="\n"} {print $1}')
+
+	if [[ "$zero_run" -ge "$threshold" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Compose a worker-mentoring infra-failure advisory body (per t1900).
+#
+# t3050: emitted when an issue accumulates N consecutive zero-session
+# CLAIM_RELEASED comments. Tells the next reader (maintainer or future
+# worker) what the symptom is, how it differs from regular failures, and
+# what diagnostics to run BEFORE re-dispatching at the same tier.
+#
+# The body intentionally does NOT remove auto-dispatch — that's the
+# caller's job. It carries the `dispatch-infrastructure-failure` marker
+# so `auto_approve_maintainer_issues` PRESERVES the NMR label rather than
+# clearing it (t2386 split semantics: this is a circuit-breaker family
+# trip, not a creation-default scanner-filed issue).
+#
+# Args:
+#   $1 - issue_number: for the worker-log path hint
+#   $2 - repo_slug:    for the worker-log path hint (slug → safe slug)
+# Returns: 0 always; advisory body printed on stdout.
+#######################################
+_dispatch_infra_failure_advisory() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local safe_slug="${repo_slug//\//-}"
+	local log_path_hint="/tmp/pulse-${safe_slug}-${issue_number}.log"
+
+	cat <<MARKER_EOF
+## Dispatch infrastructure failure detected
+
+<!-- dispatch-infrastructure-failure -->
+
+This issue has accumulated **2+ consecutive worker releases with \`session_count=0\`** — every dispatched worker exited before producing any opencode model output. Re-dispatching at the same tier reproduces the same failure mode.
+
+### What this means
+
+A \`session_count=0\` release indicates the worker died in setup (sandbox crash, OpenCode init failure, auth rotation failure, prompt parse error before first tool use, or a SIGTERM before the model emitted any output). The classifier change in t3050 surfaces this directly so the loop is broken at the orphan-cleanup pass instead of cycling through full re-dispatch attempts.
+
+### Action required (maintainer)
+
+1. Read the most recent worker logs:
+   - \`${log_path_hint}\`
+   - \`/tmp/pulse-${safe_slug}-${issue_number}.log.*\` (rotated copies)
+2. Identify the failure family — sandbox / auth / OpenCode / prompt / SIGTERM source.
+3. Once the underlying issue is fixed, clear NMR with:
+
+\`\`\`bash
+sudo aidevops approve issue ${issue_number} ${repo_slug}
+\`\`\`
+
+This applies the cryptographic approval signature that takes precedence over the \`dispatch-infrastructure-failure\` marker, allowing the next dispatch to proceed.
+
+### Why dispatch is paused
+
+Re-dispatching this issue without a setup-side fix would (a) burn another worker on the same failure mode, (b) not surface diagnostics the maintainer hasn't already seen, and (c) progress the cost circuit breaker without producing useful output. The \`needs-maintainer-review\` label + \`dispatch-infrastructure-failure\` marker pause the dispatch loop until a human verifies the failure family and lands a fix.
+MARKER_EOF
+	return 0
+}
+
+#######################################
 # Record crash classification for an orphaned worker worktree.
 #
 # Extracts the issue number from the branch name (pattern: gh[-]?NNN),
@@ -402,6 +538,13 @@ _evaluate_worktree_removal() {
 # Since GH#19042, feature/auto-* branches include the issue number
 # (feature/auto-YYYYMMDD-HHMMSS-gh<N>), so the gh[-]?([0-9]+) regex
 # now matches them. Legacy branches without issue numbers are skipped.
+#
+# t3050: per-issue infra-failure escalation. Before posting the
+# crash_type=no_work failure comment, check whether the most recent
+# CLAIM_RELEASED comments already carry session_count=0 in a row. If 2+
+# consecutive zero-session releases are detected, apply
+# needs-maintainer-review with a dispatch-infrastructure-failure marker
+# instead of re-dispatching — the loop won't break by retrying.
 #
 # Args:
 #   $1 - wt_branch_age: branch name (non-empty; caller checks)
@@ -434,6 +577,42 @@ _record_orphan_crash_classification() {
 	fi
 	# Auto-named branches (feature/auto-*) with 0 dirty files stay as
 	# "no_work" — the worker couldn't parse the issue, likely infra.
+
+	# t3050: per-issue infra-failure escalation. If the last 2 CLAIM_RELEASED
+	# comments both carry session_count=0, the issue is repeatedly killing
+	# workers in setup. Apply NMR with the dispatch-infrastructure-failure
+	# marker so auto_approve_maintainer_issues PRESERVES NMR (t2386 split
+	# semantics) and the dispatch loop pauses until a maintainer fixes
+	# the underlying setup-side issue. Best-effort, idempotent: failure
+	# falls through to the legacy "Worker failed" comment path below.
+	# Skip when AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION=1 (test/diagnostic bypass).
+	if [[ "${AIDEVOPS_SKIP_INFRA_FAILURE_ESCALATION:-0}" != "1" ]] \
+		&& _consecutive_zero_session_failures "$orphan_issue_num" "$repo_slug_age" 2; then
+		echo "[pulse-wrapper] Orphan cleanup: dispatch-infrastructure-failure detected for #${orphan_issue_num} (${repo_slug_age}) — applying needs-maintainer-review" >>"$LOGFILE"
+		# Apply NMR label (best-effort — gh_issue_edit_safe is from shared-gh-wrappers.sh)
+		if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
+			gh_issue_edit_safe "$orphan_issue_num" --repo "$repo_slug_age" \
+				--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+		else
+			gh issue edit "$orphan_issue_num" --repo "$repo_slug_age" \
+				--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+		fi
+		# Post the worker-mentoring advisory comment carrying the marker.
+		local _advisory_body
+		_advisory_body=$(_dispatch_infra_failure_advisory "$orphan_issue_num" "$repo_slug_age")
+		if declare -F gh_issue_comment >/dev/null 2>&1; then
+			gh_issue_comment "$orphan_issue_num" --repo "$repo_slug_age" \
+				--body "$_advisory_body" >/dev/null 2>&1 || true
+		else
+			gh issue comment "$orphan_issue_num" --repo "$repo_slug_age" \
+				--body "$_advisory_body" >/dev/null 2>&1 || true
+		fi
+		# Still record the failure for telemetry, but skip the legacy
+		# "Cleared for re-dispatch" comment — re-dispatch is what we're
+		# blocking. The advisory replaces the legacy comment.
+		recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
+		return 0
+	fi
 
 	recover_failed_launch_state "$orphan_issue_num" "$repo_slug_age" "premature_exit" "$orphan_crash_type"
 	echo "[pulse-wrapper] Orphan cleanup: recorded premature_exit for #${orphan_issue_num} (${repo_slug_age}) crash_type=${orphan_crash_type} — triggers fast-fail escalation" >>"$LOGFILE"

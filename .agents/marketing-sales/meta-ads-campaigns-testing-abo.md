@@ -128,6 +128,8 @@ Process: winning creative → 3-5 hook variations (same body) → test → winne
 | Day 7 | Kill underperformers; identify winners; plan next tests |
 | Day 14 | Declare winners; move to scale; document learnings; plan iteration tests |
 
+*To launch campaigns via CLI: [Meta Ads CLI](meta-ads-tooling-cli.md)*
+
 ---
 
 *Next: [Scaling Campaign (CBO)](scaling-cbo.md)*

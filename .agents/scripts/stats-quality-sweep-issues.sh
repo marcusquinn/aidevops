@@ -38,15 +38,126 @@ fi
 # --- Functions ---
 
 #######################################
-# Ensure persistent quality review issue exists for a repo
+# Search for an open quality dashboard issue by labels.
 #
-# Creates or finds the "Daily Code Quality Review" issue. Uses labels
-# "quality-review" + "persistent" for dedup. Pins the issue.
+# Fail-closed: returns 1 on any gh API error so the caller aborts
+# instead of falling through to creation (the original fail-open bug).
+#
+# Arguments:
+#   $1 - repo_slug
+#   $2 - quality-review label name
+#   $3 - persistent label name
+# Output: issue number to stdout (empty if not found)
+# Returns: 0 on success (even if not found), 1 on API error
+#######################################
+_quality_issue_label_search() {
+	local repo_slug="$1"
+	local lbl_review="$2"
+	local lbl_persist="$3"
+
+	local raw_output exit_code
+	raw_output=$(gh issue list --repo "$repo_slug" \
+		--label "$lbl_review" --label "$lbl_persist" \
+		--state open --json number \
+		--jq '.[0].number // empty' 2>&1)
+	exit_code=$?
+
+	if [[ "$exit_code" -ne 0 ]]; then
+		echo "[stats] Quality sweep: label search API error (exit ${exit_code}): ${raw_output}" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	printf '%s' "$raw_output"
+	return 0
+}
+
+#######################################
+# Search for an open quality dashboard issue by title prefix.
+#
+# Used as a fallback when label search returns empty but succeeds.
+# Labels can be stripped by reconcilers; the title prefix is invariant.
+# Fail-closed: returns 1 on any gh API error.
+#
+# Arguments:
+#   $1 - repo_slug
+# Output: issue number to stdout (empty if not found)
+# Returns: 0 on success (even if not found), 1 on API error
+#######################################
+_quality_issue_title_search() {
+	local repo_slug="$1"
+
+	local raw_output exit_code
+	raw_output=$(gh issue list --repo "$repo_slug" \
+		--state open --search "\"Code Audit Routines\" in:title" \
+		--json number --jq '.[0].number // empty' 2>&1)
+	exit_code=$?
+
+	if [[ "$exit_code" -ne 0 ]]; then
+		echo "[stats] Quality sweep: title search API error (exit ${exit_code}): ${raw_output}" >>"${LOGFILE:-/dev/null}"
+		return 1
+	fi
+
+	printf '%s' "$raw_output"
+	return 0
+}
+
+#######################################
+# Close all open "Code Audit Routines" sibling issues except the survivor.
+#
+# Self-healing sweep: called post-create to close any duplicates that
+# accumulated during prior label-search failures. Models on
+# pulse-merge.sh::_close_superseded_prs — close with comment, best-effort.
+#
+# Arguments:
+#   $1 - repo_slug
+#   $2 - survivor_issue_number (the one to keep open)
+# Returns: 0 always (best-effort, never blocks the caller)
+#######################################
+_quality_issue_close_duplicates() {
+	local repo_slug="$1"
+	local survivor="$2"
+
+	local siblings_json
+	siblings_json=$(gh issue list --repo "$repo_slug" \
+		--state open --search "\"Code Audit Routines\" in:title" \
+		--json number --jq '[.[].number]' 2>/dev/null) || return 0
+
+	[[ -z "$siblings_json" ]] && return 0
+
+	local num
+	while IFS= read -r num; do
+		[[ -z "$num" ]] && continue
+		[[ "$num" == "$survivor" ]] && continue
+		local close_body="> Auto-closed: superseded by #${survivor} as duplicate quality dashboard."
+		gh issue comment "$num" --repo "$repo_slug" --body "$close_body" 2>/dev/null || true
+		gh issue close "$num" --repo "$repo_slug" 2>/dev/null || true
+		echo "[stats] Quality sweep: closed duplicate dashboard #${num} (survivor: #${survivor})" >>"${LOGFILE:-/dev/null}"
+	done < <(printf '%s\n' "$siblings_json" | jq -r '.[]' 2>/dev/null)
+
+	return 0
+}
+
+#######################################
+# Ensure persistent quality review issue exists for a repo.
+#
+# Creates or finds the "Code Audit Routines" dashboard issue.
+# Dedup strategy (fail-closed, t3074):
+#   1. Try per-machine cache (fast path).
+#   2. Validate cache via gh issue view — only invalidate on definitive
+#      non-OPEN state; transient API errors keep the cache to prevent
+#      false-create.
+#   3. Label search (fail-closed) — abort entire sweep on API error.
+#   4. Title-prefix fallback — runs only when label search returns empty.
+#      Abort if this API call also fails.
+#   5. Create only when BOTH searches confirmed zero matches.
+#   6. Post-create: run _quality_issue_close_duplicates to reclaim any
+#      siblings created during prior failures.
 #
 # Arguments:
 #   $1 - repo slug
 # Output: issue number to stdout
-# Returns: 0 on success, 1 if issue could not be created/found
+# Returns: 0 on success, 1 if issue could not be found/created or if
+#          any dedup API call fails (fail-closed)
 #######################################
 _ensure_quality_issue() {
 	local repo_slug="$1"
@@ -65,25 +176,42 @@ _ensure_quality_issue() {
 		issue_number=$(cat "$cache_file" 2>/dev/null || echo "")
 	fi
 
-	# Validate cached issue is still open
+	# Validate cached issue — only invalidate on a definitive non-OPEN
+	# response. Transient API failures (non-zero exit, empty state) keep
+	# the cache to avoid triggering the creation path erroneously.
 	if [[ -n "$issue_number" ]]; then
-		local state
-		state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-		if [[ "$state" != "OPEN" ]]; then
+		local state gh_exit
+		state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null)
+		gh_exit=$?
+		if [[ "$gh_exit" -eq 0 && -n "$state" && "$state" != "OPEN" ]]; then
+			# Definitively closed/merged — invalidate cache
 			issue_number=""
 			rm -f "$cache_file" 2>/dev/null || true
 		fi
+		# Transient failure: keep cache and proceed as if valid
 	fi
 
-	# Search by labels
+	# Label search — fail-closed: abort sweep on any API error
 	if [[ -z "$issue_number" ]]; then
-		issue_number=$(gh issue list --repo "$repo_slug" \
-			--label "$lbl_review" --label "$lbl_persist" \
-			--state open --json number \
-			--jq '.[0].number // empty' 2>/dev/null || echo "")
+		local label_result
+		label_result=$(_quality_issue_label_search "$repo_slug" "$lbl_review" "$lbl_persist") || {
+			echo "[stats] Quality sweep: aborting — label search API failure for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
+		issue_number="$label_result"
 	fi
 
-	# Create if missing
+	# Title-prefix fallback — only runs when label search returned empty
+	if [[ -z "$issue_number" ]]; then
+		local title_result
+		title_result=$(_quality_issue_title_search "$repo_slug") || {
+			echo "[stats] Quality sweep: aborting — title search API failure for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+			return 1
+		}
+		issue_number="$title_result"
+	fi
+
+	# Create only when BOTH searches confirmed zero open matches
 	if [[ -z "$issue_number" ]]; then
 		# Ensure labels exist
 		gh label create "$lbl_review" --repo "$repo_slug" --color "7057FF" \
@@ -104,7 +232,7 @@ _ensure_quality_issue() {
 			--label "$lbl_review" --label "$lbl_persist" --label "$lbl_source" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$issue_number" ]]; then
-			echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"$LOGFILE"
+			echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
 			return 1
 		fi
 
@@ -120,10 +248,13 @@ _ensure_quality_issue() {
 				}" >/dev/null 2>&1 || true
 		fi
 
-		echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		echo "[stats] Quality sweep: created and pinned issue #${issue_number} in ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+
+		# Post-create defensive sweep: close any siblings from prior failures
+		_quality_issue_close_duplicates "$repo_slug" "$issue_number"
 	fi
 
-	# Cache
+	# Cache the winner
 	echo "$issue_number" >"$cache_file"
 	echo "$issue_number"
 	return 0

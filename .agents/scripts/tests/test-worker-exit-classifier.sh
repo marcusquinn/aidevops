@@ -122,9 +122,88 @@ test_signal_killed_sighup() {
 }
 
 test_clean_exit() {
+	# Without start_epoch_ms (==0), zero-session DB query is bypassed
+	# and the legacy "clean" path is returned.
 	local result
 	result=$(classify_worker_exit 0 0)
-	assert_eq "clean exit (status=0)" "$result" "clean"
+	assert_eq "clean exit (status=0, no start_ms)" "$result" "clean"
+	return 0
+}
+
+# t3050: clean exit + zero opencode sessions → worker_noop_zero_output.
+# Catches the "wrapper returned 0 but worker never produced model output"
+# failure mode (sandbox crash, OpenCode init failure, prompt parse before
+# tool use) that previously slipped through as reason=clean.
+test_clean_exit_zero_sessions() {
+	local db_path="${TMPDIR_TEST}/clean-zero.db"
+	_make_db "$db_path"
+	local start_ms
+	start_ms=$(_now_ms)
+
+	_WORKER_ISOLATED_DB_PATH="$db_path"
+	local result
+	result=$(classify_worker_exit 0 "$start_ms")
+	unset _WORKER_ISOLATED_DB_PATH
+
+	assert_eq "worker_noop_zero_output (clean, empty DB)" "$result" "worker_noop_zero_output"
+	return 0
+}
+
+# t3050: clean exit + sessions present after start → legacy clean path.
+# Confirms the zero-session check does not regress the genuine clean case.
+test_clean_exit_with_sessions() {
+	local db_path="${TMPDIR_TEST}/clean-with-sessions.db"
+	_make_db "$db_path"
+	local start_ms
+	start_ms=$(_now_ms)
+	_insert_session "$db_path" "$start_ms"
+
+	_WORKER_ISOLATED_DB_PATH="$db_path"
+	local result
+	result=$(classify_worker_exit 0 "$start_ms")
+	unset _WORKER_ISOLATED_DB_PATH
+
+	assert_eq "clean (clean exit, session present)" "$result" "clean"
+	return 0
+}
+
+# t3050: clean exit + session before start_ms → worker_noop_zero_output.
+# A pre-existing session in the shared DB does not count toward this
+# worker's window — must be classified as zero-output.
+test_clean_exit_session_before_start() {
+	local db_path="${TMPDIR_TEST}/clean-old-session.db"
+	_make_db "$db_path"
+	local old_ts=$(( $(_now_ms) - 10000 ))
+	_insert_session "$db_path" "$old_ts"
+	# Worker starts AFTER the old session
+	local start_ms
+	start_ms=$(_now_ms)
+
+	_WORKER_ISOLATED_DB_PATH="$db_path"
+	local result
+	result=$(classify_worker_exit 0 "$start_ms")
+	unset _WORKER_ISOLATED_DB_PATH
+
+	assert_eq "worker_noop_zero_output (clean, session before start)" "$result" "worker_noop_zero_output"
+	return 0
+}
+
+# t3050: signal-killed precedence — even with zero sessions, signal
+# detection runs FIRST. Confirms Fix 1 (wait_status sentinel) reaches the
+# signal_killed branch before the zero-session check.
+test_signal_killed_with_zero_sessions() {
+	local db_path="${TMPDIR_TEST}/signal-zero.db"
+	_make_db "$db_path"
+	local start_ms
+	start_ms=$(_now_ms)
+
+	_WORKER_ISOLATED_DB_PATH="$db_path"
+	local result
+	# wait_status=143 (SIGTERM) with zero sessions: must be signal_killed:15
+	result=$(classify_worker_exit 143 "$start_ms")
+	unset _WORKER_ISOLATED_DB_PATH
+
+	assert_eq "signal_killed:SIGTERM precedence over zero-session" "$result" "signal_killed:15"
 	return 0
 }
 
@@ -260,6 +339,10 @@ main() {
 	test_signal_killed_sigkill
 	test_signal_killed_sighup
 	test_clean_exit
+	test_clean_exit_zero_sessions
+	test_clean_exit_with_sessions
+	test_clean_exit_session_before_start
+	test_signal_killed_with_zero_sessions
 	test_crash_during_startup_empty_db
 	test_crash_during_startup_no_db
 	test_crash_during_execution_session_in_db

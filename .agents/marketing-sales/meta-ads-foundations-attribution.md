@@ -44,7 +44,7 @@ Meta's attribution is designed to show Meta ads in the best light.
 
 The gold standard for measuring true ad impact.
 
-```
+```text
 Incrementality = (Test Group Conversions - Control Group Conversions) / Test Group Conversions
 ```
 
@@ -68,7 +68,7 @@ Retargeting has the lowest incrementality — many of those users would have pur
 
 **Brand Lift:** Survey-based. Measures awareness, consideration, recall. Best for brand campaigns.
 
-```
+```text
 Test Group: 1,000 conversions | Control: 400 | Lift: 150%
 Incremental: 600 | Spend: $30K | Cost Per Incremental: $50
 ```
@@ -111,7 +111,7 @@ Use multiple methods — no single source is perfect:
 
 **MER (Marketing Efficiency Ratio):**
 
-```
+```text
 MER = Total Revenue / Total Marketing Spend
 ```
 
@@ -135,6 +135,18 @@ Tracks business-wide efficiency instead of platform ROAS. Reduces attribution ar
 | Lead gen (7-30 day cycle) | 7-day click only | CRM lead-to-customer rate |
 | B2B SaaS (30-180 day cycle) | 28-day click (API) | Dreamdata / HockeyStack |
 | Brand awareness | 1-day view | Brand lift study + surveys |
+
+## Conversions API (CAPI)
+
+Server-side event sending that bypasses browser-side tracking losses (iOS opt-outs, ad blockers,
+cross-device gaps). CAPI is mandatory in 2026 — pixel-only loses 30-50% of conversions.
+
+Load `META_PIXEL_ID` and `META_ACCESS_TOKEN` per-account via the gopass template before sending
+any CAPI events: `source <(aidevops secret env meta-ads-<account>-<env>)`.
+See `.agents/configs/secrets-templates/meta-ads.template.env` for the full variable set.
+
+CAPI events flow from your server (or a partner like Stape/Segment); the CLI (`meta ads dataset`)
+wires the pixel to the ad account — see `meta-ads-tooling-cli.md` "Pixel and dataset wiring".
 
 ## Key Takeaways
 

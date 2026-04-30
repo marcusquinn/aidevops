@@ -416,6 +416,112 @@ _post_issue_approval_updates() {
 	return 0
 }
 
+#######################################
+# t3068: Kick the pulse so it picks up this approval immediately.
+#
+# Eliminates the up-to-120s window between a verified signature post and the
+# pulse-merge cycle acting on the linked PR. Two layers, both best-effort:
+#
+#   1. Marker file (~/.aidevops/cache/pulse-merge-trigger.txt) — append a
+#      tab-separated line `slug<TAB>num<TAB>type<TAB>iso8601_ts`. The pulse
+#      drains this file at cycle entry (see pulse-wrapper-bootstrap.sh
+#      _drain_merge_trigger_file_if_present) and processes each PR via the
+#      existing process_pr() entry point in pulse-merge.sh. Survives crashes
+#      and approval/pulse races — if the immediate spawn (layer 2) is
+#      unavailable, the next pulse-merge tick (60s) drains the marker.
+#
+#   2. Immediate background spawn — fire `pulse-wrapper.sh --merge-only` so
+#      the merge pass runs within seconds. nohup + disown so the child
+#      survives this script's exit. If pulse is already mid-merge the spawn
+#      short-circuits via the merge-only lockdir collision in
+#      _pulse_run_merge_only — the marker (layer 1) covers that case.
+#
+# Args:
+#   $1 - target_type ("issue" or "pr")
+#   $2 - target_number (numeric)
+#   $3 - slug (owner/repo)
+#
+# Bypass: AIDEVOPS_SKIP_APPROVE_KICK_PULSE=1 disables both layers (used by
+# tests and CI to keep approval flow purely local).
+#
+# Exit code: always 0 (failures must NEVER block the approval flow — the
+# approval has already been signed and posted by the time we reach here).
+#######################################
+_kick_pulse_after_approval() {
+	local target_type="${1:-}"
+	local target_number="${2:-}"
+	local slug="${3:-}"
+
+	if [[ "${AIDEVOPS_SKIP_APPROVE_KICK_PULSE:-0}" == "1" ]]; then
+		return 0
+	fi
+
+	# Defense-in-depth input validation. The caller already validated these,
+	# but the marker file is consumed by another script that will exec on
+	# them — keep the bar high.
+	if ! [[ "$target_number" =~ ^[0-9]+$ ]]; then
+		return 0
+	fi
+	if ! [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		return 0
+	fi
+	if [[ "$target_type" != "issue" && "$target_type" != "pr" ]]; then
+		return 0
+	fi
+
+	# Layer 1: marker file. Always written; pulse drains on next merge cycle.
+	# _APPROVAL_HOME (set near the top of this file) handles sudo HOME reset
+	# on Linux so the marker lands in the real user's tree, not /root.
+	local trigger_file="${_APPROVAL_HOME}/.aidevops/cache/pulse-merge-trigger.txt"
+	mkdir -p "$(dirname "$trigger_file")" 2>/dev/null || true
+
+	local ts
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf 'unknown')
+	# Tab-separated; the drain parser splits on \t. Append-only — multiple
+	# concurrent approvals each contribute one line.
+	printf '%s\t%s\t%s\t%s\n' "$slug" "$target_number" "$target_type" "$ts" \
+		>>"$trigger_file" 2>/dev/null || true
+
+	# When sudo writes the marker file, ownership defaults to root. Hand it
+	# back to the real user so the pulse (running as the user) can read +
+	# rotate it without permission errors.
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		chown "$SUDO_USER" "$trigger_file" 2>/dev/null || true
+	fi
+
+	# Layer 2: immediate background spawn. Best-effort — if the binary is
+	# missing or not executable, the marker (layer 1) still drives latency
+	# down to the next pulse-merge tick (~60s).
+	local pulse_wrapper="${_APPROVAL_HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
+	if [[ ! -x "$pulse_wrapper" ]]; then
+		return 0
+	fi
+
+	local kick_log="${_APPROVAL_HOME}/.aidevops/logs/pulse-approve-kick.log"
+	mkdir -p "$(dirname "$kick_log")" 2>/dev/null || true
+
+	# Detach completely so this exits even if the child blocks. The double
+	# fork via subshell + disown matches the pattern in
+	# pulse-lifecycle-helper.sh::_start. Drop sudo (run as the real user)
+	# so the spawned pulse uses the same env/locks as the launchd-managed
+	# pulse — root-owned locks would corrupt the lockdir tree.
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v sudo >/dev/null 2>&1; then
+		(
+			nohup sudo -u "$SUDO_USER" -H -- "$pulse_wrapper" --merge-only \
+				>>"$kick_log" 2>&1 </dev/null &
+			disown 2>/dev/null || true
+		) 2>/dev/null
+	else
+		(
+			nohup "$pulse_wrapper" --merge-only \
+				>>"$kick_log" 2>&1 </dev/null &
+			disown 2>/dev/null || true
+		) 2>/dev/null
+	fi
+
+	return 0
+}
+
 _approve_target() {
 	local target_type="$1"
 	local target_number="${2:-}"
@@ -463,6 +569,12 @@ _approve_target() {
 	fi
 
 	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
+
+	# t3068: kick the pulse to act on this approval immediately. Always
+	# returns 0 — never blocks the approval flow. See _kick_pulse_after_approval
+	# above for the two-layer (marker file + background spawn) design.
+	_kick_pulse_after_approval "$target_type" "$target_number" "$slug"
+
 	# Bash 3.2 compat: ${var^} (uppercase first) requires Bash 4+. Use printf + tr.
 	local target_type_cap
 	target_type_cap="$(printf '%s' "${target_type:0:1}" | tr '[:lower:]' '[:upper:]')${target_type:1}"

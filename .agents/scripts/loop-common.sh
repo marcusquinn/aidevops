@@ -1086,8 +1086,11 @@ loop_handle_workflow_push_failure() {
 		local remote_url
 		remote_url=$(git remote get-url origin 2>/dev/null || echo "")
 		if [[ -n "$remote_url" ]]; then
-			# Extract owner/repo from SSH or HTTPS URL
-			repo_slug=$(echo "$remote_url" | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+			# Extract owner/repo from SSH or HTTPS URL.
+			# Strip .git first, then use POSIX ERE (avoids non-greedy +? which
+			# BSD sed on macOS does not support — GH#21782).
+			local _remote_no_git="${remote_url%.git}"
+			repo_slug=$(echo "$_remote_no_git" | sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#' || true)
 		fi
 	fi
 

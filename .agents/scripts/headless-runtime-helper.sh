@@ -356,6 +356,13 @@ _invoke_opencode() {
 	shift 2
 	local -a cmd=("$@")
 
+	# t3050: expose exit_code_file to the EXIT trap so it can read the
+	# .wait_status sentinel persisted below. Pattern matches the existing
+	# _WORKER_ISOLATED_DB_PATH global at line ~515. Cleared at function
+	# end alongside _WORKER_ISOLATED_DB_PATH so a post-cleanup EXIT firing
+	# does not see a stale path.
+	_WORKER_EXIT_CODE_FILE="$exit_code_file"
+
 	# Auth isolation for headless workers: each worker gets its own copy of
 	# auth.json via XDG_DATA_HOME redirection. opencode uses
 	# $XDG_DATA_HOME/opencode/auth.json for OAuth tokens. Without isolation,
@@ -521,6 +528,13 @@ _invoke_opencode() {
 	print_info "[lifecycle] waiting_for_worker pid=$worker_pid watchdog=$watchdog_pid"
 	local _wait_status=0
 	wait "$worker_pid" 2>/dev/null || _wait_status=$?
+	# t3050: persist worker wait_status so the EXIT trap can classify signal
+	# kills correctly. Without this, the EXIT trap reads $? at script exit —
+	# always 0 after the wrapper's clean post-wait cleanup — and emits
+	# reason=clean for SIGTERM/SIGKILL'd workers (canonical: GH#21707).
+	if [[ -n "${exit_code_file:-}" ]]; then
+		printf '%s' "$_wait_status" >"${exit_code_file}.wait_status" 2>/dev/null || true
+	fi
 	# t3063: classify kill_reason on the same line as wait_status so Phase 2
 	# log aggregation does not need to JOIN by PID across scripts. classifier
 	# inspects sentinel files written next to exit_code_file by kill sites
@@ -574,6 +588,12 @@ _invoke_opencode() {
 		_WORKER_ISOLATED_DB_PATH=""
 		print_info "[lifecycle] db_cleanup dir=$isolated_data_dir pid=$$"
 	fi
+
+	# t3050: Clear exit_code_file path so a post-cleanup EXIT trap firing
+	# does not read a stale sentinel left over from a prior invocation.
+	# The .wait_status sentinel itself is short-lived (read-once-and-deleted
+	# by the EXIT trap), but the path variable is process-global until cleared.
+	_WORKER_EXIT_CODE_FILE=""
 
 	print_info "[lifecycle] invoke_opencode_returning pid=$$"
 	return 0

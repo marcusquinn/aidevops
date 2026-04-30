@@ -1062,6 +1062,27 @@ _pc_search_related_prs() {
 	return $?
 }
 
+# _pc_search_related_issues — run gh issue list with OR query across keywords.
+# Args: $1 repo_slug, $2 newline-separated keywords.
+# Emits raw JSON array on stdout. Returns 0 on success, non-zero on gh error.
+_pc_search_related_issues() {
+	local repo_slug="$1"
+	local keywords_nl="$2"
+	local -a kws=()
+	local line
+	while IFS= read -r line; do
+		[[ -n "$line" ]] && kws+=("$line")
+	done <<<"$keywords_nl"
+	[[ ${#kws[@]} -eq 0 ]] && return 1
+	local query
+	query=$(printf '%s OR ' "${kws[@]}")
+	query="${query% OR }"
+	gh issue list --repo "$repo_slug" --state open \
+		--search "$query" --limit 20 \
+		--json number,title,state,createdAt 2>/dev/null
+	return $?
+}
+
 # _pc_filter_relevant_prs — apply recency + keyword-overlap filter.
 # Args: $1 raw JSON, $2 newline keywords, $3 dedup_days.
 # Emits formatted hit lines: "#NNN [STATE] title  (date)".
@@ -1094,6 +1115,38 @@ _pc_filter_relevant_prs() {
 	return 0
 }
 
+# _pc_filter_relevant_issues — apply recency + keyword-overlap filter for open issues.
+# Args: $1 raw JSON, $2 newline keywords, $3 dedup_days.
+# Emits formatted hit lines: "#NNN [ISSUE] title  (date)".
+_pc_filter_relevant_issues() {
+	local raw_json="$1"
+	local keywords_nl="$2"
+	local dedup_days="$3"
+	local now_epoch cutoff_epoch
+	now_epoch=$(date +%s 2>/dev/null || echo "0")
+	cutoff_epoch=$((now_epoch - dedup_days * 86400))
+	local issue_num issue_title issue_created_at
+	while IFS='|' read -r issue_num issue_title issue_created_at; do
+		[[ -z "$issue_num" ]] && continue
+		if [[ -n "$issue_created_at" ]]; then
+			local created_epoch=0
+			created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created_at" +%s 2>/dev/null) \
+				|| created_epoch=$(date --date="$issue_created_at" +%s 2>/dev/null) \
+				|| true
+			[[ "$created_epoch" -gt 0 && "$created_epoch" -lt "$cutoff_epoch" ]] && continue
+		fi
+		local issue_lower overlap=0 kw
+		issue_lower=$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]')
+		while IFS= read -r kw; do
+			[[ -z "$kw" ]] && continue
+			[[ "$issue_lower" == *"$kw"* ]] && overlap=$((overlap + 1))
+		done <<<"$keywords_nl"
+		[[ $overlap -lt 2 ]] && continue
+		printf '#%s [ISSUE] %s  (%s)\n' "$issue_num" "$issue_title" "${issue_created_at:-open}"
+	done < <(printf '%s' "$raw_json" | jq -r '.[] | "\(.number)|\(.title)|\(.createdAt // "")"')
+	return 0
+}
+
 # _pc_prompt_or_warn — interactive Y/N prompt or non-interactive stderr warns.
 # Args: $1 newline-separated hit lines.
 # Returns: 0 to proceed, 10 if interactive user declined.
@@ -1114,7 +1167,7 @@ _pc_prompt_or_warn() {
 	fi
 	local hit_count="${#hits[@]}" max_show=3 h
 	if [[ "$is_tty" == "true" ]]; then
-		printf '\n[claim-task-id] WARNING: Found %d similar PR(s) — please check before claiming a new task ID:\n' "$hit_count" >&2
+		printf '\n[claim-task-id] WARNING: Found %d similar open issue(s) or PR(s) — please check before claiming a new task ID:\n' "$hit_count" >&2
 		for ((h = 0; h < hit_count && h < max_show; h++)); do
 			printf '  \xe2\x80\xa2 %s\n' "${hits[$h]}" >&2
 		done
@@ -1124,12 +1177,12 @@ _pc_prompt_or_warn() {
 		local ans_lower
 		ans_lower=$(printf '%s' "$answer" | tr '[:upper:]' '[:lower:]')
 		if [[ "$ans_lower" != "y" && "$ans_lower" != "yes" ]]; then
-			printf '[claim-task-id] Claim aborted — verify the PRs above before proceeding.\n' >&2
+			printf '[claim-task-id] Claim aborted — verify the issues/PRs above before proceeding.\n' >&2
 			return 10
 		fi
 	else
 		for ((h = 0; h < hit_count && h < max_show; h++)); do
-			printf '[claim-task-id] WARN: similar PR found: %s\n' "${hits[$h]}" >&2
+			printf '[claim-task-id] WARN: similar issue or PR found: %s\n' "${hits[$h]}" >&2
 		done
 	fi
 	return 0
@@ -1139,6 +1192,7 @@ _pc_prompt_or_warn() {
 # Args: $1 title, $2 repo_slug.
 # Returns: 0 (proceed) or 10 (user declined, interactive only).
 # Fail-open: any missing dep (gh, jq, auth) short-circuits to 0.
+# GH#21831: searches both PRs and open issues to catch cross-tNNN duplicates.
 _pre_claim_discovery_pass() {
 	local title="$1"
 	local repo_slug="$2"
@@ -1150,13 +1204,32 @@ _pre_claim_discovery_pass() {
 	local keywords
 	keywords=$(_pc_sanitize_keywords "$title")
 	[[ -z "$keywords" ]] && return 0
-	local raw_json
-	raw_json=$(_pc_search_related_prs "$repo_slug" "$keywords") || return 0
-	[[ -z "$raw_json" || "$raw_json" == "[]" ]] && return 0
-	local hits
-	hits=$(_pc_filter_relevant_prs "$raw_json" "$keywords" "$dedup_days")
-	[[ -z "$hits" ]] && return 0
-	_pc_prompt_or_warn "$hits"
+	local all_hits=""
+
+	# Search related PRs (existing behaviour)
+	local pr_json pr_hits
+	pr_json=$(_pc_search_related_prs "$repo_slug" "$keywords") || true
+	if [[ -n "$pr_json" && "$pr_json" != "[]" ]]; then
+		pr_hits=$(_pc_filter_relevant_prs "$pr_json" "$keywords" "$dedup_days")
+		[[ -n "$pr_hits" ]] && all_hits="${pr_hits}"
+	fi
+
+	# Search related open issues (GH#21831: catch cross-tNNN duplicates)
+	local issue_json issue_hits
+	issue_json=$(_pc_search_related_issues "$repo_slug" "$keywords") || true
+	if [[ -n "$issue_json" && "$issue_json" != "[]" ]]; then
+		issue_hits=$(_pc_filter_relevant_issues "$issue_json" "$keywords" "$dedup_days")
+		if [[ -n "$issue_hits" ]]; then
+			if [[ -n "$all_hits" ]]; then
+				all_hits="${all_hits}"$'\n'"${issue_hits}"
+			else
+				all_hits="${issue_hits}"
+			fi
+		fi
+	fi
+
+	[[ -z "$all_hits" ]] && return 0
+	_pc_prompt_or_warn "$all_hits"
 	return $?
 }
 

@@ -32,6 +32,8 @@ tools:
 
 Manages separate credential sets for multiple clients, environments, or accounts. For encrypted storage, see `tools/credentials/gopass.md` — use `aidevops secret` for encrypted secrets alongside `credential-helper.sh` for tenant switching.
 
+**Switch vs simultaneous**: This page covers *switching* between credential sets — one active at a time, same env var names (`GITHUB_TOKEN`) in different tenants. If you instead need multiple accounts for the same provider active **simultaneously** (e.g. personal + work GitHub tokens both in env at once), use the per-account suffix convention in `gopass.md` "Naming with multiple accounts" — `GITHUB_TOKEN_PERSONAL`, `GITHUB_TOKEN_WORK`, etc. — within a single tenant.
+
 ## Architecture
 
 ```text

@@ -141,6 +141,85 @@ else
 fi
 
 # =============================================================================
+# Cases 7-9: _pc_filter_relevant_issues — issue dedup filter (GH#21831)
+# =============================================================================
+# Reference implementation matching claim-task-id.sh::_pc_filter_relevant_issues.
+# Kept inline so the test can run without sourcing the full script (which adds
+# set -e and would break Cases 1-6 above).  If the production function changes,
+# update this reference implementation to match.
+_pc_filter_relevant_issues_test() {
+	local raw_json="$1"
+	local keywords_nl="$2"
+	local dedup_days="${3:-14}"
+	local now_epoch cutoff_epoch
+	now_epoch=$(date +%s 2>/dev/null || printf '0')
+	cutoff_epoch=$((now_epoch - dedup_days * 86400))
+	local issue_num issue_title issue_created_at
+	while IFS='|' read -r issue_num issue_title issue_created_at; do
+		[[ -z "$issue_num" ]] && continue
+		if [[ -n "$issue_created_at" ]]; then
+			local created_epoch=0
+			created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$issue_created_at" +%s 2>/dev/null) \
+				|| created_epoch=$(date --date="$issue_created_at" +%s 2>/dev/null) \
+				|| true
+			[[ "$created_epoch" -gt 0 && "$created_epoch" -lt "$cutoff_epoch" ]] && continue
+		fi
+		local issue_lower overlap=0 kw
+		issue_lower=$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]')
+		while IFS= read -r kw; do
+			[[ -z "$kw" ]] && continue
+			[[ "$issue_lower" == *"$kw"* ]] && overlap=$((overlap + 1))
+		done <<<"$keywords_nl"
+		[[ $overlap -lt 2 ]] && continue
+		printf '#%s [ISSUE] %s  (%s)\n' "$issue_num" "$issue_title" "${issue_created_at:-open}"
+	done < <(printf '%s' "$raw_json" | jq -r '.[] | "\(.number)|\(.title)|\(.createdAt // "")"')
+	return 0
+}
+
+if ! command -v jq >/dev/null 2>&1; then
+	printf 'SKIP Cases 7-9: jq not available\n'
+else
+	# -------------------------------------------------------------------------
+	# Case 7: recent open issue with matching keywords surfaces in output
+	# -------------------------------------------------------------------------
+	printf 'Case 7: recent issue with matching keywords surfaces in filter output\n'
+	mock_json='[{"number":21760,"title":"claim-task-id phantom number from stderr","state":"OPEN","createdAt":"2026-04-29T00:00:00Z"}]'
+	mock_keywords=$(printf 'claim\nphantom')
+	result=$(_pc_filter_relevant_issues_test "$mock_json" "$mock_keywords" 14)
+	if printf '%s' "$result" | grep -q '#21760 \[ISSUE\]'; then
+		pass "Case 7: issue #21760 surfaced with matching keywords"
+	else
+		fail "Case 7: expected #21760 [ISSUE] in output" "$result"
+	fi
+
+	# -------------------------------------------------------------------------
+	# Case 8: issue older than dedup window is filtered out by recency gate
+	# -------------------------------------------------------------------------
+	printf 'Case 8: old issue (2020) filtered by recency gate\n'
+	mock_json='[{"number":100,"title":"claim-task-id phantom number fix","state":"OPEN","createdAt":"2020-01-01T00:00:00Z"}]'
+	mock_keywords=$(printf 'claim\nphantom')
+	result=$(_pc_filter_relevant_issues_test "$mock_json" "$mock_keywords" 14)
+	if [[ -z "$result" ]]; then
+		pass "Case 8: old issue filtered out (empty output)"
+	else
+		fail "Case 8: expected empty output for old issue" "$result"
+	fi
+
+	# -------------------------------------------------------------------------
+	# Case 9: issue with fewer than 2 keyword overlaps is filtered out
+	# -------------------------------------------------------------------------
+	printf 'Case 9: issue with <2 keyword overlaps is filtered\n'
+	mock_json='[{"number":200,"title":"claim-task-id ssh key rotation","state":"OPEN","createdAt":"2026-04-29T00:00:00Z"}]'
+	mock_keywords=$(printf 'phantom\nnumber')
+	result=$(_pc_filter_relevant_issues_test "$mock_json" "$mock_keywords" 14)
+	if [[ -z "$result" ]]; then
+		pass "Case 9: insufficient keyword overlap filtered (empty output)"
+	else
+		fail "Case 9: expected empty output for low keyword overlap" "$result"
+	fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'

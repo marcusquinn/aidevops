@@ -3569,13 +3569,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3066 extend approve_collaborator_pr to honour crypto-approval as CONTRIBUTOR-author bypass (sibling of t3052) #auto-dispatch #bug ref:GH#21803
 
-- [ ] t3068 kick pulse-merge cycle when sudo aidevops approve posts a verified signature (eliminate up-to-120s latency) #auto-dispatch #enhancement ref:GH#21806
+- [x] t3068 kick pulse-merge cycle when sudo aidevops approve posts a verified signature (eliminate up-to-120s latency) #auto-dispatch #enhancement ref:GH#21806 pr:#21854 completed:2026-04-30
 
 - [ ] t3069 harden issue_num extraction against multi-line gh_create_issue output (TODO.md append silently fails) #auto-dispatch #bug #framework ref:GH#21807
 
 - [x] t3070 switch pulse-merge to GitHub native auto-merge for sub-30s green-to-merged latency #auto-dispatch #enhancement ref:GH#21810 pr:#21812 completed:2026-04-29
 
-- [ ] t3067 interactive-session-helper.sh release applies status:available to CLOSED issues #auto-dispatch #bug #framework ref:GH#21805
+- [x] t3067 interactive-session-helper.sh release applies status:available to CLOSED issues #auto-dispatch #bug #framework ref:GH#21805 pr:#21833 completed:2026-04-30
 
 - [ ] t3071 audit framework for t3058-class watchdog self-write anti-pattern (monitor X, write marker to X) #auto-dispatch #bug #framework #pulse ref:GH#21811
 
@@ -3583,6 +3583,34 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3072 runtime-health-audit routine: surface operational bugs the supervisor blind-spots #auto-dispatch #enhancement #framework ref:GH#21820 pr:#21829 completed:2026-04-30
 
-- [ ] t3074 fix duplicate Code Audit Routines dashboard issues — fail-closed dedup + title-prefix fallback + self-healing sweep #auto-dispatch #bug ref:GH#21830
+- [x] t3074 fix duplicate Code Audit Routines dashboard issues — fail-closed dedup + title-prefix fallback + self-healing sweep #auto-dispatch #bug ref:GH#21830 pr:#21834 completed:2026-04-30
 
-- [ ] t3075 claim-task-id dedup must search OPEN ISSUES not just PRs (4-way duplicate filing of same bug) #auto-dispatch #bug ref:GH#21831
+- [x] t3075 claim-task-id dedup must search OPEN ISSUES not just PRs (4-way duplicate filing of same bug) #auto-dispatch #bug ref:GH#21831 pr:#21835 completed:2026-04-30
+
+- [x] t3076 pulse: circuit breaker auto-files root-cause meta-issue and dispatches systemic-fix worker #auto-dispatch #bug #enhancement #framework #model:opus-4-7 #pulse ref:GH#21840 pr:#21863 completed:2026-04-30
+
+- [ ] t3077 pulse: LLM-driven periodic pass detects fix-the-fixer tasks and adds extra observability #auto-dispatch #enhancement #framework #model:opus-4-7 #pulse ref:GH#21841
+
+- [x] t3082 fix: bash 3.2 heredoc parser fails on apostrophe in counter-trend-delta runtime audit rule #auto-dispatch #bug ref:GH#21849 pr:#21852 completed:2026-04-30
+
+- [x] t3081 document multi-account naming convention for secrets #documentation #enhancement ref:GH#21848 pr:#21851 completed:2026-04-30
+
+- [x] t3080 Cross-link meta-ads-tooling-cli.md from strategy docs #auto-dispatch #documentation ref:GH#21847 pr:#21859 completed:2026-04-30
+
+- [ ] t3079 Add multi-account gopass secret template for Meta Ads CLI #auto-dispatch #documentation #enhancement ref:GH#21846
+
+- [x] t3078 add Meta Ads CLI tooling doc to meta-ads agent #documentation #enhancement ref:GH#21844 pr:#21845 completed:2026-04-30
+
+- [ ] t3083 Fix Bash 3.2 heredoc parse error in counter-trend-delta.sh #auto-dispatch #bug #ci ref:GH#21853
+
+- [x] t3085 init pre-existing local-var declarations in pulse-wrapper.sh + bootstrap #auto-dispatch #bug ref:GH#21856 pr:#21864 completed:2026-04-30
+
+- [ ] t3084 Fix pulse-unbound-var-check false-positives on stale-base PRs #auto-dispatch #bug #ci ref:GH#21855
+
+- [ ] t3088 investigate: PR #21825 had both origin:interactive and origin:worker labels (t2200 violation) #bug #parent ref:GH#21862
+
+- [ ] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861
+
+- [ ] t3086 doc(bash-compat): bash 3.2 apostrophe-in-unquoted-heredoc gotcha #auto-dispatch #documentation ref:GH#21860
+
+- [ ] t3089 fix pulse-watchdog.sh self-writes to monitored log file (t3071 Phase 3) #auto-dispatch #bug ref:GH#21868

@@ -223,6 +223,17 @@ _isc_carve_out_required() {
 	return 1
 }
 
+# Returns 0 if the issue state is CLOSED, 1 otherwise or on gh lookup failure
+# (GH#21805). Fail-open: returns 1 on errors so transient network issues do not
+# silently change the release behaviour from the existing default.
+_isc_issue_is_closed() {
+	local issue="$1"
+	local slug="$2"
+	local _state
+	_state=$(gh issue view "$issue" --repo "$slug" --json state --jq .state 2>/dev/null) || return 1
+	[[ "$_state" == "CLOSED" ]]
+}
+
 # -----------------------------------------------------------------------------
 # Sub-library sourcing (GH#21320)
 # -----------------------------------------------------------------------------

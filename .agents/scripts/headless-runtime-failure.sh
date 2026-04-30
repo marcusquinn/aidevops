@@ -126,8 +126,30 @@ classify_worker_exit() {
 		return 0
 	fi
 
-	# Clean exit (unusual in EXIT trap context — trap is normally cleared on success)
+	# Clean exit (unusual in EXIT trap context — trap is normally cleared on success).
+	# t3050: a clean exit with zero opencode sessions means the wrapper returned 0
+	# cleanly but the worker never produced model output. This is a startup-phase
+	# failure (sandbox crash, OpenCode init failure, prompt parse error before
+	# tool use), not a successful run. The worker_noop_zero_output reason is
+	# already recognised by _maybe_reclassify_worker_failed_as_no_work in
+	# worker-lifecycle-common.sh and by escalate_issue_tier — emitting it
+	# directly here ensures the reason is authoritative from the trap rather
+	# than inferred later from orphan-worktree state.
 	if [[ "$wait_status" == "0" ]]; then
+		local _shared_db_zo="${HOME}/.local/share/opencode/opencode.db"
+		local _db_zo="${_WORKER_ISOLATED_DB_PATH:-}"
+		[[ -z "$_db_zo" || ! -f "$_db_zo" ]] && _db_zo="$_shared_db_zo"
+		if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_db_zo" \
+			&& "$start_epoch_ms" =~ ^[0-9]+$ && "$start_epoch_ms" -gt 0 ]]; then
+			local _cnt_zo=""
+			_cnt_zo=$(sqlite3 "$_db_zo" \
+				"SELECT count(*) FROM session WHERE time_created >= ${start_epoch_ms}" \
+				2>/dev/null) || _cnt_zo=""
+			if [[ "$_cnt_zo" =~ ^[0-9]+$ && "$_cnt_zo" -eq 0 ]]; then
+				printf '%s' "worker_noop_zero_output"
+				return 0
+			fi
+		fi
 		printf '%s' "clean"
 		return 0
 	fi
@@ -329,11 +351,37 @@ _push_wip_commits_on_exit() {
 #   _WORKER_START_EPOCH_MS   — ms epoch set by _cmd_run_prepare
 #   _WORKER_ISOLATED_DB_PATH — isolated DB path set by _invoke_opencode
 #   _WORKER_WORKTREE_PATH    — worktree path set by _cmd_run_prepare (t2923)
+#   _WORKER_EXIT_CODE_FILE   — exit_code_file path set by _invoke_opencode
+#                              (t3050); .wait_status sentinel persisted
+#                              alongside it preserves the worker subshell
+#                              wait_status across the EXIT trap boundary.
 #######################################
 _exit_trap_handler() {
 	local session_key="$1"
 	# Capture exit status immediately — any subsequent command will overwrite $?
 	local exit_status=$?
+
+	# t3050: prefer the worker's actual wait_status (persisted by _invoke_opencode
+	# at ${exit_code_file}.wait_status) over $?. By the time EXIT fires, the
+	# wrapper functions have cleanly returned 0 even when the worker subshell
+	# was SIGTERM'd. Without this override, classify_worker_exit reads $?=0
+	# from the trap and emits reason=clean for SIGTERM/SIGKILL kills (canonical
+	# failure: GH#21707 — 6+ workers all reported reason=clean session_count=0
+	# despite wait_status=143).
+	local _wait_file="${_WORKER_EXIT_CODE_FILE:-}.wait_status"
+	if [[ -n "${_WORKER_EXIT_CODE_FILE:-}" && -f "$_wait_file" ]]; then
+		local _w=""
+		_w=$(<"$_wait_file") || _w=""
+		# Trim CR/LF/whitespace (bash 3.2 compatible).
+		_w="${_w//$'\r'/}"
+		_w="${_w//$'\n'/}"
+		_w="${_w#"${_w%%[![:space:]]*}"}"
+		_w="${_w%"${_w##*[![:space:]]}"}"
+		if [[ "$_w" =~ ^[0-9]+$ && "$_w" -gt 0 ]]; then
+			exit_status="$_w"
+		fi
+		rm -f "$_wait_file" 2>/dev/null || true
+	fi
 
 	local reason="$_HRFF_FALLBACK_EXIT"
 	local session_count=0

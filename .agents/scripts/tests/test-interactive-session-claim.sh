@@ -100,6 +100,15 @@ issue)
 		if [[ "${STUB_GH_VIEW_FAILS:-0}" == "1" ]]; then
 			exit 1
 		fi
+		# GH#21805: STUB_ISSUE_STATE controls the --json state --jq .state
+		# response used by the release closed-issue check. Defaults to OPEN.
+		# When args include "--json state", return the state string directly.
+		case "$*" in
+		*"--json state"*)
+			printf '%s\n' "${STUB_ISSUE_STATE:-OPEN}"
+			exit 0
+			;;
+		esac
 		# Compose labels JSON from individual STUB_ISSUE_HAS_* flags so callers
 		# can mix and match. Order does not matter; jq queries are by name.
 		# - STUB_ISSUE_HAS_IN_REVIEW: status:in-review (idempotency tests)
@@ -762,6 +771,50 @@ fi
 
 # Reset stub state
 export STUB_ISSUE_HAS_AUTO_DISPATCH=0
+
+# =============================================================================
+# Test 21 — GH#21805: release on an OPEN issue applies status:available
+# (existing behaviour preserved).
+# =============================================================================
+_isc_cmd_claim 70001 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
+: >"$STUB_LOG"
+export STUB_ISSUE_HAS_IN_REVIEW=1
+export STUB_ISSUE_STATE=OPEN
+_isc_cmd_release 70001 testowner/testrepo >/dev/null 2>&1
+release_open_rc=$?
+release_open_log=$(cat "$STUB_LOG")
+export STUB_ISSUE_STATE=
+
+if [[ $release_open_rc -eq 0 ]] && printf '%s' "$release_open_log" | grep -q "remove-label status:in-review" && printf '%s' "$release_open_log" | grep -q "add-label status:available"; then
+	print_result "GH#21805: release on OPEN issue → status:available" 0
+else
+	print_result "GH#21805: release on OPEN issue → status:available" 1 \
+		"(rc=$release_open_rc, log=${release_open_log:0:300})"
+fi
+
+# =============================================================================
+# Test 22 — GH#21805: release on a CLOSED issue applies status:done instead of
+# status:available, preventing label pollution on closed issues.
+# =============================================================================
+_isc_cmd_claim 70002 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
+: >"$STUB_LOG"
+export STUB_ISSUE_HAS_IN_REVIEW=1
+export STUB_ISSUE_STATE=CLOSED
+_isc_cmd_release 70002 testowner/testrepo >/dev/null 2>&1
+release_closed_rc=$?
+release_closed_log=$(cat "$STUB_LOG")
+export STUB_ISSUE_STATE=
+
+# Must apply status:done, must NOT apply status:available
+if [[ $release_closed_rc -eq 0 ]] && printf '%s' "$release_closed_log" | grep -q "add-label status:done" && ! printf '%s' "$release_closed_log" | grep -q "add-label status:available"; then
+	print_result "GH#21805: release on CLOSED issue → status:done, not status:available" 0
+else
+	print_result "GH#21805: release on CLOSED issue → status:done, not status:available" 1 \
+		"(rc=$release_closed_rc, log=${release_closed_log:0:300})"
+fi
+
+# Reset stub state
+export STUB_ISSUE_HAS_IN_REVIEW=0
 
 # =============================================================================
 # Summary

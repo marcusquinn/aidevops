@@ -163,8 +163,20 @@ _validate_commit_and_pr_inputs() {
 
 	repo=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null || echo "")
 	if [[ -z "$repo" ]]; then
-		print_error "Cannot detect repo from git remote."
-		return 1
+		# t3050: gh repo view requires GraphQL. When GraphQL budget is
+		# exhausted (rate-limit window), fall back to deriving the slug from
+		# `git remote get-url origin`. This matches the framework rule
+		# "No slug? Use `git -C <path> remote get-url origin`" and keeps
+		# commit-and-pr working through GraphQL exhaustion. REST fallbacks
+		# elsewhere in the wrapper handle the actual PR creation.
+		local _origin_url=""
+		_origin_url=$(git remote get-url origin 2>/dev/null || echo "")
+		repo=$(printf '%s' "$_origin_url" | sed -E 's|^git@github.com:||; s|^https://github.com/||; s|\.git$||')
+		if [[ -z "$repo" || "$repo" != */* ]]; then
+			print_error "Cannot detect repo from git remote (gh repo view + git origin both failed)."
+			return 1
+		fi
+		print_warning "[commit-and-pr] gh repo view failed (likely rate-limited); using git origin slug: $repo"
 	fi
 
 	branch=$(git branch --show-current 2>/dev/null || echo "")

@@ -76,6 +76,12 @@ What still works: PAS copywriting, customer testimonials, retargeting warm audie
 | `meta-ads-optimization-troubleshooting.md` | Common issues and fixes (not spending, CPA spikes, account disabled) |
 | `meta-ads-optimization-automation-rules.md` | Automated rules |
 
+### Tooling
+
+| File | Topic |
+|------|-------|
+| `meta-ads-tooling-cli.md` | Official `meta ads` CLI — execution layer for the strategy docs above (campaigns, ad sets, ads, creatives, catalogs, datasets, insights). PAUSED-by-default; AI-agent friendly output formats; env-var auth. |
+
 ### Checklists
 
 | File | Topic |

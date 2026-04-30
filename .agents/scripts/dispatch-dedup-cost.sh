@@ -203,6 +203,20 @@ Remove \`needs-maintainer-review\` after investigating the root cause to re-enab
 
 _This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task guard and t2008 stale-recovery escalation)._" 2>/dev/null || true
 
+	# t3076: file root-cause meta-issue with forensics and dispatch a
+	# tier:thinking worker against it. Idempotent — second trip on the
+	# same original is a no-op. Best-effort: failures are logged but
+	# never propagate (NMR is the canonical block, the meta-issue is
+	# the self-healing channel).
+	local _cb_meta_filer="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/circuit-breaker-meta-filer.sh"
+	if [[ -x "$_cb_meta_filer" ]]; then
+		"$_cb_meta_filer" file \
+			--issue "$issue_number" --repo "$repo_slug" \
+			--breaker cost --tier "$tier" \
+			--spent "$spent" --budget "$budget" \
+			--attempts "$attempts" >/dev/null 2>&1 || true
+	fi
+
 	return 0
 }
 

@@ -79,8 +79,10 @@ runtime_audit_check() {
 	first_counter=$(printf '%s\n' "$regressions" | head -1 | cut -f1)
 
 	local title="runtime-audit: counter regression detected (\`${first_counter}\`)"
-	local body
-	body=$(cat <<MARKDOWN
+	# Bash 3.2 compat: heredoc inside $() fails parse; write to tmp file instead.
+	local _body_tmp
+	_body_tmp=$(mktemp)
+	cat >"$_body_tmp" <<MARKDOWN
 ## Task
 
 A pulse counter has regressed sharply in the last $((window / 3600))h compared to the prior $((window / 3600))h window. This is the kind of trend shift that the supervisor LLM cycle does not detect because it never reads \`pulse-stats.json\` directly — it relies on issue and PR state.
@@ -118,7 +120,9 @@ The regression block for the cited counters should no longer appear.
 
 <!-- aidevops:generator=runtime-audit detector=counter-trend-delta -->
 MARKDOWN
-)
+	local body
+	body=$(cat "$_body_tmp")
+	rm -f "$_body_tmp"
 
 	jq -n --arg id "counter-trend-delta" --arg title "$title" --arg body "$body" \
 		'{id: $id, title: $title, body: $body}'

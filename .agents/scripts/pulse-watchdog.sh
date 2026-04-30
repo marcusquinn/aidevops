@@ -30,6 +30,15 @@
 [[ -n "${_PULSE_WATCHDOG_LOADED:-}" ]] && return 0
 _PULSE_WATCHDOG_LOADED=1
 
+# GH#21842: Watchdog informational log — separate from $LOGFILE which the
+# byte-delta progress monitor reads. Writing watchdog status messages back
+# to $LOGFILE is the t3058-class self-write anti-pattern: it shows up as
+# log growth on the next 60s poll, evaluates as 'progress', resets the
+# stall counter, and silently delays stall detection by one poll interval
+# per stall cycle. Route these writes to a sibling file the monitor never
+# reads so the progress signal stays clean.
+PULSE_WATCHDOG_LOG="${PULSE_WATCHDOG_LOG:-${HOME}/.aidevops/logs/pulse-watchdog.log}"
+
 #######################################
 # Process guard: kill child processes exceeding RSS or runtime limits (t1398)
 #
@@ -375,7 +384,10 @@ _watchdog_check_progress() {
 	if [[ "$current_log_size" -gt "$WD_LAST_LOG_SIZE" ]]; then
 		WD_HAS_SEEN_PROGRESS=true
 		if [[ "$WD_PROGRESS_STALL_SECONDS" -gt 0 ]]; then
-			echo "[pulse-wrapper] Progress resumed after ${WD_PROGRESS_STALL_SECONDS}s stall (log grew by $((current_log_size - WD_LAST_LOG_SIZE)) bytes)" >>"$LOGFILE"
+			# GH#21842: route to PULSE_WATCHDOG_LOG, not $LOGFILE — the byte-delta
+			# monitor above reads $LOGFILE. Self-writing here would falsely
+			# evaluate as progress on the next poll. See file header.
+			echo "[pulse-wrapper] Progress resumed after ${WD_PROGRESS_STALL_SECONDS}s stall (log grew by $((current_log_size - WD_LAST_LOG_SIZE)) bytes)" >>"$PULSE_WATCHDOG_LOG" 2>/dev/null || true
 		fi
 		WD_LAST_LOG_SIZE="$current_log_size"
 		WD_PROGRESS_STALL_SECONDS=0
@@ -423,7 +435,9 @@ _watchdog_check_idle() {
 	# Process is active — reset idle counter
 	if [[ "$tree_cpu" -ge "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
 		if [[ "$WD_IDLE_SECONDS" -gt 0 ]]; then
-			echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${WD_IDLE_SECONDS}s idle — resetting idle counter" >>"$LOGFILE"
+			# GH#21842: route to PULSE_WATCHDOG_LOG, not $LOGFILE — keeps the
+			# progress byte-delta signal in _watchdog_check_progress clean.
+			echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${WD_IDLE_SECONDS}s idle — resetting idle counter" >>"$PULSE_WATCHDOG_LOG" 2>/dev/null || true
 		fi
 		WD_IDLE_SECONDS=0
 		return 0
