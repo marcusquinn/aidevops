@@ -217,6 +217,9 @@ _dispatch_issue_consolidation() {
 	# Ensure labels exist on this repo up front. Idempotent (--force).
 	_ensure_consolidation_labels "$repo_slug"
 
+	# t3050: pre-flight skip when parent work already resolved. Fail-open.
+	_consolidation_skip_if_resolved "$issue_number" "$repo_slug" && return 0
+
 	# t2161: skip if a resolving PR already exists — defence-in-depth vs
 	# cross-runner version drift; cheaper than child_exists, runs first.
 	if _consolidation_resolving_pr_exists "$issue_number" "$repo_slug"; then
