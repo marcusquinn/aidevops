@@ -1019,6 +1019,57 @@ _pulse_drain_prefetch_counters() {
 }
 
 # ---------------------------------------------------------------------------
+# _pulse_run_fix_the_fixer_detector_if_stale (t3077)
+#
+# Sentinel-gated invocation of pulse-fix-the-fixer-detector.sh. The detector
+# uses a haiku LLM call to classify whether each new auto-dispatch issue
+# modifies the worker dispatch system itself; when YES it applies the
+# `fix-the-fixer` label so headless-runtime-helper.sh can enable verbose
+# lifecycle, tighten the watchdog, and write a preflight sentinel.
+#
+# Sentinel: ~/.aidevops/cache/pulse-fix-the-fixer-last-run (mtime).
+# Default cadence: 3600s (1 hour). Override via env:
+#   AIDEVOPS_PULSE_FIX_THE_FIXER_MAX_AGE  — staleness threshold in seconds
+#   AIDEVOPS_SKIP_FIX_THE_FIXER_DETECTOR  — set to 1 to short-circuit
+#
+# Modelled on _pulse_prime_caches_if_stale (t2994) and _pulse_check_runaway_log
+# (GH#21756). Fail-open everywhere — a detector failure must never break the
+# pulse cycle.
+# ---------------------------------------------------------------------------
+_pulse_run_fix_the_fixer_detector_if_stale() {
+	[[ "${AIDEVOPS_SKIP_FIX_THE_FIXER_DETECTOR:-0}" == "1" ]] && return 0
+
+	local _ftf_helper=""
+	local _ftf_sentinel=""
+	local _ftf_max_age=""
+	_ftf_helper="${SCRIPT_DIR}/pulse-fix-the-fixer-detector.sh"
+	_ftf_sentinel="${HOME}/.aidevops/cache/pulse-fix-the-fixer-last-run"
+	_ftf_max_age="${AIDEVOPS_PULSE_FIX_THE_FIXER_MAX_AGE:-3600}"
+	[[ "$_ftf_max_age" =~ ^[0-9]+$ ]] || _ftf_max_age=3600
+
+	mkdir -p "$(dirname "$_ftf_sentinel")" 2>/dev/null || return 0
+	[[ ! -x "$_ftf_helper" ]] && return 0
+
+	local _should_run=0
+	if [[ ! -f "$_ftf_sentinel" ]]; then
+		_should_run=1
+	else
+		local _now_epoch="" _stamp_epoch="" _age_s=""
+		_now_epoch=$(date +%s 2>/dev/null)
+		_stamp_epoch=$(_file_mtime_epoch "$_ftf_sentinel")
+		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		[[ "$_age_s" -gt "$_ftf_max_age" ]] && _should_run=1
+	fi
+
+	if [[ "$_should_run" == "1" ]]; then
+		"$_ftf_helper" run 2>>"${WRAPPER_LOGFILE:-/dev/null}" || true
+		# Touch sentinel regardless of outcome (fail-open).
+		touch "$_ftf_sentinel" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # _pulse_record_cycle_outcome (t3027 / GH#21584)
 #
 # Determines whether this cycle was active (did meaningful work) or idle
@@ -1554,6 +1605,14 @@ main() {
 	# Sentinel-gated (every 5 min) — modelled on cache-prime pattern (t2994).
 	# Fail-open: never blocks the pulse cycle.
 	_pulse_check_runaway_log || true
+
+	# t3077: LLM-driven fix-the-fixer detector. Classifies new auto-dispatch
+	# issues — when the work itself touches the worker dispatch system,
+	# applies the `fix-the-fixer` label so the dispatcher can enable extra
+	# observability (verbose lifecycle, tighter watchdog, preflight sentinel)
+	# and avoid the canonical broken-dispatch-can-not-fix-itself trap.
+	# Sentinel-gated hourly. Fail-open: never blocks the pulse cycle.
+	_pulse_run_fix_the_fixer_detector_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.
