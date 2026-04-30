@@ -39,6 +39,12 @@ Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `sta
 | `pulse_interval` | integer | `600` | Minimum seconds between dispatch polls for this repo. Default: omit (poll every cycle). Min: 60. Useful for contributor-role repos with low activity — e.g. 600 polls every 5 cycles instead of every cycle, reducing GraphQL budget consumption ~5×. State: `~/.aidevops/logs/pulse-last-per-repo.json`. |
 | `pulse_expires` | string | `"2026-05-01"` | Past this date, pulse auto-sets `pulse: false`. Useful for temporary windows. |
 
+## Workflow Runner Configuration
+
+| Field | Type | Example | Description |
+|-------|------|---------|-------------|
+| `runner` | string | `"ubicloud-standard-2"` | Runner label for managed reusable workflows (`issue-sync`, `maintainer-gate`, `review-bot-gate`, `loc-badge`). Omit to inherit the reusable workflow default (`ubuntu-latest`). Consumed by `aidevops sync-workflows --apply` — injected as `with: runner: <label>` in the caller YAML and preserved across future syncs. Self-hosted label groups must be YAML-encoded as a string: `"[self-hosted, linux, x64]"`. See `reference/reusable-workflows.md` "Runner override". |
+
 ## Contribution and FOSS Fields
 
 | Field | Type | Description |
