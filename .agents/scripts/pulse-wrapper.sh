@@ -1584,6 +1584,13 @@ main() {
 		return 0
 	fi
 
+	# t3068: drain any pending approval-trigger records before the regular
+	# cycle. Backstop for the dedicated 60s --merge-only plist; if an
+	# approval landed since the last merge-only tick, we pick it up here
+	# rather than waiting for the next 60s cycle. Best-effort — never aborts
+	# the cycle. See pulse-wrapper-bootstrap.sh::_drain_merge_trigger_file_if_present.
+	_drain_merge_trigger_file_if_present || true
+
 	# Run pre-flight stages (cleanup, prefetch, normalization)
 	if ! _run_preflight_stages; then
 		return 0

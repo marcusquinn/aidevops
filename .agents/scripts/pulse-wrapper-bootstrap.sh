@@ -226,6 +226,12 @@ _pulse_run_merge_only() {
 	local _mo_saved_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	LOGFILE="$_mo_log"
 
+	# t3068: drain the approval trigger file FIRST so just-approved PRs get
+	# scoped per-PR merge attempts before the all-repos sweep. process_pr is
+	# 10-20x cheaper than a full merge pass and gives the maintainer
+	# sub-second feedback that the approval landed.
+	_drain_merge_trigger_file_if_present >>"$_mo_log" 2>&1 || true
+
 	# Call the merge entry point (defined in pulse-merge.sh, sourced above).
 	# All PULSE_* configuration constants are already set by the full bootstrap.
 	merge_ready_prs_all_repos >>"$_mo_log" 2>&1 || true
@@ -241,6 +247,198 @@ _pulse_run_merge_only() {
 	_mo_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)
 	printf '[%s] pulse-wrapper --merge-only: done\n' "$_mo_ts" >>"$_mo_log" 2>/dev/null || true
 
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _drain_merge_trigger_file_if_present (t3068, GH#21806)
+#
+# Drains ~/.aidevops/cache/pulse-merge-trigger.txt — the marker file written
+# by approval-helper.sh::_kick_pulse_after_approval after each successful
+# crypto-approval — and processes each listed PR via pulse-merge.sh's
+# existing process_pr() entry point.
+#
+# File format (one record per line, tab-separated):
+#   <slug>\t<num>\t<type>\t<iso8601_ts>
+#
+# - slug: owner/repo (validated via regex)
+# - num:  PR or issue number (digits only). Issue records resolve the linked
+#         PR via _resolve_linked_pr_for_issue (best-effort; skipped if none).
+# - type: "issue" or "pr" (other values rejected)
+# - ts:   UTC ISO-8601 timestamp (informational only, not parsed)
+#
+# Concurrency:
+#   1. Atomic rotation — the marker is renamed (mv) to a per-PID processing
+#      file before parsing. New approvals appended after the rename land in
+#      a fresh marker that the next pulse cycle drains.
+#   2. mv on the same filesystem is atomic. ENOENT (no marker) → no-op.
+#
+# Robustness:
+#   - Malformed lines are logged and skipped — never abort the drain.
+#   - process_pr failures are logged and ignored — non-fatal, the next
+#     pulse cycle's full merge pass picks up anything that slipped through.
+#
+# Bypass: AIDEVOPS_SKIP_TRIGGER_DRAIN=1 (used by tests for negative cases).
+#
+# Exit code: always 0 (drain is best-effort).
+# ---------------------------------------------------------------------------
+_drain_merge_trigger_file_if_present() {
+	if [[ "${AIDEVOPS_SKIP_TRIGGER_DRAIN:-0}" == "1" ]]; then
+		return 0
+	fi
+
+	local trigger_file="${PULSE_MERGE_TRIGGER_FILE:-${HOME}/.aidevops/cache/pulse-merge-trigger.txt}"
+	if [[ ! -f "$trigger_file" ]]; then
+		return 0
+	fi
+
+	# Atomic rotation. Use a per-PID processing path so concurrent drains
+	# (worst case: two pulse cycles fire close together) cannot collide.
+	local processing_file
+	processing_file="${trigger_file}.processing.$$"
+	if ! mv -f "$trigger_file" "$processing_file" 2>/dev/null; then
+		# Another drain rotated it first, or the file was removed mid-rename.
+		# Either way, nothing for us to do — return cleanly.
+		return 0
+	fi
+
+	# Verify process_pr is sourced. It comes from pulse-merge.sh which the
+	# full bootstrap sources before main() runs. If it's missing the script
+	# is mis-deployed; log and skip rather than calling an undefined function.
+	if ! declare -F process_pr >/dev/null 2>&1; then
+		printf '[%s] _drain_merge_trigger_file_if_present: process_pr not defined (pulse-merge.sh not sourced?) — restoring marker\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" \
+			>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+		# Restore the marker so the next cycle gets another chance, rather
+		# than silently dropping queued work.
+		mv -f "$processing_file" "$trigger_file" 2>/dev/null || rm -f "$processing_file" 2>/dev/null
+		return 0
+	fi
+
+	local _drain_count=0
+	local _drain_failed=0
+	local slug num type ts pr_number
+	while IFS=$'\t' read -r slug num type ts || [[ -n "$slug" ]]; do
+		# Skip blank lines and comment lines.
+		[[ -z "$slug" || "${slug:0:1}" == "#" ]] && continue
+
+		# Reject malformed records — log and continue, NEVER abort the drain.
+		if ! [[ "$num" =~ ^[0-9]+$ ]]; then
+			printf '[%s] _drain_merge_trigger_file_if_present: skipping malformed record (bad num=%q in %q)\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$num" "$slug" \
+				>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+			continue
+		fi
+		if ! [[ "$slug" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+			printf '[%s] _drain_merge_trigger_file_if_present: skipping malformed record (bad slug=%q)\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$slug" \
+				>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+			continue
+		fi
+		if [[ "$type" != "issue" && "$type" != "pr" ]]; then
+			printf '[%s] _drain_merge_trigger_file_if_present: skipping malformed record (bad type=%q)\n' \
+				"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$type" \
+				>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+			continue
+		fi
+		# ts is informational; use a sentinel so unused-variable lints stay quiet.
+		: "${ts:-unknown}"
+
+		# Resolve issue records to their linked PR. process_pr only operates
+		# on PRs, so an "issue" record needs PR resolution first. Fail-open:
+		# if no PR is linked, skip rather than blocking the rest of the drain.
+		if [[ "$type" == "issue" ]]; then
+			pr_number=$(_resolve_linked_pr_for_issue "$slug" "$num" 2>/dev/null || printf '')
+			if [[ -z "$pr_number" ]]; then
+				printf '[%s] _drain_merge_trigger_file_if_present: %s issue #%s has no linked open PR yet — skipping\n' \
+					"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$slug" "$num" \
+					>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+				continue
+			fi
+		else
+			pr_number="$num"
+		fi
+
+		printf '[%s] _drain_merge_trigger_file_if_present: process_pr %s #%s (from approve %s #%s)\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$slug" "$pr_number" "$type" "$num" \
+			>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+
+		# Call process_pr — it has its own internal logging and error
+		# handling. Non-zero return is informational (gate failure, not
+		# mergeable yet, conflict closed); not a drain failure.
+		if ! process_pr "$slug" "$pr_number"; then
+			_drain_failed=$((_drain_failed + 1))
+		fi
+		_drain_count=$((_drain_count + 1))
+	done <"$processing_file"
+
+	rm -f "$processing_file" 2>/dev/null || true
+
+	if [[ "$_drain_count" -gt 0 ]]; then
+		printf '[%s] _drain_merge_trigger_file_if_present: drained %d record(s), %d non-merge outcomes\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date)" "$_drain_count" "$_drain_failed" \
+			>>"${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _resolve_linked_pr_for_issue (t3068)
+#
+# Given an issue number, return the number of the most recent OPEN PR that
+# closes/resolves/fixes it (per GitHub close keywords in PR body) — or
+# empty when no such PR exists.
+#
+# Args:
+#   $1 - slug (owner/repo)
+#   $2 - issue number
+#
+# Stdout: PR number on stdout (single line) or empty.
+# Exit code: always 0 — empty stdout is the "not found" signal.
+# ---------------------------------------------------------------------------
+_resolve_linked_pr_for_issue() {
+	local slug="${1:-}"
+	local issue_num="${2:-}"
+
+	[[ -n "$slug" && "$issue_num" =~ ^[0-9]+$ ]] || {
+		printf ''
+		return 0
+	}
+
+	# GitHub's GraphQL closingIssuesReferences is the authoritative way to
+	# find PRs that will close this issue. The REST search alternative
+	# (`gh search prs "linked:$issue_num"`) is rate-limited heavily and
+	# returns false positives via mention.
+	#
+	# Fall back to a body-keyword search if GraphQL fails, mirroring the
+	# extraction regex in pulse-merge.sh::_extract_linked_issue. Best-effort
+	# everywhere — empty stdout means "skip this record, full merge pass
+	# will catch it on next tick".
+	local pr_num=""
+	pr_num=$(gh issue view "$issue_num" --repo "$slug" \
+		--json closedByPullRequestsReferences \
+		--jq '.closedByPullRequestsReferences // [] | map(select(.state=="OPEN")) | .[0].number // empty' \
+		2>/dev/null) || pr_num=""
+
+	if [[ -z "$pr_num" ]]; then
+		# Fallback: list recent open PRs in the repo and grep for the
+		# closing keyword. Bounded to 30 PRs to avoid runaway lookups.
+		# `gh` only forwards a `--jq` filter; `--arg` is a jq flag that gh
+		# does NOT pass through. Pipe to jq directly so `--arg n` works
+		# and the issue number stays as data, not interpolated regex.
+		# shellcheck disable=SC2016 disable=SC2034
+		pr_num=$(gh pr list --repo "$slug" --state open --limit 30 \
+			--json number,body 2>/dev/null \
+			| jq -r --arg n "$issue_num" \
+				'.[] | select(.body | test("(?i)(close[ds]?|fix(es|ed)?|resolve[ds]?)\\s+#" + $n + "\\b")) | .number' \
+				2>/dev/null | head -1) || pr_num=""
+	fi
+
+	if [[ "$pr_num" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$pr_num"
+	else
+		printf ''
+	fi
 	return 0
 }
 
