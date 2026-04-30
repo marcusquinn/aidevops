@@ -40,6 +40,11 @@ on:
         required: false
         type: string
         default: 'chore(badges): refresh LOC badges [skip ci]'
+      runner:
+        description: 'Runner label override (e.g. ubicloud-standard-2). Defaults to ubuntu-latest.'
+        required: false
+        default: 'ubuntu-latest'
+        type: string
     secrets:
       SYNC_PAT:
         required: false
@@ -48,7 +53,7 @@ on:
 jobs:
   generate:
     name: Generate LOC badges
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     concurrency:
       group: loc-badge-${{ github.ref }}

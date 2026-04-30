@@ -33,10 +33,15 @@ on:
         required: false
         type: string
         default: 'main'
+      runner:
+        description: 'Runner label override (e.g. ubicloud-standard-2). Defaults to ubuntu-latest.'
+        required: false
+        default: 'ubuntu-latest'
+        type: string
 
 jobs:
   review-bot-gate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     # Only run on PRs (issue_comment fires for PR comments too).
     # GH#4002: Skip pull_request_review events from known review bots.
     # GitHub requires manual approval for workflow runs triggered by bot
