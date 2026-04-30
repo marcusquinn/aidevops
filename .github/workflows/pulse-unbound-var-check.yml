@@ -16,8 +16,14 @@ name: Pulse Unbound-Var Check
 # Diff-scoped (diff-additions-only): only NEWLY ADDED lines in PR-changed
 # pulse-*.sh files are scanned. Pre-existing violations in a touched file do
 # not fail CI — only lines introduced by this PR are checked. This is stricter
-# than the counter-stack-check.yml "changed files" approach: it uses
-# `git diff | grep '^+'` to extract added lines before scanning.
+# than the counter-stack-check.yml "changed files" approach.
+#
+# Drift-resistant (t3084): scans use git merge-base to find the actual
+# divergence point and `git log -p --first-parent MERGE_BASE..HEAD` to extract
+# only commits authored by this PR. This avoids false positives from main-side
+# additions when the branch is behind origin/main — `git diff BASE..HEAD`
+# would otherwise include lines added on main since the branch diverged.
+# Canonical failure: PR #21827 (45-commit-stale base, ~15 phantom violations).
 #
 # Violations posted as a PR comment with remediation guidance.
 
@@ -52,7 +58,26 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- \
+
+          # t3084: compute merge-base so we measure ONLY this branch's
+          # contribution. `git diff BASE_SHA HEAD_SHA` would include lines
+          # added on main since the branch diverged when the branch is
+          # stale — those show up as "+" additions and trip false positives.
+          # `git log -p --first-parent MERGE_BASE..HEAD_SHA` walks only the
+          # branch's commits (skipping merge-from-main commits via
+          # --first-parent), so we see exactly the lines this PR authored.
+          MERGE_BASE=$(git merge-base "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || true)
+          if [ -z "$MERGE_BASE" ]; then
+            echo "::warning::Could not determine merge-base; falling back to BASE_SHA. Stale-base false positives are possible."
+            MERGE_BASE="$BASE_SHA"
+          fi
+          echo "MERGE_BASE=$MERGE_BASE"
+          echo "HEAD_SHA=$HEAD_SHA"
+
+          # Use merge-base for the changed-file list so we get files touched
+          # by THIS PR's commits, not files that drifted on main since
+          # divergence.
+          changed=$(git diff --name-only "$MERGE_BASE" "$HEAD_SHA" -- \
             '.agents/scripts/pulse-*.sh' || true)
           if [ -z "$changed" ]; then
             echo "No pulse-*.sh files changed."
@@ -68,10 +93,11 @@ jobs:
           while IFS= read -r file; do
             basename_file=$(basename "$file")
             diff_file="/tmp/puv-diff-lines/${basename_file}"
-            # grep '^+' gives added lines; grep -v '^+++' strips the file header.
-            # Prefix the line with a fake function body indent so the scan pattern
-            # (requires leading whitespace) matches correctly.
-            git diff "$BASE_SHA" "$HEAD_SHA" -- "$file" \
+            # git log -p --first-parent shows only this branch's commits
+            # (no main-side commits brought in by merge). grep '^+' gives
+            # added lines; grep -v '^+++' strips file headers. sed strips
+            # the leading + so the scanner sees real source lines.
+            git log -p --first-parent "${MERGE_BASE}..${HEAD_SHA}" -- "$file" \
               | grep '^+' | grep -v '^+++' | sed 's/^+//' \
               > "$diff_file" || true
             if [ -s "$diff_file" ]; then
