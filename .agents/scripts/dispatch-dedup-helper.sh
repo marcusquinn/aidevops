@@ -571,7 +571,7 @@ _has_active_claim() {
 # through this function (or apply an equivalent inline combined check)
 # before claiming. Any code path that checks only labels or only assignees
 # is not safe in multi-operator conditions. (t1996 — audit confirmed that
-# dispatch_with_dedup, apply_deterministic_fill_floor, and all implementation
+# dispatch_with_dedup, apply_dispatch_max, and all implementation
 # dispatch paths correctly route through check_dispatch_dedup which calls
 # this function at Layer 6; normalize_active_issue_assignments was hardened
 # in the same fix to also call this before self-assigning orphaned issues.)

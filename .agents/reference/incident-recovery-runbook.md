@@ -14,7 +14,7 @@ when **two or more** of these are true:
 
 - `tail -f ~/.aidevops/logs/pulse-wrapper.log` shows workers being killed
   with `rc=124` at exactly the per-candidate-timeout boundary (default 90s,
-  configurable via `FILL_FLOOR_PER_CANDIDATE_TIMEOUT`).
+  configurable via `DISPATCH_PER_CANDIDATE_TIMEOUT`).
 - A pulse cycle takes >25 minutes to complete despite a recent restart.
 - `gh search issues "..."` returns an empty list when issues you can see
   in the GitHub UI should match.

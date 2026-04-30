@@ -4,7 +4,7 @@
 
 # dispatch-timing-helper.sh — t3003: adaptive per-candidate dispatch timeout.
 #
-# Replaces the fixed FILL_FLOOR_PER_CANDIDATE_TIMEOUT (default 30s) with a
+# Replaces the fixed DISPATCH_PER_CANDIDATE_TIMEOUT (default 30s) with a
 # rolling-window measurement of recent dispatch attempts. Recommends a timeout
 # based on EWMA + p95 of recent successes, with PROBE mode after a timeout to
 # re-measure under degraded conditions.

@@ -817,7 +817,7 @@ JSON
 	return 0
 }
 
-test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
+test_dispatch_max_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
 
@@ -868,17 +868,17 @@ test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity() {
 	export -f gh
 
 	local dispatch_count dispatched_numbers
-	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatch_count=$(dispatch_max)
 	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
 
 	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
 
 	if [[ "$dispatch_count" == "2" && "$dispatched_numbers" == "9101|,9102|anthropic/claude-haiku-4-5" ]]; then
-		print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity and honors simple-tier override" 0
+		print_result "dispatch_max dispatches ranked candidates up to capacity and honors simple-tier override" 0
 		return 0
 	fi
 
-	print_result "dispatch_deterministic_fill_floor dispatches ranked candidates up to capacity and honors simple-tier override" 1 \
+	print_result "dispatch_max dispatches ranked candidates up to capacity and honors simple-tier override" 1 \
 		"Expected count=2 and issues 9101,9102; got count=${dispatch_count}, issues=${dispatched_numbers}"
 	return 0
 }
@@ -938,7 +938,7 @@ JSON
 	return 0
 }
 
-test_dispatch_deterministic_fill_floor_honors_stop_flag() {
+test_dispatch_max_honors_stop_flag() {
 	local dispatch_log="${TEST_ROOT}/deterministic-stop.log"
 	: >"$dispatch_log"
 	touch "$STOP_FLAG"
@@ -952,23 +952,23 @@ test_dispatch_deterministic_fill_floor_honors_stop_flag() {
 	}
 
 	local dispatch_count dispatched_numbers
-	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatch_count=$(dispatch_max)
 	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
 
 	rm -f "$STOP_FLAG"
 	unset -f build_ranked_dispatch_candidates_json dispatch_with_dedup
 
 	if [[ "$dispatch_count" == "0" && -z "$dispatched_numbers" ]]; then
-		print_result "dispatch_deterministic_fill_floor skips dispatch when stop flag is present" 0
+		print_result "dispatch_max skips dispatch when stop flag is present" 0
 		return 0
 	fi
 
-	print_result "dispatch_deterministic_fill_floor skips dispatch when stop flag is present" 1 \
+	print_result "dispatch_max skips dispatch when stop flag is present" 1 \
 		"Expected no dispatch with stop flag; got count=${dispatch_count}, issues=${dispatched_numbers}"
 	return 0
 }
 
-test_dispatch_deterministic_fill_floor_ignores_noisy_count_output() {
+test_dispatch_max_ignores_noisy_count_output() {
 	local dispatch_log="${TEST_ROOT}/deterministic-noisy-counts.log"
 	: >"$dispatch_log"
 
@@ -1003,17 +1003,17 @@ test_dispatch_deterministic_fill_floor_ignores_noisy_count_output() {
 	export -f gh
 
 	local dispatch_count dispatched_numbers
-	dispatch_count=$(dispatch_deterministic_fill_floor)
+	dispatch_count=$(dispatch_max)
 	dispatched_numbers=$(tr '\n' ',' <"$dispatch_log" | sed 's/,$//')
 
 	unset -f gh build_ranked_dispatch_candidates_json get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker check_terminal_blockers dispatch_with_dedup check_worker_launch
 
 	if [[ "$dispatch_count" == "1" && "$dispatched_numbers" == "9401" ]]; then
-		print_result "dispatch_deterministic_fill_floor ignores noisy count helper output" 0
+		print_result "dispatch_max ignores noisy count helper output" 0
 		return 0
 	fi
 
-	print_result "dispatch_deterministic_fill_floor ignores noisy count helper output" 1 \
+	print_result "dispatch_max ignores noisy count helper output" 1 \
 		"Expected count=1 and issue 9401; got count=${dispatch_count}, issues=${dispatched_numbers}"
 	return 0
 }
@@ -1027,7 +1027,7 @@ test_active_pulse_refill_skips_without_idle_or_stall_signal() {
 		printf 'recycler\n' >>"${TEST_ROOT}/active-refill-skip.log"
 		return 0
 	}
-	dispatch_deterministic_fill_floor() {
+	dispatch_max() {
 		printf 'dispatch\n' >>"${TEST_ROOT}/active-refill-skip.log"
 		return 0
 	}
@@ -1035,7 +1035,7 @@ test_active_pulse_refill_skips_without_idle_or_stall_signal() {
 	local last_refill_epoch
 	last_refill_epoch=$(maybe_refill_underfilled_pool_during_active_pulse 0 60 0 true)
 
-	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_deterministic_fill_floor
+	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max
 
 	if [[ "$last_refill_epoch" == "0" && ! -e "${TEST_ROOT}/active-refill-skip.log" ]]; then
 		print_result "maybe_refill_underfilled_pool_during_active_pulse waits for idle or stall evidence" 0
@@ -1060,7 +1060,7 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 		printf 'recycler\n' >>"$action_log"
 		return 0
 	}
-	dispatch_deterministic_fill_floor() {
+	dispatch_max() {
 		printf 'dispatch\n' >>"$action_log"
 		return 0
 	}
@@ -1070,7 +1070,7 @@ test_active_pulse_refill_dispatches_when_underfilled_and_idle() {
 	second_refill=$(maybe_refill_underfilled_pool_during_active_pulse "$first_refill" 0 60 true)
 	actions=$(tr '\n' ',' <"$action_log" | sed 's/,$//')
 
-	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_deterministic_fill_floor
+	unset -f get_max_workers_target count_active_workers count_runnable_candidates count_queued_without_worker run_underfill_worker_recycler dispatch_max
 	unset PULSE_ACTIVE_REFILL_INTERVAL
 
 	if [[ "$first_refill" =~ ^[0-9]+$ && "$first_refill" -gt 0 && "$second_refill" == "$first_refill" && "$actions" == "recycler,dispatch" ]]; then
@@ -1168,9 +1168,9 @@ main() {
 	test_dispatch_with_dedup_passes_explicit_model_override
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
-	test_dispatch_deterministic_fill_floor_dispatches_up_to_capacity
-	test_dispatch_deterministic_fill_floor_honors_stop_flag
-	test_dispatch_deterministic_fill_floor_ignores_noisy_count_output
+	test_dispatch_max_dispatches_up_to_capacity
+	test_dispatch_max_honors_stop_flag
+	test_dispatch_max_ignores_noisy_count_output
 	test_active_pulse_refill_skips_without_idle_or_stall_signal
 	test_active_pulse_refill_dispatches_when_underfilled_and_idle
 	test_worker_detection_uses_unlimited_width_ps_flag

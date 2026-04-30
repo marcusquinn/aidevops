@@ -16,7 +16,7 @@
 # silently killing every dispatch candidate that reached
 # `is_blocked_by_unresolved`. On macOS default `/bin/bash` (3.2.57), this
 # broke pulse's deterministic fill floor for weeks. Contained only by the
-# subshell wrapper in `_dff_process_candidate` (PR #18826).
+# subshell wrapper in `_dispatch_process_candidate` (PR #18826).
 #
 # This test locks in three invariants:
 #

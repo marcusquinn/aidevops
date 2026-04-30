@@ -3,8 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-pulse-wrapper-silent-dispatch.sh - Regression tests for GH#18804
 #
-# The deterministic fill floor pass (_dff_should_skip_candidate +
-# _dff_process_candidate) previously had multiple early-return paths that
+# The deterministic fill floor pass (_dispatch_should_skip_candidate +
+# _dispatch_process_candidate) previously had multiple early-return paths that
 # silently rejected dispatch candidates without writing any log line, making
 # silent-failure rounds (`candidates=N` followed immediately by
 # `Adaptive settle wait: 0 dispatches` with nothing between) impossible to
@@ -100,7 +100,7 @@ test_terminal_blocker_skip_logs() {
 	gh() { :; } # not reached because terminal_rc=0 short-circuits
 
 	local rc=0
-	_dff_should_skip_candidate "12345" "owner/repo" || rc=$?
+	_dispatch_should_skip_candidate "12345" "owner/repo" || rc=$?
 	unset -f check_terminal_blockers fast_fail_is_skipped gh
 
 	local skip_logged=1
@@ -123,7 +123,7 @@ test_fast_fail_skip_logs() {
 	fast_fail_is_skipped() { return 0; }    # fast-fail tripped
 
 	local rc=0
-	_dff_should_skip_candidate "23456" "owner/repo" || rc=$?
+	_dispatch_should_skip_candidate "23456" "owner/repo" || rc=$?
 	unset -f check_terminal_blockers fast_fail_is_skipped
 
 	local skip_logged=1
@@ -157,7 +157,7 @@ test_empty_body_skip_logs() {
 	}
 
 	local rc=0
-	_dff_should_skip_candidate "34567" "owner/repo" || rc=$?
+	_dispatch_should_skip_candidate "34567" "owner/repo" || rc=$?
 	unset -f check_terminal_blockers fast_fail_is_skipped gh
 
 	local skip_logged=1
@@ -190,7 +190,7 @@ test_stub_body_skip_logs() {
 	}
 
 	local rc=0
-	_dff_should_skip_candidate "45678" "owner/repo" || rc=$?
+	_dispatch_should_skip_candidate "45678" "owner/repo" || rc=$?
 	unset -f check_terminal_blockers fast_fail_is_skipped gh
 
 	local skip_logged=1
@@ -204,7 +204,7 @@ test_stub_body_skip_logs() {
 }
 
 #######################################
-# Test 5: malformed candidate JSON in _dff_process_candidate logs the skip
+# Test 5: malformed candidate JSON in _dispatch_process_candidate logs the skip
 # instead of returning silently. Pre-GH#18804 this was a silent return 1.
 #######################################
 test_malformed_candidate_logs_skip() {
@@ -213,7 +213,7 @@ test_malformed_candidate_logs_skip() {
 	local bad_json='{"repo_slug":"owner/repo","repo_path":"/tmp/repo"}'
 
 	local rc=0
-	_dff_process_candidate "$bad_json" "test-user" "10" || rc=$?
+	_dispatch_process_candidate "$bad_json" "test-user" "10" || rc=$?
 
 	local skip_logged=1
 	if grep -q "skipping malformed candidate — issue_number=" "$LOGFILE"; then
@@ -226,7 +226,7 @@ test_malformed_candidate_logs_skip() {
 }
 
 #######################################
-# Test 6: missing repo_path in _dff_process_candidate logs the skip.
+# Test 6: missing repo_path in _dispatch_process_candidate logs the skip.
 #######################################
 test_missing_repo_path_logs_skip() {
 	reset_logfile
@@ -234,7 +234,7 @@ test_missing_repo_path_logs_skip() {
 	local bad_json='{"number":56789,"repo_slug":"owner/repo","repo_path":""}'
 
 	local rc=0
-	_dff_process_candidate "$bad_json" "test-user" "10" || rc=$?
+	_dispatch_process_candidate "$bad_json" "test-user" "10" || rc=$?
 
 	local skip_logged=1
 	if grep -q "skipping #56789 — missing repo_slug=" "$LOGFILE"; then
@@ -266,7 +266,7 @@ test_pulse_debug_emits_per_candidate_logs() {
 		return 0
 	}
 
-	_dff_should_skip_candidate "67890" "owner/repo" || true
+	_dispatch_should_skip_candidate "67890" "owner/repo" || true
 	unset -f check_terminal_blockers fast_fail_is_skipped gh
 	unset PULSE_DEBUG
 
@@ -305,7 +305,7 @@ test_pulse_debug_unset_quiet_default() {
 		return 0
 	}
 
-	_dff_should_skip_candidate "78901" "owner/repo" || true
+	_dispatch_should_skip_candidate "78901" "owner/repo" || true
 	unset -f check_terminal_blockers fast_fail_is_skipped gh
 
 	local quiet_default=0

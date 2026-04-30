@@ -12,24 +12,24 @@ candidate" and the t2996 invariant that keeps that number bounded.
 
 Each `gh issue view` / `gh api` call costs ~0.5-2s in steady state and
 spikes to 5s+ under load (rate-limit pressure, large response bodies,
-network latency). The pulse's `_dff_dispatch_with_timeout` enforces a
+network latency). The pulse's `_dispatch_with_timeout` enforces a
 30-second per-candidate ceiling (t2989, env
-`FILL_FLOOR_PER_CANDIDATE_TIMEOUT`). When the gate pipeline made
+`DISPATCH_PER_CANDIDATE_TIMEOUT`). When the gate pipeline made
 10-15 serial gh calls per candidate, every dispatch decision sat on
 the timeout cliff:
 
 ```text
-fill_floor_candidate_3050    33s   rc=124 (timeout)
-fill_floor_candidate_3078    32s   rc=124 (timeout)
-fill_floor_candidate_3012    32s   rc=124 (timeout)
-fill_floor_candidate_21390   32s   rc=124 (timeout)
-fill_floor_candidate_21403   32s   rc=124 (timeout)
-fill_floor_candidate_21387   32s   rc=124 (timeout)
-fill_floor_candidate_3361    31s   rc=1   (just under wire — no dispatch)
-fill_floor_candidate_3366    31s   rc=1   (just under wire)
+dispatch_candidate_3050    33s   rc=124 (timeout)
+dispatch_candidate_3078    32s   rc=124 (timeout)
+dispatch_candidate_3012    32s   rc=124 (timeout)
+dispatch_candidate_21390   32s   rc=124 (timeout)
+dispatch_candidate_21403   32s   rc=124 (timeout)
+dispatch_candidate_21387   32s   rc=124 (timeout)
+dispatch_candidate_3361    31s   rc=1   (just under wire — no dispatch)
+dispatch_candidate_3366    31s   rc=1   (just under wire)
 ```
 
-`pulse_stats.json::fill_floor_per_candidate_timeout` reached 37 events
+`pulse_stats.json::dispatch_per_candidate_timeout` reached 37 events
 in 24h before t2996 landed.
 
 ## The canonical bundle (t2996)
@@ -129,7 +129,7 @@ After t2996 deployed, expected observables:
 
 ```bash
 # Counter should drop from baseline to <5 events / 24h.
-jq '.counters.fill_floor_per_candidate_timeout' ~/.aidevops/logs/pulse-stats.json
+jq '.counters.dispatch_per_candidate_timeout' ~/.aidevops/logs/pulse-stats.json
 
 # Average fill_floor candidate stage duration should drop below 15s.
 awk '/fill_floor_candidate/ {sum+=$3; n++} END {if (n>0) print sum/n}' \

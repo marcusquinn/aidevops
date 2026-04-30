@@ -14,13 +14,13 @@
 #
 # Fix: after Phase 1 completes, check for the per-cycle sentinel file
 # (pulse-cycle-$$-consolidation-fired). If it exists, consume it and
-# re-run dispatch_deterministic_fill_floor (Phase 2) when slots are
+# re-run dispatch_max (Phase 2) when slots are
 # available.
 #
 # Test strategy:
 #   1. Source pulse-dispatch-engine.sh with stub overrides for the
 #      external functions it calls.
-#   2. Track dispatch_deterministic_fill_floor call count via a counter
+#   2. Track dispatch_max call count via a counter
 #      file (required because the function runs inside $(...) subshells
 #      where variable mutations are lost in the parent).
 #   3. Verify sentinel file mechanics: created → Phase 2 fires → consumed.
@@ -66,7 +66,7 @@ print_result() {
 # ---------------------------------------------------------------------------
 # File-based dispatch counter
 #
-# dispatch_deterministic_fill_floor runs inside $(...) command substitution
+# dispatch_max runs inside $(...) command substitution
 # which creates a subshell. Variable mutations in a subshell are lost when
 # the subshell exits. Use a counter file so the parent shell can read the
 # updated count after the subshell returns.
@@ -107,7 +107,7 @@ setup_test_env() {
 	# missing external symbols. The module's own definitions overwrite
 	# these during source; we re-declare them AFTER source to win back.
 
-	dispatch_deterministic_fill_floor() {
+	dispatch_max() {
 		local c; c=$(cat "$_DISPATCH_COUNT_FILE" 2>/dev/null || echo 0)
 		echo "$((c + 1))" >"$_DISPATCH_COUNT_FILE"
 		printf '0\n'
@@ -131,7 +131,7 @@ setup_test_env() {
 	}
 
 	# Re-declare stubs AFTER source to override the module's definitions.
-	dispatch_deterministic_fill_floor() {
+	dispatch_max() {
 		local c; c=$(cat "$_DISPATCH_COUNT_FILE" 2>/dev/null || echo 0)
 		echo "$((c + 1))" >"$_DISPATCH_COUNT_FILE"
 		printf '0\n'
@@ -179,7 +179,7 @@ test_phase2_fires_when_sentinel_and_slots_available() {
 	touch "$(_sentinel_path)"
 
 	_init_dispatch_counter
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count; count=$(_read_dispatch_count)
 
 	local sentinel_after; sentinel_after="$(_sentinel_path)"
@@ -224,7 +224,7 @@ test_phase2_skipped_when_no_sentinel() {
 	# No sentinel created.
 
 	_init_dispatch_counter
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count; count=$(_read_dispatch_count)
 
 	local failures=0 failmsg=""
@@ -263,14 +263,14 @@ test_phase2_skipped_when_slots_full() {
 	touch "$(_sentinel_path)"
 
 	_init_dispatch_counter
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count; count=$(_read_dispatch_count)
 
 	local sentinel_after; sentinel_after="$(_sentinel_path)"
 	local failures=0 failmsg=""
 
 	# Sentinel consumed even when Phase 2 is skipped (prevents triggering
-	# Phase 2 a second time if apply_deterministic_fill_floor is called again
+	# Phase 2 a second time if apply_dispatch_max is called again
 	# in the same cycle: early-dispatch pass + main fill floor both call it).
 	if [[ -f "$sentinel_after" ]]; then
 		failures=$((failures + 1))
@@ -313,11 +313,11 @@ test_sentinel_consumed_prevents_double_phase2() {
 	_init_dispatch_counter
 
 	# First call: Phase 1 + Phase 2 (sentinel consumed).
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count_after_first; count_after_first=$(_read_dispatch_count)
 
 	# Second call: sentinel gone → Phase 1 only.
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count_after_second; count_after_second=$(_read_dispatch_count)
 
 	local failures=0 failmsg=""
@@ -356,7 +356,7 @@ test_stop_flag_skips_entire_fill_floor() {
 	touch "$STOP_FLAG"  # Set stop flag.
 
 	_init_dispatch_counter
-	apply_deterministic_fill_floor
+	apply_dispatch_max
 	local count; count=$(_read_dispatch_count)
 
 	local failures=0 failmsg=""

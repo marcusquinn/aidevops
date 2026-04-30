@@ -9,7 +9,7 @@
 # 7-layer dedup) historically made 10-15 serial `gh issue view` calls per
 # dispatch candidate. Each call costs 0.5-2s under steady state and 5s+
 # under load; the cumulative cost reliably exceeded the t2989 30s
-# `fill_floor_per_candidate_timeout`, killing dispatch decisions before
+# `dispatch_per_candidate_timeout`, killing dispatch decisions before
 # the worker could be spawned (37 timeout events in 24h, baseline 2026-04-27).
 #
 # The fix (t2996) threads a single canonical bundle —

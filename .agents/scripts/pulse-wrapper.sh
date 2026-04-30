@@ -707,7 +707,7 @@ _pulse_execute_self_check() {
 		normalize_count_output
 		_ff_key
 		build_dependency_graph_cache
-		dispatch_deterministic_fill_floor
+		dispatch_max
 		merge_ready_prs_all_repos
 		rotate_pulse_log
 		evaluate_routines
@@ -1222,7 +1222,7 @@ _pulse_run_deterministic_pipeline() {
 				pulse_stats_increment "pulse_dispatch_runner_health_breaker_tripped" 2>/dev/null || true
 			fi
 		else
-			apply_deterministic_fill_floor
+			apply_dispatch_max
 		fi
 	fi
 

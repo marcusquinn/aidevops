@@ -6,7 +6,7 @@
 #
 # test-pulse-dispatch-engine-timeout-floor.sh — regression guard for t3026
 #
-# Verifies that _dff_dispatch_with_timeout in pulse-dispatch-fill-floor-lib.sh
+# Verifies that _dispatch_with_timeout in pulse-dispatch-lib.sh
 # (extracted from pulse-dispatch-engine.sh in GH#21738 for file-size-debt) applies
 # a floor to the adaptive per-candidate timeout, so the dispatch ceremony
 # (~75-160s baseline, +20-40s under backpressure) cannot be killed by a
@@ -20,7 +20,7 @@
 #
 # Contract pinned by this test:
 #   1. The function declares a `floor_seconds` local sourced from
-#      FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR with a default of 600
+#      DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR with a default of 600
 #      (raised from 360 in t3043 — see ceremony breakdown in
 #      pulse-dispatch-engine.sh comment block).
 #   2. The floor block runs AFTER the adaptive helper has populated
@@ -64,8 +64,8 @@ assert_block_ordering() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 	local helper_line floor_line stage_line
 	helper_line=$(grep -nE 'dispatch-timing-helper\.sh recommend' "$file" | head -1 | cut -d: -f1)
-	floor_line=$(grep -nE 'FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR' "$file" | head -1 | cut -d: -f1)
-	stage_line=$(grep -nE 'run_stage_with_timeout "fill_floor_candidate_' "$file" | head -1 | cut -d: -f1)
+	floor_line=$(grep -nE 'DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR' "$file" | head -1 | cut -d: -f1)
+	stage_line=$(grep -nE 'run_stage_with_timeout "dispatch_candidate_' "$file" | head -1 | cut -d: -f1)
 	if [[ -z "$helper_line" || -z "$floor_line" || -z "$stage_line" ]]; then
 		TESTS_FAILED=$((TESTS_FAILED + 1))
 		echo "${TEST_RED}FAIL${TEST_NC}: $label"
@@ -87,18 +87,18 @@ assert_block_ordering() {
 
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-# GH#21738: _dff_dispatch_with_timeout lives in the fill-floor sub-library
+# GH#21738: _dispatch_with_timeout lives in the fill-floor sub-library
 # after the orchestrator + sub-library split. The original engine file is
 # kept as an ordering anchor for the run_stage_with_timeout call.
-ENGINE="$SCRIPT_DIR/pulse-dispatch-fill-floor-lib.sh"
+ENGINE="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 
 echo "=== t3026: per-candidate timeout floor regression tests ==="
 echo "Engine: $ENGINE"
 echo ""
 
 assert_grep \
-	"1: env var FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR is consulted with default 600" \
-	'\$\{FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-600\}' \
+	"1: env var DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR is consulted with default 600" \
+	'\$\{DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600\}' \
 	"$ENGINE"
 
 assert_grep \

@@ -2,21 +2,21 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-fill-floor-parallel.sh — t3005 regression test for parallel fill_floor.
+# test-dispatch-max-parallel.sh — t3005 regression test for parallel fill_floor.
 #
 # Validates the parallel-dispatch loop in pulse-dispatch-engine.sh against
 # the contract that the issue (#21438) sets out:
 #
-#   1. _dff_dispatch_loop_parallel processes candidates concurrently up to
+#   1. _dispatch_max_loop processes candidates concurrently up to
 #      max_parallel and respects the effective_slots budget.
-#   2. _dff_aggregate_outcomes correctly re-derives _DFF_ROUND_DISPATCHED
-#      and _DFF_ROUND_NO_WORKER_FAILURES from the outcomes file.
-#   3. _dff_compute_max_parallel honours DISPATCH_FILL_FLOOR_PARALLEL,
+#   2. _dispatch_max_aggregate_outcomes correctly re-derives _DISPATCH_ROUND_DISPATCHED
+#      and _DISPATCH_ROUND_NO_WORKER_FAILURES from the outcomes file.
+#   3. _dispatch_max_compute_parallel honours DISPATCH_MAX_PARALLEL,
 #      caps at effective_slots, and forces 1 (serial) when the throttle
 #      file is present.
-#   4. _dff_count_outcomes correctly tallies success/fail outcomes.
+#   4. _dispatch_max_count_outcomes correctly tallies success/fail outcomes.
 #
-# The test stubs _dff_process_candidate so the loop body completes without
+# The test stubs _dispatch_process_candidate so the loop body completes without
 # real gh API / worktree operations — this isolates the parallel loop logic
 # from the dispatch dependencies. Real dispatch behaviour is exercised by
 # the existing pulse integration suite.
@@ -58,19 +58,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 
 # =============================================================================
-# Test 1: _dff_compute_max_parallel honours DISPATCH_FILL_FLOOR_PARALLEL
+# Test 1: _dispatch_max_compute_parallel honours DISPATCH_MAX_PARALLEL
 # =============================================================================
 test_compute_max_parallel_default() {
-	# t3014: when DISPATCH_FILL_FLOOR_PARALLEL is unset, default is now
+	# t3014: when DISPATCH_MAX_PARALLEL is unset, default is now
 	# effective_slots (full slot budget), not the historical 6. Pre-t3014
 	# the default capped throughput at 6/cycle even with a 24-slot budget,
 	# leaving ~17 slots idle per cycle under adaptive-timeout regimes.
-	unset DISPATCH_FILL_FLOOR_PARALLEL || true
-	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	rm -f "$_DFF_THROTTLE_FILE"
+	unset DISPATCH_MAX_PARALLEL || true
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	rm -f "$_DISPATCH_THROTTLE_FILE"
 	local result
 	# effective_slots=24 → expect 24 (full budget, t3014 default)
-	result=$(_dff_compute_max_parallel 24)
+	result=$(_dispatch_max_compute_parallel 24)
 	if [[ "$result" == "24" ]]; then
 		print_result "compute_max_parallel: default=effective_slots(24) when unset" 0
 	else
@@ -80,10 +80,10 @@ test_compute_max_parallel_default() {
 }
 
 test_compute_max_parallel_caps_at_slots() {
-	export DISPATCH_FILL_FLOOR_PARALLEL=10
-	rm -f "$_DFF_THROTTLE_FILE"
+	export DISPATCH_MAX_PARALLEL=10
+	rm -f "$_DISPATCH_THROTTLE_FILE"
 	local result
-	result=$(_dff_compute_max_parallel 3)
+	result=$(_dispatch_max_compute_parallel 3)
 	if [[ "$result" == "3" ]]; then
 		print_result "compute_max_parallel: caps at effective_slots (3)" 0
 	else
@@ -93,11 +93,11 @@ test_compute_max_parallel_caps_at_slots() {
 }
 
 test_compute_max_parallel_throttle_forces_serial() {
-	export DISPATCH_FILL_FLOOR_PARALLEL=6
-	: >"$_DFF_THROTTLE_FILE"
+	export DISPATCH_MAX_PARALLEL=6
+	: >"$_DISPATCH_THROTTLE_FILE"
 	local result
-	result=$(_dff_compute_max_parallel 24)
-	rm -f "$_DFF_THROTTLE_FILE"
+	result=$(_dispatch_max_compute_parallel 24)
+	rm -f "$_DISPATCH_THROTTLE_FILE"
 	if [[ "$result" == "1" ]]; then
 		print_result "compute_max_parallel: throttle forces serial (1)" 0
 	else
@@ -110,21 +110,21 @@ test_compute_max_parallel_invalid_var() {
 	# t3014: invalid value falls back to effective_slots (was 6 pre-t3014).
 	# This keeps the validator graceful — a typo'd env var doesn't trap the
 	# pulse at degraded throughput; it gets the safe full-budget default.
-	export DISPATCH_FILL_FLOOR_PARALLEL="not-a-number"
-	rm -f "$_DFF_THROTTLE_FILE"
+	export DISPATCH_MAX_PARALLEL="not-a-number"
+	rm -f "$_DISPATCH_THROTTLE_FILE"
 	local result
-	result=$(_dff_compute_max_parallel 24)
+	result=$(_dispatch_max_compute_parallel 24)
 	if [[ "$result" == "24" ]]; then
 		print_result "compute_max_parallel: invalid env falls back to effective_slots(24)" 0
 	else
 		print_result "compute_max_parallel: invalid env falls back to effective_slots(24)" 1 "got=${result}"
 	fi
-	unset DISPATCH_FILL_FLOOR_PARALLEL || true
+	unset DISPATCH_MAX_PARALLEL || true
 	return 0
 }
 
 # =============================================================================
-# Test 2: _dff_count_outcomes correctly tallies outcome lines
+# Test 2: _dispatch_max_count_outcomes correctly tallies outcome lines
 # =============================================================================
 test_count_outcomes_success_and_fail() {
 	local outcomes_file
@@ -137,8 +137,8 @@ success|103
 fail|104|rc=2|reason=no_worker_process
 EOF
 	local s f
-	s=$(_dff_count_outcomes "$outcomes_file" "success")
-	f=$(_dff_count_outcomes "$outcomes_file" "fail")
+	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	f=$(_dispatch_max_count_outcomes "$outcomes_file" "fail")
 	rm -f "$outcomes_file"
 	if [[ "$s" == "3" && "$f" == "2" ]]; then
 		print_result "count_outcomes: success=3 fail=2" 0
@@ -153,7 +153,7 @@ test_count_outcomes_empty_file() {
 	outcomes_file=$(mktemp)
 	: >"$outcomes_file"
 	local s
-	s=$(_dff_count_outcomes "$outcomes_file" "success")
+	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
 	rm -f "$outcomes_file"
 	if [[ "$s" == "0" ]]; then
 		print_result "count_outcomes: empty file -> 0" 0
@@ -164,7 +164,7 @@ test_count_outcomes_empty_file() {
 }
 
 # =============================================================================
-# Test 3: _dff_aggregate_outcomes populates module-globals + invalidates cache
+# Test 3: _dispatch_max_aggregate_outcomes populates module-globals + invalidates cache
 # =============================================================================
 test_aggregate_outcomes_basic() {
 	local outcomes_file
@@ -175,23 +175,23 @@ success|101
 fail|102|rc=1|reason=skip
 success|103
 EOF
-	_DFF_ROUND_DISPATCHED=0
-	_DFF_ROUND_NO_WORKER_FAILURES=0
-	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	_DFF_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
-	rm -f "$_DFF_THROTTLE_FILE" "$_DFF_CANARY_CACHE"
-	: >"$_DFF_CANARY_CACHE"
-	_dff_aggregate_outcomes "$outcomes_file"
+	_DISPATCH_ROUND_DISPATCHED=0
+	_DISPATCH_ROUND_NO_WORKER_FAILURES=0
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	_DISPATCH_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
+	rm -f "$_DISPATCH_THROTTLE_FILE" "$_DISPATCH_CANARY_CACHE"
+	: >"$_DISPATCH_CANARY_CACHE"
+	_dispatch_max_aggregate_outcomes "$outcomes_file"
 	rm -f "$outcomes_file"
 	# 3 success + 1 fail = 4 dispatched, 0 no_worker failures
-	if [[ "$_DFF_ROUND_DISPATCHED" == "4" && "$_DFF_ROUND_NO_WORKER_FAILURES" == "0" ]]; then
+	if [[ "$_DISPATCH_ROUND_DISPATCHED" == "4" && "$_DISPATCH_ROUND_NO_WORKER_FAILURES" == "0" ]]; then
 		print_result "aggregate_outcomes: dispatched=4 no_worker=0" 0
 	else
 		print_result "aggregate_outcomes: dispatched=4 no_worker=0" 1 \
-			"got dispatched=${_DFF_ROUND_DISPATCHED} no_worker=${_DFF_ROUND_NO_WORKER_FAILURES}"
+			"got dispatched=${_DISPATCH_ROUND_DISPATCHED} no_worker=${_DISPATCH_ROUND_NO_WORKER_FAILURES}"
 	fi
 	# Cache should NOT be invalidated (only 0 no_worker failures)
-	if [[ -f "$_DFF_CANARY_CACHE" ]]; then
+	if [[ -f "$_DISPATCH_CANARY_CACHE" ]]; then
 		print_result "aggregate_outcomes: canary cache preserved on no failures" 0
 	else
 		print_result "aggregate_outcomes: canary cache preserved on no failures" 1 "cache was removed"
@@ -208,24 +208,24 @@ fail|101|rc=1|reason=no_worker_process
 fail|102|rc=1|reason=no_worker_process
 fail|103|rc=1|reason=cli_usage
 EOF
-	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	_DFF_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
-	rm -f "$_DFF_THROTTLE_FILE"
-	: >"$_DFF_CANARY_CACHE"
-	_dff_aggregate_outcomes "$outcomes_file"
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	_DISPATCH_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
+	rm -f "$_DISPATCH_THROTTLE_FILE"
+	: >"$_DISPATCH_CANARY_CACHE"
+	_dispatch_max_aggregate_outcomes "$outcomes_file"
 	rm -f "$outcomes_file"
 	# 3 no_worker failures → cache invalidated
-	if [[ ! -f "$_DFF_CANARY_CACHE" ]]; then
+	if [[ ! -f "$_DISPATCH_CANARY_CACHE" ]]; then
 		print_result "aggregate_outcomes: canary invalidated on >=3 no_worker_process" 0
 	else
 		print_result "aggregate_outcomes: canary invalidated on >=3 no_worker_process" 1 "cache still present"
 	fi
 	# no_worker_failures should be 3 (not 4 — cli_usage doesn't count)
-	if [[ "$_DFF_ROUND_NO_WORKER_FAILURES" == "3" ]]; then
+	if [[ "$_DISPATCH_ROUND_NO_WORKER_FAILURES" == "3" ]]; then
 		print_result "aggregate_outcomes: no_worker count distinguishes reasons" 0
 	else
 		print_result "aggregate_outcomes: no_worker count distinguishes reasons" 1 \
-			"got=${_DFF_ROUND_NO_WORKER_FAILURES}"
+			"got=${_DISPATCH_ROUND_NO_WORKER_FAILURES}"
 	fi
 	return 0
 }
@@ -236,12 +236,12 @@ test_aggregate_outcomes_clears_throttle_on_success() {
 	cat >"$outcomes_file" <<'EOF'
 success|100
 EOF
-	_DFF_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
-	_DFF_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
-	: >"$_DFF_THROTTLE_FILE"
-	_dff_aggregate_outcomes "$outcomes_file"
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	_DISPATCH_CANARY_CACHE="${HOME}/.aidevops/.agent-workspace/headless-runtime/canary-last-pass"
+	: >"$_DISPATCH_THROTTLE_FILE"
+	_dispatch_max_aggregate_outcomes "$outcomes_file"
 	rm -f "$outcomes_file"
-	if [[ ! -f "$_DFF_THROTTLE_FILE" ]]; then
+	if [[ ! -f "$_DISPATCH_THROTTLE_FILE" ]]; then
 		print_result "aggregate_outcomes: throttle cleared on any success" 0
 	else
 		print_result "aggregate_outcomes: throttle cleared on any success" 1 "throttle still set"
@@ -250,13 +250,13 @@ EOF
 }
 
 # =============================================================================
-# Test 4: _dff_dispatch_loop_parallel — end-to-end with stubbed candidate proc
+# Test 4: _dispatch_max_loop — end-to-end with stubbed candidate proc
 # =============================================================================
 test_parallel_loop_end_to_end() {
-	# Stub _dff_process_candidate to simulate work without real dispatch
+	# Stub _dispatch_process_candidate to simulate work without real dispatch
 	# deps. Candidates with even numbers succeed; odd numbers fail.
 	# shellcheck disable=SC2317  # called via name resolution from loop
-	_dff_process_candidate() {
+	_dispatch_process_candidate() {
 		local candidate_json="$1"
 		# Simulate ~50ms of work so parallel makes a measurable difference
 		# vs the bash tick (allows the timing assertion below to be robust
@@ -288,12 +288,12 @@ EOF
 	rm -f "$STOP_FLAG"
 	# Run parallel loop with effective_slots=10 (no budget cap), max_parallel=3
 	local result
-	result=$(_dff_dispatch_loop_parallel "$candidate_file" 10 10 "test_user" 3 "$outcomes_file")
+	result=$(_dispatch_max_loop "$candidate_file" 10 10 "test_user" 3 "$outcomes_file")
 
 	# Expected: 3 successes (even numbers), 3 fails (odd numbers)
 	local s f
-	s=$(_dff_count_outcomes "$outcomes_file" "success")
-	f=$(_dff_count_outcomes "$outcomes_file" "fail")
+	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	f=$(_dispatch_max_count_outcomes "$outcomes_file" "fail")
 	rm -f "$candidate_file" "$outcomes_file"
 
 	# Result should be "3 6" (dispatched=3, processed=6)
@@ -309,7 +309,7 @@ EOF
 test_parallel_loop_respects_budget() {
 	# Stub: every candidate succeeds
 	# shellcheck disable=SC2317  # called via name resolution from loop
-	_dff_process_candidate() {
+	_dispatch_process_candidate() {
 		sleep 0.02
 		return 0
 	}
@@ -327,9 +327,9 @@ test_parallel_loop_respects_budget() {
 	rm -f "$STOP_FLAG"
 	# effective_slots=4, max_parallel=4 — should stop after 4 successes
 	local result
-	result=$(_dff_dispatch_loop_parallel "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
+	result=$(_dispatch_max_loop "$candidate_file" 4 4 "test_user" 4 "$outcomes_file")
 	local s
-	s=$(_dff_count_outcomes "$outcomes_file" "success")
+	s=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
 	rm -f "$candidate_file" "$outcomes_file"
 
 	# We expect dispatched_count=4 (at most). It might process 5-8 before stopping
@@ -355,7 +355,7 @@ test_parallel_loop_respects_budget() {
 test_parallel_loop_stop_flag_aborts() {
 	# Stub: pre-create the STOP flag so the first candidate aborts the loop
 	# shellcheck disable=SC2317  # called via name resolution from loop
-	_dff_process_candidate() {
+	_dispatch_process_candidate() {
 		return 0
 	}
 
@@ -370,7 +370,7 @@ test_parallel_loop_stop_flag_aborts() {
 	# Pre-create STOP flag — loop must break on the first iteration
 	: >"$STOP_FLAG"
 	local result
-	result=$(_dff_dispatch_loop_parallel "$candidate_file" 10 10 "test_user" 4 "$outcomes_file")
+	result=$(_dispatch_max_loop "$candidate_file" 10 10 "test_user" 4 "$outcomes_file")
 	rm -f "$STOP_FLAG" "$candidate_file" "$outcomes_file"
 
 	# Expected: 0 dispatches because we hit STOP before any subshell launch
@@ -390,7 +390,7 @@ test_parallel_loop_stop_flag_aborts() {
 test_serial_loop_basic() {
 	# Stub: even numbers succeed, odd fail
 	# shellcheck disable=SC2317  # called via name resolution from loop
-	_dff_process_candidate() {
+	_dispatch_process_candidate() {
 		local candidate_json="$1"
 		local issue_num
 		issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
@@ -407,10 +407,10 @@ test_serial_loop_basic() {
 	done >"$candidate_file"
 
 	rm -f "$STOP_FLAG"
-	_DFF_THROTTLE_CLEARED=0
+	_DISPATCH_THROTTLE_CLEARED=0
 	# effective_slots=10 — no budget cap. 5 candidates → 3 even = 3 successes, 2 odd = 2 fails
 	local result
-	result=$(_dff_dispatch_loop_serial "$candidate_file" 10 10 "test_user")
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
 	rm -f "$candidate_file"
 
 	# Expect "3 5" — dispatched=3, processed=5
@@ -425,7 +425,7 @@ test_serial_loop_basic() {
 test_serial_loop_budget_cap() {
 	# Stub: every candidate succeeds
 	# shellcheck disable=SC2317  # called via name resolution from loop
-	_dff_process_candidate() {
+	_dispatch_process_candidate() {
 		return 0
 	}
 
@@ -438,7 +438,7 @@ test_serial_loop_budget_cap() {
 	rm -f "$STOP_FLAG"
 	# effective_slots=2 → loop must break after 2 successes (3rd iter starts but dispatched=2 stops it)
 	local result
-	result=$(_dff_dispatch_loop_serial "$candidate_file" 2 5 "test_user")
+	result=$(_dispatch_floor_loop "$candidate_file" 2 5 "test_user")
 	rm -f "$candidate_file"
 
 	# Expect dispatched=2; processed depends on where the budget check fires.

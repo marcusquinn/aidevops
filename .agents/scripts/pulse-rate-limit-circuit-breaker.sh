@@ -39,8 +39,8 @@
 #
 # Integration:
 #   Sourced by pulse-dispatch-engine.sh. The `is_graphql_budget_sufficient`
-#   function is called at the top of `_dff_compute_capacity` and at the start
-#   of `apply_deterministic_fill_floor` — one cheap check that gates all dispatch.
+#   function is called at the top of `_dispatch_compute_capacity` and at the start
+#   of `apply_dispatch_max` — one cheap check that gates all dispatch.
 #
 # Counter:
 #   `pulse_dispatch_circuit_broken` in ~/.aidevops/logs/pulse-stats.json

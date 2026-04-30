@@ -292,7 +292,7 @@ _dispatch_issue_consolidation() {
 
 	# Flag parent and post the idempotent pointer comment.
 	_post_consolidation_dispatch_comment "$issue_number" "$repo_slug" "$child_num" "$authors_csv"
-	# t2749: Signal to apply_deterministic_fill_floor that a consolidation child
+	# t2749: Signal to apply_dispatch_max that a consolidation child
 	# was created this cycle. The sentinel triggers a Phase 2 re-enumeration so
 	# the child is dispatched in the same cycle without waiting for the next pulse
 	# cycle (3–7 min latency when wrapper cycles are stable; 10–20 min when unstable).

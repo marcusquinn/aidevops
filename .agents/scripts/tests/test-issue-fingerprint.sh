@@ -175,11 +175,11 @@ check "$ok" "Test 9: empty body + different titles → different fingerprints" "
 # Test 10: Canonical reproducer — issues 21729 and 21730 scenario
 #           Two identical bodies from the same session double-fire
 # ============================================================
-CANONICAL_TITLE='bug(pulse): _dff_dispatch_loop_parallel wait -n tight loop grows pulse-wrapper.log to 679GB'
+CANONICAL_TITLE='bug(pulse): _dispatch_max_loop wait -n tight loop grows pulse-wrapper.log to 679GB'
 # shellcheck disable=SC2016 # backticks are markdown code ticks, not command substitution
 CANONICAL_BODY='## Description
 
-The `_dff_dispatch_loop_parallel` function uses `wait -n` in a tight polling loop.
+The `_dispatch_max_loop` function uses `wait -n` in a tight polling loop.
 
 ## Evidence
 

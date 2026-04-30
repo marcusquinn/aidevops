@@ -9,7 +9,7 @@
 #
 # What this test asserts:
 #   1. pulse-wrapper.sh references pulse-runner-health-helper.sh.
-#   2. The is-paused check happens BEFORE apply_deterministic_fill_floor
+#   2. The is-paused check happens BEFORE apply_dispatch_max
 #      (i.e., upstream in the same code block, not after).
 #   3. pulse-wrapper.sh skips fill-floor and increments the
 #      pulse_dispatch_runner_health_breaker_tripped counter when paused.
@@ -66,16 +66,16 @@ else
 	print_result "pulse-wrapper.sh references pulse-runner-health-helper.sh" "FAIL"
 fi
 
-# --- Test 2: is-paused check happens before apply_deterministic_fill_floor ---
+# --- Test 2: is-paused check happens before apply_dispatch_max ---
 # Capture line numbers; is-paused must appear before the first uncommented
-# call to apply_deterministic_fill_floor.
+# call to apply_dispatch_max.
 is_paused_line=$(grep -n 'is-paused' "$WRAPPER" | head -1 | cut -d: -f1)
-fill_floor_line=$(grep -n '^[[:space:]]*apply_deterministic_fill_floor' "$WRAPPER" | head -1 | cut -d: -f1)
+fill_floor_line=$(grep -n '^[[:space:]]*apply_dispatch_max' "$WRAPPER" | head -1 | cut -d: -f1)
 if [[ -n "$is_paused_line" ]] && [[ -n "$fill_floor_line" ]] \
 	&& [[ "$is_paused_line" -lt "$fill_floor_line" ]]; then
-	print_result "is-paused check precedes apply_deterministic_fill_floor" "PASS"
+	print_result "is-paused check precedes apply_dispatch_max" "PASS"
 else
-	print_result "is-paused check precedes apply_deterministic_fill_floor" "FAIL" \
+	print_result "is-paused check precedes apply_dispatch_max" "FAIL" \
 		"is_paused=$is_paused_line fill_floor=$fill_floor_line"
 fi
 

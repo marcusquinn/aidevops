@@ -2,20 +2,20 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# pulse-dispatch-fill-floor-lib.sh -- Fill-floor helpers for dispatch_deterministic_fill_floor
+# pulse-dispatch-lib.sh -- Fill-floor helpers for dispatch_max
 # =============================================================================
 # Sub-library extracted from pulse-dispatch-engine.sh (GH#21738) so the
 # orchestrator stays under the 1500-line file-size threshold. Contains all
-# `_dff_*` helper functions plus the shared debug logger that supports
-# `dispatch_deterministic_fill_floor` (which remains in the orchestrator
+# `_dispatch_*` helper functions plus the shared debug logger that supports
+# `dispatch_max` (which remains in the orchestrator
 # because its 110-line body would re-register as a new function-complexity
 # violation if moved).
 #
-# Module-level `_DFF_*` round-state counters are defined here so the helpers
-# and orchestrator share a single source of truth via the `_DFF_` prefix
+# Module-level `_DISPATCH_*` round-state counters are defined here so the helpers
+# and orchestrator share a single source of truth via the `_DISPATCH_` prefix
 # (avoids bash 4.3+ namerefs).
 #
-# Usage: source "${SCRIPT_DIR}/pulse-dispatch-fill-floor-lib.sh"
+# Usage: source "${SCRIPT_DIR}/pulse-dispatch-lib.sh"
 #
 # Dependencies:
 #   - shared-constants.sh (LOGFILE, color/status helpers, gh wrappers)
@@ -33,7 +33,7 @@ _PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED=1
 # --- Helper functions and module-level round-state vars (extracted) ---
 
 # -----------------------------------------------------------------------------
-# Helpers for dispatch_deterministic_fill_floor (GH#18656)
+# Helpers for dispatch_max (GH#18656)
 # -----------------------------------------------------------------------------
 # The helpers below are split out so the orchestrator stays under 100 lines
 # and each discrete responsibility (capacity planning, pre-passes, per-candidate
@@ -42,18 +42,18 @@ _PULSE_DISPATCH_FILL_FLOOR_LIB_LOADED=1
 # monolithic function — see git log for the refactor commit.
 #
 # The round-state counters (_round_dispatched, _round_no_worker_failures,
-# _consecutive_no_worker) are module-level with a `_DFF_` prefix so the
+# _consecutive_no_worker) are module-level with a `_DISPATCH_` prefix so the
 # helpers can update them without needing bash 4.3+ namerefs.
 
-_DFF_ROUND_DISPATCHED=0
-_DFF_ROUND_NO_WORKER_FAILURES=0
-_DFF_CONSECUTIVE_NO_WORKER=0
-_DFF_THROTTLE_FILE=""
-_DFF_CANARY_CACHE=""
-# Out-parameter set by _dff_process_candidate when a successful launch clears
+_DISPATCH_ROUND_DISPATCHED=0
+_DISPATCH_ROUND_NO_WORKER_FAILURES=0
+_DISPATCH_CONSECUTIVE_NO_WORKER=0
+_DISPATCH_THROTTLE_FILE=""
+_DISPATCH_CANARY_CACHE=""
+# Out-parameter set by _dispatch_process_candidate when a successful launch clears
 # the throttle file. The orchestrator loop reads this and restores
 # _effective_slots to the unthrottled available_slots value.
-_DFF_THROTTLE_CLEARED=0
+_DISPATCH_THROTTLE_CLEARED=0
 
 #######################################
 # Emit per-candidate debug output for the deterministic fill floor (GH#18804).
@@ -86,7 +86,7 @@ pulse_dispatch_debug_log() {
 #   0 - capacity computed (caller checks available_slots > 0 before dispatch)
 #   1 - stop flag present; caller should short-circuit
 #######################################
-_dff_compute_capacity() {
+_dispatch_compute_capacity() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor skipped: stop flag present" >>"$LOGFILE"
 		return 1
@@ -126,7 +126,7 @@ _dff_compute_capacity() {
 #   $1 - available slots before pre-passes
 # Stdout: "<remaining_slots> <triage_dispatched>"
 #######################################
-_dff_run_prepasses() {
+_dispatch_run_prepasses() {
 	local available_slots="$1"
 
 	local triage_remaining
@@ -164,7 +164,7 @@ _dff_run_prepasses() {
 #   0 - candidate is skippable
 #   1 - candidate should proceed to dispatch
 #######################################
-_dff_should_skip_candidate() {
+_dispatch_should_skip_candidate() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
@@ -177,9 +177,9 @@ _dff_should_skip_candidate() {
 	# `Adaptive settle wait: 0 dispatches` with nothing between.
 	#
 	# The set -e-safe capture idiom here is REQUIRED, not stylistic:
-	# `_dff_should_skip_candidate` runs inside the dispatch loop, which
-	# itself runs inside the `dispatch_deterministic_fill_floor` subshell
-	# created by `fill_dispatched=$(dispatch_deterministic_fill_floor)`.
+	# `_dispatch_should_skip_candidate` runs inside the dispatch loop, which
+	# itself runs inside the `dispatch_max` subshell
+	# created by `fill_dispatched=$(dispatch_max)`.
 	# Under `set -euo pipefail` an unguarded `if helper; then` is fine,
 	# but ANY internal capture or assignment that fails would abort the
 	# subshell silently. Capturing the rc explicitly keeps the failure
@@ -257,21 +257,21 @@ _dff_should_skip_candidate() {
 # so the next dispatch forces a re-test instead of trusting a stale "passed N
 # minutes ago" signal (t1959).
 #######################################
-_dff_record_launch_failure() {
+_dispatch_record_launch_failure() {
 	if [[ "$_PULSE_LAST_LAUNCH_FAILURE" == "no_worker_process" ]]; then
-		_DFF_ROUND_NO_WORKER_FAILURES=$((_DFF_ROUND_NO_WORKER_FAILURES + 1))
-		_DFF_CONSECUTIVE_NO_WORKER=$((_DFF_CONSECUTIVE_NO_WORKER + 1))
-		if [[ "$_DFF_CONSECUTIVE_NO_WORKER" -ge 3 ]]; then
-			if [[ -f "$_DFF_CANARY_CACHE" ]]; then
-				rm -f "$_DFF_CANARY_CACHE"
-				echo "[pulse-wrapper] Canary cache invalidated after ${_DFF_CONSECUTIVE_NO_WORKER} consecutive no_worker_process failures in round — next dispatch will re-run canary" >>"$LOGFILE"
+		_DISPATCH_ROUND_NO_WORKER_FAILURES=$((_DISPATCH_ROUND_NO_WORKER_FAILURES + 1))
+		_DISPATCH_CONSECUTIVE_NO_WORKER=$((_DISPATCH_CONSECUTIVE_NO_WORKER + 1))
+		if [[ "$_DISPATCH_CONSECUTIVE_NO_WORKER" -ge 3 ]]; then
+			if [[ -f "$_DISPATCH_CANARY_CACHE" ]]; then
+				rm -f "$_DISPATCH_CANARY_CACHE"
+				echo "[pulse-wrapper] Canary cache invalidated after ${_DISPATCH_CONSECUTIVE_NO_WORKER} consecutive no_worker_process failures in round — next dispatch will re-run canary" >>"$LOGFILE"
 			fi
-			_DFF_CONSECUTIVE_NO_WORKER=0
+			_DISPATCH_CONSECUTIVE_NO_WORKER=0
 		fi
 	else
 		# cli_usage_output or other launch-class failure: don't count toward
 		# the consecutive no_worker_process streak.
-		_DFF_CONSECUTIVE_NO_WORKER=0
+		_DISPATCH_CONSECUTIVE_NO_WORKER=0
 	fi
 	return 0
 }
@@ -280,9 +280,9 @@ _dff_record_launch_failure() {
 # t2989: Run dispatch_with_dedup with a per-candidate wall-clock timeout.
 #
 # Wraps the call in run_stage_with_timeout (default 30s, env override
-# FILL_FLOOR_PER_CANDIDATE_TIMEOUT). On timeout, kills the entire process
+# DISPATCH_PER_CANDIDATE_TIMEOUT). On timeout, kills the entire process
 # tree, emits a distinct log line, and bumps the
-# fill_floor_per_candidate_timeout counter in pulse-stats.json so cycle
+# dispatch_per_candidate_timeout counter in pulse-stats.json so cycle
 # cadence regressions are visible to operators without a deep log dive.
 #
 # GH#18804 isolation contract preserved: dispatch_with_dedup has no
@@ -305,17 +305,17 @@ _dff_record_launch_failure() {
 #   124   - per-candidate timeout (already logged + counter bumped)
 #   other - dispatch_with_dedup non-zero rc (failed dedup check, etc.)
 #######################################
-_dff_dispatch_with_timeout() {
+_dispatch_with_timeout() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
 	# t3003: adaptive per-candidate timeout. When DISPATCH_TIMING_ADAPTIVE=1
 	# (default), dispatch-timing-helper.sh recommends a budget based on the
 	# EWMA + p95 of recent successful dispatches; on timeouts it switches to
-	# probe mode (2x last_timeout). Old fixed FILL_FLOOR_PER_CANDIDATE_TIMEOUT
+	# probe mode (2x last_timeout). Old fixed DISPATCH_PER_CANDIDATE_TIMEOUT
 	# is preserved as the legacy fallback when the helper is unavailable or
 	# DISPATCH_TIMING_ADAPTIVE=0.
-	local timeout_seconds="$FILL_FLOOR_PER_CANDIDATE_TIMEOUT"
+	local timeout_seconds="$DISPATCH_PER_CANDIDATE_TIMEOUT"
 	local timeout_ms=$((timeout_seconds * 1000))
 	local probe_mode="false"
 	if [[ "${DISPATCH_TIMING_ADAPTIVE:-1}" == "1" ]] && command -v dispatch-timing-helper.sh >/dev/null 2>&1; then
@@ -351,17 +351,17 @@ _dff_dispatch_with_timeout() {
 	# + precreate_worktree 75s + lock 7s + eligibility 11s + predispatch 8s
 	# + tier 4s + worker_launch 142s) ~50% headroom for tail variance.
 	# Follow-up t3043 (#21659) targets reducing per-stage cost to <60s.
-	local floor_seconds="${FILL_FLOOR_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
+	local floor_seconds="${DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR:-600}"
 	if [[ "$floor_seconds" =~ ^[0-9]+$ ]] && ((timeout_seconds < floor_seconds)); then
 		timeout_seconds="$floor_seconds"
 		timeout_ms=$((floor_seconds * 1000))
 	fi
 
 	local start_ms dispatch_rc=0 outcome elapsed_ms
-	start_ms=$(_dff_now_ms)
-	run_stage_with_timeout "fill_floor_candidate_${issue_number}" "$timeout_seconds" \
+	start_ms=$(_dispatch_now_ms)
+	run_stage_with_timeout "dispatch_candidate_${issue_number}" "$timeout_seconds" \
 		dispatch_with_dedup "$@" || dispatch_rc=$?
-	elapsed_ms=$(($(_dff_now_ms) - start_ms))
+	elapsed_ms=$(($(_dispatch_now_ms) - start_ms))
 	echo "[pulse-wrapper] Deterministic fill floor: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number} elapsed_ms=${elapsed_ms} timeout_used_ms=${timeout_ms}" >>"$LOGFILE"
 
 	if [[ "$dispatch_rc" -eq 124 ]]; then
@@ -375,7 +375,7 @@ _dff_dispatch_with_timeout() {
 			>>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 		echo "[pulse-wrapper] Deterministic fill floor: per-candidate timeout (${timeout_seconds}s) on #${issue_number} (${repo_slug}) — killing candidate, continuing loop" >>"$LOGFILE"
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
-			pulse_stats_increment "fill_floor_per_candidate_timeout" 2>/dev/null || true
+			pulse_stats_increment "dispatch_per_candidate_timeout" 2>/dev/null || true
 		fi
 	elif [[ "$dispatch_rc" -eq 0 ]]; then
 		outcome="success"
@@ -402,7 +402,7 @@ _dff_dispatch_with_timeout() {
 # trailing 6 digits to convert ns→ms when GNU date is present, otherwise fall
 # back to seconds×1000 (sufficient resolution for ≥1s timeouts).
 #######################################
-_dff_now_ms() {
+_dispatch_now_ms() {
 	local ns
 	ns=$(date +%s%N 2>/dev/null)
 	if [[ "$ns" =~ ^[0-9]+$ ]] && ((${#ns} >= 13)); then
@@ -446,7 +446,7 @@ _dff_now_ms() {
 #   0 - proceed with dispatch (not opus, or inflight < cap)
 #   1 - deferred (opus inflight >= cap); caller should `return 1`
 #######################################
-_dff_check_model_concurrency_cap() {
+_dispatch_check_model_concurrency_cap() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local resolved_model="$3"
@@ -507,21 +507,21 @@ _dff_check_model_concurrency_cap() {
 #
 # Returns:
 #   0 - candidate dispatched and launch verified (caller should increment
-#       dispatched_count; if _DFF_THROTTLE_CLEARED=1 also restore
+#       dispatched_count; if _DISPATCH_THROTTLE_CLEARED=1 also restore
 #       _effective_slots)
 #   1 - candidate skipped or dispatch failed (caller should `continue`)
 #
 # Side effects:
-#   - Updates _DFF_ROUND_DISPATCHED / _DFF_ROUND_NO_WORKER_FAILURES /
-#     _DFF_CONSECUTIVE_NO_WORKER for the round.
-#   - Clears _DFF_THROTTLE_FILE and sets _DFF_THROTTLE_CLEARED=1 on a
+#   - Updates _DISPATCH_ROUND_DISPATCHED / _DISPATCH_ROUND_NO_WORKER_FAILURES /
+#     _DISPATCH_CONSECUTIVE_NO_WORKER for the round.
+#   - Clears _DISPATCH_THROTTLE_FILE and sets _DISPATCH_THROTTLE_CLEARED=1 on a
 #     successful launch while throttle was active.
 #######################################
-_dff_process_candidate() {
+_dispatch_process_candidate() {
 	local candidate_json="$1"
 	local self_login="$2"
 	local available_slots="$3"
-	_DFF_THROTTLE_CLEARED=0
+	_DISPATCH_THROTTLE_CLEARED=0
 
 	local issue_number="" repo_slug="" repo_path="" issue_url="" issue_title="" dispatch_title="" prompt="" labels_csv="" model_override=""
 	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // empty' 2>/dev/null)
@@ -545,7 +545,7 @@ _dff_process_candidate() {
 
 	pulse_dispatch_debug_log "processing #${issue_number} (${repo_slug}) labels=[${labels_csv}]"
 
-	if _dff_should_skip_candidate "$issue_number" "$repo_slug"; then
+	if _dispatch_should_skip_candidate "$issue_number" "$repo_slug"; then
 		return 1
 	fi
 
@@ -561,7 +561,7 @@ _dff_process_candidate() {
 	# Prevents 429 cascades from simultaneous opus worker launches. Sonnet/haiku
 	# candidates are unaffected. Deferred candidates retry next pulse cycle.
 	local _concurrency_cap_rc=0
-	_dff_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
+	_dispatch_check_model_concurrency_cap "$issue_number" "$repo_slug" "$model_override" >>"$LOGFILE" 2>&1 || _concurrency_cap_rc=$?
 	if [[ "$_concurrency_cap_rc" -ne 0 ]]; then
 		return 1
 	fi
@@ -569,14 +569,14 @@ _dff_process_candidate() {
 	# t2433/GH#20071: Refresh the repo before the large-file gate (inside
 	# dispatch_with_dedup → _dispatch_dedup_check_layers → _issue_targets_large_files)
 	# measures file sizes. Sentinel prevents multiple pulls for the same repo
-	# within a single dispatch_deterministic_fill_floor subshell execution.
+	# within a single dispatch_max subshell execution.
 	_pulse_refresh_repo "$repo_path"
 
 	# GH#18804 + t2989: dispatch with isolation + per-candidate timeout.
 	# Detail (subshell isolation, hang signature, 30s default rationale):
-	# see _dff_dispatch_with_timeout doc comment above.
+	# see _dispatch_with_timeout doc comment above.
 	local dispatch_rc=0
-	_dff_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
+	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
@@ -584,25 +584,25 @@ _dff_process_candidate() {
 	fi
 
 	# Count every successful dispatch attempt as a round denominator (t1959)
-	_DFF_ROUND_DISPATCHED=$((_DFF_ROUND_DISPATCHED + 1))
+	_DISPATCH_ROUND_DISPATCHED=$((_DISPATCH_ROUND_DISPATCHED + 1))
 	_PULSE_LAST_LAUNCH_FAILURE=""
 
 	local launch_rc=0
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Deterministic fill floor: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
-		_dff_record_launch_failure
+		_dispatch_record_launch_failure
 		return 1
 	fi
 
 	# Launch confirmed. Reset consecutive streak and clear throttle if active.
-	_DFF_CONSECUTIVE_NO_WORKER=0
+	_DISPATCH_CONSECUTIVE_NO_WORKER=0
 	# t1959: A single successful launch proves the runtime is back.
 	# Restore full batch immediately — do not wait for N successes.
-	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
-		rm -f "$_DFF_THROTTLE_FILE"
+	if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
+		rm -f "$_DISPATCH_THROTTLE_FILE"
 		echo "[pulse-wrapper] Dispatch throttle CLEARED: launch success in throttled mode — restoring full batch=${available_slots}" >>"$LOGFILE"
-		_DFF_THROTTLE_CLEARED=1
+		_DISPATCH_THROTTLE_CLEARED=1
 	fi
 	return 0
 }
@@ -613,12 +613,12 @@ _dff_process_candidate() {
 # engage the adaptive batch throttle so the next round is limited to batch=1
 # to avoid wasted dispatch cycles during runtime breakage (t1959).
 #######################################
-_dff_maybe_engage_throttle() {
-	if [[ "$_DFF_ROUND_DISPATCHED" -gt 0 ]]; then
-		local ratio_pct=$((_DFF_ROUND_NO_WORKER_FAILURES * 100 / _DFF_ROUND_DISPATCHED))
+_dispatch_maybe_engage_throttle() {
+	if [[ "$_DISPATCH_ROUND_DISPATCHED" -gt 0 ]]; then
+		local ratio_pct=$((_DISPATCH_ROUND_NO_WORKER_FAILURES * 100 / _DISPATCH_ROUND_DISPATCHED))
 		if [[ "$ratio_pct" -gt 80 ]]; then
-			echo "1" >"$_DFF_THROTTLE_FILE" 2>/dev/null || true
-			echo "[pulse-wrapper] Dispatch throttle ENGAGED: ${ratio_pct}% no_worker_process in round (${_DFF_ROUND_NO_WORKER_FAILURES}/${_DFF_ROUND_DISPATCHED}) — next round limited to batch=1" >>"$LOGFILE"
+			echo "1" >"$_DISPATCH_THROTTLE_FILE" 2>/dev/null || true
+			echo "[pulse-wrapper] Dispatch throttle ENGAGED: ${ratio_pct}% no_worker_process in round (${_DISPATCH_ROUND_NO_WORKER_FAILURES}/${_DISPATCH_ROUND_DISPATCHED}) — next round limited to batch=1" >>"$LOGFILE"
 		fi
 	fi
 	return 0
@@ -627,7 +627,7 @@ _dff_maybe_engage_throttle() {
 #######################################
 # t3005/t3014: Decide the parallelism level for the deterministic fill-floor loop.
 #
-# Defaults to DISPATCH_FILL_FLOOR_PARALLEL when set to a positive integer.
+# Defaults to DISPATCH_MAX_PARALLEL when set to a positive integer.
 # When unset, empty, or non-numeric, defaults to effective_slots — i.e. the
 # full slot budget — so the parallel loop saturates the worker pool in one
 # cycle (t3014). The pre-t3014 default of 6 capped throughput at 6 dispatches
@@ -644,12 +644,12 @@ _dff_maybe_engage_throttle() {
 #   $1 - effective_slots (already throttle-aware: 1 in throttle mode)
 # Stdout: integer parallelism level (>= 1)
 #######################################
-_dff_compute_max_parallel() {
+_dispatch_max_compute_parallel() {
 	local effective_slots="$1"
 	# t3014: when unset/empty/invalid, default to effective_slots (full budget)
 	# instead of the historical 6. Env override still wins when set to a valid
 	# positive integer; the cap below still clamps at effective_slots.
-	local max_parallel="${DISPATCH_FILL_FLOOR_PARALLEL:-}"
+	local max_parallel="${DISPATCH_MAX_PARALLEL:-}"
 	if ! [[ "$max_parallel" =~ ^[1-9][0-9]*$ ]]; then
 		max_parallel="$effective_slots"
 	fi
@@ -659,7 +659,7 @@ _dff_compute_max_parallel() {
 	# In throttle mode, _effective_slots is already 1 → max_parallel=1 (serial).
 	# Defensive: also short-circuit on direct file presence in case caller
 	# passes a non-throttled effective_slots while throttle is active.
-	if [[ -f "$_DFF_THROTTLE_FILE" ]]; then
+	if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
 		max_parallel=1
 	fi
 	((max_parallel < 1)) && max_parallel=1
@@ -670,9 +670,9 @@ _dff_compute_max_parallel() {
 #######################################
 # t3005: Serial dispatch loop (original behavior, refactored into a helper).
 #
-# Iterates candidates one at a time, calling _dff_process_candidate inline.
-# Module-global state mutations (_DFF_ROUND_DISPATCHED, _DFF_THROTTLE_CLEARED,
-# _PULSE_LAST_LAUNCH_FAILURE, _DFF_CONSECUTIVE_NO_WORKER) propagate normally
+# Iterates candidates one at a time, calling _dispatch_process_candidate inline.
+# Module-global state mutations (_DISPATCH_ROUND_DISPATCHED, _DISPATCH_THROTTLE_CLEARED,
+# _PULSE_LAST_LAUNCH_FAILURE, _DISPATCH_CONSECUTIVE_NO_WORKER) propagate normally
 # because the loop runs in the parent shell, not a backgrounded subshell.
 #
 # Arguments:
@@ -682,7 +682,7 @@ _dff_compute_max_parallel() {
 #   $4 - self_login (GitHub login for dedup)
 # Stdout: "<dispatched_count> <processed_count>"
 #######################################
-_dff_dispatch_loop_serial() {
+_dispatch_floor_loop() {
 	local candidate_file="$1"
 	local effective_slots="$2"
 	local available_slots="$3"
@@ -701,14 +701,14 @@ _dff_dispatch_loop_serial() {
 			echo "[pulse-wrapper] Deterministic fill floor stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
-		local _dff_proc_rc=0
-		_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dff_proc_rc=$?
-		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dff_process_candidate rc=${_dff_proc_rc}" >>"$LOGFILE"
-		if [[ "$_dff_proc_rc" -eq 0 ]]; then
+		local _dispatch_proc_rc=0
+		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dispatch_proc_rc=$?
+		echo "[pulse-wrapper] Deterministic fill floor: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
+		if [[ "$_dispatch_proc_rc" -eq 0 ]]; then
 			dispatched_count=$((dispatched_count + 1))
 			# Throttle cleared mid-round by a successful launch — restore
 			# the unthrottled slot budget so subsequent iterations dispatch.
-			if [[ "$_DFF_THROTTLE_CLEARED" -eq 1 ]]; then
+			if [[ "$_DISPATCH_THROTTLE_CLEARED" -eq 1 ]]; then
 				effective_slots="$available_slots"
 			fi
 		fi
@@ -721,7 +721,7 @@ _dff_dispatch_loop_serial() {
 # t3005: Parallel dispatch loop with bounded concurrency and outcomes file.
 #
 # Each candidate is dispatched in a backgrounded subshell. Module-global
-# mutations inside _dff_process_candidate are isolated to the subshell and
+# mutations inside _dispatch_process_candidate are isolated to the subshell and
 # lost — we re-derive aggregate state from an outcomes file written by each
 # subshell on completion. POSIX O_APPEND guarantees atomic short-line writes
 # (lines are <100 bytes, well under PIPE_BUF=512 on macOS / 4096 on Linux).
@@ -737,13 +737,13 @@ _dff_dispatch_loop_serial() {
 # Arguments:
 #   $1 - candidate_file
 #   $2 - effective_slots (slot budget — never throttled in this path)
-#   $3 - available_slots (passed through to _dff_process_candidate)
+#   $3 - available_slots (passed through to _dispatch_process_candidate)
 #   $4 - self_login
 #   $5 - max_parallel (bounded concurrency level)
 #   $6 - outcomes_file (created by caller, parent reads it post-loop)
 # Stdout: "<dispatched_count> <processed_count>"
 #######################################
-_dff_dispatch_loop_parallel() {
+_dispatch_max_loop() {
 	local candidate_file="$1"
 	local effective_slots="$2"
 	local available_slots="$3"
@@ -765,7 +765,7 @@ _dff_dispatch_loop_parallel() {
 		_alive_pids=()
 		while IFS= read -r pid; do
 			[[ -n "$pid" ]] && _alive_pids+=("$pid")
-		done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
+		done < <(_dispatch_max_reap_pids "${_pids[@]+${_pids[@]}}")
 		_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
 
 		# Wait for one to finish if we're at the concurrency cap.
@@ -779,7 +779,7 @@ _dff_dispatch_loop_parallel() {
 			_alive_pids=()
 			while IFS= read -r pid; do
 				[[ -n "$pid" ]] && _alive_pids+=("$pid")
-			done < <(_dff_reap_pids "${_pids[@]+${_pids[@]}}")
+			done < <(_dispatch_max_reap_pids "${_pids[@]+${_pids[@]}}")
 			_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
 
 			# Re-check after reaping — may have dropped below cap.
@@ -799,7 +799,7 @@ _dff_dispatch_loop_parallel() {
 		# Budget check: successes already recorded + currently in flight
 		# must stay below effective_slots. Reading the file is cheap (<1KB).
 		local successes_so_far
-		successes_so_far=$(_dff_count_outcomes "$outcomes_file")
+		successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
 		if ((successes_so_far + ${#_pids[@]} >= effective_slots)); then
 			echo "[pulse-wrapper] Deterministic fill floor: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${#_pids[@]} >= effective_slots=${effective_slots})" >>"$LOGFILE"
 			break
@@ -810,12 +810,12 @@ _dff_dispatch_loop_parallel() {
 		fi
 
 		# Background dispatch with outcomes-file write.
-		# The subshell isolates _dff_process_candidate's module-global
+		# The subshell isolates _dispatch_process_candidate's module-global
 		# mutations; only the file system mutations (throttle removal,
 		# canary cache) and the outcomes file write propagate.
 		(
 			local _rc=0
-			_dff_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
+			_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
 			local issue_num
 			issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
 			if [[ "$_rc" -eq 0 ]]; then
@@ -830,7 +830,7 @@ _dff_dispatch_loop_parallel() {
 	# Wait for all in-flight dispatches to complete
 	wait
 	local dispatched_count
-	dispatched_count=$(_dff_count_outcomes "$outcomes_file")
+	dispatched_count=$(_dispatch_max_count_outcomes "$outcomes_file")
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
 	return 0
 }
@@ -846,7 +846,7 @@ _dff_dispatch_loop_parallel() {
 #   $2 - outcome type to count (literal match on field 1, default "success")
 # Stdout: integer count (0 if file missing or empty)
 #######################################
-_dff_count_outcomes() {
+_dispatch_max_count_outcomes() {
 	local outcomes_file="$1"
 	local outcome_type="${2:-success}"
 	local count
@@ -865,7 +865,7 @@ _dff_count_outcomes() {
 # Arguments: $@ - pids to check
 # Stdout: alive pids (whitespace-separated)
 #######################################
-_dff_reap_pids() {
+_dispatch_max_reap_pids() {
 	local pid
 	for pid in "$@"; do
 		[[ -n "$pid" ]] || continue
@@ -879,8 +879,8 @@ _dff_reap_pids() {
 #######################################
 # t3005: Aggregate parallel-dispatch outcomes into module-global counters.
 #
-# After the parallel loop returns, _DFF_ROUND_DISPATCHED and
-# _DFF_ROUND_NO_WORKER_FAILURES are still 0 because the subshells couldn't
+# After the parallel loop returns, _DISPATCH_ROUND_DISPATCHED and
+# _DISPATCH_ROUND_NO_WORKER_FAILURES are still 0 because the subshells couldn't
 # mutate them. Re-derive both from the outcomes file.
 #
 # Also handles canary-cache invalidation (parallel approximation of the
@@ -891,33 +891,33 @@ _dff_reap_pids() {
 # Arguments:
 #   $1 - outcomes_file
 # Side effects:
-#   - Sets _DFF_ROUND_DISPATCHED, _DFF_ROUND_NO_WORKER_FAILURES
-#   - Removes _DFF_CANARY_CACHE if no_worker_failures >= 3
-#   - Removes _DFF_THROTTLE_FILE if any successes (parallel can only run when
+#   - Sets _DISPATCH_ROUND_DISPATCHED, _DISPATCH_ROUND_NO_WORKER_FAILURES
+#   - Removes _DISPATCH_CANARY_CACHE if no_worker_failures >= 3
+#   - Removes _DISPATCH_THROTTLE_FILE if any successes (parallel can only run when
 #     throttle was already off, but defensive cleanup is cheap)
 #######################################
-_dff_aggregate_outcomes() {
+_dispatch_max_aggregate_outcomes() {
 	local outcomes_file="$1"
 	local successes="" fails="" no_worker_failures=""
-	successes=$(_dff_count_outcomes "$outcomes_file" "success")
-	fails=$(_dff_count_outcomes "$outcomes_file" "fail")
+	successes=$(_dispatch_max_count_outcomes "$outcomes_file" "success")
+	fails=$(_dispatch_max_count_outcomes "$outcomes_file" "fail")
 	# no_worker_process is identified via the reason field embedded in the
 	# fail line — match the substring rather than adding another field.
 	no_worker_failures=$(awk -F'|' -v t="fail" '$1==t && /no_worker_process/{c++} END{print c+0}' "$outcomes_file" 2>/dev/null)
 	[[ "$no_worker_failures" =~ ^[0-9]+$ ]] || no_worker_failures=0
 
-	_DFF_ROUND_DISPATCHED=$((successes + fails))
-	_DFF_ROUND_NO_WORKER_FAILURES="$no_worker_failures"
+	_DISPATCH_ROUND_DISPATCHED=$((successes + fails))
+	_DISPATCH_ROUND_NO_WORKER_FAILURES="$no_worker_failures"
 
 	if ((no_worker_failures >= 3)); then
-		if [[ -f "$_DFF_CANARY_CACHE" ]]; then
-			rm -f "$_DFF_CANARY_CACHE"
+		if [[ -f "$_DISPATCH_CANARY_CACHE" ]]; then
+			rm -f "$_DISPATCH_CANARY_CACHE"
 			echo "[pulse-wrapper] Canary cache invalidated after ${no_worker_failures} no_worker_process failures in parallel round — next dispatch will re-run canary" >>"$LOGFILE"
 		fi
 	fi
 
-	if ((successes > 0)) && [[ -f "$_DFF_THROTTLE_FILE" ]]; then
-		rm -f "$_DFF_THROTTLE_FILE"
+	if ((successes > 0)) && [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
+		rm -f "$_DISPATCH_THROTTLE_FILE"
 		echo "[pulse-wrapper] Dispatch throttle CLEARED: parallel round had ${successes} successful launches" >>"$LOGFILE"
 	fi
 	return 0

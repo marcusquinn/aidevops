@@ -41,7 +41,7 @@
 #
 # Integration:
 #   Sourced by pulse-dispatch-engine.sh. The check_dispatch_backoff() function
-#   is called in _dff_should_skip_candidate() after fast_fail_is_skipped().
+#   is called in _dispatch_should_skip_candidate() after fast_fail_is_skipped().
 #   For NMR application (failure >= threshold), the caller reads the "NMR_REQUIRED"
 #   marker from stderr and applies the label via gh.
 #
@@ -148,7 +148,7 @@ _db_count_rate_limit_events() {
 # applies the graduated cooldown schedule, and returns exit 1 if
 # the cooldown window is still active.
 #
-# Called from _dff_should_skip_candidate() in pulse-dispatch-engine.sh
+# Called from _dispatch_should_skip_candidate() in pulse-dispatch-engine.sh
 # immediately after fast_fail_is_skipped().
 #
 # Exit codes:
