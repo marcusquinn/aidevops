@@ -3627,7 +3627,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3197 Per-issue launch-failure cooldown: prevent same-issue tight retry loops after no_worker_process #auto-dispatch #bug ref:GH#21892 pr:#21907 completed:2026-04-30
 
-- [ ] t3196 stale-stamp-aware takeover for DIRTY origin:interactive PRs #auto-dispatch #bug #enhancement ref:GH#21891
+- [x] t3196 stale-stamp-aware takeover for DIRTY origin:interactive PRs #auto-dispatch #bug #enhancement ref:GH#21891 pr:#21939 completed:2026-04-30
 
 - [x] t3194 Cross-runner peer quarantine: auto-detect broken peer runners and quarantine their dispatch claims #auto-dispatch #bug ref:GH#21890 pr:#21941 completed:2026-04-30
 
