@@ -3668,3 +3668,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3216 Realign claude-proxy.mjs getClaudeProxyModels() with model-limits.mjs CLAUDE_MODEL_LIMITS #auto-dispatch #refactor ref:GH#21952
 
 - [ ] t3217 fix(orphan-classifier): probe for existing PR before empty-branch guard short-circuits #auto-dispatch #bug #framework ref:GH#21958
+
+- [ ] t3218 pulse-merge: _resolve_pr_mergeable_status doesn't retry when prefetched mergeable is empty string #auto-dispatch #bug ref:GH#21960
