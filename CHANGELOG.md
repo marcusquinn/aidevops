@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.14] - 2026-04-30
+
+### Added
+
+- t3192 stuck auto_merge fallback to --admin direct merge (#21906)
+
+### Changed
+
+- Maintenance: mark t3192 complete (pr:#21906 completed:2026-04-30) [skip ci]
+- Maintenance: sync ref:GH#21905 to TODO.md [skip ci]
+- Maintenance: mark t3195 complete (pr:#21902 completed:2026-04-30) [skip ci]
+- fix worker output classification using --head not --search (#21902)
+
 ## [3.13.13] - 2026-04-30
 
 ### Changed
