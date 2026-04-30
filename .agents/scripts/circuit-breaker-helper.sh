@@ -606,10 +606,14 @@ _cb_update_existing_issue() {
 }
 
 # Ensure circuit-breaker labels exist and create a new issue.
+# Also files a sibling investigation task so each trip drives root-cause work
+# instead of accumulating notification-only issues (t3208 / GH#21923).
 _cb_create_new_issue() {
 	local repo_slug="$1"
 	local failure_count="$2"
 	local body="$3"
+	local last_task_id="${4:-unknown}"
+	local last_failure_reason="${5:-unknown}"
 
 	# Append signature footer
 	local sig_footer=""
@@ -637,6 +641,159 @@ _cb_create_new_issue() {
 		return 1
 	}
 	_cb_log_info "created GitHub issue: $issue_url"
+
+	# File sibling investigation task. Best-effort — failure here must not
+	# bubble up because the trip notification has already succeeded and the
+	# investigation task is a follow-up convenience, not a correctness gate.
+	local trip_issue_num="${issue_url##*/}"
+	if [[ "$trip_issue_num" =~ ^[0-9]+$ ]]; then
+		_cb_file_investigation_task \
+			"$repo_slug" "$trip_issue_num" \
+			"$failure_count" "$last_task_id" "$last_failure_reason" || true
+	else
+		_cb_log_warn "could not parse trip issue number from URL: $issue_url"
+	fi
+	return 0
+}
+
+# Build the body of the sibling investigation task that asks the next worker
+# to root-cause a circuit-breaker trip rather than just acknowledge it.
+# Args:
+#   $1 trip_issue_num
+#   $2 failure_count
+#   $3 last_task_id
+#   $4 last_failure_reason
+# Outputs: body string on stdout
+_cb_build_investigation_body() {
+	local trip_issue_num="$1"
+	local failure_count="$2"
+	local last_task_id="$3"
+	local last_failure_reason="$4"
+	local threshold="${CIRCUIT_BREAKER_THRESHOLD:-3}"
+
+	printf '%s\n' "## What
+
+Investigate the root cause of supervisor circuit-breaker trip Ref #${trip_issue_num} — ${failure_count} consecutive worker failures, last reason \`${last_failure_reason}\` on task \`${last_task_id}\`. Either:
+
+1. File ≥1 concrete fix task referencing this trip (\`Ref #${trip_issue_num}\`), OR
+2. Close trip notification #${trip_issue_num} as transient with evidence (canary now passing, prior recurrences absent in last 7 days).
+
+## Why
+
+\`circuit-breaker-helper.sh::_cb_create_new_issue\` historically created a notification-only issue. Trip after trip, the same underlying failure recurred without driving any automated investigation. The breaker pauses dispatch (good) but did not feed root-cause analysis (gap). Six prior trips were closed without root-cause fix: marcusquinn/aidevops#21919, #21556, #4360, #4318, #2293, #2292. This sibling investigation task closes that loop (t3208).
+
+## How
+
+### Last failure context
+
+- **Trip notification:** Ref #${trip_issue_num}
+- **Last failed task:** \`${last_task_id}\`
+- **Last failure reason:** \`${last_failure_reason}\`
+- **Consecutive failures:** ${failure_count}
+- **Threshold:** ${threshold}
+
+### Logs to inspect
+
+- \`~/.aidevops/logs/pulse-wrapper.log\` — pulse-side dispatch trace; grep for the failed task ID and surrounding cycle.
+- \`~/.aidevops/logs/headless-runtime-metrics.jsonl\` — per-worker outcome ledger; filter \`select(.session_key | contains(\"${last_task_id}\"))\` for terminal events.
+- \`/tmp/pulse-<runner>-<repo>-<task>.log\` — per-worker stdout/stderr if still on disk.
+- \`~/.aidevops/.agent-workspace/headless-runtime/canary-last-fail*\` — canary failure artifacts when the canary itself is the live blocker.
+- \`~/.aidevops/logs/dispatch-stages.tsv\` — dispatch-stage timing; recent rows show how far each spawn got before failing.
+
+### Failure-reason hypotheses
+
+Common \`last_failure_reason\` values and their typical root causes:
+
+- \`no_worker_process\` / \`canary_failed\` — runtime/credential/SDK drift; check canary artifacts and ANTHROPIC_API_KEY resolution.
+- \`cli_usage_output\` — opencode/claude CLI flag drift after auto-update; check stderr for unrecognised flag names.
+- \`watchdog_stall_killed\` — model context exhaustion or infinite tool loop; correlate with token counts in headless-runtime-metrics.
+- \`rate_limit\` — GraphQL or REST 429s; check \`gh-api-calls.log\` for endpoint family pressure.
+- \`worker_spawn_failed\` — environment / PATH / credentials issue at spawn; check pulse-wrapper.log for spawn trace.
+
+### Files to modify
+
+- Likely: depends on diagnosis. Probable surfaces: \`.agents/scripts/headless-runtime-helper.sh\`, \`.agents/scripts/headless-runtime-lib.sh\`, \`.agents/scripts/pulse-wrapper.sh\`, or whichever helper the failure trace points at.
+- Verification target: rerun the failing scenario after fix; canary passes; no immediate re-trip.
+
+### Acceptance
+
+- [ ] Either: file ≥1 fix task with \`Ref #${trip_issue_num}\` linking back, OR close trip notification #${trip_issue_num} with \`> Premise: transient — <evidence>\` rationale.
+- [ ] Trip-notification issue gets a comment summarising the investigation outcome (root cause, fix task numbers, or transient evidence).
+
+### Tautology guard
+
+If the worker investigation itself fails to spawn (the canary is the live blocker), the failure cascades and the existing \`dispatch-cooldown-until\` marker (t3197) prevents tight-loop retries — no special handling needed here.
+
+---
+*Auto-filed by circuit-breaker-helper.sh::_cb_file_investigation_task (t3208)*"
+	return 0
+}
+
+# File a sibling investigation task linked to a circuit-breaker trip
+# notification. Sibling (not child) by design: the trip notification is a
+# record of what happened; the investigation task is the workhorse driving
+# root-cause analysis. Best-effort — non-zero return here does not unwind
+# the trip notification.
+# Args:
+#   $1 repo_slug
+#   $2 trip_issue_num
+#   $3 failure_count
+#   $4 last_task_id
+#   $5 last_failure_reason
+# Returns: 0 on success or skip; 1 on hard failure of the gh call.
+_cb_file_investigation_task() {
+	local repo_slug="$1"
+	local trip_issue_num="$2"
+	local failure_count="$3"
+	local last_task_id="$4"
+	local last_failure_reason="$5"
+
+	# Operator escape hatch — symmetric with CB_SKIP_GITHUB but scoped to
+	# the investigation-task path so a caller can keep the trip notification
+	# while suppressing the follow-up if (e.g.) the investigation queue is
+	# already saturated.
+	if [[ "${CB_SKIP_INVESTIGATION_TASK:-}" == "true" ]]; then
+		_cb_log_info "investigation task creation skipped (CB_SKIP_INVESTIGATION_TASK=true)"
+		return 0
+	fi
+
+	# Ensure the source label exists before issue creation. Idempotent —
+	# --force makes gh treat an existing label as a no-op.
+	gh label create "source:circuit-breaker-investigation" \
+		--repo "$repo_slug" \
+		--description "Auto-filed root-cause investigation for circuit-breaker trip" \
+		--color "FBCA04" \
+		--force || true
+
+	local body
+	body=$(_cb_build_investigation_body \
+		"$trip_issue_num" "$failure_count" \
+		"$last_task_id" "$last_failure_reason")
+
+	# Append signature footer to the investigation body. The gh wrapper also
+	# auto-injects when invoked via PATH, but appending here keeps the body
+	# self-contained for any caller path that bypasses the wrapper.
+	local sig_footer=""
+	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$body" 2>/dev/null || true)
+	body="${body}${sig_footer}"
+
+	local title
+	title="Investigate circuit-breaker trip #${trip_issue_num}: ${last_failure_reason} after ${failure_count} consecutive failures"
+
+	local investigation_url
+	investigation_url=$(gh_create_issue \
+		--repo "$repo_slug" \
+		--title "$title" \
+		--body "$body" \
+		--label "auto-dispatch" \
+		--label "tier:thinking" \
+		--label "bug" \
+		--label "framework" \
+		--label "source:circuit-breaker-investigation") || {
+		_cb_log_warn "failed to file investigation task for trip #${trip_issue_num}"
+		return 1
+	}
+	_cb_log_info "filed investigation task: $investigation_url"
 	return 0
 }
 
@@ -661,7 +818,9 @@ _cb_create_or_update_issue() {
 	else
 		local body
 		body=$(_cb_build_issue_body "$failure_count" "$last_task_id" "$last_failure_reason" "$now")
-		_cb_create_new_issue "$repo_slug" "$failure_count" "$body" || return 1
+		_cb_create_new_issue \
+			"$repo_slug" "$failure_count" "$body" \
+			"$last_task_id" "$last_failure_reason" || return 1
 	fi
 
 	return 0
