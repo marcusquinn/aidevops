@@ -529,6 +529,27 @@ NOT canonical sources:
 
 Scope: applies before publishing any productivity-level claim ("workers aren't running", "dispatch is broken", "the pulse is dead", "we shipped N PRs today"). Internal hypotheses that lead to a canonical-source check are fine; published claims that skipped the check are not. This rule sits alongside t2204 (Attribution before verification) — both fire at the diagnosis-publish step, both demand evidence-then-claim.
 
+### Productivity questions are current-state queries (t3222 — MANDATORY)
+
+When the user asks any variant of "is the pulse working?" / "are workers running?" / "is real work happening now?" / "why so many failed-looking comments?" — answer from a **5-15 minute window of current-state evidence**, never from 24h/48h historical aggregates. The act of the user asking is itself signal that real-time progress notifications are missing; presenting historical totals to defend a degraded present is misdirect.
+
+**Required current-state sources (read 3+ before answering):**
+
+1. **`~/.aidevops/logs/dispatch-stages.tsv`** — append-only TSV of every dispatch stage (`precreate_worktree`, `worker_spawn`, `post_launch_hooks`, `worker_launch_total`). `tail -20` shows real spawns within seconds of occurrence. Lines in the last 5 min = dispatch is alive.
+2. **`~/.aidevops/logs/headless-runtime-metrics.jsonl`** filtered `ts >= now-900` — terminal events (success/stall/fail) in the last 15 min.
+3. **`~/.aidevops/logs/pulse-wrapper.log`** last 2 min, **excluding** detector-loop chatter and `Instance lock acquired` lines — what's left is real cycle activity.
+4. **`pulse-stats.json`** counters with `map(select(. >= (now - 600)))` — pulse-side dispatch counters in the last 10 min.
+5. **`git -C ~/Git/aidevops worktree list`** — count `feature/auto-*-gh*` worker worktrees; each is an in-flight worker.
+
+**Anti-patterns (forbidden answers to productivity questions):**
+
+- "113 PRs merged in 48h, 87% rate" — historical, says nothing about now.
+- "ps -eo shows 0 workers" as the sole signal — dispatch is **bursty**; a single `ps` instant lands between waves and lies. Always cross-reference with `dispatch-stages.tsv`.
+- "Workers spawned, fixes will land" — `worker_spawn` is initiation, not success. Land = merged PR closing the linked issue. Track to merge before claiming completion.
+- Listing aggregate failure-mode counts ("66 circuit-breaker trips in 48h") without checking whether they fired in the last 10 min.
+
+This rule sits alongside t3215 (canonical sources) and t2204 (attribution before verification) — all three fire at the diagnosis-publish step, all three demand evidence-then-claim.
+
 **Pre-edit rules:**
 
 - Before ANY file modification: run `pre-edit-check.sh`.
