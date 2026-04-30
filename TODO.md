@@ -3654,3 +3654,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3210 canary: skip with 'overload' reason when system load >> NCPU (prevents circuit-breaker trip cycle) #bug #framework ref:GH#21931
 
 - [ ] t3209 pulse-unbound-var-check.yml diff-scoping double-counts replaced lines #auto-dispatch #bug ref:GH#21930
+
+- [ ] t3211 pulse: detect & escalate GitHub Actions runner queue saturation #auto-dispatch #bug ref:GH#21942
