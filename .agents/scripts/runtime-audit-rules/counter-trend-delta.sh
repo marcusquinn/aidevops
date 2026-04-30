@@ -79,9 +79,7 @@ runtime_audit_check() {
 	first_counter=$(printf '%s\n' "$regressions" | head -1 | cut -f1)
 
 	local title="runtime-audit: counter regression detected (\`${first_counter}\`)"
-	# Build body via temp file — avoids heredoc-inside-$() which breaks Bash 3.2
-	# (single quotes in heredoc content confuse the Bash 3.2 $() nesting parser).
-	# GH#21782: pre-existing Bash 3.2 compat fix bundled with PyYAML/sed PR.
+	# Bash 3.2 compat: heredoc inside $() fails parse; write to tmp file instead.
 	local _body_tmp
 	_body_tmp=$(mktemp)
 	cat >"$_body_tmp" <<MARKDOWN
@@ -97,7 +95,7 @@ Counter source: \`${stats_file/#$HOME/\~}\`
 
 ## Why
 
-Sharp counter regressions are the supervisor’s structural blind spot — they appear in operational state long before they manifest as failed issues. Each regression cited above warrants investigation: a 3x-or-greater jump on a counter usually means a config change, a new bottleneck, or a regression in a recently-deployed script.
+Sharp counter regressions are the supervisor's structural blind spot — they appear in operational state long before they manifest as failed issues. Each regression cited above warrants investigation: a 3x-or-greater jump on a counter usually means a config change, a new bottleneck, or a regression in a recently-deployed script.
 
 ## How
 
