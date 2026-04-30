@@ -139,6 +139,87 @@ _release_interactive_claim_on_merge() {
 }
 
 #######################################
+# _pr_exists_for_branch_or_issue — Probe for an existing PR (t3195 / GH#21889)
+#
+# Determines whether a PR exists for a given head branch and/or linked issue.
+# Uses `gh pr list --head <branch> --state all` as the PRIMARY signal because
+# the GitHub Search index lags real-time PR creation by 5-30 minutes; the
+# pulls API (which `--head` queries) hits live state. Falls back to
+# `--search <issue_number>` only when branch_name is empty (no head to query)
+# OR when the head probe returns zero — search remains useful for cases
+# where the worker pushed a different branch than its detected feature branch.
+#
+# Canonical incident (t3195): a worker opened PR #21885 at 05:47:48Z;
+# `_worker_produced_output` ran at 05:52:38Z (5 min later); `gh pr list
+# --search 21870` returned 0 because of search-index lag; the worker was
+# misclassified as `worker_branch_orphan` and `_attempt_orphan_recovery_pr`
+# fired uselessly (PR already existed for the same `--head`). A `--head`
+# probe at 05:52:38Z would have returned 1 immediately.
+#
+# Args:
+#   $1 = branch_name   (may be empty)
+#   $2 = issue_number  (may be empty)
+#   $3 = repo_slug     (e.g. "owner/repo")
+#
+# Echoes one of:
+#   "found"   — at least one PR exists for the head branch (or issue match)
+#   "absent"  — definitive zero matches (caller may classify as branch_orphan)
+#   "unknown" — cannot evaluate (no inputs / repo_slug missing) — fail-open
+#
+# Always returns 0. gh CLI failures on either probe are silently treated as
+# zero matches for that probe — the helper continues to the fallback or
+# returns "absent" (callers fail-open via "unknown" only when no probe ran).
+#######################################
+_pr_exists_for_branch_or_issue() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	if [[ -z "$repo_slug" ]]; then
+		printf 'unknown'
+		return 0
+	fi
+
+	# Primary: --head match (no search-index lag, hits pulls API directly).
+	if [[ -n "$branch_name" ]]; then
+		local pr_count_head=0
+		pr_count_head=$(gh pr list --repo "$repo_slug" --head "$branch_name" \
+			--state all --json number --jq 'length' 2>/dev/null || true)
+		[[ "$pr_count_head" =~ ^[0-9]+$ ]] || pr_count_head=0
+		if [[ "$pr_count_head" -gt 0 ]]; then
+			printf 'found'
+			return 0
+		fi
+	fi
+
+	# Fallback: --search by issue_number when --head missed (or branch unknown).
+	# Search-index lag is acceptable here because the primary --head probe
+	# already returned zero — this is the second-chance covering cases where
+	# the actual pushed branch differs from the detected branch_name.
+	if [[ -n "$issue_number" ]]; then
+		local pr_count_search=0
+		pr_count_search=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
+			--json number --jq 'length' 2>/dev/null || true)
+		[[ "$pr_count_search" =~ ^[0-9]+$ ]] || pr_count_search=0
+		if [[ "$pr_count_search" -gt 0 ]]; then
+			printf 'found'
+			return 0
+		fi
+	fi
+
+	# Both probes returned zero (or only one ran and returned zero) — definitive
+	# absence. Distinct from "unknown" because we DID actually query.
+	if [[ -n "$branch_name" || -n "$issue_number" ]]; then
+		printf 'absent'
+		return 0
+	fi
+
+	# No usable inputs — fail-open with "unknown".
+	printf 'unknown'
+	return 0
+}
+
+#######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
@@ -149,6 +230,12 @@ _release_interactive_claim_on_merge() {
 #   - branch_name or repo_slug are empty (cannot construct PR)
 #   - linked issue is CLOSED (branch is genuinely orphaned, no PR needed)
 #   - gh pr create fails for any reason
+#
+# Pre-check (t3195/GH#21889): if a PR already exists for the branch
+# (`--head` probe via _pr_exists_for_branch_or_issue), returns 0 with no
+# `gh pr create` attempt. This catches search-index-lag misclassifications
+# from the upstream signal-3 path so the recovery helper does not
+# uselessly try to create a duplicate PR.
 #
 # On success: returns 0 (caller releases as worker_complete)
 # On failure: returns 1 (caller releases as worker_branch_orphan)
@@ -177,6 +264,16 @@ _attempt_orphan_recovery_pr() {
 	# Derive issue number from session key (format: issue-NNNN or pulse-*-NNNN)
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	# Pre-check (t3195/GH#21889): if a PR already exists for this branch
+	# (or issue), no recovery is needed. Caller releases as worker_complete.
+	# Catches search-index-lag misclassifications where signal-3 saw "absent"
+	# from `--search` while a PR already existed for the same `--head`.
+	local pr_existence=""
+	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	if [[ "$pr_existence" == "found" ]]; then
+		return 0
+	fi
 
 	# Guard: skip recovery for closed issues — worker may have closed it as
 	# "premise falsified" (GH#20819 §Context edge case).
