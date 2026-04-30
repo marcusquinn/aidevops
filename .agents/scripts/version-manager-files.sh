@@ -136,6 +136,14 @@ _update_homebrew_formula() {
 # to avoid repeating the escaped sed/grep pattern for the "version" JSON key.
 # All output goes to stderr. Returns 0 on success, 1 on failure.
 # Arguments: file new_version display_name
+#
+# Race-resistant validation (t3202): after the sed_inplace, validate using the
+# SAME jq query the final validator (validate-version-consistency.sh) uses.
+# This ensures updater and validator cannot disagree at the read-path level.
+# A defensive fs sync + retry covers the rare case where post-rename inode
+# cache serves stale content to a follow-on reader on macOS APFS, and where
+# an external writer briefly steps on the file between sed and validate.
+# Canonical failure: v3.13.13 release, 2026-04-30 (issue #21905).
 _update_json_version_field() {
 	local file="$1"
 	local new_version="$2"
@@ -143,12 +151,51 @@ _update_json_version_field() {
 	local ver_key='"version"'
 
 	sed_inplace "s/${ver_key}: *\"[^\"]*\"/${ver_key}: \"$new_version\"/" "$file"
-	if grep -q "${ver_key}: \"$new_version\"" "$file"; then
+
+	# Defensive fs flush — closes the rare post-rename cache window observed
+	# during back-to-back sed_inplace + jq read on macOS APFS.
+	sync 2>/dev/null || true
+
+	# Read using the validator's jq path. For marketplace.json the version
+	# lives at .metadata.version (top-level .version is null/absent), and
+	# the validator's `// .metadata.version` fallback handles that.
+	# For package.json the top-level .version is what we want. The same
+	# query covers both shapes correctly.
+	local actual_version
+	actual_version=$(jq -r '.version // .metadata.version // "not found"' "$file" 2>/dev/null || echo "jq-failed")
+
+	if [[ "$actual_version" == "$new_version" ]]; then
 		print_success "Updated $display_name" >&2
 		return 0
 	fi
 
-	print_error "Failed to update $display_name"
+	# One retry with a longer sleep — covers the genuine fsync race in
+	# which the rename has happened but the new inode's data has not yet
+	# been observed by the reader. 100ms is empirically more than enough
+	# on every filesystem we ship on; we've never measured longer in CI.
+	sleep 0.1
+	actual_version=$(jq -r '.version // .metadata.version // "not found"' "$file" 2>/dev/null || echo "jq-failed")
+
+	if [[ "$actual_version" == "$new_version" ]]; then
+		print_warning "Updated $display_name after retry (transient fs cache race)" >&2
+		return 0
+	fi
+
+	# Persistent mismatch — dump diagnostics that catch the three known
+	# failure modes (sed pattern miss, external writer, fs cache race).
+	# The grep result is included so future investigators can compare the
+	# old (grep-based) check against the new (jq-based) check at a glance.
+	print_error "Failed to update $display_name (jq read='$actual_version', expected '$new_version')"
+	{
+		printf '  diagnostic: file=%s\n' "$file"
+		printf '  diagnostic: file mtime epoch=%s\n' "$(_file_mtime_epoch "$file" 2>/dev/null || echo unknown)"
+		printf '  diagnostic: file size bytes=%s\n' "$(_file_size_bytes "$file" 2>/dev/null || echo unknown)"
+		if grep -q "${ver_key}: \"$new_version\"" "$file"; then
+			printf '  diagnostic: grep result=MATCH (jq disagrees — possible structural mismatch)\n'
+		else
+			printf '  diagnostic: grep result=MISS (sed_inplace pattern likely missed)\n'
+		fi
+	} >&2
 	return 1
 }
 
