@@ -3698,3 +3698,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3230 add current OpenAI model fallbacks to tier routing #auto-dispatch #enhancement #models ref:GH#21984
 
 - [ ] t3231 Bound optional CodeRabbit CLI pre-push review #auto-dispatch #bug ref:GH#21985
+
+- [ ] t3232 Fix OpenCode DB archive schema drift blocking session pruning #auto-dispatch #bug ref:GH#21987
