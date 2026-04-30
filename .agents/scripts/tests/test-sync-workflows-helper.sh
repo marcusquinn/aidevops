@@ -264,6 +264,51 @@ else
 fi
 rm -rf "$TMPDIR_10"
 
+# ─── Test 11: GH#21897 — CURRENT/CALLER + repos.json runner field is actionable ───
+# Regression: when a caller workflow is byte-identical to the canonical template
+# but `repos.json` carries a fresh `runner` field, the helper used to report
+# "no actionable repos" forever. Cause: `_normalize_wf_for_compare` strips
+# `runner:` lines before byte-comparison so a runner-only change never raises
+# DRIFTED/CALLER, and the actionable filter only let DRIFTED/CALLER and
+# NEEDS-MIGRATION through. `_needs_runner_sync` now closes that gap by post-
+# filtering CURRENT/CALLER rows where the on-disk runner differs from
+# repos.json. This test pins the contract: a runner-add must surface as
+# PLANNED with classification CURRENT/CALLER preserved.
+TMPDIR_11="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_11"
+mkdir -p "$TMPDIR_11/repo-runneradd/.github/workflows"
+# Canonical caller — no runner: line.
+printf '%s\n' "$CANONICAL_CALLER_CONTENT" >"$TMPDIR_11/repo-runneradd/.github/workflows/issue-sync.yml"
+# repos.json carries a runner field that has not been propagated to the file.
+_write_repos_json "$TMPDIR_11" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_11/repo-runneradd\",\"slug\":\"owner/repo-runneradd\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+OUT_11=$(HOME="$TMPDIR_11" bash "$HELPER" --json 2>/dev/null)
+_assert_contains "GH#21897 → CURRENT/CALLER + repos.json runner is actionable" "$OUT_11" '"slug":"owner/repo-runneradd"'
+_assert_contains "GH#21897 → planned outcome on runner add" "$OUT_11" '"outcome":"PLANNED"'
+_assert_contains "GH#21897 → CURRENT/CALLER classification preserved" "$OUT_11" '"classification":"CURRENT/CALLER"'
+rm -rf "$TMPDIR_11"
+
+# ─── Test 12: GH#21897 — CURRENT/CALLER + matching runner already injected → no work ───
+# Inverse of Test 11. When the file already carries the runner that repos.json
+# specifies, `_needs_runner_sync` returns false (match) and the row is skipped,
+# so the helper falls through to "no actionable repos". Pins that the runner-
+# detector does not over-trigger and resync workflows pointlessly on every
+# `--apply` after the first.
+TMPDIR_12="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_12"
+mkdir -p "$TMPDIR_12/repo-runnerok/.github/workflows"
+# Canonical caller WITH runner already injected at the canonical position
+# (mirrors what `_inject_runner_in_content` produces — first key inside
+# the existing `    with:` block).
+PRE_INJECTED_CONTENT=$(printf '%s\n' "$CANONICAL_CALLER_CONTENT" \
+	| sed -E 's|^(    with:)$|\1\n      runner: ubuntu-latest-arm64|')
+printf '%s\n' "$PRE_INJECTED_CONTENT" >"$TMPDIR_12/repo-runnerok/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_12" "{\"initialized_repos\":[{\"path\":\"$TMPDIR_12/repo-runnerok\",\"slug\":\"owner/repo-runnerok\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+OUT_12=$(HOME="$TMPDIR_12" bash "$HELPER" 2>&1)
+EXIT_12=$?
+_assert_contains "GH#21897 → already-injected runner is no-op" "$OUT_12" "no actionable repos"
+_assert_exit "GH#21897 → no-op exits 0" 0 "$EXIT_12"
+rm -rf "$TMPDIR_12"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [[ "$_FAIL" -eq 0 ]]; then

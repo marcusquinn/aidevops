@@ -88,6 +88,7 @@ readonly _STATUS_FAILED="FAILED"
 # Classification labels (must match check-workflows-helper.sh).
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
 readonly _CLASS_NEEDS_MIGRATION='NEEDS-MIGRATION'
+readonly _CLASS_CURRENT_CALLER='CURRENT/CALLER'
 
 # Canonical default branch name used in the template and as preflight fallback.
 readonly _BRANCH_DEFAULT_NAME="main"
@@ -258,6 +259,37 @@ _inject_runner_in_content() {
 	return 0
 }
 
+# _read_runner_from_file <workflow_file>
+# Extracts the existing `      runner: <value>` value from a caller workflow.
+# Emits the runner string on stdout, or empty if the line is absent or the
+# file is unreadable. Mirrors the 6-space indent that `_inject_runner_in_content`
+# writes and that `_normalize_wf_for_compare` strips.
+_read_runner_from_file() {
+	local _file="$1"
+	[[ -r "$_file" ]] || return 0
+	sed -nE 's|^      runner: (.+)$|\1|p' "$_file" | head -n 1
+	return 0
+}
+
+# _needs_runner_sync <slug> <workflow_file>
+# Returns 0 (true) when the on-disk runner does not match the repos.json
+# `runner` field for this slug — i.e. the runner needs to be added, changed,
+# or removed by `--apply`. Returns 1 (false) when they already match.
+#
+# This is the gap the comparator deliberately leaves: `_normalize_wf_for_compare`
+# strips `runner:` lines before byte-comparison so a runner-only change does
+# not flag a repo as DRIFTED/CALLER. Sync must detect runner drift separately
+# (GH#21897); without this check, `--apply` skips repos that picked up a new
+# `runner` field after the workflow was already in canonical caller shape.
+_needs_runner_sync() {
+	local _slug="$1"
+	local _workflow_file="$2"
+	local _expected _actual
+	_expected=$(_read_runner_field "$_slug")
+	_actual=$(_read_runner_from_file "$_workflow_file")
+	[[ "$_expected" != "$_actual" ]]
+}
+
 # ─── Classification Ingestion ───────────────────────────────────────────────
 
 # Invoke check-workflows-helper.sh --json and filter to actionable rows.
@@ -278,15 +310,35 @@ _list_actionable_repos() {
 		return 1
 	fi
 
-	# Filter to DRIFTED/CALLER and NEEDS-MIGRATION; carry slug, path,
-	# classification, and workflow name so _process_rows can pick the right
-	# template for each (repo × workflow) combination.
+	# Step 1 — DRIFTED/CALLER and NEEDS-MIGRATION rows always need a sync,
+	# regardless of runner state. Emit them directly.
 	# --arg makes the bash constants visible to jq without interpolation hacks.
 	printf '%s\n' "$_json" | jq -r \
 		--arg drifted "$_CLASS_DRIFTED" \
 		--arg needs "$_CLASS_NEEDS_MIGRATION" \
 		'select((.classification == $drifted) or (.classification == $needs))
 			| [.slug, .path, .classification, (.workflow // "")] | @tsv' 2>/dev/null
+
+	# Step 2 — CURRENT/CALLER rows whose `runner:` value drifted from
+	# `repos.json` (GH#21897). The comparator strips `runner:` before byte-
+	# matching so a runner add/change/remove never raises DRIFTED, and the
+	# Step 1 filter would skip these repos forever. Post-filter through
+	# `_needs_runner_sync` against the on-disk file and emit only the
+	# subset where the runner actually needs to change.
+	local _row_slug _row_path _row_class _row_workflow _wf_file
+	while IFS=$'\t' read -r _row_slug _row_path _row_class _row_workflow; do
+		[[ -z "$_row_slug" ]] && continue
+		# `.workflow` is the short name (e.g. "issue-sync"); reconstruct path.
+		_wf_file="$_row_path/.github/workflows/${_row_workflow}.yml"
+		if _needs_runner_sync "$_row_slug" "$_wf_file"; then
+			printf '%s\t%s\t%s\t%s\n' \
+				"$_row_slug" "$_row_path" "$_row_class" "$_row_workflow"
+		fi
+	done < <(printf '%s\n' "$_json" | jq -r \
+		--arg current "$_CLASS_CURRENT_CALLER" \
+		'select(.classification == $current)
+			| [.slug, .path, .classification, (.workflow // "")] | @tsv' 2>/dev/null)
+
 	return 0
 }
 
