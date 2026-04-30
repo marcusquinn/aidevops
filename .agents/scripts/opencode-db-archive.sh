@@ -205,6 +205,7 @@ CREATE TABLE IF NOT EXISTS `session` (
 	`time_compacting` integer,
 	`time_archived` integer,
 	`workspace_id` text,
+	`path` text,
 	CONSTRAINT `fk_session_project_id_project_id_fk` FOREIGN KEY (`project_id`) REFERENCES `project`(`id`) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS `session_project_idx` ON `session` (`project_id`);
@@ -271,6 +272,59 @@ SCHEMA_SQL
 		print_info "Migrated archive.project schema: added icon_url_override column"
 	fi
 
+	# Migrate existing archive DBs that predate OpenCode's session.path column.
+	# Without this, INSERT ... SELECT across active/archive schemas fails with:
+	# "table archive.session has 19 columns but 20 values were supplied".
+	local has_session_path
+	has_session_path=$(sqlite3 "$archive_db" \
+		"SELECT COUNT(*) FROM pragma_table_info('session') WHERE name='path';")
+	if [[ "$has_session_path" -eq 0 ]]; then
+		sqlite3 "$archive_db" "ALTER TABLE session ADD COLUMN path text;"
+		print_info "Migrated archive.session schema: added path column"
+	fi
+
+	return 0
+}
+
+_sqlite_has_column() {
+	local db="$1"
+	local table_name="$2"
+	local column_name="$3"
+	local count
+
+	count=$(sqlite3 "$db" \
+		"SELECT COUNT(*) FROM pragma_table_info('${table_name}') WHERE name='${column_name}';" 2>/dev/null || true)
+	[[ "$count" == "1" ]]
+	return $?
+}
+
+_archive_project_insert_columns() {
+	printf '%s\n' "id, worktree, vcs, name, icon_url, icon_color, time_created, time_updated, time_initialized, sandboxes, commands, icon_url_override"
+	return 0
+}
+
+_archive_project_select_columns() {
+	if _sqlite_has_column "$ACTIVE_DB" "project" "icon_url_override"; then
+		printf '%s\n' "p.id, p.worktree, p.vcs, p.name, p.icon_url, p.icon_color, p.time_created, p.time_updated, p.time_initialized, p.sandboxes, p.commands, p.icon_url_override"
+	else
+		printf '%s\n' "p.id, p.worktree, p.vcs, p.name, p.icon_url, p.icon_color, p.time_created, p.time_updated, p.time_initialized, p.sandboxes, p.commands, NULL AS icon_url_override"
+	fi
+	return 0
+}
+
+_archive_session_insert_columns() {
+	printf '%s\n' "id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id, path"
+	return 0
+}
+
+_archive_session_select_columns() {
+	local base_columns="id, project_id, parent_id, slug, directory, title, version, share_url, summary_additions, summary_deletions, summary_files, summary_diffs, revert, permission, time_created, time_updated, time_compacting, time_archived, workspace_id"
+
+	if _sqlite_has_column "$ACTIVE_DB" "session" "path"; then
+		printf '%s\n' "${base_columns}, path"
+	else
+		printf '%s\n' "${base_columns}, NULL AS path"
+	fi
 	return 0
 }
 
@@ -368,6 +422,13 @@ cmd_archive() {
 	# Create archive DB and schema
 	create_archive_schema "$ARCHIVE_DB"
 
+	local project_insert_columns project_select_columns
+	local session_insert_columns session_select_columns
+	project_insert_columns=$(_archive_project_insert_columns)
+	project_select_columns=$(_archive_project_select_columns)
+	session_insert_columns=$(_archive_session_insert_columns)
+	session_select_columns=$(_archive_session_select_columns)
+
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
 
@@ -430,13 +491,13 @@ ATTACH DATABASE '$ARCHIVE_DB' AS archive;
 BEGIN IMMEDIATE;
 
 -- Copy referenced project rows (INSERT OR IGNORE — projects may already exist)
-INSERT OR IGNORE INTO archive.project
-SELECT p.* FROM project p
+INSERT OR IGNORE INTO archive.project (${project_insert_columns})
+SELECT ${project_select_columns} FROM project p
 WHERE p.id IN (SELECT DISTINCT project_id FROM session WHERE id IN ($in_clause));
 
 -- Copy sessions
-INSERT OR IGNORE INTO archive.session
-SELECT * FROM session WHERE id IN ($in_clause);
+INSERT OR IGNORE INTO archive.session (${session_insert_columns})
+SELECT ${session_select_columns} FROM session WHERE id IN ($in_clause);
 
 -- Copy messages
 INSERT OR IGNORE INTO archive.message
