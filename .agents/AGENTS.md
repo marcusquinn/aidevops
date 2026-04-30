@@ -263,6 +263,8 @@ Reference code as `file_path:line_number` for easy navigation.
 
 Images >8000px crash session irrecoverably. NEVER `fullPage: true` for AI review. Max 1568px longest side. Use `browser-qa-helper.sh screenshot` (only guarded path). Full rules: `reference/screenshot-limits.md`.
 
+**User-pasted images (GH#21793):** Images >5 MB (the Anthropic API byte-size ceiling) also crash the session permanently. macOS Retina screenshots routinely exceed this. The OpenCode plugin intercepts and downscales automatically. On Claude Code, run `screenshot-import-helper.sh prepare <path>` before pasting — it sanitizes U+202F filenames AND downscales if needed. Full rules: `reference/screenshot-limits.md` "User-Provided Images".
+
 **macOS screenshot filename bug (U+202F):** macOS inserts a narrow no-break space (U+202F, UTF-8: `e2 80 af`) before AM/PM in screenshot filenames. The Read tool truncates paths at this character and returns `File not found: /Users`. If this happens, run `screenshot-import-helper.sh sanitize <path>` — it copies the file to a clean temp path and prints it. Full details: `reference/screenshot-limits.md` "macOS Filename Hygiene".
 
 ### Error Prevention (top recurring patterns)

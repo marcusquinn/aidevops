@@ -22,6 +22,56 @@ through at least 5 other paths that bypass those guardrails entirely.
 - The Playwright MCP `browser_screenshot` tool returns base64 images directly into conversation context with NO resize hook. There is no way to intercept or resize these images after the tool returns. Prefer `browser-qa-helper.sh screenshot` which has built-in guardrails, or use viewport-sized screenshots via Playwright direct.
 - The `browser-qa-helper.sh screenshot` command is the ONLY screenshot path with automatic size guardrails (post-capture resize to `--max-dim`, default 4000px). All other paths — Playwright MCP, dev-browser scripts, raw Playwright code — have zero size protection.
 
+## User-Provided Images (GH#21793)
+
+The 5 MB per-image base64 ceiling applies to **all** images — not just agent-captured
+screenshots. When a user pastes or drags an image directly into Claude Code or OpenCode,
+that image bypasses `browser-qa-helper.sh` entirely. macOS Retina screenshots routinely
+exceed 5 MB (the cited case was 7.4 MB). The crash mode is identical: the oversized
+image enters message history and every subsequent API call fails with:
+
+```
+image exceeds 5 MB maximum: 7447596 bytes > 5242880 bytes
+```
+
+There is no recovery from inside the session — you must open a new session and lose all
+context.
+
+### Two-layer protection
+
+**Layer 1 — OpenCode plugin (automatic):** The `image-guard.mjs` module in the
+`opencode-aidevops` plugin intercepts images in the `experimental.chat.messages.transform`
+hook before they reach the Anthropic API. If an image exceeds 4.5 MB (10 % headroom):
+
+1. Attempts downscale via `sips` (macOS) or `magick` (cross-platform) to max 1568px.
+2. Substitutes the downscaled image silently and logs a warning.
+3. If downscale fails, replaces the image with a text notice so the session continues.
+
+This protection is automatic for OpenCode users with the aidevops plugin installed.
+
+**Layer 2 — CLI preflight (Claude Code / manual):** For Claude Code or before pasting
+into any runtime, use the `prepare` command:
+
+```bash
+safe=$(screenshot-import-helper.sh prepare ~/Desktop/Screenshot.png)
+# paste $safe into the chat
+```
+
+The `prepare` command combines:
+1. U+202F sanitization (removes the invisible macOS AM/PM space from filenames).
+2. Size check: if the file exceeds 4.5 MB, downscales to 1568px via `sips` or `magick`.
+3. Returns the path to the clean, size-safe copy.
+
+If `sips` and `magick` are both unavailable and the image is too large, `prepare`
+exits 1 with a remediation message rather than returning an unsafe path.
+
+### Known limitation — Claude Code
+
+Claude Code does not have an equivalent `experimental.chat.messages.transform` hook.
+There is no automatic interception path. Users on Claude Code must run
+`screenshot-import-helper.sh prepare <path>` before pasting any image that may exceed
+5 MB. A Retina screenshot of a full 15" MacBook Pro display is typically 6-10 MB.
+
 ## macOS Filename Hygiene
 
 macOS inserts a narrow no-break space (U+202F, UTF-8 bytes: `e2 80 af`) before AM/PM in screenshot filenames. Example: `Screenshot 2026-04-28 at 8.16.59 PM.png` — the space before "PM" is U+202F, not a regular ASCII space (U+0020).

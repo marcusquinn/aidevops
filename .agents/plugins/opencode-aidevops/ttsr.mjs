@@ -8,6 +8,7 @@ import {
   collectDedupedViolations,
   recordFiredViolations,
 } from "./ttsr-rules.mjs";
+import { applyImageGuard } from "./image-guard.mjs";
 
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
@@ -193,10 +194,24 @@ async function ttsrSystemTransform(input, output, state, intentField) {
 }
 
 /**
- * messages.transform hook: inject token advisory and TTSR violation corrections.
+ * messages.transform hook: image size guard + token advisory + TTSR violation corrections.
+ *
+ * Image guard (GH#21793) runs first — it intercepts oversized user-pasted images
+ * before they enter message history. This is the only point where prevention is
+ * possible: once an oversized image is in history it replays on every API call and
+ * crashes the session permanently.
  */
 async function ttsrMessagesTransform(_input, output, state, qualityLog) {
   if (!output.messages || output.messages.length === 0) return;
+
+  // GH#21793: intercept oversized images in user messages before API send.
+  // applyImageGuard mutates output.messages in place; fail-open (any error is
+  // caught inside the module to avoid disrupting the hook pipeline).
+  try {
+    applyImageGuard(output.messages, qualityLog);
+  } catch (err) {
+    qualityLog("WARN", `[image-guard] guard threw unexpectedly: ${err.message}`);
+  }
 
   const advisory = checkTokenAdvisory(output.messages, state.tokenAdvisoryState);
   if (advisory) {
