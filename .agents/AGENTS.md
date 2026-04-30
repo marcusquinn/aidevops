@@ -509,6 +509,26 @@ When an incident appears to match a bug in TODO.md or recent commits, READ the c
 - Scope: applies to attributions blaming a specific task ID, issue number, PR, or commit. Generic "this seems to be a pulse-merge edge case" is fine without code-level verification; "this is the t2108 bug" is not.
 - Related: "Scientific reasoning" (hypothesis framing), "Claim discipline" (proof artifacts), "Stale-symptom investigations" (stale symptoms vs deployed file mtime). This rule sits alongside, not inside, any of them.
 
+### Pulse activity verification (canonical sources, t3215)
+
+When verifying whether workers are actually running, dispatching, or producing PRs — i.e. answering "is the pulse alive and productive?" — use the canonical outcome ledger, not file timestamps. File mtime tells you when something was *touched*; the canonical sources tell you the *outcome*. Confusing the two is a recurring misdiagnosis class (canonical failure: t3215, where a session reported "0 workers in 48h" from `worker-NNN.log` mtimes while canonical sources showed 28 successful workers and 49 PRs in the same window).
+
+Sources, in precedence order:
+
+1. **`worker-activity-helper.sh summary [--since 1h|6h|24h|48h|7d] [--json] [--no-pr-check] [--repo OWNER/REPO]`** — single command that aggregates sources 2-4 below. Start here for any "are workers running?" question. Skip the gh PR query with `--no-pr-check` when offline or rate-limited.
+2. **`~/.aidevops/logs/headless-runtime-metrics.jsonl`** — authoritative per-worker outcome record. One JSON line per terminated worker with `ts`, `session_key`, `result` (`success` / `watchdog_stall_killed` / `watchdog_stall_continue` / `rate_limit` / other), `exit_code`, `duration_ms`. Written by `headless-runtime-helper.sh`. Filter by `ts` for windows: `jq 'select(.ts >= (now - 86400))' file`.
+3. **`~/.aidevops/logs/pulse-stats.json`** — pulse-side dispatch counters. Each value is an array of unix-second timestamps. Query with `jq '.counters[<name>] // []'` — the `// []` is mandatory, otherwise missing keys silently collapse to null and `length` returns 0 (this exact failure caused the t3215 misdiagnosis). Useful keys: `pulse_dispatch_circuit_broken`, `pulse_cycle_skipped_graphql_low`, `dispatch_backoff_skipped`, `pulse_dispatch_no_work_breaker_tripped`, `pulse_cache_prime_runs`.
+4. **`gh pr list --search "created:>=<ISO> label:origin:worker" --state all --json number`** — external truth: did dispatched work actually become a PR? Cross-check sources 2-3 against this; a window with high dispatch counts but few PRs indicates worker-side stalls.
+5. **`~/.local/share/opencode/opencode.db`** (OpenCode) / **`~/.claude/projects/`** (Claude Code) — current and recent in-flight sessions. Use only when 1-4 leave a gap (e.g. you need to know what a still-running worker is doing).
+
+NOT canonical sources:
+
+- `worker-NNN.log` mtime (`ls -lt ~/.aidevops/logs/worker-*.log`) — file touch time, not outcome. A killed worker still leaves a recently-touched log.
+- `pgrep -f "headless-runtime-helper.sh run"` — counts live processes, not productivity. A worker stuck in a 30-min watchdog stall counts the same as one shipping code.
+- "Recent dispatch comments on issues" — only visible if dispatch reached the gh-write step; misses pre-flight rejections in the canonical counters.
+
+Scope: applies before publishing any productivity-level claim ("workers aren't running", "dispatch is broken", "the pulse is dead", "we shipped N PRs today"). Internal hypotheses that lead to a canonical-source check are fine; published claims that skipped the check are not. This rule sits alongside t2204 (Attribution before verification) — both fire at the diagnosis-publish step, both demand evidence-then-claim.
+
 **Pre-edit rules:**
 
 - Before ANY file modification: run `pre-edit-check.sh`.
