@@ -211,16 +211,38 @@ _launch_rate_limit_fast_monitor() {
 # =============================================================================
 
 # _invoke_claude: run the claude CLI command and capture output.
-# Same interface as _invoke_opencode for interchangeability.
-# Args: output_file exit_code_file cmd_args...
+# Same interface shape as _invoke_opencode (output/exit_code first), with an
+# additional work_dir slot so the caller can set the child cwd via shell
+# rather than a CLI flag.
+#
+# GH#21886: Claude CLI has no --cwd / --directory / --working-directory
+# flag. Setting cwd MUST happen via `cd` in the parent shell before exec.
+# This function isolates the cd in a subshell so it does not pollute the
+# caller's PWD. Empty work_dir is allowed (no-op cd) for callers that
+# legitimately want to inherit the current cwd.
+#
+# Kept in sync with _invoke_claude in headless-runtime-helper.sh; both
+# definitions exist because this file is sourced separately by some entry
+# points and we want either path to behave identically.
+#
+# Args: output_file exit_code_file work_dir cmd_args...
 _invoke_claude() {
 	local output_file="$1"
 	local exit_code_file="$2"
-	shift 2
+	local work_dir="$3"
+	shift 3
 	local -a cmd=("$@")
 
 	(
 		set +e
+		# Set child cwd via shell since claude CLI has no flag for it.
+		if [[ -n "$work_dir" ]]; then
+			if ! cd "$work_dir"; then
+				print_error "_invoke_claude: cd '$work_dir' failed (GH#21886)"
+				printf '%s' "1" >"$exit_code_file"
+				exit 1
+			fi
+		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"

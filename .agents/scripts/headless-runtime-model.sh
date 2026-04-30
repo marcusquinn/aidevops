@@ -451,11 +451,21 @@ _build_claude_cmd() {
 
 	# claude -p runs headless and prints output. --output-format stream-json
 	# gives structured output compatible with our result parsing.
-	# GH#16978: Claude CLI uses --cwd, not --directory (--directory is not a valid flag).
+	#
+	# GH#21886 (supersedes GH#16978): Claude CLI has NO flag for setting cwd.
+	# `claude --help` (verified against 2.1.123) lists --add-dir for granting
+	# tool access to additional dirs and -w/--worktree for git worktree
+	# creation, but neither sets the working directory. The earlier GH#16978
+	# fix replaced --directory with --cwd, but `claude --cwd <dir>` errors
+	# with `unknown option '--cwd'` exactly like --directory did.
+	#
+	# Correct mechanism: caller (_invoke_claude) cd's into $work_dir before
+	# exec. We deliberately do NOT emit work_dir here; it is consumed by the
+	# invocation site as a separate argument. work_dir is referenced via the
+	# default-assign below so static analysis does not flag it unused (the
+	# function signature is shared with _build_run_cmd for interchangeability).
+	: "${work_dir:=}"
 	printf '%s\0' "claude" "-p" "$prompt" "--output-format" "stream-json" "--verbose"
-	if [[ -n "$work_dir" ]]; then
-		printf '%s\0' "--cwd" "$work_dir"
-	fi
 	if [[ -n "$agent_name" ]]; then
 		printf '%s\0' "--agent" "$agent_name"
 	elif type -P claude >/dev/null 2>&1; then

@@ -600,16 +600,36 @@ _invoke_opencode() {
 }
 
 # _invoke_claude: run the claude CLI command and capture output.
-# Same interface as _invoke_opencode for interchangeability.
-# Args: output_file exit_code_file cmd_args...
+# Same interface shape as _invoke_opencode (output/exit_code first), with an
+# additional work_dir slot so the caller can set the child cwd via shell
+# rather than a CLI flag.
+#
+# GH#21886: Claude CLI has no --cwd / --directory / --working-directory
+# flag. Setting cwd MUST happen via `cd` in the parent shell before exec.
+# This function isolates the cd in a subshell so it does not pollute the
+# caller's PWD. Empty work_dir is allowed (no-op cd) for callers that
+# legitimately want to inherit the current cwd.
+#
+# Args: output_file exit_code_file work_dir cmd_args...
 _invoke_claude() {
 	local output_file="$1"
 	local exit_code_file="$2"
-	shift 2
+	local work_dir="$3"
+	shift 3
 	local -a cmd=("$@")
 
 	(
 		set +e
+		# Set child cwd via shell since claude CLI has no flag for it.
+		# Bail out of the subshell on cd failure so we don't run claude
+		# in the wrong directory and write a misleading exit code.
+		if [[ -n "$work_dir" ]]; then
+			if ! cd "$work_dir"; then
+				print_error "_invoke_claude: cd '$work_dir' failed (GH#21886)"
+				printf '%s' "1" >"$exit_code_file"
+				exit 1
+			fi
+		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
@@ -1109,7 +1129,7 @@ _execute_run_attempt() {
 	fi
 
 	case "$runtime" in
-	claude) _invoke_claude "$output_file" "$exit_code_file" "${cmd[@]}" ;;
+	claude) _invoke_claude "$output_file" "$exit_code_file" "$work_dir" "${cmd[@]}" ;;
 	*) _invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}" ;;
 	esac
 
