@@ -327,6 +327,19 @@ jobs:
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
 
+      # t3204: prepend the framework scripts dir to PATH so subsequent gh
+      # commands hit the `gh` PATH shim, which auto-injects the signature
+      # footer on `--body`/`--body-file` for issue:comment / issue:edit /
+      # issue:create / pr:* writes. Without this, the dedup-on-open path
+      # below emits an unsigned `gh issue comment` body — the same bug the
+      # bash close path had until t3204 fixed _close_comment.
+      - name: Setup gh shim (auto-inject signature footer on writes)
+        run: |
+          chmod +x __aidevops/.agents/scripts/gh \
+                   __aidevops/.agents/scripts/gh-signature-helper.sh \
+                   2>/dev/null || true
+          echo "${GITHUB_WORKSPACE}/__aidevops/.agents/scripts" >> "$GITHUB_PATH"
+
       - name: Check for duplicate issue and close if found
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -558,6 +571,27 @@ jobs:
           else
             echo "::notice::SYNC_PAT present — TODO.md push will use PAT"
           fi
+
+      # t3204: pull the framework scripts up front so the closing-hygiene and
+      # parent-task nudge steps below — both of which call `gh issue comment`
+      # with inline bodies — can route through the gh PATH shim and pick up
+      # the signature footer automatically. Previously the framework checkout
+      # only ran later in the job (gated by `if: steps.extract.outputs.task_id`)
+      # which is too late for the comment-emitting steps.
+      - name: Checkout aidevops framework scripts (early — for gh shim)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
+
+      - name: Setup gh shim (auto-inject signature footer on writes)
+        run: |
+          chmod +x __aidevops/.agents/scripts/gh \
+                   __aidevops/.agents/scripts/gh-signature-helper.sh \
+                   2>/dev/null || true
+          echo "${GITHUB_WORKSPACE}/__aidevops/.agents/scripts" >> "$GITHUB_PATH"
 
       - name: Extract task ID and collect linked issues
         id: extract
@@ -944,13 +978,13 @@ jobs:
           # See todo/tasks/t2038-brief.md Decision section for rationale.
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
-      - name: Checkout aidevops framework scripts
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          repository: marcusquinn/aidevops
-          path: __aidevops
-          ref: ${{ inputs.aidevops_ref || 'main' }}
-          fetch-depth: 1
+      # t3204: framework scripts already pulled by the early "Checkout
+      # aidevops framework scripts (early — for gh shim)" step at the top of
+      # this job. The previous duplicate checkout here would clone the repo
+      # a second time over the same `__aidevops` path on every PR merge —
+      # ~30s of wasted work. The "Checkout repo for TODO.md update" above
+      # checks out the caller repo at the workspace root; `__aidevops/`
+      # remains the framework checkout untouched.
 
       - name: Update TODO.md proof-log
         if: steps.extract.outputs.task_id != ''

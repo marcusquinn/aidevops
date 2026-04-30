@@ -83,25 +83,64 @@ _find_closing_pr() {
 	return 1
 }
 
+# t3204: append signature footer to close-comment bodies. Without it the
+# auto-close path (gh issue close --comment from _do_close, which bypasses the
+# `gh` PATH shim because `issue:close` is not in the shim's intercept list)
+# emitted bare one-liners with no runtime/version/model/token metadata —
+# in stark contrast to the rich + signed comments produced by interactive
+# agents using gh_issue_comment / the shim. See AGENTS.md "Signature footer
+# hallucination (t2685)" for the canonical rule.
 _close_comment() {
-	local task_id="$1" text="$2" pr_num="$3" pr_url="$4"
+	local task_id="$1" text="$2" pr_num="$3" pr_url="$4" repo="${5:-}" issue_number="${6:-}"
+	local body
 	# Cancelled/deferred/declined: produce a not-planned comment (no PR needed)
 	if _is_cancelled_or_deferred "$text"; then
 		local reason
 		reason=$(echo "$text" | grep -oiE 'cancelled:[0-9-]+|deferred:[0-9-]+|declined:[0-9-]+|CANCELLED' | head -1 | tr '[:upper:]' '[:lower:]')
 		[[ -z "$reason" ]] && reason="cancelled"
-		echo "Closing as not planned ($reason). Task $task_id resolved in TODO.md."
-		return 0
-	fi
-	if [[ -n "$pr_num" && -n "$pr_url" ]]; then
-		echo "Completed via [PR #${pr_num}](${pr_url}). Task $task_id done in TODO.md."
+		body="Closing as not planned ($reason). Task $task_id resolved in TODO.md."
+	elif [[ -n "$pr_num" && -n "$pr_url" ]]; then
+		body="Completed via [PR #${pr_num}](${pr_url}). Task $task_id done in TODO.md."
 	elif [[ -n "$pr_num" ]]; then
-		echo "Completed via PR #${pr_num}. Task $task_id done in TODO.md."
+		body="Completed via PR #${pr_num}. Task $task_id done in TODO.md."
 	else
 		local d
 		d=$(echo "$text" | grep -oE 'verified:[0-9-]+' | head -1 | sed 's/verified://')
-		[[ -n "$d" ]] && echo "Completed (verified: $d). Task $task_id done in TODO.md." || echo "Completed. Task $task_id done in TODO.md."
+		if [[ -n "$d" ]]; then
+			body="Completed (verified: $d). Task $task_id done in TODO.md."
+		else
+			body="Completed. Task $task_id done in TODO.md."
+		fi
 	fi
+
+	# t3204: append signature footer (--solved since this comment marks issue close).
+	# When repo/issue_number are passed, the helper sums total session time + tokens
+	# across all worker comments on this issue. Fail-open: missing args or helper
+	# failure leaves the body un-signed rather than emitting nothing.
+	local footer=""
+	if [[ -n "$repo" && -n "$issue_number" ]]; then
+		footer=$(gh-signature-helper.sh footer --solved --issue "${repo}#${issue_number}" 2>/dev/null || true)
+	else
+		footer=$(gh-signature-helper.sh footer --solved 2>/dev/null || true)
+	fi
+	printf '%s%s\n' "$body" "$footer"
+	return 0
+}
+
+# t3204: reopen-comment composition extracted into a helper so the signature
+# footer block and the body text are testable in isolation. Called by cmd_reopen
+# below; the helper output replaces the previous inline --comment string.
+_reopen_comment() {
+	local repo="${1:-}" ref_num="${2:-}"
+	local body="Reopened: TODO.md still has this as \`[ ]\` (open) and no merged PR was found. The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state."
+	local footer=""
+	if [[ -n "$repo" && -n "$ref_num" ]]; then
+		footer=$(gh-signature-helper.sh footer --issue "${repo}#${ref_num}" 2>/dev/null || true)
+	else
+		footer=$(gh-signature-helper.sh footer 2>/dev/null || true)
+	fi
+	printf '%s%s\n' "$body" "$footer"
+	return 0
 }
 
 # Mark a TODO entry as done: [ ] -> [x] with completed: date.
@@ -167,7 +206,10 @@ _do_close() {
 	fi
 
 	local comment
-	comment=$(_close_comment "$task_id" "$task_with_notes" "$pr_num" "$pr_url")
+	# t3204: pass repo + issue_number so _close_comment can ask the signature
+	# helper for an issue-scoped footer (sums total session time and tokens
+	# across all worker comments on this issue, not just this invocation).
+	comment=$(_close_comment "$task_id" "$task_with_notes" "$pr_num" "$pr_url" "$repo" "$issue_number")
 	if [[ "$DRY_RUN" == "true" ]]; then
 		print_info "[DRY-RUN] Would close #$issue_number ($task_id)"
 		return 0
@@ -337,8 +379,16 @@ cmd_reopen() {
 			continue
 		fi
 
+		# t3204: compose the reopen comment via _reopen_comment so the body
+		# carries a signature footer like every other agent-authored comment.
+		# `gh issue reopen --comment` is NOT intercepted by the gh PATH shim
+		# (only issue:comment / issue:create / issue:edit / pr:* are), so the
+		# footer must be injected here in the helper rather than relying on
+		# the shim layer.
+		local reopen_comment_body
+		reopen_comment_body=$(_reopen_comment "$repo" "$ref_num")
 		gh issue reopen "$ref_num" --repo "$repo" \
-			--comment "Reopened: TODO.md still has this as \`[ ]\` (open) and no merged PR was found. The issue was prematurely closed by a commit keyword. TODO.md is the source of truth for task state." 2>/dev/null && {
+			--comment "$reopen_comment_body" 2>/dev/null && {
 			reopened=$((reopened + 1))
 			print_success "Reopened #$ref_num ($tid)"
 		} || {
