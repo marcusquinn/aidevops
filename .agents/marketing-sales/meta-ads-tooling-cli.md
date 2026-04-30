@@ -45,6 +45,8 @@ export META_AD_ACCOUNT_ID="act_…"    # default ad account; overridable per-com
 export META_APP_ID="…"
 export META_APP_SECRET="…"
 export META_BUSINESS_ID="…"
+export META_PIXEL_ID="…"
+export META_PAGE_ID="…"
 
 # Verify
 meta ads ad-account list
@@ -54,13 +56,56 @@ meta ads ad-account list
 
 ```bash
 # Good
-META_ACCESS_TOKEN=$(aidevops secret get meta-ads-staging) meta ads campaign list
+source <(aidevops secret env meta-ads-clientA-prod)
+meta ads campaign list
 
 # Bad (token ends up in shell history AND your chat transcript)
 META_ACCESS_TOKEN="EAAB..." meta ads campaign list
 ```
 
-For the aidevops framework: store via `aidevops secret set meta-ads-<env>` (gopass-backed), retrieve via `aidevops secret get meta-ads-<env>`. Plaintext fallback: `~/.config/aidevops/credentials.sh` (chmod 600). See `tools/credentials/gopass.md`.
+For the aidevops framework: store via `aidevops secret set meta-ads-<account>-<env>` (gopass-backed),
+retrieve via `aidevops secret env meta-ads-<account>-<env>`. The naming convention is
+`meta-ads-<account>-<env>` where `<account>` is a lowercase hyphenated slug identifying the ad
+account or client (e.g., `acme`, `client-foo`, `brand-x`) and `<env>` is one of `prod` / `dev` /
+`staging`. Plaintext fallback: `~/.config/aidevops/credentials.sh` (chmod 600).
+See `tools/credentials/gopass.md` and `.agents/configs/secrets-templates/meta-ads.template.env`.
+
+### Multi-account workflows
+
+Real deployments manage multiple ad accounts simultaneously — agency clients, multiple brands under
+one org, parallel test/prod environments per client. Load each account's credentials by sourcing
+its env-file before running commands:
+
+```bash
+# Switch to client A (production)
+source <(aidevops secret env meta-ads-clientA-prod)
+meta ads campaigns list
+
+# Switch to brand B (development)
+source <(aidevops secret env meta-ads-brandB-dev)
+meta ads campaigns list
+
+# Run insights for client A staging without polluting the shell
+env $(aidevops secret env meta-ads-clientA-staging) \
+  meta ads insights get --date-preset last_7d --format json
+```
+
+Naming rules:
+- `<account>` — lowercase, hyphenated, no spaces. Identifies the ad account or client.
+  Examples: `acme`, `client-foo`, `brand-x`, `agency-clientA`.
+- `<env>` — one of `prod`, `dev`, `staging`.
+- Full key: `meta-ads-<account>-<env>`. Examples: `meta-ads-clientA-prod`,
+  `meta-ads-brandB-dev`, `meta-ads-acme-staging`.
+
+To populate a new account's secrets, use the canonical template:
+
+```bash
+# View the variable set required
+cat .agents/configs/secrets-templates/meta-ads.template.env
+
+# Store each variable (gopass prompts securely)
+aidevops secret set meta-ads-clientA-prod
+```
 
 ## Output Formats
 
@@ -87,6 +132,9 @@ meta ads campaign list --format plain | awk -F'\t' '$2 ~ /Summer/ {print $1}'
 ### Launch an ABO test (see `meta-ads-campaigns-testing-abo.md`)
 
 ```bash
+# 0. Load account credentials
+source <(aidevops secret env meta-ads-clientA-prod)
+
 # 1. Campaign — paused by default until you flip status
 meta ads campaign create \
   --name "ABO Test — UGC angles — 2026-W19" \
@@ -120,6 +168,9 @@ meta ads campaign update "$CAMPAIGN_ID" --status ACTIVE
 ### Pull insights for a weekly review (see `meta-ads-optimization-metrics.md`, `meta-ads-checklists-weekly-review.md`)
 
 ```bash
+# 0. Load account credentials
+source <(aidevops secret env meta-ads-clientA-prod)
+
 # Account-level top line
 meta ads insights get --date-preset last_7d --format json \
   --fields spend,impressions,clicks,ctr,cpc,actions,action_values,roas
@@ -136,6 +187,9 @@ meta ads insights get --level ad --date-preset last_7d --format json \
 ### Catalog and product sync (commerce campaigns)
 
 ```bash
+# 0. Load account credentials
+source <(aidevops secret env meta-ads-clientA-prod)
+
 meta ads catalog create --name "Main — 2026"
 CATALOG_ID=...
 
@@ -176,7 +230,7 @@ meta ads … --no-input --force --format json
 
 if ! meta ads campaign list --format json > /tmp/campaigns.json; then
   case $? in
-    3) echo "auth"; aidevops secret rotate meta-ads-prod ;;
+    3) echo "auth"; aidevops secret rotate meta-ads-clientA-prod ;;
     4) echo "api"; sleep 30; retry ;;
     *) echo "cli"; exit 1 ;;
   esac
@@ -188,7 +242,7 @@ fi
 1. **Resources are PAUSED on create.** Activation is always a separate `--status ACTIVE` call. Never combine create + activate in one command — leave a review step.
 2. **Verify spend before going live.** `meta ads campaign get $ID --format json | jq '.daily_budget,.lifetime_budget'` — confirm currency unit (cents vs dollars varies by ad account).
 3. **Destructive ops require confirmation.** Before `meta ads campaign delete`, `meta ads ad delete`, or any bulk update on >5 entities: run `verify-operation-helper.sh check --operation "<cmd>"` (framework rule, not CLI rule).
-4. **Stay in your ad account.** Always set `META_AD_ACCOUNT_ID` per session; never rely on a default. If you manage multiple accounts (agency model), prefix every command with `--ad-account-id "$ACCOUNT"` explicitly.
+4. **Stay in your ad account.** Always set `META_AD_ACCOUNT_ID` per session; never rely on a default. If you manage multiple accounts (agency model), use `source <(aidevops secret env meta-ads-<account>-<env>)` at the top of each script to load the correct account credentials explicitly.
 5. **Audit trail.** Pipe writes through a logger: `meta ads campaign create … --format json | tee -a ~/.aidevops/logs/meta-ads-writes.jsonl`. Combine with `audit-log-helper.sh log meta-ads "<msg>"` for security ops (creative deletes, dataset disconnects).
 6. **No tokens in commit messages or PR bodies.** Reference accounts by id, not by token.
 
