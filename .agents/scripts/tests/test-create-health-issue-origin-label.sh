@@ -28,7 +28,7 @@
 #
 # H1 verdict (from issue body):
 #   H1 (REST fallback omits origin label) was investigated and FALSIFIED.
-#   _gh_issue_create_rest correctly includes all labels inline in the POST.
+#   _rest_issue_create correctly includes all labels inline in the POST.
 #   The root cause was server-side label removal, not client-side omission.
 #
 # Tests:
@@ -40,7 +40,7 @@
 #   5. When neither AIDEVOPS_HEADLESS nor AIDEVOPS_SESSION_ORIGIN is set,
 #      the explicit AIDEVOPS_SESSION_ORIGIN=worker guard still applies
 #      origin:worker (not origin:interactive — the pre-fix bug pattern)
-#   6. The REST fallback path (_gh_issue_create_rest) includes origin:worker
+#   6. The REST fallback path (_rest_issue_create) includes origin:worker
 #      in the REST POST payload
 
 set -uo pipefail
@@ -297,7 +297,7 @@ unset AIDEVOPS_HEADLESS
 #         (confirms H1 from issue body is FALSIFIED — REST does include the label)
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "test health issue" \
 	--body "body text" \
@@ -310,18 +310,18 @@ _gh_issue_create_rest \
 if grep -qE '^api.*-X POST.*/repos/owner/repo/issues' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=origin:worker' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=source:health-dashboard' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_create_rest includes origin:worker inline in POST (H1 falsified)"
+	pass "_rest_issue_create includes origin:worker inline in POST (H1 falsified)"
 else
-	fail "_gh_issue_create_rest includes origin:worker inline in POST (H1 falsified)" \
+	fail "_rest_issue_create includes origin:worker inline in POST (H1 falsified)" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
 # Test 6: REST fallback path does NOT use a separate label POST for issues
-#         (unlike _gh_pr_create_rest which DOES use a separate step)
+#         (unlike _rest_pr_create which DOES use a separate step)
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "test health issue" \
 	--body "body" \
@@ -331,10 +331,10 @@ _gh_issue_create_rest \
 # A separate /labels POST would indicate the two-step pattern (PR pattern).
 # Use grep exit code (0=match found, 1=not found) to avoid grep -c doubling.
 if grep -qE '^api.*-X POST.*/repos/owner/repo/issues/[0-9]+/labels' "$GH_CALLS" 2>/dev/null; then
-	fail "_gh_issue_create_rest uses inline labels (no separate /labels POST)" \
+	fail "_rest_issue_create uses inline labels (no separate /labels POST)" \
 		"Found separate /issues/{N}/labels POST call (expected none)"
 else
-	pass "_gh_issue_create_rest uses inline labels (no separate /labels POST)"
+	pass "_rest_issue_create uses inline labels (no separate /labels POST)"
 fi
 
 # =============================================================================

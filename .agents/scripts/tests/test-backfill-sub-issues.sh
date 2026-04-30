@@ -184,7 +184,7 @@ if [[ "$cmd1" == "api" && "$cmd2" == "graphql" ]]; then
 	exit 0
 fi
 
-# gh api rate_limit → used by _gh_should_fallback_to_rest
+# gh api rate_limit → used by _rest_should_fallback
 if [[ "$cmd1" == "api" && "$cmd2" == "rate_limit" ]]; then
 	printf '%s\n' '{"resources":{"graphql":{"remaining":5000}}}'
 	exit 0
@@ -580,7 +580,7 @@ fi
 # Strategy:
 #   - Override the resolve_gh_node_id bash function to return empty, simulating
 #     GraphQL budget exhaustion without needing stub-level plumbing.
-#   - Set _GH_SHOULD_FALLBACK_OVERRIDE=1 so _gh_should_fallback_to_rest
+#   - Set _GH_SHOULD_FALLBACK_OVERRIDE=1 so _rest_should_fallback
 #     returns true without needing a real rate-limit state.
 #   - For test 21: GH_REST_NODE_<num> fixtures supply node IDs via REST
 #     → link succeeds (addSubIssue mutation fires).

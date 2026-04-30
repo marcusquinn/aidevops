@@ -270,7 +270,7 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 	}
 
 	_shim_rest_rewrite_read() {
-		# Source the REST fallback helper (contains _gh_should_fallback_to_rest
+		# Source the REST fallback helper (contains _rest_should_fallback
 		# and the _rest_* translator functions).
 		local _rest_helper=""
 		local _cand
@@ -294,7 +294,7 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		source "$_rest_helper" 2>/dev/null || return 1
 
 		# Check GraphQL budget. If above threshold, return 1 to fall through.
-		_gh_should_fallback_to_rest || return 1
+		_rest_should_fallback || return 1
 
 		# Extract repo and build stripped args.
 		_shim_extract_repo_and_args "$@" || return 1
@@ -323,7 +323,7 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# If the REST translator ran but returned non-zero (actual API error
 		# vs. budget-OK/missing-helper), propagate the error rather than
 		# retrying via GraphQL (which would also fail if budget is exhausted).
-		# Budget-OK returns rc=1 from _gh_should_fallback_to_rest; we only
+		# Budget-OK returns rc=1 from _rest_should_fallback; we only
 		# get here when rc=1 from the function wrapper. The translator errors
 		# are already printed to stderr by the _rest_* functions.
 		# Conservative: always fall through to real gh.

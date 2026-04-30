@@ -493,7 +493,7 @@ create_github_issue() {
 	local create_args=(--title "$title")
 	# Pass --repo explicitly so the REST fallback path inside gh_create_issue
 	# can build the /repos/{owner}/{repo}/issues endpoint without relying on cwd
-	# (t3039: _gh_issue_create_rest requires --repo).
+	# (t3039: _rest_issue_create requires --repo).
 	[[ -n "$_slug_for_warn" ]] && create_args+=(--repo "$_slug_for_warn")
 
 	local body=""

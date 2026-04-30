@@ -14,24 +14,24 @@
 #   `IFS=',' read -ra _toks <<<"$val"` is bash-only. In zsh, `read -a`
 #   is not recognised (zsh uses `read -A`) and the command fails with
 #   "bad option: -a", silently producing empty arrays. Issues created
-#   via _gh_issue_create_rest in zsh sessions received no labels and
+#   via _rest_issue_create in zsh sessions received no labels and
 #   no assignees, breaking tier-routing, origin-detection, and
 #   auto-dispatch pipelines.
 #
 # Fix: replaced all 16 `read -ra` sites with a portable helper
-# `_gh_split_csv` that uses POSIX parameter expansion only.
+# `_rest_split_csv` that uses POSIX parameter expansion only.
 #
 # Test scenarios:
-#   1. _gh_split_csv: basic CSV split under bash
-#   2. _gh_split_csv: same split under zsh (skip if zsh unavailable)
-#   3. _gh_split_csv: single token (no delimiter) returns string unchanged
-#   4. _gh_split_csv: empty string returns nothing
-#   5. _gh_split_csv: trailing delimiter — raw output, caller skips empty
-#   6. Integration: _gh_issue_create_rest labels+assignees reach gh api
+#   1. _rest_split_csv: basic CSV split under bash
+#   2. _rest_split_csv: same split under zsh (skip if zsh unavailable)
+#   3. _rest_split_csv: single token (no delimiter) returns string unchanged
+#   4. _rest_split_csv: empty string returns nothing
+#   5. _rest_split_csv: trailing delimiter — raw output, caller skips empty
+#   6. Integration: _rest_issue_create labels+assignees reach gh api
 #      payload under bash (via stubbed gh)
 #   7. Integration: same under zsh (skip if zsh unavailable)
 #   8. Load-order: sourcing shared-gh-wrappers.sh with no _SHARED_GH_WRAPPERS_DIR
-#      and no shared-constants.sh still defines _gh_should_fallback_to_rest
+#      and no shared-constants.sh still defines _rest_should_fallback
 #
 # macOS vs Linux:
 #   macOS: /bin/bash is 3.2; /bin/zsh is the default interactive shell.
@@ -90,7 +90,7 @@ if [[ ! -f "$FALLBACK_FILE" ]]; then
 	exit 1
 fi
 
-# Source the fallback file under bash to load _gh_split_csv and helpers.
+# Source the fallback file under bash to load _rest_split_csv and helpers.
 # Stub out print_info / print_warning so sourcing is noise-free.
 print_info() { return 0; }
 print_warning() { return 0; }
@@ -103,78 +103,78 @@ printf '%sRunning gh-wrapper shell-compat tests (t2743 / GH#20480)%s\n' \
 	"$TEST_GREEN" "$TEST_NC"
 
 # =============================================================================
-# Test 1: _gh_split_csv basic CSV split under bash
+# Test 1: _rest_split_csv basic CSV split under bash
 # =============================================================================
-out=$(_gh_split_csv "a,b,c" ",")
+out=$(_rest_split_csv "a,b,c" ",")
 expected=$(printf 'a\nb\nc')
 if [[ "$out" == "$expected" ]]; then
-	pass "1: _gh_split_csv splits 'a,b,c' into 3 tokens under bash"
+	pass "1: _rest_split_csv splits 'a,b,c' into 3 tokens under bash"
 else
-	fail "1: _gh_split_csv splits 'a,b,c' into 3 tokens under bash" \
+	fail "1: _rest_split_csv splits 'a,b,c' into 3 tokens under bash" \
 		"expected: $(printf '%q' "$expected")  got: $(printf '%q' "$out")"
 fi
 
 # =============================================================================
-# Test 2: _gh_split_csv under zsh
+# Test 2: _rest_split_csv under zsh
 # =============================================================================
 if ! command -v zsh >/dev/null 2>&1; then
-	skip "2: _gh_split_csv splits correctly under zsh" "zsh not installed"
+	skip "2: _rest_split_csv splits correctly under zsh" "zsh not installed"
 else
 	zsh_out=$(zsh -c "
 source '${FALLBACK_FILE}'
-out=\$(_gh_split_csv 'a,b,c' ',')
+out=\$(_rest_split_csv 'a,b,c' ',')
 printf '%s' \"\$out\"
 " 2>&1)
 	zsh_expected=$(printf 'a\nb\nc')
 	if [[ "$zsh_out" == "$zsh_expected" ]]; then
-		pass "2: _gh_split_csv splits 'a,b,c' into 3 tokens under zsh"
+		pass "2: _rest_split_csv splits 'a,b,c' into 3 tokens under zsh"
 	else
-		fail "2: _gh_split_csv splits 'a,b,c' into 3 tokens under zsh" \
+		fail "2: _rest_split_csv splits 'a,b,c' into 3 tokens under zsh" \
 			"expected: $(printf '%q' "$zsh_expected")  got: $(printf '%q' "$zsh_out")"
 	fi
 fi
 
 # =============================================================================
-# Test 3: _gh_split_csv single token (no delimiter) returns string unchanged
+# Test 3: _rest_split_csv single token (no delimiter) returns string unchanged
 # =============================================================================
-out=$(_gh_split_csv "solo" ",")
+out=$(_rest_split_csv "solo" ",")
 if [[ "$out" == "solo" ]]; then
-	pass "3: _gh_split_csv returns single token unchanged when no delimiter present"
+	pass "3: _rest_split_csv returns single token unchanged when no delimiter present"
 else
-	fail "3: _gh_split_csv returns single token unchanged when no delimiter present" \
+	fail "3: _rest_split_csv returns single token unchanged when no delimiter present" \
 		"expected 'solo' got: $(printf '%q' "$out")"
 fi
 
 # =============================================================================
-# Test 4: _gh_split_csv empty string returns nothing (no spurious empty line)
+# Test 4: _rest_split_csv empty string returns nothing (no spurious empty line)
 # =============================================================================
-out=$(_gh_split_csv "" ",")
+out=$(_rest_split_csv "" ",")
 if [[ -z "$out" ]]; then
-	pass "4: _gh_split_csv empty string returns empty output"
+	pass "4: _rest_split_csv empty string returns empty output"
 else
-	fail "4: _gh_split_csv empty string returns empty output" \
+	fail "4: _rest_split_csv empty string returns empty output" \
 		"expected empty, got: $(printf '%q' "$out")"
 fi
 
 # =============================================================================
-# Test 5: _gh_split_csv trailing delimiter — function does NOT emit spurious
-# trailing empty token. The `while [[ -n "$_str" ]]` guard in _gh_split_csv
+# Test 5: _rest_split_csv trailing delimiter — function does NOT emit spurious
+# trailing empty token. The `while [[ -n "$_str" ]]` guard in _rest_split_csv
 # ensures the loop exits when _str becomes "" after the last delimited token,
 # so "a,b," produces exactly 2 lines ("a" and "b") — no empty trailing line.
 # The caller's `[[ -n "$_tok" ]]` guard remains a defensive safety measure
-# for callers that feed raw shell word-splitting output, not _gh_split_csv output.
+# for callers that feed raw shell word-splitting output, not _rest_split_csv output.
 # =============================================================================
-out=$(_gh_split_csv "a,b," ",")
+out=$(_rest_split_csv "a,b," ",")
 line_count=$(printf '%s\n' "$out" | wc -l | tr -d ' ')
 if [[ "$line_count" == "2" ]]; then
-	pass "5: _gh_split_csv trailing delimiter produces 2 tokens (no spurious empty)"
+	pass "5: _rest_split_csv trailing delimiter produces 2 tokens (no spurious empty)"
 else
-	fail "5: _gh_split_csv trailing delimiter produces 2 tokens (no spurious empty)" \
+	fail "5: _rest_split_csv trailing delimiter produces 2 tokens (no spurious empty)" \
 		"expected 2, got: $line_count  (raw output: $(printf '%q' "$out"))"
 fi
 
 # =============================================================================
-# Test 6: Integration — _gh_issue_create_rest labels+assignees reach gh api
+# Test 6: Integration — _rest_issue_create labels+assignees reach gh api
 # under bash. Stub `gh` as a shell function; capture calls to a temp file.
 # =============================================================================
 TMP=$(mktemp -d -t t2743.XXXXXX)
@@ -196,7 +196,7 @@ gh() {
 export -f gh
 
 : >"$GH_CALLS"
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "t2743: shell compat test" \
 	--body "test body" \
@@ -211,9 +211,9 @@ assignee_other=$(grep -c 'assignees\[\]=otheruser' "$GH_CALLS" 2>/dev/null || pr
 
 if [[ "$label_standard" -ge 1 && "$label_auto" -ge 1 && "$label_fw" -ge 1 && \
       "$assignee_main" -ge 1 && "$assignee_other" -ge 1 ]]; then
-	pass "6: _gh_issue_create_rest sends all labels and assignees to gh api under bash"
+	pass "6: _rest_issue_create sends all labels and assignees to gh api under bash"
 else
-	fail "6: _gh_issue_create_rest sends all labels and assignees to gh api under bash" \
+	fail "6: _rest_issue_create sends all labels and assignees to gh api under bash" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
@@ -221,7 +221,7 @@ fi
 # Test 7: Integration — same test under zsh
 # =============================================================================
 if ! command -v zsh >/dev/null 2>&1; then
-	skip "7: _gh_issue_create_rest labels+assignees under zsh" "zsh not installed"
+	skip "7: _rest_issue_create labels+assignees under zsh" "zsh not installed"
 else
 	ZSH_CALLS="${TMP}/zsh_calls.log"
 	: >"$ZSH_CALLS"
@@ -238,7 +238,7 @@ gh() {
     return 0
 }
 source '${FALLBACK_FILE}'
-_gh_issue_create_rest \
+_rest_issue_create \
     --repo 'owner/repo' \
     --title 't2743: zsh compat test' \
     --body 'zsh body' \
@@ -254,9 +254,9 @@ _gh_issue_create_rest \
 
 	if [[ "$zsh_label_standard" -ge 1 && "$zsh_label_auto" -ge 1 && "$zsh_label_fw" -ge 1 && \
 	      "$zsh_assignee_main" -ge 1 && "$zsh_assignee_other" -ge 1 ]]; then
-		pass "7: _gh_issue_create_rest sends all labels and assignees under zsh"
+		pass "7: _rest_issue_create sends all labels and assignees under zsh"
 	else
-		fail "7: _gh_issue_create_rest sends all labels and assignees under zsh" \
+		fail "7: _rest_issue_create sends all labels and assignees under zsh" \
 			"ZSH_CALLS=$(cat "$ZSH_CALLS")"
 	fi
 fi
@@ -273,9 +273,9 @@ unset _SHARED_GH_WRAPPERS_DIR 2>/dev/null || true
 unset _SC_SELF 2>/dev/null || true
 # No shared-constants.sh sourced — test that stubs prevent command-not-found.
 source '${WRAPPERS_FILE}' 2>/dev/null
-if declare -F _gh_should_fallback_to_rest >/dev/null 2>&1 && \
-   declare -F _gh_issue_create_rest >/dev/null 2>&1 && \
-   declare -F _gh_pr_create_rest >/dev/null 2>&1; then
+if declare -F _rest_should_fallback >/dev/null 2>&1 && \
+   declare -F _rest_issue_create >/dev/null 2>&1 && \
+   declare -F _rest_pr_create >/dev/null 2>&1; then
     printf 'OK\n'
 else
     printf 'MISSING\n'

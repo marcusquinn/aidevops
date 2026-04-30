@@ -15,8 +15,8 @@
 #   - shared-gh-wrappers-session.sh (detect_session_origin, session_origin_label,
 #     _gh_wrapper_args_have_assignee, _gh_wrapper_args_have_label,
 #     _gh_wrapper_auto_assignee, _gh_wrapper_auto_sig)
-#   - shared-gh-wrappers-rest-fallback.sh (_gh_should_fallback_to_rest,
-#     _gh_issue_create_rest, _gh_pr_create_rest, _gh_issue_comment_rest)
+#   - shared-gh-wrappers-rest-fallback.sh (_rest_should_fallback,
+#     _rest_issue_create, _rest_pr_create, _rest_issue_comment)
 #   - _gh_validate_edit_args, _gh_edit_audit_rejection (from orchestrator)
 #   - gh CLI, jq
 #
@@ -199,9 +199,9 @@ gh_create_issue() {
 			if [[ -n "$auto_assignee" ]]; then
 				issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
 				local rc=$?
-				if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_gh_issue_create_rest "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
+					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" --label "$origin_label" --assignee "$auto_assignee")
 					rc=$?
 				fi
 				echo "$issue_output"
@@ -213,9 +213,9 @@ gh_create_issue() {
 
 	issue_output=$(gh issue create "$@" "${_todo_label_args[@]}" --label "$origin_label")
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-		issue_output=$(_gh_issue_create_rest "$@" "${_todo_label_args[@]}" --label "$origin_label")
+		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]}" --label "$origin_label")
 		rc=$?
 	fi
 	echo "$issue_output"
@@ -422,9 +422,9 @@ gh_create_pr() {
 	local pr_output rc
 	pr_output=$(gh pr create "$@" --label "$origin_label")
 	rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
-		pr_output=$(_gh_pr_create_rest "$@" --label "$origin_label")
+		pr_output=$(_rest_pr_create "$@" --label "$origin_label")
 		rc=$?
 	fi
 	printf '%s\n' "$pr_output"
@@ -466,9 +466,9 @@ gh_issue_comment() {
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh issue comment "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue comment"
-		_gh_issue_comment_rest "$@"
+		_rest_issue_comment "$@"
 		rc=$?
 	fi
 	return $rc

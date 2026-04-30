@@ -101,7 +101,7 @@ _cached_node_id() {
 	# GraphQL returned empty. If rate-limited, try REST path (t2739).
 	# REST: GET /repos/{owner}/{repo}/issues/{number} → .node_id
 	# Uses the same core-pool 5000/hr budget that the t2574 write-path fallbacks use.
-	if _gh_should_fallback_to_rest; then
+	if _rest_should_fallback; then
 		local rest_nid
 		rest_nid=$(gh api "/repos/${repo}/issues/${num}" --jq '.node_id // ""' 2>/dev/null || echo "")
 		if [[ -n "$rest_nid" ]]; then

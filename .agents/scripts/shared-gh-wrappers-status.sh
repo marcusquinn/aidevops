@@ -11,7 +11,7 @@
 #
 # Dependencies:
 #   - shared-constants.sh (print_info, etc.)
-#   - shared-gh-wrappers-rest-fallback.sh (_gh_should_fallback_to_rest,
+#   - shared-gh-wrappers-rest-fallback.sh (_rest_should_fallback,
 #     _rest_issue_view, _rest_issue_list, _rest_issue_search, _rest_pr_list)
 #   - _gh_with_timeout (from orchestrator)
 #   - ISSUE_STATUS_LABELS (from orchestrator)
@@ -174,9 +174,9 @@ set_issue_status() {
 
 	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 	local _rc=$?
-	if [[ $_rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $_rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for set_issue_status"
-		_gh_issue_edit_rest "$issue_num" --repo "$repo_slug" "${_flags[@]}"
+		_rest_issue_edit "$issue_num" --repo "$repo_slug" "${_flags[@]}"
 		_rc=$?
 	fi
 	return $_rc
@@ -198,7 +198,7 @@ gh_issue_view() {
 	local _first_num="${1:-}"
 	_gh_with_timeout read gh issue view "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue view #${_first_num}"
 		_rest_issue_view "$@"
 		rc=$?
@@ -223,7 +223,7 @@ gh_issue_view() {
 gh_pr_list() {
 	_gh_with_timeout read gh pr list "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
 		_rest_pr_list "$@"
 		rc=$?
@@ -256,7 +256,7 @@ gh_pr_list() {
 gh_issue_list() {
 	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		# t2995: use search-aware REST fallback when --search is supplied.
 		# Walk argv to detect --search; the helper itself re-parses, but we
 		# need to know whether to dispatch to /search/issues (which preserves

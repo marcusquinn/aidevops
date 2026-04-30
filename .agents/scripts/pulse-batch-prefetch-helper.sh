@@ -376,7 +376,7 @@ _refresh_owner_issues() {
 	# ~30 points/call) and go straight to per-slug REST iteration. Avoids
 	# burning points on a call that will fail and then be retried via REST.
 	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
-	if _gh_should_fallback_to_rest "$graphql_remaining" 2>/dev/null; then
+	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search issues for owner=${owner}, going straight to REST"
 		gh_record_call search-rest 2>/dev/null || true
 		_prefetch_rest_per_slug issues "$slugs"
@@ -432,7 +432,7 @@ _refresh_owner_prs() {
 	local graphql_remaining="${3:-}"
 	# Proactive REST fallback (t2902): same pattern as _refresh_owner_issues.
 	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
-	if _gh_should_fallback_to_rest "$graphql_remaining" 2>/dev/null; then
+	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search prs for owner=${owner}, going straight to REST"
 		gh_record_call search-rest 2>/dev/null || true
 		_prefetch_rest_per_slug prs "$slugs"
@@ -510,7 +510,7 @@ _cmd_refresh() {
 	_OWNER_ERRORS=0
 
 	# Pre-fetch GraphQL remaining once per refresh cycle (t2902 review followup).
-	# Both _refresh_owner_issues and _refresh_owner_prs call _gh_should_fallback_to_rest,
+	# Both _refresh_owner_issues and _refresh_owner_prs call _rest_should_fallback,
 	# which issues a `gh api rate_limit` call when no pre-computed value is supplied.
 	# With N owners that produces 2×N redundant API calls. Fetch here and pass the
 	# integer down so each per-owner function can reuse it without hitting the API again.

@@ -22,9 +22,9 @@
 #
 # Tests:
 #   1. bash: source shared-constants.sh emits zero REST-fallback warnings
-#   2. bash: _gh_issue_create_rest is defined after sourcing
+#   2. bash: _rest_issue_create is defined after sourcing
 #   3. zsh:  source shared-constants.sh emits zero REST-fallback warnings (t2709)
-#   4. zsh:  _gh_issue_create_rest is defined after sourcing (t2709)
+#   4. zsh:  _rest_issue_create is defined after sourcing (t2709)
 
 set -uo pipefail
 
@@ -78,11 +78,11 @@ else
 	pass "bash source emits no REST-fallback warning"
 fi
 
-bash_fn=$(bash -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _gh_issue_create_rest 2>/dev/null" || true)
-if printf '%s\n' "$bash_fn" | grep -q 'function\|_gh_issue_create_rest'; then
-	pass "bash: _gh_issue_create_rest defined after source"
+bash_fn=$(bash -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _rest_issue_create 2>/dev/null" || true)
+if printf '%s\n' "$bash_fn" | grep -q 'function\|_rest_issue_create'; then
+	pass "bash: _rest_issue_create defined after source"
 else
-	fail "bash: _gh_issue_create_rest NOT defined after source" "$bash_fn"
+	fail "bash: _rest_issue_create NOT defined after source" "$bash_fn"
 fi
 
 # =============================================================================
@@ -92,7 +92,7 @@ printf '\n=== zsh source tests ===\n'
 
 if ! command -v zsh >/dev/null 2>&1; then
 	skip "zsh not available — skipping zsh tests (not a failure)"
-	skip "zsh: _gh_issue_create_rest defined after source (zsh unavailable)"
+	skip "zsh: _rest_issue_create defined after source (zsh unavailable)"
 else
 	zsh_output=$(zsh -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>&1" || true)
 	if printf '%s\n' "$zsh_output" | grep -q 'shared-gh-wrappers-rest-fallback.sh'; then
@@ -101,11 +101,11 @@ else
 		pass "zsh source emits no REST-fallback warning (t2709)"
 	fi
 
-	zsh_fn=$(zsh -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _gh_issue_create_rest 2>/dev/null" || true)
-	if printf '%s\n' "$zsh_fn" | grep -q 'function\|_gh_issue_create_rest\|shell function'; then
-		pass "zsh: _gh_issue_create_rest defined after source (REST fallback loaded)"
+	zsh_fn=$(zsh -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _rest_issue_create 2>/dev/null" || true)
+	if printf '%s\n' "$zsh_fn" | grep -q 'function\|_rest_issue_create\|shell function'; then
+		pass "zsh: _rest_issue_create defined after source (REST fallback loaded)"
 	else
-		fail "zsh: _gh_issue_create_rest NOT defined after source" "$zsh_fn"
+		fail "zsh: _rest_issue_create NOT defined after source" "$zsh_fn"
 	fi
 fi
 

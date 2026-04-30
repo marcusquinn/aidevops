@@ -9,9 +9,9 @@
 # via `gh api` REST endpoints, which run against GitHub's separate 5000/hour
 # core REST budget.
 #
-# Detection: _gh_should_fallback_to_rest -- consults gh api rate_limit.
-# Write translators (t2574): _gh_issue_create_rest, _gh_issue_comment_rest,
-#   _gh_issue_edit_rest, _gh_pr_create_rest.
+# Detection: _rest_should_fallback -- consults gh api rate_limit.
+# Write translators (t2574): _rest_issue_create, _rest_issue_comment,
+#   _rest_issue_edit, _rest_pr_create.
 # Read translators (t2689, t2772): _rest_issue_view, _rest_issue_list, _rest_pr_list.
 #
 # Note on field mapping (_rest_issue_view): `gh issue view --json id` returns
@@ -56,9 +56,9 @@ _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1500}"
 #######################################
 # Build the `-F` value for `gh api` that uploads a file's contents as the
 # `body` form field. Centralised so the `body=@...` literal lives in exactly
-# one place; callers use "$(_gh_rest_body_file_arg "$path")".
+# one place; callers use "$(_rest_body_file_arg "$path")".
 #######################################
-_gh_rest_body_file_arg() {
+_rest_body_file_arg() {
 	local path="$1"
 	printf 'body=@%s' "$path"
 	return 0
@@ -74,7 +74,7 @@ _gh_rest_body_file_arg() {
 # Args: $1=body_file_path
 # Returns: 0 always
 #######################################
-_rest_fallback_append_sig() {
+_rest_append_sig() {
 	local body_file="$1"
 	[[ -f "$body_file" ]] || return 0
 	grep -q "<!-- aidevops:sig -->" "$body_file" 2>/dev/null && return 0
@@ -92,7 +92,7 @@ _rest_fallback_append_sig() {
 }
 
 #######################################
-# _gh_split_csv: portable CSV tokeniser. Emits one token per line to stdout.
+# _rest_split_csv: portable CSV tokeniser. Emits one token per line to stdout.
 #
 # Works in bash 3.2+, zsh 5+, and BusyBox ash — uses POSIX parameter
 # expansion only. Does NOT use:
@@ -107,9 +107,9 @@ _rest_fallback_append_sig() {
 # Usage:
 #   while IFS= read -r _tok; do
 #       [[ -n "$_tok" ]] && arr+=("$_tok")
-#   done < <(_gh_split_csv "a,b,c")
+#   done < <(_rest_split_csv "a,b,c")
 #######################################
-_gh_split_csv() {
+_rest_split_csv() {
 	local _str="$1"
 	local _delim="${2:-,}"
 	while [[ -n "$_str" ]]; do
@@ -136,7 +136,7 @@ _gh_split_csv() {
 # know the current rate-limit state (e.g. after fetching it once for a loop)
 # can pass it to avoid redundant I/O.
 #######################################
-_gh_should_fallback_to_rest() {
+_rest_should_fallback() {
 	# Test/CI override: set _GH_SHOULD_FALLBACK_OVERRIDE=1 to force true without
 	# requiring a real rate-limit state. Use in unit tests and manual smoke runs.
 	[[ "${_GH_SHOULD_FALLBACK_OVERRIDE:-0}" == "1" ]] && return 0
@@ -152,11 +152,11 @@ _gh_should_fallback_to_rest() {
 # Internal: If first arg looks like a GitHub issue URL, extract the repo slug
 # and issue number. Returns via stdout on two lines (repo, then num) so we
 # stay bash 3.2-compatible (nameref `local -n` is bash 4.3+).
-# Caller pattern:  { read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$ref" "$repo")
+# Caller pattern:  { read -r repo; read -r num; } < <(_rest_normalize_issue_ref "$ref" "$repo")
 # If the ref is a bare number, the first line is the current repo arg unchanged.
 # Args: $1=url_or_num $2=current_repo_value (empty OK)
 #######################################
-_gh_rest_normalize_issue_ref() {
+_rest_normalize_issue_ref() {
 	local raw="$1"
 	local repo="${2:-}"
 	local num=""
@@ -171,13 +171,13 @@ _gh_rest_normalize_issue_ref() {
 }
 
 #######################################
-# _gh_issue_create_rest: POST /repos/{owner}/{repo}/issues.
+# _rest_issue_create: POST /repos/{owner}/{repo}/issues.
 # Parses gh-style args (--title, --body, --body-file, --label, --assignee,
 # --milestone) into a REST payload. Emits the issue html_url on stdout,
 # mirroring `gh issue create`. Returns underlying gh api exit code.
 #######################################
-_gh_issue_create_rest() {
-	gh_record_call rest 2>/dev/null || true
+_rest_issue_create() {
+	gh_record_call rest _rest_issue_create 2>/dev/null || true
 	local title=""
 	local body=""
 	local body_file=""
@@ -201,10 +201,10 @@ _gh_issue_create_rest() {
 		--body=*) body="${_arg#--body=}"; has_body=1; shift ;;
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
-		--assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_gh_split_csv "${_arg#--assignee=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
+		--assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--assignee=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && assignees+=("$_tok"); done < <(_rest_split_csv "${_arg#--assignee=}"); shift ;;
 		--milestone) milestone="${2:-}"; shift 2 ;;
 		--milestone=*) milestone="${_arg#--milestone=}"; shift ;;
 		*) shift ;;
@@ -212,11 +212,11 @@ _gh_issue_create_rest() {
 	done
 
 	if [[ -z "$repo" ]]; then
-		printf '_gh_issue_create_rest: --repo is required\n' >&2
+		printf '_rest_issue_create: --repo is required\n' >&2
 		return 1
 	fi
 	if [[ -z "$title" ]]; then
-		printf '_gh_issue_create_rest: --title is required\n' >&2
+		printf '_rest_issue_create: --title is required\n' >&2
 		return 1
 	fi
 
@@ -230,10 +230,10 @@ _gh_issue_create_rest() {
 			printf '%s' "$body" >"$tmp_body"
 		fi
 	fi
-	[[ -n "$tmp_body" ]] && _rest_fallback_append_sig "$tmp_body"
+	[[ -n "$tmp_body" ]] && _rest_append_sig "$tmp_body"
 
 	local -a api_args=(-X POST "/repos/${repo}/issues" -f "title=${title}")
-	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
+	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_rest_body_file_arg "$tmp_body")")
 	local _lbl
 	for _lbl in "${labels[@]}"; do
 		[[ -n "$_lbl" ]] && api_args+=(-f "labels[]=${_lbl}")
@@ -259,12 +259,12 @@ _gh_issue_create_rest() {
 }
 
 #######################################
-# _gh_issue_comment_rest: POST /repos/{owner}/{repo}/issues/{N}/comments.
+# _rest_issue_comment: POST /repos/{owner}/{repo}/issues/{N}/comments.
 # Mirrors `gh issue comment <num_or_url> --repo SLUG --body ... | --body-file PATH`.
 # Emits the new comment html_url on stdout. Returns underlying gh api exit code.
 #######################################
-_gh_issue_comment_rest() {
-	gh_record_call rest 2>/dev/null || true
+_rest_issue_comment() {
+	gh_record_call rest _rest_issue_comment 2>/dev/null || true
 	local num_or_url=""
 	local repo=""
 	local body=""
@@ -291,18 +291,18 @@ _gh_issue_comment_rest() {
 	done
 
 	local num=""
-	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+	{ read -r repo; read -r num; } < <(_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
-		printf '_gh_issue_comment_rest: issue number and --repo are required\n' >&2
+		printf '_rest_issue_comment: issue number and --repo are required\n' >&2
 		return 1
 	fi
 	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
-		printf '_gh_issue_comment_rest: invalid issue number: %s\n' "$num" >&2
+		printf '_rest_issue_comment: invalid issue number: %s\n' "$num" >&2
 		return 1
 	fi
 	if [[ $has_body -eq 0 ]]; then
-		printf '_gh_issue_comment_rest: --body or --body-file required\n' >&2
+		printf '_rest_issue_comment: --body or --body-file required\n' >&2
 		return 1
 	fi
 
@@ -314,11 +314,11 @@ _gh_issue_comment_rest() {
 		tmp_body_owned=1
 		printf '%s' "$body" >"$tmp_body"
 	fi
-	_rest_fallback_append_sig "$tmp_body"
+	_rest_append_sig "$tmp_body"
 
 	local out rc
 	out=$(gh api -X POST "/repos/${repo}/issues/${num}/comments" \
-		-F "$(_gh_rest_body_file_arg "$tmp_body")" --jq '.html_url' 2>&1)
+		-F "$(_rest_body_file_arg "$tmp_body")" --jq '.html_url' 2>&1)
 	rc=$?
 
 	[[ $tmp_body_owned -eq 1 && -f "$tmp_body" ]] && rm -f "$tmp_body"
@@ -332,7 +332,7 @@ _gh_issue_comment_rest() {
 }
 
 #######################################
-# _gh_issue_edit_rest: PATCH /repos/{owner}/{repo}/issues/{N}.
+# _rest_issue_edit: PATCH /repos/{owner}/{repo}/issues/{N}.
 # Handles --title, --body, --body-file, --add-label, --remove-label,
 # --add-assignee, --remove-assignee, --milestone, --state. REST PATCH
 # requires the FULL labels/assignees arrays (not deltas), so we fetch
@@ -340,8 +340,8 @@ _gh_issue_comment_rest() {
 # are present. Current-state fetch uses REST (`gh api /repos/...`) which
 # is not affected by GraphQL exhaustion.
 #######################################
-_gh_issue_edit_rest() {
-	gh_record_call rest 2>/dev/null || true
+_rest_issue_edit() {
+	gh_record_call rest _rest_issue_edit 2>/dev/null || true
 	local num_or_url=""
 	local repo=""
 	local title=""
@@ -374,10 +374,10 @@ _gh_issue_edit_rest() {
 		--title)           title="$_v"; has_title=1 ;;
 		--body)            body="$_v"; has_body=1 ;;
 		--body-file)       body_file="$_v"; has_body=1 ;;
-		--add-label)       while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
-		--remove-label)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
-		--add-assignee)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
-		--remove-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_gh_split_csv "$_v") ;;
+		--add-label)       while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_labels+=("$_tok"); done < <(_rest_split_csv "$_v") ;;
+		--remove-label)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_labels+=("$_tok"); done < <(_rest_split_csv "$_v") ;;
+		--add-assignee)    while IFS= read -r _tok; do [[ -n "$_tok" ]] && add_assignees+=("$_tok"); done < <(_rest_split_csv "$_v") ;;
+		--remove-assignee) while IFS= read -r _tok; do [[ -n "$_tok" ]] && rm_assignees+=("$_tok"); done < <(_rest_split_csv "$_v") ;;
 		--milestone)       milestone="$_v"; has_milestone=1 ;;
 		--state)           state="$_v"; has_state=1 ;;
 		*) : ;;
@@ -385,14 +385,14 @@ _gh_issue_edit_rest() {
 	done
 
 	local num=""
-	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+	{ read -r repo; read -r num; } < <(_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
-		printf '_gh_issue_edit_rest: issue number and --repo are required\n' >&2
+		printf '_rest_issue_edit: issue number and --repo are required\n' >&2
 		return 1
 	fi
 	if [[ ! "$num" =~ ^[0-9]+$ ]]; then
-		printf '_gh_issue_edit_rest: invalid issue number: %s\n' "$num" >&2
+		printf '_rest_issue_edit: invalid issue number: %s\n' "$num" >&2
 		return 1
 	fi
 
@@ -412,23 +412,23 @@ _gh_issue_edit_rest() {
 			tmp_body_owned=1
 			printf '%s' "$body" >"$tmp_body"
 		fi
-		api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
+		api_args+=(-F "$(_rest_body_file_arg "$tmp_body")")
 	fi
 
 	# Labels and assignees: REST requires full arrays. Delegated to
-	# _gh_rest_print_patch_array_flags; see that helper for the state-fetch
+	# _rest_print_patch_array_flags; see that helper for the state-fetch
 	# and delta-application logic.
 	local _flag _val
 	if [[ ${#add_labels[@]} -gt 0 || ${#rm_labels[@]} -gt 0 ]]; then
 		while IFS=$'\t' read -r _flag _val; do
 			api_args+=("$_flag" "$_val")
-		done < <(_gh_rest_print_patch_array_flags "$_issue_path" "labels" ".labels[].name" \
+		done < <(_rest_print_patch_array_flags "$_issue_path" "labels" ".labels[].name" \
 			"$(printf '%s\n' "${add_labels[@]}")" "$(printf '%s\n' "${rm_labels[@]}")")
 	fi
 	if [[ ${#add_assignees[@]} -gt 0 || ${#rm_assignees[@]} -gt 0 ]]; then
 		while IFS=$'\t' read -r _flag _val; do
 			api_args+=("$_flag" "$_val")
-		done < <(_gh_rest_print_patch_array_flags "$_issue_path" "assignees" ".assignees[].login" \
+		done < <(_rest_print_patch_array_flags "$_issue_path" "assignees" ".assignees[].login" \
 			"$(printf '%s\n' "${add_assignees[@]}")" "$(printf '%s\n' "${rm_assignees[@]}")")
 	fi
 
@@ -445,12 +445,12 @@ _gh_issue_edit_rest() {
 # current state (fetched via REST) and add/remove deltas. Output is one
 # tab-separated `-f\tfield[]=value` pair per line; caller reads with
 # `IFS=$'\t' read -r k v` and appends both to the api_args array.
-# Factored out of _gh_issue_edit_rest so that function stays under the
+# Factored out of _rest_issue_edit so that function stays under the
 # 100-line complexity gate.
 #
 # Args: $1=issue_path  $2=field_name  $3=jq_expr  $4=adds_nl  $5=rms_nl
 #######################################
-_gh_rest_print_patch_array_flags() {
+_rest_print_patch_array_flags() {
 	local issue_path="$1"
 	local field="$2"
 	local jq_expr="$3"
@@ -458,7 +458,7 @@ _gh_rest_print_patch_array_flags() {
 	local rms="$5"
 	local _current _target _elem
 	_current=$(gh api "$issue_path" --jq "$jq_expr" 2>/dev/null) || _current=""
-	_target=$(_gh_rest_compute_target_set "$_current" "$adds" "$rms")
+	_target=$(_rest_compute_target_set "$_current" "$adds" "$rms")
 	while IFS= read -r _elem; do
 		[[ -n "$_elem" ]] && printf -- '-f\t%s[]=%s\n' "$field" "$_elem"
 	done <<<"$_target"
@@ -466,16 +466,16 @@ _gh_rest_print_patch_array_flags() {
 }
 
 #######################################
-# _gh_rest_compute_target_set: given the current values of a list field
+# _rest_compute_target_set: given the current values of a list field
 # (newline-separated), an add set (newline-separated), and a remove set
 # (newline-separated), emit the target set (removes subtracted first, then
 # adds unioned, deduped) one value per line on stdout.
 #
-# Used by _gh_issue_edit_rest to translate --add-label/--remove-label and
+# Used by _rest_issue_edit to translate --add-label/--remove-label and
 # --add-assignee/--remove-assignee flags into the full array that REST PATCH
 # requires.
 #######################################
-_gh_rest_compute_target_set() {
+_rest_compute_target_set() {
 	local current="$1" adds="$2" rms="$3"
 	local -a target=()
 	local v to_rm existing to_add skip dup
@@ -507,12 +507,12 @@ _gh_rest_compute_target_set() {
 }
 
 #######################################
-# _gh_pr_autodetect_head
+# _rest_pr_autodetect_head
 # Returns the current git branch name for use as --head when omitted.
 # Returns empty string when in detached HEAD state or outside a git repo.
 # Emits an [INFO] log line when auto-detect fires.
 #######################################
-_gh_pr_autodetect_head() {
+_rest_pr_autodetect_head() {
 	local _branch
 	_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
 	if [[ -n "$_branch" && "$_branch" != "HEAD" ]]; then
@@ -523,7 +523,7 @@ _gh_pr_autodetect_head() {
 }
 
 #######################################
-# _gh_pr_autodetect_base <repo>
+# _rest_pr_autodetect_base <repo>
 # Returns the repository's default branch for use as --base when omitted.
 # Resolution order:
 #   1. gh api /repos/{repo} --jq .default_branch (REST, no GraphQL cost)
@@ -531,7 +531,7 @@ _gh_pr_autodetect_head() {
 #   3. "main" (final fallback)
 # Emits an [INFO] log line when auto-detect fires.
 #######################################
-_gh_pr_autodetect_base() {
+_rest_pr_autodetect_base() {
 	local _repo="${1:-}"
 	local _base=""
 	if [[ -n "$_repo" ]]; then
@@ -548,7 +548,7 @@ _gh_pr_autodetect_base() {
 }
 
 #######################################
-# _gh_pr_create_rest: POST /repos/{owner}/{repo}/pulls.
+# _rest_pr_create: POST /repos/{owner}/{repo}/pulls.
 # Parses gh-style args (--head, --base, --title, --body, --body-file, --draft,
 # --label) into a REST payload. Labels are applied via a separate
 # POST /repos/{owner}/{repo}/issues/{pr_number}/labels call because the
@@ -556,10 +556,10 @@ _gh_pr_autodetect_base() {
 # Emits the PR html_url on stdout, mirroring `gh pr create`. Returns underlying
 # gh api exit code.
 # When --head or --base are omitted, auto-detects from git HEAD / repo
-# default branch respectively (see _gh_pr_autodetect_head/base above).
+# default branch respectively (see _rest_pr_autodetect_head/base above).
 #######################################
-_gh_pr_create_rest() {
-	gh_record_call rest 2>/dev/null || true
+_rest_pr_create() {
+	gh_record_call rest _rest_pr_create 2>/dev/null || true
 	local title=""
 	local head=""
 	local base=""
@@ -588,29 +588,29 @@ _gh_pr_create_rest() {
 		--body-file) body_file="${2:-}"; has_body=1; shift 2 ;;
 		--body-file=*) body_file="${_arg#--body-file=}"; has_body=1; shift ;;
 		--draft) draft=1; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
 		*) shift ;;
 		esac
 	done
 
 	if [[ -z "$repo" ]]; then
-		printf '_gh_pr_create_rest: --repo is required\n' >&2
+		printf '_rest_pr_create: --repo is required\n' >&2
 		return 1
 	fi
 	if [[ -z "$title" ]]; then
-		printf '_gh_pr_create_rest: --title is required\n' >&2
+		printf '_rest_pr_create: --title is required\n' >&2
 		return 1
 	fi
 	if [[ -z "$head" ]]; then
-		head=$(_gh_pr_autodetect_head)
+		head=$(_rest_pr_autodetect_head)
 		if [[ -z "$head" ]]; then
-			printf '_gh_pr_create_rest: --head is required\n' >&2
+			printf '_rest_pr_create: --head is required\n' >&2
 			return 1
 		fi
 	fi
 	if [[ -z "$base" ]]; then
-		base=$(_gh_pr_autodetect_base "$repo")
+		base=$(_rest_pr_autodetect_base "$repo")
 	fi
 
 	local tmp_body="" tmp_body_owned=0
@@ -623,13 +623,13 @@ _gh_pr_create_rest() {
 			printf '%s' "$body" >"$tmp_body"
 		fi
 	fi
-	[[ -n "$tmp_body" ]] && _rest_fallback_append_sig "$tmp_body"
+	[[ -n "$tmp_body" ]] && _rest_append_sig "$tmp_body"
 
 	local -a api_args=(-X POST "/repos/${repo}/pulls"
 		-f "title=$title"
 		-f "head=$head"
 		-f "base=$base")
-	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_gh_rest_body_file_arg "$tmp_body")")
+	[[ -n "$tmp_body" ]] && api_args+=(-F "$(_rest_body_file_arg "$tmp_body")")
 	[[ $draft -eq 1 ]] && api_args+=(-F "draft=true")
 
 	local html_url rc
@@ -676,7 +676,7 @@ _gh_pr_create_rest() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_issue_view() {
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest _rest_issue_view 2>/dev/null || true
 	local num_or_url=""
 	local repo=""
 	local jq_expr=""
@@ -705,7 +705,7 @@ _rest_issue_view() {
 	done
 
 	local num=""
-	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+	{ read -r repo; read -r num; } < <(_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
 		printf '_rest_issue_view: issue number and --repo are required\n' >&2
@@ -741,7 +741,7 @@ _rest_issue_view() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_pr_view() {
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest _rest_pr_view 2>/dev/null || true
 	local num_or_url=""
 	local repo=""
 	local jq_expr=""
@@ -766,7 +766,7 @@ _rest_pr_view() {
 	done
 
 	local num=""
-	{ read -r repo; read -r num; } < <(_gh_rest_normalize_issue_ref "$num_or_url" "$repo")
+	{ read -r repo; read -r num; } < <(_rest_normalize_issue_ref "$num_or_url" "$repo")
 
 	if [[ -z "$repo" || -z "$num" ]]; then
 		printf '_rest_pr_view: PR number and --repo are required\n' >&2
@@ -801,7 +801,7 @@ _rest_pr_view() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_pr_list() {
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest _rest_pr_list 2>/dev/null || true
 	local repo=""
 	local state="open"
 	local limit=30
@@ -878,7 +878,7 @@ _rest_pr_list() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_issue_list() {
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest _rest_issue_list 2>/dev/null || true
 	local repo=""
 	local state="open"
 	local limit=30
@@ -895,8 +895,8 @@ _rest_issue_list() {
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
 		--state) state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
 		--assignee) assignee="${2:-}"; shift 2 ;;
 		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
@@ -974,7 +974,7 @@ _rest_issue_list() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_issue_search() {
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest _rest_issue_search 2>/dev/null || true
 	local repo=""
 	local state=""
 	local search=""
@@ -991,8 +991,8 @@ _rest_issue_search() {
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
 		--state) state="${2:-}"; shift 2 ;;
 		--state=*) state="${_arg#--state=}"; shift ;;
-		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${2:-}"); shift 2 ;;
-		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_gh_split_csv "${_arg#--label=}"); shift ;;
+		--label) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${2:-}"); shift 2 ;;
+		--label=*) while IFS= read -r _tok; do [[ -n "$_tok" ]] && labels+=("$_tok"); done < <(_rest_split_csv "${_arg#--label=}"); shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
 		--limit=*) limit="${_arg#--limit=}"; shift ;;
 		--search) search="${2:-}"; shift 2 ;;

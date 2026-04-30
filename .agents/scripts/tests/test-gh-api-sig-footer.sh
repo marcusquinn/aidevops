@@ -14,9 +14,9 @@
 #   Layer 2 — `gh` PATH shim logic (_shim_api_is_write_endpoint / _shim_api_inject_body_sig)
 #
 # Tests:
-#   1. REST fallback translator injects sig on _gh_issue_create_rest
-#   2. REST fallback translator injects sig on _gh_issue_comment_rest
-#   3. REST fallback translator injects sig on _gh_pr_create_rest
+#   1. REST fallback translator injects sig on _rest_issue_create
+#   2. REST fallback translator injects sig on _rest_issue_comment
+#   3. REST fallback translator injects sig on _rest_pr_create
 #   4. PATH shim injects sig on gh api -X POST /repos/X/Y/issues -f body=@file
 #   5. PATH shim injects sig on gh api -X POST /repos/X/Y/issues/N/comments -f body=@file
 #   6. PATH shim leaves gh api /rate_limit (GET, no -X) untouched
@@ -24,7 +24,7 @@
 # Stub strategy for Layer 1 tests: define `gh` as a shell function that
 # captures calls and injects a mock sig line (since the real gh-signature-helper
 # is unavailable in unit-test context). The sig injection in translators is
-# validated by checking that _rest_fallback_append_sig was called and appended
+# validated by checking that _rest_append_sig was called and appended
 # the marker to the temp body file BEFORE the api call.
 #
 # Strategy for Layer 2 tests: source the shim helper functions directly into
@@ -87,7 +87,7 @@ exit 0
 STUB
 chmod +x "$_STUB_SIG_HELPER"
 
-# Ensure our stub helper is discoverable by _rest_fallback_append_sig via BASH_SOURCE.
+# Ensure our stub helper is discoverable by _rest_append_sig via BASH_SOURCE.
 # The function searches HOME/.aidevops/agents/scripts/ and dirname(BASH_SOURCE[0]).
 # Override HOME-based path since we can't write there in tests.
 # We inject via a wrapper: temporarily place the stub on PATH as gh-signature-helper.sh.
@@ -129,7 +129,7 @@ print_info() { return 0; }
 export -f print_info
 
 # Source the REST fallback module under test.
-# _rest_fallback_append_sig will call the stub via PATH lookup.
+# _rest_append_sig will call the stub via PATH lookup.
 # shellcheck source=../shared-gh-wrappers-rest-fallback.sh
 source "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" || {
 	printf 'FATAL: could not source shared-gh-wrappers-rest-fallback.sh\n' >&2
@@ -140,7 +140,7 @@ printf '%sRunning gh api sig-footer injection tests (t2707 / GH#20350)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
 # =============================================================================
-# Test 1: _gh_issue_create_rest injects sig into body file
+# Test 1: _rest_issue_create injects sig into body file
 # Use --body-file with a user-owned file so the translator doesn't clean it up
 # (tmp_body_owned=0 when body_file is provided). We can then check the file
 # contents after the call to confirm the sig was appended before the API call.
@@ -149,44 +149,44 @@ printf '%sRunning gh api sig-footer injection tests (t2707 / GH#20350)%s\n' \
 _BODY1="${TMP}/body1.md"
 printf 'Issue body for sig test.\n' >"$_BODY1"
 
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "t2707: sig injection test" \
 	--body-file "$_BODY1" >/dev/null 2>&1 || true
 
 if grep -q "<!-- aidevops:sig -->" "$_BODY1" 2>/dev/null; then
-	pass "_gh_issue_create_rest injects <!-- aidevops:sig --> into body file"
+	pass "_rest_issue_create injects <!-- aidevops:sig --> into body file"
 else
-	fail "_gh_issue_create_rest injects <!-- aidevops:sig --> into body file" \
+	fail "_rest_issue_create injects <!-- aidevops:sig --> into body file" \
 		"marker absent; file tail: $(tail -3 "$_BODY1" 2>/dev/null)"
 fi
 
 # =============================================================================
-# Test 2: _gh_issue_comment_rest injects sig into body file
+# Test 2: _rest_issue_comment injects sig into body file
 # =============================================================================
 : >"$GH_CALLS"
 _BODY2="${TMP}/body2.md"
 printf 'Comment body for sig test.\n' >"$_BODY2"
 
-_gh_issue_comment_rest 99 \
+_rest_issue_comment 99 \
 	--repo "owner/repo" \
 	--body-file "$_BODY2" >/dev/null 2>&1 || true
 
 if grep -q "<!-- aidevops:sig -->" "$_BODY2" 2>/dev/null; then
-	pass "_gh_issue_comment_rest injects <!-- aidevops:sig --> into body file"
+	pass "_rest_issue_comment injects <!-- aidevops:sig --> into body file"
 else
-	fail "_gh_issue_comment_rest injects <!-- aidevops:sig --> into body file" \
+	fail "_rest_issue_comment injects <!-- aidevops:sig --> into body file" \
 		"marker absent; file tail: $(tail -3 "$_BODY2" 2>/dev/null)"
 fi
 
 # =============================================================================
-# Test 3: _gh_pr_create_rest injects sig into body file
+# Test 3: _rest_pr_create injects sig into body file
 # =============================================================================
 : >"$GH_CALLS"
 _BODY3="${TMP}/body3.md"
 printf 'PR body for sig test.\n' >"$_BODY3"
 
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t2707: PR sig test" \
 	--head "feature/t2707-test" \
@@ -194,9 +194,9 @@ _gh_pr_create_rest \
 	--body-file "$_BODY3" >/dev/null 2>&1 || true
 
 if grep -q "<!-- aidevops:sig -->" "$_BODY3" 2>/dev/null; then
-	pass "_gh_pr_create_rest injects <!-- aidevops:sig --> into body file"
+	pass "_rest_pr_create injects <!-- aidevops:sig --> into body file"
 else
-	fail "_gh_pr_create_rest injects <!-- aidevops:sig --> into body file" \
+	fail "_rest_pr_create injects <!-- aidevops:sig --> into body file" \
 		"marker absent; file tail: $(tail -3 "$_BODY3" 2>/dev/null)"
 fi
 

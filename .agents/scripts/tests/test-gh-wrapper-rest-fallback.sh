@@ -17,33 +17,33 @@
 #   operators pivoted manually; dispatched workers crashed at step 1.
 #
 # t2579 addendum: gh_create_pr also hit GraphQL exhaustion during PR creation.
-# Fix (t2580): extend REST fallback to gh_create_pr via _gh_pr_create_rest.
+# Fix (t2580): extend REST fallback to gh_create_pr via _rest_pr_create.
 #
-# Fix (t2574): add _gh_should_fallback_to_rest + _gh_issue_*_rest helpers
+# Fix (t2574): add _rest_should_fallback + _gh_issue_*_rest helpers
 # in shared-gh-wrappers-rest-fallback.sh; wrap the 4 entry points
 # (gh_create_issue, gh_issue_comment, gh_issue_edit_safe, set_issue_status)
 # to retry via REST when primary fails and GraphQL is exhausted.
 #
 # Tests:
-#   1. _gh_should_fallback_to_rest returns 0 when remaining <= 10
-#   2. _gh_should_fallback_to_rest returns 1 when remaining > 10
-#   3. _gh_should_fallback_to_rest returns 1 when rate_limit call fails (fail-safe)
-#   4. _gh_issue_create_rest translates --title/--body/--label → POST /repos/.../issues
-#   5. _gh_issue_create_rest uses -F body=@file for newline/unicode safety
-#   6. _gh_issue_comment_rest translates --body → POST /repos/.../issues/N/comments
-#   7. _gh_issue_comment_rest extracts repo and num from a URL argument
-#   8. _gh_issue_edit_rest translates --add-label/--remove-label into full labels array
+#   1. _rest_should_fallback returns 0 when remaining <= 10
+#   2. _rest_should_fallback returns 1 when remaining > 10
+#   3. _rest_should_fallback returns 1 when rate_limit call fails (fail-safe)
+#   4. _rest_issue_create translates --title/--body/--label → POST /repos/.../issues
+#   5. _rest_issue_create uses -F body=@file for newline/unicode safety
+#   6. _rest_issue_comment translates --body → POST /repos/.../issues/N/comments
+#   7. _rest_issue_comment extracts repo and num from a URL argument
+#   8. _rest_issue_edit translates --add-label/--remove-label into full labels array
 #   9. gh_issue_comment falls back to REST when gh fails AND graphql exhausted
 #  10. gh_issue_comment does NOT fall back when gh succeeds
 #  11. gh_issue_comment does NOT fall back when gh fails but graphql healthy
-#  12. _gh_pr_create_rest translates --title/--head/--base → POST /repos/.../pulls
-#  13. _gh_pr_create_rest uses -F body=@file for body
-#  14. _gh_pr_create_rest applies labels via POST /repos/.../issues/{N}/labels
+#  12. _rest_pr_create translates --title/--head/--base → POST /repos/.../pulls
+#  13. _rest_pr_create uses -F body=@file for body
+#  14. _rest_pr_create applies labels via POST /repos/.../issues/{N}/labels
 #  15. gh_create_pr falls back to REST when primary fails AND exhausted
 #  16. gh_create_pr does NOT fall back when primary succeeds
 #  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
-#  18. _gh_pr_create_rest auto-detects --head from git HEAD when omitted
-#  19. _gh_pr_create_rest auto-detects --base from repo default_branch via REST
+#  18. _rest_pr_create auto-detects --head from git HEAD when omitted
+#  19. _rest_pr_create auto-detects --base from repo default_branch via REST
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -197,10 +197,10 @@ printf '%sRunning gh-wrapper REST fallback tests (t2574 / GH#20243)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
 # =============================================================================
-# Test 1: _gh_should_fallback_to_rest returns 0 (true) when remaining <= 10
+# Test 1: _rest_should_fallback returns 0 (true) when remaining <= 10
 # =============================================================================
 STUB_RATE_LIMIT_REMAINING=0
-if _gh_should_fallback_to_rest; then
+if _rest_should_fallback; then
 	pass "should_fallback returns true when remaining=0"
 else
 	fail "should_fallback returns true when remaining=0" \
@@ -208,7 +208,7 @@ else
 fi
 
 STUB_RATE_LIMIT_REMAINING=10
-if _gh_should_fallback_to_rest; then
+if _rest_should_fallback; then
 	pass "should_fallback returns true when remaining=10 (boundary)"
 else
 	fail "should_fallback returns true when remaining=10 (boundary)" \
@@ -216,10 +216,10 @@ else
 fi
 
 # =============================================================================
-# Test 2: _gh_should_fallback_to_rest returns 1 (false) when remaining > 10
+# Test 2: _rest_should_fallback returns 1 (false) when remaining > 10
 # =============================================================================
 STUB_RATE_LIMIT_REMAINING=100
-if ! _gh_should_fallback_to_rest; then
+if ! _rest_should_fallback; then
 	pass "should_fallback returns false when remaining=100"
 else
 	fail "should_fallback returns false when remaining=100" \
@@ -227,12 +227,12 @@ else
 fi
 
 # =============================================================================
-# Test 3: _gh_should_fallback_to_rest fail-safe when rate_limit unparseable
+# Test 3: _rest_should_fallback fail-safe when rate_limit unparseable
 # Stub returns non-numeric — fallback should NOT activate (fail-safe: let
 # caller see original error rather than running REST call that may also fail).
 # =============================================================================
 STUB_RATE_LIMIT_REMAINING="unknown"
-if ! _gh_should_fallback_to_rest; then
+if ! _rest_should_fallback; then
 	pass "should_fallback returns false when rate_limit unparseable (fail-safe)"
 else
 	fail "should_fallback returns false when rate_limit unparseable (fail-safe)" \
@@ -243,10 +243,10 @@ fi
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 4: _gh_issue_create_rest → POST /repos/.../issues with correct args
+# Test 4: _rest_issue_create → POST /repos/.../issues with correct args
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "t9991: test create" \
 	--body "test body" \
@@ -256,17 +256,17 @@ if grep -qE '^api.*-X POST.*/repos/owner/repo/issues' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'title=t9991: test create' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=bug' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=auto-dispatch' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_create_rest translates to POST /repos/.../issues with labels"
+	pass "_rest_issue_create translates to POST /repos/.../issues with labels"
 else
-	fail "_gh_issue_create_rest translates to POST /repos/.../issues with labels" \
+	fail "_rest_issue_create translates to POST /repos/.../issues with labels" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 5: _gh_issue_create_rest uses -F body=@file (for newline/unicode safety)
+# Test 5: _rest_issue_create uses -F body=@file (for newline/unicode safety)
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_create_rest \
+_rest_issue_create \
 	--repo "owner/repo" \
 	--title "t9992: newline test" \
 	--body "line1
@@ -274,58 +274,58 @@ line2
 line3" >/dev/null 2>&1 || true
 
 if grep -qE 'body=@/.*aidevops-gh-rest-body' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_create_rest uses -F body=@tmpfile for body"
+	pass "_rest_issue_create uses -F body=@tmpfile for body"
 else
-	fail "_gh_issue_create_rest uses -F body=@tmpfile for body" \
+	fail "_rest_issue_create uses -F body=@tmpfile for body" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 6: _gh_issue_comment_rest translates --body → POST .../comments
+# Test 6: _rest_issue_comment translates --body → POST .../comments
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_comment_rest 12345 \
+_rest_issue_comment 12345 \
 	--repo "owner/repo" \
 	--body "test comment" >/dev/null 2>&1 || true
 
 if grep -qE '^api.*-X POST.*/repos/owner/repo/issues/12345/comments' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_comment_rest translates to POST /issues/N/comments"
+	pass "_rest_issue_comment translates to POST /issues/N/comments"
 else
-	fail "_gh_issue_comment_rest translates to POST /issues/N/comments" \
+	fail "_rest_issue_comment translates to POST /issues/N/comments" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 7: _gh_issue_comment_rest extracts repo + num from a URL argument
+# Test 7: _rest_issue_comment extracts repo + num from a URL argument
 # =============================================================================
 : >"$GH_CALLS"
-_gh_issue_comment_rest "https://github.com/owner/repo/issues/777" \
+_rest_issue_comment "https://github.com/owner/repo/issues/777" \
 	--body "url-form comment" >/dev/null 2>&1 || true
 
 if grep -qE '^api.*-X POST.*/repos/owner/repo/issues/777/comments' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_comment_rest extracts repo+num from URL"
+	pass "_rest_issue_comment extracts repo+num from URL"
 else
-	fail "_gh_issue_comment_rest extracts repo+num from URL" \
+	fail "_rest_issue_comment extracts repo+num from URL" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 8: _gh_issue_edit_rest computes full labels array from add/remove deltas
+# Test 8: _rest_issue_edit computes full labels array from add/remove deltas
 # Current labels stub returns "bug" (single label). We add "auto-dispatch",
 # remove "bug" — target set should be ["auto-dispatch"] only.
 # =============================================================================
 : >"$GH_CALLS"
 export STUB_CURRENT_LABELS="bug"
-_gh_issue_edit_rest 42 \
+_rest_issue_edit 42 \
 	--repo "owner/repo" \
 	--add-label "auto-dispatch" \
 	--remove-label "bug" >/dev/null 2>&1 || true
 
 if grep -qE 'labels\[\]=auto-dispatch' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE 'labels\[\]=bug' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_issue_edit_rest computes target label set (add auto-dispatch, remove bug)"
+	pass "_rest_issue_edit computes target label set (add auto-dispatch, remove bug)"
 else
-	fail "_gh_issue_edit_rest computes target label set (add auto-dispatch, remove bug)" \
+	fail "_rest_issue_edit computes target label set (add auto-dispatch, remove bug)" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
@@ -400,10 +400,10 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 12: _gh_pr_create_rest → POST /repos/.../pulls with correct args
+# Test 12: _rest_pr_create → POST /repos/.../pulls with correct args
 # =============================================================================
 : >"$GH_CALLS"
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t9993: test PR create" \
 	--head "feature/t9993-test" \
@@ -414,17 +414,17 @@ if grep -qE '^api.*-X POST.*/repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'title=t9993: test PR create' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'head=feature/t9993-test' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'base=main' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_pr_create_rest translates to POST /repos/.../pulls with head/base/title"
+	pass "_rest_pr_create translates to POST /repos/.../pulls with head/base/title"
 else
-	fail "_gh_pr_create_rest translates to POST /repos/.../pulls with head/base/title" \
+	fail "_rest_pr_create translates to POST /repos/.../pulls with head/base/title" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 13: _gh_pr_create_rest uses -F body=@file for body
+# Test 13: _rest_pr_create uses -F body=@file for body
 # =============================================================================
 : >"$GH_CALLS"
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t9994: body file test" \
 	--head "feature/t9994-body" \
@@ -434,19 +434,19 @@ line2
 line3" >/dev/null 2>&1 || true
 
 if grep -qE 'body=@/.*aidevops-gh-rest-body' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_pr_create_rest uses -F body=@tmpfile for body"
+	pass "_rest_pr_create uses -F body=@tmpfile for body"
 else
-	fail "_gh_pr_create_rest uses -F body=@tmpfile for body" \
+	fail "_rest_pr_create uses -F body=@tmpfile for body" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 14: _gh_pr_create_rest applies labels via POST /repos/.../issues/{N}/labels
+# Test 14: _rest_pr_create applies labels via POST /repos/.../issues/{N}/labels
 # The stub returns https://github.com/owner/repo/issues/9999 for REST calls,
 # so label call should target issues/9999/labels.
 # =============================================================================
 : >"$GH_CALLS"
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t9995: label test" \
 	--head "feature/t9995-labels" \
@@ -456,9 +456,9 @@ _gh_pr_create_rest \
 if grep -qE '^api.*-X POST.*/repos/owner/repo/issues/[0-9]+/labels' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=origin:worker' "$GH_CALLS" 2>/dev/null &&
 	grep -qE 'labels\[\]=auto-dispatch' "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_pr_create_rest applies labels via POST /issues/{N}/labels"
+	pass "_rest_pr_create applies labels via POST /issues/{N}/labels"
 else
-	fail "_gh_pr_create_rest applies labels via POST /issues/{N}/labels" \
+	fail "_rest_pr_create applies labels via POST /issues/{N}/labels" \
 		"GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
@@ -546,40 +546,40 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 18: _gh_pr_create_rest auto-detects --head from git HEAD when omitted
+# Test 18: _rest_pr_create auto-detects --head from git HEAD when omitted
 # Verifies that omitting --head causes the current branch to be used as head.
 # =============================================================================
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 : >"$GH_CALLS"
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t9999: auto-head test" \
 	--base "main" \
 	--body "auto-detect head body" >/dev/null 2>&1 || true
 
 if [[ -n "$CURRENT_BRANCH" ]] && grep -qE "head=${CURRENT_BRANCH}" "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_pr_create_rest auto-detects --head from git HEAD when omitted"
+	pass "_rest_pr_create auto-detects --head from git HEAD when omitted"
 else
-	fail "_gh_pr_create_rest auto-detects --head from git HEAD when omitted" \
+	fail "_rest_pr_create auto-detects --head from git HEAD when omitted" \
 		"expected head=${CURRENT_BRANCH} in calls; GH_CALLS=$(cat "$GH_CALLS")"
 fi
 
 # =============================================================================
-# Test 19: _gh_pr_create_rest auto-detects --base from repo default_branch
+# Test 19: _rest_pr_create auto-detects --base from repo default_branch
 # Uses STUB_REPO_DEFAULT_BRANCH=develop to verify REST resolution path.
 # =============================================================================
 : >"$GH_CALLS"
 export STUB_REPO_DEFAULT_BRANCH="develop"
-_gh_pr_create_rest \
+_rest_pr_create \
 	--repo "owner/repo" \
 	--title "t9999: auto-base test" \
 	--head "feature/t9999-auto-base" \
 	--body "auto-detect base body" >/dev/null 2>&1 || true
 
 if grep -qE "base=develop" "$GH_CALLS" 2>/dev/null; then
-	pass "_gh_pr_create_rest auto-detects --base from repo default_branch via REST"
+	pass "_rest_pr_create auto-detects --base from repo default_branch via REST"
 else
-	fail "_gh_pr_create_rest auto-detects --base from repo default_branch via REST" \
+	fail "_rest_pr_create auto-detects --base from repo default_branch via REST" \
 		"expected base=develop in calls; GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_REPO_DEFAULT_BRANCH

@@ -14,8 +14,8 @@
 # Dependencies:
 #   - shared-constants.sh (print_info, etc.)
 #   - _gh_validate_edit_args, _GH_EDIT_REJECTION_REASON (from orchestrator)
-#   - shared-gh-wrappers-rest-fallback.sh (_gh_should_fallback_to_rest,
-#     _gh_issue_edit_rest)
+#   - shared-gh-wrappers-rest-fallback.sh (_rest_should_fallback,
+#     _rest_issue_edit)
 #   - gh CLI, jq
 #
 # Part of aidevops framework: https://aidevops.sh
@@ -226,9 +226,9 @@ gh_issue_edit_safe() {
 	_before="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"
 	gh issue edit "$@"
 	local _exit=$?
-	if [[ $_exit -ne 0 ]] && _gh_should_fallback_to_rest; then
+	if [[ $_exit -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue edit"
-		_gh_issue_edit_rest "$@"
+		_rest_issue_edit "$@"
 		_exit=$?
 	fi
 	_after="$(_gh_audit_fetch_issue_state_json "$_num" "$_repo")"

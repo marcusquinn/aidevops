@@ -119,7 +119,7 @@ _push_create_issue() {
 	fi
 
 	# t3039: args without the "issue create" sub-command prefix so the same
-	# array can be passed to both gh issue create and _gh_issue_create_rest.
+	# array can be passed to both gh issue create and _rest_issue_create.
 	local -a args=("--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
 	[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
 
@@ -134,12 +134,12 @@ _push_create_issue() {
 		gh_exit=$?
 	} || true
 	# t3039: REST fallback when GraphQL is exhausted.
-	# _gh_should_fallback_to_rest and _gh_issue_create_rest are provided by
+	# _rest_should_fallback and _rest_issue_create are provided by
 	# shared-gh-wrappers-rest-fallback.sh, sourced transitively via shared-constants.sh.
-	if [[ $gh_exit -ne 0 ]] && _gh_should_fallback_to_rest 2>/dev/null; then
+	if [[ $gh_exit -ne 0 ]] && _rest_should_fallback 2>/dev/null; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, retrying issue create via REST for $task_id"
 		{
-			combined=$(_gh_issue_create_rest "${args[@]}" 2>&1)
+			combined=$(_rest_issue_create "${args[@]}" 2>&1)
 			gh_exit=$?
 		} || true
 	fi

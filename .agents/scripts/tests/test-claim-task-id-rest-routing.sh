@@ -16,11 +16,11 @@
 # Fix:
 #   - claim-task-id.sh: bare fallback now calls gh_create_issue
 #     (REST-aware wrapper from shared-gh-wrappers.sh). gh_create_issue
-#     detects exhaustion via _gh_should_fallback_to_rest and retries via
-#     _gh_issue_create_rest (POST /repos/.../issues).
+#     detects exhaustion via _rest_should_fallback and retries via
+#     _rest_issue_create (POST /repos/.../issues).
 #   - issue-sync-helper-push.sh: _push_create_issue adds an inline REST
 #     fallback after a non-zero exit from gh issue create: calls
-#     _gh_issue_create_rest directly when _gh_should_fallback_to_rest.
+#     _rest_issue_create directly when _rest_should_fallback.
 #
 # Tests:
 #   1. gh_create_issue routes to REST (gh api -X POST) when GraphQL exhausted
@@ -33,7 +33,7 @@
 #
 # Stub strategy: define `gh` as a shell function after sourcing helpers.
 # Shell functions take precedence over PATH binaries.
-# _GH_SHOULD_FALLBACK_OVERRIDE=1 forces _gh_should_fallback_to_rest to return
+# _GH_SHOULD_FALLBACK_OVERRIDE=1 forces _rest_should_fallback to return
 # true without requiring a real rate_limit call.
 #
 # Cross-references: GH#21627 / t3039 (fix), t2574 (REST fallback system).

@@ -52,9 +52,9 @@ fi
 
 # t2574: REST fallback for GraphQL-exhausted gh issue wrappers (GH#20243).
 # t2689: Extended to READ paths — _rest_issue_view, _rest_issue_list.
-# t2743: Fixed CSV tokenisation for zsh compat (replaced read -ra with _gh_split_csv).
-# Provides _gh_should_fallback_to_rest, _gh_issue_{create,comment,edit}_rest,
-# _gh_pr_create_rest, _rest_issue_view, _rest_issue_list.
+# t2743: Fixed CSV tokenisation for zsh compat (replaced read -ra with _rest_split_csv).
+# Provides _rest_should_fallback, _rest_issue_{create,comment,edit},
+# _rest_pr_create, _rest_issue_view, _rest_issue_list.
 #
 # Resolve own directory cross-shell (bash + zsh).
 # Priority: (1) BASH_SOURCE[0] under bash (or zsh with BASH_SOURCE emulation);
