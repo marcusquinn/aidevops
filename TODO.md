@@ -3619,13 +3619,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3090 Fix 4 pre-existing failures in test-pulse-wrapper-worker-count.sh #auto-dispatch #bug ref:GH#21873 pr:#21884 completed:2026-04-30
 
-- [ ] t3192 extend pulse-merge native auto-merge with stuck-state fallback to --admin direct merge #auto-dispatch #bug #framework ref:GH#21888
+- [x] t3192 extend pulse-merge native auto-merge with stuck-state fallback to --admin direct merge #auto-dispatch #bug #framework ref:GH#21888 pr:#21906 completed:2026-04-30
 
 - [ ] t3199 add ADD_ADD_NEW_FILE classification to t2987 conflict-pattern registry #auto-dispatch #enhancement ref:GH#21894
 
 - [ ] t3198 pulse-runner-health-helper.sh diagnose: cross-check breaker state vs observed pulse log #auto-dispatch #enhancement ref:GH#21893
 
-- [ ] t3197 Per-issue launch-failure cooldown: prevent same-issue tight retry loops after no_worker_process #auto-dispatch #bug ref:GH#21892
+- [x] t3197 Per-issue launch-failure cooldown: prevent same-issue tight retry loops after no_worker_process #auto-dispatch #bug ref:GH#21892 pr:#21907 completed:2026-04-30
 
 - [ ] t3196 stale-stamp-aware takeover for DIRTY origin:interactive PRs #auto-dispatch #bug #enhancement ref:GH#21891
 
@@ -3638,3 +3638,19 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3200 full-loop-helper.sh: detect shallow clone before rebase to avoid add/add conflict cascade #auto-dispatch #bug #framework ref:GH#21900
 
 - [ ] t3201 investigate: worker stuck-loop pattern force-pushes + review_dismissed + close on PR (canonical: #21876) #bug #framework #investigation #parent ref:GH#21901
+
+- [x] t3202 version-manager release fails non-deterministically on marketplace.json update #auto-dispatch #bug ref:GH#21905 pr:#21909 completed:2026-04-30
+
+- [ ] t3204 issue-sync close path drops signature footer + summary on auto-close #auto-dispatch #bug ref:GH#21910
+
+- [ ] t3205 scan-stale: auto-release defaults OFF in AI agent sessions (TTY-only detection misses OpenCode/Claude Code interactive) #auto-dispatch #bug #framework ref:GH#21913
+
+- [ ] t3207 test-scan-stale: Test 2 fails on origin/main due to t2421 worker-pattern PID liveness check #auto-dispatch #bug ref:GH#21922
+
+- [ ] t3206 pulse-unbound-var-check: accumulated-diff false-positive on intra-branch fixes #auto-dispatch #bug ref:GH#21921
+
+- [ ] t3208 Circuit-breaker trip should auto-file sibling root-cause investigation task #auto-dispatch #bug #framework ref:GH#21923
+
+- [ ] t3210 canary: skip with 'overload' reason when system load >> NCPU (prevents circuit-breaker trip cycle) #bug #framework ref:GH#21931
+
+- [ ] t3209 pulse-unbound-var-check.yml diff-scoping double-counts replaced lines #auto-dispatch #bug ref:GH#21930

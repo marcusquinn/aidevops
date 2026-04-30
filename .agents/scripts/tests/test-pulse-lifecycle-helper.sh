@@ -150,6 +150,135 @@ _kill_mocks() {
 	_wait_for_no_mock_pulse 20 || true
 }
 
+# _spawn_extra_mock_pulse: launch ONE additional mock pulse-wrapper.sh process
+# in the background and return after it's registered with the kernel. Used by
+# the threshold tests (GH#21903) to simulate post-t2774 cycle overlap where
+# multiple pulse-wrapper.sh PIDs are alive simultaneously.
+#
+# Note on filtering: the spawned process is parented to the test-runner bash,
+# whose argv ('bash .../test-pulse-lifecycle-helper.sh') does NOT contain
+# 'pulse-wrapper.sh' — so Layer 2 of _pulse_pids does NOT filter it. It is
+# counted as a top-level pulse PID, which is exactly what we want for these
+# tests.
+_spawn_extra_mock_pulse() {
+	bash "${TEST_ROOT}/scripts/pulse-wrapper.sh" >/dev/null 2>&1 &
+	local _pid=$!
+	MOCK_PIDS+=("$_pid")
+	# Wait for the kernel to register the process so subsequent pgrep finds it.
+	local _tries=20
+	while [[ "$_tries" -gt 0 ]]; do
+		if kill -0 "$_pid" 2>/dev/null; then
+			return 0
+		fi
+		sleep 0.1
+		_tries=$((_tries - 1))
+	done
+	return 1
+}
+
+# _count_top_level_mock_pulses: count PIDs the helper would treat as
+# top-level pulse instances. We replicate _pulse_pids' two-layer filter
+# directly here — running the helper itself would side-effect via the
+# subcommand contract.
+_count_top_level_mock_pulses() {
+	local _pids _pid _ppid _ppid_cmd _count=0
+	_pids=$(pgrep -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true)
+	[[ -z "$_pids" ]] && {
+		printf '0\n'
+		return 0
+	}
+	while read -r _pid; do
+		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		if [[ "$_ppid" == "1" ]]; then
+			_count=$((_count + 1))
+			continue
+		fi
+		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
+		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		_count=$((_count + 1))
+	done <<<"$_pids"
+	printf '%s\n' "$_count"
+	return 0
+}
+
+# _spawn_sidecar_mock_pulse: launch ONE mock pulse-wrapper.sh process with a
+# sidecar role flag in argv. Uses --merge-only as the canonical sidecar; the
+# helper's _PULSE_SIDECAR_FLAGS_RE matches all four documented flags. Used
+# by the GH#21903 sidecar-filtering tests to verify that sidecars are
+# excluded from the MAIN pile-up count and reported separately by status.
+#
+# Note on filtering: the spawned process is a child of the test runner
+# (whose argv contains 'test-pulse-lifecycle-helper.sh' — does NOT match
+# the literal 'pulse-wrapper.sh' regex on Layer 2). It is therefore counted
+# as top-level by Layers 1+2 and rejected only by Layer 3 (sidecar guard).
+_spawn_sidecar_mock_pulse() {
+	bash "${TEST_ROOT}/scripts/pulse-wrapper.sh" --merge-only >/dev/null 2>&1 &
+	local _pid=$!
+	MOCK_PIDS+=("$_pid")
+	local _tries=20
+	while [[ "$_tries" -gt 0 ]]; do
+		if kill -0 "$_pid" 2>/dev/null; then
+			return 0
+		fi
+		sleep 0.1
+		_tries=$((_tries - 1))
+	done
+	return 1
+}
+
+# _count_main_mock_pulses: count PIDs the helper's _pulse_pids would return
+# AFTER the GH#21903 sidecar filter. Identical to _count_top_level_mock_pulses
+# plus the Layer 3 argv-flag check.
+_count_main_mock_pulses() {
+	local _pids _pid _ppid _ppid_cmd _cmd _count=0
+	_pids=$(pgrep -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true)
+	[[ -z "$_pids" ]] && {
+		printf '0\n'
+		return 0
+	}
+	while read -r _pid; do
+		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		if [[ "$_ppid" == "1" ]]; then
+			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+			[[ "$_cmd" =~ (--merge-only|--self-check|--dry-run|--canary) ]] && continue
+			_count=$((_count + 1))
+			continue
+		fi
+		_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
+		[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		[[ "$_cmd" =~ (--merge-only|--self-check|--dry-run|--canary) ]] && continue
+		_count=$((_count + 1))
+	done <<<"$_pids"
+	printf '%s\n' "$_count"
+	return 0
+}
+
+# _count_sidecar_mock_pulses: count PIDs that match the sidecar argv pattern
+# (top-level by subshell-guard, AND argv contains a sidecar flag).
+_count_sidecar_mock_pulses() {
+	local _pids _pid _ppid _ppid_cmd _cmd _count=0
+	_pids=$(pgrep -f "${TEST_ROOT}/scripts/pulse-wrapper.sh" 2>/dev/null || true)
+	[[ -z "$_pids" ]] && {
+		printf '0\n'
+		return 0
+	}
+	while read -r _pid; do
+		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
+		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
+		if [[ "$_ppid" != "1" ]]; then
+			_ppid_cmd=$(ps -p "$_ppid" -o command= 2>/dev/null)
+			[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
+		fi
+		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
+		[[ "$_cmd" =~ (--merge-only|--self-check|--dry-run|--canary) ]] && _count=$((_count + 1))
+	done <<<"$_pids"
+	printf '%s\n' "$_count"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
@@ -352,6 +481,309 @@ test_missing_pulse_script_exit_2() {
 }
 
 # -----------------------------------------------------------------------------
+# GH#21903: threshold-based PILE-UP detection
+# -----------------------------------------------------------------------------
+# Post-t2774 the pulse releases its instance lock BEFORE the LLM phase, so
+# brief coexistence of 2-3 pulse-wrapper.sh PIDs is the EXPECTED steady state
+# (cycle N's LLM phase + cycle N+1's deterministic phase + occasional N+2
+# overlap). The legacy "warn on count > 1" check trained operators to ignore
+# legitimate overlap. _status now warns ONLY when the count exceeds
+# AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES (default 3).
+
+test_status_two_instances_no_warning_default_threshold() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	sleep 0.3
+
+	local count
+	count=$(_count_top_level_mock_pulses)
+	if [[ "$count" -lt 2 ]]; then
+		_print_result "status: 2-instance setup (expected >=2 top-level mocks, got $count)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0
+	local out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: 2 instances exits 0 (default threshold 3)" "0" "$rc"
+	if [[ "$out" != *"PILE-UP"* && "$out" != *"singleton invariant"* ]]; then
+		_print_result "status: 2 instances does not warn" 1
+	else
+		_print_result "status: 2 instances should not warn (output included PILE-UP/singleton)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_status_at_threshold_no_warning() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	sleep 0.3
+
+	local count
+	count=$(_count_top_level_mock_pulses)
+	if [[ "$count" -lt 3 ]]; then
+		_print_result "status: 3-instance setup (expected >=3 top-level mocks, got $count)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0
+	local out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	# 3 instances is exactly the default threshold — must not warn.
+	if [[ "$count" -eq 3 ]]; then
+		_assert_eq "status: 3 instances exits 0 (at default threshold)" "0" "$rc"
+		if [[ "$out" != *"PILE-UP"* ]]; then
+			_print_result "status: at-threshold (3) does not emit PILE-UP" 1
+		else
+			_print_result "status: at-threshold (3) should not warn (got PILE-UP)" 0
+		fi
+	else
+		# Spurious extra process picked up — environmental, skip cleanly.
+		_print_result "status: at-threshold setup got $count mocks (env noise; skipping)" 1
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_status_pileup_above_threshold_warns_and_exits_3() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	sleep 0.3
+
+	local count
+	count=$(_count_top_level_mock_pulses)
+	if [[ "$count" -lt 4 ]]; then
+		_print_result "status: pile-up setup (expected >=4 top-level mocks, got $count)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0
+	local out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: 4+ instances exits 3 (above default threshold)" "3" "$rc"
+	if [[ "$out" == *"PILE-UP"* && "$out" == *"GH#21903"* ]]; then
+		_print_result "status: pile-up message includes 'PILE-UP' and 'GH#21903'" 1
+	else
+		_print_result "status: pile-up message missing expected markers (got: $out)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_status_legacy_strict_threshold_via_env() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	sleep 0.3
+
+	local count
+	count=$(_count_top_level_mock_pulses)
+	if [[ "$count" -lt 2 ]]; then
+		_print_result "status: legacy-mode setup (expected >=2 top-level mocks, got $count)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0
+	local out
+	out=$(AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=1 "$HELPER" status 2>&1) || rc=$?
+	# With threshold=1, ANY coexistence is a pile-up (legacy strict-singleton mode).
+	_assert_eq "status: 2 instances exits 3 with threshold=1 (legacy strict mode)" "3" "$rc"
+	if [[ "$out" == *"PILE-UP"* ]]; then
+		_print_result "status: legacy strict threshold triggers PILE-UP warning" 1
+	else
+		_print_result "status: legacy strict threshold should warn (got: $out)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# GH#21903 sidecar filter — sidecar-flagged pulse PIDs (--merge-only, etc)
+# must NOT count toward the MAIN pulse PILE-UP threshold. Without this, a
+# single 60s --merge-only sidecar permanently consumes one of the three
+# threshold slots, leaving only two for legitimate t2774 main-pulse overlap.
+# These tests pin the sidecar exclusion behaviour and the status display.
+
+test_status_excludes_merge_only_sidecar() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_sidecar_mock_pulse || true
+	sleep 0.3
+
+	local _main _sidecar
+	_main=$(_count_main_mock_pulses)
+	_sidecar=$(_count_sidecar_mock_pulses)
+	if [[ "$_main" -lt 1 || "$_sidecar" -lt 1 ]]; then
+		_print_result "status: 1-main-1-sidecar setup (got main=$_main sidecar=$_sidecar)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0 out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: 1 main + 1 sidecar exits 0 (sidecar excluded)" "0" "$rc"
+	if [[ "$out" == *"Sidecar"* && "$out" == *"GH#21903"* ]]; then
+		_print_result "status: lists sidecar separately with GH#21903 marker" 1
+	else
+		_print_result "status: missing sidecar listing or GH#21903 marker (out=$out)" 0
+	fi
+	# Match the warning prefix 'PILE-UP:' (with colon), not the
+	# documentation phrase 'PILE-UP threshold' that appears in the
+	# sidecar listing block on every status invocation with sidecars.
+	if [[ "$out" != *"PILE-UP:"* ]]; then
+		_print_result "status: 1 main + 1 sidecar does not warn PILE-UP" 1
+	else
+		_print_result "status: 1 main + 1 sidecar should not warn (got PILE-UP:)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_status_three_main_plus_sidecar_no_warn() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	_spawn_sidecar_mock_pulse || true
+	sleep 0.3
+
+	local _main _sidecar
+	_main=$(_count_main_mock_pulses)
+	_sidecar=$(_count_sidecar_mock_pulses)
+	if [[ "$_main" -lt 3 || "$_sidecar" -lt 1 ]]; then
+		_print_result "status: 3-main-1-sidecar setup (got main=$_main sidecar=$_sidecar)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0 out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	# Pre-fix bug: 3+1=4 PIDs would be counted, exceeding threshold 3 → exit 3.
+	# Post-fix: only the 3 mains count, exactly at threshold → exit 0, no warn.
+	if [[ "$_main" -eq 3 ]]; then
+		_assert_eq "status: 3 main + 1 sidecar exits 0 (sidecar excluded from threshold)" "0" "$rc"
+		# Match the warning prefix 'PILE-UP:' (with colon), not the
+		# documentation phrase 'PILE-UP threshold' that appears in the
+		# sidecar listing block on every status invocation with sidecars.
+		if [[ "$out" != *"PILE-UP:"* ]]; then
+			_print_result "status: 3 main + 1 sidecar does not warn (sidecar correctly excluded)" 1
+		else
+			_print_result "status: 3 main + 1 sidecar wrongly emitted PILE-UP: (got: $out)" 0
+		fi
+	else
+		_print_result "status: 3-main-1-sidecar setup got main=$_main (env noise; skipping)" 1
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_status_four_main_plus_sidecar_warns() {
+	_kill_mocks
+	"$HELPER" start >/dev/null 2>&1 || true
+	_wait_for_mock_pulse 20 || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	_spawn_extra_mock_pulse || true
+	_spawn_sidecar_mock_pulse || true
+	sleep 0.3
+
+	local _main _sidecar
+	_main=$(_count_main_mock_pulses)
+	_sidecar=$(_count_sidecar_mock_pulses)
+	if [[ "$_main" -lt 4 || "$_sidecar" -lt 1 ]]; then
+		_print_result "status: 4-main-1-sidecar setup (got main=$_main sidecar=$_sidecar)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0 out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: 4 main + 1 sidecar exits 3 (main count > threshold)" "3" "$rc"
+	if [[ "$out" == *"PILE-UP"* && "$out" == *"main pulse-wrapper.sh"* ]]; then
+		_print_result "status: pile-up message names 'main pulse-wrapper.sh'" 1
+	else
+		_print_result "status: pile-up missing 'main' qualifier (out=$out)" 0
+	fi
+	if [[ "$out" == *"Sidecars"*"excluded"* ]]; then
+		_print_result "status: pile-up message documents sidecar exclusion" 1
+	else
+		_print_result "status: pile-up missing sidecar-exclusion note (out=$out)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+test_is_running_returns_false_with_only_sidecar() {
+	_kill_mocks
+	# Start ONLY a sidecar, no main pulse.
+	_spawn_sidecar_mock_pulse || true
+	sleep 0.3
+
+	local _main _sidecar
+	_main=$(_count_main_mock_pulses)
+	_sidecar=$(_count_sidecar_mock_pulses)
+	if [[ "$_main" -ne 0 || "$_sidecar" -lt 1 ]]; then
+		_print_result "is-running: sidecar-only setup (got main=$_main sidecar=$_sidecar)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0
+	"$HELPER" is-running >/dev/null 2>&1 || rc=$?
+	_assert_eq "is-running: 0 main + 1 sidecar returns 1 (sidecar is not main)" "1" "$rc"
+	_kill_mocks
+	return 0
+}
+
+test_status_sidecar_only_reports_not_running() {
+	_kill_mocks
+	_spawn_sidecar_mock_pulse || true
+	sleep 0.3
+
+	local _main _sidecar
+	_main=$(_count_main_mock_pulses)
+	_sidecar=$(_count_sidecar_mock_pulses)
+	if [[ "$_main" -ne 0 || "$_sidecar" -lt 1 ]]; then
+		_print_result "status: sidecar-only setup (got main=$_main sidecar=$_sidecar)" 0
+		_kill_mocks
+		return 0
+	fi
+
+	local rc=0 out
+	out=$("$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: sidecar-only exits 0" "0" "$rc"
+	if [[ "$out" == *"not running (sidecar(s) only)"* ]]; then
+		_print_result "status: sidecar-only labels state explicitly" 1
+	else
+		_print_result "status: sidecar-only header missing (out=$out)" 0
+	fi
+	if [[ "$out" == *"Sidecar"*"excluded"* ]]; then
+		_print_result "status: sidecar-only includes sidecar listing block" 1
+	else
+		_print_result "status: sidecar-only missing sidecar listing (out=$out)" 0
+	fi
+	_kill_mocks
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
 
@@ -373,6 +805,19 @@ main() {
 	test_skip_env_honoured_in_restart_if_running
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
+
+	# GH#21903 threshold-based PILE-UP detection
+	test_status_two_instances_no_warning_default_threshold
+	test_status_at_threshold_no_warning
+	test_status_pileup_above_threshold_warns_and_exits_3
+	test_status_legacy_strict_threshold_via_env
+
+	# GH#21903 sidecar exclusion (additive on top of threshold)
+	test_status_excludes_merge_only_sidecar
+	test_status_three_main_plus_sidecar_no_warn
+	test_status_four_main_plus_sidecar_warns
+	test_is_running_returns_false_with_only_sidecar
+	test_status_sidecar_only_reports_not_running
 
 	echo ""
 	echo "----"

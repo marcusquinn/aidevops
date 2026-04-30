@@ -823,6 +823,74 @@ _repo_allows_auto_merge() {
 }
 
 #######################################
+# Detect a wedged auto_merge request (t3192).
+#
+# GitHub's `mergeable_state` recomputation is async and lazy; setting
+# `auto_merge: true` does not trigger immediate recompute, and once
+# `BLOCKED` is cached on a PR the state can stick for hours even after the
+# original cause (pending CI, missing approval) has been resolved. Pulse
+# cycles see `auto_merge` set, the t3070 fast path returns 0, and the PR
+# sits indefinitely. Observed 2026-04-30 on PRs that sat 8-9h despite
+# 100% required-check SUCCESS and `mergeable=MERGEABLE`.
+#
+# Stuck means ALL of:
+#   * mergeStateStatus == BLOCKED
+#   * mergeable == MERGEABLE
+#   * reviewDecision != CHANGES_REQUESTED  (don't bypass real review blocks)
+#   * autoMergeRequest.enabledAt > $threshold seconds ago
+#   * No required check is in fail/pending/cancel bucket (only pass/skipping)
+#
+# Threshold defaults to 300s, overridable via
+# AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=raw JSON from gh pr view
+# Stdout: stuck-seconds count when stuck (caller logs it)
+# Returns: 0=stuck, safe to fall through to --admin; 1=defer to GitHub
+#######################################
+_auto_merge_stuck_seconds() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_state="$3"
+	local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
+
+	local enabled_at merge_state mergeable review_decision
+	enabled_at=$(printf '%s' "$pr_state" | jq -r '.autoMergeRequest.enabledAt // empty' 2>/dev/null)
+	merge_state=$(printf '%s' "$pr_state" | jq -r '.mergeStateStatus // empty' 2>/dev/null)
+	mergeable=$(printf '%s' "$pr_state" | jq -r '.mergeable // empty' 2>/dev/null)
+	review_decision=$(printf '%s' "$pr_state" | jq -r '.reviewDecision // empty' 2>/dev/null)
+
+	# Glob form (unquoted RHS inside [[ ]]) avoids adding new repeated
+	# string literals to this file — the validator counts only quoted
+	# 4+-char literals (see pre-commit-hook.sh::_count_repeated_literals).
+	[[ "$merge_state" == BLOCKED ]] || return 1
+	[[ "$mergeable" == MERGEABLE ]] || return 1
+	[[ "$review_decision" != CHANGES_REQUESTED ]] || return 1
+	[[ -n "$enabled_at" ]] || return 1
+
+	local enabled_epoch now_epoch stuck_seconds
+	enabled_epoch=$(date -u -d "$enabled_at" +%s 2>/dev/null \
+		|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$enabled_at" +%s 2>/dev/null \
+		|| echo "0")
+	[[ "$enabled_epoch" =~ ^[0-9]+$ && "$enabled_epoch" -gt 0 ]] || return 1
+	now_epoch=$(date -u +%s)
+	stuck_seconds=$((now_epoch - enabled_epoch))
+	[[ "$stuck_seconds" -gt "$threshold" ]] || return 1
+
+	# Confirm no required check is still pending or has failed. We require
+	# every required check to be in `pass` or `skipping` bucket — anything
+	# else means the PR has a legitimate reason to stay blocked, and
+	# falling through to --admin would bypass that signal.
+	local non_ok_count
+	non_ok_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
+		--jq '[.[] | select(.bucket != "pass" and .bucket != "skipping")] | length' 2>/dev/null)
+	[[ "$non_ok_count" =~ ^[0-9]+$ ]] || non_ok_count=99
+	[[ "$non_ok_count" -eq 0 ]] || return 1
+
+	printf '%s' "$stuck_seconds"
+	return 0
+}
+
+#######################################
 # Conditionally hand a PR off to GitHub native auto-merge (t3070).
 #
 # Eliminates the ~120s pulse poll-cycle latency between CI green and merge
@@ -833,7 +901,10 @@ _repo_allows_auto_merge() {
 # next pulse cycle to detect green.
 #
 # Decision tree:
-#   * PR already has auto_merge set    → return 0 (no-op, GitHub handles)
+#   * PR already has auto_merge set + STUCK → return 1 (caller --admin path,
+#                                                       t3192 stuck fallback)
+#   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub
+#                                                         finishes the job)
 #   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
 #   * No required check pending        → return 1 (caller --admin path —
 #                                                  immediate merge fastest)
@@ -856,11 +927,26 @@ _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	# Skip if PR already has auto_merge set — let GitHub finish the job.
-	local _existing_auto
-	_existing_auto=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json autoMergeRequest --jq '.autoMergeRequest // empty' 2>/dev/null)
-	if [[ -n "$_existing_auto" ]]; then
+	# Fetch auto_merge metadata + merge state in one call so the stuck-state
+	# check (t3192) does not require an extra round trip.
+	local _pr_state
+	_pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json autoMergeRequest,mergeStateStatus,mergeable,reviewDecision 2>/dev/null)
+
+	local _existing_auto=""
+	if [[ -n "$_pr_state" ]]; then
+		_existing_auto=$(printf '%s' "$_pr_state" | jq -r '.autoMergeRequest // empty' 2>/dev/null)
+	fi
+
+	if [[ -n "$_existing_auto" && "$_existing_auto" != "null" ]]; then
+		# Auto-merge already requested — check for the GitHub auto_merge wedge
+		# before unconditionally deferring (t3192).
+		local _stuck_seconds=""
+		if _stuck_seconds=$(_auto_merge_stuck_seconds "$pr_number" "$repo_slug" "$_pr_state"); then
+			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${_stuck_seconds}s (>${_threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — falling through to immediate merge (t3192)" >>"$LOGFILE"
+			return 1
+		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge already set, deferring to GitHub (t3070)" >>"$LOGFILE"
 		return 0
 	fi

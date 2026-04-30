@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.16] - 2026-04-30
+
+### Changed
+
+- pulse: filter sidecar plists from main-pulse PILE-UP threshold (#21917)
+- Maintenance: sync ref:GH#21923 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#21921 to TODO.md [skip ci]
+
+### Fixed
+
+- default auto-release ON for AI agent interactive sessions (t3205) (#21920)
+
+## [3.13.15] - 2026-04-30
+
+### Changed
+
+- status: threshold-based PILE-UP detection (#21911)
+- Maintenance: sync ref:GH#21913 to TODO.md [skip ci]
+- Maintenance: mark t3202 complete (pr:#21909 completed:2026-04-30) [skip ci]
+- Maintenance: sync ref:GH#21910 to TODO.md [skip ci]
+- Maintenance: mark t3197 complete (pr:#21907 completed:2026-04-30) [skip ci]
+- add per-issue dispatch cooldown after no-worker-process launch failures (#21907)
+
+### Fixed
+
+- make _update_json_version_field race-resistant (#21909)
+
+## [3.13.14] - 2026-04-30
+
+### Added
+
+- t3192 stuck auto_merge fallback to --admin direct merge (#21906)
+
+### Changed
+
+- Maintenance: mark t3192 complete (pr:#21906 completed:2026-04-30) [skip ci]
+- Maintenance: sync ref:GH#21905 to TODO.md [skip ci]
+- Maintenance: mark t3195 complete (pr:#21902 completed:2026-04-30) [skip ci]
+- fix worker output classification using --head not --search (#21902)
+
 ## [3.13.13] - 2026-04-30
 
 ### Changed

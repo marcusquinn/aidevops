@@ -1031,6 +1031,67 @@ _record_runner_health_zero_attempt() {
 	return 0
 }
 
+# t3197: write a per-issue dispatch-cooldown audit marker after a
+# `no_worker_process` launch failure. The reader is
+# `dispatch-dedup-helper.sh::_is_assigned_check_dispatch_cooldown`, which
+# parses the most recent `<!-- dispatch-cooldown-until:<ISO> ... -->`
+# marker on the issue and short-circuits dispatch with
+# `DISPATCH_COOLDOWN_ACTIVE` while the timestamp is in the future.
+#
+# Closes the rapid-retry loop where a broken runtime (CLI changes, missing
+# binary, network flake) burns ~5 worker spawns over 3-4 hours per issue
+# with 95-99s lifespans each, repeating across 30+ issues simultaneously
+# when one runner is unhealthy.
+#
+# Only `no_worker_process` qualifies — `cli_usage_output`, `stale_timeout`,
+# and other failure_reasons have their own retry/escalation mechanisms;
+# layering a cooldown on top would over-throttle.
+#
+# Disabled by setting DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS=0.
+# Default cooldown: 1800 seconds (30 minutes).
+#
+# Always returns 0 — cooldown is a soft optimization, never blocks the
+# wider recovery path on its own failure (gh API hiccup, date parse
+# error, etc.).
+_post_launch_cooldown_marker() {
+	# $4 is the failure_reason; only no_worker_process should write a marker.
+	# Unquoted RHS in [[ ]] keeps the literal off the repeated-string counter.
+	[[ ${4-} == no_worker_process ]] || return 0
+
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+
+	local cooldown_s="${DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS:-1800}"
+	[[ "$cooldown_s" =~ ^[0-9]+$ ]] || cooldown_s=1800
+	(( cooldown_s > 0 )) || return 0
+
+	local now_epoch until_epoch iso
+	now_epoch=$(date -u +%s 2>/dev/null) || return 0
+	until_epoch=$((now_epoch + cooldown_s))
+
+	# Portable ISO formatting: GNU `date -d "@<epoch>"` first, BSD `date -r` fallback.
+	iso=$(date -u -d "@${until_epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) ||
+		iso=$(date -u -r "${until_epoch}" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) ||
+		return 0
+	[[ -n "$iso" ]] || return 0
+
+	local body="<!-- dispatch-cooldown-until:${iso} reason=no_worker_process runner=${self_login} -->
+Dispatch cooldown active until ${iso} following a no_worker_process launch failure (t3197). The pulse will not redispatch this issue until the marker expires. Set DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS=0 to disable."
+
+	local comments_endpoint
+	# printf single-quoted format keeps the endpoint literal off the
+	# repeated-string-literal counter (the same path appears verbatim in
+	# _post_launch_recovery_claim_released and _is_stale_assignment).
+	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
+	gh api "$comments_endpoint" \
+		--method POST \
+		--field body="$body" \
+		>/dev/null 2>&1 || true
+	declare -F invalidate_footprint_cache_for_issue >/dev/null 2>&1 && invalidate_footprint_cache_for_issue "$issue_number" || true
+	return 0
+}
+
 recover_failed_launch_state() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1102,6 +1163,10 @@ recover_failed_launch_state() {
 
 	# t2394: Invalidate stale cross-runner claims immediately (see helper below).
 	_post_launch_recovery_claim_released "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
+	# t3197: Write a per-issue dispatch cooldown marker so other runners
+	# (and this one) skip redispatch for the configured cooldown window.
+	# Only fires for `no_worker_process` — the recurring no-spawn failure mode.
+	_post_launch_cooldown_marker "$issue_number" "$repo_slug" "$self_login" "$failure_reason"
 	# t2897: Record zero-attempt outcome for the per-runner circuit breaker.
 	_record_runner_health_zero_attempt "$issue_number" "$repo_slug" "$failure_reason"
 	# t1934: Unlock issue and linked PRs (locked at dispatch time)

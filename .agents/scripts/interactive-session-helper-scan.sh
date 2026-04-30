@@ -408,7 +408,8 @@ _isc_scan_dead_stamps_phase() {
 # Subcommand: scan-stale
 # -----------------------------------------------------------------------------
 # Three-phase stale detection coordinator. Phase 1 (t2414): auto-releases dead
-# stamps (dead PID + missing worktree) when running in an interactive TTY.
+# stamps (dead PID + missing worktree) when running in an interactive context
+# (human TTY or AI agent runtime).
 # Phase 1a: report-only (stampless origin:interactive claims).
 # Phase 2: report-only (closed-not-merged PR orphans).
 #
@@ -416,12 +417,29 @@ _isc_scan_dead_stamps_phase() {
 #   [--auto-release]    — force Phase 1 auto-release on (overrides env/TTY)
 #   [--no-auto-release] — force Phase 1 auto-release off (overrides env/TTY)
 #
-# Env: AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0|1 — overrides TTY detection.
+# Env: AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0|1 — overrides runtime detection.
+#
+# Auto-release detection priority (t3205):
+#   1. Explicit --auto-release / --no-auto-release flag
+#   2. AIDEVOPS_SCAN_STALE_AUTO_RELEASE env var (0 or 1)
+#   3. TTY (stdin AND stdout are terminals) → ON
+#   4. Headless markers (FULL_LOOP_HEADLESS / AIDEVOPS_HEADLESS /
+#      OPENCODE_HEADLESS / GITHUB_ACTIONS) → OFF (truly headless wins)
+#   5. AI agent runtime markers (OPENCODE_SESSION_ID / OPENCODE_RUN_ID /
+#      OPENCODE_PID / CLAUDECODE / CLAUDE_CODE / CLAUDE_SESSION_ID /
+#      CLAUDE_CODE_SSE_PORT) → ON (agent driving an interactive user session)
+#   6. Conservative default → OFF
+#
+# The AI-agent branch (5) closes the gap where an OpenCode TUI or Claude Code
+# CLI agent drives `scan-stale` at session start (per the t2056 protocol) but
+# the agent's bash subprocess is piped from the runtime, so [[ -t 0 && -t 1 ]]
+# returns false. Without this branch, agents would re-discover the
+# `--auto-release` flag every session as the same dead stamps reappear.
 #
 # Exit: 0 always.
 _isc_cmd_scan_stale() {
-	# --- auto-release flag resolution (t2414) ---
-	# Priority: explicit flag > env var > TTY detection > default OFF.
+	# --- auto-release flag resolution (t2414, t3205) ---
+	# Priority: explicit flag > env var > TTY > headless > AI-agent > OFF.
 	local auto_release_flag=""
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -435,7 +453,21 @@ _isc_cmd_scan_stale() {
 		auto_release_flag="${AIDEVOPS_SCAN_STALE_AUTO_RELEASE}"
 	fi
 	if [[ -z "$auto_release_flag" ]]; then
-		[[ -t 0 && -t 1 ]] && auto_release_flag=1 || auto_release_flag=0
+		if [[ -t 0 && -t 1 ]]; then
+			# Human-driven TTY session.
+			auto_release_flag=1
+		elif [[ -n "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]]; then
+			# Truly headless: pulse worker, CI runner, scheduled job.
+			auto_release_flag=0
+		elif [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PID:-}${CLAUDECODE:-}${CLAUDE_CODE:-}${CLAUDE_SESSION_ID:-}${CLAUDE_CODE_SSE_PORT:-}" ]]; then
+			# AI-agent runtime markers: user driving an OpenCode TUI or Claude
+			# Code CLI session — agent's bash is piped, no TTY, but the
+			# user is present and stale stamps should be auto-released.
+			auto_release_flag=1
+		else
+			# Unknown context — conservative default.
+			auto_release_flag=0
+		fi
 	fi
 
 	# --- Phase 1: stamp-based stale claim detection (extracted for line-cap) ---
