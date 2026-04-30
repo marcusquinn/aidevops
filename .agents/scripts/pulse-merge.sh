@@ -407,6 +407,21 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 	if [[ -n "$linked_issue" && "${_parent_task_guard:-0}" -eq 0 ]]; then
 		auto_file_next_phase "$linked_issue" "$repo_slug" || true
 	fi
+
+	# Circuit-breaker meta-PR cleanup (t3076): when this PR's linked issue
+	# carries `circuit-breaker-meta`, the merge has shipped a root-cause fix
+	# for a tripped breaker. Unblock the original (remove blocked-by label,
+	# clear NMR if no other breaker markers remain, post unblock comment).
+	# Idempotent — second call is a no-op. Best-effort: failures never
+	# block the merge completion path.
+	if [[ -n "$linked_issue" && ",${_linked_labels:-}," == *",circuit-breaker-meta,"* ]]; then
+		local _cb_meta_filer="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/circuit-breaker-meta-filer.sh"
+		if [[ -x "$_cb_meta_filer" ]]; then
+			"$_cb_meta_filer" unblock-on-merge \
+				--meta "$linked_issue" --repo "$repo_slug" >>"$LOGFILE" 2>&1 || true
+		fi
+	fi
+
 	declare -F invalidate_footprint_cache_for_issue >/dev/null 2>&1 && invalidate_footprint_cache_for_issue "${linked_issue:-}" || true
 	return 0
 }

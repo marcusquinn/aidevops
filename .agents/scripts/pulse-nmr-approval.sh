@@ -378,6 +378,7 @@ _nmr_application_has_automation_signature() {
 #   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker (budget)
 #   - <!-- cost-circuit-breaker:no_work_loop — t2769 per-issue no_work breaker
 #   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
+#   - <!-- circuit-breaker-meta-filed      — t3076 root-cause meta-issue marker
 #
 # Args:
 #   $1 - issue_num  : GitHub issue number
@@ -400,9 +401,13 @@ _nmr_application_is_circuit_breaker_trip() {
 	# and the t2769 no_work breaker in worker-lifecycle-common.sh) post
 	# the marker comment immediately after applying the NMR label,
 	# so the two events are always co-temporal.
+	#
+	# t3076: the meta-filer posts its `circuit-breaker-meta-filed` marker
+	# as a sibling comment on the same trip-cycle, so it falls inside the
+	# same ±60s window — no separate query needed.
 	local has_breaker_trip
 	has_breaker_trip=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated\"))] | length" \
+		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed\"))] | length" \
 		2>/dev/null) || has_breaker_trip=0
 	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
 

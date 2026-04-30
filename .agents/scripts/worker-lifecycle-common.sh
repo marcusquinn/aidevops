@@ -900,6 +900,20 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 
 		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker fired for #%s (%s, count=%s)\n' \
 			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
+
+		# t3076: file root-cause meta-issue with forensics and dispatch a
+		# tier:thinking worker against it. Idempotent — second trip on the
+		# same original is a no-op. Best-effort: failures are logged but
+		# never propagate (NMR is the canonical block, the meta-issue is
+		# the self-healing channel).
+		local _cb_meta_filer="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/circuit-breaker-meta-filer.sh"
+		if [[ -x "$_cb_meta_filer" ]]; then
+			"$_cb_meta_filer" file \
+				--issue "$issue_number" --repo "$repo_slug" \
+				--breaker no_work --failure-count "$failure_count" \
+				--reason "$reason" >/dev/null 2>&1 || true
+		fi
+
 		return 0
 	fi
 
