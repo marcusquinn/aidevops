@@ -657,46 +657,17 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3193) on detecting a pattern o
 #   $5 - affected_prs (comma-separated PR numbers blocked by saturation)
 #   $6 - count (length of affected_prs list)
 #######################################
-_pms_file_runner_saturation_issue() {
-	local repo_slug="$1"
-	local queued="$2"
-	local in_progress="$3"
-	local ratio="$4"
-	local affected_prs="$5"
-	local count="$6"
-
-	[[ -n "$repo_slug" ]] || return 0
-	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
-	[[ "$in_progress" =~ ^[0-9]+$ ]] || in_progress=0
-	[[ "$ratio" =~ ^[0-9]+$ ]] || ratio=0
-	[[ "$count" =~ ^[0-9]+$ ]] || count=0
-
-	local marker_text="${_PMS_RUNNER_SATURATION_MARKER_TEXT}"
-	local marker="<!-- ${marker_text} -->"
-
-	# Dedup: search for an OPEN issue with this marker in the affected repo.
-	# The same repo's saturation events may recur over hours but only one
-	# meta-issue stays open at a time — operators close it after triaging.
-	local existing
-	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
-		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
-	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
-		echo "[pulse-merge-stuck] _pms_file_runner_saturation_issue: marker already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
-		# Still increment the events counter — saturation IS happening, even
-		# if the meta-issue dedup prevents a fresh filing. This way operators
-		# can correlate counter spikes with saturation incidents even when
-		# only one meta-issue exists.
-		pulse_stats_increment "$_PMS_COUNTER_QUEUE_SATURATION_EVENTS"
-		return 0
-	fi
-
-	# Compose the meta-issue body. tier:thinking + bug + auto-dispatch matches
-	# the _pms_file_outage_issue convention; source:merge-stuck-detector
-	# routes the issue to operators familiar with the detector module.
-	local title="merge-stuck: GitHub Actions runner queue saturated (${queued} queued / ${in_progress} in-progress) in ${repo_slug}"
-
-	# Use read -r -d '' for bash 3.2 portability — see _escalate_individual_stuck_pr
-	# for the rationale (heredoc-in-subshell is not bash 3.2 compatible).
+# Compose the meta-issue body for runner-saturation. Extracted from
+# _pms_file_runner_saturation_issue to keep the caller under the 100-line
+# function-complexity gate. The heredoc itself is the bulk of the work;
+# isolating it here also makes the body easier to update without
+# perturbing the dedup/file/metrics control flow above.
+#
+# Echoes the composed body to stdout. Caller captures via $().
+_pms_compose_runner_saturation_body() {
+	local marker="$1" repo_slug="$2" queued="$3" in_progress="$4"
+	local ratio="$5" affected_prs="$6" count="$7"
+	# read -r -d '' for bash 3.2 portability (heredoc-in-subshell unsupported).
 	local body=""
 	IFS='' read -r -d '' body <<EOF || true
 ${marker}
@@ -786,6 +757,49 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3211 / GH#21942) on detecting 
 
 <sub>Source: pulse-merge-stuck-detector. Threshold env: \`AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN=${AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN:-50}\`, \`AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN=${AIDEVOPS_ACTIONS_QUEUE_SATURATION_RATIO_MIN:-10}\`.</sub>
 EOF
+	printf '%s' "$body"
+	return 0
+}
+
+_pms_file_runner_saturation_issue() {
+	local repo_slug="$1"
+	local queued="$2"
+	local in_progress="$3"
+	local ratio="$4"
+	local affected_prs="$5"
+	local count="$6"
+
+	[[ -n "$repo_slug" ]] || return 0
+	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
+	[[ "$in_progress" =~ ^[0-9]+$ ]] || in_progress=0
+	[[ "$ratio" =~ ^[0-9]+$ ]] || ratio=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+
+	local marker_text="${_PMS_RUNNER_SATURATION_MARKER_TEXT}"
+	local marker="<!-- ${marker_text} -->"
+
+	# Dedup: search for an OPEN issue with this marker in the affected repo.
+	# The same repo's saturation events may recur over hours but only one
+	# meta-issue stays open at a time — operators close it after triaging.
+	local existing
+	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
+		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
+	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
+		echo "[pulse-merge-stuck] _pms_file_runner_saturation_issue: marker already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
+		# Still increment the events counter — saturation IS happening, even
+		# if the meta-issue dedup prevents a fresh filing. This way operators
+		# can correlate counter spikes with saturation incidents even when
+		# only one meta-issue exists.
+		pulse_stats_increment "$_PMS_COUNTER_QUEUE_SATURATION_EVENTS"
+		return 0
+	fi
+
+	# Compose the meta-issue body via the dedicated composer (extracted to
+	# keep this function under the function-complexity gate).
+	local title="merge-stuck: GitHub Actions runner queue saturated (${queued} queued / ${in_progress} in-progress) in ${repo_slug}"
+	local body
+	body=$(_pms_compose_runner_saturation_body "$marker" "$repo_slug" \
+		"$queued" "$in_progress" "$ratio" "$affected_prs" "$count")
 
 	# Wrapper-only — see _pms_file_outage_issue rationale above.
 	if ! declare -F gh_create_issue >/dev/null 2>&1; then
@@ -793,6 +807,9 @@ EOF
 		return 0
 	fi
 
+	# tier:thinking + bug + auto-dispatch matches the _pms_file_outage_issue
+	# convention; source:merge-stuck-detector routes the issue to operators
+	# familiar with the detector module.
 	local labels="auto-dispatch,tier:thinking,bug,source:merge-stuck-detector"
 	gh_create_issue --repo "$repo_slug" \
 		--title "$title" \
@@ -955,6 +972,97 @@ _pms_count_eligible_unmerged_for_repo() {
 # Args: $1 = repo_slug
 # Returns: 0 always (instrumentation must not break the pulse)
 #######################################
+#######################################
+# Compute Actions runner-queue saturation state for ONE repo per cycle.
+# Extracted from pulse_merge_stuck_run_pass (t3211 / GH#21942) to keep
+# the caller under the function-complexity gate.
+#
+# Echoes 4 lines (KEY=VALUE) the caller parses with grep+cut:
+#   queued=N
+#   in_progress=N
+#   ratio=N
+#   saturated=0|1
+#
+# Fails open if the upstream helper is unavailable (partial deploy):
+# echoes the safe defaults (all zeros, saturated=0) so the caller's
+# downstream logic degrades to pre-t3211 behaviour.
+#######################################
+_pms_compute_saturation_state() {
+	local repo_slug="$1"
+
+	if ! declare -F _check_actions_queue_saturation >/dev/null 2>&1; then
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 0
+	fi
+
+	local saturation_output=""
+	saturation_output=$(_check_actions_queue_saturation "$repo_slug" 2>/dev/null) || saturation_output=""
+	if [[ -z "$saturation_output" ]]; then
+		printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+		return 0
+	fi
+
+	# Pass through the helper's output verbatim — it already emits the
+	# canonical KEY=VALUE format and validates each value against the
+	# integer range.
+	printf '%s' "$saturation_output"
+	return 0
+}
+
+#######################################
+# Classify ONE eligible-stuck PR and dispatch the matching handler.
+# Extracted from pulse_merge_stuck_run_pass (t3211 / GH#21942) to keep
+# the caller under the function-complexity gate.
+#
+# Echoes a routing tag the caller uses to decide on aggregation:
+#   SATURATED  — saturation-blocked; caller MUST increment its
+#                saturation accumulator. No per-PR escalation was sent.
+#   HANDLED    — non-saturation classification; per-PR handler was
+#                already invoked. Caller takes no further action.
+#
+# Args: $1=pr_num  $2=repo_slug  $3=is_saturated (0|1)
+#######################################
+_pms_handle_classified_pr() {
+	local pr_num="$1"
+	local repo_slug="$2"
+	local is_saturated="$3"
+
+	# Pass is_saturated so the classifier can recognise QUEUED checks
+	# during a runner outage.
+	local classification
+	classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated")
+
+	# Fetch linked issue once for the escalation comment.
+	local linked_issue=""
+	if declare -F _extract_linked_issue >/dev/null 2>&1; then
+		linked_issue=$(_extract_linked_issue "$pr_num" "$repo_slug" 2>/dev/null) || linked_issue=""
+	fi
+
+	case "$classification" in
+		STUCK_RUNNER_QUEUE_SATURATION)
+			# Suppress per-PR escalation — caller aggregates for meta-issue.
+			echo "[pulse-merge-stuck] _pms_handle_classified_pr: PR #${pr_num} (${repo_slug}) classified STUCK_RUNNER_QUEUE_SATURATION — suppressing per-PR escalation, will aggregate to meta-issue" >>"$LOGFILE"
+			printf 'SATURATED'
+			;;
+		STUCK_BRANCHPROTECT_404)
+			_handle_stuck_branchprotect_404 "$pr_num" "$repo_slug"
+			printf 'HANDLED'
+			;;
+		STUCK_CONFLICT_NO_NUDGE_LABEL)
+			_handle_stuck_conflict_no_nudge_label "$pr_num" "$repo_slug"
+			printf 'HANDLED'
+			;;
+		STUCK_CHECKS_FAILING|STUCK_BRANCHPROTECT_API_ERROR|STUCK_AUTH|STUCK_OTHER)
+			_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue"
+			printf 'HANDLED'
+			;;
+		*)
+			printf 'HANDLED'
+			;;
+	esac
+	return 0
+}
+
 pulse_merge_stuck_run_pass() {
 	local repo_slug="$1"
 
@@ -977,36 +1085,22 @@ pulse_merge_stuck_run_pass() {
 	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
 	local age_threshold_secs=$((AIDEVOPS_MERGE_STUCK_AGE_MINUTES * 60))
 
-	# ── Compute Actions runner queue saturation ONCE per repo per cycle ──
-	# (t3211, GH#21942). Calling _check_actions_queue_saturation per-PR
-	# would burn REST budget pointlessly — saturation is a repo-wide signal.
-	# Fail-open if the helper is unavailable (partial deploy) — saturation
-	# defaults to 0 and the module degrades to its pre-t3211 behaviour.
-	local sat_queued=0 sat_in_progress=0 sat_ratio=0 is_saturated=0
-	if declare -F _check_actions_queue_saturation >/dev/null 2>&1; then
-		local saturation_output=""
-		saturation_output=$(_check_actions_queue_saturation "$repo_slug" 2>/dev/null) || saturation_output=""
-		if [[ -n "$saturation_output" ]]; then
-			# Parse KEY=VALUE lines emitted by the helper.
-			sat_queued=$(printf '%s\n' "$saturation_output" | grep -E '^queued=' | head -1 | cut -d= -f2)
-			sat_in_progress=$(printf '%s\n' "$saturation_output" | grep -E '^in_progress=' | head -1 | cut -d= -f2)
-			sat_ratio=$(printf '%s\n' "$saturation_output" | grep -E '^ratio=' | head -1 | cut -d= -f2)
-			is_saturated=$(printf '%s\n' "$saturation_output" | grep -E '^saturated=' | head -1 | cut -d= -f2)
-			[[ "$sat_queued" =~ ^[0-9]+$ ]] || sat_queued=0
-			[[ "$sat_in_progress" =~ ^[0-9]+$ ]] || sat_in_progress=0
-			[[ "$sat_ratio" =~ ^[0-9]+$ ]] || sat_ratio=0
-			[[ "$is_saturated" == "1" ]] || is_saturated=0
-		fi
-	fi
+	# Compute Actions runner queue saturation ONCE per repo per cycle (t3211).
+	local sat_queued=0 sat_in_progress=0 sat_ratio=0 is_saturated=0 saturation_state
+	saturation_state=$(_pms_compute_saturation_state "$repo_slug")
+	sat_queued=$(printf '%s\n' "$saturation_state" | grep -E '^queued=' | head -1 | cut -d= -f2)
+	sat_in_progress=$(printf '%s\n' "$saturation_state" | grep -E '^in_progress=' | head -1 | cut -d= -f2)
+	sat_ratio=$(printf '%s\n' "$saturation_state" | grep -E '^ratio=' | head -1 | cut -d= -f2)
+	is_saturated=$(printf '%s\n' "$saturation_state" | grep -E '^saturated=' | head -1 | cut -d= -f2)
+	[[ "$sat_queued" =~ ^[0-9]+$ ]] || sat_queued=0
+	[[ "$sat_in_progress" =~ ^[0-9]+$ ]] || sat_in_progress=0
+	[[ "$sat_ratio" =~ ^[0-9]+$ ]] || sat_ratio=0
+	[[ "$is_saturated" == "1" ]] || is_saturated=0
 
-	local eligible_stuck_count=0
-	local stuck_pr_numbers=""
-
-	# Saturation-blocked PRs aggregated for the meta-issue body (t3211).
-	# Per-PR escalation comments are SUPPRESSED for these — the meta-issue
-	# replaces them.
-	local saturation_blocked_prs=""
-	local saturation_blocked_count=0
+	# Saturation-blocked PRs aggregated for the meta-issue body (t3211) —
+	# per-PR escalation comments are SUPPRESSED for these.
+	local eligible_stuck_count=0 saturation_blocked_count=0
+	local stuck_pr_numbers="" saturation_blocked_prs=""
 
 	# Iterate each PR — classify, escalate, accumulate fingerprints.
 	local i=0
@@ -1032,36 +1126,15 @@ pulse_merge_stuck_run_pass() {
 		eligible_stuck_count=$((eligible_stuck_count + 1))
 		stuck_pr_numbers="${stuck_pr_numbers}${pr_num}\n"
 
-		# Per-PR classification + handler (skip per-PR escalation when the
-		# PR is part of a pattern cluster — detected later in the same pass).
-		# Pass is_saturated so the classifier can recognise QUEUED checks
-		# during a runner outage.
-		local classification
-		classification=$(_classify_stuck_pr "$pr_num" "$repo_slug" "$is_saturated")
-
-		# Fetch linked issue once for the escalation comment.
-		local linked_issue=""
-		if declare -F _extract_linked_issue >/dev/null 2>&1; then
-			linked_issue=$(_extract_linked_issue "$pr_num" "$repo_slug" 2>/dev/null) || linked_issue=""
+		# Classify + route via the helper. SATURATED means we must
+		# aggregate the PR for the meta-issue; HANDLED means a per-PR
+		# handler already ran.
+		local route
+		route=$(_pms_handle_classified_pr "$pr_num" "$repo_slug" "$is_saturated")
+		if [[ "$route" == "SATURATED" ]]; then
+			saturation_blocked_prs="${saturation_blocked_prs}${pr_num},"
+			saturation_blocked_count=$((saturation_blocked_count + 1))
 		fi
-
-		case "$classification" in
-			STUCK_RUNNER_QUEUE_SATURATION)
-				# Suppress per-PR escalation — aggregate for the meta-issue.
-				saturation_blocked_prs="${saturation_blocked_prs}${pr_num},"
-				saturation_blocked_count=$((saturation_blocked_count + 1))
-				echo "[pulse-merge-stuck] pulse_merge_stuck_run_pass: PR #${pr_num} (${repo_slug}) classified STUCK_RUNNER_QUEUE_SATURATION — suppressing per-PR escalation, will aggregate to meta-issue" >>"$LOGFILE"
-				;;
-			STUCK_BRANCHPROTECT_404)
-				_handle_stuck_branchprotect_404 "$pr_num" "$repo_slug"
-				;;
-			STUCK_CONFLICT_NO_NUDGE_LABEL)
-				_handle_stuck_conflict_no_nudge_label "$pr_num" "$repo_slug"
-				;;
-			STUCK_CHECKS_FAILING|STUCK_BRANCHPROTECT_API_ERROR|STUCK_AUTH|STUCK_OTHER)
-				_escalate_individual_stuck_pr "$pr_num" "$repo_slug" "$classification" "$linked_issue"
-				;;
-		esac
 	done
 
 	# Update the gauge for this cycle's count.

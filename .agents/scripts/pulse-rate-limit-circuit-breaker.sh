@@ -332,7 +332,7 @@ _check_actions_queue_saturation() {
 		return 2
 	fi
 
-	local queued in_progress
+	local queued="" in_progress=""
 	queued=$(printf '%s' "$queued_json" | jq -r '.total_count // 0' 2>/dev/null) || queued=0
 	in_progress=$(printf '%s' "$in_progress_json" | jq -r '.total_count // 0' 2>/dev/null) || in_progress=0
 	[[ "$queued" =~ ^[0-9]+$ ]] || queued=0
