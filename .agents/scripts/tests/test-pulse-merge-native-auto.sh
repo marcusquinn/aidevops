@@ -68,10 +68,12 @@ setup_test_env() {
 	export TEST_ROOT GH_LOG
 
 	# Default fixtures. Overridden per-test before invocation.
-	#  * auto_merge_request: empty (PR does not have auto-merge set)
+	#  * pr_state:           autoMergeRequest=null (auto-merge NOT set);
+	#                        full state JSON since t3192 added stuck check
 	#  * allow_auto_merge:   true  (repo allows it)
 	#  * pending_count:      1     (one required check pending)
-	printf '' >"${TEST_ROOT}/auto_merge_request.txt"
+	printf '{"autoMergeRequest":null,"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		>"${TEST_ROOT}/auto_merge_request.txt"
 	printf 'true' >"${TEST_ROOT}/allow_auto_merge.txt"
 	printf '1' >"${TEST_ROOT}/pending_count.txt"
 
@@ -126,20 +128,26 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _repo_allows_auto_merge and _set_native_auto_merge_or_skip from
-# pulse-merge-process.sh and eval them into the test shell.
+# Extract the helpers under test from pulse-merge-process.sh and eval them
+# into the test shell. _set_native_auto_merge_or_skip calls
+# _auto_merge_stuck_seconds (t3192), so we extract that too.
 define_helpers_under_test() {
-	local src_repo_allow src_set_native
+	local src_stuck src_repo_allow src_set_native
+	src_stuck=$(awk '
+		/^_auto_merge_stuck_seconds\(\) \{/,/^\}$/ { print }
+	' "$PROCESS_SCRIPT")
 	src_repo_allow=$(awk '
 		/^_repo_allows_auto_merge\(\) \{/,/^\}$/ { print }
 	' "$PROCESS_SCRIPT")
 	src_set_native=$(awk '
 		/^_set_native_auto_merge_or_skip\(\) \{/,/^\}$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$src_repo_allow" || -z "$src_set_native" ]]; then
+	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_set_native" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
+	# shellcheck disable=SC1090
+	eval "$src_stuck"
 	# shellcheck disable=SC1090
 	eval "$src_repo_allow"
 	# shellcheck disable=SC1090
@@ -241,9 +249,15 @@ test_case_c_already_set_no_op() {
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
 	# Non-empty autoMergeRequest payload — what GitHub returns when --auto
-	# was previously requested. The `// empty` filter passes the value
-	# through unchanged, so any non-empty string triggers the no-op branch.
-	printf '{"enabledAt":"2026-04-30T12:00:00Z"}' >"${TEST_ROOT}/auto_merge_request.txt"
+	# was previously requested. Since t3192, the helper fetches the full PR
+	# state in a single call to evaluate stuck-state heuristics, so the
+	# fixture must include mergeStateStatus, mergeable, and reviewDecision.
+	# enabledAt is recent (now) so the stuck-state check returns 1 (defer)
+	# and we fall through to the t3070 "auto_merge already set" path.
+	local enabled_at_now
+	enabled_at_now=$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo '2026-04-30T16:00:00Z')
+	printf '{"autoMergeRequest":{"enabledAt":"%s"},"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		"$enabled_at_now" >"${TEST_ROOT}/auto_merge_request.txt"
 
 	local result=0
 	_set_native_auto_merge_or_skip "300" "owner/repo" || result=$?

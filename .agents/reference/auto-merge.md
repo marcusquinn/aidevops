@@ -166,6 +166,37 @@ done
 
 **Bypass:** apply `hold-for-review` to opt out of all auto-merge paths (this gate is upstream of t3070 — a held PR never reaches the native-auto call site). For per-repo opt-out, set `allow_auto_merge=false` via `gh api -X PATCH repos/<slug> -f allow_auto_merge=false`.
 
+## t3192 — Stuck Auto-Merge Fallback
+
+**Problem:** GitHub's `mergeable_state` recomputation is asynchronous and lazy. Setting `auto_merge: true` does not trigger an immediate recompute, and once `BLOCKED` is cached on a PR the state can stick for hours after the original cause (pending CI, missing approval) has cleared. The t3070 fast path returns 0 unconditionally when `autoMergeRequest` is set, so pulse cycles see "auto_merge already requested, deferring to GitHub" and the PR sits indefinitely.
+
+Observed 2026-04-30 in marcusquinn/aidevops:
+
+| PR | auto_merge enabled | checks | mergeable | mergeStateStatus | stuck for |
+|----|-------------------|--------|-----------|------------------|-----------|
+| #21883 | 05:37Z | 71/71 (46 SUCCESS, 25 SKIPPED) | MERGEABLE | BLOCKED | 9h |
+| #21885 | 05:49Z | 48/48 (44 SUCCESS, 4 SKIPPED) | MERGEABLE | BLOCKED | 8h |
+
+`gh pr merge --admin --squash` succeeded immediately on each. The same wedge had been observed on 8 separate PRs the day before. t3192 closes the gap.
+
+**What it does:** `_set_native_auto_merge_or_skip` now consults `_auto_merge_stuck_seconds` before deferring. When all of the following hold the helper returns 1, the caller falls through to the existing `--admin` immediate-merge path, and the PR clears within one pulse cycle of crossing the threshold:
+
+- `mergeStateStatus == "BLOCKED"`
+- `mergeable == "MERGEABLE"`
+- `reviewDecision != "CHANGES_REQUESTED"` (don't bypass real human review blocks)
+- `autoMergeRequest.enabledAt > $threshold` seconds ago (default 300s)
+- Every required check is in the `pass` or `skipping` bucket (no `pending`, `fail`, or `cancel`)
+
+When any condition fails the helper returns non-zero with no output and the t3070 deferring path runs unchanged.
+
+**Threshold override:** `AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS` (integer seconds, default 300). Raise to defer longer; lower to fall through faster.
+
+**Audit log:** stuck fallback writes `[pulse-merge] PR #N in slug: auto_merge stuck Ks (>Ts) in BLOCKED+MERGEABLE with no failing/pending required checks — falling through to immediate merge (t3192)`. The healthy defer line is unchanged: `auto_merge already set, deferring to GitHub (t3070)`. Distinguishing the two makes log-side incident triage trivial.
+
+**Why this is safe to admin-merge:** the wedge happens on PRs the maintainer/worker has already approved (auto_merge was requested) and CI has gone fully green (no failing or pending required check). The only thing GitHub is waiting on is its own stale cached state. `--admin` here is bypass-stale-state, not bypass-policy. The CHANGES_REQUESTED guard prevents the helper from firing on PRs with a real review-driven block, even if everything else looks stuck.
+
+**Test coverage:** `.agents/scripts/tests/test-pulse-merge-stuck-auto.sh` (5 cases — stuck/under-threshold/pending-CI/changes-requested/env-override). The existing `test-pulse-merge-native-auto.sh` was extended to fixture full PR state (autoMergeRequest, mergeStateStatus, mergeable, reviewDecision) so the t3070 branches still pass after the multi-field query was added.
+
 ## Webhook-Driven Auto-Merge (t3038)
 
 The 120s `pulse-merge-routine.sh` polling loop is the **backstop**. The fast path is a webhook receiver that fires `pulse-merge.sh::process_pr` within seconds of a GitHub event:
