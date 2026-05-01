@@ -751,6 +751,7 @@ _help_commands() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-db <cmd>  OpenCode SQLite maintenance (check/report/maintain/window/status/install)"
@@ -1304,6 +1305,32 @@ main() {
 	detect | scan) cmd_detect ;;
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
 	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
+	cleanup)
+		local _cleanup_sub="${1:-help}"
+		case "$_cleanup_sub" in
+		branches | remote-branches)
+			shift || true
+			_dispatch_helper "remote-branch-cleanup-helper.sh" "remote-branch-cleanup-helper.sh" "$_cleanup_sub" "$@"
+			;;
+		help | --help | -h | "")
+			echo "Usage: aidevops cleanup <branches|remote-branches> [options]"
+			echo ""
+			echo "Cleanup commands:"
+			echo "  branches          Audit stale remote branches (dry-run default)"
+			echo "  remote-branches   Alias for branches"
+			echo ""
+			echo "Options:"
+			echo "  --repo PATH       Repository path (default: current directory)"
+			echo "  --remote NAME     Remote to audit (default: origin)"
+			echo "  --apply           Delete safe candidates"
+			echo ""
+			;;
+		*)
+			print_error "Unknown cleanup subcommand: $_cleanup_sub (try branches|remote-branches|help)"
+			exit 1
+			;;
+		esac
+		;;
 	client-format) _cmd_client_format "$@" ;;
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;

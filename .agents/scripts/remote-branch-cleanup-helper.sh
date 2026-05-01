@@ -1,0 +1,272 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+# Audit and optionally delete stale remote branches for the current repository.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=./shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+
+REPO_PATH="${PWD}"
+REMOTE_NAME="origin"
+APPLY=0
+INCLUDE_CLOSED_PR=0
+SKIP_FETCH=0
+
+usage() {
+	cat <<'EOF'
+Usage: remote-branch-cleanup-helper.sh [scan] [options]
+
+Audits stale remote branches and optionally deletes only branches proven safe.
+Default mode is dry-run.
+
+Options:
+  --repo PATH           Repository path (default: current directory)
+  --remote NAME         Remote to audit (default: origin)
+  --apply, --delete     Delete safe candidates (default: dry-run)
+  --include-closed-pr   Treat closed-without-merge PR branches as safe candidates
+  --skip-fetch          Do not fetch/prune before scanning (tests/offline only)
+  -h, --help            Show this help
+
+Examples:
+  aidevops cleanup remote-branches
+  aidevops cleanup remote-branches --apply
+  aidevops cleanup branches --repo ~/Git/aidevops --remote origin
+EOF
+	return 0
+}
+
+parse_args() {
+	local arg=""
+	while [[ $# -gt 0 ]]; do
+		arg="${1:-}"
+		case "$arg" in
+		scan | remote-branches | branches)
+			shift
+			;;
+		--repo)
+			REPO_PATH="${2:-}"
+			shift 2
+			;;
+		--remote)
+			REMOTE_NAME="${2:-}"
+			shift 2
+			;;
+		--apply | --delete)
+			APPLY=1
+			shift
+			;;
+		--include-closed-pr)
+			INCLUDE_CLOSED_PR=1
+			shift
+			;;
+		--skip-fetch)
+			SKIP_FETCH=1
+			shift
+			;;
+		-h | --help | help)
+			usage
+			exit 0
+			;;
+		*)
+			print_error "Unknown argument: $arg"
+			usage
+			exit 1
+			;;
+		esac
+	done
+	return 0
+}
+
+repo_git() {
+	git -C "$REPO_PATH" "$@"
+	return $?
+}
+
+default_branch() {
+	local branch=""
+	branch=$(repo_git symbolic-ref --quiet --short "refs/remotes/${REMOTE_NAME}/HEAD" 2>/dev/null | sed "s|^${REMOTE_NAME}/||") || branch=""
+	if [[ -z "$branch" ]]; then
+		branch=$(repo_git remote show "$REMOTE_NAME" 2>/dev/null | sed -n 's/^[[:space:]]*HEAD branch: //p' | sed -n '1p') || branch=""
+	fi
+	[[ -z "$branch" ]] && branch="main"
+	printf '%s\n' "$branch"
+	return 0
+}
+
+remote_branches() {
+	repo_git for-each-ref --format='%(refname:short)' "refs/remotes/${REMOTE_NAME}" |
+		while IFS= read -r ref; do
+			[[ -z "$ref" ]] && continue
+			[[ "$ref" == "${REMOTE_NAME}/HEAD" ]] && continue
+			printf '%s\n' "${ref#"${REMOTE_NAME}"/}"
+		done
+	return 0
+}
+
+merged_remote_branches() {
+	local branch="$1"
+	repo_git branch -r --merged "${REMOTE_NAME}/${branch}" 2>/dev/null |
+		sed 's/^[*[:space:]]*//' |
+		while IFS= read -r ref; do
+			[[ -z "$ref" ]] && continue
+			[[ "$ref" == "${REMOTE_NAME}/HEAD" ]] && continue
+			[[ "$ref" != "${REMOTE_NAME}/"* ]] && continue
+			printf '%s\n' "${ref#"${REMOTE_NAME}"/}"
+		done
+	return 0
+}
+
+active_worktree_branches() {
+	repo_git worktree list --porcelain 2>/dev/null |
+		sed -n 's|^branch refs/heads/||p'
+	return 0
+}
+
+gh_pr_branches() {
+	local state="$1"
+	if [[ "${AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH:-0}" == "1" ]]; then
+		return 0
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		return 0
+	fi
+	gh pr list --repo "$(repo_slug)" --state "$state" --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
+	return 0
+}
+
+repo_slug() {
+	local url slug
+	url=$(repo_git remote get-url "$REMOTE_NAME" 2>/dev/null || true)
+	slug="$url"
+	slug="${slug#git@github.com:}"
+	slug="${slug#https://github.com/}"
+	slug="${slug%.git}"
+	printf '%s\n' "$slug"
+	return 0
+}
+
+contains_line() {
+	local needle="$1"
+	local haystack="$2"
+	[[ $'\n'"$haystack"$'\n' == *$'\n'"$needle"$'\n'* ]]
+	return $?
+}
+
+is_protected_branch() {
+	local branch="$1"
+	local default="$2"
+	case "$branch" in
+	"$default" | main | master | develop | development | staging | production | release | gh-pages)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+print_candidate() {
+	local action="$1"
+	local branch="$2"
+	local reason="$3"
+	printf '%-10s %-55s %s\n' "$action" "$branch" "$reason"
+	return 0
+}
+
+delete_branch() {
+	local branch="$1"
+	if repo_git push "$REMOTE_NAME" --delete "$branch" >/dev/null 2>&1; then
+		print_candidate "deleted" "$branch" "remote branch removed"
+	else
+		print_candidate "failed" "$branch" "git push --delete failed"
+	fi
+	return 0
+}
+
+scan_branches() {
+	if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
+		print_error "Not a git worktree: $REPO_PATH"
+		return 1
+	fi
+
+	if [[ "$SKIP_FETCH" != "1" ]]; then
+		repo_git fetch --prune "$REMOTE_NAME" >/dev/null 2>&1 || print_warning "Fetch/prune failed; continuing with local remote refs"
+	fi
+
+	local default merged active open_prs merged_prs closed_prs branch reason safe_count skip_count review_count mode skip_action dash_label
+	default=$(default_branch)
+	merged=$(merged_remote_branches "$default")
+	active=$(active_worktree_branches)
+	open_prs=$(gh_pr_branches open)
+	merged_prs=$(gh_pr_branches merged)
+	closed_prs=""
+	if [[ "$INCLUDE_CLOSED_PR" == "1" ]]; then
+		closed_prs=$(gh_pr_branches closed)
+	fi
+	safe_count=0
+	skip_count=0
+	review_count=0
+	mode="dry-run"
+	skip_action="skip"
+	dash_label="------"
+	[[ "$APPLY" == "1" ]] && mode="apply"
+
+	printf 'Remote branch cleanup audit: repo=%s remote=%s default=%s mode=%s\n' "$REPO_PATH" "$REMOTE_NAME" "$default" "$mode"
+	printf '%-10s %-55s %s\n' "action" "branch" "reason"
+	printf '%-10s %-55s %s\n' "$dash_label" "$dash_label" "$dash_label"
+
+	while IFS= read -r branch; do
+		[[ -z "$branch" ]] && continue
+		reason=""
+		if is_protected_branch "$branch" "$default"; then
+			print_candidate "$skip_action" "$branch" "protected/default branch"
+			skip_count=$((skip_count + 1))
+			continue
+		fi
+		if contains_line "$branch" "$active"; then
+			print_candidate "$skip_action" "$branch" "checked out in a local worktree"
+			skip_count=$((skip_count + 1))
+			continue
+		fi
+		if contains_line "$branch" "$open_prs"; then
+			print_candidate "$skip_action" "$branch" "open PR exists"
+			skip_count=$((skip_count + 1))
+			continue
+		fi
+		if contains_line "$branch" "$merged"; then
+			reason="merged to ${default}"
+		elif contains_line "$branch" "$merged_prs"; then
+			reason="merged PR branch"
+		elif contains_line "$branch" "$closed_prs"; then
+			reason="closed PR branch (--include-closed-pr)"
+		fi
+
+		if [[ -n "$reason" ]]; then
+			safe_count=$((safe_count + 1))
+			if [[ "$APPLY" == "1" ]]; then
+				delete_branch "$branch"
+			else
+				print_candidate "would-del" "$branch" "$reason"
+			fi
+		else
+			review_count=$((review_count + 1))
+			print_candidate "review" "$branch" "unmerged/no closed evidence"
+		fi
+	done < <(remote_branches)
+
+	printf '\nSummary: safe=%s skipped=%s review=%s\n' "$safe_count" "$skip_count" "$review_count"
+	if [[ "$APPLY" != "1" ]]; then
+		printf 'Dry-run only. Re-run with --apply to delete safe candidates.\n'
+	fi
+	return 0
+}
+
+main() {
+	parse_args "$@"
+	scan_branches
+	return $?
+}
+
+main "$@"
