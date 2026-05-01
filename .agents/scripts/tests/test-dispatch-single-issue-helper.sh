@@ -391,6 +391,34 @@ test_load_issue_meta_accepts_lowercase_open() {
 	return 0
 }
 
+test_agent_flag_parses_with_default() {
+	reset_test_state
+
+	local rc=0
+	_dsi_parse_dispatch_args 12345 owner/repo >/dev/null 2>&1 || rc=$?
+	local default_agent="$_DSI_ARG_AGENT"
+	local check1=1
+	[[ "$rc" -eq 0 && "$default_agent" == "Build+" ]] && check1=0
+	print_result "default worker agent is Build+" "$check1" \
+		"rc=$rc agent=$default_agent"
+
+	rc=0
+	_dsi_parse_dispatch_args 12345 owner/repo --agent CustomAgent >/dev/null 2>&1 || rc=$?
+	local custom_agent="$_DSI_ARG_AGENT"
+	local check2=1
+	[[ "$rc" -eq 0 && "$custom_agent" == "CustomAgent" ]] && check2=0
+	print_result "--agent overrides worker agent" "$check2" \
+		"rc=$rc agent=$custom_agent"
+
+	rc=0
+	_dsi_parse_dispatch_args 12345 owner/repo --agent --dry-run >/dev/null 2>&1 || rc=$?
+	local check3=1
+	[[ "$rc" -eq 2 ]] && check3=0
+	print_result "--agent requires a value" "$check3" "rc=$rc"
+
+	return 0
+}
+
 test_load_issue_meta_blocks_lowercase_closed() {
 	MOCK_GH_FAIL="0"
 	MOCK_GH_ISSUE_STATE="closed"
@@ -403,6 +431,15 @@ test_load_issue_meta_blocks_lowercase_closed() {
 	print_result "load issue meta blocks lowercase closed" "$check" \
 		"expected rc=1 for closed state, got rc=$rc"
 
+	return 0
+}
+
+test_launch_worker_forwards_agent() {
+	local failed=1
+	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
+		failed=0
+	fi
+	print_result "worker launch forwards --agent to headless runtime" "$failed"
 	return 0
 }
 
@@ -429,6 +466,8 @@ _run_tests() {
 	test_no_ceremony_flag_parses_correctly
 	test_load_issue_meta_accepts_lowercase_open
 	test_load_issue_meta_blocks_lowercase_closed
+	test_agent_flag_parses_with_default
+	test_launch_worker_forwards_agent
 
 	echo
 	echo "======================================"
