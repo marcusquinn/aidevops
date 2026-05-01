@@ -180,11 +180,73 @@ test_commit_and_push_syncs_remote_ahead_repo() {
 	return 0
 }
 
+# Regression: GH#22205 — when git pull --rebase conflicts during routines
+# remote sync, the helper must abort the failed rebase and skip creating the
+# scaffold commit rather than leaving the routines repo mid-rebase.
+test_commit_and_push_aborts_failed_remote_sync_rebase() {
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d)
+	local remote_repo="${tmp_dir}/remote.git"
+	local local_repo="${tmp_dir}/local"
+	local advancer_repo="${tmp_dir}/advancer"
+
+	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
+	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
+	git -C "$local_repo" checkout -b main >/dev/null 2>&1
+	git -C "$local_repo" config user.email "test@example.invalid"
+	git -C "$local_repo" config user.name "Test User"
+	printf 'base\n' >"${local_repo}/README.md"
+	git -C "$local_repo" add README.md
+	git -C "$local_repo" commit -m "initial" >/dev/null
+	git -C "$local_repo" push -u origin main >/dev/null 2>&1
+
+	git clone "$remote_repo" "$advancer_repo" >/dev/null 2>&1
+	git -C "$advancer_repo" config user.email "test@example.invalid"
+	git -C "$advancer_repo" config user.name "Test User"
+	printf 'remote-change\n' >"${advancer_repo}/README.md"
+	git -C "$advancer_repo" commit -am "remote conflicting change" >/dev/null
+	git -C "$advancer_repo" push origin main >/dev/null 2>&1
+
+	printf 'local-change\n' >"${local_repo}/README.md"
+	git -C "$local_repo" commit -am "local conflicting change" >/dev/null
+	printf 'scaffold\n' >"${local_repo}/TODO.md"
+	# shellcheck disable=SC1090  # dynamic repo-relative helper path
+	source "$INIT_ROUTINES"
+	_commit_and_push "$local_repo"
+
+	local rebase_merge_path=""
+	rebase_merge_path=$(git -C "$local_repo" rev-parse --git-path rebase-merge)
+	local rebase_apply_path=""
+	rebase_apply_path=$(git -C "$local_repo" rev-parse --git-path rebase-apply)
+	local rebase_state_present=0
+	if [[ -d "$rebase_merge_path" || -d "$rebase_apply_path" ]]; then
+		rebase_state_present=1
+	fi
+	local scaffold_commit_count=""
+	scaffold_commit_count=$(git -C "$local_repo" log --oneline --grep 'chore: scaffold aidevops-routines repo' | wc -l | tr -d ' ')
+	local scaffold_preserved=1
+	if [[ -f "${local_repo}/TODO.md" ]] && [[ "$(<"${local_repo}/TODO.md")" == "scaffold" ]]; then
+		scaffold_preserved=0
+	fi
+
+	rm -rf "$tmp_dir"
+
+	if [[ "$rebase_state_present" -eq 0 && "$scaffold_commit_count" == "0" && "$scaffold_preserved" -eq 0 ]]; then
+		print_result "_commit_and_push aborts conflicted routines remote-sync rebase (GH#22205)" 0
+		return 0
+	fi
+
+	print_result "_commit_and_push aborts conflicted routines remote-sync rebase (GH#22205)" 1 \
+		"rebase_state=${rebase_state_present} scaffold_commits=${scaffold_commit_count} scaffold_preserved=${scaffold_preserved}"
+	return 0
+}
+
 main() {
 	test_init_routines_sources_after_shared_constants
 	test_common_tolerates_readonly_colors
 	test_routines_loader_isolates_errors
 	test_commit_and_push_syncs_remote_ahead_repo
+	test_commit_and_push_aborts_failed_remote_sync_rebase
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

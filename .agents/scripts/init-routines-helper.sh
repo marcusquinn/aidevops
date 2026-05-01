@@ -516,7 +516,23 @@ _sync_with_remote_before_commit() {
 		fi
 
 		if ! git pull --rebase; then
-			return 1
+			local pull_status=1
+			local rebase_merge_path=""
+			local rebase_apply_path=""
+			rebase_merge_path=$(git rev-parse --git-path rebase-merge 2>/dev/null || true)
+			rebase_apply_path=$(git rev-parse --git-path rebase-apply 2>/dev/null || true)
+
+			if [[ -n "$rebase_merge_path" && -d "$rebase_merge_path" ]] || [[ -n "$rebase_apply_path" && -d "$rebase_apply_path" ]]; then
+				git rebase --abort >/dev/null 2>&1 || true
+			fi
+
+			if [[ "$stashed" == true ]]; then
+				if ! git stash pop >/dev/null; then
+					print_warning "Remote sync failed and scaffold changes were preserved in git stash"
+				fi
+			fi
+
+			return "$pull_status"
 		fi
 
 		if [[ "$stashed" == true ]]; then
@@ -524,6 +540,8 @@ _sync_with_remote_before_commit() {
 				return 1
 			fi
 		fi
+
+		return 0
 	)
 	return $?
 }
