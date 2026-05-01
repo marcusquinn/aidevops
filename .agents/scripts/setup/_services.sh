@@ -45,6 +45,80 @@ setup_nodejs() {
 	return 0
 }
 
+# Run a command with a portable timeout. Prefer shared timeout_sec when setup.sh
+# has sourced shared-constants.sh; fall back to GNU/BSD timeout variants and a
+# small Bash watchdog so direct unit tests of this module stay bounded too.
+_setup_opencode_timeout_cmd() {
+	local timeout_seconds="$1"
+	shift
+
+	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=5
+	[[ "$timeout_seconds" -gt 0 ]] || timeout_seconds=5
+
+	if declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$timeout_seconds" "$@"
+		return $?
+	fi
+
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$timeout_seconds" "$@"
+		return $?
+	fi
+
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$timeout_seconds" "$@"
+		return $?
+	fi
+
+	local output_file=""
+	output_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-opencode-timeout.XXXXXX" 2>/dev/null || printf '')
+	if [[ -z "$output_file" ]]; then
+		"$@"
+		return $?
+	fi
+
+	local pid=""
+	"$@" >"$output_file" 2>&1 &
+	pid=$!
+
+	local elapsed=0
+	while kill -0 "$pid" 2>/dev/null; do
+		if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			rm -f "$output_file" 2>/dev/null || true
+			return 124
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+
+	local rc=0
+	wait "$pid" || rc=$?
+	while IFS= read -r line; do
+		printf '%s\n' "$line"
+	done <"$output_file"
+	rm -f "$output_file" 2>/dev/null || true
+	return "$rc"
+}
+
+_setup_opencode_version_output() {
+	local bin="$1"
+	local version_timeout="${AIDEVOPS_OPENCODE_VERSION_TIMEOUT:-5}"
+
+	_setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
+	return $?
+}
+
+_setup_opencode_first_line() {
+	local input="$1"
+	local first_line=""
+
+	IFS= read -r first_line <<<"$input" || true
+	printf '%s\n' "$first_line"
+	return 0
+}
+
 # Validate that an opencode binary is real anomalyco/opencode (t2888, mirrors t2887 validator).
 # Returns: 0=valid, 1=wrong package, 2=missing/unrunnable.
 # Inlined (not sourced from headless-runtime-lib.sh) so this module stays self-contained
@@ -55,7 +129,7 @@ _setup_validate_opencode_binary() {
 	command -v "$bin" >/dev/null 2>&1 || return 2
 
 	local version_output
-	version_output=$("$bin" --version 2>/dev/null || echo "")
+	version_output=$(_setup_opencode_version_output "$bin" 2>/dev/null || printf '')
 	[[ -n "$version_output" ]] || return 2
 
 	# Anthropic claude CLI signature -- highest-confidence rejection
@@ -106,7 +180,7 @@ setup_opencode_cli() {
 	# Already valid -- record + exit fast.
 	if [[ $validate_rc -eq 0 ]]; then
 		local v
-		v=$("$current_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf 'unknown')")
 		print_success "OpenCode CLI: $current_bin ($v)"
 		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
 		printf '%s\n' "$current_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
@@ -116,7 +190,7 @@ setup_opencode_cli() {
 	# Diagnose what we found.
 	if [[ $validate_rc -eq 1 ]]; then
 		local wrong_version
-		wrong_version=$("$current_bin" --version 2>/dev/null | head -1 || echo "<unknown>")
+		wrong_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf '<unknown>')")
 		print_warning "OpenCode binary at '$current_bin' is the wrong package ('$wrong_version')"
 		print_info "Forcing reinstall of opencode-ai@latest to heal the bin collision (t2888)..."
 	else
@@ -138,7 +212,8 @@ setup_opencode_cli() {
 	# Install. opencode-ai@latest, global. npm install -g overwrites the
 	# bin symlink even when another package (e.g. @anthropic-ai/claude-code)
 	# previously owned the `opencode` name -- last-installed wins.
-	if "$installer" install -g opencode-ai@latest >/dev/null 2>&1; then
+	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
+	if _setup_opencode_timeout_cmd "$install_timeout" "$installer" install -g opencode-ai@latest >/dev/null 2>&1; then
 		print_success "opencode-ai installed via $installer"
 	else
 		print_warning "opencode-ai install via $installer failed"
@@ -157,7 +232,7 @@ setup_opencode_cli() {
 
 	if [[ $validate_rc -eq 0 ]]; then
 		local v
-		v=$("$current_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf 'unknown')")
 		print_success "OpenCode CLI: $current_bin ($v)"
 		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
 		printf '%s\n' "$current_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
@@ -166,7 +241,7 @@ setup_opencode_cli() {
 		# than the npm/bun bin dir. The t2887 fallback path search will pick
 		# this up at runtime, but flag it so the user knows.
 		local v
-		v=$("$current_bin" --version 2>/dev/null | head -1 || echo "<missing>")
+		v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf '<missing>')")
 		print_warning "Post-install validation still failing: '$current_bin' returns '$v'"
 		print_info "Check PATH ordering: 'which -a opencode' and ensure the npm/bun global bin dir is first"
 	fi
