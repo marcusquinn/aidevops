@@ -24,6 +24,7 @@ tools:
 - **Purpose**: Triage and review issues/PRs — interactive or pulse-automated
 - **Focus**: Validate the problem exists, evaluate if the solution is optimal
 - **When**: Before approving/merging contributions, or automatically by the pulse for `needs-maintainer-review` items
+- **Session title**: For interactive reviews, rename the session with the target first: `Issue #123: review <short topic>` or `PR #456: review <short topic>`.
 
 **Core Questions**:
 1. **Is the issue real?** — Reproducible? Bug or expected behavior?

@@ -52,7 +52,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/m
 
 Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`.
 
-**Session-Branch Tracking**: After creating a branch, call `session-rename_sync_branch` to sync session name.
+**Session-Branch Tracking**: After creating a branch for issue/PR work, title the session with the work item first (`Issue #123: succinct description` or `PR #456: succinct description`) so Tabby tabs and OpenCode search group by number. Use `session-rename_sync_branch` only when there is no issue/PR context or no meaningful title yet.
 
 **Scope Monitoring**: When work evolves significantly from branch name/purpose, offer to create a new branch, continue on current, or stash and switch.
 

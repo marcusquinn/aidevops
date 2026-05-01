@@ -29,7 +29,7 @@ Context compaction drops operational state unless written to disk. Use `/checkpo
 ## Git Workflow Detail
 
 - Before edits: run the pre-edit check from `AGENTS.md`.
-- After branch creation: check `TODO.md` for matching tasks, record `started:`, call `session-rename_sync_branch`, read `workflows/git-workflow.md`.
+- After branch creation: check `TODO.md` for matching tasks, record `started:`, set the session title as `Issue #123: succinct description` or `PR #456: succinct description` when issue/PR context exists; otherwise call `session-rename_sync_branch`. Then read `workflows/git-workflow.md`.
 
 Worktrees are preferred for parallel work:
 

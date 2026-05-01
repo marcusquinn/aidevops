@@ -462,7 +462,8 @@ Setup shortcuts -- the dispatcher has already done these for you:
   are not running. Do NOT attempt to create a worktree yourself.
 - Do NOT call aidevops-update-check.sh -- it exits immediately for headless workers.
 - Do NOT call session-rename or session-rename_sync_branch -- your session title
-  is already set to the issue title by the dispatcher.
+  is already set by the dispatcher with the issue marker first (for example,
+  `Issue #123: succinct description`).
 
 Key file paths (use these directly, do NOT search for them):
 - Full-loop workflow: .agents/scripts/commands/full-loop.md

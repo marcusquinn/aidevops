@@ -23,7 +23,7 @@ tools:
 - **Purpose**: Sync terminal tab titles with git repo/branch via OSC escape sequences
 - **Script**: `~/.aidevops/agents/scripts/terminal-title-helper.sh`
 - **Auto-sync**: Runs via `pre-edit-check.sh` on feature branches in git repos
-- **Session sync**: OpenCode session titles auto-sync in `pre-edit-check.sh`; force via `session-rename_sync_branch`
+- **Session sync**: For issue/PR work, OpenCode session titles should begin with `Issue #123:` or `PR #456:` plus a succinct description; branch auto-sync is only the fallback when no issue/PR context exists. Force branch sync via `session-rename_sync_branch`.
 
 **Commands**:
 

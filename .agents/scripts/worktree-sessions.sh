@@ -412,7 +412,7 @@ cmd_list() {
 	echo "  2. Open OpenCode (it will show recent sessions)"
 	echo "  3. Use Ctrl+P to browse sessions by title"
 	echo ""
-	echo -e "${DIM}Tip: Session names sync with branch names when using session-rename_sync_branch${NC}"
+	echo -e "${DIM}Tip: For issue/PR work, title sessions 'Issue #123: ...' or 'PR #456: ...'; branch-name sync is the fallback.${NC}"
 
 	return 0
 }
@@ -552,8 +552,9 @@ HOW MATCHING WORKS
   - Low (<40): Possible match
 
 TIPS
-  - Use session-rename_sync_branch tool after creating branches
-  - Session titles that match branch names are easier to find
+  - For issue/PR work, title sessions with the work item first: "Issue #123: ..." or "PR #456: ..."
+  - Use session-rename_sync_branch after creating branches only when there is no issue/PR context
+  - Session titles that include the issue/PR number or branch name are easier to find
   - OpenCode stores sessions per-project, not per-worktree
 
 EOF

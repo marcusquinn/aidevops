@@ -105,11 +105,11 @@ function syncSessionWithBranch(
 
 export default tool({
   description:
-    "Rename the current session to a new title. Use this after creating a git branch to sync the session name with the branch name.",
+    "Rename the current session to a new title. For issue/PR work, start titles with the issue or PR marker (for example, 'Issue #123: concise summary' or 'PR #456: concise summary') so tabs and session search group by the work item.",
   args: {
     title: tool.schema
       .string()
-      .describe("New title for the session (e.g., branch name like 'feature/my-feature')"),
+      .describe("New title for the session (prefer 'Issue #123: concise summary' or 'PR #456: concise summary' when working on an issue/PR; otherwise use a short branch/task summary)"),
   },
   async execute(args, context) {
     const { sessionID } = context
@@ -132,7 +132,7 @@ export default tool({
 // repo on main must not clobber meaningful titles (t2252).
 export const sync_branch = tool({
   description:
-    "Rename the current session to match the current git branch name. Call this after creating or switching branches.",
+    "Rename the current session to match the current git branch name. Call this after creating or switching branches only when no issue/PR-prefixed title is already set; issue/PR work should keep 'Issue #123: ...' or 'PR #456: ...' at the beginning.",
   args: {},
   async execute(_args, context) {
     const { sessionID } = context

@@ -79,6 +79,8 @@ write_command "review-issue-pr" \
 
 Review this issue or PR: $ARGUMENTS
 
+Set the session title with the target first: "Issue #123: review <short topic>" or "PR #456: review <short topic>".
+
 **Usage:**
 - `/review-issue-pr 123` - Review issue or PR by number
 - `/review-issue-pr https://github.com/owner/repo/issues/123` - Review by URL

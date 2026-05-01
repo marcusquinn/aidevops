@@ -120,7 +120,7 @@ LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helpe
 
 ### Session Naming
 
-After creating a worktree, sync the session name via the `session-rename_sync_branch` MCP tool.
+After creating a worktree for issue/PR work, set the session title with the work item first (`Issue #123: succinct description` or `PR #456: succinct description`). If there is no issue/PR context, sync the session name via the `session-rename_sync_branch` MCP tool.
 
 ## Troubleshooting
 

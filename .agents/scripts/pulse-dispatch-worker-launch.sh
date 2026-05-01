@@ -669,6 +669,39 @@ _dlw_spawn_lifecycle_observer() {
 #   $11 - worker_worktree_branch (may be empty)
 # Stdout: worker PID
 #######################################
+_dlw_build_worker_title() {
+	local issue_number="$1"
+	local issue_title="$2"
+	local dispatch_title="$3"
+	local title="${issue_title:-${dispatch_title}}"
+
+	if [[ -z "$issue_number" ]]; then
+		printf '%s' "$title"
+		return 0
+	fi
+
+	case "$title" in
+		"Issue #${issue_number}" | "Issue #${issue_number}: "* | "Issue #${issue_number} - "* | \
+			"#${issue_number}" | "#${issue_number}: "* | "#${issue_number} - "* | \
+			"GH#${issue_number}" | "GH#${issue_number}: "* | "GH#${issue_number} - "*)
+			printf '%s' "$title"
+			return 0
+			;;
+	esac
+
+	if [[ -z "$title" ]]; then
+		printf 'Issue #%s' "$issue_number"
+		return 0
+	fi
+
+	printf 'Issue #%s: %s' "$issue_number" "$title"
+	return 0
+}
+
+#######################################
+# Launch a worker process detached from the pulse process group.
+# Stdout: worker PID
+#######################################
 _dlw_nohup_launch() {
 	local issue_number="$1"
 	local dispatch_title="$2"
@@ -682,9 +715,12 @@ _dlw_nohup_launch() {
 	local worker_worktree_path="${10}"
 	local worker_worktree_branch="${11}"
 
-	# Use issue title as session title for searchable history (not generic "Issue #NNN").
+	# Use issue title as session title for searchable history, but keep the
+	# issue marker at the beginning so Tabby tabs and OpenCode session search
+	# group worker sessions by issue number.
 	# Workers no longer need to call session-rename — the title is set at dispatch.
-	local worker_title="${issue_title:-${dispatch_title}}"
+	local worker_title
+	worker_title=$(_dlw_build_worker_title "$issue_number" "$issue_title" "$dispatch_title")
 
 	# t2758: Pre-warm OpenCode DB before launch (extracted to helper)
 	_dlw_prewarm_opencode_db "$worker_log"

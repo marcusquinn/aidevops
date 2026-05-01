@@ -79,7 +79,7 @@ wt switch -c {type}/{name}
 ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}
 ```
 
-After creating, call `session-rename_sync_branch`. Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
+After creating, set the session title with the work item first: `Issue #123: succinct description` or `PR #456: succinct description`. If there is no issue/PR context, call `session-rename_sync_branch`. Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 ## Source vs Deployed Copy
 

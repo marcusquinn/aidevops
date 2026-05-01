@@ -58,7 +58,7 @@ worktree-helper.sh clean                            # Batch cleanup merged branc
 
 **Localdev (t1224.8):** Worktree creation auto-sets branch-specific subdomain routing (`https://feature-auth.myapp.local`). Removal auto-cleans the route.
 
-**Session recovery:** Run `session-rename_sync_branch` after creating branches. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
+**Session recovery:** After creating branches, title issue/PR sessions as `Issue #123: succinct description` or `PR #456: succinct description`; otherwise run `session-rename_sync_branch`. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
 
 ```bash
 worktree-sessions.sh list   # List worktrees with matching sessions

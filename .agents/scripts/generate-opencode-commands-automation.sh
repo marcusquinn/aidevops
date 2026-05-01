@@ -36,7 +36,7 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
-**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task` which sets `"t042: description"`). If no task-prefixed title exists, use `session-rename` with a concise version of the prompt (truncate to ~60 chars if needed).
+**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task`). If the prompt references issue/PR work, use `session-rename` with the work item first (`"Issue #123: concise summary"` or `"PR #456: concise summary"`). Otherwise use a concise version of the prompt (truncate to ~60 chars if needed).
 
 **Usage:**
 ```bash
@@ -113,7 +113,7 @@ Task ID: $ARGUMENTS
 **Workflow:**
 1. Find task in TODO.md by ID (e.g., t042)
 2. Extract ralph metadata (promise, verify command, max iterations)
-3. **Set session title** using `session-rename` tool with format: `"t042: Task description here"`
+3. **Set session title** using `session-rename` tool with format: `"Issue #123 t042: Task description here"` when the task has a GitHub issue ref, otherwise `"t042: Task description here"`
 4. Start Ralph loop with extracted parameters
 
 **Task format in TODO.md:**
@@ -137,7 +137,7 @@ Task ID: $ARGUMENTS
 This will:
 1. Read TODO.md and find task t042
 2. Extract the ralph-promise, ralph-verify, ralph-max values
-3. Set session title to `"t042: {task description}"` using `session-rename` tool
+3. Set session title to `"Issue #123 t042: {task description}"` when the task has a GitHub issue ref, otherwise `"t042: {task description}"`, using the `session-rename` tool
 4. Start: `/ralph-loop "{task description}" --completion-promise "{promise}" --max-iterations {max}`
 
 **Requirements:**

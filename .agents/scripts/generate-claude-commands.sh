@@ -780,7 +780,7 @@ Task ID: $ARGUMENTS
 **Workflow:**
 1. Find task in TODO.md by ID (e.g., t042)
 2. Extract ralph metadata (promise, verify command, max iterations)
-3. Set session title with format: "t042: Task description here"
+3. Set session title with format: "Issue #123 t042: Task description here" when the task has a GitHub issue ref, otherwise "t042: Task description here"
 4. Start Ralph loop with extracted parameters
 
 **Usage:** `/ralph-task t042`' || return 1

@@ -463,6 +463,25 @@ test_review_issue_pr_session_key_fallback_dedup() {
 	return 0
 }
 
+test_worker_title_prefixes_issue_number() {
+	local title
+	title=$(_dlw_build_worker_title "21994" "t3237: standardize session title guidance" "Issue #21994")
+
+	if [[ "$title" != "Issue #21994: t3237: standardize session title guidance" ]]; then
+		print_result "worker session title prefixes issue number" 1 "Expected issue-prefixed title, got '${title}'"
+		return 0
+	fi
+
+	title=$(_dlw_build_worker_title "21994" "Issue #21994: existing prefix" "fallback")
+	if [[ "$title" != "Issue #21994: existing prefix" ]]; then
+		print_result "worker session title prefixes issue number" 1 "Expected existing prefix to be preserved, got '${title}'"
+		return 0
+	fi
+
+	print_result "worker session title prefixes issue number" 0
+	return 0
+}
+
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -1160,6 +1179,7 @@ main() {
 	test_deduplicates_chain_but_keeps_standalone_opencode_binary
 	test_counts_review_issue_pr_workers
 	test_review_issue_pr_session_key_fallback_dedup
+	test_worker_title_prefixes_issue_number
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 	test_dispatch_with_dedup_blocks_when_duplicate
 	test_dispatch_with_dedup_fails_closed_when_issue_metadata_missing
