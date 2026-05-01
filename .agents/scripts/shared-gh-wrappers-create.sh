@@ -173,6 +173,7 @@ _gh_ci_prepare_todo_labels() {
 }
 
 gh_create_issue() {
+	gh_record_call graphql gh_create_issue 2>/dev/null || true
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh issue create" "$_GH_EDIT_REJECTION_REASON" "$@"
@@ -451,6 +452,7 @@ _gh_auto_link_sub_issue() {
 }
 
 gh_create_pr() {
+	gh_record_call graphql gh_create_pr 2>/dev/null || true
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh pr create" "$_GH_EDIT_REJECTION_REASON" "$@"
@@ -526,6 +528,7 @@ _gh_recover_pr_if_exists() {
 # <!-- aidevops:sig --> marker, so callers that build their own footer
 # are not double-signed.
 gh_issue_comment() {
+	gh_record_call graphql gh_issue_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh issue comment "$@"
@@ -539,6 +542,7 @@ gh_issue_comment() {
 }
 
 gh_pr_comment() {
+	gh_record_call graphql gh_pr_comment 2>/dev/null || true
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh pr comment "$@"

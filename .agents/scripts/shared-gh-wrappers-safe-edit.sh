@@ -216,6 +216,7 @@ _gh_audit_record_op() {
 # Returns 1 with stderr message on validation failure.
 #######################################
 gh_issue_edit_safe() {
+	gh_record_call graphql gh_issue_edit_safe 2>/dev/null || true
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh issue edit" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
@@ -245,6 +246,7 @@ gh_issue_edit_safe() {
 # Returns 1 with stderr message on validation failure.
 #######################################
 gh_pr_edit_safe() {
+	gh_record_call graphql gh_pr_edit_safe 2>/dev/null || true
 	if ! _gh_validate_edit_args "$@"; then
 		_gh_edit_audit_rejection "gh pr edit" "$_GH_EDIT_REJECTION_REASON" "$@"
 		return 1
@@ -268,6 +270,7 @@ gh_pr_edit_safe() {
 # Returns the exit code of the underlying gh command.
 #######################################
 gh_issue_close_safe() {
+	gh_record_call graphql gh_issue_close_safe 2>/dev/null || true
 	local _num _repo _before _after
 	_num="$(_gh_extract_number_from_args "$@")"
 	_repo="$(_gh_extract_repo_from_args "$@")"
@@ -287,6 +290,7 @@ gh_issue_close_safe() {
 # Returns the exit code of the underlying gh command.
 #######################################
 gh_issue_reopen_safe() {
+	gh_record_call graphql gh_issue_reopen_safe 2>/dev/null || true
 	local _num _repo _before _after
 	_num="$(_gh_extract_number_from_args "$@")"
 	_repo="$(_gh_extract_repo_from_args "$@")"
@@ -306,6 +310,7 @@ gh_issue_reopen_safe() {
 # Returns the exit code of the underlying gh command.
 #######################################
 gh_pr_close_safe() {
+	gh_record_call graphql gh_pr_close_safe 2>/dev/null || true
 	local _num _repo _before _after
 	_num="$(_gh_extract_number_from_args "$@")"
 	_repo="$(_gh_extract_repo_from_args "$@")"
@@ -325,6 +330,7 @@ gh_pr_close_safe() {
 # Returns the exit code of the underlying gh command.
 #######################################
 gh_pr_merge_safe() {
+	gh_record_call graphql gh_pr_merge_safe 2>/dev/null || true
 	local _num _repo _before _after
 	_num="$(_gh_extract_number_from_args "$@")"
 	_repo="$(_gh_extract_repo_from_args "$@")"

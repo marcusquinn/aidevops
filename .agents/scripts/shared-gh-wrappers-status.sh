@@ -127,6 +127,7 @@ ensure_status_labels_exist() {
 #       --add-label "needs-maintainer-review"
 #######################################
 set_issue_status() {
+	gh_record_call graphql set_issue_status 2>/dev/null || true
 	local issue_num="$1"
 	local repo_slug="$2"
 	local new_status="$3"
@@ -195,6 +196,7 @@ set_issue_status() {
 # when both paths ran).
 #######################################
 gh_issue_view() {
+	gh_record_call graphql gh_issue_view 2>/dev/null || true
 	local _first_num="${1:-}"
 	_gh_with_timeout read gh issue view "$@"
 	local rc=$?
@@ -221,6 +223,7 @@ gh_issue_view() {
 # when both paths ran).
 #######################################
 gh_pr_list() {
+	gh_record_call graphql gh_pr_list 2>/dev/null || true
 	_gh_with_timeout read gh pr list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
@@ -254,6 +257,7 @@ gh_pr_list() {
 # when both paths ran).
 #######################################
 gh_issue_list() {
+	gh_record_call graphql gh_issue_list 2>/dev/null || true
 	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
