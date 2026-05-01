@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # worker-activity-watchdog.sh — Standalone activity watchdog for headless workers (GH#17648)
 #
-# Monitors a worker's output file for growth. Kills the worker if output
-# stalls, indicating a dropped API stream or hung runtime.
+# Monitors a worker's output file for growth. Treats timing thresholds as
+# recovery backstops: kills only when there is no evidence of live work, an
+# explicit provider failure is visible, or the hard elapsed cap is reached.
 #
 # This script runs as an INDEPENDENT process (launched via nohup) so it
 # survives the worker subshell's lifecycle changes. The previous design
@@ -13,12 +14,14 @@
 #
 # Two-phase monitoring:
 #   Phase 1 (fast, 0-30s): Any output at all. Zero bytes = dead runtime.
-#   Phase 2 (continuous):   File growth. No growth for stall_timeout = stalled.
+#   Phase 2 (continuous):   File growth. No growth for stall_timeout triggers
+#                            classification (provider failure, CI wait,
+#                            CPU-active, or no-progress) before any kill.
 #
 # On stall:
 #   - Writes WATCHDOG_KILL marker to output file
 #   - Creates .watchdog_killed sentinel (parent reads this)
-#   - Kills worker process tree (TERM, then KILL after 2s)
+#   - Kills worker process tree (TERM, then KILL after 10s)
 #   - Writes exit code 124 to exit_code_file
 #   - Posts CLAIM_RELEASED on GitHub issue (if session_key provided)
 #
@@ -31,7 +34,9 @@
 #   --exit-code-file PATH     File to write exit code 124 into
 #   --session-key KEY         Session key for claim release (optional)
 #   --repo-slug OWNER/REPO    GitHub repo slug for claim release (optional)
-#   --stall-timeout SECS      Seconds without growth before kill (default: 300)
+#   --stall-timeout SECS      Seconds without growth before recovery action
+#                             (default: 600). CPU-active and CI-wait states
+#                             defer the kill until the hard backstop.
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
 #   --hard-kill-seconds SECS  Total elapsed seconds before forced hard-kill on
@@ -310,6 +315,24 @@ _get_output_size() {
 }
 
 #######################################
+# Return whether the output file contains a known rate-limit/provider-failure marker.
+# Returns: 0 if a marker is present, 1 otherwise.
+#######################################
+_output_has_provider_rate_limit() {
+	[[ -f "$OUTPUT_FILE" ]] || return 1
+	grep -Eqi 'rate[ -]?limit|too many requests|http[[:space:]]*429|status[=: ][[:space:]]*429|quota exceeded|overloaded_error|provider.*(failed|unavailable)' "$OUTPUT_FILE" 2>/dev/null
+}
+
+#######################################
+# Return whether the output file shows the worker is intentionally waiting on CI.
+# Returns: 0 if a CI-wait marker is present, 1 otherwise.
+#######################################
+_output_has_ci_wait() {
+	[[ -f "$OUTPUT_FILE" ]] || return 1
+	grep -Eqi 'gh pr checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$OUTPUT_FILE" 2>/dev/null
+}
+
+#######################################
 # Push any local-only WIP commits to origin before killing the worker.
 # Best-effort, fail-open — never blocks the kill sequence.
 #
@@ -382,6 +405,7 @@ _kill_worker() {
 	case "$reason" in
 	phase1:*) reason_class="phase1_zero_output" ;;
 	hard_kill:*) reason_class="hard_kill_stall" ;;
+	provider_rate_limit:*) reason_class="provider_rate_limit" ;;
 	stall:*) reason_class="no_output_stall" ;;
 	*) reason_class="other" ;;
 	esac
@@ -541,9 +565,10 @@ _monitor() {
 			continue
 		fi
 
-		# Phase 2: continuous growth monitoring
+		# Phase 2: continuous growth monitoring. Output growth is the cheapest
+		# live-work signal and therefore always resets the stall counter.
 		if [[ "$current_size" -gt "$last_size" ]]; then
-			# File is growing — worker is alive
+			# File is growing — worker is output-active.
 			last_size="$current_size"
 			stall_seconds=0
 		else
@@ -570,6 +595,27 @@ _monitor() {
 				return 0
 			fi
 
+			# Explicit provider failures are not live-work evidence. Rotate/recover
+			# promptly instead of letting a rate-limited process hold a worker slot.
+			if _output_has_provider_rate_limit; then
+				_kill_worker "provider_rate_limit: provider/rate-limit marker visible after ${stall_seconds}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)"
+				return 0
+			fi
+
+			# CI/review waits are intentionally long-lived and often quiet. Defer
+			# these stalls until the hard-kill backstop rather than killing a worker
+			# that is waiting for external checks to settle.
+			if _output_has_ci_wait; then
+				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
+				printf '[lifecycle] worker_stall_deferred pid=%s reason=ci_wait stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+					"$WORKER_PID" "$stall_seconds" "$deferred_stall_seconds" \
+					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					>>"$LIFECYCLE_LOG" 2>/dev/null || true
+				stall_seconds=0
+				sleep "$POLL_INTERVAL"
+				continue
+			fi
+
 			# t3056 / GH#21781: Semantic stall check — before killing,
 			# check if the worker's process tree has CPU activity. Workers
 			# doing API roundtrips, shellcheck runs, or large file reads
@@ -587,7 +633,7 @@ _monitor() {
 				# at 1500s remained as a real cap). Format aligned with the
 				# `[lifecycle] worker_killed` line emitted by _kill_worker so
 				# Phase 2 aggregation can join defer events alongside kills.
-				printf '[lifecycle] worker_stall_deferred pid=%s cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+				printf '[lifecycle] worker_stall_deferred pid=%s reason=cpu_active cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
 					"$WORKER_PID" "$tree_cpu" "$stall_seconds" \
 					"$deferred_stall_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 					>>"$LIFECYCLE_LOG" 2>/dev/null || true
