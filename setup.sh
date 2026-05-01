@@ -1517,6 +1517,7 @@ _setup_run_non_interactive() {
 		fi
 	fi
 
+	_time_step "protect_current_setup_worktree" protect_current_setup_worktree
 	_time_step "verify_location" verify_location
 	_time_step "check_requirements" check_requirements
 	# Run quality tool detection in non-interactive mode too (warn-only path).

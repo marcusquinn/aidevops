@@ -50,6 +50,17 @@ print_error() {
 	return 0
 }
 
+REGISTERED_WORKTREE=""
+REGISTERED_BRANCH=""
+
+register_worktree() {
+	local wt_path="$1"
+	local branch="$2"
+	REGISTERED_WORKTREE="$wt_path"
+	REGISTERED_BRANCH="$branch"
+	return 0
+}
+
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
@@ -84,6 +95,17 @@ jq -n \
 source "$MIGRATIONS_MODULE" >/dev/null 2>&1
 
 cd "$CURRENT_SUBDIR" || fail "enter current worktree subdir"
+INSTALL_DIR="$CURRENT_SUBDIR" protect_current_setup_worktree || fail "protect current setup worktree"
+
+
+CURRENT_WT_PHYSICAL=$(cd "$CURRENT_WT" && pwd -P)
+if [[ "$REGISTERED_WORKTREE" != "$CURRENT_WT_PHYSICAL" ]]; then
+	fail "current setup worktree ownership is registered"
+fi
+if [[ "$REGISTERED_BRANCH" != "feature/current" ]]; then
+	fail "current setup worktree branch is registered"
+fi
+
 cleanup_worktree_entries_in_repos_json || fail "run worktree repos cleanup"
 
 if [[ ! -d "$CURRENT_WT" ]]; then
