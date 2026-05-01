@@ -90,18 +90,31 @@ phase_dedup() {
 	[[ "$quiet" != "true" ]] && log_info "Phase 1: Deduplication..."
 
 	local output
+	local dedup_status=0
 	if [[ "$dry_run" == "true" ]]; then
-		output=$("${SCRIPT_DIR}/memory-helper.sh" dedup --dry-run 2>&1) || true
+		output=$("${SCRIPT_DIR}/memory-helper.sh" dedup --dry-run 2>&1) || dedup_status=$?
 	else
-		output=$("${SCRIPT_DIR}/memory-helper.sh" dedup 2>&1) || true
+		output=$("${SCRIPT_DIR}/memory-helper.sh" dedup 2>&1) || dedup_status=$?
+	fi
+
+	if [[ "$dedup_status" -ne 0 ]]; then
+		log_error "Dedup phase failed (exit $dedup_status)"
+		printf '%s\n' "$output" >&2
+		return 1
 	fi
 
 	# Extract count from output
 	local removed=0
-	if echo "$output" | grep -q "Removed"; then
-		removed=$(echo "$output" | grep -oE 'Removed [0-9]+' | grep -oE '[0-9]+' || echo "0")
-	elif echo "$output" | grep -q "Would remove"; then
-		removed=$(echo "$output" | grep -oE 'Would remove [0-9]+' | grep -oE '[0-9]+' || echo "0")
+	if [[ "$output" =~ Removed[[:space:]]+([0-9]+)[[:space:]]+duplicates ]]; then
+		removed="${BASH_REMATCH[1]}"
+	elif [[ "$output" =~ Would[[:space:]]+remove[[:space:]]+([0-9]+)[[:space:]]+duplicates ]]; then
+		removed="${BASH_REMATCH[1]}"
+	elif [[ "$output" =~ No[[:space:]]+duplicates[[:space:]]+found ]]; then
+		removed=0
+	else
+		log_error "Unable to parse dedup count from memory-helper.sh output"
+		printf '%s\n' "$output" >&2
+		return 1
 	fi
 
 	[[ "$quiet" != "true" ]] && {
