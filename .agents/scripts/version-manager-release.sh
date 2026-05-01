@@ -201,6 +201,13 @@ create_github_release() {
 			print_info "To view the existing release: gh release view $tag_name"
 			return 0
 		fi
+		local rest_slug=""
+		rest_slug=$(_version_manager_repo_slug)
+		if _github_release_rest_view "$rest_slug" "$tag_name"; then
+			print_warning "GitHub release view failed, but REST confirms $tag_name already exists — skipping creation"
+			print_info "REST endpoint verified: repos/${rest_slug}/releases/tags/${tag_name}"
+			return 0
+		fi
 
 		# Create GitHub release
 		if gh release create "$tag_name" \

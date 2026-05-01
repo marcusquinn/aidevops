@@ -99,7 +99,7 @@ rm -f "$FAKE_GH_LOG" "$FAKE_GH_RELEASE_MARKER"
 export FAKE_REST_VIEW_SUCCEEDS=1
 rc=0
 output=$(create_github_release '1.2.4' 2>&1) || rc=$?
-if [[ "$rc" -eq 0 && "$output" == *"Partial release recovered"* ]]; then
+if [[ "$rc" -eq 0 && "$output" == *"REST confirms v1.2.4 already exists"* ]]; then
 	print_result 'REST view recovers an already-created partial release' 0
 else
 	print_result 'REST view recovers an already-created partial release' 1 "rc=$rc output=$output"
