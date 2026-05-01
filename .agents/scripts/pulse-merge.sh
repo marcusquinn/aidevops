@@ -610,6 +610,17 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
+	# Dry-run must stop before every write side effect. The standalone merge
+	# routine advertises DRY_RUN=1 as no-side-effects, but the historical path
+	# continued into auto-approval, native auto-merge, admin merge, closing
+	# comments, and issue closure. Keep all read-only eligibility checks above
+	# so dry-run still proves whether the PR would pass gates, then return before
+	# any GitHub write.
+	if [[ "${DRY_RUN:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] DRY-RUN: would merge PR #${pr_number} in ${repo_slug} (linked_issue=#${linked_issue:-none})" >>"$LOGFILE"
+		return 0
+	fi
+
 	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
 
