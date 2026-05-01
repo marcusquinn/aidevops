@@ -3854,3 +3854,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3404 Enforce public repo PR gating in aidevops setup and security audits #auto-dispatch #bug #security ref:GH#22195
 
 - [ ] t3406 Fix setup_routines non-fast-forward push handling #auto-dispatch #bug #framework ref:GH#22199
+
+- [ ] t3407 Add stale remote branch cleanup routing #auto-dispatch #enhancement ref:GH#22202
