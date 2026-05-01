@@ -1111,7 +1111,7 @@ _fetch_issue_comments() {
 		echo "[]"
 		return 0
 	fi
-	local owner repo
+	local owner="" repo=""
 	owner="${repo_slug%%/*}"
 	repo="${repo_slug##*/}"
 	local comments_json
@@ -1135,7 +1135,7 @@ _fetch_issue_linked_prs() {
 	if ! command -v gh >/dev/null 2>&1; then
 		return 0
 	fi
-	local owner repo
+	local owner="" repo=""
 	owner="${repo_slug%%/*}"
 	repo="${repo_slug##*/}"
 
@@ -1195,13 +1195,13 @@ _render_issue_lifecycle_comments() {
 		printf '  (no comments found)\n\n'
 		return 0
 	fi
-	local comment_total lc_count i
+	local comment_total="" lc_count=0 i=0
 	comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
 	[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
 	lc_count=0
 	i=0
 	while [[ "$i" -lt "$comment_total" ]]; do
-		local comment_item ts author body excerpt
+		local comment_item="" ts="" author="" body="" excerpt=""
 		comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
 		ts=$(_jq_field "$comment_item" ".created_at" "")
 		author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
@@ -1228,7 +1228,7 @@ _render_issue_linked_prs() {
 	while IFS= read -r pr_num; do
 		[[ -z "$pr_num" ]] && continue
 		pr_count=$((pr_count + 1))
-		local pr_json pr_title pr_state pr_head pr_merged_at
+		local pr_json="" pr_title="" pr_state="" pr_head="" pr_merged_at=""
 		pr_json=$(_fetch_pr_metadata "$pr_num" "$repo_slug")
 		pr_title=$(_jq_field "$pr_json" "$_IQ_TITLE" "")
 		pr_state=$(_jq_field "$pr_json" "$_IQ_STATE" "$_UNKNOWN")
@@ -1237,14 +1237,14 @@ _render_issue_linked_prs() {
 		printf '  PR #%s  %s  %s\n' "$pr_num" "$pr_state" "${pr_title:-(no title)}"
 		[[ -n "$pr_head" ]] && printf '    Branch: %s\n' "$pr_head"
 		[[ -n "$pr_merged_at" ]] && printf '    Merged: %s\n' "$pr_merged_at"
-		local pr_log_lines event_count
+		local pr_log_lines="" event_count=0
 		pr_log_lines=$(_collect_pr_log_lines "$pr_num" "$logfile" "$logdir")
 		event_count=0
 		if [[ -n "$pr_log_lines" ]]; then
 			while IFS= read -r log_line; do
 				[[ -z "$log_line" ]] && continue
 				event_count=$((event_count + 1))
-				local ts classification rule_id script_name line_range description
+				local ts="" classification="" rule_id="" script_name="" line_range="" description=""
 				ts=$(_extract_timestamp "$log_line")
 				classification=$(_classify_log_line "$log_line")
 				IFS='|' read -r rule_id script_name line_range description <<< "$classification"
@@ -1268,7 +1268,7 @@ _render_issue_text() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
 	local pr_numbers="$5" logfile="$6" logdir="$7" verbose="$8"
 
-	local title state created_at closed_at labels assignees
+	local title="" state="" created_at="" closed_at="" labels="" assignees=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
 	state=$(_jq_field "$issue_json" "$_IQ_STATE" "$_UNKNOWN")
 	created_at=$(_jq_field "$issue_json" "$_IQ_CREATED" "")
@@ -1295,7 +1295,7 @@ _render_issue_json() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
 	local pr_numbers="$5" logfile="$6" logdir="$7"
 
-	local title state created_at
+	local title="" state="" created_at=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
 	state=$(_jq_field "$issue_json" "$_IQ_STATE" "$_UNKNOWN")
 	created_at=$(_jq_field "$issue_json" "$_IQ_CREATED" "")
@@ -1310,12 +1310,12 @@ _render_issue_json() {
 	printf '  "lifecycle_comments": [\n'
 	local lc_first=1
 	if command -v jq >/dev/null 2>&1 && [[ "$comments_json" != "[]" && -n "$comments_json" ]]; then
-		local comment_total i
+		local comment_total="" i=0
 		comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
 		[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
 		i=0
 		while [[ "$i" -lt "$comment_total" ]]; do
-			local comment_item ts author body
+			local comment_item="" ts="" author="" body=""
 			comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
 			ts=$(_jq_field "$comment_item" ".created_at" "")
 			author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
@@ -1337,13 +1337,13 @@ _render_issue_json() {
 	local pr_first=1
 	while IFS= read -r pr_num; do
 		[[ -z "$pr_num" ]] && continue
-		local pr_json pr_title pr_state pr_head pr_merged_at
+		local pr_json="" pr_title="" pr_state="" pr_head="" pr_merged_at=""
 		pr_json=$(_fetch_pr_metadata "$pr_num" "$repo_slug")
 		pr_title=$(_jq_field "$pr_json" "$_IQ_TITLE" "")
 		pr_state=$(_jq_field "$pr_json" "$_IQ_STATE" "$_UNKNOWN")
 		pr_head=$(_jq_field "$pr_json" ".headRefName" "")
 		pr_merged_at=$(_jq_field "$pr_json" "$_IQ_MERGED" "")
-		local pr_log_lines pr_event_count raw_count
+		local pr_log_lines="" pr_event_count=0 raw_count=""
 		pr_log_lines=$(_collect_pr_log_lines "$pr_num" "$logfile" "$logdir")
 		pr_event_count=0
 		if [[ -n "$pr_log_lines" ]]; then
@@ -1364,11 +1364,11 @@ _render_issue_json() {
 cmd_issue() {
 	_cmd_issue_parse_args "$@" || return 1
 
-	local logfile logdir
+	local logfile="" logdir=""
 	logfile=$(_resolve_logfile "")
 	logdir=$(_resolve_logdir)
 
-	local issue_json comments_json pr_numbers
+	local issue_json="" comments_json="" pr_numbers=""
 	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
