@@ -64,7 +64,20 @@ _preflight_cleanup_and_ledger() {
 		# Fallback: synchronous with short timeout (old GH#18979 behaviour)
 		run_stage_with_timeout "cleanup_worktrees" 60 cleanup_worktrees || true
 	fi
-	run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
+	# GH#21997: Stash cleanup is moved to an async background job so slow
+	# stash auditing (including gh API calls inside stash-audit-helper.sh) cannot
+	# stall pulse preflight before early dispatch. The helper enforces a
+	# single-runner lock and cadence gate (CLEANUP_STASHES_ASYNC_CADENCE_MIN,
+	# default 10 min). Progress: ~/.aidevops/logs/cleanup_stashes.*
+	local _cleanup_stashes_async_helper="${SCRIPT_DIR}/cleanup-stashes-async-helper.sh"
+	if [[ -x "$_cleanup_stashes_async_helper" ]]; then
+		nohup "$_cleanup_stashes_async_helper" \
+			>>"${HOME}/.aidevops/logs/cleanup_stashes.log" 2>&1 &
+		disown $! 2>/dev/null || true
+	else
+		# Fallback: synchronous with the standard pre-run stage timeout.
+		run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
+	fi
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.
 	# Concurrent workers hit SQLITE_BUSY on a bloated DB (busy_timeout=0).

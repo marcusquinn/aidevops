@@ -802,7 +802,9 @@ cleanup_worktrees() {
 # Clean up safe-to-drop stashes across ALL managed repos (t1417)
 #
 # Iterates repos.json (.initialized_repos[]) and runs
-# stash-audit-helper.sh auto-clean in each repo directory.
+# stash-audit-helper.sh auto-clean in each repo directory. Pulse preflight calls
+# this via cleanup-stashes-async-helper.sh so slow stash audits cannot block
+# early dispatch (GH#21997); direct callers remain synchronous.
 # Only drops stashes whose content is already in HEAD — safe
 # and deterministic, no judgment needed.
 #
