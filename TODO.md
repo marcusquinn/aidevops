@@ -3857,4 +3857,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3407 Add stale remote branch cleanup routing #auto-dispatch #enhancement ref:GH#22202
 
-- [ ] t3408 Fix routines sync rebase-conflict cleanup #auto-dispatch #bug #framework ref:GH#22205
+- [x] t3408 Fix routines sync rebase-conflict cleanup #auto-dispatch #bug #framework ref:GH#22205 pr:#22206 completed:2026-05-01
