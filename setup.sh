@@ -1192,18 +1192,50 @@ _setup_noninteractive_signal_exit() {
 	exit "$exit_code"
 }
 
+# Compute how many seconds a lock owner PID has been running.
+# Uses the lock's started_at_epoch file (most accurate) falling back to
+# ps etimes (for locks created before started_at_epoch was introduced).
+# Prints the age in seconds on stdout; prints 0 when unknown.
+_setup_lock_owner_age() {
+	local lock_dir="$1"
+	local owner_pid="$2"
+	local _start_epoch="" _now_epoch="" _age_tmp=""
+	if [[ -r "$lock_dir/started_at_epoch" ]]; then
+		_start_epoch=$(tr -d '[:space:]' <"$lock_dir/started_at_epoch" 2>/dev/null || true)
+		_now_epoch=$(date +%s 2>/dev/null || printf '0')
+		if [[ "$_start_epoch" =~ ^[0-9]+$ && "$_now_epoch" =~ ^[0-9]+$ && "$_now_epoch" -ge "$_start_epoch" ]]; then
+			printf '%s' "$((_now_epoch - _start_epoch))"
+			return 0
+		fi
+	fi
+	# Fallback: ps etimes (seconds elapsed since process start).
+	_age_tmp=$(ps -p "$owner_pid" -o etimes= 2>/dev/null | tr -d '[:space:]')
+	if [[ "$_age_tmp" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$_age_tmp"
+		return 0
+	fi
+	printf '0'
+	return 0
+}
+
 _setup_acquire_noninteractive_setup_lock() {
 	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
-	local owner_pid=""
-	local owner_cmd=""
-	local attempts=0
+	# Maximum seconds to wait for a live owner before timing out.
+	# Override with AIDEVOPS_SETUP_WAIT_TIMEOUT_S.
+	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-300}"
+	# Maximum seconds a live owner may hold the lock before it is treated as
+	# stale and reclaimed.  Override with AIDEVOPS_SETUP_STALE_TIMEOUT_S.
+	local stale_ceiling="${AIDEVOPS_SETUP_STALE_TIMEOUT_S:-1800}"
+	local owner_pid="" owner_cmd="" owner_age=0
+	local reclaim_attempts=0 waited=0
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
-	while [[ "$attempts" -lt 2 ]]; do
+	while true; do
 		if mkdir "$lock_dir" 2>/dev/null; then
 			SETUP_NONINTERACTIVE_LOCK_DIR="$lock_dir"
 			SETUP_NONINTERACTIVE_LOCK_HELD=true
 			printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
 			printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
+			printf '%s\n' "$(date +%s 2>/dev/null || printf '0')" >"$lock_dir/started_at_epoch" 2>/dev/null || true
 			printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
 			trap _setup_release_noninteractive_setup_lock EXIT
 			trap '_setup_noninteractive_signal_exit TERM' TERM
@@ -1211,24 +1243,56 @@ _setup_acquire_noninteractive_setup_lock() {
 			return 0
 		fi
 
+		# Lock exists — inspect owner
 		owner_pid=""
-		owner_cmd=""
 		if [[ -r "$lock_dir/owner.pid" ]]; then
 			owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
 		fi
-		if _setup_lock_pid_alive "$owner_pid"; then
-			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
-			print_error "Another setup.sh --non-interactive process is already running (pid ${owner_pid}, lock ${lock_dir}). Exiting to avoid overlapping deployments. ${owner_cmd:+Command: ${owner_cmd}}"
+
+		if ! _setup_lock_pid_alive "$owner_pid"; then
+			# Dead owner — reclaim the stale lock
+			if [[ "$reclaim_attempts" -ge 2 ]]; then
+				print_error "Unable to acquire setup.sh --non-interactive lock at ${lock_dir} after ${reclaim_attempts} stale-lock removals"
+				return 75
+			fi
+			print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}"
+			rm -rf "$lock_dir" 2>/dev/null || true
+			reclaim_attempts=$((reclaim_attempts + 1))
+			continue
+		fi
+
+		# Owner is alive — compute age then check for stale-live reclaim.
+		owner_age=$(_setup_lock_owner_age "$lock_dir" "$owner_pid")
+		owner_cmd=""
+		[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+
+		if [[ "$stale_ceiling" -gt 0 && "$owner_age" -ge "$stale_ceiling" ]]; then
+			if [[ "$reclaim_attempts" -ge 2 ]]; then
+				print_error "Unable to acquire setup.sh --non-interactive lock: owner (pid ${owner_pid}, age ${owner_age}s) exceeds stale ceiling but reclaim limit reached"
+				return 75
+			fi
+			print_warning "setup.sh --non-interactive lock owner (pid ${owner_pid}) running ${owner_age}s — exceeds stale ceiling ${stale_ceiling}s (AIDEVOPS_SETUP_STALE_TIMEOUT_S)${owner_cmd:+; command: ${owner_cmd}}. Reclaiming lock."
+			rm -rf "$lock_dir" 2>/dev/null || true
+			reclaim_attempts=$((reclaim_attempts + 1))
+			continue
+		fi
+
+		# Live non-stale owner — check wait ceiling before sleeping.
+		if [[ "$waited" -ge "$wait_ceiling" ]]; then
+			print_error "Timed out waiting ${waited}s for setup.sh --non-interactive lock (owner pid ${owner_pid}, age ${owner_age}s${owner_cmd:+, command: ${owner_cmd}}). Increase AIDEVOPS_SETUP_WAIT_TIMEOUT_S (current: ${wait_ceiling}s) or kill pid ${owner_pid} to unblock."
 			return 75
 		fi
 
-		print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}"
-		rm -rf "$lock_dir" 2>/dev/null || true
-		attempts=$((attempts + 1))
-	done
+		# Emit diagnostics: first time blocked and every 60 s thereafter.
+		if [[ "$waited" -eq 0 ]]; then
+			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S)."
+		elif [[ $(( waited % 60 )) -eq 0 ]]; then
+			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s, waited ${waited}s of ${wait_ceiling}s max)."
+		fi
 
-	print_error "Unable to acquire setup.sh --non-interactive lock at ${lock_dir}"
-	return 75
+		sleep 10
+		waited=$((waited + 10))
+	done
 }
 
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).

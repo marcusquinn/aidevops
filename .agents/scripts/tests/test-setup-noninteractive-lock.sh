@@ -34,6 +34,12 @@ print_result() {
 	return 0
 }
 
+print_info() {
+	local message="$1"
+	printf '[INFO] %s\n' "$message"
+	return 0
+}
+
 print_warning() {
 	local message="$1"
 	printf '[WARNING] %s\n' "$message"
@@ -71,25 +77,32 @@ make_temp_dir() {
 }
 
 test_blocks_concurrent_live_owner() {
+	# Verify that a live non-stale owner causes the caller to wait and then
+	# time out with a clear diagnostic, not hang indefinitely.
+	# Use AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5 so the subshell exits within ~15 s.
 	local tmp_dir=""
 	local output=""
-	local exit_code=0
+	local now_epoch=0
 	tmp_dir=$(make_temp_dir)
 	mkdir -p "$tmp_dir/lock.d"
 	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	now_epoch=$(date +%s 2>/dev/null || echo "0")
+	printf '%s\n' "$now_epoch" >"$tmp_dir/lock.d/started_at_epoch"
 	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
 
 	output=$(
 		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=3600
 		load_lock_functions
 		_setup_acquire_noninteractive_setup_lock --non-interactive
-		exit_code=$?
-		printf 'exit=%s held=%s output-done\n' "$exit_code" "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}"
+		printf 'held=%s output-done\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}"
 		return 0
 	) 2>&1 || true
 
 	rm -rf "$tmp_dir"
-	if [[ "$output" == *"Another setup.sh --non-interactive process is already running"* && "$output" == *"exit=75 held=false"* ]]; then
+	# Expect: diagnostic "waiting up to Ns", timeout error, held=false
+	if [[ "$output" == *"Waiting up to"* && "$output" == *"Timed out"* && "$output" == *"held=false"* ]]; then
 		print_result "live non-interactive setup lock blocks overlap" 0
 		return 0
 	fi
@@ -125,6 +138,88 @@ test_reclaims_stale_lock() {
 	return 0
 }
 
+test_stale_live_owner_past_ceiling_is_reclaimed() {
+	local tmp_dir=""
+	local output=""
+	local stale_epoch=0
+	tmp_dir=$(make_temp_dir)
+	mkdir -p "$tmp_dir/lock.d"
+
+	# Use this test's own PID as the "owner" so kill -0 reports it alive,
+	# but set started_at_epoch far in the past to simulate a hung setup.
+	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	stale_epoch=$(( $(date +%s 2>/dev/null || echo "0") - 10000 ))
+	printf '%s\n' "$stale_epoch" >"$tmp_dir/lock.d/started_at_epoch"
+	printf '%s\n' './setup.sh --non-interactive (simulated stale)' >"$tmp_dir/lock.d/command"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=1800
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=300
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'held=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}"
+		_setup_release_noninteractive_setup_lock
+		printf 'exists=%s\n' "$([[ -d "$tmp_dir/lock.d" ]] && printf yes || printf no)"
+		return 0
+	) 2>&1 || true
+
+	rm -rf "$tmp_dir"
+	if [[ "$output" == *"stale ceiling"* && "$output" == *"held=true"* && "$output" == *"exists=no"* ]]; then
+		print_result "stale live owner past ceiling is reclaimed" 0
+		return 0
+	fi
+
+	print_result "stale live owner past ceiling is reclaimed" 1 "output=${output}"
+	return 0
+}
+
+test_wait_ceiling_prevents_indefinite_block() {
+	# Start a real background process so kill -0 succeeds and the owner is not stale.
+	# Use a very short wait ceiling so the test completes quickly.
+	local tmp_dir=""
+	local output=""
+	local owner_pid=0
+	local start_time=0
+	local end_time=0
+	local elapsed=0
+	tmp_dir=$(make_temp_dir)
+	mkdir -p "$tmp_dir/lock.d"
+
+	# Background sleeper acts as the live, non-stale lock owner.
+	sleep 300 &
+	owner_pid=$!
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' "$(date +%s 2>/dev/null || echo "0")" >"$tmp_dir/lock.d/started_at_epoch"
+	printf '%s\n' 'sleep 300 (simulated live setup owner)' >"$tmp_dir/lock.d/command"
+
+	start_time=$(date +%s 2>/dev/null || echo "0")
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=3600
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'held=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}"
+		return 0
+	) 2>&1 || true
+	end_time=$(date +%s 2>/dev/null || echo "0")
+
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
+	rm -rf "$tmp_dir"
+
+	elapsed=$(( end_time - start_time ))
+	# Expect a timeout error, held=false, and exit within 30 s (one sleep(10) + overhead).
+	if [[ "$output" == *"Timed out"* && "$output" == *"held=false"* && "$elapsed" -le 30 ]]; then
+		print_result "wait ceiling prevents indefinite blocking" 0
+		return 0
+	fi
+
+	print_result "wait ceiling prevents indefinite blocking" 1 "output=${output} elapsed=${elapsed}"
+	return 0
+}
+
 test_signal_cleanup_terminates_registered_children() {
 	local output=""
 
@@ -155,6 +250,8 @@ test_signal_cleanup_terminates_registered_children() {
 main() {
 	test_blocks_concurrent_live_owner
 	test_reclaims_stale_lock
+	test_stale_live_owner_past_ceiling_is_reclaimed
+	test_wait_ceiling_prevents_indefinite_block
 	test_signal_cleanup_terminates_registered_children
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
