@@ -298,6 +298,7 @@ test_commit_and_push_skips_rebase_retry_with_unstaged_scaffold() {
 	local remote_repo="${tmp_dir}/remote.git"
 	local local_repo="${tmp_dir}/local"
 	local fake_bin="${tmp_dir}/bin"
+	local push_failed_marker="${tmp_dir}/push-failed"
 	mkdir -p "$fake_bin"
 
 	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
@@ -316,9 +317,10 @@ test_commit_and_push_skips_rebase_retry_with_unstaged_scaffold() {
 set -euo pipefail
 if [[ "\$1" == "push" ]]; then
   "${real_git}" reset --soft HEAD~1 >/dev/null
+  : >"${push_failed_marker}"
   exit 1
 fi
-if [[ "\$1" == "pull" ]]; then
+if [[ "\$1" == "pull" && -f "${push_failed_marker}" ]]; then
   printf 'unexpected pull --rebase with unstaged scaffold changes\\n' >&2
   exit 42
 fi
