@@ -3856,3 +3856,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3406 Fix setup_routines non-fast-forward push handling #auto-dispatch #bug #framework ref:GH#22199 pr:#22203 completed:2026-05-01
 
 - [ ] t3407 Add stale remote branch cleanup routing #auto-dispatch #enhancement ref:GH#22202
+
+- [ ] t3408 Fix routines sync rebase-conflict cleanup #auto-dispatch #bug #framework ref:GH#22205
