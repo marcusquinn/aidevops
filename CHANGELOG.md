@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.49] - 2026-05-01
+
+### Changed
+
+- Maintenance: sync ref:GH#22065 to TODO.md [skip ci]
+- Maintenance: mark t3362 complete (pr:#22067 completed:2026-05-01) [skip ci]
+
+### Fixed
+
+- bound legacy OpenCode setup path (#22085)
+
 ## [3.13.48] - 2026-05-01
 
 ### Changed
