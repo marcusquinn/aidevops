@@ -612,6 +612,20 @@ test_status_legacy_strict_threshold_via_env() {
 	return 0
 }
 
+test_status_accepts_leading_zero_threshold_env() {
+	_kill_mocks
+	local rc=0
+	local out
+	out=$(AIDEVOPS_PULSE_EXPECTED_MAX_INSTANCES=08 "$HELPER" status 2>&1) || rc=$?
+	_assert_eq "status: leading-zero threshold 08 exits 0" "0" "$rc"
+	if [[ "$out" == *"value too great for base"* ]]; then
+		_print_result "status: leading-zero threshold 08 avoids octal parse error" 0
+	else
+		_print_result "status: leading-zero threshold 08 avoids octal parse error" 1
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # GH#21903 sidecar filter — sidecar-flagged pulse PIDs (--merge-only, etc)
 # must NOT count toward the MAIN pulse PILE-UP threshold. Without this, a
@@ -811,6 +825,7 @@ main() {
 	test_status_at_threshold_no_warning
 	test_status_pileup_above_threshold_warns_and_exits_3
 	test_status_legacy_strict_threshold_via_env
+	test_status_accepts_leading_zero_threshold_env
 
 	# GH#21903 sidecar exclusion (additive on top of threshold)
 	test_status_excludes_merge_only_sidecar
