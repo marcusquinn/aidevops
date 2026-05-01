@@ -84,6 +84,12 @@ if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
 	# shellcheck disable=SC1091
 	source "${SCRIPT_DIR}/canonical-guard-helper.sh" 2>/dev/null || true
 fi
+
+if [[ -f "${SCRIPT_DIR}/pr-supersession-helper.sh" ]]; then
+	# shellcheck source=pr-supersession-helper.sh
+	# shellcheck disable=SC1091
+	source "${SCRIPT_DIR}/pr-supersession-helper.sh" 2>/dev/null || true
+fi
 # Caller ID constant (avoids repeated literals in audit log lines).
 _WTAR_DPS_CALLER="pulse-dirty-pr-sweep.sh"
 
@@ -203,6 +209,31 @@ _dps_iso_to_epoch() {
 	[[ "$epoch" =~ ^[0-9]+$ ]] || epoch=0
 	printf '%s' "$epoch"
 	return 0
+}
+
+_dps_supersession_reason() {
+	local pr_obj="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+
+	if ! declare -F _psh_classify_json >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local result classification rationale
+	result=$(_psh_classify_json "$pr_obj" "$repo_path" 1 2>/dev/null) || return 1
+	classification=$(printf '%s' "$result" | jq -r '.classification // empty' 2>/dev/null) || classification=""
+	rationale=$(printf '%s' "$result" | jq -r '.rationale // empty' 2>/dev/null) || rationale=""
+	case "$classification" in
+		fully_superseded|stale_baseline_only)
+			printf 'supersession-check:%s:%s' "$classification" "$rationale"
+			return 0
+			;;
+		*)
+			_dps_log "PR in ${repo_slug}: supersession pre-check=${classification:-unknown}"
+			return 1
+			;;
+	esac
 }
 
 # -----------------------------------------------------------------------------
@@ -987,6 +1018,13 @@ _dirty_pr_sweep_for_repo() {
 		[[ -n "$pr_obj" ]] || continue
 		pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty')
 		[[ -n "$pr_number" ]] || continue
+
+		local supersession_reason=""
+		if supersession_reason=$(_dps_supersession_reason "$pr_obj" "$repo_slug" "$repo_path" 2>/dev/null); then
+			_dps_log "PR #$pr_number ($repo_slug): supersession candidate — notifying before conflict repair"
+			_dirty_pr_action_notify "$pr_number" "$repo_slug" "$supersession_reason" || true
+			continue
+		fi
 
 		decision=$(_dirty_pr_classify "$pr_obj" "$repo_slug" "$repo_path" "$self_login")
 		action="${decision%%|*}"
