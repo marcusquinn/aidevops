@@ -193,6 +193,15 @@ gh() {
 }
 export -f gh
 
+# Stub _rest_append_sig as a no-op to prevent gh-signature-helper.sh calls
+# during tests. The helper queries the OpenCode SQLite session DB which can
+# be slow or blocked when the DB is locked, causing the test to hang after
+# the PR fallback cases (GH#22076). The test does not assert on signature
+# footer content, so a no-op stub is safe for all existing assertions.
+# shellcheck disable=SC2317
+_rest_append_sig() { return 0; }
+export -f _rest_append_sig
+
 printf '%sRunning gh-wrapper REST fallback tests (t2574 / GH#20243)%s\n' \
 	"$TEST_BLUE" "$TEST_NC"
 
