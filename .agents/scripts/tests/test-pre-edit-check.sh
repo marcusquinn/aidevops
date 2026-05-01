@@ -236,6 +236,35 @@ test_todo_subdir_path_allows_edit_on_main() {
 	return 0
 }
 
+test_auto_creates_git_path_worktree_from_ansi_helper_output() {
+	local repo_parent="${TEST_ROOT}/ansi-case/Git"
+	local repo_path="${repo_parent}/aidevops"
+	mkdir -p "$repo_path"
+	git -C "$repo_path" init -b main >/dev/null 2>&1 || {
+		git -C "$repo_path" init >/dev/null 2>&1
+		git -C "$repo_path" checkout -b main >/dev/null 2>&1
+	}
+	git -C "$repo_path" config user.name "Aidevops Test"
+	git -C "$repo_path" config user.email "test@example.com"
+	printf 'test\n' >"${repo_path}/README.md"
+	git -C "$repo_path" add README.md
+	git -C "$repo_path" commit -m "test: seed ansi repo" >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(FULL_LOOP_HEADLESS=true run_helper "$repo_path" --loop-mode --task "https://github.com/marcusquinn/aidevops/issues/22136" 2>&1) || exit_code=$?
+
+	local worktree_path=""
+	worktree_path=$(printf '%s\n' "$output" | awk -F= '/^WORKTREE_PATH=/{print $2; exit}')
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"LOOP_DECISION=worktree_created"* ]] && [[ -n "$worktree_path" ]] && [[ -d "$worktree_path" ]]; then
+		print_result "auto-creates /Git worktree despite ANSI helper output" 0
+		return 0
+	fi
+
+	print_result "auto-creates /Git worktree despite ANSI helper output" 1 "exit=${exit_code} path=${worktree_path} output=${output}"
+	return 0
+}
+
 main() {
 	trap teardown_test_repo EXIT
 	setup_test_repo
@@ -248,6 +277,7 @@ main() {
 	test_path_traversal_blocked_on_main
 	test_absolute_path_outside_repo_blocked_on_main
 	test_todo_subdir_path_allows_edit_on_main
+	test_auto_creates_git_path_worktree_from_ansi_helper_output
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

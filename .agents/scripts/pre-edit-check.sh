@@ -553,8 +553,10 @@ _handle_loop_mode_on_protected() {
 	if [[ -x "$_wt_helper" ]]; then
 		local _wt_output=""
 		_wt_output=$("$_wt_helper" add "$_wt_branch_name" 2>&1) || true
+		local _wt_clean_output=""
+		_wt_clean_output=$(printf '%s' "$_wt_output" | perl -pe 's/\e\[[0-9;]*[[:alpha:]]//g') || _wt_clean_output="$_wt_output"
 		# Extract the worktree path from helper output
-		_wt_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _wt_path=""
+		_wt_path=$(printf '%s' "$_wt_clean_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _wt_path=""
 		if [[ -z "$_wt_path" ]]; then
 			# Fallback: construct expected path from repo name + branch
 			local _wt_repo_name=""
