@@ -890,7 +890,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3383 fix verify-issue-close-helper PR file parsing for merged PRs #auto-dispatch #bug #framework ref:GH#22138 pr:#22144 completed:2026-05-01
 
-- [ ] t3384 optimize skill generator to finish within setup timeout #auto-dispatch #bug #framework ref:GH#22140
 
 
 
@@ -965,6 +964,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t3384 optimize skill generator to finish within setup timeout #auto-dispatch #bug #framework ref:GH#22140 pr:#22170 completed:2026-05-01
 - [x] t3369 Bound serialized setup wait on stale setup process #auto-dispatch #bug #framework ref:GH#22084 pr:#22177 testing:runtime-verified completed:2026-05-01
 - [x] t3390 Fix task-complete-helper merged PR verification gh field drift #auto-dispatch #bug #framework ref:GH#22160 pr:#22163 completed:2026-05-01
 - [x] t3387 Deduplicate TODO entries created around REST-merged task completion #auto-dispatch #bug #framework ref:GH#22153 pr:#22156 testing:self-assessed completed:2026-05-01
