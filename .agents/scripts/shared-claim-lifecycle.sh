@@ -269,8 +269,14 @@ _attempt_orphan_recovery_pr() {
 
 	# Pre-check (t3195/GH#21889): if a PR already exists for this branch
 	# (or issue), no recovery is needed. Caller releases as worker_complete.
-	# Catches search-index-lag misclassifications where signal-3 saw "absent"
-	# from `--search` while a PR already existed for the same `--head`.
+	# Intentionally re-checks rather than trusting the caller's classification:
+	# (1) race-condition guard — a PR could be opened in the window between
+	#     _worker_produced_output running and this function running; (2) self-
+	#     containedness — makes this function correct for any future call path,
+	#     not only the current _cmd_run_finish → _handle_worker_branch_orphan
+	#     path. Note: after PR #21902 fixed signal-3 to use --head primary, the
+	#     original search-index-lag motivation no longer applies; race-condition
+	#     defense is now the primary justification for this check.
 	local pr_existence=""
 	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 	if [[ "$pr_existence" == "found" ]]; then
