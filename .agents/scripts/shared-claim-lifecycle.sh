@@ -227,15 +227,16 @@ _pr_exists_for_branch_or_issue() {
 # origin:worker-takeover label so the normal review/merge pipeline applies.
 #
 # Short-circuits (returns 1) when:
-#   - branch_name or repo_slug are empty (cannot construct PR)
+#   - repo_slug is empty (cannot query or construct PR)
+#   - branch_name is empty after the existing-PR probe (cannot construct PR)
 #   - linked issue is CLOSED (branch is genuinely orphaned, no PR needed)
 #   - gh pr create fails for any reason
 #
-# Pre-check (t3195/GH#21889): if a PR already exists for the branch
-# (`--head` probe via _pr_exists_for_branch_or_issue), returns 0 with no
-# `gh pr create` attempt. This catches search-index-lag misclassifications
-# from the upstream signal-3 path so the recovery helper does not
-# uselessly try to create a duplicate PR.
+# Pre-check (t3195/GH#21889): if a PR already exists for the branch or issue
+# (`--head`/`--search` probes via _pr_exists_for_branch_or_issue), returns 0
+# with no `gh pr create` attempt. This catches search-index-lag and cleaned-
+# worktree misclassifications so the recovery helper does not uselessly try to
+# create a duplicate PR or release the claim as worker_branch_orphan.
 #
 # On success: returns 0 (caller releases as worker_complete)
 # On failure: returns 1 (caller releases as worker_branch_orphan)
@@ -256,12 +257,13 @@ _attempt_orphan_recovery_pr() {
 	local branch_name="$3"
 	local repo_slug="$4"
 
-	# Cannot build a PR without branch + repo
-	if [[ -z "$branch_name" || -z "$repo_slug" ]]; then
+	# Cannot query or build a PR without repo context.
+	if [[ -z "$repo_slug" ]]; then
 		return 1
 	fi
 
-	# Derive issue number from session key (format: issue-NNNN or pulse-*-NNNN)
+	# Derive issue number before branch guards so the existing-PR probe can
+	# fall back to issue search when a cleaned worktree leaves branch_name empty.
 	local issue_number=""
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 
@@ -273,6 +275,12 @@ _attempt_orphan_recovery_pr() {
 	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 	if [[ "$pr_existence" == "found" ]]; then
 		return 0
+	fi
+
+	# Past this point recovery needs a branch to create a PR. Existing PRs were
+	# already handled above, including the empty-branch issue-search fallback.
+	if [[ -z "$branch_name" ]]; then
+		return 1
 	fi
 
 	# Guard: skip recovery for closed issues — worker may have closed it as
