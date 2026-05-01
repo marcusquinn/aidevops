@@ -3763,7 +3763,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3252 Fix gh_create_pr empty origin label args when caller supplies origin label #auto-dispatch #bug ref:GH#22022 pr:#22043 completed:2026-05-01
 
-- [ ] t3256 Make linters-local string literal gate ratchet-based #auto-dispatch #bug ref:GH#22039
+- [x] t3256 Make linters-local string literal gate ratchet-based #auto-dispatch #bug ref:GH#22039 pr:#22082 completed:2026-05-01
 
 - [ ] t3259 add dispatch-loop counter for repeated worker_branch_orphan on same issue branch #auto-dispatch #bug #framework ref:GH#22049
 
