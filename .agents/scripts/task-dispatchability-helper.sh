@@ -48,25 +48,25 @@ _cmd_check() {
 	local failures=0
 	printf 'Dispatchability check for %s\n' "$task_id"
 	if grep -qE "^- \[[ xX]\] ${task_id} .*ref:(GH|GL)#" TODO.md 2>/dev/null; then
-		printf '- TODO ref: ok\n'
+		printf '%s\n' '- TODO ref: ok'
 	else
-		printf '- TODO ref: missing\n'; failures=$((failures + 1))
+		printf '%s\n' '- TODO ref: missing'; failures=$((failures + 1))
 	fi
 	local brief="todo/tasks/${task_id}-brief.md"
 	if [[ -f "$brief" ]]; then
-		printf '- Brief file: %s\n' "$brief"
+		printf '%s %s\n' '- Brief file:' "$brief"
 		body_file="$brief"
 	elif [[ -n "$issue" && -z "$body_file" ]] && command -v gh >/dev/null 2>&1; then
 		body_file="$(mktemp)"
 		gh issue view "$issue" --json body --jq '.body // ""' >"$body_file" || true
-		printf '- Brief file: absent; using issue body\n'
+		printf '%s\n' '- Brief file: absent; using issue body'
 	else
-		printf '- Brief file: missing\n'; failures=$((failures + 1))
+		printf '%s\n' '- Brief file: missing'; failures=$((failures + 1))
 	fi
 	if [[ -n "$body_file" && -f "$body_file" ]]; then
 		local score
 		score="$(_body_score "$body_file")"
-		printf '- Worker-ready heading score: %s/7\n' "$score"
+		printf '%s %s/7\n' '- Worker-ready heading score:' "$score"
 		if [[ "$score" -lt 4 ]]; then
 			failures=$((failures + 1))
 		fi
