@@ -63,11 +63,16 @@ fail() {
 	return 0
 }
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+SCRIPTS_DIR="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)" || exit 1
 LIB="${SCRIPTS_DIR}/issue-sync-lib.sh"
 CLAIM="${SCRIPTS_DIR}/claim-task-id.sh"
 HELPER="${SCRIPTS_DIR}/issue-sync-helper.sh"
+
+# Sourced libraries use SCRIPT_DIR to resolve sibling scripts. Keep that value
+# pointed at .agents/scripts rather than this tests/ directory.
+SCRIPT_DIR="$SCRIPTS_DIR"
+export SCRIPT_DIR
 
 for f in "$LIB" "$CLAIM" "$HELPER"; do
 	if [[ ! -f "$f" ]]; then
@@ -187,6 +192,24 @@ else
 		"expected '## Task Brief' present and 'mode: subagent' absent"
 fi
 
+# Test B2: central brief workflow reference is appended once
+result=$(_compose_issue_brief_workflow_reference "base body")
+if [[ "$result" == *"## Brief Workflow"* ]] && [[ "$result" == *".agents/workflows/brief.md"* ]]; then
+	pass "B2 brief workflow reference appended"
+else
+	fail "B2 brief workflow reference" \
+		"expected Brief Workflow section with .agents/workflows/brief.md pointer"
+fi
+
+result=$(_compose_issue_brief_workflow_reference "$result")
+case_count=$(printf '%s\n' "$result" | awk '/^## Brief Workflow$/ {n++} END {print n+0}')
+if [[ "$case_count" == "1" ]]; then
+	pass "B3 brief workflow reference is idempotent"
+else
+	fail "B3 brief workflow reference idempotency" \
+		"expected one Brief Workflow section, got $case_count"
+fi
+
 # =============================================================================
 # Class C: claim-task-id _compose_issue_body brief-first inlining (t2063)
 # =============================================================================
@@ -232,11 +255,11 @@ BRIEF
 result=$(_compose_issue_body "t9010: test task title" "terse caller description" 2>/dev/null)
 rc=$?
 
-if [[ $rc -eq 0 ]] && [[ "$result" == *"terse caller description"* ]] && [[ "$result" == *"## Task Brief"* ]]; then
+if [[ $rc -eq 0 ]] && [[ "$result" == *"terse caller description"* ]] && [[ "$result" == *"## Task Brief"* ]] && [[ "$result" == *"## Brief Workflow"* ]]; then
 	pass "C1 brief exists + description → body contains both summary and brief"
 else
 	fail "C1 brief + description inlining" \
-		"rc=$rc, contains description: $([[ "$result" == *"terse caller description"* ]] && echo yes || echo no), contains ## Task Brief: $([[ "$result" == *"## Task Brief"* ]] && echo yes || echo no)"
+		"rc=$rc, contains description: $([[ "$result" == *"terse caller description"* ]] && echo yes || echo no), contains ## Task Brief: $([[ "$result" == *"## Task Brief"* ]] && echo yes || echo no), contains ## Brief Workflow: $([[ "$result" == *"## Brief Workflow"* ]] && echo yes || echo no)"
 fi
 
 # Test C2: brief exists, no description → body contains What section + brief
@@ -258,14 +281,14 @@ else
 		"expected 'Synced from TODO.md by issue-sync-helper.sh' in body"
 fi
 
-# Test C4: no brief + description → body is description verbatim (fallback path)
+# Test C4: no brief + description → fallback still points at brief workflow
 result=$(_compose_issue_body "t9011: other task" "just a description" 2>/dev/null)
 rc=$?
-if [[ $rc -eq 0 ]] && [[ "$result" == *"just a description"* ]] && [[ "$result" != *"## Task Brief"* ]]; then
-	pass "C4 no brief + description → description-only body (fallback)"
+if [[ $rc -eq 0 ]] && [[ "$result" == *"just a description"* ]] && [[ "$result" != *"## Task Brief"* ]] && [[ "$result" == *"## Brief Workflow"* ]]; then
+	pass "C4 no brief + description → fallback body includes brief workflow reference"
 else
 	fail "C4 no-brief fallback" \
-		"rc=$rc, unexpected content"
+		"rc=$rc, expected description plus Brief Workflow section without Task Brief"
 fi
 
 # Test C5: no brief + no description → returns empty + non-zero rc (t1937)

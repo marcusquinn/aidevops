@@ -4,13 +4,15 @@
 # test-opus-47-cascade.sh — opus-4.7 cascade + label-override tests (t2239).
 #
 # Covers:
-#   1. resolve_dispatch_model_for_labels honours model:opus-4-7 override.
-#   2. Label override takes precedence over tier:* labels (tier + override → 4.7).
-#   3. Tier-only labels continue to resolve via the existing tier path
+#   1. resolve_dispatch_model_for_labels honours model:opus-4-7 override intent.
+#   2. Label override takes precedence over tier:* labels when 4.7 is available.
+#   3. Label override falls back through the opus tier when 4.7 is unavailable
+#      or provider-disallowed by AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
+#   4. Tier-only labels continue to resolve via the existing tier path
 #      (tier:thinking → opus-4.6 unchanged).
-#   4. escalate_issue_tier on tier:thinking without the override adds
+#   5. escalate_issue_tier on tier:thinking without the override adds
 #      model:opus-4-7 and keeps tier:thinking (cascade step).
-#   5. escalate_issue_tier on tier:thinking WITH the override returns 0
+#   6. escalate_issue_tier on tier:thinking WITH the override returns 0
 #      with no label mutation (terminal — hand off to NMR).
 #
 # The cascade is the mechanism wired in worker-lifecycle-common.sh:
@@ -117,19 +119,25 @@ STUB
 chmod +x "$sandbox/gh"
 
 # Stub model-availability-helper.sh — return deterministic model IDs so the
-# tier tests don't depend on OAuth pool / API state. Only `resolve` with
-# `--quiet` is used by pulse-model-routing.sh.
+# tier tests don't depend on OAuth pool / API state. `check` covers the
+# override-model availability gate; `resolve` covers fallback routing.
 cat >"$sandbox/model-availability-helper.sh" <<'HELPER'
 #!/usr/bin/env bash
 # Stub: mirrors the real tier → model mapping for test assertions.
+if [[ "${1:-}" == "check" ]]; then
+ if [[ "${2:-}" == "anthropic/claude-opus-4-7" && "${OPUS_47_AVAILABLE:-true}" != "false" ]]; then
+  exit 0
+ fi
+ exit 1
+fi
 if [[ "${1:-}" == "resolve" ]]; then
-	case "${2:-}" in
-	opus)   printf '%s' "anthropic/claude-opus-4-6" ;;
-	sonnet) printf '%s' "anthropic/claude-sonnet-4-6" ;;
-	haiku)  printf '%s' "anthropic/claude-haiku-4-5" ;;
-	*)      printf '%s' "" ;;
-	esac
-	exit 0
+ case "${2:-}" in
+ opus)   printf '%s' "${MODEL_RESOLVE_OPUS:-anthropic/claude-opus-4-6}" ;;
+ sonnet) printf '%s' "${MODEL_RESOLVE_SONNET:-anthropic/claude-sonnet-4-6}" ;;
+ haiku)  printf '%s' "${MODEL_RESOLVE_HAIKU:-anthropic/claude-haiku-4-5}" ;;
+ *)      printf '%s' "" ;;
+ esac
+ exit 0
 fi
 exit 1
 HELPER
@@ -196,6 +204,24 @@ actual=$(resolve_dispatch_model_for_labels "enhancement,bug,model:opus-4-7")
 assert_equals "anthropic/claude-opus-4-7" "$actual" \
 	"order-independent: override wins when listed last"
 
+# 1i — unavailable override falls back through the opus tier resolver. This
+# catches GH#21988: model:* labels must not hardcode unavailable Anthropic.
+export OPUS_47_AVAILABLE=false
+export MODEL_RESOLVE_OPUS="openai/gpt-5.5-xhigh"
+actual=$(resolve_dispatch_model_for_labels "tier:thinking,model:opus-4-7")
+assert_equals "openai/gpt-5.5-xhigh" "$actual" \
+	"availability fallback: unavailable model:opus-4-7 → resolved opus fallback"
+unset OPUS_47_AVAILABLE MODEL_RESOLVE_OPUS
+
+# 1j — provider allowlist also bypasses the exact-model pin even if the model
+# would otherwise be available.
+export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
+export MODEL_RESOLVE_OPUS="openai/gpt-5.5-xhigh"
+actual=$(resolve_dispatch_model_for_labels "tier:thinking,model:opus-4-7")
+assert_equals "openai/gpt-5.5-xhigh" "$actual" \
+	"allowlist fallback: disallowed Anthropic override → resolved opus fallback"
+unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST MODEL_RESOLVE_OPUS
+
 # ========================================================================
 # Part 2 — escalate_issue_tier cascade extension
 # ========================================================================
@@ -209,15 +235,14 @@ echo "== escalate_issue_tier (tier:thinking → model:opus-4-7 → NMR) =="
 source "$AGENTS_SCRIPTS/worker-lifecycle-common.sh"
 
 # Helper: run escalate_issue_tier with controlled inputs, return the edit trace.
-# We use crash_type="no_work" to bypass the body-quality gate — that gate
-# isn't what this test is covering, and the "no_work" path is documented
-# in the function header as the intended skip for infra failures.
+# Use crash_type="partial" with a worker-ready body so the body-quality gate
+# permits escalation; no_work now short-circuits before tier escalation.
 run_escalate() {
 	local current_labels="$1" failure_count="${2:-2}"
 	local trace
 	trace=$(mktemp)
-	GH_EDIT_TRACE="$trace" CURRENT_LABELS="$current_labels" ISSUE_BODY="stub body" \
-		escalate_issue_tier 99 "test/repo" "$failure_count" "repeated_failure" "no_work" \
+	GH_EDIT_TRACE="$trace" CURRENT_LABELS="$current_labels" ISSUE_BODY=$'## How\nEDIT: .agents/scripts/pulse-model-routing.sh:29-61' \
+		escalate_issue_tier 99 "test/repo" "$failure_count" "repeated_failure" "partial" \
 		>/dev/null 2>&1 || true
 	cat "$trace"
 	rm -f "$trace"

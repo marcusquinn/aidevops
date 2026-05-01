@@ -55,6 +55,29 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=ai-cli-config.sh
 source "${SCRIPT_DIR}/ai-cli-config.sh"
 
+_mcp_adapter_run_with_timeout() {
+	local timeout_seconds="$1"
+	shift
+
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "${timeout_seconds}s" "$@"
+		return $?
+	fi
+
+	if command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "${timeout_seconds}s" "$@"
+		return $?
+	fi
+
+	if command -v perl >/dev/null 2>&1; then
+		perl -e 'alarm shift @ARGV; exec @ARGV' "$timeout_seconds" "$@"
+		return $?
+	fi
+
+	"$@"
+	return $?
+}
+
 # =============================================================================
 # Runtime Detection Stub (t1665.1 — will be replaced by runtime-registry.sh)
 # =============================================================================
@@ -235,6 +258,7 @@ _register_mcp_opencode() {
 _register_mcp_claude() {
 	local mcp_name="$1"
 	local mcp_json="$2"
+	local claude_timeout_seconds="${AIDEVOPS_MCP_CLAUDE_TIMEOUT_SECONDS:-20}"
 
 	if ! command -v claude >/dev/null 2>&1; then
 		print_info "Claude Code CLI not found — skipping"
@@ -248,8 +272,13 @@ _register_mcp_claude() {
 
 	# Check if already registered
 	# claude mcp list output format: "name: command - status"
-	local existing
-	existing=$(claude mcp list 2>/dev/null || echo "")
+	local existing list_status
+	existing=$(_mcp_adapter_run_with_timeout "$claude_timeout_seconds" claude mcp list 2>/dev/null) || list_status=$?
+	list_status="${list_status:-0}"
+	if [[ "$list_status" -ne 0 ]]; then
+		print_warning "Claude Code MCP list timed out or failed for $mcp_name — skipping"
+		return 0
+	fi
 	if echo "$existing" | grep -q "^${mcp_name}:" 2>/dev/null; then
 		print_info "$mcp_name already registered in Claude Code — skipping"
 		return 0
@@ -276,10 +305,10 @@ _register_mcp_claude() {
         }')
 	fi
 
-	if claude mcp add-json "$mcp_name" --scope user "$claude_entry" 2>/dev/null; then
+	if _mcp_adapter_run_with_timeout "$claude_timeout_seconds" claude mcp add-json "$mcp_name" --scope user "$claude_entry" 2>/dev/null; then
 		print_success "Registered $mcp_name in Claude Code"
 	else
-		print_warning "Failed to register $mcp_name in Claude Code"
+		print_warning "Failed or timed out registering $mcp_name in Claude Code"
 	fi
 	return 0
 }
