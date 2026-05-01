@@ -286,12 +286,26 @@ SELECT
     COALESCE(learning_access.access_count, 0) as access_count,
     COALESCE(learning_access.auto_captured, 0) as auto_captured,
     COALESCE(learning_access.usefulness_score, 0.0) as usefulness_score,
+    COALESCE(latest_truth.status, 'live') as truth_status,
+    COALESCE(latest_truth.evidence, '') as truth_evidence,
+    COALESCE(latest_truth.replacement_id, '') as replacement_id,
+    COALESCE(superseded_by.id, '') as superseded_by,
     bm25(learnings) as bm25_score,
     (bm25(learnings) - (COALESCE(learning_access.usefulness_score, 0.0) * 0.3)) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
+LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (
+    SELECT event_id FROM learning_truth_events truth_pick
+    WHERE truth_pick.memory_id = learnings.id
+    ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC
+    LIMIT 1
+)
+LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = learnings.id
+    AND superseded_by.relation_type = 'updates'
 $entity_fts_join
 WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
+AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted')
+AND superseded_by.id IS NULL
 ORDER BY score
 LIMIT $limit;
 EOF
@@ -393,7 +407,7 @@ _recall_recent() {
 	local format="$6"
 
 	local results
-	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
+	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured, COALESCE(a.usefulness_score, 0.0) as usefulness_score, COALESCE(latest_truth.status, 'live') as truth_status, COALESCE(latest_truth.evidence, '') as truth_evidence, COALESCE(latest_truth.replacement_id, '') as replacement_id, COALESCE(superseded_by.id, '') as superseded_by FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_truth_events latest_truth ON latest_truth.event_id = (SELECT event_id FROM learning_truth_events truth_pick WHERE truth_pick.memory_id = l.id ORDER BY truth_pick.created_at DESC, truth_pick.event_id DESC LIMIT 1) LEFT JOIN learning_relations superseded_by ON superseded_by.supersedes_id = l.id AND superseded_by.relation_type = 'updates' $entity_join WHERE 1=1 $entity_where $auto_filter AND COALESCE(latest_truth.status, 'live') NOT IN ('debunked', 'retracted') AND superseded_by.id IS NULL ORDER BY l.created_at DESC LIMIT $limit;")
 	if [[ "$format" == "json" ]]; then
 		printf '%s\n' "$results"
 	else
@@ -830,6 +844,8 @@ EOF
 #   led_to_new (+0.6) — a new memory was created after retrieving this one
 #   reused     (+0.4) — same memory recalled across different queries in session
 #   dead_end   (-0.15) — retrieved in top results but no follow-up action
+#   false      (-2.0) — retrieved memory was false/debunked
+#   debunked   (-2.0) — alias for false
 #
 # Usage:
 #   memory-helper.sh feedback <memory_id> [--signal <type>] [--value <float>]
@@ -888,9 +904,10 @@ cmd_feedback() {
 		led_to_new) reward="0.6" ;;
 		reused) reward="0.4" ;;
 		dead_end) reward="-0.15" ;;
+		false | debunked) reward="-2.0" ;;
 		*)
 			log_error "Unknown signal type: $signal"
-			log_error "Valid signals: cited, edited, led_to_new, reused, dead_end"
+			log_error "Valid signals: cited, edited, led_to_new, reused, dead_end, false, debunked"
 			return 1
 			;;
 		esac
@@ -898,13 +915,13 @@ cmd_feedback() {
 
 	# Upsert: create learning_access row if missing, then update usefulness_score.
 	# Score is additive (EMA-like accumulation) — each feedback event shifts the
-	# score. Floor at -1.0 to prevent a few dead_end signals from permanently
-	# burying a memory that might be useful in a different context.
+	# score. Floor at -5.0 so false/debunked signals can strongly demote myth-like
+	# memories while still keeping the audit trail intact.
 	db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count, usefulness_score)
-VALUES ('$escaped_id', datetime('now'), 0, MAX(-1.0, $reward))
+VALUES ('$escaped_id', datetime('now'), 0, MAX(-5.0, $reward))
 ON CONFLICT(id) DO UPDATE SET
-    usefulness_score = MAX(-1.0, COALESCE(usefulness_score, 0.0) + $reward);
+    usefulness_score = MAX(-5.0, COALESCE(usefulness_score, 0.0) + $reward);
 EOF
 
 	local new_score

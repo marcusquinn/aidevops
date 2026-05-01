@@ -469,6 +469,72 @@ EOF
 }
 
 #######################################
+# Rebuild learning_relations when the CHECK constraint predates debunks.
+#######################################
+_migrate_learning_relations_debunks() {
+	local relation_sql
+	relation_sql=$(db "$MEMORY_DB" "SELECT sql FROM sqlite_master WHERE type='table' AND name='learning_relations';" 2>/dev/null || echo "")
+	if [[ -z "$relation_sql" || "$relation_sql" == *"debunks"* ]]; then
+		return 0
+	fi
+
+	log_info "Rebuilding learning_relations to allow debunks relation..."
+	db "$MEMORY_DB" <<'EOF'
+BEGIN TRANSACTION;
+ALTER TABLE learning_relations RENAME TO learning_relations_old;
+CREATE TABLE learning_relations (
+    id TEXT NOT NULL,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives', 'debunks')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, supersedes_id, relation_type)
+);
+INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
+SELECT id, supersedes_id, relation_type, created_at
+FROM learning_relations_old
+WHERE relation_type IN ('updates', 'extends', 'derives', 'debunks');
+DROP TABLE learning_relations_old;
+COMMIT;
+EOF
+	log_success "learning_relations now supports debunks"
+	return 0
+}
+
+#######################################
+# Create append-only truth-maintenance events table.
+#######################################
+_create_learning_truth_events_table() {
+	db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS learning_truth_events (
+    event_id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('live', 'debunked', 'retracted')),
+    evidence TEXT,
+    replacement_id TEXT,
+    debunked_by TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_learning_truth_memory_created ON learning_truth_events(memory_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_truth_status ON learning_truth_events(status);
+EOF
+	return 0
+}
+
+#######################################
+# Migrate truth-maintenance event schema.
+#######################################
+_migrate_learning_truth_events() {
+	local has_truth_events
+	has_truth_events=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_truth_events';" 2>/dev/null || echo "0")
+	if [[ "$has_truth_events" == "0" ]]; then
+		log_info "Creating learning_truth_events table (truth maintenance)..."
+		_create_learning_truth_events_table
+		log_success "learning_truth_events table created"
+	fi
+	return 0
+}
+
+#######################################
 # Migrate existing database to new schema
 # With backup-before-modify pattern (t188)
 # Note: t311.4 resolved duplicate migrate_db() — this is the single
@@ -485,6 +551,8 @@ migrate_db() {
 	_migrate_conversation_summaries
 	_migrate_memory_consolidations
 	_migrate_usefulness_score
+	_migrate_learning_relations_debunks
+	_migrate_learning_truth_events
 	return 0
 }
 
@@ -584,10 +652,24 @@ CREATE TABLE IF NOT EXISTS learning_access (
 CREATE TABLE IF NOT EXISTS learning_relations (
     id TEXT NOT NULL,
     supersedes_id TEXT,
-    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives', 'debunks')),
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (id, supersedes_id, relation_type)
 );
+
+-- Append-only truth-maintenance events. FTS5 rows stay immutable; this table
+-- records validity changes such as debunking/retraction with evidence.
+CREATE TABLE IF NOT EXISTS learning_truth_events (
+    event_id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK(status IN ('live', 'debunked', 'retracted')),
+    evidence TEXT,
+    replacement_id TEXT,
+    debunked_by TEXT,
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_learning_truth_memory_created ON learning_truth_events(memory_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_learning_truth_status ON learning_truth_events(status);
 
 -- Learning-entity junction table (t1363.3) — links learnings to entities
 -- Enables entity-scoped memory queries (e.g., "what do I know about this person?")

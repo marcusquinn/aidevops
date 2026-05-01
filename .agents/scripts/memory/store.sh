@@ -24,6 +24,9 @@ _store_supersedes_id=""
 _store_relation_type=""
 _store_auto_captured=0
 _store_entity_id=""
+_store_debunks_id=""
+_store_evidence=""
+_store_replacement_id=""
 
 #######################################
 # Parse CLI arguments into _store_* module variables.
@@ -42,6 +45,9 @@ _store_parse_args() {
 	_store_relation_type=""
 	_store_auto_captured=0
 	_store_entity_id=""
+	_store_debunks_id=""
+	_store_evidence=""
+	_store_replacement_id=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -92,6 +98,21 @@ _store_parse_args() {
 			;;
 		--entity)
 			_store_entity_id="$2"
+			shift 2
+			;;
+		--debunks | --debunk)
+			local debunks_arg="$2"
+			_store_debunks_id="$debunks_arg"
+			shift 2
+			;;
+		--evidence)
+			local evidence_arg="$2"
+			_store_evidence="$evidence_arg"
+			shift 2
+			;;
+		--replacement)
+			local replacement_arg="$2"
+			_store_replacement_id="$replacement_arg"
 			shift 2
 			;;
 		*)
@@ -180,6 +201,15 @@ _store_validate_params() {
 		fi
 	fi
 
+	if [[ -n "$_store_debunks_id" ]]; then
+		if [[ -n "$_store_supersedes_id" && "$_store_supersedes_id" != "$_store_debunks_id" ]]; then
+			log_error "--debunks cannot be combined with a different --supersedes target"
+			return 1
+		fi
+		_store_supersedes_id="$_store_debunks_id"
+		_store_relation_type="debunks"
+	fi
+
 	return 0
 }
 
@@ -230,6 +260,16 @@ _store_prepare_metadata() {
 		fi
 	fi
 
+	if [[ -n "$_store_replacement_id" ]]; then
+		local replacement_exists
+		local esc_replacement="${_store_replacement_id//"'"/"''"}"
+		replacement_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$esc_replacement';")
+		if [[ "$replacement_exists" == "0" ]]; then
+			log_error "Replacement ID not found: $_store_replacement_id"
+			return 1
+		fi
+	fi
+
 	return 0
 }
 
@@ -260,6 +300,21 @@ INSERT INTO learning_relations (id, supersedes_id, relation_type, created_at)
 VALUES ('$_store_id', '$_store_esc_supersedes', '$_store_relation_type', '$_store_created_at');
 EOF
 		log_info "Relation: $_store_id $_store_relation_type $_store_supersedes_id"
+	fi
+
+	# Store append-only truth event when this learning debunks another memory.
+	if [[ -n "$_store_debunks_id" ]]; then
+		local _store_truth_event_id="truth_${_store_id#mem_}"
+		local _store_esc_debunks="${_store_debunks_id//"'"/"''"}"
+		local _store_esc_evidence="${_store_evidence:-$_store_content}"
+		_store_esc_evidence="${_store_esc_evidence//"'"/"''"}"
+		local _store_truth_replacement="${_store_replacement_id:-$_store_id}"
+		local _store_esc_replacement="${_store_truth_replacement//"'"/"''"}"
+		db "$MEMORY_DB" <<EOF
+INSERT INTO learning_truth_events (event_id, memory_id, status, evidence, replacement_id, debunked_by, created_at)
+VALUES ('$_store_truth_event_id', '$_store_esc_debunks', 'debunked', '$_store_esc_evidence', '$_store_esc_replacement', '$_store_id', '$_store_created_at');
+EOF
+		log_info "Truth event: $_store_debunks_id debunked by $_store_id"
 	fi
 
 	# Link to entity if --entity was provided (t1363.3)
@@ -321,7 +376,7 @@ cmd_store() {
 	init_db
 
 	# Deduplication: skip if content already exists (unless it's a relational update)
-	if [[ -z "$_store_supersedes_id" ]]; then
+	if [[ -z "$_store_supersedes_id" && -z "$_store_debunks_id" ]]; then
 		local existing_id
 		if existing_id=$(check_duplicate "$_store_content" "$_store_type"); then
 			log_warn "Duplicate detected (matches $existing_id). Skipping store."
