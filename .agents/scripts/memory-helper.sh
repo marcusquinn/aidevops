@@ -32,6 +32,7 @@
 #   - updates: New info supersedes old (e.g., "favorite color is now green")
 #   - extends: Adds detail without contradiction (e.g., adding job title)
 #   - derives: Second-order inference from combining memories
+#   - debunks: Evidence marks an existing memory as false/retracted
 #
 # Dual Timestamps:
 #   - created_at: When the memory was stored
@@ -71,7 +72,7 @@ readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PRE
 # - extends: Adds detail without contradiction (refinement)
 # - derives: Second-order inference from combining memories
 # shellcheck disable=SC2034 # Used in memory/store.sh
-readonly VALID_RELATIONS="updates extends derives"
+readonly VALID_RELATIONS="updates extends derives debunks"
 
 # Source modules (eager loading — simpler, avoids path resolution bugs)
 # shellcheck source=memory/_common.sh
@@ -104,7 +105,7 @@ COMMANDS:
     history     Show version history for a memory (ancestors/descendants)
     latest      Find the latest version of a memory chain
     stats       Show memory statistics
-    validate    Check for stale/duplicate entries (with detailed reports)
+    validate    Check for stale/duplicate/debunked entries (with detailed reports)
     prune       Remove old entries (auto-runs every 24h on store)
     prune-patterns  Remove repetitive pattern entries by keyword (e.g., clean_exit_no_signal)
     dedup       Remove exact and near-duplicate entries
@@ -139,6 +140,10 @@ STORE OPTIONS:
     --event-date <ISO>    When the event occurred (default: now)
     --supersedes <id>     ID of memory this updates/extends/derives from
     --relation <type>     Relation type: updates, extends, derives
+    --debunks <id>        Mark an existing memory as false/debunked using this
+                          stored learning as the evidence record
+    --replacement <id>    Optional live replacement memory for --debunks
+    --evidence <text>     Optional concise evidence note for --debunks
     --auto                Mark as auto-captured (sets source=auto, tracked separately)
     --entity <id>         Link learning to an entity (e.g., ent_xxx)
 
@@ -154,6 +159,8 @@ RELATION TYPES (inspired by Supermemory):
                 e.g., Adding job title to existing employment memory
     derives   - Second-order inference from combining memories
                 e.g., Inferring "works remotely" from location + job info
+    debunks   - Evidence marks an existing memory as false/retracted
+                e.g., "The CI failure was not caused by the hook" debunks a myth
 
 RECALL OPTIONS:
     --query <text>        Search query (required unless --recent)
@@ -184,6 +191,8 @@ FEEDBACK SIGNALS (retrieval feedback loop):
     led_to_new (+0.6) — a new memory was created after retrieving this one
     reused     (+0.4) — same memory recalled across different queries
     dead_end   (-0.15) — retrieved in top results but no follow-up action
+    false      (-2.0) — retrieved memory was false/debunked
+    debunked   (-2.0) — alias for false
 EOF
 	return 0
 }
@@ -257,6 +266,10 @@ EXAMPLES:
     memory-helper.sh store --content "Favorite color is now green" \
         --supersedes mem_xxx --relation updates
 
+    # Debunk a false memory while preserving audit history
+    memory-helper.sh store --content "Evidence: deployed script no longer has this bug" \
+        --debunks mem_old --evidence "Verified against current source"
+
     # Extend a memory with more detail
     memory-helper.sh store --content "Job title: Senior Engineer" \
         --supersedes mem_yyy --relation extends
@@ -290,6 +303,9 @@ EXAMPLES:
 
     # Record feedback: memory was a dead end (retrieved but not used)
     memory-helper.sh feedback mem_xxx --signal dead_end
+
+    # Record feedback: memory was false and should be strongly demoted
+    memory-helper.sh feedback mem_xxx --signal false
 
     # Record feedback with custom reward value
     memory-helper.sh feedback mem_xxx --value 0.8

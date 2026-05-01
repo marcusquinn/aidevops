@@ -211,6 +211,33 @@ EOF
 		log_info "$superseded_count memories have been superseded by newer versions"
 	fi
 
+	# Check truth-maintenance state (debunked/retracted memories and relation health)
+	local debunked_count retracted_count orphaned_truth_count orphaned_relation_count
+	debunked_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_truth_events e WHERE e.status = 'debunked' AND e.created_at = (SELECT MAX(created_at) FROM learning_truth_events latest WHERE latest.memory_id = e.memory_id);" 2>/dev/null || echo "0")
+	retracted_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_truth_events e WHERE e.status = 'retracted' AND e.created_at = (SELECT MAX(created_at) FROM learning_truth_events latest WHERE latest.memory_id = e.memory_id);" 2>/dev/null || echo "0")
+	orphaned_truth_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_truth_events e LEFT JOIN learnings l ON e.memory_id = l.id WHERE l.id IS NULL;" 2>/dev/null || echo "0")
+	orphaned_relation_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_relations lr LEFT JOIN learnings child ON lr.id = child.id LEFT JOIN learnings parent ON lr.supersedes_id = parent.id WHERE child.id IS NULL OR (lr.supersedes_id IS NOT NULL AND parent.id IS NULL);" 2>/dev/null || echo "0")
+
+	log_info "Truth maintenance: ${debunked_count:-0} debunked, ${retracted_count:-0} retracted, ${superseded_count:-0} superseded"
+	if [[ "${orphaned_truth_count:-0}" -gt 0 ]]; then
+		log_warn "Found $orphaned_truth_count orphaned truth event(s) pointing at missing memories"
+	fi
+	if [[ "${orphaned_relation_count:-0}" -gt 0 ]]; then
+		log_warn "Found $orphaned_relation_count orphaned relation(s) pointing at missing memories"
+	fi
+
+	if [[ "${debunked_count:-0}" -gt 0 || "${superseded_count:-0}" -gt 0 ]]; then
+		echo ""
+		echo "Truth-maintenance chains:"
+		db "$MEMORY_DB" <<'EOF'
+SELECT '  ' || lr.supersedes_id || ' --' || lr.relation_type || '--> ' || lr.id
+FROM learning_relations lr
+WHERE lr.relation_type IN ('updates', 'debunks')
+ORDER BY lr.created_at DESC
+LIMIT 10;
+EOF
+	fi
+
 	# Check database size
 	local db_size
 	db_size=$(du -h "$MEMORY_DB" | cut -f1)
