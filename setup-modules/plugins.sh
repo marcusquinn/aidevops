@@ -220,15 +220,31 @@ generate_agent_skills() {
 	print_info "Generating Agent Skills SKILL.md files..."
 
 	local skills_script="$HOME/.aidevops/agents/scripts/generate-skills.sh"
+	local timeout_seconds="${AIDEVOPS_SKILLS_GENERATE_TIMEOUT:-90}"
+	local success_msg="Agent Skills SKILL.md files generated"
+	local generate_rc=0
 
 	if [[ -f "$skills_script" ]]; then
-		if bash "$skills_script" 2>/dev/null; then
-			print_success "Agent Skills SKILL.md files generated"
-			return 0
+		if command -v timeout >/dev/null 2>&1; then
+			if timeout "$timeout_seconds" bash "$skills_script" 2>/dev/null; then
+				print_success "$success_msg"
+				return 0
+			fi
+			generate_rc=$?
+			if [[ "$generate_rc" -eq 124 ]]; then
+				print_warning "Agent Skills generation exceeded ${timeout_seconds}s — continuing without skill symlink refresh"
+				return 1
+			fi
 		else
-			print_warning "Agent Skills generation encountered issues (non-critical)"
-			return 1
+			if bash "$skills_script" 2>/dev/null; then
+				print_success "$success_msg"
+				return 0
+			fi
+			generate_rc=$?
 		fi
+
+		print_warning "Agent Skills generation encountered issues (non-critical)"
+		return 1
 	else
 		print_warning "Agent Skills generator not found at $skills_script"
 		return 1

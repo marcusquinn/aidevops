@@ -102,57 +102,105 @@ log_file_success() {
 extract_frontmatter_field() {
 	local file="$1"
 	local field="$2"
+	local line=""
+	local in_frontmatter=false
 
 	if [[ ! -f "$file" ]]; then
 		return 1
 	fi
 
-	# Extract value between --- markers
-	awk -v field="$field" '
-        /^---$/ { in_frontmatter = !in_frontmatter; next }
-        in_frontmatter && $0 ~ "^" field ":" {
-            sub("^" field ": *", "")
-            gsub(/^["'"'"']|["'"'"']$/, "")  # Remove quotes
-            print
-            exit
-        }
-    ' "$file"
+	# Extract value between initial --- frontmatter markers without forking awk
+	# once per file. Skill generation may inspect hundreds of markdown files
+	# during setup, so avoiding per-file subprocesses keeps non-interactive setup
+	# within its bounded postflight window.
+	while IFS= read -r line; do
+		if [[ "$line" == "---" ]]; then
+			if [[ "$in_frontmatter" == true ]]; then
+				break
+			fi
+			in_frontmatter=true
+			continue
+		fi
+
+		if [[ "$in_frontmatter" == true && "$line" == "$field:"* ]]; then
+			line="${line#"${field}":}"
+			line="${line#"${line%%[![:space:]]*}"}"
+			line="${line%\"}"
+			line="${line#\"}"
+			line="${line%\'}"
+			line="${line#\'}"
+			printf '%s\n' "$line"
+			return 0
+		fi
+	done <"$file"
 	return 0
 }
 
 # Extract description from file - tries frontmatter first, then first heading
 extract_description() {
 	local file="$1"
-	local desc
+	local desc=""
 
 	# Try frontmatter first
 	desc=$(extract_frontmatter_field "$file" "description")
 	if [[ -n "$desc" ]]; then
-		echo "$desc"
-		return
+		printf '%s\n' "$desc"
+		return 0
 	fi
 
 	# Try first heading (# Title - Description pattern or just # Title)
-	local heading
-	heading=$(grep -m1 "^# " "$file" 2>/dev/null | sed 's/^# //')
+	local heading=""
+	local line=""
+	while IFS= read -r line; do
+		if [[ "$line" == "# "* ]]; then
+			heading="${line#\# }"
+			break
+		fi
+	done <"$file"
 	if [[ -n "$heading" ]]; then
 		# If heading has " - ", take the part after
 		if [[ "$heading" == *" - "* ]]; then
-			echo "${heading#* - }"
+			printf '%s\n' "${heading#* - }"
 		else
-			echo "$heading"
+			printf '%s\n' "$heading"
 		fi
-		return
+		return 0
 	fi
 
 	# Fallback to filename
-	echo "$(basename "$file" .md) skill"
+	local fallback="${file##*/}"
+	printf '%s skill\n' "${fallback%.md}"
+	return 0
 }
 
 # Convert name to valid skill name (lowercase, hyphens only)
 to_skill_name() {
 	local name="$1"
-	echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-\|-$//g'
+	local lower=""
+	local out=""
+	local char=""
+	local last_dash=false
+	local i
+	lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+
+	for ((i = 0; i < ${#lower}; i++)); do
+		char="${lower:i:1}"
+		case "$char" in
+		[a-z0-9])
+			out+="$char"
+			last_dash=false
+			;;
+		*)
+			if [[ "$last_dash" == false ]]; then
+				out+="-"
+				last_dash=true
+			fi
+			;;
+		esac
+	done
+	out="${out#-}"
+	out="${out%-}"
+	printf '%s\n' "$out"
 	return 0
 }
 
@@ -172,7 +220,7 @@ generate_folder_skill() {
 	local folder_path="$1"
 	local parent_md="$2"
 	local folder_name
-	folder_name=$(basename "$folder_path")
+	folder_name="${folder_path##*/}"
 	local skill_name
 	skill_name=$(to_skill_name "$folder_name")
 
@@ -199,7 +247,8 @@ generate_folder_skill() {
 generate_leaf_skill() {
 	local md_file="$1"
 	local filename
-	filename=$(basename "$md_file" .md)
+	filename="${md_file##*/}"
+	filename="${filename%.md}"
 	local skill_name
 	skill_name=$(to_skill_name "$filename")
 
@@ -304,7 +353,7 @@ if is_verbose_output; then
 fi
 
 while IFS= read -r folder; do
-	folder_name=$(basename "$folder")
+	folder_name="${folder##*/}"
 	parent_md="$AGENTS_DIR/${folder_name}.md"
 	skill_file="$folder/SKILL.md"
 
@@ -333,7 +382,7 @@ if is_verbose_output; then
 fi
 
 while IFS= read -r folder; do
-	folder_name=$(basename "$folder")
+	folder_name="${folder##*/}"
 	skill_file="$folder/SKILL.md"
 
 	# Skip if already handled or special
@@ -376,8 +425,9 @@ if is_verbose_output; then
 fi
 
 while IFS= read -r md_file; do
-	filename=$(basename "$md_file" .md)
-	parent_dir=$(dirname "$md_file")
+	filename="${md_file##*/}"
+	filename="${filename%.md}"
+	parent_dir="${md_file%/*}"
 	target_dir="${parent_dir}/${filename}"
 	skill_file="${target_dir}/SKILL.md"
 
@@ -426,8 +476,15 @@ if [[ "$DRY_RUN" == true ]]; then
 	log_warning ""
 	log_warning "This was a dry run. Run without --dry-run to generate files."
 else
-	# Write cache hash so next run skips if nothing changed
-	new_hash=$(compute_source_hash)
+	# Write cache hash so next run skips if nothing changed.
+	# The source set excludes generated SKILL.md files, so the pre-generation
+	# hash is still valid after generation. Reusing it avoids running a second
+	# find|sort pipeline after the visible "Generation complete" message, which
+	# can leave setup.sh looking hung even though generation itself finished.
+	new_hash="${current_hash:-}"
+	if [[ -z "$new_hash" ]]; then
+		new_hash=$(compute_source_hash)
+	fi
 	echo "$new_hash" >"$CACHE_HASH_FILE"
 fi
 
