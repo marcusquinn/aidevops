@@ -10,7 +10,7 @@
 # old sessions to a separate file reduces the active DB size.
 #
 # Usage:
-#   opencode-db-archive.sh archive [--retention-days N] [--dry-run] [--max-duration-seconds N]
+#   opencode-db-archive.sh archive [--retention-days N] [--keep-sessions N] [--dry-run] [--max-duration-seconds N]
 #   opencode-db-archive.sh stats
 #   opencode-db-archive.sh help
 #
@@ -328,18 +328,77 @@ _archive_session_select_columns() {
 	return 0
 }
 
+_validate_nonnegative_integer() {
+	local value="$1"
+	local option_name="$2"
+
+	if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+		print_error "${option_name} must be a non-negative integer: ${value}"
+		return 1
+	fi
+	return 0
+}
+
+_format_cutoff_time() {
+	local cutoff_ms="$1"
+	local cutoff_s=$((cutoff_ms / 1000))
+
+	date -r "$cutoff_s" '+%Y-%m-%d %H:%M' 2>/dev/null ||
+		date -d "@$cutoff_s" '+%Y-%m-%d %H:%M' 2>/dev/null ||
+		echo 'N/A'
+	return 0
+}
+
+_archive_candidate_filter() {
+	local retention_enabled="$1"
+	local cutoff_ms="$2"
+	local keep_enabled="$3"
+	local keep_sessions="$4"
+	local exclude_clause="$5"
+	local filter="1=1"
+
+	if ((retention_enabled)); then
+		filter="${filter} AND time_created < ${cutoff_ms}"
+	fi
+	if ((keep_enabled)); then
+		filter="${filter} AND id NOT IN (SELECT id FROM session ORDER BY time_created DESC, id DESC LIMIT ${keep_sessions})"
+	fi
+	if [[ -n "$exclude_clause" ]]; then
+		filter="${filter} ${exclude_clause}"
+	fi
+
+	printf '%s\n' "$filter"
+	return 0
+}
+
 # --- Archive command ----------------------------------------------------------
 
 cmd_archive() {
 	local retention_days="$DEFAULT_RETENTION_DAYS"
+	local retention_enabled=1
+	local retention_explicit=0
+	local keep_sessions=0
+	local keep_enabled=0
 	local dry_run=0
 	local max_duration="$DEFAULT_MAX_DURATION"
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local option="$1"
+		local option_value="${2:-}"
+		case "$option" in
 		--retention-days)
-			retention_days="$2"
+			retention_days="$option_value"
+			retention_enabled=1
+			retention_explicit=1
+			shift 2
+			;;
+		--keep-sessions)
+			keep_sessions="$option_value"
+			keep_enabled=1
+			if ((retention_explicit == 0)); then
+				retention_enabled=0
+			fi
 			shift 2
 			;;
 		--dry-run)
@@ -347,11 +406,11 @@ cmd_archive() {
 			shift
 			;;
 		--max-duration-seconds)
-			max_duration="$2"
+			max_duration="$option_value"
 			shift 2
 			;;
 		*)
-			print_error "Unknown option: $1"
+			print_error "Unknown option: $option"
 			cmd_help
 			return 1
 			;;
@@ -360,11 +419,21 @@ cmd_archive() {
 
 	check_sqlite3 || return 1
 	check_active_db || return 1
+	_validate_nonnegative_integer "$retention_days" "--retention-days" || return 1
+	_validate_nonnegative_integer "$keep_sessions" "--keep-sessions" || return 1
 
 	local cutoff_ms
 	cutoff_ms=$(($(date +%s) * 1000 - retention_days * 86400 * 1000))
 
-	print_info "Retention: ${retention_days} days (cutoff: $(date -r "$((cutoff_ms / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || date -d "@$((cutoff_ms / 1000))" '+%Y-%m-%d %H:%M' 2>/dev/null || echo 'N/A'))"
+	if ((retention_enabled)); then
+		print_info "Retention: ${retention_days} days (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
+	fi
+	if ((keep_enabled)); then
+		print_info "Retention: keep newest ${keep_sessions} active sessions"
+	fi
+	if ((retention_enabled && keep_enabled)); then
+		print_info "Combined retention: archiving only sessions that are older than both targets"
+	fi
 	print_info "Active DB: $ACTIVE_DB"
 	print_info "Archive DB: $ARCHIVE_DB"
 
@@ -388,12 +457,15 @@ cmd_archive() {
 		exclude_clause="AND id NOT IN ($exclude_list)"
 	fi
 
+	local candidate_filter
+	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause")
+
 	# Count eligible sessions
 	local total_eligible
-	total_eligible=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created < $cutoff_ms $exclude_clause;")
+	total_eligible=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE $candidate_filter;")
 
 	if ((total_eligible == 0)); then
-		print_success "No sessions older than $retention_days days to archive."
+		print_success "No sessions match the archive retention target."
 		return 0
 	fi
 
@@ -402,10 +474,10 @@ cmd_archive() {
 	if ((dry_run)); then
 		# Show what would be archived
 		local msg_count part_count todo_count share_count
-		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE time_created < $cutoff_ms $exclude_clause);")
-		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE time_created < $cutoff_ms $exclude_clause);")
-		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE time_created < $cutoff_ms $exclude_clause);")
-		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE time_created < $cutoff_ms $exclude_clause);")
+		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 
 		echo ""
 		echo "=== DRY RUN — would archive: ==="
@@ -463,7 +535,7 @@ cmd_archive() {
 
 		# Collect batch session IDs
 		local session_ids
-		session_ids=$(sqlite3 "$ACTIVE_DB" "SELECT id FROM session WHERE time_created < $cutoff_ms $exclude_clause ORDER BY time_created ASC LIMIT $batch_limit;")
+		session_ids=$(sqlite3 "$ACTIVE_DB" "SELECT id FROM session WHERE $candidate_filter ORDER BY time_created ASC LIMIT $batch_limit;")
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -667,6 +739,7 @@ COMMANDS:
 
 ARCHIVE OPTIONS:
   --retention-days N        Sessions older than N days are archived (default: 14)
+  --keep-sessions N         Keep newest N active sessions; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
@@ -680,6 +753,9 @@ EXAMPLES:
 
   # Preview what would be archived (30-day retention)
   opencode-db-archive.sh archive --retention-days 30 --dry-run
+
+  # Keep the newest 500 active sessions, archive older sessions
+  opencode-db-archive.sh archive --keep-sessions 500
 
   # Archive with defaults (14 days, 60s time budget)
   opencode-db-archive.sh archive

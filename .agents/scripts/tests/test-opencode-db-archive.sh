@@ -42,6 +42,11 @@ trap 'rm -rf "$SANDBOX"' EXIT
 ACTIVE_DB="${SANDBOX}/opencode.db"
 ARCHIVE_DB="${SANDBOX}/opencode-archive.db"
 
+_reset_dbs() {
+	rm -f "$ACTIVE_DB" "$ARCHIVE_DB" "${ACTIVE_DB}-wal" "${ACTIVE_DB}-shm" "${ARCHIVE_DB}-wal" "${ARCHIVE_DB}-shm"
+	return 0
+}
+
 _make_active_db_with_session_path() {
 	sqlite3 "$ACTIVE_DB" <<'SQL'
 PRAGMA journal_mode = WAL;
@@ -137,6 +142,66 @@ SQL
 	return 0
 }
 
+_make_active_db_with_sessions() {
+	local sessions_csv="$1"
+
+	sqlite3 "$ACTIVE_DB" <<'SQL'
+PRAGMA journal_mode = WAL;
+CREATE TABLE project (
+  id text PRIMARY KEY,
+  worktree text NOT NULL,
+  vcs text,
+  name text,
+  icon_url text,
+  icon_color text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_initialized integer,
+  sandboxes text NOT NULL,
+  commands text,
+  icon_url_override text
+);
+CREATE TABLE session (
+  id text PRIMARY KEY,
+  project_id text NOT NULL,
+  parent_id text,
+  slug text NOT NULL,
+  directory text NOT NULL,
+  title text NOT NULL,
+  version text NOT NULL,
+  share_url text,
+  summary_additions integer,
+  summary_deletions integer,
+  summary_files integer,
+  summary_diffs text,
+  revert text,
+  permission text,
+  time_created integer NOT NULL,
+  time_updated integer NOT NULL,
+  time_compacting integer,
+  time_archived integer,
+  workspace_id text,
+  path text
+);
+CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
+CREATE TABLE todo (session_id text NOT NULL, content text NOT NULL, status text NOT NULL, priority text NOT NULL, position integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, PRIMARY KEY(session_id, position));
+CREATE TABLE session_share (session_id text PRIMARY KEY, id text NOT NULL, secret text NOT NULL, url text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL);
+INSERT INTO project VALUES ('proj1', '/tmp/worktree', 'git', 'project', NULL, NULL, 1, 1, NULL, '{}', NULL, NULL);
+SQL
+
+	local session_id created_ms
+	while IFS=',' read -r session_id created_ms; do
+		[[ -n "$session_id" ]] || continue
+		sqlite3 "$ACTIVE_DB" \
+			"INSERT INTO session VALUES ('${session_id}', 'proj1', NULL, '${session_id}', '/tmp/dir', '${session_id}', '1.0.0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ${created_ms}, ${created_ms}, NULL, NULL, 'workspace1', '/tmp/${session_id}');"
+		sqlite3 "$ACTIVE_DB" \
+			"INSERT INTO message VALUES ('msg-${session_id}', '${session_id}', ${created_ms}, ${created_ms}, '{}');"
+	done <<<"$sessions_csv"
+	return 0
+}
+
+_reset_dbs
 _make_active_db_with_session_path
 _make_legacy_archive_db_without_session_path
 
@@ -170,6 +235,63 @@ if [[ "$active_sessions" == "0" ]]; then
 	_pass "archived session removed from active DB"
 else
 	_fail "archived session still present in active DB"
+fi
+
+_reset_dbs
+_make_active_db_with_sessions $'s1,1000\ns2,2000\ns3,3000\ns4,4000\ns5,5000'
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --keep-sessions 2 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive succeeds with count-based retention"
+else
+	_fail "count-based archive failed with rc=$rc — output: $out"
+fi
+
+active_kept=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
+if [[ "$active_kept" == "s4,s5" ]]; then
+	_pass "count-based retention preserves newest sessions"
+else
+	_fail "count-based retention kept unexpected active sessions: ${active_kept}"
+fi
+
+archived_count_sessions=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
+if [[ "$archived_count_sessions" == "s1,s2,s3" ]]; then
+	_pass "count-based retention archives sessions outside keep target"
+else
+	_fail "count-based retention archived unexpected sessions: ${archived_count_sessions}"
+fi
+
+_reset_dbs
+now_seconds=$(date +%s)
+old1_ms=$(((now_seconds - 10 * 86400) * 1000))
+old2_ms=$(((now_seconds - 9 * 86400) * 1000))
+mid_ms=$(((now_seconds - 3 * 86400) * 1000))
+new_ms=$(((now_seconds - 1 * 86400) * 1000))
+_make_active_db_with_sessions "old1,${old1_ms}
+old2,${old2_ms}
+mid,${mid_ms}
+new,${new_ms}"
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --retention-days 7 --keep-sessions 3 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive succeeds with combined retention targets"
+else
+	_fail "combined archive failed with rc=$rc — output: $out"
+fi
+
+combined_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
+if [[ "$combined_active" == "old2,mid,new" ]]; then
+	_pass "combined retention uses conservative intersection"
+else
+	_fail "combined retention kept unexpected active sessions: ${combined_active}"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"

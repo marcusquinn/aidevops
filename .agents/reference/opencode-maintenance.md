@@ -100,6 +100,36 @@ FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0.0 \
   opencode-db-maintenance-helper.sh maintain
 ```
 
+## Archive retention modes
+
+`opencode-db-archive.sh archive` supports two retention targets:
+
+- **Age-based retention** (`--retention-days N`) archives sessions older than
+  `N` days. This remains the default mode (`14` days) and is best when session
+  volume is predictable.
+- **Count-based retention** (`--keep-sessions N`) keeps the newest `N` active
+  sessions and archives older sessions beyond that budget. Use this when TUI
+  startup cost tracks active session count more closely than calendar age, for
+  example keeping roughly the newest 500 sessions active.
+
+Examples:
+
+```bash
+# Keep roughly the newest 500 active sessions, archive older sessions
+opencode-db-archive.sh archive --keep-sessions 500
+
+# Preview a stricter active-session budget first
+opencode-db-archive.sh archive --keep-sessions 250 --dry-run
+
+# Conservative combined mode: archive only sessions older than 30 days AND
+# outside the newest 500 sessions
+opencode-db-archive.sh archive --retention-days 30 --keep-sessions 500
+```
+
+When both modes are provided, the archive uses the conservative intersection:
+recent sessions are preserved if they are within either the age window or the
+newest-session budget.
+
 ## Safety
 
 - **Never runs with active opencode processes** in `auto` or plain
