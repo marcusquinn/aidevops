@@ -28,7 +28,12 @@ _die() {
 }
 
 _clean_json_stream() {
-	python3 - <<'PY'
+	local input_file
+	input_file="$(mktemp)"
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		printf '%s\n' "$line" >>"$input_file"
+	done
+	python3 - "$input_file" <<'PY'
 import json
 import re
 import sys
@@ -69,7 +74,7 @@ def emit_record(prefix, body):
         print()
 
 
-raw = sys.stdin.read()
+raw = open(sys.argv[1], encoding='utf-8', errors='replace').read()
 if not raw.strip():
     sys.exit(0)
 data = json.loads(raw)
@@ -93,6 +98,7 @@ for index, item in enumerate(comments, 1):
         continue
     emit_record(f'Comment {index} ({author or "unknown"})', body)
 PY
+	rm -f "$input_file"
 	return 0
 }
 
