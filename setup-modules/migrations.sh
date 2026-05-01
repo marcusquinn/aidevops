@@ -333,8 +333,10 @@ cleanup_worktree_entries_in_repos_json() {
 	local stale_paths=()
 	local skipped_current_paths=()
 	local current_worktree=""
+	local current_physical_dir=""
 	local path git_dir common_dir resolved_path
 
+	current_physical_dir=$(pwd -P 2>/dev/null || pwd)
 	current_worktree=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	if [[ -n "$current_worktree" ]]; then
 		current_worktree=$(cd "$current_worktree" 2>/dev/null && pwd -P) || current_worktree=""
@@ -351,7 +353,8 @@ cleanup_worktree_entries_in_repos_json() {
 		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
 		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
 		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
-			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]]; then
+			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] \
+				|| [[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
 				skipped_current_paths+=("$path")
 				continue
 			fi
