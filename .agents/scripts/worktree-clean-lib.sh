@@ -181,6 +181,26 @@ should_skip_cleanup() {
 	local open_pr_list="$4"
 	local force_merged_flag="$5"
 
+	# GH#22154: Never remove the worktree that is executing cleanup.
+	# A caller may run `worktree-helper.sh clean --auto` from a linked worktree
+	# whose branch is already merged. Without this guard, the cleanup pass can
+	# trash the caller's current directory mid-command, producing getcwd failures
+	# and cascading "script not found" errors in the next gate.
+	local current_dir=""
+	current_dir=$(pwd -P 2>/dev/null || true)
+	if [[ -n "$current_dir" ]]; then
+		case "$current_dir" in
+		"$wt_path" | "$wt_path"/*)
+			echo -e "  ${RED}$wt_branch${NC} (current working tree - skipping)"
+			echo "    $wt_path"
+			echo ""
+			# t2976: audit log — cleanup skipped, caller is inside this worktree
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "current-worktree"
+			return 0
+			;;
+		esac
+	fi
+
 	# t2916/GH#21074: Active interactive-session claim check.
 	# Consults the same canonical claim-stamp directory the dispatch-dedup
 	# gate uses. Placed BEFORE the 4h grace cliff so claim-stamp wins on
