@@ -126,6 +126,35 @@ chmod +x "$SANDBOX/bin/opencode-garbage"
 rc4=$(tail -1 "$SANDBOX/out4")
 assert_eq "garbage version -> rc=1" "1" "$rc4"
 
+# --- Test 4b: validator timeout for hanging --version -----------------------
+echo "Test 4b: _setup_validate_opencode_binary bounds hanging --version"
+cat >"$SANDBOX/bin/opencode-slow" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+	sleep 5
+	echo "1.14.25"
+fi
+EOF
+chmod +x "$SANDBOX/bin/opencode-slow"
+
+(
+	source_lib
+	export AIDEVOPS_OPENCODE_VERSION_TIMEOUT=1
+	SECONDS=0
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-slow" || rc=$?
+	printf 'rc=%s elapsed=%s\n' "$rc" "$SECONDS"
+) >"$SANDBOX/out4b" 2>&1
+rc4b=$(grep '^rc=' "$SANDBOX/out4b" | tail -1)
+elapsed4b="${rc4b##*elapsed=}"
+rc4b="${rc4b%% elapsed=*}"
+assert_eq "hanging version -> rc=2" "rc=2" "$rc4b"
+if [[ "$elapsed4b" =~ ^[0-9]+$ ]] && [[ "$elapsed4b" -le 3 ]]; then
+	assert_eq "hanging version returns within bound" "bounded" "bounded"
+else
+	assert_eq "hanging version returns within bound" "elapsed<=3" "elapsed=${elapsed4b}"
+fi
+
 # --- Test 5: setup_opencode_cli skips install when current binary is valid --
 echo "Test 5: setup_opencode_cli skip-when-valid + persists resolved path"
 (
@@ -161,6 +190,37 @@ rc6=$(grep '^rc=' "$SANDBOX/out6" | tail -1)
 no_installer_msg=$(grep -c "Neither bun nor npm" "$SANDBOX/out6" || true)
 assert_eq "fail-open rc" "rc=0" "$rc6"
 assert_eq "fail-open emits remediation hint" "1" "$no_installer_msg"
+
+# --- Test 7: setup_opencode_cli bounds hanging installer ---------------------
+echo "Test 7: setup_opencode_cli bounds hanging installer"
+cat >"$SANDBOX/bin/npm" <<'EOF'
+#!/usr/bin/env bash
+sleep 5
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/npm"
+rm -f "$SANDBOX/bin/bun" "$HOME/.aidevops/.opencode-bin-resolved"
+(
+	source_lib
+	cp "$SANDBOX/bin/opencode-garbage" "$SANDBOX/bin/opencode"
+	export PATH="$SANDBOX/bin:/usr/bin:/bin"
+	export OPENCODE_BIN=""
+	export AIDEVOPS_OPENCODE_VERSION_TIMEOUT=1
+	export AIDEVOPS_OPENCODE_INSTALL_TIMEOUT=1
+	SECONDS=0
+	rc=0
+	setup_opencode_cli || rc=$?
+	printf 'rc=%s elapsed=%s\n' "$rc" "$SECONDS"
+) >"$SANDBOX/out7" 2>&1
+rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
+elapsed7="${rc7##*elapsed=}"
+rc7="${rc7%% elapsed=*}"
+assert_eq "hanging installer fail-opens" "rc=0" "$rc7"
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+	assert_eq "hanging installer returns within bound" "bounded" "bounded"
+else
+	assert_eq "hanging installer returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+fi
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="
