@@ -949,10 +949,9 @@ _auto_merge_stuck_seconds() {
 	local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 
 	local enabled_at merge_state mergeable review_decision
-	enabled_at=$(printf '%s' "$pr_state" | jq -r '.autoMergeRequest.enabledAt // empty' 2>/dev/null)
-	merge_state=$(printf '%s' "$pr_state" | jq -r '.mergeStateStatus // empty' 2>/dev/null)
-	mergeable=$(printf '%s' "$pr_state" | jq -r '.mergeable // empty' 2>/dev/null)
-	review_decision=$(printf '%s' "$pr_state" | jq -r '.reviewDecision // empty' 2>/dev/null)
+	read -r enabled_at merge_state mergeable review_decision <<<"$(printf '%s' "$pr_state" \
+		| jq -r '[.autoMergeRequest.enabledAt // "", .mergeStateStatus // "", .mergeable // "", .reviewDecision // ""] | @tsv' \
+		|| true)"
 
 	# Glob form (unquoted RHS inside [[ ]]) avoids adding new repeated
 	# string literals to this file — the validator counts only quoted
@@ -1033,7 +1032,7 @@ _set_native_auto_merge_or_skip() {
 		_existing_auto=$(printf '%s' "$_pr_state" | jq -r '.autoMergeRequest // empty' 2>/dev/null)
 	fi
 
-	if [[ -n "$_existing_auto" && "$_existing_auto" != "null" ]]; then
+	if [[ -n "$_existing_auto" ]]; then
 		# Auto-merge already requested — check for the GitHub auto_merge wedge
 		# before unconditionally deferring (t3192).
 		local _stuck_seconds=""
