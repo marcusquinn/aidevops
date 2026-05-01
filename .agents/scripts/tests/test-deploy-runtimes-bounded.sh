@@ -220,6 +220,49 @@ test_bounded_wrapper_timeout_env_respected() {
 	return 0
 }
 
+test_real_bounded_wrapper_timeout_returns_zero() {
+	TEST_TMP_DIR="$(mktemp -d)"
+	local script="${TEST_TMP_DIR}/real_wrapper_timeout.sh"
+	local wrapper_definition=""
+
+	wrapper_definition=$(awk '
+		/^_deploy_agents_to_runtimes_bounded\(\)/{found=1; depth=0}
+		found {print}
+		found && /\{/{depth++}
+		found && /\}/{depth--; if(depth<=0){exit}}
+	' "$AGENT_RUNTIME_SH")
+
+	if [[ -z "$wrapper_definition" ]]; then
+		print_result "real bounded wrapper extraction succeeds" 1 "function not found in ${AGENT_RUNTIME_SH}"
+		return 0
+	fi
+
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'set -uo pipefail'
+		printf '%s\n' 'print_warning() { printf "%s\n" "$*"; return 0; }'
+		printf '%s\n' 'deploy_agents_to_runtimes() { sleep 10; return 0; }'
+		printf '%s\n' 'AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT=2'
+		printf '%s\n' "$wrapper_definition"
+		printf '%s\n' '_deploy_agents_to_runtimes_bounded'
+	} >"$script"
+	chmod +x "$script"
+
+	local output=""
+	local rc=0
+	local start_s=$SECONDS
+	output=$(bash "$script" 2>&1) || rc=$?
+	local elapsed=$(( SECONDS - start_s ))
+
+	if [[ "$rc" -eq 0 && "$elapsed" -le 7 && "$output" == *"non-critical"* ]]; then
+		print_result "real bounded wrapper timeout returns zero with non-critical warning" 0
+	else
+		print_result "real bounded wrapper timeout returns zero with non-critical warning" 1 \
+			"rc=$rc elapsed=${elapsed}s output=${output}"
+	fi
+	return 0
+}
+
 main() {
 	trap cleanup EXIT
 
@@ -231,6 +274,7 @@ main() {
 	test_bounded_wrapper_fast_path
 	test_bounded_wrapper_kills_slow_deployment_without_failing_setup
 	test_bounded_wrapper_timeout_env_respected
+	test_real_bounded_wrapper_timeout_returns_zero
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
