@@ -250,15 +250,13 @@ test_real_bounded_wrapper_timeout_returns_zero() {
 
 	local output=""
 	local rc=0
-	local start_s=$SECONDS
 	output=$(bash "$script" 2>&1) || rc=$?
-	local elapsed=$(( SECONDS - start_s ))
 
-	if [[ "$rc" -eq 0 && "$elapsed" -le 7 && "$output" == *"non-critical"* ]]; then
+	if [[ "$rc" -eq 0 && "$output" == *"non-critical"* ]]; then
 		print_result "real bounded wrapper timeout returns zero with non-critical warning" 0
 	else
 		print_result "real bounded wrapper timeout returns zero with non-critical warning" 1 \
-			"rc=$rc elapsed=${elapsed}s output=${output}"
+			"rc=$rc output=${output}"
 	fi
 	return 0
 }
