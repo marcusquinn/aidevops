@@ -3733,7 +3733,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3238 Add memory truth-maintenance and debunk workflow #auto-dispatch #enhancement ref:GH#21995 pr:#22051 completed:2026-05-01
 
-- [ ] t3239 Make OpenCode DB maintenance WAL-aware under active sessions #auto-dispatch #bug ref:GH#21996
+- [x] t3239 Make OpenCode DB maintenance WAL-aware under active sessions #auto-dispatch #bug ref:GH#21996 pr:#22114 completed:2026-05-01
 
 - [x] t3241 Fix memory dedup dry-run count channel #auto-dispatch #bug #self-improvement ref:GH#21998 pr:#22040 completed:2026-05-01
 
