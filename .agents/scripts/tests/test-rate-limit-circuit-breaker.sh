@@ -140,7 +140,9 @@ reset_test_state() {
 	: >"$LOGFILE"
 	: >"$STATS_COUNTER_FILE"
 	rm -f "${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state"
+	rm -f "${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json"
 	unset AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER 2>/dev/null || true
+	unset AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL 2>/dev/null || true
 	unset STUB_GH_FAIL 2>/dev/null || true
 	STUB_GH_REMAINING=5000
 	STUB_GH_LIMIT=5000
@@ -316,6 +318,7 @@ test_state_file_lifecycle() {
 
 	# Recover.
 	STUB_GH_REMAINING=1000
+	rm -f "${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json"
 	is_graphql_budget_sufficient || true
 	if [[ ! -f "$state_file" ]]; then
 		pass "state file cleared on recovery"
@@ -351,6 +354,22 @@ test_status_output_tripped() {
 		pass "status output shows TRIPPED when budget exhausted"
 	else
 		fail "status should show TRIPPED (got: $output)"
+	fi
+	return 0
+}
+
+# --- Test 14: Cached-only status does not call gh on cache hit ---
+test_status_cached_only_uses_cache() {
+	reset_test_state
+	STUB_GH_REMAINING=4321
+	local output
+	output=$(_circuit_breaker_status 2>/dev/null)
+	STUB_GH_REMAINING=1
+	output=$(_circuit_breaker_status cached-only 2>/dev/null)
+	if [[ "$output" == OK:*remaining=4321/5000* ]]; then
+		pass "cached-only status reuses cached rate_limit response"
+	else
+		fail "cached-only status should reuse cached response (got: $output)"
 	fi
 	return 0
 }
@@ -675,6 +694,7 @@ test_stats_counter_no_increment_on_pass
 test_state_file_lifecycle
 test_status_output_ok
 test_status_output_tripped
+test_status_cached_only_uses_cache
 test_log_message_on_trip
 
 # =============================================================================
