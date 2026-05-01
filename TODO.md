@@ -3773,7 +3773,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3360 Bound OpenCode CLI setup validation timeout #auto-dispatch #bug ref:GH#22064
 
-- [ ] t3361 Make setup agent deploy rsync staging resilient to disappearing files #auto-dispatch #bug ref:GH#22063
+- [x] t3361 Make setup agent deploy rsync staging resilient to disappearing files #auto-dispatch #bug ref:GH#22063 pr:#22080 completed:2026-05-01
 
 - [ ] t3369 Bound serialized setup wait on stale setup process #auto-dispatch #bug #framework ref:GH#22084
 
