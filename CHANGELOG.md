@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.48] - 2026-05-01
+
+### Changed
+
+- Make linters-local string literal gate ratchet-based (#22082)
+
 ## [3.13.47] - 2026-05-01
 
 ### Changed
