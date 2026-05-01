@@ -299,25 +299,36 @@ export function createConfigHook(deps) {
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
 
-    // Discover and register proxy provider models
-    const { getCursorModels } = await import("./cursor/models.js");
-    const { discoverGoogleModels } = await import("./google-proxy.mjs");
+    // Discover and register proxy provider models only when a proxy listener is
+    // already active. The normal startup path intentionally leaves these ports
+    // null until first use, so unconditional imports/discovery here made config
+    // hook latency depend on optional providers. See GH#22157.
+    let cursor = 0;
+    let google = 0;
 
-    const cursor = await discoverAndRegisterModels({
-      provider: "cursor",
-      port: getCursorProxyPort(),
-      discoverModels: getCursorModels,
-      registerProvider: registerCursorProvider,
-      config,
-    });
+    const cursorProxyPort = getCursorProxyPort();
+    if (cursorProxyPort) {
+      const { getCursorModels } = await import("./cursor/models.js");
+      cursor = await discoverAndRegisterModels({
+        provider: "cursor",
+        port: cursorProxyPort,
+        discoverModels: getCursorModels,
+        registerProvider: registerCursorProvider,
+        config,
+      });
+    }
 
-    const google = await discoverAndRegisterModels({
-      provider: "google",
-      port: getGoogleProxyPort(),
-      discoverModels: discoverGoogleModels,
-      registerProvider: registerGoogleProvider,
-      config,
-    });
+    const googleProxyPort = getGoogleProxyPort();
+    if (googleProxyPort) {
+      const { discoverGoogleModels } = await import("./google-proxy.mjs");
+      google = await discoverAndRegisterModels({
+        provider: "google",
+        port: googleProxyPort,
+        discoverModels: discoverGoogleModels,
+        registerProvider: registerGoogleProvider,
+        config,
+      });
+    }
 
     const claude = registerClaudeCliModels(config);
 
