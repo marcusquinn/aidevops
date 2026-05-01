@@ -61,12 +61,16 @@ print_result() {
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
+	mkdir -p "${TEST_ROOT}/scripts"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export AGENTS_DIR="${TEST_ROOT}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	: >"$LOGFILE"
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
+	APPROVAL_VERIFY_RESULT=""
+	export APPROVAL_VERIFY_RESULT
 
 	# Default issue fixture: author_association=OWNER, no NMR comments
 	printf '{"author_association":"OWNER"}' >"${TEST_ROOT}/issue.json"
@@ -116,6 +120,16 @@ fi
 exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
+
+	cat >"${TEST_ROOT}/scripts/approval-helper.sh" <<'APPROVAL_EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "verify" ]]; then
+	printf '%s\n' "${APPROVAL_VERIFY_RESULT:-}"
+	exit 0
+fi
+exit 1
+APPROVAL_EOF
+	chmod +x "${TEST_ROOT}/scripts/approval-helper.sh"
 	return 0
 }
 
@@ -123,6 +137,7 @@ teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
+	unset AGENTS_DIR APPROVAL_VERIFY_RESULT
 	return 0
 }
 
@@ -132,7 +147,7 @@ teardown_test_env() {
 # _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
 # pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
 define_helpers_under_test() {
-	local src_worker_briefed src_issue_api src_trusted_author
+	local src_worker_briefed src_issue_api src_trusted_author src_crypto_approval
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -143,6 +158,9 @@ define_helpers_under_test() {
 	fi
 	src_trusted_author=$(awk '
 		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
+	src_crypto_approval=$(awk '
+		/^_issue_has_verified_crypto_approval\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	src_worker_briefed=$(awk '
 		/^_attempt_worker_briefed_auto_merge\(\) \{/,/^\}$/ { print }
@@ -155,6 +173,8 @@ define_helpers_under_test() {
 	eval "$src_issue_api"
 	# shellcheck disable=SC1090
 	eval "$src_trusted_author"
+	# shellcheck disable=SC1090
+	eval "$src_crypto_approval"
 	# shellcheck disable=SC1090
 	eval "$src_worker_briefed"
 	return 0
@@ -280,6 +300,7 @@ test_case_e_nmr_crypto_cleared_passes() {
 	printf '{"author_association":"OWNER"}' >"${TEST_ROOT}/issue.json"
 	# Comments contain BOTH auto-approval AND crypto approval markers
 	printf '[{"body":"auto-approved-maintainer-issue: cleared NMR"},{"body":"aidevops:approval-signature: SHA256:abc123"}]' >"${TEST_ROOT}/comments.json"
+	export APPROVAL_VERIFY_RESULT="VERIFIED"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0
@@ -461,6 +482,7 @@ test_case_k_non_owner_with_crypto_passes() {
 	printf '{"author_association":"NONE"}' >"${TEST_ROOT}/issue.json"
 	# Comments contain crypto approval signature — maintainer vouched
 	printf '[{"body":"aidevops:approval-signature: SHA256:abc123"}]' >"${TEST_ROOT}/comments.json"
+	export APPROVAL_VERIFY_RESULT="VERIFIED"
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0
@@ -611,6 +633,37 @@ test_case_o_trusted_author_not_in_allowlist_blocked() {
 }
 
 # =============================================================================
+# Case (p): issue-author=NONE + spoofed approval marker but failed verification
+# → blocked. Comment marker presence alone is not a trust signal (GH#21936).
+# =============================================================================
+test_case_p_spoofed_crypto_marker_blocked() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"NONE"}' >"${TEST_ROOT}/issue.json"
+	printf '[{"body":"aidevops:approval-signature: SHA256:spoofed"}]' >"${TEST_ROOT}/comments.json"
+	export APPROVAL_VERIFY_RESULT=""
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "115" "owner/repo" "origin:worker" "false" "57" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case (p): spoofed crypto marker without verification → blocked" 1 \
+			"Expected non-zero exit, got 0 (unverified marker should block)"
+	else
+		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (p): spoofed crypto marker without verification → blocked" 0
+		else
+			print_result "Case (p): spoofed crypto marker without verification → blocked" 1 \
+				"Exit was non-zero but expected block log message not found"
+		fi
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -634,6 +687,7 @@ main() {
 	test_case_m_owner_no_crypto_still_passes
 	test_case_n_trusted_author_allowlist_passes
 	test_case_o_trusted_author_not_in_allowlist_blocked
+	test_case_p_spoofed_crypto_marker_blocked
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

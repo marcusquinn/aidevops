@@ -570,6 +570,30 @@ _is_trusted_issue_author() {
 }
 
 #######################################
+# Verify that a linked issue has a maintainer cryptographic approval (t3052).
+#
+# Marker-string presence is not a trust signal: any user able to comment could
+# paste the marker. This helper delegates to approval-helper.sh, which verifies
+# the SSH signature against the maintainer approval public key.
+#
+# Args: $1=issue_number, $2=repo_slug
+# Returns: 0=verified approval, 1=no verified approval
+#######################################
+_issue_has_verified_crypto_approval() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	[[ -z "$issue_number" || -z "$repo_slug" ]] && return 1
+
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	[[ ! -f "$approval_helper" ]] && return 1
+
+	local verify_result=""
+	verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null) || verify_result=""
+	[[ "$verify_result" == "VERIFIED" ]]
+	return $?
+}
+
+#######################################
 # Check origin:worker worker-briefed auto-merge gates (t2449).
 #
 # Sibling to _check_interactive_pr_gates — validates that an origin:worker
@@ -630,9 +654,7 @@ _attempt_worker_briefed_auto_merge() {
 		return 1
 	fi
 
-	# Reuse the issue API base path for author-association, crypto-approval,
-	# and NMR checks — single comment fetch serves both the t3052 bypass
-	# and the t2449 NMR gate.
+	# Reuse the issue API base path for author-association and NMR checks.
 	local _issue_api
 	_issue_api=$(_pm_issue_api "$repo_slug" "$linked_issue")
 	# Fetch author_association and user.login in one API call (t3062 needs login).
@@ -643,19 +665,19 @@ _attempt_worker_briefed_auto_merge() {
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 
-	# Fetch issue comment signals once — used by both the OWNER/MEMBER
-	# bypass (t3052) and the NMR crypto-vs-auto check (t2449).
-	local _issue_signals
-	_issue_signals=$(gh api "${_issue_api}/comments" --jq '
-		[
-			(any(.[].body | strings; contains("aidevops:approval-signature:"))),
-			(any(.[].body | strings; contains("auto-approved-maintainer-issue")))
-		] | @tsv
-	' 2>/dev/null) || _issue_signals="false	false"
-
-	local _has_crypto=""
+	# Fetch auto-approval signal once for the NMR crypto-vs-auto check (t2449).
+	# Cryptographic approval is verified separately via approval-helper.sh; do not
+	# trust marker-string presence in comments as a security gate.
+	local _not_true_status="not-verified"
 	local _has_auto=""
-	read -r _has_crypto _has_auto <<< "$_issue_signals"
+	_has_auto=$(gh api "${_issue_api}/comments" --jq '
+		any(.[].body | strings; contains("auto-approved-maintainer-issue"))
+	' 2>/dev/null) || _has_auto="$_not_true_status"
+
+	local _has_crypto="$_not_true_status"
+	if _issue_has_verified_crypto_approval "$linked_issue" "$repo_slug"; then
+		_has_crypto="true"
+	fi
 
 	# Gate: linked issue authored by OWNER/MEMBER, OR login is in the
 	# trusted-issue-author allowlist (t3062), OR cryptographically approved
