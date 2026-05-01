@@ -16,6 +16,8 @@
 #   3. mv-staging-to-live fails: function returns 1, rollback restores target
 #   4. concurrent fixed staging cleanup: unique staging avoids stale path races
 #   5. deploy_aidevops_agents postcondition: returns 1 when scripts/ missing
+#   6. no-change deploy with corrupt live scripts/ and reserved plugin namespace
+#      still copies canonical scripts/ instead of excluding them from staging
 
 set -euo pipefail
 
@@ -289,12 +291,62 @@ test_postcondition_fails_when_scripts_absent() {
 	return 0
 }
 
+# Test 6: no-change deploy path — if the deployed SHA matches HEAD but the live
+# agents tree is corrupt (scripts/ missing), a plugin namespace that collides
+# with core scripts/ must not exclude canonical scripts/ from the staged copy.
+test_no_change_corrupt_live_scripts_reserved_namespace_recovers() {
+	local repo="${TEST_DIR}/repo6"
+	local target="${TEST_DIR}/.aidevops/agents"
+	local plugins_file="${TEST_DIR}/.config/aidevops/plugins.json"
+	local sha="abc123456789"
+
+	mkdir -p "$repo/.agents/scripts" "$target" "$(dirname "$plugins_file")" "${TEST_DIR}/.aidevops"
+	printf 'canonical script\n' >"$repo/.agents/scripts/hello.sh"
+	printf '%s\n' "$sha" >"${TEST_DIR}/.aidevops/.deployed-sha"
+	printf '{"plugins":[{"name":"bad","namespace":"scripts","repo":"unused"}]}\n' >"$plugins_file"
+
+	git() {
+		local first_arg="${1:-}"
+		local third_arg="${3:-}"
+		local fourth_arg="${4:-}"
+		if [[ "$first_arg" == "-C" && "$third_arg" == "rev-parse" && "$fourth_arg" == "HEAD" ]]; then
+			printf '%s\n' "$sha"
+			return 0
+		fi
+		command git "$@"
+		return $?
+	}
+	sanitize_plugin_namespace() {
+		local ns="$1"
+		printf '%s\n' "$ns"
+		return 0
+	}
+	_deploy_agents_post_copy() { return 0; }
+	_warn_deployed_script_drift() { return 0; }
+	create_backup_with_rotation() { return 0; }
+
+	local rc=0
+	HOME="${TEST_DIR}" INSTALL_DIR="$repo" AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1 deploy_aidevops_agents || rc=$?
+
+	unset -f git sanitize_plugin_namespace _deploy_agents_post_copy
+	unset -f _warn_deployed_script_drift create_backup_with_rotation
+
+	if [[ "$rc" -eq 0 && -f "$target/scripts/hello.sh" ]]; then
+		print_result "no-change corrupt live: reserved scripts namespace is ignored" 0
+	else
+		print_result "no-change corrupt live: reserved scripts namespace is ignored" 1 \
+			"rc=$rc, expected $target/scripts/hello.sh"
+	fi
+	return 0
+}
+
 main() {
 	setup
 
 	test_happy_path_target_exists_with_scripts
 	test_mv_to_old_fails_preserves_live_target
 	test_mv_staging_to_live_fails_rolls_back
+	test_no_change_corrupt_live_scripts_reserved_namespace_recovers
 	test_fixed_staging_cleanup_does_not_abort_copy
 	test_postcondition_fails_when_scripts_absent
 

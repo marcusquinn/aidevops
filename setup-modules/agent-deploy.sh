@@ -163,6 +163,23 @@ _deploy_agents_copy() {
 	return 1
 }
 
+# _is_reserved_agent_namespace namespace
+# Returns 0 when a plugin namespace collides with a core aidevops agents
+# directory. Such namespaces must never be passed as rsync/tar excludes because
+# excluding scripts/ from the canonical source can deploy an agents tree that
+# passes the copy step but fails the post-swap scripts/ invariant.
+_is_reserved_agent_namespace() {
+	local namespace="$1"
+
+	case "$namespace" in
+		AGENTS.md|VERSION|advisories|commands|configs|custom|draft|hooks|plugins|prompts|reference|scripts|services|tools|workflows)
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
 # _inject_plan_reminder target_dir
 # Injects the extracted OpenCode plan-reminder into Plan+ if the placeholder is present.
 _inject_plan_reminder() {
@@ -691,6 +708,10 @@ deploy_aidevops_agents() {
 		local ns safe_ns
 		while IFS= read -r ns; do
 			if [[ -n "$ns" ]] && safe_ns=$(sanitize_plugin_namespace "$ns" 2>/dev/null); then
+				if _is_reserved_agent_namespace "$safe_ns"; then
+					print_warning "Skipping plugin namespace that collides with core agents directory: $safe_ns"
+					continue
+				fi
 				plugin_namespaces+=("$safe_ns")
 			fi
 		done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
