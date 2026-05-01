@@ -269,6 +269,11 @@ _gh_validate_edit_args() {
 # Canonical list of mutually-exclusive origin:* labels.
 ORIGIN_LABELS=("interactive" "worker" "worker-takeover")
 
+# Canonical solved-by attribution labels. These describe who ultimately
+# resolved the task, independent from origin:* labels that describe how the
+# issue/PR was created.
+SOLVED_LABELS=("worker" "interactive")
+
 # (t2396) Labels applied by pulse-merge-feedback.sh when routing a failed/
 # conflicted/review-feedback PR back to its parent issue for re-dispatch.
 # Used by _normalize_reassign_self to detect feedback-routed status:available
@@ -447,4 +452,79 @@ set_origin_label() {
 	fi
 
 	gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+}
+
+#######################################
+# Ensure solved:* attribution labels exist on a repo (idempotent).
+# Args: $1 — repo slug (owner/repo)
+# Returns: 0 on success/no-op, 1 when repo is empty.
+#######################################
+ensure_solved_labels_exist() {
+	local repo="$1"
+	[[ -z "$repo" ]] && return 1
+	gh label create "solved:worker" --repo "$repo" \
+		--description "Task was solved by a headless worker" \
+		--color "0E8A16" 2>/dev/null || true
+	gh label create "solved:interactive" --repo "$repo" \
+		--description "Task was solved by an interactive session" \
+		--color "BFD4F2" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Transition an issue to a solved:* attribution label atomically.
+#
+# This is separate from origin:*: origin says who created the issue/PR;
+# solved:* says who actually resolved it. The labels are mutually exclusive.
+#
+# Args:
+#   $1 — issue number
+#   $2 — repo slug (owner/repo)
+#   $3 — solved actor: worker|interactive
+#   $@ — additional gh issue edit flags passed through verbatim
+# Returns:
+#   0 on gh success
+#   1 on gh failure
+#   2 on invalid args
+#######################################
+set_solved_label() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local solved_actor="$3"
+	shift 3
+
+	if [[ -z "$issue_num" || -z "$repo_slug" || -z "$solved_actor" ]]; then
+		printf 'set_solved_label: issue_num, repo_slug, and solved_actor are required\n' >&2
+		return 2
+	fi
+
+	local _valid=0
+	local _actor
+	for _actor in "${SOLVED_LABELS[@]}"; do
+		[[ "$_actor" == "$solved_actor" ]] && {
+			_valid=1
+			break
+		}
+	done
+	if [[ "$_valid" -eq 0 ]]; then
+		printf 'set_solved_label: invalid actor "%s" (valid: %s)\n' \
+			"$solved_actor" "${SOLVED_LABELS[*]}" >&2
+		return 2
+	fi
+
+	ensure_solved_labels_exist "$repo_slug" || true
+
+	local -a _flags=()
+	local _label
+	for _label in "${SOLVED_LABELS[@]}"; do
+		if [[ "$_label" == "$solved_actor" ]]; then
+			_flags+=(--add-label "solved:${_label}")
+		else
+			_flags+=(--remove-label "solved:${_label}")
+		fi
+	done
+	_flags+=("$@")
+
+	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+	return $?
 }

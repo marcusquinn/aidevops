@@ -92,12 +92,14 @@ opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-202505
 **Signature**: Worker process never appears within the grace period after dispatch. The pulse posts `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on the issue and returns the issue to `status:available`. No worker log at `/tmp/pulse-*-<issue>.log`.
 
 **Log message**:
-```
+
+```text
 [pulse-wrapper] Launch validation failed for issue #N (slug) — no active worker process within Xs
 ```
 
 **GitHub audit trail**:
-```
+
+```text
 CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<login> ts=<ISO>
 ```
 
@@ -520,7 +522,23 @@ Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a ca
 
 ## Proving Workers Are Doing Real Work
 
-Don't trust process counts or log existence. Prove output growth:
+Don't trust process counts, log existence, or generic merged PR counts. Prove
+either live output growth or completed work attributed to workers:
+
+- `origin:*` labels describe creation path (`origin:interactive`, `origin:worker`,
+  `origin:worker-takeover`). They do **not** prove who solved the task.
+- `solved:*` labels describe completion attribution. Use `solved:worker` for
+  worker throughput and `solved:interactive` for interactive/admin/manual fixes.
+- A merged `origin:interactive` PR is interactive throughput, even when the pulse
+  merged it automatically after CI passed.
+
+```bash
+worker-activity-helper.sh summary --since 1h --repo <owner/repo>
+```
+
+The helper combines canonical worker metrics with `solved:worker` closed-issue
+counts. Treat `origin:worker` PR counts as branch-creation telemetry only; they
+are not sufficient evidence of worker productivity.
 
 ```bash
 # Measure actual output growth over 15 seconds

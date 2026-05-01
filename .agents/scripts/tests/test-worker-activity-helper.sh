@@ -203,9 +203,9 @@ assert_eq "2l: nwbreaker = 1" "1" \
 
 # PR check skipped → null + state=skipped.
 assert_eq "2m: pr count is null when skipped" "null" \
-	"$(printf '%s' "$JSON" | jq -r '.worker_prs.count')"
+	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
 assert_eq "2n: pr check_state = skipped" "skipped" \
-	"$(printf '%s' "$JSON" | jq -r '.worker_prs.check_state')"
+	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.check_state')"
 
 # ---------------------------------------------------------------------------
 # Section 3: 1h window narrows correctly.
@@ -253,6 +253,43 @@ assert_contains "5c: human output shows succeeded count" "Succeeded:            
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5e: human output shows --no-pr-check note" "--no-pr-check" "$OUT"
+
+# ---------------------------------------------------------------------------
+# Section 6: solved:worker attribution query excludes origin-only PR counts.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 6: solved-by attribution query ---"
+
+GH_STUB_DIR="$FIXTURE_DIR/bin"
+mkdir -p "$GH_STUB_DIR"
+GH_CALL_LOG="$FIXTURE_DIR/gh-calls.log"
+cat >"$GH_STUB_DIR/gh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${GH_CALL_LOG}"
+if [[ "$1" == "issue" && "$2" == "list" ]]; then
+	printf '[{"number":101},{"number":102}]\n'
+	exit 0
+fi
+printf '[]\n'
+EOF
+chmod +x "$GH_STUB_DIR/gh"
+
+JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
+	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --json 2>&1)
+RC=$?
+assert_rc "6a: solved attribution query exits 0" 0 "$RC"
+assert_eq "6b: solved worker issue count = 2" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
+assert_contains "6c: gh query uses solved:worker label" "label:solved:worker" \
+	"$(<"$GH_CALL_LOG")"
+if grep -q "label:origin:worker" "$GH_CALL_LOG" 2>/dev/null; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 6d: query must not use origin:worker"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 6d: query does not use origin:worker"
+fi
 
 # ---------------------------------------------------------------------------
 # Summary.

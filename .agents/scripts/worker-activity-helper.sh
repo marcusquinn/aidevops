@@ -12,8 +12,8 @@
 #   2. ~/.aidevops/logs/pulse-stats.json
 #      Pulse-level dispatch counters (each value is an array of unix-second
 #      timestamps; query with `jq '.counters[<name>] // []'`).
-#   3. `gh pr list label:origin:worker --state all`
-#      External truth: did dispatched work actually become a PR?
+#   3. `gh issue list label:solved:worker --state closed`
+#      External truth: did headless workers actually solve tasks?
 #
 # Replaces the misdiagnosis-prone habit of reading worker-NNN.log mtimes,
 # which was the exact mistake that triggered this task. mtime tells you when
@@ -136,17 +136,17 @@ _wah_count_stats_counter() {
 }
 
 #######################################
-# Get PR count for `origin:worker` PRs created since `since_iso`.
+# Get issue count for `solved:worker` issues closed since `since_iso`.
 # Caches result for $WAH_PR_CACHE_TTL seconds to avoid hammering gh.
 #
 # $1 — since_iso (YYYY-MM-DDTHH:MM:SSZ)
 # $2 — repo_slug (optional; empty = current repo)
-# stdout — integer PR count, or "?" on gh failure.
+# stdout — integer issue count, or "?" on gh failure.
 #######################################
-_wah_pr_count() {
+_wah_solved_worker_count() {
 	local since_iso="$1" repo_slug="${2:-}"
 	local cache="$WAH_PR_CACHE_FILE"
-	local cache_key="${repo_slug:-current}|${since_iso}"
+	local cache_key="solved-worker|${repo_slug:-current}|${since_iso}"
 
 	# Check cache freshness (portable mtime via shared-constants).
 	if [[ -f "$cache" ]]; then
@@ -164,8 +164,10 @@ _wah_pr_count() {
 		fi
 	fi
 
-	# Cache miss — query gh (5s timeout via gh's own client).
-	local count gh_args=(pr list --search "created:>=${since_iso} label:origin:worker" --state all --limit 1000 --json number)
+	# Cache miss — query gh (5s timeout via gh's own client). solved:worker is
+	# the completion-attribution signal; origin:worker alone only says who
+	# created the PR and can over-credit interactive fixes.
+	local count gh_args=(issue list --search "closed:>=${since_iso} label:solved:worker" --state closed --limit 1000 --json number)
 	[[ -n "$repo_slug" ]] && gh_args+=(--repo "$repo_slug")
 	count=$(gh "${gh_args[@]}" 2>/dev/null | jq 'length' 2>/dev/null) || count="?"
 
@@ -189,7 +191,7 @@ _wah_emit_human() {
 	local since_label="$1" cutoff_iso="$2"
 	local total="$3" succ="$4" wk="$5" wc="$6" rl="$7" of="$8"
 	local cb="$9" gqlow="${10}" db_skip="${11}" nwbreaker="${12}"
-	local pr_count="${13}" pr_check_state="${14}" repo_label="${15}"
+	local solved_count="${13}" pr_check_state="${14}" repo_label="${15}"
 
 	local divider="==========================================================="
 
@@ -220,8 +222,8 @@ _wah_emit_human() {
 	printf '  dispatch_backoff_skipped:                %d\n' "$db_skip"
 	printf '  pulse_dispatch_no_work_breaker_tripped:  %d\n' "$nwbreaker"
 	printf '\n'
-	printf 'origin:worker PRs created in window:\n'
-	printf '  %s' "$pr_count"
+	printf 'solved:worker issues closed in window:\n'
+	printf '  %s' "$solved_count"
 	[[ "$pr_check_state" == "skipped" ]] && printf '  (--no-pr-check)'
 	[[ "$pr_check_state" == "failed" ]] && printf '  (gh query failed)'
 	printf '\n'
@@ -236,11 +238,11 @@ _wah_emit_json() {
 	local since_label="$1" cutoff_iso="$2" cutoff_epoch="$3"
 	local total="$4" succ="$5" wk="$6" wc="$7" rl="$8" of="$9"
 	local cb="${10}" gqlow="${11}" db_skip="${12}" nwbreaker="${13}"
-	local pr_count="${14}" pr_check_state="${15}" repo_label="${16}"
+	local solved_count="${14}" pr_check_state="${15}" repo_label="${16}"
 
-	# pr_count may be "?" on gh failure — coerce to null in JSON.
-	local pr_json="$pr_count"
-	[[ "$pr_count" == "?" ]] && pr_json="null"
+	# solved_count may be "?" on gh failure — coerce to null in JSON.
+	local solved_json="$solved_count"
+	[[ "$solved_count" == "?" ]] && solved_json="null"
 
 	jq -n \
 		--arg since "$since_label" \
@@ -256,7 +258,7 @@ _wah_emit_json() {
 		--argjson gqlow "$gqlow" \
 		--argjson db_skip "$db_skip" \
 		--argjson nwbreaker "$nwbreaker" \
-		--argjson pr_count "$pr_json" \
+		--argjson solved_count "$solved_json" \
 		--arg pr_check_state "$pr_check_state" \
 		--arg repo "$repo_label" \
 		'{
@@ -276,7 +278,8 @@ _wah_emit_json() {
 				dispatch_backoff_skipped: $db_skip,
 				pulse_dispatch_no_work_breaker_tripped: $nwbreaker
 			},
-			worker_prs: { count: $pr_count, check_state: $pr_check_state }
+			worker_solved_issues: { count: $solved_count, check_state: $pr_check_state },
+			worker_prs: { count: $solved_count, check_state: $pr_check_state, deprecated: true }
 		}'
 	return 0
 }
@@ -342,10 +345,10 @@ cmd_summary() {
 	db_skip=$(_wah_count_stats_counter "dispatch_backoff_skipped" "$cutoff_epoch")
 	nwbreaker=$(_wah_count_stats_counter "pulse_dispatch_no_work_breaker_tripped" "$cutoff_epoch")
 
-	# PR count (optional, network-dependent).
+	# Solved issue count (optional, network-dependent).
 	local pr_count="?" pr_check_state="ok"
 	if [[ $do_pr_check -eq 1 ]]; then
-		pr_count=$(_wah_pr_count "$cutoff_iso" "$repo_label")
+		pr_count=$(_wah_solved_worker_count "$cutoff_iso" "$repo_label")
 		[[ "$pr_count" == "?" ]] && pr_check_state="failed"
 	else
 		pr_count="?"
@@ -380,13 +383,13 @@ Usage:
 Options:
   --since 1h|6h|24h|48h|7d   Lookback window (default: 24h)
   --json                     Emit machine-readable JSON
-  --no-pr-check              Skip the gh PR query (offline / rate-limited)
-  --repo OWNER/REPO          Constrain PR query to a single repo
+  --no-pr-check              Skip the gh solved-issue query (offline / rate-limited)
+  --repo OWNER/REPO          Constrain solved-issue query to a single repo
 
 Sources read (in canonical-precedence order):
   1. ~/.aidevops/logs/headless-runtime-metrics.jsonl  (worker outcomes)
   2. ~/.aidevops/logs/pulse-stats.json                (dispatch counters)
-  3. gh pr list label:origin:worker                   (external truth)
+  3. gh issue list label:solved:worker                (external truth)
 
 Examples:
   # Last 24 hours, human-readable.
