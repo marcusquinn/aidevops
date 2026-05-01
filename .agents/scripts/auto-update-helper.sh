@@ -172,6 +172,7 @@ _generate_auto_update_plist() {
 	local script_path="$1"
 	local interval_seconds="$2"
 	local env_path="$3"
+	env_path=$(aidevops_launchd_sanitized_path "$env_path")
 
 	cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>

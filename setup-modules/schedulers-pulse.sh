@@ -693,7 +693,7 @@ _generate_pulse_plist_content() {
 	# Use neutral workspace path for PULSE_DIR so supervisor sessions
 	# are not associated with any specific managed repo (GH#5136).
 	_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
-	_xml_path=$(_xml_escape "$PATH")
+	_xml_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "$PATH")")
 
 	local _headless_xml_env
 	_headless_xml_env=$(_build_pulse_headless_env_xml)
@@ -842,7 +842,7 @@ _generate_pulse_watchdog_plist_content() {
 	_xml_tick=$(_xml_escape "$tick_script")
 	_xml_bash=$(_xml_escape "$bash_bin")
 	_xml_home=$(_xml_escape "$HOME")
-	_xml_path=$(_xml_escape "$PATH")
+	_xml_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "$PATH")")
 
 	cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

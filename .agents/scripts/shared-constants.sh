@@ -189,6 +189,48 @@ readonly TEMPLATE_SUFFIX=".txt"
 readonly TEMP_PREFIX="tmp_"
 
 # =============================================================================
+# launchd PATH hygiene
+# =============================================================================
+# Build a PATH value safe to embed in macOS LaunchAgent EnvironmentVariables.
+# launchd jobs inherit no useful interactive shell setup, but serialising the
+# caller's raw PATH bakes stale manager-specific entries into long-lived plists.
+# Keep known system/tool roots first, then preserve only inherited entries that
+# actually exist on this host.
+
+_aidevops_append_launchd_path_dir() {
+	local dir="$1"
+	[[ -n "$dir" ]] || return 0
+	[[ -d "$dir" ]] || return 0
+	case ":${_aidevops_launchd_path_seen:-}:" in
+	*":${dir}:"*) return 0 ;;
+	esac
+	_aidevops_launchd_path_seen="${_aidevops_launchd_path_seen:+${_aidevops_launchd_path_seen}:}${dir}"
+	_aidevops_launchd_path_result="${_aidevops_launchd_path_result:+${_aidevops_launchd_path_result}:}${dir}"
+	return 0
+}
+
+aidevops_launchd_sanitized_path() {
+	local input_path="${1:-${PATH:-}}"
+	local default_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+	local _aidevops_launchd_path_result=""
+	local _aidevops_launchd_path_seen=""
+	local dir=""
+	local old_ifs="$IFS"
+
+	IFS=':'
+	for dir in $default_path; do
+		_aidevops_append_launchd_path_dir "$dir"
+	done
+	for dir in $input_path; do
+		_aidevops_append_launchd_path_dir "$dir"
+	done
+	IFS="$old_ifs"
+
+	printf '%s' "$_aidevops_launchd_path_result"
+	return 0
+}
+
+# =============================================================================
 # Credentials File Security
 # =============================================================================
 # Shared utility for ensuring credentials files have secure permissions.

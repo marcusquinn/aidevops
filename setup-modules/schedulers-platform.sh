@@ -104,7 +104,7 @@ _install_cw_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_cw_home}</string>
 	</dict>
@@ -229,7 +229,7 @@ _install_complexity_scan_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_cs_home}</string>
 	</dict>
@@ -363,7 +363,7 @@ _install_pulse_merge_routine_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_pmr_home}</string>
 	</dict>
@@ -534,7 +534,7 @@ _install_profile_readme_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_pr_home}</string>
 	</dict>
@@ -740,7 +740,7 @@ _install_token_refresh_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_tr_home}</string>
 	</dict>
@@ -992,7 +992,7 @@ _install_peer_productivity_monitor_launchd() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_ppm_home}</string>
 	</dict>
