@@ -128,10 +128,63 @@ test_routines_loader_isolates_errors() {
 	return 0
 }
 
+# Regression: GH#22199 — when the routines remote advances between clone and
+# setup_routines, the scaffold commit must be rebased before push instead of
+# leaving a local-only "chore: scaffold aidevops-routines repo" commit behind.
+test_commit_and_push_syncs_remote_ahead_repo() {
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d)
+	local remote_repo="${tmp_dir}/remote.git"
+	local local_repo="${tmp_dir}/local"
+	local advancer_repo="${tmp_dir}/advancer"
+
+	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
+	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
+	git -C "$local_repo" checkout -b main >/dev/null 2>&1
+	git -C "$local_repo" config user.email "test@example.invalid"
+	git -C "$local_repo" config user.name "Test User"
+	printf 'base\n' >"${local_repo}/README.md"
+	git -C "$local_repo" add README.md
+	git -C "$local_repo" commit -m "initial" >/dev/null
+	git -C "$local_repo" push -u origin main >/dev/null 2>&1
+
+	git clone "$remote_repo" "$advancer_repo" >/dev/null 2>&1
+	git -C "$advancer_repo" config user.email "test@example.invalid"
+	git -C "$advancer_repo" config user.name "Test User"
+	printf 'remote-ahead\n' >>"${advancer_repo}/README.md"
+	git -C "$advancer_repo" commit -am "remote ahead" >/dev/null
+	git -C "$advancer_repo" push origin main >/dev/null 2>&1
+
+	printf 'scaffold\n' >"${local_repo}/TODO.md"
+	# shellcheck disable=SC1090  # dynamic repo-relative helper path
+	source "$INIT_ROUTINES"
+	_commit_and_push "$local_repo"
+	git -C "$local_repo" fetch origin main >/dev/null 2>&1
+
+	local ahead_count=""
+	ahead_count=$(git -C "$local_repo" rev-list --count '@{u}..HEAD')
+	local scaffold_commit_count=""
+	scaffold_commit_count=$(git -C "$local_repo" log --oneline origin/main --grep 'chore: scaffold aidevops-routines repo' | wc -l | tr -d ' ')
+	local status_output=""
+	status_output=$(git -C "$local_repo" status --porcelain)
+
+	rm -rf "$tmp_dir"
+
+	if [[ "$ahead_count" == "0" && "$scaffold_commit_count" == "1" && -z "$status_output" ]]; then
+		print_result "_commit_and_push rebases before push when routines remote is ahead (GH#22199)" 0
+		return 0
+	fi
+
+	print_result "_commit_and_push rebases before push when routines remote is ahead (GH#22199)" 1 \
+		"ahead=${ahead_count} scaffold_commits=${scaffold_commit_count} status=${status_output}"
+	return 0
+}
+
 main() {
 	test_init_routines_sources_after_shared_constants
 	test_common_tolerates_readonly_colors
 	test_routines_loader_isolates_errors
+	test_commit_and_push_syncs_remote_ahead_repo
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
