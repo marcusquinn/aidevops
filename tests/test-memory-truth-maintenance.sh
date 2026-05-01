@@ -165,6 +165,49 @@ test_validate_reports_truth_state() {
 	return 0
 }
 
+test_migrates_old_relation_constraint() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	local test_dir
+	test_dir=$(setup_memory_dir)
+	local test_db="$test_dir/memory.db"
+
+	sqlite3 "$test_db" <<'EOF'
+CREATE VIRTUAL TABLE IF NOT EXISTS learnings USING fts5(
+    id UNINDEXED, session_id UNINDEXED, content, type, tags,
+    confidence UNINDEXED, created_at UNINDEXED, event_date UNINDEXED,
+    project_path UNINDEXED, source UNINDEXED,
+    tokenize='porter unicode61'
+);
+CREATE TABLE IF NOT EXISTS learning_access (
+    id TEXT PRIMARY KEY,
+    last_accessed_at TEXT,
+    access_count INTEGER DEFAULT 0,
+    auto_captured INTEGER DEFAULT 0,
+    usefulness_score REAL DEFAULT 0.0
+);
+CREATE TABLE IF NOT EXISTS learning_relations (
+    id TEXT NOT NULL,
+    supersedes_id TEXT,
+    relation_type TEXT CHECK(relation_type IN ('updates', 'extends', 'derives')),
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id, supersedes_id, relation_type)
+);
+EOF
+
+	run_memory "$test_dir" validate >/dev/null
+	local relation_sql
+	relation_sql=$(sqlite3 "$test_db" "SELECT sql FROM sqlite_master WHERE type='table' AND name='learning_relations';")
+
+	if [[ "$relation_sql" == *"debunks"* ]]; then
+		pass "old learning_relations constraint migrates to allow debunks"
+	else
+		fail "old learning_relations constraint migrates to allow debunks" "sql=$relation_sql"
+	fi
+
+	rm -rf "$test_dir"
+	return 0
+}
+
 main() {
 	echo ""
 	echo "=== Memory Truth Maintenance Tests ==="
@@ -174,6 +217,7 @@ main() {
 	test_debunk_relation_and_truth_event
 	test_updates_hide_superseded_memory
 	test_validate_reports_truth_state
+	test_migrates_old_relation_constraint
 
 	echo ""
 	echo "=== Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed ==="
