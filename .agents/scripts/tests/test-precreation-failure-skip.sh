@@ -7,10 +7,13 @@
 #
 # Asserts that worktree pre-creation failures are observable:
 #   1. _dlw_precreate_worktree returns 1 when path extraction fails
-#   2. _dlw_precreate_worktree returns 0 when worktree creation succeeds
-#   3. _dispatch_launch_worker skips dispatch (no setsid) when pre-creation fails
-#   4. worktree_precreation_failed_count counter is incremented on failure
-#   5. --dir argument no longer contains repo_path fallback
+#   2. _dlw_precreate_worktree marks fresh worktree creation as non-reused
+#   3. _dlw_precreate_worktree marks existing issue worktree reuse
+#   4. _dlw_check_worker_branch_orphan_loop skips fresh branches
+#   5. _dlw_check_worker_branch_orphan_loop still checks reused branches
+#   6. _dispatch_launch_worker skips dispatch (no setsid) when pre-creation fails
+#   7. worktree_precreation_failed_count counter is incremented on failure
+#   8. --dir argument no longer contains repo_path fallback
 #
 # Stub strategy: stub worktree-helper.sh, git, and dependent functions
 # to isolate _dlw_precreate_worktree and _dispatch_launch_worker.
@@ -91,6 +94,9 @@ chmod +x "$STUB_WT_HELPER"
 git() {
 	# For worktree list, return nothing (no existing worktrees)
 	if [[ "${1:-}" == "-C" && "${3:-}" == "worktree" && "${4:-}" == "list" ]]; then
+		if [[ -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
+			printf '%s\n' "$STUB_EXISTING_WORKTREE_LINE"
+		fi
 		return 0
 	fi
 	# For symbolic-ref, return main
@@ -166,6 +172,17 @@ _dlw_canary_preflight() { return 0; }
 
 printf '\n%s\n' "=== t2981: worktree pre-creation failure observability ==="
 
+# Stub dispatch-dedup-helper.sh used by _dlw_check_worker_branch_orphan_loop.
+STUB_DEDUP_HELPER="${TMP}/dispatch-dedup-helper.sh"
+cat >"$STUB_DEDUP_HELPER" <<'STUB_DEDUP_EOF'
+#!/usr/bin/env bash
+printf '%s\n' "${1:-}" >>"${STUB_DEDUP_CALLS_FILE:?}"
+printf 'orphan-loop-detected\n'
+exit 0
+STUB_DEDUP_EOF
+chmod +x "$STUB_DEDUP_HELPER"
+export STUB_DEDUP_CALLS_FILE="${TMP}/dedup-helper-calls.txt"
+
 # =============================================================================
 # Test 1: _dlw_precreate_worktree returns 1 when path extraction fails
 # =============================================================================
@@ -215,13 +232,73 @@ else
 	fail "worktree path is set on success" "got: '$_DLW_WORKTREE_PATH', expected: '$STUB_WT_SUCCESS_PATH'"
 fi
 
+if [[ "${_DLW_WORKTREE_REUSED:-unset}" == "0" ]]; then
+	pass "freshly-created worktree is marked non-reused"
+else
+	fail "freshly-created worktree is marked non-reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '0'"
+fi
+
 # =============================================================================
-# Test 3: _dispatch_launch_worker skips dispatch when pre-creation fails
+# Test 3: _dlw_precreate_worktree marks existing issue worktree reuse
+# =============================================================================
+export STUB_WT_MODE="fail"
+STUB_EXISTING_PATH="${TMP}/Git/fake-repo-existing"
+STUB_EXISTING_BRANCH="feature/auto-20260502-000000-gh66666"
+mkdir -p "$STUB_EXISTING_PATH"
+export STUB_EXISTING_WORKTREE_LINE="${STUB_EXISTING_PATH} abcdef [${STUB_EXISTING_BRANCH}]"
+: >"$LOGFILE"
+_dlw_precreate_worktree "66666" "$FAKE_REPO"
+rc=$?
+unset STUB_EXISTING_WORKTREE_LINE
+
+if [[ $rc -eq 0 && "$_DLW_WORKTREE_PATH" == "$STUB_EXISTING_PATH" && "$_DLW_WORKTREE_BRANCH" == "$STUB_EXISTING_BRANCH" ]]; then
+	pass "existing issue worktree is reused"
+else
+	fail "existing issue worktree is reused" "rc=$rc path='$_DLW_WORKTREE_PATH' branch='$_DLW_WORKTREE_BRANCH'"
+fi
+
+if [[ "${_DLW_WORKTREE_REUSED:-unset}" == "1" ]]; then
+	pass "reused worktree is marked reused"
+else
+	fail "reused worktree is marked reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '1'"
+fi
+
+# =============================================================================
+# Test 4: _dlw_check_worker_branch_orphan_loop skips fresh branches
+# =============================================================================
+: >"$STUB_DEDUP_CALLS_FILE"
+if _dlw_check_worker_branch_orphan_loop "55555" "owner/repo" "feature/auto-gh55555" "0"; then
+	fail "fresh branch orphan-loop check is skipped" "check returned hold for a non-reused branch"
+else
+	if [[ ! -s "$STUB_DEDUP_CALLS_FILE" ]]; then
+		pass "fresh branch orphan-loop check is skipped"
+	else
+		fail "fresh branch orphan-loop check is skipped" "dedup helper was called"
+	fi
+fi
+
+# =============================================================================
+# Test 5: _dlw_check_worker_branch_orphan_loop still checks reused branches
+# =============================================================================
+: >"$STUB_DEDUP_CALLS_FILE"
+if _dlw_check_worker_branch_orphan_loop "44444" "owner/repo" "feature/auto-gh44444" "1"; then
+	if grep -q '^check-orphan-loop$' "$STUB_DEDUP_CALLS_FILE" 2>/dev/null; then
+		pass "reused branch orphan-loop check calls dedup helper"
+	else
+		fail "reused branch orphan-loop check calls dedup helper" "helper call log missing check-orphan-loop"
+	fi
+else
+	fail "reused branch orphan-loop check calls dedup helper" "check did not return hold from stub helper"
+fi
+
+# =============================================================================
+# Test 6: _dispatch_launch_worker skips dispatch when pre-creation fails
 # =============================================================================
 # Override _dlw_precreate_worktree to simulate failure
 _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
+	_DLW_WORKTREE_REUSED=0
 	return 1
 }
 
@@ -247,7 +324,7 @@ else
 fi
 
 # =============================================================================
-# Test 4: worktree_precreation_failed_count counter is incremented
+# Test 7: worktree_precreation_failed_count counter is incremented
 # =============================================================================
 local_count=""
 if command -v jq &>/dev/null; then
@@ -267,7 +344,7 @@ else
 fi
 
 # =============================================================================
-# Test 5: --dir argument no longer contains repo_path fallback
+# Test 8: --dir argument no longer contains repo_path fallback
 # =============================================================================
 # Grep the source file for the old pattern (single quotes intentional — literal search)
 # shellcheck disable=SC2016

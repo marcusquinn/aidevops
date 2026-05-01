@@ -192,7 +192,8 @@ _dlw_resolve_tier_and_model() {
 # module-level globals:
 #   _DLW_WORKTREE_PATH    — absolute path on success, empty on failure
 #   _DLW_WORKTREE_BRANCH  — branch name on success, empty on failure
-# Both are reset on entry so the orchestrator always sees the fresh state.
+#   _DLW_WORKTREE_REUSED  — 1 when an existing issue worktree was reused, else 0
+# All are reset on entry so the orchestrator always sees the fresh state.
 #
 # Issue-linked branch naming (GH#19042):
 #   Branch format: feature/auto-YYYYMMDD-HHMMSS-gh<issue_number>
@@ -328,6 +329,7 @@ _dlw_precreate_worktree() {
 	local repo_path="$2"
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
+	_DLW_WORKTREE_REUSED=0
 
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
 	if [[ ! -x "$_wt_helper" || ! -d "$repo_path" ]]; then
@@ -361,6 +363,7 @@ _dlw_precreate_worktree() {
 		git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
+		_DLW_WORKTREE_REUSED=1
 		# Restore gitignored deps that git clean -fd just wiped
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
@@ -915,14 +918,17 @@ Dispatching worker (deterministic).
 # issue-linked branch or creating a fresh branch. A new branch therefore does
 # not inherit an old branch's orphan count.
 #
-# Args: $1 = issue number, $2 = repo slug, $3 = worker worktree branch
+# Args: $1 = issue number, $2 = repo slug, $3 = worker worktree branch,
+#       $4 = 1 when the branch was reused, 0 for a freshly-created branch
 # Returns: exit 0 if dispatch should be held, exit 1 if safe to continue
 #######################################
 _dlw_check_worker_branch_orphan_loop() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local worker_worktree_branch="$3"
+	local worker_worktree_reused="${4:-0}"
 
+	[[ "$worker_worktree_reused" == "1" ]] || return 1
 	[[ -n "$worker_worktree_branch" ]] || return 1
 
 	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
@@ -1057,7 +1063,8 @@ _dispatch_launch_worker() {
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
-	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch"; then
+	local worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
+	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused"; then
 		return 2
 	fi
 
