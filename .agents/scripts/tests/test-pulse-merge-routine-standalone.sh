@@ -38,6 +38,8 @@
 #   6. The routine file sources pulse-fast-fail.sh (grep guard)
 #   7. setup.sh has the _should_setup_noninteractive_pulse_merge_routine helper
 #   8. setup.sh call site uses the new helper (not the generic gate)
+#   9. scheduler uses timeout-protected pulse-merge-routine
+#   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
 
 set -uo pipefail
 
@@ -238,6 +240,28 @@ if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 	fi
 else
 	skip "9: scheduler uses timeout-protected pulse-merge-routine" \
+		"setup-modules/schedulers-platform.sh not found"
+fi
+
+if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
+	if awk '
+		BEGIN { in_func=0; has_background=0; has_low_io=0; has_nice=0; has_keepalive_false=0; saw_keepalive=0 }
+		/^_install_pulse_merge_routine_launchd\(\)/ { in_func=1; next }
+		in_func && /^\}/ { in_func=0 }
+		in_func && /<key>ProcessType<\/key>/ { has_background=1 }
+		in_func && /<key>LowPriorityBackgroundIO<\/key>/ { has_low_io=1 }
+		in_func && /<key>Nice<\/key>/ { has_nice=1 }
+		in_func && /<key>KeepAlive<\/key>/ { saw_keepalive=1; next }
+		in_func && saw_keepalive && /<false\/>/ { has_keepalive_false=1; saw_keepalive=0 }
+		END { exit (!has_background && !has_low_io && !has_nice && has_keepalive_false) ? 0 : 1 }
+	' "$SCHEDULERS_PLATFORM_FILE"; then
+		pass "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false"
+	else
+		fail "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
+			"pulse merge LaunchAgent must not set ProcessType/LowPriorityBackgroundIO/Nice and must set KeepAlive=false"
+	fi
+else
+	skip "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
 		"setup-modules/schedulers-platform.sh not found"
 fi
 

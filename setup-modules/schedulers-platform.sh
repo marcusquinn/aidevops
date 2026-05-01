@@ -369,12 +369,8 @@ _install_pulse_merge_routine_launchd() {
 	</dict>
 	<key>RunAtLoad</key>
 	<false/>
-	<key>ProcessType</key>
-	<string>Background</string>
-	<key>LowPriorityBackgroundIO</key>
-	<true/>
-	<key>Nice</key>
-	<integer>10</integer>
+	<key>KeepAlive</key>
+	<false/>
 	<key>SoftResourceLimits</key>
 	<dict>
 		<key>NumberOfFiles</key>
