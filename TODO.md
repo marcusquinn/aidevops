@@ -3788,3 +3788,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3375 Raise token advisory first threshold to 250k #bug ref:GH#22115 pr:#22116 completed:2026-05-01
 
 - [ ] t3376 Track solved-by actor separately from origin labels #auto-dispatch #bug #diagnostics #framework ref:GH#22117
+
+- [ ] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119
