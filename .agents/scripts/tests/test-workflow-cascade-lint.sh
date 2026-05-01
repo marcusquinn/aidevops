@@ -6,7 +6,7 @@
 #
 # Tests the cascade vulnerability linter against fixture YAML files covering:
 # - Vulnerable workflows (labeled + cancel-in-progress + no mitigation)
-# - Mitigated workflows (paths-ignore, event-action guard)
+# - Vulnerable workflows even with paths-ignore/event-action guards
 # - Safe workflows (no labeled trigger, no cancel-in-progress)
 # - Dry-run mode
 #
@@ -275,39 +275,39 @@ test_vulnerable_multiline_types() {
 	return 0
 }
 
-test_mitigated_paths_ignore() {
+test_paths_ignore_still_vulnerable() {
 	local output rc
 	output=$(bash "$SCRIPT_UNDER_TEST" "${TEST_ROOT}/fixtures/mitigated-paths-ignore.yml" 2>&1)
 	rc=$?
 	local failed=0
-	if [[ $rc -ne 0 ]]; then
+	if [[ $rc -ne 1 ]]; then
 		failed=1
 	fi
-	print_result "mitigated with paths-ignore" "$failed" "exit=$rc"
+	print_result "vulnerable despite paths-ignore" "$failed" "exit=$rc output=$output"
 	return 0
 }
 
-test_mitigated_action_guard() {
+test_action_guard_still_vulnerable() {
 	local output rc
 	output=$(bash "$SCRIPT_UNDER_TEST" "${TEST_ROOT}/fixtures/mitigated-action-guard.yml" 2>&1)
 	rc=$?
 	local failed=0
-	if [[ $rc -ne 0 ]]; then
+	if [[ $rc -ne 1 ]]; then
 		failed=1
 	fi
-	print_result "mitigated with job-level event-action guard" "$failed" "exit=$rc"
+	print_result "vulnerable despite job-level event-action guard" "$failed" "exit=$rc output=$output"
 	return 0
 }
 
-test_mitigated_step_guard() {
+test_step_guard_still_vulnerable() {
 	local output rc
 	output=$(bash "$SCRIPT_UNDER_TEST" "${TEST_ROOT}/fixtures/mitigated-step-guard.yml" 2>&1)
 	rc=$?
 	local failed=0
-	if [[ $rc -ne 0 ]]; then
+	if [[ $rc -ne 1 ]]; then
 		failed=1
 	fi
-	print_result "mitigated with step-level EVENT_ACTION guard" "$failed" "exit=$rc"
+	print_result "vulnerable despite step-level EVENT_ACTION guard" "$failed" "exit=$rc output=$output"
 	return 0
 }
 
@@ -390,7 +390,7 @@ test_real_nmr_hold_workflow() {
 test_real_qlty_regression_mitigated() {
 	local qlty_file=".github/workflows/qlty-regression.yml"
 	if [ ! -f "$qlty_file" ]; then
-		print_result "real: qlty-regression.yml NOT flagged (paths-ignore mitigation)" 1 "file not found"
+		print_result "real: qlty-regression.yml NOT flagged (cancel disabled)" 1 "file not found"
 		return 0
 	fi
 	local output rc
@@ -400,14 +400,14 @@ test_real_qlty_regression_mitigated() {
 	if [[ $rc -ne 0 ]]; then
 		failed=1
 	fi
-	print_result "real: qlty-regression.yml NOT flagged (paths-ignore mitigation)" "$failed" "exit=$rc"
+	print_result "real: qlty-regression.yml NOT flagged (cancel disabled)" "$failed" "exit=$rc output=$output"
 	return 0
 }
 
 test_real_qlty_new_file_gate_mitigated() {
 	local gate_file=".github/workflows/qlty-new-file-gate.yml"
 	if [ ! -f "$gate_file" ]; then
-		print_result "real: qlty-new-file-gate.yml NOT flagged (paths-ignore + step guard)" 1 "file not found"
+		print_result "real: qlty-new-file-gate.yml NOT flagged (cancel disabled)" 1 "file not found"
 		return 0
 	fi
 	local output rc
@@ -417,7 +417,7 @@ test_real_qlty_new_file_gate_mitigated() {
 	if [[ $rc -ne 0 ]]; then
 		failed=1
 	fi
-	print_result "real: qlty-new-file-gate.yml NOT flagged (paths-ignore + step guard)" "$failed" "exit=$rc"
+	print_result "real: qlty-new-file-gate.yml NOT flagged (cancel disabled)" "$failed" "exit=$rc output=$output"
 	return 0
 }
 
@@ -437,9 +437,9 @@ main() {
 	test_vulnerable_issue_workflow
 	test_vulnerable_pr_workflow
 	test_vulnerable_multiline_types
-	test_mitigated_paths_ignore
-	test_mitigated_action_guard
-	test_mitigated_step_guard
+	test_paths_ignore_still_vulnerable
+	test_action_guard_still_vulnerable
+	test_step_guard_still_vulnerable
 	test_safe_no_labeled_trigger
 	test_safe_no_cancel_in_progress
 	test_dry_run_exits_zero
