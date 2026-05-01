@@ -1220,9 +1220,11 @@ _run_canary_test() {
 	local canary_output
 	canary_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-canary.XXXXXX")
 
-	# Run WITH plugins (not --pure) so our oauth-pool auth is available.
-	# The canary must validate the same provider/model the upcoming run will use,
-	# otherwise OpenAI opt-in runs still fail behind an Anthropic-only gate.
+	# Run without external plugins and with an explicit built-in agent. The canary
+	# validates provider/model health, not aidevops agent routing; relying on
+	# OpenCode's default_agent makes dispatch preflight fail before the smoke test
+	# can run when a clean setup has a stale or subagent-only default (GH#22250).
+	# OAuth auth remains available via the isolated auth.json copied below.
 	local canary_model="$requested_model"
 	if [[ -z "$canary_model" ]]; then
 		while IFS= read -r canary_model; do
@@ -1255,6 +1257,13 @@ _run_canary_test() {
 	local _canary_data_dir=""
 	_canary_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-db.XXXXXX")
 	mkdir -p "${_canary_data_dir}/opencode"
+	# Config isolation for canary: avoid validating the user's global
+	# default_agent before the smoke prompt runs. A stale or subagent-only
+	# default agent should not block provider/model health checks (GH#22250).
+	local _canary_config_dir=""
+	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
+	mkdir -p "${_canary_config_dir}/opencode"
+	printf '%s\n' "{\"\$schema\":\"https://opencode.ai/config.json\"}" >"${_canary_config_dir}/opencode/opencode.json"
 	# Copy auth.json so the canary has valid tokens
 	local _oc_auth="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
 	if [[ -f "$_oc_auth" ]]; then
@@ -1299,15 +1308,16 @@ _run_canary_test() {
 	# t2887: use _effective_opencode_bin (resolved above), not
 	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
 	# happy path; differs only when alternative-path fallback fired.
-	XDG_DATA_HOME="$_canary_data_dir" \
+	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
 		"${_canary_timeout_cmd[@]}" \
-		"$_effective_opencode_bin" run "Reply with exactly: CANARY_OK" \
-		-m "$canary_model" --dir "${HOME}" \
+		"$_effective_opencode_bin" run --pure "Reply with exactly: CANARY_OK" \
+		-m "$canary_model" --dir "${HOME}" --agent build \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
 		>"$canary_output" 2>&1 || canary_exit=$?
 
-	# Clean up canary's isolated DB dir
+	# Clean up canary's isolated DB/config dirs
 	rm -rf "$_canary_data_dir" 2>/dev/null || true
+	rm -rf "$_canary_config_dir" 2>/dev/null || true
 
 	# Output-aware check: the model responding "CANARY_OK" is the real
 	# success signal. The exit code reflects process lifecycle (opencode

@@ -138,6 +138,52 @@ test_headless_activity_timeout_default_matches_watchdog() {
 	return 0
 }
 
+test_canary_uses_builtin_agent_without_default_agent() {
+	local canary_root="${TEST_ROOT}/canary-agent"
+	local fake_bin_dir="${canary_root}/bin"
+	local args_file="${canary_root}/args.txt"
+	mkdir -p "$fake_bin_dir"
+
+	cat >"${fake_bin_dir}/opencode" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+	printf '1.14.31\n'
+	exit 0
+fi
+printf '%s\n' "$*" >"$AIDEVOPS_CANARY_ARGS_FILE"
+printf 'CANARY_OK\n'
+exit 0
+EOF
+	chmod +x "${fake_bin_dir}/opencode"
+
+	local output
+	if output=$(
+		PATH="${fake_bin_dir}:$PATH" \
+		HOME="${canary_root}/home" \
+		OPENCODE_BIN="${fake_bin_dir}/opencode" \
+		AIDEVOPS_CANARY_ARGS_FILE="$args_file" \
+		AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
+		AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1 \
+		CANARY_CACHE_TTL_SECONDS=0 \
+		CANARY_TIMEOUT_SECONDS=5 \
+		bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
+	) && [[ -f "$args_file" ]]; then
+		local args
+		args=$(<"$args_file")
+		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]]; then
+			print_result "canary uses built-in agent without default_agent" 0
+			return 0
+		fi
+		print_result "canary uses built-in agent without default_agent" 1 \
+			"Expected --pure and --agent build in canary args, got: ${args}"
+		return 0
+	fi
+
+	print_result "canary uses built-in agent without default_agent" 1 \
+		"Canary stub did not run successfully: ${output:-<empty>}"
+	return 0
+}
+
 # Helper: create a bare git repo and a feature branch with optional commits.
 # Each call uses work_dir-derived remote path to avoid inter-test collisions.
 # Args: $1 = work_dir path, $2 = 1 to add a commit (0 for none)
@@ -548,6 +594,7 @@ main() {
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_headless_activity_timeout_default_matches_watchdog
+	test_canary_uses_builtin_agent_without_default_agent
 	# Classification tests (GH#20819 refactor of _worker_produced_output)
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen
