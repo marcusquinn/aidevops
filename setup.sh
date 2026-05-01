@@ -1144,6 +1144,16 @@ _setup_lock_pid_alive() {
 	return $?
 }
 
+_setup_lock_pid_is_noninteractive_setup() {
+	local pid="$1"
+	local owner_args=""
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+	owner_args=$(ps -p "$pid" -o args= 2>/dev/null || true)
+	[[ -n "$owner_args" ]] || return 0
+	[[ "$owner_args" == *"setup.sh"* && "$owner_args" == *"--non-interactive"* ]]
+	return $?
+}
+
 _setup_lock_dir_age_seconds() {
 	local lock_dir="$1"
 	local lock_mtime=""
@@ -1177,7 +1187,6 @@ _setup_register_child_pid() {
 
 _setup_cleanup_noninteractive_children() {
 	local pid=""
-	[[ "${SETUP_NONINTERACTIVE_TERMINATING:-false}" == "true" ]] || return 0
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
 		if _setup_lock_pid_alive "$pid"; then
 			kill -TERM "$pid" 2>/dev/null || true
@@ -1229,7 +1238,7 @@ _setup_acquire_noninteractive_setup_lock() {
 			printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
 			printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
 			printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
-			trap _setup_release_noninteractive_setup_lock EXIT
+			trap '_setup_cleanup_noninteractive_children; _setup_release_noninteractive_setup_lock' EXIT
 			trap '_setup_noninteractive_signal_exit TERM' TERM
 			trap '_setup_noninteractive_signal_exit INT' INT
 			return 0
@@ -1253,6 +1262,18 @@ _setup_acquire_noninteractive_setup_lock() {
 			continue
 		fi
 		if _setup_lock_pid_alive "$owner_pid"; then
+			if ! _setup_lock_pid_is_noninteractive_setup "$owner_pid"; then
+				local _owner_lock_age="0"
+				_owner_lock_age=$(_setup_lock_dir_age_seconds "$lock_dir")
+				if [[ "$_owner_lock_age" -le 300 ]]; then
+					print_error "Another setup.sh --non-interactive process may be acquiring the deploy lock (pid ${owner_pid}; lock: ${lock_dir}, age ${_owner_lock_age}s). Exiting to avoid overlapping deployments."
+					return 75
+				fi
+				print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}; owner pid ${owner_pid} no longer appears to be setup.sh --non-interactive (age ${_owner_lock_age}s)"
+				rm -rf "$lock_dir" 2>/dev/null || true
+				attempts=$((attempts + 1))
+				continue
+			fi
 			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
 			# Build actionable diagnostics: elapsed time since lock was acquired
 			# and the currently-executing setup stage from the timing log.

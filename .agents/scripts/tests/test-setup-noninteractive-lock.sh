@@ -46,6 +46,12 @@ print_error() {
 	return 0
 }
 
+start_fake_setup_owner() {
+	bash -c 'while :; do sleep 1; done' setup.sh --non-interactive >/dev/null 2>&1 &
+	printf '%s' "$!"
+	return 0
+}
+
 load_lock_functions() {
 	local helper_definition=""
 	helper_definition="$(awk '
@@ -74,9 +80,11 @@ test_blocks_concurrent_live_owner() {
 	local tmp_dir=""
 	local output=""
 	local exit_code=0
+	local owner_pid=""
 	tmp_dir=$(make_temp_dir)
+	owner_pid=$(start_fake_setup_owner)
 	mkdir -p "$tmp_dir/lock.d"
-	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
 	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
 
 	output=$(
@@ -88,6 +96,8 @@ test_blocks_concurrent_live_owner() {
 		return 0
 	) 2>&1 || true
 
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
 	rm -rf "$tmp_dir"
 	if [[ "$output" == *"Another setup.sh --non-interactive is already running"* && "$output" == *"exit=75 held=false"* ]]; then
 		print_result "live non-interactive setup lock blocks overlap" 0
@@ -125,12 +135,43 @@ test_reclaims_stale_lock() {
 	return 0
 }
 
-test_contention_message_includes_elapsed_and_stage() {
+test_reclaims_reused_owner_pid_lock() {
 	local tmp_dir=""
 	local output=""
 	tmp_dir=$(make_temp_dir)
 	mkdir -p "$tmp_dir/lock.d"
 	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
+	touch -t 200001010000 "$tmp_dir/lock.d" 2>/dev/null || true
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'held=%s owner=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}" "$(tr -d '[:space:]' <"$tmp_dir/lock.d/owner.pid")"
+		_setup_release_noninteractive_setup_lock
+		printf 'exists=%s\n' "$([[ -d "$tmp_dir/lock.d" ]] && printf yes || printf no)"
+		return 0
+	) 2>&1 || true
+
+	rm -rf "$tmp_dir"
+	if [[ "$output" == *"owner pid $$ no longer appears to be setup.sh --non-interactive"* && "$output" == *"held=true owner="* && "$output" == *"exists=no"* ]]; then
+		print_result "reused owner pid stale lock is reclaimed" 0
+		return 0
+	fi
+
+	print_result "reused owner pid stale lock is reclaimed" 1 "output=${output}"
+	return 0
+}
+
+test_contention_message_includes_elapsed_and_stage() {
+	local tmp_dir=""
+	local output=""
+	local owner_pid=""
+	tmp_dir=$(make_temp_dir)
+	owner_pid=$(start_fake_setup_owner)
+	mkdir -p "$tmp_dir/lock.d"
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
 	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
 	# Write a started_at stamp ~5 seconds in the past so elapsed time is computable.
 	local past_ts=""
@@ -151,6 +192,8 @@ test_contention_message_includes_elapsed_and_stage() {
 		return 0
 	) 2>&1 || true
 
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
 	rm -rf "$tmp_dir"
 
 	local passed=1
@@ -182,7 +225,6 @@ test_signal_cleanup_terminates_registered_children() {
 		sleep 30 &
 		local_pid=$!
 		_setup_register_child_pid "$local_pid"
-		SETUP_NONINTERACTIVE_TERMINATING=true
 		_setup_cleanup_noninteractive_children
 		if kill -0 "$local_pid" 2>/dev/null; then
 			printf 'child=alive\n'
@@ -204,6 +246,7 @@ test_signal_cleanup_terminates_registered_children() {
 main() {
 	test_blocks_concurrent_live_owner
 	test_reclaims_stale_lock
+	test_reclaims_reused_owner_pid_lock
 	test_contention_message_includes_elapsed_and_stage
 	test_signal_cleanup_terminates_registered_children
 
