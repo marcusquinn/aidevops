@@ -1209,7 +1209,7 @@ cmd_install() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin")</string>
 		<key>HOME</key>
 		<string>${home_escaped}</string>
 	</dict>

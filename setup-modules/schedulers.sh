@@ -31,6 +31,32 @@ CRON_HOURLY="0 * * * *"
 # Kept DRY for the same reason as CRON_HOURLY.
 CRON_EVERY_MINUTE="* * * * *"
 
+# Direct unit tests source this module without setup.sh's later
+# shared-constants.sh load. Provide a small fallback; the shared helper
+# overwrites this when setup.sh sources shared-constants.sh.
+if ! declare -F aidevops_launchd_sanitized_path >/dev/null 2>&1; then
+	aidevops_launchd_sanitized_path() {
+		local input_path="${1:-${PATH:-}}"
+		local default_path="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+		local result=""
+		local seen=""
+		local dir=""
+		local old_ifs="$IFS"
+		IFS=':'
+		for dir in $default_path:$input_path; do
+			[[ -n "$dir" && -d "$dir" ]] || continue
+			case ":$seen:" in
+			*":${dir}:"*) continue ;;
+			esac
+			seen="${seen:+${seen}:}${dir}"
+			result="${result:+${result}:}${dir}"
+		done
+		IFS="$old_ifs"
+		printf '%s' "$result"
+		return 0
+	}
+fi
+
 # Shell safety baseline
 set -Eeuo pipefail
 IFS=$'\n\t'
@@ -87,7 +113,7 @@ setup_stats_wrapper() {
 			local _xml_stats_script _xml_stats_home _xml_stats_path
 			_xml_stats_script=$(_xml_escape "$stats_script")
 			_xml_stats_home=$(_xml_escape "$HOME")
-			_xml_stats_path=$(_xml_escape "$PATH")
+			_xml_stats_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "$PATH")")
 			local stats_plist_content
 			stats_plist_content=$(
 				cat <<PLIST
@@ -189,7 +215,7 @@ setup_failure_miner() {
 		local _xml_miner_script _xml_miner_home _xml_miner_path _xml_miner_log
 		_xml_miner_script=$(_xml_escape "$miner_script")
 		_xml_miner_home=$(_xml_escape "$HOME")
-		_xml_miner_path=$(_xml_escape "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")
+		_xml_miner_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
 		_xml_miner_log=$(_xml_escape "$miner_log")
 
 		local miner_plist_content
@@ -287,7 +313,7 @@ setup_process_guard() {
 		local _xml_guard_script _xml_guard_home _xml_guard_path
 		_xml_guard_script=$(_xml_escape "$guard_script")
 		_xml_guard_home=$(_xml_escape "$HOME")
-		_xml_guard_path=$(_xml_escape "$PATH")
+		_xml_guard_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "$PATH")")
 
 		local guard_plist_content
 		guard_plist_content=$(
@@ -407,7 +433,7 @@ setup_memory_pressure_monitor() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_monitor_home}</string>
 	</dict>
@@ -496,7 +522,7 @@ setup_screen_time_snapshot() {
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>$(aidevops_launchd_sanitized_path)</string>
 		<key>HOME</key>
 		<string>${_xml_st_home}</string>
 	</dict>

@@ -391,7 +391,7 @@ cmd_install_launchd() {
 	local home_escaped
 	home_escaped=$(xml_escape "$HOME")
 	local env_path_escaped
-	env_path_escaped=$(xml_escape "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")
+	env_path_escaped=$(xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
 	local log_path_escaped
 	log_path_escaped=$(xml_escape "${HOME}/.aidevops/logs/routine-${ROUTINE_NAME}.log")
 
