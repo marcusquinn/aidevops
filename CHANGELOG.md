@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.47] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3201 complete (pr:#22053)
+- Maintenance: mark t3229 complete (pr:#22025 completed:2026-05-01) [skip ci]
+- Maintenance: mark t3248 complete (pr:#22030 completed:2026-05-01) [skip ci]
+- Maintenance: record t3367 setup hang task
+- Maintenance: mark t3221 complete (pr:#22027 completed:2026-05-01) [skip ci]
+- Maintenance: mark t3249 complete (pr:#22033 completed:2026-05-01) [skip ci]
+- Maintenance: mark t3252 complete (pr:#22043 completed:2026-05-01) [skip ci]
+
 ## [3.13.46] - 2026-05-01
 
 ### Fixed
