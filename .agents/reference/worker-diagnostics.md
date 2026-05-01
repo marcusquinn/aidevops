@@ -81,6 +81,18 @@ rm -f ~/.aidevops/.agent-workspace/headless-runtime/canary-last-pass
 opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-20250514 --dir "$HOME"
 ```
 
+### Minimum Worker Concurrency Floor (t3418)
+
+Pulse keeps a soft minimum implementation-worker floor so high CPU/load conditions do not reduce useful dispatch to zero. Default: `AIDEVOPS_MIN_WORKER_CONCURRENCY=6`.
+
+When active workers are below the floor:
+
+- `dispatch_max` treats CPU/load throttling as soft and keeps dispatch eligible up to the floor.
+- The worker canary skips only the pre-canary system-overload check (`AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1`); the normal canary, auth checks, GraphQL circuit breaker, stop flag, memory/process failures, and other hard safety gates still apply.
+- Existing max worker caps above the floor still cap runaway dispatch.
+
+Set `AIDEVOPS_MIN_WORKER_CONCURRENCY=0` to disable the floor, or set a higher/lower integer for a runner-specific target.
+
 ### Version Guard
 
 **Problem**: Something outside aidevops periodically upgrades OpenCode to latest. The version guard in `headless-runtime-helper.sh` runs on every dispatch and reinstalls `OPENCODE_PINNED_VERSION` from `shared-constants.sh` if drift is detected.
