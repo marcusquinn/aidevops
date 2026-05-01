@@ -2,6 +2,26 @@
 
 Full detail for the two pulse auto-merge gates. For the one-line summary, see `AGENTS.md` "Auto-Dispatch and Completion".
 
+## Superseded DIRTY PR Pre-Check
+
+Before spending time repairing conflicts on an old DIRTY PR, run the supersession helper:
+
+```bash
+.agents/scripts/pr-supersession-helper.sh classify --repo OWNER/REPO --pr N --repo-path /path/to/repo
+```
+
+Decision tree:
+
+| Classification | Meaning | Action |
+|----------------|---------|--------|
+| `fully_superseded` | The branch has no meaningful diff against current base, and base contains the PR deliverable terms. | Close as superseded after human confirmation. |
+| `stale_baseline_only` | The current diff no longer overlaps the PR's original changed files, while base contains the deliverable. | Prefer close-with-rationale over conflict repair. |
+| `partially_superseded` | Base contains some deliverable signals, but relevant branch work remains. | Review the remaining diff before deciding. |
+| `still_needed` | Base does not contain the deliverable, or the current diff still carries it. | Continue normal rebase/conflict repair. |
+| `unknown` | Metadata or git comparison was unavailable. | Fall back to normal DIRTY PR handling. |
+
+`pulse-dirty-pr-sweep.sh` calls this helper before its normal conflict-resolution classifier. Superseded candidates are notified with a human-readable rationale; the helper itself is advisory and never closes a PR.
+
 ## t2411 — `origin:interactive` Auto-Merge
 
 `pulse-merge.sh` automatically merges `origin:interactive` PRs from `OWNER`/`MEMBER` authors once ALL criteria hold:
