@@ -8,6 +8,7 @@ files on disk.
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
+import fnmatch
 import os
 
 from discovery_utils import parse_frontmatter
@@ -67,6 +68,9 @@ def collect_subagent_files(agents_dir):
 def subagent_ref_exists(agent_name, subagent_ref, agent_slug,
                         all_subagent_files, all_subagent_paths):
     """Check if a subagent reference resolves to an actual file."""
+    if _is_glob_ref(subagent_ref):
+        return _glob_ref_exists(subagent_ref, all_subagent_files)
+
     # Exact basename match
     if subagent_ref in all_subagent_files:
         return True
@@ -87,6 +91,23 @@ def subagent_ref_exists(agent_name, subagent_ref, agent_slug,
             return True
 
     return False
+
+
+def _is_glob_ref(subagent_ref):
+    """Return True when a subagent reference uses OpenCode wildcard syntax."""
+    return any(char in subagent_ref for char in "*?[")
+
+
+def _glob_ref_exists(subagent_ref, all_subagent_files):
+    """Check whether a glob ref matches at least one subagent task name.
+
+    OpenCode evaluates permission.task patterns against the flattened agent
+    name exposed to the Task tool, not the source path. Therefore glob refs
+    intentionally validate only against basename task names; path-style globs
+    would appear valid here but fail at runtime.
+    """
+    return any(fnmatch.fnmatchcase(name, subagent_ref)
+               for name in all_subagent_files)
 
 
 def _resolve_display_to_filename_fn(fn):

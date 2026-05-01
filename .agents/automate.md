@@ -4,8 +4,7 @@ description: Automation agent - scheduling, dispatch, monitoring, and background
 mode: subagent
 subagents:
   # Git platforms (gh pr merge, gh issue edit, etc.)
-  - github-cli
-  - gitlab-cli
+  - git*
   # Orchestration workflows
   - plans
   # Context tools

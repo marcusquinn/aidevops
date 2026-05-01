@@ -893,6 +893,7 @@ When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr lis
 
 - Agents in `~/.aidevops/agents/`. Subagents on-demand, not upfront.
 - YAML frontmatter: tools, model tier, MCP dependencies.
+- OpenCode `subagents:` allowlists may use glob patterns (e.g. `git*`) only when `subagent_validation.py` verifies the pattern matches reviewed flattened task names; avoid path-style globs.
 - Progressive disclosure: pointers to subagents, not inline content.
 
 ## Memory Recall
