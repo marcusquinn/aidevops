@@ -953,8 +953,6 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
-
-- [x] t3385 Fix task-complete PR merge detection after gh REST fallback #auto-dispatch #bug #framework ref:GH#22143 pr:#22150 completed:2026-05-01
 - [x] t3380 Speed up worktree registry prune for large stale backlogs #bug ref:GH#22131 pr:#22137 testing:runtime-verified completed:2026-05-01
 - [x] t3201 investigate: worker stuck-loop pattern force-pushes + review_dismissed + close on PR (canonical: #21876) #bug #framework #investigation #parent ref:GH#21901 pr:#22053 completed:2026-05-01
 - [x] t3218 pulse-merge: _resolve_pr_mergeable_status doesn't retry when prefetched mergeable is empty string #auto-dispatch #bug ref:GH#21960 pr:#22047 completed:2026-05-01
