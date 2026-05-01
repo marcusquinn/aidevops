@@ -143,7 +143,12 @@ _deploy_agents_copy() {
 		for pns in "$@"; do
 			rsync_excludes+=("--exclude=${pns}/")
 		done
-		if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
+		# GH#22086: --timeout sets rsync I/O timeout (seconds without data transfer).
+		# Prevents rsync from hanging indefinitely when the source or destination
+		# filesystem stalls (NFS, Docker volume, I/O error). Default 120s is safe
+		# for local deploys; override with AIDEVOPS_RSYNC_TIMEOUT env var.
+		local _rsync_timeout="${AIDEVOPS_RSYNC_TIMEOUT:-120}"
+		if rsync -a --timeout="$_rsync_timeout" "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
 			deploy_ok=true
 		fi
 	else
