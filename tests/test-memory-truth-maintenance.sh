@@ -62,6 +62,23 @@ store_memory_id() {
 	return 0
 }
 
+json_payload() {
+	local output="$1"
+	local line=""
+	local json=""
+	local capturing=0
+	while IFS= read -r line; do
+		if [[ "$line" == \[* ]]; then
+			capturing=1
+		fi
+		if [[ "$capturing" -eq 1 ]]; then
+			json+="$line"$'\n'
+		fi
+	done <<<"$output"
+	printf '%s' "$json"
+	return 0
+}
+
 test_debunk_suppresses_recall() {
 	TESTS_RUN=$((TESTS_RUN + 1))
 	local test_dir
@@ -73,7 +90,7 @@ test_debunk_suppresses_recall() {
 	debunk_id=$(store_memory_id "$test_dir" --content "Evidence: current deployed source disproves the mythical alpha marker outage" --type ERROR_FIX --confidence high --debunks "$myth_id" --replacement "$live_id" --evidence "Verified current source and runtime evidence")
 
 	run_memory "$test_dir" feedback "$myth_id" --signal false >/dev/null
-	results=$(run_memory "$test_dir" recall --query "alpha marker" --json)
+	results=$(json_payload "$(run_memory "$test_dir" recall --query "alpha marker" --json)")
 
 	if echo "$results" | jq -e --arg myth_id "$myth_id" 'map(.id) | index($myth_id) | not' >/dev/null && \
 		echo "$results" | jq -e --arg live_id "$live_id" 'map(.id) | index($live_id) != null' >/dev/null; then
@@ -116,7 +133,7 @@ test_updates_hide_superseded_memory() {
 	local old_id new_id results
 	old_id=$(store_memory_id "$test_dir" --content "gamma deployment command uses old flag" --type TOOL_CONFIG --confidence medium)
 	new_id=$(store_memory_id "$test_dir" --content "gamma deployment command uses new flag" --type TOOL_CONFIG --confidence high --supersedes "$old_id" --relation updates)
-	results=$(run_memory "$test_dir" recall --query "gamma deployment command flag" --json)
+	results=$(json_payload "$(run_memory "$test_dir" recall --query "gamma deployment command flag" --json)")
 
 	if echo "$results" | jq -e --arg old_id "$old_id" --arg new_id "$new_id" 'map(.id) as $ids | ($ids | index($old_id) | not) and ($ids | index($new_id) != null)' >/dev/null; then
 		pass "superseded memory hidden while update remains discoverable"
