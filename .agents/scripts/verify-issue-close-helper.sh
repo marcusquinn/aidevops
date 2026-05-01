@@ -75,6 +75,7 @@ extract_file_paths_from_text() {
 
 	# Pattern 2: Backtick-enclosed file references (e.g., `schedulers.sh`, `pulse-wrapper.sh:6098`)
 	local backtick_files
+	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
 	backtick_files=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
 	if [[ -n "$backtick_files" ]]; then
 		paths="${paths}${backtick_files}"$'\n'
@@ -110,10 +111,31 @@ get_pr_changed_files() {
 		return 1
 	}
 
-	printf '%s' "$files_json" | jq -r '.files[].path // empty' 2>/dev/null || {
-		log_error "Failed to parse PR #${pr_number} file list"
+	local pr_files
+	pr_files=$(printf '%s' "$files_json" | jq -r '(.files // [])[]? | .path // .filename // empty' 2>/dev/null) || {
+		log_warn "Failed to parse PR #${pr_number} file list from gh pr view; trying REST fallback"
+		pr_files=""
+	}
+
+	if [[ -n "$pr_files" ]]; then
+		printf '%s\n' "$pr_files"
+		return 0
+	fi
+
+	# `gh pr view --json files` can return `null` for merged PRs on some gh/API
+	# paths. The pull files REST endpoint remains available after merge, so use
+	# it as the authoritative fallback before declaring the PR unparseable.
+	pr_files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null) || {
+		log_error "Failed to fetch PR #${pr_number} file list via REST fallback"
 		return 1
 	}
+
+	if [[ -z "$pr_files" ]]; then
+		log_error "PR #${pr_number} file list is empty"
+		return 1
+	fi
+
+	printf '%s\n' "$pr_files"
 	return 0
 }
 
