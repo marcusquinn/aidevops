@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.57] - 2026-05-01
+
+### Changed
+
+- Maintenance: add t3382 follow-up task
+- Maintenance: sync ref:GH#22119 to TODO.md [skip ci]
+- add issue-body structural lint before publication (#22096)
+- add pulse-diagnose-helper.sh issue subcommand for issue-level worker/PR timelines (#22097)
+- exclude ChatGPT OAuth unsupported pro models from routing (#22103)
+- reconstruct PR #21876 worker-loop timeline (#22102)
+- bound opencode --version in validate_opencode_config (#22104)
+- enrich setup noninteractive lock contention diagnostics (#22124)
+
+### Fixed
+
+- reduce stale-recovery NMR query overhead (#22134)
+- add include guard to prevent repeated sourcing hang (GH#22091) (#22101)
+- verify_pr_merged passes when state=closed but mergedAt is set (GH#22075) (#22098)
+
 ## [3.13.56] - 2026-05-01
 
 ### Fixed
