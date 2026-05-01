@@ -76,7 +76,7 @@ tools/build-mcp/api-wrapper/,tools/build-mcp/api-wrapper subagents,patterns
 tools/build-mcp/,tools/build-mcp subagents,build-mcp|deployment|server-patterns|transports
 tools/code-review/,tools/code-review subagents,auditing|automation|best-practices|codacy|coderabbit|code-simplifier|code-standards|management|qlty|runtime-patterns|secretlint|security-analysis|security-audit|setup|skill-scanner|snyk|tools
 tools/containers/,tools/containers subagents,orbstack|remote-dispatch
-tools/context/,tools/context subagents,augment-context-engine|context7-cli|context7|context-builder-agent|context-builder|context-guardrails|dspyground|dspy|github-search|llm-tldr|mcp-discovery|model-routing|openapi-search|prompt-optimization|rapidfuzz|toon
+tools/context/,tools/context subagents,context7-cli|context7|context-builder-agent|context-builder|context-guardrails|dspyground|dspy|github-search|llm-tldr|mcp-discovery|model-routing|openapi-search|prompt-optimization|rapidfuzz|toon
 tools/conversion/,tools/conversion subagents,mineru|pandoc
 tools/credentials/,tools/credentials subagents,api-key-management|api-key-setup|auth-troubleshooting|bitwarden|encryption-stack|enpass|environment-variables|gocryptfs|gopass|list-keys|multi-tenant|psst|sops|vaultwarden
 tools/database/,tools/database subagents,pglite-local-first|vector-search

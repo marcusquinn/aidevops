@@ -48,17 +48,6 @@ _generate_mcp_for_runtime() {
 	# Shared MCP definitions -- defined once, registered for each runtime
 	# Format: register_mcp_for_runtime <runtime_id> <name> '<json>'
 
-	# Augment Context Engine (requires auggie binary AND active auth session)
-	local auggie_path
-	auggie_path=$(command -v auggie 2>/dev/null || echo "")
-	if [[ -n "$auggie_path" && -f "$HOME/.augment/session.json" ]]; then
-		register_mcp_for_runtime "$runtime_id" "auggie-mcp" \
-			"{\"command\":\"$auggie_path\",\"args\":[\"--mcp\"]}"
-		mcp_count=$((mcp_count + 1))
-	elif [[ -n "$auggie_path" ]]; then
-		print_warning "Skipping auggie-mcp: binary found but not logged in (run: auggie login)"
-	fi
-
 	# context7 (library docs -- remote endpoint, zero install)
 	register_mcp_for_runtime "$runtime_id" "context7" \
 		'{"url":"https://mcp.context7.com/mcp"}'

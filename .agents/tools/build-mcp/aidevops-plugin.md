@@ -44,7 +44,6 @@ tools:
 | MCP | Type | Global tools |
 |---|---|---|
 | `playwriter` | local | yes |
-| `augment-context-engine` | local | no |
 | `context7` | remote | no |
 | `outscraper` | local | no |
 | `dataforseo` | local | no |

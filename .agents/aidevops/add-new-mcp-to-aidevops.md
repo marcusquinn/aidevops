@@ -80,7 +80,7 @@ Ask the user which agents need this MCP:
 
 ## Step 3: Create Documentation File
 
-Create `.agents/tools/{category}/{mcp-name}.md`. Use `.agents/tools/context/augment-context-engine.md` as reference template.
+Create `.agents/tools/{category}/{mcp-name}.md`. Use `.agents/tools/context/context7.md` as reference template.
 
 **Categories**: `context/`, `code-review/`, `deployment/`, `browser/`, `git/`, `credentials/`, `ai-assistants/`.
 
@@ -214,13 +214,13 @@ After implementation: `@agent-review Review the new {mcp-name} documentation and
 
 ## Reference Implementation
 
-See Augment Context Engine for patterns — search `augment-context-engine` in:
+See Context7 for patterns — search `context7` in:
 
 | File | Purpose |
 |------|---------|
-| `.agents/tools/context/augment-context-engine.md` | Documentation |
-| `configs/augment-context-engine-config.json.txt` | Config template |
-| `configs/mcp-templates/augment-context-engine.json` | MCP snippets |
+| `.agents/tools/context/context7.md` | Documentation |
+| `configs/context7-config.json.txt` | Config template |
+| `configs/mcp-templates/context7.json` | MCP snippets |
 | `.agents/scripts/generate-opencode-agents.sh` | Agent config |
 | `.agents/scripts/ai-cli-config.sh` | CLI config function |
 | `setup.sh` | Setup function |

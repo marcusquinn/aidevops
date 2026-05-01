@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, augment, seo, analytics, quickfile, browser-tools, opencode-plugins
+# MCP setup functions: install_mcp_packages, resolve_mcp_binary, localwp, seo, analytics, quickfile, browser-tools, opencode-plugins
 # Part of aidevops setup.sh modularization (t316.3)
 
 # Shell safety baseline
@@ -277,52 +277,6 @@ setup_localwp_mcp() {
 		print_info "Skipped LocalWP MCP server installation"
 		print_info "Install later: npm install -g @verygoodplugins/mcp-local-wp"
 	fi
-
-	return 0
-}
-
-setup_augment_context_engine() {
-	# Check prerequisites before announcing setup (GH#5240)
-	if ! command -v node &>/dev/null; then
-		print_skip "Augment Context Engine" "Node.js not installed" "Install Node.js 22+: brew install node@22 (macOS) or nvm install 22"
-		setup_track_deferred "Augment Context Engine" "Install Node.js 22+"
-		return 0
-	fi
-
-	local node_version
-	node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
-	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
-		print_skip "Augment Context Engine" "could not determine Node.js version"
-		setup_track_skipped "Augment Context Engine" "Node.js version unknown"
-		return 0
-	fi
-	if [[ "$node_version" -lt 22 ]]; then
-		print_skip "Augment Context Engine" "requires Node.js 22+, found v$node_version" "Upgrade: brew install node@22 (macOS) or nvm install 22"
-		setup_track_deferred "Augment Context Engine" "Upgrade Node.js to 22+ (currently v$node_version)"
-		return 0
-	fi
-
-	if ! command -v auggie &>/dev/null; then
-		print_skip "Augment Context Engine" "Auggie CLI not installed" "Install: npm install -g @augmentcode/auggie@prerelease && auggie login"
-		setup_track_deferred "Augment Context Engine" "Install Auggie CLI: npm install -g @augmentcode/auggie@prerelease"
-		return 0
-	fi
-
-	if [[ ! -f "$HOME/.augment/session.json" ]]; then
-		print_skip "Augment Context Engine" "Auggie not logged in" "Run: auggie login"
-		setup_track_deferred "Augment Context Engine" "Run: auggie login"
-		return 0
-	fi
-
-	# Prerequisites met — proceed with setup
-	print_info "Setting up Augment Context Engine MCP..."
-	print_success "Auggie CLI found and authenticated"
-
-	# MCP configuration is handled by generate-opencode-agents.sh for OpenCode
-
-	print_info "Augment Context Engine available as MCP in OpenCode"
-	print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
-	setup_track_configured "Augment Context Engine"
 
 	return 0
 }

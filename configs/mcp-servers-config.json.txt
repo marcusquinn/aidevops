@@ -21,11 +21,6 @@
       "url": "https://mcp.context7.com/mcp",
       "description": "Context7 MCP server for accessing latest documentation of development tools and frameworks"
     },
-    "augment-context-engine": {
-      "command": "auggie",
-      "args": ["--mcp"],
-      "description": "Augment Context Engine for semantic codebase search"
-    },
     "claude-code-mcp": {
       "command": "npx",
       "args": ["-y", "@steipete/claude-code-mcp@latest"],

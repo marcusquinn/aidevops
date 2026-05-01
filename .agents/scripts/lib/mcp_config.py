@@ -22,7 +22,7 @@ EAGER_MCPS = set()
 
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 LAZY_MCPS = {
-    'MCP_DOCKER', 'ahrefs', 'amazon-order-history', 'augment-context-engine',
+    'MCP_DOCKER', 'ahrefs', 'amazon-order-history',
     'chrome-devtools', 'claude-code-mcp', 'context7', 'dataforseo', 'gh_grep',
     'google-analytics-mcp', 'grep_app', 'gsc', 'ios-simulator', 'localwp',
     'macos-automator', 'openapi-search', 'outscraper', 'playwriter', 'quickfile',

@@ -25,7 +25,6 @@ subagents:
   - secretlint
   - qlty
   # Context tools
-  - augment-context-engine
   - context-builder
   - context7
   - toon
@@ -140,4 +139,3 @@ Auto-commit planning changes (metadata, no PR needed):
 ```
 
 Messages: `plan: add {title}` | `plan: {task} → done` | `plan: batch planning updates`
-

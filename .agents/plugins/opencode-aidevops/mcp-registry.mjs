@@ -72,16 +72,6 @@ function getMcpRegistry() {
       description: "Browser automation via Chrome extension",
     },
     {
-      name: "augment-context-engine",
-      type: "local",
-      command: ["auggie", "--mcp"],
-      eager: false,
-      toolPattern: "augment-context-engine_*",
-      globallyEnabled: false,
-      requiresBinary: "auggie",
-      description: "Semantic codebase search (Augment)",
-    },
-    {
       name: "context7",
       type: "remote",
       url: "https://mcp.context7.com/mcp",
@@ -354,6 +344,8 @@ function applyMcpToolPermissions(mcp, tools) {
 const DEPRECATED_MCPS = [
   // auggie-mcp was a duplicate of augment-context-engine (same binary, same purpose)
   { name: "auggie-mcp", toolPattern: "auggie-mcp_*" },
+  // augment-context-engine relied on the Auggie MCP; local code search is preferred.
+  { name: "augment-context-engine", toolPattern: "augment-context-engine_*" },
 ];
 
 /**

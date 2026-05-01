@@ -55,7 +55,6 @@ npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
 | MCP | Tokens | Subagent | When to enable |
 |-----|--------|----------|----------------|
 | `playwriter` | ~3K | `@playwriter` | Browser automation needed |
-| `augment-context-engine` | ~1K | `@augment-context-engine` | Semantic search needed |
 | `google-analytics-mcp` | ~800 | `@google-analytics` | Analytics reporting |
 | `context7` | ~800 | `@context7` | Library docs lookup |
 
@@ -65,7 +64,7 @@ npx mcporter generate-cli --command https://mcp.context7.com/mcp --compile
 |-----|----------|-------|
 | `grep_app` / `gh_grep` | `@github-search` | GitHub code search (no MCP used) |
 
-**Primary search**: `rg`/`fd` (local, instant). Use `@augment-context-engine` for semantic search.
+**Primary search**: `rg`/`fd` (local, instant). Use `osgrep` for semantic code search.
 
 <!-- AI-CONTEXT-END -->
 

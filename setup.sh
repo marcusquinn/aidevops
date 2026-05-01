@@ -1432,7 +1432,6 @@ _setup_run_interactive() {
 	confirm_step "Setup Node.js environment" && setup_nodejs_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
 	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-	confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
 	confirm_step "Setup Beads task management" && setup_beads
 	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
 	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp

@@ -151,15 +151,6 @@ register_all_mcp_servers() {
 		existing_mcps=$(claude mcp list 2>/dev/null | grep -oE '^[a-zA-Z0-9_-]+:' | tr -d ':' || true)
 	fi
 
-	# --- Augment Context Engine (requires binary AND active auth session) ---
-	if command -v auggie &>/dev/null && [[ -f "$HOME/.augment/session.json" ]]; then
-		local local_auggie
-		local_auggie=$(command -v auggie)
-		register_mcp "auggie-mcp" "{\"type\":\"stdio\",\"command\":\"$local_auggie\",\"args\":[\"--mcp\"]}"
-	elif command -v auggie &>/dev/null; then
-		echo -e "  ${YELLOW}[SKIP]${NC} auggie-mcp: binary found but not logged in (run: auggie login)"
-	fi
-
 	# --- context7 (library docs) ---
 	register_mcp "context7" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp@latest\"]}"
 

@@ -172,7 +172,6 @@ mcp_count = 0
 # Common tool patterns based on MCP naming conventions
 tool_categories = {
     'context7': ['query-docs', 'resolve-library-id'],
-    'augment-context-engine': ['codebase-retrieval'],
     'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
     # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md)
     'gsc': ['query', 'sitemaps', 'inspect'],
@@ -192,7 +191,6 @@ tool_descriptions = {
     'search': 'Search for content or code',
     'trace': 'Trace code execution paths',
     'skeleton': 'Generate code skeleton/structure',
-    'codebase-retrieval': 'Semantic search across codebase using Augment',
     'pack_codebase': 'Package local codebase for AI analysis',
     'pack_remote_repository': 'Package remote GitHub repo for AI analysis',
     'run_claude_code': 'Run Claude Code as a one-shot subprocess',
@@ -222,7 +220,7 @@ for mcp_name, mcp_config in mcp_servers.items():
             # Derive category from MCP name
             if 'seo' in mcp_name.lower() or pattern in ['dataforseo', 'gsc']:
                 category = 'seo'
-            elif pattern in ['context7', 'augment-context-engine']:
+            elif pattern == 'context7':
                 category = 'context'
             elif pattern in ['shadcn', 'playwriter']:
                 category = 'browser'

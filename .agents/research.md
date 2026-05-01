@@ -5,7 +5,6 @@ mode: subagent
 subagents:
   # Context/docs
   - context7
-  - augment-context-engine
   # Web research
   - crawl4ai
   - serper

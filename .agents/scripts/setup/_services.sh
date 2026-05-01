@@ -312,13 +312,6 @@ setup_localwp_mcp() {
 	return 0
 }
 
-# Setup Augment Context Engine
-setup_augment_context_engine() {
-	# TODO: Extract from setup.sh lines 4150-4191
-	:
-	return 0
-}
-
 # Setup Beads (task management)
 setup_beads() {
 	# TODO: Extract from setup.sh lines 4364-4419

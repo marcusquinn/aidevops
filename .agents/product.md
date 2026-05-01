@@ -7,7 +7,6 @@ subagents:
   - explore
   # Context / research
   - context7
-  - augment-context-engine
   # Validation / market research
   - serper
   - keyword-research

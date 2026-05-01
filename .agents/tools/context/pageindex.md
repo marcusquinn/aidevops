@@ -31,7 +31,7 @@ tools:
 
 **Use when**: Documents exceed context limits — financial reports, regulatory filings, academic textbooks, legal/technical manuals. Need explainable retrieval with page/section references. No vector DB infrastructure wanted.
 
-**Do NOT use**: Short documents fitting in context. Keyword search (use rg/grep). Codebase search (use [Augment Context Engine](augment-context-engine.md)). Real-time streaming. Existing vector pipeline (see [vector-search](../database/vector-search.md)).
+**Do NOT use**: Short documents fitting in context. Keyword search (use rg/grep). Codebase search (use osgrep). Real-time streaming. Existing vector pipeline (see [vector-search](../database/vector-search.md)).
 
 <!-- AI-CONTEXT-END -->
 
@@ -128,7 +128,6 @@ python3 examples/agentic_vectorless_rag_demo.py
 
 ## Related
 
-- [Augment Context Engine](augment-context-engine.md) — Semantic codebase retrieval (code, not documents)
 - [Context Builder](context-builder.md) — Token-efficient codebase packing
 - [Per-Tenant RAG Patterns](../database/vector-search.md) — Vector-based RAG with tenant isolation
 - [llm-tldr](llm-tldr.md) — Semantic code analysis with token savings

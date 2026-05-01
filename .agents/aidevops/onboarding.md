@@ -70,7 +70,6 @@ The two workflows compose: `/onboarding` first (you need `gh` to be authenticate
 | SEO | Serper | `SERPER_API_KEY` | https://serper.dev/api-key |
 | SEO | Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard |
 | SEO | Google Search Console | OAuth via MCP | https://search.google.com/search-console |
-| Context | Augment | `npm install -g @augmentcode/auggie@prerelease && auggie login` | — |
 | Context | Context7 | MCP config only | — |
 | Browser | Playwright | `npx playwright install` | — |
 | Browser | Stagehand | OpenAI/Anthropic key required | — |
@@ -104,7 +103,7 @@ gh auth status && glab auth status
 hcloud server list
 curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq .success
 curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" "https://api.dataforseo.com/v3/appendix/user_data" | jq .status_message
-auggie token print && openclaw doctor && tailscale status && orb status
+openclaw doctor && tailscale status && orb status
 ~/.aidevops/agents/scripts/list-keys-helper.sh
 ```
 
@@ -123,7 +122,7 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 
 - **Layers**: Main agents (Tab) → subagents (`@name`) → commands (`/name`)
 - **Main**: `Build+`, `SEO`, `WordPress` | **Init**: `cd ~/your-project && aidevops init`
-- **Subagents**: `@hetzner`, `@cloudflare`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@augment-context-engine`, `@code-standards`, `@wp-dev`
+- **Subagents**: `@hetzner`, `@cloudflare`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@code-standards`, `@wp-dev`
 - **Commands**: `/create-prd`, `/generate-tasks`, `/feature`, `/bugfix`, `/hotfix`, `/pr`, `/preflight`, `/release`, `/linters-local`, `/keyword-research`
 
 ## Repo Sync & Orchestration

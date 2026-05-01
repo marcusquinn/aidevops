@@ -26,7 +26,7 @@ if [[ -z "$MCP_NAME" ]]; then
 	echo "       mcp-diagnose.sh check-all"
 	echo ""
 	echo "Examples:"
-	echo "  mcp-diagnose.sh augment-context-engine"
+	echo "  mcp-diagnose.sh context7"
 	echo "  mcp-diagnose.sh check-all"
 	exit 1
 fi
@@ -384,10 +384,6 @@ fi
 echo "1. Checking command availability..."
 # Map MCP names to their CLI commands
 case "$MCP_NAME" in
-augment-context-engine | augment)
-	CLI_CMD="auggie"
-	NPM_PKG="@augmentcode/auggie"
-	;;
 context7)
 	CLI_CMD="context7"
 	NPM_PKG="@context7/mcp"
@@ -521,11 +517,6 @@ fi
 echo ""
 echo "4. Known issues for $MCP_NAME..."
 case "$MCP_NAME" in
-augment-context-engine | augment)
-	echo "   - Requires 'auggie login' before MCP works"
-	echo "   - Session stored in ~/.augment/"
-	echo "   - Correct command: [\"auggie\", \"--mcp\"]"
-	;;
 context7)
 	echo "   - Remote MCP, no local command needed"
 	echo "   - Use: \"type\": \"remote\", \"url\": \"https://mcp.context7.com/mcp\""
@@ -559,10 +550,6 @@ echo "5. Testing MCP command (5 second timeout)..."
 
 # timeout_sec (from shared-constants.sh) handles macOS + Linux portably
 case "$MCP_NAME" in
-augment-context-engine | augment)
-	echo "   Running: auggie --mcp"
-	timeout_sec 5 auggie --mcp 2>&1 | head -3 || echo "   (timeout - normal for MCP servers)"
-	;;
 *)
 	echo "   Skipping direct test (unknown command pattern)"
 	;;

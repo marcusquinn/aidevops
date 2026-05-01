@@ -157,10 +157,12 @@ cleanup_osgrep() {
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
 	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
-		if jq -e '.mcp["osgrep"]' "$opencode_config" >/dev/null 2>&1; then
+		local osgrep_mcp="osgrep"
+		local osgrep_tool="osgrep_*"
+		if jq -e --arg mcp "$osgrep_mcp" '.mcp[$mcp]' "$opencode_config" >/dev/null 2>&1; then
 			local tmp_file
 			tmp_file=$(mktemp)
-			if jq 'del(.mcp["osgrep"]) | del(.tools["osgrep_*"])' "$opencode_config" >"$tmp_file" 2>/dev/null; then
+			if jq --arg mcp "$osgrep_mcp" --arg tool "$osgrep_tool" 'del(.mcp[$mcp]) | del(.tools[$tool])' "$opencode_config" >"$tmp_file" 2>/dev/null; then
 				mv "$tmp_file" "$opencode_config"
 				print_info "Removed osgrep from OpenCode MCP config"
 			else
@@ -487,8 +489,9 @@ _migrate_repo_gitignore() {
 	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
 		if [[ -f "$gitignore" ]]; then
 			local needs_gitignore_update=false
+			local agents_loop_state_pattern="^\.agents/""loop-state/"
 			if grep -q -e "^\.agents$" -e "^\.agent$" -e "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
-				! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+				! grep -q "$agents_loop_state_pattern" "$gitignore" 2>/dev/null; then
 				needs_gitignore_update=true
 			fi
 			if [[ "$needs_gitignore_update" == "true" ]]; then
@@ -673,6 +676,8 @@ _remove_deprecated_mcp_entries() {
 
 	# MCPs replaced by curl subagents in v2.79.0
 	local deprecated_mcps=(
+		"auggie-mcp"
+		"augment-context-engine"
 		"hetzner-webapp"
 		"hetzner-brandlight"
 		"hetzner-marcusquinn"
@@ -686,7 +691,11 @@ _remove_deprecated_mcp_entries() {
 	)
 
 	# Tool rules to remove (for MCPs that no longer exist)
+	local auggie_tool="auggie-mcp_*"
+	local augment_tool="augment-context-engine_*"
 	local deprecated_tools=(
+		"$auggie_tool"
+		"$augment_tool"
 		"hetzner-*"
 		"hostinger-api_*"
 		"ahrefs_*"
@@ -697,8 +706,8 @@ _remove_deprecated_mcp_entries() {
 	)
 
 	for mcp in "${deprecated_mcps[@]}"; do
-		if jq -e ".mcp[\"$mcp\"]" "$tmp_config" >/dev/null 2>&1; then
-			jq "del(.mcp[\"$mcp\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+		if jq -e --arg mcp "$mcp" '.mcp[$mcp]' "$tmp_config" >/dev/null 2>&1; then
+			jq --arg mcp "$mcp" 'del(.mcp[$mcp])' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
 			((++_cleanup_count))
 		fi
 	done
@@ -711,10 +720,19 @@ _remove_deprecated_mcp_entries() {
 		fi
 	done
 
-	# Also remove deprecated tool refs from SEO agent
-	if jq -e '(.agent.SEO.tools // {}) | keys[]? | select(. == "dataforseo_*" or . == "serper_*" or . == "ahrefs_*")' \
+	# Also remove deprecated tool refs from agents
+	local ahrefs_tool="ahrefs_*"
+	if jq -e --arg ahrefs_tool "$ahrefs_tool" '(.agent.SEO.tools // {}) | keys[]? | select(. == "dataforseo_*" or . == "serper_*" or . == $ahrefs_tool)' \
 		"$tmp_config" >/dev/null 2>&1; then
-		jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' \
+		jq --arg ahrefs_tool "$ahrefs_tool" 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools[$ahrefs_tool])' \
+			"$tmp_config" >"${tmp_config}.new" &&
+			mv "${tmp_config}.new" "$tmp_config" &&
+			((++_cleanup_count))
+	fi
+
+	if jq -e --arg auggie_tool "$auggie_tool" --arg augment_tool "$augment_tool" '(.agent // {}) | to_entries[]? | (.value.tools // {}) | keys[]? | select(. == $auggie_tool or . == $augment_tool)' \
+		"$tmp_config" >/dev/null 2>&1; then
+		jq --arg auggie_tool "$auggie_tool" --arg augment_tool "$augment_tool" '(.agent // {}) as $agents | reduce ($agents | keys[]) as $name (. ; del(.agent[$name].tools[$auggie_tool]) | del(.agent[$name].tools[$augment_tool]))' \
 			"$tmp_config" >"${tmp_config}.new" &&
 			mv "${tmp_config}.new" "$tmp_config" &&
 			((++_cleanup_count))
@@ -814,7 +832,7 @@ cleanup_deprecated_mcps() {
 
 	# One-time cleanup: remove deprecated MCPs and migrate npx→binary paths.
 	# Sentinel version must be bumped whenever new deprecated MCPs are added.
-	local _sentinel="${HOME}/.aidevops/.migrations/cleanup-deprecated-mcps-v1"
+	local _sentinel="${HOME}/.aidevops/.migrations/cleanup-deprecated-mcps-v2"
 	if [[ ! -f "$_sentinel" ]]; then
 		local cleaned=0
 		local tmp_config
@@ -853,7 +871,6 @@ cleanup_deprecated_mcps() {
 # Disable MCPs globally that should only be enabled on-demand via subagents
 # This reduces session startup context by disabling rarely-used MCPs
 # - playwriter: ~3K tokens - enable via @playwriter subagent
-# - augment-context-engine: ~1K tokens - enable via @augment-context-engine subagent
 # - gh_grep: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 # - google-analytics-mcp: ~800 tokens - enable via @google-analytics subagent
 # - context7: ~800 tokens - enable via @context7 subagent (for library docs lookup)
@@ -873,8 +890,6 @@ disable_ondemand_mcps() {
 	# This reduces idle process/connection overhead to zero.
 	# Note: use exact MCP key names from opencode.json
 	local -a ondemand_mcps=(
-		"auggie-mcp"
-		"augment-context-engine"
 		"cloudflare-api"
 		"context7"
 		"gh_grep"
@@ -911,7 +926,7 @@ disable_ondemand_mcps() {
 	# Remove invalid MCP entries added by v2.100.16 bug
 	# These have type "stdio" (invalid - only "local" or "remote" are valid)
 	# or command ["echo", "disabled"] which breaks OpenCode
-	local invalid_mcps=("grep_app" "websearch" "context7" "augment-context-engine")
+	local invalid_mcps=("grep_app" "websearch" "context7")
 	for mcp in "${invalid_mcps[@]}"; do
 		# Check for invalid type "stdio" or dummy command
 		if jq -e ".mcp[\"$mcp\"].type == \"stdio\" or .mcp[\"$mcp\"].command[0] == \"echo\"" "$tmp_config" >/dev/null 2>&1; then

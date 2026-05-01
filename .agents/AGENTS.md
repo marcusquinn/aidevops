@@ -243,7 +243,7 @@ MCP servers that fail to start (e.g., "MCP error -32000: Connection closed", "sp
 ### Code Search Priority
 
 1. grep/rg — exact string matching (fast)
-2. Augment Context Engine — semantic search
+2. osgrep — semantic code search
 3. Glob — LAST RESORT
 
 ### Code References

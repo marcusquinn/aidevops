@@ -41,7 +41,7 @@ Style: tables for structured info, short paragraphs, practical examples, no jarg
 .agents/scripts/context-builder-helper.sh compress .
 ```
 
-Reference `repomix-instruction.md` for guidelines. Use Augment Context Engine or Repomix to understand architecture, new features, service integrations, and workflows since last update.
+Reference `repomix-instruction.md` for guidelines. Use local search, osgrep, or Repomix to understand architecture, new features, service integrations, and workflows since last update.
 
 ## Step 2: Review and Identify Updates
 
@@ -95,6 +95,5 @@ cat VERSION
 ## Related
 
 - `repomix-instruction.md` — codebase context instructions
-- `.agents/tools/context/augment-context-engine.md` — Augment setup
 - `.agents/tools/context/context-builder.md` — Repomix wrapper
 - `.github/workflows/sync-wiki.yml` — auto-sync workflow

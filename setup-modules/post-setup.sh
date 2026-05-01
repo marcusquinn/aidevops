@@ -145,7 +145,6 @@ print_final_instructions() {
 	echo "• Skills include: wordpress, seo, aidevops, build-mcp, and more"
 	echo ""
 	echo "MCP Integrations (OpenCode):"
-	echo "• Augment Context Engine - Cloud semantic codebase retrieval"
 	echo "• Context7               - Real-time library documentation"
 	echo "• GSC                    - Google Search Console (MCP + OAuth2)"
 	echo "• Google Analytics       - Analytics data (shared GSC credentials)"

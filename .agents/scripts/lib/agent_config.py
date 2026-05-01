@@ -42,7 +42,6 @@ SKIP_PRIMARY_AGENTS = {"plan-plus.md", "aidevops.md", "browser-extension-dev.md"
 # MCP On-Demand Loading Strategy:
 # The following MCPs are DISABLED globally to reduce context token usage:
 #   - playwriter_*: ~3K tokens - enable via @playwriter subagent
-#   - augment-context-engine_*: ~1K tokens - enable via @augment-context-engine subagent
 #   - gh_grep_*: ~600 tokens - replaced by @github-search subagent (uses rg/bash)
 #   - google-analytics-mcp_*: ~800 tokens - enable via @google-analytics subagent
 #   - context7_*: ~800 tokens - enable via @context7 subagent (library docs lookup)

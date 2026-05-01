@@ -60,11 +60,6 @@ opencode mcp list                                        # verify MCP status
 
 ## Version-Specific Issues
 
-### augment-context-engine
-
-- `unauthorized` or expired session → run `auggie login`
-- Correct command: `["auggie", "--mcp"]`
-
 ### context7
 
 Remote MCP; no local installation needed.
@@ -78,7 +73,6 @@ Remote MCP; no local installation needed.
 Run the configured MCP command directly. Expect JSON-RPC startup output, not an HTTP server banner:
 
 ```bash
-auggie --mcp   # augment
 <configured MCP command>
 ```
 

@@ -47,7 +47,7 @@ opencode run "Test [mcp] tools" --agent Build+
 
 See `tools/opencode/opencode.md` for CLI testing patterns.
 
-**MCPs to Enable**: context7, augment-context-engine, repomix
+**MCPs to Enable**: context7, repomix
 
 <!-- AI-CONTEXT-END -->
 
