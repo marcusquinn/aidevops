@@ -800,16 +800,16 @@ test_build_ranked_dispatch_candidates_json_scores_candidates() {
 }
 JSON
 
-	gh() {
-		if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-			if [[ "${4:-}" == "marcusquinn/aidevops" ]]; then
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" ]]; then
+			if [[ "${2:-}" == "marcusquinn/aidevops" ]]; then
 				printf '%s\n' '[
 				  {"number":7001,"title":"tooling simplification","url":"https://github.com/marcusquinn/aidevops/issues/7001","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"file-size-debt"}]},
 				  {"number":7002,"title":"tooling bug","url":"https://github.com/marcusquinn/aidevops/issues/7002","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"bug"}]}
 				]'
 				return 0
 			fi
-			if [[ "${4:-}" == "webapp" ]]; then
+			if [[ "${2:-}" == "webapp" ]]; then
 				printf '%s\n' '[
 				  {"number":8001,"title":"product simplification","url":"webapp#8001","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"function-complexity-debt"}]}
 				]'
@@ -818,20 +818,20 @@ JSON
 		fi
 		return 1
 	}
-	export -f gh
+	export -f gh_issue_list
 
 	local ordered_numbers
 	ordered_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
 
-	unset -f gh
+	unset -f gh_issue_list
 	REPOS_JSON="$original_repos_json"
 
-	if [[ "$ordered_numbers" == $'7002\n8001\n7001' ]]; then
-		print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 0
+	if [[ "$ordered_numbers" == $'7002\n7001\n8001' ]]; then
+		print_result "build_ranked_dispatch_candidates_json orders bug before tooling simplification before product simplification" 0
 		return 0
 	fi
 
-	print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 1 \
+	print_result "build_ranked_dispatch_candidates_json orders bug before tooling simplification before product simplification" 1 \
 		"Unexpected order: ${ordered_numbers}"
 	return 0
 }
@@ -926,25 +926,25 @@ JSON
 	check_repo_pulse_schedule() {
 		[[ "$1" == "marcusquinn/aidevops" ]]
 	}
-	gh() {
-		if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-			if [[ "${4:-}" == "marcusquinn/aidevops" ]]; then
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" ]]; then
+			if [[ "${2:-}" == "marcusquinn/aidevops" ]]; then
 				printf '%s\n' '[{"number":9201,"title":"allowed","url":"https://github.com/marcusquinn/aidevops/issues/9201","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
 				return 0
 			fi
-			if [[ "${4:-}" == "webapp" ]]; then
+			if [[ "${2:-}" == "webapp" ]]; then
 				printf '%s\n' '[{"number":9202,"title":"blocked by schedule","url":"webapp#9202","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
 				return 0
 			fi
 		fi
 		return 1
 	}
-	export -f gh
+	export -f gh_issue_list
 
 	local candidate_numbers
 	candidate_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
 
-	unset -f gh check_repo_pulse_schedule
+	unset -f gh_issue_list check_repo_pulse_schedule
 	REPOS_JSON="$original_repos_json"
 
 	if [[ "$candidate_numbers" == "9201" ]]; then
@@ -954,6 +954,54 @@ JSON
 
 	print_result "build_ranked_dispatch_candidates_json skips repos outside schedule gate" 1 \
 		"Unexpected scheduled candidate set: ${candidate_numbers}"
+	return 0
+}
+
+test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours() {
+	local original_repos_json="$REPOS_JSON"
+	local schedule_args_log="${TEST_ROOT}/pulse-hours-array-schedule-args.log"
+	: >"$schedule_args_log"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "pulse_hours": [9, 17]
+    }
+  ]
+}
+JSON
+
+	check_repo_pulse_schedule() {
+		printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$4" >>"$schedule_args_log"
+		return 0
+	}
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" && "${2:-}" == "marcusquinn/aidevops" ]]; then
+			printf '%s\n' '[{"number":9251,"title":"array pulse hours","url":"https://github.com/marcusquinn/aidevops/issues/9251","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[{"name":"bug"}]}]'
+			return 0
+		fi
+		return 1
+	}
+	export -f gh_issue_list
+
+	local candidate_numbers schedule_args
+	candidate_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+	schedule_args=$(cat "$schedule_args_log" 2>/dev/null || true)
+
+	unset -f gh_issue_list check_repo_pulse_schedule
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$candidate_numbers" == "9251" && "$schedule_args" == "marcusquinn/aidevops|9|17|" ]]; then
+		print_result "build_ranked_dispatch_candidates_json accepts array pulse_hours" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json accepts array pulse_hours" 1 \
+		"candidate_numbers='${candidate_numbers}', schedule_args='${schedule_args}'"
 	return 0
 }
 
@@ -1188,6 +1236,7 @@ main() {
 	test_dispatch_with_dedup_passes_explicit_model_override
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
+	test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours
 	test_dispatch_max_dispatches_up_to_capacity
 	test_dispatch_max_honors_stop_flag
 	test_dispatch_max_ignores_noisy_count_output

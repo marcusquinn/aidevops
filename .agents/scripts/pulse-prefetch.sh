@@ -352,17 +352,27 @@ prefetch_state() {
 
 	echo "[pulse-wrapper] Pre-fetching state for all pulse-enabled repos..." >>"$LOGFILE"
 
-	# Extract pulse-enabled, non-local-only repos as slug|path|ph_start|ph_end|expires
+	# Extract pulse-enabled, non-local-only repos as slug|path|ph_start|ph_end|expires.
+	# pulse_hours accepts object {"start":N,"end":N} and legacy array [N,N].
 	# pulse_hours fields default to "" when absent; pulse_expires defaults to "".
 	# Bash 3.2: no associative arrays — use pipe-delimited fields.
 	local repo_entries_raw
-	repo_entries_raw=$(jq -r '.initialized_repos[] |
+	repo_entries_raw=$(jq -r '
+		def pulse_hour_start:
+			if (.pulse_hours | type) == "array" then .pulse_hours[0]
+			else .pulse_hours.start
+			end;
+		def pulse_hour_end:
+			if (.pulse_hours | type) == "array" then .pulse_hours[1]
+			else .pulse_hours.end
+			end;
+		.initialized_repos[] |
 		select(.pulse == true and (.local_only // false) == false and .slug != "") |
 		[
 			.slug,
 			.path,
-			(if .pulse_hours then (.pulse_hours.start | tostring) else "" end),
-			(if .pulse_hours then (.pulse_hours.end   | tostring) else "" end),
+			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
+			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
 			(.pulse_expires // "")
 		] | join("|")
 	' "$repos_json")

@@ -246,7 +246,27 @@ build_ranked_dispatch_candidates_json() {
 				)
 			}
 		' >>"$tmp_candidates" 2>/dev/null || true
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [(.slug), (.path), (.priority // "tooling"), (if .pulse_hours then (.pulse_hours.start | tostring) else "" end), (if .pulse_hours then (.pulse_hours.end | tostring) else "" end), (.pulse_expires // ""), (.pulse_interval // "")] | join("|")' "$REPOS_JSON" 2>/dev/null)
+	done < <(jq -r '
+		def pulse_hour_start:
+			if (.pulse_hours | type) == "array" then .pulse_hours[0]
+			else .pulse_hours.start
+			end;
+		def pulse_hour_end:
+			if (.pulse_hours | type) == "array" then .pulse_hours[1]
+			else .pulse_hours.end
+			end;
+		.initialized_repos[] |
+		select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") |
+		[
+			.slug,
+			.path,
+			(.priority // "tooling"),
+			(if .pulse_hours then (pulse_hour_start | tostring) else "" end),
+			(if .pulse_hours then (pulse_hour_end | tostring) else "" end),
+			(.pulse_expires // ""),
+			(.pulse_interval // "")
+		] | join("|")
+	' "$REPOS_JSON" 2>/dev/null)
 
 	if [[ ! -s "$tmp_candidates" ]]; then
 		rm -f "$tmp_candidates"
