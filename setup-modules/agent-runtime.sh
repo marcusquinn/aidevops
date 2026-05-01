@@ -249,3 +249,38 @@ deploy_agents_to_runtimes() {
 
 	return 0
 }
+
+# _deploy_agents_to_runtimes_bounded: time-bounded wrapper for deploy_agents_to_runtimes.
+#
+# deploy_agents_to_runtimes is a shell function (not an external script), so it
+# cannot be passed directly to the `timeout` binary. Instead we run it in a
+# background subshell and poll for completion with a configurable wall-clock
+# deadline. When the deadline expires the subshell is killed with SIGTERM then
+# SIGKILL and setup continues without this non-critical step.
+#
+# Configurable via AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT (default 120s).
+_deploy_agents_to_runtimes_bounded() {
+	local timeout_s="${AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT:-120}"
+	local _start_s=$SECONDS
+	local _pid=""
+	local _rc=0
+
+	deploy_agents_to_runtimes &
+	_pid=$!
+
+	while kill -0 "$_pid" 2>/dev/null; do
+		if (( SECONDS - _start_s >= timeout_s )); then
+			kill -TERM "$_pid" 2>/dev/null || true
+			sleep 2
+			kill -KILL "$_pid" 2>/dev/null || true
+			wait "$_pid" 2>/dev/null || true
+			print_warning "Runtime agent deployment exceeded ${timeout_s}s — skipping (non-critical)"
+			return 1
+		fi
+		sleep 1
+	done
+
+	wait "$_pid" 2>/dev/null
+	_rc=$?
+	return "$_rc"
+}

@@ -1318,7 +1318,10 @@ _setup_run_non_interactive() {
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 	_time_step "inject_agents_reference" inject_agents_reference
-	_time_step "deploy_agents_to_runtimes" deploy_agents_to_runtimes
+	# Use the bounded wrapper so a slow file-system traversal across many agent
+	# files does not consume the remaining postflight budget and trip the outer
+	# timeout (GH#22087). AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT controls the deadline.
+	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded
 	_time_step "update_opencode_config" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
 	_time_step "update_codex_config" update_codex_config
