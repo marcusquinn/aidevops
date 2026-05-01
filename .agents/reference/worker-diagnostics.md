@@ -470,6 +470,19 @@ Observed on GH#20765 (t2814): 2 opus-4-6 attempts (~40K wasted tokens) before ca
 - Replace the `work_dir` snapshot in `_worker_produced_output` with a `git worktree list --porcelain` scan keyed off `WORKER_ISSUE_NUMBER`.
 - Resolve the V6 contract contradiction — pick "pre-creation always succeeds" or "worker creates own + writes path back to a known file", not both.
 
+#### Worker branch-orphan loop hold — GH#22049
+
+When orphan recovery fails, `headless-runtime-helper.sh` posts a structured marker on the issue:
+
+```text
+<!-- worker-branch-orphan:key=<repo>#<issue>#<branch>#worker_branch_orphan -->
+WORKER_BRANCH_ORPHAN branch=<branch> session=<session> ts=<ISO8601>
+```
+
+After worktree pre-creation, `pulse-dispatch-worker-launch.sh` calls `dispatch-dedup-helper.sh check-orphan-loop <issue> <repo> <branch>`. If the same issue+branch has reached `WORKER_BRANCH_ORPHAN_LOOP_THRESHOLD` markers (default `3`) inside `WORKER_BRANCH_ORPHAN_LOOP_WINDOW_S` (default `7200` seconds), dispatch is held before spawning another worker and a single ops diagnostic is posted.
+
+The hold is branch-specific: a different branch or a different issue does not inherit the count. Triage the diagnostic by running the suggested `gh pr list --head <branch>` command; if the branch already has the intended PR, link/merge it, otherwise remove or reset the stale issue-linked worktree/branch so a fresh branch can dispatch.
+
 ## GitHub API Budget, Instrumentation, and Cache Priming
 
 - **REST fallback (t2574, t2744, t2902):** `shared-gh-wrappers.sh` routes eligible writes/reads through REST when GraphQL remaining <= 1500, preserving GraphQL for calls without REST equivalents. Override: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`.
