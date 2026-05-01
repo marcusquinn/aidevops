@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.54] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3375 complete (pr:#22116 completed:2026-05-01) [skip ci]
+- Maintenance: sync ref:GH#22117 to TODO.md [skip ci]
+
+### Fixed
+
+- raise token advisory threshold (#22116)
+
 ## [3.13.53] - 2026-05-01
 
 ### Changed
