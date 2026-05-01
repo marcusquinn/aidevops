@@ -304,6 +304,36 @@ cleanup_stale_bun_opencode() {
 	return 0
 }
 
+# Register the setup caller's linked worktree as owned before setup performs
+# deployment work that may restart the pulse or trigger cleanup routines.
+protect_current_setup_worktree() {
+	command -v git &>/dev/null || return 0
+	declare -F register_worktree >/dev/null 2>&1 || return 0
+
+	local current_root=""
+	local git_dir=""
+	local common_dir=""
+	local branch=""
+
+	current_root=$(git -C "${INSTALL_DIR:-.}" rev-parse --show-toplevel 2>/dev/null || true)
+	[[ -n "$current_root" ]] || return 0
+	current_root=$(cd "$current_root" 2>/dev/null && pwd -P) || return 0
+
+	git_dir=$(git -C "$current_root" rev-parse --git-dir 2>/dev/null) || return 0
+	common_dir=$(git -C "$current_root" rev-parse --git-common-dir 2>/dev/null) || return 0
+	[[ "$git_dir" = /* ]] || git_dir="$current_root/$git_dir"
+	[[ "$common_dir" = /* ]] || common_dir="$current_root/$common_dir"
+	git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
+	common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
+	[[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]] || return 0
+
+	branch=$(git -C "$current_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	[[ -n "$branch" ]] || branch="HEAD"
+	register_worktree "$current_root" "$branch" --task "setup-noninteractive" --session "setup:${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-manual}}" >/dev/null 2>&1 || true
+	print_info "Protected current setup worktree from cleanup: $current_root"
+	return 0
+}
+
 # t1929: Remove stale contributor/legacy health issue cache files and close
 # the corresponding GitHub issues. One-time migration — the root cause
 # (API failure in _get_runner_role defaulting to "contributor") is fixed
@@ -333,8 +363,10 @@ cleanup_worktree_entries_in_repos_json() {
 	local stale_paths=()
 	local skipped_current_paths=()
 	local current_worktree=""
+	local current_physical_dir=""
 	local path git_dir common_dir resolved_path
 
+	current_physical_dir=$(pwd -P 2>/dev/null || pwd)
 	current_worktree=$(git rev-parse --show-toplevel 2>/dev/null || true)
 	if [[ -n "$current_worktree" ]]; then
 		current_worktree=$(cd "$current_worktree" 2>/dev/null && pwd -P) || current_worktree=""
@@ -351,7 +383,8 @@ cleanup_worktree_entries_in_repos_json() {
 		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
 		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
 		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
-			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]]; then
+			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]] \
+				|| [[ -n "$resolved_path" && "$current_physical_dir" == "$resolved_path"/* ]]; then
 				skipped_current_paths+=("$path")
 				continue
 			fi
