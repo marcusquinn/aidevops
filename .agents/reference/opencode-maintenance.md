@@ -40,6 +40,8 @@ time and invokes `opencode-db-maintenance-helper.sh auto`, which:
    from deleted rows. Runs when the DB is larger than 500 MB or free pages
    exceed 10% of total pages. Typical reclaim: 20–40% on DBs with heavy
    prune activity.
+5. **Final WAL checkpoint**. VACUUM itself can write a DB-sized WAL. The helper
+   runs a final `wal_checkpoint(TRUNCATE)` before declaring success.
 
 ## Subcommands
 
@@ -48,6 +50,7 @@ opencode-db-maintenance-helper.sh check    # preflight: DB exists, no locks, int
 opencode-db-maintenance-helper.sh report   # stats (size, pages, free list, top tables)
 opencode-db-maintenance-helper.sh maintain # run once (refuses if processes active)
 opencode-db-maintenance-helper.sh maintain --force  # run anyway (may cause session errors)
+opencode-db-maintenance-helper.sh maintenance-window --force-opencode
 opencode-db-maintenance-helper.sh auto     # scheduled mode (silent, throttled)
 opencode-db-maintenance-helper.sh help
 ```
@@ -92,6 +95,11 @@ All thresholds overrideable via environment variables:
 | `VACUUM_FREELIST_THRESHOLD` | `0.10` | VACUUM if free-page fraction >= this |
 | `FORCE_VACUUM_SIZE_MB` | `500` | Always VACUUM above this size (MB) |
 | `AUTO_MIN_SECONDS_BETWEEN` | `518400` | Throttle for `auto` mode (6 days) |
+| `WAL_LARGE_THRESHOLD_MB` | `500` | Report checkpoint/busy details above this WAL size |
+| `MAINTENANCE_WINDOW_KEEP_SESSIONS` | `500` | Count target used by `maintenance-window` archive |
+| `OPENCODE_DB_MAINTENANCE_HOUR` | `4` | Scheduled local hour for the weekly routine |
+| `OPENCODE_DB_MAINTENANCE_MINUTE` | `0` | Scheduled local minute for the weekly routine |
+| `OPENCODE_DB_MAINTENANCE_MODE` | `auto` | `auto` or disruptive `maintenance-window` scheduler mode |
 
 Example: force VACUUM on every run regardless of fragmentation:
 
@@ -130,11 +138,42 @@ When both modes are provided, the archive uses the conservative intersection:
 recent sessions are preserved if they are within either the age window or the
 newest-session budget.
 
+## Disruptive maintenance window
+
+`opencode-db-maintenance-helper.sh maintenance-window` is for explicit off-hours
+windows where the operator accepts interruption risk to get a compact DB and a
+truncated WAL.
+
+It does this in order:
+
+1. Stops aidevops-managed pulse/headless workers with `pulse-lifecycle-helper.sh
+   stop`.
+2. Archives old sessions with `opencode-db-archive.sh archive --keep-sessions
+   ${MAINTENANCE_WINDOW_KEEP_SESSIONS}`.
+3. Runs normal maintenance, including final post-VACUUM WAL checkpoint.
+4. Runs `PRAGMA quick_check`.
+5. Restarts pulse in a trap/finally path with `pulse-lifecycle-helper.sh start`.
+
+Interactive OpenCode TUIs are not killed automatically. If any TUI still holds
+the DB, the command exits with guidance unless `--force-opencode` is passed. Use
+that flag only when the remaining holder is the session coordinating the window.
+
+To schedule the disruptive mode instead of the safe no-op mode:
+
+```bash
+OPENCODE_DB_MAINTENANCE_MODE=maintenance-window \
+OPENCODE_DB_MAINTENANCE_HOUR=8 \
+  opencode-db-maintenance-helper.sh install
+```
+
 ## Safety
 
 - **Never runs with active opencode processes** in `auto` or plain
   `maintain` mode. A running opencode TUI holds WAL locks; VACUUM
   requires exclusive access. The check uses `pgrep` for `opencode-ai/bin/.opencode`.
+- **Disruptive mode is explicit**. `maintenance-window` may stop pulse/headless
+  workers and requires `--force-opencode` before it continues with an
+  interactive TUI holding the DB.
 - **No data loss from VACUUM**. SQLite VACUUM rewrites the DB file
   page by page, preserving every row. If interrupted, SQLite's journal
   restores the previous state.

@@ -35,6 +35,8 @@
 #   check                — report readiness; does opencode.db exist, is it locked?
 #   report               — human-readable DB stats (size, row counts, fragmentation)
 #   maintain [--force]   — run maintenance; aborts if opencode processes active
+#   maintenance-window    — stop pulse/headless workers, optionally archive,
+#                          maintain, then restart pulse (explicitly disruptive)
 #   auto                 — run maintenance only if safe (no active processes);
 #                          used by the r913 weekly routine. Silent no-op if
 #                          opencode is not installed.
@@ -85,6 +87,8 @@ readonly OPENCODE_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
 readonly OPENCODE_DB="${OPENCODE_DATA_DIR}/opencode.db"
 readonly OPENCODE_WAL="${OPENCODE_DB}-wal"
 readonly OPENCODE_SHM="${OPENCODE_DB}-shm"
+readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
+readonly SQLITE_QUICK_CHECK="PRAGMA quick_check;"
 
 readonly STATE_DIR="${HOME}/.aidevops/.agent-workspace/work/opencode-maintenance"
 readonly STATE_FILE="${STATE_DIR}/last-run.json"
@@ -99,6 +103,12 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
 # WAL_LARGE_THRESHOLD_MB: warn/report large WAL if it exceeds this size (default 500 MB)
 : "${WAL_LARGE_THRESHOLD_MB:=500}"
+# MAINTENANCE_WINDOW_KEEP_SESSIONS: count target for disruptive maintenance-window archive
+: "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"
+# Scheduler knobs: safe default is weekly Sun 04:00 running non-disruptive auto.
+: "${OPENCODE_DB_MAINTENANCE_HOUR:=4}"
+: "${OPENCODE_DB_MAINTENANCE_MINUTE:=0}"
+: "${OPENCODE_DB_MAINTENANCE_MODE:=auto}"
 
 # Scheduler (macOS launchd) — used by cmd_install / cmd_uninstall / cmd_status.
 # Linux systemd/cron install is handled by setup-modules/schedulers.sh
@@ -108,6 +118,11 @@ readonly LAUNCHD_DIR="${HOME}/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
 readonly SCHEDULER_LOG_DIR="${HOME}/.aidevops/.agent-workspace/logs"
 readonly SCHEDULER_LOG_FILE="${SCHEDULER_LOG_DIR}/opencode-db-maintenance.log"
+
+# Helper paths are overrideable for tests. Empty values mean "auto-detect".
+: "${PULSE_LIFECYCLE_HELPER:=pulse-lifecycle-helper.sh}"
+: "${OPENCODE_DB_ARCHIVE_HELPER:=${SCRIPT_DIR}/opencode-db-archive.sh}"
+: "${SQLITE3_BIN:=sqlite3}"
 
 # -----------------------------------------------------------------------------
 # Output helpers (fallback if shared-constants didn't provide them)
@@ -326,7 +341,7 @@ cmd_report() {
 		return 0
 	fi
 	if ! _sqlite_available; then
-		print_error "sqlite3 CLI not available"
+		print_error "${SQLITE3_BIN} CLI not available"
 		return 1
 	fi
 
@@ -491,7 +506,7 @@ _maintain_should_vacuum() {
 }
 
 # _maintain_run_steps <before_bytes>
-# Runs the three SQLite maintenance steps. Echoes "step_failures vacuum_ran".
+# Runs the SQLite maintenance steps. Echoes "step_failures vacuum_ran".
 _maintain_run_steps() {
 	local before_bytes="$1"
 	local step_failures=0
@@ -528,6 +543,21 @@ _maintain_run_steps() {
 		fi
 	else
 		print_info "Step 3/3: VACUUM skipped (low fragmentation: ${freelist_count}/${page_count} free pages, ${size_mb} MB < ${FORCE_VACUUM_SIZE_MB} MB)"
+	fi
+
+	# VACUUM itself can write a large WAL. The manual 2026-05-01 run saw
+	# maintenance report success while opencode.db-wal grew to DB-size. Always
+	# checkpoint again after VACUUM so success means "DB compact and WAL folded".
+	print_info "Final step: post-VACUUM wal_checkpoint(TRUNCATE)..."
+	local final_ckpt
+	if ! final_ckpt=$("$SQLITE3_BIN" "$OPENCODE_DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>&1); then
+		print_warning "post-VACUUM wal_checkpoint failed (non-fatal): ${final_ckpt}"
+		_log WARN "post-VACUUM wal_checkpoint failed: ${final_ckpt}"
+		step_failures=$((step_failures + 1))
+	elif [[ "$final_ckpt" == 1\|* ]]; then
+		print_warning "post-VACUUM wal_checkpoint busy: ${final_ckpt}"
+		_log WARN "post-VACUUM wal_checkpoint busy: ${final_ckpt}"
+		step_failures=$((step_failures + 1))
 	fi
 
 	printf '%s %s' "$step_failures" "$do_vacuum"
@@ -614,6 +644,107 @@ cmd_maintain() {
 		return 10
 	fi
 	return 0
+}
+
+# -----------------------------------------------------------------------------
+# Subcommand: maintenance-window
+# -----------------------------------------------------------------------------
+# Explicitly disruptive run for off-hours windows: stop aidevops-managed pulse
+# processes, archive old sessions, run DB maintenance, then restart pulse even
+# when a step fails. Interactive OpenCode TUIs are not stopped; they require
+# --force-opencode so the operator consciously accepts the risk.
+
+_maintenance_window_restart_pulse() {
+	if [[ "${_OCDBM_RESTART_PULSE:-0}" == "1" ]]; then
+		print_info "Restarting pulse after maintenance window..."
+		"$PULSE_LIFECYCLE_HELPER" start || print_warning "pulse restart failed; run pulse-lifecycle-helper.sh start"
+	fi
+	return 0
+}
+
+cmd_maintenance_window() {
+	local force_opencode=false
+	local keep_sessions="$MAINTENANCE_WINDOW_KEEP_SESSIONS"
+	local skip_archive=false
+	local arg
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--force-opencode)
+			force_opencode=true
+			shift
+			;;
+		--keep-sessions)
+			keep_sessions="${2:-}"
+			shift 2
+			;;
+		--skip-archive)
+			skip_archive=true
+			shift
+			;;
+		*)
+			print_error "Unknown maintenance-window option: $arg"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ ! "$keep_sessions" =~ ^[0-9]+$ ]]; then
+		print_error "--keep-sessions must be a non-negative integer: ${keep_sessions}"
+		return 1
+	fi
+	if ! _opencode_installed; then
+		print_info "opencode not installed — nothing to maintain"
+		return 0
+	fi
+	if ! _sqlite_available; then
+		print_error "sqlite3 CLI not available"
+		return 1
+	fi
+
+	if command -v "$PULSE_LIFECYCLE_HELPER" >/dev/null 2>&1; then
+		print_info "Stopping pulse for maintenance window..."
+		"$PULSE_LIFECYCLE_HELPER" stop || print_warning "pulse stop returned non-zero; continuing with DB holder checks"
+		_OCDBM_RESTART_PULSE=1
+		trap _maintenance_window_restart_pulse RETURN
+	else
+		print_warning "pulse lifecycle helper not found; skipping pulse stop/start"
+	fi
+
+	local active_count
+	active_count=$(_opencode_process_count)
+	if [[ "$active_count" -gt 0 ]] && [[ "$force_opencode" != true ]]; then
+		print_warning "$active_count OpenCode DB holder(s) still active after stopping pulse"
+		print_info "maintenance-window stops pulse/headless workers only; close interactive TUIs or pass --force-opencode"
+		return 2
+	fi
+
+	local rc=0
+	if [[ "$skip_archive" != true ]] && [[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]]; then
+		print_info "Archiving old OpenCode sessions (keep newest ${keep_sessions})..."
+		"$OPENCODE_DB_ARCHIVE_HELPER" archive --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			print_warning "archive step failed (rc=${rc}); continuing to maintenance"
+		fi
+	fi
+
+	local maintain_args=()
+	if [[ "$force_opencode" == true ]]; then
+		maintain_args+=(--force)
+	fi
+	cmd_maintain "${maintain_args[@]}" || rc=$?
+
+	local integrity
+	integrity=$("$SQLITE3_BIN" "$OPENCODE_DB" "$SQLITE_QUICK_CHECK" 2>&1 || echo "error")
+	if [[ "$integrity" != "ok" ]]; then
+		print_error "post-maintenance quick_check failed: $integrity"
+		rc=1
+	else
+		print_success "post-maintenance quick_check: ok"
+	fi
+
+	return "$rc"
 }
 
 # -----------------------------------------------------------------------------
@@ -707,6 +838,10 @@ _resolve_self_path() {
 # Hour=4, Minute=0 — matches the routine's declared "weekly(sun@04:00)".
 _generate_plist_content() {
 	local self_path="$1"
+	local scheduler_subcommand="auto"
+	if [[ "$OPENCODE_DB_MAINTENANCE_MODE" == "$MAINTENANCE_WINDOW_MODE" ]]; then
+		scheduler_subcommand="$MAINTENANCE_WINDOW_MODE"
+	fi
 	cat <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -718,16 +853,17 @@ _generate_plist_content() {
 	<array>
 		<string>/bin/bash</string>
 		<string>${self_path}</string>
-		<string>auto</string>
+		<string>${scheduler_subcommand}</string>
+$([[ "$scheduler_subcommand" == "$MAINTENANCE_WINDOW_MODE" ]] && printf '\t\t<string>--force-opencode</string>\n')
 	</array>
 	<key>StartCalendarInterval</key>
 	<dict>
 		<key>Weekday</key>
 		<integer>0</integer>
 		<key>Hour</key>
-		<integer>4</integer>
+		<integer>${OPENCODE_DB_MAINTENANCE_HOUR}</integer>
 		<key>Minute</key>
-		<integer>0</integer>
+		<integer>${OPENCODE_DB_MAINTENANCE_MINUTE}</integer>
 	</dict>
 	<key>StandardOutPath</key>
 	<string>${SCHEDULER_LOG_FILE}</string>
@@ -875,6 +1011,9 @@ Subcommands:
   report                 Human-readable DB stats (size, pages, free list, PRAGMAs)
   maintain [--force]     Run maintenance. Aborts if opencode processes active
                          unless --force is passed (may cause session errors).
+  maintenance-window     Disruptive off-hours mode: stop pulse/headless workers,
+                         archive old sessions, maintain DB, quick_check, restart pulse.
+                         Pass --force-opencode to continue with interactive TUIs open.
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
   install                macOS: install/refresh LaunchAgent (weekly Sun 04:00).
@@ -899,6 +1038,11 @@ Environment variables (advanced):
   VACUUM_FREELIST_THRESHOLD    Fraction of free pages triggering VACUUM (default 0.10)
   FORCE_VACUUM_SIZE_MB         Always VACUUM above this size (default 500)
   AUTO_MIN_SECONDS_BETWEEN     Throttle for auto mode (default 518400 = 6 days)
+  WAL_LARGE_THRESHOLD_MB       Warn/report large WAL above this size (default 500)
+  MAINTENANCE_WINDOW_KEEP_SESSIONS  Archive keep target for maintenance-window (default 500)
+  OPENCODE_DB_MAINTENANCE_HOUR Scheduled local hour for install (default 4)
+  OPENCODE_DB_MAINTENANCE_MINUTE Scheduled local minute for install (default 0)
+  OPENCODE_DB_MAINTENANCE_MODE  Scheduler mode: auto or maintenance-window
 
 State:
   ~/.aidevops/.agent-workspace/work/opencode-maintenance/last-run.json
@@ -923,6 +1067,7 @@ main() {
 	check) cmd_check "$@" ;;
 	report) cmd_report "$@" ;;
 	maintain | run) cmd_maintain "$@" ;;
+	"$MAINTENANCE_WINDOW_MODE" | window) cmd_maintenance_window "$@" ;;
 	auto) cmd_auto "$@" ;;
 	install) cmd_install "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;

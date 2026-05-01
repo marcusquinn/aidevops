@@ -802,7 +802,7 @@ setup_oauth_token_refresh() {
 }
 
 # Setup opencode DB maintenance scheduler (r913, t2183).
-# Runs weekly (Sun 04:00 local) to checkpoint/optimize/vacuum opencode.db.
+# Runs weekly (Sun 04:00 local by default) to checkpoint/optimize/vacuum opencode.db.
 # The helper self-noops on missing DB, so installing unconditionally is safe —
 # a non-opencode machine wakes up weekly, sees no DB, exits 0 silently.
 #
@@ -820,14 +820,21 @@ setup_opencode_db_maintenance() {
 	fi
 
 	local ocdbm_log_dir="$HOME/.aidevops/.agent-workspace/logs"
+	local ocdbm_hour="${OPENCODE_DB_MAINTENANCE_HOUR:-4}"
+	local ocdbm_minute="${OPENCODE_DB_MAINTENANCE_MINUTE:-0}"
+	local ocdbm_mode="${OPENCODE_DB_MAINTENANCE_MODE:-auto}"
+	local ocdbm_command="\"${ocdbm_script}\" auto"
+	if [[ "$ocdbm_mode" == "maintenance-window" ]]; then
+		ocdbm_command="\"${ocdbm_script}\" maintenance-window --force-opencode"
+	fi
 	mkdir -p "$ocdbm_log_dir"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		# Helper owns its own plist generation (Approach B, like repo-sync).
 		# Quiet the helper's multi-line output and emit one consolidated line
 		# to match the style of setup_profile_readme / setup_oauth_token_refresh.
-		if bash "$ocdbm_script" install >/dev/null 2>&1; then
-			print_info "OpenCode DB maintenance enabled (launchd, weekly Sun 04:00)"
+		if OPENCODE_DB_MAINTENANCE_HOUR="$ocdbm_hour" OPENCODE_DB_MAINTENANCE_MINUTE="$ocdbm_minute" OPENCODE_DB_MAINTENANCE_MODE="$ocdbm_mode" bash "$ocdbm_script" install >/dev/null 2>&1; then
+			print_info "OpenCode DB maintenance enabled (launchd, weekly Sun ${ocdbm_hour}:${ocdbm_minute})"
 		else
 			print_warning "Failed to install opencode DB maintenance LaunchAgent"
 		fi
@@ -838,21 +845,21 @@ setup_opencode_db_maintenance() {
 		return 0
 	else
 		# Linux / WSL: prefer systemd user timer, fall back to cron.
-		# Weekly Sunday 04:00 local — cron: `0 4 * * 0`; systemd OnCalendar
+		# Weekly Sunday local time — cron: `${minute} ${hour} * * 0`; systemd OnCalendar
 		# ensures wall-clock firing even across suspends/reboots.
 		_install_scheduler_linux \
 			"aidevops-opencode-db-maintenance" \
 			"aidevops: opencode-db-maintenance" \
-			"0 4 * * 0" \
-			"\"${ocdbm_script}\" auto" \
+			"${ocdbm_minute} ${ocdbm_hour} * * 0" \
+			"${ocdbm_command}" \
 			"604800" \
 			"${ocdbm_log_dir}/opencode-db-maintenance.log" \
 			"" \
-			"OpenCode DB maintenance enabled (weekly Sun 04:00)" \
+			"OpenCode DB maintenance enabled (weekly Sun ${ocdbm_hour}:${ocdbm_minute})" \
 			"Failed to install opencode DB maintenance scheduler" \
 			"false" \
 			"true" \
-			"Sun *-*-* 04:00:00"
+			"Sun *-*-* ${ocdbm_hour}:${ocdbm_minute}:00"
 	fi
 	return 0
 }

@@ -278,6 +278,44 @@ else
 	_fail "report failed (rc=$rc) when WAL absent — output: $out"
 fi
 
+# Recreate the WAL-capable DB after the absent-WAL test for maintenance-window.
+rm -f "$OPENCODE_DIR/opencode.db"
+_make_opencode_db
+
+# -----------------------------------------------------------------------------
+# Test 13: maintenance-window restores pulse through mocked lifecycle helper
+# -----------------------------------------------------------------------------
+
+mock_bin="$SANDBOX/mock-bin"
+mkdir -p "$mock_bin"
+mock_pulse_log="$SANDBOX/pulse-lifecycle.log"
+mock_archive_log="$SANDBOX/archive.log"
+cat >"$mock_bin/pulse-lifecycle-helper.sh" <<'MOCK_PULSE'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$MOCK_PULSE_LOG"
+exit 0
+MOCK_PULSE
+chmod +x "$mock_bin/pulse-lifecycle-helper.sh"
+cat >"$mock_bin/opencode-db-archive.sh" <<'MOCK_ARCHIVE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$MOCK_ARCHIVE_LOG"
+exit 0
+MOCK_ARCHIVE
+chmod +x "$mock_bin/opencode-db-archive.sh"
+
+set +e
+out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="$mock_archive_log" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	VACUUM_FREELIST_THRESHOLD=0.01 FORCE_VACUUM_SIZE_MB=0 \
+	_run_helper maintenance-window --force-opencode --keep-sessions 123 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && grep -q -- '--keep-sessions 123' "$mock_archive_log"; then
+	_pass "maintenance-window stops pulse, archives, maintains, and restarts pulse"
+else
+	_fail "maintenance-window mocked lifecycle failed (rc=$rc) — output: $out"
+fi
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
