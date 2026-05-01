@@ -1010,15 +1010,28 @@ validate_opencode_config() {
 		issues="${issues}\n  - tools entries as objects instead of booleans: $(echo "$tools_as_objects" | tr '\n' ', ' | sed 's/,$//')"
 	fi
 
-	# Check 3: Try to parse with opencode (if available) to catch other schema issues
+	# Check 3: Try to parse with opencode (if available) to catch other schema issues.
+	# GH#22079: wrap the --version probe in a timeout so a hung Node.js opencode
+	# process cannot stall the non-interactive deploy path indefinitely.
 	if command -v opencode &>/dev/null; then
 		local validation_output
-		if ! validation_output=$(opencode --version 2>&1); then
-			# If opencode fails to start, config might be invalid
-			if [[ "$validation_output" == *"Configuration is invalid"* ]]; then
-				needs_repair=true
-				issues="${issues}\n  - OpenCode reports invalid configuration"
-			fi
+		local _oc_timeout
+		local _oc_rc
+		_oc_timeout="${AIDEVOPS_OPENCODE_VERSION_TIMEOUT:-5}"
+		_oc_rc=0
+		# Prefer the shared helper sourced from _services.sh (always available when
+		# called from setup.sh); fall back to system timeout; last resort: unbounded.
+		if declare -F _setup_opencode_timeout_cmd >/dev/null 2>&1; then
+			validation_output=$(_setup_opencode_timeout_cmd "$_oc_timeout" opencode --version 2>&1) || _oc_rc=$?
+		elif command -v timeout >/dev/null 2>&1; then
+			validation_output=$(timeout "$_oc_timeout" opencode --version 2>&1) || _oc_rc=$?
+		else
+			validation_output=$(opencode --version 2>&1) || _oc_rc=$?
+		fi
+		# Exit 124 means timed out — not a config-invalid signal; skip the check.
+		if [[ "$_oc_rc" -ne 0 && "$_oc_rc" -ne 124 ]] && [[ "$validation_output" == *"Configuration is invalid"* ]]; then
+			needs_repair=true
+			issues="${issues}\n  - OpenCode reports invalid configuration"
 		fi
 	fi
 
