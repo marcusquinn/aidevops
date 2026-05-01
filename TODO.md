@@ -3726,3 +3726,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3242 Tighten AGENTS progressive disclosure and routing references ref:GH#21999
 
 - [ ] t3243 Add count-based OpenCode DB archive retention target #auto-dispatch #enhancement ref:GH#22001
+
+- [ ] t3244 Add disruptive OpenCode DB maintenance window mode #auto-dispatch #enhancement ref:GH#22004
