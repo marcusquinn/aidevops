@@ -893,7 +893,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [ ] t3384 optimize skill generator to finish within setup timeout #auto-dispatch #bug #framework ref:GH#22140
 
 
-- [ ] t3387 Deduplicate TODO entries created around REST-merged task completion #auto-dispatch #bug #framework ref:GH#22153
 
 - [ ] t3388 Investigate setup noninteractive lock overlap during deploy #auto-dispatch #bug ref:GH#22155
 
@@ -953,6 +952,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t3387 Deduplicate TODO entries created around REST-merged task completion #auto-dispatch #bug #framework ref:GH#22153 pr:#22156 testing:self-assessed completed:2026-05-01
 - [x] t3380 Speed up worktree registry prune for large stale backlogs #bug ref:GH#22131 pr:#22137 testing:runtime-verified completed:2026-05-01
 - [x] t3201 investigate: worker stuck-loop pattern force-pushes + review_dismissed + close on PR (canonical: #21876) #bug #framework #investigation #parent ref:GH#21901 pr:#22053 completed:2026-05-01
 - [x] t3218 pulse-merge: _resolve_pr_mergeable_status doesn't retry when prefetched mergeable is empty string #auto-dispatch #bug ref:GH#21960 pr:#22047 completed:2026-05-01
