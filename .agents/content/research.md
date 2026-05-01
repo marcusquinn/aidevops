@@ -33,7 +33,7 @@ Pre-writing research to validate niches, understand audiences, and analyse compe
 
 ## Pre-flight
 
-Apply first-principles thinking, bias checks (confirmation, anchoring, availability, survivorship), and evidence evaluation per `prompts/build.txt` "Scientific reasoning". Ask: what would disprove this conclusion?
+Apply first-principles thinking, bias checks (confirmation, anchoring, availability, survivorship), and evidence evaluation per `AGENTS.md` "Scientific reasoning". Ask: what would disprove this conclusion?
 
 ## Workflow
 

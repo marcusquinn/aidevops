@@ -252,7 +252,7 @@ _lock_maintainer_issue_at_creation() {
 # so the pulse can dispatch workers immediately.
 #
 # Non-blocking — all failure modes (helper missing, slug unresolvable, gh
-# offline) are swallowed. The Phase 1 AI-guidance rule in prompts/build.txt
+# offline) are swallowed. The Phase 1 AI-guidance rule in AGENTS.md
 # is the primary enforcement layer; this is the code-level safety net.
 _interactive_session_auto_claim_new_task() {
 	local issue_num="$1"
@@ -521,7 +521,7 @@ _compose_issue_body() {
 		body=$(_compose_issue_brief_workflow_reference "$body")
 	fi
 
-	# t1899: Append provenance signature footer (build.txt rule #8)
+	# t1899: Append provenance signature footer (AGENTS.md signature rule)
 	local sig_helper="${SCRIPT_DIR}/gh-signature-helper.sh"
 	if [[ -x "$sig_helper" ]]; then
 		local sig_footer

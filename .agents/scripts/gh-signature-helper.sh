@@ -407,7 +407,7 @@ cmd_footer() {
 	# ${args[@]+"${args[@]}"} handles empty array under set -u (Bash 3.2 compat)
 	sig=$(cmd_generate ${args[@]+"${args[@]}"})
 	# HTML comment marker lets workers/tooling identify and skip signature blocks
-	# (see build.txt rule #8a — signature footer skip when reading)
+	# (see AGENTS.md — signature footer skip when reading)
 	printf '\n<!-- aidevops:sig -->\n---\n%s\n' "$sig"
 	return 0
 }

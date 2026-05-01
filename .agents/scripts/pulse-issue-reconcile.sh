@@ -570,7 +570,7 @@ normalize_active_issue_assignments() {
 #   4. Post a single idempotent mentorship comment guarded by the HTML
 #      sentinel marker `<!-- aidevops:labelless-backfill -->`. The comment
 #      tells the operator that the issue bypassed `gh_create_issue` and
-#      points them at the wrapper rule in `prompts/build.txt`.
+#      points them at the wrapper rule in `AGENTS.md`.
 #
 # Hard cap: 10 issues per repo per cycle to limit API calls. Idempotent —
 # re-running does not re-label already-blessed issues or duplicate comments.
@@ -604,7 +604,7 @@ This issue was created via a bare \`${_raw_cmd}\` call that bypassed the \`${_wr
 
 **Why this matters:** issues missing origin/tier labels are invisible to the dispatch-dedup guard and the label-reconciler. Without this backfill, the pulse would have left this issue unblessed forever.
 
-**Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`prompts/build.txt\` → \"Origin labelling (MANDATORY)\".
+**Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`AGENTS.md\` → \"Origin labelling (MANDATORY)\".
 
 This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
 
@@ -717,7 +717,7 @@ This issue was created via a bare \`${_raw_cmd}\` call that bypassed the \`${_wr
 
 **Why this matters:** issues missing origin/tier labels are invisible to the dispatch-dedup guard and the label-reconciler. Without this backfill, the pulse would have left this issue unblessed forever.
 
-**Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`prompts/build.txt\` → \"Origin labelling (MANDATORY)\".
+**Next time:** use \`${_wrap_cmd}\` (defined in \`shared-constants.sh\`, sourced via the framework PATH) instead of bare \`${_raw_cmd}\`. The wrapper applies origin + auto-assign + sub-issue linking automatically. See \`AGENTS.md\` → \"Origin labelling (MANDATORY)\".
 
 This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
 	local external_comment_template

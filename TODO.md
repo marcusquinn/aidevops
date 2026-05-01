@@ -870,10 +870,6 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t3231 Bound optional CodeRabbit CLI pre-push review #auto-dispatch #bug blocked-by:t3228 ref:GH#21985
 
-- [x] t3245 Enforce brief workflow in issue creation harness ref:GH#22008 pr:#22010 completed:2026-05-01
-
-- [ ] t3248 Investigate setup.sh non-interactive timeout after prompt deployment #auto-dispatch #bug ref:GH#22012
-
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -3681,7 +3677,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3218 pulse-merge: _resolve_pr_mergeable_status doesn't retry when prefetched mergeable is empty string #auto-dispatch #bug ref:GH#21960
 
-- [ ] t3219 worker-activity-helper.sh: streaming jq + jq-built cache JSON (gemini #21956 followup) #auto-dispatch #bug ref:GH#21961
+- [x] t3219 worker-activity-helper.sh: streaming jq + jq-built cache JSON (gemini #21956 followup) #auto-dispatch #bug ref:GH#21961 pr:#22021 completed:2026-05-01
 
 - [ ] t3220 pre-edit-check: path traversal and absolute-path-outside-repo cases create worktree instead of blocking #auto-dispatch #bug #security ref:GH#21963
 
@@ -3709,7 +3705,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3232 Fix OpenCode DB archive schema drift blocking session pruning #auto-dispatch #bug ref:GH#21987 pr:#21992 completed:2026-04-30
 
-- [ ] t3234 setup.sh non-interactive hangs after Claude openapi-search MCP registration #auto-dispatch #bug #framework ref:GH#21989
+- [x] t3234 setup.sh non-interactive hangs after Claude openapi-search MCP registration #auto-dispatch #bug #framework ref:GH#21989 pr:#22015 completed:2026-05-01
 
 - [x] t3233 make model override labels availability-aware #auto-dispatch #bug #models ref:GH#21988 pr:#22005 completed:2026-05-01
 
@@ -3727,7 +3723,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3240 Make stash cleanup non-blocking in pulse preflight #auto-dispatch #bug ref:GH#21997
 
-- [ ] t3242 Tighten AGENTS progressive disclosure and routing references ref:GH#21999
+- [x] t3242 Tighten AGENTS progressive disclosure and routing references ref:GH#21999 pr:#22006 completed:2026-05-01
 
 - [ ] t3243 Add count-based OpenCode DB archive retention target #auto-dispatch #enhancement ref:GH#22001
 
@@ -3740,3 +3736,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3247 Release queued claims when headless canary overload aborts worker launch #auto-dispatch #bug ref:GH#22011
 
 - [ ] t3248 Investigate setup.sh non-interactive timeout after prompt deployment #auto-dispatch #bug ref:GH#22012
+
+- [ ] t3249 setup worktree deploy can remove deployed agents directory #auto-dispatch #bug #framework ref:GH#22014
+
+- [ ] t3250 Fix stale maintainer-gate required check compatibility #auto-dispatch #bug ref:GH#22016
+
+- [x] t3251 fast-fail worker dispatch before expensive startup when canary is unhealthy #auto-dispatch #bug ref:GH#22017 pr:#22018 completed:2026-05-01
+
+- [ ] t3253 setup postflight can exceed 900s before Claude config begins #auto-dispatch #bug #framework ref:GH#22023
+
+- [ ] t3252 Fix gh_create_pr empty origin label args when caller supplies origin label #auto-dispatch #bug ref:GH#22022

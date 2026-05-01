@@ -461,7 +461,7 @@ _compose_issue_html_notes_and_footer() {
 
 	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
 
-	# t1899: Append provenance signature footer (build.txt rule #8)
+	# t1899: Append provenance signature footer (AGENTS.md signature rule)
 	local sig_helper
 	sig_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-signature-helper.sh"
 	if [[ -x "$sig_helper" ]]; then

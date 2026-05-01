@@ -90,7 +90,7 @@ run: |
   ./.agents/scripts/code-audit-helper.sh report ${{ github.repository }} audit-report.json
 ```
 
-Upload `audit-report.json` as an artifact via `actions/upload-artifact@v4`. See `prompts/build.txt` for full secret-handling rules.
+Upload `audit-report.json` as an artifact via `actions/upload-artifact@v4`. See `AGENTS.md` "Security Rules" and `reference/secret-handling.md` for full secret-handling rules.
 
 ## Review Categories
 

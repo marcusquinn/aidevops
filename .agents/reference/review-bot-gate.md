@@ -48,7 +48,7 @@ When a review bot comments with a suggestion that isn't a correctness issue in t
 
 2. **Is the suggestion adding coverage, generality, new behaviour, or cosmetic improvements?**
    - Yes → file as follow-up task with `ref:GH#<current-PR>`.
-   - No → skip (may be a nit; see `coderabbit-nits-ok` rule in `prompts/build.txt` §"Review Bot Gate").
+   - No → skip (may be a nit; see the `coderabbit-nits-ok` rule in AGENTS.md "Review Bot Gate").
 
 3. **File follow-up via:**
    - Claim task ID (`claim-task-id.sh`).
@@ -59,7 +59,7 @@ When a review bot comments with a suggestion that isn't a correctness issue in t
 
 PR #19712 (t2209) Gemini review suggested extending the duplicate-ID regex to cover declined tasks and routine IDs. This is additive (broader coverage), not a correctness fix for the PR's shipped behaviour. Filed as t2222 / #19723.
 
-See also: `prompts/build.txt` §"Review Bot Gate (t1382)" for the authoritative rule and rationale.
+See also: AGENTS.md "Review Bot Gate (t1382)" for the authoritative rule and rationale.
 
 ## Composition with auto-merge paths
 

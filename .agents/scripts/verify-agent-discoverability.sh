@@ -18,15 +18,16 @@
 #
 # Discoverability checks:
 #   1. All extracted reference files exist and are non-empty
-#   2. build.txt has pointers to extracted reference files
+#   2. AGENTS.md has pointers to extracted reference files
 #   3. AGENTS.md Domain Index section has pointer to reference/domain-index.md
-#   4. reference/domain-index.md exists and has >=30 domain rows
+#   4. reference/domain-index.md exists and has >=30 domain rows with trigger words
 #   5. All 9 primary agent @mention files exist and are non-empty
 #   6. Capabilities section retains key capability entries
 #   7. Self-Improvement section has pointer to reference/self-improvement.md
 #   8. Agent Routing section has pointer to reference/agent-routing.md
 #   9. subagent-index.toon TOON block counts are valid (>=9 agents, >=60 subagents)
-#  10. Critical scripts for self-improvement workflow are executable
+#  10. Prompt-to-hook migration registry is discoverable
+#  11. Critical scripts for self-improvement workflow are executable
 #
 # Usage: bash verify-agent-discoverability.sh [--agents-dir <path>]
 # Exit: 0 = all checks pass, 1 = one or more failures
@@ -34,6 +35,7 @@
 set -euo pipefail
 
 AGENTS_DIR="${HOME}/.aidevops/agents"
+PROMPT_HOOK_REGISTRY="configs/prompt-hook-candidates.conf"
 PASS=0
 FAIL=0
 WARNINGS=0
@@ -122,6 +124,14 @@ for ref in "${EXTRACTED_REFS[@]}"; do
 	check_file_nonempty "$ref" 100 "Extracted reference"
 done
 
+# ─── Test 1b: Prompt-to-hook migration registry exists and is discoverable ────
+echo ""
+echo "=== 1b. Prompt-to-Hook Migration Registry ==="
+check_file_nonempty "$PROMPT_HOOK_REGISTRY" 1000 "Prompt-hook registry"
+check_string_in_file "AGENTS.md" "$PROMPT_HOOK_REGISTRY" "AGENTS.md: pointer to prompt-hook registry"
+check_string_in_file "reference/progressive-disclosure.md" "Prompt-to-Hook Migration" "progressive-disclosure: prompt-to-hook migration rubric"
+check_string_in_file "$PROMPT_HOOK_REGISTRY" "deterministic" "Prompt-hook registry: deterministic rule class present"
+
 # ─── Test 2: AGENTS.md Framework Rules has pointers to extracted reference files ─
 # Post-t2878: build.txt was consolidated into AGENTS.md "Framework Rules", so
 # the pointers that used to live in prompts/build.txt now live in AGENTS.md.
@@ -149,8 +159,10 @@ DOMAIN_INDEX="${AGENTS_DIR}/reference/domain-index.md"
 if [[ ! -f "$DOMAIN_INDEX" ]]; then
 	log_fail "reference/domain-index.md not found"
 else
-	# Count table rows (lines starting with | that aren't header/separator)
-	ROW_COUNT=$(grep -c "^|" "$DOMAIN_INDEX" 2>/dev/null || echo "0")
+	# Count table rows (lines starting with | that aren't header/separator).
+	# Avoid `grep -c ... || echo 0` counter stacking on zero-match paths.
+	ROW_COUNT=$(grep -c "^|" "$DOMAIN_INDEX" 2>/dev/null || true)
+	[[ "$ROW_COUNT" =~ ^[0-9]+$ ]] || ROW_COUNT=0
 	# Subtract header and separator rows (2 per table)
 	DATA_ROWS=$((ROW_COUNT - 2))
 	if [[ "$DATA_ROWS" -ge 30 ]]; then
@@ -159,6 +171,7 @@ else
 		log_fail "reference/domain-index.md has only ${DATA_ROWS} domain rows (expected >=30)"
 	fi
 	check_file_nonempty "reference/domain-index.md" 2000 "Domain index: substantial content"
+	check_string_in_file "reference/domain-index.md" "Trigger words" "Domain index: trigger-word column present"
 fi
 
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
@@ -257,11 +270,13 @@ else
 	else
 		log_fail "subagent-index.toon: could not parse subagents block count"
 	fi
+
+	check_string_in_file "subagent-index.toon" "triggers" "subagent-index.toon: primary agent triggers documented"
 fi
 
 # ─── Test 10: Critical scripts for self-improvement workflow ──────────────────
 echo ""
-echo "=== 10. Critical Scripts for Self-Improvement Workflow ==="
+echo "=== 11. Critical Scripts for Self-Improvement Workflow ==="
 CRITICAL_SCRIPTS=(
 	"scripts/framework-issue-helper.sh"
 	"scripts/framework-routing-helper.sh"

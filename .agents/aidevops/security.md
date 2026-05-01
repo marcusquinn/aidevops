@@ -16,7 +16,7 @@ tools:
 
 # Security Best Practices
 
-Core security rules (never expose credentials, gopass/credentials.sh storage, secret-handling): `prompts/build.txt`.
+Core security rules (never expose credentials, gopass/credentials.sh storage, secret-handling): `AGENTS.md` "Security Rules".
 API key compliance, incident response, provider rotation: `aidevops/security-requirements.md`.
 
 ## Credential Management

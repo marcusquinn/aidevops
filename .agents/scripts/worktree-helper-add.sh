@@ -695,7 +695,7 @@ cmd_add() {
 	# issue number AND this is an interactive session, immediately apply
 	# status:in-review + self-assign so the pulse's dispatch-dedup guard
 	# blocks parallel worker dispatch. Silent on failure — the agent-driven
-	# contract in prompts/build.txt covers the fallback path. Guard on
+	# contract in AGENTS.md covers the fallback path. Guard on
 	# helper presence so the worktree create works even before Phase 1
 	# has been deployed to the running environment.
 	# t2260: pass explicit --issue arg if provided for unambiguous claim.

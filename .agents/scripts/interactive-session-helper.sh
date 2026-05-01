@@ -31,7 +31,7 @@
 # commit-and-pr`); we need it to land at interactive session engage.
 #
 # AI-driven contract:
-#   The primary enforcement layer is a `prompts/build.txt` rule telling the
+#   The primary enforcement layer is an `AGENTS.md` rule telling the
 #   agent to call claim/release from conversation intent. Phase 2 (t2057)
 #   adds code-level safety nets in worktree-helper.sh, claim-task-id.sh, and
 #   approval-helper.sh. Users are never expected to invoke this helper by
@@ -65,7 +65,7 @@ set -euo pipefail
 
 # Stamp directory for crash-recovery metadata. Each claim writes one JSON file
 # keyed by "<slug-flat>-<issue>.json" so stamps are unique per-repo per-issue.
-# Matches the `~/.aidevops/.agent-workspace/` convention from prompts/build.txt.
+# Matches the `~/.aidevops/.agent-workspace/` convention from AGENTS.md.
 CLAIM_STAMP_DIR="${HOME}/.aidevops/.agent-workspace/interactive-claims"
 
 # -----------------------------------------------------------------------------
@@ -343,7 +343,7 @@ USAGE:
 
 CONTRACT:
   This helper is intended to be called from interactive AI sessions, driven
-  by conversation intent (see `prompts/build.txt` → "Interactive issue
+  by conversation intent (see `AGENTS.md` → "Interactive issue
   ownership"). Users should never need to invoke it directly — the agent
   claims on engage and releases on signal.
 

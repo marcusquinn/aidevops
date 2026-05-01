@@ -3,9 +3,9 @@
 
 # Secret Handling Reference
 
-Rules for preventing credential exposure in AI agent sessions. Extracted from `prompts/build.txt` sections 8.1–8.4.
+Rules for preventing credential exposure in AI agent sessions. Extracted from `AGENTS.md` "Security Rules".
 
-**Trigger rules in build.txt:** NEVER expose credentials in output/logs. Treat command output as transcript-visible. Full rules: `reference/secret-handling.md`.
+**Trigger rules in AGENTS.md:** NEVER expose credentials in output/logs. Treat command output as transcript-visible. Full rules: `reference/secret-handling.md`.
 
 ---
 

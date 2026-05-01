@@ -4,7 +4,7 @@
 #
 # gh-wrapper-guard.sh — static checker for raw gh issue/pr create AND edit calls
 #
-# Enforces two rules from prompts/build.txt:
+# Enforces two rules from AGENTS.md:
 #   1. Origin labelling: "NEVER use raw gh pr create or gh issue create directly.
 #      Always use the wrappers: gh_create_pr and gh_create_issue."
 #   2. Edit safety (GH#19857): "NEVER use raw gh issue edit / gh pr edit with
@@ -147,7 +147,7 @@ _report_violations() {
 	if [[ "$_SCAN_VIOLATIONS" -gt 0 ]]; then
 		printf 'gh-wrapper-guard: %d violation(s) found — use safe wrappers instead of raw gh commands.\n' "$_SCAN_VIOLATIONS"
 		printf 'Create: gh_create_issue / gh_create_pr. Edit: gh_issue_edit_safe / gh_pr_edit_safe.\n'
-		printf 'Rule: prompts/build.txt → "Origin labelling" + GH#19857 (edit safety invariant)\n'
+		printf 'Rule: AGENTS.md → "Origin labelling" + GH#19857 (edit safety invariant)\n'
 		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
 		printf '%s' "$_SCAN_OUTPUT"
 		return 1
@@ -253,7 +253,7 @@ cmd_check_full() {
 	if [[ "$violations" -gt 0 ]]; then
 		printf 'gh-wrapper-guard: %d violation(s) found — use safe wrappers instead of raw gh commands.\n' "$violations"
 		printf 'Create: gh_create_issue / gh_create_pr. Edit: gh_issue_edit_safe / gh_pr_edit_safe.\n'
-		printf 'Rule: prompts/build.txt → "Origin labelling" + GH#19857 (edit safety invariant)\n'
+		printf 'Rule: AGENTS.md → "Origin labelling" + GH#19857 (edit safety invariant)\n'
 		printf 'Suppress: append "# aidevops-allow: raw-gh-wrapper" to the line.\n\n'
 		printf '%s' "$violation_output"
 		return 1

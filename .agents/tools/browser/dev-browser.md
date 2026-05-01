@@ -40,7 +40,7 @@ tools:
 
 ## Security
 
-> **Screenshot size limit (session-crashing)**: NEVER use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `rg "Screenshot Size Limits" .agents/prompts/build.txt`.
+> **Screenshot size limit (session-crashing)**: NEVER use `fullPage: true` for AI vision review — full-page captures can exceed 8000px (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI. For human review: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `reference/screenshot-limits.md`.
 
 ## Setup
 

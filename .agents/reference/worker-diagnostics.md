@@ -470,6 +470,28 @@ Observed on GH#20765 (t2814): 2 opus-4-6 attempts (~40K wasted tokens) before ca
 - Replace the `work_dir` snapshot in `_worker_produced_output` with a `git worktree list --porcelain` scan keyed off `WORKER_ISSUE_NUMBER`.
 - Resolve the V6 contract contradiction — pick "pre-creation always succeeds" or "worker creates own + writes path back to a known file", not both.
 
+## GitHub API Budget, Instrumentation, and Cache Priming
+
+- **REST fallback (t2574, t2744, t2902):** `shared-gh-wrappers.sh` routes eligible writes/reads through REST when GraphQL remaining <= 1500, preserving GraphQL for calls without REST equivalents. Override: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`.
+- **Instrumentation (t2902):** routed `gh` calls append to `~/.aidevops/logs/gh-api-calls.log` and aggregate by stage in `~/.aidevops/logs/gh-api-calls-by-stage.json`. Helper: `gh-api-instrument.sh record|report|trim|clear`. Instrumentation is fail-open.
+- **Circuit breaker (t2690, t2744, t2896):** worker dispatch pauses when GraphQL budget is below the emergency 5% floor. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Overrides: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD`, `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1`.
+- **Cache priming (t2992, t2994):** `pulse-wrapper.sh::main()` pre-warms L3 per-owner JSON caches after lock/canary/session/dedup gates and before `prefetch_state`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run`; log: `~/.aidevops/logs/pulse-cache-prime.log`; counters: `pulse_cache_prime_runs`, `pulse_cache_prime_failures`; overrides: `AIDEVOPS_SKIP_CACHE_PRIME=1`, `AIDEVOPS_PULSE_PRIME_MAX_AGE`.
+
+Background: t2994 moved priming from `pulse-lifecycle-helper.sh::_start` into `pulse-wrapper.sh::main()` because launchd `KeepAlive` could respawn the pulse before `_start` ran, causing the lifecycle hook to early-return and skip priming.
+
+## CI Failure Feedback Registry (t3225)
+
+When a worker PR has failing required checks, `_dispatch_ci_fix_worker` routes feedback through `.agents/configs/ci-failure-patterns.conf` so the next worker tries cheap auto-fix paths before re-implementing the original task.
+
+| Classification | Canonical check names | Resolution |
+|---|---|---|
+| `FORMAT_FAILURE` | `*Format*`, `*Prettier*`, `*Biome*`, `*gofmt*`, `*cargo fmt*`, `*Black*` | Run the project's format command, amend, push with lease. |
+| `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Run the project's lint-fix command first; hand-fix remaining findings. |
+| `TYPECHECK_FAILURE` | `*Typecheck*`, `*tsc*`, `*mypy*` | Read the failing check and fix types in code. Never auto-suppress with `@ts-ignore`, `as any`, or `type: ignore` without explicit authorisation. |
+| `OTHER` | Everything else | Generic worker guidance only. |
+
+Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
+
 ## Diagnostic Quick Reference
 
 | Symptom | Check | Likely cause |

@@ -331,6 +331,46 @@ test_launch_script_has_prewarm() {
 }
 
 # ---------------------------------------------------------------------------
+# Test: canary preflight runs before expensive worktree pre-creation
+# ---------------------------------------------------------------------------
+test_launch_script_fast_fails_before_prewarm() {
+	local launch_path="$SCRIPT_DIR/../pulse-dispatch-worker-launch.sh"
+	local helper_path="$SCRIPT_DIR/../headless-runtime-helper.sh"
+	if [[ ! -f "$launch_path" || ! -f "$helper_path" ]]; then
+		print_result "canary_preflight_files_found" 1 "launch/helper script missing"
+		return 1
+	fi
+
+	local rc=0
+	if ! grep -q "canary_preflight" "$launch_path"; then
+		print_result "canary_preflight_stage_present" 1 "canary_preflight stage not found"
+		rc=1
+	else
+		print_result "canary_preflight_stage_present" 0
+	fi
+
+	local canary_line precreate_line
+	canary_line=$(grep -n "_dlw_canary_preflight" "$launch_path" | tail -1 | cut -d: -f1)
+	precreate_line=$(grep -n "_dlw_precreate_worktree" "$launch_path" | tail -1 | cut -d: -f1)
+	if [[ -z "$canary_line" || -z "$precreate_line" || "$canary_line" -ge "$precreate_line" ]]; then
+		print_result "canary_before_worktree_precreate" 1 "canary_line=${canary_line:-missing}, precreate_line=${precreate_line:-missing}"
+		rc=1
+	else
+		print_result "canary_before_worktree_precreate" 0
+	fi
+
+	if ! grep -q "cmd_canary" "$helper_path"; then
+		print_result "headless_canary_command_present" 1 "cmd_canary not found in headless-runtime-helper.sh"
+		rc=1
+	else
+		print_result "headless_canary_command_present" 0
+	fi
+
+	if [[ "$rc" -eq 0 ]]; then return 0; fi
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 main() {
@@ -343,6 +383,7 @@ main() {
 	test_warm_up_failure_nonfatal
 	test_headless_runtime_honours_prewarm_dir
 	test_launch_script_has_prewarm
+	test_launch_script_fast_fails_before_prewarm
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

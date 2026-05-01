@@ -250,6 +250,39 @@ is_main_allowlisted_path() {
 	return 1
 }
 
+# Usage: is_unsafe_main_target_path <file_path>
+# Returns: 0 if the explicit target path must hard-block on main/master, 1 otherwise.
+# Path traversal and absolute paths outside the repo are not safe candidates for
+# automatic worktree creation because they indicate the caller is addressing a
+# location other than the literal repo-relative path being edited.
+is_unsafe_main_target_path() {
+	local file_path="$1"
+
+	case "$file_path" in
+	../* | */../* | */.. | ..)
+		return 0
+		;;
+	esac
+
+	case "$file_path" in
+	/*)
+		local repo_root
+		repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+		if [[ -z "$repo_root" ]]; then
+			return 0
+		fi
+
+		local normalised
+		normalised="$(_canonicalize_repo_relative_path "$file_path" "$repo_root")"
+		if [[ "$normalised" == "OUTSIDE_REPO" ]]; then
+			return 0
+		fi
+		;;
+	esac
+
+	return 1
+}
+
 # Function to detect if task is docs-only (fallback when --file is not provided)
 # Deprecated: prefer --file for path-based enforcement. Kept for backward compatibility
 # with callers that only pass --task descriptions.
@@ -474,6 +507,14 @@ _handle_loop_mode_on_protected() {
 		fi
 		echo "LOOP_DECISION=stay"
 		exit 0
+	fi
+
+	if [[ -n "$TARGET_FILE" ]] && is_unsafe_main_target_path "$TARGET_FILE"; then
+		echo -e "${RED}BLOCKED${NC}: unsafe target path '$TARGET_FILE' on protected '$branch'"
+		echo "LOOP_DECISION=worktree"
+		echo "ACTION_REQUIRED=fix_target_path"
+		echo "HINT: pass a normalized repo-relative path inside the repository"
+		exit 2
 	fi
 
 	# Auto-create worktree for non-allowlisted paths / code changes.

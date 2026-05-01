@@ -2,11 +2,11 @@
 
 ## The Problem
 
-`build.txt` and `AGENTS.md` are loaded on every conversation turn — they are the full session token cost before the model writes a single word. As aidevops grows (new features, new edge cases, new lessons), the natural tendency is to append more inline context. Left unchecked, this reaches a point where the first "hi" costs 48k tokens.
+`AGENTS.md` and the `prompts/build.txt` placeholder are loaded on every conversation turn — they are the full framework prompt cost before the model writes a single word. As aidevops grows (new features, new edge cases, new lessons), the natural tendency is to append more inline context. Left unchecked, this reaches a point where the first "hi" costs 48k tokens.
 
 ## The Two-Layer Model
 
-**Layer 1 — Always loaded (build.txt + AGENTS.md):**
+**Layer 1 — Always loaded (`AGENTS.md` + `prompts/build.txt` placeholder):**
 - Core mandates: what you MUST do, what you MUST NOT do
 - Operational rules: how to execute the most common 80% of tasks
 - Pointers: where to find detail for the other 20%
@@ -37,6 +37,29 @@ Keep inline when:
 4. **Anti-patterns with high recurrence** — if the model will make a mistake without seeing it inline, it stays inline
 5. **The rule applies before you know whether the scenario is relevant** — e.g., "always run memory recall" must be seen before deciding whether to run it
 
+## Prompt-to-Hook Migration
+
+Progressive disclosure has a third layer: deterministic rules should become harness enforcement wherever possible. The prompt should teach judgment and declare invariants; hooks and validators should enforce syntax, file-shape, CLI, and policy checks consistently across models.
+
+Use `.agents/configs/prompt-hook-candidates.conf` as the tracking registry. Each deterministic inline rule must have one of:
+
+1. **`hooked`** — an enforcing hook/check exists; AGENTS keeps only the invariant and pointer.
+2. **`partial`** — enforcement exists for common cases; AGENTS keeps the judgment/security boundary.
+3. **`candidate`** — no enforcement yet; registry records the planned hook/check before more prompt detail is added.
+4. **`prompt-only`** — reserved for judgment/security rules where model reasoning is the enforcement layer.
+
+Migration rubric:
+
+| Rule type | Prompt treatment | Harness treatment |
+|-----------|------------------|-------------------|
+| Deterministic CLI syntax (`gh`, `git`, helper flags) | 1-2 line invariant + command names | Static scan, PATH shim, wrapper, or CI gate |
+| File-format/portability (`stat`, `grep -c`, shell init) | 1-2 line trap summary + reference | Pre-commit/pre-push/CI ratchet gate |
+| Security invariants (secrets, prompt injection) | Keep inline; never defer entirely | Scanner/hook as defense in depth |
+| Workflow judgment (triage, dedup, productivity diagnosis) | Keep inline decision rule | Helper can provide evidence, not decide |
+| Rare operational detail (env vars, historical rationale) | Pointer only | Reference doc + optional diagnostic helper |
+
+`progressive-load-check.sh` validates that the registry exists, is well-formed, and covers at least one hooked deterministic rule so prompt-token reduction remains a ratchet instead of a one-off cleanup.
+
 ## The Pointer Contract
 
 When extracting to Layer 2, the inline replacement must:
@@ -57,12 +80,14 @@ The bad pointer requires the model to go read the reference before knowing wheth
 
 Self-improvement sessions that ADD to build.txt or AGENTS.md should:
 
-1. First check whether the new content is Layer 1 or Layer 2 material
-2. If Layer 2: create or extend a reference file, add a pointer inline
-3. If Layer 1: check whether any existing inline content is now superseded (remove it)
-4. Target: build.txt + AGENTS.md combined ≤ 30k tokens. Measure before merging.
+1. First check whether the new content is Layer 1, Layer 2, or hook-enforceable material.
+2. If Layer 2: create or extend a reference file, add a pointer inline.
+3. If deterministic: add/update `.agents/configs/prompt-hook-candidates.conf`, then implement or point at the enforcing hook/check.
+4. If Layer 1: check whether any existing inline content is now superseded (remove it).
+5. Target: `AGENTS.md` + `prompts/build.txt` combined ≤ 30k tokens. Measure before merging.
 
 To measure current token load:
+
 ```bash
 python3 -c "
 import os

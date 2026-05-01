@@ -47,8 +47,8 @@ gh pr list --repo marcusquinn/aidevops --state closed --limit 50 \
 cat ~/.aidevops/agents/workflows/error-feedback.md 2>/dev/null | \
   grep -E "^- |^\* " | head -30
 
-# Scan for patterns in build.txt that address recurring errors
-rg "observed|recurring|failure rate|%" ~/.aidevops/agents/prompts/build.txt 2>/dev/null | \
+# Scan for patterns in AGENTS.md that address recurring errors
+rg "observed|recurring|failure rate|%" ~/.aidevops/agents/AGENTS.md 2>/dev/null | \
   head -20
 ```
 
@@ -133,7 +133,7 @@ cat ~/.aidevops/.agent-workspace/work/session-miner/feedback_actions.md 2>/dev/n
 
 ```json
 {
-  "file": ".agents/prompts/build.txt",
+  "file": ".agents/AGENTS.md",
   "issue": "instruction-to-save: 'always use local var=\"$1\" in shell functions' (confidence: 90%)",
   "source": "instruction-to-save",
   "priority": "medium",
@@ -152,11 +152,11 @@ Each source produces findings in this shape:
 |--------|--------|---------|--------------|
 | Session Miner | `.agents/path/to/file.md` | recurring error description | `session-miner` |
 | Pulse Outcomes | `null` | task pattern that fails repeatedly | `pulse-outcomes` |
-| Error-Feedback | `.agents/prompts/build.txt` | pattern description | `error-feedback` |
+| Error-Feedback | `.agents/AGENTS.md` | pattern description | `error-feedback` |
 | Comprehension Tests | `.agents/path/to/agent.md` | test failure description | `comprehension-tests` |
 | Git Churn | `.agents/path/to/file.md` | high churn — N changes in 30 days | `git-churn` |
 | Linter | `.agents/scripts/helper.sh` | shellcheck SC2086: double-quote variable | `linter` |
-| Instruction Candidates | `.agents/prompts/build.txt` | instruction-to-save: user guidance text (confidence: N%) | `instruction-to-save` |
+| Instruction Candidates | `.agents/AGENTS.md` | instruction-to-save: user guidance text (confidence: N%) | `instruction-to-save` |
 
 ## Finding Aggregation
 
@@ -206,7 +206,7 @@ Signal mining produces `SIGNAL_FINDINGS` — a ranked list passed to hypothesis 
 ```json
 [
   {
-    "file": ".agents/prompts/build.txt",
+    "file": ".agents/AGENTS.md",
     "issue": "webfetch failure rate 46.8% — URL guessing pattern",
     "source": "error-feedback",
     "priority": "high",

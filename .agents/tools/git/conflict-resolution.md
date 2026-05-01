@@ -152,6 +152,21 @@ git stash drop   # stash is NOT dropped automatically on conflict
 | Lock files (package-lock.json, yarn.lock) | Never manually merge. Pick one side, then regenerate: `npm install && git add package-lock.json` |
 | Binary files | Cannot merge. Use per-file resolution to pick one version |
 
+### Aidevops conflict-feedback registry (t2987)
+
+When `gh pr update-branch` cannot resolve a worker PR, `pulse-merge-feedback.sh` classifies conflicts through `.agents/configs/conflict-patterns.conf` and appends pattern-specific guidance to the linked issue.
+
+| Classification | Canonical files | Resolution |
+|---|---|---|
+| `DRIZZLE_MIGRATION` | `*/migrations/meta/_journal.json`, `*_snapshot.json` | Renumber SQL + regenerate via the package DB command. Never hand-merge snapshots. |
+| `LOCKFILE` | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb` | Accept one side, regenerate with the package manager. Never hand-merge. |
+| `I18N_JSON` | `*/translations/*/*.json` | Union-merge with `jq -s '.[0] * .[1]'`. |
+| `GENERATED` | `*_snapshot.json`, `*.generated.ts`, `*.generated.graphql` | Delete and regenerate via the project toolchain. |
+| `ADD_ADD_NEW_FILE` | `git status --porcelain` reports `AA` | During rebase, `git checkout --ours <path> && git add <path> && git rebase --continue`; append unique additions later. Never cherry-pick the same add/add conflict. |
+| `CODE` | Everything else | Semantic hand-resolution; no pattern block emitted. |
+
+Add a pattern by editing `.agents/configs/conflict-patterns.conf`, adding a case to `.agents/scripts/tests/test-conflict-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
+
 ## git rerere (Reuse Recorded Resolution)
 
 Records conflict resolutions and auto-applies them next time the same conflict occurs.

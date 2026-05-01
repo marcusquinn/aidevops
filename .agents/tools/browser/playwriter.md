@@ -123,7 +123,7 @@ server.close()
 
 ### Screenshots and PDF
 
-> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review. Full-page captures can exceed 8000px, crashing the session. Use viewport-sized screenshots. For human-only full-page: `magick full.png -resize "1568x1568>" full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+> **Screenshot size limit**: Do NOT use `fullPage: true` for AI vision review. Full-page captures can exceed 8000px, crashing the session. Use viewport-sized screenshots. For human-only full-page: `magick full.png -resize "1568x1568>" full-resized.png`. See `reference/screenshot-limits.md`.
 
 ```javascript
 // Viewport screenshot (safe for AI review)

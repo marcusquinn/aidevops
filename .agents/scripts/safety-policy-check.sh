@@ -90,14 +90,14 @@ check_generator_rules() {
 }
 
 check_policy_markers() {
-	local build_prompt="${SCRIPT_DIR}/../prompts/build.txt"
+	local agents_guide="${SCRIPT_DIR}/../AGENTS.md"
 	local sandbox_helper="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 	local secret_handling_ref="${SCRIPT_DIR}/../reference/secret-handling.md"
 
 	# Explicit readability checks before marker checks — avoids misleading
 	# "marker missing" errors when the file itself is absent or unreadable.
-	if [[ ! -r "$build_prompt" ]]; then
-		echo "FAIL: build prompt not readable: $build_prompt" >&2
+	if [[ ! -r "$agents_guide" ]]; then
+		echo "FAIL: AGENTS guide not readable: $agents_guide" >&2
 		return 1
 	fi
 
@@ -106,21 +106,21 @@ check_policy_markers() {
 		return 1
 	fi
 
-	# build.txt must reference transcript exposure policy (inline or via pointer)
-	if ! require_pattern "transcript exposure" "$build_prompt" \
-		"transcript exposure policy missing from build prompt"; then
+	# AGENTS.md must reference transcript exposure policy (inline or via pointer)
+	if ! require_pattern "transcript exposure" "$agents_guide" \
+		"transcript exposure policy missing from AGENTS guide"; then
 		return 1
 	fi
 
-	# build.txt must contain the transcript-visible rule
-	if ! require_pattern "transcript-visible" "$build_prompt" \
-		"transcript-visible rule missing from build prompt"; then
+	# AGENTS.md must contain the transcript-visible rule
+	if ! require_pattern "transcript-visible" "$agents_guide" \
+		"transcript-visible rule missing from AGENTS guide"; then
 		return 1
 	fi
 
-	# Detailed secret handling rules must exist (either inline in build.txt
+	# Detailed secret handling rules must exist (either inline in AGENTS.md
 	# or in the extracted reference file)
-	local secret_check_target="$build_prompt"
+	local secret_check_target="$agents_guide"
 	if [[ -f "$secret_handling_ref" ]]; then
 		[[ ! -r "$secret_handling_ref" ]] && {
 			echo "FAIL: secret-handling reference not readable: $secret_handling_ref" >&2

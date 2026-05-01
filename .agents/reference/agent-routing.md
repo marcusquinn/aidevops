@@ -11,7 +11,7 @@ Dispatch workers with `headless-runtime-helper.sh run`, not bare runtime CLIs. T
 
 1. Read the task or issue description.
 2. If it is clearly code work (`implement`, `fix`, `refactor`, `CI`), use Build+ or omit `--agent`.
-3. If it matches another domain, pass `--agent <name>`.
+3. If trigger words clearly match another domain, pass `--agent <name>` or load the matching skill/subagent before acting.
 4. If uncertain, default to Build+; it can load narrower docs on demand.
 5. **Bundle-aware routing (t1364.6):** project bundles can define `agent_routing` overrides. Check with `bundle-helper.sh get agent_routing <repo-path>`. An explicit `--agent` flag wins.
 
@@ -21,17 +21,19 @@ The selected agent changes the system prompt and domain knowledge loaded for the
 
 Full index: `subagent-index.toon`.
 
-| Agent | Use for |
-|-------|---------|
-| Build+ | Code: features, bug fixes, refactors, CI, PRs (default) |
-| Automate | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
-| SEO | SEO audits, keyword research, GSC, schema markup |
-| Content | Media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
-| Marketing-Sales | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
-| Business | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
-| Legal | Compliance, terms of service, privacy policy |
-| Research | Tech research, competitive analysis, market research |
-| Health | Health and wellness content |
+| Agent | Trigger words | Use for |
+|-------|---------------|---------|
+| Build+ | implement, fix, refactor, bug, CI, tests, PR | Code: features, bug fixes, refactors, CI, PRs (default) |
+| Automate | schedule, cron, dispatch, pulse, monitoring, routine | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
+| SEO | SEO, ranking, keyword, schema, GSC, sitemap, backlinks | SEO audits, keyword research, GSC, schema markup |
+| Content | blog, video, script, social, newsletter, audio, image | Media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
+| Marketing-Sales | ads, CRO, email campaign, CRM, copy, outreach, funnel | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
+| Business | company ops, finance, invoice, receipts, strategy, runners | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
+| Legal | legal, compliance, privacy policy, terms, contract, GDPR | Compliance, terms of service, privacy policy |
+| Research | research, compare, market, competitor, technical analysis | Tech research, competitive analysis, market research |
+| Health | health, wellness, nutrition, fitness, medical lifestyle | Health and wellness content |
+
+For narrower domains such as WordPress, Shopify, Cloudflare, Proxmox, Remotion, CalDAV, or browser/mobile work, read `reference/domain-index.md` and the relevant skill/subagent entry before defaulting to Build+.
 
 ## Dispatch example
 

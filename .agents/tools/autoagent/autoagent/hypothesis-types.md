@@ -44,9 +44,9 @@ Improve existing helper scripts to reduce failure rates, execution time, or toke
 
 ### Type 3: Instruction Refinement
 
-Improve agent `.md` files and prompts to increase comprehension test pass rates and reduce token usage. Edit: agent `.md` files (consolidate redundant rules, shorten verbose phrasing), `prompts/build.txt` (merge thin sections, replace inline code with references), subagent docs (progressive disclosure). Signal: comprehension test failures, token ratio from metric, git churn on agent files.
+Improve agent `.md` files and prompts to increase comprehension test pass rates and reduce token usage. Edit: agent `.md` files (consolidate redundant rules, shorten verbose phrasing), `AGENTS.md` (merge thin sections, replace inline code with references), subagent docs (progressive disclosure). Signal: comprehension test failures, token ratio from metric, git churn on agent files.
 
-**Good:** "Consolidate the two 'Read before Edit' rules in build.txt into one authoritative rule" · "Replace 3-sentence webfetch warning with 1-sentence rule + link to reference" · "Move inline bash examples in `git-workflow.md` to a reference file, replace with `rg` pattern refs"
+**Good:** "Consolidate the two 'Read before Edit' rules in AGENTS.md into one authoritative rule" · "Replace 3-sentence webfetch warning with 1-sentence rule + link to reference" · "Move inline bash examples in `git-workflow.md` to a reference file, replace with `rg` pattern refs"
 
 **Bad:** "Remove all security rules" (blocked by safety constraints) · "Add more examples to every rule" (increases tokens, likely hurts metric)
 

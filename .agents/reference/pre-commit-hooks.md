@@ -78,6 +78,6 @@ This prevents scope creep and keeps the regression test focused on one bug per P
 
 ## Cross-Reference
 
-For the runtime-debugging analogue (investigating deployed code that differs from source), see `prompts/build.txt` §"Stale-symptom investigations" (t2036).
+For the runtime-debugging analogue (investigating deployed code that differs from source), see `AGENTS.md` §"Stale-symptom investigations" (t2036).
 
 For the general pre-commit hook architecture and installation, see `reference/pre-commit-hooks.md` (this file) and `.agents/scripts/install-hooks-helper.sh`.

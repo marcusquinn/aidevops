@@ -45,7 +45,7 @@ RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER"
 | `PASS` | Read bot reviews; address critical/security findings before merge. Non-critical → follow-up. |
 | `SKIP` | PR has `skip-review-gate` label — proceed. |
 
-AI review verification rules: `reference/session.md` "Bot Reviewer Feedback" and `prompts/build.txt` "AI Suggestion Verification".
+AI review verification rules: `reference/session.md` "Bot Reviewer Feedback" and `AGENTS.md` "AI Suggestion Verification".
 
 ### Gate Failure Playbook
 
