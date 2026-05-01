@@ -212,7 +212,8 @@ else
 		in_block {
 			lines_since_gate++
 			if ($0 ~ /^[[:space:]]+setup_pulse_merge_routine([[:space:]]|$)/ ||
-				$0 ~ /_time_step[[:space:]]+"setup_pulse_merge_routine"[[:space:]]+setup_pulse_merge_routine([[:space:]]|$)/) {
+				($0 ~ /_time_step[[:space:]]+"setup_pulse_merge_routine"/ &&
+					$0 ~ /setup_pulse_merge_routine([[:space:]]|$)/)) {
 				found_call=1
 				exit
 			}
@@ -248,11 +249,11 @@ if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 		BEGIN { in_func=0; has_background=0; has_low_io=0; has_nice=0; has_keepalive_false=0; saw_keepalive=0 }
 		/^_install_pulse_merge_routine_launchd\(\)/ { in_func=1; next }
 		in_func && /^\}/ { in_func=0 }
-		in_func && /<key>ProcessType<\/key>/ { has_background=1 }
-		in_func && /<key>LowPriorityBackgroundIO<\/key>/ { has_low_io=1 }
-		in_func && /<key>Nice<\/key>/ { has_nice=1 }
-		in_func && /<key>KeepAlive<\/key>/ { saw_keepalive=1; next }
-		in_func && saw_keepalive && /<false\/>/ { has_keepalive_false=1; saw_keepalive=0 }
+		in_func && index($0, "<key>ProcessType</key>") { has_background=1 }
+		in_func && index($0, "<key>LowPriorityBackgroundIO</key>") { has_low_io=1 }
+		in_func && index($0, "<key>Nice</key>") { has_nice=1 }
+		in_func && index($0, "<key>KeepAlive</key>") { saw_keepalive=1; next }
+		in_func && saw_keepalive { if (index($0, "<false/>")) has_keepalive_false=1; saw_keepalive=0 }
 		END { exit (!has_background && !has_low_io && !has_nice && has_keepalive_false) ? 0 : 1 }
 	' "$SCHEDULERS_PLATFORM_FILE"; then
 		pass "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false"
