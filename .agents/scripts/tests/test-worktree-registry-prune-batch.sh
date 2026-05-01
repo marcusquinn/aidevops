@@ -70,6 +70,11 @@ INSERT INTO worktree_owners (worktree_path, branch, owner_pid) VALUES ('$(_wt_sq
 	i=$((i + 1))
 done
 
+quoted_stale_path="${TEST_ROOT}/missing-o'clock"
+sqlite3 "$WORKTREE_REGISTRY_DB" "
+INSERT INTO worktree_owners (worktree_path, branch, owner_pid) VALUES ('$(_wt_sql_escape "$quoted_stale_path")', 'feature/quoted', 999999);
+"
+
 start_s=$(date +%s)
 VERBOSE=1 prune_output=$(prune_worktree_registry 2>&1)
 prune_rc=$?
@@ -90,6 +95,13 @@ if [[ "$live_remaining" == "1" ]]; then
 	print_result "prune preserves existing worktree rows" 0
 else
 	print_result "prune preserves existing worktree rows" 1 "live_remaining=$live_remaining"
+fi
+
+quoted_remaining=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT COUNT(*) FROM worktree_owners WHERE worktree_path = '$(_wt_sql_escape "$quoted_stale_path")';")
+if [[ "$quoted_remaining" == "0" ]]; then
+	print_result "prune deletes quoted stale paths" 0
+else
+	print_result "prune deletes quoted stale paths" 1 "quoted_remaining=$quoted_remaining"
 fi
 
 if [[ "$duration" -le 10 ]]; then

@@ -487,7 +487,8 @@ _wt_registry_delete_paths_batch() {
 		printf 'BEGIN IMMEDIATE;\n'
 		while IFS='|' read -r wt_path _reason; do
 			[[ -z "$wt_path" ]] && continue
-			printf "DELETE FROM worktree_owners WHERE worktree_path = '%s';\n" "$(_wt_sql_escape "$wt_path")"
+			local escaped_wt_path="${wt_path//\'/\'\'}"
+			printf "DELETE FROM worktree_owners WHERE worktree_path = '%s';\n" "$escaped_wt_path"
 		done <<<"$stale_entries"
 		printf 'COMMIT;\n'
 	} | sqlite3 "$WORKTREE_REGISTRY_DB" >/dev/null 2>&1 || return 1
@@ -523,15 +524,14 @@ _wt_registry_print_pruned_entries() {
 # Count newline-separated entries.
 _wt_registry_entry_count() {
 	local entries="$1"
-	local count=0
 	[[ -z "$entries" ]] && {
 		printf '0'
 		return 0
 	}
 
-	while IFS= read -r _entry; do
-		((++count))
-	done <<<"$entries"
+	local count
+	count=$(grep -c . <<<"$entries" || true)
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
 	return 0
 }
