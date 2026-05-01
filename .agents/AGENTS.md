@@ -608,6 +608,7 @@ Full rules: `reference/bash-compat.md`.
 - Fix linter violations in code, not linter config. Config changes need documented rationale.
 - After editing code: run relevant linter before next edit. Shell: `shellcheck`. MD: `markdownlint-cli2`.
 - Fix immediately, don't batch for commit time.
+- Deterministic prompt rules should migrate to hooks/validators and shrink back to short pointers. Track rule status in `.agents/configs/prompt-hook-candidates.conf`; rubric: `reference/progressive-disclosure.md` "Prompt-to-Hook Migration".
 
 ### Gate design — ratchet, not absolute (t2228 class)
 
