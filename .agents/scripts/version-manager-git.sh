@@ -161,8 +161,8 @@ extract_task_ids_from_commits() {
 		[[ -z "$commit" ]] && continue
 
 		# Pattern 1: Conventional commits with task ID in scope
-		# e.g., feat(t001):, fix(t002):, docs(t003.1):, refactor(t004):
-		if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\((t[0-9]{3}(\.[0-9]+)*)\): ]]; then
+		# e.g., feat(t001):, fix(t3375):, docs(t003.1):, refactor(t004):
+		if [[ "$commit" =~ ^(feat|fix|docs|refactor|perf|test|chore|style|build|ci)\((t[0-9]+(\.[0-9]+)*)\): ]]; then
 			task_ids+=("${BASH_REMATCH[2]}")
 		fi
 
@@ -174,18 +174,18 @@ extract_task_ids_from_commits() {
 			while IFS= read -r id; do
 				[[ -n "$id" ]] || continue
 				task_ids+=("$id")
-			done < <(printf '%s\n' "$segment" | grep -oE 't[0-9]{3}(\.[0-9]+)*' || true)
+			done < <(printf '%s\n' "$segment" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
 		fi
 
 		# Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
 		# e.g., "complete t037", "closes t001"
-		if [[ "$commit" =~ (^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+(t[0-9]{3}(\.[0-9]+)*)([^[:alnum:]_]|$) ]]; then
+		if [[ "$commit" =~ (^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+(t[0-9]+(\.[0-9]+)*)([^[:alnum:]_]|$) ]]; then
 			task_ids+=("${BASH_REMATCH[3]}")
 		fi
 
 		# Pattern 4: "tXXX complete/done/finished" - task ID before completion word
 		# e.g., "t001 complete", "t002 done"
-		if [[ "$commit" =~ (t[0-9]{3}(\.[0-9]+)*)[[:space:]]+(complete|done|finished)($|[^[:alnum:]_]) ]]; then
+		if [[ "$commit" =~ (t[0-9]+(\.[0-9]+)*)[[:space:]]+(complete|done|finished)($|[^[:alnum:]_]) ]]; then
 			task_ids+=("${BASH_REMATCH[1]}")
 		fi
 
@@ -196,7 +196,7 @@ extract_task_ids_from_commits() {
 		return 0
 	fi
 
-	printf '%s\n' "${task_ids[@]}" | grep -E '^t[0-9]{3}(\.[0-9]+)*$' | sort -u
+	printf '%s\n' "${task_ids[@]}" | grep -E '^t[0-9]+(\.[0-9]+)*$' | sort -u
 	return 0
 }
 

@@ -223,6 +223,88 @@ fi
 unset OPENAI_API_KEY
 
 # =============================================================================
+# Assertion 5 — ChatGPT OAuth denylist blocks known-unsupported pro models
+# (GH#21990)
+# =============================================================================
+# _chatgpt_oauth_denylist_check must return 0 (denied) for known-unsupported
+# pro models when auth.json shows openai.type == "oauth".
+# It must return 1 (allowed) for supported models like gpt-5.5 even with OAuth.
+# And it must return 1 (allowed) for any model when no OAuth is configured.
+
+# Set up auth.json with OpenAI ChatGPT OAuth to trigger the denylist path.
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-chatgpt-access-token",
+    "refresh": "fake-openai-chatgpt-refresh-token"
+  }
+}
+JSON
+
+# 5a — gpt-5.5-pro denied under ChatGPT OAuth
+_chatgpt_oauth_denylist_check openai gpt-5.5-pro
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "chatgpt-oauth-denylist: gpt-5.5-pro denied (rc=0)" 0
+else
+	print_result "chatgpt-oauth-denylist: gpt-5.5-pro denied (rc=0)" 1 \
+		"(got rc=$rc — expected 0; gpt-5.5-pro should be blocked under ChatGPT OAuth)"
+fi
+
+# 5b — gpt-5.4-pro denied under ChatGPT OAuth
+_chatgpt_oauth_denylist_check openai gpt-5.4-pro
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "chatgpt-oauth-denylist: gpt-5.4-pro denied (rc=0)" 0
+else
+	print_result "chatgpt-oauth-denylist: gpt-5.4-pro denied (rc=0)" 1 \
+		"(got rc=$rc — expected 0; gpt-5.4-pro should be blocked under ChatGPT OAuth)"
+fi
+
+# 5c — gpt-5.5 (non-pro) allowed under ChatGPT OAuth
+_chatgpt_oauth_denylist_check openai gpt-5.5
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "chatgpt-oauth-denylist: gpt-5.5 allowed (rc=1)" 0
+else
+	print_result "chatgpt-oauth-denylist: gpt-5.5 allowed (rc=1)" 1 \
+		"(got rc=$rc — expected 1; gpt-5.5 is supported and must not be blocked)"
+fi
+
+# 5d — denylist no-ops when no OAuth is present (API key auth)
+rm -f "$AUTH_FILE"
+_chatgpt_oauth_denylist_check openai gpt-5.5-pro
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "chatgpt-oauth-denylist: no-op without OAuth (rc=1)" 0
+else
+	print_result "chatgpt-oauth-denylist: no-op without OAuth (rc=1)" 1 \
+		"(got rc=$rc — expected 1; denylist must not fire when auth.json has no OpenAI OAuth)"
+fi
+
+# 5e — denylist no-ops for non-openai provider
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-chatgpt-access-token",
+    "refresh": "fake-openai-chatgpt-refresh-token"
+  }
+}
+JSON
+_chatgpt_oauth_denylist_check anthropic gpt-5.5-pro
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "chatgpt-oauth-denylist: no-op for non-openai provider (rc=1)" 0
+else
+	print_result "chatgpt-oauth-denylist: no-op for non-openai provider (rc=1)" 1 \
+		"(got rc=$rc — expected 1; denylist only applies to openai provider)"
+fi
+
+rm -f "$AUTH_FILE"
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%d test(s) run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"

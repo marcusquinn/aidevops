@@ -359,7 +359,34 @@ _validate_and_normalize_args() {
 		_normalised_labels=$(map_tags_to_labels "$TASK_LABELS" 2>/dev/null) || true
 		[[ -n "$_normalised_labels" ]] && TASK_LABELS="$_normalised_labels"
 	fi
+
+	# GH#21991: advisory structural check on --description before issue creation.
+	# Non-blocking by default; set AIDEVOPS_BODY_FORMAT_STRICT=1 to hard-fail.
+	_validate_description_format
 	return 0
+}
+
+# _validate_description_format — run structural lint on TASK_DESCRIPTION.
+# Called at the end of _validate_and_normalize_args (GH#21991).
+# Advisory by default; AIDEVOPS_BODY_FORMAT_STRICT=1 hard-fails on non-dispatchable.
+# Skipped when: --no-issue, --dry-run, empty description, or helper unavailable.
+_validate_description_format() {
+	# Skip when issue creation is not happening or description is absent
+	[[ "$NO_ISSUE" == "true" || "$DRY_RUN" == "true" ]] && return 0
+	[[ -z "$TASK_DESCRIPTION" ]] && return 0
+
+	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
+	[[ ! -x "$fmt_helper" ]] && return 0
+
+	local rc=0
+	"$fmt_helper" check "$TASK_DESCRIPTION" || rc=$?
+
+	# Exit 1 from helper = non-dispatchable body
+	if [[ $rc -eq 1 && "${AIDEVOPS_BODY_FORMAT_STRICT:-0}" != "1" ]]; then
+		# Advisory only — already warned via helper's log_warn calls.
+		rc=0
+	fi
+	return $rc
 }
 
 # t2436: Scan TODO.md for the task entry matching task_id and derive

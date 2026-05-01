@@ -630,19 +630,73 @@ Each event line shows: timestamp, source script, rule ID, human description, and
 exact `script:line` of the rule that produced the log entry. Use `--verbose` to see raw
 log lines alongside classifications. Use `--json` for programmatic consumption.
 
+### Issue-level diagnosis (t3258)
+
+When a failure is a cascade on one issue — for example, repeated re-dispatch to the
+same branch producing WORKER_BRANCH_ORPHAN comments while a PR already exists — use
+the `issue` subcommand for a unified view:
+
+```bash
+pulse-diagnose-helper.sh issue <N> --repo <owner/repo>
+```
+
+The command collects:
+
+- **Issue metadata**: title, state, labels, assignees, and created/closed timestamps.
+- **Lifecycle comments**: comments containing structured markers such as
+  `WORKER_BRANCH_ORPHAN`, `CLAIM_RELEASED`, `CLAIM_DEFERRED`, `watchdog`,
+  `STUCK_WORKER`, `source:ci-failure`, `source:conflict-feedback`, and
+  `DISPATCH_CLAIM`. Signature footers and generic ops noise are stripped.
+- **Linked and worker PRs**: discovered via two strategies — (1) timeline
+  cross-references (PRs that reference the issue via closing keywords), and (2) worker
+  branch pattern search (`gh<N> in:head` for worker branches named
+  `feature/auto-*-gh<N>`). For each linked PR, pulse log events are shown using the
+  same rule inventory as the `pr` subcommand.
+
+#### Worked example — WORKER_BRANCH_ORPHAN cascade
+
+```text
+$ pulse-diagnose-helper.sh issue 21860 --repo marcusquinn/aidevops
+
+Issue #21860 (OPEN)
+  Title: t3206: worker re-dispatch loops on same branch
+  Labels: auto-dispatch, status:queued
+  Assignees: (none)
+  Created: 2026-04-26T08:00:00Z
+
+Lifecycle comments:
+  2026-04-27T10:00:00Z  alex-solovyev
+    WORKER_BRANCH_ORPHAN: existing PR #21876 for branch feature/auto-20260427-gh21860 already open
+  2026-04-27T10:05:00Z  alex-solovyev
+    WORKER_BRANCH_ORPHAN: second re-dispatch attempt detected on same branch
+
+Linked/worker PRs:
+  PR #21876  CLOSED  t3210: fix re-dispatch on existing branch
+    Branch: feature/auto-20260427-gh21860
+    2026-04-27T09:30:00Z  pmc-close-conflicting   Closed conflicting PR, linked issue left open
+    (1 pulse events)
+```
+
+The pattern of two `WORKER_BRANCH_ORPHAN` comments plus a closed conflicting PR is
+the signature of a repeated re-dispatch loop. The `pr` subcommand can then be used
+for deeper investigation of PR #21876.
+
 ### Subcommands
 
 | Command | Description |
 |---------|-------------|
 | `pr <N> [--repo <slug>] [--verbose] [--json]` | Diagnose pulse behaviour for PR #N |
+| `issue <N> [--repo <slug>] [--verbose] [--json]` | Diagnose issue-level dispatch and PR lifecycle |
 | `rules [--json]` | List the full rule inventory (60+ entries) |
+| `cycle-health [--window <W>] [--json]` | Summarise pulse-cycle stability |
 | `help` | Show usage |
 
 ### Limitations
 
 - Read-only diagnostic — does not change pulse behaviour.
-- Covers PR merge/sweep decisions only. Issue-lifecycle (dispatch, NMR, parent-task)
-  is a candidate follow-up (`pulse-diagnose-helper.sh issue <N>`).
+- The `issue` subcommand's PR discovery uses GitHub API cross-references and a
+  worker-branch head search. PRs linked only via commit messages (without a
+  cross-reference event) may not appear.
 - Log lines without timestamps are sorted lexically (best effort).
 - Rotated `.gz` logs require `zcat` to be available.
 

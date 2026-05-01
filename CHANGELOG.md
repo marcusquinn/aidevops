@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.56] - 2026-05-01
+
+### Fixed
+
+- reuse preflight timing helper (#22126)
+- support variable-width release task IDs (#22127)
+
+## [3.13.55] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3378 complete (pr:#22122 completed:2026-05-01) [skip ci]
+- fix pulse merge dry-run and scheduler (#22122)
+- Maintenance: mark t3371 complete (pr:#22109 completed:2026-05-01) [skip ci]
+- Maintenance: sync ref:GH#22123 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22121 to TODO.md [skip ci]
+- expose OpenCode DB maintenance command and notice (#22120)
+- Maintenance: sync ref:GH#22119 to TODO.md [skip ci]
+
+### Fixed
+
+- portable timeout + Pattern 2 subprocess elimination in generate_agent_skills (#22099)
+- bound deploy_agents_to_runtimes stage in non-interactive setup (#22109)
+- avoid empty gh_create_issue label arg when no TODO labels derived (GH#22056) (#22110)
+
 ## [3.13.54] - 2026-05-01
 
 ### Changed
