@@ -126,12 +126,13 @@ After file changes: run preflight automatically. Pass → auto-commit with sugge
 
 ## Branch Cleanup
 
-After postflight, delete merged branches. Keep unmerged unless stale (>30 days) — ask user.
+After postflight, delete merged branches. Keep unmerged unless stale (>30 days) — ask user. Prefer the aidevops cleanup route for remote branch sweeps because it checks merged/open-PR/worktree evidence before deletion.
 
 ```bash
 git checkout main && git pull origin main
-git branch --merged main | grep -vE '^\*|^(main|develop)$' | xargs -r git branch -d
-git push origin --delete {branch-name}  # Remote
+wt prune                                      # Local worktrees
+aidevops cleanup remote-branches             # Dry-run remote audit
+aidevops cleanup remote-branches --apply     # Delete safe remote candidates
 git remote prune origin
 ```
 

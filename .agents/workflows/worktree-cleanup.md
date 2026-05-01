@@ -50,6 +50,18 @@ wt prune
 
 `wt prune` removes worktrees whose branches have been merged and deleted on the remote. Run from the canonical repo (on `main`). If unavailable: `git worktree prune` then delete the worktree directory manually.
 
+## Bulk Remote Branch Cleanup
+
+Use the aidevops CLI route when the remote has accumulated old worker/worktree branches:
+
+```bash
+aidevops cleanup remote-branches              # dry-run audit
+aidevops cleanup remote-branches --apply      # delete safe candidates
+aidevops cleanup branches --repo ~/Git/aidevops --remote origin
+```
+
+The command deletes only branches with safety evidence: merged to the default branch or linked to a merged PR, with no open PR and no active local worktree. Unmerged branches are reported as `review` and are not deleted by default.
+
 ## See Also
 
 - `workflows/git-workflow.md` — full worktree lifecycle
