@@ -117,11 +117,35 @@ test_generation_completes_within_bounded_time() {
 	return 0
 }
 
+test_warm_cache_skip_is_fast() {
+	make_large_test_agents_dir
+	local _start _end _elapsed output
+
+	AIDEVOPS_AGENTS_DIR="$TEST_TMP_DIR" bash "$GENERATE_SKILLS_SCRIPT" >/dev/null 2>&1
+	_start=$(date +%s)
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_TMP_DIR" bash "$GENERATE_SKILLS_SCRIPT" 2>&1)
+	_end=$(date +%s)
+	_elapsed=$((_end - _start))
+
+	if [[ "$output" != *"up to date"* ]]; then
+		print_result "generate-skills warm cache reports skip" 1 "output=${output}"
+		return 0
+	fi
+	if [[ "$_elapsed" -gt 3 ]]; then
+		print_result "generate-skills warm cache skips within 3s" 1 "took ${_elapsed}s"
+		return 0
+	fi
+
+	print_result "generate-skills warm cache skips within 3s" 0
+	return 0
+}
+
 main() {
 	trap cleanup EXIT
 
 	test_cache_hash_written_before_completion_summary
 	test_generation_completes_within_bounded_time
+	test_warm_cache_skip_is_fast
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
