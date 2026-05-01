@@ -25,10 +25,10 @@ New to aidevops? Type `/onboarding`.
 - **Claude Code**: `~/.claude/projects/` — per-project session transcripts in JSONL. `rg "keyword" ~/.claude/projects/`
 
 **Write-time quality hooks:**
-- **Claude Code**: A `PreToolUse` git safety hook is installed via `~/.aidevops/hooks/git_safety_guard.py` — blocks edits on main/master. Install with `install-hooks-helper.sh install`. Linting is prompt-level (see build.txt "Write-Time Quality Enforcement").
+- **Claude Code**: A `PreToolUse` git safety hook is installed via `~/.aidevops/hooks/git_safety_guard.py` — blocks edits on main/master. Install with `install-hooks-helper.sh install`. Linting is prompt-level (see Framework Rules > Write-Time Quality Enforcement).
 - **Claude Code**: A `PreToolUse` complexity advisory hook is installed via `~/.aidevops/hooks/complexity_advisory_pre_edit.py` (t2864) — emits an advisory (non-blocking) when a proposed bash function body exceeds 80 lines, the 40% buffer below the 100-line `function-complexity` CI gate. Covers `Edit` and `Write` tool calls on `*.sh`/`*.bash`/`*.zsh` files. Install with `install-hooks-helper.sh install`. Threshold configurable via `AIDEVOPS_COMPLEXITY_WARN_THRESHOLD` env var.
 - **OpenCode**: `opencode-aidevops` plugin provides `tool.execute.before`/`tool.execute.after` hooks for the git safety check.
-- **Neither available**: Enforce via prompt-level discipline and explicit tool calls (see build.txt "Write-Time Quality Enforcement").
+- **Neither available**: Enforce via prompt-level discipline and explicit tool calls (see Framework Rules > Write-Time Quality Enforcement).
 
 **Prompt injection scanning** works with any agentic app (Claude Code, OpenCode, custom agents) — the scanner is a shell script, not a platform-specific hook.
 
@@ -37,7 +37,7 @@ New to aidevops? Type `/onboarding`.
 - "Implement X" / "Fix Y" → Execution (code changes)
 - Ambiguous → asks for clarification
 
-**Specialist subagents**: `@aidevops`, `@seo`, `@wordpress`, etc.
+**Specialist subagents**: `@aidevops`, `@seo`, `@wordpress`, etc. If a request includes clear domain triggers (SEO/ranking/schema, WordPress/WP/plugin, content/video/social, ads/CRO/outreach, legal/privacy/contract, finance/invoice, calendar/schedule, Cloudflare/Workers, Proxmox/VM), load the matching skill/subagent or read `reference/domain-index.md` before acting.
 
 ## Pre-Edit Git Check
 
@@ -45,7 +45,7 @@ New to aidevops? Type `/onboarding`.
 
 Hard rules: see "Framework Rules > Git Workflow > Pre-edit rules" below. Details: `.agents/workflows/pre-edit.md`.
 
-Subagent write restrictions: on `main`/`master`, **headless subagents** may write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. **Interactive subagents** must always use a linked worktree regardless of path — no planning exception (t1990). All other writes → proposed edits in a worktree.
+Subagent write restrictions: on `main`/`master`, **headless supervisor/routine bookkeeping** may write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. **Interactive subagents** always use a linked worktree regardless of path — no planning exception (t1990). **Headless implementation workers** use worktree+PR unless their explicit task is planning-only bookkeeping. All other writes → proposed edits in a worktree.
 
 ---
 
@@ -555,7 +555,7 @@ This rule sits alongside t3215 (canonical sources) and t2204 (attribution before
 - Before ANY file modification: run `pre-edit-check.sh`.
 - Exit 0=proceed, 1=STOP (main), 2=create worktree, 3=warn off-main.
 - **Interactive sessions (t1990):** NEVER edit directly in the canonical repo on main/master. **ALL work** — code, planning files (TODO.md, todo/**, README.md), routine configs, everything — goes through a linked worktree at `~/Git/{repo}-{type}-{name}/`. No planning exception. The canonical directory stays on `main`.
-- **Headless sessions (pulse, CI workers, routines):** the main-branch planning allowlist (`README.md`, `TODO.md`, `todo/**`) still applies so routine bookkeeping doesn't need PR ceremony. Detected via `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` env vars.
+- **Headless supervisor/routine bookkeeping:** the main-branch planning allowlist (`README.md`, `TODO.md`, `todo/**`) still applies so routine bookkeeping can commit directly. Headless implementation workers use worktree+PR unless explicitly assigned planning-only bookkeeping. Detected via `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` env vars.
 - Exactly one active session may own a writable worktree path. Never share a live worktree between sessions; create a new worktree on ownership conflict.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`.
 - NEVER revert others' changes without explicit user request.
@@ -588,61 +588,9 @@ See also `reference/pre-commit-hooks.md` for the full playbook and "Stale-sympto
 - `aidevops update` and `setup.sh` auto-restart the pulse (t2579). For manual hot-deploys (`cp` to `~/.aidevops/agents/scripts/`), restart manually: `pulse-lifecycle-helper.sh restart-if-running`. Fallback: `pkill -f "(^|/)pulse-wrapper\.sh( |$)" || true; sleep 3; nohup ~/.aidevops/agents/scripts/pulse-wrapper.sh >> ~/.aidevops/logs/pulse-wrapper.log 2>&1 &`. Subcommands: `is-running | status | start | stop | restart | restart-if-running`.
 - **Ensure-running guarantee (t2914):** every `aidevops update` ends with an idempotent `pulse-lifecycle-helper.sh start` call (in `aidevops.sh::cmd_update`). The earlier `restart-if-running` paths in `setup.sh:1329` / `agent-deploy.sh:601` are silent no-ops when pulse is **dead**, so a crashed pulse used to stay dead through subsequent updates. The `start` subcommand is idempotent — no-op when running, starts when dead — closing that gap. Honours `AIDEVOPS_SKIP_PULSE_RESTART=1` at the call site for parity with restart paths.
 
-### Conflict Resolution Patterns (t2987)
+### Conflict and CI Failure Resolution Patterns
 
-When a worker PR develops merge conflicts that `gh pr update-branch` cannot resolve, `_dispatch_conflict_fix_worker` (in `pulse-merge-feedback.sh`) appends a conflict-feedback section to the linked issue. As of t2987, this section includes **pattern-aware guidance** derived from a declarative registry.
-
-**Pattern registry:** `.agents/configs/conflict-patterns.conf` — single source of truth for pattern → classification → guidance text. Format: `CLASSIFICATION | GLOB_PATTERN | RESOLUTION_COMMAND | GUIDANCE_TEXT` (one record per line, `#` comments and blank lines ignored). Add new patterns here; the shell code picks them up automatically.
-
-**Supported classifications:**
-
-| Classification | Canonical files | Resolution |
-|---|---|---|
-| `DRIZZLE_MIGRATION` | `*/migrations/meta/_journal.json`, `*_snapshot.json` | Renumber SQL + regenerate via `pnpm --filter <db-pkg> db:generate`. Never hand-merge snapshots. |
-| `LOCKFILE` | `pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `bun.lockb` | Accept one side, regenerate with the package manager. Never hand-merge. |
-| `I18N_JSON` | `*/translations/*/*.json` | Union-merge via `jq -s '.[0] * .[1]'`. Both sides add keys; merged result contains all. |
-| `GENERATED` | `*_snapshot.json`, `*.generated.ts`, `*.generated.graphql` | Delete and regenerate via project toolchain. Never hand-merge generated artifacts. |
-| `ADD_ADD_NEW_FILE` | any path where both branches created the file (detected via `git status --porcelain` `AA` rows, not via filename glob) | `git checkout --ours <path>` during rebase to accept the canonical first-merged version, then `git add <path> && git rebase --continue`. Append unique additions in a follow-up commit. NEVER cherry-pick — recreates the same conflict. |
-| `CODE` | everything else | Semantic conflict — hand-resolve required. No guidance block emitted (falls through to generic cherry-pick guidance). |
-
-**How the pattern detection works:** `_classify_conflicts_by_pattern()` in `pulse-merge-feedback.sh` takes the conflicting file list and (optionally) a repo path with an in-flight rebase/merge. Files marked `AA` by `git status --porcelain` in the supplied repo are pre-classified as `ADD_ADD_NEW_FILE` — independent of filename, since `add/add` conflicts can occur on any path (the `__SPECIAL_ADD_ADD__` sentinel glob in the conf is never glob-matched; it exists only so the conf record carries the guidance text). Remaining files match each path/basename against conf patterns in order (first match wins). `_build_conflict_feedback_section()` then calls `_emit_pattern_guidance_blocks()` which appends a `### Pattern-Specific Resolution Guidance` block per non-CODE pattern. CODE-only conflicts receive only the generic cherry-pick guidance. The pulse caller (`_dispatch_conflict_fix_worker`) does not have a local checkout and passes no repo path, so `add/add` detection is opt-in — worker / test contexts that DO have a checkout opt in by passing the repo path as the third argument.
-
-**Adding a new pattern:**
-
-1. Add a record to `.agents/configs/conflict-patterns.conf` (see inline format comments).
-2. Add a test case to `.agents/scripts/tests/test-conflict-pattern-detection.sh`.
-3. Run `bash .agents/scripts/tests/test-conflict-pattern-detection.sh` — must pass 0 failures.
-4. Run `shellcheck .agents/scripts/pulse-merge-feedback.sh` — must pass clean.
-
-**Background (t2987):** 3 reroutes on the same Drizzle migration conflict in a managed private repo. The generic brief told each worker "files conflicted, rebuild on develop" — they did, hit the same index-collision conflict, got rerouted again. Pattern-aware briefs turn each reroute into a one-shot fix.
-
-### CI Failure Resolution Patterns (t3225)
-
-When a worker PR develops failing required CI checks, the deterministic merge pass routes the failure to the linked issue via `_dispatch_ci_fix_worker` (in `pulse-merge-feedback.sh`). As of t3225, the routed feedback section includes **pattern-aware guidance** that surfaces auto-fix sequences for the largest CI-failure cost class (format/lint failures), so the next worker tries a one-line fix BEFORE re-implementing the original task.
-
-This is the second-layer fix that complements t3224 (the pre-push verify hook). t3224 prevents new format/lint failures from reaching CI at push time; t3225 unsticks PRs that already have such failures (in-flight backlog or hook-bypassed pushes).
-
-**Pattern registry:** `.agents/configs/ci-failure-patterns.conf` — single source of truth for check-name → classification → guidance text. Format: `CLASSIFICATION | NAME_PATTERN | RESOLUTION_COMMAND | GUIDANCE_TEXT` (one record per line, `#` comments and blank lines ignored). Add new patterns here; the shell code picks them up automatically.
-
-**Supported classifications:**
-
-| Classification | Canonical check names | Resolution |
-|---|---|---|
-| `FORMAT_FAILURE` | `*Format*`, `*Prettier*`, `*Biome*`, `*gofmt*`, `*cargo fmt*`, `*Black*` | Auto-fix via project's format command (`pnpm format --write`, `cargo fmt --all`, `black .`, etc.) → `git commit --amend --no-edit` → `git push --force-with-lease`. |
-| `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Auto-fix via project's lint-fix command (`pnpm lint --fix`, `cargo clippy --fix`, `ruff check --fix`, etc.). Many lint rules auto-fix; remaining findings need code changes. |
-| `TYPECHECK_FAILURE` | `*Typecheck*`, `*tsc*`, `*mypy*` | Read failing-check URL for type errors; fix in code. **Never** auto-suppress with `@ts-ignore`/`as any`/`type: ignore` unless explicitly authorised. |
-| `OTHER` | everything else | Catch-all. No guidance block emitted (falls through to generic worker guidance in the feedback section). |
-
-**How the pattern detection works:** `_classify_ci_failures_by_pattern()` in `pulse-merge-feedback.sh` takes the failing-check names list (from `gh pr checks --bucket fail`), matches each name against conf patterns in order (first match wins), and returns one output line per classification containing all matching names. `_build_ci_feedback_section()` then calls `_emit_ci_failure_guidance_blocks()` which appends a `### Pattern-Specific Resolution Guidance` block per non-`OTHER` pattern, BEFORE the generic `### Worker guidance` block. `OTHER`-only failures receive only the generic guidance.
-
-**Adding a new pattern:**
-
-1. Add a record to `.agents/configs/ci-failure-patterns.conf` (see inline format comments).
-2. Add a test case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`.
-3. Run `bash .agents/scripts/tests/test-ci-failure-pattern-detection.sh` — must pass 0 failures.
-4. Run `shellcheck .agents/scripts/pulse-merge-feedback.sh` — must pass clean.
-
-**Background (t3225):** 12 PRs in a managed private repo were stuck on `Format:FAILURE`, `Lint:FAILURE`, `Typecheck:FAILURE` for 17h+ despite `ci-feedback-routed` dispatch. Workers spent tier:standard or tier:thinking sessions on what was auto-fixable in one bash command. The pre-t3225 brief said "fix the failures" generically; the post-t3225 brief leads with the auto-fix sequence so workers try the cheap fix first. Companion to t3224 (pre-push hook) — together they collapse the dominant non-merge cause class.
+Pattern-aware reroutes use declarative registries, not inline prompt rules: conflicts → `.agents/configs/conflict-patterns.conf` (Drizzle migrations, lockfiles, generated files, add/add, etc.); CI failures → `.agents/configs/ci-failure-patterns.conf` (format, lint, typecheck, other). Details and extension steps: `tools/git/conflict-resolution.md` and `reference/worker-diagnostics.md`.
 
 ### Quality Standards
 
@@ -805,7 +753,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 ### Auto-Dispatch and Completion
 
 **Auto-dispatch default**: Always add `#auto-dispatch` unless an exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging".
-- **Exclusions**: Needs credentials, decomposition, user preference, or dispatch-path files (t2821). Canonical blocker label set: `reference/dispatch-blockers.md`.
+- **Exclusions**: Needs credentials, decomposition, or explicit user preference. Dispatch-path files are **not** excluded post-t2920; they auto-dispatch with opus-4-7 elevation. Canonical blocker label set: `reference/dispatch-blockers.md`.
 - **Dispatch-path advisory (t2821, t2832, t2920)**: When a task's `### Files Scope` or `## How` section references any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, dispatch-dedup-helper.sh, etc.), use `#auto-dispatch` as normal. The t2819 pre-dispatch detector auto-elevates these workers to `model:opus-4-7`; combined with worker worktree isolation, CI gates, watchdog kills, and the t2690 circuit breaker, the protection cascade replaces the historical t2821 `no-auto-dispatch` default (reverted t2920). **Opt-out (rare):** use `#no-auto-dispatch #interactive` only when you specifically want to implement interactively to observe the running system. Full decision tree: `reference/auto-dispatch.md` "Dispatch-Path Default (t2821 / t2920)".
 - **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.
@@ -847,9 +795,9 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 **Known limitation — issue-sync TODO auto-completion (t2029 → t2166):** `issue-sync.yml` cannot auto-push to `main` without `SYNC_PAT` (fine-grained PAT, Contents: Read and write). **Guided fix:** run `/setup-git` in your AI assistant — it walks all affected repos with pre-filled token-creation URLs (see `reference/sync-pat-platforms.md`). Manual fix per repo: create the PAT, then `gh secret set SYNC_PAT --repo <owner>/<repo>` (interactive prompt, NOT `--body` which leaks to shell history). Without SYNC_PAT, the workflow posts a remediation comment with a `task-complete-helper.sh` workaround. `SYNC_PAT` is per-repo. Full setup and known false-positive (t2252): `reference/auto-dispatch.md`.
 
-Code changes need worktree + PR. Workers NEVER edit TODO.md.
+Code changes need worktree + PR. Implementation workers do not edit `TODO.md` as part of code fixes; supervisor/routine/issue-sync bookkeeping may update planning files under the allowlist below.
 
-**Main-branch planning exception (headless sessions only, t1990):** `TODO.md`, `todo/*`, and `README.md` are an explicit exception to the PR-only flow for **headless sessions** (pulse, CI workers, routines). Headless workers may commit and push these directly to `main` without worktree ceremony. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. The canonical repo directory (`~/Git/<repo>/`) stays on `main` always. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()` which short-circuits FALSE when none of `FULL_LOOP_HEADLESS` / `AIDEVOPS_HEADLESS` / `OPENCODE_HEADLESS` / `GITHUB_ACTIONS` is set.
+**Main-branch planning exception (headless bookkeeping only, t1990):** `TODO.md`, `todo/*`, and `README.md` may go direct to `main` only for headless supervisor/routine/issue-sync bookkeeping or an explicitly planning-only worker task. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()`.
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
 
@@ -880,7 +828,7 @@ Set fields based on the repo's purpose. Full field reference — `pulse`, `pulse
 1. **Claim the ID atomically**: `claim-task-id.sh --repo-path <target-repo> --title "description"` — allocates via CAS. NEVER grep TODO.md for the next ID; concurrent sessions collide.
 2. **Create the GitHub issue BEFORE pushing TODO.md**: Let `claim-task-id.sh` create it (default) or run `gh issue create` manually. Get the issue number first.
 3. **Add the TODO entry WITH `ref:GH#NNN` in a single commit+push**: issue-sync triggers on TODO.md pushes and creates issues for entries missing `ref:GH#`. A second commit creates a duplicate. Always include the ref in the same commit.
-4. **Code changes still need a worktree + PR**: TODO/issue creation is planning (direct to main). Code changes in the current repo follow the normal worktree + PR flow.
+4. **Code changes still need a worktree + PR**: TODO/issue creation is planning; direct-to-main applies only to headless bookkeeping flows. Interactive sessions still use a linked worktree/PR for planning edits.
 
 Full rules: `reference/planning-detail.md`
 
@@ -898,23 +846,7 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Worktree/session isolation (MANDATORY):** exactly one active session may own a writable worktree path at a time. Never reuse a live worktree across sessions (interactive or headless). If ownership conflict is detected, create a fresh worktree for the current task/session instead of continuing in the contested path.
 
-**Interactive issue ownership (MANDATORY — AI-driven, t2056):** When an interactive session engages with a GitHub issue you intend to **work on** — opening a worktree for it, claiming a new task, or picking up an existing issue mid-lifecycle — the agent MUST immediately call `interactive-session-helper.sh claim <N> <slug>`. This applies `status:in-review` + self-assignment, which the pulse's dispatch-dedup guard (`_has_active_claim`) already honours as a block. Unlike `origin:interactive` (which only marks creation-time origin), this is the session-ownership signal for picking up *any* issue mid-lifecycle.
-
-  **Eager stamp creation (t2943):** `claim-task-id.sh` now atomically writes a crash-recovery stamp when it self-assigns a newly created interactive task. This eliminates the stampless-claim window between `_auto_assign_issue` and the agent's subsequent `claim` call. For NEW task creation via `claim-task-id.sh`, the stamp is written automatically — the explicit `claim` call is still required when picking up an EXISTING issue mid-lifecycle.
-
-  **Scope limitation (GH#19861):** `claim` blocks the pulse's **dispatch** path only. It does NOT block the enrich path (which may overwrite issue title/body/labels), the completion-sweep path (which may strip status labels), or any other non-dispatch pulse operation. For full insulation from all pulse modifications (e.g., investigating a pulse bug), use `interactive-session-helper.sh lockdown <N> <slug>` instead — it applies `no-auto-dispatch` + `status:in-review` + self-assignment + conversation lock + audit comment.
-
-  **Auto-dispatch carve-out (GH#20946):** if the issue carries the `auto-dispatch` label (and is not also a `parent-task`), `claim` is a no-op by default — it warns and exits 0. The pulse must remain free to dispatch a worker; self-assigning would create a permanent dispatch block per the t1996/t2218 invariant. If you legitimately intend to implement an `auto-dispatch` issue yourself instead of letting a worker pick it up, pass `--implementing`: `interactive-session-helper.sh claim <N> <slug> --implementing`. The flag is the single source of truth for "I am the implementer" — the helper enforces the carve-out so the agent never has to label-inspect in its own head.
-
-- **Release is the agent's responsibility**, not the user's. Call `interactive-session-helper.sh release <N> <slug>` when the user signals completion ("done", "ship it", "moving on", "let a worker take over") or when they switch to a different issue. The user should never need to type a release command. **PR merge auto-release (t2413, t2429, t2811):** when either `pulse-merge.sh` or `full-loop-helper.sh merge` merges an `origin:interactive` PR with a `Resolves #NNN` link (or a `Ref #NNN` / `For #NNN` planning-PR keyword) and a claim stamp exists, `release_interactive_claim_on_merge` (from `shared-claim-lifecycle.sh`) fires automatically — no manual release required on merge. Manual release is still needed for task abandonment or mid-stream task switches.
-- **Session start:** run `interactive-session-helper.sh scan-stale` and act on any findings:
-  - Phase 1 (dead claims, t2414): stamps with dead PID AND missing worktree are **auto-released** in interactive TTY sessions. No manual intervention needed. Stamps with a live PID or existing worktree are never touched. Override: `AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0|1` or `--auto-release`/`--no-auto-release` flag.
-  - Phase 1a (stampless interactive claims, t2148, t2942): if issues with `origin:interactive` + self-assigned + no stamp surface, they are zombie claims blocking pulse dispatch. Unassign immediately (`gh issue edit N --repo SLUG --remove-assignee USER`) — the 1h autonomous recovery in `normalize_active_issue_assignments` (env: `STAMPLESS_INTERACTIVE_AGE_THRESHOLD`, default 3600s; was 24h until t2942) is a safety net, not a substitute for session-start cleanup.
-  - Phase 2 (closed-PR orphans): if a closed-not-merged PR with a still-open linked issue surfaces, surface it for human triage. Do NOT auto-reopen — the close may have been intentional. Closed by the deterministic merge pass (pulse-merge.sh) is a higher-severity signal.
-- **Offline `gh`:** the helper warns and continues (exit 0). A collision with a worker is harmless — the interactive work naturally becomes its own issue/PR.
-- **`sudo aidevops approve issue <N>`** (crypto-approval flow for contributor-filed NMR issues) also clears `status:in-review` idempotently when present — no new user-facing command, it's a passive side effect of the already-required approval step.
-- `/release-issue <N>` and `aidevops issue release <N>` exist as fallbacks only.
-- **Idle interactive PR handover (t2189):** `origin:interactive` PRs idle >4h with no active claim stamp auto-transfer to `origin:worker-takeover` for CI-fix/conflict pipelines. Apply `no-takeover` to opt out. Override via `IDLE_INTERACTIVE_HANDOVER_SECONDS` env var (default 14400). Full detail and env controls: `reference/session.md`.
+**Interactive issue ownership:** Mandatory claim/release rules live in Framework Rules > Git Workflow. Use `interactive-session-helper.sh claim <N> <slug>` for existing issues, `--implementing` for interactive takeover of `auto-dispatch` issues, `lockdown` for full pulse insulation, and `release` on handoff/abandonment. Session-start stale-claim details and idle handover: `reference/session.md`.
 
 **Traceability and signature footer:** Hard rules: see "Framework Rules > Git Workflow > Traceability" and "Framework Rules > Signature footer hallucination" above. Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
@@ -932,7 +864,7 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Git-readiness:** Non-git project with ongoing development? Flag: "No git tracking. Consider `git init` + `aidevops init`."
 
-**Review Bot Gate (t1382):** Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>`. Read bot reviews before merging. Full workflow: `reference/review-bot-gate.md`. **Override:** apply `coderabbit-nits-ok` label to a PR to auto-dismiss CodeRabbit-only CHANGES_REQUESTED reviews on the next merge pass. Label is ignored if a human reviewer also requested changes (t2179). **Additive suggestions:** when a bot posts a `COMMENTED` review with scope-expanding (not correctness-fixing) suggestions, file as a follow-up task rather than expanding the PR. Decision tree: `reference/review-bot-gate.md` §"Additive suggestion decision tree". Full rule and rationale: see "Framework Rules > Review Bot Gate (t1382)" above.
+**Review Bot Gate (t1382):** Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>` and read bot reviews. Additive bot suggestions become follow-up tasks, not PR scope creep. Full workflow/overrides: `reference/review-bot-gate.md`.
 
 **Qlty Regression Gate (t2065, GH#18773):** CI fails if a PR introduces a net increase in `qlty smells` count. Docs-only PRs skip automatically. Override: add `ratchet-bump` label with justification. Helper: `qlty-regression-helper.sh` (supports `--dry-run`).
 
@@ -955,20 +887,9 @@ Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR 
 
 **Workflow Cascade Vulnerability Lint (t2229):** `.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows containing the cascade-vulnerable combination: label-like event types (`labeled`, `unlabeled`, `assigned`, etc.) + `cancel-in-progress: true` + no mitigation (`paths-ignore` or event-action guard). See t2220 for the failure mode (15 cancelled runs in ~2s). Helper: `.agents/scripts/workflow-cascade-lint.sh` (supports `--dry-run` for local checks). Override: apply `workflow-cascade-ok` label AND add a `## Workflow Cascade Justification` section to the PR body.
 
-**Reusable-workflow architecture (t2770):** Framework workflows that need to run identically across many repos (starting with `issue-sync.yml`) are shipped as **reusable workflows** (`on: workflow_call:`). Downstream repos carry a ~45-line caller YAML (`.github/workflows/<name>.yml`) that `uses: marcusquinn/aidevops/.github/workflows/<name>-reusable.yml@<ref>` and declares its own triggers. Framework shell scripts are fetched at runtime via a secondary `actions/checkout` — downstream repos need **zero** `.agents/scripts/` files. Canonical caller templates live at `.agents/templates/workflows/`. Pinning options: `@main` (auto-update, default), `@v3.9.0` (stability), `@<sha>` (exact). Full architecture, migration guide, and pinning tradeoffs: `reference/reusable-workflows.md`.
+**Reusable workflows:** downstream repos use thin caller YAMLs that reference aidevops reusable workflows. Drift tools: `aidevops check-workflows`, `aidevops sync-workflows --apply`. Full architecture/pinning: `reference/reusable-workflows.md`.
 
-**Workflow drift detector (t2778):** `aidevops check-workflows` iterates `~/.config/aidevops/repos.json` and classifies each repo's `.github/workflows/issue-sync.yml` against the canonical caller template at `.agents/templates/workflows/issue-sync-caller.yml`. Classifications: `CURRENT/CALLER`, `CURRENT/SELF-CALLER`, `DRIFTED/CALLER`, `NEEDS-MIGRATION`, `NO-WORKFLOW`, `LOCAL-ONLY`, `NO-TEMPLATE`. Exit code 1 if any repo is `DRIFTED/CALLER` or `NEEDS-MIGRATION` (suitable for CI gates). Flags: `--repo OWNER/REPO`, `--json`, `--verbose`.
-
-**Workflow drift resync (t2779):** `aidevops sync-workflows` consumes the detector output and either installs (NEEDS-MIGRATION) or refreshes (DRIFTED/CALLER) the canonical caller template in each target repo. Default is `--dry-run` (report planned actions); pass `--apply` to write, commit, branch, push, and open a PR per repo. Flags: `--repo OWNER/REPO` (single repo), `--ref @vX` (target pin for new installs), `--force-ref` (overwrite existing pins), `--branch NAME` (override default `chore/workflow-sync-YYYYMMDD`), `--json`. Skips repos with dirty working tree or not on default branch. Never touches the aidevops repo itself.
-
-**Badge management (t2975):** `aidevops badges` manages README badge blocks and the LOC badge workflow across all registered repos. Full documentation: `.agents/aidevops/badges.md`.
-
-- **`aidevops badges render <slug>`** — print the canonical badge block for a repo (delegates to `readme-badges-helper.sh render`).
-- **`aidevops badges check [--repo OWNER/REPO] [--json] [--verbose]`** — cross-repo drift detection. Classifies all non-local-only repos as `CURRENT` / `DRIFTED` / `NO-BLOCK` / `NO-README` / `LOCAL-ONLY` / `EXTERNAL`. Exit 1 on drift. Check enumerates all repos; owned-org filter applies only to write operations.
-- **`aidevops badges sync [--repo OWNER/REPO] [--apply]`** — inject the canonical badge block into README.md and install the loc-badge caller workflow. Default is dry-run. `--apply` writes, commits, pushes, and opens a PR per repo. Restricted to owned-org repos (see `badge-orgs.conf`). Helper: `.agents/scripts/badges-sync-helper.sh`.
-- **`aidevops badges install [--repo OWNER/REPO] [--apply]`** — install the loc-badge caller workflow only (skips README badge block injection).
-- **Owned-org filter:** sync/install operations only touch repos whose org is in the owned-orgs list (`marcusquinn`, `awardsapp`, `essentials-com`, `wpallstars`). Override: create `~/.config/aidevops/badge-orgs.conf` with one org per line.
-- **`aidevops init` badge hook:** when initializing a fresh repo with a known `repo_slug`, `cmd_init` automatically installs the loc-badge caller workflow and seeds the canonical badge block in README.md. Also reminds about `SYNC_PAT` for GitHub Actions.
+**Badge management (t2975):** `aidevops badges render|check|sync|install` manages README badge blocks and LOC badge workflows. Full docs: `.agents/aidevops/badges.md`.
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
@@ -986,7 +907,7 @@ For setup workflow, safety gates, and scheduling patterns, use `/routine` or rea
 
 ## Agent Routing
 
-Not every task is code. Full routing table, rules, and dispatch examples: `reference/agent-routing.md`.
+Not every task is code. Clear trigger words should route to specialists before Build+: SEO/ranking/schema, WordPress/WP/plugin, content/video/social, ads/CRO/outreach, legal/privacy/contract, research/compare/market, schedule/cron/pulse, finance/invoice. Full routing table and dispatch examples: `reference/agent-routing.md`; domain inventory: `reference/domain-index.md`.
 
 ## Worker Diagnostics
 
@@ -996,17 +917,9 @@ Headless workers failing, stalling, or stuck in dispatch loops: `reference/worke
 
 **Pre-dispatch eligibility gate (t2424):** Catches already-resolved issues (CLOSED, `status:done`/`status:resolved`, linked PR merged in last 5 min) before spawning a worker. Fail-open on API errors. Bypass: `AIDEVOPS_SKIP_PREDISPATCH_ELIGIBILITY=1`. Full detail and env controls: `reference/worker-diagnostics.md`.
 
-**GraphQL rate-limit protection (t2574, t2744, t2902):** `shared-gh-wrappers.sh` auto-routes via REST API when GraphQL remaining ≤ 1500 points, splitting load across the separate 5000/hr REST core pool while GraphQL still has reserve for ops without REST equivalents. Covers `gh_create_issue`, `gh_create_pr`, `gh_issue_comment`, `gh_issue_edit_safe`, `set_issue_status`, issue read paths (t2689), and `pulse-batch-prefetch-helper.sh::_refresh_owner_{issues,prs}` which previously bypassed the wrapper because they call `gh search` directly (t2902 — proactive guard now skips `gh search` and goes straight to per-slug REST when budget is low). Env: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD` (default 1500 since t2902; was 1000 since t2744; was 10 since t2574 — was reactive, now proactive).
-
-**gh API call instrumentation (t2902):** Every routed `gh` call records a TSV line at `~/.aidevops/logs/gh-api-calls.log` partitioned by endpoint family (`graphql | rest | search-graphql | search-rest | other`) and caller script. The pulse-batch-prefetch refresh cycle aggregates to `~/.aidevops/logs/gh-api-calls-by-stage.json` so heavy GraphQL consumers can be identified. Helper: `gh-api-instrument.sh` (sourceable + CLI: `record | report | trim | clear`). Env: `AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1` (no-op all calls), `AIDEVOPS_GH_API_LOG`, `AIDEVOPS_GH_API_REPORT`, `AIDEVOPS_GH_API_LOG_MAX_LINES`. Fail-open everywhere — instrumentation never breaks the host script.
-
-**Pulse circuit breaker (t2690, t2744, t2896):** Pauses ALL worker dispatch when GraphQL budget < 5% (250/5000 points) — emergency floor only. Auto-resets when budget recovers. Earlier 30% reserve (t2744) was redundant once t2689 added read-side REST fallback (Apr 2026); operational data showed the breaker fired alongside exhaustion rather than preventing it. With both write-side (t2574) and read-side (t2689) REST fallbacks active, in-flight ops are protected by the separate 5000/hr REST core pool. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Env: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD` (canonical default in `.agents/configs/pulse-rate-limit.conf`; env var takes precedence over conf file), `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1` (emergency bypass).
+**GitHub API budget:** REST fallback, GraphQL circuit breaker, `gh-api-instrument.sh`, and pulse cache priming details live in `reference/worker-diagnostics.md`. Start with `worker-activity-helper.sh summary` and `pulse-diagnose-helper.sh pr <N>` for live diagnosis.
 
 **Pulse decision correlation (t2714):** `pulse-diagnose-helper.sh pr <N> [--repo <slug>]` explains what the pulse did on any PR and why, classified against a 60+ rule inventory. Use `--verbose` for raw log lines, `--json` for programmatic output. Full detail: `reference/worker-diagnostics.md`.
-
-**Pulse cache priming (t2992 + t2994):** Every pulse cycle invocation pre-warms the L3 per-owner JSON caches via `_pulse_prime_caches_if_stale` in `pulse-wrapper.sh::main()` — gated by a sentinel staleness check so steady-state launchd respawns (every 120s) skip while post-deploy/long-quiet boots prime. Runs after the lock + canary + session + dedup gates pass and BEFORE `prefetch_state` inside the cycle, so the cycle finds warm caches and takes the t1975 delta path (only items with `updatedAt > last_prefetch`) instead of the cold-cache full fetch. Eliminates the structural ~210s `prefetch_state` cost on the first post-restart cycle that t2989 (per-iteration timeout) and t2988 (reconcile budget) cannot address. Counters: `pulse_cache_prime_runs` and `pulse_cache_prime_failures` in `pulse-stats.json`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run` (mtime). Log: `~/.aidevops/logs/pulse-cache-prime.log`. Opt out: `AIDEVOPS_SKIP_CACHE_PRIME=1`. Threshold override: `AIDEVOPS_PULSE_PRIME_MAX_AGE` (seconds, default 1800 = 30 min).
-
-**t2994 background:** the original t2992 implementation hooked into `pulse-lifecycle-helper.sh::_start`, but launchd's `KeepAlive` auto-respawns pulse-wrapper.sh inside the helper's `stop → sleep → start` window — `_start` then early-returns on `_is_running` and never calls the prime helper. Under launchd-managed pulse on macOS (the canonical path), the lifecycle hook never fired. The t2994 fix moves priming into pulse-wrapper.sh::main() itself, so it fires regardless of how pulse boots (manual restart, launchd respawn, `aidevops update`, `setup.sh` ensure-running). The staleness gate prevents running it on every 120s launchd respawn.
 
 ## Self-Improvement
 
@@ -1022,15 +935,9 @@ When `rtk` installed, prefer `rtk` prefix for: `git status/log/diff`, `gh pr lis
 - YAML frontmatter: tools, model tier, MCP dependencies.
 - Progressive disclosure: pointers to subagents, not inline content.
 
-## Memory Recall (MANDATORY — t2050)
+## Memory Recall
 
-Run before any non-trivial task (code change, PR review, debugging, design):
-
-```bash
-memory-helper.sh recall --query "<1-3 keywords>" --limit 5
-```
-
-Store at session end: `memory-helper.sh store --content "<lesson>" --confidence high|medium|low`. This is independent from the t2046 git/gh discovery pass. Full mandate: see "Framework Rules > Memory recall (MANDATORY — t2050)" above.
+Mandatory rule: see Framework Rules > Memory recall (t2050). Conversational lookup details: `reference/memory-lookup.md`.
 
 ## Conversational Memory Lookup
 
@@ -1055,7 +962,7 @@ If unsure which command maps to the intent: `ls ~/.aidevops/agents/scripts/comma
 
 ## Capabilities
 
-Model routing, memory, orchestration, browser, skills, sessions, auth recovery: `reference/orchestration.md`, `reference/services.md`, `reference/session.md`.
+Model routing, Bundle presets, Memory, Orchestration, Browser, Quality, Sessions, skills, auth recovery: `reference/orchestration.md`, `reference/services.md`, `reference/session.md`.
 
 ## Observability
 

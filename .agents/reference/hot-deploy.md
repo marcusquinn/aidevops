@@ -101,7 +101,7 @@ AIDEVOPS_FORCE_HOTFIX_BANNER=1 .agents/scripts/aidevops-update-check.sh --intera
 
 ## Related
 
-- `prompts/build.txt` "Pulse restart after deploying pulse script fixes" — existing manual restart rule
+- `AGENTS.md` "Pulse restart after deploying pulse script fixes" — existing manual restart rule
 - `reference/cross-runner-coordination.md` — multi-runner coordination
 - `reference/auto-update.md` — regular update mechanism
 - t2394 (CLAIM_VOID) — complementary fix for cross-runner poisoning

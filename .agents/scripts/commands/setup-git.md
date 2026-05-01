@@ -227,7 +227,7 @@ walkthrough.
 - `aidevops/onboarding.md` — per-account auth (the `/onboarding` command)
 - `reference/sync-pat-platforms.md` — PAT URL templates and scopes per platform
 - `reference/reusable-workflows.md` — cross-account secrets architecture and caller template
-- `prompts/build.txt` "Security Rules" — secret handling principles
+- `AGENTS.md` "Security Rules" — secret handling principles
 - `tools/credentials/gopass.md` — preferred secret store for AIDEVOPS env vars
 - t2449 (auto-merge.md) — why SYNC_PAT matters for worker auto-merge
 - t2374 (auto-dispatch.md) — original SYNC_PAT advisory infrastructure

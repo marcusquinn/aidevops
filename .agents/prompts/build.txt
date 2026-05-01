@@ -4,8 +4,9 @@
 # This file is intentionally a near-empty placeholder.
 #
 # As of t2878, the framework rules previously kept here were consolidated into
-# .agents/AGENTS.md so they reach all 11 supported runtimes via native AGENTS.md
-# loading (only OpenCode and Claude Code consumed this file before).
+# .agents/AGENTS.md so they reach runtimes that load AGENTS.md natively or via
+# aidevops prompt-injection adapters (only OpenCode and Claude Code consumed
+# this file directly before).
 #
 # The file is preserved so the OpenCode `{file:prompts/build.txt}` injection
 # channel (lib/agent_config.py:174-176) remains a valid no-op rather than
@@ -13,5 +14,5 @@
 # because the rules are already injected via AGENTS.md.
 #
 # DO NOT add framework rules here — edit .agents/AGENTS.md "Framework Rules"
-# instead. Adding content here would only reach 2 of 11 runtimes and silently
-# diverge from the canonical source.
+# instead. Adding content here would only reach runtimes still wired to this
+# placeholder and silently diverge from the canonical source.

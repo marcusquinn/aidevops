@@ -167,11 +167,11 @@ check_agents_md_extractions() {
 		"$AGENTS_MD" \
 		"## Self-Improvement|framework-issue-helper\.sh"
 
-	# Agent Routing: reference file is a supplement; inline content kept in AGENTS.md
-	check_inline_only \
-		"Agent Routing — inline + reference/agent-routing.md supplement" \
+	check_extraction \
+		"Agent Routing" \
 		"$AGENTS_MD" \
-		"## Agent Routing|headless-runtime-helper\.sh"
+		"agent-routing.md" \
+		"reference/agent-routing\.md"
 
 	return 0
 }

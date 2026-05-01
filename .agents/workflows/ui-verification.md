@@ -29,7 +29,7 @@ tools:
 
 ### 1. Screenshots + Error Check
 
-> **NEVER `fullPage: true`** for AI vision review — exceeds 8000px, hard-crashes session. Viewport-sized only. See `prompts/build.txt` "Screenshot Size Limits".
+> **NEVER `fullPage: true`** for AI vision review — exceeds 8000px, hard-crashes session. Viewport-sized only. See `reference/screenshot-limits.md` and AGENTS.md "Screenshot Size Limits".
 
 Capture `before-` baseline before changes, `after-` after. **Responsive-critical edge cases:** also test `mobile-sm` 320x568, `mobile-landscape` 844x390, `tablet-landscape` 1194x834.
 

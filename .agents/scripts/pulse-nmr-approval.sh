@@ -265,7 +265,7 @@ issue_has_required_approval() {
 # Breaker trip detection now lives in `_nmr_application_is_circuit_breaker_trip`
 # below. `_nmr_applied_by_maintainer` consults both helpers and routes
 # breaker trips to "preserve NMR" while still auto-clearing
-# creation defaults. See t2386 brief and `prompts/build.txt`
+# creation defaults. See t2386 brief and AGENTS.md
 # "Cryptographic issue/PR approval" for the split semantics.
 #
 # Creation-default signatures detected (t2686 extended set):

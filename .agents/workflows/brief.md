@@ -29,7 +29,7 @@ tools:
 
 ## Pre-composition Checks (MANDATORY)
 
-Before composing any brief, issue body, or PR description that will result in code changes, perform ALL of the following checks. These consolidate three mandatory rules from `prompts/build.txt` (t2046, t2050, GH#17832-17835) into the briefing workflow.
+Before composing any brief, issue body, or PR description that will result in code changes, perform ALL of the following checks. These consolidate three mandatory rules from `AGENTS.md` (t2046, t2050, GH#17832-17835) into the briefing workflow.
 
 ### 1. Memory recall (t2050)
 
@@ -144,4 +144,4 @@ for the classified tier. Load on demand — do not inline the format rules.
 - `reference/large-file-split.md` — Playbook for shell library splits (scanner-filed issues, PR body template)
 - `tools/build-agent/build-agent.md` — "Designing tier-aware output" section
 - `tools/code-review/code-simplifier.md` — Primary consumer for simplification issues
-- `prompts/build.txt` — Traceability rules, signature footer, PR title format
+- `AGENTS.md` — Traceability rules, signature footer, PR title format

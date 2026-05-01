@@ -53,7 +53,7 @@ Before composing any framework-bug report, run these 5 checks. They are shared w
    gh pr list --state open --search "<keywords>" --limit 5
    ```
 
-   If a recent commit touches the exact file/function you're investigating, verify the bug still reproduces on HEAD before filing. Stale symptoms from a pre-deploy state (see `prompts/build.txt` section 10) are not bugs — close the investigation.
+   If a recent commit touches the exact file/function you're investigating, verify the bug still reproduces on HEAD before filing. Stale symptoms from a pre-deploy state (see `AGENTS.md` "Stale-symptom investigations") are not bugs — close the investigation.
 
 3. **File:line verification**: For every file reference in the brief, run `git ls-files <path>` or `sed -n "<line>p" <path>` to confirm the reference exists and the content matches the claim. Phantom line refs force the worker to spend the first hour re-locating the code (GH#17832-17835).
 

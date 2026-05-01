@@ -55,7 +55,7 @@ tools:
 
 ## Quality Standards (Mandatory)
 
-All code changes must maintain these standards. Also enforced in `prompts/build.txt`.
+All code changes must maintain these standards. Also enforced in `AGENTS.md` "Quality Standards".
 
 **Platforms**: SonarCloud (A-grade), CodeFactor (A-grade), GitHub Actions (all checks pass), ShellCheck (zero violations)
 
@@ -98,5 +98,5 @@ Detailed requirements for these areas live in dedicated files:
 
 - **Security**: `security-requirements.md` -- credential management, incident response, compliance
 - **Architecture**: `architecture.md` -- service patterns, extension guide, naming conventions
-- **Quality enforcement**: `prompts/build.txt` -- write-time linting, pre-commit checks
+- **Quality enforcement**: `AGENTS.md` -- write-time linting, pre-commit checks
 - **Monitoring & observability**: Health checks, error alerting, and audit logging are implemented per-service in each `*-helper.sh` script

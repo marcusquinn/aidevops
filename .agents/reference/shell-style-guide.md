@@ -3,7 +3,7 @@
 
 # Shell Helper Style Guide
 
-Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never assign `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI. See `prompts/build.txt` → "Quality Standards".
+Canonical rules for `.agents/scripts/**/*.sh`: **source `shared-constants.sh` OR use `[[ -z "${VAR+x}" ]]` guards**. Never assign `RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, or `NC` at top level without a guard. Never `readonly` those names outside `shared-constants.sh`. Enforcement: `shell-init-pattern-check.sh` + CI. See `AGENTS.md` → "Quality Standards".
 
 **Incident rationale (GH#18702):** On 2026-04-09, `init-routines-helper.sh:22` had an unguarded `GREEN='\033[0;32m'`. `setup.sh` sources it after `shared-constants.sh` (which has `readonly GREEN`). Under `set -Eeuo pipefail`, the re-assignment fatally aborted `setup.sh`, silently skipping `setup_privacy_guard` and `setup_canonical_guard` — **auto-update broken for 4 days** (cascade: GH#18693, fixed: PR #18728).
 
@@ -384,5 +384,5 @@ PR #21797 (t3058) — `worker-activity-watchdog.sh` defer-marker writes to `$OUT
 - **Consolidation parent**: GH#18735 (t2053, closed — all phases complete as of PR #19180)
 - **Canonical source**: `.agents/scripts/shared-constants.sh`
 - **Prior art**: Pattern B: `watercrawl-helper.sh:58`, `security-helper.sh:22`, `routine-log-helper.sh:30`. Include-guard: `circuit-breaker-helper.sh:64-70`.
-- **Build-time rule**: `prompts/build.txt` → "Quality Standards"
+- **Build-time rule**: `AGENTS.md` → "Quality Standards"
 - **Architecture pointer**: `aidevops/architecture.md` → "Shell Helper Initialization"

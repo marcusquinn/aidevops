@@ -241,4 +241,4 @@ Code bypasses an established abstraction layer, accessing internals directly ins
 - `tools/code-review/auditing.md` — audit services and workflows
 - `tools/build-agent/agent-review.md` — agent review checklist
 - `tools/code-review/code-standards.md` — quality rules (ShellCheck, markdownlint)
-- `prompts/build.txt` — framework-wide quality rules
+- `AGENTS.md` — framework-wide quality rules

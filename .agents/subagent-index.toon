@@ -1,13 +1,13 @@
-<!--TOON:agents[9]{name,file,purpose,model_tier}:
-Build+,build-plus.md,Enhanced Build with context tools,opus
-Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet
-Business,business.md,Company orchestration including financial ops invoicing receipts,sonnet
-Content,content.md,All media production and distribution including AI video generation and social media,opus
-Health,health.md,Health and wellness,opus
-Legal,legal.md,Legal compliance,opus
-Marketing-Sales,marketing-sales.md,Marketing strategy email campaigns paid ads CRO direct response copy CRM pipeline proposals outreach,opus
-Research,research.md,Research and analysis tasks,gemini/grok
-SEO,seo.md,SEO optimization and analysis,opus
+<!--TOON:agents[9]{name,file,purpose,model_tier,triggers}:
+Build+,build-plus.md,Enhanced Build with context tools,opus,code fix refactor bug ci tests pr implementation
+Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet,schedule cron dispatch pulse monitoring automation routine
+Business,business.md,Company orchestration including financial ops invoicing receipts,sonnet,company ops finance invoice receipts strategy runners
+Content,content.md,All media production and distribution including AI video generation and social media,opus,blog video script social newsletter podcast image voice
+Health,health.md,Health and wellness,opus,health wellness nutrition fitness medical lifestyle
+Legal,legal.md,Legal compliance,opus,legal compliance privacy policy terms contract gdpr
+Marketing-Sales,marketing-sales.md,Marketing strategy email campaigns paid ads CRO direct response copy CRM pipeline proposals outreach,opus,ads cro email crm copy outreach proposals sales funnel
+Research,research.md,Research and analysis tasks,gemini/grok,research compare market competitor technical analysis realtime
+SEO,seo.md,SEO optimization and analysis,opus,seo ranking keyword schema gsc sitemap backlinks
 -->
 
 <!--TOON:model_tiers[7]{tier,model_id,use_case}:

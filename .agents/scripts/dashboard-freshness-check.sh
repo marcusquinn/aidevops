@@ -162,7 +162,7 @@ _format_age() {
 extract_last_refresh() {
 	# Plain grep, not regex engine, so backticks/code fences/emphasis around
 	# the value don't shield the marker — same robustness invariant as the
-	# PR-body closing-keyword regex (see prompts/build.txt "Traceability").
+	# PR-body closing-keyword regex (see AGENTS.md "Traceability").
 	grep -oE 'last_refresh:[[:space:]]*[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z' 2>/dev/null \
 		| head -n1 \
 		| sed -E 's/^last_refresh:[[:space:]]*//'

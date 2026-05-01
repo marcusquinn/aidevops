@@ -362,7 +362,7 @@ _dps_labels_has() {
 # Check whether a PR body contains a recognised issue reference (t2708).
 #
 # Recognises three reference patterns, matching the conventions documented in
-# `prompts/build.txt` ("Parent-task PR keyword rule") and the closing-keyword
+# `AGENTS.md` ("Parent-task PR keyword rule") and the closing-keyword
 # regex used by `_extract_linked_issue` in pulse-merge.sh:
 #
 #   - Closing keywords: `(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#NNN` (case-

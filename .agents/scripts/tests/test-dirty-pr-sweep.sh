@@ -301,7 +301,7 @@ esac
 # =============================================================================
 # Test 6b: origin:interactive WITH `For #NNN` + 10d old → notify
 #          (t2711 Q2) Within the 14d extended window. Planning-PR pattern from
-#          prompts/build.txt "Parent-task PR keyword rule".
+#          AGENTS.md "Parent-task PR keyword rule".
 # =============================================================================
 
 PR_INTERACTIVE_FOR=$(mkpr 620 "DIRTY" \

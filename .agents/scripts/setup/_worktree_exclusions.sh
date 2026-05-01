@@ -80,7 +80,7 @@ setup_worktree_exclusions() {
 #######################################
 # Post a one-time advisory if Backblaze is detected and the user has not yet
 # dismissed it. Advisory file is written under ~/.aidevops/advisories/ per the
-# existing pattern documented in prompts/build.txt "Security".
+# existing pattern documented in AGENTS.md "Security Rules".
 #######################################
 _setup_worktree_exclusions_backblaze_advisory() {
 	local helper="$1"

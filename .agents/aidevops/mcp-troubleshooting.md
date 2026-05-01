@@ -33,7 +33,7 @@ When an MCP server fails to start, its tool schemas can remain in the tool list.
 # Restart runtime to reload tool list.
 ```
 
-**Agent rule:** On `MCP error -32000`, `Connection closed`, `spawn ENOENT`, or similar startup failures, mark that server unavailable for the session and do not retry it. See `prompts/build.txt` "Errored MCP Server Guard".
+**Agent rule:** On `MCP error -32000`, `Connection closed`, `spawn ENOENT`, or similar startup failures, mark that server unavailable for the session and do not retry it. See `AGENTS.md` "Errored MCP Server Guard".
 
 ## Common Errors
 

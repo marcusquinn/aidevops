@@ -30,7 +30,7 @@ NEVER modify under any safety level:
 
 | File | Reason |
 |------|--------|
-| `prompts/build.txt` security sections (rules 7–8) | Prompt injection and secret handling — core security posture |
+| `AGENTS.md` security sections | Prompt injection and secret handling — core security posture |
 | `tools/credentials/gopass.md` | Credential management — modification could expose secrets |
 | `tools/security/prompt-injection-defender.md` | Security threat model — modification weakens defenses |
 | `hooks/git_safety_guard.py` | Git safety hook — modification bypasses pre-edit checks |
@@ -46,8 +46,7 @@ Require `SAFETY_LEVEL=elevated`. Under `standard`, skip hypotheses targeting the
 
 | File | Reason |
 |------|--------|
-| `AGENTS.md` | Primary user guide — changes affect all users |
-| `prompts/build.txt` (non-security sections) | Core instruction set — high blast radius |
+| `AGENTS.md` (non-security sections) | Primary user guide and core instruction set — high blast radius |
 | `workflows/git-workflow.md` | Git workflow — changes affect all PRs and commits |
 | `workflows/pre-edit.md` | Pre-edit gate — changes affect all file modifications |
 | `reference/agent-routing.md` | Routing table — changes affect all task dispatch |

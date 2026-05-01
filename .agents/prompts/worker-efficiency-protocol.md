@@ -66,10 +66,10 @@ ai_research(prompt: "Find all functions that dispatch workers in pulse-wrapper.s
 - Fail fast: read target files, verify imports/dependencies, and stop if the task is already done.
 - Read only needed line ranges, keep commits concise, and after one failed approach try one fundamentally different strategy before `BLOCKED`.
 - Replan when stuck. Do not patch a broken path incrementally.
-- **Skip signature footers** when reading GH issue/PR threads. Content after `<!-- aidevops:sig -->` or `---` followed by `[aidevops.sh]` is operational telemetry (version, tokens, timing) — not task-relevant. Never visit URLs in signature footers (aidevops.sh, opencode.ai). See build.txt rule #8a.
-- **Skip provenance metadata** in quality-debt issues. Content inside `<!-- provenance:start/end -->` markers (Source PR, Reviewers, View comment links, generating script) records origin — not implementation guidance. Read only the file:line targets and code blocks. See build.txt rule #8b.
-- **Skip bot comment noise** on PR threads. CodeRabbit internal state (`<!-- internal state start/end -->`), review-skipped notices, quota warnings, SonarCloud/Codacy badge summaries — none are actionable. Extract only specific file:line findings from bot reviews. Use `gh pr checks` for pass/fail. See build.txt rule #8c.
-- **Skip operational comments** on issue threads. Dispatch claims (`<!-- ops:start/end -->`), worker PIDs, kill notifications, approval instructions — these are audit trail, not implementation context. See build.txt rule #8d.
+- **Skip signature footers** when reading GH issue/PR threads. Content after `<!-- aidevops:sig -->` or `---` followed by `[aidevops.sh]` is operational telemetry (version, tokens, timing) — not task-relevant. Never visit URLs in signature footers (aidevops.sh, opencode.ai). See `AGENTS.md` "Signature footer skip when reading".
+- **Skip provenance metadata** in quality-debt issues. Content inside `<!-- provenance:start/end -->` markers (Source PR, Reviewers, View comment links, generating script) records origin — not implementation guidance. Read only the file:line targets and code blocks. See `AGENTS.md` "Provenance metadata skip when reading".
+- **Skip bot comment noise** on PR threads. CodeRabbit internal state (`<!-- internal state start/end -->`), review-skipped notices, quota warnings, SonarCloud/Codacy badge summaries — none are actionable. Extract only specific file:line findings from bot reviews. Use `gh pr checks` for pass/fail. See `AGENTS.md` "Bot comment noise skip when reading".
+- **Skip operational comments** on issue threads. Dispatch claims (`<!-- ops:start/end -->`), worker PIDs, kill notifications, approval instructions — these are audit trail, not implementation context. See `AGENTS.md` "Operational comment skip when reading".
 
 ## 4. Model escalation before BLOCKED (GH#14964 — MANDATORY)
 

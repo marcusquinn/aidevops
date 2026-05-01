@@ -24,7 +24,7 @@ Context compaction drops operational state unless written to disk. Use `/checkpo
 - Load: `session-checkpoint-helper.sh load`
 - Continuation prompt: `session-checkpoint-helper.sh continuation`
 - Checkpoint after each task, before large operations, and after PR creation or merge.
-- Full docs: `workflows/session-manager.md` "Compaction Resilience". Survival rules: `prompts/build.txt`.
+- Full docs: `workflows/session-manager.md` "Compaction Resilience". Survival rules: `AGENTS.md` "Context Compaction Survival".
 
 ## Git Workflow Detail
 
@@ -77,7 +77,7 @@ Use `.local` domains with SSL via Traefik + mkcert. Primary doc: `services/hosti
 Development → @code-standards → /code-simplifier → /linters-local → /pr review → /postflight
 ```
 
-Quick commands: `linters-local.sh` (pre-commit), `/pr review` (full), `version-manager.sh release [type]`. Bot reviewer feedback: follow `prompts/build.txt` — dismiss incorrect suggestions with evidence; address valid ones.
+Quick commands: `linters-local.sh` (pre-commit), `/pr review` (full), `version-manager.sh release [type]`. Bot reviewer feedback: follow `AGENTS.md` "Review Bot Gate" / "AI Suggestion Verification" — dismiss incorrect suggestions with evidence; address valid ones.
 
 ## Agents & Subagents
 
@@ -93,6 +93,6 @@ Orchestration agents may create drafts for reusable parallel-processing context.
 
 ## Security & Working Directories
 
-- Security rules: `prompts/build.txt`.
+- Security rules: `AGENTS.md` "Security Rules".
 - Config templates: `configs/*.json.txt` (committed); working configs: `configs/*.json` (gitignored).
 - Credential docs: `tools/credentials/gopass.md`, `tools/credentials/api-key-setup.md`.

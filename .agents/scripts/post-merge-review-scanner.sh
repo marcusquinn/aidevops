@@ -58,7 +58,7 @@
 #        then apply needs-maintainer-review. The human reads a ready-to-
 #        approve recommendation, not a blank triage task.
 #
-#   This is the same rule as prompts/build.txt "Reasoning responsibility":
+#   This is the same rule as AGENTS.md "Reasoning responsibility":
 #   the model does the thinking and delivers a recommendation. Applying
 #   needs-maintainer-review unconditionally at creation time is that
 #   anti-pattern at the dispatch layer — punting analysis to a human who
@@ -69,8 +69,8 @@
 #   helper, closes with "premise falsified — no write path exists" — done
 #   in minutes, with zero human touches.
 #
-# Prior art for the false-premise risk: prompts/build.txt section 6a
-# (AI-generated issue quality, GH#17832-17835). The prompts/build.txt
+# Prior art for the false-premise risk: AGENTS.md "AI-Generated Issue Quality"
+# (AI-generated issue quality, GH#17832-17835). The AGENTS.md
 # principle "Reasoning responsibility" and AGENTS.md "origin:interactive
 # implies maintainer approval" are both echoes of the same rule: humans
 # approve decisions, they don't re-do analysis.
@@ -425,8 +425,8 @@ with a wontfix rationale.
 This issue is **auto-created from review bot output** and dispatched
 directly to you. Review bots can be wrong: hallucinated line refs, false
 premises about codebase structure, template-driven sweeps without
-measurements (see GH#17832-17835 for prior art and \`prompts/build.txt\`
-section 6a). **Do not assume the bot is correct.** Verify before acting.
+measurements (see GH#17832-17835 for prior art and \`AGENTS.md\`
+"AI-Generated Issue Quality"). **Do not assume the bot is correct.** Verify before acting.
 
 You must end in exactly one of three outcomes — no fourth "hand it back
 to the human" path exists. Humans approve decisions; they do not re-do
@@ -475,7 +475,7 @@ Then apply \`needs-maintainer-review\` and stop. The human wakes up to a
 ready-to-approve recommendation, not a blank task.
 
 > **Ambiguity about scope or style is not Outcome C.** Per
-> \`prompts/build.txt\` "Reasoning responsibility", the model does the
+> \`AGENTS.md\` "Reasoning responsibility", the model does the
 > thinking and delivers a recommendation. Only escalate what is genuinely
 > a maintainer-only decision.
 MD
