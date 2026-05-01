@@ -1235,6 +1235,18 @@ _run_canary_test() {
 	if [[ -f "$_oc_auth" ]]; then
 		cp "$_oc_auth" "${_canary_data_dir}/opencode/auth.json" 2>/dev/null || true
 	fi
+	# t3362: Mirror the real worker auth path. A multi-account OAuth pool can
+	# have the shared auth.json pointing at a cooldown/rate-limited account while
+	# another account is healthy. Workers rotate their isolated auth.json before
+	# launch; the canary must do the same or it blocks dispatch with a false
+	# no_worker_process failure before the worker gets a chance to rotate.
+	if [[ -f "${_canary_data_dir}/opencode/auth.json" ]] && declare -F _maybe_rotate_isolated_auth >/dev/null 2>&1; then
+		local _canary_provider
+		_canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "anthropic")
+		[[ -n "$_canary_provider" ]] || _canary_provider="anthropic"
+		XDG_DATA_HOME="$_canary_data_dir" _maybe_rotate_isolated_auth \
+			"${_canary_data_dir}/opencode/auth.json" "$_canary_provider" || true
+	fi
 
 	# Process-tree timeout: the `opencode` npm distribution ships a Node.js
 	# wrapper (#!/usr/bin/env node) that spawns the Go binary (.opencode)

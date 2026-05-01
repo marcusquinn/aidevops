@@ -19,6 +19,7 @@
 #   2. Cooldown in past (0)    → rotate helper is NOT invoked
 #   3. Missing jq              → exits 0 without action (best-effort guard)
 #   4. Missing pool file       → exits 0 without action (best-effort guard)
+#   7. Canary preflight        → invokes the same isolated rotation path before opencode
 #
 # Strategy: extract the function definition via `declare -f` from a
 # subshell source (side-effect-isolated), then eval it into the test
@@ -315,6 +316,32 @@ else
 	fail "unknown-access expectations not met (rc=$rc, access=$unchanged_access, calls=$stub_calls)"
 fi
 rm -rf "$fixture"
+
+# --- Test 7: canary preflight wires isolated OAuth rotation before opencode --
+#
+# Guards t3362: the canary copies auth.json into an isolated XDG_DATA_HOME just
+# like workers do. It must rotate that isolated file before running `opencode
+# run`, otherwise a cooldown-marked shared Anthropic account makes the canary
+# fail and dispatch reports `launch_recovery:no_worker_process` even when a
+# healthy second OAuth account is available.
+
+LIB_FILE="${SCRIPTS_DIR}/headless-runtime-lib.sh"
+canary_wiring=$(awk '
+	/_canary_data_dir=\$\(mktemp -d/ { in_canary=1 }
+	in_canary && /_maybe_rotate_isolated_auth/ { rotate_line=NR }
+	in_canary && /"\$_effective_opencode_bin" run "Reply with exactly: CANARY_OK"/ { opencode_line=NR }
+	END {
+		if (rotate_line > 0 && opencode_line > 0 && rotate_line < opencode_line) {
+			print "ok"
+		}
+	}
+' "$LIB_FILE" 2>/dev/null || true)
+
+if [[ "$canary_wiring" == "ok" ]]; then
+	pass "canary preflight rotates isolated OAuth auth before opencode run"
+else
+	fail "canary preflight must call _maybe_rotate_isolated_auth before opencode run"
+fi
 
 # --- Summary ----------------------------------------------------------------
 
