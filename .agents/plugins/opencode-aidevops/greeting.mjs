@@ -92,7 +92,7 @@ function runGreetingAsync(scriptsDir, client) {
   execAsync(`bash ${JSON.stringify(script)} --interactive`, {
     timeout: 15000,
   })
-    .then(({ stdout }) => {
+    .then(async ({ stdout }) => {
       const output = stdout ? stdout.trim() : "";
       if (!output) {
         if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -101,9 +101,12 @@ function runGreetingAsync(scriptsDir, client) {
         return;
       }
 
-      cacheGreeting(output);
+      const maintenanceNotice = await getOpenCodeMaintenanceNotice(scriptsDir);
+      const combinedOutput = [output, maintenanceNotice].filter(Boolean).join("\n");
 
-      const buckets = classifyLines(output);
+      cacheGreeting(combinedOutput);
+
+      const buckets = classifyLines(combinedOutput);
       const toast = buildToast(buckets);
 
       if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -125,6 +128,31 @@ function runGreetingAsync(scriptsDir, client) {
       }
     });
   // Returns here — handler can resolve before the subprocess finishes.
+}
+
+/**
+ * Return an optional one-line OpenCode DB maintenance notice.
+ *
+ * The helper owns all DB/scheduler logic; the plugin only appends any emitted
+ * notice to the existing consolidated greeting toast. Failures are ignored so
+ * session startup never depends on maintenance diagnostics.
+ *
+ * @param {string} scriptsDir
+ * @returns {Promise<string>}
+ */
+async function getOpenCodeMaintenanceNotice(scriptsDir) {
+  const script = join(scriptsDir, "opencode-db-maintenance-helper.sh");
+  try {
+    const { stdout } = await execAsync(`bash ${JSON.stringify(script)} notice`, {
+      timeout: 2500,
+    });
+    return stdout ? stdout.trim() : "";
+  } catch (err) {
+    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+      console.error(`[aidevops] greeting: opencode maintenance notice failed: ${err.message}`);
+    }
+    return "";
+  }
 }
 
 /**
@@ -174,6 +202,7 @@ function classifyLines(output) {
     } else if (
       line.startsWith("Pulse stalled") ||
       /contribution\(s\) need/i.test(line) ||
+      line.startsWith("[OPENCODE MAINTENANCE]") ||
       line.startsWith("[WARNING]") ||
       line.startsWith("[WARN]")
     ) {

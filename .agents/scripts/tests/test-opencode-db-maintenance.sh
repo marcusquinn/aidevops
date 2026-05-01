@@ -93,10 +93,24 @@ SQL
 # -----------------------------------------------------------------------------
 
 out=$(_run_helper help 2>&1)
-if grep -q "check" <<<"$out" && grep -q "maintain" <<<"$out" && grep -q "auto" <<<"$out"; then
+if grep -q "check" <<<"$out" && grep -q "maintain" <<<"$out" && grep -q "auto" <<<"$out" && grep -q "notice" <<<"$out"; then
 	_pass "help lists all subcommands"
 else
 	_fail "help output missing subcommands"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 1b: notice is quiet when opencode not installed
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(_run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && [[ -z "$out" ]]; then
+	_pass "notice is quiet when opencode is not installed"
+else
+	_fail "notice should be quiet with no DB (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------
@@ -259,6 +273,34 @@ if [[ "$rc" -eq 0 ]] && grep -qiE "WAL:" <<<"$out"; then
 	_pass "check shows WAL info when WAL_LARGE_THRESHOLD_MB=0"
 else
 	_fail "check missing WAL info (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11b: notice warns when WAL threshold says maintenance is due
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "\[OPENCODE MAINTENANCE\]" <<<"$out" && grep -q "aidevops opencode-db maintenance-window" <<<"$out"; then
+	_pass "notice warns when maintenance is due"
+else
+	_fail "notice missing due warning (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11c: notice warns about scheduled disruptive maintenance-window mode
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(OPENCODE_DB_MAINTENANCE_MODE=maintenance-window OPENCODE_DB_MAINTENANCE_HOUR=3 OPENCODE_DB_MAINTENANCE_MINUTE=30 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "Sun 03:30" <<<"$out" && grep -q "pauses pulse/headless workers" <<<"$out"; then
+	_pass "notice warns about scheduled maintenance-window pause"
+else
+	_fail "notice missing scheduled maintenance-window warning (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------

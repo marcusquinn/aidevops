@@ -46,6 +46,7 @@
 #   uninstall            — macOS only: remove LaunchAgent. Idempotent.
 #   status               — report scheduler install state (launchd on macOS,
 #                          systemd/cron on Linux).
+#   notice               — emit one toast-safe warning line when due/scheduled.
 #   help                 — show this help
 #
 # Usage:
@@ -219,6 +220,21 @@ _db_size_human() {
 		local hundredths=$((bytes * 100 / 1073741824))
 		printf '%d.%02d GB\n' "$((hundredths / 100))" "$((hundredths % 100))"
 	fi
+}
+
+# _state_mtime_epoch <path> — portable file mtime getter for last-run state.
+_state_mtime_epoch() {
+	local path="$1"
+	[[ -f "$path" ]] || {
+		echo 0
+		return 0
+	}
+	if declare -f _file_mtime_epoch >/dev/null 2>&1; then
+		_file_mtime_epoch "$path"
+		return 0
+	fi
+	echo 0
+	return 0
 }
 
 # _pragma <db> <name>
@@ -995,6 +1011,52 @@ cmd_status() {
 	return 0
 }
 
+# Subcommand: notice
+# Emits at most one warning line for OpenCode's session-start toast.
+cmd_notice() {
+	if ! _opencode_installed; then
+		return 0
+	fi
+
+	if [[ "$OPENCODE_DB_MAINTENANCE_MODE" == "$MAINTENANCE_WINDOW_MODE" ]]; then
+		printf '[OPENCODE MAINTENANCE] Scheduled weekly Sun %02d:%02d local: maintenance-window pauses pulse/headless workers while compacting opencode.db.\n' \
+			"$OPENCODE_DB_MAINTENANCE_HOUR" "$OPENCODE_DB_MAINTENANCE_MINUTE"
+		return 0
+	fi
+
+	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason=""
+	now=$(date +%s)
+	last_ts=$(_state_mtime_epoch "$STATE_FILE")
+	db_bytes=$(_db_size_bytes "$OPENCODE_DB")
+	wal_bytes=$(_db_size_bytes "$OPENCODE_WAL")
+	db_mb=$((db_bytes / 1048576))
+	wal_mb=$((wal_bytes / 1048576))
+
+	if [[ "$last_ts" -eq 0 ]]; then
+		due=true
+		reason="no previous run recorded"
+	else
+		age=$((now - last_ts))
+		if [[ "$age" -ge "$AUTO_MIN_SECONDS_BETWEEN" ]]; then
+			due=true
+			reason="last run older than scheduler interval"
+		fi
+	fi
+
+	if [[ "$wal_mb" -ge "$WAL_LARGE_THRESHOLD_MB" ]]; then
+		due=true
+		reason="WAL ${wal_mb}MB >= ${WAL_LARGE_THRESHOLD_MB}MB"
+	elif [[ "$db_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
+		due=true
+		reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+	fi
+
+	if [[ "$due" == true ]]; then
+		printf '[OPENCODE MAINTENANCE] Recommended: %s. Run aidevops opencode-db maintenance-window off-hours; pulse/headless workers pause during the window.\n' "$reason"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Usage
 # -----------------------------------------------------------------------------
@@ -1020,6 +1082,7 @@ Subcommands:
                          Linux: no-op (handled by setup-modules/schedulers.sh).
   uninstall              macOS: remove LaunchAgent. Idempotent.
   status                 Report scheduler state (launchd/systemd/cron).
+  notice                 Emit one toast-safe warning when maintenance is due or disruptive mode is scheduled.
   help                   This help
 
 What maintenance does:
@@ -1072,6 +1135,7 @@ main() {
 	install) cmd_install "$@" ;;
 	uninstall) cmd_uninstall "$@" ;;
 	status) cmd_status "$@" ;;
+	notice) cmd_notice "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown subcommand: $sub"

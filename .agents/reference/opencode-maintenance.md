@@ -45,6 +45,19 @@ time and invokes `opencode-db-maintenance-helper.sh auto`, which:
 
 ## Subcommands
 
+User-facing CLI entry point:
+
+```bash
+aidevops opencode-db check    # preflight: DB exists, no locks, integrity OK
+aidevops opencode-db report   # stats (size, pages, free list, top tables)
+aidevops opencode-db maintain # run once (refuses if processes active)
+aidevops opencode-db maintenance-window --force-opencode
+aidevops opencode-db status   # scheduler install state
+```
+
+The CLI delegates to the helper; direct helper calls remain supported for tests
+and advanced scripting:
+
 ```bash
 opencode-db-maintenance-helper.sh check    # preflight: DB exists, no locks, integrity OK
 opencode-db-maintenance-helper.sh report   # stats (size, pages, free list, top tables)
@@ -52,8 +65,20 @@ opencode-db-maintenance-helper.sh maintain # run once (refuses if processes acti
 opencode-db-maintenance-helper.sh maintain --force  # run anyway (may cause session errors)
 opencode-db-maintenance-helper.sh maintenance-window --force-opencode
 opencode-db-maintenance-helper.sh auto     # scheduled mode (silent, throttled)
+opencode-db-maintenance-helper.sh notice   # one-line session-start toast notice
 opencode-db-maintenance-helper.sh help
 ```
+
+## Session-start notice
+
+OpenCode session-start toasts include a one-line maintenance notice when either:
+
+- maintenance is recommended (no previous run, DB/WAL above thresholds, or the
+  last run is older than `AUTO_MIN_SECONDS_BETWEEN`), or
+- `OPENCODE_DB_MAINTENANCE_MODE=maintenance-window` is configured.
+
+The disruptive scheduled-mode notice includes the weekly day/time and explicitly
+states that pulse/headless workers pause during the maintenance window.
 
 ### Sample output
 
@@ -163,7 +188,7 @@ To schedule the disruptive mode instead of the safe no-op mode:
 ```bash
 OPENCODE_DB_MAINTENANCE_MODE=maintenance-window \
 OPENCODE_DB_MAINTENANCE_HOUR=8 \
-  opencode-db-maintenance-helper.sh install
+  aidevops opencode-db install
 ```
 
 ## Safety
