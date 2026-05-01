@@ -262,13 +262,11 @@ verify_pr_merged() {
 	fi
 
 	# Parse tab-separated output: state\tmergedAt
-	pr_state="${pr_output%%$'\t'*}"
-	local pr_remainder="${pr_output#*$'\t'}"
-	pr_merged_at="$pr_remainder"
+	IFS=$'\t' read -r pr_state pr_merged_at <<<"$pr_output"
 	pr_merged_bool="$bool_false"
 
 	if [[ -z "$pr_merged_at" ]]; then
-		local rest_output rest_state rest_remainder rest_merged_at
+		local rest_output rest_state rest_merged_at
 		local gh_api_args=("api" "repos/{owner}/{repo}/pulls/$pr_number" "$gh_jq_arg" '[.state, (.merged // false), (.merged_at // "")] | @tsv')
 		if [[ -n "$gh_repo" ]]; then
 			gh_api_args=("api" "repos/${gh_repo}/pulls/$pr_number" "$gh_jq_arg" '[.state, (.merged // false), (.merged_at // "")] | @tsv')
@@ -281,10 +279,7 @@ verify_pr_merged() {
 		fi
 
 		if [[ -n "$rest_output" ]]; then
-			rest_state="${rest_output%%$'\t'*}"
-			rest_remainder="${rest_output#*$'\t'}"
-			pr_merged_bool="${rest_remainder%%$'\t'*}"
-			rest_merged_at="${rest_remainder#*$'\t'}"
+			IFS=$'\t' read -r rest_state pr_merged_bool rest_merged_at <<<"$rest_output"
 			[[ -n "$rest_state" ]] && pr_state="$rest_state"
 			[[ -n "$rest_merged_at" ]] && pr_merged_at="$rest_merged_at"
 		fi
