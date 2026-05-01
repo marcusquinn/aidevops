@@ -547,6 +547,45 @@ _sync_with_remote_before_commit() {
 }
 
 # ---------------------------------------------------------------------------
+# _current_origin_push_refspec
+# Prints a fully-qualified refspec for pushing the current HEAD to origin.
+# ---------------------------------------------------------------------------
+_current_origin_push_refspec() {
+	local branch=""
+	branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+
+	if [[ -z "$branch" ]]; then
+		local origin_head=""
+		origin_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+		if [[ "$origin_head" == origin/* ]]; then
+			branch="${origin_head#origin/}"
+		fi
+	fi
+
+	if [[ -z "$branch" ]]; then
+		return 1
+	fi
+
+	printf 'HEAD:refs/heads/%s\n' "$branch"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _push_current_head_to_origin
+# Pushes HEAD using a fully-qualified destination ref to avoid raw HEAD ambiguity.
+# ---------------------------------------------------------------------------
+_push_current_head_to_origin() {
+	local refspec=""
+	if ! refspec=$(_current_origin_push_refspec); then
+		print_warning "Unable to determine routines repo branch — skipping push to avoid ambiguous HEAD refspec"
+		return 1
+	fi
+
+	git push origin "$refspec"
+	return $?
+}
+
+# ---------------------------------------------------------------------------
 # _commit_and_push <path>
 # Commits scaffolded files and pushes to remote.
 # ---------------------------------------------------------------------------
@@ -560,10 +599,18 @@ _commit_and_push() {
 		fi
 		git add -A
 		if ! git diff --cached --quiet; then
-			git commit -m "chore: scaffold aidevops-routines repo"
-			if ! git push origin HEAD; then
+			if ! git commit -m "chore: scaffold aidevops-routines repo"; then
+				print_warning "Routines scaffold commit failed — uncommitted scaffold changes preserved"
+				return 0
+			fi
+			if ! _push_current_head_to_origin; then
 				print_warning "Push rejected — rebasing onto remote and retrying"
-				if git pull --rebase && git push origin HEAD; then
+				if [[ -n "$(git status --porcelain)" ]]; then
+					git reset --soft HEAD~1
+					print_warning "Push retry skipped — scaffold changes are unstaged and were preserved"
+					return 0
+				fi
+				if git pull --rebase && _push_current_head_to_origin; then
 					return 0
 				fi
 				git reset --soft HEAD~1

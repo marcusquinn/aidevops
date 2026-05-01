@@ -241,12 +241,117 @@ test_commit_and_push_aborts_failed_remote_sync_rebase() {
 	return 0
 }
 
+# Regression: GH#22235 — detached/stale routines worktrees must not push a raw
+# HEAD destination. The helper should derive origin/HEAD and push with a fully
+# qualified branch ref so setup_routines avoids Git's "destination provided is
+# not a full refname" error.
+test_commit_and_push_uses_full_refspec_when_head_detached() {
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d)
+	local remote_repo="${tmp_dir}/remote.git"
+	local local_repo="${tmp_dir}/local"
+
+	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
+	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
+	git -C "$local_repo" checkout -b main >/dev/null 2>&1
+	git -C "$local_repo" config user.email "test@example.invalid"
+	git -C "$local_repo" config user.name "Test User"
+	printf 'base\n' >"${local_repo}/README.md"
+	git -C "$local_repo" add README.md
+	git -C "$local_repo" commit -m "initial" >/dev/null
+	git -C "$local_repo" push -u origin main >/dev/null 2>&1
+	git -C "$local_repo" remote set-head origin main >/dev/null 2>&1
+	git -C "$local_repo" checkout --detach HEAD >/dev/null 2>&1
+
+	printf 'scaffold\n' >"${local_repo}/TODO.md"
+	# shellcheck disable=SC1090  # dynamic repo-relative helper path
+	source "$INIT_ROUTINES"
+	local output=""
+	output=$(_commit_and_push "$local_repo" 2>&1)
+	git -C "$local_repo" fetch origin main >/dev/null 2>&1
+
+	local scaffold_commit_count=""
+	scaffold_commit_count=$(git -C "$local_repo" log --oneline origin/main --grep 'chore: scaffold aidevops-routines repo' | wc -l | tr -d ' ')
+	local status_output=""
+	status_output=$(git -C "$local_repo" status --porcelain)
+
+	rm -rf "$tmp_dir"
+
+	if [[ "$scaffold_commit_count" == "1" && -z "$status_output" && "$output" != *"destination provided is not a full refname"* ]]; then
+		print_result "_commit_and_push uses full refspec when routines HEAD is detached (GH#22235)" 0
+		return 0
+	fi
+
+	print_result "_commit_and_push uses full refspec when routines HEAD is detached (GH#22235)" 1 \
+		"scaffold_commits=${scaffold_commit_count} status=${status_output} output=${output}"
+	return 0
+}
+
+# Regression: GH#22235 — if a push fails while scaffold changes are already
+# unstaged, retry must not run git pull --rebase over those local changes.
+test_commit_and_push_skips_rebase_retry_with_unstaged_scaffold() {
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d)
+	local remote_repo="${tmp_dir}/remote.git"
+	local local_repo="${tmp_dir}/local"
+	local fake_bin="${tmp_dir}/bin"
+	mkdir -p "$fake_bin"
+
+	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
+	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
+	git -C "$local_repo" checkout -b main >/dev/null 2>&1
+	git -C "$local_repo" config user.email "test@example.invalid"
+	git -C "$local_repo" config user.name "Test User"
+	printf 'base\n' >"${local_repo}/README.md"
+	git -C "$local_repo" add README.md
+	git -C "$local_repo" commit -m "initial" >/dev/null
+	git -C "$local_repo" push -u origin main >/dev/null 2>&1
+
+	local real_git=""
+	real_git=$(command -v git)
+	cat >"${fake_bin}/git" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "\$1" == "push" ]]; then
+  "${real_git}" reset --soft HEAD~1 >/dev/null
+  exit 1
+fi
+if [[ "\$1" == "pull" ]]; then
+  printf 'unexpected pull --rebase with unstaged scaffold changes\\n' >&2
+  exit 42
+fi
+exec "${real_git}" "\$@"
+EOF
+	chmod +x "${fake_bin}/git"
+
+	printf 'scaffold\n' >"${local_repo}/TODO.md"
+	# shellcheck disable=SC1090  # dynamic repo-relative helper path
+	source "$INIT_ROUTINES"
+	local output=""
+	PATH="${fake_bin}:$PATH" output=$(_commit_and_push "$local_repo" 2>&1)
+	local status_output=""
+	status_output=$(git -C "$local_repo" status --porcelain)
+
+	rm -rf "$tmp_dir"
+
+	if [[ "$status_output" == *"TODO.md"* && "$output" == *"Push retry skipped"* && "$output" != *"unexpected pull --rebase"* ]]; then
+		print_result "_commit_and_push skips rebase retry with unstaged scaffold changes (GH#22235)" 0
+		return 0
+	fi
+
+	print_result "_commit_and_push skips rebase retry with unstaged scaffold changes (GH#22235)" 1 \
+		"status=${status_output} output=${output}"
+	return 0
+}
+
 main() {
 	test_init_routines_sources_after_shared_constants
 	test_common_tolerates_readonly_colors
 	test_routines_loader_isolates_errors
 	test_commit_and_push_syncs_remote_ahead_repo
 	test_commit_and_push_aborts_failed_remote_sync_rebase
+	test_commit_and_push_uses_full_refspec_when_head_detached
+	test_commit_and_push_skips_rebase_retry_with_unstaged_scaffold
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
