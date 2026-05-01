@@ -876,7 +876,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t3257 Reconstruct PR 21876 worker-loop timeline #auto-dispatch #framework #investigation ref:GH#22041
 
-- [ ] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065
+- [x] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065 pr:#22067 completed:2026-05-01
 
 - [ ] t3364 Fix task-complete helper merged PR detection for closed PRs #auto-dispatch #bug ref:GH#22075
 
@@ -3765,7 +3765,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3258 add pulse-diagnose issue subcommand for issue-level worker/PR timelines #auto-dispatch #enhancement #framework ref:GH#22045
 
-- [ ] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065
+- [x] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065 pr:#22067 completed:2026-05-01
 
 - [ ] t3360 Bound OpenCode CLI setup validation timeout #auto-dispatch #bug ref:GH#22064
 
