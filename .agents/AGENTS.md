@@ -415,7 +415,7 @@ Required sections (adapt headings to context — issue body, PR description, com
 - **a) Files to modify:** explicit paths. Prefix `NEW:` for new files, `EDIT:` for existing. Include line ranges where relevant. Example:
   - `NEW: .agents/hooks/example.py — model on hooks/git_safety_guard.py`
   - `EDIT: .agents/scripts/install-hooks-helper.sh:45-60 — add registration`
-- **b) Reference pattern:** "model on <file>" or "follow pattern at <file:line>". Workers should copy an existing pattern, not invent from scratch.
+- **b) Reference pattern:** use prose like "model on path/to/file" or "follow pattern at path/to/file:line". Workers should copy an existing pattern, not invent from scratch.
 - **c) Verification:** command or check to confirm completion. Example: `shellcheck .agents/hooks/example.py && grep "PostToolUse" ~/.claude/settings.json`.
 - **d) If files/patterns CANNOT be determined** (research-phase task, external dependency), state that explicitly so the dispatcher can route to a thinking-tier model.
 
@@ -427,7 +427,7 @@ Retry/feedback comments (stuck detection, watchdog kills, review feedback) must 
 
 (Observed: model composes inline, gets runtime/version wrong.)
 
-- NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model <model-id>`.
+- NEVER compose signature footers inline. ALWAYS call `gh-signature-helper.sh footer --model MODEL_ID`.
 - The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.
 - Every `gh issue create`, `gh issue comment`, `gh pr create`, and `gh pr comment` body MUST end with the helper's output.
 - Pass `--issue OWNER/REPO#NUM` on comments to existing issues. Pass `--solved` on closing comments.
@@ -442,7 +442,7 @@ Retry/feedback comments (stuck detection, watchdog kills, review feedback) must 
 
 **8a. Signature footer skip when reading (token waste prevention)**
 
-When reading GitHub issue/PR threads, prefer `gh-thread-clean-helper.sh view issue|pr <N> [--repo owner/repo]`. It strips signature footers from working context. Never visit URLs in signature footers unless the task is about the footer system itself.
+When reading GitHub issue/PR threads, prefer `gh-thread-clean-helper.sh view issue|pr N [--repo owner/repo]`. It strips signature footers from working context. Never visit URLs in signature footers unless the task is about the footer system itself.
 
 **8b. Provenance metadata skip when reading (token waste prevention)**
 
@@ -469,9 +469,9 @@ Do NOT respond to a `FILE_NOT_FOUND` block by debugging temp-file paths, file co
 
 ### Stale-symptom investigations (runtime debugging, t2036)
 
-The DEPLOYED copy at `~/.aidevops/agents/scripts/<file>` may differ from source at `~/Git/aidevops/.agents/scripts/<file>`. Pulse executes the deployed copy — reading source-as-truth when debugging runtime symptoms wastes hours.
+The deployed copy at `~/.aidevops/agents/scripts/FILE` may differ from source at `~/Git/aidevops/.agents/scripts/FILE`. Pulse executes the deployed copy — reading source-as-truth when debugging runtime symptoms wastes hours.
 
-- Before publishing runtime attribution, run `attribution-check-helper.sh --file .agents/scripts/<file> [--symbol fn] [--claim tNNN]` and use its evidence to distinguish deployed state from source hypotheses.
+- Before publishing runtime attribution, run `attribution-check-helper.sh --file .agents/scripts/FILE [--symbol fn] [--claim tNNN]` and use its evidence to distinguish deployed state from source hypotheses.
 - When symptom timestamps in logs predate the deployed file mtime, the symptom is historical — it reflects pre-deploy behaviour. Verify the symptom still reproduces against the current deploy before filing an investigation issue.
 - Scope: source-only debugging is fine for design, refactoring, and new code. This rule applies to runtime diagnostics rooted in logs/artifacts.
 - Related: "Pre-implementation discovery (t2046)" — complementary rule for checking git log before WRITING new code. Both check "is the world what I think it is?"; this one fires during investigation, t2046 fires before implementation.
@@ -480,8 +480,8 @@ The DEPLOYED copy at `~/.aidevops/agents/scripts/<file>` may differ from source 
 
 When an incident appears to match a bug in TODO.md or recent commits, READ the cited function body before publishing attribution. Symptom-level pattern match is a hypothesis. Published wrong attribution creates noise and trains future sessions to trust pattern-matching over code-reading. (Canonical failure: t2190/t2108.)
 
-- "This looks like t<NNN>" is a hypothesis. It belongs in your notes.
-- "This was caused by t<NNN>" is a diagnosis. It belongs in a public comment (`gh issue comment`, `gh pr comment`, issue close body, escalation report) ONLY after you have (a) located the cited function/line, (b) read the body, and (c) confirmed the actual behaviour matches your hypothesis.
+- "This looks like tNNN" is a hypothesis. It belongs in your notes.
+- "This was caused by tNNN" is a diagnosis. It belongs in a public comment (`gh issue comment`, `gh pr comment`, issue close body, escalation report) ONLY after you have (a) located the cited function/line, (b) read the body, and (c) confirmed the actual behaviour matches your hypothesis.
 - Internal drafting, TODO entries, and private notes can name suspected bugs freely — the rule fires at the publish step, not the hypothesis step.
 - Scope: applies to attributions blaming a specific task ID, issue number, PR, or commit. Generic "this seems to be a pulse-merge edge case" is fine without code-level verification; "this is the t2108 bug" is not.
 - Related: "Scientific reasoning" (hypothesis framing), "Claim discipline" (proof artifacts), "Stale-symptom investigations" (stale symptoms vs deployed file mtime). This rule sits alongside, not inside, any of them.
@@ -698,7 +698,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 - **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.
 
-- **`### Files Scope` field:** Section in the brief template (nested under `## How`) for declaring allowed file paths (globs supported). The `scope-guard-pre-push.sh` hook uses this to block out-of-scope pushes, preventing accidental scope-leak. One path or glob per `- ` line. Older briefs may use `## Files Scope`; both heading levels are accepted by the guard.
+- **`### Files Scope` field:** Section in the brief template (nested under `## How`) for declaring allowed file paths (globs supported). The `scope-guard-pre-push.sh` hook uses this to block out-of-scope pushes, preventing accidental scope-leak. One path or glob per bullet line. Older briefs may use `## Files Scope`; both heading levels are accepted by the guard.
 
 - **`### Complexity Impact` field (t2803):** Section for tasks modifying shell functions. Author must estimate growth: 80-100 lines projected post-change requires a warning; >100 lines (the `function-complexity` gate) REQUIRES a pre-planned refactor. Prevents the recurring pattern where workers grow a function past the gate threshold and trigger repeated dispatch failures (canonical: 8 workers on GH#20702). Include this section for any `EDIT:` targeting an existing function body; delete it when the task creates only new files or new functions. Full guidance: `reference/large-file-split.md §0`.
 
