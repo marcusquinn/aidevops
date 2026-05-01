@@ -6,6 +6,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+
 _usage() {
 	cat <<'EOF'
 Usage: pulse-current-state-helper.sh [--window 15m] [--repo-path PATH] [--log-dir DIR] [--json]
@@ -45,14 +47,14 @@ main() {
 	done
 	local window_s
 	window_s="$(_seconds "$window")"
-	python3 - "$log_dir" "$repo_path" "$window_s" "$as_json" <<'PY'
+	python3 - "$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" <<'PY'
 import json
 import os
 import subprocess
 import sys
 import time
 
-log_dir, repo_path, window_s, as_json = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1'
+log_dir, repo_path, window_s, as_json, script_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5]
 now = time.time()
 since = now - window_s
 
@@ -115,6 +117,29 @@ try:
 except (OSError, subprocess.CalledProcessError):
     worktrees = []
 
+graphql_budget_status = 'UNKNOWN: no cached status'
+breaker = os.path.join(script_dir, 'pulse-rate-limit-circuit-breaker.sh')
+try:
+    graphql_budget_status = subprocess.check_output(
+        [breaker, 'status', '--cached'], text=True, stderr=subprocess.DEVNULL, timeout=5
+    ).strip() or graphql_budget_status
+except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+    pass
+
+api_consumers = []
+api_report = os.path.join(log_dir, 'gh-api-calls-by-stage.json')
+if os.path.exists(api_report):
+    try:
+        report = json.load(open(api_report, encoding='utf-8'))
+        for caller, data in (report.get('by_caller') or {}).items():
+            if isinstance(data, dict):
+                gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
+                if gql > 0:
+                    api_consumers.append({'caller': caller, 'graphql_calls': gql})
+        api_consumers = sorted(api_consumers, key=lambda item: item['graphql_calls'], reverse=True)[:5]
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        api_consumers = []
+
 result = {
     'window_seconds': window_s,
     'dispatch_stage_events': len(stage_lines),
@@ -125,6 +150,8 @@ result = {
     'wrapper_activity_lines': len(wrapper_activity),
     'worker_worktrees': len(worktrees),
     'dispatch_alive': bool(stage_lines or metrics or counter_hits or worktrees),
+    'graphql_budget_status': graphql_budget_status,
+    'top_graphql_consumers': api_consumers,
 }
 
 if as_json:
@@ -136,6 +163,9 @@ else:
     print(f'- Dispatch stage events: {result["dispatch_stage_events"]}')
     print(f'- Worker terminal events: {result["worker_terminal_events"]} ({result["worker_successes"]} success, {result["worker_failures_or_stalls"]} non-success)')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
+    print(f'- GraphQL budget: {graphql_budget_status}')
+    if api_consumers:
+        print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- Worker worktrees: {result["worker_worktrees"]}')
     if wrapper_activity:
         print('- Recent wrapper activity:')

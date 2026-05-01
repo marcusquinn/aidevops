@@ -25,5 +25,6 @@ output="$TMP_DIR/out.txt"
 grep -q 'Dispatch alive: true' "$output"
 grep -q 'Worker terminal events: 1' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
+grep -q 'GraphQL budget:' "$output"
 
 printf 'PASS pulse-current-state-helper\n'

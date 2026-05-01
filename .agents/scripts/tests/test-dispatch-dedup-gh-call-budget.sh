@@ -48,6 +48,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
 
 CORE_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-core.sh"
+DISPATCH_LIB_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-lib.sh"
 LARGE_FILE_GATE_SH="${REPO_ROOT}/.agents/scripts/pulse-dispatch-large-file-gate.sh"
 TRIAGE_SH="${REPO_ROOT}/.agents/scripts/pulse-triage.sh"
 
@@ -104,7 +105,7 @@ _extract_function_body() {
 	' "$file"
 }
 
-_count_gh_issue_view_in_function() {
+_count_issue_view_in_function() {
 	# Counts ACTUAL `gh issue view` invocations — skips lines whose first
 	# non-whitespace character is `#` (shell comments). Without this filter
 	# the t2996 audit markers in the function bodies (which legitimately
@@ -114,7 +115,7 @@ _count_gh_issue_view_in_function() {
 	local fname="$2"
 	_extract_function_body "$file" "$fname" \
 		| grep -vE '^[[:space:]]*#' \
-		| grep -cE 'gh issue view ' || true
+		| grep -cE '(gh issue view |gh_issue_view )' || true
 }
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ test_canonical_bundle_includes_body() {
 	body=$(_extract_function_body "$CORE_SH" "dispatch_with_dedup")
 
 	# shellcheck disable=SC2016 # Literal '$issue_number' inside regex pattern is intentional.
-	if printf '%s' "$body" | grep -qE 'gh issue view "\$issue_number" --repo "\$repo_slug" \\$'; then
+	if printf '%s' "$body" | grep -qE 'gh_issue_view "\$issue_number" --repo "\$repo_slug" \\$'; then
 		# header line present; check the next line includes body
 		if printf '%s' "$body" | grep -qE -- '--json number,title,state,labels,assignees,body'; then
 			_print_result "dispatch_with_dedup canonical gh call includes body" 1
@@ -142,7 +143,7 @@ test_canonical_bundle_includes_body() {
 # ---------------------------------------------------------------------------
 test_dispatch_with_dedup_single_gh_call() {
 	local count
-	count=$(_count_gh_issue_view_in_function "$CORE_SH" "dispatch_with_dedup")
+	count=$(_count_issue_view_in_function "$CORE_SH" "dispatch_with_dedup")
 	count="${count//[!0-9]/}"
 	count="${count:-0}"
 	if [[ "$count" -eq 1 ]]; then
@@ -159,7 +160,7 @@ test_dispatch_with_dedup_single_gh_call() {
 # ---------------------------------------------------------------------------
 test_check_layers_no_gh_issue_view() {
 	local count
-	count=$(_count_gh_issue_view_in_function "$CORE_SH" "_dispatch_dedup_check_layers")
+	count=$(_count_issue_view_in_function "$CORE_SH" "_dispatch_dedup_check_layers")
 	count="${count//[!0-9]/}"
 	count="${count:-0}"
 	if [[ "$count" -eq 0 ]]; then
@@ -268,6 +269,24 @@ test_t2996_markers_present() {
 	fi
 }
 
+# ---------------------------------------------------------------------------
+# Test 9: pre-dedup placeholder-body check uses REST, not `gh issue view`.
+# This path runs before the canonical dispatch_with_dedup bundle exists, so it
+# must avoid an extra GraphQL-backed CLI read per candidate.
+# ---------------------------------------------------------------------------
+test_dispatch_skip_candidate_body_uses_rest() {
+	local body
+	body=$(_extract_function_body "$DISPATCH_LIB_SH" "_dispatch_should_skip_candidate")
+	if printf '%s' "$body" | grep -qE 'gh api "repos/\$\{repo_slug\}/issues/\$\{issue_number\}"' \
+		&& ! printf '%s' "$body" | grep -vE '^[[:space:]]*#' | grep -qE 'gh issue view .*body'; then
+		_print_result "_dispatch_should_skip_candidate fetches body via REST" 1
+	else
+		_print_result "_dispatch_should_skip_candidate fetches body via REST" 0 \
+			"expected gh api repos/\${repo_slug}/issues/\${issue_number} and no active gh issue view --json body"
+	fi
+	return 0
+}
+
 main() {
 	test_canonical_bundle_includes_body || true
 	test_dispatch_with_dedup_single_gh_call || true
@@ -277,6 +296,7 @@ main() {
 	test_ensure_issue_body_has_brief_accepts_meta || true
 	test_check_dispatch_dedup_passes_meta_env || true
 	test_t2996_markers_present || true
+	test_dispatch_skip_candidate_body_uses_rest || true
 
 	printf '\n--- Tests run: %d, failed: %d ---\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

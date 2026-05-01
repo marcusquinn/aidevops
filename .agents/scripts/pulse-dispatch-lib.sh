@@ -232,11 +232,13 @@ _dispatch_should_skip_candidate() {
 	fi
 
 	# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
-	# worker to an undescribed issue wastes a session. The body check is
-	# a single API call per candidate. Detects both the legacy GitLab stub
-	# and the current claim-task-id.sh stub marker.
+	# worker to an undescribed issue wastes a session. Use REST here instead of
+	# `gh issue view --json body`: this pre-dedup fast-fail runs once per
+	# candidate, so a GraphQL-backed CLI read can drain the shared GraphQL budget
+	# before workers ever launch.
 	local issue_body
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest "pulse-dispatch-lib.sh" || true
+	issue_body=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || issue_body=""
 	pulse_dispatch_debug_log "#${issue_number}: body length=${#issue_body}"
 	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"

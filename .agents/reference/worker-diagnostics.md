@@ -490,6 +490,9 @@ The hold is branch-specific: a different branch or a different issue does not in
 - **REST fallback (t2574, t2744, t2902):** `shared-gh-wrappers.sh` routes eligible writes/reads through REST when GraphQL remaining <= 1500, preserving GraphQL for calls without REST equivalents. Override: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`.
 - **Instrumentation (t2902):** routed `gh` calls append to `~/.aidevops/logs/gh-api-calls.log` and aggregate by stage in `~/.aidevops/logs/gh-api-calls-by-stage.json`. Helper: `gh-api-instrument.sh record|report|trim|clear`. Instrumentation is fail-open.
 - **Circuit breaker (t2690, t2744, t2896):** worker dispatch pauses when GraphQL budget is below the emergency 5% floor. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Overrides: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD`, `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1`.
+- **Rate-limit status cache (t3422):** `pulse-rate-limit-circuit-breaker.sh` caches the free `gh api rate_limit` response for 20s at `~/.aidevops/cache/pulse-graphql-rate-limit.json`. Use `pulse-rate-limit-circuit-breaker.sh status --cached` inside diagnostics that must not touch the network; use plain `status` when you need a fresh free endpoint read. Override: `AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL`.
+- **GraphQL-efficient current-state check (t3422):** start with `pulse-current-state-helper.sh --window 15m`. It reads local pulse/worker logs, shows cached GraphQL budget state, and surfaces top GraphQL consumers from the instrumentation report without issuing GraphQL queries.
+- **Solved-issue search is opt-in (t3422):** `worker-activity-helper.sh summary` no longer runs the `gh issue list --search ... label:solved:worker` path by default because GitHub search uses GraphQL. Add `--pr-check` only when GraphQL budget is healthy or the external solved-count is required; `--no-pr-check` remains accepted and explicit.
 - **Cache priming (t2992, t2994):** `pulse-wrapper.sh::main()` pre-warms L3 per-owner JSON caches after lock/canary/session/dedup gates and before `prefetch_state`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run`; log: `~/.aidevops/logs/pulse-cache-prime.log`; counters: `pulse_cache_prime_runs`, `pulse_cache_prime_failures`; overrides: `AIDEVOPS_SKIP_CACHE_PRIME=1`, `AIDEVOPS_PULSE_PRIME_MAX_AGE`.
 
 Background: t2994 moved priming from `pulse-lifecycle-helper.sh::_start` into `pulse-wrapper.sh::main()` because launchd `KeepAlive` could respawn the pulse before `_start` ran, causing the lifecycle hook to early-return and skip priming.
@@ -533,12 +536,16 @@ either live output growth or completed work attributed to workers:
   merged it automatically after CI passed.
 
 ```bash
-worker-activity-helper.sh summary --since 1h --repo <owner/repo>
+pulse-current-state-helper.sh --window 15m
+worker-activity-helper.sh summary --since 1h --repo <owner/repo> --no-pr-check
 ```
 
-The helper combines canonical worker metrics with `solved:worker` closed-issue
-counts. Treat `origin:worker` PR counts as branch-creation telemetry only; they
-are not sufficient evidence of worker productivity.
+The current-state helper is the cheapest live signal: local logs + cached
+GraphQL budget + instrumentation report. The worker-activity helper combines
+canonical worker metrics with local pulse counters by default; add `--pr-check`
+only when you need the `solved:worker` closed-issue count and have GraphQL
+budget available. Treat `origin:worker` PR counts as branch-creation telemetry
+only; they are not sufficient evidence of worker productivity.
 
 ```bash
 # Measure actual output growth over 15 seconds
