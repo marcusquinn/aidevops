@@ -307,7 +307,7 @@ _check_pr_merge_gates() {
 # Perform all post-merge actions for a successfully merged PR:
 # build and post closing comment, close linked issue, unlock.
 # Best-effort — failures are logged but do not propagate.
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary, $5=pr_labels
 #######################################
 #######################################
 # Build the closing comment body for a merged PR (with signature footer).
@@ -347,6 +347,7 @@ _handle_post_merge_actions() {
 	local repo_slug="$2"
 	local linked_issue="$3"
 	local merge_summary="$4"
+	local pr_labels="${5:-}"
 
 	local closing_comment
 	closing_comment=$(_pm_build_closing_comment "$pr_number" "$repo_slug" \
@@ -398,6 +399,15 @@ _handle_post_merge_actions() {
 		fi
 
 		if [[ "$_parent_task_guard" -eq 0 ]]; then
+			if [[ -z "$pr_labels" ]]; then
+				pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
+			fi
+			local _solved_actor="interactive"
+			case ",${pr_labels}," in
+			*,origin:worker,* | *,origin:worker-takeover,*) _solved_actor="worker" ;;
+			esac
+			set_solved_label "$linked_issue" "$repo_slug" "$_solved_actor" || true
 			gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 			# Reset fast-fail counter now that the issue is resolved (GH#2076)
 			fast_fail_reset "$linked_issue" "$repo_slug" || true
@@ -677,7 +687,7 @@ _process_single_ready_pr() {
 		if [[ ",${_ipr_labels}," == *"${_OW_LABEL_PAT}"* ]]; then
 			echo "[pulse-merge] auto-merged origin:worker (worker-briefed) PR #${pr_number} (author=${pr_author}, linked_issue=#${linked_issue:-unknown})" >>"$LOGFILE"
 		fi
-		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary"
+		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
 		return 0
 	else
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"

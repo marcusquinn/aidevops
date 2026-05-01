@@ -281,6 +281,70 @@ verify_pr_merged() {
 	return 0
 }
 
+#######################################
+# Best-effort solved-by attribution for interactive/manual completion paths.
+#
+# Pulse merge owns the normal closure path, but task-complete-helper is the
+# manual preserve/completion path. When it is given a merged PR, mirror the
+# same solved:* attribution onto the linked issue without changing origin:*
+# semantics.
+#
+# Args:
+#   $1 - PR number
+#   $2 - GitHub repo slug (owner/repo), or empty to auto-detect from git remote
+#   $3 - Repository path (used for git context when gh_repo is empty)
+# Returns: 0 always (best-effort; completion must not fail on label drift).
+#######################################
+annotate_solved_label_for_pr() {
+	local pr_number="$1"
+	local gh_repo="${2:-}"
+	local repo_path="${3:-}"
+
+	[[ -z "$pr_number" ]] && return 0
+
+	local -a gh_view_args=("pr" "view" "$pr_number" "--json" "title,body,labels" "--jq" '
+		def linked:
+			((.body // "") | match("(?i)(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#([0-9]+)") | .captures[-1].string) //
+			((.title // "") | match("GH#([0-9]+)") | .captures[0].string) // "";
+		[linked, ([.labels[].name] | join(","))] | @tsv
+	')
+	if [[ -n "$gh_repo" ]]; then
+		gh_view_args+=("--repo" "$gh_repo")
+	fi
+
+	local pr_output=""
+	if [[ -z "$gh_repo" && -n "$repo_path" ]]; then
+		pr_output=$(cd "$repo_path" && gh "${gh_view_args[@]}" 2>/dev/null) || pr_output=""
+	else
+		pr_output=$(gh "${gh_view_args[@]}" 2>/dev/null) || pr_output=""
+	fi
+	[[ -z "$pr_output" ]] && return 0
+
+	local linked_issue="${pr_output%%$'\t'*}"
+	local pr_labels="${pr_output#*$'\t'}"
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+
+	local solved_actor="interactive"
+	case ",${pr_labels}," in
+	*,origin:worker,* | *,origin:worker-takeover,*) solved_actor="worker" ;;
+	esac
+
+	local repo_slug="$gh_repo"
+	if [[ -z "$repo_slug" && -n "$repo_path" ]]; then
+		local remote_url=""
+		remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || remote_url=""
+		case "$remote_url" in
+		git@github.com:*) repo_slug="${remote_url#git@github.com:}" ;;
+		https://github.com/*) repo_slug="${remote_url#https://github.com/}" ;;
+		esac
+		repo_slug="${repo_slug%.git}"
+	fi
+	[[ -z "$repo_slug" ]] && return 0
+
+	set_solved_label "$linked_issue" "$repo_slug" "$solved_actor" || true
+	return 0
+}
+
 # Mark task complete in TODO.md
 complete_task() {
 	local task_id="$1"
@@ -738,6 +802,7 @@ main() {
 				return 1
 			fi
 		fi
+		annotate_solved_label_for_pr "$PR_NUMBER" "$GH_REPO" "$REPO_PATH"
 	else
 		proof_log="verified:${VERIFIED_DATE}"
 		log_info "Proof-log: verified ${VERIFIED_DATE}"
