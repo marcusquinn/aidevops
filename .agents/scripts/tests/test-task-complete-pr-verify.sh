@@ -17,8 +17,9 @@
 #   1. state=MERGED  + mergedAt populated → passes (happy-path regression)
 #   2. state=closed  + mergedAt populated → passes (the GH#22075 bug fix)
 #   3. state=CLOSED  + mergedAt populated → passes (REST fallback regression)
-#   4. state=CLOSED  + mergedAt empty     → fails  (genuinely unmerged PR)
-#   5. state=OPEN    + mergedAt empty     → fails  (open PR)
+#   4. state=closed  + mergedAt empty + REST merged=true / merged_at → passes
+#   5. state=CLOSED  + mergedAt empty     → fails  (genuinely unmerged PR)
+#   6. state=OPEN    + mergedAt empty     → fails  (open PR)
 #
 # Strategy:
 #   - Create a real git repo in a temp dir (script needs git add/commit).
@@ -120,11 +121,17 @@ setup_repo() {
 #   $1  - output directory for the mock binary
 #   $2  - state string to return  (e.g. "MERGED", "closed", "CLOSED", "OPEN")
 #   $3  - mergedAt value to return (e.g. "2026-04-30T12:00:00Z" or "")
+#   $4  - REST merged boolean to return (default: false)
+#   $5  - REST merged_at value to return (default: empty)
+#   $6  - REST state string to return (default: closed)
 # -----------------------------------------------------------------------------
 make_mock_gh() {
 	local mock_dir="$1"
 	local mock_state="$2"
 	local mock_merged_at="$3"
+	local mock_rest_merged="${4:-false}"
+	local mock_rest_merged_at="${5:-}"
+	local mock_rest_state="${6:-closed}"
 
 	mkdir -p "$mock_dir"
 	# Use printf to avoid heredoc quoting issues with embedded variables.
@@ -147,6 +154,11 @@ make_mock_gh() {
 		printf '    shift\n'
 		printf '  done\n'
 		printf '  printf '"'"'%%s\t%%s\n'"'"' "%s" "%s"\n' "$mock_state" "$mock_merged_at"
+		printf '  exit 0\n'
+		printf 'fi\n'
+		# shellcheck disable=SC2016
+		printf 'if [[ "${1:-}" == "api" && "${2:-}" == repos/*/pulls/* ]]; then\n'
+		printf '  printf '"'"'%%s\t%%s\t%%s\n'"'"' "%s" "%s" "%s"\n' "$mock_rest_state" "$mock_rest_merged" "$mock_rest_merged_at"
 		printf '  exit 0\n'
 		printf 'fi\n'
 		# Forward non-pr-view calls to the real gh so git operations are not broken.
@@ -228,15 +240,38 @@ else
 fi
 
 # =============================================================================
-# Test 4: state=CLOSED, mergedAt empty, merged=false — should FAIL (unmerged closed PR)
+# Test 4: state=closed, mergedAt empty, REST merged=true + merged_at — should PASS
 # =============================================================================
-printf '\nTest 4: state=CLOSED + mergedAt empty + merged=false → task NOT marked complete\n'
+printf '\nTest 4: state=closed + mergedAt empty + REST merged=true/merged_at → task marked complete\n'
 
 MOCK_DIR_4="$TMP/mock4"
-make_mock_gh "$MOCK_DIR_4" "CLOSED" ""
+make_mock_gh "$MOCK_DIR_4" "closed" "" "true" "2026-05-01T16:11:09Z" "closed"
 setup_repo "repo4"
 
-if ! PATH="$MOCK_DIR_4:$PATH" "$HELPER" t999 --pr 9004 --gh-repo owner/repo \
+if PATH="$MOCK_DIR_4:$PATH" "$HELPER" t999 --pr 9004 --gh-repo owner/repo \
+	--no-push --repo-path "$REPO_PATH" >/dev/null 2>&1; then
+	pass "exits 0 (state=closed, mergedAt empty, REST merged=true/merged_at populated)"
+else
+	fail "exits 0 (state=closed, mergedAt empty, REST merged=true/merged_at populated)" \
+		"helper failed — REST merged evidence was not accepted"
+fi
+
+if grep -qE "\- \[x\] t999" "$REPO_PATH/TODO.md"; then
+	pass "t999 marked [x] in TODO.md"
+else
+	fail "t999 marked [x] in TODO.md" "task was not marked complete even though REST merged evidence was populated"
+fi
+
+# =============================================================================
+# Test 5: state=CLOSED, mergedAt empty, merged=false — should FAIL (unmerged closed PR)
+# =============================================================================
+printf '\nTest 5: state=CLOSED + mergedAt empty + merged=false → task NOT marked complete\n'
+
+MOCK_DIR_5="$TMP/mock5"
+make_mock_gh "$MOCK_DIR_5" "CLOSED" ""
+setup_repo "repo5"
+
+if ! PATH="$MOCK_DIR_5:$PATH" "$HELPER" t999 --pr 9005 --gh-repo owner/repo \
 	--no-push --repo-path "$REPO_PATH" >/dev/null 2>&1; then
 	pass "exits non-zero (state=CLOSED, mergedAt empty, merged=false)"
 else
@@ -251,15 +286,15 @@ else
 fi
 
 # =============================================================================
-# Test 5: state=OPEN, mergedAt empty, merged=false — should FAIL (open PR)
+# Test 6: state=OPEN, mergedAt empty, merged=false — should FAIL (open PR)
 # =============================================================================
-printf '\nTest 5: state=OPEN + mergedAt empty + merged=false → task NOT marked complete\n'
+printf '\nTest 6: state=OPEN + mergedAt empty + merged=false → task NOT marked complete\n'
 
-MOCK_DIR_5="$TMP/mock5"
-make_mock_gh "$MOCK_DIR_5" "OPEN" ""
-setup_repo "repo5"
+MOCK_DIR_6="$TMP/mock6"
+make_mock_gh "$MOCK_DIR_6" "OPEN" ""
+setup_repo "repo6"
 
-if ! PATH="$MOCK_DIR_5:$PATH" "$HELPER" t999 --pr 9005 --gh-repo owner/repo \
+if ! PATH="$MOCK_DIR_6:$PATH" "$HELPER" t999 --pr 9006 --gh-repo owner/repo \
 	--no-push --repo-path "$REPO_PATH" >/dev/null 2>&1; then
 	pass "exits non-zero (state=OPEN, mergedAt empty, merged=false)"
 else
