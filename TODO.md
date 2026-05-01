@@ -3863,6 +3863,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3409 Make release creation resilient to GitHub GraphQL exhaustion #auto-dispatch #bug #framework ref:GH#22213 pr:#22217 completed:2026-05-01
 
-- [ ] t3411 Fix routine setup push retry when HEAD ref is detached or stale #auto-dispatch #bug #framework ref:GH#22235
+- [x] t3411 Fix routine setup push retry when HEAD ref is detached or stale #auto-dispatch #bug #framework ref:GH#22235 pr:#22239 completed:2026-05-01
 
 - [ ] t3412 Fix runaway dispatch timing and worktree precreation CPU spikes #auto-dispatch #bug ref:GH#22238
