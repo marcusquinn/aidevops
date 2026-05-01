@@ -474,6 +474,9 @@ _compose_issue_body() {
 		# These helpers are sourced from issue-sync-lib.sh at the top of this script.
 		body=$(_compose_issue_worker_guidance "$body" "$brief_file")
 		body=$(_compose_issue_brief "$body" "$brief_file")
+		if declare -F _compose_issue_brief_workflow_reference >/dev/null 2>&1; then
+			body=$(_compose_issue_brief_workflow_reference "$body")
+		fi
 
 		# t2838: inject Parent: line so _gh_auto_link_sub_issue (when called)
 		# and human readers can resolve the parent. Placed before the footer.
@@ -513,6 +516,9 @@ _compose_issue_body() {
 	# and human readers can resolve the parent. Placed before the footer.
 	if [[ -n "${PARENT_ISSUE_NUM:-}" ]]; then
 		body="${body}"$'\n\n'"Parent: #${PARENT_ISSUE_NUM}"
+	fi
+	if declare -F _compose_issue_brief_workflow_reference >/dev/null 2>&1; then
+		body=$(_compose_issue_brief_workflow_reference "$body")
 	fi
 
 	# t1899: Append provenance signature footer (build.txt rule #8)

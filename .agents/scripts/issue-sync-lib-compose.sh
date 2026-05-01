@@ -402,6 +402,25 @@ _compose_issue_content() {
 	return 0
 }
 
+# Append an explicit pointer to the central brief workflow used for generated
+# GitHub content. This keeps the workflow contract visible in generated issue
+# bodies instead of relying on agent memory.
+# Arguments:
+#   $1 - current body text
+_compose_issue_brief_workflow_reference() {
+	local body="$1"
+
+	if [[ "$body" == *"## Brief Workflow"* ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	body="$body"$'\n\n'"## Brief Workflow"$'\n\n'"This issue body is composed under \`.agents/workflows/brief.md\`. Before implementation, ensure it contains files to modify, a reference pattern, verification commands, and concrete acceptance criteria."
+
+	echo "$body"
+	return 0
+}
+
 # Append subtasks section to the body, converting TODO.md checkbox format to GitHub checkboxes.
 # Arguments:
 #   $1 - current body text
@@ -489,6 +508,7 @@ _compose_issue_sections() {
 	body=$(_compose_issue_related_files "$body" "$task_id" "$project_root")
 	body=$(_compose_issue_worker_guidance "$body" "$project_root/todo/tasks/${task_id}-brief.md")
 	body=$(_compose_issue_brief "$body" "$project_root/todo/tasks/${task_id}-brief.md")
+	body=$(_compose_issue_brief_workflow_reference "$body")
 
 	echo "$body"
 	return 0
