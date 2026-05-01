@@ -69,28 +69,28 @@ def subagent_ref_exists(agent_name, subagent_ref, agent_slug,
                         all_subagent_files, all_subagent_paths):
     """Check if a subagent reference resolves to an actual file."""
     if _is_glob_ref(subagent_ref):
-        return _glob_ref_exists(subagent_ref, all_subagent_files)
+        exists = _glob_ref_exists(subagent_ref, all_subagent_files)
+    else:
+        exists = _literal_ref_exists(
+            subagent_ref, agent_slug, all_subagent_files, all_subagent_paths)
+    return exists
 
-    # Exact basename match
-    if subagent_ref in all_subagent_files:
-        return True
 
-    # Exact path from agents root
-    if subagent_ref in all_subagent_paths:
-        return True
-
-    # Agent-local relative path
-    if f"{agent_slug}/{subagent_ref}" in all_subagent_paths:
-        return True
-
-    # Folder shorthand
+def _literal_ref_exists(subagent_ref, agent_slug,
+                        all_subagent_files, all_subagent_paths):
+    """Check whether a non-glob subagent ref resolves to a file/path."""
+    candidates = [
+        subagent_ref,
+        f"{agent_slug}/{subagent_ref}",
+    ]
     if "/" in subagent_ref:
         leaf = subagent_ref.rsplit("/", 1)[1]
-        if (f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths
-                or f"{subagent_ref}/{leaf}" in all_subagent_paths):
-            return True
-
-    return False
+        candidates.extend([
+            f"{agent_slug}/{subagent_ref}/{leaf}",
+            f"{subagent_ref}/{leaf}",
+        ])
+    return (subagent_ref in all_subagent_files
+            or any(candidate in all_subagent_paths for candidate in candidates))
 
 
 def _is_glob_ref(subagent_ref):
