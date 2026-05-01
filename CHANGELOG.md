@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.62] - 2026-05-01
+
+### Changed
+
+- fix pre-edit worktree auto-create detection
+- Maintenance: sync t3385 follow-up task
+
+### Fixed
+
+- stub _rest_append_sig in REST fallback test to prevent hang (#22107)
+
 ## [3.13.61] - 2026-05-01
 
 ### Changed
