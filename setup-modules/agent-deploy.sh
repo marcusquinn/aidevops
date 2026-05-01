@@ -503,6 +503,9 @@ _deploy_agents_post_copy() {
 # (those edits are overwritten by every deploy). Emits a warning listing drifted
 # files and the canonical source path to edit instead.
 # Non-fatal: always returns 0 so deployment proceeds.
+#
+# Performance: uses a single rsync --checksum --dry-run call instead of one
+# diff -q subprocess per script (was 783 calls → now 1 call; t3221).
 _warn_deployed_script_drift() {
 	local source_dir="$1"
 	local target_dir="$2"
@@ -512,20 +515,35 @@ _warn_deployed_script_drift() {
 	if [[ ! -d "$source_scripts" || ! -d "$target_scripts" ]]; then
 		return 0
 	fi
-	if ! command -v diff &>/dev/null; then
-		return 0
-	fi
 
 	local -a drifted=()
-	local f bn
-	for f in "$target_scripts"/*.sh; do
-		[[ -f "$f" ]] || continue
-		bn=$(basename "$f")
-		local src="$source_scripts/$bn"
-		if [[ -f "$src" ]] && ! diff -q "$src" "$f" &>/dev/null; then
-			drifted+=("$bn")
-		fi
-	done
+	if command -v rsync &>/dev/null; then
+		# Single bulk comparison: rsync --checksum --dry-run reports changed files
+		# without transferring anything. --out-format='%f' prints only the relative
+		# path of each changed file. Filter to top-level *.sh only (no subdirs).
+		local changed_file
+		while IFS= read -r changed_file; do
+			[[ -n "$changed_file" ]] || continue
+			# Skip subdirectory scripts (only warn about top-level scripts/)
+			[[ "$changed_file" == */* ]] && continue
+			[[ "$changed_file" == *.sh ]] || continue
+			drifted+=("$changed_file")
+		done < <(rsync --checksum --dry-run \
+			--out-format='%f' \
+			--include='*.sh' --exclude='*/' --exclude='*' \
+			"$source_scripts/" "$target_scripts/" 2>/dev/null || true)
+	elif command -v diff &>/dev/null; then
+		# Fallback: one diff -q per script (slow, only reached when rsync absent)
+		local f bn
+		for f in "$target_scripts"/*.sh; do
+			[[ -f "$f" ]] || continue
+			bn=$(basename "$f")
+			local src="$source_scripts/$bn"
+			if [[ -f "$src" ]] && ! diff -q "$src" "$f" &>/dev/null; then
+				drifted+=("$bn")
+			fi
+		done
+	fi
 
 	if [[ ${#drifted[@]} -gt 0 ]]; then
 		print_warning "Deployed scripts differ from canonical source (local edits will be overwritten; backup will be created):"
@@ -577,9 +595,18 @@ deploy_aidevops_agents() {
 		_warn_deployed_script_drift "$source_dir" "$target_dir"
 	fi
 
-	# Create backup if target exists (with rotation)
+	# Create backup if target exists (with rotation).
+	# Skip when the deployed SHA matches the current HEAD — nothing changed on
+	# disk, so there is nothing worth backing up (t3221: steady-state perf).
 	if [[ -d "$target_dir" ]]; then
-		create_backup_with_rotation "$target_dir" "agents"
+		local _cur_sha _dep_sha
+		_cur_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
+		_dep_sha=$(cat "${HOME}/.aidevops/.deployed-sha" 2>/dev/null || echo "")
+		if [[ -n "$_cur_sha" && -n "$_dep_sha" && "$_cur_sha" == "$_dep_sha" ]]; then
+			print_info "No changes since last deploy (${_cur_sha:0:8}) — skipping backup"
+		else
+			create_backup_with_rotation "$target_dir" "agents"
+		fi
 	fi
 
 	mkdir -p "$target_dir"
@@ -594,17 +621,11 @@ deploy_aidevops_agents() {
 	print_success "Deployed agents to $target_dir"
 	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
 
-	# Restart pulse if running — bash processes load source files at startup
-	# and don't re-read them when files change on disk. Without a restart,
-	# fixes to pulse-*.sh, dispatch-dedup-*.sh, headless-runtime-*.sh, and
-	# other sourced scripts don't take effect until the next manual restart.
-	# This was the root cause of a multi-hour outage where deployed fixes
-	# were correct but the running pulse kept using old code in memory.
-	_restart_pulse_if_running
-
-	# Write deployed-SHA stamp so aidevops-update-check.sh can detect
-	# script drift between this deploy and future canonical-repo commits.
-	# Written AFTER pulse restart so the stamp reflects a fully-applied deploy.
+	# Write deployed-SHA stamp BEFORE the pulse restart so the stamp is
+	# available immediately for subsequent setup steps and the next run's
+	# backup-skip check (t3221). Previously written after the blocking
+	# restart wait; moving it here has no correctness impact — the deploy
+	# is already fully on disk at this point.
 	# t2156: enables auto-redeploy when local commits land between releases.
 	local deployed_sha
 	deployed_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
@@ -613,6 +634,20 @@ deploy_aidevops_agents() {
 		mkdir -p "$aidevops_dir"
 		printf '%s\n' "$deployed_sha" >"${aidevops_dir}/.deployed-sha"
 	fi
+
+	# Restart pulse in the background — bash processes load source files at
+	# startup and don't re-read them when files change on disk. Without a
+	# restart, fixes to pulse-*.sh, dispatch-dedup-*.sh, and other sourced
+	# scripts don't take effect until the next manual restart.
+	#
+	# t3221: running this asynchronously saves the 10-15s blocking wait
+	# (pkill + up to 10s die-wait + sleep 5 launchd grace period). The
+	# deploy is already complete on disk; the pulse picks up the new scripts
+	# once it restarts regardless of when that happens relative to setup.sh
+	# finishing. disown prevents SIGHUP propagation if setup.sh is sourced
+	# interactively; in script mode the orphan survives the exit anyway.
+	_restart_pulse_if_running &
+	disown
 
 	return 0
 }
