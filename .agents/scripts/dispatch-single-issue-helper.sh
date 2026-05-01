@@ -111,9 +111,10 @@ _dsi_load_issue_meta() {
 		return 1
 	fi
 
-	local state
+	local state state_normalized
 	state=$(printf '%s' "$meta_json" | jq -r '.state // "UNKNOWN"')
-	if [[ "$state" != "OPEN" ]]; then
+	state_normalized=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
+	if [[ "$state_normalized" != "OPEN" ]]; then
 		_dsi_err "Issue #${issue_number} is ${state} (must be OPEN for dispatch)"
 		return 1
 	fi

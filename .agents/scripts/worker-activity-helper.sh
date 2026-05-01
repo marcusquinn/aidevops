@@ -12,8 +12,9 @@
 #   2. ~/.aidevops/logs/pulse-stats.json
 #      Pulse-level dispatch counters (each value is an array of unix-second
 #      timestamps; query with `jq '.counters[<name>] // []'`).
-#   3. `gh issue list label:solved:worker --state closed`
-#      External truth: did headless workers actually solve tasks?
+#   3. Optional `gh issue list label:solved:worker --state closed`
+#      External truth: did headless workers actually solve tasks? Disabled by
+#      default because gh issue search uses the GraphQL search path.
 #
 # Replaces the misdiagnosis-prone habit of reading worker-NNN.log mtimes,
 # which was the exact mistake that triggered this task. mtime tells you when
@@ -23,7 +24,7 @@
 # Usage:
 #   worker-activity-helper.sh summary [--since 1h|6h|24h|48h|7d]
 #                                     [--json]
-#                                     [--no-pr-check]
+#                                     [--pr-check|--no-pr-check]
 #                                     [--repo OWNER/REPO]
 #   worker-activity-helper.sh help
 
@@ -224,7 +225,7 @@ _wah_emit_human() {
 	printf '\n'
 	printf 'solved:worker issues closed in window:\n'
 	printf '  %s' "$solved_count"
-	[[ "$pr_check_state" == "skipped" ]] && printf '  (--no-pr-check)'
+	[[ "$pr_check_state" == "skipped" ]] && printf '  (skipped; use --pr-check)'
 	[[ "$pr_check_state" == "failed" ]] && printf '  (gh query failed)'
 	printf '\n'
 	printf '%s\n' "$divider"
@@ -289,7 +290,7 @@ _wah_emit_json() {
 # to the right emitter.
 #######################################
 cmd_summary() {
-	local since_label="24h" emit_json=0 do_pr_check=1 repo_label=""
+	local since_label="24h" emit_json=0 do_pr_check=0 repo_label=""
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
@@ -299,6 +300,10 @@ cmd_summary() {
 			;;
 		--json)
 			emit_json=1
+			shift
+			;;
+		--pr-check)
+			do_pr_check=1
 			shift
 			;;
 		--no-pr-check)
@@ -383,13 +388,14 @@ Usage:
 Options:
   --since 1h|6h|24h|48h|7d   Lookback window (default: 24h)
   --json                     Emit machine-readable JSON
-  --no-pr-check              Skip the gh solved-issue query (offline / rate-limited)
+  --pr-check                 Run the gh solved-issue query (GraphQL search path)
+  --no-pr-check              Explicitly keep the gh solved-issue query skipped (default)
   --repo OWNER/REPO          Constrain solved-issue query to a single repo
 
 Sources read (in canonical-precedence order):
   1. ~/.aidevops/logs/headless-runtime-metrics.jsonl  (worker outcomes)
   2. ~/.aidevops/logs/pulse-stats.json                (dispatch counters)
-  3. gh issue list label:solved:worker                (external truth)
+  3. gh issue list label:solved:worker                (optional external truth)
 
 Examples:
   # Last 24 hours, human-readable.
@@ -400,6 +406,9 @@ Examples:
 
   # Last 7 days, single repo, no network call.
   worker-activity-helper.sh summary --since 7d --repo marcusquinn/aidevops --no-pr-check
+
+  # Include solved:worker issue search when GraphQL budget is healthy.
+  worker-activity-helper.sh summary --since 24h --pr-check
 
 NOT a substitute for:
   - worker-NNN.log mtime → file touch time, not outcome.

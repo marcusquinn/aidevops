@@ -30,6 +30,8 @@ TESTS_RUN=0
 TESTS_FAILED=0
 SET_ISSUE_STATUS_LOG=""
 SET_ORIGIN_LABEL_LOG=""
+MOCK_GH_ISSUE_STATE="OPEN"
+MOCK_GH_FAIL="0"
 
 print_result() {
 	local test_name="$1"
@@ -101,6 +103,22 @@ set_origin_label() {
 _install_mock_set_origin_label() {
 	MOCK_SET_ORIGIN_LABEL_MODE="${1:-success}"
 	return 0
+}
+
+# shellcheck disable=SC2317
+gh() {
+	if [[ "$MOCK_GH_FAIL" == "1" ]]; then
+		return 1
+	fi
+
+	if [[ "$1" == "issue" && "$2" == "view" ]]; then
+		printf '{"number":%s,"title":"Mock issue","state":"%s","labels":[],"assignees":[],"url":"https://example.invalid/issues/%s"}\n' \
+			"$3" "$MOCK_GH_ISSUE_STATE" "$3"
+		return 0
+	fi
+
+	printf 'unexpected gh call: %s\n' "$*" >&2
+	return 1
 }
 
 reset_test_state() {
@@ -358,6 +376,36 @@ test_no_ceremony_flag_parses_correctly() {
 	return 0
 }
 
+test_load_issue_meta_accepts_lowercase_open() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_ISSUE_STATE="open"
+
+	local rc=0
+	_dsi_load_issue_meta 123 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 0 && "$_DSI_ISSUE_TITLE" == "Mock issue" ]] && check=0
+	print_result "load issue meta accepts lowercase open" "$check" \
+		"expected rc=0 with title populated, got rc=$rc title=$_DSI_ISSUE_TITLE"
+
+	return 0
+}
+
+test_load_issue_meta_blocks_lowercase_closed() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_ISSUE_STATE="closed"
+
+	local rc=0
+	_dsi_load_issue_meta 124 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 ]] && check=0
+	print_result "load issue meta blocks lowercase closed" "$check" \
+		"expected rc=1 for closed state, got rc=$rc"
+
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -379,6 +427,8 @@ _run_tests() {
 	test_ceremony_handles_set_issue_status_failure
 	test_ceremony_origin_label_failure_is_nonfatal
 	test_no_ceremony_flag_parses_correctly
+	test_load_issue_meta_accepts_lowercase_open
+	test_load_issue_meta_blocks_lowercase_closed
 
 	echo
 	echo "======================================"

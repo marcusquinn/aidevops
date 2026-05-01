@@ -252,7 +252,7 @@ assert_contains "5b: human output names pulse-stats" "pulse-stats.json" "$OUT"
 assert_contains "5c: human output shows succeeded count" "Succeeded:                   2" "$OUT"
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
-assert_contains "5e: human output shows --no-pr-check note" "--no-pr-check" "$OUT"
+assert_contains "5e: human output shows pr-check opt-in note" "use --pr-check" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 6: solved:worker attribution query excludes origin-only PR counts.
@@ -275,7 +275,7 @@ EOF
 chmod +x "$GH_STUB_DIR/gh"
 
 JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
-	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --json 2>&1)
+	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
 RC=$?
 assert_rc "6a: solved attribution query exits 0" 0 "$RC"
 assert_eq "6b: solved worker issue count = 2" "2" \

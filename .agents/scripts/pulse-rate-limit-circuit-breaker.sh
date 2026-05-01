@@ -79,11 +79,57 @@ LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 # State file for tracking when the breaker last tripped (for status reporting).
 _CIRCUIT_BREAKER_STATE_FILE="${HOME}/.aidevops/logs/pulse-graphql-circuit-breaker.state"
 
+# Short-lived cache for the free rate_limit endpoint. The dispatch loop can ask
+# for budget state once per candidate; caching keeps diagnostics and in-loop
+# checks from hammering GitHub while preserving sub-minute recovery.
+_CB_RL_CACHE_FILE="${AIDEVOPS_PULSE_RATE_LIMIT_CACHE:-${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json}"
+_CB_RL_CACHE_TTL="${AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL:-20}"
+_CB_RL_MODE_CACHED_ONLY="cached-only"
+
 # Log prefix for all messages from this module.
 _CB_RL_LOG_PREFIX="[circuit-breaker-rl]"
 
 # Unknown value placeholder for status output.
 _CB_RL_UNKNOWN="?"
+
+#######################################
+# Read GitHub rate-limit state with a short TTL cache.
+#
+# Args:
+#   $1 - mode: normal (default) or cached-only
+#
+# Stdout: raw `gh api rate_limit` JSON.
+#######################################
+_cb_rate_limit_json() {
+	local mode="${1:-normal}"
+	local now cached_ts age rate_json tmp
+	now=$(date +%s 2>/dev/null) || now=0
+
+	if [[ -f "$_CB_RL_CACHE_FILE" ]]; then
+		cached_ts=$(jq -r '.ts // 0' "$_CB_RL_CACHE_FILE" 2>/dev/null) || cached_ts=0
+		[[ "$cached_ts" =~ ^[0-9]+$ ]] || cached_ts=0
+		age=$((now - cached_ts))
+		if [[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]] || { [[ "$_CB_RL_CACHE_TTL" =~ ^[0-9]+$ ]] && [[ "$age" -ge 0 ]] && [[ "$age" -lt "$_CB_RL_CACHE_TTL" ]]; }; then
+			rate_json=$(jq -c '.rate // empty' "$_CB_RL_CACHE_FILE" 2>/dev/null) || rate_json=""
+			if [[ -n "$rate_json" && "$rate_json" != "null" ]]; then
+				printf '%s\n' "$rate_json"
+				return 0
+			fi
+		fi
+	fi
+
+	[[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]] && return 1
+
+	rate_json=$(gh api rate_limit 2>/dev/null) || return 1
+	[[ -n "$rate_json" ]] || return 1
+	mkdir -p "${_CB_RL_CACHE_FILE%/*}" 2>/dev/null || true
+	tmp=$(mktemp "${_CB_RL_CACHE_FILE}.XXXXXX" 2>/dev/null) || tmp=""
+	if [[ -n "$tmp" ]]; then
+		printf '{"ts":%s,"rate":%s}\n' "$now" "$rate_json" >"$tmp" 2>/dev/null && mv "$tmp" "$_CB_RL_CACHE_FILE" 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+	fi
+	printf '%s\n' "$rate_json"
+	return 0
+}
 
 #######################################
 # Check whether the GitHub GraphQL rate-limit budget is sufficient for dispatch.
@@ -111,9 +157,9 @@ is_graphql_budget_sufficient() {
 		return 0
 	fi
 
-	# Query rate limit (free endpoint).
+	# Query rate limit (free endpoint, short-TTL cached).
 	local rate_json
-	rate_json=$(gh api rate_limit 2>/dev/null) || rate_json=""
+	rate_json=$(_cb_rate_limit_json normal) || rate_json=""
 
 	if [[ -z "$rate_json" ]]; then
 		echo "${_CB_RL_LOG_PREFIX} WARNING: gh api rate_limit failed — proceeding with dispatch (fail-open)" >>"$LOGFILE"
@@ -201,6 +247,7 @@ _compute_threshold_count() {
 # Stdout: status line (one of: "OK: ...", "TRIPPED: ...", "UNKNOWN: ...")
 #######################################
 _circuit_breaker_status() {
+	local mode="${1:-normal}"
 	# Check for emergency bypass.
 	if [[ "${AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER:-0}" == "1" ]]; then
 		printf 'BYPASSED: AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1\n'
@@ -215,10 +262,14 @@ _circuit_breaker_status() {
 
 	# Check current rate-limit state.
 	local rate_json
-	rate_json=$(gh api rate_limit 2>/dev/null) || rate_json=""
+	rate_json=$(_cb_rate_limit_json "$mode") || rate_json=""
 
 	if [[ -z "$rate_json" ]]; then
-		printf 'UNKNOWN: gh api rate_limit unavailable\n'
+		if [[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]]; then
+			printf 'UNKNOWN: no cached gh api rate_limit data\n'
+		else
+			printf 'UNKNOWN: gh api rate_limit unavailable\n'
+		fi
 		return 0
 	fi
 
@@ -384,7 +435,11 @@ _main() {
 			return $?
 			;;
 		status)
-			_circuit_breaker_status
+			local status_mode="normal"
+			if [[ "${1:-}" == "--cached" ]]; then
+				status_mode="$_CB_RL_MODE_CACHED_ONLY"
+			fi
+			_circuit_breaker_status "$status_mode"
 			return 0
 			;;
 		help | --help | -h)
@@ -393,11 +448,12 @@ _main() {
 			echo "Usage:"
 			echo "  pulse-rate-limit-circuit-breaker.sh check                          # exit 0=OK, 1=tripped, 2=API error"
 			echo "  pulse-rate-limit-circuit-breaker.sh check-actions-queue OWNER/REPO # KEY=VALUE: queued/in_progress/ratio/saturated"
-			echo "  pulse-rate-limit-circuit-breaker.sh status                         # human-readable status line"
+			echo "  pulse-rate-limit-circuit-breaker.sh status [--cached]              # human-readable status line"
 			echo ""
 			echo "Environment (GraphQL):"
 			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.30 = 30%)"
 			echo "  AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1     emergency bypass"
+			echo "  AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL       rate_limit cache TTL seconds (default 20)"
 			echo ""
 			echo "Environment (Actions queue, t3211):"
 			echo "  AIDEVOPS_ACTIONS_QUEUE_SATURATION_QUEUED_MIN  min queued runs (default 50; 0 disables)"
