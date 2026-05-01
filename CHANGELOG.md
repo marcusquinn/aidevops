@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.36] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3241 complete (pr:#22040 completed:2026-05-01) [skip ci]
+
+### Fixed
+
+- warn when pulse credentials lack Anthropic key (#22046)
+
 ## [3.13.35] - 2026-05-01
 
 ### Changed
