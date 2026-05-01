@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.37] - 2026-05-01
+
+### Changed
+
+- Maintenance: record follow-up tasks for PR 21876 investigation (#22053)
+- add memory truth-maintenance workflow (#22051)
+
 ## [3.13.36] - 2026-05-01
 
 ### Changed
