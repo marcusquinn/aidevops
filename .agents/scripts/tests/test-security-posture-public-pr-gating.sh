@@ -150,10 +150,8 @@ resolve_slug() {
 	return 0
 }
 
-eval "$(sed -n '/^_repo_is_public_admin()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
-eval "$(sed -n '/^_classic_required_checks_count()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
-eval "$(sed -n '/^_rulesets_pr_gating_state()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
-eval "$(sed -n '/^check_branch_protection()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
+# shellcheck source=../security-posture-helper-repo.sh
+source "${SCRIPTS_DIR}/security-posture-helper-repo.sh"
 
 SEVERITY_CRITICAL="critical"
 SEVERITY_WARNING="warning"

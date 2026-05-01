@@ -222,13 +222,164 @@ check_workflow_security() {
 	return 0
 }
 
+# _report_rulesets_branch_protection <slug> <default-branch> <public-admin-flag>
+_report_rulesets_branch_protection() {
+	local slug="$1"
+	local default_branch="$2"
+	local public_admin="$3"
+
+	local rulesets_state protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass
+	if rulesets_state=$(_rulesets_pr_gating_state "$slug" "$default_branch"); then
+		IFS=$'\t' read -r protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass <<<"$rulesets_state"
+	else
+		protected_by_rulesets=0
+		rulesets_reviews=0
+		rulesets_checks=0
+		rulesets_bypass=0
+	fi
+
+	if [[ "$protected_by_rulesets" -ne 1 ]]; then
+		print_crit "Default branch '$default_branch' has NO branch protection or active matching ruleset"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No branch protection on $default_branch"
+		return 0
+	fi
+
+	print_pass "Default branch '$default_branch' protected by active repository ruleset(s)"
+	add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets protect $default_branch"
+	_report_rulesets_review_requirement "$default_branch" "$public_admin" "$rulesets_reviews"
+	_report_rulesets_check_requirement "$default_branch" "$public_admin" "$rulesets_checks"
+	_report_rulesets_bypass_requirement "$public_admin" "$rulesets_bypass"
+	return 0
+}
+
+_report_rulesets_review_requirement() {
+	local default_branch="$1"
+	local public_admin="$2"
+	local rulesets_reviews="$3"
+
+	if [[ "$rulesets_reviews" -eq 1 ]]; then
+		print_pass "Rulesets require pull request approval"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets require PR approval"
+	elif [[ "$public_admin" -eq 1 ]]; then
+		print_crit "Rulesets do not require pull request approval on public ADMIN repo"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets missing PR approval requirement"
+	else
+		print_warn "Rulesets do not require pull request approval on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets missing PR approval requirement"
+	fi
+	return 0
+}
+
+_report_rulesets_check_requirement() {
+	local default_branch="$1"
+	local public_admin="$2"
+	local rulesets_checks="$3"
+
+	if [[ "$rulesets_checks" -eq 1 ]]; then
+		print_pass "Rulesets require status checks"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets require status checks"
+	elif [[ "$public_admin" -eq 1 ]]; then
+		print_crit "Rulesets do not require status checks on public ADMIN repo"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets missing required status checks"
+	else
+		print_warn "Rulesets do not require status checks on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets missing required status checks"
+	fi
+	return 0
+}
+
+_report_rulesets_bypass_requirement() {
+	local public_admin="$1"
+	local rulesets_bypass="$2"
+
+	if [[ "$rulesets_bypass" -eq 1 && "$public_admin" -eq 1 ]]; then
+		print_crit "Rulesets define bypass actors on public ADMIN repo"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets allow bypass actors"
+	elif [[ "$rulesets_bypass" -eq 1 ]]; then
+		print_warn "Rulesets define bypass actors"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets allow bypass actors"
+	else
+		print_pass "Rulesets have no bypass actors"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets have no bypass actors"
+	fi
+	return 0
+}
+
+_report_classic_branch_protection() {
+	local protection_json="$1"
+	local default_branch="$2"
+	local public_admin="$3"
+
+	local required_reviews required_checks enforce_admins
+	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
+	required_checks=$(_classic_required_checks_count "$protection_json")
+	enforce_admins=$(echo "$protection_json" | jq -r '.enforce_admins.enabled // false' 2>/dev/null) || enforce_admins="false"
+
+	_report_classic_review_requirement "$default_branch" "$public_admin" "$required_reviews"
+	_report_classic_check_requirement "$default_branch" "$public_admin" "$required_checks"
+	_report_classic_admin_enforcement "$public_admin" "$enforce_admins"
+	return 0
+}
+
+_report_classic_review_requirement() {
+	local default_branch="$1"
+	local public_admin="$2"
+	local required_reviews="$3"
+
+	if [[ "$required_reviews" -gt 0 ]]; then
+		print_pass "PR reviews required ($required_reviews approving review(s))"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "PR reviews required: $required_reviews"
+	elif [[ "$public_admin" -eq 1 ]]; then
+		print_crit "PR reviews not required on public ADMIN repo default branch '$default_branch'"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
+	else
+		print_warn "PR reviews not required on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
+	fi
+	return 0
+}
+
+_report_classic_check_requirement() {
+	local default_branch="$1"
+	local public_admin="$2"
+	local required_checks="$3"
+
+	if [[ "$required_checks" -gt 0 ]]; then
+		print_pass "Required status checks configured ($required_checks check(s))"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Status checks configured: $required_checks"
+	elif [[ "$public_admin" -eq 1 ]]; then
+		print_crit "No required status checks on public ADMIN repo default branch '$default_branch'"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No required status checks"
+	else
+		print_warn "No required status checks on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "No required status checks"
+	fi
+	return 0
+}
+
+_report_classic_admin_enforcement() {
+	local public_admin="$1"
+	local enforce_admins="$2"
+
+	if [[ "$enforce_admins" == "true" ]]; then
+		print_pass "Branch protection enforced for admins"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Enforced for admins"
+	elif [[ "$public_admin" -eq 1 ]]; then
+		print_crit "Branch protection allows admin bypass on public ADMIN repo"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
+	else
+		print_info "Branch protection not enforced for admins (common for solo repos)"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
+	fi
+	return 0
+}
+
 # Phase 2: Check branch protection
 check_branch_protection() {
 	local repo_path="$1"
 
 	print_header "Phase 2: Branch Protection"
 
-	# Need gh CLI and a GitHub remote
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed — cannot check branch protection"
 		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "gh CLI not available"
@@ -242,124 +393,22 @@ check_branch_protection() {
 		return 0
 	fi
 
-	# Detect default branch
-	local default_branch
+	local default_branch public_admin protection_json
 	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
-	if [[ -z "$default_branch" ]]; then
-		default_branch="main"
-	fi
-
-	local public_admin=0
+	default_branch="${default_branch:-main}"
+	public_admin=0
 	if _repo_is_public_admin "$slug"; then
 		public_admin=1
 		print_info "Repository is public and current token has admin access — PR merge gating is required"
 	fi
 
-	# Query branch protection rules via gh API
-	local protection_json
 	protection_json=$(gh api "repos/$slug/branches/$default_branch/protection" 2>/dev/null) || true
-
 	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
-		local rulesets_state protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass
-		if rulesets_state=$(_rulesets_pr_gating_state "$slug" "$default_branch"); then
-			IFS=$'\t' read -r protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass <<<"$rulesets_state"
-		else
-			protected_by_rulesets=0
-			rulesets_reviews=0
-			rulesets_checks=0
-			rulesets_bypass=0
-		fi
-
-		if [[ "$protected_by_rulesets" -ne 1 ]]; then
-			print_crit "Default branch '$default_branch' has NO branch protection or active matching ruleset"
-			add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No branch protection on $default_branch"
-			return 0
-		fi
-
-		print_pass "Default branch '$default_branch' protected by active repository ruleset(s)"
-		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets protect $default_branch"
-
-		if [[ "$rulesets_reviews" -eq 1 ]]; then
-			print_pass "Rulesets require pull request approval"
-			add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets require PR approval"
-		elif [[ "$public_admin" -eq 1 ]]; then
-			print_crit "Rulesets do not require pull request approval on public ADMIN repo"
-			add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets missing PR approval requirement"
-		else
-			print_warn "Rulesets do not require pull request approval on $default_branch"
-			add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets missing PR approval requirement"
-		fi
-
-		if [[ "$rulesets_checks" -eq 1 ]]; then
-			print_pass "Rulesets require status checks"
-			add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets require status checks"
-		elif [[ "$public_admin" -eq 1 ]]; then
-			print_crit "Rulesets do not require status checks on public ADMIN repo"
-			add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets missing required status checks"
-		else
-			print_warn "Rulesets do not require status checks on $default_branch"
-			add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets missing required status checks"
-		fi
-
-		if [[ "$rulesets_bypass" -eq 1 && "$public_admin" -eq 1 ]]; then
-			print_crit "Rulesets define bypass actors on public ADMIN repo"
-			add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Rulesets allow bypass actors"
-		elif [[ "$rulesets_bypass" -eq 1 ]]; then
-			print_warn "Rulesets define bypass actors"
-			add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "Rulesets allow bypass actors"
-		else
-			print_pass "Rulesets have no bypass actors"
-			add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Rulesets have no bypass actors"
-		fi
-
+		_report_rulesets_branch_protection "$slug" "$default_branch" "$public_admin"
 		return 0
 	fi
 
-	# Check: require PR reviews
-	local required_reviews
-	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
-
-	if [[ "$required_reviews" -gt 0 ]]; then
-		print_pass "PR reviews required ($required_reviews approving review(s))"
-		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "PR reviews required: $required_reviews"
-	elif [[ "$public_admin" -eq 1 ]]; then
-		print_crit "PR reviews not required on public ADMIN repo default branch '$default_branch'"
-		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
-	else
-		print_warn "PR reviews not required on $default_branch"
-		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
-	fi
-
-	# Check: require status checks
-	local required_checks
-	required_checks=$(_classic_required_checks_count "$protection_json")
-
-	if [[ "$required_checks" -gt 0 ]]; then
-		print_pass "Required status checks configured ($required_checks check(s))"
-		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Status checks configured: $required_checks"
-	elif [[ "$public_admin" -eq 1 ]]; then
-		print_crit "No required status checks on public ADMIN repo default branch '$default_branch'"
-		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No required status checks"
-	else
-		print_warn "No required status checks on $default_branch"
-		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "No required status checks"
-	fi
-
-	# Check: enforce for admins
-	local enforce_admins
-	enforce_admins=$(echo "$protection_json" | jq -r '.enforce_admins.enabled // false' 2>/dev/null) || enforce_admins="false"
-
-	if [[ "$enforce_admins" == "true" ]]; then
-		print_pass "Branch protection enforced for admins"
-		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Enforced for admins"
-	elif [[ "$public_admin" -eq 1 ]]; then
-		print_crit "Branch protection allows admin bypass on public ADMIN repo"
-		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
-	else
-		print_info "Branch protection not enforced for admins (common for solo repos)"
-		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
-	fi
-
+	_report_classic_branch_protection "$protection_json" "$default_branch" "$public_admin"
 	return 0
 }
 
