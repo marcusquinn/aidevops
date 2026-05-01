@@ -45,6 +45,14 @@ print_result() {
 	return 0
 }
 
+configure_test_git_identity() {
+	local repo_path="$1"
+	git -C "$repo_path" config user.email "test@example.invalid"
+	git -C "$repo_path" config user.name "Test User"
+	git -C "$repo_path" config commit.gpgsign false
+	return 0
+}
+
 # The original bug: setup.sh sources shared-constants.sh (readonly colors),
 # then sources _routines.sh which sources init-routines-helper.sh. The helper
 # previously did unconditional `GREEN='\033[0;32m'` which failed under
@@ -141,16 +149,14 @@ test_commit_and_push_syncs_remote_ahead_repo() {
 	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
 	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
 	git -C "$local_repo" checkout -b main >/dev/null 2>&1
-	git -C "$local_repo" config user.email "test@example.invalid"
-	git -C "$local_repo" config user.name "Test User"
+	configure_test_git_identity "$local_repo"
 	printf 'base\n' >"${local_repo}/README.md"
 	git -C "$local_repo" add README.md
 	git -C "$local_repo" commit -m "initial" >/dev/null
 	git -C "$local_repo" push -u origin main >/dev/null 2>&1
 
 	git clone "$remote_repo" "$advancer_repo" >/dev/null 2>&1
-	git -C "$advancer_repo" config user.email "test@example.invalid"
-	git -C "$advancer_repo" config user.name "Test User"
+	configure_test_git_identity "$advancer_repo"
 	printf 'remote-ahead\n' >>"${advancer_repo}/README.md"
 	git -C "$advancer_repo" commit -am "remote ahead" >/dev/null
 	git -C "$advancer_repo" push origin main >/dev/null 2>&1
@@ -193,16 +199,14 @@ test_commit_and_push_aborts_failed_remote_sync_rebase() {
 	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
 	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
 	git -C "$local_repo" checkout -b main >/dev/null 2>&1
-	git -C "$local_repo" config user.email "test@example.invalid"
-	git -C "$local_repo" config user.name "Test User"
+	configure_test_git_identity "$local_repo"
 	printf 'base\n' >"${local_repo}/README.md"
 	git -C "$local_repo" add README.md
 	git -C "$local_repo" commit -m "initial" >/dev/null
 	git -C "$local_repo" push -u origin main >/dev/null 2>&1
 
 	git clone "$remote_repo" "$advancer_repo" >/dev/null 2>&1
-	git -C "$advancer_repo" config user.email "test@example.invalid"
-	git -C "$advancer_repo" config user.name "Test User"
+	configure_test_git_identity "$advancer_repo"
 	printf 'remote-change\n' >"${advancer_repo}/README.md"
 	git -C "$advancer_repo" commit -am "remote conflicting change" >/dev/null
 	git -C "$advancer_repo" push origin main >/dev/null 2>&1
@@ -254,8 +258,7 @@ test_commit_and_push_uses_full_refspec_when_head_detached() {
 	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
 	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
 	git -C "$local_repo" checkout -b main >/dev/null 2>&1
-	git -C "$local_repo" config user.email "test@example.invalid"
-	git -C "$local_repo" config user.name "Test User"
+	configure_test_git_identity "$local_repo"
 	printf 'base\n' >"${local_repo}/README.md"
 	git -C "$local_repo" add README.md
 	git -C "$local_repo" commit -m "initial" >/dev/null
@@ -300,8 +303,7 @@ test_commit_and_push_skips_rebase_retry_with_unstaged_scaffold() {
 	git -c init.defaultBranch=main init --bare "$remote_repo" >/dev/null
 	git clone "$remote_repo" "$local_repo" >/dev/null 2>&1
 	git -C "$local_repo" checkout -b main >/dev/null 2>&1
-	git -C "$local_repo" config user.email "test@example.invalid"
-	git -C "$local_repo" config user.name "Test User"
+	configure_test_git_identity "$local_repo"
 	printf 'base\n' >"${local_repo}/README.md"
 	git -C "$local_repo" add README.md
 	git -C "$local_repo" commit -m "initial" >/dev/null
