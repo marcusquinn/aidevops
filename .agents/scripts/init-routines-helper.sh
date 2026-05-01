@@ -487,6 +487,48 @@ register_repo() {
 }
 
 # ---------------------------------------------------------------------------
+# _sync_with_remote_before_commit <path>
+# Pulls remote changes before creating the scaffold commit so a remote-ahead
+# routines repo does not leave a local-only commit after a non-fast-forward push.
+# ---------------------------------------------------------------------------
+_sync_with_remote_before_commit() {
+	local repo_path="$1"
+	(
+		cd "$repo_path"
+
+		if ! git remote get-url origin &>/dev/null; then
+			return 0
+		fi
+
+		local upstream=""
+		upstream=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+		if [[ -z "$upstream" ]]; then
+			return 0
+		fi
+
+		local stashed=false
+		if [[ -n "$(git status --porcelain)" ]]; then
+			if git stash push -u -m "aidevops-routines scaffold before remote sync" >/dev/null; then
+				stashed=true
+			else
+				return 1
+			fi
+		fi
+
+		if ! git pull --rebase; then
+			return 1
+		fi
+
+		if [[ "$stashed" == true ]]; then
+			if ! git stash pop >/dev/null; then
+				return 1
+			fi
+		fi
+	)
+	return $?
+}
+
+# ---------------------------------------------------------------------------
 # _commit_and_push <path>
 # Commits scaffolded files and pushes to remote.
 # ---------------------------------------------------------------------------
@@ -494,10 +536,21 @@ _commit_and_push() {
 	local repo_path="$1"
 	(
 		cd "$repo_path"
+		if ! _sync_with_remote_before_commit "$repo_path"; then
+			print_warning "Remote sync failed — skipping routines scaffold commit to avoid a stranded local commit"
+			return 0
+		fi
 		git add -A
 		if ! git diff --cached --quiet; then
 			git commit -m "chore: scaffold aidevops-routines repo"
-			git push origin HEAD 2>&1 || print_warning "Push failed — commit exists locally"
+			if ! git push origin HEAD; then
+				print_warning "Push rejected — rebasing onto remote and retrying"
+				if git pull --rebase && git push origin HEAD; then
+					return 0
+				fi
+				git reset --soft HEAD~1
+				print_warning "Push failed — uncommitted scaffold changes preserved; no local-only commit left behind"
+			fi
 		fi
 	)
 	return 0
