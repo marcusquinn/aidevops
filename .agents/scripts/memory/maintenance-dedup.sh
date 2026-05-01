@@ -93,7 +93,7 @@ EOF
 			local escaped_remove="${mem_id//"'"/"''"}"
 
 			if [[ "$dry_run" == true ]]; then
-				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)"
+				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)" >&2
 			else
 				_dedup_merge_tags "$escaped_keep" "$escaped_remove"
 				# Transfer access history (keep higher count)
@@ -153,6 +153,29 @@ EOF
 		local ids_arr
 		IFS=',' read -ra ids_arr <<<"$id_list"
 
+		# Exact duplicates are handled in phase 1. During dry-run they are not
+		# physically deleted, so collapse each exact-content set to one
+		# representative before counting near-duplicate removals. This mirrors the
+		# database state phase 2 sees during a real run and avoids double-counting.
+		if [[ "$dry_run" == true ]]; then
+			local representative_ids=()
+			local seen_contents=$'\n'
+			for nid in "${ids_arr[@]}"; do
+				[[ -z "$nid" ]] && continue
+				local nid_esc="${nid//"'"/"''"}"
+				local nid_content
+				nid_content=$(db "$MEMORY_DB" "SELECT content FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || true)
+				[[ -z "$nid_content" ]] && continue
+				if [[ "$seen_contents" == *$'\n'"$nid_content"$'\n'* ]]; then
+					continue
+				fi
+				seen_contents+="${nid_content}"$'\n'
+				representative_ids+=("$nid")
+			done
+			ids_arr=("${representative_ids[@]}")
+			[[ "${#ids_arr[@]}" -le 1 ]] && continue
+		fi
+
 		# Find the oldest entry to keep
 		local oldest_id="" oldest_date="9999"
 		for nid in "${ids_arr[@]}"; do
@@ -182,7 +205,7 @@ EOF
 			if [[ "$dry_run" == true ]]; then
 				local preview
 				preview=$(db "$MEMORY_DB" "SELECT substr(content, 1, 50) FROM learnings WHERE id = '$nid_esc';")
-				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..."
+				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..." >&2
 			else
 				_dedup_merge_tags "$oldest_esc" "$nid_esc"
 				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
@@ -209,7 +232,7 @@ _dedup_semantic_phase() {
 	local threshold_judge="$2"
 	local semantic_removed=0
 
-	log_info "Scanning for semantic duplicates (AI-judged)..."
+	log_info "Scanning for semantic duplicates (AI-judged)..." >&2
 
 	local types
 	types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
@@ -243,7 +266,7 @@ _dedup_semantic_phase() {
 					local remove_esc="${remove_id//"'"/"''"}"
 					local keep_esc="${keep_id//"'"/"''"}"
 					if [[ "$dry_run" == true ]]; then
-						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..."
+						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..." >&2
 					else
 						_dedup_merge_tags "$keep_esc" "$remove_esc"
 						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
