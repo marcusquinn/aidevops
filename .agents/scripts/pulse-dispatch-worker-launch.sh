@@ -843,6 +843,27 @@ Dispatching worker (deterministic).
 	return 0
 }
 
+_dlw_canary_preflight() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_log="$3"
+	local dispatch_model_tier="$4"
+	local selected_model="$5"
+
+	local -a _canary_cmd=("$HEADLESS_RUNTIME_HELPER" canary --role worker --tier "$dispatch_model_tier")
+	if [[ -n "$selected_model" ]]; then
+		_canary_cmd+=(--model "$selected_model")
+	fi
+
+	if "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
+		return 0
+	fi
+
+	pulse_stats_increment "worker_canary_preflight_failed_count" 2>/dev/null || true
+	echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — worker canary preflight failed before worktree pre-creation; will retry next cycle" >>"$LOGFILE"
+	return 1
+}
+
 #######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
@@ -877,10 +898,6 @@ _dispatch_launch_worker() {
 	# t3034: per-stage timing for launch sub-stages
 	local _ds_t0
 
-	_ds_t0=$(_ds_now_ns)
-	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
-	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
-
 	local worker_log
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
 
@@ -890,6 +907,18 @@ _dispatch_launch_worker() {
 	local dispatch_tier="$_DLW_DISPATCH_TIER"
 	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
 	local selected_model="$_DLW_SELECTED_MODEL"
+
+	_ds_t0=$(_ds_now_ns)
+	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \
+		"$dispatch_model_tier" "$selected_model"; then
+		_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
+		return 0
+	fi
+	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
+
+	_ds_t0=$(_ds_now_ns)
+	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
+	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
 	# t1894/t1934: Lock issue and linked PRs during worker execution
 	_ds_t0=$(_ds_now_ns)

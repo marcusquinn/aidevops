@@ -1546,6 +1546,7 @@ _handle_worker_branch_orphan() {
 		# Post structured ops comment so the next dispatch knows what happened
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
+			# shellcheck disable=SC2016 # printf format string; placeholders are supplied below.
 			_ops_comment=$(printf '<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base main --repo %s\n```\n<!-- ops:end -->' \
 				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 				"$branch_name" "$branch_name" "$repo_slug")
@@ -2078,6 +2079,40 @@ cmd_run() {
 	return 1
 }
 
+cmd_canary() {
+	local role="worker"
+	local model_override=""
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--role)
+			role="${2:-}"
+			shift 2
+			;;
+		--model)
+			model_override="${2:-}"
+			shift 2
+			;;
+		--tier)
+			# Accepted for call-site clarity; the dispatcher resolves the
+			# concrete model before invoking this preflight.
+			shift 2
+			;;
+		*)
+			print_error "Unknown option for canary: $arg"
+			return 1
+			;;
+		esac
+	done
+
+	local selected_model
+	selected_model=$(choose_model "$role" "$model_override") || return $?
+	_enforce_opencode_version_pin
+	_run_canary_test "$selected_model"
+	return $?
+}
+
 # =============================================================================
 # Help and main entry point
 # =============================================================================
@@ -2088,6 +2123,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
+  headless-runtime-helper.sh canary [--role pulse|worker] [--model provider/model] [--tier haiku|sonnet|opus|...]
   headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
@@ -2134,6 +2170,10 @@ main() {
 		;;
 	run)
 		cmd_run "$@"
+		return $?
+		;;
+	canary)
+		cmd_canary "$@"
 		return $?
 		;;
 	backoff)
