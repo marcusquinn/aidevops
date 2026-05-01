@@ -24,6 +24,16 @@ Merge typically happens within one pulse cycle (4-10 minutes) after all checks g
 
 **Note:** "pulse never auto-closes `origin:interactive` PRs" applies to AUTO-CLOSE (abandoning stale incremental PRs on the same task ID), NOT to auto-merge of green PRs. These are separate pulse actions.
 
+### Interactive Admin Merge Authority
+
+Interactive sessions operate with the repo admin/owner account. When the trust source is maintainer-controlled — `OWNER`/`MEMBER` PR author, maintainer-authored linked issue, trusted issue author, or valid cryptographic maintainer approval — the admin account may merge with `gh pr merge <N> --repo <slug> --admin --squash --delete-branch` after verifying:
+
+1. Non-gate CI is green or skipped.
+2. No human `CHANGES_REQUESTED` review exists.
+3. The blocking condition is review-required branch protection, stale GitHub merge state, or a self-blocking framework gate.
+
+This is bypassing stale/redundant automation state, not bypassing maintainer policy. Keep the merge gated when the issue/PR originates from a non-maintainer and there is no valid cryptographic approval.
+
 ## t2449 — `origin:worker` (Worker-Briefed) Auto-Merge
 
 `pulse-merge.sh` also auto-merges `origin:worker` PRs when the underlying issue was **maintainer-briefed** (filed by `OWNER`/`MEMBER`) OR authored by a **trusted peer runner** in the allowlist (t3062) OR **cryptographically approved** by a maintainer (`sudo aidevops approve issue N`). Trust chain is equivalent to interactive: maintainer brief (or explicit vouching) + worker implementation + CI verification + no human objection.
