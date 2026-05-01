@@ -152,6 +152,13 @@ _cron_escape() {
 _time_step() {
 	local _ts_stage="$1"
 	shift
+	# GH#22012: In non-interactive mode, emit the stage name before running so
+	# an operator watching setup.sh output can identify which step is blocking.
+	# The TSV log entry below is written AFTER the step returns — it provides no
+	# signal during a hang. This print is the only in-flight indicator.
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+		printf '[SETUP] stage: %s\n' "$_ts_stage"
+	fi
 	local _ts_start _ts_end _ts_duration _ts_exit
 	_ts_start=$(date +%s.%N 2>/dev/null || date +%s)
 	_ts_exit=0
@@ -1355,70 +1362,74 @@ _setup_run_interactive() {
 _setup_noninteractive_schedulers() {
 	local os="$1"
 
+	# GH#22012: Wrap every scheduler step with _time_step so the stage-timing
+	# log ($HOME/.aidevops/logs/setup-stage-timings.log) covers post-deploy
+	# scheduler setup — the same visibility _setup_run_non_interactive has.
+
 	# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
-	setup_auto_update
+	_time_step "setup_auto_update" setup_auto_update
 	if _should_setup_noninteractive_supervisor_pulse; then
-		setup_supervisor_pulse "$os"
+		_time_step "setup_supervisor_pulse" setup_supervisor_pulse "$os"
 	fi
 	# t2939: pulse-watchdog (independent revival mechanism). Always installed
 	# alongside the pulse — it is a no-op when pulse is disabled. Skipping the
 	# `_should_setup_noninteractive_*` guard intentionally: this is layered
 	# defense, the cost of installing it is one plist file, and the user opts
 	# in by enabling the pulse itself.
-	setup_pulse_watchdog "${PULSE_ENABLED:-}"
+	_time_step "setup_pulse_watchdog" setup_pulse_watchdog "${PULSE_ENABLED:-}"
 	# Regenerate other schedulers if already installed (GH#17695 Finding B).
 	# Stats wrapper is a pulse dependency — also install on first run when
 	# the supervisor pulse is consented (t2418, GH#20016).
 	if _should_setup_noninteractive_stats_wrapper; then
-		setup_stats_wrapper "${PULSE_ENABLED:-}"
+		_time_step "setup_stats_wrapper" setup_stats_wrapper "${PULSE_ENABLED:-}"
 	fi
 	if _should_setup_noninteractive_scheduler "Failure miner" "sh.aidevops.routine-gh-failure-miner" "aidevops: gh-failure-miner" "aidevops-gh-failure-miner"; then
-		setup_failure_miner "${PULSE_ENABLED:-}"
+		_time_step "setup_failure_miner" setup_failure_miner "${PULSE_ENABLED:-}"
 	fi
 	if _should_setup_noninteractive_scheduler "Process guard" "sh.aidevops.process-guard" "aidevops: process-guard" "aidevops-process-guard"; then
-		setup_process_guard
+		_time_step "setup_process_guard" setup_process_guard
 	fi
 	if _should_setup_noninteractive_scheduler "Memory pressure" "sh.aidevops.memory-pressure-monitor" "aidevops: memory-pressure-monitor" "aidevops-memory-pressure-monitor"; then
-		setup_memory_pressure_monitor
+		_time_step "setup_memory_pressure_monitor" setup_memory_pressure_monitor
 	fi
 	if _should_setup_noninteractive_scheduler "Screen time" "sh.aidevops.screen-time-snapshot" "aidevops: screen-time-snapshot" "aidevops-screen-time-snapshot"; then
-		setup_screen_time_snapshot
+		_time_step "setup_screen_time_snapshot" setup_screen_time_snapshot
 	fi
 	if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
-		setup_contribution_watch
+		_time_step "setup_contribution_watch" setup_contribution_watch
 	fi
 	# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
 	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
-		setup_complexity_scan
+		_time_step "setup_complexity_scan" setup_complexity_scan
 	fi
 	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass.
 	# t3036 (GH#21616): use the pulse-dependency escape hatch instead of the
 	# generic chicken-and-egg gate so the routine installs on existing systems
 	# whenever the supervisor pulse is consented.
 	if _should_setup_noninteractive_pulse_merge_routine; then
-		setup_pulse_merge_routine
+		_time_step "setup_pulse_merge_routine" setup_pulse_merge_routine
 	fi
 	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
 	# dispatch coordination, runs every 30 min.
 	if _should_setup_noninteractive_scheduler "Peer productivity monitor" "sh.aidevops.peer-productivity-monitor" "aidevops: peer-productivity-monitor" "aidevops-peer-productivity-monitor"; then
-		setup_peer_productivity_monitor
+		_time_step "setup_peer_productivity_monitor" setup_peer_productivity_monitor
 	fi
 	# Repo sync handles non-interactive mode internally (systemd detection fixed in GH#17861)
-	setup_repo_sync
+	_time_step "setup_repo_sync" setup_repo_sync
 	# r914 repo-aidevops-health — daily drift keeper (t2366)
-	setup_repo_aidevops_health
+	_time_step "setup_repo_aidevops_health" setup_repo_aidevops_health
 	if _should_setup_noninteractive_scheduler "Profile README" "sh.aidevops.profile-readme-update" "aidevops: profile-readme-update" "aidevops-profile-readme-update"; then
-		setup_profile_readme
+		_time_step "setup_profile_readme" setup_profile_readme
 	fi
 	if _should_setup_noninteractive_scheduler "OAuth token refresh" "sh.aidevops.token-refresh" "aidevops: token-refresh" "aidevops-token-refresh"; then
-		setup_oauth_token_refresh
+		_time_step "setup_oauth_token_refresh" setup_oauth_token_refresh
 	fi
 	# opencode DB maintenance (r913, t2183). Helper self-noops on missing
 	# DB — safe to install unconditionally in non-interactive mode too.
-	setup_opencode_db_maintenance
+	_time_step "setup_opencode_db_maintenance" setup_opencode_db_maintenance
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
-	migrate_cron_to_systemd
-	setup_tabby
+	_time_step "migrate_cron_to_systemd" migrate_cron_to_systemd
+	_time_step "setup_tabby" setup_tabby
 	return 0
 }
 
@@ -1551,9 +1562,17 @@ main() {
 	# No-op if pulse is not running, or if AIDEVOPS_SKIP_PULSE_RESTART=1.
 	# Uses the deployed helper (not the repo-local one) so the restart runs
 	# against the agents directory setup.sh just populated.
+	# GH#22012: bounded 120 s timeout prevents setup.sh hanging here when the
+	# pulse helper takes unusually long to stop a stalled instance. Falls back
+	# to an unbounded call on platforms without timeout(1) (old macOS w/o
+	# coreutils, embedded shells).
 	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
 	if [[ -x "$_pulse_helper" ]]; then
-		"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+		if command -v timeout >/dev/null 2>&1; then
+			timeout 120 "$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+		else
+			"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+		fi
 	fi
 
 	# GH#18492 / t2026: completion sentinel. Must be the last output of a
