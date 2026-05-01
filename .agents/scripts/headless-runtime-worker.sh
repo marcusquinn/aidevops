@@ -485,6 +485,53 @@ _worker_produced_output() {
 # =============================================================================
 
 #######################################
+# _record_orphan_loop_event — record a per-issue+branch orphan event for loop detection
+#
+# Appends the current unix timestamp to the orphan-loop-state.json counter array
+# keyed by "{repo}#{issue}#{branch}#worker_branch_orphan". The dispatch-dedup
+# check (_is_assigned_check_orphan_loop in dispatch-dedup-helper.sh) reads this
+# file and blocks re-dispatch when the same issue+branch accumulates more than
+# DISPATCH_ORPHAN_LOOP_THRESHOLD events within the time window (default: 3 in 2h).
+#
+# Recommended key format (GH#22049): {repo}#{issue}#{branch}#worker_branch_orphan
+#   Example: marcusquinn/aidevops#21860#feature/auto-20260430-062441-gh21860#worker_branch_orphan
+#
+# Non-fatal: any file/jq/lock failure is silently ignored.
+#
+# Args: $1=issue_number, $2=branch_name, $3=repo_slug
+#######################################
+_record_orphan_loop_event() {
+	local issue_number="$1"
+	local branch_name="$2"
+	local repo_slug="$3"
+
+	# Only record when we have all three components
+	[[ -n "$issue_number" && -n "$branch_name" && -n "$repo_slug" ]] || return 0
+
+	local state_file="${HOME}/.aidevops/logs/orphan-loop-state.json"
+	local state_dir
+	state_dir="$(dirname "$state_file")"
+	[[ -d "$state_dir" ]] || mkdir -p "$state_dir" 2>/dev/null || return 0
+	[[ -f "$state_file" ]] || printf '{"counters":{}}\n' >"$state_file" 2>/dev/null || return 0
+
+	local _key _ts _tmp _tmp_path
+	_key="${repo_slug}#${issue_number}#${branch_name}#worker_branch_orphan"
+	_ts=$(date +%s 2>/dev/null) || _ts=0
+
+	# t2997 pattern: XXXXXX must be at end for BSD mktemp
+	_tmp_path=$(mktemp "${TMPDIR:-/tmp}/orphan-loop-state-XXXXXX") || return 0
+	_tmp="$_tmp_path"
+	jq --arg key "$_key" --argjson ts "$_ts" \
+		'.counters[$key] += [$ts]' \
+		"$state_file" >"$_tmp" 2>/dev/null \
+		|| { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$state_file" 2>/dev/null || rm -f "$_tmp"
+
+	print_info "[orphan-loop] recorded event key=${_key} ts=${_ts}"
+	return 0
+}
+
+#######################################
 # _increment_orphan_count_stat — increment worker_branch_orphan_count in pulse-stats.json
 #
 # Uses pulse_stats_increment if available (pulse-stats-helper.sh is sourced
@@ -574,6 +621,9 @@ _handle_worker_branch_orphan() {
 	else
 		print_info "[lifecycle] Orphan recovery failed for session=${session_key}"
 		_release_dispatch_claim "$session_key" "worker_branch_orphan"
+		# GH#22049: Record orphan loop event so dispatch-dedup can block repeated
+		# orphan cascades on the same issue+branch within the time window.
+		_record_orphan_loop_event "$issue_number" "$branch_name" "$repo_slug"
 		# Post structured ops comment so the next dispatch knows what happened
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment

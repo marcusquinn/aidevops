@@ -560,6 +560,62 @@ When workers are failing systemically:
 7. **Issue comments**: check for `CLAIM_RELEASED` / `DISPATCH_CLAIM` comment loops
 8. **Review gate**: `review-bot-gate-helper.sh check <PR>` — `WAITING` means bot is blocking merge
 
+## Orphan Loop Guard (GH#22049)
+
+When a worker pushes a branch but fails to open a PR (`worker_branch_orphan`), the
+orphan-recovery path (`_attempt_orphan_recovery_pr` in `shared-claim-lifecycle.sh`)
+tries to create the PR automatically. If that also fails, the claim is released and
+the issue re-enters the dispatch queue — potentially causing the same branch to orphan
+repeatedly until a human intervenes.
+
+**Root cause example (GH#21860):** PR #21876 already existed for branch
+`feature/auto-20260430-062441-gh21860`, but GitHub search lag caused the classifier
+to miss it. Each dispatch cycle emitted `WORKER_BRANCH_ORPHAN` for the same branch
+without any backpressure, burning tokens and creating noise.
+
+**Guard behaviour:**
+
+On each failed orphan recovery, `_record_orphan_loop_event` in
+`headless-runtime-worker.sh` writes a timestamped event to:
+
+```
+~/.aidevops/logs/orphan-loop-state.json
+```
+
+Key format: `{repo}#{issue}#{branch}#worker_branch_orphan`
+
+At dispatch time, `_is_assigned_check_orphan_loop` in `dispatch-dedup-helper.sh`
+reads this file and blocks dispatch with `ORPHAN_LOOP_BLOCKED` when any branch
+for the queried issue has accumulated >= threshold events within the window.
+
+**Defaults (both configurable via env var):**
+
+| Env var | Default | Meaning |
+|---|---|---|
+| `DISPATCH_ORPHAN_LOOP_THRESHOLD` | `3` | Events per window before blocking (`0` = disabled) |
+| `DISPATCH_ORPHAN_LOOP_WINDOW_SECS` | `7200` | Window length in seconds (2h) |
+
+**Triage when blocked:**
+
+```
+# See what's blocking
+gh pr list --head <branch> --repo <owner/repo>
+
+# If PR exists but was missed (search lag): wait a few minutes and re-open dispatch
+# If PR is closed/conflicted: close the issue or open a fresh PR manually
+# If no PR exists: the branch has orphaned legitimately — open the PR
+gh pr create --head <branch> --base main --repo <owner/repo>
+
+# After fixing, the orphan-loop state expires automatically after the window (2h).
+# To clear immediately: delete or edit the state file.
+rm ~/.aidevops/logs/orphan-loop-state.json
+```
+
+**Fail-open:** if the state file is missing, unreadable, or jq fails, dispatch
+is allowed to proceed. The guard is a safety net, not a hard gate.
+
+**Test coverage:** `.agents/scripts/tests/test-dispatch-orphan-loop.sh`
+
 ## Pre-Dispatch Eligibility Gate (t2424)
 
 Runs after all dedup/claim/validator layers pass, before the worker spawns. Catches issues that are already resolved:

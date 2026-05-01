@@ -791,6 +791,96 @@ _is_assigned_check_dispatch_cooldown() {
 }
 
 #######################################
+# GH#22049: is_assigned helper — per-issue+branch orphan loop guard.
+#
+# When `_handle_worker_branch_orphan` in headless-runtime-worker.sh fails to
+# auto-recover a pushed branch (no PR opened), it writes a timestamped event
+# to `~/.aidevops/logs/orphan-loop-state.json` keyed by
+#   "{repo}#{issue}#{branch}#worker_branch_orphan"
+#
+# This check reads that file, finds any key matching "{repo}#{issue}#",
+# and counts how many timestamps fall within the configured time window.
+# When any branch for this issue has >= DISPATCH_ORPHAN_LOOP_THRESHOLD
+# events in the window, dispatch is blocked with a diagnostic message.
+#
+# This caps the blast radius of repeated orphan cascades (e.g., #21860 where
+# the same branch emitted WORKER_BRANCH_ORPHAN repeatedly while PR #21876
+# already existed) and surfaces the diagnostic for human triage.
+#
+# Gating:
+#   - DISPATCH_ORPHAN_LOOP_THRESHOLD: events per window before blocking
+#     (default 3; 0 = disabled).
+#   - DISPATCH_ORPHAN_LOOP_WINDOW_SECS: window length in seconds (default 7200 = 2h).
+#   - Fail-open: missing file, jq error → return 1 (allow dispatch).
+#   - Only the same issue+branch combination triggers the block; a new branch
+#     for the same issue has no orphan history and is not blocked.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 (block) + ORPHAN_LOOP_BLOCKED output if threshold exceeded,
+#          exit 1 (allow) if under threshold / no data / disabled / error
+#######################################
+_is_assigned_check_orphan_loop() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	# Feature gate — 0 disables; non-numeric falls back to default.
+	local threshold="${DISPATCH_ORPHAN_LOOP_THRESHOLD:-3}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=3
+	[[ "$threshold" -gt 0 ]] || return 1
+
+	local window_secs="${DISPATCH_ORPHAN_LOOP_WINDOW_SECS:-7200}"
+	[[ "$window_secs" =~ ^[0-9]+$ ]] || window_secs=7200
+
+	local state_file="${HOME}/.aidevops/logs/orphan-loop-state.json"
+	[[ -f "$state_file" ]] || return 1
+
+	local now_epoch
+	now_epoch=$(date -u +%s 2>/dev/null) || return 1
+	local cutoff=$(( now_epoch - window_secs ))
+
+	# Key prefix to match: "{repo}#{issue}#" — captures all branches for this issue.
+	local key_prefix="${repo_slug}#${issue_number}#"
+
+	# For each matching key, count timestamps newer than the cutoff.
+	# Output: "branch_name count" pairs, one per line; pick the max.
+	local _jq_out _jq_rc=0
+	_jq_out=$(jq -r \
+		--arg prefix "$key_prefix" \
+		--argjson cutoff "$cutoff" \
+		--argjson threshold "$threshold" \
+		'
+		  .counters // {} |
+		  to_entries |
+		  map(select(.key | startswith($prefix))) |
+		  map({
+		    key: .key,
+		    count: ([.value[] | select(. >= $cutoff)] | length)
+		  }) |
+		  map(select(.count >= $threshold)) |
+		  sort_by(-.count) |
+		  .[0]? // empty
+		' \
+		"$state_file" 2>/dev/null) || _jq_rc=$?
+
+	# Fail-open on jq error or no data
+	[[ "$_jq_rc" -ne 0 || -z "$_jq_out" || "$_jq_out" == "null" ]] && return 1
+
+	local blocked_key blocked_count
+	blocked_key=$(printf '%s' "$_jq_out" | jq -r '.key // ""' 2>/dev/null) || return 1
+	blocked_count=$(printf '%s' "$_jq_out" | jq -r '.count // 0' 2>/dev/null) || return 1
+	[[ -n "$blocked_key" && "$blocked_key" != "null" ]] || return 1
+
+	# Extract branch name from key: strip prefix and "#worker_branch_orphan" suffix
+	local branch_name="${blocked_key#"$key_prefix"}"
+	branch_name="${branch_name%#worker_branch_orphan}"
+
+	printf 'ORPHAN_LOOP_BLOCKED (branch=%s count=%s window_secs=%s issue=%s repo=%s) — repeated orphan recovery failure on same branch; triage manually: gh pr list --head %s --repo %s\n' \
+		"$branch_name" "$blocked_count" "$window_secs" "$issue_number" "$repo_slug" \
+		"$branch_name" "$repo_slug"
+	return 0
+}
+
+#######################################
 # is_assigned helper: cost-per-issue circuit breaker (t2007).
 #
 # Aggregate token spend across all worker attempts; if the cumulative total
@@ -1014,6 +1104,15 @@ is_assigned() {
 	# Fail-open: feature-gated by DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS,
 	# returns 1 (allow) on API/jq/date error so it never permanently blocks.
 	if _is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	# GH#22049: per-issue+branch orphan loop guard.
+	# Blocks dispatch when the same issue+branch has accumulated
+	# >= DISPATCH_ORPHAN_LOOP_THRESHOLD orphan recovery failures within
+	# DISPATCH_ORPHAN_LOOP_WINDOW_SECS (default 3 events / 2h).
+	# Fail-open: returns 1 (allow) when state file is missing or unreadable.
+	if _is_assigned_check_orphan_loop "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 

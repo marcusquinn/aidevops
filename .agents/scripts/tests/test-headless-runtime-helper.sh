@@ -527,6 +527,113 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	return 0
 }
 
+# =============================================================================
+# GH#22049: _record_orphan_loop_event tests
+# =============================================================================
+
+# AC#1: _record_orphan_loop_event writes a timestamp entry to orphan-loop-state.json
+test_record_orphan_loop_event_writes_state_file() {
+	local state_file="${HOME}/.aidevops/logs/orphan-loop-state.json"
+	rm -f "$state_file" 2>/dev/null || true
+
+	_record_orphan_loop_event "21860" "feature/auto-20260430-gh21860" "owner/repo"
+
+	local file_present=0
+	[[ -f "$state_file" ]] && file_present=1
+
+	local key_present=0
+	if [[ "$file_present" -eq 1 ]]; then
+		local _count
+		_count=$(jq '[.counters["owner/repo#21860#feature/auto-20260430-gh21860#worker_branch_orphan"] // [] | length] | .[0]' \
+			"$state_file" 2>/dev/null) || _count=0
+		[[ "$_count" -ge 1 ]] && key_present=1
+	fi
+
+	if [[ "$file_present" -eq 1 && "$key_present" -eq 1 ]]; then
+		print_result "_record_orphan_loop_event writes timestamp to state file" 0
+	else
+		print_result "_record_orphan_loop_event writes timestamp to state file" 1 \
+			"file_present=${file_present} key_present=${key_present}"
+	fi
+	return 0
+}
+
+# AC#2: multiple calls accumulate events for the same key
+test_record_orphan_loop_event_accumulates_events() {
+	local state_file="${HOME}/.aidevops/logs/orphan-loop-state.json"
+	rm -f "$state_file" 2>/dev/null || true
+
+	_record_orphan_loop_event "21860" "feature/auto-gh21860" "owner/repo"
+	_record_orphan_loop_event "21860" "feature/auto-gh21860" "owner/repo"
+	_record_orphan_loop_event "21860" "feature/auto-gh21860" "owner/repo"
+
+	local count=0
+	count=$(jq '.counters["owner/repo#21860#feature/auto-gh21860#worker_branch_orphan"] | length' \
+		"$state_file" 2>/dev/null) || count=0
+
+	if [[ "$count" -eq 3 ]]; then
+		print_result "_record_orphan_loop_event accumulates 3 events for same key" 0
+	else
+		print_result "_record_orphan_loop_event accumulates 3 events for same key" 1 \
+			"Expected 3, got ${count}"
+	fi
+	return 0
+}
+
+# AC#3: _handle_worker_branch_orphan records a loop event when recovery fails
+# Uses the same work_dir pattern as existing orphan-failure test (issue-99999,
+# feature/auto-test-issue-99999), verifying integration wiring end-to-end.
+test_handle_worker_branch_orphan_records_loop_event_on_failure() {
+	local work_dir="${TEST_ROOT}/repo-orphan-loop"
+	_setup_test_git_repo "$work_dir" 1
+	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	# Stub gh: pr list returns 0, issue view = OPEN, pr create FAILS
+	gh() {
+		if [[ "${*}" == *"pr list"* ]]; then
+			printf '0'; return 0
+		elif [[ "${*}" == *"issue view"* ]]; then
+			printf 'OPEN'; return 0
+		elif [[ "${*}" == *"repo view"* ]]; then
+			printf 'main'; return 0
+		elif [[ "${*}" == *"pr create"* ]]; then
+			return 1
+		fi
+		return 0
+	}
+
+	local state_file="${HOME}/.aidevops/logs/orphan-loop-state.json"
+	rm -f "$state_file" 2>/dev/null || true
+
+	local released_reason="" fast_fail_called=0
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_cmd_run_finish "issue-99999" "complete" "$work_dir"
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	# Verify the orphan-loop state file was written with an entry for issue-99999
+	local loop_count=0
+	if [[ -f "$state_file" ]]; then
+		loop_count=$(jq '[.counters | to_entries | .[] | select(.key | contains("#99999#")) | .value | length] | add // 0' \
+			"$state_file" 2>/dev/null) || loop_count=0
+	fi
+
+	if [[ "$released_reason" == "worker_branch_orphan" && "$loop_count" -ge 1 ]]; then
+		print_result "_handle_worker_branch_orphan records loop event on recovery failure" 0
+	else
+		print_result "_handle_worker_branch_orphan records loop event on recovery failure" 1 \
+			"released=${released_reason} loop_count=${loop_count}"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -550,6 +657,10 @@ main() {
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	# Orphan loop detection tests (GH#22049)
+	test_record_orphan_loop_event_writes_state_file
+	test_record_orphan_loop_event_accumulates_events
+	test_handle_worker_branch_orphan_records_loop_event_on_failure
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
