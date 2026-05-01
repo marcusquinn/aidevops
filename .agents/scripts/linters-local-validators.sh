@@ -186,9 +186,14 @@ check_string_literals() {
 
 	local violations=0
 	local debt_files=0
-	local repo_root baseline_ref
+	local repo_root baseline_ref changed_shell_files
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 	baseline_ref=$(git -C "$repo_root" merge-base HEAD origin/main 2>/dev/null || printf '%s' 'origin/main')
+	changed_shell_files=$(git -C "$repo_root" diff --name-only "$baseline_ref" -- '*.sh' 2>/dev/null || true)
+	if [[ -z "$changed_shell_files" ]]; then
+		print_success "String literals: no changed shell files"
+		return 0
+	fi
 
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
@@ -203,7 +208,7 @@ check_string_literals() {
 		file_dir=$(cd "$(dirname "$file")" && pwd -P)
 		file_abs="${file_dir}/$(basename "$file")"
 		rel_file=${file_abs#"$repo_root"/}
-		if git -C "$repo_root" diff --quiet "$baseline_ref" -- "$rel_file" 2>/dev/null; then
+		if ! printf '%s\n' "$changed_shell_files" | grep -qxF "$rel_file"; then
 			continue
 		fi
 
