@@ -1218,7 +1218,27 @@ _setup_acquire_noninteractive_setup_lock() {
 		fi
 		if _setup_lock_pid_alive "$owner_pid"; then
 			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
-			print_error "Another setup.sh --non-interactive process is already running (pid ${owner_pid}, lock ${lock_dir}). Exiting to avoid overlapping deployments. ${owner_cmd:+Command: ${owner_cmd}}"
+			# Build actionable diagnostics: elapsed time since lock was acquired
+			# and the currently-executing setup stage from the timing log.
+			local _diag_elapsed="" _diag_stage=""
+			local _diag_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
+			if [[ -r "$lock_dir/started_at" ]]; then
+				local _diag_started_str="" _diag_started="" _diag_now="" _diag_secs=""
+				_diag_started_str=$(tr -d '[:space:]' <"$lock_dir/started_at" 2>/dev/null || true)
+				_diag_started=$(date -d "$_diag_started_str" +%s 2>/dev/null || \
+					date -jf '%Y-%m-%dT%H:%M:%SZ' "$_diag_started_str" +%s 2>/dev/null || true)
+				_diag_now=$(date +%s 2>/dev/null || true)
+				if [[ "$_diag_started" =~ ^[0-9]+$ && "$_diag_now" =~ ^[0-9]+$ && "$_diag_now" -ge "$_diag_started" ]]; then
+					_diag_secs=$((_diag_now - _diag_started))
+					_diag_elapsed="elapsed ${_diag_secs}s; "
+				fi
+			fi
+			if [[ -r "$_diag_stl" ]]; then
+				local _diag_cur_stage=""
+				_diag_cur_stage=$(awk -F'\t' '$4=="RUNNING"{s=$2} END{if(s)printf "%s",s}' "$_diag_stl" 2>/dev/null || true)
+				[[ -n "$_diag_cur_stage" ]] && _diag_stage="stage: ${_diag_cur_stage}; "
+			fi
+			print_error "Another setup.sh --non-interactive is already running (pid ${owner_pid}; ${_diag_elapsed}${_diag_stage}lock: ${lock_dir}). Exiting to avoid overlapping deployments.${owner_cmd:+ Command: ${owner_cmd}} Diagnose: ${_diag_stl}"
 			return 75
 		fi
 
