@@ -3792,3 +3792,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119
 
 - [ ] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121
+
+- [ ] t3379 Investigate setup noninteractive lock hanging across deploy #auto-dispatch #bug ref:GH#22123
