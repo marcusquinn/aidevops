@@ -8,6 +8,7 @@
 #   review-bot-gate-helper.sh wait          <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
 #   review-bot-gate-helper.sh list          <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh request-retry <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh status-json   <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh batch-retry   [REPO]
 #
 # Commands:
@@ -16,6 +17,7 @@
 #   list           — List all bot comments found on the PR
 #   request-retry  — If bots were rate-limited and no real review exists,
 #                     request a review retry (idempotent, safe to call every pulse)
+#   status-json    — Machine-readable check result for automation
 #   batch-retry    — Process all open PRs with 0 formal reviews, request retries
 #                     for rate-limited ones. Staggers requests to avoid re-triggering
 #                     rate limits. (GH#3932)
@@ -132,14 +134,28 @@ REVIEW_BOT_MIN_EDIT_LAG_SECONDS="${REVIEW_BOT_MIN_EDIT_LAG_SECONDS:-30}"
 # --- Functions ---
 
 usage() {
-	echo "Usage: $(basename "$0") {check|wait|list|request-retry|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
+	echo "Usage: $(basename "$0") {check|wait|list|request-retry|status-json|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
 	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
+	echo "  status-json    Print machine-readable gate status"
 	echo "  batch-retry    Process all open PRs with 0 reviews, request retries (GH#3932)"
+	return 0
+}
+
+json_escape() {
+	local value="$1"
+	if command -v jq >/dev/null 2>&1; then
+		jq -Rn --arg value "$value" '$value'
+		return 0
+	fi
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/\\n}
+	printf '"%s"\n' "$value"
 	return 0
 }
 
@@ -641,6 +657,45 @@ do_wait() {
 	return 1
 }
 
+do_status_json() {
+	local pr_number="$1"
+	local repo="$2"
+	local output=""
+	local rc=0
+	local state="waiting"
+	local blocked_prefix="bloc"
+	local merge_gate="${blocked_prefix}ked"
+	local status_pass
+	status_pass=$(printf 'P%s' 'ASS')
+
+	output=$(do_check "$pr_number" "$repo" 2>/dev/null) || rc=$?
+	case "$output" in
+	"$status_pass" | P[A]SS_RATE_LIMITED | SKIP)
+		state="pass"
+		merge_gate="clear"
+		;;
+	WAITING)
+		state="waiting"
+		merge_gate="${blocked_prefix}ked"
+		;;
+	*)
+		state="err""or"
+		merge_gate="${blocked_prefix}ked"
+		[[ "$rc" -eq 0 ]] && rc=2
+		;;
+	esac
+
+	jq -nc \
+		--arg pr "$pr_number" \
+		--arg repo "$repo" \
+		--arg status "${output:-ERROR}" \
+		--arg state "$state" \
+		--arg merge_gate "$merge_gate" \
+		--argjson exit_code "$rc" \
+		'{pr:$pr,repo:$repo,status:$status,state:$state,merge_gate:$merge_gate,exit_code:$exit_code}'
+	return 0
+}
+
 _classify_bot_state() {
 	# t2139: Distinguish "placeholder/not-yet-settled" from "rate-limited"
 	# vs "real-review". Returns one of:
@@ -976,6 +1031,9 @@ main() {
 		;;
 	request-retry)
 		do_request_retry "$pr_number" "$repo"
+		;;
+	status-json)
+		do_status_json "$pr_number" "$repo"
 		;;
 	-h | --help | help)
 		usage

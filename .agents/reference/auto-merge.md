@@ -34,6 +34,27 @@ Interactive sessions operate with the repo admin/owner account. When the trust s
 
 This is bypassing stale/redundant automation state, not bypassing maintainer policy. Keep the merge gated when the issue/PR originates from a non-maintainer and there is no valid cryptographic approval.
 
+### Interactive PR-Drain Mode
+
+Use `pr-drain-helper.sh <owner/repo>` when the goal is maintainer-directed backlog clearing rather than broad baseline cleanup. The helper is read-only by default: it lists open PRs, checks same-repo/non-draft metadata, asks `review-bot-gate-helper.sh status-json` for a machine-readable bot-gate result, inspects merge/conflict state, separates configured baseline-red checks from PR-specific failures, and prints the next command for each PR.
+
+Recommended loop:
+
+1. `pr-drain-helper.sh <owner/repo>` — rank PRs as `mergeable`, `conflict-only`, `superseded/stale`, or `blocked`.
+2. For `conflict-only`, create the printed worktree, run `gh pr checkout`, resolve only concrete conflicts, then push.
+3. Re-run `review-bot-gate-helper.sh check <PR> <owner/repo>` and inspect the scoped diff before merging.
+4. Use admin squash merge only when the safety checklist below is true.
+
+Admin-merge safety checklist for PR drains:
+
+- PR is same-repo and non-draft.
+- Review-bot gate is `PASS`, `PASS_RATE_LIMITED`, or `SKIP`; `WAITING` remains blocked.
+- No human `CHANGES_REQUESTED` review exists.
+- Any failing check is known baseline/unrelated and matched by `PR_DRAIN_BASELINE_CHECK_REGEX`; unknown failures block.
+- The scoped diff matches the linked issue/task and conflict fixes do not broaden scope.
+
+The drain helper must not declare a failing PR safe solely because checks are red. A baseline-red classification requires an explicit baseline check-name regex supplied by the maintainer for that drain session.
+
 ## t2449 — `origin:worker` (Worker-Briefed) Auto-Merge
 
 `pulse-merge.sh` also auto-merges `origin:worker` PRs when the underlying issue was **maintainer-briefed** (filed by `OWNER`/`MEMBER`) OR authored by a **trusted peer runner** in the allowlist (t3062) OR **cryptographically approved** by a maintainer (`sudo aidevops approve issue N`). Trust chain is equivalent to interactive: maintainer brief (or explicit vouching) + worker implementation + CI verification + no human objection.
