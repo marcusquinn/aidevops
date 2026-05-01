@@ -87,6 +87,7 @@ Self-improvement sessions that ADD to build.txt or AGENTS.md should:
 5. Target: `AGENTS.md` + `prompts/build.txt` combined ≤ 30k tokens. Measure before merging.
 
 To measure current token load:
+
 ```bash
 python3 -c "
 import os
