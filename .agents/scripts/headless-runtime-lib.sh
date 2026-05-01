@@ -291,6 +291,16 @@ record = {
     "activity": os.environ.get("ACTIVITY", "0") == "1",
     "duration_ms": int(os.environ.get("DURATION_MS", "0") or 0),
 }
+try:
+    load_1min, _load_5min, _load_15min = os.getloadavg()
+    cpu_count = os.cpu_count() or 0
+    record["load_1min"] = round(load_1min, 2)
+    record["cpu_count"] = cpu_count
+    record["load_per_cpu"] = round(load_1min / cpu_count, 3) if cpu_count else None
+except (AttributeError, OSError):
+    record["load_1min"] = None
+    record["cpu_count"] = os.cpu_count() or 0
+    record["load_per_cpu"] = None
 with open(os.environ["METRICS_PATH"], "a") as f:
     f.write(json.dumps(record, separators=(",", ":")) + "\n")
 PY
@@ -1151,6 +1161,9 @@ _check_system_overload() {
 	is_overloaded=$(awk -v l="$load_1min" -v t="$threshold" 'BEGIN{print (l > t) ? "1" : "0"}')
 	if [[ "$is_overloaded" == "1" ]]; then
 		print_warning "Canary skipped: system overloaded (load_1min=${load_1min}, ncpu=${ncpu}, threshold=${threshold}, multiplier=${CANARY_OVERLOAD_LOAD_MULTIPLIER}) -- canary cold-start cannot complete reliably under contention (t3210)"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "dispatch_load_blocked" 2>/dev/null || true
+		fi
 		return 1
 	fi
 	return 0

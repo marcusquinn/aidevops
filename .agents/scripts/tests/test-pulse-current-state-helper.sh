@@ -13,18 +13,49 @@ python3 - "$TMP_DIR" <<'PY'
 import json, os, sys, time
 root = sys.argv[1]
 now = time.time()
-open(os.path.join(root, 'dispatch-stages.tsv'), 'w').write(f'{now}\tworker_spawn\tissue=1\n')
-open(os.path.join(root, 'headless-runtime-metrics.jsonl'), 'w').write(json.dumps({'ts': now, 'result': 'success'}) + '\n')
-json.dump({'counters': {'dispatch_backoff_skipped': [now]}}, open(os.path.join(root, 'pulse-stats.json'), 'w'))
-open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nInstance lock acquired\n')
+iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(now))
+open(os.path.join(root, 'dispatch-stages.tsv'), 'w').write(
+    f'{iso}\t#1\tmarcusquinn/aidevops\tworker_launch_total\t123\n'
+    f'{iso}\t#1\tmarcusquinn/aidevops\tceremony_total\t456\n'
+)
+open(os.path.join(root, 'headless-runtime-metrics.jsonl'), 'w').write(
+    json.dumps({'ts': now, 'result': 'success', 'exit_code': 0, 'duration_ms': 1000, 'load_1min': 1.5, 'load_per_cpu': 0.2}) + '\n' +
+    json.dumps({'ts': now, 'result': 'watchdog_stall_killed', 'exit_code': 79, 'duration_ms': 2000}) + '\n' +
+    json.dumps({'ts': now, 'result': 'rate_limit_fast', 'exit_code': 80, 'failure_reason': 'rate_limit_fast'}) + '\n' +
+    json.dumps({'ts': now, 'result': 'worker_noop', 'exit_code': 2}) + '\n'
+)
+json.dump({
+    'counters': {
+        'dispatch_backoff_skipped': [now],
+        'worker_canary_preflight_failed_count': [now],
+        'pulse_cycle_skipped_graphql_low': [now],
+        'dispatch_load_blocked': [now],
+    },
+    'gauges': {'graphql_remaining': {'value': 1234, 'ts': now}},
+}, open(os.path.join(root, 'pulse-stats.json'), 'w'))
+open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nPR opened #2\nPR merged #2\nissue closed #1\nInstance lock acquired\n')
 PY
 
 output="$TMP_DIR/out.txt"
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m >"$output"
 
 grep -q 'Dispatch alive: true' "$output"
-grep -q 'Worker terminal events: 1' "$output"
+grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
+grep -q 'worker_launch_total' "$output"
+grep -q 'watchdog_killed' "$output"
+grep -q 'rate_limited' "$output"
+grep -q 'canary_failed' "$output"
+
+json_output="$TMP_DIR/out.json"
+"$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
+jq -e '.worker_outcomes.spawned == 1' "$json_output" >/dev/null
+jq -e '.worker_outcomes.watchdog_killed == 1' "$json_output" >/dev/null
+jq -e '.worker_outcomes.rate_limited == 1' "$json_output" >/dev/null
+jq -e '.worker_outcomes.no_op == 1' "$json_output" >/dev/null
+jq -e '.worker_outcomes.canary_failed == 1' "$json_output" >/dev/null
+jq -e '.graphql_budget.skipped_low_count == 1' "$json_output" >/dev/null
+jq -e '.dispatch_stage_timing_ms.worker_launch_total.avg_ms == 123' "$json_output" >/dev/null
 
 printf 'PASS pulse-current-state-helper\n'

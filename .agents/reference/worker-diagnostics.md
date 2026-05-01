@@ -541,6 +541,7 @@ The hold is branch-specific: a different branch or a different issue does not in
 - **Rate-limit status cache (t3422):** `pulse-rate-limit-circuit-breaker.sh` caches the free `gh api rate_limit` response for 20s at `~/.aidevops/cache/pulse-graphql-rate-limit.json`. Use `pulse-rate-limit-circuit-breaker.sh status --cached` inside diagnostics that must not touch the network; use plain `status` when you need a fresh free endpoint read. Override: `AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL`.
 - **GraphQL-efficient current-state check (t3422):** start with `pulse-current-state-helper.sh --window 15m`. It reads local pulse/worker logs, shows cached GraphQL budget state, and surfaces top GraphQL consumers from the instrumentation report without issuing GraphQL queries.
 - **Solved-issue search is opt-in (t3422):** `worker-activity-helper.sh summary` no longer runs the `gh issue list --search ... label:solved:worker` path by default because GitHub search uses GraphQL. Add `--pr-check` only when GraphQL budget is healthy or the external solved-count is required; `--no-pr-check` remains accepted and explicit.
+- **Current-state GraphQL telemetry:** `pulse-current-state-helper.sh --window 15m --json` reports `graphql_budget.skipped_low_count`, `graphql_budget.circuit_broken_count`, `graphql_budget.prefetch_throttled_count`, and any recent GraphQL/rate-limit gauges already present in `pulse-stats.json`. This reuses local counters/gauges and does not make duplicate API calls.
 - **Cache priming (t2992, t2994):** `pulse-wrapper.sh::main()` pre-warms L3 per-owner JSON caches after lock/canary/session/dedup gates and before `prefetch_state`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run`; log: `~/.aidevops/logs/pulse-cache-prime.log`; counters: `pulse_cache_prime_runs`, `pulse_cache_prime_failures`; overrides: `AIDEVOPS_SKIP_CACHE_PRIME=1`, `AIDEVOPS_PULSE_PRIME_MAX_AGE`.
 
 Background: t2994 moved priming from `pulse-lifecycle-helper.sh::_start` into `pulse-wrapper.sh::main()` because launchd `KeepAlive` could respawn the pulse before `_start` ran, causing the lifecycle hook to early-return and skip priming.
@@ -594,6 +595,28 @@ canonical worker metrics with local pulse counters by default; add `--pr-check`
 only when you need the `solved:worker` closed-issue count and have GraphQL
 budget available. Treat `origin:worker` PR counts as branch-creation telemetry
 only; they are not sufficient evidence of worker productivity.
+
+For “right now” diagnosis, prefer the current-state helper:
+
+```bash
+pulse-current-state-helper.sh --window 15m --json
+```
+
+Key fields:
+
+- `worker_outcomes.spawned` — launch-stage events (`worker_launch_total`) plus
+  recent worker-start lifecycle lines.
+- `worker_outcomes.canary_failed` — canary preflight failure counter plus recent
+  wrapper failure lines.
+- `worker_outcomes.watchdog_killed`, `rate_limited`, `no_op` — classified from
+  `headless-runtime-metrics.jsonl` result/failure fields.
+- `worker_outcomes.pr_opened`, `pr_merged`, `issue_closed` — recent wrapper-log
+  outcome examples for quick operator correlation.
+- `dispatch_stage_timing_ms` — avg/max/count per dispatch stage, separating slow
+  startup (`canary_preflight`, `worker_launch_total`) from slow implementation or
+  later CI/review wait.
+- `resource_context` — recent worker load context (`load_1min`, `load_per_cpu`)
+  and load-blocked dispatch count.
 
 ```bash
 # Measure actual output growth over 15 seconds

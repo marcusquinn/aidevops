@@ -48,11 +48,13 @@ main() {
 	local window_s
 	window_s="$(_seconds "$window")"
 	python3 - "$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" <<'PY'
+import datetime
 import json
 import os
 import subprocess
 import sys
 import time
+from collections import Counter, defaultdict
 
 log_dir, repo_path, window_s, as_json, script_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5]
 now = time.time()
@@ -67,19 +69,68 @@ def recent_lines(path, limit=2000):
     return [line.rstrip('\n') for line in lines]
 
 
+def parse_time(value):
+    value = str(value).strip()
+    if not value:
+        return 0.0
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        return datetime.datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return 0.0
+
+
 def parse_stage(line):
     parts = line.split('\t')
-    for part in parts:
-        try:
-            value = float(part)
-        except ValueError:
-            continue
-        if value > since:
-            return True
-    return False
+    if not parts:
+        return None
+    ts = parse_time(parts[0])
+    if ts < since:
+        return None
+    return {
+        'ts': ts,
+        'issue': parts[1] if len(parts) > 1 else '',
+        'repo': parts[2] if len(parts) > 2 else '',
+        'stage': parts[3] if len(parts) > 3 else 'unknown',
+        'duration_ms': int(parts[4]) if len(parts) > 4 and str(parts[4]).isdigit() else 0,
+    }
 
 
-stage_lines = [line for line in recent_lines(os.path.join(log_dir, 'dispatch-stages.tsv')) if parse_stage(line)]
+def classify_metric(item):
+    result = str(item.get('result') or 'unknown')
+    failure_reason = str(item.get('failure_reason') or '')
+    exit_code = item.get('exit_code')
+    if result == 'success' and exit_code == 0:
+        return 'success'
+    if result in {'watchdog_stall_killed', 'watchdog_stall_continue'}:
+        return result
+    if result in {'rate_limit', 'rate_limit_fast'} or 'rate_limit' in failure_reason:
+        return 'rate_limit'
+    if result in {'worker_noop', 'no_work', 'noop'}:
+        return 'worker_noop'
+    return result
+
+
+def line_count(patterns, lines):
+    count = 0
+    examples = []
+    for line in lines:
+        lower = line.lower()
+        if any(pattern in lower for pattern in patterns):
+            count += 1
+            if len(examples) < 3:
+                examples.append(line[-180:])
+    return count, examples
+
+
+stage_records = []
+for line in recent_lines(os.path.join(log_dir, 'dispatch-stages.tsv')):
+    record = parse_stage(line)
+    if record:
+        stage_records.append(record)
 metrics = []
 for line in recent_lines(os.path.join(log_dir, 'headless-runtime-metrics.jsonl')):
     try:
@@ -90,6 +141,7 @@ for line in recent_lines(os.path.join(log_dir, 'headless-runtime-metrics.jsonl')
         metrics.append(item)
 
 counter_hits = {}
+gauge_values = {}
 stats_path = os.path.join(log_dir, 'pulse-stats.json')
 if os.path.exists(stats_path):
     try:
@@ -99,8 +151,12 @@ if os.path.exists(stats_path):
                 hits = [v for v in values if isinstance(v, (int, float)) and v >= since]
                 if hits:
                     counter_hits[key] = len(hits)
+        for key, item in (stats.get('gauges') or {}).items():
+            if isinstance(item, dict) and float(item.get('ts', 0)) >= since:
+                gauge_values[key] = item.get('value')
     except (OSError, json.JSONDecodeError):
         counter_hits = {}
+        gauge_values = {}
 
 wrapper_activity = []
 for line in recent_lines(os.path.join(log_dir, 'pulse-wrapper.log'), 400):
@@ -109,6 +165,45 @@ for line in recent_lines(os.path.join(log_dir, 'pulse-wrapper.log'), 400):
     if line.strip():
         wrapper_activity.append(line)
 wrapper_activity = wrapper_activity[-10:]
+
+metric_class_counts = Counter(classify_metric(item) for item in metrics)
+stage_counts = Counter(record['stage'] for record in stage_records)
+stage_timing = defaultdict(lambda: {'count': 0, 'sum_ms': 0, 'max_ms': 0})
+for record in stage_records:
+    item = stage_timing[record['stage']]
+    item['count'] += 1
+    item['sum_ms'] += record['duration_ms']
+    item['max_ms'] = max(item['max_ms'], record['duration_ms'])
+stage_timing_summary = {
+    key: {
+        'count': value['count'],
+        'avg_ms': int(value['sum_ms'] / value['count']) if value['count'] else 0,
+        'max_ms': value['max_ms'],
+    }
+    for key, value in stage_timing.items()
+}
+
+worker_spawn_count = stage_counts.get('worker_launch_total', 0) + sum(
+    1 for line in wrapper_activity if 'worker_start' in line or 'worker_started' in line
+)
+canary_fail_count = counter_hits.get('worker_canary_preflight_failed_count', 0) + sum(
+    1 for line in wrapper_activity if 'canary failed' in line.lower()
+)
+load_blocked_count = counter_hits.get('dispatch_load_blocked', 0) + sum(
+    1 for line in wrapper_activity if 'system overloaded' in line.lower() or 'load-blocked' in line.lower()
+)
+rate_limit_count = metric_class_counts.get('rate_limit', 0)
+watchdog_kill_count = metric_class_counts.get('watchdog_stall_killed', 0)
+noop_count = metric_class_counts.get('worker_noop', 0)
+pr_opened_count, pr_opened_examples = line_count(['pr opened', 'opened pr', 'pull request'], wrapper_activity)
+pr_merged_count, pr_merged_examples = line_count(['pr merged', 'merged pr', 'squash merged'], wrapper_activity)
+issue_closed_count, issue_closed_examples = line_count(['issue closed', 'closed issue', 'status:done'], wrapper_activity)
+graphql_budget = {
+    'skipped_low_count': counter_hits.get('pulse_cycle_skipped_graphql_low', 0),
+    'circuit_broken_count': counter_hits.get('pulse_dispatch_circuit_broken', 0),
+    'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
+    'gauges': {k: v for k, v in gauge_values.items() if 'graphql' in k.lower() or 'budget' in k.lower() or 'rate' in k.lower()},
+}
 
 worktrees = []
 try:
@@ -142,14 +237,39 @@ if os.path.exists(api_report):
 
 result = {
     'window_seconds': window_s,
-    'dispatch_stage_events': len(stage_lines),
+    'dispatch_stage_events': len(stage_records),
+    'dispatch_stage_counts': dict(stage_counts),
+    'dispatch_stage_timing_ms': stage_timing_summary,
     'worker_terminal_events': len(metrics),
-    'worker_successes': sum(1 for item in metrics if item.get('result') == 'success'),
-    'worker_failures_or_stalls': sum(1 for item in metrics if item.get('result') and item.get('result') != 'success'),
+    'worker_result_counts': dict(metric_class_counts),
+    'worker_successes': metric_class_counts.get('success', 0),
+    'worker_failures_or_stalls': sum(count for key, count in metric_class_counts.items() if key != 'success'),
+    'worker_outcomes': {
+        'spawned': worker_spawn_count,
+        'canary_failed': canary_fail_count,
+        'watchdog_killed': watchdog_kill_count,
+        'rate_limited': rate_limit_count,
+        'no_op': noop_count,
+        'pr_opened': pr_opened_count,
+        'pr_merged': pr_merged_count,
+        'issue_closed': issue_closed_count,
+    },
+    'worker_outcome_examples': {
+        'pr_opened': pr_opened_examples,
+        'pr_merged': pr_merged_examples,
+        'issue_closed': issue_closed_examples,
+    },
+    'resource_context': {
+        'load_1min_last': next((item.get('load_1min') for item in reversed(metrics) if item.get('load_1min') is not None), None),
+        'load_per_cpu_last': next((item.get('load_per_cpu') for item in reversed(metrics) if item.get('load_per_cpu') is not None), None),
+        'load_blocked_count': load_blocked_count,
+    },
+    'graphql_budget': graphql_budget,
     'pulse_counter_hits': counter_hits,
+    'pulse_gauges': gauge_values,
     'wrapper_activity_lines': len(wrapper_activity),
     'worker_worktrees': len(worktrees),
-    'dispatch_alive': bool(stage_lines or metrics or counter_hits or worktrees),
+    'dispatch_alive': bool(stage_records or metrics or counter_hits or worktrees),
     'graphql_budget_status': graphql_budget_status,
     'top_graphql_consumers': api_consumers,
 }
@@ -161,7 +281,11 @@ else:
     print(f'- Window: {window_s}s')
     print(f'- Dispatch alive: {str(result["dispatch_alive"]).lower()}')
     print(f'- Dispatch stage events: {result["dispatch_stage_events"]}')
+    print(f'- Dispatch stage counts: {json.dumps(result["dispatch_stage_counts"], sort_keys=True)}')
     print(f'- Worker terminal events: {result["worker_terminal_events"]} ({result["worker_successes"]} success, {result["worker_failures_or_stalls"]} non-success)')
+    print(f'- Worker outcomes: {json.dumps(result["worker_outcomes"], sort_keys=True)}')
+    print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
+    print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     if api_consumers:
