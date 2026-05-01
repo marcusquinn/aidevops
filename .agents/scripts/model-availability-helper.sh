@@ -390,6 +390,11 @@ resolve_api_key() {
 		IFS=',' read -ra var_names <<<"$key_vars"
 		for var_name in "${var_names[@]}"; do
 			# Source 1: Environment variable
+			# NOTE (t3229): if this key is stale/invalid and the HTTP probe
+			# rejects it (HTTP 401/403), probe_provider falls back to Source 4
+			# (auth.json OAuth) via _probe_check_oauth_fallback in
+			# model-availability-probe-lib.sh — so a stale env key does not
+			# permanently mask a working OAuth account.
 			if [[ -n "${!var_name:-}" ]]; then
 				echo "${!var_name}"
 				return 0

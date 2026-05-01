@@ -422,6 +422,35 @@ _probe_resolve_and_validate_key() {
 	return 0
 }
 
+# _probe_check_oauth_fallback: called when an HTTP probe rejected the resolved
+# key with exit code 3 (HTTP 401/403). Checks whether auth.json has an OAuth
+# entry for the provider — if so, the OpenCode runtime can authenticate at
+# session start via its own OAuth flow, so the provider IS available.
+# Records healthy and returns 0 on OAuth hit; returns 3 if no OAuth found.
+#
+# t3229: prevents a stale/invalid env OPENAI_API_KEY (or any provider key)
+# from permanently masking a working OAuth account in auth.json. Without this
+# fallback, resolve_api_key returns the stale env key (Source 1), the HTTP
+# probe 401s/403s, and the provider is marked key_invalid — even though
+# auth.json has a valid OAuth entry the runtime would use.
+_probe_check_oauth_fallback() {
+	local provider="$1"
+	local quiet="${2:-false}"
+
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	[[ -f "$auth_file" ]] || return 3
+
+	local auth_type
+	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	if [[ "$auth_type" == "oauth" ]]; then
+		[[ "$quiet" != "true" ]] && print_success "$provider: env key rejected (HTTP 401/403) but OAuth found in auth.json — recording healthy (t3229)"
+		_record_health "$provider" "healthy" 0 0 "OAuth available (env key rejected, t3229)" 0
+		return 0
+	fi
+
+	return 3
+}
+
 # Execute an HTTP probe against a provider's /models endpoint and record results.
 # Builds the curl request, executes it, parses the response, records health and
 # rate limits, and logs the probe result.
@@ -525,8 +554,18 @@ probe_provider() {
 	fi
 
 	# Execute HTTP probe against the provider's /models endpoint
-	_probe_execute_http "$provider" "$api_key" "$quiet"
-	return $?
+	local http_exit=0
+	_probe_execute_http "$provider" "$api_key" "$quiet" || http_exit=$?
+
+	# t3229: if the resolved key was rejected (HTTP 401/403), check whether
+	# auth.json has an OAuth entry for this provider. OAuth wins over a
+	# stale/invalid env key — the runtime authenticates at session start.
+	if [[ "$http_exit" -eq 3 ]]; then
+		_probe_check_oauth_fallback "$provider" "$quiet"
+		return $?
+	fi
+
+	return "$http_exit"
 }
 
 _record_health() {

@@ -172,6 +172,57 @@ fi
 unset ANTHROPIC_API_KEY
 
 # =============================================================================
+# Assertion 4 — stale env key + OpenAI OAuth in auth.json (t3229)
+# =============================================================================
+# The failure mode: OPENAI_API_KEY=invalid is set (stale from an old account)
+# and auth.json has a valid OpenAI OAuth entry. _probe_check_oauth_fallback
+# must return 0 (healthy) so the provider is not permanently marked key_invalid.
+#
+# We cannot invoke probe_provider directly (it makes HTTP calls), but we CAN
+# test _probe_check_oauth_fallback in isolation — it reads auth.json and calls
+# _record_health. This is the testable unit for the t3229 fix.
+
+export OPENAI_API_KEY="sk-invalid-stale-key-from-old-account"
+
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-access-token",
+    "refresh": "fake-openai-refresh-token"
+  }
+}
+JSON
+
+# init_db may already be done from assertion 3 — reinit is idempotent.
+init_db >/dev/null 2>&1 || {
+	print_result "assertion 4 precondition: init_db" 1 "(init_db failed)"
+}
+
+# _probe_check_oauth_fallback must detect the oauth entry and return 0.
+_probe_check_oauth_fallback openai true
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "stale-env-key+openai-oauth: _probe_check_oauth_fallback returns 0 (t3229)" 0
+else
+	print_result "stale-env-key+openai-oauth: _probe_check_oauth_fallback returns 0 (t3229)" 1 \
+		"(got rc=$rc — expected 0; stale env key should not mask OAuth in auth.json)"
+fi
+
+# Assertion 4b — no OAuth in auth.json → fallback returns 3 (no override).
+rm -f "$AUTH_FILE"
+_probe_check_oauth_fallback openai true
+rc=$?
+if [[ "$rc" -eq 3 ]]; then
+	print_result "stale-env-key+no-oauth: _probe_check_oauth_fallback returns 3 (no override)" 0
+else
+	print_result "stale-env-key+no-oauth: _probe_check_oauth_fallback returns 3 (no override)" 1 \
+		"(got rc=$rc — expected 3; no auth.json OAuth should not produce a false healthy)"
+fi
+
+unset OPENAI_API_KEY
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%d test(s) run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
