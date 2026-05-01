@@ -331,10 +331,18 @@ cleanup_worktree_entries_in_repos_json() {
 	command -v git &>/dev/null || return 0
 
 	local stale_paths=()
-	local path git_dir common_dir
+	local skipped_current_paths=()
+	local current_worktree=""
+	local path git_dir common_dir resolved_path
+
+	current_worktree=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	if [[ -n "$current_worktree" ]]; then
+		current_worktree=$(cd "$current_worktree" 2>/dev/null && pwd -P) || current_worktree=""
+	fi
 
 	while IFS= read -r path; do
 		[[ -n "$path" && -d "$path" ]] || continue
+		resolved_path=$(cd "$path" 2>/dev/null && pwd -P) || resolved_path=""
 		git_dir=$(git -C "$path" rev-parse --git-dir 2>/dev/null) || continue
 		common_dir=$(git -C "$path" rev-parse --git-common-dir 2>/dev/null) || continue
 		# Normalise to absolute paths for comparison.
@@ -343,6 +351,10 @@ cleanup_worktree_entries_in_repos_json() {
 		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
 		common_dir=$(cd "$common_dir" 2>/dev/null && pwd -P) || common_dir=""
 		if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" ]]; then
+			if [[ -n "$current_worktree" && -n "$resolved_path" && "$resolved_path" == "$current_worktree" ]]; then
+				skipped_current_paths+=("$path")
+				continue
+			fi
 			stale_paths+=("$path")
 		fi
 	done < <(jq -r '.initialized_repos[].path // empty' "$repos_json" 2>/dev/null)
@@ -359,6 +371,16 @@ cleanup_worktree_entries_in_repos_json() {
 		for p in "${stale_paths[@]}"; do
 			print_info "  - $p"
 		done
+	fi
+
+	if [[ ${#skipped_current_paths[@]} -gt 0 ]]; then
+		print_warning "Skipped ${#skipped_current_paths[@]} active current worktree entry/entries in repos.json (t2250):"
+		local skipped_path
+		for skipped_path in "${skipped_current_paths[@]}"; do
+			print_warning "  - $skipped_path"
+		done
+		print_warning "Run setup.sh from the canonical worktree later to finish the one-shot cleanup."
+		return 0
 	fi
 
 	mkdir -p "$(dirname "$flag_file")"
