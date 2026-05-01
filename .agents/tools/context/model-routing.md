@@ -32,13 +32,13 @@ model: haiku
 |------|-------|----------|
 | `local` | llama.cpp or Ollama (user models) | Privacy/offline, bulk, experimentation; opt-in only |
 | `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
-| `flash` | gemini-2.5-flash-preview-05-20 | >50K context, summarization, bulk processing, research sweeps |
-| `haiku` | claude-haiku-4-5-20251001 | Classification, triage, simple transforms, commit messages, routing |
-| `sonnet` | claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
-| `pro` | gemini-2.5-pro | >100K codebases + complex reasoning |
-| `opus` | claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
+| `flash` | openai/gpt-5.4-mini → claude-haiku-4-5 | >50K context, summarization, bulk processing, research sweeps |
+| `haiku` | openai/gpt-5.4-mini → claude-haiku-4-5 | Classification, triage, simple transforms, commit messages, routing |
+| `sonnet` | openai/gpt-5.5 → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
+| `pro` | openai/gpt-5.5 → claude-sonnet-4-6 | >100K codebases + complex reasoning |
+| `opus` | openai/gpt-5.5 → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
 
-**Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`.
+**Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
 **`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → Ollama → `composer2`. Local is opt-in only — default dispatch uses `haiku`. Users who explicitly configure local tier: llama.cpp → Ollama → `haiku`.
 
@@ -58,12 +58,12 @@ Privacy/on-device? → YES → local running? → YES: local | NO: FAIL
 | Tier | Fallback | Trigger |
 |------|----------|---------|
 | `local` | Ollama → composer2 (cost) / FAIL (privacy) | llama.cpp not running |
-| `flash` | gpt-4.1-mini | No Google key |
-| `haiku` | flash | No Anthropic key |
+| `flash` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
+| `haiku` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
 | `composer2` | sonnet | No Cursor OAuth pool |
-| `sonnet` | gpt-5.3-codex | No Anthropic key |
-| `pro` | sonnet | No Google key |
-| `opus` | gpt-5.4 | No Anthropic key |
+| `sonnet` | claude-sonnet-4-6 | OpenAI unavailable or provider-disallowed |
+| `pro` | claude-sonnet-4-6 | OpenAI unavailable or provider-disallowed |
+| `opus` | claude-opus-4-6 | OpenAI unavailable or provider-disallowed |
 
 Supervisor resolves automatically. Interactive: `compare-models-helper.sh discover`.
 
@@ -76,13 +76,15 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
 4. **Result**: pulse resolves a sonnet-tier model; workers round-robin across the filtered sonnet-tier list
 
-- **Shared default**: The framework routing table remains Anthropic-first. Other providers are opt-in through `custom/configs/model-routing-table.json`, so existing Anthropic users are unchanged after update.
+- **Shared default**: The framework routing table lists smoke-tested OpenAI models first so workers can continue during Anthropic cooldowns. Anthropic remains the fallback, and local custom routing can still reorder or replace these defaults.
 - **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
 - **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:thinking` → `opus`).
-- **Local switch**: Add OpenAI models to `custom/configs/model-routing-table.json`, then set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto OpenAI. If you want OpenAI primary but Anthropic fallback, reorder the custom routing table and omit the allowlist.
+- **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
+- **OpenAI default mapping**: `haiku`/`flash`/`health` resolve to `openai/gpt-5.4-mini`; `sonnet`/`pro`/`eval` resolve to `openai/gpt-5.5`; `opus`/`coding` also use `openai/gpt-5.5` until account-aware support gates can distinguish working `*-pro` access.
+- **OpenAI pro caveat**: Current OpenCode ChatGPT OAuth smoke tests fail for `openai/gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs, so default worker dispatch intentionally excludes them. Codex models remain excluded because they are not agentic in headless worker sessions.
 - **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Headless runs do not default to `xhigh`; if no variant is set, OpenCode sends no explicit effort override and the provider default applies.
 - **GPT-5.5 standard workers**: For `openai/gpt-5.5` on worker `sonnet`/`pro` tiers, aidevops omits env-derived variants such as `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins because it bypasses automatic variant resolution.
-- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.4`. The GPT-5.5 standard-worker exception above only applies to env-derived sonnet/pro variants.
+- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.5`. The GPT-5.5 standard-worker exception above only applies to env-derived sonnet/pro variants.
 - **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
