@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.42] - 2026-05-01
+
+### Fixed
+
+- avoid empty gh_create_pr origin label arg (#22043)
+
 ## [3.13.41] - 2026-05-01
 
 ### Changed
