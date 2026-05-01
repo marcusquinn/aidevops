@@ -502,6 +502,7 @@ The hold is branch-specific: a different branch or a different issue does not in
 - **REST fallback (t2574, t2744, t2902):** `shared-gh-wrappers.sh` routes eligible writes/reads through REST when GraphQL remaining <= 1500, preserving GraphQL for calls without REST equivalents. Override: `AIDEVOPS_GH_REST_FALLBACK_THRESHOLD`.
 - **Instrumentation (t2902):** routed `gh` calls append to `~/.aidevops/logs/gh-api-calls.log` and aggregate by stage in `~/.aidevops/logs/gh-api-calls-by-stage.json`. Helper: `gh-api-instrument.sh record|report|trim|clear`. Instrumentation is fail-open.
 - **Circuit breaker (t2690, t2744, t2896):** worker dispatch pauses when GraphQL budget is below the emergency 5% floor. Counter: `pulse_dispatch_circuit_broken` in `pulse-stats.json`. Overrides: `AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD`, `AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1`.
+- **Current-state GraphQL telemetry:** `pulse-current-state-helper.sh --window 15m --json` reports `graphql_budget.skipped_low_count`, `graphql_budget.circuit_broken_count`, `graphql_budget.prefetch_throttled_count`, and any recent GraphQL/rate-limit gauges already present in `pulse-stats.json`. This reuses local counters/gauges and does not make duplicate API calls.
 - **Cache priming (t2992, t2994):** `pulse-wrapper.sh::main()` pre-warms L3 per-owner JSON caches after lock/canary/session/dedup gates and before `prefetch_state`. Sentinel: `~/.aidevops/cache/pulse-cache-prime-last-run`; log: `~/.aidevops/logs/pulse-cache-prime.log`; counters: `pulse_cache_prime_runs`, `pulse_cache_prime_failures`; overrides: `AIDEVOPS_SKIP_CACHE_PRIME=1`, `AIDEVOPS_PULSE_PRIME_MAX_AGE`.
 
 Background: t2994 moved priming from `pulse-lifecycle-helper.sh::_start` into `pulse-wrapper.sh::main()` because launchd `KeepAlive` could respawn the pulse before `_start` ran, causing the lifecycle hook to early-return and skip priming.
@@ -551,6 +552,28 @@ worker-activity-helper.sh summary --since 1h --repo <owner/repo>
 The helper combines canonical worker metrics with `solved:worker` closed-issue
 counts. Treat `origin:worker` PR counts as branch-creation telemetry only; they
 are not sufficient evidence of worker productivity.
+
+For “right now” diagnosis, prefer the current-state helper:
+
+```bash
+pulse-current-state-helper.sh --window 15m --json
+```
+
+Key fields:
+
+- `worker_outcomes.spawned` — launch-stage events (`worker_launch_total`) plus
+  recent worker-start lifecycle lines.
+- `worker_outcomes.canary_failed` — canary preflight failure counter plus recent
+  wrapper failure lines.
+- `worker_outcomes.watchdog_killed`, `rate_limited`, `no_op` — classified from
+  `headless-runtime-metrics.jsonl` result/failure fields.
+- `worker_outcomes.pr_opened`, `pr_merged`, `issue_closed` — recent wrapper-log
+  outcome examples for quick operator correlation.
+- `dispatch_stage_timing_ms` — avg/max/count per dispatch stage, separating slow
+  startup (`canary_preflight`, `worker_launch_total`) from slow implementation or
+  later CI/review wait.
+- `resource_context` — recent worker load context (`load_1min`, `load_per_cpu`)
+  and load-blocked dispatch count.
 
 ```bash
 # Measure actual output growth over 15 seconds
