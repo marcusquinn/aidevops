@@ -162,6 +162,47 @@ _release_check_changelog() {
 	return 0
 }
 
+# Roll back release file mutations when a pre-commit release gate exits after
+# bumping files. Release starts from a clean tree by default, so restoring the
+# tracked diff on failure returns retries to the same next-version target instead
+# of leaving a half-bumped VERSION behind.
+_release_rollback_mutated_tree() {
+	if [[ "${VERSION_MANAGER_RELEASE_ROLLBACK_ACTIVE:-0}" -ne 1 ]]; then
+		return 0
+	fi
+
+	local changed_files=""
+	changed_files=$(cd "$REPO_ROOT" && git diff --name-only 2>/dev/null || true)
+	if [[ -z "$changed_files" ]]; then
+		return 0
+	fi
+
+	print_warning "Rolling back release file mutations after failed pre-commit release gate"
+	local changed_file=""
+	while IFS= read -r changed_file; do
+		[[ -n "$changed_file" ]] || continue
+		(cd "$REPO_ROOT" && git checkout -- "$changed_file" 2>/dev/null) || true
+	done <<<"$changed_files"
+	return 0
+}
+
+_release_enable_failure_rollback() {
+	VERSION_MANAGER_RELEASE_ROLLBACK_ACTIVE=1
+	trap '_release_rollback_mutated_tree' EXIT
+	return 0
+}
+
+_release_disable_failure_rollback() {
+	VERSION_MANAGER_RELEASE_ROLLBACK_ACTIVE=0
+	trap - EXIT
+	return 0
+}
+
+_release_abort_after_mutation() {
+	_release_rollback_mutated_tree
+	exit 1
+}
+
 # Perform the version bump, file updates, tag, push, and GitHub release.
 # Arguments: bump_type new_version
 _release_execute() {
@@ -199,7 +240,7 @@ _release_execute() {
 		print_error "Failed to update version in all files. Aborting release."
 		print_info "The VERSION file may have been updated. Run validation to check:"
 		print_info "  $0 validate"
-		exit 1
+		_release_abort_after_mutation
 	fi
 
 	print_info "Updating CHANGELOG.md..."
@@ -216,7 +257,7 @@ _release_execute() {
 
 		# t2437/GH#20073: commit the bump, verify HEAD is the bump commit.
 		if ! _release_commit_and_verify_bump "$new_version" "$bump_type"; then
-			exit 1
+			_release_abort_after_mutation
 		fi
 
 		if ! create_git_tag "$new_version"; then
@@ -254,7 +295,7 @@ _release_execute() {
 		print_success "Release $new_version created successfully!"
 	else
 		print_error "Version validation failed. Please fix inconsistencies before creating release."
-		exit 1
+		_release_abort_after_mutation
 	fi
 	return 0
 }
@@ -355,6 +396,7 @@ _main_release() {
 			print_info "Commit your changes first, or use --allow-dirty to bypass"
 			exit 1
 		fi
+		_release_enable_failure_rollback
 	else
 		print_warning "Releasing with uncommitted changes (--allow-dirty)"
 	fi
@@ -383,6 +425,7 @@ _main_release() {
 		if [[ "$hotfix_flag" -eq 1 ]]; then
 			_create_hotfix_tag "$new_version"
 		fi
+		_release_disable_failure_rollback
 	else
 		exit 1
 	fi
