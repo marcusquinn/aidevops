@@ -1004,6 +1004,387 @@ cmd_cycle_health() {
 	return 0
 }
 
+# =============================================================================
+# Subcommands — cmd_issue (t3258)
+#
+# Summarises issue-level dispatch and PR lifecycle evidence, collecting:
+#   - Issue metadata (labels, state, assignees)
+#   - Lifecycle comments (WORKER_BRANCH_ORPHAN, CLAIM_RELEASED, watchdog, etc.)
+#   - Linked and worker PRs with pulse log events for each
+# =============================================================================
+
+# jq field path constants — centralised to avoid repeated string literals.
+readonly _IQ_TITLE=".title"
+readonly _IQ_STATE=".state"
+readonly _IQ_CREATED=".createdAt"
+readonly _IQ_MERGED=".mergedAt"
+
+_CMD_ISSUE_NUMBER=""
+_CMD_ISSUE_REPO_SLUG=""
+_CMD_ISSUE_VERBOSE=0
+_CMD_ISSUE_JSON_OUTPUT=0
+
+# Parse cmd_issue CLI arguments into _CMD_ISSUE_* module globals.
+# Returns 1 on validation error.
+_cmd_issue_parse_args() {
+	_CMD_ISSUE_NUMBER=""
+	_CMD_ISSUE_REPO_SLUG=""
+	_CMD_ISSUE_VERBOSE=0
+	_CMD_ISSUE_JSON_OUTPUT=0
+
+	while [[ $# -gt 0 ]]; do
+		case "${1}" in
+			--repo)
+				_CMD_ISSUE_REPO_SLUG="${2:-}"
+				shift 2
+				;;
+			--verbose)
+				_CMD_ISSUE_VERBOSE=1
+				shift
+				;;
+			--json)
+				_CMD_ISSUE_JSON_OUTPUT=1
+				shift
+				;;
+			-*)
+				print_error "invalid option: ${1}"
+				return 1
+				;;
+			*)
+				if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
+					_CMD_ISSUE_NUMBER="${1}"
+				fi
+				shift
+				;;
+		esac
+	done
+
+	if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
+		print_error "usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]"
+		return 1
+	fi
+
+	if [[ -z "$_CMD_ISSUE_REPO_SLUG" ]]; then
+		_CMD_ISSUE_REPO_SLUG=$(git remote get-url origin 2>/dev/null | sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+		if [[ -z "$_CMD_ISSUE_REPO_SLUG" ]]; then
+			print_error "could not determine repo slug — pass --repo <owner/repo>"
+			return 1
+		fi
+	fi
+	return 0
+}
+
+# Fetch issue metadata from GitHub API.
+# Args: $1 = issue number, $2 = repo slug
+# Outputs JSON to stdout.
+_fetch_issue_metadata() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ "${PULSE_DIAGNOSE_GH_OFFLINE:-0}" == "1" ]]; then
+		echo "{}"
+		return 0
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		echo "{}"
+		return 0
+	fi
+	local meta_json
+	meta_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,author,createdAt,closedAt,labels,assignees 2>/dev/null) || meta_json="{}"
+	echo "$meta_json"
+	return 0
+}
+
+# Fetch issue comments from GitHub REST API.
+# Args: $1 = issue number, $2 = repo slug
+# Outputs JSON array to stdout.
+_fetch_issue_comments() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ "${PULSE_DIAGNOSE_GH_OFFLINE:-0}" == "1" ]]; then
+		echo "[]"
+		return 0
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		echo "[]"
+		return 0
+	fi
+	local owner="" repo=""
+	owner="${repo_slug%%/*}"
+	repo="${repo_slug##*/}"
+	local comments_json
+	comments_json=$(gh api "repos/${owner}/${repo}/issues/${issue_number}/comments" \
+		--paginate --jq '.' 2>/dev/null) || comments_json="[]"
+	echo "$comments_json"
+	return 0
+}
+
+# Fetch linked PR numbers for an issue via timeline cross-references and
+# worker branch pattern search.
+# Args: $1 = issue number, $2 = repo slug
+# Outputs newline-separated PR numbers to stdout.
+_fetch_issue_linked_prs() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ "${PULSE_DIAGNOSE_GH_OFFLINE:-0}" == "1" ]]; then
+		return 0
+	fi
+	if ! command -v gh >/dev/null 2>&1; then
+		return 0
+	fi
+	local owner="" repo=""
+	owner="${repo_slug%%/*}"
+	repo="${repo_slug##*/}"
+
+	# Strategy 1: timeline cross-references from PRs that reference this issue
+	# (pipe through jq so the gh stub in tests sees raw JSON)
+	local xref_nums=""
+	xref_nums=$(gh api "repos/${owner}/${repo}/issues/${issue_number}/timeline" \
+		--paginate 2>/dev/null \
+		| jq -r '[.[] | select(.event == "cross-referenced") | select(.source.issue.pull_request != null) | .source.issue.number] | unique | .[]' \
+		2>/dev/null) || xref_nums=""
+
+	# Strategy 2: worker branch naming pattern (feature/auto-*-gh<N>)
+	local branch_prs=""
+	branch_prs=$(gh pr list --repo "$repo_slug" --state all \
+		--search "gh${issue_number} in:head" \
+		--json number --limit 10 2>/dev/null \
+		| jq -r '.[].number' 2>/dev/null) || branch_prs=""
+
+	{ printf '%s\n' "$xref_nums"; printf '%s\n' "$branch_prs"; } \
+		| grep -E '^[0-9]+$' 2>/dev/null | sort -n | uniq
+	return 0
+}
+
+# Returns 0 if the comment body contains a lifecycle event marker.
+_comment_has_lifecycle_marker() {
+	local body="$1"
+	printf '%s' "$body" | grep -qE \
+		'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci-failure|source:conflict-feedback|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting_dispatch' \
+		2>/dev/null
+	return $?
+}
+
+# Extract up to 2 lines matching lifecycle patterns from a comment body,
+# stripping HTML comment blocks, dividers, and signature footer lines.
+_lifecycle_comment_excerpt() {
+	local body="$1"
+	printf '%s' "$body" \
+		| grep -v '^<!--' \
+		| grep -v '^---' \
+		| grep -v 'aidevops\.sh' \
+		| grep -E 'WORKER_BRANCH_ORPHAN|CLAIM_RELEASED|CLAIM_DEFERRED|[Ww]atchdog|STUCK_WORKER|source:ci|source:conflict|DISPATCH_CLAIM|worker.kill|WORKER_KILLED|_aborting' \
+		| head -2 \
+		| sed 's/^[[:space:]]*//'
+	return 0
+}
+
+# Render lifecycle comments subsection for _render_issue_text.
+# Args: $1 = comments_json
+_render_issue_lifecycle_comments() {
+	local comments_json="$1"
+	printf 'Lifecycle comments:\n'
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '  (jq not available — cannot parse comments)\n\n'
+		return 0
+	fi
+	if [[ -z "$comments_json" || "$comments_json" == "[]" ]]; then
+		printf '  (no comments found)\n\n'
+		return 0
+	fi
+	local comment_total="" lc_count=0 i=0
+	comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
+	[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
+	lc_count=0
+	i=0
+	while [[ "$i" -lt "$comment_total" ]]; do
+		local comment_item="" ts="" author="" body="" excerpt=""
+		comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
+		ts=$(_jq_field "$comment_item" ".created_at" "")
+		author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
+		body=$(_jq_field "$comment_item" ".body" "")
+		i=$((i + 1))
+		[[ -z "$ts" ]] && continue
+		_comment_has_lifecycle_marker "$body" || continue
+		lc_count=$((lc_count + 1))
+		excerpt=$(_lifecycle_comment_excerpt "$body")
+		printf '  %s  %b%s%b\n' "$ts" "$YELLOW" "$author" "$NC"
+		[[ -n "$excerpt" ]] && printf '    %s\n' "$excerpt"
+	done
+	[[ "$lc_count" -eq 0 ]] && printf '  (no lifecycle marker comments found)\n'
+	printf '\n'
+	return 0
+}
+
+# Render linked/worker PRs subsection for _render_issue_text.
+# Args: $1=repo_slug $2=pr_numbers $3=logfile $4=logdir $5=verbose
+_render_issue_linked_prs() {
+	local repo_slug="$1" pr_numbers="$2" logfile="$3" logdir="$4" verbose="$5"
+	printf 'Linked/worker PRs:\n'
+	local pr_count=0
+	while IFS= read -r pr_num; do
+		[[ -z "$pr_num" ]] && continue
+		pr_count=$((pr_count + 1))
+		local pr_json="" pr_title="" pr_state="" pr_head="" pr_merged_at=""
+		pr_json=$(_fetch_pr_metadata "$pr_num" "$repo_slug")
+		pr_title=$(_jq_field "$pr_json" "$_IQ_TITLE" "")
+		pr_state=$(_jq_field "$pr_json" "$_IQ_STATE" "$_UNKNOWN")
+		pr_head=$(_jq_field "$pr_json" ".headRefName" "")
+		pr_merged_at=$(_jq_field "$pr_json" "$_IQ_MERGED" "")
+		printf '  PR #%s  %s  %s\n' "$pr_num" "$pr_state" "${pr_title:-(no title)}"
+		[[ -n "$pr_head" ]] && printf '    Branch: %s\n' "$pr_head"
+		[[ -n "$pr_merged_at" ]] && printf '    Merged: %s\n' "$pr_merged_at"
+		local pr_log_lines="" event_count=0
+		pr_log_lines=$(_collect_pr_log_lines "$pr_num" "$logfile" "$logdir")
+		event_count=0
+		if [[ -n "$pr_log_lines" ]]; then
+			while IFS= read -r log_line; do
+				[[ -z "$log_line" ]] && continue
+				event_count=$((event_count + 1))
+				local ts="" classification="" rule_id="" script_name="" line_range="" description=""
+				ts=$(_extract_timestamp "$log_line")
+				classification=$(_classify_log_line "$log_line")
+				IFS='|' read -r rule_id script_name line_range description <<< "$classification"
+				printf '    %s  %b%-25s%b  %s\n' \
+					"$ts" "$CYAN" "${rule_id:-unclassified}" "$NC" "$description"
+				[[ "$verbose" -eq 1 ]] && printf '      RAW: %s\n' "$log_line"
+			done <<< "$pr_log_lines"
+			printf '    (%d pulse events)\n' "$event_count"
+		else
+			printf '    (no pulse log entries for this PR)\n'
+		fi
+	done <<< "$pr_numbers"
+	[[ "$pr_count" -eq 0 ]] && printf '  (no linked or worker PRs found)\n'
+	printf '\n'
+	return 0
+}
+
+# Render the human-readable issue correlation report.
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir verbose
+_render_issue_text() {
+	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
+	local pr_numbers="$5" logfile="$6" logdir="$7" verbose="$8"
+
+	local title="" state="" created_at="" closed_at="" labels="" assignees=""
+	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
+	state=$(_jq_field "$issue_json" "$_IQ_STATE" "$_UNKNOWN")
+	created_at=$(_jq_field "$issue_json" "$_IQ_CREATED" "")
+	closed_at=$(_jq_field "$issue_json" ".closedAt" "")
+	labels=$(printf '%s' "$issue_json" | jq -r '[.labels[]?.name] | join(", ")' 2>/dev/null || echo "")
+	assignees=$(printf '%s' "$issue_json" | jq -r '[.assignees[]?.login] | join(", ")' 2>/dev/null || echo "")
+
+	local closed_suffix=""
+	[[ -n "$closed_at" ]] && closed_suffix=" closed:${closed_at}"
+	printf '\nIssue #%s (%s%s)\n' "$issue_number" "$state" "$closed_suffix"
+	[[ -n "$title" ]] && printf '  Title: %s\n' "$title"
+	printf '  Labels: %s\n' "${labels:-(none)}"
+	printf '  Assignees: %s\n' "${assignees:-(none)}"
+	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
+
+	_render_issue_lifecycle_comments "$comments_json"
+	_render_issue_linked_prs "$repo_slug" "$pr_numbers" "$logfile" "$logdir" "$verbose"
+	return 0
+}
+
+# Render JSON issue correlation report.
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir
+_render_issue_json() {
+	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
+	local pr_numbers="$5" logfile="$6" logdir="$7"
+
+	local title="" state="" created_at=""
+	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
+	state=$(_jq_field "$issue_json" "$_IQ_STATE" "$_UNKNOWN")
+	created_at=$(_jq_field "$issue_json" "$_IQ_CREATED" "")
+
+	printf '{\n'
+	_json_num_field "issue_number" "$issue_number"
+	_json_str_field "repo"         "$repo_slug"
+	_json_str_field "title"        "$(printf '%s' "$title" | sed 's/"/\\"/g')"
+	_json_str_field "state"        "$state"
+	_json_str_field "created_at"   "$created_at"
+
+	printf '  "lifecycle_comments": [\n'
+	local lc_first=1
+	if command -v jq >/dev/null 2>&1 && [[ "$comments_json" != "[]" && -n "$comments_json" ]]; then
+		local comment_total="" i=0
+		comment_total=$(printf '%s' "$comments_json" | jq 'length' 2>/dev/null || echo 0)
+		[[ "$comment_total" =~ ^[0-9]+$ ]] || comment_total=0
+		i=0
+		while [[ "$i" -lt "$comment_total" ]]; do
+			local comment_item="" ts="" author="" body=""
+			comment_item=$(printf '%s' "$comments_json" | jq -r ".[$i]" 2>/dev/null) || comment_item="{}"
+			ts=$(_jq_field "$comment_item" ".created_at" "")
+			author=$(_jq_field "$comment_item" ".user.login" "$_UNKNOWN")
+			body=$(_jq_field "$comment_item" ".body" "")
+			i=$((i + 1))
+			[[ -z "$ts" ]] && continue
+			_comment_has_lifecycle_marker "$body" || continue
+			local excerpt
+			excerpt=$(_lifecycle_comment_excerpt "$body" | tr '\n' ' ' | sed 's/"/\\"/g; s/[[:space:]]*$//')
+			[[ "$lc_first" -eq 0 ]] && printf ',\n'
+			lc_first=0
+			printf '    {"ts": "%s", "author": "%s", "excerpt": "%s"}' \
+				"$ts" "$author" "${excerpt:-}"
+		done
+	fi
+	printf '\n  ],\n'
+
+	printf '  "linked_prs": [\n'
+	local pr_first=1
+	while IFS= read -r pr_num; do
+		[[ -z "$pr_num" ]] && continue
+		local pr_json="" pr_title="" pr_state="" pr_head="" pr_merged_at=""
+		pr_json=$(_fetch_pr_metadata "$pr_num" "$repo_slug")
+		pr_title=$(_jq_field "$pr_json" "$_IQ_TITLE" "")
+		pr_state=$(_jq_field "$pr_json" "$_IQ_STATE" "$_UNKNOWN")
+		pr_head=$(_jq_field "$pr_json" ".headRefName" "")
+		pr_merged_at=$(_jq_field "$pr_json" "$_IQ_MERGED" "")
+		local pr_log_lines="" pr_event_count=0 raw_count=""
+		pr_log_lines=$(_collect_pr_log_lines "$pr_num" "$logfile" "$logdir")
+		pr_event_count=0
+		if [[ -n "$pr_log_lines" ]]; then
+			raw_count=$(printf '%s\n' "$pr_log_lines" | grep -c '.' 2>/dev/null || true)
+			[[ "$raw_count" =~ ^[0-9]+$ ]] && pr_event_count="$raw_count"
+		fi
+		[[ "$pr_first" -eq 0 ]] && printf ',\n'
+		pr_first=0
+		printf '    {"number": %s, "pr_title": "%s", "pr_state": "%s", "head_ref": "%s", "merged_at": "%s", "pulse_event_count": %d}' \
+			"$pr_num" "$(printf '%s' "$pr_title" | sed 's/"/\\"/g')" \
+			"$pr_state" "$pr_head" "$pr_merged_at" "$pr_event_count"
+	done <<< "$pr_numbers"
+	printf '\n  ]\n'
+	printf '}\n'
+	return 0
+}
+
+cmd_issue() {
+	_cmd_issue_parse_args "$@" || return 1
+
+	local logfile="" logdir=""
+	logfile=$(_resolve_logfile "")
+	logdir=$(_resolve_logdir)
+
+	local issue_json="" comments_json="" pr_numbers=""
+	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
+	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
+	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
+
+	if [[ "$_CMD_ISSUE_JSON_OUTPUT" -eq 1 ]]; then
+		_render_issue_json "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
+			"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir"
+		return 0
+	fi
+
+	_render_issue_text "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
+		"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir" \
+		"$_CMD_ISSUE_VERBOSE"
+	return 0
+}
+
 cmd_help() {
 	cat <<'USAGE'
 pulse-diagnose-helper.sh — correlate pulse.log events with PR merge decisions
@@ -1014,6 +1395,11 @@ COMMANDS:
     --verbose        Show raw log lines alongside classifications
     --json           Machine-readable JSON output
     --logfile <path> Override pulse.log path
+
+  issue <N> [options]  Diagnose issue-level dispatch and PR lifecycle
+    --repo <slug>    GitHub repo (default: from git remote)
+    --verbose        Show raw pulse log lines alongside PR events
+    --json           Machine-readable JSON output
 
   rules [--json]     List the full rule inventory
 
@@ -1034,6 +1420,8 @@ ENVIRONMENT:
 EXAMPLES:
   pulse-diagnose-helper.sh pr 20329 --repo marcusquinn/aidevops
   pulse-diagnose-helper.sh pr 20336 --verbose
+  pulse-diagnose-helper.sh issue 21860 --repo marcusquinn/aidevops
+  pulse-diagnose-helper.sh issue 21860 --json
   pulse-diagnose-helper.sh rules --json
   pulse-diagnose-helper.sh cycle-health
   pulse-diagnose-helper.sh cycle-health --window 24h --json
@@ -1051,6 +1439,7 @@ main() {
 
 	case "$cmd" in
 		pr)            cmd_pr "$@" ;;
+		issue)         cmd_issue "$@" ;;
 		rules)         cmd_rules "$@" ;;
 		cycle-health)  cmd_cycle_health "$@" ;;
 		help|-h|--help) cmd_help ;;

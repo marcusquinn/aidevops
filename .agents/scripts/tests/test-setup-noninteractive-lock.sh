@@ -174,6 +174,51 @@ test_stale_live_owner_past_ceiling_is_reclaimed() {
 	return 0
 }
 
+test_contention_message_includes_elapsed_and_stage() {
+	local tmp_dir=""
+	local output=""
+	tmp_dir=$(make_temp_dir)
+	mkdir -p "$tmp_dir/lock.d"
+	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
+	# Write a started_at stamp ~5 seconds in the past so elapsed time is computable.
+	local past_ts=""
+	past_ts=$(date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+		date -u -v-5S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+	[[ -n "$past_ts" ]] && printf '%s\n' "$past_ts" >"$tmp_dir/lock.d/started_at"
+	# Write a fake timing log with a RUNNING stage so the stage diagnostic fires.
+	local fake_stl="$tmp_dir/fake-stage-timings.log"
+	printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "deploy_aidevops_agents" "0.00" "RUNNING" >"$fake_stl"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=3600
+		HOME="$tmp_dir"
+		mkdir -p "$tmp_dir/.aidevops/logs"
+		cp "$fake_stl" "$tmp_dir/.aidevops/logs/setup-stage-timings.log"
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		return 0
+	) 2>&1 || true
+
+	rm -rf "$tmp_dir"
+
+	local passed=1
+	# Stage name and diagnose log path must appear in the wait diagnostic.
+	[[ "$output" == *"stage: deploy_aidevops_agents"* ]] || passed=3
+	[[ "$output" == *"setup-stage-timings.log"* ]] || passed=4
+	[[ "$output" == *"Waiting up to"* ]] || passed=5
+
+	if [[ "$passed" -eq 1 ]]; then
+		print_result "lock contention message includes stage diagnostics" 0
+		return 0
+	fi
+
+	print_result "lock contention message includes stage diagnostics" 1 "missing_field=${passed} output=${output}"
+	return 0
+}
+
 test_wait_ceiling_prevents_indefinite_block() {
 	# Start a real background process so kill -0 succeeds and the owner is not stale.
 	# Use a very short wait ceiling so the test completes quickly.
@@ -252,6 +297,7 @@ main() {
 	test_reclaims_stale_lock
 	test_stale_live_owner_past_ceiling_is_reclaimed
 	test_wait_ceiling_prevents_indefinite_block
+	test_contention_message_includes_elapsed_and_stage
 	test_signal_cleanup_terminates_registered_children
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"

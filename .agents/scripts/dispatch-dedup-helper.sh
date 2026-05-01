@@ -31,6 +31,11 @@
 #     task-id fallback) and should be skipped by pulse dispatch.
 #     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
 #
+#   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch>
+#     Check whether repeated worker_branch_orphan outcomes for the same issue
+#     and branch should hold dispatch before launching another worker.
+#     Exit 0 = threshold reached (do NOT dispatch), exit 1 = no hold.
+#
 #   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
 #     Check if issue is assigned to another runner (not self, owner, or maintainer).
 #     GH#10521: Ignores repo owner (from slug) and maintainer (from repos.json).
@@ -755,8 +760,10 @@ _is_assigned_check_dispatch_cooldown() {
 	# Fetch comments. GitHub returns ASC (oldest first); the latest marker
 	# wins via jq `last`. Fail-open on API error — cooldown is an
 	# optimisation, not a guarantee.
+	local comments_endpoint
+	comments_endpoint=$(printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number")
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" 2>/dev/null) || return 1
+	comments_json=$(gh api "$comments_endpoint" 2>/dev/null) || return 1
 	[[ -n "$comments_json" ]] || return 1
 
 	# Extract the latest cooldown marker timestamp.
@@ -788,6 +795,106 @@ _is_assigned_check_dispatch_cooldown() {
 		return 0
 	fi
 	return 1
+}
+
+#######################################
+# Check repeated worker_branch_orphan outcomes for a single issue+branch.
+#
+# This is a surgical dispatch-loop fuse for the branch-orphan class. The
+# headless runtime posts structured WORKER_BRANCH_ORPHAN comments containing
+# branch, session, and timestamp. When the same branch hits the threshold within
+# the configured window, the dispatch path holds that branch before spawning yet
+# another worker and posts one mentor-quality diagnostic comment for triage.
+#
+# Gating:
+#   WORKER_BRANCH_ORPHAN_LOOP_THRESHOLD  default 3, 0 disables
+#   WORKER_BRANCH_ORPHAN_LOOP_WINDOW_S   default 7200 seconds
+#
+# Fail-open on missing branch, gh/jq/date errors, or malformed comments. This is
+# a blast-radius limiter, not a security gate; unrelated dispatch should not be
+# starved by telemetry read failures.
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = branch name
+# Returns: exit 0 if loop threshold reached (prints ORPHAN_LOOP_BLOCKED),
+#          exit 1 otherwise.
+#######################################
+check_worker_branch_orphan_loop() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+
+	[[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]] || return 1
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$branch_name" != "HEAD" ]] || return 1
+
+	local threshold="${WORKER_BRANCH_ORPHAN_LOOP_THRESHOLD:-3}"
+	local window_s="${WORKER_BRANCH_ORPHAN_LOOP_WINDOW_S:-7200}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=3
+	[[ "$window_s" =~ ^[0-9]+$ ]] || window_s=7200
+	[[ "$threshold" -gt 0 && "$window_s" -gt 0 ]] || return 1
+
+	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_json
+	comments_json=$(gh api "$comments_endpoint" 2>/dev/null) || return 1
+	[[ -n "$comments_json" ]] || return 1
+
+	local now_epoch
+	now_epoch=$(date -u +%s 2>/dev/null) || return 1
+
+	local count=0
+	local latest_iso=""
+	local marker_iso=""
+	while IFS= read -r marker_iso; do
+		[[ -n "$marker_iso" ]] || continue
+		local marker_epoch=""
+		marker_epoch=$(date -u -d "$marker_iso" +%s 2>/dev/null) ||
+			marker_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$marker_iso" +%s 2>/dev/null) ||
+			continue
+		[[ "$marker_epoch" =~ ^[0-9]+$ ]] || continue
+		if [[ $((now_epoch - marker_epoch)) -le "$window_s" ]]; then
+			count=$((count + 1))
+			latest_iso="$marker_iso"
+		fi
+	done < <(printf '%s' "$comments_json" |
+		jq -r --arg branch "$branch_name" '
+			.[]
+			| (.body // "")
+			| select(contains("WORKER_BRANCH_ORPHAN branch=" + $branch + " "))
+			| (capture("WORKER_BRANCH_ORPHAN branch=[^ ]+ session=[^ ]+ ts=(?<ts>[^\\n ]+)")? // {})
+			| .ts // empty
+		' 2>/dev/null) || return 1
+
+	[[ "$count" -ge "$threshold" ]] || return 1
+
+	local existing_block=""
+	existing_block=$(printf '%s' "$comments_json" |
+		jq -r --arg branch "$branch_name" '
+			[.[] | (.body // "") | select(contains("worker-branch-orphan-loop:blocked branch=" + $branch + " "))] | length
+		' 2>/dev/null) || existing_block="0"
+	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
+
+	local pr_hint="none found"
+	local pr_line=""
+	pr_line=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state all \
+		--json number,state,url --jq '.[0] | select(.number != null) | "#\(.number) (\(.state)) \(.url)"' 2>/dev/null || true)
+	[[ -n "$pr_line" ]] && pr_hint="$pr_line"
+
+	if [[ "$existing_block" -eq 0 ]]; then
+		local diag
+		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-loop:blocked branch=%s issue=%s count=%s window_s=%s -->\n## Dispatch held: repeated worker_branch_orphan\n\nThe dispatch path has seen `%s` `WORKER_BRANCH_ORPHAN` outcomes for issue #%s on branch `%s` within the last %s seconds. Dispatch is held for this same branch to avoid burning more worker attempts while preserving evidence.\n\n- Branch: `%s`\n- Latest orphan marker: `%s`\n- PR for branch: %s\n- Next verification: `gh pr list --repo %s --head %s --state all --json number,state,url`\n\nIf the branch already has the intended PR, link or merge that PR. If the branch is stale or corrupt, remove/reset that worktree/branch so a fresh branch can dispatch.\n<!-- ops:end -->' \
+			"$branch_name" "$issue_number" "$count" "$window_s" \
+			"$count" "$issue_number" "$branch_name" "$window_s" \
+			"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$repo_slug" "$branch_name")
+		gh api "$comments_endpoint" \
+			--method POST \
+			--field body="$diag" \
+			>/dev/null 2>&1 || true
+	fi
+
+	printf 'WORKER_BRANCH_ORPHAN_LOOP_BLOCKED (issue=%s repo=%s branch=%s count=%s threshold=%s window_s=%s latest=%s pr=%s)\n' \
+		"$issue_number" "$repo_slug" "$branch_name" "$count" "$threshold" "$window_s" "${latest_iso:-unknown}" "$pr_hint"
+	return 0
 }
 
 #######################################
@@ -1572,6 +1679,8 @@ Usage:
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
                                                        t2007: aggregate token spend (returns "spent|attempts")
+  dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch>
+                                                       Hold repeated worker_branch_orphan loops for same branch
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
                                                        Used by headless-runtime-helper.sh to enable verbose lifecycle,
@@ -1615,6 +1724,13 @@ Examples:
     echo "Issue already has merged PR evidence — skip dispatch"
   else
     echo "No merged PR evidence — safe to dispatch"
+  fi
+
+  # Check before launching a worker on a reused branch-orphan worktree
+  if dispatch-dedup-helper.sh check-orphan-loop 2300 owner/repo feature/auto-20260501-000000-gh2300; then
+    echo "Repeated worker_branch_orphan on this branch — hold dispatch"
+  else
+    echo "No branch-orphan loop — safe to dispatch"
   fi
 
   # Report ALL structural label blockers in one pass (t2894)
@@ -1679,6 +1795,11 @@ main() {
 	has-open-pr)
 		_require_args has-open-pr 2 "$#" "<issue-number> <repo-slug> [issue-title]" || return 1
 		has_open_pr "$1" "$2" "${3:-}"
+		;;
+	check-orphan-loop)
+		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch>" || return 1
+		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3"
+		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch"
 		;;
 	claim)
 		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1

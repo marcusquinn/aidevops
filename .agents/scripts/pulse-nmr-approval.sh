@@ -618,48 +618,33 @@ _find_qualifying_pr_for_stale_recovery() {
 		--limit 10 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
 
-	local pr_count
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" -gt 0 ]] || return 0
+	local candidate_prs
+	candidate_prs=$(printf '%s' "$pr_json" | jq -r \
+		--arg nmr_at "$nmr_at" \
+		--arg blank "" \
+		--arg approved "APPROVED" \
+		--arg owner "OWNER" \
+		--arg member "MEMBER" \
+		--arg origin_worker "origin:worker" \
+		--arg origin_interactive "origin:interactive" '
+		.[]?
+		| select((.createdAt // $blank) != $blank and (($nmr_at // $blank) != $blank))
+		| select((.createdAt | fromdateiso8601) > ($nmr_at | fromdateiso8601))
+		| select(.reviewDecision == $approved)
+		| select(.authorAssociation == $owner or .authorAssociation == $member)
+		| select([.labels[]?.name] | any(. == $origin_worker or . == $origin_interactive))
+		| select((.headRefOid // $blank) != $blank)
+		| [.number, .headRefOid]
+		| @tsv
+	' 2>/dev/null) || candidate_prs=""
+	[[ -n "$candidate_prs" ]] || return 0
 
-	local j=0
-	while [[ "$j" -lt "$pr_count" ]]; do
-		local pr_num="" pr_review="" pr_author_assoc="" pr_created_at="" pr_sha=""
-		pr_num=$(printf '%s' "$pr_json" | jq -r ".[$j].number // empty" 2>/dev/null) || pr_num=""
-		pr_review=$(printf '%s' "$pr_json" | jq -r ".[$j].reviewDecision // empty" 2>/dev/null) || pr_review=""
-		pr_author_assoc=$(printf '%s' "$pr_json" | jq -r ".[$j].authorAssociation // empty" 2>/dev/null) || pr_author_assoc=""
-		pr_created_at=$(printf '%s' "$pr_json" | jq -r ".[$j].createdAt // empty" 2>/dev/null) || pr_created_at=""
-		pr_sha=$(printf '%s' "$pr_json" | jq -r ".[$j].headRefOid // empty" 2>/dev/null) || pr_sha=""
-		j=$((j + 1))
-
-		# PR must be created AFTER NMR was applied.
-		if [[ -n "$pr_created_at" && -n "$nmr_at" ]]; then
-			local pr_after_nmr
-			pr_after_nmr=$(jq -n --arg p "$pr_created_at" --arg n "$nmr_at" \
-				'(($p | fromdateiso8601) > ($n | fromdateiso8601))' 2>/dev/null) || pr_after_nmr="false"
-			[[ "$pr_after_nmr" == "true" ]] || continue
-		else
-			continue
-		fi
-
-		# reviewDecision must be APPROVED.
-		[[ "$pr_review" == "APPROVED" ]] || continue
-
-		# authorAssociation must be OWNER or MEMBER (not COLLABORATOR/external).
-		[[ "$pr_author_assoc" == "OWNER" || "$pr_author_assoc" == "MEMBER" ]] || continue
-
-		# PR must have origin:worker or origin:interactive label.
-		local has_valid_origin
-		has_valid_origin=$(printf '%s' "$pr_json" | jq -r \
-			"[.[$((j - 1))].labels[]?.name] | map(select(. == \"origin:worker\" or . == \"origin:interactive\")) | length" \
-			2>/dev/null) || has_valid_origin=0
-		[[ "$has_valid_origin" =~ ^[0-9]+$ ]] || has_valid_origin=0
-		[[ "$has_valid_origin" -gt 0 ]] || continue
+	local pr_num="" pr_sha=""
+	while IFS=$'\t' read -r pr_num pr_sha; do
+		[[ -n "$pr_num" && -n "$pr_sha" ]] || continue
 
 		# GH#21799: All non-maintainer-gate CI checks must have a passing
 		# conclusion. Fetch via REST check-runs (separate from GraphQL pool).
-		# Skip fail-closed if SHA missing (cached PR pre-migration).
-		[[ -n "$pr_sha" ]] || continue
 		local check_runs_json
 		check_runs_json=$(gh_pr_check_runs_rest "$slug" "$pr_sha" 2>/dev/null) || check_runs_json=""
 		# Empty output → /check-runs API failure → fail-closed (skip this PR).
@@ -674,7 +659,7 @@ _find_qualifying_pr_for_stale_recovery() {
 		# All gates passed — output the PR number.
 		printf '%s' "$pr_num"
 		return 0
-	done
+	done <<<"$candidate_prs"
 
 	return 0
 }
@@ -721,25 +706,55 @@ _notify_stale_recovery_resolved_by_pr() {
 	# Shared API path — constructed via printf to avoid string-literal ratchet regression
 	local comments_api
 	printf -v comments_api 'repos/%s/issues/%s/comments' "$slug" "$issue_num"
+	local json_null='null'
 
-	# Gate 1: Only act on stale-recovery-tick:escalated breaker trips.
-	# Cost-circuit-breaker:fired and cost-circuit-breaker:no_work_loop indicate
-	# budget/infra problems where merging is itself unsafe.
-	local has_stale_recovery
-	has_stale_recovery=$(gh api "$comments_api" --paginate \
-		--jq "[.[] | select(.body | test(\"stale-recovery-tick:escalated\")) | select(.body | test(\"cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop\") | not)] | length" \
-		2>/dev/null) || has_stale_recovery=0
-	[[ "$has_stale_recovery" =~ ^[0-9]+$ ]] || has_stale_recovery=0
+	# Gate 1/2: Fetch comments once, then evaluate stale-recovery eligibility
+	# and idempotency from the same result. Cost-circuit-breaker:fired and
+	# cost-circuit-breaker:no_work_loop indicate budget/infra problems where
+	# merging is itself unsafe.
+	local stale_marker='stale-recovery-tick:escalated'
+	local breaker_pattern='cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop'
+	local notice_marker='nmr-stale-recovery-resolution-notice'
+	local comments_json comment_state
+	comments_json=$(gh api "$comments_api" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	[[ -n "$comments_json" && "$comments_json" != "$json_null" ]] || comments_json="[]"
+	comment_state=$(printf '%s' "$comments_json" | jq -r \
+		--arg array_type "array" \
+		--arg stale_marker "$stale_marker" \
+		--arg breaker_pattern "$breaker_pattern" \
+		--arg notice_marker "$notice_marker" '
+			(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+			elif type == $array_type then .
+			else [] end)
+			|
+			[
+				([
+					.[]
+					| select((.body? // empty) | test($stale_marker))
+					| select(((.body? // empty) | test($breaker_pattern)) | not)
+				] | length),
+				([
+					.[]
+					| select((.body? // empty) | test($notice_marker))
+				] | length)
+			]
+			| @tsv
+		' \
+		2>/dev/null) || comment_state=""
+
+	local has_stale_recovery=0 already_notified=0
+	local page_stale_recovery="" page_already_notified=""
+	while IFS=$'\t' read -r page_stale_recovery page_already_notified; do
+		[[ "$page_stale_recovery" =~ ^[0-9]+$ ]] || page_stale_recovery=0
+		[[ "$page_already_notified" =~ ^[0-9]+$ ]] || page_already_notified=0
+		has_stale_recovery=$((has_stale_recovery + page_stale_recovery))
+		already_notified=$((already_notified + page_already_notified))
+	done <<<"$comment_state"
+
 	if [[ "$has_stale_recovery" -le 0 ]]; then
 		return 0
 	fi
 
-	# Gate 2: Idempotency — never post twice.
-	local already_notified
-	already_notified=$(gh api "$comments_api" --paginate \
-		--jq '[.[] | select(.body | test("nmr-stale-recovery-resolution-notice"))] | length' \
-		2>/dev/null) || already_notified=0
-	[[ "$already_notified" =~ ^[0-9]+$ ]] || already_notified=0
 	if [[ "$already_notified" -gt 0 ]]; then
 		echo "[pulse-wrapper] _notify_stale_recovery_resolved_by_pr: #${issue_num} in ${slug} — notification already posted, skipping" >>"$LOGFILE"
 		return 0

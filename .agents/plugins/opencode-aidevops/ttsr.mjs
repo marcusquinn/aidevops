@@ -13,17 +13,17 @@ import {
 // Token Cost Advisory
 // ---------------------------------------------------------------------------
 // Injects a synthetic message when session context exceeds a token threshold,
-// prompting the LLM to advise the user to run /compact. Fires at 200k tokens,
-// then every 50k above that (250k, 300k, ...). Uses the last assistant
+// prompting the LLM to advise the user to run /compact. Fires at 250k tokens,
+// then every 50k above that (300k, 350k, ...). Uses the last assistant
 // message's token counts — which represent the full context sent to the model
 // on that turn — so the number tracks real cost, not model capacity.
 //
 // For headless sessions: autocompact already fires at ~(limit - 20k), so
 // this advisory primarily helps interactive sessions on large-context models
-// (Gemini 1M+, future models) where autocompact is far above 200k, or when
+// (Gemini 1M+, future models) where autocompact is far above 250k, or when
 // autocompact is disabled.
 
-const TOKEN_ADVISORY_INITIAL = 200_000;
+const TOKEN_ADVISORY_INITIAL = 250_000;
 const TOKEN_ADVISORY_INTERVAL = 50_000;
 
 /**

@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.13.52
+# Version: 3.13.56
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1265,6 +1265,13 @@ _setup_acquire_noninteractive_setup_lock() {
 		owner_age=$(_setup_lock_owner_age "$lock_dir" "$owner_pid")
 		owner_cmd=""
 		[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+		local _diag_stage=""
+		local _diag_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
+		if [[ -r "$_diag_stl" ]]; then
+			local _diag_cur_stage=""
+			_diag_cur_stage=$(awk -F'\t' '$4=="RUNNING"{s=$2} END{if(s)printf "%s",s}' "$_diag_stl" 2>/dev/null || true)
+			[[ -n "$_diag_cur_stage" ]] && _diag_stage=", stage: ${_diag_cur_stage}"
+		fi
 
 		if [[ "$stale_ceiling" -gt 0 && "$owner_age" -ge "$stale_ceiling" ]]; then
 			if [[ "$reclaim_attempts" -ge 2 ]]; then
@@ -1279,13 +1286,13 @@ _setup_acquire_noninteractive_setup_lock() {
 
 		# Live non-stale owner — check wait ceiling before sleeping.
 		if [[ "$waited" -ge "$wait_ceiling" ]]; then
-			print_error "Timed out waiting ${waited}s for setup.sh --non-interactive lock (owner pid ${owner_pid}, age ${owner_age}s${owner_cmd:+, command: ${owner_cmd}}). Increase AIDEVOPS_SETUP_WAIT_TIMEOUT_S (current: ${wait_ceiling}s) or kill pid ${owner_pid} to unblock."
+			print_error "Timed out waiting ${waited}s for setup.sh --non-interactive lock (owner pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Increase AIDEVOPS_SETUP_WAIT_TIMEOUT_S (current: ${wait_ceiling}s) or kill pid ${owner_pid} to unblock. Diagnose: ${_diag_stl}"
 			return 75
 		fi
 
 		# Emit diagnostics: first time blocked and every 60 s thereafter.
 		if [[ "$waited" -eq 0 ]]; then
-			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S)."
+			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S). Diagnose: ${_diag_stl}"
 		elif [[ $(( waited % 60 )) -eq 0 ]]; then
 			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s, waited ${waited}s of ${wait_ceiling}s max)."
 		fi
@@ -1382,7 +1389,10 @@ _setup_run_non_interactive() {
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 	_time_step "inject_agents_reference" inject_agents_reference
-	_time_step "deploy_agents_to_runtimes" deploy_agents_to_runtimes
+	# Use the bounded wrapper so a slow file-system traversal across many agent
+	# files does not consume the remaining postflight budget and trip the outer
+	# timeout (GH#22087). AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT controls the deadline.
+	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded
 	_time_step "update_opencode_config" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
 	_time_step "update_codex_config" update_codex_config

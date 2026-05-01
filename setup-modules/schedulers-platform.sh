@@ -306,9 +306,13 @@ setup_complexity_scan() {
 }
 
 # Install the dedicated merge-pass launchd plist (macOS).
-# Supersedes the t2862 sh.aidevops.pulse-merge-routine approach (t21247, GH#21247):
+# Uses the timeout-protected pulse-merge-routine.sh path (t3378). The older
+# t21247 pulse-wrapper.sh --merge-only path had no hard ceiling; a hung merge
+# pass could leave green PRs unmerged until manual intervention.
+# Supersedes the t2862 sh.aidevops.pulse-merge-routine label while keeping the
+# timeout-protected helper implementation:
 #   - Label: com.aidevops.aidevops-supervisor-merge
-#   - Script: pulse-wrapper.sh --merge-only (full bootstrap + merge only)
+#   - Script: pulse-merge-routine.sh run
 #   - Interval: 60s (down from 120s) — targets <=90s PR-green-to-merged latency
 #   - Log: pulse-merge.log (isolated from main pulse log)
 #
@@ -348,7 +352,7 @@ _install_pulse_merge_routine_launchd() {
 	<array>
 		<string>${_xml_bash_bin}</string>
 		<string>${_xml_pmr_script}</string>
-		<string>--merge-only</string>
+		<string>run</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>60</integer>
@@ -382,7 +386,7 @@ PMR_PLIST
 	)
 
 	if _launchd_install_if_changed "$pmr_label" "$pmr_plist" "$pmr_plist_content"; then
-		print_info "Pulse merge pass enabled (launchd, every 60s via --merge-only)"
+		print_info "Pulse merge pass enabled (launchd, every 60s via pulse-merge-routine.sh)"
 	else
 		print_warning "Failed to load pulse merge pass LaunchAgent"
 	fi
@@ -390,8 +394,8 @@ PMR_PLIST
 }
 
 # Install the dedicated merge-pass scheduler via systemd or cron (Linux).
-# Supersedes the t2862 aidevops-pulse-merge-routine approach (t21247, GH#21247):
-#   - Command: pulse-wrapper.sh --merge-only
+# Uses timeout-protected pulse-merge-routine.sh (t3378).
+#   - Command: pulse-merge-routine.sh run
 #   - Interval: every 60s (cron * * * * *, systemd OnUnitActiveSec=60)
 #   - Log: pulse-merge.log
 # Args: $1=wrapper_script $2=log_dir
@@ -413,13 +417,13 @@ _install_pulse_merge_routine_linux() {
 
 	_install_scheduler_linux \
 		"$pmr_systemd" \
-		"aidevops: pulse-merge (--merge-only)" \
+		"aidevops: pulse-merge-routine" \
 		"* * * * *" \
-		"\"${pmr_script}\" --merge-only" \
+		"\"${pmr_script}\" run" \
 		"60" \
 		"${_pmr_log_dir}/pulse-merge.log" \
 		"" \
-		"Pulse merge pass enabled (every 60s via --merge-only)" \
+		"Pulse merge pass enabled (every 60s via pulse-merge-routine.sh)" \
 		"Failed to install pulse merge pass scheduler" \
 		"true" \
 		"true"
@@ -428,18 +432,17 @@ _install_pulse_merge_routine_linux() {
 
 # Setup the dedicated merge-pass scheduler (t21247, GH#21247).
 #
-# Supersedes t2862/GH#20919 (pulse-merge-routine.sh, 120s interval). The new
-# approach runs pulse-wrapper.sh --merge-only every 60s so green PRs merge
+# Supersedes t2862/GH#20919's legacy label/120s interval. The current
+# approach runs pulse-merge-routine.sh every 60s so green PRs merge
 # within <=90s of CI completion regardless of dispatch-cycle length (~23 min
-# average). The full pulse bootstrap ensures all PULSE_* config and repo state
-# are available; the separate lockdir (pulse-merge-instance.lock) prevents
-# overlap with the main dispatch cycle lock.
+# average). The routine has its own hard timeout and lockdir so a hung merge
+# pass cannot starve the backlog.
 #
-# Requires: pulse-wrapper.sh must be installed and executable.
+# Requires: pulse-merge-routine.sh must be installed and executable.
 # The in-cycle merge pass in pulse-wrapper.sh is kept as defense-in-depth —
 # it short-circuits when a merge pass ran within the last 60s.
 setup_pulse_merge_routine() {
-	local pmr_wrapper="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
+	local pmr_wrapper="$HOME/.aidevops/agents/scripts/pulse-merge-routine.sh"
 	local pmr_label="com.aidevops.aidevops-supervisor-merge"
 	if ! [[ -x "$pmr_wrapper" ]]; then
 		return 0
@@ -802,7 +805,7 @@ setup_oauth_token_refresh() {
 }
 
 # Setup opencode DB maintenance scheduler (r913, t2183).
-# Runs weekly (Sun 04:00 local) to checkpoint/optimize/vacuum opencode.db.
+# Runs weekly (Sun 04:00 local by default) to checkpoint/optimize/vacuum opencode.db.
 # The helper self-noops on missing DB, so installing unconditionally is safe —
 # a non-opencode machine wakes up weekly, sees no DB, exits 0 silently.
 #
@@ -820,14 +823,21 @@ setup_opencode_db_maintenance() {
 	fi
 
 	local ocdbm_log_dir="$HOME/.aidevops/.agent-workspace/logs"
+	local ocdbm_hour="${OPENCODE_DB_MAINTENANCE_HOUR:-4}"
+	local ocdbm_minute="${OPENCODE_DB_MAINTENANCE_MINUTE:-0}"
+	local ocdbm_mode="${OPENCODE_DB_MAINTENANCE_MODE:-auto}"
+	local ocdbm_command="\"${ocdbm_script}\" auto"
+	if [[ "$ocdbm_mode" == "maintenance-window" ]]; then
+		ocdbm_command="\"${ocdbm_script}\" maintenance-window --force-opencode"
+	fi
 	mkdir -p "$ocdbm_log_dir"
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		# Helper owns its own plist generation (Approach B, like repo-sync).
 		# Quiet the helper's multi-line output and emit one consolidated line
 		# to match the style of setup_profile_readme / setup_oauth_token_refresh.
-		if bash "$ocdbm_script" install >/dev/null 2>&1; then
-			print_info "OpenCode DB maintenance enabled (launchd, weekly Sun 04:00)"
+		if OPENCODE_DB_MAINTENANCE_HOUR="$ocdbm_hour" OPENCODE_DB_MAINTENANCE_MINUTE="$ocdbm_minute" OPENCODE_DB_MAINTENANCE_MODE="$ocdbm_mode" bash "$ocdbm_script" install >/dev/null 2>&1; then
+			print_info "OpenCode DB maintenance enabled (launchd, weekly Sun ${ocdbm_hour}:${ocdbm_minute})"
 		else
 			print_warning "Failed to install opencode DB maintenance LaunchAgent"
 		fi
@@ -838,21 +848,21 @@ setup_opencode_db_maintenance() {
 		return 0
 	else
 		# Linux / WSL: prefer systemd user timer, fall back to cron.
-		# Weekly Sunday 04:00 local — cron: `0 4 * * 0`; systemd OnCalendar
+		# Weekly Sunday local time — cron: `${minute} ${hour} * * 0`; systemd OnCalendar
 		# ensures wall-clock firing even across suspends/reboots.
 		_install_scheduler_linux \
 			"aidevops-opencode-db-maintenance" \
 			"aidevops: opencode-db-maintenance" \
-			"0 4 * * 0" \
-			"\"${ocdbm_script}\" auto" \
+			"${ocdbm_minute} ${ocdbm_hour} * * 0" \
+			"${ocdbm_command}" \
 			"604800" \
 			"${ocdbm_log_dir}/opencode-db-maintenance.log" \
 			"" \
-			"OpenCode DB maintenance enabled (weekly Sun 04:00)" \
+			"OpenCode DB maintenance enabled (weekly Sun ${ocdbm_hour}:${ocdbm_minute})" \
 			"Failed to install opencode DB maintenance scheduler" \
 			"false" \
 			"true" \
-			"Sun *-*-* 04:00:00"
+			"Sun *-*-* ${ocdbm_hour}:${ocdbm_minute}:00"
 	fi
 	return 0
 }

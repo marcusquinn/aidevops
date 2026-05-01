@@ -346,6 +346,44 @@ else
 		"got $n labels in: $(tail -1 "$GH_RECORD_FILE")"
 fi
 
+# B'3: no TODO-derived labels + explicit non-origin labels → no empty argv element
+# Regression for GH#22056: "${_todo_label_args[@]+...}" on an empty array could emit
+# "" when no TODO task ID was present, causing gh CLI error:
+#   unknown argument ""; please quote all values that have spaces
+# Fix: use explicit ${#arr[@]} -gt 0 checks before expansion (mirrors PR #22043).
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_issue_labels.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:worker" \
+	gh_create_issue --repo o/r --title "some title" --body "body" \
+	--label "auto-dispatch" --label "tier:standard" --label "enhancement" \
+	>/dev/null 2>&1
+if grep -qx '<>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B'3: gh_create_issue no-TODO-labels passes no empty argv element" 1 \
+		"empty argv element reached gh: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B'3: gh_create_issue no-TODO-labels passes no empty argv element" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
+# B'4: caller passes origin label + no TODO task ID → no empty argv element
+# Second regression scenario from GH#22056: both _todo_label_args AND
+# _origin_label_args empty when caller provides origin label and no TODO ID.
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_issue_origin.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "some title" --body "body" \
+	--label "auto-dispatch" --label "tier:standard" --label "origin:worker" \
+	>/dev/null 2>&1
+if grep -qx '<>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B'4: gh_create_issue caller-origin+no-TODO passes no empty argv element" 1 \
+		"empty argv element reached gh: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B'4: gh_create_issue caller-origin+no-TODO passes no empty argv element" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh
 # ---------------------------------------------------------------------------

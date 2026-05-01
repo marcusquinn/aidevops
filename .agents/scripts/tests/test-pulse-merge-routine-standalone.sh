@@ -196,8 +196,10 @@ else
 	# pulse-merge-routine entry, not _should_setup_noninteractive_scheduler.
 	# Pattern: an `if _should_setup_noninteractive_pulse_merge_routine; then`
 	# line must be immediately followed (within 3 lines, allowing comments) by
-	# `setup_pulse_merge_routine` standalone. Use portable awk regex (no \b
-	# word boundary — BSD awk on macOS doesn't support it).
+	# either `setup_pulse_merge_routine` directly or the timed wrapper form
+	# `_time_step "setup_pulse_merge_routine" setup_pulse_merge_routine`.
+	# Use portable awk regex (no \b word boundary — BSD awk on macOS doesn't
+	# support it).
 	if awk '
 		BEGIN { in_block=0; lines_since_gate=0; found_call=0 }
 		/^[[:space:]]*if _should_setup_noninteractive_pulse_merge_routine[;[:space:]]/ {
@@ -207,7 +209,8 @@ else
 		}
 		in_block {
 			lines_since_gate++
-			if ($0 ~ /^[[:space:]]+setup_pulse_merge_routine([[:space:]]|$)/) {
+			if ($0 ~ /^[[:space:]]+setup_pulse_merge_routine([[:space:]]|$)/ ||
+				$0 ~ /_time_step[[:space:]]+"setup_pulse_merge_routine"[[:space:]]+setup_pulse_merge_routine([[:space:]]|$)/) {
 				found_call=1
 				exit
 			}
@@ -222,6 +225,20 @@ else
 		fail "8: setup.sh call site uses new helper" \
 			"'if _should_setup_noninteractive_pulse_merge_routine; then' not followed by 'setup_pulse_merge_routine' call"
 	fi
+fi
+
+SCHEDULERS_PLATFORM_FILE="${REPO_ROOT}/setup-modules/schedulers-platform.sh"
+if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
+	if grep -qF 'pulse-merge-routine.sh' "$SCHEDULERS_PLATFORM_FILE" \
+		&& ! grep -qF '<string>--merge-only</string>' "$SCHEDULERS_PLATFORM_FILE"; then
+		pass "9: scheduler uses timeout-protected pulse-merge-routine"
+	else
+		fail "9: scheduler uses timeout-protected pulse-merge-routine" \
+			"merge scheduler must not install unbounded pulse-wrapper.sh --merge-only"
+	fi
+else
+	skip "9: scheduler uses timeout-protected pulse-merge-routine" \
+		"setup-modules/schedulers-platform.sh not found"
 fi
 
 # =============================================================================

@@ -502,7 +502,11 @@ main() {
 			return 0
 		fi
 		AIDEVOPS_NON_INTERACTIVE=true bash "$REPO_DIR/setup.sh" --non-interactive
-		return $?
+		local _full_rc=$?
+		if [[ "$_full_rc" -eq 75 ]]; then
+			log_warn "setup.sh --non-interactive is locked by another process (exit 75). The lightweight deploy path (deploy-agents-on-merge.sh without --full) is unaffected — re-run without --full for an immediate agent sync while the full setup completes."
+		fi
+		return "$_full_rc"
 	fi
 
 	# Pull latest (only if on main)

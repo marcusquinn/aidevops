@@ -26,6 +26,16 @@
 
 set -euo pipefail
 
+# Include guard — prevent double-sourcing (GH#22091).
+# pulse-stats-helper.sh is sourced by pulse-merge-stuck.sh,
+# pulse-rate-limit-circuit-breaker.sh, pre-dispatch-eligibility-helper.sh,
+# and pulse-dispatch-engine.sh. Without this guard every bootstrap cycle
+# re-runs the SCRIPT_DIR subprocess and the shared-constants.sh source
+# for each caller, stacking enough subprocess overhead to cause --dry-run
+# timeouts on slow filesystems.
+[[ -n "${_PULSE_STATS_HELPER_LOADED:-}" ]] && return 0
+_PULSE_STATS_HELPER_LOADED=1
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 
 # Source shared constants if available (provides color helpers etc.).
