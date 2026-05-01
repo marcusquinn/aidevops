@@ -3870,3 +3870,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3414 Fix pulse dispatch success accounting and GraphQL budget drain #auto-dispatch #bug ref:GH#22243 pr:#22244 completed:2026-05-01
 
 - [x] t3415 tune OpenAI worker watchdog for long no-output reasoning stalls #auto-dispatch #bug #framework ref:GH#22248 pr:#22249 completed:2026-05-01
+
+- [ ] t3416 Fix headless canary default agent regression #auto-dispatch #bug #framework ref:GH#22250
