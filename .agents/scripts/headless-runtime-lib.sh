@@ -937,6 +937,38 @@ _validate_opencode_binary() {
 	return 0
 }
 
+_headless_runtime_is_linux() {
+	local platform="${AIDEVOPS_TEST_UNAME_S:-}"
+	if [[ -z "$platform" ]]; then
+		platform=$(uname -s 2>/dev/null || true)
+	fi
+	[[ "$platform" == "Linux" ]] && return 0
+	return 1
+}
+
+_opencode_fixed_candidate_paths() {
+	local fixed_candidates=(
+		"/opt/homebrew/bin/opencode"
+		"/usr/local/bin/opencode"
+		"${HOME}/.local/bin/opencode"
+		"${HOME}/.opencode/bin/opencode"
+	)
+	if _headless_runtime_is_linux; then
+		fixed_candidates+=("/snap/bin/opencode")
+	fi
+	printf '%s\n' "${fixed_candidates[@]}"
+	return 0
+}
+
+_opencode_fixed_candidate_dirs_for_warning() {
+	local fixed_candidate_dirs="/opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.opencode/bin"
+	if _headless_runtime_is_linux; then
+		fixed_candidate_dirs="${fixed_candidate_dirs}, /snap/bin"
+	fi
+	printf '%s' "$fixed_candidate_dirs"
+	return 0
+}
+
 #######################################
 # t2887/t2954: Search common installation paths for a real anomalyco/opencode
 # binary. Used as a self-heal when $OPENCODE_BIN_DEFAULT resolves to the
@@ -955,20 +987,13 @@ _validate_opencode_binary() {
 #######################################
 _find_alternative_opencode_binary() {
 	# Fixed install paths (Homebrew, npm-global, Snap, etc.).
-	local fixed_candidates=(
-		"/opt/homebrew/bin/opencode"
-		"/usr/local/bin/opencode"
-		"${HOME}/.local/bin/opencode"
-		"${HOME}/.opencode/bin/opencode"
-		"/snap/bin/opencode"
-	)
 	local candidate
-	for candidate in "${fixed_candidates[@]}"; do
+	while IFS= read -r candidate; do
 		if [[ -x "$candidate" ]] && _validate_opencode_binary "$candidate"; then
 			printf '%s\n' "$candidate"
 			return 0
 		fi
-	done
+	done < <(_opencode_fixed_candidate_paths)
 
 	# t2954: Node version manager sweep (nvm, volta, fnm). Newest version
 	# wins (sort -rV) so users on multiple Node versions get the most-
@@ -1183,7 +1208,7 @@ _run_canary_test() {
 			# fail-fast on the cache hit instead of re-discovering this
 			# state every 90s.
 			print_warning "Canary: OPENCODE_BIN_DEFAULT='${OPENCODE_BIN_DEFAULT}' returns '${wrong_version}' (rc=${_validate_rc}) — not anomalyco/opencode."
-			print_warning "Canary: searched /opt/homebrew/bin, /usr/local/bin, ~/.local/bin, ~/.opencode/bin, /snap/bin — no valid binary found."
+			print_warning "Canary: searched $(_opencode_fixed_candidate_dirs_for_warning) — no valid binary found."
 			print_warning "Canary: install with 'npm install -g opencode-ai' or set OPENCODE_BIN to a valid binary (t2887)."
 			mkdir -p "${STATE_DIR}" 2>/dev/null || true
 			date +%s >"$fail_cache_file" 2>/dev/null || true
