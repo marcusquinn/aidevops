@@ -93,10 +93,24 @@ SQL
 # -----------------------------------------------------------------------------
 
 out=$(_run_helper help 2>&1)
-if grep -q "check" <<<"$out" && grep -q "maintain" <<<"$out" && grep -q "auto" <<<"$out"; then
+if grep -q "check" <<<"$out" && grep -q "maintain" <<<"$out" && grep -q "auto" <<<"$out" && grep -q "notice" <<<"$out"; then
 	_pass "help lists all subcommands"
 else
 	_fail "help output missing subcommands"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 1b: notice is quiet when opencode not installed
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(_run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && [[ -z "$out" ]]; then
+	_pass "notice is quiet when opencode is not installed"
+else
+	_fail "notice should be quiet with no DB (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------
@@ -229,6 +243,119 @@ if [[ -f "$CORE_ROUTINES" ]]; then
 	fi
 else
 	_fail "core-routines.sh not found at $CORE_ROUTINES"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 10: report shows WAL status section when WAL_LARGE_THRESHOLD_MB=0
+# -----------------------------------------------------------------------------
+# Setting the threshold to 0 forces the WAL status code path regardless of
+# actual WAL file size, without touching the real opencode.db.
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper report 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -qiE "WAL status:|WAL size:" <<<"$out"; then
+	_pass "report shows WAL status section when WAL_LARGE_THRESHOLD_MB=0"
+else
+	_fail "report missing WAL status section (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11: check shows WAL info when WAL_LARGE_THRESHOLD_MB=0
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper check 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -qiE "WAL:" <<<"$out"; then
+	_pass "check shows WAL info when WAL_LARGE_THRESHOLD_MB=0"
+else
+	_fail "check missing WAL info (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11b: notice warns when WAL threshold says maintenance is due
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "\[OPENCODE MAINTENANCE\]" <<<"$out" && grep -q "aidevops opencode-db maintenance-window" <<<"$out"; then
+	_pass "notice warns when maintenance is due"
+else
+	_fail "notice missing due warning (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11c: notice warns about scheduled disruptive maintenance-window mode
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(OPENCODE_DB_MAINTENANCE_MODE=maintenance-window OPENCODE_DB_MAINTENANCE_HOUR=3 OPENCODE_DB_MAINTENANCE_MINUTE=30 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "Sun 03:30" <<<"$out" && grep -q "pauses pulse/headless workers" <<<"$out"; then
+	_pass "notice warns about scheduled maintenance-window pause"
+else
+	_fail "notice missing scheduled maintenance-window warning (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 12: WAL report does not error when WAL file absent (no-op path)
+# -----------------------------------------------------------------------------
+
+# Remove the WAL to test the absent-WAL path
+rm -f "$OPENCODE_DIR/opencode.db-wal" "$OPENCODE_DIR/opencode.db-shm"
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper report 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]]; then
+	_pass "report exits 0 cleanly when WAL file is absent"
+else
+	_fail "report failed (rc=$rc) when WAL absent — output: $out"
+fi
+
+# Recreate the WAL-capable DB after the absent-WAL test for maintenance-window.
+rm -f "$OPENCODE_DIR/opencode.db"
+_make_opencode_db
+
+# -----------------------------------------------------------------------------
+# Test 13: maintenance-window restores pulse through mocked lifecycle helper
+# -----------------------------------------------------------------------------
+
+mock_bin="$SANDBOX/mock-bin"
+mkdir -p "$mock_bin"
+mock_pulse_log="$SANDBOX/pulse-lifecycle.log"
+mock_archive_log="$SANDBOX/archive.log"
+cat >"$mock_bin/pulse-lifecycle-helper.sh" <<'MOCK_PULSE'
+#!/usr/bin/env bash
+printf '%s\n' "$1" >>"$MOCK_PULSE_LOG"
+exit 0
+MOCK_PULSE
+chmod +x "$mock_bin/pulse-lifecycle-helper.sh"
+cat >"$mock_bin/opencode-db-archive.sh" <<'MOCK_ARCHIVE'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$MOCK_ARCHIVE_LOG"
+exit 0
+MOCK_ARCHIVE
+chmod +x "$mock_bin/opencode-db-archive.sh"
+
+set +e
+out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="$mock_archive_log" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	VACUUM_FREELIST_THRESHOLD=0.01 FORCE_VACUUM_SIZE_MB=0 \
+	_run_helper maintenance-window --force-opencode --keep-sessions 123 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && grep -q -- '--keep-sessions 123' "$mock_archive_log"; then
+	_pass "maintenance-window stops pulse, archives, maintains, and restarts pulse"
+else
+	_fail "maintenance-window mocked lifecycle failed (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------

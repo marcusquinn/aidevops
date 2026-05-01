@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.54] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3375 complete (pr:#22116 completed:2026-05-01) [skip ci]
+- Maintenance: sync ref:GH#22117 to TODO.md [skip ci]
+
+### Fixed
+
+- raise token advisory threshold (#22116)
+
+## [3.13.53] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3239 complete (pr:#22114 completed:2026-05-01) [skip ci]
+- finish OpenCode DB WAL and maintenance-window handling (#22114)
+- Maintenance: sync ref:GH#22115 to TODO.md [skip ci]
+- Maintenance: mark t3259 complete (pr:#22113 completed:2026-05-01) [skip ci]
+- add branch-orphan loop hold (#22113)
+- Maintenance: sync ref:GH#22093 to TODO.md [skip ci]
+- remove Augment and Auggie MCP (#22089)
+- Maintenance: mark t3361 complete (pr:#22080 completed:2026-05-01) [skip ci]
+
 ## [3.13.52] - 2026-05-01
 
 ### Changed

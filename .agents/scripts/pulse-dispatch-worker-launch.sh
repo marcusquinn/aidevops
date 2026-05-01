@@ -20,6 +20,7 @@
 #   - _dlw_spawn_lifecycle_observer (t3055/GH#21870)
 #   - _dlw_nohup_launch
 #   - _dlw_post_launch_hooks
+#   - _dlw_check_worker_branch_orphan_loop
 #   - _dispatch_launch_worker
 
 [[ -n "${_PULSE_DISPATCH_WORKER_LAUNCH_LOADED:-}" ]] && return 0
@@ -843,6 +844,37 @@ Dispatching worker (deterministic).
 	return 0
 }
 
+#######################################
+# Hold dispatch when a reused worker branch repeatedly orphaned.
+#
+# The branch-specific check lives in dispatch-dedup-helper.sh so tests and
+# ad-hoc diagnosis can exercise it directly. It runs after worktree
+# pre-creation because only then do we know whether dispatch is reusing the same
+# issue-linked branch or creating a fresh branch. A new branch therefore does
+# not inherit an old branch's orphan count.
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = worker worktree branch
+# Returns: exit 0 if dispatch should be held, exit 1 if safe to continue
+#######################################
+_dlw_check_worker_branch_orphan_loop() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worker_worktree_branch="$3"
+
+	[[ -n "$worker_worktree_branch" ]] || return 1
+
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	[[ -x "$dedup_helper" ]] || return 1
+
+	local orphan_loop_out=""
+	if orphan_loop_out=$("$dedup_helper" check-orphan-loop "$issue_number" "$repo_slug" "$worker_worktree_branch" 2>/dev/null); then
+		echo "[dispatch_with_dedup] Dispatch held for #${issue_number} in ${repo_slug}: ${orphan_loop_out}" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -946,6 +978,9 @@ _dispatch_launch_worker() {
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
+	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch"; then
+		return 0
+	fi
 
 	_ds_t0=$(_ds_now_ns)
 	local worker_pid

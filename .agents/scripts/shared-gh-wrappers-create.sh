@@ -201,7 +201,25 @@ gh_create_issue() {
 	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
 	_gh_ci_prepare_todo_labels "$@"
 	set -- "${_GH_CI_FILTERED_ARGS[@]+"${_GH_CI_FILTERED_ARGS[@]}"}"
-	local -a _todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]+"${_GH_CI_TODO_LABEL_ARGS[@]}"}")
+	local -a _todo_label_args=()
+	if [[ ${#_GH_CI_TODO_LABEL_ARGS[@]} -gt 0 ]]; then
+		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
+	fi
+
+	# Build command arrays safely — avoids empty-arg injection from
+	# "${arr[@]+...}" on empty arrays when no TODO task ID is present and/or
+	# the caller already provided an origin label (GH#22056, mirrors PR #22043).
+	# _issue_cmd: full gh invocation; _rest_args: same flags for REST fallback.
+	local -a _issue_cmd=(gh issue create "$@")
+	local -a _rest_args=("$@")
+	if [[ ${#_todo_label_args[@]} -gt 0 ]]; then
+		_issue_cmd+=("${_todo_label_args[@]}")
+		_rest_args+=("${_todo_label_args[@]}")
+	fi
+	if [[ ${#_origin_label_args[@]} -gt 0 ]]; then
+		_issue_cmd+=("${_origin_label_args[@]}")
+		_rest_args+=("${_origin_label_args[@]}")
+	fi
 
 	# t2028: auto-assign to the current user when the session is interactive
 	# and the caller did not pass an explicit --assignee. Reaches parity with
@@ -222,11 +240,11 @@ gh_create_issue() {
 			local auto_assignee
 			auto_assignee=$(_gh_wrapper_auto_assignee)
 			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
+				issue_output=$("${_issue_cmd[@]}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
 				rc=$?
 				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee")
+					issue_output=$(_rest_issue_create "${_rest_args[@]}" --assignee "$auto_assignee")
 					rc=$?
 				fi
 				echo "$issue_output"
@@ -236,11 +254,11 @@ gh_create_issue() {
 		fi
 	fi
 
-	issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
+	issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
 	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
+		issue_output=$(_rest_issue_create "${_rest_args[@]}")
 		rc=$?
 	fi
 	echo "$issue_output"

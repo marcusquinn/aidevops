@@ -872,7 +872,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t3258 add pulse-diagnose issue subcommand for issue-level worker/PR timelines #auto-dispatch #feat #framework ref:GH#22045
 
-- [ ] t3259 add dispatch-loop counter for repeated worker_branch_orphan on same issue branch #auto-dispatch #bug #framework ref:GH#22049
+- [x] t3259 add dispatch-loop counter for repeated worker_branch_orphan on same issue branch #auto-dispatch #bug #framework ref:GH#22049 pr:#22113 completed:2026-05-01
 
 - [ ] t3257 Reconstruct PR 21876 worker-loop timeline #auto-dispatch #framework #investigation ref:GH#22041
 
@@ -3733,7 +3733,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3238 Add memory truth-maintenance and debunk workflow #auto-dispatch #enhancement ref:GH#21995 pr:#22051 completed:2026-05-01
 
-- [ ] t3239 Make OpenCode DB maintenance WAL-aware under active sessions #auto-dispatch #bug ref:GH#21996
+- [x] t3239 Make OpenCode DB maintenance WAL-aware under active sessions #auto-dispatch #bug ref:GH#21996 pr:#22114 completed:2026-05-01
 
 - [x] t3241 Fix memory dedup dry-run count channel #auto-dispatch #bug #self-improvement ref:GH#21998 pr:#22040 completed:2026-05-01
 
@@ -3765,7 +3765,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3256 Make linters-local string literal gate ratchet-based #auto-dispatch #bug ref:GH#22039 pr:#22082 completed:2026-05-01
 
-- [ ] t3259 add dispatch-loop counter for repeated worker_branch_orphan on same issue branch #auto-dispatch #bug #framework ref:GH#22049
+- [x] t3259 add dispatch-loop counter for repeated worker_branch_orphan on same issue branch #auto-dispatch #bug #framework ref:GH#22049 pr:#22113 completed:2026-05-01
 
 - [ ] t3258 add pulse-diagnose issue subcommand for issue-level worker/PR timelines #auto-dispatch #enhancement #framework ref:GH#22045
 
@@ -3784,3 +3784,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3366 Fix REST fallback wrapper test hang after PR fallback cases #auto-dispatch #bug ref:GH#22076
 
 - [ ] t3371 Bound setup deploy_agents_to_runtimes stage #auto-dispatch #bug #framework ref:GH#22087
+
+- [x] t3375 Raise token advisory first threshold to 250k #bug ref:GH#22115 pr:#22116 completed:2026-05-01
+
+- [ ] t3376 Track solved-by actor separately from origin labels #auto-dispatch #bug #diagnostics #framework ref:GH#22117
+
+- [ ] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119
+
+- [ ] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121
+
+- [ ] t3379 Investigate setup noninteractive lock hanging across deploy #auto-dispatch #bug ref:GH#22123
