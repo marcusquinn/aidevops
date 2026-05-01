@@ -171,23 +171,24 @@ get_tier_models() {
 
 	# Hardcoded fallback — kept in sync with model-routing-table.json.
 	# If you're editing these, update the JSON file instead.
-	# Claude remains primary. OpenAI is the direct-provider fallback for
-	# headless continuity when Anthropic is unavailable.
+	# Current smoke-tested OpenAI models are listed first for headless
+	# continuity during Anthropic cooldown windows. Anthropic remains the
+	# fallback; exclude Codex and unsupported *-pro IDs from dispatch.
 	case "$tier" in
-	local) current_model="anthropic/claude-haiku-4-5" ;;
-	haiku) current_model=$'anthropic/claude-haiku-4-5\nopenai/gpt-5.4' ;;
-	flash) current_model=$'anthropic/claude-haiku-4-5\nopenai/gpt-5.4' ;;
-	sonnet) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
-	pro) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
-	opus) current_model=$'anthropic/claude-opus-4-6\nopenai/gpt-5.4' ;;
-	health) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
-	eval) current_model=$'anthropic/claude-sonnet-4-6\nopenai/gpt-5.4' ;;
-	coding) current_model=$'anthropic/claude-opus-4-6\nopenai/gpt-5.4' ;;
+	local) current_model=$'openai/gpt-5.4-mini\nanthropic/claude-haiku-4-5' ;;
+	haiku) current_model=$'openai/gpt-5.4-mini\nanthropic/claude-haiku-4-5' ;;
+	flash) current_model=$'openai/gpt-5.4-mini\nanthropic/claude-haiku-4-5' ;;
+	sonnet) current_model=$'openai/gpt-5.5\nanthropic/claude-sonnet-4-6' ;;
+	pro) current_model=$'openai/gpt-5.5\nanthropic/claude-sonnet-4-6' ;;
+	opus) current_model=$'openai/gpt-5.5\nanthropic/claude-opus-4-6' ;;
+	health) current_model=$'openai/gpt-5.4-mini\nanthropic/claude-sonnet-4-6' ;;
+	eval) current_model=$'openai/gpt-5.5\nanthropic/claude-sonnet-4-6' ;;
+	coding) current_model=$'openai/gpt-5.5\nanthropic/claude-opus-4-6' ;;
 	*) return 1 ;;
 	esac
 
 	if [[ ${#allowlist[@]} -eq 0 ]]; then
-		echo "$(printf '%s\n' "$current_model" | paste -sd'|' -)"
+		printf '%s\n' "$current_model" | paste -sd'|' -
 		return 0
 	fi
 
