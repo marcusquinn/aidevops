@@ -202,6 +202,20 @@ else
 		"first:\n$winners\nsecond:\n$second_run"
 fi
 
+# 8. Missing/stale optional AGENTS_DIR paths are skipped without raw find stderr.
+missing_stderr=$(mktemp)
+missing_winners=$(AGENTS_DIR="$FIXTURE_DIR/missing-agent-source" \
+	_resolve_basename_collisions_for_generate 2>"$missing_stderr" |
+	tr '\0' '\n' | grep -v '^$' | sort || true)
+missing_rc=$?
+if [[ "$missing_rc" -eq 0 && -z "$missing_winners" && ! -s "$missing_stderr" ]]; then
+	print_result "missing optional agent source emits no raw find errors" 0
+else
+	print_result "missing optional agent source emits no raw find errors" 1 \
+		"rc=$missing_rc winners=$missing_winners stderr:\n$(cat "$missing_stderr")"
+fi
+rm -f "$missing_stderr"
+
 rm -f "$stderr_log" "$winners_raw"
 
 # --- Summary ---

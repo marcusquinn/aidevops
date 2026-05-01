@@ -351,10 +351,15 @@ _resolve_basename_collisions_for_generate() {
 	local tmpfile
 	tmpfile=$(mktemp 2>/dev/null || mktemp -t generate-runtime-config.XXXXXX)
 
+	if [[ ! -d "${AGENTS_DIR:-}" ]]; then
+		rm -f "$tmpfile"
+		return 0
+	fi
+
 	# For each candidate source: record name, priority (0=restrictive, 1=permissive), path.
 	# Priority 0 wins via ascending sort.
 	find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f \
-		-not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
+		-not -path "*/loop-state/*" -not -name "*-skill.md" -print0 2>/dev/null |
 		while IFS= read -r -d '' f; do
 			local name priority
 			name=$(basename "$f" .md)
