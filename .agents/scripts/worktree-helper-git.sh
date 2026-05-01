@@ -50,12 +50,93 @@ get_current_branch() {
 	git branch --show-current 2>/dev/null || echo ""
 }
 
-# Get the default branch (main or master) (GH#3797)
-# Checks all remotes for HEAD, preferring origin first.
+# Resolve owner/repo from the origin remote when it is hosted on GitHub.
+_origin_github_slug() {
+	local origin_url=""
+	local slug=""
+	origin_url=$(git remote get-url origin 2>/dev/null || true)
+	[[ -z "$origin_url" ]] && return 1
+
+	case "$origin_url" in
+	git@github.com:*)
+		slug="${origin_url#git@github.com:}"
+		;;
+	ssh://git@github.com/*)
+		slug="${origin_url#ssh://git@github.com/}"
+		;;
+	https://github.com/*)
+		slug="${origin_url#https://github.com/}"
+		;;
+	http://github.com/*)
+		slug="${origin_url#http://github.com/}"
+		;;
+	*)
+		return 1
+		;;
+	esac
+	slug="${slug%%\?*}"
+	slug="${slug%%#*}"
+	slug="${slug%/}"
+	slug="${slug%.git}"
+	if [[ -n "$slug" && "$slug" == */* ]]; then
+		printf '%s\n' "$slug"
+		return 0
+	fi
+	return 1
+}
+
+# Resolve a cached default branch from repos.json for the current origin slug.
+_repos_json_default_branch() {
+	local repo_slug="$1"
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local default_branch=""
+	[[ -n "$repo_slug" ]] || return 1
+	[[ -f "$repos_json" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	default_branch=$(jq -r --arg slug "$repo_slug" '
+		first(.initialized_repos[]? | select(.slug == $slug) | .default_branch // empty) // empty
+	' "$repos_json" 2>/dev/null || true)
+	if [[ -n "$default_branch" && "$default_branch" != "null" ]]; then
+		printf '%s\n' "$default_branch"
+		return 0
+	fi
+	return 1
+}
+
+# Resolve the GitHub default branch via REST without GraphQL cost.
+_github_default_branch() {
+	local repo_slug="$1"
+	local default_branch=""
+	[[ -n "$repo_slug" ]] || return 1
+	command -v gh >/dev/null 2>&1 || return 1
+
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch // empty' 2>/dev/null || true)
+	if [[ -n "$default_branch" && "$default_branch" != "null" ]]; then
+		printf '%s\n' "$default_branch"
+		return 0
+	fi
+	return 1
+}
+
+# Resolve the default branch from `git remote show origin` when origin/HEAD is unset.
+_remote_show_default_branch() {
+	local default_branch=""
+	default_branch=$(git remote show origin 2>/dev/null | sed -n 's/^[[:space:]]*HEAD branch: //p' | head -1 || true)
+	if [[ -n "$default_branch" && "$default_branch" != "(unknown)" ]]; then
+		printf '%s\n' "$default_branch"
+		return 0
+	fi
+	return 1
+}
+
+# Get the default branch (GH#3797, GH#22037).
+# Checks remote HEAD first, then configured/API metadata before local name fallbacks.
 get_default_branch() {
 	# Try origin first, then any other remote HEAD
 	local default_branch=""
 	local remote
+	local repo_slug=""
 	default_branch=$(git symbolic-ref "refs/remotes/origin/HEAD" 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 	if [[ -n "$default_branch" ]]; then
 		echo "$default_branch"
@@ -69,6 +150,25 @@ get_default_branch() {
 			return 0
 		fi
 	done
+	repo_slug=$(_origin_github_slug || true)
+	if [[ -n "$repo_slug" ]]; then
+		default_branch=$(_repos_json_default_branch "$repo_slug" || true)
+		if [[ -n "$default_branch" ]]; then
+			echo "$default_branch"
+			return 0
+		fi
+
+		default_branch=$(_github_default_branch "$repo_slug" || true)
+		if [[ -n "$default_branch" ]]; then
+			echo "$default_branch"
+			return 0
+		fi
+	fi
+	default_branch=$(_remote_show_default_branch || true)
+	if [[ -n "$default_branch" ]]; then
+		echo "$default_branch"
+		return 0
+	fi
 
 	# Fallback: check if main or master exists
 	if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
@@ -79,6 +179,7 @@ get_default_branch() {
 		# Last resort default
 		echo "main"
 	fi
+	return 0
 }
 
 # Check if the current directory is the main (non-linked) worktree.
