@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.66] - 2026-05-01
+
+### Changed
+
+- optimize pulse auto-merge state parsing
+- Maintenance: remove duplicate t3385 TODO entry (#22156)
+- Maintenance: record t3388 follow-up
+
 ## [3.13.65] - 2026-05-01
 
 ### Changed
