@@ -391,11 +391,34 @@ _atomic_stage_and_deploy_agents() {
 		fi
 	done
 
-	# Atomic swap: mv is atomic on the same filesystem (POSIX rename())
+	# Atomic swap: mv is atomic on the same filesystem (POSIX rename()).
+	# IMPORTANT: explicit error checks are REQUIRED here because this function
+	# is called via `|| return 1` which disables set -e inside the function
+	# body (bash set -e semantics: disabled in any function called as part of
+	# a compound list such as `fn || ...`). Without these checks, a failed mv
+	# falls through silently, the backup is deleted, and the function returns
+	# 0 with $target_dir absent — the root cause of GH#22014 where worktree
+	# setup left ~/.aidevops/agents missing while reporting [SETUP_COMPLETE].
 	if [[ -d "$target_dir" ]]; then
-		mv "$target_dir" "$old_dir"
+		if ! mv "$target_dir" "$old_dir"; then
+			print_error "Failed to move live agents to backup ($old_dir) — agents directory preserved"
+			rm -rf "$staging_dir"
+			return 1
+		fi
 	fi
-	mv "$staging_dir" "$target_dir"
+	if ! mv "$staging_dir" "$target_dir"; then
+		print_error "Failed to move staging to live agents directory — attempting rollback"
+		# Restore the previous agents dir from backup so the system stays functional.
+		if [[ -d "$old_dir" ]]; then
+			if mv "$old_dir" "$target_dir"; then
+				print_info "Rollback successful — previous agents directory restored"
+			else
+				print_error "Rollback failed — agents directory is missing! Previous state preserved in $old_dir"
+			fi
+		fi
+		rm -rf "$staging_dir"
+		return 1
+	fi
 	rm -rf "$old_dir"
 	return 0
 }
@@ -589,6 +612,16 @@ deploy_aidevops_agents() {
 		_atomic_stage_and_deploy_agents "$source_dir" "$target_dir" "${plugin_namespaces[@]}" || return 1
 	else
 		_atomic_stage_and_deploy_agents "$source_dir" "$target_dir" || return 1
+	fi
+
+	# Postcondition: verify the swap actually produced a functional agents dir.
+	# _atomic_stage_and_deploy_agents returns 0 on success, but a belt-and-
+	# suspenders check here catches any future regression where the function
+	# might return early without correctly populating $target_dir (GH#22014).
+	if [[ ! -d "$target_dir/scripts" ]]; then
+		print_error "Deploy verification failed: $target_dir/scripts missing after swap"
+		print_error "The agents directory was not correctly deployed — setup cannot continue"
+		return 1
 	fi
 
 	print_success "Deployed agents to $target_dir"
