@@ -3876,3 +3876,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3416 Fix headless canary default agent regression #auto-dispatch #bug #framework ref:GH#22250 pr:#22258 completed:2026-05-01
 
 - [x] t3417 support glob-compressed subagent allowlists and document permission.task pattern #auto-dispatch ref:GH#22251 pr:#22252 completed:2026-05-01
+
+- [ ] t3428 fix campaign status router mismatch #auto-dispatch #bug ref:GH#22271
+
+- [ ] t3427 Integrate plugin namespaces into subagent discovery #auto-dispatch #bug ref:GH#22270
+
+- [ ] t3426 Fix attribution-check-helper printf option crash #auto-dispatch #bug #framework ref:GH#22268
+
+- [ ] t3425 Fix feedback redispatch preserving interactive claim blockers #auto-dispatch #bug #framework ref:GH#22267
+
+- [ ] t3421 Improve worker resource and failure telemetry for throughput tuning #auto-dispatch #enhancement #framework #observability ref:GH#22256
+
+- [ ] t3419 Relax worker timing gates now that OpenAI workers complete work #auto-dispatch #enhancement #framework ref:GH#22254
