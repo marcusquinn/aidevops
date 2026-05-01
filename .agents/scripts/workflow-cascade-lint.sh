@@ -87,7 +87,7 @@ has_cascade_triggers() {
 # Returns 0 if cancel-in-progress: true is set anywhere (top-level or job-level).
 has_cancel_in_progress() {
 	local _file="$1"
-	grep -qE 'cancel-in-progress:\s*true' "$_file"
+	grep -Ev '^\s*#' "$_file" | grep -qE 'cancel-in-progress:\s*true'
 	return $?
 }
 
