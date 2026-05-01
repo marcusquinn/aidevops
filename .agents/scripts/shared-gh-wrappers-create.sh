@@ -413,10 +413,12 @@ _gh_auto_link_sub_issue() {
 
 	# Resolve both to node IDs and link
 	local parent_node child_node
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by gh, not Bash.
 	parent_node=$(gh api graphql \
 		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
 		-f o="$owner" -f n="$name" -F num="$parent_num" \
 		--jq '.data.repository.issue.id' 2>/dev/null || echo "")
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by gh, not Bash.
 	child_node=$(gh api graphql \
 		-f query='query($o:String!,$n:String!,$num:Int!){repository(owner:$o,name:$n){issue(number:$num){id}}}' \
 		-f o="$owner" -f n="$name" -F num="$child_num" \
@@ -424,6 +426,7 @@ _gh_auto_link_sub_issue() {
 	[[ -z "$parent_node" || -z "$child_node" ]] && return 0
 
 	# Fire and forget — suppress all errors
+	# shellcheck disable=SC2016 # GraphQL variables are expanded by gh, not Bash.
 	gh api graphql -f query='mutation($p:ID!,$c:ID!){addSubIssue(input:{issueId:$p,subIssueId:$c}){issue{number}}}' \
 		-f p="$parent_node" -f c="$child_node" >/dev/null 2>&1 || true
 	return 0
@@ -453,12 +456,21 @@ gh_create_pr() {
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
+	local -a pr_cmd=(gh pr create "$@")
+	if [[ ${#_origin_label_args[@]} -gt 0 ]]; then
+		pr_cmd+=("${_origin_label_args[@]}")
+	fi
+
 	local pr_output rc
-	pr_output=$(gh pr create "$@" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
+	pr_output=$("${pr_cmd[@]}") # aidevops-allow: raw-gh-wrapper
 	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
-		pr_output=$(_rest_pr_create "$@" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
+		if [[ ${#_origin_label_args[@]} -gt 0 ]]; then
+			pr_output=$(_rest_pr_create "$@" "${_origin_label_args[@]}")
+		else
+			pr_output=$(_rest_pr_create "$@")
+		fi
 		rc=$?
 	fi
 	printf '%s\n' "$pr_output"
