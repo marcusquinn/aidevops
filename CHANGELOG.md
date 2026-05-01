@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.25] - 2026-05-01
+
+### Fixed
+
+- harden JSON version updates (#22002)
+
 ## [3.13.24] - 2026-05-01
 
 ### Changed
