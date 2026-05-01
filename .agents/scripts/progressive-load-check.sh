@@ -108,7 +108,7 @@ check_inline_only() {
 check_framework_rules_extractions() {
 	# Post-t2878: build.txt was consolidated into AGENTS.md "Framework Rules".
 	# All checks below now run against AGENTS.md instead of build.txt.
-	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md Framework Rules extractions ---"
+	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md Framework Rules extractions ---\n"
 
 	check_extraction \
 		"Screenshot Size Limits" \
@@ -162,7 +162,7 @@ check_framework_rules_extractions() {
 }
 
 check_agents_md_extractions() {
-	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md extractions ---"
+	[[ "$QUIET" != "--quiet" ]] && printf "\n--- AGENTS.md extractions ---\n"
 
 	check_extraction \
 		"Domain Index" \
@@ -186,7 +186,7 @@ check_agents_md_extractions() {
 }
 
 check_prompt_hook_registry() {
-	[[ "$QUIET" != "--quiet" ]] && printf "\n--- Prompt-to-hook migration registry ---"
+	[[ "$QUIET" != "--quiet" ]] && printf "\n--- Prompt-to-hook migration registry ---\n"
 
 	if [[ ! -f "$PROMPT_HOOK_REGISTRY" ]]; then
 		log_fail "prompt-hook registry MISSING: configs/prompt-hook-candidates.conf"
@@ -313,7 +313,10 @@ main() {
 	check_framework_rules_extractions
 	check_agents_md_extractions
 	check_prompt_hook_registry
-	print_summary
+	if print_summary; then
+		return 0
+	fi
+	return 1
 }
 
 main "$@"
