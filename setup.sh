@@ -1810,6 +1810,15 @@ _setup_noninteractive_schedulers() {
 _setup_post_setup_steps() {
 	local os="$1"
 
+	# Non-interactive mode still has post-deploy scheduler and pulse-restart
+	# work to do. Do not print the human "Setup complete!" marker until those
+	# bounded postflight steps and the final child-process drain have finished;
+	# callers treat that line as a completion signal.
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		_setup_noninteractive_schedulers "$os"
+		return 0
+	fi
+
 	# Print setup summary before final success message (GH#5240)
 	print_setup_summary
 
@@ -1823,17 +1832,6 @@ _setup_post_setup_steps() {
 		echo ""
 		echo -e "${YELLOW}[TIP]${NC} Install Claude CLI for automatic request format alignment:"
 		echo "      npm install -g @anthropic-ai/claude-code"
-	fi
-
-	# Non-interactive mode: deploy + migrations only — skip schedulers,
-	# services, and optional post-setup work (CI/agent shells don't need them).
-	# Tabby profile sync runs in both modes (has its own non-interactive path).
-	#
-	# Exceptions: regenerate existing schedulers (GH#17381, GH#17695 Finding B)
-	# and allow first-time install when config consent is explicitly true (GH#17403).
-	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		_setup_noninteractive_schedulers "$os"
-		return 0
 	fi
 
 	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
@@ -1869,6 +1867,36 @@ _setup_post_setup_steps() {
 	fi
 
 	setup_onboarding_prompt
+	return 0
+}
+
+_setup_restart_pulse_if_running() {
+	# t2579: restart pulse if running, so newly-deployed scripts take effect.
+	# No-op if pulse is not running, or if AIDEVOPS_SKIP_PULSE_RESTART=1.
+	# Uses the deployed helper (not the repo-local one) so the restart runs
+	# against the agents directory setup.sh just populated.
+	# GH#22012: bounded 120 s timeout prevents setup.sh hanging here when the
+	# pulse helper takes unusually long to stop a stalled instance. Falls back
+	# to an unbounded call on platforms without timeout(1) (old macOS w/o
+	# coreutils, embedded shells).
+	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
+	if [[ -x "$_pulse_helper" ]]; then
+		if command -v timeout >/dev/null 2>&1; then
+			timeout 120 "$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+		else
+			"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+		fi
+	fi
+	return 0
+}
+
+_setup_print_noninteractive_success() {
+	# Ensure every tracked or discovered child has either exited or been
+	# intentionally terminated before emitting the caller-visible success line.
+	_setup_cleanup_noninteractive_children
+	print_setup_summary
+	echo ""
+	print_success "Setup complete!"
 	return 0
 }
 
@@ -1936,21 +1964,10 @@ main() {
 
 	_setup_post_setup_steps "$_os"
 
-	# t2579: restart pulse if running, so newly-deployed scripts take effect.
-	# No-op if pulse is not running, or if AIDEVOPS_SKIP_PULSE_RESTART=1.
-	# Uses the deployed helper (not the repo-local one) so the restart runs
-	# against the agents directory setup.sh just populated.
-	# GH#22012: bounded 120 s timeout prevents setup.sh hanging here when the
-	# pulse helper takes unusually long to stop a stalled instance. Falls back
-	# to an unbounded call on platforms without timeout(1) (old macOS w/o
-	# coreutils, embedded shells).
-	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
-	if [[ -x "$_pulse_helper" ]]; then
-		if command -v timeout >/dev/null 2>&1; then
-			timeout 120 "$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
-		else
-			"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
-		fi
+	_setup_restart_pulse_if_running
+
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		_setup_print_noninteractive_success
 	fi
 
 	# GH#18492 / t2026: completion sentinel. Must be the last output of a

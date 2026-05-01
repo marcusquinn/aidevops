@@ -126,6 +126,30 @@ test_setup_uses_bounded_wrapper() {
 	return 0
 }
 
+test_noninteractive_success_printed_after_postflight() {
+	local setup_sh="${REPO_ROOT}/setup.sh"
+	local order=""
+
+	order=$(awk '
+		/_setup_restart_pulse_if_running$/ { restart=NR }
+		/_setup_print_noninteractive_success$/ { success=NR }
+		/print_setup_complete_sentinel$/ { sentinel=NR }
+		END {
+			if (restart && success && sentinel && restart < success && success < sentinel) {
+				print "ok"
+			}
+		}
+	' "$setup_sh")
+
+	if [[ "$order" == "ok" ]]; then
+		print_result "non-interactive success prints after postflight and before sentinel" 0
+	else
+		print_result "non-interactive success prints after postflight and before sentinel" 1 \
+			"main must restart pulse, drain children, then print Setup complete before [SETUP_COMPLETE]"
+	fi
+	return 0
+}
+
 test_deploy_function_has_no_background_jobs() {
 	# deploy_agents_to_runtimes must not start background processes of its own;
 	# the bounded wrapper only kills the direct subshell PID, so background jobs
@@ -268,6 +292,7 @@ main() {
 
 	test_bounded_wrapper_present
 	test_setup_uses_bounded_wrapper
+	test_noninteractive_success_printed_after_postflight
 	test_deploy_function_has_no_background_jobs
 	test_bounded_wrapper_fast_path
 	test_bounded_wrapper_kills_slow_deployment_without_failing_setup
