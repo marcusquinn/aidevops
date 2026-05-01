@@ -3795,7 +3795,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121 pr:#22122 completed:2026-05-01
 
-- [ ] t3379 Investigate setup noninteractive lock hanging across deploy #auto-dispatch #bug ref:GH#22123
+- [x] t3379 Investigate setup noninteractive lock hanging across deploy #auto-dispatch #bug ref:GH#22123 pr:#22124 completed:2026-05-01
 
 - [ ] t3381 Fix merge LaunchAgent stuck in xpcproxy before exec #auto-dispatch #bug ref:GH#22133
 
