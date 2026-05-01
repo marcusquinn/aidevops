@@ -143,34 +143,40 @@ _cron_escape() {
 }
 
 # GH#21060 / t2911: Per-stage timing helper for non-interactive setup runs.
-# Wraps a function call, records start/end time, and appends one TSV line to
+# Wraps a function call, records start/end time, and appends TSV lines to
 # $HOME/.aidevops/logs/setup-stage-timings.log:
 #   iso8601_utc <TAB> stage_name <TAB> duration_seconds <TAB> exit_code
+# A RUNNING row is written before each stage starts so a tool/worker timeout
+# still leaves the currently executing phase in the timing log.
 # Usage: _time_step "stage_name" function_name [args...]
 # ShellCheck: $@ is used deliberately (SC2068 not applicable; no word-splitting
 # issue since we shift the stage-name arg first and pass the rest as a command).
-_time_step() {
+_time_step_log() {
 	local _ts_stage="$1"
-	shift
-	# GH#22012: In non-interactive mode, emit the stage name before running so
-	# an operator watching setup.sh output can identify which step is blocking.
-	# The TSV log entry below is written AFTER the step returns — it provides no
-	# signal during a hang. This print is the only in-flight indicator.
-	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
-		printf '[SETUP] stage: %s\n' "$_ts_stage"
-	fi
-	local _ts_start _ts_end _ts_duration _ts_exit
-	_ts_start=$(date +%s.%N 2>/dev/null || date +%s)
-	_ts_exit=0
-	"$@" || _ts_exit=$?
-	_ts_end=$(date +%s.%N 2>/dev/null || date +%s)
-	_ts_duration=$(awk -v a="$_ts_start" -v b="$_ts_end" 'BEGIN { printf "%.2f", b - a }')
+	local _ts_duration="$2"
+	local _ts_exit="$3"
 	printf '%s\t%s\t%s\t%s\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		"$_ts_stage" \
 		"$_ts_duration" \
 		"$_ts_exit" \
 		>>"$HOME/.aidevops/logs/setup-stage-timings.log" 2>/dev/null || true
+	return 0
+}
+
+_time_step() {
+	local _ts_stage="$1"
+	shift
+	local _ts_start _ts_end _ts_duration _ts_exit
+	print_info "Starting setup stage: $_ts_stage"
+	_time_step_log "$_ts_stage" "0.00" "RUNNING"
+	_ts_start=$(date +%s.%N 2>/dev/null || date +%s)
+	_ts_exit=0
+	"$@" || _ts_exit=$?
+	_ts_end=$(date +%s.%N 2>/dev/null || date +%s)
+	_ts_duration=$(awk -v a="$_ts_start" -v b="$_ts_end" 'BEGIN { printf "%.2f", b - a }')
+	_time_step_log "$_ts_stage" "$_ts_duration" "$_ts_exit"
+	print_info "Finished setup stage: $_ts_stage (${_ts_duration}s, exit=${_ts_exit})"
 	return "$_ts_exit"
 }
 
