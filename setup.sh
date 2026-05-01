@@ -1178,6 +1178,55 @@ _setup_lock_dir_age_seconds() {
 	return 0
 }
 
+_setup_lock_started_age_seconds() {
+	local lock_dir="$1"
+	local started_str=""
+	local started_epoch=""
+	local now_epoch=""
+	if [[ -r "$lock_dir/started_at" ]]; then
+		started_str=$(tr -d '[:space:]' <"$lock_dir/started_at" 2>/dev/null || true)
+		started_epoch=$(date -d "$started_str" +%s 2>/dev/null || \
+			date -jf '%Y-%m-%dT%H:%M:%SZ' "$started_str" +%s 2>/dev/null || true)
+		now_epoch=$(date +%s 2>/dev/null || true)
+		if [[ "$started_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$started_epoch" ]]; then
+			printf '%s\n' $((now_epoch - started_epoch))
+			return 0
+		fi
+	fi
+	_setup_lock_dir_age_seconds "$lock_dir"
+	return 0
+}
+
+_setup_pid_elapsed_seconds() {
+	local pid="$1"
+	local etime=""
+	local first="" second="" third=""
+	local days=0 hours=0 minutes=0 seconds=0
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+	etime=$(ps -p "$pid" -o etime= 2>/dev/null || true)
+	etime="${etime//[[:space:]]/}"
+	[[ -n "$etime" ]] || return 1
+	IFS=':' read -r first second third <<<"$etime"
+	if [[ -n "$third" ]]; then
+		seconds="$third"
+		minutes="$second"
+		if [[ "$first" == *"-"* ]]; then
+			days="${first%%-*}"
+			hours="${first#*-}"
+		else
+			hours="$first"
+		fi
+	else
+		minutes="$first"
+		seconds="$second"
+	fi
+	if [[ "$days" =~ ^[0-9]+$ && "$hours" =~ ^[0-9]+$ && "$minutes" =~ ^[0-9]+$ && "$seconds" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' $((days * 86400 + hours * 3600 + minutes * 60 + seconds))
+		return 0
+	fi
+	return 1
+}
+
 _setup_register_child_pid() {
 	local pid="$1"
 	[[ -n "$pid" ]] || return 0
@@ -1282,6 +1331,16 @@ _setup_acquire_noninteractive_setup_lock() {
 					return 75
 				fi
 				print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}; owner pid ${owner_pid} no longer appears to be setup.sh --non-interactive (age ${_owner_lock_age}s)"
+				rm -rf "$lock_dir" 2>/dev/null || true
+				attempts=$((attempts + 1))
+				continue
+			fi
+			local _owner_started_age=""
+			local _owner_pid_age=""
+			_owner_started_age=$(_setup_lock_started_age_seconds "$lock_dir" 2>/dev/null || true)
+			_owner_pid_age=$(_setup_pid_elapsed_seconds "$owner_pid" 2>/dev/null || true)
+			if [[ "$_owner_started_age" =~ ^[0-9]+$ && "$_owner_pid_age" =~ ^[0-9]+$ && "$_owner_started_age" -gt 300 && "$_owner_started_age" -gt $((_owner_pid_age + 300)) ]]; then
+				print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}; lock age ${_owner_started_age}s is older than owner pid ${owner_pid} runtime ${_owner_pid_age}s"
 				rm -rf "$lock_dir" 2>/dev/null || true
 				attempts=$((attempts + 1))
 				continue

@@ -164,6 +164,39 @@ test_reclaims_reused_owner_pid_lock() {
 	return 0
 }
 
+test_reclaims_stale_started_at_with_reused_setup_pid() {
+	local tmp_dir=""
+	local output=""
+	local owner_pid=""
+	tmp_dir=$(make_temp_dir)
+	owner_pid=$(start_fake_setup_owner)
+	mkdir -p "$tmp_dir/lock.d"
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
+	printf '%s\n' '2000-01-01T00:00:00Z' >"$tmp_dir/lock.d/started_at"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'held=%s owner=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}" "$(tr -d '[:space:]' <"$tmp_dir/lock.d/owner.pid")"
+		_setup_release_noninteractive_setup_lock
+		printf 'exists=%s\n' "$([[ -d "$tmp_dir/lock.d" ]] && printf yes || printf no)"
+		return 0
+	) 2>&1 || true
+
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
+	rm -rf "$tmp_dir"
+	if [[ "$output" == *"lock age "* && "$output" == *"older than owner pid ${owner_pid} runtime"* && "$output" == *"held=true owner="* && "$output" == *"exists=no"* ]]; then
+		print_result "stale started_at with reused setup pid is reclaimed" 0
+		return 0
+	fi
+
+	print_result "stale started_at with reused setup pid is reclaimed" 1 "output=${output}"
+	return 0
+}
+
 test_contention_message_includes_elapsed_and_stage() {
 	local tmp_dir=""
 	local output=""
@@ -248,6 +281,7 @@ main() {
 	test_blocks_concurrent_live_owner
 	test_reclaims_stale_lock
 	test_reclaims_reused_owner_pid_lock
+	test_reclaims_stale_started_at_with_reused_setup_pid
 	test_contention_message_includes_elapsed_and_stage
 	test_signal_cleanup_terminates_registered_children
 
