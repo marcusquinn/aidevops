@@ -16,7 +16,12 @@ set -euo pipefail
 #######################################
 # PATH normalisation — same as pulse-wrapper.sh
 #######################################
-export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin:${PATH}"
+_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
+if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
+	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
+fi
+export PATH="${_aidevops_path_prefix}:${PATH}"
+unset _aidevops_path_prefix
 
 # Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
 # in zsh (MCP shell environment). See GH#3931.

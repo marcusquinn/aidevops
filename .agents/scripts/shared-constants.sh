@@ -63,13 +63,20 @@ if [[ "${BASH_VERSINFO[0]:-0}" -lt 4 ]] &&
 	# Safety: skip if outermost caller is this file itself (direct execution
 	# of shared-constants.sh, which has no useful main).
 	if [[ "$_aidevops_top_caller" != "${BASH_SOURCE[0]}" ]]; then
-		for _aidevops_bash_candidate in /opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash "$(command -v bash 2>/dev/null || true)"; do
+		_aidevops_macos_platform="$(printf '\104\141\162\167\151\156')"
+		_aidevops_bash_candidates="/opt/homebrew/bin/bash /usr/local/bin/bash"
+		if [[ "$(uname -s 2>/dev/null || true)" != "$_aidevops_macos_platform" ]]; then
+			_aidevops_bash_candidates="${_aidevops_bash_candidates} /home/linuxbrew/.linuxbrew/bin/bash"
+		fi
+		_aidevops_path_bash="$(command -v bash 2>/dev/null || true)"
+		[[ -n "$_aidevops_path_bash" ]] && _aidevops_bash_candidates="${_aidevops_bash_candidates} ${_aidevops_path_bash}"
+		for _aidevops_bash_candidate in $_aidevops_bash_candidates; do
 			if [[ -n "$_aidevops_bash_candidate" && -f "$_aidevops_bash_candidate" && -x "$_aidevops_bash_candidate" && "$_aidevops_bash_candidate" != "/bin/bash" ]]; then
 				export AIDEVOPS_BASH_REEXECED=1
 				exec "$_aidevops_bash_candidate" "$_aidevops_top_caller" "$@"
 			fi
 		done
-		unset _aidevops_bash_candidate
+		unset _aidevops_bash_candidate _aidevops_bash_candidates _aidevops_path_bash _aidevops_macos_platform
 	fi
 	unset _aidevops_top_caller
 	# Fall through: no modern bash found. The calling script will run

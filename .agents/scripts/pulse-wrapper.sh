@@ -72,7 +72,12 @@ set -euo pipefail
 # and other standard directories, causing `env bash` to fail. Ensure
 # essential directories are always present.
 #######################################
-export PATH="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin:${PATH}"
+_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/bin:/usr/bin"
+if [[ "$(uname -s 2>/dev/null || true)" != "Darwin" && -d "/home/linuxbrew/.linuxbrew/bin" ]]; then
+	_aidevops_path_prefix="/opt/homebrew/bin:/usr/local/bin:/home/linuxbrew/.linuxbrew/bin:/bin:/usr/bin"
+fi
+export PATH="${_aidevops_path_prefix}:${PATH}"
+unset _aidevops_path_prefix
 
 #######################################
 # FD budget: raise soft limit to avoid exhaustion (GH#19044)

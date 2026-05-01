@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# shellcheck disable=SC2016
 #
 # bash-upgrade-helper.sh — detect and install modern bash on macOS.
 #
@@ -42,8 +43,14 @@ set -u
 # Candidate paths for modern bash, in detection order.
 # /opt/homebrew/bin/bash  — Apple Silicon Homebrew default
 # /usr/local/bin/bash     — Intel macOS Homebrew default
-# /home/linuxbrew/.linuxbrew/bin/bash — Linuxbrew default
-_BASH_UPGRADE_CANDIDATES="/opt/homebrew/bin/bash /usr/local/bin/bash /home/linuxbrew/.linuxbrew/bin/bash"
+# /home/linuxbrew/.linuxbrew/bin/bash — Linuxbrew default; skipped on Darwin to
+# avoid probing macOS /home autofs during routine command lookup.
+_BU_DARWIN="Darwin"
+_BASH_UPGRADE_CANDIDATES="/opt/homebrew/bin/bash /usr/local/bin/bash"
+if [[ "$(uname -s 2>/dev/null || true)" != "$_BU_DARWIN" ]]; then
+	_BASH_UPGRADE_CANDIDATES="${_BASH_UPGRADE_CANDIDATES} /home/linuxbrew/.linuxbrew/bin/bash"
+fi
+unset _BU_DARWIN
 
 _MIN_MAJOR_VERSION=4
 
