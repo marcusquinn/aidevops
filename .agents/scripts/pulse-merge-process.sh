@@ -949,7 +949,7 @@ _auto_merge_stuck_seconds() {
 	local threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 
 	local enabled_at merge_state mergeable review_decision
-	read -r enabled_at merge_state mergeable review_decision <<<"$(printf '%s' "$pr_state" \
+	IFS=$'\t' read -r enabled_at merge_state mergeable review_decision <<<"$(printf '%s' "$pr_state" \
 		| jq -r '[.autoMergeRequest.enabledAt // "", .mergeStateStatus // "", .mergeable // "", .reviewDecision // ""] | @tsv' \
 		|| true)"
 
