@@ -365,19 +365,15 @@ _isc_scan_dead_stamps_phase() {
 				pid_alive=1
 			fi
 
-			local worktree_exists=0
-			[[ -n "$worktree" && -d "$worktree" ]] && worktree_exists=1
-
-			if [[ $pid_alive -eq 0 && $worktree_exists -eq 0 ]]; then
+			if [[ $pid_alive -eq 0 ]]; then
 				if [[ "$auto_release_flag" == "1" ]]; then
 					_isc_info "[scan-stale] auto-releasing dead stamp: $(basename "$stamp")"
 					_isc_release_claim_by_stamp_path "$stamp" >/dev/null 2>&1 || true
 					auto_released=$((auto_released + 1))
 				else
-					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead PID and missing worktree):\n\n'
+					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead session — PID gone or recycled by unrelated process):\n\n'
 					printf '  #%s in %s\n' "$issue" "$slug"
-					printf '    worktree: %s (missing)\n' "${worktree:-unknown}"
-					printf '    pid:      %s (dead)\n' "${pid:-unknown}"
+					printf '    pid:      %s (dead or argv-hash mismatch)\n' "${pid:-unknown}"
 					printf '    release:  aidevops issue release %s\n' "$issue"
 					printf '\n'
 					stale_count=$((stale_count + 1))
@@ -391,7 +387,7 @@ _isc_scan_dead_stamps_phase() {
 			printf 'No stale interactive claims.\n'
 		else
 			_isc_info "[scan-stale] Phase 1 auto-released $auto_released stamp(s)."
-			printf 'Phase 1: auto-released %d dead stamp(s) (dead PID + missing worktree).\n' "$auto_released"
+			printf 'Phase 1: auto-released %d dead stamp(s) (PID gone or argv-hash mismatch).\n' "$auto_released"
 		fi
 	else
 		if [[ $stale_count -eq 0 ]]; then
@@ -408,7 +404,7 @@ _isc_scan_dead_stamps_phase() {
 # Subcommand: scan-stale
 # -----------------------------------------------------------------------------
 # Three-phase stale detection coordinator. Phase 1 (t2414): auto-releases dead
-# stamps (dead PID + missing worktree) when running in an interactive context
+# stamps (PID gone or argv-hash mismatch) when running in an interactive context
 # (human TTY or AI agent runtime).
 # Phase 1a: report-only (stampless origin:interactive claims).
 # Phase 2: report-only (closed-not-merged PR orphans).
