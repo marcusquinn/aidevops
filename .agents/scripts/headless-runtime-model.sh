@@ -304,9 +304,28 @@ choose_model() {
 
 # --- Cmd Builders ---
 
+_headless_variant_should_omit_gpt55_sonnet() {
+	local role="$1"
+	local tier_upper="$2"
+	local selected_model="$3"
+	local variant="$4"
+
+	[[ "$role" == "worker" ]] || return 1
+	[[ -n "$variant" ]] || return 1
+	case "$tier_upper" in
+	SONNET | PRO) ;;
+	*) return 1 ;;
+	esac
+	case "$selected_model" in
+	openai/gpt-5.5 | openai/gpt-5.5-*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 resolve_headless_variant() {
 	local role="$1"
 	local tier="${2:-}"
+	local selected_model="${3:-}"
 	local variant="${AIDEVOPS_HEADLESS_VARIANT:-}"
 	local tier_upper=""
 
@@ -346,6 +365,14 @@ resolve_headless_variant() {
 			fi
 			;;
 		esac
+	fi
+
+	# GPT-5.5 currently benchmarks fastest for standard worker dispatch when
+	# OpenCode sends no explicit reasoning-effort variant. Keep explicit CLI
+	# --variant untouched (caller bypasses this resolver when provided), but
+	# ignore env-derived high/xhigh defaults for non-thinking worker tiers.
+	if _headless_variant_should_omit_gpt55_sonnet "$role" "$tier_upper" "$selected_model" "$variant"; then
+		variant=""
 	fi
 
 	printf '%s' "$variant"

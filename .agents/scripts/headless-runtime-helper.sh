@@ -1883,7 +1883,7 @@ cmd_run() {
 	fi
 
 	if [[ -z "$variant_override" ]]; then
-		variant_override=$(resolve_headless_variant "$role" "$tier_override")
+		variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")
 	fi
 
 	# GH#17436: Continuation retry configuration.
@@ -2151,6 +2151,7 @@ Defaults:
   AIDEVOPS_HEADLESS_MODELS is deprecated — respected as override for one release cycle.
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
   AIDEVOPS_HEADLESS_VARIANT_SONNET / AIDEVOPS_HEADLESS_VARIANT_OPUS can set tier defaults.
+  GPT-5.5 sonnet-tier worker dispatch omits env-derived variants so OpenCode sends no explicit thinking override.
   AIDEVOPS_HEADLESS_VARIANT sets an OpenCode model variant (for example: high, xhigh).
   AIDEVOPS_HEADLESS_PULSE_VARIANT / AIDEVOPS_HEADLESS_WORKER_VARIANT override by role.
   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables worker /full-loop contract injection

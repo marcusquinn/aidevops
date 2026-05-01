@@ -81,7 +81,8 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 - **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:thinking` → `opus`).
 - **Local switch**: Add OpenAI models to `custom/configs/model-routing-table.json`, then set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto OpenAI. If you want OpenAI primary but Anthropic fallback, reorder the custom routing table and omit the allowlist.
 - **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Headless runs do not default to `xhigh`; if no variant is set, OpenCode sends no explicit effort override and the provider default applies.
-- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.4`.
+- **GPT-5.5 standard workers**: For `openai/gpt-5.5` on worker `sonnet`/`pro` tiers, aidevops omits env-derived variants such as `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins because it bypasses automatic variant resolution.
+- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.4`. The GPT-5.5 standard-worker exception above only applies to env-derived sonnet/pro variants.
 - **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
@@ -97,8 +98,8 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "sonnet": { "models": ["openai/gpt-5.4", "anthropic/claude-sonnet-4-6"] },
-    "opus": { "models": ["openai/gpt-5.4", "anthropic/claude-opus-4-6"] }
+    "sonnet": { "models": ["openai/gpt-5.5", "anthropic/claude-sonnet-4-6"] },
+    "opus": { "models": ["openai/gpt-5.5", "anthropic/claude-opus-4-6"] }
   }
 }
 ```
