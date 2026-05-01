@@ -259,6 +259,31 @@ _validators_should_run() {
 	return 0
 }
 
+# Returns 0 when HEAD changes files that should be covered by Node validators.
+# This keeps shell-only commits from failing on missing local Node dependencies
+# while preserving fail-closed typecheck behaviour for JS/TS/package changes.
+_commit_touches_node_files() {
+	local changed_file
+	while IFS= read -r changed_file; do
+		case "$changed_file" in
+		package.json | package-lock.json | npm-shrinkwrap.json | pnpm-lock.yaml | yarn.lock | bun.lock | bun.lockb)
+			return 0
+			;;
+		*.js | *.jsx | *.mjs | *.cjs | *.ts | *.tsx | *.mts | *.cts)
+			return 0
+			;;
+		*.json | *.jsonc | *.yaml | *.yml)
+			case "$changed_file" in
+			*.eslintrc.* | eslint.config.* | tsconfig*.json | jsconfig*.json | prettier.config.* | .prettierrc*)
+				return 0
+				;;
+			esac
+			;;
+		esac
+	done < <(git show --name-only --format='' HEAD 2>/dev/null)
+	return 1
+}
+
 # Detect node project type and chosen package manager.
 # Sets caller-scope `pm` variable (npm/pnpm/yarn) on success.
 # Returns 0 if a node project with relevant scripts is detected, 1 otherwise.
@@ -399,6 +424,10 @@ _run_project_validators() {
 	local skip_hooks="${1:-0}"
 	# _validators_should_run returns 0 when validators should run, 1 otherwise.
 	if ! _validators_should_run "$skip_hooks"; then
+		return 0
+	fi
+	if ! _commit_touches_node_files; then
+		print_info "[validators] no Node/TypeScript files changed, skipping node project validators"
 		return 0
 	fi
 	local pm=""
