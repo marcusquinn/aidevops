@@ -864,7 +864,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3089 fix pulse-watchdog.sh self-writes to monitored log file (t3071 Phase 3) #auto-dispatch #bug ref:GH#21868 pr:#21869 completed:2026-04-30
 
-- [ ] t3220 pre-edit-check: path traversal and absolute-path-outside-repo cases create worktree instead of blocking #auto-dispatch #bug #security ref:GH#21963
+- [x] t3220 pre-edit-check: path traversal and absolute-path-outside-repo cases create worktree instead of blocking #auto-dispatch #bug #security ref:GH#21963 pr:#22020 completed:2026-05-01
 
 - [x] t3228 Refactor conflict-pattern classifier below function-complexity gate #auto-dispatch #bug ref:GH#21981 pr:#21986 completed:2026-04-30
 
@@ -3679,7 +3679,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3219 worker-activity-helper.sh: streaming jq + jq-built cache JSON (gemini #21956 followup) #auto-dispatch #bug ref:GH#21961 pr:#22021 completed:2026-05-01
 
-- [ ] t3220 pre-edit-check: path traversal and absolute-path-outside-repo cases create worktree instead of blocking #auto-dispatch #bug #security ref:GH#21963
+- [x] t3220 pre-edit-check: path traversal and absolute-path-outside-repo cases create worktree instead of blocking #auto-dispatch #bug #security ref:GH#21963 pr:#22020 completed:2026-05-01
 
 - [ ] t3221 setup.sh deploy under 60s steady-state — bulk rsync, migration sentinels, async pulse restart #auto-dispatch #bug ref:GH#21964
 
@@ -3731,7 +3731,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3245 Enforce brief workflow in issue creation harness ref:GH#22008 pr:#22010 completed:2026-05-01
 
-- [ ] t3246 Add prompt-to-hook migration loop for deterministic rules #auto-dispatch #enhancement #self-improvement ref:GH#22009
+- [x] t3246 Add prompt-to-hook migration loop for deterministic rules #auto-dispatch #enhancement #self-improvement ref:GH#22009 pr:#22013 completed:2026-05-01
 
 - [ ] t3247 Release queued claims when headless canary overload aborts worker launch #auto-dispatch #bug ref:GH#22011
 

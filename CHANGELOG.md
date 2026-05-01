@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.29] - 2026-05-01
+
+### Changed
+
+- Maintenance: sync ref:GH#22022 to TODO.md [skip ci]
+- add prompt-to-hook migration loop (#22013)
+- Maintenance: mark t3251 complete (pr:#22018 completed:2026-05-01) [skip ci]
+- fast-fail worker dispatch before expensive startup (#22018)
+- Maintenance: mark t3242 complete (pr:#22006 completed:2026-05-01) [skip ci]
+- tighten AGENTS progressive disclosure and routing references (#22006)
+- Maintenance: sync ref:GH#22017 to TODO.md [skip ci]
+
+### Fixed
+
+- block unsafe pre-edit target paths (#22020)
+- stream worker activity metrics aggregation (#22021)
+
 ## [3.13.28] - 2026-05-01
 
 ### Changed
