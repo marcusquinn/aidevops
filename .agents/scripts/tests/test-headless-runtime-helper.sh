@@ -138,6 +138,26 @@ test_headless_activity_timeout_default_matches_watchdog() {
 	return 0
 }
 
+test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait() {
+	local output_file="${TEST_ROOT}/activity-classifier.out"
+
+	printf 'OpenAI error: HTTP 429 rate limit exceeded\n' >"$output_file"
+	if _activity_output_has_provider_rate_limit "$output_file"; then
+		print_result "activity watchdog detects provider rate-limit marker" 0
+	else
+		print_result "activity watchdog detects provider rate-limit marker" 1
+	fi
+
+	printf 'waiting for CI checks to finish before merge\n' >"$output_file"
+	if _activity_output_has_ci_wait "$output_file"; then
+		print_result "activity watchdog detects CI-wait marker" 0
+	else
+		print_result "activity watchdog detects CI-wait marker" 1
+	fi
+
+	return 0
+}
+
 test_canary_uses_builtin_agent_without_default_agent() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
@@ -760,6 +780,7 @@ main() {
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_headless_activity_timeout_default_matches_watchdog
+	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_canary_uses_builtin_agent_without_default_agent
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only

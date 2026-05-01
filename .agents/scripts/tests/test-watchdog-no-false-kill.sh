@@ -165,11 +165,11 @@ assert_contains \
 	"$pulse_wd_source"
 
 #######################################
-# Test 7: pulse-dispatch-engine.sh timeout handler emits [lifecycle] line
+# Test 7: pulse-dispatch-lib.sh timeout handler emits [lifecycle] line
 #######################################
-dispatch_source=$(< "${SCRIPT_DIR}/pulse-dispatch-engine.sh")
+dispatch_source=$(< "${SCRIPT_DIR}/pulse-dispatch-lib.sh")
 assert_contains \
-	"7. pulse-dispatch-engine.sh per-candidate timeout emits [lifecycle] line" \
+	"7. pulse-dispatch-lib.sh per-candidate timeout emits [lifecycle] line" \
 	"reason=wait_loop_timeout_" \
 	"$dispatch_source"
 
@@ -183,7 +183,7 @@ shellcheck_pass=true
 for script in \
 	"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
 	"${SCRIPT_DIR}/pulse-watchdog.sh" \
-	"${SCRIPT_DIR}/pulse-dispatch-engine.sh"; do
+	"${SCRIPT_DIR}/pulse-dispatch-lib.sh"; do
 
 	local_name="$(basename "$script")"
 	if command -v shellcheck >/dev/null 2>&1; then
@@ -220,6 +220,10 @@ assert_contains \
 	"9c. kill_reason class: no_output_stall mapped" \
 	"no_output_stall" \
 	"$watchdog_source"
+assert_contains \
+	"9d. kill_reason class: provider_rate_limit mapped" \
+	"provider_rate_limit" \
+	"$watchdog_source"
 
 #######################################
 # Test 10: Lifecycle log path is configurable via env
@@ -245,6 +249,18 @@ assert_contains \
 assert_contains \
 	"12. Deferred stall seconds tracked cumulatively" \
 	"deferred_stall_seconds=\$((deferred_stall_seconds + stall_seconds))" \
+	"$watchdog_source"
+assert_contains \
+	"12b. CPU-active defers are labeled distinctly" \
+	"reason=cpu_active" \
+	"$watchdog_source"
+assert_contains \
+	"12c. CI-wait defers are labeled distinctly" \
+	"reason=ci_wait" \
+	"$watchdog_source"
+assert_contains \
+	"12d. Output-active path is documented as live work" \
+	"output-active" \
 	"$watchdog_source"
 
 #######################################
@@ -440,6 +456,43 @@ for cleanup_pid in $descendants "$test_root_pid"; do
 	kill "$cleanup_pid" 2>/dev/null || true
 done
 wait 2>/dev/null || true
+
+#######################################
+# Test 23: Runtime — CPU-active quiet worker survives beyond stall timeout
+#######################################
+tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-live)
+live_output="${tmp_dir}/worker.out"
+live_exit="${tmp_dir}/worker.exit"
+live_log="${tmp_dir}/lifecycle.log"
+printf 'worker started\n' >"$live_output"
+
+bash -c 'yes >/dev/null & wait' >/dev/null 2>&1 &
+live_worker_pid=$!
+WORKER_LIFECYCLE_LOG="$live_log" \
+	"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
+	--output-file "$live_output" \
+	--worker-pid "$live_worker_pid" \
+	--exit-code-file "$live_exit" \
+	--stall-timeout 1 \
+	--poll-interval 1 \
+	--hard-kill-seconds 0 >/dev/null 2>&1 &
+live_watchdog_pid=$!
+
+sleep 8
+if kill -0 "$live_worker_pid" 2>/dev/null && [[ ! -f "${live_exit}.watchdog_killed" ]]; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 23. CPU-active quiet worker survives beyond stall timeout (long-but-live path)"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 23. CPU-active quiet worker was killed despite live-work evidence"
+fi
+
+pkill -P "$live_worker_pid" 2>/dev/null || true
+kill "$live_worker_pid" "$live_watchdog_pid" 2>/dev/null || true
+wait "$live_worker_pid" 2>/dev/null || true
+wait "$live_watchdog_pid" 2>/dev/null || true
+rm -rf "$tmp_dir"
 
 #######################################
 # Summary

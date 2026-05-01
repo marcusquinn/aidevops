@@ -599,12 +599,32 @@ EOF
 # --- Section 8: Activity Watchdog (inline fallback) ---
 
 #######################################
+# Return whether output contains a known provider/rate-limit marker.
+# Returns: 0 if a marker is present, 1 otherwise.
+#######################################
+_activity_output_has_provider_rate_limit() {
+	local output_file="$1"
+	[[ -f "$output_file" ]] || return 1
+	grep -Eqi 'rate[ -]?limit|too many requests|http[[:space:]]*429|status[=: ][[:space:]]*429|quota exceeded|overloaded_error|provider.*(failed|unavailable)' "$output_file" 2>/dev/null
+}
+
+#######################################
+# Return whether output shows an intentional CI/review wait.
+# Returns: 0 if a marker is present, 1 otherwise.
+#######################################
+_activity_output_has_ci_wait() {
+	local output_file="$1"
+	[[ -f "$output_file" ]] || return 1
+	grep -Eqi 'gh pr checks|review-bot-gate|pre-merge-gate|CI check|checks? (are )?(still )?(running|pending)|waiting (for|on) (CI|checks|review|merge)|merge (is )?(slow|pending)' "$output_file" 2>/dev/null
+}
+
+#######################################
 # Activity watchdog for _invoke_opencode.
 #
-# Runs as a background process alongside the worker. Polls the output
-# file for LLM activity indicators (JSON events from opencode: text,
-# tool, reasoning, step_start). If none appear within the timeout,
-# kills the worker process.
+# Runs as a background process alongside the worker. Polls the output file for
+# growth. Timing thresholds are recovery backstops, not strict success/failure
+# policy: output-active and CI-wait states continue until the hard elapsed cap,
+# while explicit provider failures recover promptly.
 #
 # The initial output always contains the sandbox startup line (~300 bytes).
 # This is NOT activity -- it's just the executor logging. Real activity
@@ -627,7 +647,7 @@ _run_activity_watchdog() {
 	#
 	# Phase 1 (startup, default 180s): any output at all. Zero bytes = dead runtime.
 	# Phase 2 (continuous): monitors file growth. If the output file stops
-	#   growing for stall_timeout seconds, the worker is stalled -- kill it.
+	#   growing for stall_timeout seconds, classify the stall before killing it.
 	#
 	# Previous design (broken): returned 0 after first LLM activity event,
 	# never monitoring again. Workers that stalled mid-session were invisible.
@@ -684,7 +704,7 @@ _run_activity_watchdog() {
 
 		# Phase 2: continuous growth monitoring
 		if [[ "$current_size" -gt "$last_size" ]]; then
-			# File is growing -- worker is alive
+			# File is growing -- worker is output-active
 			last_size="$current_size"
 			stall_seconds=0
 		else
@@ -704,6 +724,17 @@ _run_activity_watchdog() {
 					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${hard_kill_seconds}s (stuck at ${current_size}b) -- slot freed for re-dispatch" \
 					"$session_key" "stall_killed"
 				return 0
+			fi
+			if _activity_output_has_provider_rate_limit "$output_file"; then
+				_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+					"provider_rate_limit: provider/rate-limit marker visible after ${stall_seconds}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
+				return 0
+			fi
+			if _activity_output_has_ci_wait "$output_file"; then
+				print_warning "Activity watchdog: CI-wait evidence found after ${stall_seconds}s quiet window -- deferring kill until hard backstop"
+				stall_seconds=0
+				sleep "$poll_interval"
+				continue
 			fi
 			_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
 				"stall: no output growth for ${stall_timeout}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
