@@ -373,7 +373,7 @@ _dlw_prewarm_opencode_db() {
 	mkdir -p "${_DLW_PREWARM_DIR}/opencode"
 	{
 		echo "[lifecycle] opencode_warm_start pid=$$"
-		if XDG_DATA_HOME="$_DLW_PREWARM_DIR" timeout 30 opencode --version >/dev/null 2>&1; then
+		if XDG_DATA_HOME="$_DLW_PREWARM_DIR" timeout "${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}" opencode --version >/dev/null 2>&1; then
 			echo "[lifecycle] opencode_warm_done pid=$$"
 		else
 			echo "[lifecycle] WARN opencode warm-up failed or timed out — fallback to cold-start pid=$$"

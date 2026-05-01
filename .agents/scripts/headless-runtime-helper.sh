@@ -488,8 +488,8 @@ _invoke_opencode() {
 	local watchdog_pid=""
 	local _stall_timeout="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
 	[[ "$_stall_timeout" =~ ^[0-9]+$ ]] || _stall_timeout=600
-	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
-	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=60
+	local _phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-180}"
+	[[ "$_phase1_timeout" =~ ^[0-9]+$ ]] || _phase1_timeout=180
 
 	if [[ -x "$_watchdog_script" ]]; then
 		nohup "$_watchdog_script" \
@@ -1546,6 +1546,7 @@ _handle_worker_branch_orphan() {
 		# Post structured ops comment so the next dispatch knows what happened
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
+			# shellcheck disable=SC2016 # Backticks are literal Markdown in the comment body.
 			_ops_comment=$(printf '<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base main --repo %s\n```\n<!-- ops:end -->' \
 				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 				"$branch_name" "$branch_name" "$repo_slug")
@@ -1733,6 +1734,7 @@ _cmd_run_prepare_retry() {
 	local max_attempts="$5"
 	local selected_model="$6"
 	local attempt_exit="$7"
+	local tier_override="${8:-sonnet}"
 	local provider=""
 	local next_model=""
 
@@ -1756,7 +1758,7 @@ _cmd_run_prepare_retry() {
 	fi
 
 	provider=$(extract_provider "$selected_model")
-	next_model=$(choose_model "$role" "") || {
+	next_model=$(choose_model "$role" "" "$tier_override") || {
 		_cmd_run_finish "$session_key" "fail"
 		return "$attempt_exit"
 	}
@@ -1845,7 +1847,7 @@ cmd_run() {
 	fi
 
 	local selected_model
-	selected_model=$(choose_model "$role" "$model_override") || {
+	selected_model=$(choose_model "$role" "$model_override" "$tier_override") || {
 		local choose_exit=$?
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
@@ -2065,7 +2067,7 @@ cmd_run() {
 
 		_cmd_run_prepare_retry \
 			"$role" "$session_key" "$model_override" "$attempt" \
-			"$max_attempts" "$selected_model" "$attempt_exit" || return $?
+			"$max_attempts" "$selected_model" "$attempt_exit" "$tier_override" || return $?
 		if [[ "$cmd_run_action" == "switch" ]]; then
 			selected_model="$cmd_run_next_model"
 		fi

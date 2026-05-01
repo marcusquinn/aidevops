@@ -43,6 +43,7 @@ readonly _HEADLESS_RUNTIME_MODEL_LOADED=1
 # user-configurable env var while allowing temporary provider pinning via
 # AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST.
 get_configured_models() {
+	local tier_name="${1:-sonnet}"
 	local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
 	local -a allowlist=()
 	local -a models=()
@@ -100,7 +101,7 @@ get_configured_models() {
 			fi
 
 			models+=("$model")
-		done < <(jq -r '.tiers.sonnet.models[]? // empty' "$routing_table" 2>/dev/null)
+		done < <(jq -r --arg tier "$tier_name" '.tiers[$tier].models[]? // empty' "$routing_table" 2>/dev/null)
 	fi
 
 	# Fallback: if routing derivation yielded nothing and no allowlist is forcing a
@@ -234,11 +235,12 @@ _choose_model_tier_downgrade() {
 # Skips models that are backed off or have no auth. Returns 75 if all are backed off.
 _choose_model_auto() {
 	local role="$1"
+	local tier_name="${2:-sonnet}"
 	local -a models=()
 	local current_model
 	while IFS= read -r current_model; do
 		models+=("$current_model")
-	done < <(get_configured_models)
+	done < <(get_configured_models "$tier_name")
 	if [[ ${#models[@]} -eq 0 ]]; then
 		print_error "No direct provider models configured for headless runtime"
 		return 1
@@ -292,13 +294,14 @@ _choose_model_auto() {
 choose_model() {
 	local role="$1"
 	local explicit_model="${2:-}"
+	local tier_name="${3:-sonnet}"
 
 	if [[ -n "$explicit_model" ]]; then
 		_choose_model_explicit "$explicit_model"
 		return $?
 	fi
 
-	_choose_model_auto "$role"
+	_choose_model_auto "$role" "$tier_name"
 	return $?
 }
 

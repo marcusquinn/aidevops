@@ -542,14 +542,14 @@ _run_activity_watchdog() {
 
 	# GH#17549: Continuous activity watchdog.
 	#
-	# Phase 1 (fast, 0-60s): any output at all. Zero bytes = dead runtime.
+	# Phase 1 (startup, default 180s): any output at all. Zero bytes = dead runtime.
 	# Phase 2 (continuous): monitors file growth. If the output file stops
 	#   growing for stall_timeout seconds, the worker is stalled -- kill it.
 	#
 	# Previous design (broken): returned 0 after first LLM activity event,
 	# never monitoring again. Workers that stalled mid-session were invisible.
-	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-60}"
-	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=60
+	local phase1_timeout="${HEADLESS_PHASE1_TIMEOUT_SECONDS:-180}"
+	[[ "$phase1_timeout" =~ ^[0-9]+$ ]] || phase1_timeout=180
 
 	# t2956 / Issue #21231: Hard-kill threshold (default 1500s = 25 min).
 	# When stall is detected AND total elapsed since watchdog start ≥ this,
@@ -850,7 +850,7 @@ source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 _VALIDATE_OC_VERSION=""
 
 CANARY_CACHE_TTL_SECONDS="${CANARY_CACHE_TTL_SECONDS:-1800}"
-CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-60}"
+CANARY_TIMEOUT_SECONDS="${CANARY_TIMEOUT_SECONDS:-180}"
 # t2814 (Phase 3, fix #4): Short-lived negative cache. When the canary
 # fails, subsequent dispatch attempts within this window short-circuit to
 # fail-fast instead of each spending up to CANARY_TIMEOUT_SECONDS on a
@@ -888,7 +888,7 @@ CANARY_OVERLOAD_TTL_SECONDS="${CANARY_OVERLOAD_TTL_SECONDS:-300}"
 # load_avg_1min > NCPU * MULTIPLIER = system overloaded, skip canary.
 # Default 2 = system is noticeably contending. Lower = more aggressive
 # (skip canary sooner). Set very high (e.g. 100) to effectively disable.
-CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-2}"
+CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
 #######################################
 # t2887: Validate that an opencode binary path is the real anomalyco/opencode.
