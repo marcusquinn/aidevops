@@ -3848,3 +3848,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3402 Sanitize inherited PATH when generating launchd plists #auto-dispatch #bug ref:GH#22192
 
 - [ ] t3401 Guard Snap runtime candidate on non-Linux platforms #auto-dispatch #bug ref:GH#22191
+
+- [ ] t3405 Suppress stale agent path find errors during setup config generation #auto-dispatch #bug ref:GH#22197
+
+- [ ] t3404 Enforce public repo PR gating in aidevops setup and security audits #auto-dispatch #bug #security ref:GH#22195
