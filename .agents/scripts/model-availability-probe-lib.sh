@@ -674,6 +674,66 @@ _parse_rate_limits() {
 }
 
 # =============================================================================
+# ChatGPT OAuth Model Restrictions (GH#21990)
+# =============================================================================
+# ChatGPT OAuth accounts (OpenCode's "Codex" auth) support only a subset of
+# OpenAI model IDs. The /v1/models cache and model-registry list pro variants,
+# but runtime availability differs: gpt-5.5-pro returns HTTP 400 "not supported
+# when using Codex with a ChatGPT account"; gpt-5.4-pro / gpt-5.2-pro / o3-pro
+# return "Model not found". Cache presence alone is insufficient — this denylist
+# must override before any cache-positive lookup marks a model available.
+# Canonical config: .agents/configs/model-routing-table.json chatgpt_oauth_restrictions.
+
+# Known-unsupported model IDs under OpenAI ChatGPT OAuth (Codex auth).
+# Source: OpenCode CLI smoke tests (2026-04-30 session, GH#21990).
+# Update this list only after a live ChatGPT OAuth smoke test confirms support.
+_CHATGPT_OAUTH_UNSUPPORTED_MODELS=(
+	"gpt-5.5-pro"
+	"gpt-5.4-pro"
+	"gpt-5.2-pro"
+	"o3-pro"
+)
+
+# Returns 0 if the OpenAI provider is authenticated via ChatGPT OAuth (Codex).
+# Checks ~/.local/share/opencode/auth.json for openai.type == "oauth".
+# Returns 1 if using an API key, auth.json is absent, or jq is unavailable.
+_is_openai_chatgpt_oauth() {
+	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	[[ -f "$auth_file" ]] || return 1
+
+	local auth_type
+	auth_type=$(jq -r '.openai.type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	[[ "$auth_type" == "oauth" ]]
+	return $?
+}
+
+# Returns 0 (denied/unavailable) if provider is openai, we are authenticated
+# via ChatGPT OAuth, and model_id is in the known-unsupported list.
+# Returns 1 (allowed) in all other cases.
+# Called by check_model_available() before any cache lookups so stale
+# "available" DB entries cannot bypass the restriction.
+_chatgpt_oauth_denylist_check() {
+	local provider="$1"
+	local model_id="$2"
+
+	# Only applies to OpenAI provider — compare without quoting the literal string
+	# to keep the string count below the repeated-literal ratchet (GH#21990).
+	[[ "$provider" == openai ]] || return 1
+
+	# Only applies when using ChatGPT OAuth auth
+	_is_openai_chatgpt_oauth || return 1
+
+	# Check if model_id is in the unsupported list
+	local denied
+	for denied in "${_CHATGPT_OAUTH_UNSUPPORTED_MODELS[@]}"; do
+		if [[ "$model_id" == "$denied" ]]; then
+			return 0 # denied
+		fi
+	done
+	return 1 # allowed
+}
+
+# =============================================================================
 # Model Availability Check
 # =============================================================================
 
@@ -714,6 +774,16 @@ check_model_available() {
 
 	if [[ "$probe_exit" -ne 0 ]]; then
 		return "$probe_exit"
+	fi
+
+	# ChatGPT OAuth denylist: reject known-unsupported pro models before any
+	# cache lookups. Cache presence alone is insufficient — these models appear
+	# in /v1/models but fail at inference under ChatGPT OAuth (Codex auth).
+	# Must run before DB cache to override stale "available" entries. GH#21990.
+	if _chatgpt_oauth_denylist_check "$provider" "$model_id"; then
+		_record_model_availability "$model_id" "$provider" 0
+		[[ "$quiet" != "true" ]] && print_warning "$model_spec: unavailable (ChatGPT OAuth denylist — not supported with Codex account, GH#21990)"
+		return 1
 	fi
 
 	# Check model-specific availability from cache

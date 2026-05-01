@@ -58,6 +58,11 @@
     }
   },
 
+  "chatgpt_oauth_restrictions": {
+    "_comment": "OpenCode ChatGPT OAuth (Codex auth) supports fewer models than the /v1/models cache lists. These model IDs return HTTP 400 ('not supported when using Codex with a ChatGPT account') or HTTP 404 ('Model not found') at inference time despite appearing in the models cache. model-availability-probe-lib.sh enforces this denylist before marking cache-positive models as available. Do not add any pro model IDs to tier routing until a live ChatGPT OAuth smoke test confirms support. Source: GH#21990 smoke tests (2026-04-30).",
+    "openai_unsupported": ["gpt-5.5-pro", "gpt-5.4-pro", "gpt-5.2-pro", "o3-pro"]
+  },
+
   "settings": {
     "probe_timeout_seconds": 10,
     "cache_ttl_seconds": 300

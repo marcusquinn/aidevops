@@ -3783,7 +3783,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3366 Fix REST fallback wrapper test hang after PR fallback cases #auto-dispatch #bug ref:GH#22076
 
-- [ ] t3371 Bound setup deploy_agents_to_runtimes stage #auto-dispatch #bug #framework ref:GH#22087
+- [x] t3371 Bound setup deploy_agents_to_runtimes stage #auto-dispatch #bug #framework ref:GH#22087 pr:#22109 completed:2026-05-01
 
 - [x] t3375 Raise token advisory first threshold to 250k #bug ref:GH#22115 pr:#22116 completed:2026-05-01
 
@@ -3791,6 +3791,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119
 
-- [ ] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121
+- [x] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121 pr:#22122 completed:2026-05-01
 
 - [ ] t3379 Investigate setup noninteractive lock hanging across deploy #auto-dispatch #bug ref:GH#22123

@@ -77,10 +77,51 @@ test_cache_hash_written_before_completion_summary() {
 	return 0
 }
 
+make_large_test_agents_dir() {
+	TEST_TMP_DIR="$(mktemp -d)"
+	# Create a top-level example skill (Pattern 1)
+	mkdir -p "$TEST_TMP_DIR/example" "$TEST_TMP_DIR/scripts"
+	cat >"$TEST_TMP_DIR/example.md" <<'EOF'
+---
+description: Example skill
+---
+
+# Example
+EOF
+	# Create many nested subdirectories with .md files to stress Pattern 2 + 3.
+	# Simulates the ~1800-subdirectory scale seen in a deployed agents tree.
+	local i
+	for i in $(seq 1 200); do
+		mkdir -p "$TEST_TMP_DIR/tools/cat${i}"
+		printf '# Tool %s\n\nA tool.\n' "$i" >"$TEST_TMP_DIR/tools/cat${i}/tool.md"
+	done
+	return 0
+}
+
+test_generation_completes_within_bounded_time() {
+	make_large_test_agents_dir
+	local _start _end _elapsed
+	_start=$(date +%s)
+	AIDEVOPS_AGENTS_DIR="$TEST_TMP_DIR" bash "$GENERATE_SKILLS_SCRIPT" >/dev/null 2>&1
+	_end=$(date +%s)
+	_elapsed=$((_end - _start))
+
+	# Generation over 200 nested dirs must complete well under the 90s timeout.
+	# A regression in subprocess spawning (e.g. find|wc per dir) would push this
+	# over 10s on macOS; the bash-glob approach stays under 3s on any platform.
+	if [[ "$_elapsed" -gt 15 ]]; then
+		print_result "generate-skills completes within 15s on 200-subdir tree" 1 "took ${_elapsed}s — likely per-dir subprocess regression"
+	else
+		print_result "generate-skills completes within 15s on 200-subdir tree" 0
+	fi
+	return 0
+}
+
 main() {
 	trap cleanup EXIT
 
 	test_cache_hash_written_before_completion_summary
+	test_generation_completes_within_bounded_time
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

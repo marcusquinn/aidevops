@@ -262,8 +262,13 @@ verify_pr_merged() {
 	pr_state="${pr_output%%$'\t'*}"
 	pr_merged_at="${pr_output#*$'\t'}"
 
-	if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]]; then
-		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown})"
+	# Base the merged check on mergedAt evidence, not state string alone.
+	# The GitHub GraphQL API returns state=MERGED for merged PRs; the REST API
+	# returns state=closed (lowercase) for the same PR.  Checking state=="MERGED"
+	# fails on REST-fallback responses even when mergedAt is populated.
+	# Decision rule: mergedAt non-empty → merged; mergedAt empty → not merged.
+	if [[ -z "$pr_merged_at" ]]; then
+		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown}, mergedAt: empty)"
 		log_error "Task completion is only allowed after the PR is merged."
 		local rerun_cmd="task-complete-helper.sh $TASK_ID --pr $pr_number"
 		[[ -n "$gh_repo" ]] && rerun_cmd+=" --gh-repo $gh_repo"
@@ -272,7 +277,7 @@ verify_pr_merged() {
 	fi
 
 	# good stuff — PR is confirmed merged, safe to mark the task done
-	log_success "PR #${pr_number} is merged (mergedAt: ${pr_merged_at})"
+	log_success "PR #${pr_number} is merged (state: ${pr_state}, mergedAt: ${pr_merged_at})"
 	return 0
 }
 

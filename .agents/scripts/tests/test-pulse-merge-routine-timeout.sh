@@ -156,6 +156,14 @@ else
 		"missing 'merge_exit ... -eq 124' branch in cmd_run/cmd_dry_run"
 fi
 
+if grep -qF 'DRY-RUN: would merge PR #' "${SCRIPTS_DIR}/pulse-merge.sh" \
+	&& grep -qF "\${DRY_RUN:-0}" "${SCRIPTS_DIR}/pulse-merge.sh"; then
+	pass "1f: merge dry-run exits before write side effects"
+else
+	fail "1f: merge dry-run exits before write side effects" \
+		"pulse-merge.sh must guard DRY_RUN before approval/merge/comment side effects"
+fi
+
 # =============================================================================
 # Test 2: Behavioural — timeout ceiling kills a forced-hang sub-shell
 # =============================================================================

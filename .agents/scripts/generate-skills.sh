@@ -390,9 +390,14 @@ while IFS= read -r folder; do
 		continue
 	fi
 
-	# Check if folder has .md files
-	md_count=$(find "$folder" -maxdepth 1 -name "*.md" -type f 2>/dev/null | wc -l)
-	if [[ $md_count -gt 0 ]]; then
+	# Check if folder has .md files without spawning subprocesses.
+	# Iterating via glob avoids a find|wc -l subprocess invocation per directory,
+	# which is expensive when scanning hundreds of nested directories on macOS.
+	_has_md=false
+	for _md_chk in "$folder"/*.md; do
+		[[ -f "$_md_chk" ]] && { _has_md=true; break; }
+	done
+	if [[ "$_has_md" == true ]]; then
 		local_name=$(to_skill_name "$folder_name")
 
 		if [[ "$DRY_RUN" == true ]]; then

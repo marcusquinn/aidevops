@@ -224,29 +224,42 @@ generate_agent_skills() {
 	local success_msg="Agent Skills SKILL.md files generated"
 	local generate_rc=0
 
-	if [[ -f "$skills_script" ]]; then
-		if command -v timeout >/dev/null 2>&1; then
-			if timeout "$timeout_seconds" bash "$skills_script" 2>/dev/null; then
-				print_success "$success_msg"
-				return 0
-			fi
-			generate_rc=$?
-			if [[ "$generate_rc" -eq 124 ]]; then
-				print_warning "Agent Skills generation exceeded ${timeout_seconds}s — continuing without skill symlink refresh"
-				return 1
-			fi
+	if [[ ! -f "$skills_script" ]]; then
+		print_warning "Agent Skills generator not found at $skills_script"
+		return 1
+	fi
+
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$timeout_seconds" bash "$skills_script" 2>/dev/null
+		generate_rc=$?
+	else
+		# Portable fallback for macOS and other systems without GNU coreutils.
+		# Run the generator in the background; poll every 5s; kill on overrun.
+		bash "$skills_script" 2>/dev/null &
+		local _gen_pid=$!
+		local _elapsed=0
+		while kill -0 "$_gen_pid" 2>/dev/null && [[ "$_elapsed" -lt "$timeout_seconds" ]]; do
+			sleep 5
+			_elapsed=$((_elapsed + 5))
+		done
+		if kill -0 "$_gen_pid" 2>/dev/null; then
+			kill "$_gen_pid" 2>/dev/null
+			wait "$_gen_pid" 2>/dev/null || true
+			generate_rc=124
 		else
-			if bash "$skills_script" 2>/dev/null; then
-				print_success "$success_msg"
-				return 0
-			fi
+			wait "$_gen_pid" 2>/dev/null || true
 			generate_rc=$?
 		fi
+	fi
 
-		print_warning "Agent Skills generation encountered issues (non-critical)"
+	if [[ "$generate_rc" -eq 0 ]]; then
+		print_success "$success_msg"
+		return 0
+	elif [[ "$generate_rc" -eq 124 ]]; then
+		print_warning "Agent Skills generation exceeded ${timeout_seconds}s — continuing without skill symlink refresh"
 		return 1
 	else
-		print_warning "Agent Skills generator not found at $skills_script"
+		print_warning "Agent Skills generation encountered issues (non-critical)"
 		return 1
 	fi
 }

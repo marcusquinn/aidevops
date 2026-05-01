@@ -129,7 +129,57 @@ if [[ "$*" == *"pr view"*"99999"* ]]; then
   echo '{"number":99999,"title":"ghost PR","state":"MERGED","author":{"login":"someone"},"mergedAt":"2026-04-21T12:00:00Z","closedAt":"2026-04-21T12:00:00Z","createdAt":"2026-04-21T11:00:00Z","labels":[],"reviewDecision":"","mergeStateStatus":"","headRefName":"feature/ghost","baseRefName":"main","isDraft":false}'
   exit 0
 fi
+if [[ "$*" == *"pr view"*"21876"* ]]; then
+  cat <<'JSON'
+{"number":21876,"title":"t3210: fix re-dispatch on existing branch","state":"CLOSED","author":{"login":"alex-solovyev"},"mergedAt":null,"closedAt":"2026-04-28T10:00:00Z","createdAt":"2026-04-27T09:00:00Z","labels":[{"name":"origin:worker"}],"reviewDecision":"","mergeStateStatus":"CONFLICTING","headRefName":"feature/auto-20260427-gh21860","baseRefName":"main","isDraft":false}
+JSON
+  exit 0
+fi
+if [[ "$*" == *"issue view"*"21860"* ]]; then
+  cat <<'JSON'
+{"number":21860,"title":"t3206: worker re-dispatch loops on same branch","state":"OPEN","author":{"login":"marcusquinn"},"createdAt":"2026-04-26T08:00:00Z","closedAt":null,"labels":[{"name":"auto-dispatch"},{"name":"status:queued"}],"assignees":[]}
+JSON
+  exit 0
+fi
+if [[ "$*" == *"issue view"*"99998"* ]]; then
+  cat <<'JSON'
+{"number":99998,"title":"ghost issue","state":"CLOSED","author":{"login":"marcusquinn"},"createdAt":"2026-04-01T00:00:00Z","closedAt":"2026-04-02T00:00:00Z","labels":[],"assignees":[]}
+JSON
+  exit 0
+fi
+if [[ "$*" == *"api"*"issues/21860/timeline"* ]]; then
+  cat <<'JSON'
+[{"event":"cross-referenced","source":{"issue":{"number":21876,"pull_request":{"url":"https://api.github.com/repos/marcusquinn/aidevops/pulls/21876"}}}},{"event":"labeled","label":{"name":"auto-dispatch"}}]
+JSON
+  exit 0
+fi
+if [[ "$*" == *"api"*"issues/21860/comments"* ]]; then
+  cat <<'JSON'
+[{"created_at":"2026-04-27T10:00:00Z","user":{"login":"alex-solovyev"},"body":"WORKER_BRANCH_ORPHAN: existing PR #21876 for branch feature/auto-20260427-gh21860 already open\n<!-- ops:start -->\nworker-orphan comment\n<!-- ops:end -->"},{"created_at":"2026-04-27T10:05:00Z","user":{"login":"alex-solovyev"},"body":"WORKER_BRANCH_ORPHAN: second re-dispatch attempt detected on same branch"},{"created_at":"2026-04-27T10:10:00Z","user":{"login":"marcusquinn"},"body":"Looks like the pulse is looping on this one"}]
+JSON
+  exit 0
+fi
+if [[ "$*" == *"api"*"issues/99998/timeline"* ]]; then
+  echo '[]'
+  exit 0
+fi
+if [[ "$*" == *"api"*"issues/99998/comments"* ]]; then
+  echo '[]'
+  exit 0
+fi
 if [[ "$*" == *"api"*"timeline"* ]]; then
+  echo '[]'
+  exit 0
+fi
+if [[ "$*" == *"api"*"comments"* ]]; then
+  echo '[]'
+  exit 0
+fi
+if [[ "$*" == *"pr list"*"gh21860"* ]]; then
+  echo '[]'
+  exit 0
+fi
+if [[ "$*" == *"pr list"* ]]; then
   echo '[]'
   exit 0
 fi
@@ -281,6 +331,116 @@ printf '\nTest 12: missing PR number shows error\n'
 output=$("$HELPER" pr 2>&1) || true
 rc=$?
 assert_contains "shows usage on missing arg" "usage:" "$output"
+
+# =============================================================================
+# Tests — issue subcommand (t3258)
+# =============================================================================
+
+# Create a fixture pulse.log entry for PR #21876 (linked to issue #21860)
+cat >> "$FIXTURE_LOGFILE" <<'ISSUE_FIXTURE'
+2026-04-27T09:30:00Z [pulse-merge-conflict] Deterministic merge: closed conflicting PR #21876, linked issue left open for re-dispatch in marcusquinn/aidevops
+2026-04-27T09:30:01Z [pulse-wrapper] Deterministic merge pass complete: merged=0, closed_conflicting=1, failed=0
+ISSUE_FIXTURE
+
+# --- Test 13: issue subcommand — basic output ---
+printf '\nTest 13: issue #21860 — WORKER_BRANCH_ORPHAN cascade\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 21860 --repo marcusquinn/aidevops 2>&1) || true
+
+assert_contains "shows issue number" "Issue #21860" "$output"
+assert_contains "shows issue title" "worker re-dispatch" "$output"
+assert_contains "shows issue labels" "auto-dispatch" "$output"
+assert_contains "shows lifecycle comments section" "Lifecycle comments:" "$output"
+assert_contains "shows WORKER_BRANCH_ORPHAN comment" "WORKER_BRANCH_ORPHAN" "$output"
+assert_contains "shows linked PRs section" "Linked/worker PRs:" "$output"
+assert_contains "shows linked PR number" "PR #21876" "$output"
+assert_contains "shows linked PR branch" "feature/auto-20260427-gh21860" "$output"
+
+# --- Test 14: issue pulse log events for linked PR ---
+printf '\nTest 14: issue #21860 — linked PR pulse events\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 21860 --repo marcusquinn/aidevops 2>&1) || true
+
+assert_contains "shows pulse events for linked PR" "pmc-close-conflicting" "$output"
+assert_contains "shows pulse event count" "pulse events" "$output"
+
+# --- Test 15: issue with no linked PRs or lifecycle comments ---
+printf '\nTest 15: issue #99998 — no linked PRs or lifecycle comments\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 99998 --repo marcusquinn/aidevops 2>&1) || true
+
+assert_contains "shows issue number" "Issue #99998" "$output"
+assert_contains "no comments found" "no comments found" "$output"
+assert_contains "no linked PRs" "no linked or worker PRs found" "$output"
+
+# --- Test 16: issue --json output ---
+printf '\nTest 16: issue --json output\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 21860 --repo marcusquinn/aidevops --json 2>&1) || true
+
+if command -v jq >/dev/null 2>&1; then
+	json_issue_num=$(echo "$output" | jq '.issue_number' 2>/dev/null || echo 0)
+	assert_eq "JSON issue_number for #21860" "21860" "$json_issue_num"
+	json_state=$(echo "$output" | jq -r '.state' 2>/dev/null || echo "")
+	assert_eq "JSON state is OPEN" "OPEN" "$json_state"
+	json_lc_count=$(echo "$output" | jq '.lifecycle_comments | length' 2>/dev/null || echo 0)
+	TOTAL=$((TOTAL + 1))
+	if [[ "$json_lc_count" -ge 1 ]]; then
+		PASS=$((PASS + 1))
+		printf '  ✓ JSON lifecycle_comments has ≥1 entry (got %s)\n' "$json_lc_count"
+	else
+		FAIL=$((FAIL + 1))
+		printf '  ✗ JSON lifecycle_comments has ≥1 entry (got %s)\n' "$json_lc_count"
+	fi
+	json_pr_count=$(echo "$output" | jq '.linked_prs | length' 2>/dev/null || echo 0)
+	TOTAL=$((TOTAL + 1))
+	if [[ "$json_pr_count" -ge 1 ]]; then
+		PASS=$((PASS + 1))
+		printf '  ✓ JSON linked_prs has ≥1 entry (got %s)\n' "$json_pr_count"
+	else
+		FAIL=$((FAIL + 1))
+		printf '  ✗ JSON linked_prs has ≥1 entry (got %s)\n' "$json_pr_count"
+	fi
+fi
+
+# --- Test 17: issue --verbose shows raw log lines ---
+printf '\nTest 17: issue --verbose shows raw pulse log lines\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PATH="${TMPDIR_TEST}:${PATH}" \
+	"$HELPER" issue 21860 --repo marcusquinn/aidevops --verbose 2>&1) || true
+
+assert_contains "verbose shows RAW: lines" "RAW:" "$output"
+
+# --- Test 18: issue gh offline mode ---
+printf '\nTest 18: issue gh offline mode graceful degradation\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PULSE_DIAGNOSE_GH_OFFLINE=1 \
+	"$HELPER" issue 21860 --repo marcusquinn/aidevops 2>&1) || true
+
+assert_contains "offline shows issue number" "Issue #21860" "$output"
+assert_contains "offline shows state unknown" "unknown" "$output"
+assert_contains "offline shows no comments" "no comments found" "$output"
+assert_contains "offline shows no linked PRs" "no linked or worker PRs found" "$output"
+
+# --- Test 19: issue missing number shows error ---
+printf '\nTest 19: issue missing number shows error\n'
+output=$("$HELPER" issue 2>&1) || true
+assert_contains "issue shows usage on missing arg" "usage:" "$output"
+
+# --- Test 20: help shows issue subcommand ---
+printf '\nTest 20: help output includes issue subcommand\n'
+output=$("$HELPER" help 2>&1) || true
+assert_contains "help shows issue subcommand" "issue <N>" "$output"
 
 # =============================================================================
 # Summary

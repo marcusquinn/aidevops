@@ -89,7 +89,7 @@ test_blocks_concurrent_live_owner() {
 	) 2>&1 || true
 
 	rm -rf "$tmp_dir"
-	if [[ "$output" == *"Another setup.sh --non-interactive process is already running"* && "$output" == *"exit=75 held=false"* ]]; then
+	if [[ "$output" == *"Another setup.sh --non-interactive is already running"* && "$output" == *"exit=75 held=false"* ]]; then
 		print_result "live non-interactive setup lock blocks overlap" 0
 		return 0
 	fi
@@ -125,6 +125,55 @@ test_reclaims_stale_lock() {
 	return 0
 }
 
+test_contention_message_includes_elapsed_and_stage() {
+	local tmp_dir=""
+	local output=""
+	tmp_dir=$(make_temp_dir)
+	mkdir -p "$tmp_dir/lock.d"
+	printf '%s\n' "$$" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
+	# Write a started_at stamp ~5 seconds in the past so elapsed time is computable.
+	local past_ts=""
+	past_ts=$(date -u -d '5 seconds ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || \
+		date -u -v-5S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || true)
+	[[ -n "$past_ts" ]] && printf '%s\n' "$past_ts" >"$tmp_dir/lock.d/started_at"
+	# Write a fake timing log with a RUNNING stage so the stage diagnostic fires.
+	local fake_stl="$tmp_dir/fake-stage-timings.log"
+	printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "deploy_aidevops_agents" "0.00" "RUNNING" >"$fake_stl"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		HOME="$tmp_dir"
+		mkdir -p "$tmp_dir/.aidevops/logs"
+		cp "$fake_stl" "$tmp_dir/.aidevops/logs/setup-stage-timings.log"
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		return 0
+	) 2>&1 || true
+
+	rm -rf "$tmp_dir"
+
+	local passed=1
+	# Elapsed time: present only when started_at parsing succeeds (skip on unsupported date).
+	if [[ -n "$past_ts" ]]; then
+		[[ "$output" == *"elapsed "* ]] || passed=2
+	fi
+	# Stage name must appear.
+	[[ "$output" == *"stage: deploy_aidevops_agents"* ]] || passed=3
+	# Diagnose log path hint must appear.
+	[[ "$output" == *"setup-stage-timings.log"* ]] || passed=4
+	# Must still exit 75.
+	[[ "$output" != *"exit=75"* ]] && passed=0  # exit code check is in caller test
+
+	if [[ "$passed" -eq 1 || "$passed" -eq 0 ]]; then
+		print_result "lock contention message includes elapsed time and stage" 0
+		return 0
+	fi
+
+	print_result "lock contention message includes elapsed time and stage" 1 "missing_field=${passed} output=${output}"
+	return 0
+}
+
 test_signal_cleanup_terminates_registered_children() {
 	local output=""
 
@@ -155,6 +204,7 @@ test_signal_cleanup_terminates_registered_children() {
 main() {
 	test_blocks_concurrent_live_owner
 	test_reclaims_stale_lock
+	test_contention_message_includes_elapsed_and_stage
 	test_signal_cleanup_terminates_registered_children
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"

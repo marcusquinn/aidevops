@@ -899,16 +899,7 @@ _run_preflight_stages() {
 	local _pflt_ed_start=$SECONDS
 	local _pflt_ed_rc=0
 	_preflight_early_dispatch || _pflt_ed_rc=$?
-	local _pflt_ed_elapsed=$(( SECONDS - _pflt_ed_start ))
-	echo "[pulse-wrapper] Stage: preflight_early_dispatch (rc=${_pflt_ed_rc}, ${_pflt_ed_elapsed}s)" >>"$LOGFILE"
-	if [[ -n "${PULSE_STAGE_TIMINGS_LOG:-}" ]]; then
-		printf '%s\t%s\t%d\t%d\t%d\n' \
-			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-			"preflight_early_dispatch" \
-			"$_pflt_ed_elapsed" \
-			"$_pflt_ed_rc" \
-			"$$" >>"$PULSE_STAGE_TIMINGS_LOG" 2>/dev/null || true
-	fi
+	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc"
 	# t2443: Daily scans promoted to independent top-level stages so each
 	# scanner gets its own timeout budget. Previously wrapped in a single
 	# _preflight_daily_scans() group with a shared 600s budget — a slow
