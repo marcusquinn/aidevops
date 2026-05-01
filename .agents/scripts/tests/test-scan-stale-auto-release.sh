@@ -2,18 +2,18 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# test-scan-stale-auto-release.sh — t2414 + t3205 regression guard.
+# test-scan-stale-auto-release.sh — t2414 + t3205 + GH#22112 regression guard.
 #
-# Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases stamps ONLY when
-# BOTH conditions hold: dead PID AND missing worktree. Any live signal (live
-# PID or existing worktree) must preserve the stamp.
+# Asserts that `_isc_cmd_scan_stale` Phase 1 auto-releases stamps when the
+# command-aware PID liveness check says the owner is dead. Existing worktree
+# paths are informational only; a live matching PID must preserve the stamp.
 #
 # Background (GH#20012, t2414):
 #   scan-stale Phase 1 previously ONLY reported dead stamps, requiring N manual
 #   `interactive-session-helper.sh release` calls per crashed session. Dead
-#   PID + missing worktree is definitionally safe to auto-release — the owning
-#   session died without cleanup, there is no ambiguity and no false-positive
-#   surface.
+#   owner PID is safe to auto-release — t2421 command-aware liveness rejects
+#   recycled PIDs via argv-hash mismatch, so a surviving worktree path no
+#   longer adds safety.
 #
 # t3205 (GH#21913): the bare TTY check `[[ -t 0 && -t 1 ]]` collapsed two
 #   distinct concepts (truly-headless vs AI-agent-interactive). OpenCode TUI
@@ -29,13 +29,14 @@
 # Tests:
 #   1. dead PID + missing worktree → stamp auto-released (file removed)
 #   2. live PID + missing worktree → stamp preserved
-#   3. dead PID + existing worktree → stamp preserved
+#   3. dead PID + existing worktree → stamp auto-released
 #   4. live PID + existing worktree → stamp preserved
-#   5. --no-auto-release flag → dead+missing stamp NOT released (report only)
-#   6. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
-#   7. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env + non-TTY → dead+missing released
-#   8. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
-#   9. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
+#   5. recycled PID / argv-hash mismatch + existing worktree → stamp auto-released
+#   6. --no-auto-release flag → dead+missing stamp NOT released (report only)
+#   7. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
+#   8. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env + non-TTY → dead+missing released
+#   9. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
+#   10. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -100,13 +101,15 @@ write_stamp() {
 	local s_worktree="$3"
 	local s_issue="${4:-42}"
 	local s_slug="${5:-owner/repo}"
+	local s_owner_argv_hash="${6:-}"
 	jq -n \
 		--arg issue "$s_issue" \
 		--arg slug "$s_slug" \
 		--argjson pid "$s_pid" \
 		--arg worktree_path "$s_worktree" \
 		--arg hostname "$LOCAL_HOST" \
-		'{issue: $issue, slug: $slug, pid: $pid, worktree_path: $worktree_path, hostname: $hostname}' \
+		--arg owner_argv_hash "$s_owner_argv_hash" \
+		'{issue: $issue, slug: $slug, pid: $pid, worktree_path: $worktree_path, hostname: $hostname, owner_argv_hash: $owner_argv_hash}' \
 		>"${STAMP_DIR}/${filename}"
 	return 0
 }
@@ -192,17 +195,17 @@ fi
 rm -f "${STAMP_DIR}/owner-repo-102.json"
 
 # =============================================================================
-# Test 3 — dead PID + existing worktree → stamp preserved
+# Test 3 — dead PID + existing worktree → stamp auto-released
 # =============================================================================
 write_stamp "owner-repo-103.json" "99999" "$EXISTING_WORKTREE" "103" "owner/repo"
 
 _isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
 
-if [[ -f "${STAMP_DIR}/owner-repo-103.json" ]]; then
-	pass "dead PID + existing worktree → stamp preserved"
+if [[ ! -f "${STAMP_DIR}/owner-repo-103.json" ]]; then
+	pass "dead PID + existing worktree → stamp auto-released"
 else
-	fail "dead PID + existing worktree → stamp preserved" \
-		"stamp was deleted despite existing worktree — in-progress work may exist"
+	fail "dead PID + existing worktree → stamp auto-released" \
+		"stamp still exists despite dead PID — existing worktree must not block release"
 fi
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-103.json"
@@ -224,45 +227,61 @@ fi
 rm -f "${STAMP_DIR}/owner-repo-104.json"
 
 # =============================================================================
-# Test 5 — --no-auto-release flag → dead+missing stamp NOT released (report only)
+# Test 5 — recycled PID / argv-hash mismatch + existing worktree → stamp released
 # =============================================================================
-write_stamp "owner-repo-105.json" "99999" "/nonexistent/path/105" "105" "owner/repo"
+write_stamp "owner-repo-105.json" "$LIVE_PID" "$EXISTING_WORKTREE" "105" "owner/repo" "not-the-live-process-hash"
+
+_isc_cmd_scan_stale --auto-release >/dev/null 2>/dev/null || true
+
+if [[ ! -f "${STAMP_DIR}/owner-repo-105.json" ]]; then
+	pass "recycled PID + existing worktree → stamp auto-released"
+else
+	fail "recycled PID + existing worktree → stamp auto-released" \
+		"stamp still exists despite argv-hash mismatch — t2421 liveness path did not fire"
+fi
+# Cleanup
+rm -f "${STAMP_DIR}/owner-repo-105.json"
+
+# =============================================================================
+# Test 6 — --no-auto-release flag → dead+missing stamp NOT released (report only)
+# =============================================================================
+write_stamp "owner-repo-106.json" "99999" "/nonexistent/path/106" "106" "owner/repo"
 
 _isc_cmd_scan_stale --no-auto-release >/dev/null 2>/dev/null || true
 
-if [[ -f "${STAMP_DIR}/owner-repo-105.json" ]]; then
+if [[ -f "${STAMP_DIR}/owner-repo-106.json" ]]; then
 	pass "--no-auto-release flag → dead+missing stamp preserved (report only)"
 else
 	fail "--no-auto-release flag → dead+missing stamp preserved (report only)" \
 		"stamp was deleted even though --no-auto-release was specified"
 fi
 # Cleanup
-rm -f "${STAMP_DIR}/owner-repo-105.json"
+rm -f "${STAMP_DIR}/owner-repo-106.json"
 
 # =============================================================================
-# Test 6 — AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
+# Test 7 — AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 env → dead+missing stamp NOT released
 # =============================================================================
-write_stamp "owner-repo-106.json" "99999" "/nonexistent/path/106" "106" "owner/repo"
+write_stamp "owner-repo-107.json" "99999" "/nonexistent/path/107" "107" "owner/repo"
 
 AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 _isc_cmd_scan_stale >/dev/null 2>/dev/null || true
 
-if [[ -f "${STAMP_DIR}/owner-repo-106.json" ]]; then
+if [[ -f "${STAMP_DIR}/owner-repo-107.json" ]]; then
 	pass "AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 → stamp preserved"
 else
 	fail "AIDEVOPS_SCAN_STALE_AUTO_RELEASE=0 → stamp preserved" \
 		"stamp was deleted despite env var disabling auto-release"
 fi
 # Cleanup
-rm -f "${STAMP_DIR}/owner-repo-106.json"
+rm -f "${STAMP_DIR}/owner-repo-107.json"
 
 # =============================================================================
-# Test 7 — AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env → dead+missing stamp released
+# Test 8 — AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env → dead+missing stamp released
 # =============================================================================
-write_stamp "owner-repo-107.json" "99999" "/nonexistent/path/107" "107" "owner/repo"
+write_stamp "owner-repo-108.json" "99999" "/nonexistent/path/108" "108" "owner/repo"
 
 AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 _isc_cmd_scan_stale >/dev/null 2>/dev/null || true
 
-if [[ ! -f "${STAMP_DIR}/owner-repo-107.json" ]]; then
+if [[ ! -f "${STAMP_DIR}/owner-repo-108.json" ]]; then
 	pass "AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env → dead+missing stamp released"
 else
 	fail "AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env → dead+missing stamp released" \
@@ -270,13 +289,13 @@ else
 fi
 
 # =============================================================================
-# Test 8 — AI-agent runtime markers (no TTY, no headless) → auto-released (t3205)
+# Test 9 — AI-agent runtime markers (no TTY, no headless) → auto-released (t3205)
 # =============================================================================
 # t3205: previously, scan-stale defaulted auto-release OFF in OpenCode/Claude
 # Code agent sessions because the agent's bash subprocess is piped from the
 # runtime ([[ -t 0 && -t 1 ]] returns false). Tests 8/9 lock in the new
 # three-way detection: runtime markers count as "interactive enough".
-write_stamp "owner-repo-108.json" "99999" "/nonexistent/path/108" "108" "owner/repo"
+write_stamp "owner-repo-109.json" "99999" "/nonexistent/path/109" "109" "owner/repo"
 
 # Force off all override paths and headless markers; set AI-agent marker only.
 # Tests run via `bash test.sh`, so [[ -t 0 && -t 1 ]] is already false here.
@@ -300,23 +319,23 @@ env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
 		_isc_cmd_scan_stale >/dev/null 2>/dev/null || true
 	"
 
-if [[ ! -f "${STAMP_DIR}/owner-repo-108.json" ]]; then
+if [[ ! -f "${STAMP_DIR}/owner-repo-109.json" ]]; then
 	pass "OPENCODE_SESSION_ID set, no TTY → dead+missing stamp auto-released"
 else
 	fail "OPENCODE_SESSION_ID set, no TTY → dead+missing stamp auto-released" \
 		"stamp still exists despite AI-agent runtime marker — t3205 branch did not fire"
 fi
 # Cleanup
-rm -f "${STAMP_DIR}/owner-repo-108.json"
+rm -f "${STAMP_DIR}/owner-repo-109.json"
 
 # =============================================================================
-# Test 9 — Headless wins over AI-agent marker → stamp preserved (t3205)
+# Test 10 — Headless wins over AI-agent marker → stamp preserved (t3205)
 # =============================================================================
 # When BOTH AIDEVOPS_HEADLESS and OPENCODE_SESSION_ID are set, the headless
 # marker MUST take precedence. Pulse-spawned workers run inside an OpenCode
 # child process and inherit OPENCODE_SESSION_ID; without this precedence rule,
 # the worker would auto-release stamps owned by other live sessions.
-write_stamp "owner-repo-109.json" "99999" "/nonexistent/path/109" "109" "owner/repo"
+write_stamp "owner-repo-110.json" "99999" "/nonexistent/path/110" "110" "owner/repo"
 
 env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS -u GITHUB_ACTIONS \
 	-u OPENCODE_RUN_ID -u OPENCODE_PID -u CLAUDECODE -u CLAUDE_CODE \
@@ -337,14 +356,14 @@ env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS -u GITHUB_ACTIONS \
 		_isc_cmd_scan_stale >/dev/null 2>/dev/null || true
 	"
 
-if [[ -f "${STAMP_DIR}/owner-repo-109.json" ]]; then
+if [[ -f "${STAMP_DIR}/owner-repo-110.json" ]]; then
 	pass "AIDEVOPS_HEADLESS=1 + OPENCODE_SESSION_ID → stamp preserved (headless wins)"
 else
 	fail "AIDEVOPS_HEADLESS=1 + OPENCODE_SESSION_ID → stamp preserved (headless wins)" \
 		"stamp deleted — headless marker must take precedence over AI-agent marker"
 fi
 # Cleanup
-rm -f "${STAMP_DIR}/owner-repo-109.json"
+rm -f "${STAMP_DIR}/owner-repo-110.json"
 
 # =============================================================================
 # Summary
