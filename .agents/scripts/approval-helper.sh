@@ -240,13 +240,25 @@ _fetch_target_title() {
 	local target_type="$1"
 	local target_number="$2"
 	local slug="$3"
+	local title=""
+	local rc=0
 
 	if [[ "$target_type" == "issue" ]]; then
-		gh issue view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || printf '%s' "(could not fetch title)"
+		title=$(gh issue view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || rc=$?
+		if [[ $rc -ne 0 ]] && command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+			_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for issue title" >&2
+			title=$(_rest_issue_view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || title=""
+		fi
+		[[ -n "$title" ]] && printf '%s' "$title" || printf '%s' "(could not fetch title)"
 		return 0
 	fi
 
-	gh pr view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null || printf '%s' "(could not fetch title)"
+	title=$(gh pr view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 ]] && command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for PR title" >&2
+		title=$(_rest_pr_view "$target_number" --repo "$slug" --json title --jq '.title' 2>/dev/null) || title=""
+	fi
+	[[ -n "$title" ]] && printf '%s' "$title" || printf '%s' "(could not fetch title)"
 	return 0
 }
 
@@ -333,6 +345,116 @@ EOF
 	return 0
 }
 
+_approval_lock_issue() {
+	local target_number="$1"
+	local slug="$2"
+	local rc=0
+
+	gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || rc=$?
+	if [[ $rc -ne 0 ]] && command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for issue lock" >&2
+		gh api -X PUT "/repos/${slug}/issues/${target_number}/lock" -f lock_reason=resolved >/dev/null 2>&1 || rc=$?
+	fi
+	return "$rc"
+}
+
+_approval_fetch_issue_json() {
+	local target_number="$1"
+	local slug="$2"
+
+	gh api "/repos/${slug}/issues/${target_number}" 2>/dev/null
+	return $?
+}
+
+_approval_verify_issue_state() {
+	local target_number="$1"
+	local slug="$2"
+	local gh_user="$3"
+	local issue_json=""
+
+	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+		_print_error "Approval state verification failed: could not read issue #$target_number via REST"
+		return 1
+	}
+
+	if ! printf '%s' "$issue_json" | jq -e '(.labels // []) | any(.name == "needs-maintainer-review") | not' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: needs-maintainer-review is still present on #$target_number"
+		return 1
+	fi
+	if ! printf '%s' "$issue_json" | jq -e '(.labels // []) | any(.name == "auto-dispatch")' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: auto-dispatch is missing on #$target_number"
+		return 1
+	fi
+	if ! printf '%s' "$issue_json" | jq -e --arg user "$gh_user" '(.assignees // []) | any(.login == $user)' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: $gh_user is not assigned to #$target_number"
+		return 1
+	fi
+	if ! printf '%s' "$issue_json" | jq -e '.locked == true' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: issue #$target_number is not locked"
+		return 1
+	fi
+
+	return 0
+}
+
+_approval_apply_issue_lifecycle_updates() {
+	local target_number="$1"
+	local slug="$2"
+	local gh_user=""
+	local edit_err=""
+	local lock_err=""
+
+	gh_user=$(gh api user --jq '.login' 2>/dev/null || printf '')
+	if [[ -z "$gh_user" || "$gh_user" == "null" ]]; then
+		_print_error "Could not detect GitHub username — approval state was not changed"
+		return 1
+	fi
+
+	edit_err=$(gh_issue_edit_safe "$target_number" --repo "$slug" \
+		--remove-label "needs-maintainer-review" \
+		--add-label "auto-dispatch" \
+		--add-assignee "$gh_user" 2>&1 >/dev/null) || {
+		_print_error "Failed to update approval labels/assignee on issue #$target_number"
+		[[ -n "$edit_err" ]] && _print_error "$edit_err"
+		return 1
+	}
+	_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
+	_print_info "Assigned to $gh_user"
+
+	lock_err=$(_approval_lock_issue "$target_number" "$slug" 2>&1 >/dev/null) || {
+		_print_error "Failed to lock issue #$target_number"
+		[[ -n "$lock_err" ]] && _print_error "$lock_err"
+		return 1
+	}
+	_print_info "Issue #$target_number locked (scope finalized, unlocks after worker completion)"
+
+	# t2057: idempotent release of status:in-review. Signing is the handoff to
+	# automation, so the interactive hold must lift. Best-effort: verification
+	# below checks the approval-critical state, not local stamp cleanup.
+	local _ah_labels_json
+	_ah_labels_json=$(gh_issue_view "$target_number" --repo "$slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
+	if [[ "$_ah_labels_json" == *"status:in-review"* ]]; then
+		local _ah_helper=""
+		if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
+			_ah_helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
+		else
+			local _ah_script_dir
+			_ah_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || _ah_script_dir=""
+			if [[ -n "$_ah_script_dir" && -x "${_ah_script_dir}/interactive-session-helper.sh" ]]; then
+				_ah_helper="${_ah_script_dir}/interactive-session-helper.sh"
+			fi
+		fi
+		if [[ -n "$_ah_helper" ]]; then
+			"$_ah_helper" release "$target_number" "$slug" >/dev/null 2>&1 || true
+			_print_info "Released status:in-review (interactive review transitioned to available)"
+		fi
+	fi
+
+	_approval_verify_issue_state "$target_number" "$slug" "$gh_user"
+	return $?
+}
+
 _post_issue_approval_updates() {
 	local target_type="$1"
 	local target_number="$2"
@@ -340,66 +462,8 @@ _post_issue_approval_updates() {
 
 	# Label updates and assignee are issue-specific (PRs don't use these labels).
 	if [[ "$target_type" == "issue" ]]; then
-		gh issue edit "$target_number" --repo "$slug" \
-			--remove-label "needs-maintainer-review" \
-			--add-label "auto-dispatch" >/dev/null 2>&1 || true
-		_print_info "Labels updated: removed needs-maintainer-review, added auto-dispatch"
-
-		# t1932: Auto-assign the approving maintainer so the CI maintainer gate
-		# passes without a separate manual command. The crypto approval is already
-		# the strongest signal of maintainer intent — requiring a second command
-		# to set assignee adds friction with zero additional security value.
-		local gh_user
-		gh_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
-		if [[ -n "$gh_user" ]]; then
-			gh issue edit "$target_number" --repo "$slug" \
-				--add-assignee "$gh_user" >/dev/null 2>&1 || true
-			_print_info "Assigned to $gh_user"
-		else
-			_print_warn "Could not detect GitHub username — set assignee manually"
-		fi
-
-		# t1931: Lock the issue immediately at approval time to close the
-		# prompt-injection window between crypto-approval and worker dispatch.
-		# Previously, the lock only happened at dispatch time (pulse-wrapper.sh
-		# lock_issue_for_worker), leaving a gap where non-collaborators could
-		# add comments that influence the worker. The pulse's dispatch-time lock
-		# becomes a reinforcing no-op (gh issue lock on an already-locked issue
-		# is idempotent). Unlock still happens after worker completion.
-		gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || true
-		_print_info "Issue #$target_number locked (scope finalized, unlocks after worker completion)"
-
-		# t2057: idempotent release of status:in-review. If the maintainer was
-		# interactively reviewing this contributor issue before signing the
-		# cryptographic approval, the `interactive-session-helper.sh claim`
-		# will have applied `status:in-review`. Clear it here so the pulse
-		# dispatch-dedup guard no longer blocks — signing is the handoff to
-		# automation, so the interactive hold must lift. Idempotent: no-op
-		# when the label is not present. Delete the stamp too so the local
-		# state matches the remote.
-		local _ah_labels_json
-		_ah_labels_json=$(gh issue view "$target_number" --repo "$slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null || echo "")
-		if [[ "$_ah_labels_json" == *"status:in-review"* ]]; then
-			# Use set_issue_status from shared-constants.sh for the atomic
-			# status transition. Located via deployed helper first, then
-			# in-repo source.
-			local _ah_helper=""
-			if [[ -x "${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh" ]]; then
-				_ah_helper="${HOME}/.aidevops/agents/scripts/interactive-session-helper.sh"
-			else
-				# Resolve sibling path relative to this file
-				local _ah_script_dir
-				_ah_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd) || _ah_script_dir=""
-				if [[ -n "$_ah_script_dir" && -x "${_ah_script_dir}/interactive-session-helper.sh" ]]; then
-					_ah_helper="${_ah_script_dir}/interactive-session-helper.sh"
-				fi
-			fi
-			if [[ -n "$_ah_helper" ]]; then
-				"$_ah_helper" release "$target_number" "$slug" >/dev/null 2>&1 || true
-				_print_info "Released status:in-review (interactive review transitioned to available)"
-			fi
-		fi
+		_approval_apply_issue_lifecycle_updates "$target_number" "$slug"
+		return $?
 	else
 		# GH#17903: Lock PRs at approval time to close the same prompt-injection
 		# window that exists for issues. Without locking, non-collaborators can
