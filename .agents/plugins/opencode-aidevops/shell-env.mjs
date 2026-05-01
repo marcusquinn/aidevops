@@ -23,6 +23,30 @@ function readIfExists(filepath) {
 }
 
 /**
+ * Extract the current OpenCode session ID from hook input variants.
+ * @param {object} input
+ * @returns {string}
+ */
+function getSessionId(input) {
+  return input?.session?.id || input?.sessionID || input?.session_id || input?.id || "";
+}
+
+/**
+ * Extract the current model ID from hook input variants.
+ * @param {object} input
+ * @returns {string}
+ */
+function getModelId(input) {
+  const provider = input?.model?.providerID || "";
+  const model = input?.model?.modelID || input?.modelID || input?.model || "";
+
+  if (provider && model && typeof model === "string" && !model.includes("/")) {
+    return `${provider}/${model}`;
+  }
+  return typeof model === "string" ? model : "";
+}
+
+/**
  * Create the shell environment hook.
  * @param {object} deps - { agentsDir, scriptsDir, workspaceDir }
  * @returns {Function} Shell env hook function
@@ -32,10 +56,10 @@ export function createShellEnvHook(deps) {
 
   /**
    * Inject aidevops environment variables into shell sessions.
-   * @param {object} _input - { cwd }
+   * @param {object} input - { cwd, session/sessionID, model }
    * @param {object} output - { env } (mutable)
    */
-  return async function shellEnvHook(_input, output) {
+  return async function shellEnvHook(input, output) {
     // Ensure aidevops scripts are on PATH
     if (existsSync(scriptsDir)) {
       const currentPath = output.env.PATH || process.env.PATH || "";
@@ -52,6 +76,20 @@ export function createShellEnvHook(deps) {
     const version = readIfExists(join(agentsDir, "..", "version"));
     if (version) {
       output.env.AIDEVOPS_VERSION = version;
+    }
+
+    // Signature helpers need the current OpenCode session, not a session guessed
+    // from the long-lived app process start time (GH#22003). OpenCode hook input
+    // has changed shape across releases, so accept the known variants and keep
+    // this best-effort: absence should not block shell startup.
+    const sessionId = getSessionId(input);
+    if (sessionId && !output.env.OPENCODE_SESSION_ID) {
+      output.env.OPENCODE_SESSION_ID = sessionId;
+    }
+
+    const modelId = getModelId(input);
+    if (modelId && !output.env.AIDEVOPS_SIG_MODEL) {
+      output.env.AIDEVOPS_SIG_MODEL = modelId;
     }
 
     // OTEL env passthrough (t2177) — propagate OpenTelemetry config so

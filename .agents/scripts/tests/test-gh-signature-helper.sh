@@ -366,7 +366,7 @@ VALUES ('msg_c1','ses_child_test',${child_created_ms_16},${child_created_ms_16},
 "
 
 	# Test 16a: record-child without --tokens (auto-detect from DB)
-	HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
+	XDG_DATA_HOME="${tmp_home_16}/.local/share" HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
 	ledger_file="${tmp_home_16}/.aidevops/.agent-workspace/tmp/ses_parent_test.children.tsv"
 	if [[ -r "$ledger_file" ]]; then
 		ledger_content=$(cat "$ledger_file")
@@ -378,17 +378,17 @@ VALUES ('msg_c1','ses_child_test',${child_created_ms_16},${child_created_ms_16},
 	fi
 
 	# Test 16b: idempotent — recording same child again is a no-op
-	HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
+	XDG_DATA_HOME="${tmp_home_16}/.local/share" HOME="$tmp_home_16" "$HELPER" record-child --child ses_child_test --parent ses_parent_test
 	line_count=$(wc -l <"$ledger_file" | tr -d ' ')
 	assert_eq "idempotent record-child" "1" "$line_count"
 
 	# Test 16c: generate includes child tokens (parent 500 + child 200 = 700)
-	result=$(HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
+	result=$(OPENCODE_SESSION_ID="ses_parent_test" XDG_DATA_HOME="${tmp_home_16}/.local/share" HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
 	assert_contains "aggregated tokens (parent + child)" "700 tokens" "$result"
 
 	# Test 16d: record-child with explicit --tokens (non-OpenCode runtime path)
-	HOME="$tmp_home_16" "$HELPER" record-child --child ses_other_child --parent ses_parent_test --tokens 300
-	result=$(HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
+	XDG_DATA_HOME="${tmp_home_16}/.local/share" HOME="$tmp_home_16" "$HELPER" record-child --child ses_other_child --parent ses_parent_test --tokens 300
+	result=$(OPENCODE_SESSION_ID="ses_parent_test" XDG_DATA_HOME="${tmp_home_16}/.local/share" HOME="$tmp_home_16" "$HELPER" generate --cli "OpenCode" --model "m")
 	assert_contains "aggregated with explicit child (500+200+300)" "1,000 tokens" "$result"
 else
 	echo "  SKIP: sqlite3 not available"
@@ -429,13 +429,56 @@ INSERT INTO message (id,session_id,time_created,time_updated,data)
 VALUES ('msg_s1','ses_solo',${session_created_ms_18},${session_created_ms_18},
   '{\"tokens\":{\"input\":800,\"output\":200,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
 "
-	result=$(HOME="$tmp_home_18" "$HELPER" generate --cli "OpenCode" --model "m")
+	result=$(XDG_DATA_HOME="${tmp_home_18}/.local/share" HOME="$tmp_home_18" "$HELPER" generate --cli "OpenCode" --model "m")
 	assert_contains "solo session shows own tokens only" "1,000 tokens" "$result"
 else
 	echo "  SKIP: sqlite3 not available"
 fi
 
 rm -rf "$tmp_home_18"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 19: OpenCode session selection prefers current session over PID-start
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 19: OpenCode session selection avoids stale PID-start match"
+tmp_home_19=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper19)
+mkdir -p "${tmp_home_19}/.local/share/opencode"
+db_path_19="${tmp_home_19}/.local/share/opencode/opencode.db"
+
+now_epoch_19=$(date +%s)
+recent_session_ms_19=$(((now_epoch_19 - 60) * 1000))
+stale_pid_session_ms_19=$(((now_epoch_19 - 3600) * 1000))
+cwd_sql_19=$(pwd)
+cwd_sql_19=${cwd_sql_19//\'/\'\'}
+
+if command -v sqlite3 &>/dev/null; then
+	sqlite3 "$db_path_19" "
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+INSERT INTO session (id,title,directory,time_created) VALUES
+  ('ses_stale_pid','old opus session near app launch','${cwd_sql_19}',${stale_pid_session_ms_19}),
+  ('ses_current','current gpt session','${cwd_sql_19}',${recent_session_ms_19});
+INSERT INTO message (id,session_id,time_created,time_updated,data) VALUES
+  ('msg_stale','ses_stale_pid',${stale_pid_session_ms_19},${stale_pid_session_ms_19},
+   '{\"model\":{\"providerID\":\"anthropic\",\"modelID\":\"claude-opus-4-7\"},\"tokens\":{\"input\":10,\"output\":1,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}'),
+  ('msg_current','ses_current',${recent_session_ms_19},${recent_session_ms_19},
+   '{\"model\":{\"providerID\":\"openai\",\"modelID\":\"gpt-5.5\"},\"tokens\":{\"input\":20,\"output\":2,\"cache\":{\"read\":0,\"write\":0}},\"role\":\"assistant\"}');
+"
+
+	result=$(env -u OPENCODE_SESSION_ID -u AIDEVOPS_SIG_SESSION_ID OPENCODE=1 OPENCODE_PID=$$ AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "recent session model wins over PID-start match" "with gpt-5.5" "$result"
+	assert_contains "recent session tokens used" "22 tokens on this" "$result"
+	assert_not_contains "stale PID session model ignored" "claude-opus-4-7" "$result"
+
+	result=$(OPENCODE=1 OPENCODE_SESSION_ID="ses_current" AIDEVOPS_SIG_MODEL="" XDG_DATA_HOME="${tmp_home_19}/.local/share" HOME="$tmp_home_19" "$HELPER" generate --cli "OpenCode")
+	assert_contains "explicit OPENCODE_SESSION_ID model used" "with gpt-5.5" "$result"
+	assert_contains "explicit OPENCODE_SESSION_ID tokens used" "22 tokens on this" "$result"
+else
+	echo "  SKIP: sqlite3 not available"
+fi
+
+rm -rf "$tmp_home_19"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary

@@ -151,13 +151,50 @@ _pid_start_epoch() {
 	return 0
 }
 
+_sql_quote() {
+	local value="$1"
+	value=${value//\'/\'\'}
+	printf "'%s'" "$value"
+	return 0
+}
+
+_find_explicit_session_id() {
+	local db_path="$1"
+	local explicit_session_id="${AIDEVOPS_SIG_SESSION_ID:-${OPENCODE_SESSION_ID:-}}"
+
+	if [[ -z "$explicit_session_id" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local quoted_id
+	quoted_id=$(_sql_quote "$explicit_session_id")
+	sqlite3 "$db_path" "
+		SELECT id FROM session
+		WHERE id=${quoted_id}
+		LIMIT 1
+	" 2>/dev/null || echo ""
+	return 0
+}
+
+_allow_pid_session_match() {
+	if [[ "${AIDEVOPS_SIG_ALLOW_PID_SESSION_MATCH:-}" == "1" ]]; then
+		return 0
+	fi
+
+	# OpenCode processes can outlive many chat sessions. PID-start matching is
+	# available only as an explicit compatibility escape hatch, never by default.
+	return 1
+}
+
 # =============================================================================
 # _find_session_id -- shared session identification for all detectors
 # =============================================================================
 # Finds the current OpenCode session ID using multiple heuristics:
-# 1. OPENCODE_PID / PPID chain -> match session by process start time
+# 1. Explicit session env (AIDEVOPS_SIG_SESSION_ID / OPENCODE_SESSION_ID)
 # 2. Most recently created session in this directory
 # 3. Most recently created session globally (within 10 minutes)
+# 4. Optional PID-start fallback for explicit opt-in compatibility contexts
 #
 # Delegates directory resolution to _build_session_dir_list,
 # PID detection to _find_opencode_pid, and epoch conversion to _pid_start_epoch.
@@ -170,21 +207,8 @@ _find_session_id() {
 
 	local session_id=""
 
-	# Strategy 1: match by process start time (most precise)
-	local target_pid
-	target_pid=$(_find_opencode_pid)
-	if [[ -n "$target_pid" ]] && [[ -n "$dir_list" ]]; then
-		local epoch
-		epoch=$(_pid_start_epoch "$target_pid")
-		if [[ -n "$epoch" ]]; then
-			local pid_start_ms=$((epoch * 1000))
-			session_id=$(sqlite3 "$db_path" "
-				SELECT id FROM session
-				WHERE directory IN (${dir_list})
-				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
-			" 2>/dev/null || echo "")
-		fi
-	fi
+	# Strategy 1: explicit current session metadata from the runtime/plugin.
+	session_id=$(_find_explicit_session_id "$db_path")
 
 	# Strategy 2: most recently created session matching directory
 	# (not updated -- avoids picking long-running supervisor sessions)
@@ -207,6 +231,26 @@ _find_session_id() {
 			WHERE time_created > (strftime('%s','now') - 600) * 1000
 			ORDER BY time_created DESC LIMIT 1
 		" 2>/dev/null || echo "")
+	fi
+
+	# Strategy 4: legacy PID-start fallback, demoted because OpenCode's
+	# interactive app process can outlive many sessions (GH#22003).
+	local target_pid
+	target_pid=""
+	if [[ -z "$session_id" ]] && _allow_pid_session_match && [[ -n "$dir_list" ]]; then
+		target_pid=$(_find_opencode_pid)
+	fi
+	if [[ -z "$session_id" ]] && [[ -n "$target_pid" ]] && [[ -n "$dir_list" ]]; then
+		local epoch
+		epoch=$(_pid_start_epoch "$target_pid")
+		if [[ -n "$epoch" ]]; then
+			local pid_start_ms=$((epoch * 1000))
+			session_id=$(sqlite3 "$db_path" "
+				SELECT id FROM session
+				WHERE directory IN (${dir_list})
+				ORDER BY ABS(time_created - ${pid_start_ms}) ASC LIMIT 1
+			" 2>/dev/null || echo "")
+		fi
 	fi
 
 	echo "$session_id"
