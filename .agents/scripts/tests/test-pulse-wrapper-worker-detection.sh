@@ -826,12 +826,12 @@ JSON
 	unset -f gh_issue_list
 	REPOS_JSON="$original_repos_json"
 
-	if [[ "$ordered_numbers" == $'7002\n8001\n7001' ]]; then
-		print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 0
+	if [[ "$ordered_numbers" == $'7002\n7001\n8001' ]]; then
+		print_result "build_ranked_dispatch_candidates_json orders bug before tooling simplification before product simplification" 0
 		return 0
 	fi
 
-	print_result "build_ranked_dispatch_candidates_json orders bug before product simplification before tooling simplification" 1 \
+	print_result "build_ranked_dispatch_candidates_json orders bug before tooling simplification before product simplification" 1 \
 		"Unexpected order: ${ordered_numbers}"
 	return 0
 }
