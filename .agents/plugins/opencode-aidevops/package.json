@@ -8,6 +8,9 @@
     "./server": "./index.mjs"
   },
   "main": "index.mjs",
+  "scripts": {
+    "test": "node --test tests/*.mjs"
+  },
   "keywords": ["opencode", "plugin", "aidevops", "devops", "agents", "compaction"],
   "author": "Marcus Quinn",
   "license": "MIT",
