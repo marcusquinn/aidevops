@@ -152,6 +152,18 @@ source "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"
 # worktree-helper.sh.
 SCRIPT_DIR="$TMP"
 
+# Re-stub launch-orchestrator dependencies after sourcing; the module defines
+# real implementations when loaded, but this test isolates precreation failure.
+_ds_now_ns() { printf '0\n'; return 0; }
+_ds_record() { return 0; }
+_dlw_resolve_tier_and_model() {
+	_DLW_DISPATCH_TIER="standard"
+	_DLW_DISPATCH_MODEL_TIER="sonnet"
+	_DLW_SELECTED_MODEL=""
+	return 0
+}
+_dlw_canary_preflight() { return 0; }
+
 printf '\n%s\n' "=== t2981: worktree pre-creation failure observability ==="
 
 # =============================================================================
@@ -218,13 +230,20 @@ _dlw_precreate_worktree() {
 # Reset stats file
 printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"
 
+launch_rc=0
 _dispatch_launch_worker "77777" "owner/repo" "test-dispatch" "Test Issue" \
-	"testuser" "$FAKE_REPO" "test prompt" "session-key-1" "" "{}"
+	"testuser" "$FAKE_REPO" "test prompt" "session-key-1" "" "{}" || launch_rc=$?
 
 if [[ ! -s "${TMP}/setsid-calls.txt" ]]; then
 	pass "dispatch skipped (no setsid) when pre-creation fails"
 else
 	fail "dispatch skipped (no setsid) when pre-creation fails" "setsid was called"
+fi
+
+if [[ "$launch_rc" -eq 2 ]]; then
+	pass "dispatch skip returns explicit no-op rc=2"
+else
+	fail "dispatch skip returns explicit no-op rc=2" "got rc=$launch_rc"
 fi
 
 # =============================================================================

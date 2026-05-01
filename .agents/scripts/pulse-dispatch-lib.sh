@@ -379,6 +379,8 @@ _dispatch_with_timeout() {
 		fi
 	elif [[ "$dispatch_rc" -eq 0 ]]; then
 		outcome="success"
+	elif [[ "$dispatch_rc" -eq 2 ]]; then
+		outcome="noop"
 	else
 		outcome="skip"
 	fi
@@ -394,6 +396,28 @@ _dispatch_with_timeout() {
 	fi
 
 	return "$dispatch_rc"
+}
+
+#######################################
+# Stop dispatch loops when the GraphQL reserve is already below the circuit
+# breaker threshold. The rate_limit endpoint is free, so this protects the
+# high-fanout loop without spending additional GraphQL points.
+#
+# Returns:
+#   0 — budget is sufficient, unavailable, or checker is not loaded
+#   1 — budget is below threshold; caller should stop the loop
+#######################################
+_dispatch_graphql_budget_allows_next() {
+	if ! declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
+		return 0
+	fi
+
+	local _budget_rc=0
+	is_graphql_budget_sufficient >/dev/null 2>&1 || _budget_rc=$?
+	if [[ "$_budget_rc" -eq 1 ]]; then
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -710,6 +734,10 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
+		if ! _dispatch_graphql_budget_allows_next; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during serial loop" >>"$LOGFILE"
+			break
+		fi
 		local _dispatch_proc_rc=0
 		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dispatch_proc_rc=$?
 		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
@@ -815,6 +843,10 @@ _dispatch_max_loop() {
 		fi
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
+			break
+		fi
+		if ! _dispatch_graphql_budget_allows_next; then
+			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
 			break
 		fi
 

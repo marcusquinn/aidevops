@@ -384,6 +384,82 @@ test_parallel_loop_stop_flag_aborts() {
 	return 0
 }
 
+test_parallel_loop_graphql_budget_aborts() {
+	# Stub: every candidate would succeed if the budget gate allowed launch.
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		return 0
+	}
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	is_graphql_budget_sufficient() {
+		return 1
+	}
+
+	local candidate_file outcomes_file
+	candidate_file=$(mktemp)
+	outcomes_file=$(mktemp)
+	for i in 320 321 322 323; do
+		printf '{"number":%d,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}\n' "$i"
+	done >"$candidate_file"
+	: >"$outcomes_file"
+
+	rm -f "$STOP_FLAG"
+	local result
+	result=$(_dispatch_max_loop "$candidate_file" 10 10 "test_user" 4 "$outcomes_file")
+	rm -f "$candidate_file" "$outcomes_file"
+	unset -f is_graphql_budget_sufficient
+
+	if [[ "$result" == "0 1" ]]; then
+		print_result "parallel_loop: GraphQL budget gate aborts before launch" 0
+	else
+		print_result "parallel_loop: GraphQL budget gate aborts before launch" 1 "got=${result}"
+	fi
+	return 0
+}
+
+test_dispatch_with_timeout_noop_outcome() {
+	local capture_dir old_path rc capture
+	capture_dir=$(mktemp -d)
+	old_path="$PATH"
+	cat >"${capture_dir}/dispatch-timing-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${DISPATCH_TIMING_CAPTURE}"
+exit 0
+EOF
+	chmod +x "${capture_dir}/dispatch-timing-helper.sh"
+	export PATH="${capture_dir}:$PATH"
+	export DISPATCH_TIMING_CAPTURE="${capture_dir}/capture.txt"
+	export DISPATCH_TIMING_ADAPTIVE=0
+	export DISPATCH_PER_CANDIDATE_TIMEOUT=5
+	export DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=1
+	# shellcheck disable=SC2317  # called via _dispatch_with_timeout
+	dispatch_with_dedup() {
+		return 2
+	}
+	# shellcheck disable=SC2317  # called via _dispatch_with_timeout
+	run_stage_with_timeout() {
+		shift 2
+		"$@"
+		return $?
+	}
+
+	rc=0
+	_dispatch_with_timeout 330 "o/r" "Issue #330" "title" "me" "/tmp/repo" "prompt" "issue-330" "" || rc=$?
+	capture=$(cat "$DISPATCH_TIMING_CAPTURE" 2>/dev/null || true)
+	PATH="$old_path"
+	export PATH
+	unset DISPATCH_TIMING_CAPTURE DISPATCH_TIMING_ADAPTIVE DISPATCH_PER_CANDIDATE_TIMEOUT DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR
+	unset -f dispatch_with_dedup run_stage_with_timeout
+	rm -rf "$capture_dir"
+
+	if [[ "$rc" -eq 2 && "$capture" == *"--outcome noop"* ]]; then
+		print_result "dispatch_with_timeout: rc=2 records noop outcome" 0
+	else
+		print_result "dispatch_with_timeout: rc=2 records noop outcome" 1 "rc=${rc} capture=${capture}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Test 5: serial loop preserves existing behavior (regression escape hatch)
 # =============================================================================
@@ -469,6 +545,8 @@ test_aggregate_outcomes_clears_throttle_on_success
 test_parallel_loop_end_to_end
 test_parallel_loop_respects_budget
 test_parallel_loop_stop_flag_aborts
+test_parallel_loop_graphql_budget_aborts
+test_dispatch_with_timeout_noop_outcome
 test_serial_loop_basic
 test_serial_loop_budget_cap
 

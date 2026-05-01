@@ -1113,8 +1113,9 @@ _run_eligibility_gate_or_abort() {
 #   $9 - model_override (optional, default empty = auto round-robin)
 #
 # Exit codes:
-#   0 - worker dispatched successfully, or blocked (not a failure)
+#   0 - worker dispatched successfully
 #   1 - hard error (metadata unavailable, dedup gate blocked)
+#   2 - explicit launch no-op (canary/precreate/orphan guard; retry later)
 #######################################
 dispatch_with_dedup() {
 	local issue_number="$1"
@@ -1230,14 +1231,16 @@ dispatch_with_dedup() {
 
 	# All checks passed — launch the worker.
 	_ds_t0=$(_ds_now_ns)
+	local _launch_rc=0
 	_dispatch_launch_worker \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "$session_key" \
-		"$model_override" "$issue_meta_json"
+		"$model_override" "$issue_meta_json" || _launch_rc=$?
 	_ds_record "$issue_number" "$repo_slug" "worker_launch_total" "$_ds_t0"
 
 	# t3034: record total ceremony time
 	_ds_record "$issue_number" "$repo_slug" "ceremony_total" "$_ds_ceremony_t0"
+	return "$_launch_rc"
 }
 
 #######################################

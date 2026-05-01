@@ -1000,7 +1000,7 @@ _dispatch_launch_worker() {
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \
 		"$dispatch_model_tier" "$selected_model"; then
 		_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
-		return 0
+		return 2
 	fi
 	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
 
@@ -1029,13 +1029,13 @@ _dispatch_launch_worker() {
 		_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 		pulse_stats_increment "worktree_precreation_failed_count" 2>/dev/null || true
 		echo "[dispatch_with_dedup] Skipping #${issue_number} — pre-creation failed; will retry next cycle" >>"$LOGFILE"
-		return 0
+		return 2
 	fi
 	_ds_record "$issue_number" "$repo_slug" "precreate_worktree" "$_ds_t0"
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
 	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch"; then
-		return 0
+		return 2
 	fi
 
 	_ds_t0=$(_ds_now_ns)
