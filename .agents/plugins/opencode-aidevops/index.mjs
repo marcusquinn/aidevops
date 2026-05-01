@@ -148,41 +148,41 @@ export async function AidevopsPlugin({ directory, client }) {
   // Initialise LLM observability
   initObservability();
 
-  // Cursor gRPC proxy — eagerly discover models + register provider in
-  // opencode.json so the model picker is populated. Listener bind is
-  // LAZY (see systemTransformHook below) — defers `Bun.serve` until the
-  // first cursor/* request. Eliminates the multi-instance EADDRINUSE
-  // race that previously fired when N OpenCode sessions started together.
-  // See GH#21948.
+  const prepareOptionalProxy = (label, prepare) => {
+    prepare()
+      .catch((err) => {
+        console.error(`[aidevops] ${label} proxy failed to register: ${err.message}`);
+      });
+  };
+
+  // Cursor gRPC proxy — prepare models/provider in the background so OpenCode
+  // startup never waits on network-bound model discovery or OAuth refresh.
+  // Listener bind remains LAZY (see systemTransformHook below) — deferred until
+  // the first cursor/* request. See GH#21948 and GH#22157.
   const cursorAccounts = getAccounts("cursor");
   if (cursorAccounts.length > 0) {
-    try {
+    prepareOptionalProxy("Cursor gRPC", async () => {
       const cursorProxyResult = await startCursorProxy(client);
       if (cursorProxyResult) {
         console.error(`[aidevops] Cursor gRPC proxy registered on port ${cursorProxyResult.port} with ${cursorProxyResult.models.length} models (listener lazy)`);
       }
-    } catch (err) {
-      console.error(`[aidevops] Cursor gRPC proxy failed to register: ${err.message}`);
-    }
+    });
   }
 
-  // Google auth-translating proxy — same eager/lazy split as Cursor:
-  // eager phase persists the provider entry (URL, models) so the picker
-  // is populated; the `Bun.serve` listener bind defers to the first
-  // google/* request. See GH#21948.
+  // Google auth-translating proxy — same non-blocking preparation / lazy
+  // listener split as Cursor. The picker uses the last persisted provider entry
+  // immediately, then refreshes when the background preparation completes.
   const googleAccounts = getAccounts("google");
   if (googleAccounts.length > 0) {
-    try {
+    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      process.env.GOOGLE_GENERATIVE_AI_API_KEY = "google-pool-proxy";
+    }
+    prepareOptionalProxy("Google", async () => {
       const googleProxyResult = await startGoogleProxy(client);
       if (googleProxyResult) {
-        if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
-          process.env.GOOGLE_GENERATIVE_AI_API_KEY = "google-pool-proxy";
-        }
         console.error(`[aidevops] Google proxy registered on port ${googleProxyResult.port} with ${googleProxyResult.models.length} models (listener lazy)`);
       }
-    } catch (err) {
-      console.error(`[aidevops] Google proxy failed to register: ${err.message}`);
-    }
+    });
   }
 
   // Claude CLI transport proxy — lazy-started on first claudecli/* request
