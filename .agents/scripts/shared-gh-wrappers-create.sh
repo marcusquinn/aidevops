@@ -201,7 +201,8 @@ gh_create_issue() {
 	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
 	_gh_ci_prepare_todo_labels "$@"
 	set -- "${_GH_CI_FILTERED_ARGS[@]+"${_GH_CI_FILTERED_ARGS[@]}"}"
-	local -a _todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]+"${_GH_CI_TODO_LABEL_ARGS[@]}"}")
+	local -a _todo_label_args=()
+	[[ ${#_GH_CI_TODO_LABEL_ARGS[@]} -gt 0 ]] && _todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
 
 	# t2028: auto-assign to the current user when the session is interactive
 	# and the caller did not pass an explicit --assignee. Reaches parity with
@@ -222,11 +223,21 @@ gh_create_issue() {
 			local auto_assignee
 			auto_assignee=$(_gh_wrapper_auto_assignee)
 			if [[ -n "$auto_assignee" ]]; then
-				issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee") # aidevops-allow: raw-gh-wrapper
+				# GH#22071: use explicit length guards instead of ${arr[@]+"${arr[@]}"}
+				# to prevent empty argv elements when arrays are empty (mirrors gh_create_pr fix).
+				local -a _issue_cmd=(gh issue create "$@")
+				[[ ${#_todo_label_args[@]} -gt 0 ]] && _issue_cmd+=("${_todo_label_args[@]}")
+				[[ ${#_origin_label_args[@]} -gt 0 ]] && _issue_cmd+=("${_origin_label_args[@]}")
+				_issue_cmd+=(--assignee "$auto_assignee")
+				issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
 				rc=$?
 				if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 					print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-					issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}" --assignee "$auto_assignee")
+					local -a _rest_cmd=("$@")
+					[[ ${#_todo_label_args[@]} -gt 0 ]] && _rest_cmd+=("${_todo_label_args[@]}")
+					[[ ${#_origin_label_args[@]} -gt 0 ]] && _rest_cmd+=("${_origin_label_args[@]}")
+					_rest_cmd+=(--assignee "$auto_assignee")
+					issue_output=$(_rest_issue_create "${_rest_cmd[@]}")
 					rc=$?
 				fi
 				echo "$issue_output"
@@ -236,11 +247,19 @@ gh_create_issue() {
 		fi
 	fi
 
-	issue_output=$(gh issue create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}") # aidevops-allow: raw-gh-wrapper
+	# GH#22071: use explicit length guards instead of ${arr[@]+"${arr[@]}"}
+	# to prevent empty argv elements when arrays are empty (mirrors gh_create_pr fix).
+	local -a _issue_cmd=(gh issue create "$@")
+	[[ ${#_todo_label_args[@]} -gt 0 ]] && _issue_cmd+=("${_todo_label_args[@]}")
+	[[ ${#_origin_label_args[@]} -gt 0 ]] && _issue_cmd+=("${_origin_label_args[@]}")
+	issue_output=$("${_issue_cmd[@]}") # aidevops-allow: raw-gh-wrapper
 	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for issue create"
-		issue_output=$(_rest_issue_create "$@" "${_todo_label_args[@]+"${_todo_label_args[@]}"}" "${_origin_label_args[@]+"${_origin_label_args[@]}"}")
+		local -a _rest_cmd=("$@")
+		[[ ${#_todo_label_args[@]} -gt 0 ]] && _rest_cmd+=("${_todo_label_args[@]}")
+		[[ ${#_origin_label_args[@]} -gt 0 ]] && _rest_cmd+=("${_origin_label_args[@]}")
+		issue_output=$(_rest_issue_create "${_rest_cmd[@]}")
 		rc=$?
 	fi
 	echo "$issue_output"

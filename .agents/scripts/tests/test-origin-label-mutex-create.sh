@@ -346,6 +346,23 @@ else
 		"got $n labels in: $(tail -1 "$GH_RECORD_FILE")"
 fi
 
+# B'5: caller origin must not leave an empty argv element before gh issue create.
+# Regression for GH#22071: the guarded array expansion emitted "" when
+# _origin_label_args was empty, so gh failed with: unknown argument "".
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_issue_calls.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:worker" \
+	gh_create_issue --repo o/r --title "t1: x" --body "Issue body" \
+	--label "origin:interactive" >/dev/null 2>&1
+if grep -qx '<>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B'5: gh_create_issue caller origin passes no empty argv element" 1 \
+		"empty argv element reached gh: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B'5: gh_create_issue caller origin passes no empty argv element" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh
 # ---------------------------------------------------------------------------
