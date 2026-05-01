@@ -248,7 +248,9 @@ _resolve_pr_mergeable_status() {
 	local repo_slug="$2"
 	local pr_mergeable="$3"
 
-	if [[ "$pr_mergeable" == "UNKNOWN" ]]; then
+	if [[ "$pr_mergeable" == "UNKNOWN" || -z "$pr_mergeable" ]]; then
+		local _was_label="$pr_mergeable"
+		[[ -z "$pr_mergeable" ]] && _was_label="empty"
 		# Separate local declaration from assignment to preserve exit code (SC2181).
 		local _retry_output _retry_exit
 		_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
@@ -258,7 +260,7 @@ _resolve_pr_mergeable_status() {
 		if [[ "$pr_mergeable" == "MERGEABLE" ]]; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
 		else
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable} (was UNKNOWN, still not MERGEABLE after retry)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — mergeable=${pr_mergeable} (was ${_was_label}, still not MERGEABLE after retry)" >>"$LOGFILE"
 			return 1
 		fi
 	fi

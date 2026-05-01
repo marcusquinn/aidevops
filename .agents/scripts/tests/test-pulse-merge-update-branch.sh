@@ -6,7 +6,9 @@
 #
 #   1. `_attempt_pr_update_branch` — invokes `gh pr update-branch`, returns 0
 #      on success and 1 on failure, logs to LOGFILE.
-#   2. CONFLICTING-close skip for PRs whose linked issue carries
+#   2. `_resolve_pr_mergeable_status` — retries UNKNOWN and empty mergeable
+#      states, logging the original state clearly when still not mergeable.
+#   3. CONFLICTING-close skip for PRs whose linked issue carries
 #      `needs-maintainer-review` — verified indirectly via a smoke test that
 #      drives `_process_single_ready_pr` through a mocked `gh` binary and
 #      asserts the close path is NOT taken.
@@ -75,6 +77,8 @@ teardown_test_env() {
 # Install a gh stub that:
 #   - logs every invocation to LAST_GH_ARGS_FILE (one line per call, tab-joined)
 #   - `gh pr update-branch <N> --repo <slug>` → exit code controlled by GH_UB_EXIT
+#   - `gh pr view <N> --repo <slug> --json mergeable --jq ...` → emits
+#     GH_VIEW_MERGEABLE (default MERGEABLE)
 #   - every other gh call → exit 0, no output
 install_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
@@ -83,22 +87,27 @@ printf '%s\n' "$*" >>"${LAST_GH_ARGS_FILE}"
 if [[ "${1:-}" == "pr" && "${2:-}" == "update-branch" ]]; then
 	exit "${GH_UB_EXIT:-0}"
 fi
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	printf '%s\n' "${GH_VIEW_MERGEABLE:-MERGEABLE}"
+	exit "${GH_VIEW_EXIT:-0}"
+fi
 exit 0
 EOF
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
 }
 
-# Extract `_attempt_pr_update_branch` from pulse-merge-process.sh (post-GH#21595)
+# Extract helpers from pulse-merge-process.sh (post-GH#21595)
 # and eval it into the test shell. Matches the define_helper_under_test
 # pattern used by test-pulse-merge-rebase-nudge.sh.
 define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
+		/^_resolve_pr_mergeable_status\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _attempt_pr_update_branch from %s\n' "$PROCESS_SCRIPT" >&2
+	if [[ -z "$helper_src" || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
+		printf 'ERROR: could not extract pulse-merge-process helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -172,6 +181,63 @@ test_update_branch_tags_log_with_task_id() {
 	fi
 
 	print_result "log entries carry (t2116) audit tag" 0
+	return 0
+}
+
+test_resolve_mergeable_retries_unknown() {
+	install_gh_stub
+	: >"$LOGFILE"
+	local rc=0
+	GH_VIEW_MERGEABLE=MERGEABLE _resolve_pr_mergeable_status "21950" "marcusquinn/aidevops" "UNKNOWN" || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		print_result "UNKNOWN mergeable retry can resolve to MERGEABLE" 1 \
+			"Expected return 0 after retry, got ${rc}"
+		return 0
+	fi
+
+	if ! grep -qE '^pr view 21950 --repo marcusquinn/aidevops --json mergeable --jq' "$LAST_GH_ARGS_FILE"; then
+		print_result "UNKNOWN mergeable retry can resolve to MERGEABLE" 1 \
+			"Expected gh pr view retry in args. Got: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	if ! grep -q "mergeable resolved to MERGEABLE after retry" "$LOGFILE"; then
+		print_result "UNKNOWN mergeable retry can resolve to MERGEABLE" 1 \
+			"Expected retry success log. Contents: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "UNKNOWN mergeable retry can resolve to MERGEABLE" 0
+	return 0
+}
+
+test_resolve_mergeable_retries_empty_and_logs_empty() {
+	install_gh_stub
+	: >"$LOGFILE"
+	: >"$LAST_GH_ARGS_FILE"
+	local rc=0
+	GH_VIEW_MERGEABLE=UNKNOWN _resolve_pr_mergeable_status "21950" "marcusquinn/aidevops" "" || rc=$?
+
+	if [[ $rc -ne 1 ]]; then
+		print_result "empty mergeable retry logs original empty state" 1 \
+			"Expected return 1 when retry remains UNKNOWN, got ${rc}"
+		return 0
+	fi
+
+	if ! grep -qE '^pr view 21950 --repo marcusquinn/aidevops --json mergeable --jq' "$LAST_GH_ARGS_FILE"; then
+		print_result "empty mergeable retry logs original empty state" 1 \
+			"Expected gh pr view retry in args. Got: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	if ! grep -q "was empty, still not MERGEABLE after retry" "$LOGFILE"; then
+		print_result "empty mergeable retry logs original empty state" 1 \
+			"Expected empty-state retry log. Contents: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "empty mergeable retry logs original empty state" 0
 	return 0
 }
 
@@ -271,6 +337,8 @@ main() {
 	test_update_branch_success_returns_zero
 	test_update_branch_failure_returns_one
 	test_update_branch_tags_log_with_task_id
+	test_resolve_mergeable_retries_unknown
+	test_resolve_mergeable_retries_empty_and_logs_empty
 	test_nmr_guard_exists_before_close
 	test_mergeable_refetch_after_update_branch
 

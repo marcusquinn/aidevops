@@ -487,7 +487,7 @@ _process_single_ready_pr() {
 	local _RS=$'\x1e'
 	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title < <(
 		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")"'
+			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")"'
 	)
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
