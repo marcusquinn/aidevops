@@ -60,7 +60,7 @@ test_appends_escalation_contract() {
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
-	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V6'* ]] &&
+	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V7'* ]] &&
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
@@ -449,6 +449,39 @@ test_cmd_run_finish_orphan_recovery_success_emits_worker_complete() {
 	return 0
 }
 
+test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete() {
+	local work_dir="${TEST_ROOT}/repo-finish-orphan-cleaned"
+	mkdir -p "$work_dir"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	# Stub gh: empty branch skips --head and falls back to issue search; existing PR found.
+	gh() {
+		if [[ "${*}" == *"pr list"* && "${*}" == *"--search 99999"* ]]; then
+			printf '1'
+			return 0
+		fi
+		printf '0'
+		return 0
+	}
+
+	local released_reason=""
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_handle_worker_branch_orphan "issue-99999" "$work_dir"
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$released_reason" == "worker_complete" ]]; then
+		print_result "_handle_worker_branch_orphan treats empty-branch existing PR as complete" 0
+	else
+		print_result "_handle_worker_branch_orphan treats empty-branch existing PR as complete" 1 \
+			"Expected worker_complete (existing PR found by issue search), got '${released_reason}'"
+	fi
+	return 0
+}
+
 # AC#4: on auto-PR failure, _cmd_run_finish emits worker_branch_orphan
 test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	local work_dir="${TEST_ROOT}/repo-finish-orphan-fail"
@@ -515,6 +548,7 @@ main() {
 	# Orphan recovery tests (GH#20819)
 	test_attempt_orphan_recovery_pr_calls_gh_create
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
+	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
 	teardown_test_env
 
