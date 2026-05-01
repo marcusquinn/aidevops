@@ -35,6 +35,11 @@ AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 DRY_RUN=false
 CLEAN=false
 VERBOSE=false
+SOURCE_MD_GLOB="*.md"
+SKILL_MD_NAME="SKILL.md"
+AGENTS_MD_NAME="AGENTS.md"
+README_MD_NAME="README.md"
+MARKDOWN_H1_PREFIX="# "
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -104,6 +109,7 @@ extract_frontmatter_field() {
 	local field="$2"
 	local line=""
 	local in_frontmatter=false
+	EXTRACT_FRONTMATTER_FIELD_RESULT=""
 
 	if [[ ! -f "$file" ]]; then
 		return 1
@@ -129,7 +135,7 @@ extract_frontmatter_field() {
 			line="${line#\"}"
 			line="${line%\'}"
 			line="${line#\'}"
-			printf '%s\n' "$line"
+			EXTRACT_FRONTMATTER_FIELD_RESULT="$line"
 			return 0
 		fi
 	done <"$file"
@@ -140,11 +146,13 @@ extract_frontmatter_field() {
 extract_description() {
 	local file="$1"
 	local desc=""
+	EXTRACT_DESCRIPTION_RESULT=""
 
 	# Try frontmatter first
-	desc=$(extract_frontmatter_field "$file" "description")
+	extract_frontmatter_field "$file" "description"
+	desc="$EXTRACT_FRONTMATTER_FIELD_RESULT"
 	if [[ -n "$desc" ]]; then
-		printf '%s\n' "$desc"
+		EXTRACT_DESCRIPTION_RESULT="$desc"
 		return 0
 	fi
 
@@ -152,39 +160,112 @@ extract_description() {
 	local heading=""
 	local line=""
 	while IFS= read -r line; do
-		if [[ "$line" == "# "* ]]; then
-			heading="${line#\# }"
+		if [[ "$line" == "$MARKDOWN_H1_PREFIX"* ]]; then
+			heading="${line#"$MARKDOWN_H1_PREFIX"}"
 			break
 		fi
 	done <"$file"
 	if [[ -n "$heading" ]]; then
 		# If heading has " - ", take the part after
 		if [[ "$heading" == *" - "* ]]; then
-			printf '%s\n' "${heading#* - }"
+			EXTRACT_DESCRIPTION_RESULT="${heading#* - }"
 		else
-			printf '%s\n' "$heading"
+			EXTRACT_DESCRIPTION_RESULT="$heading"
 		fi
 		return 0
 	fi
 
 	# Fallback to filename
 	local fallback="${file##*/}"
-	printf '%s skill\n' "${fallback%.md}"
+	EXTRACT_DESCRIPTION_RESULT="${fallback%.md} skill"
+	return 0
+}
+
+# Lowercase one ASCII character without spawning tr. Bash 3.2 does not support
+# ${var,,}, and skill generation calls this path thousands of times during
+# setup, so avoiding per-call subprocesses is material on macOS.
+lowercase_ascii_char() {
+	local char="$1"
+	case "$char" in
+	A) LOWERCASE_ASCII_CHAR_RESULT='a' ;;
+	B) LOWERCASE_ASCII_CHAR_RESULT='b' ;;
+	C) LOWERCASE_ASCII_CHAR_RESULT='c' ;;
+	D) LOWERCASE_ASCII_CHAR_RESULT='d' ;;
+	E) LOWERCASE_ASCII_CHAR_RESULT='e' ;;
+	F) LOWERCASE_ASCII_CHAR_RESULT='f' ;;
+	G) LOWERCASE_ASCII_CHAR_RESULT='g' ;;
+	H) LOWERCASE_ASCII_CHAR_RESULT='h' ;;
+	I) LOWERCASE_ASCII_CHAR_RESULT='i' ;;
+	J) LOWERCASE_ASCII_CHAR_RESULT='j' ;;
+	K) LOWERCASE_ASCII_CHAR_RESULT='k' ;;
+	L) LOWERCASE_ASCII_CHAR_RESULT='l' ;;
+	M) LOWERCASE_ASCII_CHAR_RESULT='m' ;;
+	N) LOWERCASE_ASCII_CHAR_RESULT='n' ;;
+	O) LOWERCASE_ASCII_CHAR_RESULT='o' ;;
+	P) LOWERCASE_ASCII_CHAR_RESULT='p' ;;
+	Q) LOWERCASE_ASCII_CHAR_RESULT='q' ;;
+	R) LOWERCASE_ASCII_CHAR_RESULT='r' ;;
+	S) LOWERCASE_ASCII_CHAR_RESULT='s' ;;
+	T) LOWERCASE_ASCII_CHAR_RESULT='t' ;;
+	U) LOWERCASE_ASCII_CHAR_RESULT='u' ;;
+	V) LOWERCASE_ASCII_CHAR_RESULT='v' ;;
+	W) LOWERCASE_ASCII_CHAR_RESULT='w' ;;
+	X) LOWERCASE_ASCII_CHAR_RESULT='x' ;;
+	Y) LOWERCASE_ASCII_CHAR_RESULT='y' ;;
+	Z) LOWERCASE_ASCII_CHAR_RESULT='z' ;;
+	*) LOWERCASE_ASCII_CHAR_RESULT="$char" ;;
+	esac
+	return 0
+}
+
+# Uppercase one ASCII character without spawning tr/cut.
+uppercase_ascii_char() {
+	local char="$1"
+	case "$char" in
+	a) UPPERCASE_ASCII_CHAR_RESULT='A' ;;
+	b) UPPERCASE_ASCII_CHAR_RESULT='B' ;;
+	c) UPPERCASE_ASCII_CHAR_RESULT='C' ;;
+	d) UPPERCASE_ASCII_CHAR_RESULT='D' ;;
+	e) UPPERCASE_ASCII_CHAR_RESULT='E' ;;
+	f) UPPERCASE_ASCII_CHAR_RESULT='F' ;;
+	g) UPPERCASE_ASCII_CHAR_RESULT='G' ;;
+	h) UPPERCASE_ASCII_CHAR_RESULT='H' ;;
+	i) UPPERCASE_ASCII_CHAR_RESULT='I' ;;
+	j) UPPERCASE_ASCII_CHAR_RESULT='J' ;;
+	k) UPPERCASE_ASCII_CHAR_RESULT='K' ;;
+	l) UPPERCASE_ASCII_CHAR_RESULT='L' ;;
+	m) UPPERCASE_ASCII_CHAR_RESULT='M' ;;
+	n) UPPERCASE_ASCII_CHAR_RESULT='N' ;;
+	o) UPPERCASE_ASCII_CHAR_RESULT='O' ;;
+	p) UPPERCASE_ASCII_CHAR_RESULT='P' ;;
+	q) UPPERCASE_ASCII_CHAR_RESULT='Q' ;;
+	r) UPPERCASE_ASCII_CHAR_RESULT='R' ;;
+	s) UPPERCASE_ASCII_CHAR_RESULT='S' ;;
+	t) UPPERCASE_ASCII_CHAR_RESULT='T' ;;
+	u) UPPERCASE_ASCII_CHAR_RESULT='U' ;;
+	v) UPPERCASE_ASCII_CHAR_RESULT='V' ;;
+	w) UPPERCASE_ASCII_CHAR_RESULT='W' ;;
+	x) UPPERCASE_ASCII_CHAR_RESULT='X' ;;
+	y) UPPERCASE_ASCII_CHAR_RESULT='Y' ;;
+	z) UPPERCASE_ASCII_CHAR_RESULT='Z' ;;
+	*) UPPERCASE_ASCII_CHAR_RESULT="$char" ;;
+	esac
 	return 0
 }
 
 # Convert name to valid skill name (lowercase, hyphens only)
 to_skill_name() {
 	local name="$1"
-	local lower=""
 	local out=""
 	local char=""
 	local last_dash=false
 	local i
-	lower=$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')
+	LOWERCASE_ASCII_CHAR_RESULT=""
+	TO_SKILL_NAME_RESULT=""
 
-	for ((i = 0; i < ${#lower}; i++)); do
-		char="${lower:i:1}"
+	for ((i = 0; i < ${#name}; i++)); do
+		lowercase_ascii_char "${name:i:1}"
+		char="$LOWERCASE_ASCII_CHAR_RESULT"
 		case "$char" in
 		[a-z0-9])
 			out+="$char"
@@ -200,18 +281,24 @@ to_skill_name() {
 	done
 	out="${out#-}"
 	out="${out%-}"
-	printf '%s\n' "$out"
+	TO_SKILL_NAME_RESULT="$out"
 	return 0
 }
 
 # Capitalize first letter (portable)
 capitalize() {
 	local str="$1"
-	local first
-	local rest
-	first=$(echo "$str" | cut -c1 | tr '[:lower:]' '[:upper:]')
-	rest=$(echo "$str" | cut -c2-)
-	echo "${first}${rest}"
+	local first=""
+	local rest=""
+	CAPITALIZE_RESULT=""
+	if [[ -z "$str" ]]; then
+		return 0
+	fi
+	UPPERCASE_ASCII_CHAR_RESULT=""
+	uppercase_ascii_char "${str:0:1}"
+	first="$UPPERCASE_ASCII_CHAR_RESULT"
+	rest="${str:1}"
+	CAPITALIZE_RESULT="${first}${rest}"
 	return 0
 }
 
@@ -222,22 +309,25 @@ generate_folder_skill() {
 	local folder_name
 	folder_name="${folder_path##*/}"
 	local skill_name
-	skill_name=$(to_skill_name "$folder_name")
+	to_skill_name "$folder_name"
+	skill_name="$TO_SKILL_NAME_RESULT"
 
 	# Extract description from parent .md
 	local description
-	description=$(extract_description "$parent_md")
+	extract_description "$parent_md"
+	description="$EXTRACT_DESCRIPTION_RESULT"
 
 	# Generate pure pointer SKILL.md — no inlined subskill lists
 	local title
-	title=$(capitalize "$folder_name")
+	capitalize "$folder_name"
+	title="$CAPITALIZE_RESULT"
 
 	echo "---"
 	echo "name: ${skill_name}"
 	echo "description: ${description}"
 	echo "---"
 	echo ""
-	echo "# ${title}"
+	printf '%s%s\n' "$MARKDOWN_H1_PREFIX" "$title"
 	echo ""
 	echo "See [${folder_name}.md](../${folder_name}.md) for full instructions."
 	return 0
@@ -250,24 +340,27 @@ generate_leaf_skill() {
 	filename="${md_file##*/}"
 	filename="${filename%.md}"
 	local skill_name
-	skill_name=$(to_skill_name "$filename")
+	to_skill_name "$filename"
+	skill_name="$TO_SKILL_NAME_RESULT"
 
 	# Extract description
 	local description
-	description=$(extract_description "$md_file")
+	extract_description "$md_file"
+	description="$EXTRACT_DESCRIPTION_RESULT"
 
 	# Get relative path to the .md file from the new folder
 	local relative_path="../${filename}.md"
 
 	local title
-	title=$(capitalize "$filename")
+	capitalize "$filename"
+	title="$CAPITALIZE_RESULT"
 
 	echo "---"
 	echo "name: ${skill_name}"
 	echo "description: ${description}"
 	echo "---"
 	echo ""
-	echo "# ${title}"
+	printf '%s%s\n' "$MARKDOWN_H1_PREFIX" "$title"
 	echo ""
 	echo "See [${filename}.md](${relative_path}) for full instructions."
 	return 0
@@ -305,29 +398,56 @@ fi
 
 CACHE_HASH_FILE="${AGENTS_DIR}/.skills-source-hash"
 
+has_any_skill_file() {
+	local skill_file=""
+	while IFS= read -r skill_file; do
+		[[ -n "$skill_file" ]] && return 0
+	done < <(find "$AGENTS_DIR" -name "$SKILL_MD_NAME" -type f -print -quit 2>/dev/null)
+	return 1
+}
+
+has_source_newer_than_cache() {
+	local newer_file=""
+	while IFS= read -r newer_file; do
+		[[ -n "$newer_file" ]] && return 0
+	done < <(find "$AGENTS_DIR" -name "$SOURCE_MD_GLOB" -not -name "$SKILL_MD_NAME" -not -name "$AGENTS_MD_NAME" \
+		-not -name "$README_MD_NAME" -type f -newer "$CACHE_HASH_FILE" -print -quit 2>/dev/null)
+	return 1
+}
+
 compute_source_hash() {
 	# Hash the listing of all source .md files with their sizes and mtimes.
 	# This is fast (~10ms for 1600 files) vs regenerating (~56s).
 	# Uses _stat_translate_fmt + xargs for ARG_MAX safety.
 	_stat_translate_fmt '%n %s %Y' || return 1
-	find "$AGENTS_DIR" -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" \
-		-not -name "README.md" -type f -print0 2>/dev/null |
+	find "$AGENTS_DIR" -name "$SOURCE_MD_GLOB" -not -name "$SKILL_MD_NAME" -not -name "$AGENTS_MD_NAME" \
+		-not -name "$README_MD_NAME" -type f -print0 2>/dev/null |
 		xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT" 2>/dev/null |
 		LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
 	return 0
 }
 
 if [[ "$DRY_RUN" == false && "$CLEAN" == false ]]; then
-	current_hash=$(compute_source_hash)
 	if [[ -f "$CACHE_HASH_FILE" ]]; then
+		# Warm setup runs should skip in milliseconds. The full source hash is a
+		# correctness fallback for changed trees, but computing it on every run can
+		# dominate the 90s postflight budget on macOS deployed-agent trees.
+		if has_any_skill_file && ! has_source_newer_than_cache; then
+			log_info "Agent Skills SKILL.md files up to date (source unchanged) — skipping generation"
+			exit 0
+		fi
+
+		current_hash=$(compute_source_hash)
 		stored_hash=$(cat "$CACHE_HASH_FILE" 2>/dev/null || echo "")
 		if [[ "$current_hash" == "$stored_hash" ]]; then
 			# Verify at least one SKILL.md exists (handles first run after cache file created manually)
-			if find "$AGENTS_DIR" -name "SKILL.md" -type f -print -quit 2>/dev/null | grep -q .; then
+			if has_any_skill_file; then
 				log_info "Agent Skills SKILL.md files up to date (source unchanged) — skipping generation"
 				exit 0
 			fi
 		fi
+	else
+		current_hash=$(compute_source_hash)
 	fi
 fi
 
@@ -398,20 +518,22 @@ while IFS= read -r folder; do
 		[[ -f "$_md_chk" ]] && { _has_md=true; break; }
 	done
 	if [[ "$_has_md" == true ]]; then
-		local_name=$(to_skill_name "$folder_name")
+		to_skill_name "$folder_name"
+		local_name="$TO_SKILL_NAME_RESULT"
 
 		if [[ "$DRY_RUN" == true ]]; then
 			log_file_success "Would generate: $skill_file (folder index)"
 		else
 			# Pure pointer — no inlined subskill lists
-			title=$(capitalize "$folder_name")
+			capitalize "$folder_name"
+			title="$CAPITALIZE_RESULT"
 			{
 				echo "---"
 				echo "name: ${local_name}"
 				echo "description: ${title} tools and utilities"
 				echo "---"
 				echo ""
-				echo "# ${title}"
+				printf '%s%s\n' "$MARKDOWN_H1_PREFIX" "$title"
 				echo ""
 				echo "Browse the .md files in this directory for full instructions."
 			} >"$skill_file"
@@ -466,7 +588,7 @@ while IFS= read -r md_file; do
 		log_file_success "Generated: $skill_file"
 	fi
 	((++generated))
-done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" -not -name "README.md" -type f 2>/dev/null | sort)
+done < <(find "$AGENTS_DIR" -mindepth 2 -name "$SOURCE_MD_GLOB" -not -name "$SKILL_MD_NAME" -not -name "$AGENTS_MD_NAME" -not -name "$README_MD_NAME" -type f 2>/dev/null | sort)
 
 # =============================================================================
 # Summary
