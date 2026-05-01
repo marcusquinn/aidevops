@@ -699,6 +699,7 @@ check_tool_updates() {
 	bash "$tool_check_script" --quiet
 	echo ""
 
+	local do_update=""
 	setup_prompt do_update "Update all outdated tools now? [Y/n]: " "Y"
 
 	if [[ "$do_update" =~ ^[Yy]?$ || "$do_update" == "Y" ]]; then
