@@ -87,6 +87,7 @@ pulse_dispatch_debug_log() {
 #   1 - stop flag present; caller should short-circuit
 #######################################
 _dispatch_compute_capacity() {
+	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
 		return 1
@@ -110,6 +111,21 @@ _dispatch_compute_capacity() {
 	active_workers=$(count_active_workers)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+
+	# t3418: Keep a minimum implementation worker floor eligible under CPU/load
+	# throttling. This relaxes soft load posture only; STOP_FLAG and the
+	# GraphQL circuit breaker above remain hard stops.
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
+		min_worker_floor=6
+	fi
+	if ((min_worker_floor > 0 && active_workers < min_worker_floor)); then
+		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
+		if ((max_workers < min_worker_floor)); then
+			echo "[pulse-wrapper] Dispatch_min_floor active: max_workers=${max_workers} raised to ${min_worker_floor} while active=${active_workers}" >>"$LOGFILE"
+			max_workers="$min_worker_floor"
+		fi
+	fi
 	available_slots=$((max_workers - active_workers))
 
 	printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
@@ -690,9 +706,11 @@ _dispatch_max_compute_parallel() {
 		max_parallel="$effective_slots"
 	fi
 	# In throttle mode, _effective_slots is already 1 → max_parallel=1 (serial).
+	# t3418: when the minimum worker floor is active, CPU/load launch throttles
+	# are soft signals; keep parallelism eligible until the floor is reached.
 	# Defensive: also short-circuit on direct file presence in case caller
 	# passes a non-throttled effective_slots while throttle is active.
-	if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
+	if [[ -f "$_DISPATCH_THROTTLE_FILE" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; then
 		max_parallel=1
 	fi
 	((max_parallel < 1)) && max_parallel=1

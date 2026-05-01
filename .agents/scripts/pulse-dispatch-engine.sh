@@ -304,6 +304,14 @@ dispatch_max() {
 	}
 	local max_workers active_workers available_slots
 	read -r max_workers active_workers available_slots <<<"$capacity_line"
+	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
+	local _min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	if ! [[ "$_min_worker_floor" =~ ^[0-9]+$ ]]; then
+		_min_worker_floor=6
+	fi
+	if ((_min_worker_floor > 0 && active_workers < _min_worker_floor)); then
+		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
+	fi
 	if [[ "$available_slots" -le 0 ]]; then
 		echo 0
 		return 0
@@ -351,13 +359,16 @@ dispatch_max() {
 	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
+	# t3418: if the minimum worker floor is active, recent CPU/load throttling
+	# is a soft signal and must not collapse dispatch below the floor. Explicit
+	# dispatch_floor() callers still force the floor path.
 	# _dispatch_should_use_floor_path returns 0 when the runtime is degraded
 	# (throttle file present) OR when an explicit caller invoked dispatch_floor
 	# (which sets _DISPATCH_FORCE_FLOOR=1). The floor path preserves the
 	# legacy "test the waters" behaviour as a regression escape hatch.
 	local _effective_slots="$available_slots"
 	local _dispatch_path="max"
-	if _dispatch_should_use_floor_path; then
+	if [[ -n "${_DISPATCH_FORCE_FLOOR:-}" ]] || { _dispatch_should_use_floor_path && [[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" != "1" ]]; }; then
 		_effective_slots=1
 		_dispatch_path="floor"
 		if [[ -f "$_DISPATCH_THROTTLE_FILE" ]]; then
