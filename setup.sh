@@ -1124,6 +1124,107 @@ setup_cases_planes() {
 	return 0
 }
 
+# Non-interactive setup singleton state. This lock only gates the deployment path;
+# interactive setup remains prompt-driven and can still be used for first-run init.
+SETUP_NONINTERACTIVE_LOCK_HELD=false
+SETUP_NONINTERACTIVE_LOCK_DIR=""
+SETUP_NONINTERACTIVE_CHILD_PIDS=""
+SETUP_NONINTERACTIVE_TERMINATING=false
+
+_setup_lock_pid_alive() {
+	local pid="$1"
+	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
+	kill -0 "$pid" 2>/dev/null
+	return $?
+}
+
+_setup_register_child_pid() {
+	local pid="$1"
+	[[ -n "$pid" ]] || return 0
+	SETUP_NONINTERACTIVE_CHILD_PIDS="${SETUP_NONINTERACTIVE_CHILD_PIDS}${SETUP_NONINTERACTIVE_CHILD_PIDS:+ }${pid}"
+	return 0
+}
+
+_setup_cleanup_noninteractive_children() {
+	local pid=""
+	[[ "${SETUP_NONINTERACTIVE_TERMINATING:-false}" == "true" ]] || return 0
+	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
+		if _setup_lock_pid_alive "$pid"; then
+			kill -TERM "$pid" 2>/dev/null || true
+		fi
+	done
+	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
+		wait "$pid" 2>/dev/null || true
+	done
+	return 0
+}
+
+_setup_release_noninteractive_setup_lock() {
+	local lock_dir="${SETUP_NONINTERACTIVE_LOCK_DIR:-}"
+	local owner_pid=""
+	if [[ "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}" != "true" || -z "$lock_dir" ]]; then
+		return 0
+	fi
+	if [[ -r "$lock_dir/owner.pid" ]]; then
+		owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
+	fi
+	if [[ -z "$owner_pid" || "$owner_pid" == "$$" ]]; then
+		rm -rf "$lock_dir" 2>/dev/null || true
+	fi
+	SETUP_NONINTERACTIVE_LOCK_HELD=false
+	return 0
+}
+
+_setup_noninteractive_signal_exit() {
+	local signal_name="$1"
+	local exit_code=143
+	[[ "$signal_name" == "INT" ]] && exit_code=130
+	SETUP_NONINTERACTIVE_TERMINATING=true
+	print_warning "setup.sh --non-interactive received ${signal_name}; cleaning up child deployment processes"
+	_setup_cleanup_noninteractive_children
+	_setup_release_noninteractive_setup_lock
+	exit "$exit_code"
+}
+
+_setup_acquire_noninteractive_setup_lock() {
+	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
+	local owner_pid=""
+	local owner_cmd=""
+	local attempts=0
+	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
+	while [[ "$attempts" -lt 2 ]]; do
+		if mkdir "$lock_dir" 2>/dev/null; then
+			SETUP_NONINTERACTIVE_LOCK_DIR="$lock_dir"
+			SETUP_NONINTERACTIVE_LOCK_HELD=true
+			printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
+			printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
+			printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
+			trap _setup_release_noninteractive_setup_lock EXIT
+			trap '_setup_noninteractive_signal_exit TERM' TERM
+			trap '_setup_noninteractive_signal_exit INT' INT
+			return 0
+		fi
+
+		owner_pid=""
+		owner_cmd=""
+		if [[ -r "$lock_dir/owner.pid" ]]; then
+			owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
+		fi
+		if _setup_lock_pid_alive "$owner_pid"; then
+			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+			print_error "Another setup.sh --non-interactive process is already running (pid ${owner_pid}, lock ${lock_dir}). Exiting to avoid overlapping deployments. ${owner_cmd:+Command: ${owner_cmd}}"
+			return 75
+		fi
+
+		print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}"
+		rm -rf "$lock_dir" 2>/dev/null || true
+		attempts=$((attempts + 1))
+	done
+
+	print_error "Unable to acquire setup.sh --non-interactive lock at ${lock_dir}"
+	return 75
+}
+
 # Non-interactive path: deploy agents and run safe migrations only (no prompts).
 # GH#21060 / t2911: Every direct function call is wrapped with _time_step so
 # that a one-line-per-stage TSV timing record is appended to
@@ -1196,12 +1297,14 @@ _setup_run_non_interactive() {
 	if _time_step "generate_agent_skills" generate_agent_skills; then
 		_time_step "create_skill_symlinks" create_skill_symlinks &
 		_pid_symlinks=$!
+		_setup_register_child_pid "$_pid_symlinks"
 	else
 		print_warning "Agent skills generation failed — skipping skill symlinks"
 	fi
 
 	_time_step "scan_imported_skills" scan_imported_skills &
 	local _pid_scan=$!
+	_setup_register_child_pid "$_pid_scan"
 
 	if [[ -n "$_pid_symlinks" ]]; then
 		wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
@@ -1541,6 +1644,10 @@ main() {
 	if [[ "$INTERACTIVE_MODE" == "true" && "$NON_INTERACTIVE" == "true" ]]; then
 		print_error "--interactive and --non-interactive cannot be used together"
 		exit 1
+	fi
+
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		_setup_acquire_noninteractive_setup_lock "$@" || exit $?
 	fi
 
 	_setup_print_header
