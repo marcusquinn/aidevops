@@ -52,6 +52,9 @@ assert_eq() {
 extract_functions() {
 	# Use awk to extract the three functions by name.
 	awk '
+		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
 		/^_setup_validate_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_force_heal\(\)/, /^}$/ { print; next }
 		/^setup_opencode_cli\(\)/, /^}$/ { print; next }
@@ -134,6 +137,34 @@ echo "Test 3: _setup_validate_opencode_binary on missing path"
 ) >"$SANDBOX/out3" 2>&1
 assert_eq "missing path -> rc=2" "2" "$(tail -1 "$SANDBOX/out3")"
 
+# --- Test 3b: validator bounds hanging --version ---------------------------
+echo "Test 3b: _setup_validate_opencode_binary bounds hanging --version"
+cat >"$SANDBOX/bin/opencode-slow" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--version" ]]; then
+	sleep 5
+	echo "1.14.25"
+fi
+EOF
+chmod +x "$SANDBOX/bin/opencode-slow"
+(
+	source_extracted
+	export AIDEVOPS_OPENCODE_VERSION_TIMEOUT=1
+	SECONDS=0
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-slow" || rc=$?
+	printf 'rc=%s elapsed=%s\n' "$rc" "$SECONDS"
+) >"$SANDBOX/out3b" 2>&1
+rc3b=$(grep '^rc=' "$SANDBOX/out3b" | tail -1)
+elapsed3b="${rc3b##*elapsed=}"
+rc3b="${rc3b%% elapsed=*}"
+assert_eq "hanging version -> rc=2" "rc=2" "$rc3b"
+if [[ "$elapsed3b" =~ ^[0-9]+$ ]] && [[ "$elapsed3b" -le 3 ]]; then
+	assert_eq "hanging version returns within bound" "bounded" "bounded"
+else
+	assert_eq "hanging version returns within bound" "elapsed<=3" "elapsed=${elapsed3b}"
+fi
+
 # --- Test 4: setup_opencode_cli skip when valid + persists path ------------
 echo "Test 4: setup_opencode_cli skip-when-valid path"
 rm -f "$HOME/.aidevops/.opencode-bin-resolved"
@@ -178,6 +209,35 @@ assert_eq "post-heal validation success" "1" "$post_heal_success"
 echo "Test 6: post-heal persisted resolved path"
 [[ -f "$HOME/.aidevops/.opencode-bin-resolved" ]] && resolved6=$(cat "$HOME/.aidevops/.opencode-bin-resolved") || resolved6="MISSING"
 assert_eq "post-heal resolved-path file populated" "$SANDBOX/bin/opencode" "$resolved6"
+
+# --- Test 7: auto-heal bounds hanging installer ----------------------------
+echo "Test 7: setup_opencode_cli bounds hanging auto-heal installer"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
+(
+	source_extracted
+	npm_global_install() {
+		sleep 5
+		return 0
+	}
+	export -f npm_global_install 2>/dev/null || true
+	export PATH="$SANDBOX/bin:$PATH"
+	export AIDEVOPS_OPENCODE_VERSION_TIMEOUT=1
+	export AIDEVOPS_OPENCODE_INSTALL_TIMEOUT=1
+	SECONDS=0
+	rc=0
+	setup_opencode_cli || rc=$?
+	printf 'rc=%s elapsed=%s\n' "$rc" "$SECONDS"
+) >"$SANDBOX/out7" 2>&1
+rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
+elapsed7="${rc7##*elapsed=}"
+rc7="${rc7%% elapsed=*}"
+assert_eq "hanging auto-heal fail-opens" "rc=0" "$rc7"
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+	assert_eq "hanging auto-heal returns within bound" "bounded" "bounded"
+else
+	assert_eq "hanging auto-heal returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+fi
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="

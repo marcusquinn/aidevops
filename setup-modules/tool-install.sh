@@ -1547,6 +1547,82 @@ setup_nodejs() {
 	return 0
 }
 
+# Bound OpenCode setup probes/installers so non-interactive setup cannot hang
+# indefinitely when an opencode shim or package manager blocks.
+_setup_opencode_timeout_cmd() {
+	local timeout_seconds="$1"
+	shift
+
+	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=5
+	[[ "$timeout_seconds" -gt 0 ]] || timeout_seconds=5
+
+	local command_name="${1:-}"
+	if [[ -n "$command_name" ]] && ! declare -F "$command_name" >/dev/null 2>&1; then
+		if declare -F timeout_sec >/dev/null 2>&1; then
+			timeout_sec "$timeout_seconds" "$@"
+			return $?
+		fi
+
+		if command -v gtimeout >/dev/null 2>&1; then
+			gtimeout "$timeout_seconds" "$@"
+			return $?
+		fi
+
+		if command -v timeout >/dev/null 2>&1; then
+			timeout "$timeout_seconds" "$@"
+			return $?
+		fi
+	fi
+
+	local output_file=""
+	output_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-opencode-timeout.XXXXXX" 2>/dev/null || printf '')
+	if [[ -z "$output_file" ]]; then
+		"$@"
+		return $?
+	fi
+
+	local pid=""
+	"$@" >"$output_file" 2>&1 &
+	pid=$!
+
+	local elapsed=0
+	while kill -0 "$pid" 2>/dev/null; do
+		if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+			kill "$pid" 2>/dev/null || true
+			wait "$pid" 2>/dev/null || true
+			rm -f "$output_file" 2>/dev/null || true
+			return 124
+		fi
+		sleep 1
+		elapsed=$((elapsed + 1))
+	done
+
+	local rc=0
+	wait "$pid" || rc=$?
+	while IFS= read -r line; do
+		printf '%s\n' "$line"
+	done <"$output_file"
+	rm -f "$output_file" 2>/dev/null || true
+	return "$rc"
+}
+
+_setup_opencode_version_output() {
+	local bin="$1"
+	local version_timeout="${AIDEVOPS_OPENCODE_VERSION_TIMEOUT:-5}"
+
+	_setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
+	return $?
+}
+
+_setup_opencode_first_line() {
+	local input="$1"
+	local first_line=""
+
+	IFS= read -r first_line <<<"$input" || true
+	printf '%s\n' "$first_line"
+	return 0
+}
+
 # t2891: Validate that an opencode binary is real anomalyco/opencode.
 # Mirrors the t2887 runtime canary validator (headless-runtime-lib.sh) and
 # the t2888 setup module validator (.agents/scripts/setup/_services.sh).
@@ -1559,7 +1635,7 @@ _setup_validate_opencode_binary() {
 	command -v "$bin" >/dev/null 2>&1 || return 2
 
 	local v
-	v=$("$bin" --version 2>/dev/null || echo "")
+	v=$(_setup_opencode_version_output "$bin" 2>/dev/null || printf '')
 	[[ -n "$v" ]] || return 2
 
 	# Anthropic claude CLI signature — highest-confidence rejection.
@@ -1597,7 +1673,8 @@ _setup_opencode_force_heal() {
 		return 0
 	fi
 
-	if run_with_spinner "Reinstalling OpenCode (heal)" npm_global_install "$install_pkg"; then
+	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
+	if run_with_spinner "Reinstalling OpenCode (heal)" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
 		print_success "OpenCode reinstalled via $installer"
 	else
 		print_warning "Heal install failed via $installer"
@@ -1609,13 +1686,13 @@ _setup_opencode_force_heal() {
 	new_bin=$(command -v opencode 2>/dev/null || echo "")
 	if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 		local new_v
-		new_v=$("$new_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		new_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf 'unknown')")
 		print_success "OpenCode CLI: $new_bin ($new_v)"
 		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
 		printf '%s\n' "$new_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
 	else
 		local v_after
-		v_after=$("$new_bin" --version 2>/dev/null | head -1 || echo "<missing>")
+		v_after=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf '<missing>')")
 		print_warning "Post-heal validation still failing: '$new_bin' returns '$v_after'"
 		print_info "Check PATH: 'which -a opencode' — npm/bun global bin dir must come first"
 	fi
@@ -1648,7 +1725,7 @@ setup_opencode_cli() {
 	# Already valid → record + early return.
 	if [[ $validate_rc -eq 0 ]]; then
 		local oc_version
-		oc_version=$("$current_bin" --version 2>/dev/null | head -1 || echo "unknown")
+		oc_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf 'unknown')")
 		print_success "OpenCode already installed: $oc_version"
 		mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
 		printf '%s\n' "$current_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
@@ -1658,7 +1735,7 @@ setup_opencode_cli() {
 	# Wrong package → auto-heal (no prompt).
 	if [[ $validate_rc -eq 1 ]]; then
 		local wrong_v
-		wrong_v=$("$current_bin" --version 2>/dev/null | head -1 || echo "<unknown>")
+		wrong_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf '<unknown>')")
 		_setup_opencode_force_heal "$install_pkg" "$current_bin" "$wrong_v"
 		return 0
 	fi
@@ -1682,7 +1759,8 @@ setup_opencode_cli() {
 	local install_oc
 	setup_prompt install_oc "Install OpenCode via $installer? [Y/n]: " "Y"
 	if [[ "$install_oc" =~ ^[Yy]?$ ]]; then
-		if run_with_spinner "Installing OpenCode" npm_global_install "$install_pkg"; then
+		local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
+		if run_with_spinner "Installing OpenCode" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
 			print_success "OpenCode installed"
 
 			# Persist resolved path on first-time success too (t2891).
