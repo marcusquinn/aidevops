@@ -116,6 +116,43 @@ Dismiss without re-syncing (e.g., intentional fork with own secrets):
 
 After the operator confirms the re-sync PR is merged, move on.
 
+### Phase 1.6 — Public Repo PR-Gating Remediation (GH#22195)
+
+For public repos where the current GitHub token has admin access,
+`aidevops security check` treats missing effective PR merge gating as an
+actionable failure. This setup command may guide the operator, but it must not
+silently change branch protection during unrelated secret setup.
+
+Use this template for each affected public ADMIN repo:
+
+```text
+=== Repo: <SLUG> — branch protection / ruleset setup needed ===
+
+Why this matters: public repos need GitHub-enforced PR review and required
+status checks on the default branch. Pulse-side merge logic is defense in depth,
+not a substitute for repository protection.
+
+Fix (maintainer/admin action — run explicitly in GitHub settings or a separate
+terminal):
+
+  1. Ensure review-bot-gate.yml and maintainer-gate.yml are installed/current:
+       aidevops check-workflows --repo <SLUG>
+       aidevops sync-workflows --apply --repo <SLUG>   # only if drift/missing
+
+  2. In GitHub Settings → Rules → Rulesets (preferred) or Branches → Branch
+     protection, target the default branch and require:
+       - Pull request before merging
+       - At least 1 approving review
+       - Required status checks, including review-bot-gate and maintainer-gate
+       - No admin bypass for public ADMIN repos unless consciously documented
+
+  3. Verify:
+       aidevops security check --repo <SLUG>
+
+Do not ask the AI session to apply protection implicitly; this changes repo
+security posture and should be a deliberate maintainer/admin action.
+```
+
 ### Phase 2 — Per-Repo Walkthrough
 
 For each repo with missing `SYNC_PAT`, present this template (substitute slug
