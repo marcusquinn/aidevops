@@ -17,6 +17,7 @@ TEST_GREEN=$'\033[0;32m'
 TEST_RESET=$'\033[0m'
 
 TEST_ROOT=$(mktemp -d)
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 fail() {
