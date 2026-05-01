@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.84] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3408 complete (pr:#22206 completed:2026-05-01) [skip ci]
+- Maintenance: mark t3404 complete (pr:#22200 completed:2026-05-01) [skip ci]
+- enforce public repo PR gating (#22200)
+
+### Fixed
+
+- abort routines sync rebase conflicts (#22206)
+
 ## [3.13.83] - 2026-05-01
 
 ### Changed
