@@ -21,7 +21,7 @@ Pulse cycle (every 3 min, configurable)
   → nohup worker launch (survives pulse-wrapper exit)
     → DB isolation (XDG_DATA_HOME per worker)
     → Activity watchdog (standalone process, monitors output growth)
-    → OpenCode run (headless, direct to Anthropic API via OAuth)
+    → OpenCode run (headless, direct to the selected provider/model via OAuth or API key)
     → On completion: merge worker DB back to shared DB, cleanup
     → On failure: CLAIM_RELEASED posted, issue available for re-dispatch
 ```
@@ -62,6 +62,17 @@ grep WATCHDOG_KILL /tmp/pulse-*-<issue>.log
 gh api repos/<slug>/issues/<num>/comments --jq '.[] | select(.body | test("CLAIM_RELEASED")) | .created_at'
 ```
 
+### Provider-scoped startup (t3420)
+
+Headless OpenCode workers scope startup state to the selected model provider:
+
+- The isolated `auth.json` copied into `XDG_DATA_HOME` contains only the selected provider entry (for example, `openai` for `openai/gpt-5.5`).
+- Sandbox passthrough includes shared framework/runtime variables plus only the selected provider's env vars (`OPENAI_*`, `ANTHROPIC_*`/`CLAUDE_*`, or `GOOGLE_*`).
+- Canary uses the same provider-scoped auth copy as the real worker, so it validates the selected model without eagerly initializing unrelated provider accounts.
+- Fallback remains lazy: when retry logic selects another provider/model, the next run attempt rebuilds the isolated auth/env scope for that provider.
+
+Diagnostic: set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` or dispatch with `--model openai/gpt-5.5`, then inspect the worker temp auth dir in lifecycle logs (`db_isolated dir=...`). Its `opencode/auth.json` should not contain unrelated provider keys.
+
 ### Canary Smoke Test (v3.6.123)
 
 **Rules**:
@@ -80,6 +91,18 @@ rm -f ~/.aidevops/.agent-workspace/headless-runtime/canary-last-pass
 # Test canary manually
 opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-20250514 --dir "$HOME"
 ```
+
+### Minimum Worker Concurrency Floor (t3418)
+
+Pulse keeps a soft minimum implementation-worker floor so high CPU/load conditions do not reduce useful dispatch to zero. Default: `AIDEVOPS_MIN_WORKER_CONCURRENCY=6`.
+
+When active workers are below the floor:
+
+- `dispatch_max` treats CPU/load throttling as soft and keeps dispatch eligible up to the floor.
+- The worker canary skips only the pre-canary system-overload check (`AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1`); the normal canary, auth checks, GraphQL circuit breaker, stop flag, memory/process failures, and other hard safety gates still apply.
+- Existing max worker caps above the floor still cap runaway dispatch.
+
+Set `AIDEVOPS_MIN_WORKER_CONCURRENCY=0` to disable the floor, or set a higher/lower integer for a runner-specific target.
 
 ### Version Guard
 

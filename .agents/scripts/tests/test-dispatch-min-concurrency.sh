@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# test-dispatch-min-concurrency.sh — t3418 regression tests for the minimum
+# pulse worker concurrency floor under CPU/load throttling.
+
+set -uo pipefail
+
+TEST_RED=$'\033[0;31m'
+TEST_GREEN=$'\033[0;32m'
+TEST_RESET=$'\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+print_result() {
+	local name="$1" rc="$2" extra="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%sPASS%s %s\n' "$TEST_GREEN" "$TEST_RESET" "$name"
+	else
+		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	return 0
+}
+
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+export HOME="${TEST_ROOT}/home"
+mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/headless-runtime"
+export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
+export STOP_FLAG="${HOME}/.aidevops/logs/stop"
+: >"$LOGFILE"
+
+SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../pulse-dispatch-engine.sh
+source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
+# shellcheck source=../pulse-dispatch-worker-launch.sh
+source "${SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
+
+get_max_workers_target() {
+	printf '%s\n' "${TEST_MAX_WORKERS:-1}"
+	return 0
+}
+
+count_active_workers() {
+	printf '%s\n' "${TEST_ACTIVE_WORKERS:-0}"
+	return 0
+}
+
+test_capacity_raises_soft_cap_to_floor() {
+	TEST_MAX_WORKERS=1
+	TEST_ACTIVE_WORKERS=2
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "6 2 4" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "1" ]]; then
+		print_result "capacity: raises max_workers to floor while active below floor" 0
+	else
+		print_result "capacity: raises max_workers to floor while active below floor" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
+test_capacity_respects_existing_higher_cap() {
+	TEST_MAX_WORKERS=10
+	TEST_ACTIVE_WORKERS=2
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "10 2 8" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "1" ]]; then
+		print_result "capacity: existing max cap still wins above floor" 0
+	else
+		print_result "capacity: existing max cap still wins above floor" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
+test_throttle_does_not_force_serial_under_floor() {
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	: >"$_DISPATCH_THROTTLE_FILE"
+	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
+	unset DISPATCH_MAX_PARALLEL || true
+	local result
+	result=$(_dispatch_max_compute_parallel 6)
+	rm -f "$_DISPATCH_THROTTLE_FILE"
+	if [[ "$result" == "6" ]]; then
+		print_result "parallel: throttle remains soft under minimum floor" 0
+	else
+		print_result "parallel: throttle remains soft under minimum floor" 1 "got=${result}"
+	fi
+	return 0
+}
+
+test_throttle_forces_serial_above_floor() {
+	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
+	: >"$_DISPATCH_THROTTLE_FILE"
+	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
+	unset DISPATCH_MAX_PARALLEL || true
+	local result
+	result=$(_dispatch_max_compute_parallel 6)
+	rm -f "$_DISPATCH_THROTTLE_FILE"
+	if [[ "$result" == "1" ]]; then
+		print_result "parallel: throttle still forces serial outside floor" 0
+	else
+		print_result "parallel: throttle still forces serial outside floor" 1 "got=${result}"
+	fi
+	return 0
+}
+
+test_canary_preflight_bypasses_overload_only_below_floor() {
+	local fake_helper worker_log
+	fake_helper="${TEST_ROOT}/fake-headless-runtime-helper.sh"
+	worker_log="${TEST_ROOT}/worker.log"
+	cat >"$fake_helper" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK:-}" == "1" ]]; then
+	exit 0
+fi
+exit 42
+EOF
+	chmod +x "$fake_helper"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	TEST_ACTIVE_WORKERS=5
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	if _dlw_canary_preflight 100 "o/r" "$worker_log" "standard" ""; then
+		print_result "canary: overload check bypassed below minimum floor" 0
+	else
+		print_result "canary: overload check bypassed below minimum floor" 1
+	fi
+	TEST_ACTIVE_WORKERS=6
+	if _dlw_canary_preflight 101 "o/r" "$worker_log" "standard" ""; then
+		print_result "canary: overload check enforced at floor" 1 "unexpected success"
+	else
+		print_result "canary: overload check enforced at floor" 0
+	fi
+	return 0
+}
+
+test_capacity_raises_soft_cap_to_floor
+test_capacity_respects_existing_higher_cap
+test_throttle_does_not_force_serial_under_floor
+test_throttle_forces_serial_above_floor
+test_canary_preflight_bypasses_overload_only_below_floor
+
+echo ""
+echo "===================="
+echo "Tests run: $TESTS_RUN"
+echo "Tests failed: $TESTS_FAILED"
+echo "===================="
+if [[ "$TESTS_FAILED" -eq 0 ]]; then
+	exit 0
+else
+	exit 1
+fi

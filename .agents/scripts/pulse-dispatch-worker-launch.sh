@@ -792,6 +792,12 @@ _dlw_nohup_launch() {
 		FULL_LOOP_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
 	)
+	if _dlw_min_worker_floor_active; then
+		worker_cmd+=(
+			AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1
+			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
+		)
+	fi
 	# Pass worktree env vars only if pre-creation succeeded
 	if [[ -n "$worker_worktree_path" ]]; then
 		worker_cmd+=(
@@ -931,6 +937,18 @@ _dlw_check_worker_branch_orphan_loop() {
 	return 1
 }
 
+_dlw_min_worker_floor_active() {
+	local active_workers min_worker_floor
+	active_workers=$(count_active_workers 2>/dev/null || echo 0)
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
+		min_worker_floor=6
+	fi
+	((min_worker_floor > 0 && active_workers < min_worker_floor)) && return 0
+	return 1
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -942,8 +960,13 @@ _dlw_canary_preflight() {
 	if [[ -n "$selected_model" ]]; then
 		_canary_cmd+=(--model "$selected_model")
 	fi
+	local -a _canary_env=()
+	if _dlw_min_worker_floor_active; then
+		_canary_env+=(AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1 AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1)
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — bypassing canary CPU/load overload preflight only" >>"$LOGFILE"
+	fi
 
-	if "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
+	if env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
 		return 0
 	fi
 
