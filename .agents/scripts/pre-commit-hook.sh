@@ -1016,6 +1016,43 @@ main_pre_commit() {
 	fi
 }
 
+_coderabbit_cli_review_timeout() {
+	local review_timeout="${AIDEVOPS_CODERABBIT_CLI_REVIEW_TIMEOUT:-45}"
+	if ! [[ "$review_timeout" =~ ^[0-9]+$ ]] || ((review_timeout < 1)); then
+		print_warning "Invalid AIDEVOPS_CODERABBIT_CLI_REVIEW_TIMEOUT='${review_timeout}'; using 45s"
+		review_timeout=45
+	fi
+	printf '%s\n' "$review_timeout"
+	return 0
+}
+
+run_optional_coderabbit_cli_review() {
+	if [[ "${AIDEVOPS_SKIP_CODERABBIT_CLI_REVIEW:-0}" == "1" ]]; then
+		print_info "CodeRabbit CLI review skipped (AIDEVOPS_SKIP_CODERABBIT_CLI_REVIEW=1)"
+		return 0
+	fi
+
+	if [[ ! -f ".agents/scripts/coderabbit-cli.sh" ]] || ! command -v coderabbit &>/dev/null; then
+		return 0
+	fi
+
+	local review_timeout
+	review_timeout=$(_coderabbit_cli_review_timeout)
+	local review_status=0
+	print_info "Running CodeRabbit CLI review (timeout ${review_timeout}s)..."
+	if timeout_sec "$review_timeout" bash .agents/scripts/coderabbit-cli.sh review >/dev/null 2>&1; then
+		print_success "CodeRabbit CLI review completed"
+	else
+		review_status=$?
+		if [[ $review_status -eq 124 ]]; then
+			print_info "CodeRabbit CLI review skipped (timed out after ${review_timeout}s)"
+		else
+			print_info "CodeRabbit CLI review skipped (setup required)"
+		fi
+	fi
+	return 0
+}
+
 main_pre_push() {
 	echo -e "${BLUE}Pre-push Quality Validation${NC}" >&2
 	echo -e "${BLUE}================================${NC}" >&2
@@ -1028,16 +1065,9 @@ main_pre_push() {
 	check_quality_standards
 	echo "" >&2
 
-	# Optional CodeRabbit CLI review (if available)
-	if [[ -f ".agents/scripts/coderabbit-cli.sh" ]] && command -v coderabbit &>/dev/null; then
-		print_info "Running CodeRabbit CLI review..."
-		if bash .agents/scripts/coderabbit-cli.sh review >/dev/null 2>&1; then
-			print_success "CodeRabbit CLI review completed"
-		else
-			print_info "CodeRabbit CLI review skipped (setup required)"
-		fi
-		echo "" >&2
-	fi
+	# Optional CodeRabbit CLI review (advisory; fail-open and bounded)
+	run_optional_coderabbit_cli_review
+	echo "" >&2
 
 	# Final decision
 	if [[ $total_violations -eq 0 ]]; then
