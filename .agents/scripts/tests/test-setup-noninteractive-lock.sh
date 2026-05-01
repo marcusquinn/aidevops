@@ -288,6 +288,58 @@ test_signal_cleanup_terminates_registered_children() {
 	return 0
 }
 
+test_signal_cleanup_terminates_unregistered_child_tree() {
+	local output=""
+
+	output=$(
+		AIDEVOPS_SETUP_CHILD_TERM_GRACE_S=1
+		load_lock_functions
+		bash -c 'bash -c '\''trap "" TERM; sleep 30'\'' & wait' &
+		local_pid=$!
+		sleep 1
+		_setup_cleanup_noninteractive_children
+		if kill -0 "$local_pid" 2>/dev/null; then
+			printf 'child=alive\n'
+		else
+			printf 'child=stopped\n'
+		fi
+		return 0
+	) 2>&1 || true
+
+	if [[ "$output" == *"child=stopped"* ]]; then
+		print_result "termination cleanup stops unregistered setup child tree" 0
+		return 0
+	fi
+
+	print_result "termination cleanup stops unregistered setup child tree" 1 "output=${output}"
+	return 0
+}
+
+test_bounded_noncritical_stage_times_out_child_tree() {
+	local output=""
+
+	output=$(
+		AIDEVOPS_SETUP_CHILD_TERM_GRACE_S=1
+		load_lock_functions
+		slow_stage() {
+			bash -c 'trap "" TERM; sleep 30' &
+			wait
+			return 0
+		}
+		_setup_run_noncritical_stage_bounded "test stage" 1 slow_stage
+		printf 'bounded=returned\n'
+		return 0
+	) 2>&1 || true
+
+	if [[ "$output" == *"exceeded 1s"* && "$output" == *"bounded=returned"* ]]; then
+		print_result "bounded non-critical stage times out child tree" 0
+		return 0
+	fi
+
+	print_result "bounded non-critical stage times out child tree" 1 "output=${output}"
+	return 0
+}
+
 test_stale_live_owner_past_ceiling_is_reclaimed() {
 	# Verify that a live owner whose age exceeds stale_ceiling is reclaimed
 	# and the waiting process acquires the lock successfully.
@@ -385,6 +437,8 @@ main() {
 	test_wait_ceiling_prevents_indefinite_block
 	test_contention_message_includes_elapsed_and_stage
 	test_signal_cleanup_terminates_registered_children
+	test_signal_cleanup_terminates_unregistered_child_tree
+	test_bounded_noncritical_stage_times_out_child_tree
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

@@ -1234,15 +1234,46 @@ _setup_register_child_pid() {
 	return 0
 }
 
+_setup_collect_child_pids() {
+	local parent_pid="$1"
+	local child_pid=""
+	local child_pids=""
+	local current_pid="${BASHPID:-$$}"
+	child_pids=$(pgrep -P "$parent_pid" 2>/dev/null || true)
+	for child_pid in $child_pids; do
+		[[ -n "$child_pid" && "$child_pid" != "$current_pid" ]] || continue
+		printf '%s\n' "$child_pid"
+		_setup_collect_child_pids "$child_pid"
+	done
+	return 0
+}
+
+_setup_kill_pid_tree() {
+	local signal_name="$1"
+	local root_pid="$2"
+	local child_pid=""
+	local current_pid="${BASHPID:-$$}"
+	[[ -n "$root_pid" && "$root_pid" != "$current_pid" ]] || return 0
+	for child_pid in $(_setup_collect_child_pids "$root_pid"); do
+		kill "-${signal_name}" "$child_pid" 2>/dev/null || true
+	done
+	kill "-${signal_name}" "$root_pid" 2>/dev/null || true
+	return 0
+}
+
 _setup_cleanup_noninteractive_children() {
 	local pid=""
+	local current_pid="${BASHPID:-$$}"
 	local grace_s="${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}"
 	local has_live_child=false
 	[[ "$grace_s" =~ ^[0-9]+$ ]] || grace_s=2
+	for pid in $(_setup_collect_child_pids "$current_pid"); do
+		_setup_register_child_pid "$pid"
+	done
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
 		if _setup_lock_pid_alive "$pid"; then
 			has_live_child=true
-			kill -TERM "$pid" 2>/dev/null || true
+			_setup_kill_pid_tree TERM "$pid"
 		fi
 	done
 	if [[ "$has_live_child" == "true" && "$grace_s" -gt 0 ]]; then
@@ -1250,13 +1281,39 @@ _setup_cleanup_noninteractive_children() {
 	fi
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
 		if _setup_lock_pid_alive "$pid"; then
-			kill -KILL "$pid" 2>/dev/null || true
+			_setup_kill_pid_tree KILL "$pid"
 		fi
 	done
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
 		wait "$pid" 2>/dev/null || true
 	done
 	return 0
+}
+
+_setup_run_noncritical_stage_bounded() {
+	local stage_label="$1"
+	local timeout_s="$2"
+	shift 2
+	local start_s=$SECONDS
+	local pid=""
+	local rc=0
+	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=60
+	"$@" &
+	pid=$!
+	_setup_register_child_pid "$pid"
+	while _setup_lock_pid_alive "$pid"; do
+		if (( SECONDS - start_s >= timeout_s )); then
+			_setup_kill_pid_tree TERM "$pid"
+			sleep "${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}" 2>/dev/null || true
+			_setup_kill_pid_tree KILL "$pid"
+			wait "$pid" 2>/dev/null || true
+			print_warning "${stage_label} exceeded ${timeout_s}s — skipping remaining non-critical work"
+			return 0
+		fi
+		sleep 1
+	done
+	wait "$pid" 2>/dev/null || rc=$?
+	return "$rc"
 }
 
 _setup_release_noninteractive_setup_lock() {
@@ -1527,7 +1584,7 @@ _setup_run_non_interactive() {
 	# files does not consume the remaining postflight budget and trip the outer
 	# timeout (GH#22087). AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT controls the deadline.
 	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded
-	_time_step "update_opencode_config" update_opencode_config
+	_time_step "update_opencode_config" _setup_run_noncritical_stage_bounded "OpenCode config update" "${AIDEVOPS_UPDATE_OPENCODE_CONFIG_TIMEOUT:-60}" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
 	_time_step "update_codex_config" update_codex_config
 	_time_step "update_cursor_config" update_cursor_config
@@ -1535,7 +1592,7 @@ _setup_run_non_interactive() {
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
-	_time_step "setup_routines" setup_routines
+	_time_step "setup_routines" _setup_run_noncritical_stage_bounded "Routine setup" "${AIDEVOPS_SETUP_ROUTINES_TIMEOUT:-60}" setup_routines
 	# Install/refresh the privacy-guard pre-push hook in every initialized
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).
@@ -1723,7 +1780,7 @@ _setup_noninteractive_schedulers() {
 	# generic chicken-and-egg gate so the routine installs on existing systems
 	# whenever the supervisor pulse is consented.
 	if _should_setup_noninteractive_pulse_merge_routine; then
-		_time_step "setup_pulse_merge_routine" setup_pulse_merge_routine
+		_time_step "setup_pulse_merge_routine" _setup_run_noncritical_stage_bounded "Pulse merge routine setup" "${AIDEVOPS_SETUP_PULSE_MERGE_ROUTINE_TIMEOUT:-30}" setup_pulse_merge_routine
 	fi
 	# t2932 (GH#21125): peer productivity monitor — adaptive cross-runner
 	# dispatch coordination, runs every 30 min.
