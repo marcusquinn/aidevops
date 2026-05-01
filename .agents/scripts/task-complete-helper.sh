@@ -235,11 +235,11 @@ verify_pr_merged() {
 
 	log_info "Verifying PR #${pr_number} is merged${gh_repo:+ (repo: $gh_repo)}..."
 
-	# Use gh's built-in --jq to extract both fields in a single API call,
+	# Use gh's built-in --jq to extract merge evidence in a single API call,
 	# avoiding external jq dependency. When --gh-repo is not provided, run gh
 	# from the repo directory so it picks up the correct git remote context.
-	local pr_output pr_state pr_merged_at
-	local gh_view_args=("pr" "view" "$pr_number" "--json" "state,mergedAt" "--jq" '[.state, (.mergedAt // "")] | join("\t")')
+	local pr_output pr_state pr_merged_at pr_merged_flag
+	local gh_view_args=("pr" "view" "$pr_number" "--json" "state,mergedAt" "--jq" '[.state, (.mergedAt // .merged_at // ""), ((.merged // false) | tostring)] | join("\t")')
 	if [[ -n "$gh_repo" ]]; then
 		gh_view_args+=("--repo" "$gh_repo")
 	fi
@@ -258,17 +258,25 @@ verify_pr_merged() {
 		fi
 	fi
 
-	# Parse tab-separated output: state\tmergedAt
+	# Parse tab-separated output: state\tmergedAt-or-merged_at\tmerged-flag
 	pr_state="${pr_output%%$'\t'*}"
-	pr_merged_at="${pr_output#*$'\t'}"
+	local pr_remainder="${pr_output#*$'\t'}"
+	if [[ "$pr_remainder" == *$'\t'* ]]; then
+		pr_merged_at="${pr_remainder%%$'\t'*}"
+		pr_merged_flag="${pr_remainder#*$'\t'}"
+	else
+		pr_merged_at="$pr_remainder"
+		pr_merged_flag="false"
+	fi
 
 	# Base the merged check on mergedAt evidence, not state string alone.
 	# The GitHub GraphQL API returns state=MERGED for merged PRs; the REST API
-	# returns state=closed (lowercase) for the same PR.  Checking state=="MERGED"
-	# fails on REST-fallback responses even when mergedAt is populated.
-	# Decision rule: mergedAt non-empty → merged; mergedAt empty → not merged.
-	if [[ -z "$pr_merged_at" ]]; then
-		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown}, mergedAt: empty)"
+	# returns state=closed (lowercase) for the same PR. REST-fallback responses
+	# can also expose merged_at and merged=true instead of GraphQL mergedAt.
+	# Decision rule: mergedAt/merged_at non-empty OR merged=true → merged;
+	# otherwise not merged.
+	if [[ -z "$pr_merged_at" && "$pr_merged_flag" != "true" ]]; then
+		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown}, mergedAt: empty, merged: ${pr_merged_flag:-false})"
 		log_error "Task completion is only allowed after the PR is merged."
 		local rerun_cmd="task-complete-helper.sh $TASK_ID --pr $pr_number"
 		[[ -n "$gh_repo" ]] && rerun_cmd+=" --gh-repo $gh_repo"
@@ -277,7 +285,7 @@ verify_pr_merged() {
 	fi
 
 	# good stuff — PR is confirmed merged, safe to mark the task done
-	log_success "PR #${pr_number} is merged (state: ${pr_state}, mergedAt: ${pr_merged_at})"
+	log_success "PR #${pr_number} is merged (state: ${pr_state}, mergedAt: ${pr_merged_at:-empty}, merged: ${pr_merged_flag:-false})"
 	return 0
 }
 
