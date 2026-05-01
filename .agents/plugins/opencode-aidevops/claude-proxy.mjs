@@ -96,58 +96,20 @@ function isClaudeCliAvailable() {
 }
 
 function getClaudeProxyModels() {
-  return [
-    {
-      id: "claude-haiku-4-5",
-      name: "Claude Haiku 4.5 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: 1000000,
-      maxTokens: 32000,
-    },
-    {
-      id: "claude-sonnet-4-5",
-      name: "Claude Sonnet 4.5 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: 200000,
-      maxTokens: 64000,
-    },
-    {
-      id: "claude-sonnet-4-6",
-      name: "Claude Sonnet 4.6 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: 1000000,
-      maxTokens: 64000,
-    },
-    {
-      id: "claude-opus-4-5",
-      name: "Claude Opus 4.5 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: 200000,
-      maxTokens: 64000,
-    },
-    {
-      id: "claude-opus-4-6",
-      name: "Claude Opus 4.6 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: 1000000,
-      maxTokens: 64000,
-    },
-    {
-      // Opus 4.7 — opt-in only. Framework defaults stay on 4.6.
-      // Context default 250K (not 1M API ceiling) due to MRCR v2 regression
-      // past 200K (256K 91.9% -> 59.2%, 1M 78.3% -> 32.2%). The 250K limit
-      // is sized so OpenCode's 80% auto-compact threshold lands at the 200K
-      // reliability boundary, giving the full functional window before
-      // compaction. Context value is sourced from model-limits.mjs so the
-      // AIDEVOPS_OPUS_47_CONTEXT env-var override (t2435) flows through here
-      // too. See models-opus.md.
-      id: "claude-opus-4-7",
-      name: "Claude Opus 4.7 (via Claude CLI)",
-      reasoning: true,
-      contextWindow: CLAUDE_MODEL_LIMITS["claude-opus-4-7"].context,
-      maxTokens: CLAUDE_MODEL_LIMITS["claude-opus-4-7"].output,
-    },
-  ];
+  return Object.entries(CLAUDE_MODEL_LIMITS).map(([id, limit]) => ({
+    id,
+    name: `${formatClaudeModelName(id)} (via Claude CLI)`,
+    reasoning: true,
+    contextWindow: limit.context,
+    maxTokens: limit.output,
+  }));
+}
+
+function formatClaudeModelName(id) {
+  const [family = id, ...versionParts] = id.replace(/^claude-/, "").split("-");
+  const displayFamily = family.charAt(0).toUpperCase() + family.slice(1);
+  const version = versionParts.join(".");
+  return version ? `Claude ${displayFamily} ${version}` : `Claude ${displayFamily}`;
 }
 
 // ---------------------------------------------------------------------------
