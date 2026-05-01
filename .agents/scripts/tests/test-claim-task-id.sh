@@ -55,11 +55,11 @@ fail() {
 	return 0
 }
 
-# Extraction pipeline extracted from claim-task-id.sh (GH#21770 fix).
-# Kept as a local variable so the test targets the exact pipeline in use.
+# Extraction command extracted from claim-task-id.sh (GH#21770 fix).
+# Kept as a local function so the test targets the exact extraction in use.
 extract_issue_num() {
 	local input="$1"
-	printf '%s' "$input" | grep -oE '/issues/[0-9]+' | tail -1 | grep -oE '[0-9]+'
+	printf '%s\n' "$input" | awk 'match($0, /\/issues\/[0-9]+/) { num=substr($0, RSTART + 8, RLENGTH - 8) } END { print num }'
 	return 0
 }
 
@@ -133,7 +133,7 @@ fi
 # -----------------------------------------------------------------------------
 printf 'Case 6: old-regex failure documentation (must produce phantom 2157)\n'
 mock_output=$(printf '[INFO] auto-dispatch label present — skipping self-assignment per t2157\nhttps://github.com/example/repo/issues/2150')
-old_result=$(printf '%s' "$mock_output" | grep -oE '[0-9]+$' | head -1)
+old_result=$(printf '%s\n' "$mock_output" | grep -oE '[0-9]+$' | head -1)
 if [[ "$old_result" == "2157" ]]; then
 	pass "confirmed old regex produces phantom 2157 (documents the bug)"
 else

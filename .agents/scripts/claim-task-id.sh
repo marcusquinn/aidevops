@@ -577,8 +577,9 @@ create_github_issue() {
 	# log lines like "[INFO] ... per t2157" whose trailing digits would
 	# match a naive '[0-9]+$' pattern, producing phantom numbers. Anchoring
 	# to the URL shape (/issues/NNN) is immune to log message contamination.
-	# tail -1 defends against any future multi-line URL output (t3039/GH#21770).
-	issue_num=$(echo "$issue_url" | grep -oE '/issues/[0-9]+' | tail -1 | grep -oE '[0-9]+')
+	# Capture the last /issues/NNN match to defend against future multi-line URL
+	# output (t3039/GH#21770), while avoiding echo and a multi-process pipeline.
+	issue_num=$(printf '%s\n' "$issue_url" | awk 'match($0, /\/issues\/[0-9]+/) { num=substr($0, RSTART + 8, RLENGTH - 8) } END { print num }')
 
 	if [[ -z "$issue_num" ]]; then
 		log_warn "Failed to extract issue number from: $issue_url"
