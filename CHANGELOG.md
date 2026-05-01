@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.45] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3218 complete (pr:#22047)
+- Maintenance: mark t3250 complete (pr:#22036 completed:2026-05-01) [skip ci]
+- Maintenance: sync ref:GH#21985 to TODO.md [skip ci]
+- Maintenance: mark t3231 complete (pr:#22044 completed:2026-05-01) [skip ci]
+- Refactor: split headless runtime worker helpers (#22055)
+
 ## [3.13.44] - 2026-05-01
 
 ### Changed
