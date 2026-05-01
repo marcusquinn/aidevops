@@ -421,8 +421,9 @@ _dsi_build_prompt() {
 #   $4 - prompt
 #   $5 - tier
 #   $6 - selected_model (may be empty for auto-select)
-#   $7 - worker_log path
-#   $8 - issue_number
+#   $7 - agent_name
+#   $8 - worker_log path
+#   $9 - issue_number
 # Stdout (on success): worker PID (single line)
 # Returns: 0 launched, 1 failed
 #######################################
@@ -433,8 +434,9 @@ _dsi_launch_worker() {
 	local prompt="$4"
 	local tier="$5"
 	local selected_model="$6"
-	local worker_log="$7"
-	local issue_number="$8"
+	local agent_name="$7"
+	local worker_log="$8"
+	local issue_number="$9"
 
 	local -a cmd=(
 		env
@@ -453,6 +455,9 @@ _dsi_launch_worker() {
 	)
 	if [[ -n "$selected_model" ]]; then
 		cmd+=(--model "$selected_model")
+	fi
+	if [[ -n "$agent_name" ]]; then
+		cmd+=(--agent "$agent_name")
 	fi
 
 	# Run in background, redirect stdout/stderr to worker_log so caller
@@ -475,13 +480,14 @@ _dsi_launch_worker() {
 #######################################
 # Parse + validate dispatch args. Sets globals:
 #   _DSI_ARG_ISSUE, _DSI_ARG_REPO, _DSI_ARG_MODEL, _DSI_ARG_DRYRUN,
-#   _DSI_ARG_NO_CEREMONY
+#   _DSI_ARG_NO_CEREMONY, _DSI_ARG_AGENT
 # Returns: 0 ok, 2 invalid usage (caller should propagate)
 #######################################
 _dsi_parse_dispatch_args() {
 	_DSI_ARG_ISSUE=""
 	_DSI_ARG_REPO=""
 	_DSI_ARG_MODEL=""
+	_DSI_ARG_AGENT="Build+"
 	_DSI_ARG_DRYRUN=0
 	_DSI_ARG_NO_CEREMONY=0
 	while [[ $# -gt 0 ]]; do
@@ -497,6 +503,14 @@ _dsi_parse_dispatch_args() {
 				return 2
 			fi
 			_DSI_ARG_MODEL="${2}"
+			shift 2
+			;;
+		--agent)
+			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+				_dsi_err "--agent requires an agent name (default: Build+)"
+				return 2
+			fi
+			_DSI_ARG_AGENT="${2}"
 			shift 2
 			;;
 		--dry-run)
@@ -568,6 +582,7 @@ _dsi_print_dryrun() {
 	_dsi_info "  Labels:       ${_DSI_ISSUE_LABELS}"
 	_dsi_info "  Tier:         ${_DSI_TIER}"
 	_dsi_info "  Model:        ${_DSI_SELECTED_MODEL:-<auto>}"
+	_dsi_info "  Agent:        ${_DSI_ARG_AGENT}"
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
 	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
@@ -676,7 +691,7 @@ cmd_dispatch() {
 #   $2 repo_slug
 #   $3 session_key
 # Reads: _DSI_ISSUE_URL, _DSI_LOG_DIR, _DSI_WORKTREE_PATH, _DSI_ISSUE_TITLE,
-#        _DSI_TIER, _DSI_SELECTED_MODEL.
+#        _DSI_TIER, _DSI_SELECTED_MODEL, _DSI_ARG_AGENT.
 _dsi_launch_and_report() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -689,7 +704,7 @@ _dsi_launch_and_report() {
 	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
-		"$worker_log" "$issue_number") || return 1
+		"$_DSI_ARG_AGENT" "$worker_log" "$issue_number") || return 1
 
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")
@@ -700,6 +715,7 @@ _dsi_launch_and_report() {
 	_dsi_info "  Worker PID: ${worker_pid}"
 	_dsi_info "  Issue:      #${issue_number} (${repo_slug})"
 	_dsi_info "  Tier/model: ${_DSI_TIER} / ${_DSI_SELECTED_MODEL:-<auto>}"
+	_dsi_info "  Agent:      ${_DSI_ARG_AGENT}"
 	_dsi_info "  Worktree:   ${_DSI_WORKTREE_PATH}"
 	_dsi_info "  Log:        ${worker_log}"
 	_dsi_info "  Session:    ${session_key}"
@@ -777,6 +793,7 @@ Usage: dispatch-single-issue-helper.sh dispatch <issue_number> <owner/repo> [opt
 Options:
   --model <id>    Override model (e.g. anthropic/claude-opus-4-7).
                   Default: inferred from tier:* and model:* labels.
+  --agent <name>  Worker agent name. Default: Build+.
   --dry-run       Print planned dispatch without launching.
   --no-ceremony   Skip the pre-launch ceremony (status:queued + origin:worker
                   + assignee normalize). Default: ceremony is ON. Use only
@@ -786,6 +803,7 @@ Options:
 Examples:
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
+  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --agent Build+
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --no-ceremony
 EOF
@@ -810,6 +828,9 @@ Examples:
 
   # Force a specific model
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
+
+  # Force an agent name (default: Build+)
+  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --agent Build+
 
   # Check status
   dispatch-single-issue-helper.sh status 20882 marcusquinn/aidevops

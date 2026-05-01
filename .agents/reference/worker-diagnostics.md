@@ -26,6 +26,31 @@ Pulse cycle (every 3 min, configurable)
     → On failure: CLAIM_RELEASED posted, issue available for re-dispatch
 ```
 
+## Manual Worker Launch
+
+Use `aidevops launch-worker` when an operator needs a controlled headless
+worker launch instead of waiting for the next pulse cycle. Common cases:
+
+- Smoke-test a newly filed issue.
+- Retry after fixing a dispatch blocker.
+- Validate worker-readiness for a brief.
+- Start a small batch with an explicit model.
+
+Examples:
+
+```bash
+aidevops launch-worker 22259 marcusquinn/aidevops --dry-run
+aidevops launch-worker 22259 marcusquinn/aidevops --model anthropic/claude-opus-4-7
+aidevops launch-worker --batch 22259,22260 marcusquinn/aidevops --agent Build+
+aidevops launch-worker status 22259 marcusquinn/aidevops
+```
+
+The command wraps `dispatch-single-issue-helper.sh dispatch`, so it preserves the
+manual-dispatch ceremony: open-issue validation, parent-task block, fail-closed
+dedup check, `status:queued`, `origin:worker`, runner assignment, worktree
+creation from `origin/<default>`, and ledger registration. It is not a pulse
+replacement; the pulse still owns scanning, cadence, capacity, and merge flow.
+
 ## Architecture Decisions
 
 ### SQLite DB Isolation (v3.6.130)
