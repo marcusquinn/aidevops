@@ -143,7 +143,12 @@ _deploy_agents_copy() {
 		for pns in "$@"; do
 			rsync_excludes+=("--exclude=${pns}/")
 		done
-		if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
+		local rsync_timeout="${AIDEVOPS_RSYNC_TIMEOUT:-120}"
+		[[ "$rsync_timeout" =~ ^[0-9]+$ && "$rsync_timeout" -gt 0 ]] || rsync_timeout=120
+		# GH#22086: bound rsync I/O stalls so setup.sh --non-interactive can
+		# unwind via its EXIT trap instead of leaving a long-running setup owner
+		# and stale setup-noninteractive.lock.d behind.
+		if rsync -a --timeout="$rsync_timeout" "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
 			deploy_ok=true
 		fi
 	else

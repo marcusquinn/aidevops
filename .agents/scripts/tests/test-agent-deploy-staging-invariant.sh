@@ -340,6 +340,33 @@ test_no_change_corrupt_live_scripts_reserved_namespace_recovers() {
 	return 0
 }
 
+test_rsync_copy_uses_io_timeout() {
+	local src="${TEST_DIR}/src7"
+	local tgt="${TEST_DIR}/tgt7"
+	local args_file="${TEST_DIR}/rsync-args7.txt"
+	_make_source_dir "$src"
+	mkdir -p "$tgt"
+
+	rsync() {
+		printf '%s\n' "$*" >"$args_file"
+		mkdir -p "$tgt/scripts"
+		cp -a "$src/scripts/." "$tgt/scripts/"
+		return 0
+	}
+
+	local rc=0
+	AIDEVOPS_RSYNC_TIMEOUT=7 _deploy_agents_copy "$src" "$tgt" || rc=$?
+
+	unset -f rsync
+
+	if [[ "$rc" -eq 0 ]] && grep -q -- '--timeout=7' "$args_file" && [[ -f "$tgt/scripts/hello.sh" ]]; then
+		print_result "rsync copy uses bounded I/O timeout" 0
+	else
+		print_result "rsync copy uses bounded I/O timeout" 1 "rc=$rc args=$(tr '\n' ' ' <"$args_file" 2>/dev/null || true)"
+	fi
+	return 0
+}
+
 main() {
 	setup
 
@@ -347,6 +374,7 @@ main() {
 	test_mv_to_old_fails_preserves_live_target
 	test_mv_staging_to_live_fails_rolls_back
 	test_no_change_corrupt_live_scripts_reserved_namespace_recovers
+	test_rsync_copy_uses_io_timeout
 	test_fixed_staging_cleanup_does_not_abort_copy
 	test_postcondition_fails_when_scripts_absent
 
