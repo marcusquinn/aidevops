@@ -3782,5 +3782,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3367 fix setup hang in generate_agent_skills stage #auto-dispatch #bug #framework ref:GH#22077
 
 - [ ] t3366 Fix REST fallback wrapper test hang after PR fallback cases #auto-dispatch #bug ref:GH#22076
-
-- [ ] t3364 Fix task-complete helper merged PR detection for closed PRs #auto-dispatch #bug ref:GH#22075
