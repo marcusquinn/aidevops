@@ -328,6 +328,7 @@ EOF
 		-c user.email='test@example.invalid' \
 		commit -q -m 'baseline repeated string debt'
 	git -C "$tmp_repo" update-ref refs/remotes/origin/main HEAD
+	printf '\n# unrelated maintenance comment\n' >>"$fixture"
 
 	local output ret
 	(
