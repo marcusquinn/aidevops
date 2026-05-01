@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.76] - 2026-05-01
+
+### Changed
+
+- fix task-complete merged PR detection (#22181)
+- Maintenance: mark t3391 complete (pr:#22172 completed:2026-05-01) [skip ci]
+- Maintenance: record task-complete follow-up
+- Maintenance: mark t3369 complete (pr:#22177 testing:runtime-verified)
+- Maintenance: mark t3392 complete (pr:#22169 completed:2026-05-01) [skip ci]
+- Maintenance: sync ref:GH#22146 to TODO.md [skip ci]
+- Maintenance: mark t3386 complete (pr:#22152 completed:2026-05-01) [skip ci]
+
 ## [3.13.75] - 2026-05-01
 
 ### Changed
