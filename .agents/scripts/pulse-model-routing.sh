@@ -14,6 +14,8 @@
 # constants in the bootstrap section.
 #
 # Functions in this module (in source order):
+#   - _provider_allowed_by_headless_allowlist
+#   - _resolve_model_override_label
 #   - resolve_dispatch_model_for_labels
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
@@ -26,23 +28,78 @@
 [[ -n "${_PULSE_MODEL_ROUTING_LOADED:-}" ]] && return 0
 _PULSE_MODEL_ROUTING_LOADED=1
 
-resolve_dispatch_model_for_labels() {
-	local labels_csv="$1"
-	local tier=""
-	local resolved_model=""
+_provider_allowed_by_headless_allowlist() {
+ local provider="$1"
+ local allowlist_raw="${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}"
+ local -a allowlist=()
+ local allowed_provider=""
 
-	# Model-override labels take precedence over tier:* labels (t2239).
-	# These route directly to a specific model, bypassing the tier → model
-	# resolution in model-availability-helper.sh. Applied either by the
-	# cascade (after opus-4.6 exhausts its retries at tier:thinking) or
-	# manually by maintainers for intent-driven routing. See
-	# tools/ai-assistants/models-opus.md for the when-to-apply guidance.
-	case ",${labels_csv}," in
-	*,model:opus-4-7,*)
-		printf '%s' "anthropic/claude-opus-4-7"
-		return 0
-		;;
-	esac
+ if [[ -z "$allowlist_raw" ]]; then
+  return 0
+ fi
+
+ IFS=',' read -r -a allowlist <<<"$allowlist_raw"
+ for allowed_provider in "${allowlist[@]}"; do
+  allowed_provider=$(printf '%s' "$allowed_provider" | sed 's/^ *//;s/ *$//')
+  if [[ "$allowed_provider" == "$provider" ]]; then
+   return 0
+  fi
+ done
+
+ return 1
+}
+
+_resolve_model_override_label() {
+ local labels_csv="$1"
+ local override_model=""
+ local override_provider=""
+ local fallback_tier=""
+ local resolved_model=""
+
+ # Model-override labels express intent, not an unconditional provider pin.
+ # Prefer the named model when its provider is allowed and the availability
+ # helper says it is usable; otherwise fall back through the same tier resolver
+ # as normal tier labels.
+ case ",${labels_csv}," in
+ *,model:opus-4-7,*)
+  override_model="anthropic/claude-opus-4-7"
+  fallback_tier="opus"
+  ;;
+ *)
+  return 1
+  ;;
+ esac
+
+ if [[ ! -x "${MODEL_AVAILABILITY_HELPER:-}" ]]; then
+  printf '%s' ""
+  return 0
+ fi
+
+ override_provider="${override_model%%/*}"
+ if _provider_allowed_by_headless_allowlist "$override_provider" && \
+  "$MODEL_AVAILABILITY_HELPER" check "$override_model" --quiet 2>/dev/null; then
+  printf '%s' "$override_model"
+  return 0
+ fi
+
+ resolved_model=$("$MODEL_AVAILABILITY_HELPER" resolve "$fallback_tier" --quiet 2>/dev/null || true)
+ printf '%s' "$resolved_model"
+ return 0
+}
+
+resolve_dispatch_model_for_labels() {
+ local labels_csv="$1"
+ local tier=""
+ local resolved_model=""
+
+ # Model-override labels take precedence over tier:* labels (t2239), but must
+ # still resolve through availability/fallback so cooldowns and provider
+ # allowlists can route away from unavailable providers.
+ resolved_model=$(_resolve_model_override_label "$labels_csv")
+ if [[ -n "$resolved_model" ]]; then
+  printf '%s' "$resolved_model"
+  return 0
+ fi
 
 	# Tier label resolution — tier:thinking is the canonical opus-tier label
 	case ",${labels_csv}," in
