@@ -331,10 +331,28 @@ cleanup_worktree_entries_in_repos_json() {
 	command -v git &>/dev/null || return 0
 
 	local stale_paths=()
-	local path git_dir common_dir
+	local current_repo_root=""
+	local current_physical_dir=""
+	local path normalized_path git_dir common_dir
+
+	current_physical_dir=$(pwd -P 2>/dev/null || pwd)
+	current_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	if [[ -n "$current_repo_root" ]]; then
+		current_repo_root=$(cd "$current_repo_root" 2>/dev/null && pwd -P) || current_repo_root=""
+	fi
 
 	while IFS= read -r path; do
 		[[ -n "$path" && -d "$path" ]] || continue
+		normalized_path=$(cd "$path" 2>/dev/null && pwd -P) || continue
+		# GH#22176: setup may run from a linked implementation worktree.
+		# The t2250 migration should remove stale worktree registrations from
+		# repos.json, but never deregister the worktree currently executing setup.
+		if [[ -n "$current_repo_root" && "$normalized_path" == "$current_repo_root" ]]; then
+			continue
+		fi
+		if [[ "$current_physical_dir" == "$normalized_path" || "$current_physical_dir" == "$normalized_path"/* ]]; then
+			continue
+		fi
 		git_dir=$(git -C "$path" rev-parse --git-dir 2>/dev/null) || continue
 		common_dir=$(git -C "$path" rev-parse --git-common-dir 2>/dev/null) || continue
 		# Normalise to absolute paths for comparison.
