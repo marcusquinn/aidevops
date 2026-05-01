@@ -13,15 +13,17 @@ name: Qlty Regression Gate
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-    # t2220: suppress concurrency-cancellation cascade on docs-only PRs.
+    # t2220/t3403: suppress concurrency-cancellation cascade on docs-only PRs.
     # `gh pr create --label "a,b,c,d"` fires one `labeled` event per label
-    # after the initial `opened`; each event triggers a new run that
-    # cancels the in-flight one via `cancel-in-progress: true`. Docs-only
+    # after the initial `opened`; each event can trigger a new run. When this
+    # workflow used `cancel-in-progress: true`, label runs cancelled the
+    # in-flight required check before job-level guards could skip them. Docs-only
     # PRs observed 15+ cancelled runs per workflow, which `gh pr checks`
     # then surfaces as `fail` (it displays `cancelled` conclusions as
     # `fail` in its TSV output). Filtering docs-only at the trigger
-    # level prevents the cascade entirely. In-workflow `detect-scope`
-    # still runs for mixed PRs as a belt-and-suspenders check.
+    # level reduces no-op runs; keeping cancel-in-progress disabled prevents
+    # label events on mixed PRs from cancelling required checks. In-workflow
+    # `detect-scope` still runs as a belt-and-suspenders check.
     paths-ignore:
       - '**/*.md'
       - 'todo/**'
@@ -32,15 +34,16 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   detect-scope:
     name: Detect PR scope
     runs-on: ubuntu-latest
-    # t2231: fast-fail gate — skip entirely when a labeled event is unrelated to
-    # 'ratchet-bump'. Cascade still fires N workflow runs on bulk label application,
-    # but each one exits in ~3s with no checkout cost — no "cancelled" surface.
+    # t2231/t3403: fast-fail gate — skip entirely when a labeled event is
+    # unrelated to 'ratchet-bump'. Cascade can still fire N workflow runs on
+    # bulk label application, but cancel-in-progress is disabled so these
+    # cheap skipped runs cannot cancel the required scan from opened/synchronize.
     if: >-
       github.event.action != 'labeled' ||
       github.event.label.name == 'ratchet-bump'

@@ -9,7 +9,10 @@
 #      unassigned, review_requested, review_request_removed) — these fire
 #      once per item, so `gh pr create --label "a,b,c"` fires 3 events.
 #   2. cancel-in-progress: true on any concurrency group.
-#   3. No effective mitigation (paths-ignore or job-level event-action guard).
+#   3. No effective cancellation mitigation. Trigger filters and job-level
+#      guards reduce work after the run starts, but GitHub evaluates
+#      concurrency before any job or step can skip, so they do not prevent a
+#      label run from cancelling an already-registered required check.
 #
 # This combination causes rapid-fire event cascades where intermediate
 # workflow runs get cancelled before completing. See t2220 for the canonical
@@ -88,39 +91,6 @@ has_cancel_in_progress() {
 	return $?
 }
 
-# has_paths_ignore <file>
-# Returns 0 if paths-ignore is present under a trigger section.
-# paths-ignore scopes the trigger to file-changing events, which prevents
-# the cascade for PRs matching the ignore pattern (e.g., docs-only PRs).
-has_paths_ignore() {
-	local _file="$1"
-	grep -qE '^\s+paths-ignore:' "$_file"
-	return $?
-}
-
-# has_event_action_guard <file>
-# Returns 0 if at least one job has an if: condition that gates on
-# github.event.action. This catches patterns like:
-#   if: github.event.action != 'labeled' || contains(...)
-# which prevent cascade by skipping unrelated label events early.
-# Note: checking github.event.label.name alone does NOT mitigate cascade
-# because the run still enters the concurrency group and can be cancelled.
-has_event_action_guard() {
-	local _file="$1"
-	# Job-level if: referencing event.action
-	if grep -qE '^\s+if:.*github\.event\.action' "$_file"; then
-		return 0
-	fi
-	# Step-level early exit on event action (run: block)
-	# Pattern: check EVENT_ACTION or github.event.action in a run block
-	# and exit 0 before doing work — prevents wasting the concurrency slot.
-	if grep -qE 'EVENT_ACTION|github\.event\.action' "$_file" &&
-		grep -qE '(exit 0|echo.*skip|echo.*Skipping)' "$_file"; then
-		return 0
-	fi
-	return 1
-}
-
 # check_file <file>
 # Returns 0 if the file is OK (not vulnerable), 1 if vulnerable.
 check_file() {
@@ -136,18 +106,10 @@ check_file() {
 		return 0
 	fi
 
-	# Step 3: Check mitigations (either is sufficient)
-	if has_paths_ignore "$_file"; then
-		log "MITIGATED (paths-ignore): $_file"
-		return 0
-	fi
-
-	if has_event_action_guard "$_file"; then
-		log "MITIGATED (event-action guard): $_file"
-		return 0
-	fi
-
-	# No mitigation found — vulnerable
+	# Trigger filters and event-action guards run after GitHub has already
+	# admitted the run into the concurrency group, so they cannot stop a label
+	# run from cancelling an in-flight required check. The only reliable fix is
+	# removing the label-like trigger or not cancelling in-progress runs.
 	return 1
 }
 
@@ -165,9 +127,9 @@ print_report() {
 	done < "$_vuln_file"
 	printf '\n'
 	printf 'Remediation:\n'
-	printf '  1. Add paths-ignore under the trigger to scope to file-changing events\n'
-	printf '  2. OR add a job-level if: guard on github.event.action\n'
-	printf '  3. OR remove cancel-in-progress: true from the concurrency group\n'
+	printf '  1. Remove cancel-in-progress: true from workflows with label-like triggers\n'
+	printf '  2. OR remove label-like triggers from workflows that must cancel older runs\n'
+	printf '  3. Keep paths-ignore/event-action guards only as cost controls; they are not cancellation controls\n'
 	printf '\n'
 	printf 'See: t2220 (evidence), t2228 (parent remediation)\n'
 	printf 'Override: apply the workflow-cascade-ok label with a justification section\n'
@@ -190,7 +152,7 @@ print_markdown_report() {
 	printf '**%d workflow(s) have the cascade-vulnerable combination** ' "$_count"
 	# Backticks below are intentional markdown formatting, not command substitution.
 	# shellcheck disable=SC2016
-	printf '(label-like trigger + `cancel-in-progress: true` + no mitigation):\n\n'
+	printf '(label-like trigger + `cancel-in-progress: true`):\n\n'
 	while IFS= read -r _f; do
 		# shellcheck disable=SC2016
 		printf '- `%s`\n' "$_f"
@@ -198,11 +160,11 @@ print_markdown_report() {
 	printf '\n'
 	printf '### Remediation\n\n'
 	# shellcheck disable=SC2016
-	printf '1. Add `paths-ignore` under the trigger to scope to file-changing events\n'
+	printf '1. Remove `cancel-in-progress: true` from workflows with label-like triggers\n'
 	# shellcheck disable=SC2016
-	printf '2. OR add a job-level `if:` guard on `github.event.action`\n'
+	printf '2. OR remove label-like triggers from workflows that must cancel older runs\n'
 	# shellcheck disable=SC2016
-	printf '3. OR remove `cancel-in-progress: true` from the concurrency group\n\n'
+	printf '3. Keep `paths-ignore` and event-action guards only as cost controls; GitHub evaluates concurrency before those guards run\n\n'
 	printf 'See: [t2220](https://github.com/marcusquinn/aidevops/pull/19726) (evidence), '
 	printf '[t2228 parent](https://github.com/marcusquinn/aidevops/issues/19736) (remediation plan)\n\n'
 	# shellcheck disable=SC2016
