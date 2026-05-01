@@ -179,13 +179,13 @@ export AIDEVOPS_AGENTS_DIR="$TMP/.aidevops/agents"
 mkdir -p "$AIDEVOPS_AGENTS_DIR"
 
 # Source shared-constants.sh fallbacks
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${CYAN+x}" ]] && CYAN='\033[0;36m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
 
 # Counters (same as in the helper)
 FINDINGS_CRITICAL=0
