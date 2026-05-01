@@ -37,6 +37,7 @@
 #   8. AIDEVOPS_SCAN_STALE_AUTO_RELEASE=1 env + non-TTY → dead+missing released
 #   9. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
 #   10. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
+#   11. report-only stale output includes worktree path (GH#22210)
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -364,6 +365,22 @@ else
 fi
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-110.json"
+
+# =============================================================================
+# Test 11 — report-only stale output includes worktree path (GH#22210)
+# =============================================================================
+write_stamp "owner-repo-111.json" "99999" "$EXISTING_WORKTREE" "111" "owner/repo"
+
+REPORT_OUTPUT=$(_isc_cmd_scan_stale --no-auto-release 2>/dev/null || true)
+
+if [[ "$REPORT_OUTPUT" == *"worktree: $EXISTING_WORKTREE"* ]]; then
+	pass "report-only stale output includes worktree path"
+else
+	fail "report-only stale output includes worktree path" \
+		"expected report to include worktree: $EXISTING_WORKTREE"
+fi
+# Cleanup
+rm -f "${STAMP_DIR}/owner-repo-111.json"
 
 # =============================================================================
 # Summary

@@ -373,6 +373,7 @@ _isc_scan_dead_stamps_phase() {
 				else
 					[[ $stale_count -eq 0 ]] && printf 'Stale interactive claims (dead session — PID gone or recycled by unrelated process):\n\n'
 					printf '  #%s in %s\n' "$issue" "$slug"
+					printf '    worktree: %s\n' "${worktree:-unknown}"
 					printf '    pid:      %s (dead or argv-hash mismatch)\n' "${pid:-unknown}"
 					printf '    release:  aidevops issue release %s\n' "$issue"
 					printf '\n'
