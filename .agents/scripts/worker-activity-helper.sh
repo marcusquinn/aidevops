@@ -62,9 +62,10 @@ _wah_parse_since() {
 
 #######################################
 # Aggregate worker outcomes from headless-runtime-metrics.jsonl.
-# Single jq slurp pass: filter by ts cutoff, bucket by result + exit_code.
+# Single jq streaming pass: filter by ts cutoff, bucket by result + exit_code.
 # Bucketing lives entirely in jq (not awk) so we don't need positional
-# field references in shell. jsonl files are small (~MB), slurp is safe.
+# field references in shell. `inputs` avoids reading unrelated old entries into
+# memory before filtering the append-only jsonl.
 #
 # $1 — cutoff_epoch (entries with ts < cutoff are dropped).
 # stdout — six space-separated integers:
@@ -90,8 +91,8 @@ _wah_aggregate_metrics() {
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
 	local result
-	result=$(jq -rs --argjson cutoff "$cutoff_epoch" '
-		[.[] | select((.ts // 0) >= $cutoff)] as $w | {
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" '
+		[inputs | select((.ts // 0) >= $cutoff)] as $w | {
 			total:  ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
 			wk:     ([$w[] | select(.result == "watchdog_stall_killed")] | length),
@@ -104,7 +105,7 @@ _wah_aggregate_metrics() {
 				and .result != "rate_limit"
 			)] | length)
 		} | "\(.total) \(.succ) \(.wk) \(.wc) \(.rl) \(.of)"
-	' "$metrics" 2>/dev/null) || result="0 0 0 0 0 0"
+	' <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -171,8 +172,10 @@ _wah_pr_count() {
 	# Best-effort cache write.
 	mkdir -p "$(dirname "$cache")" 2>/dev/null || true
 	if [[ "$count" != "?" ]]; then
-		printf '{"key":"%s","count":%s,"ts":%d}\n' "$cache_key" "$count" "$(date +%s)" \
-			>"$cache" 2>/dev/null || true
+		local cache_ts
+		cache_ts=$(date +%s)
+		jq -n --arg key "$cache_key" --argjson count "$count" --argjson ts "$cache_ts" \
+			'{key: $key, count: $count, ts: $ts}' >"$cache" 2>/dev/null || true
 	fi
 	printf '%s\n' "$count"
 	return 0
