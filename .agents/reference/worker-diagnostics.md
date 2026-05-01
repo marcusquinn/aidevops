@@ -21,7 +21,7 @@ Pulse cycle (every 3 min, configurable)
   → nohup worker launch (survives pulse-wrapper exit)
     → DB isolation (XDG_DATA_HOME per worker)
     → Activity watchdog (standalone process, monitors output growth)
-    → OpenCode run (headless, direct to Anthropic API via OAuth)
+    → OpenCode run (headless, direct to the selected provider/model via OAuth or API key)
     → On completion: merge worker DB back to shared DB, cleanup
     → On failure: CLAIM_RELEASED posted, issue available for re-dispatch
 ```
@@ -61,6 +61,17 @@ grep WATCHDOG_KILL /tmp/pulse-*-<issue>.log
 # Check for CLAIM_RELEASED on the issue
 gh api repos/<slug>/issues/<num>/comments --jq '.[] | select(.body | test("CLAIM_RELEASED")) | .created_at'
 ```
+
+### Provider-scoped startup (t3420)
+
+Headless OpenCode workers scope startup state to the selected model provider:
+
+- The isolated `auth.json` copied into `XDG_DATA_HOME` contains only the selected provider entry (for example, `openai` for `openai/gpt-5.5`).
+- Sandbox passthrough includes shared framework/runtime variables plus only the selected provider's env vars (`OPENAI_*`, `ANTHROPIC_*`/`CLAUDE_*`, or `GOOGLE_*`).
+- Canary uses the same provider-scoped auth copy as the real worker, so it validates the selected model without eagerly initializing unrelated provider accounts.
+- Fallback remains lazy: when retry logic selects another provider/model, the next run attempt rebuilds the isolated auth/env scope for that provider.
+
+Diagnostic: set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` or dispatch with `--model openai/gpt-5.5`, then inspect the worker temp auth dir in lifecycle logs (`db_isolated dir=...`). Its `opencode/auth.json` should not contain unrelated provider keys.
 
 ### Canary Smoke Test (v3.6.123)
 

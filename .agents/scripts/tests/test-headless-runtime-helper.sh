@@ -184,6 +184,56 @@ EOF
 	return 0
 }
 
+test_sandbox_passthrough_scopes_provider_env() {
+	local csv
+	csv=$(
+		OPENAI_API_KEY='openai-test' \
+		ANTHROPIC_API_KEY='anthropic-test' \
+		GOOGLE_API_KEY='google-test' \
+		OPENCODE_BIN='opencode' \
+		build_sandbox_passthrough_csv "openai"
+	)
+
+	if [[ "$csv" == *"OPENAI_API_KEY"* ]] &&
+		[[ "$csv" != *"ANTHROPIC_API_KEY"* ]] &&
+		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
+		[[ "$csv" == *"OPENCODE_BIN"* ]]; then
+		print_result "sandbox passthrough scopes env to selected provider" 0
+		return 0
+	fi
+
+	print_result "sandbox passthrough scopes env to selected provider" 1 \
+		"Expected OpenAI env only, got: ${csv}"
+	return 0
+}
+
+test_copy_scoped_opencode_auth_keeps_selected_provider_only() {
+	local auth_root="${TEST_ROOT}/scoped-auth"
+	local source_auth="${auth_root}/source.json"
+	local dest_auth="${auth_root}/dest/opencode/auth.json"
+	mkdir -p "$auth_root"
+	cat >"$source_auth" <<'EOF'
+{
+  "openai": {"type": "oauth", "access": "openai-token"},
+  "anthropic": {"type": "oauth", "access": "anthropic-token"}
+}
+EOF
+
+	copy_scoped_opencode_auth "$source_auth" "$dest_auth" "openai"
+
+	local has_openai has_anthropic
+	has_openai=$(jq -r 'has("openai")' "$dest_auth")
+	has_anthropic=$(jq -r 'has("anthropic")' "$dest_auth")
+	if [[ "$has_openai" == "true" && "$has_anthropic" == "false" ]]; then
+		print_result "copy_scoped_opencode_auth keeps selected provider only" 0
+		return 0
+	fi
+
+	print_result "copy_scoped_opencode_auth keeps selected provider only" 1 \
+		"Expected only openai auth entry in ${dest_auth}"
+	return 0
+}
+
 # Helper: create a bare git repo and a feature branch with optional commits.
 # Each call uses work_dir-derived remote path to avoid inter-test collisions.
 # Args: $1 = work_dir path, $2 = 1 to add a commit (0 for none)
@@ -595,6 +645,8 @@ main() {
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_headless_activity_timeout_default_matches_watchdog
 	test_canary_uses_builtin_agent_without_default_agent
+	test_sandbox_passthrough_scopes_provider_env
+	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	# Classification tests (GH#20819 refactor of _worker_produced_output)
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen

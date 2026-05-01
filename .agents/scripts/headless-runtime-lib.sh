@@ -385,7 +385,47 @@ PY
 
 # --- Section 6: Sandbox Passthrough ---
 
+_headless_provider_env_allowed() {
+	local provider="$1"
+	local name="$2"
+
+	case "$name" in
+	OPENAI_*) [[ "$provider" == "openai" ]] && return 0 ;;
+	ANTHROPIC_* | CLAUDE_*) [[ "$provider" == "anthropic" ]] && return 0 ;;
+	GOOGLE_*) [[ "$provider" == "google" ]] && return 0 ;;
+	esac
+
+	return 1
+}
+
+copy_scoped_opencode_auth() {
+	local source_auth="$1"
+	local dest_auth="$2"
+	local provider="${3:-}"
+	local dest_dir
+
+	[[ -f "$source_auth" ]] || return 0
+	dest_dir=$(dirname "$dest_auth")
+	mkdir -p "$dest_dir"
+
+	if [[ -n "$provider" ]] && command -v jq >/dev/null 2>&1; then
+		local tmp_auth="${dest_auth}.tmp.$$"
+		if jq --arg p "$provider" 'if has($p) then {($p): .[$p]} else {} end' \
+			"$source_auth" >"$tmp_auth" 2>/dev/null; then
+			mv "$tmp_auth" "$dest_auth"
+			chmod 600 "$dest_auth" 2>/dev/null || true
+			return 0
+		fi
+		rm -f "$tmp_auth" 2>/dev/null || true
+	fi
+
+	cp "$source_auth" "$dest_auth" 2>/dev/null || true
+	chmod 600 "$dest_auth" 2>/dev/null || true
+	return 0
+}
+
 build_sandbox_passthrough_csv() {
+	local provider="${1:-}"
 	local names=()
 	local seen_names=" "
 	local name
@@ -396,11 +436,21 @@ build_sandbox_passthrough_csv() {
 		# workers causes them to attach to the pulse's session instead of
 		# creating independent sessions (GH#6668). Exclude it explicitly.
 		OPENCODE_PID) ;;
+		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
+			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
+				continue
+			fi
+			if [[ "$seen_names" == *" ${name} "* ]]; then
+				continue
+			fi
+			seen_names+="${name} "
+			names+=("$name")
+			;;
 		# OTEL_* is passed through so headless workers under the sandbox
 		# can export OTLP traces when OTEL_EXPORTER_OTLP_ENDPOINT is set.
 		# Without this, opencode never initialises its OTLP exporter and
 		# all aidevops.* plugin span enrichment is silently dropped (t2186).
-		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENAI_* | ANTHROPIC_* | GOOGLE_* | OPENCODE_* | CLAUDE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENCODE_* | XDG_* | OTEL_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
 			if [[ "$seen_names" == *" ${name} "* ]]; then
 				continue
 			fi
@@ -1264,10 +1314,17 @@ _run_canary_test() {
 	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
 	mkdir -p "${_canary_config_dir}/opencode"
 	printf '%s\n' "{\"\$schema\":\"https://opencode.ai/config.json\"}" >"${_canary_config_dir}/opencode/opencode.json"
-	# Copy auth.json so the canary has valid tokens
+	local _canary_provider
+	local _canary_default_provider="anthropic"
+	_canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "$_canary_default_provider")
+	[[ -n "$_canary_provider" ]] || _canary_provider="$_canary_default_provider"
+
+	# Copy only the selected provider's auth entry so canary startup does not
+	# initialize unrelated provider state. Env/API-key auth still passes through
+	# normally via the selected provider's environment variables.
 	local _oc_auth="${XDG_DATA_HOME:-$HOME/.local/share}/opencode/auth.json"
 	if [[ -f "$_oc_auth" ]]; then
-		cp "$_oc_auth" "${_canary_data_dir}/opencode/auth.json" 2>/dev/null || true
+		copy_scoped_opencode_auth "$_oc_auth" "${_canary_data_dir}/opencode/auth.json" "$_canary_provider"
 	fi
 	# t3362: Mirror the real worker auth path. A multi-account OAuth pool can
 	# have the shared auth.json pointing at a cooldown/rate-limited account while
@@ -1275,9 +1332,6 @@ _run_canary_test() {
 	# launch; the canary must do the same or it blocks dispatch with a false
 	# no_worker_process failure before the worker gets a chance to rotate.
 	if [[ -f "${_canary_data_dir}/opencode/auth.json" ]] && declare -F _maybe_rotate_isolated_auth >/dev/null 2>&1; then
-		local _canary_provider
-		_canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "anthropic")
-		[[ -n "$_canary_provider" ]] || _canary_provider="anthropic"
 		XDG_DATA_HOME="$_canary_data_dir" _maybe_rotate_isolated_auth \
 			"${_canary_data_dir}/opencode/auth.json" "$_canary_provider" || true
 	fi

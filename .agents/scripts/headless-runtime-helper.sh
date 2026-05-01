@@ -236,8 +236,7 @@ _invoke_opencode() {
 		mkdir -p "${isolated_data_dir}/opencode"
 		# Copy the current auth.json so the worker has valid tokens at startup
 		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
-			cp "$OPENCODE_AUTH_FILE" "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
-			chmod 600 "${isolated_data_dir}/opencode/auth.json" 2>/dev/null || true
+			copy_scoped_opencode_auth "$OPENCODE_AUTH_FILE" "${isolated_data_dir}/opencode/auth.json" "${_invoke_provider:-}"
 		fi
 		# GH#17549: Each worker gets its OWN SQLite DB (no shared OPENCODE_DB).
 		# Previously we set OPENCODE_DB back to the shared DB for session stats,
@@ -297,7 +296,7 @@ _invoke_opencode() {
 		fi
 		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 			local passthrough_csv
-			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			passthrough_csv="$(build_sandbox_passthrough_csv "${_invoke_provider:-}")"
 			# --stream-stdout: let child stdout flow through the pipe to tee
 			# so the activity watchdog can monitor output in real-time
 			# (GH#15180 bug #4). Without this, the sandbox captures stdout to
