@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.67] - 2026-05-01
+
+### Changed
+
+- fix verify-issue-close-helper merged PR file parsing
+- Maintenance: mark t3381 complete (pr:#22142 completed:2026-05-01) [skip ci]
+- Maintenance: restore t3389 TODO entry
+- Maintenance: add t3390 follow-up task
+- Maintenance: mark t3387 complete (pr:#22156 testing:self-assessed)
+
 ## [3.13.66] - 2026-05-01
 
 ### Changed
