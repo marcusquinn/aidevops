@@ -476,6 +476,66 @@ is_worktree_owned_by_others() {
 	return 0
 }
 
+# Delete registry paths in one sqlite transaction.
+# Arguments:
+#   $1 - newline-separated entries as worktree_path|reason
+_wt_registry_delete_paths_batch() {
+	local stale_entries="$1"
+	[[ -z "$stale_entries" ]] && return 0
+
+	{
+		printf 'BEGIN IMMEDIATE;\n'
+		while IFS='|' read -r wt_path _reason; do
+			[[ -z "$wt_path" ]] && continue
+			printf "DELETE FROM worktree_owners WHERE worktree_path = '%s';\n" "$(_wt_sql_escape "$wt_path")"
+		done <<<"$stale_entries"
+		printf 'COMMIT;\n'
+	} | sqlite3 "$WORKTREE_REGISTRY_DB" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+# Print prunable missing-directory entries as worktree_path|reason lines.
+_wt_registry_missing_directory_entries() {
+	local entries="$1"
+	[[ -z "$entries" ]] && return 0
+
+	while IFS='|' read -r wt_path _owner_pid; do
+		[[ -z "$wt_path" ]] && continue
+		if [[ ! -d "$wt_path" ]]; then
+			printf '%s|directory missing\n' "$wt_path"
+		fi
+	done <<<"$entries"
+	return 0
+}
+
+# Print verbose prune lines for already-selected entries.
+_wt_registry_print_pruned_entries() {
+	local stale_entries="$1"
+	[[ -z "$stale_entries" ]] && return 0
+
+	while IFS='|' read -r wt_path prune_reason; do
+		[[ -z "$wt_path" ]] && continue
+		echo "  Pruned: $wt_path ($prune_reason)"
+	done <<<"$stale_entries"
+	return 0
+}
+
+# Count newline-separated entries.
+_wt_registry_entry_count() {
+	local entries="$1"
+	local count=0
+	[[ -z "$entries" ]] && {
+		printf '0'
+		return 0
+	}
+
+	while IFS= read -r _entry; do
+		((++count))
+	done <<<"$entries"
+	printf '%s' "$count"
+	return 0
+}
+
 # Prune stale registry entries (dead PIDs, missing directories, corrupted paths)
 # (t197) Enhanced to handle:
 #   - Dead PIDs with missing directories
@@ -510,33 +570,22 @@ prune_worktree_registry() {
 	pruned_count=$((pruned_count + temp_count))
 	[[ -n "${VERBOSE:-}" && "$temp_count" -gt 0 ]] && echo "  Pruned $temp_count test artifacts in temp directories"
 
-	# Now process remaining entries for dead PIDs and missing directories
+	# Now process remaining entries for missing directories. Delete selected rows in
+	# one sqlite transaction; the old path called unregister_worktree once per row,
+	# which made large stale backlogs exceed common assistant/tool timeouts.
 	local entries
 	entries=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
         SELECT worktree_path, owner_pid FROM worktree_owners;
     " 2>/dev/null || echo "")
 
 	if [[ -n "$entries" ]]; then
-		while IFS='|' read -r wt_path owner_pid; do
-			local should_prune=false
-			local prune_reason=""
-
-			# Directory no longer exists
-			if [[ ! -d "$wt_path" ]]; then
-				should_prune=true
-				prune_reason="directory missing"
-			# Owner process is dead (only prune if directory also missing)
-			elif [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null && [[ ! -d "$wt_path" ]]; then
-				should_prune=true
-				prune_reason="dead PID and directory missing"
-			fi
-
-			if [[ "$should_prune" == "true" ]]; then
-				unregister_worktree "$wt_path"
-				((++pruned_count))
-				[[ -n "${VERBOSE:-}" ]] && echo "  Pruned: $wt_path ($prune_reason)"
-			fi
-		done <<<"$entries"
+		local stale_entries
+		stale_entries=$(_wt_registry_missing_directory_entries "$entries")
+		if [[ -n "$stale_entries" ]]; then
+			_wt_registry_delete_paths_batch "$stale_entries" || return 1
+			pruned_count=$((pruned_count + $(_wt_registry_entry_count "$stale_entries")))
+			[[ -n "${VERBOSE:-}" ]] && _wt_registry_print_pruned_entries "$stale_entries"
+		fi
 	fi
 
 	[[ -n "${VERBOSE:-}" ]] && echo "Pruned $pruned_count entries total"
