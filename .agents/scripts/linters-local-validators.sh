@@ -186,8 +186,9 @@ check_string_literals() {
 
 	local violations=0
 	local debt_files=0
-	local repo_root
+	local repo_root baseline_ref
 	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+	baseline_ref=$(git -C "$repo_root" merge-base HEAD origin/main 2>/dev/null || printf '%s' 'origin/main')
 
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
@@ -202,7 +203,7 @@ check_string_literals() {
 		file_dir=$(cd "$(dirname "$file")" && pwd -P)
 		file_abs="${file_dir}/$(basename "$file")"
 		rel_file=${file_abs#"$repo_root"/}
-		if git -C "$repo_root" diff --quiet origin/main -- "$rel_file" 2>/dev/null; then
+		if git -C "$repo_root" diff --quiet "$baseline_ref" -- "$rel_file" 2>/dev/null; then
 			continue
 		fi
 
@@ -210,7 +211,7 @@ check_string_literals() {
 		[[ "$repeated_strings" =~ ^[0-9]+$ ]] || repeated_strings=0
 
 		baseline_strings=0
-		base_content=$(git -C "$repo_root" show "origin/main:${rel_file}" 2>/dev/null || true)
+		base_content=$(git -C "$repo_root" show "${baseline_ref}:${rel_file}" 2>/dev/null || true)
 		if [[ -n "$base_content" ]]; then
 			baseline_strings=$(printf '%s\n' "$base_content" | _linters_count_repeated_literals)
 			[[ "$baseline_strings" =~ ^[0-9]+$ ]] || baseline_strings=0
