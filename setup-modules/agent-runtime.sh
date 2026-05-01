@@ -256,7 +256,8 @@ deploy_agents_to_runtimes() {
 # cannot be passed directly to the `timeout` binary. Instead we run it in a
 # background subshell and poll for completion with a configurable wall-clock
 # deadline. When the deadline expires the subshell is killed with SIGTERM then
-# SIGKILL and setup continues without this non-critical step.
+# SIGKILL and this non-critical step is treated as a warning so setup can
+# continue after core deployment has already succeeded.
 #
 # Configurable via AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT (default 120s).
 _deploy_agents_to_runtimes_bounded() {
@@ -275,7 +276,7 @@ _deploy_agents_to_runtimes_bounded() {
 			kill -KILL "$_pid" 2>/dev/null || true
 			wait "$_pid" 2>/dev/null || true
 			print_warning "Runtime agent deployment exceeded ${timeout_s}s — skipping (non-critical)"
-			return 1
+			return 0
 		fi
 		sleep 1
 	done
