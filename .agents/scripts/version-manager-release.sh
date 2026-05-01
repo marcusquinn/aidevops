@@ -41,6 +41,72 @@ fi
 
 # --- Functions ---
 
+_version_manager_repo_slug() {
+	local remote_url=""
+	remote_url=$(git -C "$REPO_ROOT" remote get-url origin 2>/dev/null || echo "")
+	printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||'
+	return 0
+}
+
+_github_release_rest_view() {
+	local slug="$1"
+	local tag_name="$2"
+
+	[[ -n "$slug" ]] || return 1
+	gh api "repos/${slug}/releases/tags/${tag_name}" >/dev/null 2>&1
+	return $?
+}
+
+_github_release_rest_create() {
+	local slug="$1"
+	local tag_name="$2"
+	local release_notes="$3"
+
+	[[ -n "$slug" ]] || return 1
+	gh api "repos/${slug}/releases" \
+		--method POST \
+		-f "tag_name=${tag_name}" \
+		-f "name=${tag_name} - AI DevOps Framework" \
+		-f "body=${release_notes}" \
+		-F latest=true >/dev/null
+	return $?
+}
+
+_github_release_recover_with_rest() {
+	local tag_name="$1"
+	local release_notes="$2"
+	local context="$3"
+	local slug=""
+	slug=$(_version_manager_repo_slug)
+
+	if [[ -z "$slug" ]]; then
+		print_error "Cannot recover GitHub release via REST: cannot determine repo slug from origin"
+		return 1
+	fi
+
+	print_warning "GitHub CLI release ${context} failed; checking REST release endpoint for $tag_name"
+	if _github_release_rest_view "$slug" "$tag_name"; then
+		print_warning "Partial release recovered: tag $tag_name was pushed and GitHub release already exists via REST"
+		print_info "REST endpoint verified: repos/${slug}/releases/tags/${tag_name}"
+		return 0
+	fi
+
+	print_warning "Partial release state: tag $tag_name may be pushed but release is not visible via REST; creating release via REST"
+	if _github_release_rest_create "$slug" "$tag_name" "$release_notes"; then
+		print_success "Created GitHub release via REST fallback: $tag_name"
+		return 0
+	fi
+
+	if _github_release_rest_view "$slug" "$tag_name"; then
+		print_warning "REST release create returned non-zero, but release is now visible; treating as recovered"
+		return 0
+	fi
+
+	print_error "Failed to recover GitHub release $tag_name via REST after $context failure"
+	print_info "Manual recovery: gh api repos/${slug}/releases/tags/${tag_name} || gh api repos/${slug}/releases --method POST ..."
+	return 1
+}
+
 # Function to create git tag
 create_git_tag() {
 	local version="$1"
@@ -120,16 +186,21 @@ create_github_release() {
 	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
 		print_info "Using GitHub CLI for release creation"
 
-		# Guard: check if GitHub release already exists for this tag
-		if gh release view "$tag_name" &>/dev/null; then
+		# Generate release notes before any recovery path so REST creation can
+		# finish a partial release without rerunning the version bump.
+		local release_notes
+		release_notes=$(generate_release_notes "$version")
+
+		# Guard: check if GitHub release already exists for this tag. When GraphQL
+		# quota is exhausted, `gh release view` can fail while REST remains usable;
+		# recover through REST instead of returning failure after tag/push success.
+		local view_exit=0
+		gh release view "$tag_name" &>/dev/null || view_exit=$?
+		if [[ "$view_exit" -eq 0 ]]; then
 			print_warning "GitHub release $tag_name already exists — skipping creation"
 			print_info "To view the existing release: gh release view $tag_name"
 			return 0
 		fi
-
-		# Generate release notes based on version
-		local release_notes
-		release_notes=$(generate_release_notes "$version")
 
 		# Create GitHub release
 		if gh release create "$tag_name" \
@@ -139,7 +210,10 @@ create_github_release() {
 			print_success "Created GitHub release: $tag_name"
 			return 0
 		else
-			print_error "Failed to create GitHub release with GitHub CLI"
+			if _github_release_recover_with_rest "$tag_name" "$release_notes" "create"; then
+				return 0
+			fi
+			print_error "Failed to create GitHub release with GitHub CLI or REST fallback"
 			return 1
 		fi
 	else
