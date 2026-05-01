@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.88] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3410 complete (pr:#22223 completed:2026-05-01) [skip ci]
+- Maintenance: mark t3409 complete (pr:#22217 completed:2026-05-01) [skip ci]
+- Make release creation resilient to GitHub GraphQL exhaustion (#22217)
+
+### Fixed
+
+- include worktree path in stale claim reports (#22227)
+
 ## [3.13.87] - 2026-05-01
 
 ### Fixed
