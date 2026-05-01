@@ -1171,6 +1171,15 @@ _setup_release_noninteractive_setup_lock() {
 	if [[ "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}" != "true" || -z "$lock_dir" ]]; then
 		return 0
 	fi
+	# GH#22086: kill any still-running background deployment children so they
+	# don't outlive an abnormal exit (set -e triggered early exit). On clean
+	# exit, the children have already been waited for and kill is a no-op.
+	local _cpid
+	for _cpid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
+		if _setup_lock_pid_alive "$_cpid"; then
+			kill -TERM "$_cpid" 2>/dev/null || true
+		fi
+	done
 	if [[ -r "$lock_dir/owner.pid" ]]; then
 		owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
 	fi
@@ -1204,6 +1213,8 @@ _setup_acquire_noninteractive_setup_lock() {
 			SETUP_NONINTERACTIVE_LOCK_HELD=true
 			printf '%s\n' "$$" >"$lock_dir/owner.pid" 2>/dev/null || true
 			printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$lock_dir/started_at" 2>/dev/null || true
+			# GH#22086: store epoch for age-based stale detection
+			printf '%s\n' "$(date +%s)" >"$lock_dir/started_epoch" 2>/dev/null || true
 			printf '%s\n' "$0 $*" >"$lock_dir/command" 2>/dev/null || true
 			trap _setup_release_noninteractive_setup_lock EXIT
 			trap '_setup_noninteractive_signal_exit TERM' TERM
@@ -1217,9 +1228,35 @@ _setup_acquire_noninteractive_setup_lock() {
 			owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
 		fi
 		if _setup_lock_pid_alive "$owner_pid"; then
-			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
-			print_error "Another setup.sh --non-interactive process is already running (pid ${owner_pid}, lock ${lock_dir}). Exiting to avoid overlapping deployments. ${owner_cmd:+Command: ${owner_cmd}}"
-			return 75
+			# GH#22086: age-based stale detection — a hung process (e.g. rsync
+			# with no I/O timeout) can hold the lock indefinitely. After
+			# AIDEVOPS_SETUP_LOCK_MAX_SECONDS (default 30 min), kill the
+			# hung process and treat the lock as stale so retries succeed.
+			local _max_lock_seconds="${AIDEVOPS_SETUP_LOCK_MAX_SECONDS:-1800}"
+			local _lock_age=0
+			local _started_epoch _now_epoch
+			if [[ -r "$lock_dir/started_epoch" ]]; then
+				_started_epoch=$(tr -d '[:space:]' <"$lock_dir/started_epoch" 2>/dev/null || echo "0")
+				_now_epoch=$(date +%s 2>/dev/null || echo "0")
+				if [[ "$_started_epoch" =~ ^[0-9]+$ && "$_now_epoch" =~ ^[0-9]+$ && "$_started_epoch" -gt 0 ]]; then
+					_lock_age=$((_now_epoch - _started_epoch))
+				fi
+			fi
+			if [[ "$_lock_age" -gt 0 && "$_lock_age" -gt "$_max_lock_seconds" ]]; then
+				print_warning "setup.sh --non-interactive lock held ${_lock_age}s by pid ${owner_pid} (max ${_max_lock_seconds}s) — killing stale/hung process"
+				kill -TERM "$owner_pid" 2>/dev/null || true
+				local _kw=0
+				while _setup_lock_pid_alive "$owner_pid" && [[ "$_kw" -lt 10 ]]; do
+					sleep 1
+					_kw=$((_kw + 1))
+				done
+				_setup_lock_pid_alive "$owner_pid" && { kill -KILL "$owner_pid" 2>/dev/null || true; }
+				# Fall through to stale lock removal below
+			else
+				[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+				print_error "Another setup.sh --non-interactive process is already running (pid ${owner_pid}, lock ${lock_dir}). Exiting to avoid overlapping deployments. ${owner_cmd:+Command: ${owner_cmd}}"
+				return 75
+			fi
 		fi
 
 		print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}"
