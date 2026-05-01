@@ -29,6 +29,14 @@
 [[ -n "${_WORKTREE_ADD_LIB_LOADED:-}" ]] && return 0
 _WORKTREE_ADD_LIB_LOADED=1
 
+# GH#22238: node_modules restore is useful for interactive worktrees but can
+# saturate CPU when many pulse precreations run concurrently. Serialize the
+# copy path and fail open quickly; workers can still install/fallback later if
+# dependency restore is skipped during overload.
+: "${WORKTREE_NODE_MODULES_RESTORE_ENABLED:=1}"
+: "${WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S:=2}"
+: "${WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS:=2}"
+
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	_lib_path="${BASH_SOURCE[0]%/*}"
@@ -303,14 +311,68 @@ _interactive_session_auto_claim() {
 # Git worktrees only contain tracked files — dirs in .gitignore are missing.
 # If .opencode/tool/*.ts imports from node_modules the runtime crashes on
 # startup. See pulse-dispatch-worker-launch.sh _dlw_restore_worktree_deps.
+_restore_worktree_node_modules_lock_dir() {
+	local workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}"
+	printf '%s\n' "${workspace_dir}/tmp/worktree-node-modules-restore.lock.d"
+	return 0
+}
+
+_restore_worktree_node_modules_acquire_lock() {
+	local lock_dir="$1"
+	local timeout_s="${WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S}"
+	local elapsed=0
+	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=2
+	mkdir -p "${lock_dir%/*}" 2>/dev/null || return 1
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		if [[ -d "$lock_dir" ]]; then
+			local lock_mtime now_epoch age_s
+			lock_mtime=$(_file_mtime_epoch "$lock_dir")
+			now_epoch=$(date +%s)
+			age_s=$((now_epoch - lock_mtime))
+			if ((age_s > 60)); then
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+		fi
+		if ((elapsed >= timeout_s * 10)); then
+			return 1
+		fi
+		sleep 0.1
+		elapsed=$((elapsed + 1))
+	done
+	printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || true
+	return 0
+}
+
+_restore_worktree_node_modules_release_lock() {
+	local lock_dir="$1"
+	rm -f "${lock_dir}/pid" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
 _restore_worktree_node_modules() {
 	local wt_path="$1"
 	local repo_root="$2"
 
 	[[ -n "$repo_root" && -d "$wt_path" ]] || return 0
+	[[ "$WORKTREE_NODE_MODULES_RESTORE_ENABLED" == "1" ]] || return 0
+
+	local _lock_dir=""
+	_lock_dir=$(_restore_worktree_node_modules_lock_dir)
+	if ! _restore_worktree_node_modules_acquire_lock "$_lock_dir"; then
+		print_warning "Skipping node_modules restore for ${wt_path}: another restore is active"
+		return 0
+	fi
 
 	local _pkg_file=""
+	local _restored=0
+	local _max_dirs="$WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS"
+	[[ "$_max_dirs" =~ ^[0-9]+$ ]] || _max_dirs=2
 	while IFS= read -r _pkg_file; do
+		if ((_restored >= _max_dirs)); then
+			break
+		fi
 		local _pdir="" _rel=""
 		_pdir=$(dirname "$_pkg_file") || continue
 		_rel="${_pdir#"$wt_path"}"
@@ -320,8 +382,10 @@ _restore_worktree_node_modules() {
 			# t2889: fast_cp uses APFS clonefile / btrfs reflink CoW where
 			# available — sub-second copy on macOS, near-zero disk delta.
 			fast_cp "$_src" "$_dst" 2>/dev/null || true
+			_restored=$((_restored + 1))
 		fi
 	done < <(find "$wt_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
+	_restore_worktree_node_modules_release_lock "$_lock_dir"
 	return 0
 }
 

@@ -89,6 +89,13 @@ LOCK_DIR="${STATE_FILE}.lock.d"
 # Lock acquisition timeout (mkdir-based busy-wait).
 : "${DISPATCH_TIMING_LOCK_TIMEOUT_S:=5}"
 
+# Record-path lock timeouts. `recommend`/`stats` can tolerate the legacy lock
+# timeout, but `record` is called once per candidate and must fail open quickly
+# under fanout. Skip records are low-value telemetry, so they never wait for the
+# lock by default (GH#22238).
+: "${DISPATCH_TIMING_RECORD_LOCK_TIMEOUT_S:=1}"
+: "${DISPATCH_TIMING_SKIP_LOCK_TIMEOUT_S:=0}"
+
 # JSONL field-name constants — extracted to satisfy repeated-literal ratchet
 # and to centralise the schema in one place.
 readonly _DT_FIELD_OUTCOME="outcome"
@@ -100,10 +107,13 @@ readonly _DT_FIELD_TIMEOUT_USED_MS="timeout_used_ms"
 # ---------------------------------------------------------------------------
 
 _dt_acquire_lock() {
-	local timeout_s="${DISPATCH_TIMING_LOCK_TIMEOUT_S}"
+	local timeout_s="${1:-$DISPATCH_TIMING_LOCK_TIMEOUT_S}"
 	local elapsed=0
 	mkdir -p "$STATE_DIR" 2>/dev/null
 	while ! mkdir "$LOCK_DIR" 2>/dev/null; do
+		if ((timeout_s <= 0)); then
+			return 1
+		fi
 		# Check for stale lock (>30s old → assume crashed)
 		if [[ -d "$LOCK_DIR" ]]; then
 			local lock_mtime now_epoch age_s
@@ -392,7 +402,12 @@ _dt_cmd_record() {
 
 	# Acquire lock — fail-open if we can't, so dispatch is never blocked
 	# by recording machinery.
-	_dt_acquire_lock || {
+	local lock_timeout_s="$DISPATCH_TIMING_RECORD_LOCK_TIMEOUT_S"
+	if [[ "$outcome" == "skip" ]]; then
+		lock_timeout_s="$DISPATCH_TIMING_SKIP_LOCK_TIMEOUT_S"
+	fi
+	[[ "$lock_timeout_s" =~ ^[0-9]+$ ]] || lock_timeout_s=1
+	_dt_acquire_lock "$lock_timeout_s" || {
 		echo "[dispatch-timing] WARN: lock timeout — skipping record (non-fatal)" >&2
 		return 0
 	}

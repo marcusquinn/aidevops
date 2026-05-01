@@ -237,18 +237,72 @@ _dlw_resolve_tier_and_model() {
 #
 # Arguments: worktree_path, repo_path
 ###############################################################################
+_dlw_node_modules_restore_lock_dir() {
+	local workspace_dir="${AIDEVOPS_WORKSPACE_DIR:-${HOME}/.aidevops/.agent-workspace}"
+	printf '%s\n' "${workspace_dir}/tmp/worktree-node-modules-restore.lock.d"
+	return 0
+}
+
+_dlw_node_modules_restore_acquire_lock() {
+	local lock_dir="$1"
+	local timeout_s="${WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S:-2}"
+	local elapsed=0
+	[[ "$timeout_s" =~ ^[0-9]+$ ]] || timeout_s=2
+	mkdir -p "${lock_dir%/*}" 2>/dev/null || return 1
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		if [[ -d "$lock_dir" ]]; then
+			local lock_mtime now_epoch age_s
+			lock_mtime=$(_file_mtime_epoch "$lock_dir")
+			now_epoch=$(date +%s)
+			age_s=$((now_epoch - lock_mtime))
+			if ((age_s > 60)); then
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+		fi
+		if ((elapsed >= timeout_s * 10)); then
+			return 1
+		fi
+		sleep 0.1
+		elapsed=$((elapsed + 1))
+	done
+	printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || true
+	return 0
+}
+
+_dlw_node_modules_restore_release_lock() {
+	local lock_dir="$1"
+	rm -f "${lock_dir}/pid" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
 _dlw_restore_worktree_deps() {
 	local worktree_path="$1"
 	local repo_path="$2"
 
 	[[ -z "$worktree_path" || -z "$repo_path" ]] && return 0
 	[[ ! -d "$worktree_path" || ! -d "$repo_path" ]] && return 0
+	[[ "${WORKTREE_NODE_MODULES_RESTORE_ENABLED:-1}" == "1" ]] || return 0
+
+	local _lock_dir=""
+	_lock_dir=$(_dlw_node_modules_restore_lock_dir)
+	if ! _dlw_node_modules_restore_acquire_lock "$_lock_dir"; then
+		echo "[dispatch_with_dedup] Skipping node_modules restore for ${worktree_path}: another restore is active" >>"$LOGFILE"
+		return 0
+	fi
 
 	# Find directories in the worktree that have a package.json but are
 	# missing node_modules. Only check top-level and one level deep —
 	# deeper nesting is unlikely and find is expensive.
 	local _pkg_dir=""
+	local _restored=0
+	local _max_dirs="${WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS:-2}"
+	[[ "$_max_dirs" =~ ^[0-9]+$ ]] || _max_dirs=2
 	while IFS= read -r _pkg_dir; do
+		if ((_restored >= _max_dirs)); then
+			break
+		fi
 		local _dir=""
 		_dir=$(dirname "$_pkg_dir") || continue
 		local _rel_dir=""
@@ -260,9 +314,11 @@ _dlw_restore_worktree_deps() {
 			# t2889: fast_cp uses APFS clonefile / btrfs reflink CoW
 			# where available — sub-second copy, near-zero disk delta.
 			fast_cp "$_src_nm" "$_dst_nm" 2>/dev/null || true
+			_restored=$((_restored + 1))
 			echo "[dispatch_with_dedup] Restored node_modules: ${_rel_dir:-/} ($(du -sh "$_dst_nm" 2>/dev/null | cut -f1))" >>"$LOGFILE"
 		fi
 	done < <(find "$worktree_path" -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" 2>/dev/null)
+	_dlw_node_modules_restore_release_lock "$_lock_dir"
 
 	return 0
 }
@@ -323,7 +379,7 @@ _dlw_precreate_worktree() {
 	_branch="feature/auto-$(date +%Y%m%d-%H%M%S)-gh${issue_number}"
 	# Run from repo_path — worktree-helper.sh uses git commands that need
 	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
-	_wt_output=$(cd "$repo_path" && "$_wt_helper" add "$_branch" 2>&1) || true
+	_wt_output=$(cd "$repo_path" && WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 "$_wt_helper" add "$_branch" 2>&1) || true
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
 	local _path
 	_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _path=""
