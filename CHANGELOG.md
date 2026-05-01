@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.44] - 2026-05-01
+
+### Changed
+
+- Maintenance: mark t3238 complete (pr:#22051 completed:2026-05-01) [skip ci]
+
+### Fixed
+
+- resolve worktree default branch from repo metadata (#22060)
+
 ## [3.13.43] - 2026-05-01
 
 ### Changed
