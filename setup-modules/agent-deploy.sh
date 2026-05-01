@@ -340,8 +340,9 @@ _install_opencode_plugin_deps() {
 }
 
 # _atomic_stage_and_deploy_agents source_dir target_dir [plugin_namespaces...]
-# Stages a copy in target_dir.staging, carries over preserved dirs (custom/,
-# draft/, and any plugin namespaces), then atomically swaps staging into place.
+# Stages a copy in a per-process target_dir.staging.* directory, carries over
+# preserved dirs (custom/, draft/, and any plugin namespaces), then atomically
+# swaps staging into place.
 # Returns 0 on success, 1 on failure.
 _atomic_stage_and_deploy_agents() {
 	local source_dir="$1"
@@ -353,14 +354,22 @@ _atomic_stage_and_deploy_agents() {
 	# Previously, clean + copy happened in-place, creating a window where
 	# scripts were missing. The pulse could dispatch workers mid-deploy,
 	# hitting "No such file or directory" errors. Now we:
-	#   1. rsync into a staging dir (target_dir.staging)
+	#   1. rsync into a unique staging dir (target_dir.staging.*)
 	#   2. Move preserved dirs (custom/, draft/, plugins) from live to staging
-	#   3. mv live → .old, mv staging → live (atomic on same filesystem)
-	#   4. rm .old
-	local staging_dir="${target_dir}.staging"
-	local old_dir="${target_dir}.old"
-	rm -rf "$staging_dir" "$old_dir"
-	mkdir -p "$staging_dir"
+	#   3. mv live → .old.*, mv staging → live (atomic on same filesystem)
+	#   4. rm .old.*
+	#
+	# GH#22063: the staging/backup paths must be unique per setup process. Fixed
+	# names such as target_dir.staging let a concurrent setup cleanup remove the
+	# directory while rsync is still writing into it, producing renameat/move_file
+	# ENOENT failures even though the canonical .agents/ source is valid.
+	local staging_dir old_dir
+	staging_dir=$(mktemp -d "${target_dir}.staging.XXXXXX") || {
+		print_error "Failed to create agents staging directory"
+		return 1
+	}
+	old_dir="${target_dir}.old.$$"
+	rm -rf "$old_dir"
 
 	# Copy source into staging
 	local copy_rc

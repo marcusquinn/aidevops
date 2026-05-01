@@ -14,7 +14,8 @@
 #   1. Happy path: swap succeeds, target_dir exists and contains scripts/
 #   2. mv-to-old fails: function returns 1, live target_dir preserved
 #   3. mv-staging-to-live fails: function returns 1, rollback restores target
-#   4. deploy_aidevops_agents postcondition: returns 1 when scripts/ missing
+#   4. concurrent fixed staging cleanup: unique staging avoids stale path races
+#   5. deploy_aidevops_agents postcondition: returns 1 when scripts/ missing
 
 set -euo pipefail
 
@@ -111,33 +112,28 @@ test_happy_path_target_exists_with_scripts() {
 		print_result "happy path: target scripts/ exists after swap" 1 "$tgt/scripts missing"
 	fi
 
-	if [[ ! -d "${tgt}.staging" && ! -d "${tgt}.old" ]]; then
+	if ! compgen -G "${tgt}.staging*" >/dev/null && ! compgen -G "${tgt}.old*" >/dev/null; then
 		print_result "happy path: staging and old dirs cleaned up" 0
 	else
 		print_result "happy path: staging and old dirs cleaned up" 1 \
-			"staging=$(ls -d "${tgt}.staging" 2>/dev/null || echo absent) old=$(ls -d "${tgt}.old" 2>/dev/null || echo absent)"
+			"staging/old temp dirs still present"
 	fi
 	return 0
 }
 
-# Test 2: mv target→old fails — function returns 1, live target preserved.
-# We simulate mv failure by making $target_dir.old a non-empty directory that
-# cannot be overwritten by mv (mv fails when destination already exists and is
-# a non-empty directory on most filesystems).
+# Test 2: mv target→old.* fails — function returns 1, live target preserved.
+# Override mv for the generated backup path so the test remains independent of
+# the per-process suffix used to avoid concurrent setup collisions.
 test_mv_to_old_fails_preserves_live_target() {
 	local src="${TEST_DIR}/src2"
 	local tgt="${TEST_DIR}/tgt2"
-	local old_dir="${tgt}.old"
 	_make_source_dir "$src"
 	_make_live_target "$tgt"
-
-	# Pre-populate the .old dir so mv tgt → .old fails (destination occupied).
-	mkdir -p "$old_dir/blocker"
 
 	# Override mv to fail when the destination is the .old path.
 	mv() {
 		local dst="${*: -1}"
-		if [[ "$dst" == "$old_dir" ]]; then
+		if [[ "$dst" == "${tgt}.old."* ]]; then
 			return 1
 		fi
 		command mv "$@"
@@ -170,14 +166,13 @@ test_mv_to_old_fails_preserves_live_target() {
 test_mv_staging_to_live_fails_rolls_back() {
 	local src="${TEST_DIR}/src3"
 	local tgt="${TEST_DIR}/tgt3"
-	local staging_dir="${tgt}.staging"
 	_make_source_dir "$src"
 	_make_live_target "$tgt"
 
 	# Override mv to fail only for the staging→live move.
 	mv() {
 		local src_arg="$1"
-		if [[ "$src_arg" == "$staging_dir" ]]; then
+		if [[ "$src_arg" == "${tgt}.staging."* ]]; then
 			return 1
 		fi
 		command mv "$@"
@@ -203,22 +198,58 @@ test_mv_staging_to_live_fails_rolls_back() {
 	fi
 
 	# Staging should be cleaned up
-	if [[ ! -d "$staging_dir" ]]; then
+	if ! compgen -G "${tgt}.staging*" >/dev/null; then
 		print_result "mv-staging-to-live fails: staging cleaned up" 0
 	else
-		print_result "mv-staging-to-live fails: staging cleaned up" 1 "$staging_dir still present"
+		print_result "mv-staging-to-live fails: staging cleaned up" 1 "staging temp dirs still present"
 	fi
 	return 0
 }
 
-# Test 4: deploy_aidevops_agents postcondition check — if scripts/ is absent
+# Test 4: a concurrent cleanup of the legacy fixed staging path must not affect
+# the active deploy. Original fixed-path staging used ${target}.staging; if that
+# directory was removed during rsync, setup failed with renameat/move_file ENOENT.
+test_fixed_staging_cleanup_does_not_abort_copy() {
+	local src="${TEST_DIR}/src4"
+	local tgt="${TEST_DIR}/tgt4"
+	_make_source_dir "$src"
+	_make_live_target "$tgt"
+	mkdir -p "${tgt}.staging/scripts"
+	printf 'stale staging\n' >"${tgt}.staging/scripts/stale.sh"
+
+	_deploy_agents_copy() {
+		local copy_source_dir="$1"
+		local copy_target_dir="$2"
+		if [[ "$copy_target_dir" == "${tgt}.staging" ]]; then
+			rm -rf "$copy_target_dir"
+			return 1
+		fi
+		mkdir -p "$copy_target_dir/scripts"
+		cp -a "$copy_source_dir/scripts/." "$copy_target_dir/scripts/"
+		return 0
+	}
+
+	local rc=0
+	_atomic_stage_and_deploy_agents "$src" "$tgt" || rc=$?
+
+	unset -f _deploy_agents_copy
+
+	if [[ "$rc" -eq 0 && -f "$tgt/scripts/hello.sh" ]]; then
+		print_result "fixed staging cleanup: unique staging deploy succeeds" 0
+	else
+		print_result "fixed staging cleanup: unique staging deploy succeeds" 1 "rc=$rc"
+	fi
+	return 0
+}
+
+# Test 5: deploy_aidevops_agents postcondition check — if scripts/ is absent
 # after swap (regression scenario), function returns 1.
 # We wire this up by overriding _atomic_stage_and_deploy_agents to return 0
 # without populating the target so we isolate the postcondition gate.
 test_postcondition_fails_when_scripts_absent() {
-	local src="${TEST_DIR}/src4"
-	local tgt="${TEST_DIR}/tgt4"
-	local plugins_file="${TEST_DIR}/plugins4.json"
+	local src="${TEST_DIR}/src5"
+	local tgt="${TEST_DIR}/tgt5"
+	local plugins_file="${TEST_DIR}/plugins5.json"
 	printf '{"plugins":[]}\n' >"$plugins_file"
 
 	mkdir -p "$src/scripts"  # source has scripts/ but we won't copy it
@@ -264,6 +295,7 @@ main() {
 	test_happy_path_target_exists_with_scripts
 	test_mv_to_old_fails_preserves_live_target
 	test_mv_staging_to_live_fails_rolls_back
+	test_fixed_staging_cleanup_does_not_abort_copy
 	test_postcondition_fails_when_scripts_absent
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
