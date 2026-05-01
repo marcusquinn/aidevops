@@ -185,26 +185,91 @@ check_string_literals() {
 	echo -e "${BLUE}Checking String Literals (S1192)...${NC}"
 
 	local violations=0
+	local debt_files=0
+	local repo_root baseline_ref changed_shell_files
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+	baseline_ref=$(git -C "$repo_root" merge-base HEAD origin/main 2>/dev/null || printf '%s' 'origin/main')
+	changed_shell_files=$(git -C "$repo_root" diff --name-only "$baseline_ref" -- '*.sh' 2>/dev/null || true)
+	if [[ -z "$changed_shell_files" ]]; then
+		print_success "String literals: no changed shell files"
+		return 0
+	fi
 
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
-		# Find strings that appear 3 or more times
-		local repeated_strings
-		repeated_strings=$(grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3 {print $1, $2}' | wc -l)
+		if [[ "$file" == *"/tests/"* ]] || [[ "$(basename "$file")" == test-*.sh ]]; then
+			continue
+		fi
 
-		if [[ $repeated_strings -gt 0 ]]; then
-			((violations += repeated_strings))
-			print_warning "$file has $repeated_strings repeated string literals"
+		# Diff-scope the expensive string-literal scan. Pre-existing repository-wide
+		# debt is not actionable for unrelated changes and must not block local
+		# preflight.
+		local repeated_strings baseline_strings rel_file base_content file_abs file_dir
+		file_dir=$(cd "$(dirname "$file")" && pwd -P)
+		file_abs="${file_dir}/$(basename "$file")"
+		rel_file=${file_abs#"$repo_root"/}
+		if ! printf '%s\n' "$changed_shell_files" | grep -qxF "$rel_file"; then
+			continue
+		fi
+
+		repeated_strings=$(_linters_count_repeated_literals <"$file")
+		[[ "$repeated_strings" =~ ^[0-9]+$ ]] || repeated_strings=0
+
+		baseline_strings=0
+		base_content=$(git -C "$repo_root" show "${baseline_ref}:${rel_file}" 2>/dev/null || true)
+		if [[ -n "$base_content" ]]; then
+			baseline_strings=$(printf '%s\n' "$base_content" | _linters_count_repeated_literals)
+			[[ "$baseline_strings" =~ ^[0-9]+$ ]] || baseline_strings=0
+		fi
+
+		if ((repeated_strings > baseline_strings)); then
+			local new_strings=$((repeated_strings - baseline_strings))
+			((violations += new_strings))
+			print_error "$file has $new_strings new repeated string literal(s) (baseline: $baseline_strings, current: $repeated_strings)"
+			_linters_show_repeated_literals <"$file"
+		elif ((repeated_strings > 0)); then
+			((debt_files += 1))
+			print_warning "$file has $repeated_strings pre-existing repeated string literal(s) (not blocking)"
 		fi
 	done
 
-	if [[ $violations -le $MAX_STRING_LITERAL_ISSUES ]]; then
-		print_success "String literals: $violations violations (within threshold)"
+	if [[ $violations -eq 0 ]]; then
+		print_success "String literals: no new repeated string literals (${debt_files} file(s) with pre-existing debt)"
 	else
-		print_error "String literals: $violations violations (exceeds threshold of $MAX_STRING_LITERAL_ISSUES)"
+		print_error "String literals: $violations new repeated string literal regression(s)"
 		return 1
 	fi
 
+	return 0
+}
+
+_linters_count_repeated_literals() {
+	grep -v '^[[:space:]]*#' |
+		sed -E '
+			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
+			s/"\$\{[^}]*\}"//g
+			s/"\$@"//g
+			s/"\$[0-9*#?$!-]"//g
+		' |
+		grep -oE '"[^"]{4,}"' |
+		grep -vE '^"[0-9]+\.?[0-9]*"$' |
+		grep -vE '^"\$' |
+		sort | uniq -c | awk '$1 >= 3' | wc -l | tr -d '[:space:]'
+	return 0
+}
+
+_linters_show_repeated_literals() {
+	grep -v '^[[:space:]]*#' |
+		sed -E '
+			s/"\$[A-Za-z_][A-Za-z0-9_]*"//g
+			s/"\$\{[^}]*\}"//g
+			s/"\$@"//g
+			s/"\$[0-9*#?$!-]"//g
+		' |
+		grep -oE '"[^"]{4,}"' |
+		grep -vE '^"[0-9]+\.?[0-9]*"$' |
+		grep -vE '^"\$' |
+		sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
 	return 0
 }
 

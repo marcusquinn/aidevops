@@ -289,6 +289,68 @@ test_posix_grep_comment_filter() {
 }
 
 # ---------------------------------------------------------------------------
+# Local linter regression: repository-wide pre-existing debt is advisory only
+#
+# A file that already has repeated string-literal debt at origin/main must not
+# make linters-local.sh fail when the current branch has not increased that
+# file's repeated-literal count.
+# ---------------------------------------------------------------------------
+test_local_linter_preexisting_debt_nonblocking() {
+	local scripts_root="${SCRIPT_DIR}/.."
+	local old_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="$scripts_root"
+	BLUE=""
+	NC=""
+	print_error() { printf '[ERROR] %s\n' "$1" >&2; return 0; }
+	print_warning() { printf '[WARNING] %s\n' "$1" >&2; return 0; }
+	print_info() { printf '[INFO] %s\n' "$1" >&2; return 0; }
+	print_success() { printf '[OK] %s\n' "$1" >&2; return 0; }
+	# shellcheck disable=SC1091
+	source "${scripts_root}/linters-local-validators.sh"
+	SCRIPT_DIR="$old_script_dir"
+
+	local tmp_repo
+	tmp_repo=$(mktemp -d 2>/dev/null || mktemp -d -t string-literal-ratchet)
+	mkdir -p "${tmp_repo}/.agents/scripts"
+
+	local fixture="${tmp_repo}/.agents/scripts/legacy.sh"
+	cat >"$fixture" <<'EOF'
+#!/usr/bin/env bash
+legacy_one() { printf '%s\n' "legacy repeated debt"; return 0; }
+legacy_two() { printf '%s\n' "legacy repeated debt"; return 0; }
+legacy_three() { printf '%s\n' "legacy repeated debt"; return 0; }
+EOF
+
+	git -C "$tmp_repo" init -q
+	git -C "$tmp_repo" add .agents/scripts/legacy.sh
+	git -C "$tmp_repo" \
+		-c user.name='Test User' \
+		-c user.email='test@example.invalid' \
+		commit -q -m 'baseline repeated string debt'
+	git -C "$tmp_repo" update-ref refs/remotes/origin/main HEAD
+	printf '\n# unrelated maintenance comment\n' >>"$fixture"
+
+	local output ret
+	(
+		cd "$tmp_repo" || exit 1
+		ALL_SH_FILES=("$fixture")
+		check_string_literals
+	) >"${tmp_repo}/output.txt" 2>&1
+	ret=$?
+	output=$(cat "${tmp_repo}/output.txt")
+
+	rm -rf "$tmp_repo"
+
+	if [ "$ret" -eq 0 ] && printf '%s' "$output" | grep -q 'no new repeated string literals'; then
+		print_result "local linter: pre-existing string-literal debt is non-blocking" 0
+	else
+		print_result "local linter: pre-existing string-literal debt is non-blocking" 1 \
+			"expected success with no-new-regression summary, got ret=$ret output=[$output]"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 main() {
@@ -306,6 +368,7 @@ main() {
 	test_boundary_escaped_dollar_caught
 	test_show_matches_count_no_phantom
 	test_posix_grep_comment_filter
+	test_local_linter_preexisting_debt_nonblocking
 
 	echo ""
 	if [ "$TESTS_FAILED" -eq 0 ]; then
