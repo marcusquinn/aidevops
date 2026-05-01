@@ -124,6 +124,20 @@ EOF
 	return 0
 }
 
+test_headless_activity_timeout_default_matches_watchdog() {
+	local expected="600"
+	local actual="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-}"
+
+	if [[ "$actual" == "$expected" ]]; then
+		print_result "HEADLESS_ACTIVITY_TIMEOUT_SECONDS default matches watchdog default" 0
+		return 0
+	fi
+
+	print_result "HEADLESS_ACTIVITY_TIMEOUT_SECONDS default matches watchdog default" 1 \
+		"Expected ${expected}s to avoid GPT-5.x no-output false kills; got '${actual:-<unset>}'"
+	return 0
+}
+
 # Helper: create a bare git repo and a feature branch with optional commits.
 # Each call uses work_dir-derived remote path to avoid inter-test collisions.
 # Args: $1 = work_dir path, $2 = 1 to add a commit (0 for none)
@@ -533,6 +547,7 @@ main() {
 	test_non_full_loop_prompt_unchanged
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
+	test_headless_activity_timeout_default_matches_watchdog
 	# Classification tests (GH#20819 refactor of _worker_produced_output)
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen

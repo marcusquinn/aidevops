@@ -70,7 +70,11 @@ source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
 source "${SCRIPT_DIR}/headless-runtime-worker.sh"
 
 # Activity watchdog timeout — used by _invoke_opencode and the inline watchdog fallback.
-HEADLESS_ACTIVITY_TIMEOUT_SECONDS="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-300}"
+# Keep this aligned with worker-activity-watchdog.sh and headless-runtime-lib.sh.
+# OpenAI/GPT-5.x workers can spend several minutes reasoning without emitting
+# additional JSON/log output; 300s caused false no-output kills before workers
+# reached implementation/PR creation (GH#22248).
+HEADLESS_ACTIVITY_TIMEOUT_SECONDS="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
 
 # =============================================================================
 # Run argument parsing and validation
