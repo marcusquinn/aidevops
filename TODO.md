@@ -3861,4 +3861,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3410 Ensure setup.sh exits cleanly after non-interactive success #auto-dispatch #bug #framework ref:GH#22214
 
-- [ ] t3409 Make release creation resilient to GitHub GraphQL exhaustion #auto-dispatch #bug #framework ref:GH#22213
+- [x] t3409 Make release creation resilient to GitHub GraphQL exhaustion #auto-dispatch #bug #framework ref:GH#22213 pr:#22217 completed:2026-05-01
