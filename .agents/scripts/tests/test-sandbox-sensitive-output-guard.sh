@@ -56,7 +56,7 @@ test_blocks_risky_env_print_command() {
 	local exit_code
 
 	set +e
-	output="$($HELPER run "echo \$SHOPIFY_CLIENT_SECRET" 2>&1)"
+	output="$(timeout 10 "$HELPER" run "echo \$SHOPIFY_CLIENT_SECRET" 2>&1)"
 	exit_code=$?
 	set -e
 
@@ -73,7 +73,7 @@ test_allows_safe_command() {
 	local exit_code
 
 	set +e
-	output="$($HELPER run "printf safe" 2>&1)"
+	output="$(timeout 10 "$HELPER" run -- /bin/bash -lc 'printf safe' 2>&1)"
 	exit_code=$?
 	set -e
 
@@ -85,12 +85,30 @@ test_allows_safe_command() {
 	return 0
 }
 
+test_stream_stdout_returns_after_child_exit() {
+	local output
+	local exit_code
+
+	set +e
+	output="$(timeout 10 "$HELPER" run --timeout 2 --stream-stdout -- /bin/bash -lc 'printf stream-safe' 2>&1)"
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" == *"stream-safe"* ]]; then
+		print_result "stream stdout returns after child exit" 0
+	else
+		print_result "stream stdout returns after child exit" 1 "exit=$exit_code output=$output"
+	fi
+	return 0
+}
+
 test_override_flag_allows_blocked_pattern() {
 	local output
 	local exit_code
 
 	set +e
-	output="$($HELPER run --allow-secret-io "echo \$SHOPIFY_CLIENT_SECRET" 2>&1)"
+	# shellcheck disable=SC2016 # expansion must happen inside the sandboxed child
+	output="$(timeout 10 "$HELPER" run --allow-secret-io -- /bin/bash -lc 'echo "$SHOPIFY_CLIENT_SECRET"' 2>&1)"
 	exit_code=$?
 	set -e
 
@@ -108,6 +126,7 @@ main() {
 
 	test_blocks_risky_env_print_command
 	test_allows_safe_command
+	test_stream_stdout_returns_after_child_exit
 	test_override_flag_allows_blocked_pattern
 
 	echo ""

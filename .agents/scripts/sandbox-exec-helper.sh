@@ -423,7 +423,23 @@ _sandbox_pgkill_cleanup() {
 	# after we've already cleaned up the child.
 	if [[ -n "$cleanup_watchdog_pid" ]]; then
 		kill "$cleanup_watchdog_pid" 2>/dev/null || true
+		local cleanup_wait_start cleanup_wait_elapsed
+		cleanup_wait_start=$(date +%s)
+		while kill -0 "$cleanup_watchdog_pid" 2>/dev/null; do
+			cleanup_wait_elapsed=$(( $(date +%s) - cleanup_wait_start ))
+			if [[ "$cleanup_wait_elapsed" -ge 5 ]]; then
+				kill -9 "$cleanup_watchdog_pid" 2>/dev/null || true
+				break
+			fi
+			sleep 1
+		done
 		wait "$cleanup_watchdog_pid" 2>/dev/null || true
+	fi
+
+	local cleanup_self_pgid=""
+	cleanup_self_pgid="$(ps -o pgid= -p "$$" 2>/dev/null | tr -d '[:space:]')" || true
+	if [[ -n "$cleanup_child_pgid" && -n "$cleanup_self_pgid" && "$cleanup_child_pgid" == "$cleanup_self_pgid" ]]; then
+		cleanup_child_pgid=""
 	fi
 
 	if [[ -n "$cleanup_child_pgid" ]]; then
@@ -514,8 +530,13 @@ _sandbox_poll_child() {
 	local poll_timeout="$1"
 	local poll_child_pid="$2"
 	local half_secs_remaining=$((poll_timeout * 2))
+	local poll_state=""
 
 	while kill -0 "$poll_child_pid" 2>/dev/null; do
+		poll_state="$(ps -o stat= -p "$poll_child_pid" 2>/dev/null | tr -d '[:space:]')" || true
+		if [[ "$poll_state" == *Z* ]]; then
+			return 0
+		fi
 		if ((half_secs_remaining <= 0)); then
 			return 124
 		fi
