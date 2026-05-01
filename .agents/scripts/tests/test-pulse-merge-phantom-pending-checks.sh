@@ -16,7 +16,8 @@
 # proceed.
 #
 # Scenarios tested:
-#   1. all_required_pass — all required contexts SUCCESS → return 0
+#   1. all_required_pass — all required contexts SUCCESS, including the
+#      maintainer-gate legacy status alias → return 0
 #   2. phantom_pending_only — required pass + non-required null/pending → return 0
 #   3. one_required_failing — one required FAILURE → return 1
 #   4. required_context_absent — required context not in rollup (NOT_FOUND) → return 1
@@ -35,6 +36,8 @@
 #   3. gh pr view NUM --json headRefOid               → PR HEAD SHA
 #   4. gh api repos/SLUG/commits/SHA/check-runs       → check-run states
 #   5. gh api repos/SLUG/commits/SHA/status           → legacy status contexts
+#      (t3250: includes `Maintainer Review & Assignee Gate` alias for repos
+#      whose branch protection still requires the pre-reusable workflow name)
 #
 # Mode variables:
 #   MOCK_REPO_MODE   — controls gh api repos/<slug> response
@@ -176,10 +179,12 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 	local_json=""
 	case "${MOCK_ROLLUP_MODE:-all_required_pass}" in
 	all_required_pass)
-		# All three required checks pass; no non-required checks.
+		# All three required checks pass. The maintainer-gate CheckRun name is
+		# what reusable workflow callers emit; the exact legacy required context
+		# is satisfied by the /status alias below (t3250).
 		local_json='{"check_runs":[
 			{"name":"review-bot-gate","conclusion":"success","status":"completed"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
@@ -187,7 +192,7 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 		# Required checks pass; non-required checks report null/pending.
 		local_json='{"check_runs":[
 			{"name":"review-bot-gate","conclusion":"success","status":"completed"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"},
 			{"name":"coderabbit-review","conclusion":null,"status":"queued"},
 			{"name":"qlty-check","conclusion":null,"status":"queued"},
@@ -199,14 +204,14 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 		# review-bot-gate is FAILURE; other required checks pass.
 		local_json='{"check_runs":[
 			{"name":"review-bot-gate","conclusion":"failure","status":"completed"},
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
 	required_absent)
 		# review-bot-gate is missing from check-runs; other required checks pass.
 		local_json='{"check_runs":[
-			{"name":"Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
@@ -220,11 +225,14 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 fi
 
 # Match: gh api repos/SLUG/commits/SHA/status (GH#21799)
-# Mock data drives ALL checks through /check-runs above; /status returns empty.
-# (Helper merges both endpoints — empty /status is the realistic case for
-# GitHub-Actions-only repos like aidevops.)
+# t3250: maintainer-gate-reusable.yml posts both the stable `maintainer-gate`
+# commit status and a legacy `Maintainer Review & Assignee Gate` alias so repos
+# with stale branch protection still see an exact required context.
 if [[ "$1" == "api" && "$*" == *"/commits/"* && "$*" == *"/status"* ]]; then
-	local_json='{"statuses":[]}'
+	local_json='{"statuses":[
+		{"context":"maintainer-gate","state":"success"},
+		{"context":"Maintainer Review & Assignee Gate","state":"success"}
+	]}'
 	apply_jq "$local_json" "$@"
 	exit 0
 fi
@@ -243,7 +251,8 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _check_required_checks_passing from pulse-merge.sh and eval it.
+# Extract _required_contexts_for_default_branch and _check_required_checks_passing
+# from pulse-merge-process.sh and eval them.
 define_function_under_test() {
 	# Source the REST check-runs helper so the extracted function can call
 	# `gh_pr_check_runs_rest` (GH#21799 migration). Sub-library only — avoids
@@ -256,6 +265,18 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$checks_lib"
+
+	local helper_src
+	helper_src=$(awk '
+		/^_required_contexts_for_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$helper_src" ]]; then
+		printf 'ERROR: could not extract _required_contexts_for_default_branch from %s\n' \
+			"$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$helper_src"
 
 	local fn_src
 	fn_src=$(awk '
@@ -308,7 +329,7 @@ test_all_required_pass() {
 	export MOCK_REPO_MODE="ok"
 	export MOCK_BP_MODE="three_required"
 	export MOCK_ROLLUP_MODE="all_required_pass"
-	assert_returns 0 "all required checks SUCCESS → allowed"
+	assert_returns 0 "all required checks SUCCESS via check-runs/status alias → allowed"
 	assert_log_contains "all required contexts passing" \
 		"all_required_pass: pass message logged"
 	assert_log_contains "t2922" "all_required_pass: log tagged t2922"

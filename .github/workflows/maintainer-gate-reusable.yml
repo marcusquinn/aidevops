@@ -124,6 +124,42 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           MAINTAINER_GATE_DEBUG: ${{ vars.MAINTAINER_GATE_DEBUG || 'false' }}
         run: |
+          readonly MAINTAINER_GATE_CONTEXT="maintainer-gate"
+          readonly MAINTAINER_GATE_LEGACY_CONTEXT="Maintainer Review & Assignee Gate"
+
+          post_maintainer_gate_status_once() {
+            local state="$1"
+            local description="$2"
+            local context=""
+
+            # t3250: Some repos still require the pre-reusable workflow job name
+            # as a branch-protection context. The reusable caller reports that
+            # CheckRun as "gate / Maintainer Review & Assignee Gate", so post a
+            # commit-status alias with the legacy context while repos migrate to
+            # the stable "maintainer-gate" status context documented above.
+            for context in "$MAINTAINER_GATE_CONTEXT" "$MAINTAINER_GATE_LEGACY_CONTEXT"; do
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state="$state" \
+                -f context="$context" \
+                -f description="$description" || return 1
+            done
+            return 0
+          }
+
+          post_maintainer_gate_status_with_retry() {
+            local state="$1"
+            local description="$2"
+
+            post_maintainer_gate_status_once "$state" "$description" 2>/dev/null \
+              || { sleep 5 && post_maintainer_gate_status_once "$state" "$description"; } \
+              || {
+                echo "::error::Failed to post maintainer-gate commit status after retry"
+                exit 1
+              }
+            return 0
+          }
+
           # ---------------------------------------------------------------
           # Check 0: Does the PR itself carry needs-maintainer-review?
           # GH#17671 post-mortem: external PRs without linked issues bypassed
@@ -148,19 +184,9 @@ jobs:
               echo "blocked=true" >> "$GITHUB_OUTPUT"
               printf 'PR #%s has \x60needs-maintainer-review\x60 label — a maintainer must cryptographically approve it before merge.\n' "$PR_NUMBER" > /tmp/gate-reasons.txt
               echo "has_reasons=true" >> "$GITHUB_OUTPUT"
-              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-                --method POST \
-                -f state=failure \
-                -f context="maintainer-gate" \
-                -f description="PR has needs-maintainer-review — requires cryptographic approval" \
-                2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-                --method POST \
-                -f state=failure \
-                -f context="maintainer-gate" \
-                -f description="PR has needs-maintainer-review — requires cryptographic approval"; } || {
-                echo "::error::Failed to post maintainer-gate commit status after retry"
-                exit 1
-              }
+              post_maintainer_gate_status_with_retry \
+                failure \
+                "PR has needs-maintainer-review — requires cryptographic approval"
               exit 0
             fi
           fi
@@ -202,19 +228,9 @@ jobs:
             # Post failure commit status so branch protection sees the result
             # Fail-closed: if status post fails after retry, fail the job to avoid
             # leaving the PR without a maintainer-gate status (GH#14277)
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=failure \
-              -f context="maintainer-gate" \
-              -f description="Title-based issue lookup failed — cannot verify linked issues" \
-              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=failure \
-              -f context="maintainer-gate" \
-              -f description="Title-based issue lookup failed — cannot verify linked issues"; } || {
-              echo "::error::Failed to post maintainer-gate commit status after retry"
-              exit 1
-            }
+            post_maintainer_gate_status_with_retry \
+              failure \
+              "Title-based issue lookup failed — cannot verify linked issues"
             exit 0
           fi
 
@@ -246,11 +262,9 @@ jobs:
             if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
                [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
               echo "PASS: PR #$PR_NUMBER has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval (t2030: applies to linked-issue PRs too)"
-              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-                --method POST \
-                -f state=success \
-                -f context="maintainer-gate" \
-                -f description="origin:interactive by maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval" \
+              post_maintainer_gate_status_once \
+                success \
+                "origin:interactive by maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval" \
                 2>/dev/null || true
               exit 0
             else
@@ -264,19 +278,9 @@ jobs:
             echo "reason=" >> "$GITHUB_OUTPUT"
             # Post success commit status so branch protection sees the result
             # Fail-closed: if status post fails after retry, fail the job (GH#14277)
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=success \
-              -f context="maintainer-gate" \
-              -f description="No linked issues to check" \
-              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=success \
-              -f context="maintainer-gate" \
-              -f description="No linked issues to check"; } || {
-              echo "::error::Failed to post maintainer-gate commit status after retry"
-              exit 1
-            }
+            post_maintainer_gate_status_with_retry \
+              success \
+              "No linked issues to check"
             exit 0
           fi
 
@@ -430,33 +434,11 @@ jobs:
           # Fail-closed: if status post fails after retry, fail the job (GH#14277)
           if [[ "$BLOCKED" == "true" ]]; then
             DESCRIPTION=$(head -c 140 /tmp/gate-reasons.txt | tr '\n' ' ')
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=failure \
-              -f context="maintainer-gate" \
-              -f description="${DESCRIPTION}" \
-              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=failure \
-              -f context="maintainer-gate" \
-              -f description="${DESCRIPTION}"; } || {
-              echo "::error::Failed to post maintainer-gate commit status after retry"
-              exit 1
-            }
+            post_maintainer_gate_status_with_retry failure "${DESCRIPTION}"
           else
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=success \
-              -f context="maintainer-gate" \
-              -f description="All linked issues pass gate checks" \
-              2>/dev/null || { sleep 5 && gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=success \
-              -f context="maintainer-gate" \
-              -f description="All linked issues pass gate checks"; } || {
-              echo "::error::Failed to post maintainer-gate commit status after retry"
-              exit 1
-            }
+            post_maintainer_gate_status_with_retry \
+              success \
+              "All linked issues pass gate checks"
           fi
 
       - name: Post or update gate comment
@@ -596,6 +578,24 @@ jobs:
           REPO_OWNER: ${{ github.repository_owner }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          readonly MAINTAINER_GATE_CONTEXT="maintainer-gate"
+          readonly MAINTAINER_GATE_LEGACY_CONTEXT="Maintainer Review & Assignee Gate"
+
+          post_maintainer_gate_status_once() {
+            local state="$1"
+            local description="$2"
+            local context=""
+
+            for context in "$MAINTAINER_GATE_CONTEXT" "$MAINTAINER_GATE_LEGACY_CONTEXT"; do
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state="$state" \
+                -f context="$context" \
+                -f description="$description" || return 1
+            done
+            return 0
+          }
+
           echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
 
           # Find open PRs that reference this issue via body closing keywords
@@ -661,11 +661,9 @@ jobs:
               if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
                  [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
                 echo "SKIP rerun: PR #$PR_NUM has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOC_J3) — posting success, no Job 1 rerun needed"
-                gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-                  --method POST \
-                  -f state=success \
-                  -f context="maintainer-gate" \
-                  -f description="origin:interactive by maintainer — implied approval (Job 3 exemption)" \
+                post_maintainer_gate_status_once \
+                  success \
+                  "origin:interactive by maintainer — implied approval (Job 3 exemption)" \
                   2>/dev/null || true
                 continue
               fi
@@ -702,11 +700,9 @@ jobs:
                 fi
                 if [[ "$ISSUE_TRUSTED_J3" == "true" ]]; then
                   echo "SKIP rerun: PR #$PR_NUM has origin:worker, trusted issue author ($ISSUE_AUTHOR_J3), no non-maintainer comments — posting success, no Job 1 rerun needed (t2451)"
-                  gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-                    --method POST \
-                    -f state=success \
-                    -f context="maintainer-gate" \
-                    -f description="origin:worker on trusted issue — implied approval (Job 3 exemption, t2451)" \
+                  post_maintainer_gate_status_once \
+                    success \
+                    "origin:worker on trusted issue — implied approval (Job 3 exemption, t2451)" \
                     2>/dev/null || true
                   continue
                 fi
@@ -715,11 +711,9 @@ jobs:
 
             # Post pending status while Job 1 re-evaluates
             # t2037: Job 3 is pure plumbing — gate evaluation is Job 1's sole responsibility
-            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
-              --method POST \
-              -f state=pending \
-              -f context="maintainer-gate" \
-              -f description="Refreshing via Job 1 rerun..." \
+            post_maintainer_gate_status_once \
+              pending \
+              "Refreshing via Job 1 rerun..." \
               2>/dev/null || true
 
             # -----------------------------------------------------------------
