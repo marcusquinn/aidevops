@@ -1187,9 +1187,21 @@ _setup_register_child_pid() {
 
 _setup_cleanup_noninteractive_children() {
 	local pid=""
+	local grace_s="${AIDEVOPS_SETUP_CHILD_TERM_GRACE_S:-2}"
+	local has_live_child=false
+	[[ "$grace_s" =~ ^[0-9]+$ ]] || grace_s=2
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
 		if _setup_lock_pid_alive "$pid"; then
+			has_live_child=true
 			kill -TERM "$pid" 2>/dev/null || true
+		fi
+	done
+	if [[ "$has_live_child" == "true" && "$grace_s" -gt 0 ]]; then
+		sleep "$grace_s" 2>/dev/null || true
+	fi
+	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do
+		if _setup_lock_pid_alive "$pid"; then
+			kill -KILL "$pid" 2>/dev/null || true
 		fi
 	done
 	for pid in ${SETUP_NONINTERACTIVE_CHILD_PIDS:-}; do

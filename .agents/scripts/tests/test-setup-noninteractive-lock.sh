@@ -221,8 +221,9 @@ test_signal_cleanup_terminates_registered_children() {
 	local output=""
 
 	output=$(
+		AIDEVOPS_SETUP_CHILD_TERM_GRACE_S=1
 		load_lock_functions
-		sleep 30 &
+		bash -c 'trap "" TERM; sleep 30' &
 		local_pid=$!
 		_setup_register_child_pid "$local_pid"
 		_setup_cleanup_noninteractive_children
