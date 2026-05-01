@@ -5,7 +5,7 @@
 
 **[aidevops.sh](https://aidevops.sh)** — An [OpenCode](https://opencode.ai/) plugin and AI operations platform for launching and managing development, business, marketing, and creative projects. 13 specialist AI agents handle the automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
 
-> **Recommended setup:** [OpenCode](https://opencode.ai/) + [Claude](https://claude.ai/) models (Anthropic). All features, agents, and workflows are designed and tested for OpenCode first. Claude models (haiku, sonnet, opus) deliver the best results across all agent tiers.
+> **Recommended setup:** [OpenCode](https://opencode.ai/) + OpenAI models. GPT-5.5 is the preferred high-capability model for complex agent work; GPT-5.4 mini is the preferred fast, lower-cost model for triage and routine implementation. Claude models (Anthropic) remain fully supported, and other model providers are evaluated from time to time as their quality, latency, and cost profiles change.
 
 *"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"*
 
@@ -20,7 +20,7 @@ Founded by [Marcus Quinn](https://github.com/marcusquinn) on 9th November 2025 t
 - **Autonomous orchestration** - An AI supervisor runs every 2 minutes, dispatching parallel workers, merging PRs, detecting stuck processes, and advancing multi-day missions — no human babysitting required
 - **Multi-domain agents** - 13 specialist agents (code, automation, SEO, marketing, content, legal, sales, research, video, business, accounts, social media, health) with 900+ subagents loaded on demand
 - **Multi-model safety** - High-stakes operations (force push, production deploy, data migration) are verified by a second cross-provider model before execution — different providers have different failure modes, so correlated hallucinations are rare
-- **Resource efficiency** - Cost-aware model routing (local → haiku → flash → sonnet → pro → opus), project-type bundles that auto-configure quality gates and model tiers, budget tracking with burn-rate analysis
+- **Resource efficiency** - Cost-aware model routing across OpenAI, Anthropic, Gemini, Cursor, and local models; project-type bundles auto-configure quality gates and model tiers, with budget tracking and burn-rate analysis
 - **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
 - **Self-improving** - When patterns of failure or inefficiency emerge, improve the framework itself. Session mining extracts learnings from past sessions automatically
 - **Gap awareness** - Every session is an opportunity to identify what's missing — gaps in automation, documentation, coverage, or processes — and create tasks to fill them
@@ -95,6 +95,7 @@ The result: an AI operations platform that manages projects across every busines
 
 - **Purpose**: AI-assisted DevOps automation framework
 - **Install**: `npm install -g aidevops && aidevops update`
+- **Recommended runtime/models**: OpenCode + OpenAI GPT-5.5 / GPT-5.4 mini
 - **Entry**: `aidevops` CLI, `~/.aidevops/agents/AGENTS.md`
 - **Stack**: Bash scripts, TypeScript (Bun), MCP servers
 
@@ -111,8 +112,8 @@ The result: an AI operations platform that manages projects across every busines
 
 - 13 primary agents (Build+, Automate, SEO, Marketing, etc.) with specialist @subagents on demand
 - 900+ subagent markdown files organized by domain
-- 390+ helper scripts in `.agents/scripts/`
-- 69 slash commands for common workflows
+- 1,200+ helper scripts in `.agents/scripts/`
+- 90+ slash commands and workflow guides for common operations
 
 <!-- AI-CONTEXT-END -->
 
@@ -192,9 +193,9 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Offer to install Oh My Zsh (optional, opt-in) for enhanced shell experience
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
 - Ensure all PATH and alias changes work in both bash, zsh, and fish
-- Add a `claude` alias that runs `claude --dangerously-skip-permissions` (skips per-tool permission prompts). Re-running setup updates the alias automatically. To grant permissions per-session instead, press **Shift-Tab** inside Claude Code to cycle through permission modes (default → skip permissions → auto-approve).
+- When Claude Code is installed, add a `claude` alias that runs `claude --dangerously-skip-permissions` (skips per-tool permission prompts). Re-running setup updates the alias automatically. To grant permissions per-session instead, press **Shift-Tab** inside Claude Code to cycle through permission modes (default → skip permissions → auto-approve).
 
-**New users: Start [OpenCode](https://opencode.ai/) and type `/onboarding`** to configure your services interactively. OpenCode is the recommended tool for aidevops - all features, agents, and workflows are designed and tested for it first. The onboarding wizard will:
+**New users: Start [OpenCode](https://opencode.ai/) and type `/onboarding`** to configure your services interactively. OpenCode is the recommended tool for aidevops; pair it with OpenAI GPT-5.5 and GPT-5.4 mini for the best current results across agent tiers. The onboarding wizard will:
 - Explain what **[aidevops](https://aidevops.sh)** can do
 - Ask about your work to give personalized recommendations
 - Show which services are configured vs need setup
@@ -314,7 +315,25 @@ See `.agents/tools/task-management/beads.md` for complete documentation and inst
 
 **Your AI assistant now has agentic access to 30+ service integrations.**
 
-### OpenCode Anthropic OAuth (Built-in)
+### OpenAI Models in OpenCode (Recommended)
+
+OpenCode with OpenAI is the current recommended aidevops setup. Use GPT-5.5 for complex reasoning, architecture, security-sensitive review, and hard agent tiers; use GPT-5.4 mini for fast triage, routine implementation, retries, and lower-cost worker throughput.
+
+**Authenticate via the pool:**
+
+```bash
+aidevops model-accounts-pool add openai
+# Restart OpenCode after adding
+```
+
+**Why this is the default:**
+
+- **Best current cross-tier results** — strongest observed balance across interactive Build+, workers, review, and dispatch tiers
+- **Good cost/latency split** — GPT-5.5 for depth, GPT-5.4 mini for high-volume routine work
+- **Provider isolation** — OpenAI accounts rotate independently from Anthropic, Google, Cursor, and local providers
+- **Fallback-friendly** — Claude, Gemini, Cursor, and local models remain available when a task or rate-limit profile calls for them
+
+### OpenCode Anthropic OAuth (Supported)
 
 OpenCode includes Anthropic OAuth authentication natively — no API key needed. OAuth is covered by your Claude Pro/Max subscription at zero additional cost.
 
@@ -334,7 +353,8 @@ Open OpenCode → `Ctrl+A` → Select **Anthropic** → **Login with Claude.ai**
 
 **Benefits:**
 
-- **Zero cost** for Claude Pro/Max subscribers (covered by subscription)
+- **Still fully supported** for users who prefer Claude models or already have Claude Pro/Max
+- **Zero marginal cost** for Claude Pro/Max subscribers (covered by subscription)
 - **Automatic token refresh** — no manual re-authentication needed
 - **Multiple accounts** — add more accounts to the pool for automatic rotation when one hits rate limits
 - **Beta features enabled** — extended thinking modes and latest features
@@ -406,8 +426,8 @@ Enable AI-powered issue resolution directly from GitHub. Comment `/oc fix this` 
 # 1. Install the OpenCode GitHub App
 # Visit: https://github.com/apps/opencode-agent
 
-# 2. Add API key secret
-# Repository → Settings → Secrets → ANTHROPIC_API_KEY
+# 2. Add API key secret for your chosen provider
+# Repository → Settings → Secrets → OPENAI_API_KEY or ANTHROPIC_API_KEY
 
 # 3. Create required labels
 gh label create "ai-approved" --color "0E8A16" --description "Issue approved for AI agent"
@@ -427,13 +447,14 @@ The secure workflow is included at `.github/workflows/opencode-agent.yml`.
 
 See `.agents/tools/git/opencode-github-security.md` for the full security documentation.
 
-**Supported AI tool:** [OpenCode](https://opencode.ai/) is the recommended and tested AI coding tool for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. We recommend [Claude](https://claude.ai/) models (Anthropic) for the best results across all agent tiers -- haiku for triage, sonnet for implementation, opus for complex reasoning.
+**Supported AI tool:** [OpenCode](https://opencode.ai/) is the recommended and tested AI coding tool for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. We recommend OpenAI models for the best current results across all agent tiers: GPT-5.4 mini for fast triage/routine work and GPT-5.5 for complex implementation, review, and reasoning. [Claude](https://claude.ai/) models (Anthropic) remain fully supported, and other providers are tested as their capabilities change.
 
 **Recommended stack:**
 
 - **[OpenCode](https://opencode.ai/)** - The recommended AI coding agent. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, LSP integration, plugin ecosystem, and excellent DX. All aidevops features are designed and tested for OpenCode first.
 - **[OpenCode Zen](https://opencode.ai/)** - Free tier of OpenCode with included models. Start working with AI straight away at no cost -- no API keys or subscriptions required.
-- **[Claude](https://claude.ai/)** (Anthropic) - Our most-used and tested model provider. Claude haiku, sonnet, and opus deliver the best results across all aidevops agent tiers and workflows. Recommended for users who want the highest quality output.
+- **OpenAI GPT-5.5 / GPT-5.4 mini** - Recommended model pair for aidevops today. Use GPT-5.5 for complex reasoning and high-impact agent tiers; use GPT-5.4 mini for triage, routine implementation, and cost-efficient parallel workers.
+- **[Claude](https://claude.ai/)** (Anthropic) - Fully supported alternative provider. Claude models remain useful for fallback, cross-provider verification, and users with Claude Pro/Max OAuth access.
 - **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
 - **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
@@ -452,19 +473,21 @@ aidevops model-accounts-pool check        # live token validity test per account
 
 | Symptom | Command |
 |---------|---------|
-| Account shows `rate-limited` | `aidevops model-accounts-pool rotate anthropic` |
+| OpenAI account shows `rate-limited` | `aidevops model-accounts-pool rotate openai` |
+| Anthropic account shows `rate-limited` | `aidevops model-accounts-pool rotate anthropic` |
 | All accounts in cooldown | `aidevops model-accounts-pool reset-cooldowns` |
-| Account shows `auth-error` | `aidevops model-accounts-pool add anthropic` (re-auth) |
-| Pool is empty (no accounts) | `aidevops model-accounts-pool add anthropic` |
-| Recently re-authed, still broken | `aidevops model-accounts-pool assign-pending anthropic` |
+| OpenAI account shows `auth-error` | `aidevops model-accounts-pool add openai` (re-auth) |
+| Anthropic account shows `auth-error` | `aidevops model-accounts-pool add anthropic` (re-auth) |
+| Pool is empty (no accounts) | `aidevops model-accounts-pool add openai` |
+| Recently re-authenticated, still broken | `aidevops model-accounts-pool assign-pending openai` |
 | Google Gemini CLI rate-limited | `aidevops model-accounts-pool rotate google` |
 | Google token expired | `aidevops model-accounts-pool add google` (re-auth) |
 
 **Step 3 — If still broken, re-add the account**
 
 ```bash
-aidevops model-accounts-pool add anthropic     # Claude Pro/Max — opens browser OAuth
 aidevops model-accounts-pool add openai        # ChatGPT Plus/Pro
+aidevops model-accounts-pool add anthropic     # Claude Pro/Max — opens browser OAuth
 aidevops model-accounts-pool add cursor        # Cursor Pro (reads from local IDE)
 aidevops model-accounts-pool add google        # Google AI Pro/Ultra/Workspace — browser OAuth
 aidevops model-accounts-pool import claude-cli # Import from existing Claude CLI auth
@@ -488,7 +511,7 @@ aidevops model-accounts-pool remove <p> <email># Remove an account
 
 **If you prefer guided help:** Open OpenCode with a free model (OpenCode Zen includes free models that don't require any API key or subscription) and run the auth troubleshooting agent by typing:
 
-```
+```text
 @auth-troubleshooting
 ```
 
@@ -657,7 +680,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 390+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 1,200+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Knowledge Graph Routing** | Indexed, cross-referenced agents instead of isolated skills | `subagent-index.toon` maps 900+ agents by domain, purpose, and dependency — agents discover related context through the graph, not just their own file |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
@@ -670,7 +693,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `/patterns` command, `memory-helper.sh` |
 | **Token-Efficient Serialisation** | Minimise context overhead for structured data | [TOON format](https://github.com/marcusquinn/aidevops/blob/main/.agents/toon-format.md) — 20-60% token reduction vs JSON/YAML for agent indexes, registries, and data exchange |
-| **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 7-tier guidance, `/route` command |
+| **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with provider-aware tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
 
@@ -691,7 +714,7 @@ Supervisor (pulse loop)
 │   ├── task_assignment → worker inbox
 │   ├── status_report → coordinator outbox
 │   └── broadcast → all agents
-└── Model Routing (tier-based: haiku/sonnet/opus/flash/pro)
+└── Model Routing (tier-based: GPT-5.4 mini / GPT-5.5 / provider fallbacks)
 ```
 
 **Key components:**
@@ -701,7 +724,7 @@ Supervisor (pulse loop)
 | Mailbox | `mail-helper.sh` | SQLite-backed inter-agent messaging (send, check, broadcast, archive) |
 | Supervisor | `supervisor-helper.sh` | Autonomous multi-task orchestration with SQLite state machine, batches, retry cycles, cron scheduling, auto-pickup from TODO.md |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
-| Model routing | `model-routing.md`, `/route` | Cost-aware 7-tier routing guidance (local/haiku/flash/sonnet/pro/opus/grok) |
+| Model routing | `model-routing.md`, `/route` | Cost-aware routing across OpenAI, Anthropic, Gemini, Cursor, Grok, and local providers |
 | Budget tracking | `budget-tracker-helper.sh` | Append-only cost log for model routing decisions |
 | Observability | `observability.mjs` plugin | LLM request capture for cost tracking and performance analysis |
 
@@ -810,7 +833,7 @@ High-stakes operations are verified by a second AI model from a different provid
 4. On disagreement, the operation is blocked (critical) or warned (high)
 5. All verification decisions are logged for audit
 
-**Why cross-provider?** Same-provider models share training data and failure modes. A Claude hallucination is unlikely to be reproduced by Gemini or GPT, and vice versa. The verification uses the cheapest model tier (haiku-equivalent) — cost is minimal per check.
+**Why cross-provider?** Same-provider models share training data and failure modes. A GPT hallucination is unlikely to be reproduced by Claude or Gemini, and vice versa. The verifier uses the cheapest suitable model tier, so cost is minimal per check.
 
 **Configuration:** Per-repo via `.agents/reference/high-stakes-operations.md`. Opt-out with `VERIFY_ENABLED=false` (not recommended).
 
@@ -824,12 +847,12 @@ Bundles are project-type presets that auto-configure model tiers, quality gates,
 
 | Bundle | Auto-detected by | Model default | Quality gates | Agent routing |
 |--------|-----------------|---------------|---------------|---------------|
-| `web-app` | `package.json` + framework markers | sonnet | Full (lint, test, build, a11y) | Build+ default |
-| `library` | `package.json` with `main`/`exports` | sonnet | Full + API docs check | Build+ default |
-| `cli-tool` | `bin` field in package.json | sonnet | ShellCheck, test | Build+ default |
-| `content-site` | CMS markers, `wp-config.php` | haiku | Lighthouse, SEO | Marketing for content tasks |
-| `infrastructure` | `Dockerfile`, `terraform/`, `ansible/` | sonnet | ShellCheck, security scan | Build+ default |
-| `agent` | `AGENTS.md`, `.agents/` | opus | Agent review, prompt quality | Build+ default |
+| `web-app` | `package.json` + framework markers | standard | Full (lint, test, build, a11y) | Build+ default |
+| `library` | `package.json` with `main`/`exports` | standard | Full + API docs check | Build+ default |
+| `cli-tool` | `bin` field in package.json | standard | ShellCheck, test | Build+ default |
+| `content-site` | CMS markers, `wp-config.php` | fast | Lighthouse, SEO | Marketing for content tasks |
+| `infrastructure` | `Dockerfile`, `terraform/`, `ansible/` | standard | ShellCheck, security scan | Build+ default |
+| `agent` | `AGENTS.md`, `.agents/` | thinking | Agent review, prompt quality | Build+ default |
 
 **Resolution priority:** Explicit `bundle` field in `repos.json` > `.aidevops.json` project config > auto-detection from marker files.
 
@@ -1747,7 +1770,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 13 primary agents, 900+ subagents, and 390+ helper scripts.
+This installs the complete framework: 13 primary agents, 900+ subagents, and 1,200+ helper scripts.
 
 ### Importing External Skills
 
@@ -2572,7 +2595,7 @@ aidevops/
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
 │   ├── *.md                       # 13 primary agents
-│   ├── scripts/                   # 390+ helper scripts
+│   ├── scripts/                   # 1,200+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
@@ -2695,7 +2718,7 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 
 - Autonomous supervisor — pulse runs every 2 minutes, merging PRs, dispatching workers, killing stuck processes, advancing missions
 - Operational intelligence — struggle-ratio detection, orphaned PR recovery, circuit breaker, dynamic concurrency
-- Cost-aware routing — 7-tier model selection (local → haiku → flash → sonnet → pro → opus → grok) with budget tracking
+- Cost-aware routing — provider-aware model selection across OpenAI, Anthropic, Gemini, Cursor, Grok, and local models with budget tracking
 - Progressive context — 900+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
 - Self-improving — session mining extracts learnings, quality findings auto-create tasks, patterns feed back into agent prompts
 
