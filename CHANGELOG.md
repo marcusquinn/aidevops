@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.60] - 2026-05-01
+
+### Changed
+
+- speed up worktree registry prune for large stale backlogs
+- Maintenance: mark t3258 complete (pr:#22097 completed:2026-05-01) [skip ci]
+- track solved-by actor labels (#22130)
+
+### Fixed
+
+- check paginated dispatch cooldown comments (#22132)
+
 ## [3.13.59] - 2026-05-01
 
 ### Fixed
