@@ -349,6 +349,44 @@ _format_cutoff_time() {
 	return 0
 }
 
+# _check_wal_post_archive <db>
+# After a successful archive pass, checks whether the WAL is still large
+# because active readers are blocking the checkpoint.  Emits a warning with
+# the number of blocking processes and a deterministic next step.
+# Silent no-op when WAL is within the threshold or does not exist.
+_check_wal_post_archive() {
+	local db="$1"
+	local wal_path="${db}-wal"
+	[[ -f "$wal_path" ]] || return 0
+	local wal_bytes wal_mb
+	wal_bytes=$(file_size_bytes "$wal_path")
+	wal_mb=$(( wal_bytes / 1048576 ))
+	local threshold="${WAL_LARGE_THRESHOLD_MB:-500}"
+	[[ "$wal_mb" -ge "$threshold" ]] || return 0
+	print_warning "WAL still large after archive: $(format_bytes "$wal_bytes") (${wal_path})"
+	# Probe checkpoint state: PASSIVE does not block writers — safe with live sessions.
+	local ckpt_out blocked log_pages ckpt_pages
+	ckpt_out=$(sqlite3 "$db" "PRAGMA wal_checkpoint(PASSIVE);" 2>/dev/null || echo "0|0|0")
+	IFS='|' read -r blocked log_pages ckpt_pages <<<"$ckpt_out"
+	if [[ "${blocked:-0}" == "1" ]] && [[ "${log_pages:-0}" -gt "${ckpt_pages:-0}" ]]; then
+		local unckpt=$(( ${log_pages:-0} - ${ckpt_pages:-0} ))
+		print_warning "WAL checkpoint busy: ${unckpt} frame(s) still held by active readers"
+		local n_holders=0
+		if command -v lsof >/dev/null 2>&1 && [[ -f "$db" ]]; then
+			n_holders=$(lsof "$db" 2>/dev/null | awk 'NR>1 {print $2}' | sort -u | wc -l | tr -d ' ')
+		fi
+		n_holders="${n_holders:-0}"
+		if [[ "$n_holders" -gt 0 ]]; then
+			print_warning "${n_holders} process(es) holding DB open — WAL cannot be truncated until they close"
+		fi
+		print_info "Next step: close all OpenCode sessions, then run:"
+		print_info "  opencode-db-maintenance-helper.sh maintain"
+	else
+		print_info "WAL will be truncated on next maintenance run (no active readers blocking)"
+	fi
+	return 0
+}
+
 _archive_candidate_filter() {
 	local retention_enabled="$1"
 	local cutoff_ms="$2"
@@ -645,6 +683,8 @@ BATCH_SQL
 	print_success "Archive complete: $archived_total sessions moved"
 	print_success "Active DB: $(format_bytes "$size_before") → $(format_bytes "$size_after") ($(format_bytes "$total_freed") freed)"
 	print_success "Archive DB: $(format_bytes "$(file_size_bytes "$ARCHIVE_DB")")"
+	# Surface large WAL that remains after archiving (active readers may be blocking truncation).
+	_check_wal_post_archive "$ACTIVE_DB"
 	return 0
 }
 

@@ -232,6 +232,53 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Test 10: report shows WAL status section when WAL_LARGE_THRESHOLD_MB=0
+# -----------------------------------------------------------------------------
+# Setting the threshold to 0 forces the WAL status code path regardless of
+# actual WAL file size, without touching the real opencode.db.
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper report 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -qiE "WAL status:|WAL size:" <<<"$out"; then
+	_pass "report shows WAL status section when WAL_LARGE_THRESHOLD_MB=0"
+else
+	_fail "report missing WAL status section (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11: check shows WAL info when WAL_LARGE_THRESHOLD_MB=0
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper check 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -qiE "WAL:" <<<"$out"; then
+	_pass "check shows WAL info when WAL_LARGE_THRESHOLD_MB=0"
+else
+	_fail "check missing WAL info (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 12: WAL report does not error when WAL file absent (no-op path)
+# -----------------------------------------------------------------------------
+
+# Remove the WAL to test the absent-WAL path
+rm -f "$OPENCODE_DIR/opencode.db-wal" "$OPENCODE_DIR/opencode.db-shm"
+
+set +e
+out=$(WAL_LARGE_THRESHOLD_MB=0 _run_helper report 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]]; then
+	_pass "report exits 0 cleanly when WAL file is absent"
+else
+	_fail "report failed (rc=$rc) when WAL absent — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 

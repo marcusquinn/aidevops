@@ -97,6 +97,8 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${FORCE_VACUUM_SIZE_MB:=500}"
 # AUTO_MIN_SECONDS_BETWEEN: skip auto run if last run was within N seconds (default 6 days)
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
+# WAL_LARGE_THRESHOLD_MB: warn/report large WAL if it exceeds this size (default 500 MB)
+: "${WAL_LARGE_THRESHOLD_MB:=500}"
 
 # Scheduler (macOS launchd) — used by cmd_install / cmd_uninstall / cmd_status.
 # Linux systemd/cron install is handled by setup-modules/schedulers.sh
@@ -211,6 +213,37 @@ _pragma() {
 	sqlite3 "$db" "PRAGMA ${name};" 2>/dev/null
 }
 
+# _wal_checkpoint_probe <db>
+# Runs PRAGMA wal_checkpoint(PASSIVE) and emits "blocked log checkpointed"
+# as space-separated integers. PASSIVE is non-blocking — safe with live sessions.
+# blocked=1 means at least one reader still holds frames in the WAL.
+# On sqlite3 error or empty output, emits "0 0 0".
+_wal_checkpoint_probe() {
+	local db="$1"
+	[[ -f "$db" ]] || { printf '%s' "0 0 0"; return 0; }
+	local result
+	result=$(sqlite3 "$db" "PRAGMA wal_checkpoint(PASSIVE);" 2>/dev/null || true)
+	if [[ -z "$result" ]]; then
+		printf '%s' "0 0 0"
+		return 0
+	fi
+	local blocked log_pages ckpt_pages
+	IFS='|' read -r blocked log_pages ckpt_pages <<<"$result"
+	printf '%s %s %s' "${blocked:-0}" "${log_pages:-0}" "${ckpt_pages:-0}"
+	return 0
+}
+
+# _wal_list_db_holders <db>
+# Emits "PID CMDNAME" lines for processes holding <db> open (via lsof).
+# Returns empty when lsof is unavailable or no holders found.
+_wal_list_db_holders() {
+	local db="$1"
+	[[ -f "$db" ]] || return 0
+	command -v lsof >/dev/null 2>&1 || return 0
+	lsof "$db" 2>/dev/null | awk 'NR>1 {print $2, $1}' | sort -u || true
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: check
 # -----------------------------------------------------------------------------
@@ -256,6 +289,30 @@ cmd_check() {
 	print_info "DB:  $(_db_size_human "$db_bytes") ($OPENCODE_DB)"
 	print_info "WAL: $(_db_size_human "$wal_bytes") ($OPENCODE_WAL)"
 
+	# WAL-specific warning: if WAL is large, probe checkpoint state and name blockers
+	local wal_mb=$(( wal_bytes / 1048576 ))
+	if [[ "$wal_mb" -ge "${WAL_LARGE_THRESHOLD_MB}" ]] && [[ -f "$OPENCODE_WAL" ]]; then
+		local probe_result probe_blocked probe_log probe_ckpt
+		probe_result=$(_wal_checkpoint_probe "$OPENCODE_DB")
+		read -r probe_blocked probe_log probe_ckpt <<<"$probe_result"
+		if [[ "$probe_blocked" == "1" ]]; then
+			local unckpt=$(( probe_log - probe_ckpt ))
+			print_warning "WAL large and checkpoint BUSY — ${unckpt} frame(s) still held by active readers"
+			local holders
+			holders=$(_wal_list_db_holders "$OPENCODE_DB")
+			if [[ -n "$holders" ]]; then
+				print_info "Active DB holders blocking WAL truncation (PID process):"
+				while IFS=' ' read -r pid name; do
+					print_info "  PID ${pid}  ${name}"
+				done <<<"$holders"
+			fi
+			print_info "Next step: close all OpenCode sessions, then run:"
+			print_info "  opencode-db-maintenance-helper.sh maintain"
+		else
+			print_info "WAL large but checkpoint is not blocked — run maintain to truncate"
+		fi
+	fi
+
 	return "$exit_code"
 }
 
@@ -297,6 +354,32 @@ cmd_report() {
 	printf '  Path:          %s\n' "$OPENCODE_DB"
 	printf '  DB size:       %s\n' "$(_db_size_human "$db_bytes")"
 	printf '  WAL size:      %s\n' "$(_db_size_human "$wal_bytes")"
+	# WAL status: distinguish active-DB table size from WAL size; show checkpoint state
+	# when WAL is large so users understand why it hasn't shrunk after archiving.
+	local wal_mb_report=$(( wal_bytes / 1048576 ))
+	if [[ "$wal_mb_report" -ge "${WAL_LARGE_THRESHOLD_MB}" ]] && [[ -f "$OPENCODE_WAL" ]]; then
+		local rp_result rp_blocked rp_log rp_ckpt
+		rp_result=$(_wal_checkpoint_probe "$OPENCODE_DB")
+		read -r rp_blocked rp_log rp_ckpt <<<"$rp_result"
+		if [[ "$rp_blocked" == "1" ]]; then
+			local rp_unckpt=$(( rp_log - rp_ckpt ))
+			printf '  WAL status:    BUSY — checkpoint blocked by active readers\n'
+			printf '                 (%s frames total, %s checkpointed, %s held)\n' \
+				"$rp_log" "$rp_ckpt" "$rp_unckpt"
+			local rp_holders
+			rp_holders=$(_wal_list_db_holders "$OPENCODE_DB")
+			if [[ -n "$rp_holders" ]]; then
+				printf '  WAL blockers:  (PID process)\n'
+				while IFS=' ' read -r pid name; do
+					printf '                 PID %-8s %s\n' "$pid" "$name"
+				done <<<"$rp_holders"
+			fi
+			printf '  Next step:     close all OpenCode sessions, then:\n'
+			printf '                 opencode-db-maintenance-helper.sh maintain\n'
+		else
+			printf '  WAL status:    ok (checkpoint not blocked)\n'
+		fi
+	fi
 	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
 	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
 	printf '\n  PRAGMAs (fresh CLI connection — not what opencode uses):\n'
