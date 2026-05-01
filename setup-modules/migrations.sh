@@ -616,7 +616,16 @@ _migrate_ai_config_agent_refs() {
 # 3. .gitignore entries in user projects
 # 4. References in user's AI assistant configs
 # 5. References in ~/.aidevops/ config files
+#
+# Guarded by a sentinel file: on a converged system the function does
+# a repos.json scan and a find(1) scan of ~/Git, both of which cost
+# several seconds per run (t3221).
 migrate_agent_to_agents_folder() {
+	local _sentinel="${HOME}/.aidevops/.migrations/agent-to-agents-done"
+	if [[ -f "$_sentinel" ]]; then
+		return 0
+	fi
+
 	print_info "Checking for .agent -> .agents migration..."
 
 	local migrated=0
@@ -649,6 +658,9 @@ migrate_agent_to_agents_folder() {
 		print_info "No .agent -> .agents migration needed"
 	fi
 
+	# Write sentinel so subsequent setup runs skip the repos+find scans (t3221)
+	mkdir -p "$(dirname "$_sentinel")"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$_sentinel"
 	return 0
 }
 
@@ -782,6 +794,12 @@ _migrate_mcp_npx_to_binary() {
 
 # Remove deprecated MCP entries from opencode.json
 # These MCPs have been replaced by curl-based subagents (zero context cost)
+#
+# The one-time cleanup (remove deprecated entries + migrate npx→binary) is
+# guarded by a versioned sentinel (t3221). Bump the sentinel version when new
+# deprecated MCPs are added to _remove_deprecated_mcp_entries.
+# The recurring update_mcp_paths_in_opencode call is NOT guarded — it resolves
+# stale binary paths on every run (paths can change after package upgrades).
 cleanup_deprecated_mcps() {
 	local opencode_config
 	opencode_config=$(find_opencode_config) || return 0
@@ -794,27 +812,36 @@ cleanup_deprecated_mcps() {
 		return 0
 	fi
 
-	local cleaned=0
-	local tmp_config
-	tmp_config=$(mktemp)
-	trap 'rm -f "${tmp_config:-}"' RETURN
+	# One-time cleanup: remove deprecated MCPs and migrate npx→binary paths.
+	# Sentinel version must be bumped whenever new deprecated MCPs are added.
+	local _sentinel="${HOME}/.aidevops/.migrations/cleanup-deprecated-mcps-v1"
+	if [[ ! -f "$_sentinel" ]]; then
+		local cleaned=0
+		local tmp_config
+		tmp_config=$(mktemp)
+		trap 'rm -f "${tmp_config:-}"' RETURN
 
-	cp "$opencode_config" "$tmp_config"
+		cp "$opencode_config" "$tmp_config"
 
-	# Remove deprecated MCP and tool entries
-	_remove_deprecated_mcp_entries "$tmp_config"
-	cleaned=$((cleaned + _cleanup_count))
+		# Remove deprecated MCP and tool entries
+		_remove_deprecated_mcp_entries "$tmp_config"
+		cleaned=$((cleaned + _cleanup_count))
 
-	# Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
-	_migrate_mcp_npx_to_binary "$tmp_config"
-	cleaned=$((cleaned + _cleanup_count))
+		# Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
+		_migrate_mcp_npx_to_binary "$tmp_config"
+		cleaned=$((cleaned + _cleanup_count))
 
-	if [[ $cleaned -gt 0 ]]; then
-		create_backup_with_rotation "$opencode_config" "opencode"
-		mv "$tmp_config" "$opencode_config"
-		print_info "Updated $cleaned MCP entry/entries in opencode.json (using full binary paths)"
-	else
-		rm -f "$tmp_config"
+		if [[ $cleaned -gt 0 ]]; then
+			create_backup_with_rotation "$opencode_config" "opencode"
+			mv "$tmp_config" "$opencode_config"
+			print_info "Updated $cleaned MCP entry/entries in opencode.json (using full binary paths)"
+		else
+			rm -f "$tmp_config"
+		fi
+
+		# Write sentinel
+		mkdir -p "$(dirname "$_sentinel")"
+		date -u +%Y-%m-%dT%H:%M:%SZ >"$_sentinel"
 	fi
 
 	# Always resolve bare binary names to full paths (fixes PATH-dependent startup)
@@ -1127,7 +1154,15 @@ migrate_old_backups() {
 # Migrate loop state from .claude/ to .agents/loop-state/ in user projects
 # Also migrates from legacy .agents/loop-state/ to .agents/loop-state/
 # The migration is non-destructive: moves files, doesn't delete originals until confirmed
+#
+# Guarded by a sentinel file: on a converged system the function does a
+# find(1) scan of ~/Git which costs several seconds per run (t3221).
 migrate_loop_state_directories() {
+	local _sentinel="${HOME}/.aidevops/.migrations/loop-state-dirs-migrated"
+	if [[ -f "$_sentinel" ]]; then
+		return 0
+	fi
+
 	print_info "Checking for legacy loop state directories..."
 
 	local migrated=0
@@ -1218,6 +1253,9 @@ migrate_loop_state_directories() {
 		print_info "No legacy loop state directories found"
 	fi
 
+	# Write sentinel so subsequent setup runs skip the find scan (t3221)
+	mkdir -p "$(dirname "$_sentinel")"
+	date -u +%Y-%m-%dT%H:%M:%SZ >"$_sentinel"
 	return 0
 }
 
