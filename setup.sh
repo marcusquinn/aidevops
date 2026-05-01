@@ -1144,6 +1144,30 @@ _setup_lock_pid_alive() {
 	return $?
 }
 
+_setup_lock_dir_age_seconds() {
+	local lock_dir="$1"
+	local lock_mtime=""
+	local now=""
+	if ! [[ -d "$lock_dir" ]]; then
+		printf '%s\n' 0
+		return 0
+	fi
+	if type _file_mtime_epoch >/dev/null 2>&1; then
+		lock_mtime=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
+	elif [[ "$(uname -s 2>/dev/null || true)" == "Darwin" || "$(uname -s 2>/dev/null || true)" == "FreeBSD" ]]; then
+		lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null || true)
+	else
+		lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null || true)
+	fi
+	now=$(date +%s 2>/dev/null || true)
+	if [[ "$lock_mtime" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ && "$now" -ge "$lock_mtime" ]]; then
+		printf '%s\n' $((now - lock_mtime))
+		return 0
+	fi
+	printf '%s\n' 0
+	return 0
+}
+
 _setup_register_child_pid() {
 	local pid="$1"
 	[[ -n "$pid" ]] || return 0
@@ -1215,6 +1239,18 @@ _setup_acquire_noninteractive_setup_lock() {
 		owner_cmd=""
 		if [[ -r "$lock_dir/owner.pid" ]]; then
 			owner_pid=$(tr -d '[:space:]' <"$lock_dir/owner.pid" 2>/dev/null || true)
+		fi
+		if [[ -z "$owner_pid" ]]; then
+			local _lock_age="0"
+			_lock_age=$(_setup_lock_dir_age_seconds "$lock_dir")
+			if [[ "$_lock_age" -le 300 ]]; then
+				print_error "Another setup.sh --non-interactive process is acquiring the deploy lock (lock: ${lock_dir}, age ${_lock_age}s). Exiting to avoid overlapping deployments."
+				return 75
+			fi
+			print_warning "Removing stale setup.sh --non-interactive lock with no owner at ${lock_dir} (age ${_lock_age}s)"
+			rm -rf "$lock_dir" 2>/dev/null || true
+			attempts=$((attempts + 1))
+			continue
 		fi
 		if _setup_lock_pid_alive "$owner_pid"; then
 			[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)

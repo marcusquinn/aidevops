@@ -57,8 +57,13 @@ _restart_pulse_if_running() {
 		fi
 	fi
 
-	# No auto-restart — start it manually
-	local pulse_script="${HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
+	# No auto-restart — start it manually. Prefer the canonical repo source so a
+	# background launch never depends on a path inside ~/.aidevops/agents/scripts/
+	# that may be in the middle of a future deploy swap (must-not-be-wiped-during-deploy).
+	local pulse_script="${INSTALL_DIR:-.}/.agents/scripts/pulse-wrapper.sh"
+	if [[ ! -x "$pulse_script" ]]; then
+		pulse_script="${HOME}/.aidevops/agents/scripts/pulse-wrapper.sh"
+	fi
 	if [[ -x "$pulse_script" ]]; then
 		nohup "$pulse_script" >>"${HOME}/.aidevops/logs/pulse-wrapper.log" 2>&1 &
 		print_success "Pulse started manually (PID $!)"
@@ -304,6 +309,76 @@ _set_script_permissions_and_report() {
 	agent_count=$(find "$target_dir" -name "*.md" -type f | wc -l | tr -d ' ')
 	script_count=$(find "$target_dir/scripts" -name "*.sh" -type f 2>/dev/null | wc -l | tr -d ' ')
 	print_info "Deployed $agent_count agent files and $script_count scripts"
+	return 0
+}
+
+# _count_deployed_agent_files target_dir
+# Prints the number of files in the deployed agents tree. Non-numeric output is
+# normalised to 0 so deploy verification never compares an empty string.
+_count_deployed_agent_files() {
+	local target_dir="$1"
+	local file_count="0"
+	if [[ -d "$target_dir" ]]; then
+		file_count=$(find "$target_dir" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+	fi
+	[[ "$file_count" =~ ^[0-9]+$ ]] || file_count=0
+	printf '%s\n' "$file_count"
+	return 0
+}
+
+# _restore_latest_agents_backup target_dir
+# Restores the newest agents backup after a failed deploy verification. Backups
+# are created by create_backup_with_rotation as ~/.aidevops/agents-backups/<ts>/agents.
+_restore_latest_agents_backup() {
+	local target_dir="$1"
+	local backup_base="$HOME/.aidevops/agents-backups"
+	local latest_backup=""
+
+	if [[ ! -d "$backup_base" ]]; then
+		print_warning "No agents backup directory found for restore: $backup_base"
+		return 1
+	fi
+
+	latest_backup=$(find "$backup_base" -maxdepth 2 -type d -name agents 2>/dev/null | sort | tail -n 1)
+	if [[ -z "$latest_backup" || ! -d "$latest_backup" ]]; then
+		print_warning "No restorable agents backup found under $backup_base"
+		return 1
+	fi
+
+	print_warning "Restoring agents from latest backup: $latest_backup"
+	rm -rf "$target_dir"
+	mkdir -p "$(dirname "$target_dir")"
+	if cp -a "$latest_backup" "$target_dir"; then
+		print_success "Restored agents directory from backup"
+		return 0
+	fi
+
+	print_error "Failed to restore agents directory from backup: $latest_backup"
+	return 1
+}
+
+# _verify_deployed_agents_tree target_dir
+# Verifies the deployed agents tree is plausibly complete before .deployed-sha is
+# written. This catches empty/partial deploys that would otherwise suppress the
+# next auto-update retry by stamping the new SHA.
+_verify_deployed_agents_tree() {
+	local target_dir="$1"
+	local min_files="${AIDEVOPS_AGENT_DEPLOY_MIN_FILES:-100}"
+	local file_count="0"
+
+	[[ "$min_files" =~ ^[0-9]+$ ]] || min_files=100
+
+	if [[ ! -d "$target_dir/scripts" ]]; then
+		print_error "Deploy verification failed: $target_dir/scripts missing after swap"
+		return 1
+	fi
+
+	file_count=$(_count_deployed_agent_files "$target_dir")
+	if [[ "$file_count" -lt "$min_files" ]]; then
+		print_error "Deploy verification failed: $target_dir has $file_count files (< $min_files)"
+		return 1
+	fi
+
 	return 0
 }
 
@@ -651,12 +726,14 @@ deploy_aidevops_agents() {
 	fi
 
 	# Postcondition: verify the swap actually produced a functional agents dir.
-	# _atomic_stage_and_deploy_agents returns 0 on success, but a belt-and-
-	# suspenders check here catches any future regression where the function
-	# might return early without correctly populating $target_dir (GH#22014).
-	if [[ ! -d "$target_dir/scripts" ]]; then
-		print_error "Deploy verification failed: $target_dir/scripts missing after swap"
+	# _atomic_stage_and_deploy_agents returns 0 on success, but this belt-and-
+	# suspenders check catches future regressions where the function returns early
+	# without correctly populating $target_dir (GH#22014/GH#21973). Do not write
+	# .deployed-sha unless this passes; otherwise auto-update would suppress the
+	# next retry even though agents/ is empty or partial.
+	if ! _verify_deployed_agents_tree "$target_dir"; then
 		print_error "The agents directory was not correctly deployed — setup cannot continue"
+		_restore_latest_agents_backup "$target_dir" || true
 		return 1
 	fi
 
