@@ -757,12 +757,12 @@ _is_assigned_check_dispatch_cooldown() {
 	[[ "$cooldown_s" =~ ^[0-9]+$ ]] || cooldown_s=1800
 	[[ "$cooldown_s" -gt 0 ]] || return 1
 
-	# Fetch comments newest-first across every page. Active review-followup
-	# threads can exceed GitHub's first page, and a recent cooldown marker must
-	# win over older markers. Fail-open on API error — cooldown is an
-	# optimisation, not a guarantee.
+	# Fetch comments across every page. GitHub's issue comments endpoint returns
+	# oldest-first and ignores sort/direction parameters, so select the last
+	# matching marker after pagination to use the newest cooldown. Fail-open on API
+	# error — cooldown is an optimisation, not a guarantee.
 	local comments_endpoint
-	comments_endpoint=$(printf 'repos/%s/issues/%s/comments?per_page=100&sort=created&direction=desc' "$repo_slug" "$issue_number")
+	comments_endpoint=$(printf 'repos/%s/issues/%s/comments?per_page=100' "$repo_slug" "$issue_number")
 	local comments_json
 	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
 	[[ -n "$comments_json" ]] || return 1
@@ -774,7 +774,7 @@ _is_assigned_check_dispatch_cooldown() {
 	local _jq_rc=0
 	local marker_iso
 	marker_iso=$(printf '%s' "$comments_json" |
-		jq -r '[.[][] | (.body // "") | match("<!-- dispatch-cooldown-until:([^ ]+) reason=no_worker_process"; "g") | .captures[0].string] | first // ""') || _jq_rc=$?
+		jq -r '[.[][] | (.body // "") | match("<!-- dispatch-cooldown-until:([^ ]+) reason=no_worker_process"; "g") | .captures[0].string] | last // ""') || _jq_rc=$?
 	if [[ "$_jq_rc" -ne 0 ]]; then
 		return 1
 	fi

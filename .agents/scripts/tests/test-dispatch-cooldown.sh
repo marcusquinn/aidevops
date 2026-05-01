@@ -76,6 +76,12 @@ ${issue_payload}
 JSON
 	exit 0
 fi
+if [[ "\$1" == "api" && "\$4" == *sort=* ]]; then
+	exit 1
+fi
+if [[ "\$1" == "api" && "\$4" == *direction=* ]]; then
+	exit 1
+fi
 if [[ "\$1" == "api" && "\$2" == "--paginate" && "\$3" == "--slurp" && "\$4" == repos/*/issues/*/comments* ]]; then
 	printf '['
 	cat <<'JSON'
@@ -134,11 +140,11 @@ else
 fi
 
 # Case B: latest of multiple markers wins. GitHub comments are fetched
-# newest-first, so a fresh marker before an expired marker should block (jq
-# `first` semantics).
+# oldest-first, so a fresh marker after an expired marker should block (jq
+# `last` semantics).
 PAST_ISO=$(iso_offset -3600)
 FUTURE_ISO_2=$(iso_offset 1800)
-COMMENTS_LATEST_WINS='[{"body":"<!-- dispatch-cooldown-until:'"${FUTURE_ISO_2}"' reason=no_worker_process runner=runner-b -->"},{"body":"intervening human comment"},{"body":"<!-- dispatch-cooldown-until:'"${PAST_ISO}"' reason=no_worker_process runner=runner-a -->"}]'
+COMMENTS_LATEST_WINS='[{"body":"<!-- dispatch-cooldown-until:'"${PAST_ISO}"' reason=no_worker_process runner=runner-a -->"},{"body":"intervening human comment"},{"body":"<!-- dispatch-cooldown-until:'"${FUTURE_ISO_2}"' reason=no_worker_process runner=runner-b -->"}]'
 write_stub_gh "$PASSTHROUGH_ISSUE" "$COMMENTS_LATEST_WINS"
 run_is_assigned 99886 "owner/repo"
 if [[ "$rc" -eq 0 && "$output" == *"DISPATCH_COOLDOWN_ACTIVE"* && "$output" == *"$FUTURE_ISO_2"* ]]; then
