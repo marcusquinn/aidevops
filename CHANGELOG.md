@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.26] - 2026-05-01
+
+### Changed
+
+- Maintenance: sync ref:GH#22009 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22008 to TODO.md [skip ci]
+- Maintenance: mark t3233 complete (pr:#22005 completed:2026-05-01) [skip ci]
+- make model override labels availability-aware (#22005)
+
 ## [3.13.25] - 2026-05-01
 
 ### Fixed
