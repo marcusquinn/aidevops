@@ -6,7 +6,7 @@
 # Verifies that the bounded wrapper:
 #   1. Returns 0 when deploy_agents_to_runtimes completes quickly.
 #   2. Kills a slow deployment within AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT seconds and
-#      returns non-zero, ensuring the stage cannot hang the outer setup timeout.
+#      returns 0 because runtime deployment is non-critical during setup postflight.
 #   3. The bounded wrapper is wired into setup.sh's non-interactive path.
 #
 # Note on process-group cleanup: deploy_agents_to_runtimes does not start any
@@ -89,7 +89,7 @@ _deploy_agents_to_runtimes_bounded() {
 			kill -KILL "\$_pid" 2>/dev/null || true
 			wait "\$_pid" 2>/dev/null || true
 			print_warning "bounded: exceeded timeout"
-			return 1
+			return 0
 		fi
 		sleep 1
 	done
@@ -170,7 +170,7 @@ test_bounded_wrapper_fast_path() {
 	return 0
 }
 
-test_bounded_wrapper_kills_slow_deployment() {
+test_bounded_wrapper_kills_slow_deployment_without_failing_setup() {
 	TEST_TMP_DIR="$(mktemp -d)"
 	local script="${TEST_TMP_DIR}/slow.sh"
 
@@ -181,11 +181,11 @@ test_bounded_wrapper_kills_slow_deployment() {
 	bash "$script" || rc=$?
 	local elapsed=$(( SECONDS - start_s ))
 
-	if [[ "$rc" -ne 0 ]]; then
-		print_result "slow deployment: bounded wrapper returns non-zero on timeout" 0
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "slow deployment timeout is non-critical for setup" 0
 	else
-		print_result "slow deployment: bounded wrapper returns non-zero on timeout" 1 \
-			"expected non-zero from bounded wrapper, got 0"
+		print_result "slow deployment timeout is non-critical for setup" 1 \
+			"expected 0 from bounded wrapper timeout, got $rc"
 	fi
 
 	# timeout=3 + 2s SIGKILL grace + 1s poll overhead = at most ~7s
@@ -203,6 +203,7 @@ test_bounded_wrapper_timeout_env_respected() {
 	local script="${TEST_TMP_DIR}/env_check.sh"
 
 	# Deploy that sleeps 10s; AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT=2 should terminate it
+	# without failing setup's non-interactive path.
 	_write_bounded_wrapper_script "$script" "  sleep 10; return 0" "2"
 
 	local rc=0
@@ -210,7 +211,7 @@ test_bounded_wrapper_timeout_env_respected() {
 	bash "$script" || rc=$?
 	local elapsed=$(( SECONDS - start_s ))
 
-	if [[ "$rc" -ne 0 && "$elapsed" -le 7 ]]; then
+	if [[ "$rc" -eq 0 && "$elapsed" -le 7 ]]; then
 		print_result "AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT env var respected (${elapsed}s)" 0
 	else
 		print_result "AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT env var respected (${elapsed}s)" 1 \
@@ -228,7 +229,7 @@ main() {
 	test_setup_uses_bounded_wrapper
 	test_deploy_function_has_no_background_jobs
 	test_bounded_wrapper_fast_path
-	test_bounded_wrapper_kills_slow_deployment
+	test_bounded_wrapper_kills_slow_deployment_without_failing_setup
 	test_bounded_wrapper_timeout_env_respected
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
