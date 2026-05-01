@@ -60,7 +60,7 @@ mkdir -p "$STUB_DIR"
 
 # write_stub_gh: configure the stub to respond to:
 #   - `gh issue view ...`         → emits ISSUE_PAYLOAD
-#   - `gh api repos/.../comments` → emits COMMENTS_PAYLOAD
+#   - `gh api --paginate --slurp repos/.../comments...` → emits COMMENTS_PAYLOAD
 #
 # Both payloads are passed via stub-side env vars so successive test cases
 # can swap them without rewriting the script.
@@ -76,10 +76,12 @@ ${issue_payload}
 JSON
 	exit 0
 fi
-if [[ "\$1" == "api" && "\$2" == repos/*/issues/*/comments ]]; then
+if [[ "\$1" == "api" && "\$2" == "--paginate" && "\$3" == "--slurp" && "\$4" == repos/*/issues/*/comments* ]]; then
+	printf '['
 	cat <<'JSON'
 ${comments_payload}
 JSON
+	printf ']'
 	exit 0
 fi
 exit 1
@@ -131,11 +133,12 @@ else
 		"(rc=$rc output='$output')"
 fi
 
-# Case B: latest of multiple markers wins. An expired marker followed by a
-# fresh one should block (jq `last` semantics).
+# Case B: latest of multiple markers wins. GitHub comments are fetched
+# newest-first, so a fresh marker before an expired marker should block (jq
+# `first` semantics).
 PAST_ISO=$(iso_offset -3600)
 FUTURE_ISO_2=$(iso_offset 1800)
-COMMENTS_LATEST_WINS='[{"body":"<!-- dispatch-cooldown-until:'"${PAST_ISO}"' reason=no_worker_process runner=runner-a -->"},{"body":"intervening human comment"},{"body":"<!-- dispatch-cooldown-until:'"${FUTURE_ISO_2}"' reason=no_worker_process runner=runner-b -->"}]'
+COMMENTS_LATEST_WINS='[{"body":"<!-- dispatch-cooldown-until:'"${FUTURE_ISO_2}"' reason=no_worker_process runner=runner-b -->"},{"body":"intervening human comment"},{"body":"<!-- dispatch-cooldown-until:'"${PAST_ISO}"' reason=no_worker_process runner=runner-a -->"}]'
 write_stub_gh "$PASSTHROUGH_ISSUE" "$COMMENTS_LATEST_WINS"
 run_is_assigned 99886 "owner/repo"
 if [[ "$rc" -eq 0 && "$output" == *"DISPATCH_COOLDOWN_ACTIVE"* && "$output" == *"$FUTURE_ISO_2"* ]]; then
