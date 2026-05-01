@@ -144,13 +144,20 @@ _update_homebrew_formula() {
 # cache serves stale content to a follow-on reader on macOS APFS, and where
 # an external writer briefly steps on the file between sed and validate.
 # Canonical failure: v3.13.13 release, 2026-04-30 (issue #21905).
+_json_version_jq_query() {
+	printf '%s\n' '.version // .metadata.version // "not found"'
+	return 0
+}
+
 _update_json_version_field() {
 	local file="$1"
 	local new_version="$2"
 	local display_name="$3"
 	local ver_key='"version"'
+	local version_jq_query
+	version_jq_query="$(_json_version_jq_query)"
 
-	sed_inplace "s/${ver_key}: *\"[^\"]*\"/${ver_key}: \"$new_version\"/" "$file"
+	sed_inplace "s|${ver_key}[[:space:]]*:[[:space:]]*\"[^\"]*\"|${ver_key}: \"$new_version\"|" "$file"
 
 	# Defensive fs flush — closes the rare post-rename cache window observed
 	# during back-to-back sed_inplace + jq read on macOS APFS.
@@ -162,7 +169,7 @@ _update_json_version_field() {
 	# For package.json the top-level .version is what we want. The same
 	# query covers both shapes correctly.
 	local actual_version
-	actual_version=$(jq -r '.version // .metadata.version // "not found"' "$file" 2>/dev/null || echo "jq-failed")
+	actual_version=$(jq -r "$version_jq_query" "$file" 2>/dev/null || echo "jq-failed")
 
 	if [[ "$actual_version" == "$new_version" ]]; then
 		print_success "Updated $display_name" >&2
@@ -174,7 +181,7 @@ _update_json_version_field() {
 	# been observed by the reader. 100ms is empirically more than enough
 	# on every filesystem we ship on; we've never measured longer in CI.
 	sleep 0.1
-	actual_version=$(jq -r '.version // .metadata.version // "not found"' "$file" 2>/dev/null || echo "jq-failed")
+	actual_version=$(jq -r "$version_jq_query" "$file" 2>/dev/null || echo "jq-failed")
 
 	if [[ "$actual_version" == "$new_version" ]]; then
 		print_warning "Updated $display_name after retry (transient fs cache race)" >&2

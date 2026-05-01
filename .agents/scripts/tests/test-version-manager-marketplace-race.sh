@@ -70,9 +70,9 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=../version-manager-files.sh
 source "${SCRIPT_DIR}/version-manager-files.sh"
 
-# The validator's exact query — pin it so the test fails loudly if
-# validate-version-consistency.sh's read path drifts away from the
-# updater's read path. Update both helpers together, never one alone.
+# The validator's exact query — pin it so the test fails loudly if the
+# validator's read path drifts away from the updater's public query helper.
+# Update both helpers together, never one alone.
 VALIDATOR_JQ_QUERY='.version // .metadata.version // "not found"'
 
 # ---------------------------------------------------------------------
@@ -148,7 +148,30 @@ EOF
 }
 
 # ---------------------------------------------------------------------
-# Test 3: idempotent path — file already has target version.
+# Test 3: JSON whitespace and slash-bearing versions
+# ---------------------------------------------------------------------
+test_json_spacing_and_slash_version() {
+	local fixture="${TEST_ROOT}/package-spaced.json"
+	cat >"$fixture" <<'EOF'
+{
+  "name": "aidevops-test",
+  "version" : "9.8.0"
+}
+EOF
+
+	local new_version="release/9.8.1"
+	local actual
+	_update_json_version_field "$fixture" "$new_version" "package-spaced.json (test)" >/dev/null 2>&1 || return 1
+	actual=$(jq -r "$VALIDATOR_JQ_QUERY" "$fixture" 2>/dev/null)
+	if [[ "$actual" != "$new_version" ]]; then
+		echo "  validator read '$actual', expected '$new_version'" >&2
+		return 1
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------
+# Test 4: idempotent path — file already has target version.
 # The sed runs anyway (no-op substitution), and the post-validation
 # must still confirm the value via the validator's query.
 # ---------------------------------------------------------------------
@@ -169,7 +192,7 @@ EOF
 }
 
 # ---------------------------------------------------------------------
-# Test 4: negative path — file has no "version" key the sed can match.
+# Test 5: negative path — file has no "version" key the sed can match.
 # The helper must return 1 AND emit a diagnostic line that mentions the
 # observed jq read. We capture stderr and grep for the marker.
 # ---------------------------------------------------------------------
@@ -207,16 +230,15 @@ EOF
 }
 
 # ---------------------------------------------------------------------
-# Test 5: read-path symmetry pin — assert the helper uses the SAME jq
+# Test 6: read-path symmetry pin — assert the helper exposes the SAME jq
 # query string the final validator uses. Locks the contract: if either
-# helper drifts, both this test and validate-version-consistency must
+# read path drifts, both this test and validate-version-consistency must
 # move together.
 # ---------------------------------------------------------------------
 test_read_path_symmetry() {
 	local helper_query
-	helper_query=$(grep -E "^[[:space:]]+actual_version=\\\$\\(jq -r " \
-		"${SCRIPT_DIR}/version-manager-files.sh" | head -n 1)
-	if ! grep -q "$VALIDATOR_JQ_QUERY" <<<"$helper_query"; then
+	helper_query="$(_json_version_jq_query)"
+	if [[ "$helper_query" != "$VALIDATOR_JQ_QUERY" ]]; then
 		echo "  helper jq query does not match validator query" >&2
 		echo "  helper: $helper_query" >&2
 		echo "  validator (pinned): $VALIDATOR_JQ_QUERY" >&2
@@ -240,6 +262,9 @@ print_result "marketplace.json (.metadata.version) — 50 rapid update+validator
 
 test_package_shape
 print_result "package.json (top-level .version) — 50 rapid update+validator cycles" $?
+
+test_json_spacing_and_slash_version
+print_result "json version update — whitespace before colon and slash version" $?
 
 test_idempotent_already_target
 print_result "idempotent path — file already at target version" $?
