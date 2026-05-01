@@ -65,6 +65,11 @@ mkdir -p "$MOCK_BIN_DIR"
 cat >"${MOCK_BIN_DIR}/gh" <<'MOCK'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${GH_RECORD_FILE}"
+if [[ -n "${GH_ARGV_RECORD_FILE:-}" ]]; then
+	for arg in "$@"; do
+		printf '<%s>\n' "$arg" >>"${GH_ARGV_RECORD_FILE}"
+	done
+fi
 # pr/issue create paths print a URL on stdout for caller capture
 case "$1 $2" in
 "pr create" | "issue create")
@@ -288,6 +293,23 @@ else
 	print_result "B4: gh_create_pr respects origin in comma-list (no dup)" 1 \
 		"got $n labels in: $(tail -1 "$GH_RECORD_FILE")"
 fi
+
+# B5: caller origin must not leave an empty argv element before gh pr create.
+# Regression for GH#22022: the guarded array expansion emitted "" when
+# _origin_label_args was empty, so gh failed with: unknown argument "".
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_calls.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:worker" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" \
+	--label "origin:interactive" >/dev/null 2>&1
+if grep -qx '<>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B5: gh_create_pr caller origin passes no empty argv element" 1 \
+		"empty argv element reached gh: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B5: gh_create_pr caller origin passes no empty argv element" 0
+fi
+unset GH_ARGV_RECORD_FILE
 
 # ---------------------------------------------------------------------------
 # Layer B': gh_create_issue defence-in-depth (mirrors PR tests)
