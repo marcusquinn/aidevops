@@ -235,6 +235,32 @@ gh_pr_list() {
 }
 
 #######################################
+# gh_pr_view — drop-in replacement for gh pr view.  (t3460)
+# Falls back to REST (`gh api GET /repos/{owner}/{repo}/pulls/{N}`) when the
+# primary call fails AND GraphQL is exhausted. All arguments are forwarded
+# unchanged to the primary gh command; the REST translator supports the common
+# --repo, --json, --jq, and -q read shapes.
+#
+#   gh_pr_view 123 --repo owner/repo --json body --jq '.body // empty'
+#   gh_pr_view 123 --repo owner/repo --json labels --jq '[.labels[].name] | join(",")'
+#
+# Returns the exit code of whichever path succeeded (or the REST path's code
+# when both paths ran).
+#######################################
+gh_pr_view() {
+	gh_record_call graphql gh_pr_view 2>/dev/null || true
+	local _first_num="${1:-}"
+	_gh_with_timeout read gh pr view "$@"
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr view #${_first_num}"
+		_rest_pr_view "$@"
+		rc=$?
+	fi
+	return $rc
+}
+
+#######################################
 # gh_issue_list — drop-in replacement for gh issue list.  (t2689, t2995)
 # Falls back to REST when the primary call fails AND GraphQL is exhausted.
 # Supports --state, --label (multiple), --assignee, --limit, --json, --jq,

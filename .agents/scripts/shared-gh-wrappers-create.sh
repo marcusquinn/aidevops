@@ -274,7 +274,7 @@ _gh_resolve_task_id_to_issue() {
 	local tid="$1"
 	local repo="$2"
 	[[ -z "$tid" || -z "$repo" ]] && return 0
-	gh issue list --repo "$repo" --state all \
+	gh_issue_list --repo "$repo" --state all \
 		--search "${tid}: in:title" --json number,title --limit 5 2>/dev/null |
 		jq -r --arg prefix "${tid}: " \
 			'.[] | select(.title | startswith($prefix)) | .number // ""' 2>/dev/null |
@@ -512,7 +512,7 @@ _gh_recover_pr_if_exists() {
 	local branch="$1" repo="${2:-}"
 	[[ -z "$branch" ]] && return 0
 	local url_candidate=""
-	url_candidate=$(gh pr list --head "$branch" ${repo:+--repo "$repo"} --state open \
+	url_candidate=$(gh_pr_list --head "$branch" ${repo:+--repo "$repo"} --state open \
 		--json number,url --jq '.[0].url // empty' 2>/dev/null || true)
 	printf '%s\n' "${url_candidate:-}"
 	return 0

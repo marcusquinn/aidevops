@@ -44,6 +44,7 @@
 #  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
 #  18. _rest_pr_create auto-detects --head from git HEAD when omitted
 #  19. _rest_pr_create auto-detects --base from repo default_branch via REST
+#  20. gh_pr_view falls back to REST when primary fails AND exhausted
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -125,6 +126,13 @@ source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
 print_info() { printf '[INFO] %s\n' "$*" >>"${GH_INFO_OUTPUT}"; return 0; }
 export -f print_info
 
+# The read wrappers run through _gh_with_timeout. In production this may exec
+# coreutils timeout, which cannot see this test's exported shell-function gh
+# stub. Keep the unit test in-process so the stub captures wrapper calls.
+# shellcheck disable=SC2317
+_gh_with_timeout() { local _op_class="${1:-read}"; shift; "$@"; return $?; }
+export -f _gh_with_timeout
+
 # Post-source stubs. Shell functions beat PATH binaries.
 gh() {
 	printf '%s\n' "$*" >>"${GH_CALLS}"
@@ -151,6 +159,10 @@ gh() {
 
 	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
 	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
+		printf '{"number":123,"title":"stub PR"}\n'
+		return 0
+	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
 		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
@@ -185,6 +197,16 @@ gh() {
 			return 1
 		fi
 		printf 'https://github.com/owner/repo/pull/9100\n'
+		return 0
+	fi
+
+	# gh pr view - the primary path for PR reads
+	if [[ "$1" == "pr" && "$2" == "view" ]]; then
+		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
+			printf 'primary stub forced failure (rate limit)\n' >&2
+			return 1
+		fi
+		printf '{"number":123,"title":"stub PR"}\n'
 		return 0
 	fi
 
@@ -592,6 +614,28 @@ else
 		"expected base=develop in calls; GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_REPO_DEFAULT_BRANCH
+
+# =============================================================================
+# Test 20: gh_pr_view → falls back to REST when primary fails AND exhausted
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_view 123 --repo "owner/repo" --json number,title --jq '.number' >/dev/null 2>&1 || true
+
+if grep -qE '^pr view 123' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api /repos/owner/repo/pulls/123' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_view falls back to REST when primary fails AND exhausted"
+else
+	fail "gh_pr_view falls back to REST when primary fails AND exhausted" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
 # Summary

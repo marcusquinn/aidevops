@@ -1097,6 +1097,9 @@ _pc_search_related_prs() {
 	local query
 	query=$(printf '%s OR ' "${kws[@]}")
 	query="${query% OR }"
+	# t3460: Intentional raw gh exception. gh_pr_list's REST fallback drops
+	# --search because /repos/{owner}/{repo}/pulls has no equivalent search
+	# endpoint; duplicate detection must preserve search semantics.
 	gh pr list --repo "$repo_slug" --state all \
 		--search "$query" --limit 5 \
 		--json number,title,state,mergedAt,createdAt 2>/dev/null
@@ -1118,7 +1121,7 @@ _pc_search_related_issues() {
 	local query
 	query=$(printf '%s OR ' "${kws[@]}")
 	query="${query% OR }"
-	gh issue list --repo "$repo_slug" --state open \
+	gh_issue_list --repo "$repo_slug" --state open \
 		--search "$query" --limit 20 \
 		--json number,title,state,createdAt 2>/dev/null
 	return $?

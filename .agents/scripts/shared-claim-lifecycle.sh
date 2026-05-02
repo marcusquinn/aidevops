@@ -96,7 +96,7 @@ release_interactive_claim_on_merge() {
 	# (t2811/GH#20757; precedent: interactive-session-helper.sh:850-858)
 	if [[ -z "$linked_issue" ]]; then
 		local _pr_body
-		_pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		_pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json body --jq '.body // empty' 2>/dev/null) || _pr_body=""
 		linked_issue=$(printf '%s' "$_pr_body" \
 			| grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?|ref(s|erences?)?|for)\b[[:space:]]+#[0-9]+' \
@@ -106,7 +106,7 @@ release_interactive_claim_on_merge() {
 
 	# Guard 2: fetch labels if not provided by caller
 	if [[ -z "$pr_labels" ]]; then
-		pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
 	fi
 
@@ -183,7 +183,7 @@ _pr_exists_for_branch_or_issue() {
 	# Primary: --head match (no search-index lag, hits pulls API directly).
 	if [[ -n "$branch_name" ]]; then
 		local pr_count_head=0
-		pr_count_head=$(gh pr list --repo "$repo_slug" --head "$branch_name" \
+		pr_count_head=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" \
 			--state all --json number --jq 'length' 2>/dev/null || true)
 		[[ "$pr_count_head" =~ ^[0-9]+$ ]] || pr_count_head=0
 		if [[ "$pr_count_head" -gt 0 ]]; then
@@ -198,6 +198,9 @@ _pr_exists_for_branch_or_issue() {
 	# the actual pushed branch differs from the detected branch_name.
 	if [[ -n "$issue_number" ]]; then
 		local pr_count_search=0
+		# t3460: Intentional raw gh exception. gh_pr_list's REST fallback routes to
+		# /repos/{owner}/{repo}/pulls and cannot preserve --search semantics; this
+		# second-chance probe must not silently degrade to an unfiltered PR list.
 		pr_count_search=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
 			--json number --jq 'length' 2>/dev/null || true)
 		[[ "$pr_count_search" =~ ^[0-9]+$ ]] || pr_count_search=0
@@ -293,7 +296,7 @@ _attempt_orphan_recovery_pr() {
 	# "premise falsified" (GH#20819 §Context edge case).
 	if [[ -n "$issue_number" ]]; then
 		local issue_state=""
-		issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		issue_state=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json state --jq '.state' 2>/dev/null || true)
 		if [[ "$issue_state" == "CLOSED" ]]; then
 			return 1
