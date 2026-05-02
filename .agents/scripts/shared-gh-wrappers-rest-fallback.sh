@@ -51,7 +51,15 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 #                         threshold to give earlier headroom (1500 = 30%
 #                         remaining). Pair: instrumentation + earlier
 #                         fallback. Trivial revert: set back to 1000 here.
-_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1500}"
+#   t3448 (default 3000): route safe read/list/search traffic through REST
+#                         before GraphQL drops near the dispatch circuit-breaker
+#                         floor. Operational evidence showed repeated trips while
+#                         GraphQL was still around 2500/5000 because list/view
+#                         bursts drained the remaining headroom between pulse
+#                         cycles. Writes and GraphQL-only gates remain unchanged;
+#                         this only shifts supported read/list/search translators
+#                         to the REST core bucket earlier.
+_GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
 _GH_REST_FALLBACK_RATE_LIMIT_CACHE=""
 _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
 

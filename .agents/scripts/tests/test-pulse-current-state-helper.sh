@@ -33,6 +33,16 @@ json.dump({
     },
     'gauges': {'graphql_remaining': {'value': 1234, 'ts': now}},
 }, open(os.path.join(root, 'pulse-stats.json'), 'w'))
+json.dump({
+    '_meta': {'total_calls': 42},
+    'by_caller': {
+        'gh_issue_list': {'graphql_calls': 7, 'rest_calls': 3, 'search_graphql_calls': 0, 'search_rest_calls': 0, 'other_calls': 0, 'total': 10},
+        'gh_pr_view': {'graphql_calls': 2, 'rest_calls': 0, 'search_graphql_calls': 0, 'search_rest_calls': 0, 'other_calls': 0, 'total': 2},
+        '_rest_pr_list': {'graphql_calls': 0, 'rest_calls': 5, 'search_graphql_calls': 0, 'search_rest_calls': 0, 'other_calls': 0, 'total': 5},
+        'pulse-batch-prefetch-helper.sh': {'graphql_calls': 0, 'rest_calls': 0, 'search_graphql_calls': 11, 'search_rest_calls': 4, 'other_calls': 0, 'total': 15},
+        'gh_api_graphql': {'graphql_calls': 10, 'rest_calls': 0, 'search_graphql_calls': 0, 'search_rest_calls': 0, 'other_calls': 0, 'total': 10},
+    }
+}, open(os.path.join(root, 'gh-api-calls-by-stage.json'), 'w'))
 open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nPR opened #2\nPR merged #2\nissue closed #1\nInstance lock acquired\n')
 PY
 
@@ -43,6 +53,7 @@ grep -q 'Dispatch alive: true' "$output"
 grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
+grep -q 'API call pressure:' "$output"
 grep -q 'worker_launch_total' "$output"
 grep -q 'watchdog_killed' "$output"
 grep -q 'rate_limited' "$output"
@@ -57,5 +68,11 @@ jq -e '.worker_outcomes.no_op == 1' "$json_output" >/dev/null
 jq -e '.worker_outcomes.canary_failed == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.skipped_low_count == 1' "$json_output" >/dev/null
 jq -e '.dispatch_stage_timing_ms.worker_launch_total.avg_ms == 123' "$json_output" >/dev/null
+jq -e '.api_call_pressure.graphql_read_calls == 9' "$json_output" >/dev/null
+jq -e '.api_call_pressure.rest_read_calls == 8' "$json_output" >/dev/null
+jq -e '.api_call_pressure.graphql_search_calls == 11' "$json_output" >/dev/null
+jq -e '.api_call_pressure.rest_search_calls == 4' "$json_output" >/dev/null
+jq -e '.api_call_pressure.graphql_other_calls == 10' "$json_output" >/dev/null
+jq -e '.api_call_pressure.read_rest_ratio == 0.4706' "$json_output" >/dev/null
 
 printf 'PASS pulse-current-state-helper\n'

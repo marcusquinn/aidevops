@@ -222,18 +222,62 @@ except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
     pass
 
 api_consumers = []
+api_pressure = {
+    'graphql_read_calls': 0,
+    'rest_read_calls': 0,
+    'graphql_search_calls': 0,
+    'rest_search_calls': 0,
+    'graphql_other_calls': 0,
+    'read_rest_ratio': None,
+    'top_read_graphql_callers': [],
+    'shadow_mode': 'gh shim records operation-specific read/list callers; REST rows are before/after counter for fallback routing',
+}
 api_report = os.path.join(log_dir, 'gh-api-calls-by-stage.json')
 if os.path.exists(api_report):
     try:
         report = json.load(open(api_report, encoding='utf-8'))
+        read_graphql_callers = []
+        read_caller_names = {'gh_issue_list', 'gh_pr_list', 'gh_issue_view', 'gh_pr_view'}
+        rest_read_caller_names = {'_rest_issue_list', '_rest_pr_list', '_rest_issue_view', '_rest_pr_view'}
         for caller, data in (report.get('by_caller') or {}).items():
             if isinstance(data, dict):
                 gql = int(data.get('graphql_calls') or 0) + int(data.get('search_graphql_calls') or 0)
                 if gql > 0:
                     api_consumers.append({'caller': caller, 'graphql_calls': gql})
+                graphql_calls = int(data.get('graphql_calls') or 0)
+                rest_calls = int(data.get('rest_calls') or 0)
+                search_graphql_calls = int(data.get('search_graphql_calls') or 0)
+                search_rest_calls = int(data.get('search_rest_calls') or 0)
+                if caller in read_caller_names:
+                    api_pressure['graphql_read_calls'] += graphql_calls
+                    api_pressure['rest_read_calls'] += rest_calls
+                    if graphql_calls > 0:
+                        read_graphql_callers.append({'caller': caller, 'graphql_calls': graphql_calls})
+                elif caller in rest_read_caller_names:
+                    api_pressure['rest_read_calls'] += rest_calls
+                else:
+                    api_pressure['graphql_other_calls'] += graphql_calls
+                api_pressure['graphql_search_calls'] += search_graphql_calls
+                api_pressure['rest_search_calls'] += search_rest_calls
         api_consumers = sorted(api_consumers, key=lambda item: item['graphql_calls'], reverse=True)[:5]
+        read_total = api_pressure['graphql_read_calls'] + api_pressure['rest_read_calls']
+        if read_total > 0:
+            api_pressure['read_rest_ratio'] = round(api_pressure['rest_read_calls'] / read_total, 4)
+        api_pressure['top_read_graphql_callers'] = sorted(
+            read_graphql_callers, key=lambda item: item['graphql_calls'], reverse=True
+        )[:5]
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         api_consumers = []
+        api_pressure = {
+            'graphql_read_calls': 0,
+            'rest_read_calls': 0,
+            'graphql_search_calls': 0,
+            'rest_search_calls': 0,
+            'graphql_other_calls': 0,
+            'read_rest_ratio': None,
+            'top_read_graphql_callers': [],
+            'shadow_mode': 'unavailable: failed to parse gh-api report',
+        }
 
 result = {
     'window_seconds': window_s,
@@ -272,6 +316,7 @@ result = {
     'dispatch_alive': bool(stage_records or metrics or counter_hits or worktrees),
     'graphql_budget_status': graphql_budget_status,
     'top_graphql_consumers': api_consumers,
+    'api_call_pressure': api_pressure,
 }
 
 if as_json:
@@ -290,6 +335,7 @@ else:
     print(f'- GraphQL budget: {graphql_budget_status}')
     if api_consumers:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
+    print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')
     print(f'- Worker worktrees: {result["worker_worktrees"]}')
     if wrapper_activity:
         print('- Recent wrapper activity:')
