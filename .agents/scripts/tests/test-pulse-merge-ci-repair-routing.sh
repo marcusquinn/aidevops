@@ -47,7 +47,12 @@ setup_test_env() {
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 	printf 'Original issue body.\n' >"${TEST_ROOT}/issue-body.txt"
+	write_gh_mock
+	return 0
+}
 
+
+write_gh_mock() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
