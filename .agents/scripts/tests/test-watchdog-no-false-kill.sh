@@ -458,15 +458,15 @@ done
 wait 2>/dev/null || true
 
 #######################################
-# Test 23: Runtime — CPU-active quiet worker survives beyond stall timeout
+# Test 23: Runtime — CI-wait quiet worker survives beyond stall timeout
 #######################################
 tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-live)
 live_output="${tmp_dir}/worker.out"
 live_exit="${tmp_dir}/worker.exit"
 live_log="${tmp_dir}/lifecycle.log"
-printf 'worker started\n' >"$live_output"
+printf 'waiting for CI checks to finish before merge\n' >"$live_output"
 
-bash -c 'yes >/dev/null & wait' >/dev/null 2>&1 &
+bash -c 'while :; do sleep 1; done' >/dev/null 2>&1 &
 live_worker_pid=$!
 WORKER_LIFECYCLE_LOG="$live_log" \
 	"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
@@ -481,11 +481,11 @@ live_watchdog_pid=$!
 sleep 8
 if kill -0 "$live_worker_pid" 2>/dev/null && [[ ! -f "${live_exit}.watchdog_killed" ]]; then
 	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 23. CPU-active quiet worker survives beyond stall timeout (long-but-live path)"
+	echo "${TEST_GREEN}PASS${TEST_NC}: 23. CI-wait quiet worker survives beyond stall timeout (long-but-live path)"
 else
 	TESTS_RUN=$((TESTS_RUN + 1))
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 23. CPU-active quiet worker was killed despite live-work evidence"
+	echo "${TEST_RED}FAIL${TEST_NC}: 23. CI-wait quiet worker was killed despite live-work evidence"
 fi
 
 pkill -P "$live_worker_pid" 2>/dev/null || true
