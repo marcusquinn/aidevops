@@ -88,6 +88,25 @@ if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
 	fi
 	exit 0
 fi
+if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/issues\? ]]; then
+	jq_filter=""
+	i=3
+	while [[ $i -le $# ]]; do
+		if [[ "${!i}" == "--jq" ]]; then
+			next=$((i + 1))
+			jq_filter="${!next:-}"
+			break
+		fi
+		i=$((i + 1))
+	done
+	fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}]}]'
+	if [[ -n "$jq_filter" ]]; then
+		printf '%s\n' "$fixture" | jq -c "$jq_filter"
+	else
+		printf '%s\n' "$fixture"
+	fi
+	exit 0
+fi
 EOF
 chmod +x "$TMP/bin/gh"
 
@@ -310,10 +329,10 @@ else
 fi
 
 # =============================================================================
-# Test 12: --json read calls stay on GraphQL to preserve gh-shaped fields
+# Test 12: --json view calls stay on GraphQL to preserve gh-shaped fields
 # =============================================================================
 echo ""
-echo "Test 12: --json read calls do not REST rewrite"
+echo "Test 12: --json view calls do not REST rewrite"
 _reset_log
 export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-json.log"
 rm -f "$AIDEVOPS_GH_API_LOG"
@@ -343,6 +362,25 @@ if [[ "$output" == "22337" ]] &&
 	_pass "gh pr list --json uses REST fallback with qualified --head"
 else
 	_fail "gh pr list --json REST fallback" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+# =============================================================================
+# Test 14: gh issue list --json can REST rewrite while preserving JSON shape
+# =============================================================================
+echo ""
+echo "Test 14: gh issue list --json REST rewrite preserves compact output"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-json-issue-list.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+output=$(STUB_RATE_LIMIT_REMAINING=0 "$SHIM_RUN" issue list --repo owner/repo \
+	--state open --json number,title,url,assignees,labels,updatedAt --jq '.[0].title' 2>/dev/null || true)
+argv=$(_read_argv)
+if [[ "$output" == '"Reduce GraphQL list-call pressure"' ]] &&
+	[[ "$argv" == *"/repos/owner/repo/issues?state=open&per_page=30"* ]] &&
+	grep -q $'\tgh_issue_list\trest' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "gh issue list --json uses REST fallback with compact issue fields"
+else
+	_fail "gh issue list --json REST fallback" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
 fi
 
 # =============================================================================

@@ -333,11 +333,15 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# objects plus jq filtering, so rewriting --json calls is not semantically
 		# equivalent. Preserve gate safety by leaving those calls on GraphQL and
 		# let current-state telemetry count them as unavoidable read pressure.
-		# Exception: _rest_pr_list now maps the common `gh pr list --json` contract
-		# (including --head filtering) onto REST, so it remains safe to rewrite.
-		if [[ "$_SHIM_READ_REWRITE" != "pr:list" ]]; then
+		# Exceptions: _rest_pr_list and _rest_issue_list map the common
+		# `gh * list --json` contracts onto REST, so high-volume pulse polling
+		# can move off GraphQL while preserving compact list output.
+		case "$_SHIM_READ_REWRITE" in
+		pr:list | issue:list) ;;
+		*)
 			_shim_read_has_json_flag "$@" && return 1
-		fi
+			;;
+		esac
 
 		# Check GraphQL budget. If above threshold, return 1 to fall through.
 		_rest_should_fallback || return 1
@@ -355,7 +359,13 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		pr:view)    _rest_pr_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
 		issue:view) _rest_issue_view "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
 		pr:list)    _rest_pr_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
-		issue:list) _rest_issue_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO" ;;
+		issue:list)
+			if _rest_args_have_search "${_SHIM_REST_ARGS[@]}"; then
+				_rest_issue_search "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO"
+			else
+				_rest_issue_list "${_SHIM_REST_ARGS[@]}" --repo "$_SHIM_REPO"
+			fi
+			;;
 		*) return 1 ;;
 		esac
 		return $?

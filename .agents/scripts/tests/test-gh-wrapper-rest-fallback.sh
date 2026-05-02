@@ -169,6 +169,25 @@ gh() {
 		printf '%s\n' "${STUB_CURRENT_LABELS:-bug}"
 		return 0
 	fi
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/issues\? ]]; then
+		local jq_filter=""
+		local i=3
+		while [[ $i -le $# ]]; do
+			if [[ "${!i}" == "--jq" ]]; then
+				local next=$((i + 1))
+				jq_filter="${!next:-}"
+				break
+			fi
+			i=$((i + 1))
+		done
+		local fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"maintainer"}}]'
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s\n' "$fixture" | jq -c "$jq_filter"
+		else
+			printf '%s\n' "$fixture"
+		fi
+		return 0
+	fi
 
 	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
 	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
@@ -800,6 +819,25 @@ if [[ "$pr_list_numbers" == "22337" ]] &&
 else
 	fail "gh_pr_list REST fallback preserves --head and compact --json/--jq shape" \
 		"output=${pr_list_numbers} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 23c: gh_issue_list REST fallback preserves gh-shaped JSON output
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+issue_list_title=$(gh_issue_list --repo "owner/repo" --state open \
+	--json number,title,url,assignees,labels,updatedAt --jq '.[0].title' 2>/dev/null || true)
+
+if [[ "$issue_list_title" == '"Reduce GraphQL list-call pressure"' ]] &&
+	grep -qE '^api /repos/owner/repo/issues\?state=open&per_page=30' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list REST fallback preserves compact --json/--jq shape"
+else
+	fail "gh_issue_list REST fallback preserves compact --json/--jq shape" \
+		"output=${issue_list_title} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
 # =============================================================================

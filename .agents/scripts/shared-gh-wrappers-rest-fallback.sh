@@ -992,17 +992,49 @@ _rest_pr_list() {
 # `?labels=` query parameter (GitHub REST AND semantics — same as gh CLI).
 # The --search flag is not supported by this REST translator and is silently
 # skipped; callers that require full-text search semantics must use the
-# GraphQL / Search API path. --json FIELDS is accepted for parity but
-# ignored (the REST endpoint returns the full object; use --jq to select).
+# GraphQL / Search API path. --json FIELDS maps common gh field names onto
+# REST field names so low-budget list polling can avoid GraphQL without
+# breaking compact JSON callers.
 #
 # Returns the underlying gh api exit code.
 #######################################
+_rest_issue_list_json_jq() {
+	local fields="$1"
+	local user_jq="$2"
+	local projection=""
+	local field=""
+	while IFS= read -r field; do
+		[[ -z "$field" ]] && continue
+		case "$field" in
+		number) projection="${projection}${projection:+,}number: .number" ;;
+		state) projection="${projection}${projection:+,}state: .state" ;;
+		url) projection="${projection}${projection:+,}url: .html_url" ;;
+		title) projection="${projection}${projection:+,}title: .title" ;;
+		body) projection="${projection}${projection:+,}body: .body" ;;
+		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
+		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
+		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
+		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
+		assignees) projection="${projection}${projection:+,}assignees: (.assignees // [])" ;;
+		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
+		comments) projection="${projection}${projection:+,}comments: .comments" ;;
+		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	[[ -z "$projection" ]] && projection="number: .number"
+	local jq_expr="[.[] | {${projection}}]"
+	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
+	printf '%s' "$jq_expr"
+	return 0
+}
+
 _rest_issue_list() {
 	gh_record_call rest _rest_issue_list 2>/dev/null || true
 	local repo=""
 	local state="open"
 	local limit=30
 	local jq_expr=""
+	local json_fields=""
 	local assignee=""
 	local -a labels
 	local _tok
@@ -1021,10 +1053,12 @@ _rest_issue_list() {
 		--assignee=*) assignee="${_arg#--assignee=}"; shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
 		--limit=*) limit="${_arg#--limit=}"; shift ;;
-		--json) shift 2 ;;
-		--json=*) shift ;;
+		--json) json_fields="${2:-}"; shift 2 ;;
+		--json=*) json_fields="${_arg#--json=}"; shift ;;
 		--jq) jq_expr="${2:-}"; shift 2 ;;
 		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
+		-q) jq_expr="${2:-}"; shift 2 ;;
+		-q=*) jq_expr="${_arg#*=}"; shift ;;
 		--search) shift 2 ;;
 		--search=*) shift ;;
 		*) shift ;;
@@ -1055,6 +1089,9 @@ _rest_issue_list() {
 
 	local _path="/repos/${repo}/issues?${_query}"
 	local _gh_cmd=(gh api "$_path")
+	if [[ -n "$json_fields" ]]; then
+		jq_expr="$(_rest_issue_list_json_jq "$json_fields" "$jq_expr")"
+	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
