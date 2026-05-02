@@ -109,11 +109,11 @@ _SOURCING_FOR_TEST=1
 
 # Extract _create_pr
 # shellcheck disable=SC2312
-eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # Extract _post_merge_summary
 # shellcheck disable=SC2312
-eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper.sh")"
+eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
 # =============================================================================
 # Post-extraction stubs (override PATH binaries and define missing deps).
@@ -135,6 +135,8 @@ export -f git
 GH_CREATE_PR_FAIL=0
 # Control variable: the URL to return from gh_create_pr on success
 GH_CREATE_PR_URL="https://github.com/owner/repo/pull/999"
+# Control variable: optional stderr emitted by gh_create_pr on success
+GH_CREATE_PR_STDERR_LOG=""
 
 # Stub: gh_create_pr — honours GH_CREATE_PR_FAIL
 # On failure, outputs an error message (like real gh does) and returns 1.
@@ -143,6 +145,9 @@ gh_create_pr() {
 	if [[ "$GH_CREATE_PR_FAIL" -eq 1 ]]; then
 		printf 'pull request update failed: GraphQL: Something went wrong\n' >&2
 		return 1
+	fi
+	if [[ -n "$GH_CREATE_PR_STDERR_LOG" ]]; then
+		printf '%s\n' "$GH_CREATE_PR_STDERR_LOG" >&2
 	fi
 	printf '%s\n' "$GH_CREATE_PR_URL"
 	return 0
@@ -252,6 +257,7 @@ fi
 GH_CREATE_PR_FAIL=0
 GH_RECOVER_PR_URL=""
 GH_CREATE_PR_URL="https://github.com/owner/repo/pull/888"
+GH_CREATE_PR_STDERR_LOG=""
 
 success_pr_number=""
 success_rc=0
@@ -270,6 +276,49 @@ else
 	fail "normal success: _create_pr outputs correct PR number (888)" \
 		"got '${success_pr_number}'"
 fi
+
+# =============================================================================
+# Test 3b: _create_pr REST fallback logs do not pollute machine stdout
+# gh_create_pr succeeds via wrapper REST fallback but writes GraphQL/fallback
+# diagnostics mentioning the issue number to stderr. Expected: _create_pr
+# outputs only the actual PR number, so commit-and-pr posts MERGE_SUMMARY there.
+# =============================================================================
+: >"$STUB_LOG"
+GH_CREATE_PR_FAIL=0
+GH_RECOVER_PR_URL=""
+GH_CREATE_PR_URL="https://github.com/owner/repo/pull/22459"
+GH_CREATE_PR_STDERR_LOG=$'[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create\nhttps://github.com/owner/repo/issues/22437'
+
+rest_fallback_pr_number=""
+rest_fallback_rc=0
+rest_fallback_pr_number=$(_create_pr "owner/repo" "t2767: test" "body text" "origin:worker") || rest_fallback_rc=$?
+
+if [[ "$rest_fallback_rc" -eq 0 ]]; then
+	pass "REST fallback success: _create_pr returns 0 when wrapper succeeds"
+else
+	fail "REST fallback success: _create_pr returns 0 when wrapper succeeds" \
+		"got exit $rest_fallback_rc; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+if [[ "$rest_fallback_pr_number" == "22459" ]]; then
+	pass "REST fallback success: _create_pr outputs only actual PR number (22459)"
+else
+	fail "REST fallback success: _create_pr outputs only actual PR number (22459)" \
+		"got '${rest_fallback_pr_number}'; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+GH_EXISTING_MERGE_SUMMARY_COUNT=0
+_post_merge_summary "$rest_fallback_pr_number" "owner/repo" "22437" "impl" "file.sh" "shellcheck" "none" >/dev/null 2>&1
+
+if grep -q "gh_pr_comment pr=22459" "$STUB_LOG" 2>/dev/null &&
+	! grep -q "gh_pr_comment pr=22437" "$STUB_LOG" 2>/dev/null; then
+	pass "REST fallback success: MERGE_SUMMARY targets the actual PR number"
+else
+	fail "REST fallback success: MERGE_SUMMARY targets the actual PR number" \
+		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+GH_CREATE_PR_STDERR_LOG=""
 
 # =============================================================================
 # Test 4: _post_merge_summary idempotency — skip when comment already exists

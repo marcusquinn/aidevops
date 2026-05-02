@@ -835,7 +835,7 @@ _create_pr() {
 	local -a extra_labels=("$@")
 
 	print_info "Creating PR..."
-	local pr_url="" rc=0
+	local pr_url="" pr_error="" rc=0
 	# t2115/t3088: gh_create_pr auto-appends origin label and signature footer.
 	# Previously we passed --label "$origin_label" here too, with the comment
 	# "GitHub deduplicates". That claim is FALSE for non-identical labels: when
@@ -853,7 +853,8 @@ _create_pr() {
 		pr_cmd+=(--label "$lbl")
 	done
 
-	pr_url=$("${pr_cmd[@]}" 2>&1) || rc=$?
+	pr_error=$(mktemp -t aidevops-pr-create-error.XXXXXX) || return 1
+	pr_url=$("${pr_cmd[@]}" 2>"$pr_error") || rc=$?
 
 	if [[ $rc -ne 0 ]]; then
 		# t2767: Partial-success recovery.
@@ -869,13 +870,21 @@ _create_pr() {
 			print_info "PR creation command returned non-zero but PR exists — recovering (t2767): ${recovered_url}"
 			pr_url="$recovered_url"
 		else
-			print_error "PR creation failed: ${pr_url}"
+			print_error "PR creation failed: $(<"$pr_error")"
+			rm -f "$pr_error"
 			return 1
 		fi
 	fi
+	rm -f "$pr_error"
 
 	local pr_number=""
-	pr_number=$(printf '%s' "$pr_url" | grep -oE '[0-9]+$' || echo "")
+	local pr_candidates=""
+	pr_candidates=$(printf '%s\n' "$pr_url" | grep -oE 'github\.com/[^[:space:]]+/[^[:space:]]+/pull/[0-9]+' | grep -oE '[0-9]+$' || true)
+	pr_number="${pr_candidates##*$'\n'}"
+	if [[ -z "$pr_number" ]]; then
+		pr_candidates=$(printf '%s\n' "$pr_url" | grep -oE '[0-9]+$' || true)
+		pr_number="${pr_candidates##*$'\n'}"
+	fi
 	if [[ -z "$pr_number" ]]; then
 		print_error "Could not extract PR number from: ${pr_url}"
 		return 1
