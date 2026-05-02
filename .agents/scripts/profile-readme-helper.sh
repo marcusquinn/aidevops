@@ -885,9 +885,10 @@ _update_push_with_recovery() {
 
 	git -C "$profile_repo" add README.md
 	git -C "$profile_repo" commit -m "$commit_msg" --no-verify 2>/dev/null || {
-		echo "No changes to commit"
+		echo "No changes to commit after profile README update"
 		return 0
 	}
+	echo "Committed profile README update: $commit_msg"
 
 	local default_branch
 	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
@@ -908,6 +909,8 @@ _update_push_with_recovery() {
 		else
 			echo "Warning: push failed and could not resolve username for recovery" >&2
 		fi
+	else
+		echo "Pushed profile README update to origin/${default_branch}"
 	fi
 	return 0
 }
@@ -918,6 +921,7 @@ cmd_update() {
 	if [[ "${1:-}" == "--dry-run" ]]; then
 		dry_run=true
 	fi
+	echo "Profile README update started at $(date -u +%Y-%m-%dT%H:%M:%SZ) (dry_run=${dry_run})"
 
 	# Resolve profile repo
 	local profile_repo
@@ -998,6 +1002,7 @@ cmd_update() {
 
 	# Apply changes and push
 	mv "$tmp_file" "$readme_path"
+	echo "Profile README content changed — committing and pushing"
 	_update_push_with_recovery "$profile_repo" "chore: update profile stats ($(date -u +%Y-%m-%d))" "$@"
 
 	echo "Profile README updated and pushed"

@@ -80,6 +80,74 @@ _define_launchd_install_if_changed() {
 	launchctl() { return 0; }
 
 	# _launchd_install_if_changed — inline from setup.sh (GH#21063 fixes)
+	_launchd_agent_state() {
+		local label="$1"
+		local state=""
+		state=$(launchctl print "gui/$(id -u)/${label}" 2>/dev/null | awk -F'= ' '/state =/ { print $2; exit }' || true)
+		printf '%s\n' "$state"
+		return 0
+	}
+
+	_launchd_bootout_bootstrap() {
+		local label="$1"
+		local plist_path="$2"
+		local domain
+		domain="gui/$(id -u)"
+
+		launchctl bootout "${domain}/${label}" 2>/dev/null || true
+		launchctl bootstrap "$domain" "$plist_path" 2>/dev/null
+		return $?
+	}
+
+	_launchd_recover_xpcproxy_if_stuck() {
+		local label="$1"
+		local plist_path="$2"
+		local state
+		state=$(_launchd_agent_state "$label")
+		if [[ "$state" != "xpcproxy" ]]; then
+			return 0
+		fi
+
+		print_warning "LaunchAgent $label stuck in xpcproxy; reloading with bootout/bootstrap"
+		if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
+			return 1
+		fi
+
+		state=$(_launchd_agent_state "$label")
+		if [[ "$state" == "xpcproxy" ]]; then
+			print_warning "LaunchAgent $label still stuck in xpcproxy after recovery"
+			return 1
+		fi
+		return 0
+	}
+
+	_launchd_load_agent() {
+		local label="$1"
+		local plist_path="$2"
+
+		if launchctl load "$plist_path" 2>/dev/null; then
+			_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
+			return 0
+		fi
+
+		if _launchd_bootout_bootstrap "$label" "$plist_path"; then
+			_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
+			return 0
+		fi
+		return 1
+	}
+
+	_launchd_kickstart_and_recover() {
+		local label="$1"
+		local plist_path="$2"
+		local domain
+		domain="gui/$(id -u)"
+
+		launchctl kickstart -k "${domain}/${label}" 2>/dev/null || return 1
+		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path"
+		return $?
+	}
+
 	_launchd_install_if_changed() {
 		local label="$1"
 		local plist_path="$2"
@@ -90,7 +158,9 @@ _define_launchd_install_if_changed() {
 			existing_content=$(cat "$plist_path")
 			if [[ "$existing_content" == "$new_content" ]]; then
 				if ! _launchd_has_agent "$label"; then
-					launchctl load "$plist_path" 2>/dev/null || return 1
+					_launchd_load_agent "$label" "$plist_path" || return 1
+				else
+					_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
 				fi
 				return 0
 			fi
@@ -119,7 +189,7 @@ _define_launchd_install_if_changed() {
 			rm -f "$tmp_plist"
 			return 1
 		fi
-		launchctl load "$plist_path" 2>/dev/null || return 1
+		_launchd_load_agent "$label" "$plist_path" || return 1
 		return 0
 	}
 	return 0
@@ -296,6 +366,117 @@ test_empty_content_rejected() {
 }
 
 # ---------------------------------------------------------------------------
+# (d) Loaded-but-stuck xpcproxy agents are recovered without content changes
+# ---------------------------------------------------------------------------
+
+test_xpcproxy_recovered_when_content_unchanged() {
+	local plist_dir="$TEST_DIR/la_xpcproxy"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local recovered_marker="$plist_dir/recovered"
+	printf 'some plist content\n' >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+
+	local bootout_count=0
+	local bootstrap_count=0
+	launchctl() {
+		case "${1:-}" in
+		print)
+			if [[ -f "$recovered_marker" ]]; then
+				printf 'state = running\n'
+			else
+				printf 'state = xpcproxy\n'
+			fi
+			return 0
+			;;
+		bootout)
+			bootout_count=$((bootout_count + 1))
+			return 0
+			;;
+		bootstrap)
+			bootstrap_count=$((bootstrap_count + 1))
+			: >"$recovered_marker"
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" || rc=$?
+
+	unset -f launchctl _launchd_has_agent
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "xpcproxy_recovered_when_content_unchanged" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	if [[ "$bootout_count" -lt 1 || "$bootstrap_count" -lt 1 ]]; then
+		print_result "xpcproxy_recovered_when_content_unchanged" 1 \
+			"expected bootout/bootstrap recovery (bootout=$bootout_count bootstrap=$bootstrap_count)"
+		return 0
+	fi
+
+	print_result "xpcproxy_recovered_when_content_unchanged" 0
+	return 0
+}
+
+test_kickstart_recovers_xpcproxy() {
+	local plist_dir="$TEST_DIR/la_kickstart"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local recovered_marker="$plist_dir/recovered"
+	printf 'some plist content\n' >"$plist_path"
+
+	local kickstart_count=0
+	local bootstrap_count=0
+	launchctl() {
+		case "${1:-}" in
+		print)
+			if [[ -f "$recovered_marker" ]]; then
+				printf 'state = running\n'
+			else
+				printf 'state = xpcproxy\n'
+			fi
+			return 0
+			;;
+		kickstart)
+			kickstart_count=$((kickstart_count + 1))
+			return 0
+			;;
+		bootout)
+			return 0
+			;;
+		bootstrap)
+			bootstrap_count=$((bootstrap_count + 1))
+			: >"$recovered_marker"
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local rc=0
+	_launchd_kickstart_and_recover "test-label" "$plist_path" || rc=$?
+
+	unset -f launchctl
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "kickstart_recovers_xpcproxy" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	if [[ "$kickstart_count" -ne 1 || "$bootstrap_count" -lt 1 ]]; then
+		print_result "kickstart_recovers_xpcproxy" 1 \
+			"expected kickstart and bootstrap recovery (kickstart=$kickstart_count bootstrap=$bootstrap_count)"
+		return 0
+	fi
+
+	print_result "kickstart_recovers_xpcproxy" 0
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -313,6 +494,8 @@ main() {
 
 	test_mv_failure_returns_1
 	test_empty_content_rejected
+	test_xpcproxy_recovered_when_content_unchanged
+	test_kickstart_recovers_xpcproxy
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions

@@ -253,6 +253,74 @@ _launchd_has_agent() {
 	return $?
 }
 
+_launchd_agent_state() {
+	local label="$1"
+	local state=""
+	state=$(launchctl print "gui/$(id -u)/${label}" 2>/dev/null | awk -F'= ' '/state =/ { print $2; exit }' || true)
+	printf '%s\n' "$state"
+	return 0
+}
+
+_launchd_bootout_bootstrap() {
+	local label="$1"
+	local plist_path="$2"
+	local domain
+	domain="gui/$(id -u)"
+
+	launchctl bootout "${domain}/${label}" 2>/dev/null || true
+	launchctl bootstrap "$domain" "$plist_path" 2>/dev/null
+	return $?
+}
+
+_launchd_recover_xpcproxy_if_stuck() {
+	local label="$1"
+	local plist_path="$2"
+	local state
+	state=$(_launchd_agent_state "$label")
+	if [[ "$state" != "xpcproxy" ]]; then
+		return 0
+	fi
+
+	print_warning "LaunchAgent $label stuck in xpcproxy; reloading with bootout/bootstrap"
+	if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
+		return 1
+	fi
+
+	state=$(_launchd_agent_state "$label")
+	if [[ "$state" == "xpcproxy" ]]; then
+		print_warning "LaunchAgent $label still stuck in xpcproxy after recovery"
+		return 1
+	fi
+	return 0
+}
+
+_launchd_load_agent() {
+	local label="$1"
+	local plist_path="$2"
+
+	if launchctl load "$plist_path" 2>/dev/null; then
+		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
+		return 0
+	fi
+
+	if _launchd_bootout_bootstrap "$label" "$plist_path"; then
+		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
+		return 0
+	fi
+	return 1
+}
+
+_launchd_kickstart_and_recover() {
+	local label="$1"
+	local plist_path="$2"
+	local domain
+	domain="gui/$(id -u)"
+
+	launchctl kickstart -k "${domain}/${label}" 2>/dev/null || return 1
+	_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path"
+	return $?
+}
+
 # Install a launchd plist only if its content has changed.
 # Avoids unnecessary unload/reload which resets StartInterval timers.
 # Usage: _launchd_install_if_changed <label> <plist_path> <new_content>
@@ -269,7 +337,9 @@ _launchd_install_if_changed() {
 		if [[ "$existing_content" == "$new_content" ]]; then
 			# Ensure it's loaded even if content unchanged
 			if ! _launchd_has_agent "$label"; then
-				launchctl load "$plist_path" 2>/dev/null || return 1
+				_launchd_load_agent "$label" "$plist_path" || return 1
+			else
+				_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path" || return 1
 			fi
 			return 0
 		fi
@@ -305,7 +375,7 @@ _launchd_install_if_changed() {
 		rm -f "$tmp_plist"
 		return 1
 	fi
-	launchctl load "$plist_path" 2>/dev/null || return 1
+	_launchd_load_agent "$label" "$plist_path" || return 1
 	return 0
 }
 
