@@ -616,36 +616,36 @@ _handle_run_result() {
 			failure_reason="rate_limit"
 			print_warning "$selected_model watchdog saw provider/rate-limit marker — classifying as rate_limit for rotation"
 		else
-		if [[ "$activity_detected" == "1" ]]; then
-			# Worker was making progress, then stalled (stream drop, hung connection).
-			# Store session ID for continuation before deleting output.
-			local discovered_session_for_continue
-			discovered_session_for_continue=$(extract_session_id_from_output "$output_file")
-			if [[ "$role" != "pulse" && -n "$discovered_session_for_continue" ]]; then
-				store_session_id "$provider" "$session_key" "$discovered_session_for_continue" "$selected_model"
-			fi
-			# t2956: Hard-kill path — proactive elapsed-time kill from the
-			# watchdog. Skip continuation, free the slot. The flag is set in
-			# _execute_run_attempt when the .watchdog_stall_killed sentinel
-			# was present alongside .watchdog_killed.
-			if [[ "${_run_watchdog_hard_killed:-0}" -eq 1 ]]; then
-				# Local to avoid duplicating the literal across the file
-				# (string-literal ratchet). The pre-existing per-session cap
-				# branch below uses the same label string.
-				local _hk_label="watchdog_stall_killed"
-				_run_result_label="$_hk_label"
-				_run_failure_reason="$_hk_label"
+			if [[ "$activity_detected" == "1" ]]; then
+				# Worker was making progress, then stalled (stream drop, hung connection).
+				# Store session ID for continuation before deleting output.
+				local discovered_session_for_continue
+				discovered_session_for_continue=$(extract_session_id_from_output "$output_file")
+				if [[ "$role" != "pulse" && -n "$discovered_session_for_continue" ]]; then
+					store_session_id "$provider" "$session_key" "$discovered_session_for_continue" "$selected_model"
+				fi
+				# t2956: Hard-kill path — proactive elapsed-time kill from the
+				# watchdog. Skip continuation, free the slot. The flag is set in
+				# _execute_run_attempt when the .watchdog_stall_killed sentinel
+				# was present alongside .watchdog_killed.
+				if [[ "${_run_watchdog_hard_killed:-0}" -eq 1 ]]; then
+					# Local to avoid duplicating the literal across the file
+					# (string-literal ratchet). The pre-existing per-session cap
+					# branch below uses the same label string.
+					local _hk_label="watchdog_stall_killed"
+					_run_result_label="$_hk_label"
+					_run_failure_reason="$_hk_label"
+					rm -f "$output_file"
+					print_warning "$selected_model watchdog hard-kill (elapsed ≥ WORKER_STALL_HARD_KILL_SECONDS) — slot freed for re-dispatch (no continuation)"
+					return 79
+				fi
+				_run_result_label="watchdog_stall_continue"
 				rm -f "$output_file"
-				print_warning "$selected_model watchdog hard-kill (elapsed ≥ WORKER_STALL_HARD_KILL_SECONDS) — slot freed for re-dispatch (no continuation)"
-				return 79
+				print_warning "$selected_model watchdog stall with prior activity — will attempt session continuation"
+				return 78
 			fi
-			_run_result_label="watchdog_stall_continue"
-			rm -f "$output_file"
-			print_warning "$selected_model watchdog stall with prior activity — will attempt session continuation"
-			return 78
-		fi
-		failure_reason="rate_limit"
-		print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
+			failure_reason="rate_limit"
+			print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 		fi
 	else
 		failure_reason=$(classify_failure_reason "$output_file")
