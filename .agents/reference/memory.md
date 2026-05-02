@@ -117,7 +117,9 @@ Graduate validated local memories (`confidence = "high"` OR `access_count >= 3`)
 
 ## Memory Audit Pulse
 
-Phase 9 of supervisor pulse cycle (self-throttled to once per 24h). Phases: Dedup → Prune → Graduate → Consolidate → Scan → Report. Commands: `memory-audit-pulse.sh run [--force|--dry-run]`, `memory-audit-pulse.sh status`.
+Phase 9 of supervisor pulse cycle (self-throttled to once per 24h). Phases: Dedup → Prune → Graduate → Consolidate → Scan → File opportunities → Report. Commands: `memory-audit-pulse.sh run [--force|--dry-run]`, `memory-audit-pulse.sh status`.
+
+The opportunity scan is actionable in live mode: repeated failures, popular low-confidence memories, untagged-memory debt, superseded-memory cleanup, high growth, and session-metadata noise are converted into worker-ready tasks through `claim-task-id.sh`. Dry-run is report-only and records `would-file` actions without creating issues. Duplicate suppression uses source-detail fingerprints in `~/.aidevops/.agent-workspace/work/memory-audit/opportunity-state.tsv`, so the same opportunity is not filed every 24h. Inspect `last-opportunity-details.txt`, `last-opportunity-actions.txt`, `opportunity-state.tsv`, and `audit-*.txt` in that directory to see what was found, filed, skipped, or failed.
 
 ## Memory Consolidation
 
