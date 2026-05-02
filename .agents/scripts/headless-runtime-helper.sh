@@ -44,6 +44,8 @@ readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 readonly LOCK_DIR="${STATE_DIR}/locks"
 readonly METRICS_DIR="${HOME}/.aidevops/logs"
 readonly METRICS_FILE="${METRICS_DIR}/headless-runtime-metrics.jsonl"
+readonly RESOURCE_METRICS_HELPER="${SCRIPT_DIR}/resource-metrics-helper.sh"
+readonly RESOURCE_METRICS_FILE="${METRICS_DIR}/resource-metrics.jsonl"
 
 # Runtime temp paths owned by this helper. The worker EXIT trap also calls the
 # cleanup function below so prompt/auth dirs are removed after normal exits,
@@ -858,9 +860,15 @@ _execute_run_attempt() {
 
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
+	local resource_stop_file resource_result_file resource_sampler_pid
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	output_file=$(mktemp)
 	exit_code_file=$(mktemp)
+	resource_stop_file=$(mktemp)
+	resource_result_file=$(mktemp)
+	rm -f "$resource_stop_file" 2>/dev/null || true
+	rm -f "$resource_result_file" 2>/dev/null || true
+	resource_sampler_pid=""
 	exit_code=0
 
 	# GH#17549: expose session_key to _invoke_opencode → watchdog → _watchdog_kill
@@ -912,6 +920,19 @@ _execute_run_attempt() {
 	_emit_verbose_checkpoint worker_started \
 		"model=${selected_model} runtime=${runtime} fix_the_fixer=${_T3077_FIX_THE_FIXER:-0}"
 	print_info "[lifecycle] worker_start session=$session_key model=$selected_model runtime=$runtime pid=$$"
+	if [[ -x "$RESOURCE_METRICS_HELPER" ]]; then
+		"$RESOURCE_METRICS_HELPER" sample \
+			--pid "$$" \
+			--role "$role" \
+			--session-key "$session_key" \
+			--repo "${DISPATCH_REPO_SLUG:-}" \
+			--issue "${WORKER_ISSUE_NUMBER:-}" \
+			--result-file "$resource_result_file" \
+			--out "$RESOURCE_METRICS_FILE" \
+			--stop-file "$resource_stop_file" \
+			--interval "${AIDEVOPS_RESOURCE_SAMPLE_INTERVAL_SECONDS:-30}" >/dev/null 2>&1 &
+		resource_sampler_pid="$!"
+	fi
 
 	# t3077 — spawn the verbose lifecycle watcher (background subshell).
 	# Fail-open: returns silently if AIDEVOPS_VERBOSE_LIFECYCLE != 1.
@@ -1013,6 +1034,12 @@ _execute_run_attempt() {
 			_rl_duration_ms=$((_rl_end_ms - start_ms))
 		fi
 		print_info "[lifecycle] rate_limit_fast_exit session=$session_key model=$selected_model duration_ms=${_rl_duration_ms}"
+		if [[ -n "$resource_sampler_pid" ]]; then
+			printf '%s\n' "$_run_result_label" >"$resource_result_file" 2>/dev/null || true
+			printf 'done\n' >"$resource_stop_file" 2>/dev/null || true
+			wait "$resource_sampler_pid" 2>/dev/null || true
+			rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
+		fi
 		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms"
 		return 80
 	fi
@@ -1059,6 +1086,12 @@ _execute_run_attempt() {
 		duration_ms=$((end_ms - start_ms))
 	else
 		duration_ms=0
+	fi
+	if [[ -n "$resource_sampler_pid" ]]; then
+		printf '%s\n' "${_run_result_label:-failed}" >"$resource_result_file" 2>/dev/null || true
+		printf 'done\n' >"$resource_stop_file" 2>/dev/null || true
+		wait "$resource_sampler_pid" 2>/dev/null || true
+		rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 	fi
 	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms"
 	return "$handle_exit"

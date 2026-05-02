@@ -46,6 +46,7 @@ readonly SUPERVISOR_DB="${SUPERVISOR_DIR}/supervisor.db"
 readonly CIRCUIT_BREAKER_STATE="${SUPERVISOR_DIR}/circuit-breaker.state"
 readonly DISPATCH_LEDGER="${AGENT_WORKSPACE}/tmp/dispatch-ledger.jsonl"
 readonly HEADLESS_METRICS="${LOGS_DIR}/headless-runtime-metrics.jsonl"
+readonly RESOURCE_METRICS="${LOGS_DIR}/resource-metrics.jsonl"
 readonly PULSE_LOG="${LOGS_DIR}/pulse.log"
 readonly PULSE_HEALTH="${LOGS_DIR}/pulse-health.json"
 readonly WORKTREE_REGISTRY="${AGENT_WORKSPACE}/worktree-registry.db"
@@ -426,10 +427,17 @@ EOF
 
 collect_resources() {
 	local date="$1"
+	local start_epoch end_epoch
+	start_epoch=$(date_to_epoch "${date}")
+	end_epoch=$((start_epoch + 86400))
 
 	local peak_worker_memory_mb=0
 	local total_pulse_cpu_pct=0
 	local idle_worker_cpu_waste_pct=0
+	local cpu_seconds_per_success=0
+	local peak_rss_mb=0
+	local avg_rss_mb=0
+	local top_resource_consumers='[]'
 
 	# Memory from ps snapshots in pulse log
 	if [[ -f "$PULSE_LOG" ]]; then
@@ -442,11 +450,68 @@ collect_resources() {
 		peak_worker_memory_mb=$(safe_int "$peak_worker_memory_mb")
 	fi
 
+	if [[ -f "$RESOURCE_METRICS" ]]; then
+		local resource_summary
+		resource_summary=$(RESOURCE_METRICS_PATH="$RESOURCE_METRICS" START_EPOCH="$start_epoch" END_EPOCH="$end_epoch" python3 - <<'PY' 2>/dev/null || printf '{}'
+import json
+import os
+
+path = os.environ["RESOURCE_METRICS_PATH"]
+start = int(os.environ["START_EPOCH"])
+end = int(os.environ["END_EPOCH"])
+records = []
+with open(path, "r", encoding="utf-8") as fh:
+    for line in fh:
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        ts = int(rec.get("ts") or 0)
+        if start <= ts < end:
+            records.append(rec)
+
+total_cpu = sum(float(r.get("cpu_seconds") or 0) for r in records)
+successes = [r for r in records if str(r.get("result") or "") in {"success", "completed", "merged"}]
+success_count = len(successes)
+peak_rss_kb = max([int(r.get("peak_rss_kb") or r.get("rss_kb") or 0) for r in records] or [0])
+avg_rss_values = [int(r.get("avg_rss_kb") or r.get("rss_kb") or 0) for r in records]
+avg_rss_kb = int(sum(avg_rss_values) / len(avg_rss_values)) if avg_rss_values else 0
+top = sorted(records, key=lambda r: (float(r.get("cpu_seconds") or 0), int(r.get("peak_rss_kb") or 0)), reverse=True)[:5]
+print(json.dumps({
+    "cpu_seconds_per_success": round(total_cpu / success_count, 3) if success_count else 0,
+    "peak_rss_mb": round(peak_rss_kb / 1024, 2),
+    "avg_rss_mb": round(avg_rss_kb / 1024, 2),
+    "top_resource_consumers": [
+        {
+            "role": r.get("role", ""),
+            "session_key": r.get("session_key", ""),
+            "repo": r.get("repo", ""),
+            "issue": r.get("issue", ""),
+            "result": r.get("result", ""),
+            "cpu_seconds": round(float(r.get("cpu_seconds") or 0), 3),
+            "peak_rss_mb": round(int(r.get("peak_rss_kb") or 0) / 1024, 2),
+            "elapsed_s": int(r.get("elapsed_s") or 0),
+        }
+        for r in top
+    ],
+}))
+PY
+		)
+		cpu_seconds_per_success=$(printf '%s' "$resource_summary" | jq -r '.cpu_seconds_per_success // 0' 2>/dev/null || printf '0')
+		peak_rss_mb=$(printf '%s' "$resource_summary" | jq -r '.peak_rss_mb // 0' 2>/dev/null || printf '0')
+		avg_rss_mb=$(printf '%s' "$resource_summary" | jq -r '.avg_rss_mb // 0' 2>/dev/null || printf '0')
+		top_resource_consumers=$(printf '%s' "$resource_summary" | jq -c '.top_resource_consumers // []' 2>/dev/null || printf '[]')
+	fi
+
 	cat <<EOF
 "resources": {
     "peak_worker_memory_mb": ${peak_worker_memory_mb},
     "total_pulse_cpu_overhead_pct": ${total_pulse_cpu_pct},
-    "idle_worker_cpu_waste_pct": ${idle_worker_cpu_waste_pct}
+    "idle_worker_cpu_waste_pct": ${idle_worker_cpu_waste_pct},
+    "cpu_seconds_per_success": ${cpu_seconds_per_success},
+    "peak_rss_mb": ${peak_rss_mb},
+    "avg_rss_mb": ${avg_rss_mb},
+    "top_resource_consumers": ${top_resource_consumers}
   }
 EOF
 	return 0
