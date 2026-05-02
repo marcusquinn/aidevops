@@ -3961,7 +3961,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3459 Route eligible GitHub list/view reads to REST before GraphQL exhaustion #auto-dispatch #enhancement ref:GH#22320
 
-- [ ] t3467 Make memory audit opportunities actionable #auto-dispatch #enhancement ref:GH#22351
+- [x] t3467 Make memory audit opportunities actionable #auto-dispatch #enhancement ref:GH#22351 pr:#22383 completed:2026-05-02
 
 - [ ] t3466 Harden launchd jobs still stuck in xpcproxy after setup recovery #auto-dispatch #bug ref:GH#22350
 
