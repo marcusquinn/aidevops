@@ -41,9 +41,8 @@ setup() {
 	mkdir -p "$agents_dir/scripts" "$agents_dir/example-plugin" "$config_dir"
 	cp "$REPO_ROOT/.agents/scripts/subagent-index-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/plugin-loader-helper.sh" "$agents_dir/scripts/"
-	cp "$REPO_ROOT/.agents/scripts/shared-constants.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" "$agents_dir/scripts/"
-	cp "$REPO_ROOT"/.agents/scripts/shared-gh-wrappers*.sh "$agents_dir/scripts/"
+	cp "$REPO_ROOT"/.agents/scripts/shared-*.sh "$agents_dir/scripts/"
 	chmod +x "$agents_dir/scripts/subagent-index-helper.sh" "$agents_dir/scripts/plugin-loader-helper.sh"
 
 	cat >"$config_dir/plugins.json" <<'JSON'
