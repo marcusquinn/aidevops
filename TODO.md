@@ -4068,3 +4068,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3515 Add conditional delta caching for pulse issue and PR prefetch #auto-dispatch #enhancement ref:GH#22481
 
 - [ ] t3516 Respect all priority labels in dispatch scoring #auto-dispatch #bug ref:GH#22482
+
+- [ ] t3518 Investigate setup postflight degraded stages #auto-dispatch #bug ref:GH#22499
+
+- [ ] t3517 Gate OpenCode compaction advisory ref:GH#22496
