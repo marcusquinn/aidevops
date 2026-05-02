@@ -164,6 +164,27 @@ else
 	PASS=$((PASS + 1))
 fi
 
+# --- Test 7: explicit call-site names partition coarse callers ----------
+unset AIDEVOPS_GH_API_INSTRUMENT_DISABLE
+gh_clear_log
+gh_record_call rest pulse_batch_prefetch_rate_limit
+gh_record_call search-graphql pulse_batch_prefetch_search_issues
+gh_record_call search-graphql pulse_batch_prefetch_search_prs
+gh_record_call rest events_tickle_events
+gh_aggregate_calls
+
+rate_limit_count=$(jq -r '.by_caller["pulse_batch_prefetch_rate_limit"].rest_calls' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "explicit caller: rate-limit REST call counted separately" "1" "$rate_limit_count"
+
+search_issue_count=$(jq -r '.by_caller["pulse_batch_prefetch_search_issues"].search_graphql_calls' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "explicit caller: issue search counted separately" "1" "$search_issue_count"
+
+search_pr_count=$(jq -r '.by_caller["pulse_batch_prefetch_search_prs"].search_graphql_calls' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "explicit caller: PR search counted separately" "1" "$search_pr_count"
+
+tickle_count=$(jq -r '.by_caller["events_tickle_events"].rest_calls' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "explicit caller: events tickle REST call counted separately" "1" "$tickle_count"
+
 # --- Summary ----------------------------------------------------------
 echo ""
 echo "===================================================="

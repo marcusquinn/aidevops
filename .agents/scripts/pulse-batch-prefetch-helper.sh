@@ -137,7 +137,7 @@ _is_search_rate_limited() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_issues_for_slug() {
 	local slug="$1"
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest pulse_batch_prefetch_rest_issues 2>/dev/null || true
 	local rest_json
 	rest_json=$(gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
@@ -177,7 +177,7 @@ _prefetch_rest_issues_for_slug() {
 # Returns: 0 on success (cache written), 1 on failure (REST also failed/no data)
 _prefetch_rest_prs_for_slug() {
 	local slug="$1"
-	gh_record_call rest 2>/dev/null || true
+	gh_record_call rest pulse_batch_prefetch_rest_prs 2>/dev/null || true
 	local rest_json
 	rest_json=$(gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
@@ -378,11 +378,11 @@ _refresh_owner_issues() {
 	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
 	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search issues for owner=${owner}, going straight to REST"
-		gh_record_call search-rest 2>/dev/null || true
+		gh_record_call search-rest pulse_batch_prefetch_search_issues_fallback 2>/dev/null || true
 		_prefetch_rest_per_slug issues "$slugs"
 		return 0
 	fi
-	gh_record_call search-graphql 2>/dev/null || true
+	gh_record_call search-graphql pulse_batch_prefetch_search_issues 2>/dev/null || true
 	local issue_err
 	issue_err=$(mktemp)
 	local issue_json=""
@@ -434,11 +434,11 @@ _refresh_owner_prs() {
 	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
 	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
 		_log "GraphQL <= threshold — skipping gh search prs for owner=${owner}, going straight to REST"
-		gh_record_call search-rest 2>/dev/null || true
+		gh_record_call search-rest pulse_batch_prefetch_search_prs_fallback 2>/dev/null || true
 		_prefetch_rest_per_slug prs "$slugs"
 		return 0
 	fi
-	gh_record_call search-graphql 2>/dev/null || true
+	gh_record_call search-graphql pulse_batch_prefetch_search_prs 2>/dev/null || true
 	local pr_err
 	pr_err=$(mktemp)
 	local pr_json=""
@@ -517,6 +517,7 @@ _cmd_refresh() {
 	# Fail-open: if the fetch fails, an empty string is passed and the per-owner functions
 	# fall back to their own rate-limit call (the existing behaviour).
 	local _graphql_remaining=""
+	gh_record_call rest pulse_batch_prefetch_rate_limit 2>/dev/null || true
 	_graphql_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _graphql_remaining=""
 
 	# L1 tickle counters — reset per refresh cycle (module globals from

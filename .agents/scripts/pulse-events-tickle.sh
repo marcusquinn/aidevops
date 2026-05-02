@@ -85,6 +85,7 @@ _events_tickle_log() {
 _events_tickle_detect_owner_type() {
 	local owner="$1"
 	local api_type
+	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_owner_type || true
 	api_type=$(gh api "/users/${owner}" --jq '.type' 2>/dev/null) || api_type=""
 	if [[ "$api_type" == "Organization" ]]; then
 		printf 'orgs'
@@ -182,6 +183,7 @@ events_tickle() {
 	# detect the 304 status code and extract the ETag from the headers.
 	# gh exits non-zero for non-2xx responses including 304.
 	local response="" exit_code=0
+	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_events || true
 	if [[ -n "$stored_etag" ]]; then
 		response=$(gh api -i "$api_path" -H "If-None-Match: \"${stored_etag}\"" 2>&1) || exit_code=$?
 	else
@@ -217,6 +219,7 @@ events_tickle() {
 		# Retry with the other type; update cache if the retry succeeds.
 		if [[ "$owner_type" == "users" ]]; then
 			local org_response="" org_exit=0
+			declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_org_retry || true
 			org_response=$(gh api -i "/orgs/${owner}/events?per_page=1" 2>&1) || org_exit=$?
 			local org_status
 			org_status=$(_events_tickle_parse_status "$org_response")
