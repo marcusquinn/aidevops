@@ -29,10 +29,11 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 skills) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `63a6b994c315`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills, checked at `c45a9fa1f63d`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
+
 ```bash
 command -v asc >/dev/null || { brew install tddworks/tap/asccli || exit 1; }
 command -v jq >/dev/null || { brew install jq || exit 1; }
@@ -112,7 +113,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage).
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files.
 
 ## Blitz MCP Server (Optional)
 

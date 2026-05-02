@@ -21,8 +21,9 @@ tools:
 - **Docs**: [docs.cloudron.io/packaging/cli](https://docs.cloudron.io/packaging/cli) | **Upstream skill**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills)
 - **Install**: `sudo npm install -g cloudron` (on your PC/Mac, NOT the server)
 - **Login**: `cloudron login my.example.com` (browser-based; 9.1+ uses OIDC/passkey)
+- **Self-signed TLS**: `cloudron login my.example.com --allow-selfsigned`
 - **CI/CD**: `--server <domain> --token <api-token> --no-wait` (token from `https://my.<domain>/#/profile`); e.g. `cloudron update --server my.example.com --token <token> --app blog.example.com --image user/image:tag`
-- **Token**: `~/.cloudron.json` | **Self-signed TLS**: `--allow-selfsigned`
+- **Token**: `~/.cloudron.json`
 - **App targeting**: `--app` accepts FQDN, subdomain, or app ID; auto-detected from `CloudronManifest.json`
 - **Global flags**: `--server`, `--token`, `--allow-selfsigned`, `--no-wait`
 - **Also see**: `cloudron-helper.sh` for multi-server management via API
@@ -35,6 +36,8 @@ tools:
 
 ```bash
 cloudron list                  # all installed apps (-q for IDs only, --tag <tag> to filter)
+cloudron list -q               # IDs only
+cloudron list --tag web        # filter by tag
 cloudron status --app <app>    # app details (status, domain, memory, image)
 cloudron inspect               # raw JSON of the Cloudron server
 ```
@@ -49,7 +52,7 @@ cloudron repair --app <app>    # reconfigure without changing image
 cloudron clone --app <app> --location new-location
 ```
 
-Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>`, `--versions-url <url>`
+Flags for `install`/`update`: `--image <repo:tag>`, `--no-backup`, `-l <subdomain>`, `-s <secondary-domains>`, `-p <port-bindings>`, `-m <memory-bytes>` / `--memory-limit <bytes>`, `--versions-url <url>`
 
 **On-server build (9.1+)** — directory with `CloudronManifest.json` + `Dockerfile`:
 
