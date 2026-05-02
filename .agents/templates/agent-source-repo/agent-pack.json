@@ -1,0 +1,55 @@
+{
+  "$schema": "https://aidevops.sh/schemas/agent-pack.schema.json",
+  "name": "example-private-agent-pack",
+  "version": "1.0.0",
+  "description": "Private aidevops agent pack for a specific domain or client workflow.",
+  "domains": ["example-domain", "operations"],
+  "triggers": ["example trigger", "private workflow", "client ops"],
+  "primary_agents": [
+    {
+      "name": "ExampleOps",
+      "file": "example-ops/example-ops.md",
+      "model_tier": "sonnet",
+      "purpose": "Primary entrypoint for private example operations."
+    }
+  ],
+  "subagents": [
+    {
+      "name": "example-ops.research",
+      "file": "example-ops/research.md",
+      "purpose": "Research support for the example operations workflow."
+    }
+  ],
+  "commands": [
+    {
+      "name": "example-status",
+      "file": "example-ops/example-status.md",
+      "agent": "ExampleOps",
+      "purpose": "Report the current private workflow status."
+    }
+  ],
+  "helpers": [
+    {
+      "name": "example-helper",
+      "file": "example-ops/example-helper.sh",
+      "purpose": "Deterministic helper for private workflow automation."
+    }
+  ],
+  "required_secrets": [
+    {
+      "name": "EXAMPLE_API_KEY",
+      "storage": "aidevops secret set EXAMPLE_API_KEY",
+      "purpose": "Authenticate to the private example API."
+    }
+  ],
+  "outputs": [
+    {
+      "name": "status-report",
+      "path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/status/",
+      "purpose": "Generated status reports and workflow artifacts."
+    }
+  ],
+  "sensitivity": "private",
+  "upstream_candidate": false,
+  "core_candidate": false
+}

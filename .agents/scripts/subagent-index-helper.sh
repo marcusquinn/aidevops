@@ -31,6 +31,7 @@ _sih_dir="${BASH_SOURCE[0]%/*}"
 
 AGENTS_DIR="${HOME}/.aidevops/agents"
 INDEX_FILE="${AGENTS_DIR}/subagent-index.toon"
+CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
 
 # Directories to scan for subagents (relative to AGENTS_DIR)
 # Covers all tiers: shared, custom, draft; plugins are appended separately
@@ -45,6 +46,19 @@ generate_plugin_agents_block() {
 	fi
 
 	AIDEVOPS_AGENTS_DIR="$agents_dir" "$plugin_loader" index 2>/dev/null || true
+	return 0
+}
+
+generate_agent_source_capabilities_block() {
+	local agents_dir="$1"
+	local capability_index="${agents_dir}/agent-source-capabilities.toon"
+
+	if [[ -f "$capability_index" ]]; then
+		cat "$capability_index"
+	else
+		echo "<!--TOON:agent_source_capabilities[0]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:"
+		echo "-->"
+	fi
 	return 0
 }
 
@@ -135,14 +149,16 @@ cmd_generate() {
 		return 1
 	fi
 
-	local tmpfile new_block_file plugin_block_file result_file
+	local tmpfile new_block_file plugin_block_file capability_block_file result_file
 	tmpfile=$(mktemp)
 	new_block_file=$(mktemp)
 	plugin_block_file=$(mktemp)
+	capability_block_file=$(mktemp)
 	result_file=$(mktemp)
 
 	generate_subagents_block "$AGENTS_DIR" >"$new_block_file"
 	generate_plugin_agents_block "$AGENTS_DIR" >"$plugin_block_file"
+	generate_agent_source_capabilities_block "$AGENTS_DIR" >"$capability_block_file"
 
 	if [[ -f "$INDEX_FILE" ]]; then
 		# Preserve existing sections (agents, model_tiers, workflows, scripts),
@@ -159,6 +175,10 @@ cmd_generate() {
 				in_block=1
 				continue
 			fi
+			if [[ "$line" == "<!--TOON:agent_source_capabilities["* ]]; then
+				in_block=1
+				continue
+			fi
 			if [[ "$in_block" -eq 1 ]]; then
 				[[ "$line" == "-->" ]] && in_block=0
 				continue
@@ -169,6 +189,8 @@ cmd_generate() {
 			echo "" >>"$result_file"
 			cat "$plugin_block_file" >>"$result_file"
 		fi
+		echo "" >>"$result_file"
+		cat "$capability_block_file" >>"$result_file"
 		mv "$result_file" "$tmpfile"
 	else
 		# No existing file — generate minimal index with just subagents
@@ -177,14 +199,17 @@ cmd_generate() {
 			echo "" >>"$tmpfile"
 			cat "$plugin_block_file" >>"$tmpfile"
 		fi
+		echo "" >>"$tmpfile"
+		cat "$capability_block_file" >>"$tmpfile"
 	fi
 
 	mv "$tmpfile" "$INDEX_FILE"
-	rm -f "$new_block_file" "$plugin_block_file" "$result_file" 2>/dev/null
+	rm -f "$new_block_file" "$plugin_block_file" "$capability_block_file" "$result_file" 2>/dev/null
 
 	# Count entries for summary
 	local entry_count
-	entry_count=$(grep -c '|' "$INDEX_FILE" 2>/dev/null || echo "0")
+	entry_count=$(grep -c '|' "$INDEX_FILE" 2>/dev/null || true)
+	[[ "$entry_count" =~ ^[0-9]+$ ]] || entry_count=0
 	echo "Generated ${INDEX_FILE} (${entry_count} entries with key_files)"
 	return 0
 }
@@ -241,6 +266,26 @@ cmd_check() {
 		fi
 	fi
 
+	local declared_capability_rows
+	declared_capability_rows=$(sed -n 's/^<!--TOON:agent_source_capabilities\[\([0-9][0-9]*\)\]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:$/\1/p' "$INDEX_FILE")
+	if [[ -n "$declared_capability_rows" ]]; then
+		local actual_capability_rows
+		actual_capability_rows=$(sed -n '/^<!--TOON:agent_source_capabilities\[/,/^-->/p' "$INDEX_FILE" |
+			awk 'BEGIN { in_block = 0; count = 0 }
+				/^<!--TOON:agent_source_capabilities\[/ { in_block = 1; next }
+				/^-->/ { if (in_block) { in_block = 0 }; next }
+				{ if (in_block && NF > 0) { count++ } }
+				END { print count }')
+		echo "Declared agent source capability rows: ${declared_capability_rows}"
+		echo "Actual agent source capability rows: ${actual_capability_rows}"
+		if [[ "$declared_capability_rows" != "$actual_capability_rows" ]]; then
+			echo ""
+			echo "Error: agent_source_capabilities TOON header cardinality mismatch (declared ${declared_capability_rows}, actual ${actual_capability_rows})."
+			echo "$regenerate_hint"
+			return 1
+		fi
+	fi
+
 	if [[ "$declared_rows" != "$actual_block_rows" ]]; then
 		echo ""
 		echo "Error: TOON header cardinality mismatch (declared ${declared_rows}, actual ${actual_block_rows})."
@@ -291,12 +336,13 @@ cmd_help() {
 subagent-index-helper.sh — Generate subagent-index.toon
 
 Usage:
-  subagent-index-helper.sh generate    Regenerate the subagents index
+  subagent-index-helper.sh generate    Regenerate the subagents and capability index
   subagent-index-helper.sh check       Show index freshness and coverage
   subagent-index-helper.sh help        Show this help
 
 The index is read by the OpenCode plugin at startup (1 file read vs 500+).
-	It covers shared, custom, draft, and enabled plugin agent tiers.
+	It covers shared, custom, draft, enabled plugin tiers, and compact private
+	agent-source manifest capabilities.
 
 Called automatically by:
   - setup.sh / aidevops update

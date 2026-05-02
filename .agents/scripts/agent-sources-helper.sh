@@ -24,6 +24,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 AGENTS_DIR="${HOME}/.aidevops/agents"
 CUSTOM_DIR="${AGENTS_DIR}/custom"
 CONFIG_FILE="${AGENTS_DIR}/configs/agent-sources.json"
+CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
 
 # Print an informational message in blue
 info() {
@@ -188,6 +189,88 @@ update_last_synced() {
         }
         fs.writeFileSync(process.env.CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n');
     " 2>/dev/null
+	return 0
+}
+
+# Convert configured source manifests into a compact TOON registry.
+# Missing or invalid manifests are ignored so directory scanning remains the
+# fail-open behaviour for private repos that have not adopted agent-pack.json.
+generate_capability_registry() {
+	ensure_config
+	mkdir -p "$(dirname "${CAPABILITY_INDEX_FILE}")"
+	CONFIG_PATH="${CONFIG_FILE}" INDEX_PATH="${CAPABILITY_INDEX_FILE}" node <<'NODE'
+const fs = require('fs');
+const path = require('path');
+
+function asArray(value) {
+  if (!value) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
+function text(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return value.name || value.file || value.path || value.command || '';
+}
+
+function list(value) {
+  return asArray(value)
+    .map(text)
+    .filter(Boolean)
+    .map((item) => item.replace(/[\n\r,|]+/g, ' ').trim())
+    .filter(Boolean)
+    .join('|');
+}
+
+function scalar(value) {
+  return text(value).replace(/[\n\r,]+/g, ' ').trim();
+}
+
+function outputNames(manifest) {
+  return list(manifest.outputs || manifest.output_artifacts || manifest.artifacts);
+}
+
+const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
+const rows = [];
+for (const src of cfg.sources || []) {
+  const sourceName = scalar(src.name || 'unknown');
+  const localPath = src.local_path || '';
+  const manifestPath = path.join(localPath, '.agents', 'agent-pack.json');
+  if (!localPath || !fs.existsSync(manifestPath)) continue;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    rows.push([
+      sourceName,
+      scalar(manifest.name || sourceName),
+      scalar(manifest.version || ''),
+      list(manifest.domains),
+      list(manifest.triggers || manifest.trigger_words),
+      list(manifest.primary_agents || manifest.agents),
+      list(manifest.subagents),
+      list(manifest.commands),
+      list(manifest.helpers || manifest.helper_scripts),
+      list(manifest.required_secrets || manifest.secrets),
+      outputNames(manifest),
+      scalar(manifest.sensitivity || manifest.sensitivity_tier || 'private'),
+      String(Boolean(manifest.upstream_candidate || manifest.core_candidate)),
+      'ok'
+    ].join(','));
+  } catch (error) {
+    rows.push([
+      sourceName, sourceName, '', '', '', '', '', '', '', '', '', 'private', 'false', 'invalid-manifest'
+    ].join(','));
+  }
+}
+
+const body = [
+  `<!--TOON:agent_source_capabilities[${rows.length}]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:`,
+  ...rows,
+  '-->',
+  ''
+].join('\n');
+fs.writeFileSync(process.env.INDEX_PATH, body);
+NODE
 	return 0
 }
 
@@ -494,6 +577,7 @@ cmd_sync() {
 	count="$(get_source_count)"
 
 	if [[ "${count}" == "0" ]]; then
+		generate_capability_registry
 		info "No agent sources configured. Nothing to sync."
 		echo "  Add a source: agent-sources-helper.sh add ~/Git/my-agents"
 		return 0
@@ -572,6 +656,7 @@ cmd_sync() {
 	# outside this helper (e.g., user `rm -rf`'d their private clone). Left
 	# unchecked, these block OpenCode session start with "Failed to parse command".
 	cleanup_broken_command_symlinks
+	generate_capability_registry
 	return 0
 }
 
