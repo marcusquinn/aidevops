@@ -1061,6 +1061,7 @@ Usage: aidevops launch-worker <issue|issue,issue> [owner/repo] [options]
        aidevops launch-worker status <issue> [owner/repo]
 
 Launch one or more headless workers manually without waiting for the pulse.
+If owner/repo is omitted, it defaults to the current git repository's origin.
 
 Options:
   --model <id>      Override model (for example, anthropic/claude-opus-4-7).
