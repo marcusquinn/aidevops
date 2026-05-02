@@ -131,6 +131,11 @@ _gh_with_timeout() {
 	write) secs="${AIDEVOPS_GH_WRITE_TIMEOUT:-45}" ;;
 	*) secs=30 ;;
 	esac
+	local cmd="${1:-}"
+	if [[ -n "$cmd" && "$(type -t "$cmd" 2>/dev/null || true)" == "function" ]]; then
+		"$@"
+		return $?
+	fi
 	if command -v timeout >/dev/null 2>&1; then
 		timeout "$secs" "$@"
 		return $?
