@@ -32,6 +32,8 @@ SET_ISSUE_STATUS_LOG=""
 SET_ORIGIN_LABEL_LOG=""
 MOCK_GH_ISSUE_STATE="OPEN"
 MOCK_GH_FAIL="0"
+MOCK_PS_LINES=""
+MOCK_LEDGER_RECORD=""
 
 print_result() {
 	local test_name="$1"
@@ -118,6 +120,34 @@ gh() {
 	fi
 
 	printf 'unexpected gh call: %s\n' "$*" >&2
+	return 1
+}
+
+
+# shellcheck disable=SC2317
+_dsi_ps_worker_lines() {
+	printf '%s\n' "$MOCK_PS_LINES"
+	return 0
+}
+
+# shellcheck disable=SC2317
+_dsi_repo_slug_for_worktree() {
+	local worktree_path="$1"
+	case "$worktree_path" in
+	/tmp/aidevops-existing | /tmp/aidevops-recovery) printf '%s\n' "owner/repo" ;;
+	*) printf '\n' ;;
+	esac
+	return 0
+}
+
+# shellcheck disable=SC2317
+_dsi_find_ledger_dispatch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	if [[ -n "$MOCK_LEDGER_RECORD" && "$issue_number" == "12345" && "$repo_slug" == "owner/repo" ]]; then
+		printf '%s\n' "$MOCK_LEDGER_RECORD"
+		return 0
+	fi
 	return 1
 }
 
@@ -457,6 +487,62 @@ test_launch_worker_forwards_agent() {
 	return 0
 }
 
+
+
+test_live_dispatch_detects_issue_repo() {
+	MOCK_LEDGER_RECORD=""
+	MOCK_PS_LINES='700 S bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key manual-cli-12345-999 --dir /tmp/aidevops-existing --title Issue #12345 --prompt-file /tmp/prompt'
+
+	local record="" rc=0
+	record=$(_dsi_find_live_dispatch 12345 owner/repo "") || rc=$?
+
+	local found=1
+	[[ "$rc" -eq 0 && "$record" == process$'\t'700$'\t'*$'\t'/tmp/aidevops-existing$'\t'manual-cli-12345-999 ]] && found=0
+	print_result "live process evidence detects active issue/repo worker" "$found" "rc=$rc record=$record"
+	return 0
+}
+
+test_guard_blocks_ledger_duplicate() {
+	MOCK_PS_LINES=""
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-1'
+
+	local out="" rc=0
+	out=$(_dsi_guard_no_existing_dispatch 12345 owner/repo 2>&1) || rc=$?
+
+	local blocked=1
+	[[ "$rc" -eq 1 && "$out" == *"Existing PID:"* && "$out" == *"888"* && "$out" == *"Existing worktree:"* ]] && blocked=0
+	print_result "duplicate guard blocks active ledger dispatch" "$blocked" "rc=$rc output=$out"
+	return 0
+}
+
+test_guard_blocks_live_worktree_duplicate() {
+	MOCK_LEDGER_RECORD=""
+	MOCK_PS_LINES='701 S opencode run --dir /tmp/aidevops-recovery --title Issue #9999 "/full-loop Implement issue #9999"'
+
+	local out="" rc=0
+	out=$(_dsi_guard_no_existing_dispatch 12345 owner/repo /tmp/aidevops-recovery 2>&1) || rc=$?
+
+	local blocked=1
+	[[ "$rc" -eq 1 && "$out" == *"701"* && "$out" == *"/tmp/aidevops-recovery"* ]] && blocked=0
+	print_result "duplicate guard blocks active worktree owner" "$blocked" "rc=$rc output=$out"
+	return 0
+}
+
+
+
+test_status_reports_live_process_without_ledger() {
+	MOCK_LEDGER_RECORD=""
+	MOCK_PS_LINES='702 S bash /Users/test/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key manual-cli-12345-777 --dir /tmp/aidevops-existing --title Issue #12345 --prompt-file /tmp/prompt'
+
+	local out="" rc=0
+	out=$(cmd_status 12345 owner/repo 2>&1) || rc=$?
+
+	local active=1
+	[[ "$rc" -eq 0 && "$out" == *"Active dispatch"* && "$out" == *"live process evidence"* && "$out" == *"702"* ]] && active=0
+	print_result "status reports live process when ledger is missing" "$active" "rc=$rc output=$out"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Runner
 # -----------------------------------------------------------------------------
@@ -482,6 +568,10 @@ _run_tests() {
 	test_load_issue_meta_blocks_lowercase_closed
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
+	test_live_dispatch_detects_issue_repo
+	test_guard_blocks_ledger_duplicate
+	test_guard_blocks_live_worktree_duplicate
+	test_status_reports_live_process_without_ledger
 
 	echo
 	echo "======================================"

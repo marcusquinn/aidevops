@@ -94,6 +94,86 @@ _dispatch_stats_increment() {
 }
 
 #######################################
+# Increment the aggregate dispatch-candidate failure counter plus a stable
+# reason-coded counter.
+#
+# Arguments:
+#   $1 - low-cardinality reason token
+# Returns: 0 always (telemetry must never block dispatch).
+#######################################
+_dispatch_stats_increment_candidate_failed() {
+	local reason="$1"
+	case "$reason" in
+		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | canary_failed | launch_error | unknown)
+			;;
+		*)
+			reason="unknown"
+			;;
+	esac
+	_dispatch_stats_increment "dispatch_candidate_failed"
+	_dispatch_stats_increment "dispatch_candidate_failed_reason_${reason}"
+	return 0
+}
+
+#######################################
+# Classify a failed dispatch_with_dedup return using recent candidate log lines.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - dispatch rc
+# Stdout: low-cardinality reason token
+#######################################
+_dispatch_candidate_failure_reason() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_rc="$3"
+	local recent_lines=""
+	local reason="unknown"
+
+	if [[ "$dispatch_rc" -eq 124 ]]; then
+		printf 'launch_error\n'
+		return 0
+	fi
+	if [[ "$dispatch_rc" -eq 2 ]]; then
+		printf 'canary_failed\n'
+		return 0
+	fi
+
+	if [[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]]; then
+		recent_lines=$(awk -v issue="#${issue_number}" -v repo="$repo_slug" '
+			index($0, issue) && index($0, repo) { lines[++n] = $0 }
+			END {
+				start = n - 20
+				if (start < 1) { start = 1 }
+				for (i = start; i <= n; i++) { print lines[i] }
+			}
+		' "$LOGFILE" 2>/dev/null) || recent_lines=""
+	fi
+
+	if [[ "$recent_lines" == *"DISPATCH_BLOCK_REASON reason="* ]]; then
+		reason=$(printf '%s\n' "$recent_lines" | awk '
+			match($0, /DISPATCH_BLOCK_REASON reason=[a-z_]+/) {
+				reason = substr($0, RSTART, RLENGTH)
+				sub(/^DISPATCH_BLOCK_REASON reason=/, "", reason)
+			}
+			END { if (reason != "") { print reason } }
+		') || reason="unknown"
+		[[ -n "$reason" ]] || reason="unknown"
+		printf '%s\n' "$reason"
+		return 0
+	fi
+
+	if [[ -x "${SCRIPT_DIR:-}/dispatch-dedup-helper.sh" && -n "$recent_lines" ]]; then
+		reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$recent_lines" 2>/dev/null) || reason="unknown"
+		[[ -n "$reason" ]] || reason="unknown"
+	fi
+
+	printf '%s\n' "$reason"
+	return 0
+}
+
+#######################################
 # Set a pulse-stats gauge when the stats helper is loaded.
 #
 # Arguments:
@@ -726,6 +806,7 @@ _dispatch_graphql_budget_allows_next() {
 	is_graphql_budget_sufficient >/dev/null 2>&1 || _budget_rc=$?
 	if [[ "$_budget_rc" -eq 1 ]]; then
 		_dispatch_stats_increment "dispatch_graphql_circuit_blocked"
+		_dispatch_stats_increment_candidate_failed "graphql_circuit_breaker"
 		return 1
 	fi
 	return 0
@@ -919,7 +1000,10 @@ _dispatch_process_candidate() {
 		if [[ "$dispatch_rc" -eq 2 ]]; then
 			_dispatch_stats_increment "dispatch_candidate_noop"
 		else
-			_dispatch_stats_increment "dispatch_candidate_failed"
+			local failure_reason
+			failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
+			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=${failure_reason}" >>"$LOGFILE"
+			_dispatch_stats_increment_candidate_failed "$failure_reason"
 		fi
 		return 1
 	fi

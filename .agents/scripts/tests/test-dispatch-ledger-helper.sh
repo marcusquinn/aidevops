@@ -69,7 +69,7 @@ teardown_test_env() {
 test_register_creates_entry() {
 	setup_test_env
 
-	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$
+	run_helper "$LEDGER_HELPER" register --session-key "issue-42" --issue 42 --repo "owner/repo" --pid $$ --worktree "/tmp/aidevops-issue-42"
 
 	local entry_count
 	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
@@ -92,7 +92,13 @@ test_register_creates_entry() {
 		result=1
 	fi
 
-	print_result "register creates a ledger entry with correct fields" "$result" "count=${entry_count}, status=${status}, key=${session_key}"
+	local worktree_path
+	worktree_path=$(jq -r '.worktree_path' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" 2>/dev/null | head -1)
+	if [[ "$worktree_path" != "/tmp/aidevops-issue-42" ]]; then
+		result=1
+	fi
+
+	print_result "register creates a ledger entry with correct fields" "$result" "count=${entry_count}, status=${status}, key=${session_key}, worktree=${worktree_path}"
 	teardown_test_env
 	return 0
 }
@@ -147,6 +153,25 @@ test_check_issue_detects_inflight() {
 	fi
 
 	print_result "check-issue detects in-flight by issue number" "$result"
+	teardown_test_env
+	return 0
+}
+
+
+#######################################
+# Test: check-issue accepts positional ISSUE REPO syntax
+#######################################
+test_check_issue_positional_syntax() {
+	setup_test_env
+
+	run_helper "$LEDGER_HELPER" register --session-key "issue-56" --issue 56 --repo "owner/repo" --pid $$
+
+	local result=1
+	if "$LEDGER_HELPER" check-issue 56 "owner/repo" >/dev/null 2>&1; then
+		result=0
+	fi
+
+	print_result "check-issue accepts positional issue and repo" "$result"
 	teardown_test_env
 	return 0
 }
@@ -721,6 +746,7 @@ main() {
 	test_check_detects_inflight
 	test_check_returns_1_for_unknown
 	test_check_issue_detects_inflight
+	test_check_issue_positional_syntax
 	test_check_issue_different_repo
 	test_complete_marks_entry
 	test_terminal_state_immutability

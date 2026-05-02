@@ -30,6 +30,10 @@ json.dump({
         'worker_canary_preflight_failed_count': [now],
         'pulse_cycle_skipped_graphql_low': [now],
         'dispatch_load_blocked': [now],
+        'dispatch_candidate_failed': [now, now, now, now],
+        'dispatch_candidate_failed_reason_cost_budget_exceeded': [now, now],
+        'dispatch_candidate_failed_reason_dedup_active_claim': [now],
+        'dispatch_candidate_failed_reason_graphql_circuit_breaker': [now],
     },
     'gauges': {'graphql_remaining': {'value': 1234, 'ts': now}},
 }, open(os.path.join(root, 'pulse-stats.json'), 'w'))
@@ -53,6 +57,7 @@ grep -q 'Dispatch alive: true' "$output"
 grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
+grep -q 'Top pre-launch blockers:' "$output"
 grep -q 'API call pressure:' "$output"
 grep -q 'worker_launch_total' "$output"
 grep -q 'watchdog_killed' "$output"
@@ -67,6 +72,9 @@ jq -e '.worker_outcomes.rate_limited == 1' "$json_output" >/dev/null
 jq -e '.worker_outcomes.no_op == 1' "$json_output" >/dev/null
 jq -e '.worker_outcomes.canary_failed == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.skipped_low_count == 1' "$json_output" >/dev/null
+jq -e '.pre_launch_blockers.cost_budget_exceeded == 2' "$json_output" >/dev/null
+jq -e '.pre_launch_blockers.dedup_active_claim == 1' "$json_output" >/dev/null
+jq -e '.top_pre_launch_blockers[0].reason == "cost_budget_exceeded"' "$json_output" >/dev/null
 jq -e '.dispatch_stage_timing_ms.worker_launch_total.avg_ms == 123' "$json_output" >/dev/null
 jq -e '.api_call_pressure.graphql_read_calls == 9' "$json_output" >/dev/null
 jq -e '.api_call_pressure.rest_read_calls == 8' "$json_output" >/dev/null

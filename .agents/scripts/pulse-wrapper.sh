@@ -1290,6 +1290,8 @@ _pulse_run_deterministic_pipeline() {
 			echo "[pulse-wrapper] Dispatch_max skipped: runner-health circuit breaker tripped (t2897)" >>"$LOGFILE"
 			if declare -F pulse_stats_increment >/dev/null 2>&1; then
 				pulse_stats_increment "pulse_dispatch_runner_health_breaker_tripped" 2>/dev/null || true
+				pulse_stats_increment "dispatch_candidate_failed" 2>/dev/null || true
+				pulse_stats_increment "dispatch_candidate_failed_reason_runner_health_circuit_breaker" 2>/dev/null || true
 			fi
 		else
 			apply_dispatch_max
