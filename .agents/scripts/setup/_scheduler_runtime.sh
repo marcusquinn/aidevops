@@ -172,8 +172,8 @@ _launchd_recover_xpcproxy_if_stuck() {
 		fi
 	done
 
-	print_warning "LaunchAgent $label still reports xpcproxy after best-effort reload (pid=${pid:-none}, args=${process_args:-none}); leaving non-critical scheduler loaded for launchd to settle"
-	return 0
+	print_warning "LaunchAgent $label still reports xpcproxy after best-effort reload (pid=${pid:-none}, args=${process_args:-none}); scheduler install remains non-fatal to setup"
+	return 1
 }
 
 _launchd_load_agent() {
