@@ -3981,7 +3981,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3468 Enforce private reference guard across all public surfaces #auto-dispatch #security ref:GH#22355
 
-- [ ] t3475 Fix worker activity future timestamp examples #auto-dispatch #bug #framework ref:GH#22370
+- [x] t3475 Fix worker activity future timestamp examples #auto-dispatch #bug #framework ref:GH#22370 pr:#22377 completed:2026-05-02
 
 - [ ] t3476 _projects plane parent — structured project lifecycle and TODO/full-loop integration #enhancement #framework #parent ref:GH#22371
 
