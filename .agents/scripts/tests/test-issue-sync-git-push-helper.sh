@@ -32,6 +32,7 @@ git_init_repo() {
 	local repo_dir="$1"
 	git -C "$repo_dir" config user.name "Issue Sync Test"
 	git -C "$repo_dir" config user.email "issue-sync-test@example.invalid"
+	git -C "$repo_dir" config commit.gpgsign false
 	return 0
 }
 
