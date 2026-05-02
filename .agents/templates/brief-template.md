@@ -18,6 +18,7 @@ mode: subagent
 - [ ] Discovery pass: `<N>` commits / `<N>` merged PRs / `<N>` open PRs touch target files in last 48h
 - [ ] File refs verified: `<N>` refs checked, all present at HEAD
 - [ ] Tier: `<tier>` — disqualifier check clean (`<1-line rationale>`)
+- [ ] Seeded draft PR decision recorded: `<created draft PR #N | skipped — rationale>`
 
 ## Origin
 
@@ -54,7 +55,7 @@ Answer each question for `tier:simple`. If **any** answer is "no", use `tier:sta
 - [ ] **No cross-package or cross-module changes?** (no `packages/a/` + `packages/b/`, no changes spanning unrelated subsystems)
 - [ ] **Estimate 1h or less?**
 - [ ] **4 or fewer acceptance criteria?**
-- [ ] **Dispatch-path classification (t2821):** Does the `### Files Scope` or `## How` section reference any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, etc.)? If yes, use `#parent` + `no-auto-dispatch` + `#interactive` instead of `#auto-dispatch`. Override with `#dispatch-path-ok` if auto-dispatch is intentional.
+- [ ] **Dispatch-path classification (t2821/t2920):** Does the `### Files Scope` or `## How` section reference any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, etc.)? If yes, keep the normal `#auto-dispatch` default; the pre-dispatch detector auto-elevates to `model:opus-4-7`. Opt out only with `#no-auto-dispatch #interactive` when intentionally implementing interactively.
 
 All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:thinking` (no existing pattern to follow).
 
@@ -115,8 +116,23 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 {If this task is for a `parent-task`-labeled issue, confirm: PR body will use `For #NNN`, not `Resolves`.}
 {If leaf task: use `Resolves #NNN` as normal — delete this section or leave it blank.}
 
+## Seeded Draft PR
+
+<!-- Optional seeded draft PR record, governed by workflows/brief.md "Seeded Draft PR Decision".
+     Use only when current-session discovery produced high-confidence implementation
+     context and the seed will reduce duplicate exploration without anchoring the
+     next worker to stale or unverified assumptions. Draft means not merge-ready. -->
+
+- **Decision:** Created draft PR `{#N}` | Skipped
+- **Rationale:** {Why this is safe and useful, or why issue-only is better}
+- **Status:** `draft` | `blocked` | `unverified` | `not-created`
+- **Freshness evidence:** {memory/discovery/file verification performed against current HEAD}
+- **Verification run:** {commands and results, or `UNVERIFIED — not run`}
+- **Stale-assumption warning:** {What changed code, failed checks, or design uncertainty would make the seed wrong}
+
 ## Phases
 
+<!-- markdownlint-disable MD046 -->
 <!-- For `parent-task`-labeled issues only. Delete this section for leaf tasks.
 
      The sequential phase auto-file mechanism (t2740) is ON by default since t2787.
@@ -127,17 +143,17 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 
      **List format (preferred — auto-fire works out of the box):**
 
-       - Phase 1 - description [auto-fire:on-prior-merge]
-       - Phase 2 - description [auto-fire:on-prior-merge]
-       - Phase 3 - description
+     - Phase 1 - description [auto-fire:on-prior-merge]
+     - Phase 2 - description [auto-fire:on-prior-merge]
+     - Phase 3 - description
 
      **Narrative bold-heading format (for prose-style decomposition plans):**
 
-       **Phase 1 — description [auto-fire:on-prior-merge]**
-       Detailed implementation notes...
+     **Phase 1 — description [auto-fire:on-prior-merge]**
+     Detailed implementation notes...
 
-       **Phase 2 — description**
-       Detailed implementation notes...
+     **Phase 2 — description**
+     Detailed implementation notes...
 
      Available markers:
      - `[auto-fire:on-prior-merge]` — file this phase when the prior phase PR merges (recommended)
@@ -154,7 +170,8 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
      without it, children appear in the parent body but the GitHub UI does not
      show them as sub-issues. The pulse also runs a periodic backfill
      (`AIDEVOPS_PARENT_BACKFILL_INTERVAL_SECS`, default 3600s) so any
-     missed links are reconciled within an hour. -->
+      missed links are reconciled within an hour. -->
+<!-- markdownlint-enable MD046 -->
 
 {Delete this section for leaf tasks. For parent tasks, list phases here.}
 
@@ -324,19 +341,24 @@ Each criterion may include an optional `verify:` block (YAML in a fenced code bl
 that defines how to machine-check the criterion. See `.agents/scripts/verify-brief.sh` for the runner.
 
 - [ ] {Specific, testable criterion — e.g., "User can toggle sidebar with Cmd+B"}
+
   ```yaml
   verify:
     method: bash
     run: "{shell command — pass if exit 0}"
   ```
+
 - [ ] {Another criterion — e.g., "Conversation history persists across page reloads"}
+
   ```yaml
   verify:
     method: codebase
     pattern: "{regex pattern to search for}"
     path: "{directory or file to search in}"
   ```
+
 - [ ] {Negative criterion — e.g., "Org A's data never appears in Org B's context"}
+
   ```yaml
   verify:
     method: codebase
@@ -344,22 +366,28 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
     path: "{search scope}"
     expect: absent
   ```
+
 - [ ] {Criterion requiring AI review}
+
   ```yaml
   verify:
     method: subagent
     prompt: "{review prompt for AI to evaluate}"
     files: "{optional: files to include as context}"
   ```
+
 - [ ] {Criterion requiring human review}
+
   ```yaml
   verify:
     method: manual
     prompt: "{what the human should check}"
   ```
+
 - [ ] Tests pass (`npm test` / `bun test` / project-specific)
 - [ ] Lint clean (`eslint` / `shellcheck` / project-specific)
 - [ ] Qlty smells resolved (for `#simplification` tasks): `~/.qlty/bin/qlty smells --all 2>&1 | grep '<target_file>' | grep -c . | grep -q '^0$'`
+
   ```yaml
   verify:
     method: bash

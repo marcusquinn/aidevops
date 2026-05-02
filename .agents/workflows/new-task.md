@@ -97,6 +97,15 @@ Fill in the `### Complexity Impact` subsection in the brief (see `templates/brie
 
 **Subtasks:** MUST reference parent: `**Parent task:** {parent_id} — see [todo/tasks/{parent_id}-brief.md]`. Inherit context; add only subtask-specific details.
 
+### Step 3.2: Decide Whether to Seed a Draft PR
+
+After the brief is worker-ready, consider an optional implementation-seeded draft PR using `workflows/brief.md` "Seeded Draft PR Decision". Do not make this the default.
+
+- Seed only when current-session discovery produced high-confidence file paths, line ranges, and implementation patterns verified against current `HEAD`.
+- Keep issue-only when the implementation is uncertain, depends on design judgment, or would anchor workers to stale assumptions.
+- If seeded, create the PR as draft, link it back to the issue/brief, mark unrun checks as `UNVERIFIED`, and record the draft PR number/status in the brief's **Seeded Draft PR** section.
+- If skipped, record the rationale in the same section so later workers know whether the absence of a seed was intentional.
+
 ### Step 3.5: Classify and Decompose (t1408.2)
 
 Run `task-decompose-helper.sh classify "{title}"` if available. Skip with `--no-decompose` or if helper missing (t1408.1).
@@ -110,7 +119,7 @@ If the task is tagged `#parent`, add a `## Phases` section to the issue body (an
 
 **Canonical list format (preferred):**
 
-```
+```markdown
 - Phase 1 - description [auto-fire:on-prior-merge]
 - Phase 2 - description [auto-fire:on-prior-merge]
 - Phase 3 - description
@@ -118,7 +127,7 @@ If the task is tagged `#parent`, add a `## Phases` section to the issue body (an
 
 **Narrative bold-heading format:**
 
-```
+```markdown
 **Phase 1 — description [auto-fire:on-prior-merge]**
 Implementation notes...
 ```

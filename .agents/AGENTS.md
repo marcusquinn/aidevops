@@ -704,7 +704,7 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 - **Worker-ready issue body heuristic (t2417):** Before creating a full brief, `/define`, `/new-task`, and `task-brief-helper.sh` check whether the linked issue body is already worker-ready — i.e., it contains 4+ of the 7 known heading signals (`## Task`, `## Why`, `## How`, `## Acceptance`, `## What`, `## Session Origin`, `## Files to modify`). When the issue body is worker-ready, the brief file is either skipped (headless default) or replaced with a stub that links to the issue as the canonical brief. This prevents brief/issue body duplication and the collision surface it creates (see GH#20015). Helper: `scripts/brief-readiness-helper.sh`. Threshold override: `BRIEF_READINESS_THRESHOLD` env var.
 
-**Brief composition**: All GitHub-written content (issue bodies, PR descriptions, comments, escalation reports) follows `workflows/brief.md` — the centralised formatting workflow.
+**Brief composition**: All GitHub-written content (issue bodies, briefs, PR descriptions, comments, escalation reports, worker guidance) follows `workflows/brief.md` — the centralised formatting workflow. Load it before publishing; optional seeded draft PRs are governed there, not in this root guide.
 
 **Model tiers and dispatchability**: Use GitHub `tier:*` labels; default to `tier:standard` when uncertain. Before recommending a tier or queueing work, run `task-dispatchability-helper.sh check --task-id tNNN [--issue N]`. Full tier rules live in `reference/task-taxonomy.md`; `tier-simple-body-shape-helper.sh` still enforces high-confidence simple-tier downgrades pre-dispatch.
 
