@@ -619,6 +619,44 @@ _activity_output_has_ci_wait() {
 }
 
 #######################################
+# Handle a Phase 2 quiet-window threshold crossing.
+# Returns: 0 if watchdog action is complete, 1 if caller should defer.
+#######################################
+_activity_watchdog_handle_stall() {
+	local output_file="$1"
+	local worker_pid="$2"
+	local exit_code_file="$3"
+	local session_key="$4"
+	local stall_seconds="$5"
+	local current_size="$6"
+	local start_epoch="$7"
+	local hard_kill_seconds="$8"
+
+	local now_epoch elapsed_total
+	now_epoch=$(date +%s)
+	elapsed_total=$((now_epoch - start_epoch))
+
+	if [[ "$hard_kill_seconds" -gt 0 && "$elapsed_total" -ge "$hard_kill_seconds" ]]; then
+		_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+			"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${hard_kill_seconds}s (stuck at ${current_size}b) -- slot freed for re-dispatch" \
+			"$session_key" "stall_killed"
+		return 0
+	fi
+	if _activity_output_has_provider_rate_limit "$output_file"; then
+		_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+			"provider_rate_limit: provider/rate-limit marker visible after ${stall_seconds}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
+		return 0
+	fi
+	if _activity_output_has_ci_wait "$output_file"; then
+		print_warning "Activity watchdog: CI-wait evidence found after ${stall_seconds}s quiet window -- deferring kill until hard backstop"
+		return 1
+	fi
+	_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
+		"stall: no output growth for ${stall_seconds}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
+	return 0
+}
+
+#######################################
 # Activity watchdog for _invoke_opencode.
 #
 # Runs as a background process alongside the worker. Polls the output file for
@@ -713,31 +751,12 @@ _run_activity_watchdog() {
 		fi
 
 		if [[ "$stall_seconds" -ge "$stall_timeout" ]]; then
-			# t2956: Decide between passive kill (legacy → exit 78 →
-			# continuation) vs. proactive hard-kill (new → exit 79 → no
-			# continuation, slot freed) based on total elapsed time.
-			local now_epoch elapsed_total
-			now_epoch=$(date +%s)
-			elapsed_total=$((now_epoch - start_epoch))
-			if [[ "$hard_kill_seconds" -gt 0 && "$elapsed_total" -ge "$hard_kill_seconds" ]]; then
-				_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
-					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${hard_kill_seconds}s (stuck at ${current_size}b) -- slot freed for re-dispatch" \
-					"$session_key" "stall_killed"
-				return 0
-			fi
-			if _activity_output_has_provider_rate_limit "$output_file"; then
-				_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
-					"provider_rate_limit: provider/rate-limit marker visible after ${stall_seconds}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
-				return 0
-			fi
-			if _activity_output_has_ci_wait "$output_file"; then
-				print_warning "Activity watchdog: CI-wait evidence found after ${stall_seconds}s quiet window -- deferring kill until hard backstop"
+			if ! _activity_watchdog_handle_stall "$output_file" "$worker_pid" "$exit_code_file" \
+				"$session_key" "$stall_seconds" "$current_size" "$start_epoch" "$hard_kill_seconds"; then
 				stall_seconds=0
 				sleep "$poll_interval"
 				continue
 			fi
-			_watchdog_kill "$worker_pid" "$exit_code_file" "$output_file" \
-				"stall: no output growth for ${stall_timeout}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s)" "$session_key"
 			return 0
 		fi
 
