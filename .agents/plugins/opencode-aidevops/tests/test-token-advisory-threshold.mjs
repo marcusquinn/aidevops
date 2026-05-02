@@ -7,14 +7,18 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { createTtsrHooks } from "../ttsr.mjs";
 
 function createHooks() {
   const logs = [];
+  const tempPrefix = `${Date.now()}-${process.pid}-${randomUUID()}-aidevops-token-advisory-test`;
   const hooks = createTtsrHooks({
-    agentsDir: "/tmp/aidevops-token-advisory-test-agents",
-    scriptsDir: "/tmp/aidevops-token-advisory-test-scripts",
+    agentsDir: join(tmpdir(), `${tempPrefix}-agents`),
+    scriptsDir: join(tmpdir(), `${tempPrefix}-scripts`),
     readIfExists: () => "",
     qualityLog: (level, message) => logs.push({ level, message }),
     run: () => "",
