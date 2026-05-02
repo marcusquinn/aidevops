@@ -378,10 +378,6 @@ _normalize_reassign_self() {
 		local issue_rows
 		issue_rows=$(printf '%s' "$issue_rows_json" | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
 
-		# Pass 2 (t2396): status:available + origin:worker + feedback-routed
-		local feedback_rows=""
-		feedback_rows=$(_normalize_get_feedback_routed_rows "$issue_rows_json" "$slug")
-
 		# Pass 2b (t3425): status:available + feedback-routed issues that were
 		# requeued for worker dispatch but retained stale interactive ownership.
 		local stale_feedback_rows=""
@@ -410,16 +406,17 @@ _normalize_reassign_self() {
 			done
 
 			if gh issue edit "$_stale_issue" --repo "$slug" "${_normalize_flags[@]}" >/dev/null 2>&1; then
-				feedback_rows=$(printf '%s\n%s\n' "$feedback_rows" "$_stale_issue")
 				echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${_stale_issue} in ${slug}" >>"$LOGFILE"
 			else
 				echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${_stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
 			fi
 		done <<<"$stale_feedback_rows"
 
-		# Merge Pass 1 + Pass 2 rows (dedup via sort -u)
+		# Only active worker states receive assignment normalization. Available
+		# feedback-routed worker issues may stay unassigned until the atomic dispatch
+		# claim path transitions them back to status:queued/status:in-progress.
 		local all_rows=""
-		all_rows=$(printf '%s\n%s' "$issue_rows" "$feedback_rows" | grep -E '^[0-9]+$' | sort -u -n) || all_rows=""
+		all_rows=$(printf '%s\n' "$issue_rows" | grep -E '^[0-9]+$' | sort -u -n) || all_rows=""
 		[[ -n "$all_rows" ]] || continue
 
 		while IFS= read -r issue_number; do

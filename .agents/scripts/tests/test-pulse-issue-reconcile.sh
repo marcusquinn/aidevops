@@ -179,10 +179,11 @@ test_single_pass_cache_consolidation() {
 		_fail "single-pass: expected ≥2 _read_cache_issues_for_slug matches, got ${cache_read_count}"
 	fi
 
-	# (c) all five _should_* predicates defined
+	# (c) all five _should_* predicates defined in the actions sub-library
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local pred_count
 	pred_count=$(grep -c '^_should_ciw()\|^_should_rsd()\|^_should_oimp()\|^_should_cpt()\|^_should_lia()' \
-		"${RECONCILE_SH}" 2>/dev/null || true)
+		"${actions_sh}" 2>/dev/null || true)
 	[[ "$pred_count" =~ ^[0-9]+$ ]] || pred_count=0
 	if [[ "$pred_count" -eq 5 ]]; then
 		_pass "single-pass: all 5 _should_* predicates defined"
@@ -218,12 +219,13 @@ test_body_in_prefetch_fetch() {
 # Test 8: _should_* predicates (t2776)
 # ---------------------------------------------------------------------------
 test_should_predicates() {
-	# Source just the predicate functions from RECONCILE_SH in a subshell.
+	# Source just the predicate functions from the actions sub-library in a subshell.
 	# We extract the five _should_* function definitions then call each.
 
 	# Extract all five predicate definitions (stop before the first _action_* helper)
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local pred_defs
-	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${RECONCILE_SH}" | \
+	pred_defs=$(sed -n '/^_should_ciw()/,/^_action_ciw_single()/p' "${actions_sh}" | \
 		grep -v '^_action_ciw_single()' || true)
 
 	# Run predicate checks in one subshell
@@ -601,8 +603,9 @@ test_t2985_action_oimp_single_signature() {
 		all_ok=0
 	fi
 
-	# 3. Both call sites in RECONCILE_SH pass 4 args (slug, issue, verify, lookup).
-	#    Use grep -E to match the multi-arg form and require oimp_lookup at end.
+	# 3. The single-pass call site in RECONCILE_SH passes 4 args (slug, issue,
+	#    verify, lookup). Use grep -E to match the multi-arg form and require
+	#    oimp_lookup at end.
 	# SC2016: single-quoted pattern intentionally contains literal $slug etc. —
 	# grepping for the literal source string, no expansion wanted.
 	local call_count
@@ -610,14 +613,94 @@ test_t2985_action_oimp_single_signature() {
 	call_count=$(grep -cE '_action_oimp_single "\$slug" "\$issue_num" "\$verify_helper" "\$oimp_lookup"' \
 		"${RECONCILE_SH}" 2>/dev/null || true)
 	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0
-	if [[ "$call_count" -ge 2 ]]; then
+	if [[ "$call_count" -ge 1 ]]; then
 		_pass "t2985: ${call_count} call site(s) pass oimp_lookup to _action_oimp_single"
 	else
-		_fail "t2985: expected ≥2 call sites passing oimp_lookup, got ${call_count}"
+		_fail "t2985: expected ≥1 call site passing oimp_lookup, got ${call_count}"
 		all_ok=0
 	fi
 
 	[[ "$all_ok" == "1" ]] && _pass "t2985: _action_oimp_single signature contract enforced"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 16 (GH#22473): status:available feedback-routed worker issues stay
+# unassigned during assignment normalization.
+# ---------------------------------------------------------------------------
+test_available_feedback_worker_issue_not_assigned() {
+	local tmp_dir repos_json ops_log pulse_log
+	tmp_dir=$(mktemp -d)
+	repos_json="${tmp_dir}/repos.json"
+	ops_log="${tmp_dir}/ops.log"
+	pulse_log="${tmp_dir}/pulse.log"
+	printf '{"initialized_repos":[{"pulse":true,"local_only":false,"slug":"owner/repo"}]}' >"$repos_json"
+
+	local fixture_json
+	fixture_json=$(jq -nc '[
+		{
+			number: 101,
+			assignees: [],
+			labels: [{name:"status:available"},{name:"origin:worker"},{name:"auto-dispatch"},{name:"source:review-feedback"}]
+		},
+		{
+			number: 202,
+			assignees: [],
+			labels: [{name:"status:queued"},{name:"origin:worker"},{name:"auto-dispatch"}]
+		},
+		{
+			number: 303,
+			assignees: [{login:"old-owner"}],
+			labels: [{name:"status:available"},{name:"origin:interactive"},{name:"source:conflict-feedback"}]
+		}
+	]')
+
+	local result
+	result=$(bash -c '
+		fixture_json=$1
+		repos_json=$2
+		ops_log=$3
+		pulse_log=$4
+		RECONCILE_SH=$5
+		LOGFILE="$pulse_log"
+		PULSE_QUEUED_SCAN_LIMIT=1000
+
+		gh_issue_list() { printf "%s" "$fixture_json"; return 0; }
+		gh() {
+			if [[ "${1:-}" == "issue" && "${2:-}" == "edit" ]]; then
+				printf "%s\n" "$*" >>"$ops_log"
+				return 0
+			fi
+			return 1
+		}
+
+		# shellcheck source=/dev/null
+		source "$RECONCILE_SH"
+		_normalize_reassign_self "runner-user" "$repos_json" "/nonexistent-dedup-helper"
+		cat "$ops_log" 2>/dev/null || true
+	' _ "$fixture_json" "$repos_json" "$ops_log" "$pulse_log" "$RECONCILE_SH" 2>/dev/null)
+
+	rm -rf "$tmp_dir"
+
+	local all_ok=1
+	if printf '%s\n' "$result" | grep -q 'edit 101 .*--add-assignee'; then
+		_fail "GH#22473: status:available feedback-routed worker issue received add-assignee"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -q 'edit 202 .*--add-assignee runner-user'; then
+		_fail "GH#22473: status:queued unassigned worker issue was not assigned"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -q 'edit 303 .*--remove-assignee old-owner'; then
+		_fail "GH#22473: stale interactive feedback owner was not cleared"
+		all_ok=0
+	fi
+	if printf '%s\n' "$result" | grep -q 'edit 303 .*--add-assignee'; then
+		_fail "GH#22473: stale available feedback issue was reassigned after stale owner cleanup"
+		all_ok=0
+	fi
+
+	[[ "$all_ok" == "1" ]] && _pass "GH#22473: available feedback worker issues stay unassigned while queued issues normalize"
 	return 0
 }
 
@@ -639,6 +722,7 @@ test_t2984_budget_env_validation
 test_t2985_oimp_lookup_builder
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
+test_available_feedback_worker_issue_not_assigned
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
