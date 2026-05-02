@@ -78,6 +78,17 @@ _preflight_cleanup_and_ledger() {
 		# Fallback: synchronous with the standard pre-run stage timeout.
 		run_stage_with_timeout "cleanup_stashes" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stashes || true
 	fi
+	# GH#22415: Remote branch cleanup is moved to an async background job so
+	# cross-repo branch audits and optional safe deletes do not block preflight.
+	# The helper is dry-run by default, enforces a single-runner lock/cadence gate,
+	# and skips when GitHub API budget is below the configured floor.
+	# Progress: ~/.aidevops/logs/cleanup_remote_branches.*
+	local _cleanup_remote_branches_async_helper="${SCRIPT_DIR}/cleanup-remote-branches-async-helper.sh"
+	if [[ -x "$_cleanup_remote_branches_async_helper" ]]; then
+		nohup "$_cleanup_remote_branches_async_helper" \
+			>>"${HOME}/.aidevops/logs/cleanup_remote_branches.log" 2>&1 &
+		disown $! 2>/dev/null || true
+	fi
 
 	# GH#17549: Archive old OpenCode sessions to keep the active DB small.
 	# Concurrent workers hit SQLITE_BUSY on a bloated DB (busy_timeout=0).
