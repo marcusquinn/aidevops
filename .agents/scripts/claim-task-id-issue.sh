@@ -605,7 +605,8 @@ _insert_todo_line() {
 # - Labels with status:, tier:, origin:, dispatched:, implemented: prefixes
 #   are skipped — they are not TODO-file-format tags.
 # GH#21473: 3rd arg is TITLE (one-line summary), not DESCRIPTION (full body).
-# Returns 0 always (non-fatal; the issue is already created).
+# Returns 0 only when the target TODO ref is present after the write attempt.
+# Returns 1 when TODO.md exists but the ref could not be written/verified.
 _ensure_todo_entry_written() {
 	local task_id="$1"
 	local issue_num="$2"
@@ -622,7 +623,8 @@ _ensure_todo_entry_written() {
 		if declare -F add_gh_ref_to_todo >/dev/null 2>&1; then
 			add_gh_ref_to_todo "$task_id" "$issue_num" "$todo_file" 2>/dev/null || true
 		fi
-		return 0
+		_todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file" && return 0
+		return 1
 	fi
 
 	# Build tag suffix from labels (skip reserved-prefix labels applied
@@ -677,7 +679,20 @@ _ensure_todo_entry_written() {
 	if declare -F log_info >/dev/null 2>&1; then
 		log_info "t2548: appended TODO entry for ${task_id} (ref:GH#${issue_num})"
 	fi
-	return 0
+	_todo_entry_has_gh_ref "$task_id" "$issue_num" "$todo_file" && return 0
+	return 1
+}
+
+# _todo_entry_has_gh_ref TASK_ID ISSUE_NUM TODO_FILE
+# Verify a task line outside code fences contains the expected GH ref.
+_todo_entry_has_gh_ref() {
+	local task_id="$1"
+	local issue_num="$2"
+	local todo_file="$3"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+	strip_code_fences <"$todo_file" | grep -qE "^[[:space:]]*- \\[.\\] ${task_id_ere} .*ref:GH#${issue_num}([[:space:]]|$)"
+	return $?
 }
 
 # =============================================================================

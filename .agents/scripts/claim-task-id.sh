@@ -521,6 +521,15 @@ create_github_issue() {
 
 	# Dedup check before bare creation (t1446)
 	if issue_num=$(_check_duplicate_issue "$title"); then
+		# GH#22381: issue-sync-helper.sh push can create the issue but emit no
+		# parseable number. The duplicate lookup then recovers the issue number;
+		# stamp/verify TODO.md before reporting success so dispatchability sees
+		# the same state as the returned issue number.
+		if ! _ensure_todo_entry_written \
+			"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"; then
+			log_warn "Recovered issue #${issue_num}, but failed to write TODO ref for ${_task_id_for_todo}"
+			return 1
+		fi
 		echo "$issue_num"
 		return 0
 	fi
@@ -634,8 +643,11 @@ create_github_issue() {
 	# through issue-sync-helper.sh, so _push_process_task never runs and
 	# the TODO entry is never written. This call closes that gap idempotently.
 	# GH#21473: pass $title (one-liner), not $description (full body).
-	_ensure_todo_entry_written \
-		"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"
+	if ! _ensure_todo_entry_written \
+		"$_task_id_for_todo" "$issue_num" "$title" "$labels" "$repo_path"; then
+		log_warn "Created issue #${issue_num}, but failed to write TODO ref for ${_task_id_for_todo}"
+		return 1
+	fi
 
 	echo "$issue_num"
 	return 0

@@ -30,6 +30,8 @@
 #   6. `bug` / `enhancement` labels map to `#bug` / `#feat` tags
 #   7. No TODO.md file → silent no-op (non-fatal)
 #   8. Empty task_id or issue_num → silent no-op (non-fatal)
+#   9. Existing entry with a different GH ref returns failure
+#   10. issue-sync no-number + duplicate recovery stamps TODO ref
 
 set -u
 
@@ -304,6 +306,78 @@ test_empty_task_id() {
 	return 0
 }
 test_empty_task_id
+
+# ---------------------------------------------------------------------------
+# Test 9 — Existing entry with a different GH ref must fail verification
+# ---------------------------------------------------------------------------
+test_existing_wrong_ref_fails() {
+	local name="9: existing entry with different GH ref → returns failure"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	cat >"${tmpdir}/TODO.md" <<'EOF'
+# Tasks
+
+- [ ] t2548 fix orphan bug ref:GH#99999
+EOF
+
+	local rc=0
+	_ensure_todo_entry_written "t2548" "20180" "fix orphan bug" "" "$tmpdir" || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected non-zero when ref:GH#20180 could not be verified"
+	fi
+	return 0
+}
+test_existing_wrong_ref_fails
+
+# ---------------------------------------------------------------------------
+# Test 10 — issue-sync creates but emits no number; duplicate recovery still
+# stamps TODO.md with the recovered issue number before create_github_issue
+# reports success (GH#22381).
+# ---------------------------------------------------------------------------
+test_issue_sync_no_number_duplicate_recovery_stamps_ref() {
+	local name="10: issue-sync no-number duplicate recovery stamps TODO ref"
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	cat >"${tmpdir}/TODO.md" <<'EOF'
+# Project TODO
+
+## Backlog
+
+- [ ] t3481 Preserve TODO refs after fallback issue creation #bug #auto-dispatch
+EOF
+
+	_try_issue_sync_delegation() {
+		return 1
+	}
+	_check_duplicate_issue() {
+		printf '22370'
+		return 0
+	}
+
+	local issue_num rc=0
+	issue_num=$(create_github_issue \
+		"t3481: Preserve TODO refs after fallback issue creation" \
+		"description not used on duplicate recovery" \
+		"bug,auto-dispatch" \
+		"$tmpdir") || rc=$?
+
+	if [[ $rc -eq 0 && "$issue_num" == "22370" ]] && \
+		grep -qE '^- \[ \] t3481 .*ref:GH#22370$' "${tmpdir}/TODO.md"; then
+		pass "$name"
+	else
+		fail "$name" "rc=${rc} issue=${issue_num:-<empty>} line=$(grep 't3481' "${tmpdir}/TODO.md" || echo '(none)')"
+	fi
+	return 0
+}
+test_issue_sync_no_number_duplicate_recovery_stamps_ref
 
 # ---------------------------------------------------------------------------
 # Summary
