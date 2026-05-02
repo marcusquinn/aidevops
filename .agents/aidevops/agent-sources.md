@@ -77,7 +77,58 @@ my-private-agents/.agents/my-agent/
 3. Use `mode: primary` when the agent should auto-discover in `~/.aidevops/agents/`.
 4. Add slash commands as `.md` files with `agent: <Name>` frontmatter.
 5. Add any helper `.sh` scripts needed for CLI automation.
-6. Follow `tools/build-agent/build-agent.md`.
+6. Add `agent-pack.json` from `.agents/templates/agent-source-repo/` and keep its
+   data-flow contract current.
+7. Follow `tools/build-agent/build-agent.md`.
+
+## Data-Flow Contracts
+
+Private agent sources should include an `agent-pack.json` manifest at the repo root.
+The manifest teaches agents and validators what data the pack consumes, what it
+produces, where artifacts belong, and which destinations are safe.
+
+Required top-level fields:
+
+- `inputs[]` — expected source material. Each input declares `name`,
+  `description`, `sensitivity`, and `allowed_sources`.
+- `outputs[]` — produced artifacts. Each output declares `name`, `description`,
+  `artifact_path`, `sensitivity`, and `allowed_destinations`.
+- `artifact_paths` — named local paths for durable working outputs.
+- `sensitivity` — the default tier and supported tier list.
+
+Every output must have its own `artifact_path` and sensitivity tier. Do not rely on
+a pack-level default for outputs because the destination decision is made per
+artifact.
+
+## Privacy Tiers
+
+| Tier | Definition | Chat | Git commits | Logs | Local workspace | GitHub issue/PR text |
+|------|------------|------|-------------|------|-----------------|----------------------|
+| `public-safe` | Redacted, non-private output intended for broad sharing. | Yes | Yes | Yes | Yes | Yes |
+| `private-local` | Private repo, client, operational, or unpublished context. | No | Private repo only when intentional | No | Yes | No |
+| `secret-adjacent` | Secret locations, credential-store metadata, access patterns, or redacted security findings. | Redacted summary only | No | No | Yes | No |
+| `never-export` | Secret values, tokens, private keys, recovery codes, or unredacted credential material. | No | No | No | No; use secret store | No |
+
+When in doubt, choose the stricter tier. A `public-safe` artifact can be surfaced in
+chat, GitHub issue/PR text, logs, commits, and local workspace files. All other
+tiers should stay in local workspace artifacts unless the contract explicitly
+allows a narrower destination.
+
+## Output Contract Pattern
+
+```json
+{
+  "name": "private_working_notes",
+  "description": "Intermediate notes that may reference private source material.",
+  "artifact_path": "~/.aidevops/.agent-workspace/work/<pack-name>/notes/",
+  "sensitivity": "private-local",
+  "allowed_destinations": ["local-workspace"]
+}
+```
+
+Use `~/.aidevops/.agent-workspace/work/<pack-name>/` for private artifacts that
+must survive the session. Use `~/.aidevops/.agent-workspace/tmp/session-*` for
+throwaway intermediates. Never commit `secret-adjacent` or `never-export` content.
 
 ### Slash Command Format
 

@@ -1,0 +1,64 @@
+{
+  "name": "example-private-agent-pack",
+  "description": "Private agent pack template with explicit data-flow contracts.",
+  "version": "0.1.0",
+  "inputs": [
+    {
+      "name": "source_material",
+      "description": "Private source notes, repo files, or operational context the pack may read.",
+      "sensitivity": "private-local",
+      "allowed_sources": [
+        "local-workspace",
+        "private-repo"
+      ]
+    }
+  ],
+  "outputs": [
+    {
+      "name": "agent_response",
+      "description": "User-facing answer or implementation summary produced by the agent.",
+      "artifact_path": "~/.aidevops/.agent-workspace/work/<pack-name>/responses/",
+      "sensitivity": "public-safe",
+      "allowed_destinations": [
+        "chat",
+        "github-issue-pr",
+        "git-commit",
+        "local-workspace",
+        "logs"
+      ]
+    },
+    {
+      "name": "private_working_notes",
+      "description": "Intermediate notes that may reference private source material.",
+      "artifact_path": "~/.aidevops/.agent-workspace/work/<pack-name>/notes/",
+      "sensitivity": "private-local",
+      "allowed_destinations": [
+        "local-workspace"
+      ]
+    },
+    {
+      "name": "secret_adjacency_report",
+      "description": "Findings that describe secret locations, credential stores, or access boundaries without exposing values.",
+      "artifact_path": "~/.aidevops/.agent-workspace/work/<pack-name>/restricted/",
+      "sensitivity": "secret-adjacent",
+      "allowed_destinations": [
+        "local-workspace"
+      ]
+    }
+  ],
+  "artifact_paths": {
+    "base": "~/.aidevops/.agent-workspace/work/<pack-name>/",
+    "responses": "~/.aidevops/.agent-workspace/work/<pack-name>/responses/",
+    "notes": "~/.aidevops/.agent-workspace/work/<pack-name>/notes/",
+    "restricted": "~/.aidevops/.agent-workspace/work/<pack-name>/restricted/"
+  },
+  "sensitivity": {
+    "default": "private-local",
+    "tiers": [
+      "public-safe",
+      "private-local",
+      "secret-adjacent",
+      "never-export"
+    ]
+  }
+}
