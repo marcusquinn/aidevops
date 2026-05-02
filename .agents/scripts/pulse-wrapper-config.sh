@@ -359,6 +359,9 @@ _PULSE_HEALTH_EVENTS_TICKLE_FRESH=0 # GH#20868 (t2830): owners skipped via L1 ET
 _PULSE_HEALTH_EVENTS_TICKLE_STALE=0 # GH#20868 (t2830): owners that had event changes (200 responses)
 _PULSE_HEALTH_PREFETCH_THROTTLED=0  # GH#21584 (t3027): cycles where prefetch was skipped due to GraphQL budget gate
 _PULSE_HEALTH_IDLE_CYCLE_SKIPPED=0  # GH#21584 (t3027): cycles where idle-backoff skipped the cycle entirely
+_PULSE_HEALTH_CONDITIONAL_304=0     # GH#22481: per-repo conditional REST 304 cache hits
+_PULSE_HEALTH_CONDITIONAL_REFRESHES=0 # GH#22481: per-repo conditional REST refreshed caches
+_PULSE_HEALTH_CONDITIONAL_MISSES=0  # GH#22481: per-repo conditional REST requests without ETags
 
 # t2433/GH#20071: Cycle-scoped repo refresh sentinel.
 # Keyed by repo_path; set to "1" once the repo has been pulled this cycle.

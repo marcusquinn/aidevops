@@ -1013,19 +1013,23 @@ _pulse_check_idle_backoff_gate() {
 # run_stage_with_timeout subshell — direct shell-var updates are lost
 # at subshell exit. Counterpart: pulse-prefetch.sh:246-264 (writer).
 #
-# File format (single line, 4 space-separated integers, fixed positional
+# File format (single line, 7 space-separated integers, fixed positional
 # order — DO NOT change without updating the writer):
-#   search_calls cache_hits tickle_fresh tickle_stale
+#   search_calls cache_hits tickle_fresh tickle_stale conditional_304 conditional_refreshes conditional_misses
 # ---------------------------------------------------------------------------
 _pulse_drain_prefetch_counters() {
 	local _pf_file="${TMPDIR:-/tmp}/pulse-health-prefetch-$$.tmp"
 	[[ -f "$_pf_file" ]] || return 0
 	local _pf_search=0 _pf_hits=0 _pf_fresh=0 _pf_stale=0
-	read -r _pf_search _pf_hits _pf_fresh _pf_stale <"$_pf_file" || true
+	local _pf_cond_304=0 _pf_cond_refreshes=0 _pf_cond_misses=0
+	read -r _pf_search _pf_hits _pf_fresh _pf_stale _pf_cond_304 _pf_cond_refreshes _pf_cond_misses <"$_pf_file" || true
 	[[ "$_pf_search" =~ ^[0-9]+$ ]] || _pf_search=0
 	[[ "$_pf_hits" =~ ^[0-9]+$ ]] || _pf_hits=0
 	[[ "$_pf_fresh" =~ ^[0-9]+$ ]] || _pf_fresh=0
 	[[ "$_pf_stale" =~ ^[0-9]+$ ]] || _pf_stale=0
+	[[ "$_pf_cond_304" =~ ^[0-9]+$ ]] || _pf_cond_304=0
+	[[ "$_pf_cond_refreshes" =~ ^[0-9]+$ ]] || _pf_cond_refreshes=0
+	[[ "$_pf_cond_misses" =~ ^[0-9]+$ ]] || _pf_cond_misses=0
 	# Replace rather than add: prefetch_state writes its own running totals
 	# (cumulative within the call), and these vars were 0-initialised at
 	# cycle start with prefetch_state as the sole writer this cycle.
@@ -1033,6 +1037,9 @@ _pulse_drain_prefetch_counters() {
 	_PULSE_HEALTH_BATCH_CACHE_HITS="$_pf_hits"
 	_PULSE_HEALTH_EVENTS_TICKLE_FRESH="$_pf_fresh"
 	_PULSE_HEALTH_EVENTS_TICKLE_STALE="$_pf_stale"
+	_PULSE_HEALTH_CONDITIONAL_304="$_pf_cond_304"
+	_PULSE_HEALTH_CONDITIONAL_REFRESHES="$_pf_cond_refreshes"
+	_PULSE_HEALTH_CONDITIONAL_MISSES="$_pf_cond_misses"
 	rm -f "$_pf_file" || true
 	return 0
 }

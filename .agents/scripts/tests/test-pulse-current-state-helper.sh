@@ -47,6 +47,12 @@ json.dump({
         'gh_api_graphql': {'graphql_calls': 10, 'rest_calls': 0, 'search_graphql_calls': 0, 'search_rest_calls': 0, 'other_calls': 0, 'total': 10},
     }
 }, open(os.path.join(root, 'gh-api-calls-by-stage.json'), 'w'))
+json.dump({
+    'batch_cache_hits': 5,
+    'prefetch_conditional_304': 3,
+    'prefetch_conditional_refreshes': 2,
+    'prefetch_conditional_misses': 1,
+}, open(os.path.join(root, 'pulse-health.json'), 'w'))
 open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nPR opened #2\nPR merged #2\nissue closed #1\nInstance lock acquired\n')
 PY
 
@@ -59,6 +65,7 @@ grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
 grep -q 'Top pre-launch blockers:' "$output"
 grep -q 'API call pressure:' "$output"
+grep -q 'Prefetch cache:' "$output"
 grep -q 'worker_launch_total' "$output"
 grep -q 'watchdog_killed' "$output"
 grep -q 'rate_limited' "$output"
@@ -82,5 +89,8 @@ jq -e '.api_call_pressure.graphql_search_calls == 11' "$json_output" >/dev/null
 jq -e '.api_call_pressure.rest_search_calls == 4' "$json_output" >/dev/null
 jq -e '.api_call_pressure.graphql_other_calls == 10' "$json_output" >/dev/null
 jq -e '.api_call_pressure.read_rest_ratio == 0.4706' "$json_output" >/dev/null
+jq -e '.prefetch_cache.conditional_304 == 3' "$json_output" >/dev/null
+jq -e '.prefetch_cache.conditional_refreshes == 2' "$json_output" >/dev/null
+jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
 
 printf 'PASS pulse-current-state-helper\n'

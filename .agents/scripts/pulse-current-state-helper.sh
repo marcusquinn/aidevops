@@ -302,6 +302,25 @@ if os.path.exists(api_report):
             'shadow_mode': 'unavailable: failed to parse gh-api report',
         }
 
+prefetch_cache = {
+    'batch_cache_hits': 0,
+    'conditional_304': 0,
+    'conditional_refreshes': 0,
+    'conditional_misses': 0,
+}
+health_path = os.path.join(log_dir, 'pulse-health.json')
+if os.path.exists(health_path):
+    try:
+        health = json.load(open(health_path, encoding='utf-8'))
+        prefetch_cache = {
+            'batch_cache_hits': int(health.get('batch_cache_hits') or 0),
+            'conditional_304': int(health.get('prefetch_conditional_304') or 0),
+            'conditional_refreshes': int(health.get('prefetch_conditional_refreshes') or 0),
+            'conditional_misses': int(health.get('prefetch_conditional_misses') or 0),
+        }
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+
 result = {
     'window_seconds': window_s,
     'dispatch_stage_events': len(stage_records),
@@ -343,6 +362,7 @@ result = {
     'graphql_budget_status': graphql_budget_status,
     'top_graphql_consumers': api_consumers,
     'api_call_pressure': api_pressure,
+    'prefetch_cache': prefetch_cache,
 }
 
 if as_json:
@@ -361,6 +381,7 @@ else:
     print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
+    print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
     if api_consumers:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')

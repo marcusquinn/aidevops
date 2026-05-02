@@ -88,6 +88,7 @@ PULSE_BATCH_PREFETCH_ENABLED="${PULSE_BATCH_PREFETCH_ENABLED:-1}"
 PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-14400}"
 BATCH_SEARCH_LIMIT="${PULSE_BATCH_SEARCH_LIMIT:-200}"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse-wrapper.log}"
+PULSE_BATCH_CONDITIONAL_REST_ENABLED="${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}"
 
 # String constants to avoid repeated-literal ratchet violations
 _KIND_ISSUES="issues"
@@ -332,6 +333,144 @@ _cache_file_path() {
 	return 0
 }
 
+_conditional_rest_endpoint() {
+	local kind="$1"
+	local slug="$2"
+	case "$kind" in
+	issues) printf '/repos/%s/issues?state=open&per_page=%s\n' "$slug" "$BATCH_SEARCH_LIMIT" ;;
+	prs) printf '/repos/%s/pulls?state=open&per_page=%s\n' "$slug" "$BATCH_SEARCH_LIMIT" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_conditional_rest_update_cache_from_response() {
+	local kind="$1"
+	local slug="$2"
+	local response_file="$3"
+	local cache_file="$4"
+	python3 - "$kind" "$slug" "$response_file" "$cache_file" <<'PY'
+import datetime
+import json
+import os
+import re
+import sys
+
+kind, slug, response_file, cache_file = sys.argv[1:5]
+raw = open(response_file, 'rb').read().decode('utf-8', 'replace')
+normal = raw.replace('\r\n', '\n')
+headers, body = normal.split('\n\n', 1) if '\n\n' in normal else (normal, '')
+match = re.search(r'^HTTP/\S+\s+(\d{3})', headers, re.M)
+if not match:
+    sys.exit(1)
+status = int(match.group(1))
+etag_match = re.search(r'^etag:\s*(.+)$', headers, re.I | re.M)
+etag = etag_match.group(1).strip() if etag_match else ''
+now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def write_cache(payload):
+    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+    tmp = f'{cache_file}.tmp.{os.getpid()}'
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        json.dump(payload, handle, separators=(',', ':'))
+        handle.write('\n')
+    os.replace(tmp, cache_file)
+
+if status == 304:
+    if not os.path.exists(cache_file):
+        sys.exit(1)
+    with open(cache_file, encoding='utf-8') as handle:
+        payload = json.load(handle)
+    payload['timestamp'] = now
+    payload['last_success'] = now
+    payload['conditional_status'] = 304
+    payload['conditional_cache_hit'] = True
+    if etag:
+        payload['etag'] = etag
+    write_cache(payload)
+    print('304')
+    sys.exit(0)
+if status < 200 or status >= 300:
+    sys.exit(1)
+try:
+    data = json.loads(body or '[]')
+except json.JSONDecodeError:
+    sys.exit(1)
+items = []
+for item in data:
+    if kind == 'issues':
+        if item.get('pull_request') is not None:
+            continue
+        items.append({'number': item.get('number'), 'title': item.get('title'), 'labels': item.get('labels') or [], 'updatedAt': item.get('updated_at') or item.get('updatedAt'), 'assignees': item.get('assignees') or []})
+    else:
+        user = item.get('user') or {}
+        head = item.get('head') or {}
+        items.append({'number': item.get('number'), 'title': item.get('title'), 'labels': item.get('labels') or [], 'updatedAt': item.get('updated_at') or item.get('updatedAt'), 'assignees': item.get('assignees') or [], 'createdAt': item.get('created_at') or item.get('createdAt'), 'author': {'login': user.get('login')} if user.get('login') else item.get('author'), 'headRefOid': head.get('sha'), 'headRefName': head.get('ref')})
+write_cache({'timestamp': now, 'last_success': now, 'etag': etag, 'conditional_status': status, 'conditional_cache_hit': False, 'items': items})
+print(str(status))
+PY
+	return 0
+}
+
+_conditional_rest_refresh_slug() {
+	local kind="$1"
+	local slug="$2"
+	[[ "${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}" == "1" ]] || return 1
+	local cache_file
+	cache_file=$(_cache_file_path "$kind" "$slug")
+	local endpoint
+	endpoint=$(_conditional_rest_endpoint "$kind" "$slug") || return 1
+	local etag=""
+	if [[ -f "$cache_file" ]]; then
+		etag=$(jq -r '.etag // ""' "$cache_file" 2>/dev/null) || etag=""
+		[[ "$etag" == "$_JSON_NULL" ]] && etag=""
+	fi
+	[[ -n "$etag" ]] || _OWNER_CONDITIONAL_MISSES=$((_OWNER_CONDITIONAL_MISSES + 1))
+	local response_file err_file
+	response_file=$(mktemp)
+	err_file=$(mktemp)
+	local rc=0
+	if [[ -n "$etag" ]]; then
+		gh api -i -H "Accept: application/vnd.github+json" -H "If-None-Match: ${etag}" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
+	else
+		gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
+	fi
+	local status=""
+	status=$(_conditional_rest_update_cache_from_response "$kind" "$slug" "$response_file" "$cache_file" 2>/dev/null) || status=""
+	rm -f "$response_file" "$err_file"
+	case "$status" in
+	304)
+		_OWNER_CONDITIONAL_304=$((_OWNER_CONDITIONAL_304 + 1))
+		_OWNER_CACHE_WRITES=$((_OWNER_CACHE_WRITES + 1))
+		_log "conditional REST ${kind}: 304 cache hit for ${slug}"
+		return 0
+		;;
+	2*)
+		_OWNER_CONDITIONAL_REFRESHES=$((_OWNER_CONDITIONAL_REFRESHES + 1))
+		_OWNER_CACHE_WRITES=$((_OWNER_CACHE_WRITES + 1))
+		_log "conditional REST ${kind}: refreshed ${slug} status=${status}"
+		return 0
+		;;
+	*)
+		[[ "$rc" -eq 0 ]] || _log "conditional REST ${kind}: failed for ${slug}; falling back"
+		return 1
+		;;
+	esac
+}
+
+_conditional_rest_per_slug() {
+	local kind="$1"
+	local slugs="${2:-}"
+	[[ -n "$slugs" ]] || return 1
+	local slug failures=0
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		_conditional_rest_refresh_slug "$kind" "$slug" || failures=$((failures + 1))
+	done < <(tr ',' '\n' <<< "$slugs")
+	[[ "$failures" -eq 0 ]] || return 1
+	return 0
+}
+
 # --- Write per-slug cache files ---
 # Takes normalized JSON (keyed by slug) and writes individual cache files.
 _write_per_slug_caches() {
@@ -371,6 +510,10 @@ _refresh_owner_issues() {
 	local owner="$1"
 	local slugs="${2:-}"
 	local graphql_remaining="${3:-}"
+	if _conditional_rest_per_slug issues "$slugs"; then
+		_log "conditional REST issues complete for owner=${owner} — skipped search"
+		return 0
+	fi
 	# Proactive REST fallback (t2902): if GraphQL is at/below the fallback
 	# threshold, skip `gh search issues` (which uses the GraphQL Search API,
 	# ~30 points/call) and go straight to per-slug REST iteration. Avoids
@@ -430,6 +573,10 @@ _refresh_owner_prs() {
 	local owner="$1"
 	local slugs="${2:-}"
 	local graphql_remaining="${3:-}"
+	if _conditional_rest_per_slug prs "$slugs"; then
+		_log "conditional REST prs complete for owner=${owner} — skipped search"
+		return 0
+	fi
 	# Proactive REST fallback (t2902): same pattern as _refresh_owner_issues.
 	# Pass pre-computed remaining to avoid a redundant rate-limit API call per owner.
 	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
@@ -508,6 +655,9 @@ _cmd_refresh() {
 	_OWNER_SEARCH_CALLS=0
 	_OWNER_CACHE_WRITES=0
 	_OWNER_ERRORS=0
+	_OWNER_CONDITIONAL_304=0
+	_OWNER_CONDITIONAL_REFRESHES=0
+	_OWNER_CONDITIONAL_MISSES=0
 
 	# Pre-fetch GraphQL remaining once per refresh cycle (t2902 review followup).
 	# Both _refresh_owner_issues and _refresh_owner_prs call _rest_should_fallback,
@@ -546,7 +696,7 @@ _cmd_refresh() {
 		_refresh_owner_prs "$owner" "$slugs" "$_graphql_remaining" || true
 	done <<<"$owner_groups"
 
-	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS} tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH} tickle_stale=${_PULSE_EVENTS_TICKLE_STALE}"
+	_log "refresh complete: search_calls=${_OWNER_SEARCH_CALLS} cache_writes=${_OWNER_CACHE_WRITES} errors=${_OWNER_ERRORS} tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH} tickle_stale=${_PULSE_EVENTS_TICKLE_STALE} conditional_304=${_OWNER_CONDITIONAL_304} conditional_refreshes=${_OWNER_CONDITIONAL_REFRESHES} conditional_misses=${_OWNER_CONDITIONAL_MISSES}"
 
 	# t2902: aggregate gh API call records to JSON report at the end of each
 	# refresh cycle. Fail-open: if gh-api-instrument.sh isn't sourced, the
@@ -579,6 +729,9 @@ _cmd_refresh() {
 	echo "errors=${_OWNER_ERRORS}"
 	echo "events_tickle_fresh=${_PULSE_EVENTS_TICKLE_FRESH}"
 	echo "events_tickle_stale=${_PULSE_EVENTS_TICKLE_STALE}"
+	echo "conditional_304=${_OWNER_CONDITIONAL_304}"
+	echo "conditional_refreshes=${_OWNER_CONDITIONAL_REFRESHES}"
+	echo "conditional_misses=${_OWNER_CONDITIONAL_MISSES}"
 	return 0
 }
 
