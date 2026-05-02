@@ -96,6 +96,21 @@ case "$_subcmd" in
 		printf 'fix/worker-branch\n'
 		exit 0
 	fi
+	if [[ "$*" == *"--json headRefOid"* ]]; then
+		printf 'abc123repairsha\n'
+		exit 0
+	fi
+	exit 0
+	;;
+"pr checks")
+	if [[ "$*" == *"--json name,bucket,link"* ]]; then
+		printf '%s\n' '- **Lint**: fail — [https://example.invalid/check](https://example.invalid/check)'
+		exit 0
+	fi
+	if [[ "$*" == *"--json name,bucket"* ]]; then
+		printf '%s\n' 'Lint'
+		exit 0
+	fi
 	exit 0
 	;;
 "pr close" | "pr edit")
@@ -186,6 +201,8 @@ define_helpers_under_test() {
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
+		_build_ci_feedback_section
+		_dispatch_ci_fix_worker
 		_dispatch_pr_fix_worker
 	)
 	for fn in "${fns[@]}"; do
@@ -201,6 +218,7 @@ define_helpers_under_test() {
 		# shellcheck disable=SC1090
 		eval "$fn_src"
 	done
+	_classify_ci_failures_by_pattern() { return 0; }
 	return 0
 }
 
@@ -489,6 +507,43 @@ GHEOF
 	return 0
 }
 
+test_ci_dispatch_dedupes_by_pr_head_marker() {
+	reset_mock_state
+	: >"$GH_LOG"
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	local body_edit_count pr_close_count
+	body_edit_count=$(grep -cE 'gh issue edit 42 --repo owner/repo --body' "$GH_LOG" 2>/dev/null || true)
+	pr_close_count=$(grep -cF 'gh pr close 100' "$GH_LOG" 2>/dev/null || true)
+	[[ "$body_edit_count" =~ ^[0-9]+$ ]] || body_edit_count=0
+	[[ "$pr_close_count" =~ ^[0-9]+$ ]] || pr_close_count=0
+
+	if [[ "$body_edit_count" -ne 1 ]]; then
+		print_result "CI repair dispatch writes issue body exactly once per PR/head" 1 \
+			"Expected 1 body edit, got ${body_edit_count}. Log: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if [[ "$pr_close_count" -ne 1 ]]; then
+		print_result "CI repair dispatch closes PR exactly once per PR/head" 1 \
+			"Expected 1 PR close, got ${pr_close_count}. Log: $(cat "$GH_LOG")"
+		return 0
+	fi
+	if ! grep -qF '<!-- ci-feedback:PR100:SHAabc123repairsha -->' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "CI repair dispatch stores PR/head marker" 1 \
+			"Expected PR/head marker in issue body. Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+		return 0
+	fi
+	if ! grep -qF 'already has CI repair marker' "$LOGFILE"; then
+		print_result "CI repair dispatch logs duplicate skip" 1 \
+			"Expected duplicate skip log. Log: $(cat "$LOGFILE")"
+		return 0
+	fi
+	print_result "CI repair dispatch dedupes repair routing per PR/head" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -505,6 +560,7 @@ main() {
 	test_dispatch_noop_when_no_substantive_feedback
 	test_dispatch_noop_on_invalid_inputs
 	test_dispatch_clears_in_progress_labels_as_fallback
+	test_ci_dispatch_dedupes_by_pr_head_marker
 	test_dispatch_skips_body_edit_on_issue_view_failure
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

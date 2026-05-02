@@ -662,9 +662,23 @@ _process_single_ready_pr() {
 	# it merges within seconds of green instead of waiting for the next
 	# pulse poll cycle (~120s). Falls through to --admin immediate merge
 	# when CI is already green, repo opts out, or the API call fails.
-	if _set_native_auto_merge_or_skip "$pr_number" "$repo_slug"; then
-		return 0
-	fi
+	local _native_auto_rc=0
+	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" || _native_auto_rc=$?
+	case "$_native_auto_rc" in
+		0)
+			return 0
+			;;
+		2)
+			# t3508: auto-merge has been stuck on required pending checks past
+			# threshold. Route bounded CI repair feedback rather than silently
+			# deferring forever or attempting an admin bypass through pending CI.
+			local _native_labels
+			_native_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _native_labels=""
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$_native_labels" || true
+			return 1
+			;;
+	esac
 
 	# Merge
 	local merge_output _merge_exit

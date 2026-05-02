@@ -18,6 +18,8 @@
 #               (deferred to GitHub)
 #   Case (D): Repo allow_auto_merge=false
 #             → returns 1; no `gh pr merge --auto` invocation
+#   Case (E): autoMergeRequest pending past threshold
+#             → returns 2 so caller routes bounded CI repair
 #
 # No real repository is touched. The `gh` binary is replaced with a mock
 # stub that serves canned responses from TEST_ROOT fixture files and logs
@@ -314,11 +316,55 @@ test_case_d_repo_disallows_falls_through() {
 	return 0
 }
 
+# =============================================================================
+# Case (E): PR already has autoMergeRequest but required checks are stale-pending
+# =============================================================================
+test_case_e_stale_pending_routes_repair() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	local old_enabled_at
+	old_enabled_at=$(date -u -v-30M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| date -u -d '30 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| echo '2026-04-30T16:00:00Z')
+	printf '{"autoMergeRequest":{"enabledAt":"%s"},"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		"$old_enabled_at" >"${TEST_ROOT}/auto_merge_request.txt"
+	printf '1' >"${TEST_ROOT}/pending_count.txt"
+	export AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS=60
+
+	local result=0
+	_set_native_auto_merge_or_skip "500" "owner/repo" || result=$?
+	unset AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS
+
+	if [[ "$result" -ne 2 ]]; then
+		print_result "Case (E): stale pending auto_merge → returns 2 (repair)" 1 \
+			"Expected exit 2, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if grep -qE 'gh pr merge 500 .*--auto' "$GH_LOG"; then
+		print_result "Case (E): stale pending auto_merge → no new --auto invocation" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'routing CI repair.*t3508' "$LOGFILE"; then
+		print_result "Case (E): stale pending auto_merge → repair audit log written" 1 \
+			"pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (E): stale pending auto_merge → returns 2 for repair" 0
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_case_a_pending_ci_sets_auto_merge
 	test_case_b_ci_green_falls_through
 	test_case_c_already_set_no_op
 	test_case_d_repo_disallows_falls_through
+	test_case_e_stale_pending_routes_repair
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
