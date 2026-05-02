@@ -162,19 +162,7 @@ jobs:
           else
             git add TODO.md
             git commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]"
-            # Retry loop for concurrent pushes
-            for i in 1 2 3; do
-              echo "Push attempt $i..."
-              git pull --rebase origin main || true
-              if git push; then
-                echo "Push succeeded on attempt $i"
-                exit 0
-              fi
-              echo "Push failed, retrying..."
-              sleep $((i * 3))
-            done
-            echo "All push attempts failed"
-            exit 1
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh push-todo main 3
           fi
 
       - name: Show sync status
@@ -278,17 +266,7 @@ jobs:
           else
             git add TODO.md
             git commit -m "chore: sync ref:GH#${ISSUE_NUMBER} to TODO.md [skip ci]"
-            for i in 1 2 3; do
-              echo "Push attempt $i..."
-              git pull --rebase origin main || true
-              if git push; then
-                echo "Push succeeded on attempt $i"
-                exit 0
-              fi
-              sleep $((i * 3))
-            done
-            echo "All push attempts failed"
-            exit 1
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh push-todo main 3
           fi
 
   # =========================================================================
@@ -513,14 +491,7 @@ jobs:
           else
             git add TODO.md
             git commit -m "chore: manual issue sync ($SYNC_COMMAND) [skip ci]"
-            for i in 1 2 3; do
-              git pull --rebase origin main || true
-              if git push; then
-                exit 0
-              fi
-              sleep $((i * 3))
-            done
-            exit 1
+            bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh push-todo main 3
           fi
 
   # =========================================================================
@@ -1102,16 +1073,9 @@ jobs:
           # success even though TODO.md was never pushed — which is exactly
           # how this workflow broke silently for ~3 weeks before t2029.
           PUSH_SUCCEEDED=false
-          for i in 1 2 3; do
-            echo "Push attempt $i..."
-            git pull --rebase origin main || true
-            if git push; then
-              echo "Push succeeded on attempt $i"
-              PUSH_SUCCEEDED=true
-              break
-            fi
-            sleep $((i * 3))
-          done
+          if bash __aidevops/.agents/scripts/issue-sync-git-push-helper.sh push-todo main 3; then
+            PUSH_SUCCEEDED=true
+          fi
 
           if [[ "$PUSH_SUCCEEDED" != "true" ]]; then
             # t2029: branch protection on personal-account repos cannot
