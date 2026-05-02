@@ -49,6 +49,7 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+export LOGFILE="${TEST_ROOT}/pulse.log"
 
 # =============================================================================
 # Stub harness — fake `gh` CLI that returns canned JSON for the calls
@@ -170,28 +171,34 @@ run_check_cost_budget() {
 # =============================================================================
 # Assertion 1 — under budget allows dispatch (rc=1, no signal)
 # =============================================================================
-# tier:standard budget = 100K. Spend 30K → under budget.
+# tier:standard budget = 800K. Spend 30K → under budget.
 write_fixture_issue '[{"name":"tier:standard"},{"name":"pulse"}]'
 write_fixture_comments "30000"
 run_check_cost_budget 18001 "owner/repo" "standard"
 if [[ "$rc" -eq 1 && -z "$output" ]]; then
-	print_result "under-budget allow (30K < 100K standard)" 0
+	print_result "under-budget allow (30K < 800K standard)" 0
 else
-	print_result "under-budget allow (30K < 100K standard)" 1 "(rc=$rc output='$output')"
+	print_result "under-budget allow (30K < 800K standard)" 1 "(rc=$rc output='$output')"
 fi
 
 # =============================================================================
 # Assertion 2 — over budget blocks with COST_BUDGET_EXCEEDED signal
 # =============================================================================
-# tier:standard budget = 100K. Spend 60K + 80K = 140K → over budget.
+# tier:standard budget = 800K. Spend 500K + 400K = 900K → over budget.
 write_fixture_issue '[{"name":"tier:standard"},{"name":"pulse"}]'
-write_fixture_comments "60000,80000"
+write_fixture_comments "500000,400000"
 run_check_cost_budget 18002 "owner/repo" "standard"
 if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* && "$output" == *"attempts=2"* ]]; then
-	print_result "over-budget block emits COST_BUDGET_EXCEEDED (140K > 100K, 2 attempts)" 0
+	print_result "over-budget block emits COST_BUDGET_EXCEEDED (900K > 800K, 2 attempts)" 0
 else
-	print_result "over-budget block emits COST_BUDGET_EXCEEDED (140K > 100K, 2 attempts)" 1 \
+	print_result "over-budget block emits COST_BUDGET_EXCEEDED (900K > 800K, 2 attempts)" 1 \
 		"(rc=$rc output='$output')"
+fi
+
+if grep -q 'cost-circuit-breaker:fired issue=#18002 repo=owner/repo tier=standard spent=900000 budget=800000 attempts=2' "$LOGFILE" 2>/dev/null; then
+	print_result "cost breaker trip writes diagnostic log line" 0
+else
+	print_result "cost breaker trip writes diagnostic log line" 1 "(log=$(tr '\n' ' ' <"$LOGFILE" 2>/dev/null))"
 fi
 
 # =============================================================================
@@ -220,27 +227,27 @@ else
 fi
 
 # =============================================================================
-# Assertion 5 — per-tier budget enforcement: tier:simple = 30K, spend 50K → block
+# Assertion 5 — per-tier budget enforcement: tier:simple = 800K, spend 850K → block
 # =============================================================================
 write_fixture_issue '[{"name":"tier:simple"}]'
-write_fixture_comments "20000,30000"
+write_fixture_comments "400000,450000"
 run_check_cost_budget 18005 "owner/repo" "simple"
 if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* && "$output" == *"tier=simple"* ]]; then
-	print_result "tier:simple budget (50K > 30K) blocks" 0
+	print_result "tier:simple budget (850K > 800K) blocks" 0
 else
-	print_result "tier:simple budget (50K > 30K) blocks" 1 "(rc=$rc output='$output')"
+	print_result "tier:simple budget (850K > 800K) blocks" 1 "(rc=$rc output='$output')"
 fi
 
 # =============================================================================
-# Assertion 6 — same spend (50K) on tier:thinking is well under budget (300K)
+# Assertion 6 — same spend (50K) on tier:thinking is well under budget (800K)
 # =============================================================================
 write_fixture_issue '[{"name":"tier:thinking"}]'
 write_fixture_comments "20000,30000"
 run_check_cost_budget 18006 "owner/repo" "thinking"
 if [[ "$rc" -eq 1 ]]; then
-	print_result "tier:thinking budget (50K < 300K) allows" 0
+	print_result "tier:thinking budget (50K < 800K) allows" 0
 else
-	print_result "tier:thinking budget (50K < 300K) allows" 1 "(rc=$rc output='$output')"
+	print_result "tier:thinking budget (50K < 800K) allows" 1 "(rc=$rc output='$output')"
 fi
 
 # =============================================================================
@@ -253,7 +260,7 @@ fi
 : >"$STUB_LOG"
 # Fixture: over budget AND needs-maintainer-review already on the issue
 write_fixture_issue '[{"name":"tier:standard"},{"name":"needs-maintainer-review"}]'
-write_fixture_comments "60000,80000"
+write_fixture_comments "500000,400000"
 run_check_cost_budget 18007 "owner/repo" "standard"
 # The signal must still be emitted (so dispatch is blocked)…
 if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then
@@ -275,16 +282,16 @@ else
 fi
 
 # =============================================================================
-# Assertion 8 — unknown tier falls back to default budget (100K)
+# Assertion 8 — unknown tier falls back to default budget (800K)
 # =============================================================================
-# Spend 150K on an issue with no tier:* label → should block (default = 100K).
+# Spend 900K on an issue with no tier:* label → should block (default = 800K).
 write_fixture_issue '[{"name":"pulse"}]'
-write_fixture_comments "75000,75000"
+write_fixture_comments "450000,450000"
 run_check_cost_budget 18008 "owner/repo" "unknown-tier-name"
 if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then
-	print_result "unknown-tier falls back to default budget (150K > 100K default)" 0
+	print_result "unknown-tier falls back to default budget (900K > 800K default)" 0
 else
-	print_result "unknown-tier falls back to default budget (150K > 100K default)" 1 \
+	print_result "unknown-tier falls back to default budget (900K > 800K default)" 1 \
 		"(rc=$rc output='$output')"
 fi
 

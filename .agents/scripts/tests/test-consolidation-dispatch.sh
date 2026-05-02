@@ -404,6 +404,18 @@ fixture_stale_recovery_tick_comments() {
 JSON
 }
 
+# Fixture: TWO cost-circuit-breaker comments — both must be filtered. These are
+# operational diagnostics and must not trigger or leak into issue consolidation.
+fixture_cost_circuit_breaker_comments() {
+	cat <<'JSON'
+[
+  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-05-02T19:27:10Z", "body": "<!-- cost-circuit-breaker:fired tier=standard spent=248726 budget=100000 -->\nCost circuit breaker fired. This diagnostic comment is intentionally long enough to clear the consolidation min-char threshold."},
+  {"user": {"login": "marcusquinn", "type": "User"}, "created_at": "2026-05-02T19:42:10Z", "body": "<!-- cost-circuit-breaker:fired tier=standard spent=350000 budget=100000 -->\nCost circuit breaker fired again. This diagnostic comment is intentionally long enough to clear the consolidation min-char threshold."}
+]
+JSON
+	return 0
+}
+
 # t2144 A1 regression: WORKER_SUPERSEDED comments must NOT count as substantive.
 test_worker_superseded_comments_are_filtered() {
 	setup_gh_stub
@@ -448,6 +460,37 @@ test_stale_recovery_tick_comments_are_filtered() {
 			"_issue_needs_consolidation returned 0 despite only stale-recovery-tick noise"
 	else
 		print_result "t2144: stale-recovery-tick comments are filtered" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+# Cost-circuit-breaker diagnostics must not count as substantive comments and
+# must not be included in the consolidation-task child body.
+test_cost_circuit_breaker_comments_are_filtered() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_cost_circuit_breaker_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	if _issue_needs_consolidation 22462 "marcusquinn/aidevops"; then
+		print_result "cost-circuit-breaker comments are filtered from consolidation trigger" 1 \
+			"_issue_needs_consolidation returned 0 despite only cost-circuit-breaker noise"
+	else
+		print_result "cost-circuit-breaker comments are filtered from consolidation trigger" 0
+	fi
+
+	local substantive_json
+	substantive_json=$(_consolidation_substantive_comments 22462 "marcusquinn/aidevops")
+	if [[ "$substantive_json" == "[]" ]]; then
+		print_result "cost-circuit-breaker comments are excluded from consolidation body input" 0
+	else
+		print_result "cost-circuit-breaker comments are excluded from consolidation body input" 1 \
+			"(substantive_json=$substantive_json)"
 	fi
 
 	teardown_gh_stub
@@ -721,6 +764,7 @@ main() {
 	# t2144 regression suite
 	test_worker_superseded_comments_are_filtered
 	test_stale_recovery_tick_comments_are_filtered
+	test_cost_circuit_breaker_comments_are_filtered
 	test_recently_closed_child_blocks_redispatch_within_grace
 	test_grace_zero_restores_open_only_semantics
 	test_backfill_clears_stale_label_on_consolidated_parent
