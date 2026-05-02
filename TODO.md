@@ -4052,3 +4052,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3508 Add PR repair loop for greenable unmerged worker PRs #auto-dispatch #bug ref:GH#22472
 
 - [ ] t3509 Suppress assignment notifications for available worker feedback issues #auto-dispatch #bug ref:GH#22473
+
+- [ ] t3510 Prevent duplicate manual workers on the same issue worktree #auto-dispatch #bug ref:GH#22474
+
+- [ ] t3511 Reason-code dispatch candidate pre-launch failures #auto-dispatch #bug ref:GH#22476

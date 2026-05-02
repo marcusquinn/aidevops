@@ -68,6 +68,41 @@ dedup check, `status:queued`, `origin:worker`, runner assignment, worktree
 creation from `origin/<default>`, and ledger registration. It is not a pulse
 replacement; the pulse still owns scanning, cadence, capacity, and merge flow.
 
+## PR Repair Loop for Red or Stale Checks (t3508)
+
+The deterministic merge pass does not leave trusted worker PRs to accumulate
+when all trust/review gates pass but required checks are red or stale-pending.
+It routes actionable repair context back to the linked issue and re-opens that
+issue for dispatch.
+
+Repair triggers:
+
+- Required checks in `fail` or `cancel` buckets.
+- Native auto-merge already set, but at least one required check remains
+  `pending` longer than `AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS` (default 300s).
+
+Safety boundaries:
+
+- Non-collaborator PRs are still blocked by the normal maintainer/security
+  gates before repair routing.
+- `CHANGES_REQUESTED` still routes through review-feedback handling, not CI
+  repair.
+- Repair feedback is deduplicated by linked issue + PR + head SHA marker
+  (`<!-- ci-feedback:PR...:SHA... -->`) so each stuck head queues at most one
+  repair action.
+
+Diagnosis commands:
+
+```bash
+pulse-diagnose-helper.sh pr <pr-number> --repo <owner/repo>
+gh pr checks <pr-number> --repo <owner/repo> --required --watch=false
+gh issue view <linked-issue> --repo <owner/repo> --json body --jq '.body'
+```
+
+Expected evidence after routing: the linked issue body contains a `CI Repair
+Feedback` section with check names/URLs, the issue has `source:ci-feedback`, and
+the stale PR has `ci-feedback-routed`.
+
 ## Architecture Decisions
 
 ### SQLite DB Isolation (v3.6.130)
@@ -621,7 +656,14 @@ Background: t2994 moved priming from `pulse-lifecycle-helper.sh::_start` into `p
 
 ## CI Failure Feedback Registry (t3225)
 
-When a worker PR has failing required checks, `_dispatch_ci_fix_worker` routes feedback through `.agents/configs/ci-failure-patterns.conf` so the next worker tries cheap auto-fix paths before re-implementing the original task.
+When a trusted worker/maintainer PR has failing or pending required checks, the merge pass first runs the normal merge gates (collaborator/security, maintainer approval, interactive/worker-briefed trust chain, and review-bot gate). Only after those gates pass does `_dispatch_ci_fix_worker` route feedback through `.agents/configs/ci-failure-patterns.conf` so the next worker tries cheap auto-fix paths before re-implementing the original task.
+
+Repair routing is idempotent per `repo + PR + head SHA`: the routed section marker uses `<!-- ci-feedback:PR<N>:SHA<sha> -->`. Repeated pulse cycles on the same red head skip the issue-body edit and do not enqueue duplicate repair work; a newly-pushed head can be routed again if required checks still block merge. Diagnose with:
+
+```bash
+pulse-diagnose-helper.sh pr <PR> --repo <owner/repo>
+gh pr checks <PR> --repo <owner/repo> --watch=false
+```
 
 | Classification | Canonical check names | Resolution |
 |---|---|---|
@@ -640,7 +682,7 @@ Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a ca
 | No workers dispatched | Canary cache, pulse log | Broken canary, dedup blocking, no dispatchable issues |
 | Workers rejected immediately | `grep "Claim guard" /tmp/pulse-*.log` | Claim format mismatch (removed in v3.6.138) |
 | Workers dispatch but produce 0 bytes | Version check, `opencode --version` | Wrong OpenCode version, auth failure |
-| PRs created but not merged | `review-bot-gate-helper.sh check <PR>` | Review bot rate-limited (passes immediately since v3.6.136) |
+| PRs created but not merged | `pulse-diagnose-helper.sh pr <PR> --repo <owner/repo>` and `gh pr checks <PR> --repo <owner/repo> --watch=false` | Review bot gate, required-check failure/pending, mergeability, or branch-protection state |
 | Claim/release loop | Comment history on issue | Stale claims, guard rejections — recreate issue with clean context |
 | Watchdog doesn't fire | `ps aux \| grep watchdog` | Watchdog process died with subshell |
 | `CLAIM_RELEASED reason=launch_recovery:no_worker_process` on multiple issues | `grep "no active worker process" ~/.aidevops/logs/pulse-wrapper.log` | Cluster failure on one runner — retries at same tier (no cascade escalation, t2815); check system load |

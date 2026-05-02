@@ -267,14 +267,14 @@ _build_ci_feedback_section() {
 	local conf_file
 	conf_file="${BASH_SOURCE[0]%/*}/../configs/ci-failure-patterns.conf"
 
-	# Lead with header + failing checks list (always present).
+	# Lead with header + non-passing checks list (always present).
 	cat <<-EOF
-		## CI Failure Feedback (from PR #${pr_number})
+		## CI Repair Feedback (from PR #${pr_number})
 
-		The previous worker's PR #${pr_number} had failing required CI checks. The PR has been
+		The previous worker's PR #${pr_number} had non-passing required CI checks. The PR has been
 		closed and this issue re-queued for dispatch. The next worker should address these failures.
 
-		### Failing checks
+		### Non-passing required checks
 
 		${failing_checks}
 	EOF
@@ -290,7 +290,7 @@ _build_ci_feedback_section() {
 		### Worker guidance
 
 		1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
-		2. Read the failing check URLs above for specific error messages
+		2. Read the check URLs above for specific error messages
 		3. Fix the issues in the code, not in the CI config
 		4. Ensure all checks pass locally before pushing
 
@@ -300,13 +300,14 @@ _build_ci_feedback_section() {
 }
 
 #######################################
-# Route CI failure feedback from a worker PR to its linked issue, close
+# Route CI failure feedback from a worker/trusted PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
 #
 # The next worker sees the failing check names, URLs, and context in the
-# issue body and can address the failures directly. This closes the gap
-# where worker PRs with red CI sit indefinitely — the merge pass skips
-# them (correctly), but nothing dispatches a fix worker.
+# issue body and can address the failures directly. The marker is keyed by
+# PR + head SHA so repeated pulse cycles do not duplicate repair work for the
+# same failing commit, while a newly-pushed head can be routed again if it is
+# still red.
 #
 # Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
 # instead of review CHANGES_REQUESTED.
@@ -330,17 +331,19 @@ _dispatch_ci_fix_worker() {
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
 
-	# Collect failing checks: name, status, URL
+	# Collect non-green required checks: name, status, URL. Include pending
+	# required checks as actionable repair/backlog context; the caller only
+	# reaches this path after merge/security/review gates have passed.
 	local failing_checks
 	failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
 		--json name,bucket,link \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")
+		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")
 			| "- **\(.name)**: \(.bucket) — [\(.link // "no link")](\(.link // ""))"]
 			| join("\n")' \
 		2>/dev/null) || failing_checks=""
 
 	if [[ -z "$failing_checks" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has failing checks but could not collect details — skipping routing" >>"$LOGFILE"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has non-passing checks but could not collect details — skipping routing" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -350,19 +353,34 @@ _dispatch_ci_fix_worker() {
 	local failing_names classification_output=""
 	failing_names=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
 		--json name,bucket \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel") | .name]
+		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending") | .name]
 			| join("\n")' \
 		2>/dev/null) || failing_names=""
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi
 
+	# Key dedup by PR + head SHA. A repeated pulse cycle on the same failing
+	# commit sees the same marker and skips; a new push gets a new marker and
+	# can re-enter repair if it is still blocked.
+	local pr_head_sha=""
+	pr_head_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || pr_head_sha=""
+	[[ -n "$pr_head_sha" ]] || pr_head_sha="unknown"
+
 	# Build the CI Failure Feedback section (with optional pattern guidance).
 	local feedback_section
 	feedback_section=$(_build_ci_feedback_section "$pr_number" "$failing_checks" "$classification_output")
 
 	# Append to issue body (marker-guarded, t2383 fail-safe)
-	local marker="<!-- ci-feedback:PR${pr_number} -->"
+	local marker="<!-- ci-feedback:PR${pr_number}:SHA${pr_head_sha} -->"
+	local current_body=""
+	current_body=$(gh issue view "$linked_issue" --repo "$repo_slug" \
+		--json body --jq '.body // ""' 2>/dev/null) || current_body=""
+	if [[ -n "$current_body" ]] && printf '%s' "$current_body" | grep -qF "$marker"; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: issue #${linked_issue} already has CI repair marker for PR #${pr_number} head ${pr_head_sha} — skipping duplicate dispatch (t3508)" >>"$LOGFILE"
+		return 0
+	fi
 	_append_feedback_to_issue "$linked_issue" "$repo_slug" "$marker" \
 		"$feedback_section" "_dispatch_ci_fix_worker" || return 0
 
@@ -371,12 +389,12 @@ _dispatch_ci_fix_worker() {
 
 	# Close the PR with feedback summary
 	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
-		"## CI failure feedback routed to issue #${linked_issue}
+		"## CI repair feedback routed to issue #${linked_issue}
 
-This worker PR had failing required CI checks. The failure details have been appended
+This worker PR had non-passing required CI checks. The check details have been appended
 to the linked issue body so the next worker can address them.
 
-Failing checks:
+Non-passing required checks:
 ${failing_checks}
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \

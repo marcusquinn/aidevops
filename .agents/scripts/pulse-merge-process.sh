@@ -1156,8 +1156,10 @@ _auto_merge_stuck_seconds() {
 # next pulse cycle to detect green.
 #
 # Decision tree:
-#   * PR already has auto_merge set + STUCK → return 1 (caller --admin path,
-#                                                       t3192 stuck fallback)
+#   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
+#                                                             t3192 stuck fallback)
+#   * PR already has auto_merge set + stale pending → return 2 (caller routes
+#                                                               CI repair)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub
 #                                                         finishes the job)
 #   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
@@ -1176,7 +1178,7 @@ _auto_merge_stuck_seconds() {
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
 # Args: $1=pr_number, $2=repo_slug
-# Returns: 0=native-auto requested (caller skips merge), 1=fall through
+# Returns: 0=native-auto requested/deferred, 1=fall through, 2=stale pending repair
 #######################################
 _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
@@ -1201,6 +1203,30 @@ _set_native_auto_merge_or_skip() {
 			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${_stuck_seconds}s (>${_threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — falling through to immediate merge (t3192)" >>"$LOGFILE"
 			return 1
+		fi
+
+		# t3508: if native auto-merge has been waiting on required checks past
+		# the same stuck threshold, stop silently deferring every pulse cycle.
+		# Return 2 so the caller can route a bounded CI repair worker/comment keyed
+		# by the linked issue/PR marker instead of attempting an admin bypass.
+		local _pending_count=""
+		_pending_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
+			--jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null) || _pending_count="0"
+		[[ "$_pending_count" =~ ^[0-9]+$ ]] || _pending_count=0
+		if [[ "$_pending_count" -gt 0 ]]; then
+			local _enabled_at="" _enabled_epoch="0" _now_epoch="0" _age_seconds="0"
+			_enabled_at=$(printf '%s' "$_pr_state" | jq -r '.autoMergeRequest.enabledAt // ""' 2>/dev/null) || _enabled_at=""
+			_enabled_epoch=$(date -u -d "$_enabled_at" +%s 2>/dev/null \
+				|| TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$_enabled_at" +%s 2>/dev/null \
+				|| echo "0")
+			[[ "$_enabled_epoch" =~ ^[0-9]+$ ]] || _enabled_epoch=0
+			_now_epoch=$(date -u +%s)
+			_age_seconds=$((_now_epoch - _enabled_epoch))
+			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
+			if [[ "$_enabled_epoch" -gt 0 && "$_age_seconds" -gt "$_threshold" ]]; then
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge has ${_pending_count} required check(s) pending for ${_age_seconds}s (>${_threshold}s) — routing CI repair (t3508)" >>"$LOGFILE"
+				return 2
+			fi
 		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge already set, deferring to GitHub (t3070)" >>"$LOGFILE"
 		return 0
