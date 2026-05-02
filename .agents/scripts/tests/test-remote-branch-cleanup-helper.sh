@@ -123,6 +123,7 @@ setup_repo() {
 	git clone -q "$TEST_ROOT/origin.git" "$TEST_ROOT/repo"
 	git -C "$TEST_ROOT/repo" config user.email test@example.invalid
 	git -C "$TEST_ROOT/repo" config user.name "Remote Branch Cleanup Test"
+	git -C "$TEST_ROOT/repo" config commit.gpgsign false
 	make_commit "$TEST_ROOT/repo" base.txt base
 	git -C "$TEST_ROOT/repo" branch -M main
 	git -C "$TEST_ROOT/repo" push -q -u origin main

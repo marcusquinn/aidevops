@@ -80,9 +80,20 @@ make_repo() {
 	git init -q "$repo_path"
 	git -C "$repo_path" config user.email test@example.invalid
 	git -C "$repo_path" config user.name "Remote Branch Async Test"
+	git -C "$repo_path" config commit.gpgsign false
 	printf 'base\n' >"${repo_path}/base.txt"
 	git -C "$repo_path" add base.txt
 	git -C "$repo_path" commit -qm base
+	return 0
+}
+
+write_repos_config() {
+	local repo_path="$1"
+	local config_dir="${TEST_DIR}/.config/aidevops"
+	mkdir -p "$config_dir"
+	cat >"${config_dir}/repos.json" <<JSON
+{"initialized_repos":[{"path":"${repo_path}","local_only":false}],"git_parent_dirs":[]}
+JSON
 	return 0
 }
 
@@ -115,9 +126,10 @@ test_cold_start_dry_run() {
 	local repo_path="${TEST_DIR}/repo"
 	local marker_file="${TEST_DIR}/mock-ran"
 	make_repo "$repo_path"
+	write_repos_config "$repo_path"
 	rm -f "$marker_file"
 
-	AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 run_helper_in_isolation "PWD" "$repo_path"
+	AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 run_helper_in_isolation
 
 	if [[ -f "$marker_file" ]] && grep -q -- "--repo ${repo_path}" "$marker_file" && ! grep -q "APPLY" "$marker_file"; then
 		print_result "cold-start: audits current repo in dry-run mode" 0
@@ -131,10 +143,11 @@ test_apply_requires_explicit_flag() {
 	local repo_path="${TEST_DIR}/repo-apply"
 	local marker_file="${TEST_DIR}/mock-ran"
 	make_repo "$repo_path"
+	write_repos_config "$repo_path"
 	rm -f "$marker_file"
 
 	AIDEVOPS_REMOTE_BRANCH_CLEANUP_APPLY=1 AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 \
-		run_helper_in_isolation "PWD" "$repo_path"
+		run_helper_in_isolation
 
 	if [[ -f "$marker_file" ]] && grep -q "APPLY" "$marker_file"; then
 		print_result "apply mode: passes --apply only when explicitly enabled" 0
@@ -149,12 +162,13 @@ test_cadence_gate() {
 	local logs_dir="${TEST_DIR}/.aidevops/logs"
 	local marker_file="${TEST_DIR}/mock-ran"
 	make_repo "$repo_path"
+	write_repos_config "$repo_path"
 	mkdir -p "$logs_dir"
 	printf '%s\n' "$(( $(date +%s) - 30 ))" >"${logs_dir}/cleanup_remote_branches.last-run"
 	rm -f "$marker_file"
 
 	AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 CLEANUP_REMOTE_BRANCHES_ASYNC_CADENCE_MIN=10 \
-		run_helper_in_isolation "PWD" "$repo_path"
+		run_helper_in_isolation
 
 	if [[ ! -f "$marker_file" ]]; then
 		print_result "cadence-gate: skips when last run is recent" 0
@@ -170,11 +184,12 @@ test_lock_held() {
 	local lock_dir="${logs_dir}/cleanup_remote_branches.lock"
 	local marker_file="${TEST_DIR}/mock-ran"
 	make_repo "$repo_path"
+	write_repos_config "$repo_path"
 	mkdir -p "$lock_dir"
 	printf '%s\n' "$$" >"${lock_dir}/pid"
 	rm -f "$marker_file"
 
-	AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 run_helper_in_isolation "PWD" "$repo_path"
+	AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 run_helper_in_isolation
 
 	if [[ ! -f "$marker_file" ]]; then
 		print_result "lock-held: skips when live lock exists" 0
@@ -190,6 +205,7 @@ test_low_rate_limit_skip() {
 	local stub_dir="${TEST_DIR}/scripts"
 	local marker_file="${TEST_DIR}/mock-ran"
 	make_repo "$repo_path"
+	write_repos_config "$repo_path"
 	write_stub_helper "$stub_dir" "$marker_file"
 	cat >"${stub_dir}/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -202,7 +218,7 @@ STUB
 	copy_helper_to_stub_dir "$stub_dir"
 	rm -f "$marker_file"
 
-	env HOME="$TEST_DIR" PATH="$stub_dir:$PATH" PWD="$repo_path" \
+	env HOME="$TEST_DIR" PATH="$stub_dir:$PATH" \
 		AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=0 \
 		AIDEVOPS_REMOTE_BRANCH_CLEANUP_MIN_GH_REMAINING=100 \
 		bash "${stub_dir}/cleanup-remote-branches-async-helper.sh" 2>/dev/null || true
