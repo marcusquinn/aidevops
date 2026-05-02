@@ -15,6 +15,7 @@
 #   8. Stats output (text + JSON)
 #   9. Reset clears state
 #   10. Window trimming (>WINDOW records → only last N considered)
+#   11. Stale non-empty lock cleanup does not spin forever
 
 set -uo pipefail
 
@@ -396,6 +397,30 @@ test_probe_flag_roundtrip() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 14: Stale non-empty lock cleanup
+# ---------------------------------------------------------------------------
+test_stale_non_empty_lock_cleanup() {
+	echo "Test 14: stale non-empty lock cleanup exits quickly"
+	_reset_state
+	mkdir -p "${DISPATCH_TIMING_STATE_FILE}.lock.d"
+	printf '999999\n' >"${DISPATCH_TIMING_STATE_FILE}.lock.d/pid"
+	# Force the lock mtime far enough into the past to trigger stale cleanup.
+	touch -t 200001010000 "${DISPATCH_TIMING_STATE_FILE}.lock.d"
+	local start_epoch end_epoch elapsed_s rc line_count
+	start_epoch=$(date +%s)
+	DISPATCH_TIMING_RECORD_LOCK_TIMEOUT_S=1 _record success 5000
+	rc=$?
+	end_epoch=$(date +%s)
+	elapsed_s=$((end_epoch - start_epoch))
+	_assert_eq "stale non-empty lock record exits 0" "$rc" "0"
+	_assert_in_range "stale non-empty lock record completes quickly" "$elapsed_s" "0" "2"
+	line_count=$(wc -l <"$DISPATCH_TIMING_STATE_FILE" 2>/dev/null | tr -d ' ')
+	[[ -z "$line_count" ]] && line_count=0
+	_assert_eq "stale non-empty lock record writes one line" "$line_count" "1"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------------
 
@@ -414,6 +439,7 @@ _run_tests() {
 	test_reset
 	test_window_limit
 	test_probe_flag_roundtrip
+	test_stale_non_empty_lock_cleanup
 
 	echo ""
 	echo "===== Summary ====="

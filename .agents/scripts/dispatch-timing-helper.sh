@@ -121,8 +121,15 @@ _dt_acquire_lock() {
 			now_epoch=$(date +%s)
 			age_s=$((now_epoch - lock_mtime))
 			if ((age_s > 30)); then
-				rmdir "$LOCK_DIR" 2>/dev/null || true
-				continue
+				# The lock directory is helper-owned and may contain a diagnostic
+				# pid file. Plain rmdir fails on that non-empty stale lock and can
+				# otherwise spin forever because the continue skips the sleep and
+				# elapsed timeout below.
+				rm -rf "$LOCK_DIR" 2>/dev/null || true
+				if mkdir "$LOCK_DIR" 2>/dev/null; then
+					echo "$$" >"${LOCK_DIR}/pid" 2>/dev/null || true
+					return 0
+				fi
 			fi
 		fi
 		sleep 0.1
