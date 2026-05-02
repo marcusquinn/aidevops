@@ -671,11 +671,19 @@ _assemble_state_file() {
 		echo "This state was fetched by pulse-wrapper.sh BEFORE the pulse started."
 		echo "Do NOT re-fetch — act on this data directly. See pulse.md Step 2."
 		echo ""
+		local -a state_parts=()
 		local i=0
 		while [[ -f "${tmpdir}/${i}.txt" ]]; do
-			cat "${tmpdir}/${i}.txt"
+			state_parts+=("${tmpdir}/${i}.txt")
 			i=$((i + 1))
 		done
+		# GH#22289: concatenate numbered state shards with one awk process
+		# instead of one cat fork per shard. The common path has only a handful
+		# of files, but large repo sets can produce dozens of shards and this
+		# assembly runs in the pulse hot path.
+		if [[ "${#state_parts[@]}" -gt 0 ]]; then
+			awk '1' "${state_parts[@]}"
+		fi
 	} >"$STATE_FILE"
 	return 0
 }

@@ -872,18 +872,22 @@ cmd_count() {
 	fi
 
 	local count=0
-	local inflight_lines
-	inflight_lines=$(jq -c 'select(.status == "in-flight")' "$LEDGER_FILE" 2>/dev/null) || inflight_lines=""
+	local inflight_pids
+	# GH#22289: keep this as one jq pass. The previous implementation first
+	# selected in-flight JSON lines, then forked jq once per entry to extract
+	# pid. On a 1200-entry synthetic ledger that made `count` take ~2.4s.
+	# A single jq pass emits just the PIDs; bash keeps the kill -0 liveness
+	# checks because jq cannot query process state.
+	inflight_pids=$(jq -r 'select(.status == "in-flight") | (.pid // 0)' "$LEDGER_FILE" 2>/dev/null) || inflight_pids=""
 
-	if [[ -z "$inflight_lines" ]]; then
+	if [[ -z "$inflight_pids" ]]; then
 		printf '%s\n' "0"
 		return 0
 	fi
 
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		local entry_pid
-		entry_pid=$(printf '%s' "$line" | jq -r '.pid // 0' 2>/dev/null) || entry_pid=0
+	local entry_pid
+	while IFS= read -r entry_pid; do
+		[[ -z "$entry_pid" ]] && continue
 		if [[ "$entry_pid" =~ ^[0-9]+$ ]] && [[ "$entry_pid" -gt 0 ]]; then
 			if kill -0 "$entry_pid" 2>/dev/null; then
 				count=$((count + 1))
@@ -892,7 +896,7 @@ cmd_count() {
 			# No valid PID — count it (conservative; expire will clean up)
 			count=$((count + 1))
 		fi
-	done <<<"$inflight_lines"
+	done <<<"$inflight_pids"
 
 	printf '%s\n' "$count"
 	return 0
@@ -912,11 +916,25 @@ cmd_status() {
 		return 0
 	fi
 
-	local total inflight completed failed
-	total=$(wc -l <"$LEDGER_FILE" | tr -d ' ')
-	inflight=$(jq -c 'select(.status == "in-flight")' "$LEDGER_FILE" 2>/dev/null | wc -l | tr -d ' ') || inflight=0
-	completed=$(jq -c 'select(.status == "completed")' "$LEDGER_FILE" 2>/dev/null | wc -l | tr -d ' ') || completed=0
-	failed=$(jq -c 'select(.status == "failed")' "$LEDGER_FILE" 2>/dev/null | wc -l | tr -d ' ') || failed=0
+	local total inflight completed failed status_counts
+	# GH#22289: compute all status counts in one jq process instead of three
+	# jq+wc pipelines. The win is modest compared with cmd_count, but this is
+	# still a hot diagnostic path and preserves the single-pass ledger pattern.
+	status_counts=$(jq -nr '
+		[inputs.status // ""] as $statuses
+		| [
+			($statuses | length),
+			($statuses | map(select(. == "in-flight")) | length),
+			($statuses | map(select(. == "completed")) | length),
+			($statuses | map(select(. == "failed")) | length)
+		]
+		| @tsv
+	' "$LEDGER_FILE" 2>/dev/null) || status_counts=$'0\t0\t0\t0'
+	IFS=$'\t' read -r total inflight completed failed <<<"$status_counts"
+	[[ "$total" =~ ^[0-9]+$ ]] || total=0
+	[[ "$inflight" =~ ^[0-9]+$ ]] || inflight=0
+	[[ "$completed" =~ ^[0-9]+$ ]] || completed=0
+	[[ "$failed" =~ ^[0-9]+$ ]] || failed=0
 
 	echo "Dispatch Ledger Status"
 	echo "  Total entries: ${total}"
