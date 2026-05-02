@@ -44,6 +44,10 @@ fi
 # --- Format number with commas (bash 3.2 compatible) ---
 _format_number() {
 	local num="$1"
+	if [[ -z "$num" || "$num" == "null" || ! "$num" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+		num="0"
+	fi
+
 	# Handle decimals: split on dot
 	local integer_part decimal_part
 	integer_part="${num%%.*}"
@@ -63,6 +67,9 @@ _format_number() {
 # --- Format hours with 1 decimal place ---
 _format_hours() {
 	local val="$1"
+	if [[ -z "$val" || "$val" == "null" || ! "$val" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+		val="0"
+	fi
 	printf "%.1f" "$val"
 	return 0
 }
