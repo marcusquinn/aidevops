@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.92] - 2026-05-02
+
+### Fixed
+
+- use app usage fallback for sparse backlit stream (#22309)
+
 ## [3.13.91] - 2026-05-02
 
 ### Added
