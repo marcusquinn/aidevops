@@ -399,8 +399,8 @@ _handle_post_merge_actions() {
 		fi
 
 		if [[ "$_parent_task_guard" -eq 0 ]]; then
-			if [[ -z "$pr_labels" ]]; then
-				pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			if [[ $# -lt 5 ]]; then
+				pr_labels=$(_gh_with_timeout read gh pr view "$pr_number" --repo "$repo_slug" \
 					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
 			fi
 			local _solved_actor="interactive"
