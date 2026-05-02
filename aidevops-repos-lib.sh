@@ -246,7 +246,10 @@ _scope_includes() {
 		*)        required_level=1 ;;
 	esac
 
-	[[ $current_level -ge $required_level ]]
+	if [[ $current_level -ge $required_level ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # Check whether a repo is marked as an agent source repo in local project

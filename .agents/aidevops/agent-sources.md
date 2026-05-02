@@ -14,10 +14,12 @@ Use agent sources when agents should stay in a private Git repo but remain avail
 ## Quick Start
 
 1. Keep private agents under `.agents/` in a private Git repo.
-2. Register the repo with `aidevops sources add <path>`.
-3. Run `aidevops update` or `aidevops sources sync`.
-4. Synced files land in `~/.aidevops/agents/custom/<source-name>/`.
-5. Add `.agents/agent-pack.json` when the repo exposes reusable capabilities
+2. Mark the repo in `~/.config/aidevops/repos.json` with `"agent_source": true`.
+3. Run `aidevops init` in the repo to seed root `AGENTS.md` and the core-style `.agents/` skeleton.
+4. Register the repo with `aidevops sources add <path>`.
+5. Run `aidevops update` or `aidevops sources sync`.
+6. Synced files land in `~/.aidevops/agents/custom/<source-name>/`.
+7. Add `.agents/agent-pack.json` when the repo exposes reusable capabilities
    that should be routed without reading every private file at startup.
 
 ## CLI
@@ -74,16 +76,30 @@ my-private-agents/.agents/my-agent/
 
 ## Repo Checklist
 
-1. Create a Git repo with a `.agents/` directory.
-2. Add an agent subdirectory with `<name>.md`.
-3. Use `mode: primary` when the agent should auto-discover in `~/.aidevops/agents/`.
-4. Add slash commands as `.md` files with `agent: <Name>` frontmatter.
-5. Add any helper `.sh` scripts needed for CLI automation.
-6. Add `.agents/agent-pack.json` for private packs that should advertise
-   domains, triggers, commands, helpers, secrets, and outputs compactly.
-7. Keep the manifest's data-flow contract current as inputs, outputs, and
-   privacy tiers change.
-8. Follow `tools/build-agent/build-agent.md`.
+1. Create or clone the private Git repo.
+2. Add the repo to `~/.config/aidevops/repos.json` with `"agent_source": true` or compatibility form `"role": "agent-source"`.
+3. Run `aidevops init`; missing root `AGENTS.md`, `.agents/AGENTS.md`, and core-style skeleton directories are seeded from `.agents/templates/agent-source-repo/`.
+4. Add primary agents as root `.agents/<name>.md` files.
+5. Add extended context in matching `.agents/<name>/` directories only when needed.
+6. Put reusable capabilities in shared `tools/`, `services/`, `workflows/`, `reference/`, `scripts/`, `configs/`, `templates/`, `rules/`, or `tests/` directories.
+7. Use `mode: primary` when the agent should auto-discover in `~/.aidevops/agents/`.
+8. Add slash commands as `.md` files with `agent: <Name>` frontmatter.
+9. Add helper scripts in `.agents/scripts/` and verify them with `shellcheck`.
+10. Add `.agents/agent-pack.json` for private packs that should advertise
+    domains, triggers, commands, helpers, secrets, and outputs compactly.
+11. Keep the manifest's data-flow contract current as inputs, outputs, and
+    privacy tiers change.
+12. Follow `tools/build-agent/build-agent.md`.
+
+## Init and Update Template Policy
+
+Agent-source repos are managed as private extensions of the core framework organization model.
+
+- **Detection:** `aidevops init` and `aidevops update` treat a repo as an agent source when its project `.aidevops.json` or managed `repos.json` entry has `"agent_source": true`; `"role": "agent-source"` is accepted for older configs.
+- **Initial seed:** `aidevops init` creates root `AGENTS.md`, `.agents/AGENTS.md`, and the standard `.agents/` directory skeleton when they are missing.
+- **Update propagation:** `aidevops update` traverses registered repos from `repos.json` and refreshes framework-owned template blocks in every agent-source repo.
+- **Non-destructive rule:** only blocks marked with `<!-- aidevops:agent-source-template:start -->` and `<!-- aidevops:agent-source-template:end -->` are refreshed. User-authored files or files without those markers are left untouched.
+- **Privacy rule:** never write private repo slugs into public TODO entries, issue bodies, PR comments, or logs. Say "a managed private agent source repo" instead.
 
 ## Agent Pack Manifest
 
@@ -171,7 +187,6 @@ allows a narrower destination.
 Use `~/.aidevops/.agent-workspace/work/<pack-name>/` for private artifacts that
 must survive the session. Use `~/.aidevops/.agent-workspace/tmp/session-*` for
 throwaway intermediates. Never commit `secret-adjacent` or `never-export` content.
-
 ### Slash Command Format
 
 ```yaml

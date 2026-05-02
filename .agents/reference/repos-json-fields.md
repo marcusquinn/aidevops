@@ -15,6 +15,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
 | `role` | string | `"maintainer"` or `"contributor"`. Controls which pulse scanners run |
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
+| `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
 
 ### `role` detail
 
@@ -30,6 +31,17 @@ Auto-detected from slug owner vs `gh api user` when omitted.
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
 Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+
+### `agent_source` detail
+
+Set `"agent_source": true` on private repos that store aidevops agent packs. `"role": "agent-source"` is also accepted for compatibility, but the boolean field is preferred because it does not overload maintainer/contributor scanner role semantics.
+
+Agent-source repos receive non-destructive template management:
+
+- `aidevops init` creates root `AGENTS.md`, `.agents/AGENTS.md`, and the core-style `.agents/` skeleton when absent.
+- `aidevops update` revisits every managed repo marked as an agent source and refreshes only framework-owned managed blocks marked with `<!-- aidevops:agent-source-template:* -->`.
+- User-authored files without the managed markers are never overwritten.
+- Public TODO entries, issue text, logs, and comments must not include private repo slugs; use generic wording such as "a managed private agent source repo".
 
 ## Scheduling and Lifecycle Fields
 
