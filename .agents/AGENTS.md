@@ -545,8 +545,9 @@ See also `reference/pre-commit-hooks.md` for the full playbook and "Stale-sympto
 
 **Worktree removal safety:**
 
-- `worktree-helper.sh remove` and `wt clean` move the worktree directory to system trash before deregistering from git. Accidental removal (e.g. by cleanup routines) is recoverable — restore from trash and `git worktree add` on the same branch.
-- If trash is unavailable, falls back to permanent `git worktree remove`.
+- Manual `worktree-helper.sh remove` stays trash-backed for operator recoverability.
+- Verified cleanup paths (`wt clean --auto --force-merged`, pulse orphan cleanup, empty skill-update worktrees) use guarded permanent removal after current-cwd, canonical repo, ownership, claim, PR, dirty-state, and grace checks pass.
+- Every removal or skip writes `cleanup_worktrees.log` with caller, path, reason, and `mode=trash|permanent|fixture|skipped`. Fixture-only test worktrees must keep explicit path-shape assertions before direct deletion.
 
 **Pulse restart after deploying pulse script fixes (MANDATORY):**
 

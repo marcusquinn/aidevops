@@ -7,7 +7,7 @@
 #
 # Tests cover:
 #   1. log_worktree_removal_event writes exactly one structured line per call
-#   2. Log format: [ISO8601] [caller] worktree-{removed|skipped}: <path> — <reason>
+#   2. Log format: [ISO8601] [caller] worktree-{removed|skipped}: <path> — <reason> — mode=<mode>
 #   3. Custom AIDEVOPS_CLEANUP_LOG env var is honoured
 #   4. All three event types produce correct type strings in the log
 #   5. should_skip_cleanup emits worktree-skipped when ownership blocks removal
@@ -101,7 +101,7 @@ test_log_writes_one_line() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 
-	log_worktree_removal_event "$_WTAR_REMOVED" "test-caller.sh" "/tmp/test-wt" "manual"
+	log_worktree_removal_event "$_WTAR_REMOVED" "test-caller.sh" "/tmp/test-wt" "manual" "trash"
 
 	local rc=0
 	assert_line_count "$log_file" 1 || rc=$?
@@ -120,9 +120,9 @@ test_log_format_correct() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 
-	log_worktree_removal_event "$_WTAR_SKIPPED" "worktree-helper.sh" "/some/path" "owned-skip"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "worktree-helper.sh" "/some/path" "owned-skip" "skipped"
 
-	local pattern='^\[20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] \[worktree-helper\.sh\] worktree-skipped: /some/path — owned-skip$'
+	local pattern='^\[20[0-9]{2}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\] \[worktree-helper\.sh\] worktree-skipped: /some/path — owned-skip — mode=skipped$'
 	local rc=0
 	assert_file_contains "$log_file" "$pattern" || rc=$?
 	print_result "log_format_correct" "$rc" "Log line does not match expected format. Content: $(cat "$log_file" 2>/dev/null)"
@@ -140,7 +140,7 @@ test_custom_log_path() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 
-	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt/path" "age-eligible"
+	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt/path" "age-eligible" "permanent"
 
 	local rc=0
 	if [[ -f "$custom_log" ]]; then
@@ -164,15 +164,15 @@ test_all_event_types() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"
 
-	log_worktree_removal_event "$_WTAR_REMOVED" "s.sh" "/p1" "manual"
-	log_worktree_removal_event "$_WTAR_SKIPPED" "s.sh" "/p2" "grace-period"
-	log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "s.sh" "/p3" "fixture"
+	log_worktree_removal_event "$_WTAR_REMOVED" "s.sh" "/p1" "manual" "trash"
+	log_worktree_removal_event "$_WTAR_SKIPPED" "s.sh" "/p2" "grace-period" "skipped"
+	log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "s.sh" "/p3" "fixture" "fixture"
 
 	local rc=0
 	assert_line_count "$log_file" 3 || rc=1
-	assert_file_contains "$log_file" "worktree-removed.*p1" || rc=1
-	assert_file_contains "$log_file" "worktree-skipped.*p2.*grace-period" || rc=1
-	assert_file_contains "$log_file" "worktree-fixture-removed.*p3.*fixture" || rc=1
+	assert_file_contains "$log_file" "worktree-removed.*p1.*mode=trash" || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*p2.*grace-period.*mode=skipped" || rc=1
+	assert_file_contains "$log_file" "worktree-fixture-removed.*p3.*fixture.*mode=fixture" || rc=1
 	print_result "all_event_types_logged" "$rc" "Not all event types written correctly"
 	return 0
 }
@@ -219,7 +219,7 @@ test_should_skip_cleanup_owned_skip_logs() {
 				echo "    $wt_path_sc"
 				echo ""
 				log_worktree_removal_event "$_WTAR_SKIPPED" "worktree-helper.sh" \
-					"$wt_path_sc" "owned-skip"
+					"$wt_path_sc" "owned-skip" "skipped"
 				return 0
 			fi
 			return 1
@@ -248,11 +248,63 @@ test_idempotent_sourcing() {
 	# shellcheck source=../audit-worktree-removal-helper.sh
 	source "$AUDIT_HELPER"  # second source — guard makes this a no-op
 
-	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt" "manual"
+	log_worktree_removal_event "$_WTAR_REMOVED" "test.sh" "/wt" "manual" "trash"
 
 	local rc=0
 	assert_line_count "$log_file" 1 || rc=$?
 	print_result "idempotent_sourcing" "$rc" "Double-sourcing produced unexpected output"
+	return 0
+}
+
+# =============================================================================
+# Test 7: shared guard refuses current working directory removals
+# =============================================================================
+test_guard_refuses_current_cwd() {
+	local log_file="${TEST_DIR}/t7-cleanup.log"
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+
+	local wt_path="${TEST_DIR}/current-wt"
+	mkdir -p "$wt_path"
+
+	local rc=0
+	(
+		unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+		# shellcheck source=../audit-worktree-removal-helper.sh
+		source "$AUDIT_HELPER"
+		cd "$wt_path" || exit 2
+		if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
+			exit 1
+		fi
+	) || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		assert_file_contains "$log_file" "worktree-skipped.*current-worktree.*mode=skipped" || rc=$?
+	fi
+	print_result "guard_refuses_current_cwd" "$rc" \
+		"Expected current-worktree skip. Log: $(cat "$log_file" 2>/dev/null)"
+	return 0
+}
+
+# =============================================================================
+# Test 8: permanent helper removes only after guard passes and logs mode
+# =============================================================================
+test_permanent_helper_removes_and_logs() {
+	local log_file="${TEST_DIR}/t8-cleanup.log"
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+
+	local wt_path="${TEST_DIR}/old-wt"
+	mkdir -p "$wt_path"
+
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+
+	local rc=0
+	remove_worktree_path_permanently "$wt_path" "test.sh" "age-eligible" || rc=$?
+	[[ ! -e "$wt_path" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-removed.*age-eligible.*mode=permanent" || rc=1
+	print_result "permanent_helper_removes_and_logs" "$rc" \
+		"Expected permanent removal audit. Log: $(cat "$log_file" 2>/dev/null)"
 	return 0
 }
 
@@ -270,6 +322,8 @@ test_custom_log_path
 test_all_event_types
 test_should_skip_cleanup_owned_skip_logs
 test_idempotent_sourcing
+test_guard_refuses_current_cwd
+test_permanent_helper_removes_and_logs
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."

@@ -195,7 +195,7 @@ should_skip_cleanup() {
 			echo "    $wt_path"
 			echo ""
 			# t2976: audit log — cleanup skipped, caller is inside this worktree
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "current-worktree"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "current-worktree" "skipped"
 			return 0
 			;;
 		esac
@@ -211,7 +211,7 @@ should_skip_cleanup() {
 		echo "    $wt_path"
 		echo ""
 		# t2976: audit log — cleanup skipped, interactive claim active
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "active-claim"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "active-claim" "skipped"
 		return 0
 	fi
 
@@ -225,7 +225,7 @@ should_skip_cleanup() {
 		echo "    $wt_path"
 		echo ""
 		# t2976: audit log — cleanup skipped, registry owner is alive
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip" "skipped"
 		return 0
 	fi
 
@@ -240,7 +240,7 @@ should_skip_cleanup() {
 		echo "    $wt_path"
 		echo ""
 		# t2976: audit log — cleanup skipped, within grace period
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "grace-period"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "grace-period" "skipped"
 		return 0
 	fi
 
@@ -252,7 +252,7 @@ should_skip_cleanup() {
 		echo "    $wt_path"
 		echo ""
 		# t2976: audit log — cleanup skipped, open PR exists
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "open-pr"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "open-pr" "skipped"
 		return 0
 	fi
 
@@ -265,7 +265,7 @@ should_skip_cleanup() {
 		echo "    $wt_path"
 		echo ""
 		# t2976: audit log — cleanup skipped, zero-commit+dirty safety check
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "zero-commit-dirty"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "zero-commit-dirty" "skipped"
 		return 0
 	fi
 
@@ -277,7 +277,7 @@ should_skip_cleanup() {
 			echo "    $wt_path"
 			echo ""
 			# t2976: audit log — cleanup skipped, uncommitted changes present
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "dirty-skip"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "dirty-skip" "skipped"
 			return 0
 		fi
 		# force_merged=true: dirty state is abandoned WIP, safe to force-remove
@@ -501,16 +501,22 @@ _clean_remove_merged() {
 					if worktree_has_changes "$worktree_path" && [[ "$force_merged" == "true" ]]; then
 						use_force=true
 					fi
-				echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
-				# Clean up heavy reproducible directories first to speed up removal
+					echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
+					if ! worktree_removal_guard "$worktree_path" "$_WTAR_WH_CALLER" "branch-merged"; then
+						echo -e "${YELLOW}Skipped $worktree_branch - removal guard refused path${NC}" >&2
+						worktree_path=""
+						worktree_branch=""
+						continue
+					fi
+					# Clean up heavy reproducible directories first to speed up removal
 					# (node_modules, .next, .turbo can have 100k+ files — rm -rf is faster than trash)
 					rm -rf "$worktree_path/node_modules" 2>/dev/null || true
 					rm -rf "$worktree_path/.next" 2>/dev/null || true
 					rm -rf "$worktree_path/.turbo" 2>/dev/null || true
-					# Move entire worktree to trash for recoverability, then prune git's registry.
-					# Falls back to git worktree remove if trash is unavailable.
+					# Safety gates above prove the completed worktree is disposable; remove
+					# permanently to avoid growing system Trash, then prune git's registry.
 					local removed=false
-					if trash_path "$worktree_path"; then
+					if remove_worktree_path_permanently "$worktree_path" "$_WTAR_WH_CALLER" "branch-merged"; then
 						git worktree prune 2>/dev/null || true
 						removed=true
 					else
@@ -520,16 +526,15 @@ _clean_remove_merged() {
 						fi
 						# shellcheck disable=SC2086
 						if git worktree remove $remove_flag "$worktree_path" 2>/dev/null; then
+							log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "branch-merged" "permanent"
 							removed=true
 						fi
 					fi
-				if [[ "$removed" != "true" ]]; then
-					echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}" >&2
-				else
+					if [[ "$removed" != "true" ]]; then
+						echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}" >&2
+					else
 						# Unregister ownership (t189)
 						unregister_worktree "$worktree_path"
-						# t2976: audit log — merged/closed branch worktree removed
-						log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "branch-merged"
 						# Localdev integration (t1224.8): auto-remove branch route
 						localdev_auto_branch_rm "$worktree_branch"
 						# Also delete the local branch

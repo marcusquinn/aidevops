@@ -676,15 +676,21 @@ _cleanup_worktree() {
 		if is_worktree_owned_by_others "$wt_path"; then
 			log_warning "Skipping removal of worktree owned by another session: $wt_path"
 			# t2976: audit log — skill worktree removal blocked by ownership registry
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_SU_CALLER" "$wt_path" "owned-skip"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_SU_CALLER" "$wt_path" "owned-skip" "skipped"
+			return 0
+		fi
+		if ! worktree_removal_guard "$wt_path" "$_WTAR_SU_CALLER" "manual"; then
+			log_warning "Skipping removal of guarded worktree path: $wt_path"
 			return 0
 		fi
 		log_info "Cleaning up empty worktree: $wt_path"
-		git worktree remove "$wt_path" --force 2>/dev/null || true
+		if ! remove_worktree_path_permanently "$wt_path" "$_WTAR_SU_CALLER" "manual"; then
+			if git worktree remove "$wt_path" --force 2>/dev/null; then
+				log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_SU_CALLER" "$wt_path" "manual" "permanent"
+			fi
+		fi
 		git branch -D "$branch" 2>/dev/null || true
 		unregister_worktree "$wt_path"
-		# t2976: audit log — empty skill worktree removed on failure cleanup
-		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_SU_CALLER" "$wt_path" "manual"
 	fi
 	return 0
 }

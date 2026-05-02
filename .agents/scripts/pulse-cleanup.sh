@@ -49,7 +49,7 @@
 _PULSE_CLEANUP_LOADED=1
 
 # t2559: canonical-guard-helper.sh provides is_registered_canonical and
-# assert_git_available, used by _trash_or_remove and
+# assert_git_available, used by guarded removal helpers and
 # _cleanup_merged_prs_for_all_repos below. Guarded missing-file so older
 # deployments fail open.
 _PULSE_CLEANUP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || _PULSE_CLEANUP_SCRIPT_DIR=""
@@ -232,7 +232,7 @@ _worktree_owner_alive() {
 	if pgrep -f "$wt_path" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — pgrep matched active process" >>"$LOGFILE"
 		# t2976: audit log — orphan cleanup blocked, pgrep found active owner
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip" "skipped"
 		return 0
 	fi
 
@@ -241,7 +241,7 @@ _worktree_owner_alive() {
 	if is_worktree_owned_by_others "$wt_path"; then
 		echo "[pulse-wrapper] Orphan cleanup: skipping ${wt_branch:-detached} ($wt_path) — registered owner alive in registry" >>"$LOGFILE"
 		# t2976: audit log — orphan cleanup blocked, registry owner is alive
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "owned-skip" "skipped"
 		return 0
 	fi
 
@@ -262,7 +262,7 @@ _worktree_owner_alive() {
 		if [[ -n "$_isc_helper" ]]; then
 			if "$_isc_helper" branch-has-active-claim "$wt_branch" --worktree "$wt_path" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Orphan cleanup: skipping $wt_branch ($wt_path) — active interactive claim stamp" >>"$LOGFILE"
-				log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "active-claim"
+				log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path" "active-claim" "skipped"
 				return 0
 			fi
 		fi
@@ -672,6 +672,10 @@ _cleanup_single_worktree() {
 	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
 
 	# Step 3: skip if an active owner still holds the worktree (GH#18346, GH#18021)
+	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible"; then
+		return 1
+	fi
+
 	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
 		return 1
 	fi
@@ -694,10 +698,16 @@ _cleanup_single_worktree() {
 		_record_orphan_crash_classification "$wt_branch_age" "$dirty_count" "$repo_slug_age"
 	fi
 
-	# Step 5b: perform removal (trash worktree dir + deregister + branch cleanup)
-	# Move to trash first for recoverability (macOS: trash CLI, Linux: gio trash).
-	# Then deregister from git. Falls back to git worktree remove if trash fails.
-	_trash_or_remove "$wt_path_age" || git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null || true
+	# Step 5b: perform removal (guarded permanent delete + deregister + branch cleanup)
+	# Age/PR/dirty gates above prove this orphaned worktree is disposable; remove
+	# permanently to avoid growing system Trash.
+	if ! remove_worktree_path_permanently "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible"; then
+		if git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null; then
+			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible" "permanent"
+		else
+			return 1
+		fi
+	fi
 	# Prune git's worktree registry for the now-missing directory
 	git -C "$rp_age" worktree prune 2>/dev/null || true
 	# t2860: deregister from SQLite ownership registry to prevent stale entries.
@@ -706,8 +716,6 @@ _cleanup_single_worktree() {
 	# Mirrors the pattern in worktree-helper.sh:1224 (cmd_remove path).
 	# Fail-open: registry deregistration must never block cleanup.
 	unregister_worktree "$wt_path_age" 2>/dev/null || true
-	# t2976: audit log — orphan worktree removed by pulse cleanup
-	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible"
 	if [[ -n "$wt_branch_age" ]]; then
 		git -C "$rp_age" branch -D "$wt_branch_age" 2>/dev/null || true
 		git -C "$rp_age" push origin --delete "$wt_branch_age" 2>/dev/null || true
