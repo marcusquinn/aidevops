@@ -4,9 +4,9 @@
 #
 # test-shared-gh-wrappers-source.sh — t2709 / GH#20357 regression guard.
 #
-# Asserts that sourcing shared-constants.sh (which sources shared-gh-wrappers.sh)
-# emits zero output about shared-gh-wrappers-rest-fallback.sh under both bash
-# and zsh, and that the REST fallback helpers are loaded correctly in both.
+# Asserts that sourcing shared-constants.sh (which sources portable-stat.sh and
+# shared-gh-wrappers.sh) emits no missing-source warnings under both bash and zsh,
+# and that the REST fallback helpers are loaded correctly in both.
 #
 # Root cause: shared-gh-wrappers.sh:44-46 used ${BASH_SOURCE[0]%/*} to resolve
 # its own directory. Under zsh, BASH_SOURCE is not populated, so the expansion
@@ -21,9 +21,9 @@
 # fallback — pure bash syntax, shfmt-parseable, same directory.
 #
 # Tests:
-#   1. bash: source shared-constants.sh emits zero REST-fallback warnings
+#   1. bash: source shared-constants.sh emits zero missing-source warnings
 #   2. bash: _rest_issue_create is defined after sourcing
-#   3. zsh:  source shared-constants.sh emits zero REST-fallback warnings (t2709)
+#   3. zsh:  source shared-constants.sh emits zero missing-source warnings (t2709/t3455)
 #   4. zsh:  _rest_issue_create is defined after sourcing (t2709)
 
 set -uo pipefail
@@ -67,15 +67,15 @@ skip() {
 }
 
 # =============================================================================
-# Test 1 + 2: bash — source emits no REST-fallback warning, helper defined
+# Test 1 + 2: bash — source emits no missing-source warning, helper defined
 # =============================================================================
 printf '\n=== bash source tests ===\n'
 
 bash_output=$(bash -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>&1" || true)
-if printf '%s\n' "$bash_output" | grep -q 'shared-gh-wrappers-rest-fallback.sh'; then
-	fail "bash source emits REST-fallback warning" "$bash_output"
+if printf '%s\n' "$bash_output" | grep -Eq 'shared-gh-wrappers-rest-fallback\.sh|portable-stat\.sh'; then
+	fail "bash source emits missing-source warning" "$bash_output"
 else
-	pass "bash source emits no REST-fallback warning"
+	pass "bash source emits no missing-source warning"
 fi
 
 bash_fn=$(bash -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _rest_issue_create 2>/dev/null" || true)
@@ -86,7 +86,7 @@ else
 fi
 
 # =============================================================================
-# Test 3 + 4: zsh — source emits no REST-fallback warning, helper defined
+# Test 3 + 4: zsh — source emits no missing-source warning, helper defined
 # =============================================================================
 printf '\n=== zsh source tests ===\n'
 
@@ -95,10 +95,10 @@ if ! command -v zsh >/dev/null 2>&1; then
 	skip "zsh: _rest_issue_create defined after source (zsh unavailable)"
 else
 	zsh_output=$(zsh -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>&1" || true)
-	if printf '%s\n' "$zsh_output" | grep -q 'shared-gh-wrappers-rest-fallback.sh'; then
-		fail "zsh source emits REST-fallback warning (t2709)" "$zsh_output"
+	if printf '%s\n' "$zsh_output" | grep -Eq 'shared-gh-wrappers-rest-fallback\.sh|portable-stat\.sh'; then
+		fail "zsh source emits missing-source warning (t2709/t3455)" "$zsh_output"
 	else
-		pass "zsh source emits no REST-fallback warning (t2709)"
+		pass "zsh source emits no missing-source warning (t2709/t3455)"
 	fi
 
 	zsh_fn=$(zsh -c "source '${SCRIPTS_DIR}/shared-constants.sh' 2>/dev/null && type _rest_issue_create 2>/dev/null" || true)

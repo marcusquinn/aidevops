@@ -773,8 +773,9 @@ fast_cp() {
 # Provides: _file_mtime_epoch, _file_size_bytes, _file_perms, _file_owner.
 # =============================================================================
 
+_SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=./portable-stat.sh
-source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+source "${_SC_SELF%/*}/portable-stat.sh"
 # _file_size_bytes, _file_perms, _file_mtime_epoch, _file_owner, _stat_batch,
 # _stat_translate_fmt are now provided by portable-stat.sh (GH#21742).
 
