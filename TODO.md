@@ -3904,3 +3904,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3435 Measure CPU and RAM per pulse and worker outcome #auto-dispatch #enhancement ref:GH#22286
 
 - [ ] t3436 Investigate lingering dispatch timing record processes #auto-dispatch #bug ref:GH#22287
+
+- [ ] t3439 Audit shell hot paths for compute-efficient tools #auto-dispatch #enhancement ref:GH#22289
+
+- [ ] t3438 Audit pulse GitHub API prefetch for need-to-know caching #auto-dispatch #enhancement ref:GH#22288
