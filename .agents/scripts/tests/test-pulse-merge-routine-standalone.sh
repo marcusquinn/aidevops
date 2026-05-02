@@ -232,12 +232,18 @@ fi
 
 SCHEDULERS_PLATFORM_FILE="${REPO_ROOT}/setup-modules/schedulers-platform.sh"
 if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
-	if grep -qF 'pulse-merge-routine.sh' "$SCHEDULERS_PLATFORM_FILE" \
-		&& ! grep -qF '<string>--merge-only</string>' "$SCHEDULERS_PLATFORM_FILE"; then
+	if awk '
+		BEGIN { in_func=0; has_routine_script=0; has_merge_only_arg=0 }
+		/^_install_pulse_merge_routine_launchd\(\)/ { in_func=1; next }
+		in_func && /^\}/ { in_func=0 }
+		in_func && /^[[:space:]]*<string>\$\{_xml_pmr_script\}<\/string>[[:space:]]*$/ { has_routine_script=1 }
+		in_func && /^[[:space:]]*<string>--merge-only<\/string>[[:space:]]*$/ { has_merge_only_arg=1 }
+		END { exit (has_routine_script && !has_merge_only_arg) ? 0 : 1 }
+	' "$SCHEDULERS_PLATFORM_FILE"; then
 		pass "9: scheduler uses timeout-protected pulse-merge-routine"
 	else
 		fail "9: scheduler uses timeout-protected pulse-merge-routine" \
-			"merge scheduler must not install unbounded pulse-wrapper.sh --merge-only"
+			"merge LaunchAgent must run pulse-merge-routine.sh directly and must not pass --merge-only"
 	fi
 else
 	skip "9: scheduler uses timeout-protected pulse-merge-routine" \
