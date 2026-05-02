@@ -147,6 +147,14 @@ export -f git
 
 _check_and_handle_shallow_clone() { return 0; }
 
+timeout() {
+	local _duration="${1:-}"
+	: "$_duration"
+	shift || return 1
+	"$@"
+	return $?
+}
+
 # Control variable: set to 1 to simulate gh_create_pr partial success
 GH_CREATE_PR_FAIL=0
 # Control variable: the URL to return from gh_create_pr on success
