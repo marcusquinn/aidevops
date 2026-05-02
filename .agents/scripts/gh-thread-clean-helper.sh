@@ -74,6 +74,27 @@ def emit_record(prefix, body):
         print()
 
 
+def list_records(value):
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        nodes = value.get('nodes')
+        if isinstance(nodes, list):
+            return nodes
+        return [value]
+    return []
+
+
+def author_login(item):
+    author = item.get('author')
+    if isinstance(author, dict):
+        return author.get('login')
+    user = item.get('user')
+    if isinstance(user, dict):
+        return user.get('login')
+    return None
+
+
 raw = open(sys.argv[1], encoding='utf-8', errors='replace').read()
 if not raw.strip():
     sys.exit(0)
@@ -81,16 +102,16 @@ data = json.loads(raw)
 if isinstance(data, dict):
     if 'body' in data:
         emit_record('Body', data.get('body'))
-    comments = data.get('comments') or data.get('nodes') or []
+    comments = list_records(data.get('comments') or data.get('nodes'))
 elif isinstance(data, list):
-    comments = data
+    comments = list_records(data)
 else:
     comments = []
 
 for index, item in enumerate(comments, 1):
     if not isinstance(item, dict):
         continue
-    author = item.get('author', {}).get('login') if isinstance(item.get('author'), dict) else item.get('user', {}).get('login', 'unknown')
+    author = author_login(item)
     body = clean_body(item.get('body', ''))
     if not body:
         continue
