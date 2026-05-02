@@ -5,8 +5,9 @@
 # privacy-guard-pre-push.sh — git pre-push hook.
 #
 # Blocks a push to a public GitHub repo if the push diff introduces any
-# private repo slug (from ~/.config/aidevops/repos.json) into TODO.md,
-# todo/**, README.md, or .github/ISSUE_TEMPLATE/** content.
+# private repo slug (from ~/.config/aidevops/repos.json) or local/private path
+# into repository content. The default scan surface is the full repo and can be
+# narrowed with PRIVACY_SCAN_GLOBS_TEXT when a repository has a documented need.
 #
 # Install: see .agents/scripts/install-privacy-guard.sh
 #
@@ -97,12 +98,9 @@ if [[ ! -s "$slugs_file" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Fast-path: read all refs from stdin first (stdin is a one-shot stream),
-# then check if any watchlist files appear in the diff. The privacy guard
-# only scans TODO.md, todo/**, README.md, and .github/ISSUE_TEMPLATE/** —
-# a doc-only push that touches none of these is safe regardless of slug
-# content elsewhere. Skipping the per-ref scan saves ~1-3s of gh API
-# calls and grep on repos with no private-slug risk in non-watchlist files.
+# Read all refs from stdin first (stdin is a one-shot stream). The helper owns
+# the scan surface via PRIVACY_SCAN_GLOBS / PRIVACY_SCAN_GLOBS_TEXT; aidevops
+# defaults to full-repo scanning so source/docs/tests are protected too.
 # ---------------------------------------------------------------------------
 _all_refs=()
 while IFS=' ' read -r _lr _ls _rr _rs; do
@@ -130,34 +128,7 @@ if [[ -n "$remote_name" ]]; then
 	fi
 fi
 
-_watchlist_present=0
-for _ref_entry in "${_all_refs[@]}"; do
-	read -r _lr _ls _rr _rs <<<"$_ref_entry"
-	[[ -z "$_ls" ]] && continue
-	[[ "$_ls" =~ ^0+$ ]] && continue
-	# Determine base for diff: use remote sha when known, merge-base otherwise.
-	# Use the ref's own local SHA ($_ls) instead of HEAD so multi-ref pushes
-	# compute the correct base for each ref being pushed (GH#20177).
-	_base=""
-	if [[ -n "$_rs" ]] && ! [[ "$_rs" =~ ^0+$ ]]; then
-		_base="$_rs"
-	else
-		_base=$(git merge-base "$_ls" "$_default_remote_head" 2>/dev/null || echo "")
-	fi
-	[[ -z "$_base" ]] && _watchlist_present=1 && break
-	if git diff --name-only "$_base" "$_ls" 2>/dev/null \
-		| grep -qE '^(TODO\.md|README\.md|todo/|\.github/ISSUE_TEMPLATE/)'; then
-		_watchlist_present=1
-		break
-	fi
-done
-
-if [[ "$_watchlist_present" -eq 0 ]]; then
-	[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "no watchlist files (TODO.md, todo/**, README.md, .github/ISSUE_TEMPLATE/**) in push diff — privacy scan skipped"
-	exit 0
-fi
-
-[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "watchlist files present — scanning diff for private slugs"
+[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "scanning push diff for private references"
 
 # Walk each ref in the push (re-iterate over collected refs)
 exit_code=0
@@ -169,14 +140,19 @@ for _ref_entry in "${_all_refs[@]}"; do
 		continue
 	fi
 
-	hits_output=$(privacy_scan_diff "$remote_sha" "$local_sha" "$slugs_file")
+	_scan_base="$remote_sha"
+	if [[ -z "$_scan_base" || "$_scan_base" =~ ^0+$ ]]; then
+		_scan_base=$(git merge-base "$local_sha" "$_default_remote_head" 2>/dev/null || echo "")
+		[[ -z "$_scan_base" ]] && _scan_base="$remote_sha"
+	fi
+	hits_output=$(privacy_scan_diff "$_scan_base" "$local_sha" "$slugs_file")
 	scan_rc=$?
 	if [[ "$scan_rc" -ne 0 ]]; then
-		printf '\n[privacy-guard][BLOCK] Push to %s contains private repo slugs in planning/docs content:\n\n' "$remote_name" >&2
+		printf '\n[privacy-guard][BLOCK] Push to %s contains private references in public-repo content:\n\n' "$remote_name" >&2
 		printf '%s\n\n' "$hits_output" >&2
 		printf '  Remove the private slug from the committed content and amend/rewrite the commit before pushing.\n' >&2
 		printf '  To bypass (audit trail preserves the override): PRIVACY_GUARD_DISABLE=1 git push ... or git push --no-verify\n' >&2
-		printf '  Private slug sources scanned: repos.json initialized_repos[] with mirror_upstream or local_only, plus ~/.aidevops/configs/privacy-guard-extra-slugs.txt\n\n' >&2
+		printf '  Sources scanned: private slugs from repos.json/extra-slugs plus built-in and configured local/private path patterns.\n\n' >&2
 		exit_code=1
 	fi
 done

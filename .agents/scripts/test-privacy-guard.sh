@@ -11,7 +11,7 @@
 # Tests:
 #   1. Match blocks: TODO.md diff introducing a private slug → scanner returns 1
 #   2. Sanitised passes: TODO.md diff without private slug → scanner returns 0
-#   3. No scan paths: diff only in src/ → scanner returns 0
+#   3. Source/code diffs are scanned too: diff in src/ → scanner returns 1 on leak
 #   4. Extra-slug file: privacy-guard-extra-slugs.txt entries are picked up
 #   5. Enumerate: repos.json with mirror_upstream / local_only → enumerated correctly
 #
@@ -209,7 +209,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Test 3: diff only in src/ (outside scan globs) → does not block
+# Test 3: diff in src/ is scanned under the public-repo full-surface default
 # -----------------------------------------------------------------------------
 (
 	cd "$REPO" || exit 1
@@ -229,10 +229,35 @@ pushd "$REPO" >/dev/null || exit 1
 hits=$(privacy_scan_diff "$base" "$head" "$SLUGS_FILE")
 rc=$?
 popd >/dev/null || exit 1
-if [[ "$rc" -eq 0 && -z "$hits" ]]; then
-	pass "src/ diff outside scan globs is not flagged"
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -q 'testorg/private-mirror'; then
+	pass "src/ diff with private slug is flagged"
 else
-	fail "src/ diff incorrectly flagged (rc=$rc hits=$hits)"
+	fail "src/ diff with private slug should be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test 3b: local/private path in source code → blocks even with empty slug list
+EMPTY_SLUGS_FILE="${TMP}/empty-slugs.txt"
+: >"$EMPTY_SLUGS_FILE"
+(
+	cd "$REPO" || exit 1
+	cat >src/local_path.ts <<'EOF'
+const WORKTREE = "/Users/example/Git/private-project";
+EOF
+	git add src/local_path.ts
+	git commit -m 'add local path reference' --quiet
+) || fail "could not seed test 3b repo state"
+
+base=$(git -C "$REPO" rev-parse HEAD~1)
+head=$(git -C "$REPO" rev-parse HEAD)
+
+pushd "$REPO" >/dev/null || exit 1
+hits=$(privacy_scan_diff "$base" "$head" "$EMPTY_SLUGS_FILE")
+rc=$?
+popd >/dev/null || exit 1
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -q '\[local-path\]'; then
+	pass "diff with local path is flagged without exposing raw path"
+else
+	fail "local path diff should be flagged generically (rc=$rc hits=$hits)"
 fi
 
 # =============================================================================
@@ -386,7 +411,7 @@ else
 		return "$rc"
 	}
 
-	# Test: public target + clean diff → exit 0
+# Test: public target + clean diff → exit 0
 	_seed_cache "test/public" false 0
 	_run_hook "origin" "git@github.com:test/public.git" \
 		"refs/heads/main ${CLEAN_HEAD} refs/heads/main ${INIT_HEAD}"
@@ -417,6 +442,26 @@ else
 		pass "hook dispatch: private target + leak diff → exit 0 (fast path)"
 	else
 		fail "hook dispatch: private target should exit 0 without scanning (got $rc)"
+	fi
+
+	# Test: public target + source leak diff → exit 1 (full-surface scan)
+	_seed_cache "test/public" false 0
+	(
+		cd "$HOOK_REPO" || exit 1
+		mkdir -p src
+		printf 'const leaked = "testorg/private-mirror";\n' >src/leak.js
+		git add src/leak.js
+		git commit -m 'source leak' --quiet
+	) || fail "hook dispatch: could not seed source leak"
+	SOURCE_LEAK_HEAD=$(git -C "$HOOK_REPO" rev-parse HEAD)
+	SOURCE_LEAK_BASE=$(git -C "$HOOK_REPO" rev-parse HEAD~1)
+	_run_hook "origin" "git@github.com:test/public.git" \
+		"refs/heads/main ${SOURCE_LEAK_HEAD} refs/heads/main ${SOURCE_LEAK_BASE}"
+	rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "hook dispatch: public target + source leak diff → exit 1 (blocked)"
+	else
+		fail "hook dispatch: source leak should exit 1 (got $rc)"
 	fi
 
 	# Test: PRIVACY_GUARD_DISABLE=1 bypass → exit 0 regardless of leak
@@ -463,6 +508,15 @@ if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -qF 'testorg/private-mirror';
 	pass "scan_text: full slug in text → flagged"
 else
 	fail "scan_text: full slug in text should be flagged (rc=$rc hits=$hits)"
+fi
+
+# Test: local path match in text body → returns 1 with generic placeholder
+hits=$(privacy_scan_text "See /Users/example/Git/private-project for details" "$TEXT_SLUGS_FILE")
+rc=$?
+if [[ "$rc" -eq 1 ]] && printf '%s' "$hits" | grep -q '\[local-path\]' && ! printf '%s' "$hits" | grep -q '/Users/example'; then
+	pass "scan_text: local path in text → flagged generically"
+else
+	fail "scan_text: local path should be flagged generically (rc=$rc hits=$hits)"
 fi
 
 # Test: clean text → returns 0, no hits

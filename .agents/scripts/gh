@@ -6,7 +6,8 @@
 #            + GraphQL→REST read rewriting under low budget (t3037)
 # =============================================================================
 #
-# Intercepts `gh issue comment|create` and `gh pr comment|create`, calls
+# Intercepts GitHub content writes (`gh issue/pr create|edit|comment|review`
+# and selected `gh api` REST write endpoints), calls
 # gh-signature-helper.sh footer, and appends the footer to --body / --body-file
 # when the canonical HTML marker `<!-- aidevops:sig -->` is missing. Every
 # other gh subcommand is passed straight through with minimal overhead.
@@ -177,13 +178,14 @@ _find_real_gh() {
 # Fast pass-through for non-intercepted subcommands.
 # Every gh invocation pays this case-match plus one exec.
 # t2876: extended to include issue:edit and pr:edit so privacy-scan layer
-# protects body/title edits the same way create/comment are protected.
+# protects body/title edits and review bodies the same way create/comment are
+# protected.
 # t3037: read subcommands (pr:view, issue:view, pr:list, issue:list) are
 # intercepted for GraphQL→REST budget-aware rewriting.
 # -----------------------------------------------------------------------------
 _SHIM_READ_REWRITE=""
 case "${1:-}:${2:-}" in
-issue:comment | issue:create | issue:edit | pr:create | pr:comment | pr:edit) ;;
+	issue:comment | issue:create | issue:edit | pr:create | pr:comment | pr:edit | pr:review) ;;
 pr:view | issue:view | pr:list | issue:list)
 	# t3037: read subcommands — may be rewritten to REST when GraphQL budget
 	# is low. Falls through to the read-rewrite handler below.
@@ -400,8 +402,10 @@ fi
 # -----------------------------------------------------------------------------
 # _shim_api_is_write_endpoint
 # Returns 0 (true) when the current _modified_args array represents a
-# POST or PATCH to an issue, issue-comment, or PR REST endpoint.
-# Recognises: /repos/*/issues  /repos/*/issues/N/comments  /repos/*/pulls
+# POST or PATCH to an issue, issue-comment, PR, PR-review, or PR-review-comment
+# REST endpoint.
+# Recognises: /repos/*/issues, /repos/*/issues/N/comments, /repos/*/pulls,
+# /repos/*/pulls/N/reviews, and PR review-comment endpoints.
 # Leaves GET, DELETE, and non-content endpoints (e.g. /labels PATCH) untouched.
 # -----------------------------------------------------------------------------
 _shim_api_is_write_endpoint() {
@@ -438,7 +442,34 @@ _shim_api_is_write_endpoint() {
 	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues(/[0-9]+)?(\?.*)?$ ]] && return 0
 	[[ "$npath" =~ ^repos/[^/]+/[^/]+/issues(/[0-9]+/comments|/comments/[0-9]+)(\?.*)?$ ]] && return 0
 	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls(/[0-9]+)?(\?.*)?$ ]] && return 0
-	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls(/[0-9]+/comments|/comments/[0-9]+)(\?.*)?$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls(/[0-9]+/(comments|reviews)|/[0-9]+/reviews/[0-9]+)(\?.*)?$ ]] && return 0
+	[[ "$npath" =~ ^repos/[^/]+/[^/]+/pulls/comments/[0-9]+(\?.*)?$ ]] && return 0
+	return 1
+}
+
+_shim_api_target_from_path() {
+	local path=""
+	local i=0
+	local a=""
+	while [[ $i -lt ${#_modified_args[@]} ]]; do
+		a="${_modified_args[$i]}"
+		case "$a" in
+		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview | -X | --method)
+			i=$((i + 2))
+			continue
+			;;
+		api) ;;
+		/repos/* | repos/*) [[ -z "$path" ]] && path="$a" ;;
+		-*) ;;
+		*) [[ -z "$path" ]] && path="$a" ;;
+		esac
+		i=$((i + 1))
+	done
+	local npath="${path#/}"
+	if [[ "$npath" =~ ^repos/([^/]+/[^/]+)(/|$|\?) ]]; then
+		printf 'https://github.com/%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
 	return 1
 }
 
@@ -556,7 +587,8 @@ _shim_privacy_scan() {
 	# shellcheck source=/dev/null
 	source "$_PRIVACY_HELPER" 2>/dev/null || return 0
 
-	# Determine target repo from --repo arg or current git remote.
+	# Determine target repo from --repo arg, gh api /repos/owner/repo path, or
+	# current git remote.
 	local target_url="" _idx=0
 	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
 		case "${_modified_args[$_idx]}" in
@@ -575,6 +607,9 @@ _shim_privacy_scan() {
 		esac
 		_idx=$((_idx + 1))
 	done
+	if [[ -z "$target_url" && "${_modified_args[0]:-}" == "api" ]]; then
+		target_url="$(_shim_api_target_from_path 2>/dev/null || true)"
+	fi
 	if [[ -z "$target_url" ]]; then
 		target_url=$(git remote get-url origin 2>/dev/null) || return 0
 		[[ -z "$target_url" ]] && return 0
@@ -598,11 +633,6 @@ _shim_privacy_scan() {
 		rm -f "$_slugs_file"
 		return 0
 	fi
-	if [[ ! -s "$_slugs_file" ]]; then
-		rm -f "$_slugs_file"
-		return 0
-	fi
-
 	# Build content blob from --body / --body-file / --title args plus
 	# `-f body=...` / `-F body=@...` forms used by gh api.
 	local _blob="" _bf _kv

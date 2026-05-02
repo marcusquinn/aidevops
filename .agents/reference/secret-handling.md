@@ -98,3 +98,19 @@ After any Bash command referencing a credential variable (`gopass`, `$*_SECRET`,
 - URLs in config records frequently contain embedded secrets (`?secret=`, `?token=`, `?key=`, `?api_key=`, `?password=`). Treat any URL field in application config as potentially containing credentials.
 - Applies broadly: WordPress options/meta, Stripe webhook endpoints, Zapier/Make.com integration configs, OAuth redirect URIs with state tokens, any SaaS callback URL stored in a database.
 - When investigating webhook or integration issues, describe the config structure (field names, record count, status) without exposing field values. If a specific URL is needed for debugging, ask the user to check it in their admin UI.
+
+---
+
+## 8.5 Private Repository and Local Path References (t3468)
+
+**Threat:** Public code, issues, PR bodies, comments, or reviews can leak private repository names, bare private repo basenames, or local filesystem paths even when no credential value is present.
+
+- Use placeholders in public surfaces: `<webapp>`, `[private-repo]`, `[local-path]`, "a managed private repo", or "cross-repo project".
+- Deterministic guard locations:
+  - `.agents/scripts/privacy-guard-helper.sh` centralizes detection for full private slugs, bare private basenames, built-in local path patterns, and configured private path patterns.
+  - `.agents/scripts/gh` scans public-target issue/PR create/edit/comment/review bodies and supported `gh api` REST write fields before they reach GitHub.
+  - `.agents/hooks/privacy-guard-pre-push.sh` scans public-repo pushes across the configured diff surface; aidevops defaults to full-repo scanning.
+- Extra private slugs: `~/.aidevops/configs/privacy-guard-extra-slugs.txt` (one slug per line).
+- Extra local/private path regexes: `~/.aidevops/configs/privacy-guard-private-path-patterns.txt` (one POSIX ERE per line). Matches are reported as `[configured-private-path]` so the raw path is not repeated.
+- Private target repos fail open/allowed: internal work should not be blocked just because it references its own private name.
+- Bypasses are explicit and auditable: `AIDEVOPS_GH_PRIVACY_BYPASS=1` for gh writes; `PRIVACY_GUARD_DISABLE=1` or `git push --no-verify` for pre-push.

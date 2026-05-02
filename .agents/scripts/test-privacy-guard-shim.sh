@@ -371,6 +371,56 @@ else
 	fail "expected rc=1 for issue edit leak. rc=$rc out='$out'"
 fi
 
+# -- Test 2.12: local path in body → BLOCKED with generic hit
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" issue create --repo marcusquinn/aidevops --title "test" --body "See /Users/example/Git/private-project for repro" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]] && printf '%s' "$out" | grep -q '\[local-path\]' && ! printf '%s' "$out" | grep -q '/Users/example'; then
+	pass "public target + local path body → BLOCKED generically"
+else
+	fail "expected rc=1 + generic local-path hit. rc=$rc out='$out'"
+fi
+
+# -- Test 2.13: pr review body with private slug → BLOCKED
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" pr review 123 --repo marcusquinn/aidevops --comment --body "Review mentions acme/longprivate" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
+	pass "pr review with private body → BLOCKED"
+else
+	fail "expected rc=1 for pr review leak. rc=$rc out='$out'"
+fi
+
+# -- Test 2.14: gh api issue write body field → BLOCKED from REST path target
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" api -X POST repos/marcusquinn/aidevops/issues -f title=test -f body="API mentions acme/longprivate" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
+	pass "gh api issue body field leak → BLOCKED"
+else
+	fail "expected rc=1 for gh api field leak. rc=$rc out='$out'"
+fi
+
+# -- Test 2.15: gh api PR review endpoint local path → BLOCKED
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" api --method POST /repos/marcusquinn/aidevops/pulls/123/reviews -f body="Review path /home/example/private" 2>&1)
+rc=$?
+if [[ "$rc" -eq 1 ]] && [[ ! -f "$RECORD_FILE" ]]; then
+	pass "gh api PR review local path → BLOCKED"
+else
+	fail "expected rc=1 for gh api PR review path leak. rc=$rc out='$out'"
+fi
+
+# -- Test 2.16: gh api private target write remains allowed
+rm -f "$RECORD_FILE"
+out=$(run_shim "$PATH_DIR" api -X POST repos/acme/longprivate/issues -f title=test -f body="Mentions acme/longprivate" 2>&1)
+rc=$?
+if [[ "$rc" -eq 0 ]] && [[ -f "$RECORD_FILE" ]]; then
+	pass "gh api private target leak → ALLOWED"
+else
+	fail "expected rc=0 for private target gh api write. rc=$rc out='$out'"
+fi
+
 # -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------

@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# privacy-guard-helper.sh — Shared library for the git pre-push privacy guard.
+# privacy-guard-helper.sh — Shared library for private-reference guards.
 #
 # Enumerates private repo slugs from ~/.config/aidevops/repos.json and scans
-# a git diff range for TODO.md / todo/** content that would leak a private
-# slug into a public target.
+# free-form text or git diff content that would leak a private repository name
+# or local/private path into a public target.
 #
 # This file is sourced by:
 #   - .agents/hooks/privacy-guard-pre-push.sh (the actual git pre-push hook)
@@ -19,7 +19,8 @@
 # Functions exported:
 #   privacy_is_target_public <remote_url>        exit 0 public, 1 private, 2 unknown
 #   privacy_enumerate_private_slugs [out_file]   writes one slug per line
-#   privacy_scan_diff <base_sha> <head_sha>      writes "file:line: slug" to stdout
+#   privacy_scan_text <text> <slugs_file>        scans text bodies/titles
+#   privacy_scan_diff <base_sha> <head_sha>      writes "file:line: hit" to stdout
 #   privacy_scan_paths                           list of path globs scanned
 #   privacy_log <level> <msg>                    tagged stderr log
 #
@@ -37,15 +38,13 @@ set -u
 PRIVACY_REPOS_CONFIG="${PRIVACY_REPOS_CONFIG:-$HOME/.config/aidevops/repos.json}"
 PRIVACY_CACHE_FILE="${PRIVACY_CACHE_FILE:-$HOME/.aidevops/cache/repo-privacy.json}"
 PRIVACY_CACHE_TTL="${PRIVACY_CACHE_TTL:-600}" # 10 minutes
-# Paths whose diffs we scan. Shell globs, matched against every changed file
-# in the diff range. Keep tight — this is the set of "planning-only" paths
-# that bypass the worktree-PR flow and go direct to main.
+# Paths whose diffs we scan. Default to the full repository because aidevops is
+# public and private names/paths must not land in code, docs, tests, or plans.
+# Override with PRIVACY_SCAN_GLOBS_TEXT as a newline/colon/comma-separated list.
 PRIVACY_SCAN_GLOBS=(
-	"TODO.md"
-	"todo/"
-	".github/ISSUE_TEMPLATE/"
-	"README.md"
+	"."
 )
+PRIVACY_SCAN_GLOBS_TEXT="${PRIVACY_SCAN_GLOBS_TEXT:-}"
 
 # =============================================================================
 # Logging
@@ -243,8 +242,8 @@ PRIVACY_BARE_BASENAME_MIN_LEN="${PRIVACY_BARE_BASENAME_MIN_LEN:-6}"
 
 #######################################
 # Scan free-form text content (issue/PR body, title, gh api -f body=value)
-# for private repo references. Used by .agents/scripts/gh PATH shim before
-# letting a write reach a public repo.
+# for private repo references and local/private path leaks. Used by
+# .agents/scripts/gh PATH shim before letting a write reach a public repo.
 #
 # Two match forms per slug:
 #   1. Full slug "owner/basename" — fixed-string match, low FP risk.
@@ -259,6 +258,8 @@ PRIVACY_BARE_BASENAME_MIN_LEN="${PRIVACY_BARE_BASENAME_MIN_LEN:-6}"
 #   One line per hit on stdout, format:
 #     "owner/basename"                    (full slug form match)
 #     "basename (basename of owner/basename)"  (bare basename form match)
+# Local/private path detection emits generic labels instead of the raw path so
+# the block message does not repeat the sensitive value.
 # Returns:
 #   0 if no hits, 1 if at least one hit, 2 on argument/setup error.
 #######################################
@@ -269,13 +270,33 @@ privacy_scan_text() {
 	if [[ -z "$slugs_file" || ! -f "$slugs_file" ]]; then
 		return 2
 	fi
-	# Empty text or empty slug list — nothing to scan.
-	if [[ -z "$text" ]] || [[ ! -s "$slugs_file" ]]; then
+	# Empty text — nothing to scan.
+	if [[ -z "$text" ]]; then
 		return 0
 	fi
 
 	local hits=0
 	local matched_full_slugs=""
+
+	# Phase 0: local/private path matching. Keep output generic to avoid
+	# re-printing the path in stderr or GitHub comments.
+	local path_hits
+	path_hits=$(privacy_scan_local_paths "$text")
+	local path_rc=$?
+	if [[ "$path_rc" -eq 1 ]]; then
+		printf '%s\n' "$path_hits"
+		hits=$((hits + 1))
+	elif [[ "$path_rc" -eq 2 ]]; then
+		return 2
+	fi
+
+	# Empty slug list still allows local path scanning above.
+	if [[ ! -s "$slugs_file" ]]; then
+		if [[ "$hits" -gt 0 ]]; then
+			return 1
+		fi
+		return 0
+	fi
 
 	# Phase 1: Full-slug fixed-string matching — single grep -F -f pass over all
 	# owner/repo entries at once. Reduces O(N) grep forks (one per slug) to one
@@ -330,10 +351,8 @@ privacy_scan_text() {
 
 		# Form 2: bare basename with word boundaries — only for distinctive lengths.
 		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
-			# Escape regex metacharacters in basename for ERE. GitHub repo names can
-			# contain '.' (e.g. "my.project"), which is a special char in ERE —
-			# escaping prevents false positives from matching unintended characters.
-			escaped_basename="${basename//./\\.}"
+			# Escape regex metacharacters in basename for ERE.
+			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
 			# Word boundary regex: must NOT be flanked by [a-zA-Z0-9_-].
 			# Note: we use grep -E (POSIX ERE), not PCRE, so \b is unreliable.
 			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
@@ -353,6 +372,58 @@ privacy_scan_text() {
 	return 0
 }
 
+#######################################
+# Scan text for local/private path patterns. Emits generic labels only.
+# Built-in patterns catch common macOS/Linux home and repo paths. Optional
+# configured ERE patterns live in ~/.aidevops/configs/privacy-guard-private-path-patterns.txt.
+# Arguments:
+#   $1 - text content to scan
+# Returns:
+#   0 if no hits, 1 if at least one hit, 2 on setup error.
+#######################################
+privacy_scan_local_paths() {
+	local text="$1"
+	[[ -z "$text" ]] && return 0
+
+	local hits=0
+	local emitted_builtin=0
+	local builtin_patterns=(
+		'(^|[[:space:]`"'\''(:=])/(Users|home)/[^[:space:]`"'\'')]+(/[[:alnum:]_.@%+=:,~ -][^[:space:]`"'\'')]*|)' 
+		'(^|[[:space:]`"'\''(:=])~/(Git|Projects|Code|src|work|dev)/[^[:space:]`"'\'')]*'
+		'(^|[[:space:]`"'\''(:=])file:///(Users|home)/[^[:space:]`"'\'')]*'
+	)
+	local pattern
+	for pattern in "${builtin_patterns[@]}"; do
+		if printf '%s' "$text" | grep -qE "$pattern" 2>/dev/null; then
+			if [[ "$emitted_builtin" -eq 0 ]]; then
+				printf '[local-path]\n'
+				emitted_builtin=1
+				hits=$((hits + 1))
+			fi
+		fi
+	done
+
+	local patterns_file="$HOME/.aidevops/configs/privacy-guard-private-path-patterns.txt"
+	if [[ -f "$patterns_file" ]]; then
+		local configured_hit=0
+		while IFS= read -r pattern || [[ -n "$pattern" ]]; do
+			[[ -z "$pattern" || "$pattern" == \#* ]] && continue
+			if printf '%s' "$text" | grep -qE "$pattern" 2>/dev/null; then
+				configured_hit=1
+			fi
+		done <"$patterns_file"
+		if [[ "$configured_hit" -eq 1 ]]; then
+			printf '[configured-private-path]\n'
+			hits=$((hits + 1))
+		fi
+	fi
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
 # =============================================================================
 # Diff scanning
 # =============================================================================
@@ -363,6 +434,19 @@ privacy_scan_text() {
 #######################################
 _privacy_pathspec_args() {
 	local glob
+	if [[ -n "$PRIVACY_SCAN_GLOBS_TEXT" ]]; then
+		local normalized
+		normalized=$(printf '%s' "$PRIVACY_SCAN_GLOBS_TEXT" | tr ':,' '\n\n')
+		while IFS= read -r glob || [[ -n "$glob" ]]; do
+			[[ -z "$glob" ]] && continue
+			if [[ "$glob" == */ ]]; then
+				printf '%s**\n' "$glob"
+			else
+				printf '%s\n' "$glob"
+			fi
+		done <<<"$normalized"
+		return 0
+	fi
 	for glob in "${PRIVACY_SCAN_GLOBS[@]}"; do
 		# Glob ending with / → match everything under that directory
 		if [[ "$glob" == */ ]]; then
@@ -375,8 +459,8 @@ _privacy_pathspec_args() {
 }
 
 #######################################
-# Scan the diff between two SHAs for added lines matching any private slug.
-# Only lines added (prefix '+') in paths matching PRIVACY_SCAN_GLOBS are
+# Scan the diff between two SHAs for added lines matching any private slug or
+# local/private path. Only lines added (prefix '+') in PRIVACY_SCAN_GLOBS are
 # considered — we don't flag pre-existing content that has already been
 # pushed. Output format: "file:NNN: slug" for each hit.
 # Arguments:
@@ -391,8 +475,7 @@ privacy_scan_diff() {
 	local head_sha="$2"
 	local slugs_file="$3"
 
-	if [[ ! -s "$slugs_file" ]]; then
-		# No private slugs to match → nothing to block
+	if [[ ! -f "$slugs_file" ]]; then
 		return 0
 	fi
 
@@ -427,8 +510,8 @@ privacy_scan_diff() {
 	fi
 
 	# Walk the diff, tracking current file and hunk line counter. Match added
-	# lines (those starting with "+" but not "+++") against private slugs using
-	# grep -F -f for O(lines) matching instead of O(lines × slugs).
+	# lines (those starting with "+" but not "+++") against the centralized
+	# free-form scanner so diff and gh-write paths share one policy.
 	local hits=0
 	local current_file=""
 	local line_num=0
@@ -450,18 +533,15 @@ privacy_scan_diff() {
 			# Skip the "+++ b/..." which we already handled
 			[[ "$line" == "+++ "* ]] && continue
 			local added="${line:1}"
-			local matching_slugs slug
-			# grep -F -f matches all slugs at once (fixed strings, no regex).
-			# -o outputs only the matched text, one match per line.
-			# grep exits 1 on no match; || true prevents aborting if the caller
-			# has set -e.
-			matching_slugs=$(printf '%s\n' "$added" | grep -F -o -f "$slugs_file" 2>/dev/null || true)
-			if [[ -n "$matching_slugs" ]]; then
-				while IFS= read -r slug; do
-					[[ -z "$slug" ]] && continue
-					printf '%s:%s: %s\n' "$current_file" "$line_num" "$slug"
+			local matching_hits hit
+			matching_hits=$(privacy_scan_text "$added" "$slugs_file")
+			local scan_rc=$?
+			if [[ "$scan_rc" -eq 1 ]]; then
+				while IFS= read -r hit; do
+					[[ -z "$hit" ]] && continue
+					printf '%s:%s: %s\n' "$current_file" "$line_num" "$hit"
 					hits=$((hits + 1))
-				done <<<"$matching_slugs"
+				done <<<"$matching_hits"
 			fi
 			line_num=$((line_num + 1))
 			;;
