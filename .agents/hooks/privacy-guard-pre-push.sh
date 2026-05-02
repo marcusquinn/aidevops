@@ -93,8 +93,7 @@ if ! privacy_enumerate_private_slugs "$slugs_file"; then
 fi
 
 if [[ ! -s "$slugs_file" ]]; then
-	[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "no private slugs to guard against"
-	exit 0
+	[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "no private slugs to guard against; secret-material scan still active"
 fi
 
 # ---------------------------------------------------------------------------
@@ -128,7 +127,61 @@ if [[ -n "$remote_name" ]]; then
 	fi
 fi
 
-[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "scanning push diff for private references"
+_watchlist_present=0
+for _ref_entry in "${_all_refs[@]}"; do
+	read -r _lr _ls _rr _rs <<<"$_ref_entry"
+	[[ -z "$_ls" ]] && continue
+	[[ "$_ls" =~ ^0+$ ]] && continue
+	# Determine base for diff: use remote sha when known, merge-base otherwise.
+	# Use the ref's own local SHA ($_ls) instead of HEAD so multi-ref pushes
+	# compute the correct base for each ref being pushed (GH#20177).
+	_base=""
+	if [[ -n "$_rs" ]] && ! [[ "$_rs" =~ ^0+$ ]]; then
+		_base="$_rs"
+	else
+		_base=$(git merge-base "$_ls" "$_default_remote_head" 2>/dev/null || echo "")
+	fi
+	[[ -z "$_base" ]] && _watchlist_present=1 && break
+	if git diff --name-only "$_base" "$_ls" 2>/dev/null \
+		| grep -qE '^(TODO\.md|README\.md|todo/|\.github/ISSUE_TEMPLATE/)'; then
+		_watchlist_present=1
+		break
+	fi
+done
+
+# Secret-material scan is global for public pushes. Unlike private-repo slug
+# scanning, it is not limited to planning/docs paths because private-key blocks
+# are unsafe in any public commit.
+secret_exit_code=0
+for _ref_entry in "${_all_refs[@]}"; do
+	read -r _lr _ls _rr _rs <<<"$_ref_entry"
+	[[ -z "$_ls" ]] && continue
+	[[ "$_ls" =~ ^0+$ ]] && continue
+	_secret_base="$_rs"
+	if [[ -z "$_secret_base" || "$_secret_base" =~ ^0+$ ]]; then
+		_secret_base=$(git merge-base "$_ls" "$_default_remote_head" 2>/dev/null || printf '')
+		[[ -z "$_secret_base" ]] && _secret_base="0000000000000000000000000000000000000000"
+	fi
+	secret_hits=$(privacy_scan_secret_material_diff "$_secret_base" "$_ls")
+	secret_rc=$?
+	if [[ "$secret_rc" -ne 0 ]]; then
+		printf '\n[privacy-guard][BLOCK] Push to %s contains secret/private-key material:\n\n' "$remote_name" >&2
+		printf '%s\n\n' "$secret_hits" >&2
+		printf '  Remove the secret material from committed content and amend/rewrite before pushing.\n' >&2
+		printf '  Use synthetic fixtures in tests; never commit real private keys or credential values.\n\n' >&2
+		secret_exit_code=1
+	fi
+done
+if [[ "$secret_exit_code" -ne 0 ]]; then
+	exit "$secret_exit_code"
+fi
+
+if [[ "$_watchlist_present" -eq 0 ]]; then
+	[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "no watchlist files (TODO.md, todo/**, README.md, .github/ISSUE_TEMPLATE/**) in push diff — private-reference scan skipped"
+	exit 0
+fi
+
+[[ "${PRIVACY_GUARD_DEBUG:-0}" == "1" ]] && privacy_log INFO "watchlist files present — scanning push diff for private references"
 
 # Walk each ref in the push (re-iterate over collected refs)
 exit_code=0

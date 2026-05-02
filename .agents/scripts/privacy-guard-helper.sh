@@ -426,6 +426,105 @@ privacy_scan_local_paths() {
 }
 
 # =============================================================================
+# Secret-material scanning (private-key / credential content)
+# =============================================================================
+
+#######################################
+# Scan free-form text for private-key material or obvious credential values.
+# Arguments:
+#   $1 - text content to scan
+# Output: one finding label per hit class
+# Returns: 0 no hits, 1 hit(s)
+#######################################
+privacy_scan_secret_material_text() {
+	local text="$1"
+	local hits=0
+
+	if [[ -z "$text" ]]; then
+		return 0
+	fi
+
+	if printf '%s' "$text" | grep -qE -- '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'; then
+		printf '%s\n' 'private-key PEM block'
+		hits=$((hits + 1))
+	fi
+	if printf '%s' "$text" | grep -qE '(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'; then
+		printf '%s\n' 'credential token prefix'
+		hits=$((hits + 1))
+	fi
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Scan all added diff lines for private-key material.
+# Arguments:
+#   $1 - base SHA (remote tip); may be all zeros for a new branch push
+#   $2 - head SHA (local tip)
+# Writes: "file:line: finding" lines to stdout
+# Returns: 0 no hits, 1 hit(s)
+#######################################
+privacy_scan_secret_material_diff() {
+	local base_sha="$1"
+	local head_sha="$2"
+	local diff_base="$base_sha"
+
+	if [[ "$base_sha" =~ ^0+$ ]]; then
+		local default_branch
+		default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^origin/||') || default_branch=""
+		[[ -z "$default_branch" ]] && default_branch="main"
+		diff_base=$(git merge-base "$head_sha" "origin/${default_branch}" 2>/dev/null) || diff_base=""
+		[[ -z "$diff_base" ]] && diff_base=$(git hash-object -t tree /dev/null)
+	fi
+
+	local diff_output
+	diff_output=$(git diff --unified=0 --no-color "$diff_base" "$head_sha" 2>/dev/null) || return 0
+	[[ -z "$diff_output" ]] && return 0
+
+	local hits=0 current_file="" line_num=0 in_pem=0
+	while IFS= read -r line; do
+		case "$line" in
+		"+++ b/"*) current_file="${line#+++ b/}"; line_num=0 ;;
+		"--- "*) ;;
+		"@@ "*)
+			local rest="${line#@@ -*+}"
+			local new_start="${rest%% *}"
+			line_num="${new_start%,*}"
+			;;
+		"+"*)
+			[[ "$line" == "+++ "* ]] && continue
+			local added="${line:1}"
+			if [[ "$added" =~ -----BEGIN[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
+				printf '%s:%s: private-key PEM block\n' "$current_file" "$line_num"
+				hits=$((hits + 1))
+				in_pem=1
+			elif [[ "$in_pem" -eq 1 ]]; then
+				printf '%s:%s: private-key PEM block content\n' "$current_file" "$line_num"
+				hits=$((hits + 1))
+			fi
+			if [[ "$added" =~ -----END[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
+				in_pem=0
+			fi
+			if printf '%s' "$added" | grep -qE '(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'; then
+				printf '%s:%s: credential token prefix\n' "$current_file" "$line_num"
+				hits=$((hits + 1))
+			fi
+			line_num=$((line_num + 1))
+			;;
+		" "*) line_num=$((line_num + 1)) ;;
+		esac
+	done <<<"$diff_output"
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+# =============================================================================
 # Diff scanning
 # =============================================================================
 

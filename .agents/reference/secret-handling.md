@@ -53,6 +53,16 @@ Rules for preventing credential exposure in AI agent sessions. Extracted from `A
   - Do NOT repeat, echo, or reference the pasted value in your response
   - Continue with a placeholder like `<YOUR_API_KEY>` instead
 
+### Layered secret-read and egress controls (GH#22368)
+
+Secret protection is deliberately layered so one missed path does not expose raw material:
+
+1. **Pre-read deny:** OpenCode file-read tools are blocked by `quality-hooks-secret-read.mjs`; Claude Code `Read|Glob|NotebookRead` calls are blocked by `secret_file_read_guard.py`. Obvious secret paths include private SSH key names, `.pem`, `.key`, `.env`, credentials files, cloud/kube credential stores, and password-manager exports. Public key files ending `.pub` remain allowed.
+2. **Command guard:** `sandbox-exec-helper.sh` blocks shell reads of the same high-risk paths unless the caller explicitly uses the audited local bypass for a user-approved operation.
+3. **Transcript scrub:** `credential-transcript-scrub.py` redacts known token prefixes and PEM/private-key blocks if upstream prevention misses a result.
+4. **GitHub egress guard:** the `gh` PATH shim scans issue/PR/comment body text and body files before writes to public repositories, blocking private-key material and credential-token patterns.
+5. **Pre-push guard:** `privacy-guard-pre-push.sh` blocks public pushes that introduce synthetic or real private-key material. Tests must use synthetic fixtures only; never read or commit real credential files.
+
 ---
 
 ## 8.3 Secret as Command Argument Exposure (t4939)

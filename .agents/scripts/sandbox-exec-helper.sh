@@ -118,8 +118,13 @@ _sandbox_secret_block_reason() {
 		return 0
 	fi
 
-	if [[ "$normalized" =~ (^|[[:space:];|&])cat[[:space:]]+([^[:space:]]*/)?(\.env([^[:space:]]*)?|credentials\.sh|[^[:space:]]*secret[^[:space:]]*)($|[[:space:];|&]) ]]; then
+	if [[ "$normalized" =~ (^|[[:space:];|&])(cat|less|more|tail|head|sed|awk)[[:space:]].*(^|[[:space:]/])((id_(rsa|dsa|ecdsa|ed25519))|\.env([^[:space:]]*)?|credentials\.(sh|json|ya?ml)|[^[:space:]]*secret[^[:space:]]*|[^[:space:]]*password[^[:space:]]*|[^[:space:]]*passwd[^[:space:]]*|[^[:space:]]*\.(pem|key|p12|pfx|kdbx|age|asc|gpg))($|[[:space:];|&]) ]]; then
 		echo "file read command targeting likely secret material"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])(cat|less|more|tail|head|sed|awk)[[:space:]].*(^|[[:space:]/])(\.ssh|\.gnupg|\.aws|\.azure|\.kube|password-store|1password|op-vault)(/|[[:space:];|&]) ]] && [[ ! "$normalized" =~ \.pub($|[[:space:];|&]) ]]; then
+		echo "file read command targeting credential-store path"
 		return 0
 	fi
 

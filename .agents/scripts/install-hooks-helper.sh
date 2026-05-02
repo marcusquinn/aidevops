@@ -31,11 +31,13 @@ HOOKS_DIR="$HOME/.aidevops/hooks"
 HOOK_SCRIPT="$HOOKS_DIR/git_safety_guard.py"
 POST_HOOK_SCRIPT="$HOOKS_DIR/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_SCRIPT="$HOOKS_DIR/credential-transcript-scrub.py"
+SECRET_READ_GUARD_SCRIPT="$HOOKS_DIR/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_SCRIPT="$HOOKS_DIR/complexity_advisory_pre_edit.py"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 HOOK_COMMAND="\$HOME/.aidevops/hooks/git_safety_guard.py"
 POST_HOOK_COMMAND="\$HOME/.aidevops/hooks/mcp_task_post_hook.py"
 CREDENTIAL_SCRUB_COMMAND="\$HOME/.aidevops/hooks/credential-transcript-scrub.py"
+SECRET_READ_GUARD_COMMAND="\$HOME/.aidevops/hooks/secret_file_read_guard.py"
 COMPLEXITY_ADVISORY_COMMAND="\$HOME/.aidevops/hooks/complexity_advisory_pre_edit.py"
 
 # gh-wrapper-guard pre-push hook (t2113)
@@ -587,6 +589,8 @@ install_hook() {
 	source_post_hook=$(find_source_hook "mcp_task_post_hook.py") || return 1
 	local source_credential_scrub_hook
 	source_credential_scrub_hook=$(find_source_hook "credential-transcript-scrub.py") || return 1
+	local source_secret_read_guard_hook
+	source_secret_read_guard_hook=$(find_source_hook "secret_file_read_guard.py") || return 1
 	local source_complexity_advisory_hook
 	source_complexity_advisory_hook=$(find_source_hook "complexity_advisory_pre_edit.py") || return 1
 
@@ -606,6 +610,9 @@ install_hook() {
 	cp "$source_credential_scrub_hook" "$CREDENTIAL_SCRUB_SCRIPT"
 	chmod +x "$CREDENTIAL_SCRUB_SCRIPT"
 	print_success "Installed $CREDENTIAL_SCRUB_SCRIPT"
+	cp "$source_secret_read_guard_hook" "$SECRET_READ_GUARD_SCRIPT"
+	chmod +x "$SECRET_READ_GUARD_SCRIPT"
+	print_success "Installed $SECRET_READ_GUARD_SCRIPT"
 	cp "$source_complexity_advisory_hook" "$COMPLEXITY_ADVISORY_SCRIPT"
 	chmod +x "$COMPLEXITY_ADVISORY_SCRIPT"
 	print_success "Installed $COMPLEXITY_ADVISORY_SCRIPT"
@@ -658,6 +665,15 @@ settings = {
                     {
                         'type': 'command',
                         'command': '$HOOK_COMMAND'
+                    }
+                ]
+            },
+            {
+                'matcher': 'Read|Glob|NotebookRead',
+                'hooks': [
+                    {
+                        'type': 'command',
+                        'command': '$SECRET_READ_GUARD_COMMAND'
                     }
                 ]
             },
@@ -722,6 +738,7 @@ hooks = d.get('hooks', {})
 has_guard_bash = False
 has_guard_edit_write = False
 has_complexity = False
+has_secret_read_guard = False
 for h in hooks.get('PreToolUse', []):
     matcher = h.get('matcher', '')
     for sub in h.get('hooks', []):
@@ -733,6 +750,8 @@ for h in hooks.get('PreToolUse', []):
                 has_guard_edit_write = True
         if 'complexity_advisory' in cmd:
             has_complexity = True
+        if 'secret_file_read_guard' in cmd:
+            has_secret_read_guard = True
 
 has_post = False
 has_scrub = False
@@ -743,7 +762,7 @@ for h in hooks.get('PostToolUse', []):
         if 'credential-transcript-scrub' in sub.get('command', ''):
             has_scrub = True
 
-if has_guard_bash and has_guard_edit_write and has_complexity and has_post and has_scrub:
+if has_guard_bash and has_guard_edit_write and has_complexity and has_secret_read_guard and has_post and has_scrub:
     sys.exit(0)
 sys.exit(1)
 " 2>/dev/null; then
@@ -814,6 +833,16 @@ complexity_advisory_entry = {
     ]
 }
 
+secret_read_guard_entry = {
+    'matcher': 'Read|Glob|NotebookRead',
+    'hooks': [
+        {
+            'type': 'command',
+            'command': '$SECRET_READ_GUARD_COMMAND'
+        }
+    ]
+}
+
 post_hook_entry = {
     'matcher': 'Task',
     'hooks': [
@@ -835,7 +864,7 @@ credential_scrub_entry = {
 }
 
 if 'PreToolUse' not in settings['hooks']:
-    settings['hooks']['PreToolUse'] = [hook_entry, complexity_advisory_entry]
+    settings['hooks']['PreToolUse'] = [hook_entry, secret_read_guard_entry, complexity_advisory_entry]
 else:
     if not has_hook(settings['hooks']['PreToolUse'], 'git_safety_guard'):
         settings['hooks']['PreToolUse'].append(hook_entry)
@@ -843,6 +872,8 @@ else:
     ensure_hook_in_matcher(settings['hooks']['PreToolUse'], 'Edit|Write', '$HOOK_COMMAND')
     if not has_hook(settings['hooks']['PreToolUse'], 'complexity_advisory'):
         settings['hooks']['PreToolUse'].append(complexity_advisory_entry)
+    if not has_hook(settings['hooks']['PreToolUse'], 'secret_file_read_guard'):
+        settings['hooks']['PreToolUse'].append(secret_read_guard_entry)
 
 if 'PostToolUse' not in settings['hooks']:
     settings['hooks']['PostToolUse'] = [post_hook_entry, credential_scrub_entry]
@@ -890,6 +921,12 @@ uninstall_hook() {
 	else
 		print_info "Credential scrub hook not found (already removed)"
 	fi
+	if [[ -f "$SECRET_READ_GUARD_SCRIPT" ]]; then
+		rm "$SECRET_READ_GUARD_SCRIPT"
+		print_success "Removed $SECRET_READ_GUARD_SCRIPT"
+	else
+		print_info "Secret read guard hook not found (already removed)"
+	fi
 	if [[ -f "$COMPLEXITY_ADVISORY_SCRIPT" ]]; then
 		rm "$COMPLEXITY_ADVISORY_SCRIPT"
 		print_success "Removed $COMPLEXITY_ADVISORY_SCRIPT"
@@ -909,7 +946,7 @@ hooks = settings.get('hooks', {}).get('PreToolUse', [])
 filtered = []
 for h in hooks:
     sub_hooks = h.get('hooks', [])
-    sub_filtered = [s for s in sub_hooks if 'git_safety_guard' not in s.get('command', '') and 'complexity_advisory' not in s.get('command', '')]
+    sub_filtered = [s for s in sub_hooks if 'git_safety_guard' not in s.get('command', '') and 'complexity_advisory' not in s.get('command', '') and 'secret_file_read_guard' not in s.get('command', '')]
     if sub_filtered:
         h['hooks'] = sub_filtered
         filtered.append(h)
@@ -1107,6 +1144,34 @@ sys.exit(1)
 	return 0
 }
 
+_check_status_secret_read_guard_hook() {
+	if [[ -f "$SECRET_READ_GUARD_SCRIPT" ]] && [[ -x "$SECRET_READ_GUARD_SCRIPT" ]]; then
+		print_success "secret-file-read-guard: $SECRET_READ_GUARD_SCRIPT"
+	elif [[ -f "$SECRET_READ_GUARD_SCRIPT" ]]; then
+		print_warning "secret-file-read-guard: installed but not executable"
+		return 1
+	else
+		print_warning "secret-file-read-guard: not installed (run: install-hooks-helper.sh install)"
+		return 1
+	fi
+	if [[ -f "$CLAUDE_SETTINGS" ]] && python3 -c "
+import json, sys
+with open('$CLAUDE_SETTINGS') as f:
+    d = json.load(f)
+for h in d.get('hooks', {}).get('PreToolUse', []):
+    for sub in h.get('hooks', []):
+        if 'secret_file_read_guard' in sub.get('command', ''):
+            sys.exit(0)
+sys.exit(1)
+" 2>/dev/null; then
+		print_success "  PreToolUse registration: present"
+	else
+		print_warning "  PreToolUse registration: missing (run: install-hooks-helper.sh install)"
+		return 1
+	fi
+	return 0
+}
+
 _check_status_precommit_hook() {
 	local common_dir pc_hook_path
 	if ! common_dir=$(git rev-parse --git-common-dir 2>/dev/null); then
@@ -1160,6 +1225,11 @@ check_status() {
 	echo "Credential Transcript Scrub Hook (GH#20207)"
 	echo "--------------------------------------------"
 	_check_status_credential_scrub_hook || all_ok=false
+
+	echo ""
+	echo "Secret File Read Guard Hook (GH#22368)"
+	echo "----------------------------------------"
+	_check_status_secret_read_guard_hook || all_ok=false
 
 	echo ""
 	echo "GH Wrapper Guard (pre-push)"

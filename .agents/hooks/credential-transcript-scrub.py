@@ -59,13 +59,20 @@ CREDENTIAL_PATTERN = re.compile(
     re.ASCII,
 )
 
+PEM_PRIVATE_KEY_PATTERN = re.compile(
+    r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----",
+    re.DOTALL,
+)
+
 REDACTION_TOKEN = "[redacted-credential]"
+PEM_REDACTION_TOKEN = "[redacted-private-key]"
 
 
 def scrub_credentials(text: str) -> tuple[str, int]:
     """Replace credential tokens in text. Returns (scrubbed_text, match_count)."""
-    result, count = CREDENTIAL_PATTERN.subn(REDACTION_TOKEN, text)
-    return result, count
+    result, pem_count = PEM_PRIVATE_KEY_PATTERN.subn(PEM_REDACTION_TOKEN, text)
+    result, token_count = CREDENTIAL_PATTERN.subn(REDACTION_TOKEN, result)
+    return result, pem_count + token_count
 
 
 def scrub_value(value):
@@ -91,8 +98,8 @@ def main() -> None:
 
     tool_response = data.get("tool_response", "")
 
-    # Fast path: no credential pattern anywhere in the raw payload.
-    if not CREDENTIAL_PATTERN.search(raw):
+    # Fast path: no credential/private-key pattern anywhere in the raw payload.
+    if not CREDENTIAL_PATTERN.search(raw) and not PEM_PRIVATE_KEY_PATTERN.search(raw):
         return
 
     # Scrub the tool_response field (may be str or nested JSON object).
