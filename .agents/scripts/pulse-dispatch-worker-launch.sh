@@ -257,7 +257,10 @@ _dlw_node_modules_restore_acquire_lock() {
 			now_epoch=$(date +%s)
 			age_s=$((now_epoch - lock_mtime))
 			if ((age_s > 60)); then
-				rmdir "$lock_dir" 2>/dev/null || true
+				# Stale lock dirs contain a pid marker. rmdir fails on that
+				# non-empty directory; retrying immediately without changing
+				# state spins pulse-wrapper children before worker_spawn.
+				rm -rf "$lock_dir" 2>/dev/null || true
 				continue
 			fi
 		fi
