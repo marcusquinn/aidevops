@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.3] - 2026-05-03
+
+### Changed
+
+- Documentation: clarify launch-worker repo default (#22491)
+
+### Fixed
+
+- reduce GraphQL read pressure during pulse cycles (#22493)
+
 ## [3.14.2] - 2026-05-03
 
 ### Fixed
