@@ -347,7 +347,7 @@ main() {
 		done < <(rt_detect_installed)
 	fi
 
-	# Regenerate subagent index (shared between runtimes)
+	# Regenerate subagent index (shared between runtimes, includes plugin namespaces)
 	local subagent_index_helper="$AGENTS_DIR/scripts/subagent-index-helper.sh"
 	if [[ -x "$subagent_index_helper" ]]; then
 		print_info "Regenerating subagent index..."
