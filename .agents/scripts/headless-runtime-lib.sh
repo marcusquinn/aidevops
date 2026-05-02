@@ -944,6 +944,12 @@ CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
 # load time to subside without wasting canary CPU on doomed attempts.
 CANARY_OVERLOAD_TTL_SECONDS="${CANARY_OVERLOAD_TTL_SECONDS:-300}"
 
+# t3449: Soft canary failures (timeouts/provider/rate-limit blips) may be
+# bypassed by the dispatcher only when there is recent worker evidence. Hard
+# failures (auth/runtime/config/local) still block. This window bounds the
+# bypass so a stale success cannot mask a real outage indefinitely.
+CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS="${CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS:-900}"
+
 # t3210: Load multiplier for the pre-canary overload check.
 # load_avg_1min > NCPU * MULTIPLIER = system overloaded, skip canary.
 # Default 2 = system is noticeably contending. Lower = more aggressive
@@ -1166,6 +1172,31 @@ _check_system_overload() {
 		fi
 		return 1
 	fi
+	return 0
+}
+
+_classify_canary_failure_reason() {
+	local output_file="$1"
+	local exit_code="$2"
+	local reason
+	reason=$(classify_failure_reason "$output_file")
+	case "$reason" in
+		auth_error | rate_limit | provider_error)
+			printf '%s' "$reason"
+			return 0
+			;;
+	esac
+	case "$exit_code" in
+		124 | 137 | 142)
+			printf '%s' "timeout"
+			return 0
+			;;
+		126 | 127)
+			printf '%s' "runtime_error"
+			return 0
+			;;
+	esac
+	printf '%s' "local_error"
 	return 0
 }
 
@@ -1415,14 +1446,15 @@ _run_canary_test() {
 	local oc_version="${_VALIDATE_OC_VERSION:-unknown}"
 	print_warning "Canary test FAILED (exit=$canary_exit, model=$canary_model, opencode=$oc_version, timeout=${CANARY_TIMEOUT_SECONDS}s)"
 	print_warning "Output (last 20 lines): $(tail -20 "$canary_output" 2>/dev/null || echo '<empty>')"
-	# t2814 (Phase 3, fix #4): Stamp the negative cache so subsequent
-	# dispatches within CANARY_NEGATIVE_TTL_SECONDS short-circuit.
-	# t2887: stamp reason as "transient" -- the binary is valid (we
-	# pre-validated above) but the actual run failed. Keeps the standard
-	# 90s TTL for API/auth/timeout-class failures.
+	# t2814/t2887/t3449: Stamp the negative cache with a concrete reason so
+	# dispatch can distinguish hard failures (auth/runtime/local) from bounded
+	# soft failures (timeout/rate_limit/provider_error) when recent workers prove
+	# the runtime is still capable of launching.
+	local canary_reason
+	canary_reason=$(_classify_canary_failure_reason "$canary_output" "$canary_exit")
 	mkdir -p "${STATE_DIR}" 2>/dev/null || true
 	date +%s >"$fail_cache_file" 2>/dev/null || true
-	printf 'transient\n' >"$fail_reason_file" 2>/dev/null || true
+	printf '%s\n' "$canary_reason" >"$fail_reason_file" 2>/dev/null || true
 	rm -f "$canary_output"
 	return 1
 }

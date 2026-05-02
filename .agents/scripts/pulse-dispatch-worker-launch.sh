@@ -958,6 +958,80 @@ _dlw_min_worker_floor_active() {
 	return 1
 }
 
+_dlw_headless_state_dir() {
+	printf '%s' "${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
+	return 0
+}
+
+_dlw_canary_last_failure_reason() {
+	local state_dir reason_file reason
+	state_dir=$(_dlw_headless_state_dir)
+	reason_file="${state_dir}/canary-last-fail.reason"
+	reason=$(cat "$reason_file" 2>/dev/null || printf '%s' "transient")
+	printf '%s' "$reason"
+	return 0
+}
+
+_dlw_canary_failure_is_soft() {
+	local reason="$1"
+	case "$reason" in
+		overload | provider_error | rate_limit | timeout | transient)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+_dlw_recent_worker_evidence() {
+	local ttl ledger_file
+	ttl="${CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS:-900}"
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=900
+	ledger_file="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-ledger.jsonl"
+	[[ -f "$ledger_file" ]] || return 1
+	python3 - "$ledger_file" "$ttl" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+
+ledger_path = sys.argv[1]
+ttl = int(sys.argv[2])
+now = datetime.now(timezone.utc).timestamp()
+allowed = {"in-flight", "completed"}
+
+def parse_ts(value):
+    if not value:
+        return 0
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+        return 0
+
+try:
+    with open(ledger_path, "r", encoding="utf-8") as handle:
+        for raw in handle:
+            try:
+                entry = json.loads(raw)
+            except Exception:
+                continue
+            if entry.get("status") not in allowed:
+                continue
+            stamp = parse_ts(entry.get("updated_at") or entry.get("dispatched_at"))
+            if stamp and 0 <= now - stamp <= ttl:
+                sys.exit(0)
+except FileNotFoundError:
+    pass
+sys.exit(1)
+PY
+	return $?
+}
+
+_dlw_allow_soft_canary_failure() {
+	local reason="$1"
+	_dlw_canary_failure_is_soft "$reason" || return 1
+	_dlw_recent_worker_evidence || return 1
+	return 0
+}
+
 _dlw_canary_preflight() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -976,6 +1050,13 @@ _dlw_canary_preflight() {
 	fi
 
 	if env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then
+		return 0
+	fi
+
+	local canary_reason
+	canary_reason=$(_dlw_canary_last_failure_reason)
+	if _dlw_allow_soft_canary_failure "$canary_reason"; then
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: soft worker canary failure reason=${canary_reason} bypassed because recent worker evidence exists (bounded t3449)" >>"$LOGFILE"
 		return 0
 	fi
 

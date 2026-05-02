@@ -210,12 +210,79 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	return 0
 }
 
+write_recent_ledger_evidence() {
+	local status="$1"
+	local ledger_dir timestamp
+	ledger_dir="${HOME}/.aidevops/.agent-workspace/tmp"
+	mkdir -p "$ledger_dir"
+	timestamp=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+	printf '{"session_key":"test-canary","issue_number":"100","repo_slug":"o/r","pid":"1","dispatched_at":"%s","status":"%s","updated_at":"%s"}\n' \
+		"$timestamp" "$status" "$timestamp" >"${ledger_dir}/dispatch-ledger.jsonl"
+	return 0
+}
+
+test_soft_canary_failure_bypasses_with_recent_worker_evidence() {
+	local fake_helper worker_log state_dir
+	fake_helper="${TEST_ROOT}/fake-soft-canary.sh"
+	worker_log="${TEST_ROOT}/worker-soft.log"
+	state_dir="${HOME}/.aidevops/.agent-workspace/headless-runtime"
+	cat >"$fake_helper" <<'EOF'
+#!/usr/bin/env bash
+state_dir="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
+mkdir -p "$state_dir"
+date +%s >"${state_dir}/canary-last-fail"
+printf 'timeout\n' >"${state_dir}/canary-last-fail.reason"
+exit 124
+EOF
+	chmod +x "$fake_helper"
+	write_recent_ledger_evidence "in-flight"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	AIDEVOPS_HEADLESS_RUNTIME_DIR="$state_dir"
+	TEST_ACTIVE_WORKERS=6
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	if _dlw_canary_preflight 102 "o/r" "$worker_log" "standard" ""; then
+		print_result "canary: soft failure bypassed with recent worker evidence" 0
+	else
+		print_result "canary: soft failure bypassed with recent worker evidence" 1
+	fi
+	return 0
+}
+
+test_hard_canary_failure_blocks_despite_recent_worker_evidence() {
+	local fake_helper worker_log state_dir
+	fake_helper="${TEST_ROOT}/fake-hard-canary.sh"
+	worker_log="${TEST_ROOT}/worker-hard.log"
+	state_dir="${HOME}/.aidevops/.agent-workspace/headless-runtime"
+	cat >"$fake_helper" <<'EOF'
+#!/usr/bin/env bash
+state_dir="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
+mkdir -p "$state_dir"
+date +%s >"${state_dir}/canary-last-fail"
+printf 'auth_error\n' >"${state_dir}/canary-last-fail.reason"
+exit 1
+EOF
+	chmod +x "$fake_helper"
+	write_recent_ledger_evidence "completed"
+	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	AIDEVOPS_HEADLESS_RUNTIME_DIR="$state_dir"
+	TEST_ACTIVE_WORKERS=6
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	if _dlw_canary_preflight 103 "o/r" "$worker_log" "standard" ""; then
+		print_result "canary: hard failure blocks despite recent worker evidence" 1 "unexpected success"
+	else
+		print_result "canary: hard failure blocks despite recent worker evidence" 0
+	fi
+	return 0
+}
+
 test_capacity_raises_soft_cap_to_floor
 test_capacity_respects_existing_higher_cap
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_bypasses_overload_only_below_floor
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
+test_soft_canary_failure_bypasses_with_recent_worker_evidence
+test_hard_canary_failure_blocks_despite_recent_worker_evidence
 
 echo ""
 echo "===================="
