@@ -50,6 +50,7 @@ git init -q -b main
 git config user.email 'test@example.com'
 git config user.name 'Test Runner'
 git config commit.gpgsign false
+git config tag.gpgSign false
 
 printf 'initial\n' >README.md
 git add README.md
@@ -72,6 +73,10 @@ printf 'legacy\n' >>work.txt
 git add work.txt
 git commit -q -m 'complete t123'
 
+printf 'prefix-boundary\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: at9876 complete should stay ignored'
+
 SCRIPT_DIR="$TEST_SCRIPTS_DIR"
 REPO_ROOT="$REPO_DIR"
 VERSION_FILE="${REPO_DIR}/VERSION"
@@ -86,6 +91,12 @@ if [[ "$actual" != *$'t337\n'* && "$actual" != "t337" ]]; then
 	print_result 'extract_task_ids_from_commits: does not truncate t3375 to t337' 0
 else
 	print_result 'extract_task_ids_from_commits: does not truncate t3375 to t337' 1 "got [$actual]"
+fi
+
+if [[ "$actual" != *"t9876"* ]]; then
+	print_result 'extract_task_ids_from_commits: requires leading boundary before Pattern 4 task ID' 0
+else
+	print_result 'extract_task_ids_from_commits: requires leading boundary before Pattern 4 task ID' 1 "got [$actual]"
 fi
 
 printf '\nTests run: %s, Failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -185,8 +185,8 @@ extract_task_ids_from_commits() {
 
 		# Pattern 4: "tXXX complete/done/finished" - task ID before completion word
 		# e.g., "t001 complete", "t002 done"
-		if [[ "$commit" =~ (t[0-9]+(\.[0-9]+)*)[[:space:]]+(complete|done|finished)($|[^[:alnum:]_]) ]]; then
-			task_ids+=("${BASH_REMATCH[1]}")
+		if [[ "$commit" =~ (^|[^[:alnum:]_])(t[0-9]+(\.[0-9]+)*)[[:space:]]+(complete|done|finished)($|[^[:alnum:]_]) ]]; then
+			task_ids+=("${BASH_REMATCH[2]}")
 		fi
 
 	done <<<"$commits"
