@@ -112,6 +112,23 @@ _pmp_classify_pr_backlog_state() {
 	return 0
 }
 
+_pmp_enrich_prs_with_rest_check_status() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local status_json=""
+	status_json=$(gh_pr_check_status_rest_batch "$repo_slug" "$pr_json" 2>/dev/null) || status_json="[]"
+	[[ -n "$status_json" && "$status_json" != "null" ]] || status_json="[]"
+	jq -n --argjson prs "$pr_json" --argjson statuses "$status_json" '
+		def rollup($s):
+			if $s == "PASS" then [{status:"COMPLETED", conclusion:"SUCCESS", state:"SUCCESS"}]
+			elif $s == "FAIL" then [{status:"COMPLETED", conclusion:"FAILURE", state:"FAILURE"}]
+			elif $s == "PENDING" then [{status:"IN_PROGRESS", conclusion:null, state:"PENDING"}]
+			else [] end;
+		$prs | map(. as $pr | ($statuses | map(select(.number == $pr.number)) | last | .status // "none") as $s | $pr + {statusCheckRollup: rollup($s)})' \
+		2>/dev/null || printf '%s' "$pr_json"
+	return 0
+}
+
 #######################################
 # Convert a backlog bucket to a numeric scheduling priority.
 # Lower number runs first. Merge-ready and fix-needed PRs are processed before
@@ -309,14 +326,13 @@ _merge_ready_prs_for_repo() {
 	local closed=0
 	local failed=0
 
-	# Fetch open PRs with the status rollup needed for backlog-first scheduling.
-	# Safety still lives in _process_single_ready_pr; this list only determines
-	# which PRs receive merge/fix attention before dispatch_max consumes worker
-	# and API budget on unrelated new tasks.
+	# Fetch open PRs without GraphQL statusCheckRollup. Backlog scheduling is
+	# enriched below from REST check-suites so merge polling preserves GraphQL
+	# budget for dispatch.
 	local pr_json pr_merge_err
 	pr_merge_err=$(mktemp)
 	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,author,title,isDraft,labels,statusCheckRollup \
+		--json number,mergeable,reviewDecision,author,title,isDraft,labels,headRefOid \
 		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
@@ -334,6 +350,8 @@ _merge_ready_prs_for_repo() {
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return 0
 	fi
+
+	pr_json=$(_pmp_enrich_prs_with_rest_check_status "$repo_slug" "$pr_json")
 
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
 	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json")
@@ -414,7 +432,7 @@ _resolve_pr_mergeable_status() {
 		[[ -z "$pr_mergeable" ]] && _was_label="empty"
 		# Separate local declaration from assignment to preserve exit code (SC2181).
 		local _retry_output _retry_exit
-		_retry_output=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		_retry_output=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json mergeable --jq '.mergeable // ""')
 		_retry_exit=$?
 		[[ $_retry_exit -eq 0 && -n "$_retry_output" ]] && pr_mergeable="$_retry_output" || pr_mergeable="UNKNOWN"
@@ -489,8 +507,8 @@ _pulse_merge_dismiss_coderabbit_nits() {
 # Skips PRs with failing CI even when the merge would use --admin
 # (which bypasses branch protection).
 #
-# t2104 (GH#19040): switch to `gh pr checks --required` which consults
-# branch protection and returns ONLY checks that gate the merge.
+# t3514: delegate to REST-backed branch-protection context verification so
+# merge readiness does not spend GraphQL on `gh pr checks --required`.
 #
 # An empty result (no required checks defined in branch protection) is
 # treated as "nothing is failing" → merge allowed. Fail-closed on API
@@ -502,22 +520,8 @@ _pulse_merge_dismiss_coderabbit_nits() {
 _pr_required_checks_pass() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local failing _gh_exit
-	# Separate declaration from assignment to preserve exit code (SC2181).
-	failing=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel")] | length' \
-		2>/dev/null)
-	_gh_exit=$?
-	# Fail-closed: if the API call itself fails, skip the merge rather than
-	# silently allowing it (t2092 — --admin bypasses branch protection).
-	if [[ $_gh_exit -ne 0 ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — required checks fetch failed (exit ${_gh_exit}) (t2104)" >>"$LOGFILE"
-		return 1
-	fi
-	# Empty string = no required checks; normalise to 0.
-	[[ -z "$failing" ]] && failing=0
-	if [[ "$failing" -gt 0 ]]; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — ${failing} required status check(s) failing (t2104)" >>"$LOGFILE"
+	if ! _check_required_checks_passing "$repo_slug" "$pr_number"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks not provably passing (t3514)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -543,9 +547,9 @@ _attempt_pr_ci_rebase_retry() {
 	local pr_number="$1"
 	local repo_slug="$2"
 
-	# Fetch baseRefName and headRefOid in a single gh pr view call.
+	# Fetch baseRefName and headRefOid in a single REST-first PR view call.
 	local _pr_info _base_branch _head_oid
-	_pr_info=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	_pr_info=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json baseRefName,headRefOid --jq '(.baseRefName // "") + " " + (.headRefOid // "")' 2>/dev/null) || _pr_info=""
 	read -r _base_branch _head_oid <<< "$_pr_info"
 
@@ -609,7 +613,7 @@ _route_pr_to_fix_worker() {
 
 	# Fetch labels if not provided by caller
 	if [[ -z "$pr_labels" ]]; then
-		pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
 	fi
 
@@ -681,7 +685,7 @@ _retarget_stacked_children() {
 	local parent_pr_number="$1"
 	local repo_slug="$2"
 	local parent_head_ref
-	parent_head_ref=$(gh pr view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
+	parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
 	if [[ -z "$parent_head_ref" ]]; then
 		return 0
 	fi
@@ -976,7 +980,7 @@ _check_required_checks_passing() {
 	# (~111KB/PR) but exposes per-context .name fields needed for matching
 	# branch-protection required_status_checks. Single-PR path → cost is fine.
 	local pr_sha=""
-	pr_sha=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
 	if [[ -z "$pr_sha" ]]; then
 		echo "[pulse-merge] _check_required_checks_passing: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922, GH#21799)" >>"$LOGFILE"
@@ -1099,7 +1103,7 @@ _repo_allows_auto_merge() {
 # Threshold defaults to 300s, overridable via
 # AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS.
 #
-# Args: $1=pr_number, $2=repo_slug, $3=raw JSON from gh pr view
+# Args: $1=pr_number, $2=repo_slug, $3=raw JSON from gh_pr_view
 # Stdout: stuck-seconds count when stuck (caller logs it)
 # Returns: 0=stuck, safe to fall through to --admin; 1=defer to GitHub
 #######################################
@@ -1135,11 +1139,7 @@ _auto_merge_stuck_seconds() {
 	# every required check to be in `pass` or `skipping` bucket — anything
 	# else means the PR has a legitimate reason to stay blocked, and
 	# falling through to --admin would bypass that signal.
-	local non_ok_count
-	non_ok_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
-		--jq '[.[] | select(.bucket != "pass" and .bucket != "skipping")] | length' 2>/dev/null)
-	[[ "$non_ok_count" =~ ^[0-9]+$ ]] || non_ok_count=99
-	[[ "$non_ok_count" -eq 0 ]] || return 1
+	_check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1 || return 1
 
 	printf '%s' "$stuck_seconds"
 	return 0
@@ -1187,7 +1187,7 @@ _set_native_auto_merge_or_skip() {
 	# Fetch auto_merge metadata + merge state in one call so the stuck-state
 	# check (t3192) does not require an extra round trip.
 	local _pr_state
-	_pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	_pr_state=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json autoMergeRequest,mergeStateStatus,mergeable,reviewDecision 2>/dev/null)
 
 	local _existing_auto=""
@@ -1209,10 +1209,10 @@ _set_native_auto_merge_or_skip() {
 		# the same stuck threshold, stop silently deferring every pulse cycle.
 		# Return 2 so the caller can route a bounded CI repair worker/comment keyed
 		# by the linked issue/PR marker instead of attempting an admin bypass.
-		local _pending_count=""
-		_pending_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
-			--jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null) || _pending_count="0"
-		[[ "$_pending_count" =~ ^[0-9]+$ ]] || _pending_count=0
+		local _pending_count=0
+		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
+			_pending_count=1
+		fi
 		if [[ "$_pending_count" -gt 0 ]]; then
 			local _enabled_at="" _enabled_epoch="0" _now_epoch="0" _age_seconds="0"
 			_enabled_at=$(printf '%s' "$_pr_state" | jq -r '.autoMergeRequest.enabledAt // ""' 2>/dev/null) || _enabled_at=""
@@ -1241,16 +1241,10 @@ _set_native_auto_merge_or_skip() {
 	# already done (success/skipped — failures filtered upstream by
 	# _pr_required_checks_pass), the immediate --admin path is faster than
 	# round-tripping through GitHub's auto-merge engine.
-	local pending_count=""
-	local _pc_exit=0
-	pending_count=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json bucket \
-		--jq '[.[] | select(.bucket == "pending")] | length' 2>/dev/null)
-	_pc_exit=$?
-	if [[ $_pc_exit -ne 0 ]]; then
-		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: gh pr checks --required failed (exit ${_pc_exit}), falling through to immediate merge (t3070)" >>"$LOGFILE"
-		return 1
+	local pending_count=0
+	if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
+		pending_count=1
 	fi
-	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
 
 	if [[ "$pending_count" -eq 0 ]]; then
 		# No pending required checks — immediate --admin merge is faster.

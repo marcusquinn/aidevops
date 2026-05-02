@@ -837,6 +837,7 @@ _rest_pr_view() {
 	local num_or_url=""
 	local repo=""
 	local jq_expr=""
+	local json_fields=""
 
 	local _first="${1:-}"
 	if [[ $# -gt 0 && "$_first" != --* ]]; then
@@ -849,8 +850,8 @@ _rest_pr_view() {
 		case "$_arg" in
 		--repo) repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--json) shift 2 ;;
-		--json=*) shift ;;
+		--json) json_fields="${2:-}"; shift 2 ;;
+		--json=*) json_fields="${_arg#--json=}"; shift ;;
 		--jq | -q) jq_expr="${2:-}"; shift 2 ;;
 		--jq=* | -q=*) jq_expr="${_arg#*=}"; shift ;;
 		*) shift ;;
@@ -871,9 +872,44 @@ _rest_pr_view() {
 
 	local _path="/repos/${repo}/pulls/${num}"
 	local _gh_cmd=(gh api "$_path")
+	if [[ -n "$json_fields" ]]; then
+		jq_expr="$(_rest_pr_object_json_jq "$json_fields" "$jq_expr")"
+	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
+}
+
+_rest_pr_object_json_jq() {
+	local fields="$1"
+	local user_jq="$2"
+	local projection=""
+	local field=""
+	while IFS= read -r field; do
+		[[ -z "$field" ]] && continue
+		case "$field" in
+		number) projection="${projection}${projection:+,}number: .number" ;;
+		state) projection="${projection}${projection:+,}state: .state" ;;
+		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable // \"UNKNOWN\")" ;;
+		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
+		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
+		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
+		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
+		title) projection="${projection}${projection:+,}title: (.title // \"\")" ;;
+		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
+		baseRefName) projection="${projection}${projection:+,}baseRefName: (.base.ref // \"\")" ;;
+		headRefName) projection="${projection}${projection:+,}headRefName: (.head.ref // \"\")" ;;
+		headRefOid) projection="${projection}${projection:+,}headRefOid: (.head.sha // \"\")" ;;
+		autoMergeRequest) projection="${projection}${projection:+,}autoMergeRequest: (.autoMergeRequest // null)" ;;
+		mergeStateStatus) projection="${projection}${projection:+,}mergeStateStatus: (.mergeStateStatus // \"\")" ;;
+		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	[[ -z "$projection" ]] && projection="number: .number"
+	local jq_expr="{${projection}}"
+	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
+	printf '%s' "$jq_expr"
+	return 0
 }
 
 #######################################
@@ -899,6 +935,10 @@ _rest_pr_list_json_jq() {
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
 		state) projection="${projection}${projection:+,}state: .state" ;;
+		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable // \"UNKNOWN\")" ;;
+		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
+		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
+		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
 		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;
 		url) projection="${projection}${projection:+,}url: .html_url" ;;
 		title) projection="${projection}${projection:+,}title: .title" ;;
@@ -908,6 +948,7 @@ _rest_pr_list_json_jq() {
 		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
 		baseRefName) projection="${projection}${projection:+,}baseRefName: .base.ref" ;;
 		headRefName) projection="${projection}${projection:+,}headRefName: .head.ref" ;;
+		headRefOid) projection="${projection}${projection:+,}headRefOid: .head.sha" ;;
 		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
 		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
 		esac

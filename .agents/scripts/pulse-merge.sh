@@ -161,7 +161,7 @@ _check_pr_merge_gates() {
 		# Fetch labels once — reused by both the nits-ok check and the
 		# worker-routing block below.
 		local _cr_pr_labels
-		_cr_pr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
 
 		# t2179: coderabbit-nits-ok path.
@@ -235,7 +235,7 @@ _check_pr_merge_gates() {
 	# ── External contributor gate (t1958) ──
 	# Requires linked issue + crypto approval (defence-in-depth after _is_collaborator_author).
 	local pr_labels_for_ext
-	pr_labels_for_ext=$(gh pr view "$pr_number" --repo "$repo_slug" --json labels \
+	pr_labels_for_ext=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json labels \
 		--jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_for_ext=""
 	if [[ "$pr_labels_for_ext" == *"external-contributor"* ]]; then
 		if ! _external_pr_has_linked_issue "$pr_number" "$repo_slug"; then
@@ -256,7 +256,7 @@ _check_pr_merge_gates() {
 	# COLLABORATOR). COLLABORATORs that pass these checks still go through the
 	# review bot gate and normal merge path without an ownership fast-path.
 	local _oi_info_json _oi_labels_str _oi_is_draft
-	_oi_info_json=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	_oi_info_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json labels,isDraft 2>/dev/null) || _oi_info_json=""
 	_oi_labels_str=$(printf '%s' "$_oi_info_json" \
 		| jq -r '[.labels[].name] | join(",")' 2>/dev/null) || _oi_labels_str=""
@@ -400,7 +400,7 @@ _handle_post_merge_actions() {
 
 		if [[ "$_parent_task_guard" -eq 0 ]]; then
 			if [[ $# -lt 5 ]]; then
-				pr_labels=$(_gh_with_timeout read gh pr view "$pr_number" --repo "$repo_slug" \
+				pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 					--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels=""
 			fi
 			local _solved_actor="interactive"
@@ -541,7 +541,7 @@ _process_single_ready_pr() {
 			# moment to recompute it. _resolve_pr_mergeable_status already
 			# has a UNKNOWN-retry loop so we reuse it.
 			local _refetched_mergeable
-			_refetched_mergeable=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			_refetched_mergeable=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 				--json mergeable --jq '.mergeable // "UNKNOWN"' 2>/dev/null) || _refetched_mergeable="UNKNOWN"
 			pr_mergeable="$_refetched_mergeable"
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded, refetched mergeable=${pr_mergeable} (t2116)" >>"$LOGFILE"
@@ -603,7 +603,7 @@ _process_single_ready_pr() {
 		# (external contributors, interactive sessions) take the normal
 		# CI-failure routing path, preserving the contributor security gate.
 		local _rcl_labels
-		_rcl_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		_rcl_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _rcl_labels=""
 		if [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
 			&& _check_required_checks_passing "$repo_slug" "$pr_number"; then
@@ -673,7 +673,7 @@ _process_single_ready_pr() {
 			# threshold. Route bounded CI repair feedback rather than silently
 			# deferring forever or attempting an admin bypass through pending CI.
 			local _native_labels
-			_native_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			_native_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _native_labels=""
 			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$_native_labels" || true
 			return 1
@@ -692,7 +692,7 @@ _process_single_ready_pr() {
 		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 		# t2411: emit audit log for origin:interactive auto-merges
 		local _ipr_labels
-		_ipr_labels=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		_ipr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ipr_labels=""
 		if [[ "$_ipr_labels" == *"origin:interactive"* ]]; then
 			local _ipr_role="collaborator"
@@ -750,7 +750,7 @@ process_pr() {
 	# (number, mergeable, reviewDecision, author, title) and synthesize a
 	# single-PR object. _process_single_ready_pr expects a compact JSON object.
 	local pr_obj
-	pr_obj=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	pr_obj=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json number,mergeable,reviewDecision,author,title 2>/dev/null) || pr_obj=""
 
 	if [[ -z "$pr_obj" || "$pr_obj" == "null" ]]; then
@@ -760,7 +760,7 @@ process_pr() {
 
 	# Verify state is OPEN — closed/merged PRs should not be re-processed.
 	local pr_state
-	pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	pr_state=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json state --jq '.state // ""' 2>/dev/null) || pr_state=""
 	if [[ "$pr_state" != "OPEN" ]]; then
 		echo "[pulse-merge] process_pr: PR ${repo_slug}#${pr_number} is not OPEN (state=${pr_state}) — skipping" >>"$LOGFILE"
@@ -789,8 +789,8 @@ _extract_linked_issue() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local pr_title pr_body
-	pr_title=$(gh pr view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || pr_title=""
-	pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
+	pr_title=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || pr_title=""
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 
 	# Match GitHub-native close keywords in the PR body only (case-insensitive).
 	# Matches: close/closes/closed, fix/fixes/fixed, resolve/resolves/resolved.
@@ -860,7 +860,7 @@ _extract_merge_summary() {
 	# Workers skip the MERGE_SUMMARY comment ~65% of the time, but the PR body
 	# always contains a useful description of what was done (GH#17503).
 	local pr_body
-	pr_body=$(gh pr view "$pr_number" --repo "$repo_slug" \
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 
 	if [[ -z "$pr_body" ]]; then
