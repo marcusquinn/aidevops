@@ -1341,6 +1341,10 @@ _setup_restart_pulse_if_running() {
 	# pulse helper takes unusually long to stop a stalled instance. Falls back
 	# to an unbounded call on platforms without timeout(1) (old macOS w/o
 	# coreutils, embedded shells).
+	if [[ "${AIDEVOPS_SKIP_PULSE_RESTART:-0}" == "1" ]]; then
+		return 0
+	fi
+
 	local _pulse_helper="${HOME}/.aidevops/agents/scripts/pulse-lifecycle-helper.sh"
 	if [[ -x "$_pulse_helper" ]]; then
 		if command -v timeout >/dev/null 2>&1; then
