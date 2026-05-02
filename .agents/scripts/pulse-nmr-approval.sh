@@ -631,7 +631,7 @@ _find_qualifying_pr_for_stale_recovery() {
 		--arg origin_worker "origin:worker" \
 		--arg origin_interactive "origin:interactive" '
 		.[]?
-		| select((.createdAt // $blank) != $blank and (($nmr_at // $blank) != $blank))
+		| select((.createdAt // $blank) != $blank)
 		| select((.createdAt | fromdateiso8601) > ($nmr_at | fromdateiso8601))
 		| select(.reviewDecision == $approved)
 		| select(.authorAssociation == $owner or .authorAssociation == $member)
