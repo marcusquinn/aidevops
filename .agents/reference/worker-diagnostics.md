@@ -98,6 +98,42 @@ Headless OpenCode workers scope startup state to the selected model provider:
 
 Diagnostic: set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` or dispatch with `--model openai/gpt-5.5`, then inspect the worker temp auth dir in lifecycle logs (`db_isolated dir=...`). Its `opencode/auth.json` should not contain unrelated provider keys.
 
+### Linux/OpenCode/OAuth-pool zero-worker runbook (t3476)
+
+Use this when a runner's dashboard is fresh but **Active Workers = 0**.
+
+1. Start with current state, not historical aggregates:
+
+   ```bash
+   pulse-current-state-helper.sh --window 15m
+   ```
+
+2. Verify provider/model selection. Fresh installs and updates use the OpenAI-first routing table unless the operator overrides with `custom/configs/model-routing-table.json` or `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`:
+
+   ```bash
+   headless-runtime-helper.sh select --role worker --tier sonnet
+   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai headless-runtime-helper.sh select --role worker --tier sonnet
+   ```
+
+3. Verify OAuth-pool health without printing secrets:
+
+   ```bash
+   oauth-pool-helper.sh status
+   oauth-pool-helper.sh check openai
+   oauth-pool-helper.sh check anthropic
+   ```
+
+4. Read the dashboard's **Worker Dispatch Diagnostics** section. It is rendered only when Active Workers is 0 and distinguishes:
+   - no eligible work (`Assigned Issues=0`, `Total Issues=0`)
+   - auth/model unavailable (OpenAI/Anthropic both missing)
+   - canary or worker launch failure (`Last Launch Failure`)
+   - max-worker/resource gate (`Max Workers=0`, high CPU/load, memory pressure)
+   - API budget/dispatch blockers (inspect `Last Dispatch Stage` and the current-state helper output)
+
+5. Linux process counting must use the shared worker discovery path, which calls `ps axwwo pid,stat,etime,command` so long OpenCode commands are not truncated. A direct `pgrep` snapshot is not canonical because dispatch is bursty and can land between waves.
+
+6. If the selected provider is OpenAI but the auth file contains only an Anthropic entry, model selection now treats OpenAI as unavailable rather than assuming any OpenCode `auth.json` is sufficient. Re-run OAuth pool rotation/checks and then retry selection.
+
 ### Canary Smoke Test (v3.6.123)
 
 **Rules**:

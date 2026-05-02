@@ -329,7 +329,7 @@ LIB_FILE="${SCRIPTS_DIR}/headless-runtime-lib.sh"
 canary_wiring=$(awk '
 	/_canary_data_dir=\$\(mktemp -d/ { in_canary=1 }
 	in_canary && /_maybe_rotate_isolated_auth/ { rotate_line=NR }
-	in_canary && /"\$_effective_opencode_bin" run "Reply with exactly: CANARY_OK"/ { opencode_line=NR }
+	in_canary && /"\$_effective_opencode_bin" run/ && /CANARY_OK/ { opencode_line=NR }
 	END {
 		if (rotate_line > 0 && opencode_line > 0 && rotate_line < opencode_line) {
 			print "ok"

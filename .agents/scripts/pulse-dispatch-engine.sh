@@ -313,6 +313,7 @@ dispatch_max() {
 		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
 	fi
 	if [[ "$available_slots" -le 0 ]]; then
+		echo "[pulse-wrapper] Dispatch_max skipped: no available worker slots (max=${max_workers}, active=${active_workers}, available=${available_slots})" >>"$LOGFILE"
 		echo 0
 		return 0
 	fi
@@ -334,6 +335,7 @@ dispatch_max() {
 	candidate_count=$(printf '%s' "$candidates_json" | jq 'length' 2>/dev/null) || candidate_count=0
 	[[ "$candidate_count" =~ ^[0-9]+$ ]] || candidate_count=0
 	if [[ "$candidate_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] Dispatch_max skipped: no ranked candidates (available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker})" >>"$LOGFILE"
 		echo 0
 		return 0
 	fi
