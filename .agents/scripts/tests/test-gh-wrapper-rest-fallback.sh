@@ -53,7 +53,9 @@
 #  26. gh_pr_list routes directly to REST when GraphQL remaining is low
 #  27. gh_pr_list keeps --search on the GraphQL path when budget is low
 #  28. gh_pr_view routes directly to REST when GraphQL remaining is low
-#  29. gh_pr_list does NOT fall back for --search because REST pulls cannot
+#  29. AIDEVOPS_GH_FORCE_REST_READS routes supported reads through REST without
+#      a rate-limit probe
+#  30. gh_pr_list does NOT fall back for --search because REST pulls cannot
 #      preserve search semantics
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
@@ -876,7 +878,27 @@ else
 fi
 
 # =============================================================================
-# Test 26: gh_pr_list --search → no non-equivalent REST fallback
+# Test 26: forced REST read mode routes supported list calls without rate_limit
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=5000
+export AIDEVOPS_GH_FORCE_REST_READS=1
+
+gh_issue_list --repo "owner/repo" --state open --json number --jq length >/dev/null 2>&1 || true
+
+if grep -qE '^api /repos/owner/repo/issues\?' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
+	pass "AIDEVOPS_GH_FORCE_REST_READS routes issue list to REST without rate_limit probe"
+else
+	fail "AIDEVOPS_GH_FORCE_REST_READS routes issue list to REST without rate_limit probe" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset AIDEVOPS_GH_FORCE_REST_READS
+
+# =============================================================================
+# Test 27: gh_pr_list --search → no non-equivalent REST fallback
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"

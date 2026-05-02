@@ -1613,6 +1613,28 @@ main() {
 		fi
 	fi
 
+	# GH#22478: if the circuit breaker has not tripped but GraphQL headroom is
+	# already inside the REST fallback reserve, force supported read/list wrappers
+	# to use REST for the whole pulse cycle. This avoids every stage/subprocess
+	# spending a fresh GraphQL list call before discovering the same low-budget
+	# state. GraphQL-only operations and security gates still run through their
+	# existing paths; this only affects wrappers with REST-equivalent translators.
+	unset AIDEVOPS_GH_FORCE_REST_READS
+	if [[ "${AIDEVOPS_PULSE_FORCE_REST_READS_ON_LOW_GRAPHQL:-1}" == "1" ]] && declare -F _cb_rate_limit_json >/dev/null 2>&1; then
+		local _gh22478_rate_json="" _gh22478_remaining="" _gh22478_threshold="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
+		_gh22478_rate_json=$(_cb_rate_limit_json normal 2>/dev/null) || _gh22478_rate_json=""
+		if [[ -n "$_gh22478_rate_json" ]]; then
+			_gh22478_remaining=$(printf '%s' "$_gh22478_rate_json" | jq -r '.resources.graphql.remaining // ""' 2>/dev/null) || _gh22478_remaining=""
+			if [[ "$_gh22478_remaining" =~ ^[0-9]+$ && "$_gh22478_threshold" =~ ^[0-9]+$ && "$_gh22478_remaining" -le "$_gh22478_threshold" ]]; then
+				export AIDEVOPS_GH_FORCE_REST_READS=1
+				echo "[pulse-wrapper] GraphQL remaining ${_gh22478_remaining} <= REST fallback threshold ${_gh22478_threshold}; forcing REST-backed read/list wrappers for this cycle (GH#22478)" >>"$LOGFILE"
+				if declare -F pulse_stats_increment >/dev/null 2>&1; then
+					pulse_stats_increment "pulse_graphql_low_force_rest_reads" 2>/dev/null || true
+				fi
+			fi
+		fi
+	fi
+
 	# t2994: pre-warm L3 caches when sentinel is stale. Runs after lock,
 	# canary, session, and dedup gates have all passed (so a real cycle is
 	# about to run) and BEFORE prefetch_state inside the cycle. Steady-state
