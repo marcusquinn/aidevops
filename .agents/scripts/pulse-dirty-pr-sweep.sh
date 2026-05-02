@@ -769,12 +769,12 @@ _dps_rebase_in_ephemeral() {
 	# destroying, and log the skip so the unexpected state is visible.
 	if is_registered_canonical "$ephemeral"; then
 		_dps_log "PR #$pr_number ($repo_slug): refusing to remove canonical path $ephemeral — registry hit"
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_DPS_CALLER" "$ephemeral" "canonical-skip" "skipped"
 	else
 		git -C "$repo_path" worktree remove --force "$ephemeral" >/dev/null 2>&1 || true
 		git -C "$repo_path" branch -D "$ephemeral_branch" >/dev/null 2>&1 || true
 		rm -rf "$ephemeral" 2>/dev/null || true
-		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture"
+		log_worktree_removal_event "$_WTAR_FIXTURE_REMOVED" "$_WTAR_DPS_CALLER" "$ephemeral" "fixture" "fixture"
 	fi
 
 	if [[ "$rebase_ok" -ne 0 ]]; then

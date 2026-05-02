@@ -66,7 +66,7 @@ make_commit() {
 	local content="$3"
 	printf '%s\n' "$content" >"${repo}/${file}"
 	git -C "$repo" add "$file"
-	git -C "$repo" commit -qm "add ${file}"
+	git -C "$repo" -c commit.gpgsign=false commit -qm "add ${file}"
 	return 0
 }
 
@@ -86,7 +86,7 @@ merge_branch_to_main() {
 	local repo="$1"
 	local branch="$2"
 	git -C "$repo" checkout -q main
-	git -C "$repo" merge -q --no-ff "$branch" -m "merge ${branch}"
+	git -C "$repo" -c commit.gpgsign=false merge -q --no-ff "$branch" -m "merge ${branch}"
 	git -C "$repo" push -q origin main
 	return 0
 }
@@ -123,7 +123,6 @@ setup_repo() {
 	git clone -q "$TEST_ROOT/origin.git" "$TEST_ROOT/repo"
 	git -C "$TEST_ROOT/repo" config user.email test@example.invalid
 	git -C "$TEST_ROOT/repo" config user.name "Remote Branch Cleanup Test"
-	git -C "$TEST_ROOT/repo" config commit.gpgsign false
 	make_commit "$TEST_ROOT/repo" base.txt base
 	git -C "$TEST_ROOT/repo" branch -M main
 	git -C "$TEST_ROOT/repo" push -q -u origin main

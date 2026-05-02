@@ -10,7 +10,7 @@
 # Usage (source this file, then call the function):
 #   # shellcheck source=audit-worktree-removal-helper.sh
 #   source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
-#   log_worktree_removal_event "$_WTAR_REMOVED" "worktree-helper.sh" "/path/to/wt" "branch-merged"
+#   log_worktree_removal_event "$_WTAR_REMOVED" "worktree-helper.sh" "/path/to/wt" "branch-merged" "permanent"
 #
 # Event types (use the constants below to avoid repeated literal violations):
 #   _WTAR_REMOVED          "removed"        — worktree was actually removed
@@ -55,9 +55,10 @@ _WTAR_FIXTURE_REMOVED="fixture-removed"
 #   $2  caller      — basename of the calling script (e.g. "worktree-helper.sh")
 #   $3  wt_path     — absolute path to the worktree
 #   $4  reason      — short reason string (see Reason values above)
+#   $5  mode        — optional removal mode: trash, permanent, fixture, skipped
 #
 # Output format (append to AIDEVOPS_CLEANUP_LOG):
-#   [2026-04-27T11:22:33Z] [worktree-helper.sh] worktree-removed: /path/to/wt — branch-merged
+#   [2026-04-27T11:22:33Z] [worktree-helper.sh] worktree-removed: /path/to/wt — branch-merged — mode=permanent
 #
 # Returns 0 always (fail-open).
 # =============================================================================
@@ -66,19 +67,95 @@ log_worktree_removal_event() {
 	local caller="$2"
 	local wt_path="$3"
 	local reason="$4"
+	local mode="${5:-unknown}"
 	local log_file="${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}"
 
 	# Ensure log directory exists (silent; don't fail callers on permission errors)
 	mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
 
 	# Write one structured line and swallow any write error (fail-open)
-	printf '[%s] [%s] worktree-%s: %s — %s\n' \
+	printf '[%s] [%s] worktree-%s: %s — %s — mode=%s\n' \
 		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		"$caller" \
 		"$event_type" \
 		"$wt_path" \
 		"$reason" \
+		"$mode" \
 		>>"$log_file" 2>/dev/null || true
 
 	return 0
+}
+
+# =============================================================================
+# worktree_removal_guard — shared destructive-path guard for production cleanup
+#
+# Args:
+#   $1  wt_path  — absolute path candidate
+#   $2  caller   — audit caller constant
+#   $3  reason   — reason to log on skip
+#
+# Refuses registered canonical repos and the caller's current working directory.
+# Returns 0 when callers may continue, 1 when removal must be skipped.
+# =============================================================================
+worktree_removal_guard() {
+	local wt_path="$1"
+	local caller="$2"
+	local reason="$3"
+
+	if [[ -z "$wt_path" ]]; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "empty-path" "skipped"
+		return 1
+	fi
+
+	if command -v is_registered_canonical >/dev/null 2>&1; then
+		if is_registered_canonical "$wt_path"; then
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "canonical-skip" "skipped"
+			return 1
+		fi
+	fi
+
+	local wt_path_real="$wt_path"
+	if [[ -e "$wt_path" ]]; then
+		wt_path_real=$(cd "$wt_path" 2>/dev/null && pwd -P) || wt_path_real="$wt_path"
+	fi
+
+	local current_dir=""
+	current_dir=$(pwd -P 2>/dev/null || true)
+	if [[ -n "$current_dir" ]]; then
+		case "$current_dir" in
+		"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "current-worktree" "skipped"
+			return 1
+			;;
+		esac
+	fi
+
+	: "$reason"
+	return 0
+}
+
+# =============================================================================
+# remove_worktree_path_permanently — guarded direct delete for verified cleanup
+#
+# Args:
+#   $1  wt_path  — absolute path candidate
+#   $2  caller   — audit caller constant
+#   $3  reason   — audit reason on removal
+#
+# Returns 0 when path is gone, 1 on guard/delete failure.
+# =============================================================================
+remove_worktree_path_permanently() {
+	local wt_path="$1"
+	local caller="$2"
+	local reason="$3"
+
+	worktree_removal_guard "$wt_path" "$caller" "$reason" || return 1
+	[[ ! -e "$wt_path" ]] && return 0
+
+	if rm -rf "$wt_path" 2>/dev/null; then
+		log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$wt_path" "$reason" "permanent"
+		return 0
+	fi
+
+	return 1
 }

@@ -40,7 +40,7 @@ mkdir -p "$FAKE_REPO"
 git -C "$FAKE_REPO" init -q -b main || fail "init fake repo"
 printf '#!/usr/bin/env bash\nprintf '\''ok\\n'\''\n' >"${FAKE_REPO}/ok.sh"
 git -C "$FAKE_REPO" add ok.sh || fail "stage fake script"
-git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t commit -q -m init || fail "commit fake repo"
+git -C "$FAKE_REPO" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init || fail "commit fake repo"
 
 git -C "$FAKE_REPO" worktree add -q -b feature/gh22154-current "$FAKE_WT" main || fail "create linked worktree"
 

@@ -132,7 +132,7 @@ _remove_validate_path() {
 		_remove_show_owner_error "$path_to_remove"
 		if [[ "${WORKTREE_FORCE_REMOVE:-}" != "1" ]]; then
 			# t2976: audit log — removal blocked by ownership registry
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "owned-skip"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$path_to_remove" "owned-skip" "skipped"
 			return 1
 		fi
 		echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
@@ -176,7 +176,7 @@ _remove_cleanup_and_execute() {
 	echo -e "${GREEN}Worktree removed successfully${NC}"
 
 	# t2976: audit log — manual removal completed
-	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$path_to_remove" "manual"
+	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$path_to_remove" "manual" "trash"
 
 	# Localdev integration (t1224.8): auto-remove branch subdomain route
 	if [[ -n "$removed_branch" ]]; then
