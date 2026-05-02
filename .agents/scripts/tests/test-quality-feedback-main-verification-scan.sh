@@ -50,6 +50,36 @@ _restore_mock_gh() {
 
 # --- Test Functions ---
 
+test_quality_debt_security_labels_for_security_review_feedback() {
+	local labels
+	labels=$(_build_quality_debt_labels "medium" "true" \
+		"Review finding: prompt injection can expose secrets and API key credentials.")
+
+	if [[ ",$labels," == *",security,"* && ",$labels," == *",priority:high,"* ]]; then
+		print_result "quality-debt labels security review feedback as security + high priority" 0
+		return 0
+	fi
+
+	print_result "quality-debt labels security review feedback as security + high priority" 1 \
+		"labels=${labels}"
+	return 0
+}
+
+test_quality_debt_security_labels_do_not_overprioritize_ordinary_feedback() {
+	local labels
+	labels=$(_build_quality_debt_labels "medium" "true" \
+		"Review finding: split this long helper into smaller functions for readability.")
+
+	if [[ ",$labels," != *",security,"* && ",$labels," == *",priority:medium,"* && ",$labels," != *",priority:high,"* ]]; then
+		print_result "quality-debt leaves ordinary review feedback at normal priority" 0
+		return 0
+	fi
+
+	print_result "quality-debt leaves ordinary review feedback at normal priority" 1 \
+		"labels=${labels}"
+	return 0
+}
+
 # Integration test: _scan_single_pr with include_positive=true returns findings
 # for a purely positive review that would otherwise be filtered.
 test_scan_single_pr_include_positive_returns_positive_review() {

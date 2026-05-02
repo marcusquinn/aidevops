@@ -203,6 +203,10 @@ source "${SCRIPT_DIR}/test-quality-feedback-main-verification-scan.sh"
 main() {
 	source "$HELPER"
 
+	echo "Running quality-debt security classification tests (GH#22429)"
+	test_quality_debt_security_labels_for_security_review_feedback
+	test_quality_debt_security_labels_do_not_overprioritize_ordinary_feedback
+
 	echo "Running quality-feedback main-branch verification tests"
 	test_skips_resolved_finding_when_snippet_missing
 	test_creates_issue_when_snippet_still_exists

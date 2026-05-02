@@ -884,6 +884,50 @@ JSON
 	return 0
 }
 
+test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt() {
+	local original_repos_json="$REPOS_JSON"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "maintainer": "marcusquinn"
+    }
+  ]
+}
+JSON
+
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" && "${2:-}" == "marcusquinn/aidevops" ]]; then
+			printf '%s\n' '[
+			  {"number":9201,"title":"ordinary high quality debt","url":"#9201","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"quality-debt"},{"name":"priority:high"}]},
+			  {"number":9202,"title":"security high quality debt","url":"#9202","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"quality-debt"},{"name":"security"},{"name":"priority:high"}]}
+			]'
+			return 0
+		fi
+		return 1
+	}
+	export -f gh_issue_list
+
+	local ordered_numbers
+	ordered_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+
+	unset -f gh_issue_list
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$ordered_numbers" == $'9202\n9201' ]]; then
+		print_result "build_ranked_dispatch_candidates_json prioritizes security quality-debt" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json prioritizes security quality-debt" 1 \
+		"Unexpected order: ${ordered_numbers}"
+	return 0
+}
+
 test_dispatch_max_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
@@ -1284,6 +1328,7 @@ main() {
 	test_dispatch_with_dedup_passes_explicit_model_override
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_priority_labels
+	test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours
 	test_dispatch_max_dispatches_up_to_capacity

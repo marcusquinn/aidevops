@@ -236,6 +236,7 @@ build_ranked_dispatch_candidates_json() {
 				repo_priority: $priority,
 				score: (
 					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
+					(if ((.labels | index("quality-debt")) != null and (.labels | index("security")) != null) then 500 else 0 end) +
 					(if (.labels | index("priority:critical")) != null then 10000
 					 elif (.labels | index("priority:high")) != null then 9000
 					 elif (.labels | index("priority:medium")) != null then 8000
