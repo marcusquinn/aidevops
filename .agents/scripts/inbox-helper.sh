@@ -584,6 +584,10 @@ readonly TRIAGE_RATE_LIMIT_DEFAULT=50
 # Default consecutive needs-review backoff threshold
 readonly TRIAGE_BACKOFF_THRESHOLD_DEFAULT=10
 
+# Preview extraction limits keep classification payloads bounded and local-only.
+readonly TRIAGE_PREVIEW_EXCERPT_CHARS=4000
+readonly TRIAGE_PREVIEW_EXCERPT_LINES=80
+
 # _triage_check_deps
 # Checks availability of P0.5a (sensitivity-detect.sh) and P0.5b
 # (llm-routing-helper.sh). Prints warnings and sets caller's has_* variables.
@@ -640,12 +644,195 @@ _triage_run_sensitivity_gate() {
 	return 0
 }
 
-# _triage_run_classification <abs-path> <sensitivity> <confidence-threshold>
+# _triage_file_kind <abs-path>
+# Returns a coarse content kind for preview extraction.
+_triage_file_kind() {
+	local abs_path="$1"
+	local ext
+	ext="${abs_path##*.}"
+	ext="${ext,,}"
+	case "$ext" in
+	eml | emlx | msg) printf 'email' ;;
+	pdf) printf 'pdf' ;;
+	png | jpg | jpeg | heic | heif | tiff | tif | gif | bmp | webp) printf 'image' ;;
+	mp3 | m4a | wav | ogg | flac | aac | opus) printf 'audio' ;;
+	csv | tsv) printf 'csv' ;;
+	html | htm) printf 'web' ;;
+	json)
+		if [[ "$abs_path" == *.meta.json ]]; then
+			printf 'web'
+		else
+			printf 'text'
+		fi
+		;;
+	txt | md | markdown | log | yaml | yml | xml) printf 'text' ;;
+	*) printf 'unknown' ;;
+	esac
+	return 0
+}
+
+# _triage_safe_excerpt <abs-path>
+# Emits a bounded printable excerpt without interpreting binary content.
+_triage_safe_excerpt() {
+	local abs_path="$1"
+	LC_ALL=C tr -cd '\11\12\15\40-\176' < "$abs_path" 2>/dev/null \
+		| sed '/^[[:space:]]*$/d' \
+		| head -"$TRIAGE_PREVIEW_EXCERPT_LINES" \
+		| cut -c1-240 \
+		| head -c "$TRIAGE_PREVIEW_EXCERPT_CHARS" || true
+	return 0
+}
+
+# _triage_web_text_path <meta-json-path>
+# Resolves a captured URL text file from the flat metadata JSON.
+_triage_web_text_path() {
+	local meta_path="$1"
+	local repo_root="$2"
+	local meta_json text_rel
+	meta_json="$(tr -d '\n' < "$meta_path" 2>/dev/null || true)"
+	text_rel="$(_json_field "$meta_json" "text")"
+	if [[ -n "$text_rel" && -f "${repo_root}/${text_rel}" ]]; then
+		printf '%s' "${repo_root}/${text_rel}"
+	fi
+	return 0
+}
+
+# _triage_email_preview <abs-path>
+# Builds a local preview for email headers, body, and attachment metadata.
+_triage_email_preview() {
+	local abs_path="$1"
+	local parse_dir parsed_json
+	parse_dir="$(mktemp -d)"
+	parsed_json="${parse_dir}/parsed.json"
+	if python3 "${SCRIPT_DIR}/email_parse.py" "$abs_path" --output-dir "$parse_dir" >"$parsed_json" 2>/dev/null; then
+		python3 - "$parsed_json" <<'PY'
+import json, os, sys
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+attachments = data.get("attachments", [])
+print("summary: email subject={}; attachments={}".format(data.get("subject", ""), len(attachments)))
+print("metadata:")
+for key in ("from", "to", "cc", "date", "subject", "message_id"):
+    val = str(data.get(key, "")).replace("\n", " ")[:300]
+    print("  {}: {}".format(key, val))
+if attachments:
+    print("  attachments:")
+    for att in attachments[:10]:
+        print("    - filename: {}; content_type: {}; size: {}".format(
+            att.get("filename", ""), att.get("content_type", ""), att.get("size", 0)))
+body_path = data.get("body_text_path") or ""
+print("safe_excerpts:")
+if body_path and os.path.exists(body_path):
+    text = open(body_path, encoding="utf-8", errors="replace").read(4000)
+    print(text.strip())
+PY
+	else
+		printf 'summary: email parse unavailable\nmetadata:\n  parser: failed\nsafe_excerpts:\n'
+		_triage_safe_excerpt "$abs_path"
+	fi
+	rm -rf "$parse_dir"
+	return 0
+}
+
+# _triage_document_preview <abs-path>
+# Builds a local preview for documents/images, preferring the existing extractor.
+_triage_document_preview() {
+	local abs_path="$1"
+	local doc_helper converted output_path
+	doc_helper="${SCRIPT_DIR}/document-extraction-helper.sh"
+	if [[ -x "$doc_helper" ]]; then
+		converted="$(bash "$doc_helper" convert "$abs_path" --output text 2>/dev/null || true)"
+		output_path="$(printf '%s\n' "$converted" | grep -oE '(/[^ ]+\.(txt|md))' | tail -1 || true)"
+		if [[ -n "$output_path" && -f "$output_path" ]]; then
+			printf 'summary: local document extraction succeeded\nmetadata:\n  extractor: document-extraction-helper.sh\n  extracted_path: %s\nsafe_excerpts:\n' "$output_path"
+			_triage_safe_excerpt "$output_path"
+			return 0
+		fi
+	fi
+	printf 'summary: local document extraction unavailable; using printable fallback\nmetadata:\n  extractor: printable-bytes-fallback\nsafe_excerpts:\n'
+	_triage_safe_excerpt "$abs_path"
+	return 0
+}
+
+# _triage_audio_preview <abs-path>
+# Builds a local audio transcript preview when a sidecar or local transcriber exists.
+_triage_audio_preview() {
+	local abs_path="$1"
+	local sidecar transcript_helper transcript_file transcript_dir
+	sidecar="${abs_path}.txt"
+	if [[ -f "$sidecar" ]]; then
+		printf 'summary: audio sidecar transcript found\nmetadata:\n  transcript_source: sidecar\n  transcript_path: %s\nsafe_excerpts:\n' "$sidecar"
+		_triage_safe_excerpt "$sidecar"
+		return 0
+	fi
+	transcript_helper="${SCRIPT_DIR}/transcription-helper.sh"
+	if [[ -x "$transcript_helper" ]]; then
+		transcript_dir="$(mktemp -d)"
+		transcript_file="${transcript_dir}/transcript.txt"
+		if bash "$transcript_helper" transcribe "$abs_path" --backend faster-whisper --format txt --output "$transcript_file" >/dev/null 2>&1 \
+			&& [[ -s "$transcript_file" ]]; then
+			printf 'summary: local audio transcription succeeded\nmetadata:\n  transcript_source: transcription-helper.sh\n  backend: faster-whisper\nsafe_excerpts:\n'
+			_triage_safe_excerpt "$transcript_file"
+			rm -rf "$transcript_dir"
+			return 0
+		fi
+		rm -rf "$transcript_dir"
+	fi
+	printf 'summary: local audio transcript unavailable; using printable fallback\nmetadata:\n  transcript_source: unavailable\nsafe_excerpts:\n'
+	_triage_safe_excerpt "$abs_path"
+	return 0
+}
+
+# _triage_build_preview <abs-path> <sensitivity>
+# Builds the structured local preview passed to the classifier.
+_triage_build_preview() {
+	local abs_path="$1"
+	local sensitivity="$2"
+	local repo_root kind size basename mime web_text
+	repo_root="$(pwd)"
+	kind="$(_triage_file_kind "$abs_path")"
+	size="$(wc -c < "$abs_path" 2>/dev/null | tr -d ' ' || echo 0)"
+	basename="$(basename "$abs_path")"
+	mime="$(file -b --mime-type "$abs_path" 2>/dev/null || echo unknown)"
+	printf 'kind: %s\nsummary: %s item for inbox routing\nmetadata:\n  filename: %s\n  bytes: %s\n  mime: %s\n  sensitivity: %s\n' \
+		"$kind" "$kind" "$basename" "$size" "$mime" "$sensitivity"
+	case "$kind" in
+	email)
+		_triage_email_preview "$abs_path"
+		;;
+	pdf | image)
+		_triage_document_preview "$abs_path"
+		;;
+	audio)
+		_triage_audio_preview "$abs_path"
+		;;
+	web)
+		web_text="$(_triage_web_text_path "$abs_path" "$repo_root")"
+		if [[ -n "$web_text" ]]; then
+			printf 'summary: captured URL/web text\nmetadata:\n  text_path: %s\nsafe_excerpts:\n' "$web_text"
+			_triage_safe_excerpt "$web_text"
+		else
+			printf 'safe_excerpts:\n'
+			_triage_safe_excerpt "$abs_path"
+		fi
+		;;
+	csv)
+		printf 'summary: delimited table preview\nmetadata:\n  table_kind: %s\nsafe_excerpts:\n' "$kind"
+		_triage_safe_excerpt "$abs_path"
+		;;
+	*)
+		printf 'safe_excerpts:\n'
+		_triage_safe_excerpt "$abs_path"
+		;;
+	esac
+	return 0
+}
+
+# _triage_run_classification <abs-path> <sensitivity> <confidence-threshold> <explain>
 # Runs llm-routing-helper.sh to classify a file.
 # Outputs space-separated: <plane> <sub-folder> <confidence> <use-local-only> <reason>
 # On failure, outputs: "" "" 0 0 <reason>
 _triage_run_classification() {
-	local abs_path="$1" sensitivity="$2" confidence_threshold="$3"
+	local abs_path="$1" sensitivity="$2" confidence_threshold="$3" explain="$4"
 	local use_local_only=0
 	local tier_check
 	for tier_check in $SENSITIVITY_LOCAL_ONLY_TIERS; do
@@ -656,7 +843,10 @@ _triage_run_classification() {
 	command -v llm-routing-helper.sh >/dev/null 2>&1 && routing_script="llm-routing-helper.sh"
 
 	local content_preview
-	content_preview="$(dd if="$abs_path" bs=1 count=2048 2>/dev/null | strings 2>/dev/null | head -40 || true)"
+	content_preview="$(_triage_build_preview "$abs_path" "$sensitivity")"
+	if [[ "$explain" -eq 1 ]]; then
+		printf '  [EXPLAIN] Classification preview for %s:\n%s\n' "$abs_path" "$content_preview" >&2
+	fi
 
 	local llm_flags=("--task" "classify-inbox")
 	[[ "$use_local_only" -eq 1 ]] && llm_flags+=("--local-only")
@@ -686,13 +876,13 @@ _triage_run_classification() {
 
 # _triage_process_item <inbox-dir> <repo-root> <rel-path>
 #   <has-sensitivity-detect> <has-llm-routing>
-#   <confidence-threshold> <dry-run> <log-path>
+#   <confidence-threshold> <dry-run> <log-path> <explain>
 # Processes a single pending item through the full triage pipeline.
 # Outputs: "routed" or "needs-review" on stdout.
 _triage_process_item() {
 	local inbox_dir="$1" repo_root="$2" rel_path="$3"
 	local has_sd="$4" has_llm="$5"
-	local confidence_threshold="$6" dry_run="$7" log_path="$8"
+	local confidence_threshold="$6" dry_run="$7" log_path="$8" explain="$9"
 
 	local abs_path="${repo_root}/${rel_path}"
 
@@ -707,7 +897,7 @@ _triage_process_item() {
 		needs_review_reason="dependency-unavailable"
 	else
 		local class_out
-		class_out="$(_triage_run_classification "$abs_path" "$sensitivity" "$confidence_threshold")"
+		class_out="$(_triage_run_classification "$abs_path" "$sensitivity" "$confidence_threshold" "$explain")"
 		IFS=$'\t' read -r plane sub_folder confidence use_local_only needs_review_reason reasoning <<< "$class_out"
 	fi
 
@@ -729,6 +919,7 @@ _triage_process_item() {
 
 cmd_triage() {
 	local dry_run=0
+	local explain=0
 	local limit="${TRIAGE_RATE_LIMIT:-${TRIAGE_RATE_LIMIT_DEFAULT}}"
 	local confidence_threshold="${TRIAGE_CONFIDENCE_THRESHOLD:-${TRIAGE_CONFIDENCE_THRESHOLD_DEFAULT}}"
 	local backoff_threshold="${TRIAGE_BACKOFF_THRESHOLD:-${TRIAGE_BACKOFF_THRESHOLD_DEFAULT}}"
@@ -737,6 +928,7 @@ cmd_triage() {
 		local cur_arg="$1"
 		case "$cur_arg" in
 		--dry-run) dry_run=1; shift ;;
+		--explain) explain=1; shift ;;
 		--limit)   limit="${2:-$limit}"; shift 2 ;;
 		--limit=*) limit="${cur_arg#--limit=}"; shift ;;
 		--confidence-threshold)  confidence_threshold="${2:-$confidence_threshold}"; shift 2 ;;
@@ -758,6 +950,7 @@ cmd_triage() {
 	has_llm="${dep_out##* }"
 
 	[[ "$dry_run" -eq 1 ]] && print_info "[DRY RUN] No files will be moved."
+	[[ "$explain" -eq 1 ]] && print_info "[EXPLAIN] Structured extraction previews will be printed."
 
 	local -a pending_paths
 	while IFS= read -r p; do
@@ -793,7 +986,7 @@ cmd_triage() {
 		outcome="$(_triage_process_item \
 			"$inbox_dir" "$repo_root" "$rel_path" \
 			"$has_sd" "$has_llm" \
-			"$confidence_threshold" "$dry_run" "$log_path")"
+			"$confidence_threshold" "$dry_run" "$log_path" "$explain")"
 		processed=$(( processed + 1 ))
 		if [[ "$outcome" == "routed" ]]; then
 			routed=$(( routed + 1 ))
@@ -1086,7 +1279,7 @@ Commands:
     --repo PATH               Repo root to scan (default: current dir)
     --include-workspace       Also scan workspace inbox (~/.aidevops/.agent-workspace/inbox/)
     --json                    Machine-readable JSON array output
-  triage [--dry-run] [--limit N] [--confidence-threshold N]
+  triage [--dry-run] [--explain] [--limit N] [--confidence-threshold N]
                             Process pending items: sensitivity → classify → route
   help                      Show this help
 
