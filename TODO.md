@@ -3945,4 +3945,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3457 Normalize escaped newlines in issue bodies #auto-dispatch #bug ref:GH#22316
 
-- [ ] t3458 Fix node_modules restore stale lock spin #bug ref:GH#22317
+- [x] t3458 Fix node_modules restore stale lock spin #bug ref:GH#22317 pr:#22318 completed:2026-05-02
