@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # t2891: Smoke test for the active setup_opencode_cli function in
-# setup-modules/tool-install.sh — the function that's actually sourced
+# .agents/scripts/setup/modules/tool-install.sh — the function that's actually sourced
 # by setup.sh (line 753), as opposed to the orphan stub in
 # .agents/scripts/setup/_services.sh that t2888 fixed.
 #
@@ -18,7 +18,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
-TOOL_INSTALL="$REPO_ROOT/setup-modules/tool-install.sh"
+TOOL_INSTALL="$REPO_ROOT/.agents/scripts/setup/modules/tool-install.sh"
 
 if [[ ! -f "$TOOL_INSTALL" ]]; then
 	echo "FAIL: cannot find $TOOL_INSTALL" >&2

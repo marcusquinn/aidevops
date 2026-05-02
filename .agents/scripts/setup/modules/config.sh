@@ -38,7 +38,7 @@ install_aidevops_cli() {
 	print_info "Installing aidevops CLI command..."
 
 	# Use INSTALL_DIR (repo root, exported by setup.sh) — not BASH_SOURCE[0]
-	# which resolves to setup-modules/ when sourced from setup.sh.
+	# which resolves to .agents/scripts/setup/modules/ when sourced from setup.sh.
 	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/aidevops.sh"
 	local cli_target="/usr/local/bin/aidevops"
 

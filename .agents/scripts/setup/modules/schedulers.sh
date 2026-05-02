@@ -64,7 +64,7 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
-# SCRIPT_DIR — resolves to the setup-modules/ directory so sub-library
+# SCRIPT_DIR — resolves to the setup modules directory so sub-library
 # source calls work regardless of the caller's working directory or any
 # inherited SCRIPT_DIR from parent scripts. Always derive from ${BASH_SOURCE[0]}
 # to ensure sub-libraries load from the correct location.

@@ -11,7 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 SETUP_SH="${REPO_ROOT}/setup.sh"
-AGENT_DEPLOY="${REPO_ROOT}/setup-modules/agent-deploy.sh"
+AGENT_DEPLOY="${REPO_ROOT}/.agents/scripts/setup/modules/agent-deploy.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

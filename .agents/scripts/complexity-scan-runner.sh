@@ -171,7 +171,7 @@ Usage:
   complexity-scan-runner.sh help     Show this help
 
 Scheduled via launchd: sh.aidevops.complexity-scan (hourly, RunAtLoad=true).
-Install via setup.sh / setup_complexity_scan in setup-modules/schedulers.sh.
+Install via setup.sh / setup_complexity_scan in .agents/scripts/setup/modules/schedulers.sh.
 
 Paths:
   Lock dir:    ${LOCK_DIR}

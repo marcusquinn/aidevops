@@ -299,7 +299,7 @@ npm_global_install() {
 # Prompt the user for input, with non-interactive fallback.
 # Canonical definition in .agents/scripts/setup/_common.sh; this fallback
 # ensures the function exists even when _common.sh was not sourced (e.g.
-# bootstrap from curl where setup-modules/ doesn't exist yet).
+# bootstrap from curl where .agents/scripts/setup/modules/ doesn't exist yet).
 if ! type setup_prompt &>/dev/null; then
 	setup_prompt() {
 		local var_name="$1"

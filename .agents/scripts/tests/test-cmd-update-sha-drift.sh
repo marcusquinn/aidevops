@@ -22,7 +22,7 @@
 #   it never fired. The pulse kept hitting the bug ~every 4 minutes.
 #
 # Fix (t2706): both update paths now use the .deployed-sha stamp (written by
-# setup-modules/agent-deploy.sh:612) and a git diff between deployed and HEAD,
+# .agents/scripts/setup/modules/agent-deploy.sh:612) and a git diff between deployed and HEAD,
 # filtered to framework code paths. Catches ANY file drift, not just one.
 
 set -uo pipefail
@@ -208,7 +208,7 @@ run_cmd_update_stamp_branch() {
 				has_code_drift=0
 				if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
 					.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-					setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+					setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 					has_code_drift=1
 				fi
 				if [[ "$has_code_drift" -eq 1 ]]; then

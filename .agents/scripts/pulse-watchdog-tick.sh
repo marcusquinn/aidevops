@@ -56,7 +56,7 @@ _wd_log() {
 }
 
 # Resolve the configured pulse interval from settings.json (default 180s).
-# Mirrors _read_pulse_interval_seconds in setup-modules/schedulers.sh.
+# Mirrors _read_pulse_interval_seconds in .agents/scripts/setup/modules/schedulers.sh.
 # Reads orchestration.pulse_interval_seconds canonically; falls back to
 # supervisor.pulse_interval_seconds for legacy settings.json files (t2946).
 _read_pulse_interval() {

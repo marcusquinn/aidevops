@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
-SCHEDULERS_SH="$REPO_ROOT/setup-modules/schedulers.sh"
+SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0

@@ -519,7 +519,7 @@ _cmd_check_stale_agent_redeploy() {
 	# (e.g., PR #20323 fixed pulse-batch-prefetch-helper.sh — sentinel was blind
 	# to it, and the pulse kept hitting the bug for ~14h while VERSION matched).
 	# Replacement: compare the canonical HEAD SHA against ~/.aidevops/.deployed-sha
-	# (written by setup-modules/agent-deploy.sh on every successful deploy).
+	# (written by .agents/scripts/setup/modules/agent-deploy.sh on every successful deploy).
 	# Docs-only drift (reference/, *.md) is intentionally skipped — no runtime
 	# impact and redeploying for docs wastes cycles.
 	# GH#4727: Codacy not_collected false-positive recurred because the fix in
@@ -533,11 +533,11 @@ _cmd_check_stale_agent_redeploy() {
 			local has_code_drift=0
 			# Per Gemini code-review on PR #20342: use git's path filter +
 			# `grep -q .` to detect drift across the full set of deploy-affecting
-			# paths (not just .agents/ subdirs — also setup.sh, setup-modules/,
+			# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 			# and aidevops.sh itself, which are deployed/sourced by setup).
 			if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$head_sha" -- \
 				.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-				setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+				setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 				has_code_drift=1
 			fi
 			if [[ "$has_code_drift" -eq 1 ]]; then

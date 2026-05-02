@@ -722,7 +722,7 @@ _warn_deployed_script_drift() {
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
-	# Use INSTALL_DIR (set by setup.sh) — BASH_SOURCE[0] points to setup-modules/
+	# Use INSTALL_DIR (set by setup.sh) — BASH_SOURCE[0] points to .agents/scripts/setup/modules/
 	# which is not the repo root, so we can't derive .agents/ from it
 	local repo_dir="${INSTALL_DIR:?INSTALL_DIR must be set by setup.sh}"
 	local source_dir="$repo_dir/.agents"

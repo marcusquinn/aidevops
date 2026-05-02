@@ -6,7 +6,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MIGRATIONS_SCRIPT="$REPO_DIR/setup-modules/migrations.sh"
+MIGRATIONS_SCRIPT="$REPO_DIR/.agents/scripts/setup/modules/migrations.sh"
 
 PASS_COUNT=0
 FAIL_COUNT=0

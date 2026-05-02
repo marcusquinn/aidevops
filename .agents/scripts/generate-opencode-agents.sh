@@ -4,7 +4,7 @@
 # =============================================================================
 # DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
 # This script is kept for one release cycle as a fallback.
-# setup-modules/config.sh will use generate-runtime-config.sh when available.
+# .agents/scripts/setup/modules/config.sh will use generate-runtime-config.sh when available.
 # =============================================================================
 # Generate OpenCode Agent Configuration
 # =============================================================================

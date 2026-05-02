@@ -153,29 +153,30 @@ ensure_trailing_newline() {
 	[[ -s "$file" ]] && [[ "$last" != $'\n'x ]] && printf '\n' >>"$file"
 }
 
-# Source sub-libraries (repo management, init/scaffold, skills/plugins).
-# INSTALL_DIR is the canonical location of aidevops.sh (set above).
-# Using INSTALL_DIR rather than BASH_SOURCE[0] because aidevops is installed
-# as a symlink at /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh;
-# dirname(BASH_SOURCE[0]) resolves to /usr/local/bin, not $INSTALL_DIR.
-# shellcheck source=./aidevops-repos-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-repos-lib.sh"
-# shellcheck source=./aidevops-init-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-init-lib.sh"
-# shellcheck source=./aidevops-skills-plugin-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-skills-plugin-lib.sh"
-# shellcheck source=./aidevops-status-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-status-lib.sh"
-# shellcheck source=./aidevops-update-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-update-lib.sh"
-# shellcheck source=./aidevops-upgrade-planning-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-upgrade-planning-lib.sh"
+# Source CLI implementation modules from the namespaced module tree.
+# INSTALL_DIR is the canonical location of aidevops.sh (set above). Using
+# INSTALL_DIR rather than BASH_SOURCE[0] preserves installed symlink support:
+# /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh would otherwise resolve
+# BASH_SOURCE[0] to /usr/local/bin instead of the checkout/deployed tree.
+AIDEVOPS_CLI_MODULES_DIR="${INSTALL_DIR}/.agents/scripts/aidevops-cli"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
+# shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-repos-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-init-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-init-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-skills-plugin-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-skills-plugin-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-status-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-status-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-update-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-upgrade-planning-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
 
 # Update/upgrade command
 cmd_update() {
@@ -229,11 +230,11 @@ cmd_update() {
 					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
 						# Per Gemini code-review on PR #20342: use git's path filter +
 						# `grep -q .` to detect drift across the full set of deploy-affecting
-						# paths (not just .agents/ subdirs — also setup.sh, setup-modules/,
+						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 						# and aidevops.sh itself, which are deployed/sourced by setup).
 						if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
 							.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-							setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+							setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 							has_code_drift=1
 						fi
 						if [[ "$has_code_drift" -eq 1 ]]; then

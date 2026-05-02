@@ -2083,7 +2083,7 @@ setup_ollama_for_knowledge() {
 	local bundle_dir="$HOME/.aidevops/configs"
 	local bundle_dest="${bundle_dir}/ollama-bundle.json"
 	local bundle_src
-	bundle_src="${BASH_SOURCE[0]%/*}/../.agents/templates/ollama-bundle.json"
+	bundle_src="${INSTALL_DIR}/.agents/templates/ollama-bundle.json"
 	if [[ ! -f "$bundle_src" ]]; then
 		bundle_src="$HOME/.aidevops/agents/templates/ollama-bundle.json"
 	fi

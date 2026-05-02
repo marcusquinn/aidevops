@@ -96,7 +96,7 @@ unset _aidevops_path_prefix
 # This is the primary fix for the FD exhaustion observed in GH#18787:
 #   pulse-simplification-state.sh: redirection error: cannot duplicate fd: Too many open files
 #
-# Defence-in-depth: setup-modules/schedulers.sh also sets
+# Defence-in-depth: .agents/scripts/setup/modules/schedulers.sh also sets
 # SoftResourceLimits.NumberOfFiles=4096 in the launchd plist, but the
 # ulimit raise here is the runtime safety net in case the plist is stale.
 #######################################

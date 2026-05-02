@@ -42,7 +42,7 @@
 #                          opencode is not installed.
 #   install              — macOS only: install/refresh LaunchAgent for weekly
 #                          auto-run on Sun 04:00 local (t2183). Linux install
-#                          is handled by setup-modules/schedulers.sh directly.
+#                          is handled by .agents/scripts/setup/modules/schedulers.sh directly.
 #   uninstall            — macOS only: remove LaunchAgent. Idempotent.
 #   status               — report scheduler install state (launchd on macOS,
 #                          systemd/cron on Linux).
@@ -112,7 +112,7 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 : "${OPENCODE_DB_MAINTENANCE_MODE:=auto}"
 
 # Scheduler (macOS launchd) — used by cmd_install / cmd_uninstall / cmd_status.
-# Linux systemd/cron install is handled by setup-modules/schedulers.sh
+# Linux systemd/cron install is handled by .agents/scripts/setup/modules/schedulers.sh
 # (setup_opencode_db_maintenance → _install_scheduler_linux).
 readonly LAUNCHD_LABEL="sh.aidevops.opencode-db-maintenance"
 readonly LAUNCHD_DIR="${HOME}/Library/LaunchAgents"
@@ -816,7 +816,7 @@ cmd_auto() {
 # Subcommand: install / uninstall / status (macOS launchd scheduler, t2183)
 # -----------------------------------------------------------------------------
 # Helper owns its plist generation (Approach B, mirrors repo-sync-helper.sh).
-# Linux systemd/cron install is handled by setup-modules/schedulers.sh calling
+# Linux systemd/cron install is handled by .agents/scripts/setup/modules/schedulers.sh calling
 # _install_scheduler_linux — these subcommands are macOS-only; on Linux they
 # print an info message and exit 0 (success, nothing to do here).
 
@@ -907,7 +907,7 @@ EOF
 
 cmd_install() {
 	if ! _is_macos; then
-		print_info "install: Linux scheduling is handled by setup-modules/schedulers.sh (systemd/cron)"
+		print_info "install: Linux scheduling is handled by .agents/scripts/setup/modules/schedulers.sh (systemd/cron)"
 		print_info "This helper's install subcommand is macOS-only — exiting cleanly"
 		return 0
 	fi
@@ -952,7 +952,7 @@ cmd_install() {
 
 cmd_uninstall() {
 	if ! _is_macos; then
-		print_info "uninstall: Linux scheduling is handled by setup-modules/schedulers.sh"
+		print_info "uninstall: Linux scheduling is handled by .agents/scripts/setup/modules/schedulers.sh"
 		return 0
 	fi
 
@@ -1077,7 +1077,7 @@ Subcommands:
   auto                   Safe mode for scheduled use (r913). Silent no-op when
                          opencode not installed; throttles rapid re-runs.
   install                macOS: install/refresh LaunchAgent (weekly Sun 04:00).
-                         Linux: no-op (handled by setup-modules/schedulers.sh).
+                         Linux: no-op (handled by .agents/scripts/setup/modules/schedulers.sh).
   uninstall              macOS: remove LaunchAgent. Idempotent.
   status                 Report scheduler state (launchd/systemd/cron).
   notice                 Emit one toast-safe warning when maintenance is due or disruptive mode is scheduled.

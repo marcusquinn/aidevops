@@ -101,7 +101,7 @@ suggest_home() {
 		printf 'docs/ or .agents/reference/ unless this is a public root entrypoint'
 		;;
 	*.sh)
-		printf '.agents/scripts/ for framework helpers, setup-modules/ for setup internals, or root only for public entrypoints'
+		printf '.agents/scripts/ for framework helpers, .agents/scripts/setup/modules/ for setup internals, or root only for public entrypoints'
 		;;
 	*.json | *.jsonc | *.yml | *.yaml | *.toml | *.properties)
 		printf '.agents/configs/ for framework policy, configs/ for user templates, or tool-specific tracked config when required at root'

@@ -13,7 +13,7 @@
 #   subagent-index-helper.sh help        # Show this help
 #
 # Called by:
-#   - setup.sh (via setup-modules/config.sh)
+#   - setup.sh (via .agents/scripts/setup/modules/config.sh)
 #   - aidevops update
 #   - build-agent workflow (after agent create/promote)
 #

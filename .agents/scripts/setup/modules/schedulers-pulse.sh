@@ -5,7 +5,7 @@
 # Schedulers Pulse Sub-Library -- Pulse resolution, supervisor setup, plist
 # generation, and watchdog installation functions.
 # =============================================================================
-# This sub-library is sourced by setup-modules/schedulers.sh (the orchestrator).
+# This sub-library is sourced by .agents/scripts/setup/modules/schedulers.sh (the orchestrator).
 # It covers:
 #   - Modern bash resolution for launchd ProgramArguments
 #   - Pulse consent resolution and install decision

@@ -1157,7 +1157,7 @@ _opencode_fixed_candidate_dirs_for_warning() {
 #
 # t2954 (Apr 2026): Node version manager paths (nvm, volta, fnm) added.
 # nvm is overwhelmingly the most common Node manager on Linux; the
-# absence of nvm here mirrored the gap in setup-modules/schedulers.sh
+# absence of nvm here mirrored the gap in .agents/scripts/setup/modules/schedulers.sh
 # and silently broke dispatch for ~9 days on alex-solovyev's runner
 # every time the persisted scheduler-runtime-bin file got dropped or
 # the canary fired against a freshly missing binary.

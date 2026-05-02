@@ -66,7 +66,7 @@ extract_file_paths_from_text() {
 	local paths=""
 
 	# Pattern 1: Explicit file paths with directory separators
-	# Matches: src/foo/bar.sh, .agents/scripts/pulse-wrapper.sh, setup-modules/schedulers.sh
+	# Matches: src/foo/bar.sh, .agents/scripts/pulse-wrapper.sh, .agents/scripts/setup/modules/schedulers.sh
 	local dir_paths
 	dir_paths=$(printf '%s' "$text" | grep -oE '[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+\.[a-zA-Z]{1,10}' | sort -u || true)
 	if [[ -n "$dir_paths" ]]; then
@@ -234,8 +234,8 @@ _check_tier1_specific_paths() {
 		local issue_basename
 		issue_basename=$(basename "$issue_file")
 
-		# Full path substring match (issue says "setup-modules/schedulers.sh",
-		# PR has ".agents/setup-modules/schedulers.sh" or exact match)
+		# Full path substring match (issue says ".agents/scripts/setup/modules/schedulers.sh",
+		# PR has ".agents/.agents/scripts/setup/modules/schedulers.sh" or exact match)
 		if printf '%s\n' "$pr_files" | grep -qF "$issue_file"; then
 			overlap_count=$((overlap_count + 1))
 			specific_overlap=$((specific_overlap + 1))
@@ -348,10 +348,10 @@ _emit_overlap_verdict() {
 # Uses a two-tier strategy to avoid false positives from contextual mentions:
 #
 # Tier 1 (strict): If the issue mentions files with directory separators
-#   (e.g., "setup-modules/schedulers.sh"), at least one of these specific
+#   (e.g., ".agents/scripts/setup/modules/schedulers.sh"), at least one of these specific
 #   paths must appear in the PR diff. This catches the case where an issue
 #   mentions a contextual file (pulse-wrapper.sh) alongside the actual
-#   buggy file (setup-modules/schedulers.sh), and the PR only touches
+#   buggy file (.agents/scripts/setup/modules/schedulers.sh), and the PR only touches
 #   the contextual file.
 #
 # Tier 2 (relaxed): If no specific paths are found (only bare filenames),
