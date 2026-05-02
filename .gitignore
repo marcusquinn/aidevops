@@ -105,6 +105,7 @@ vault-export-*.csv
 setup-wizard-responses.json
 tmp.*.json
 quality-report.md
+.beads/
 
 # Logs
 *.log
