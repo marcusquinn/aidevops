@@ -6,7 +6,7 @@
 # =============================================================================
 # Inbox Helper (t2866 + t2867)
 # =============================================================================
-# Manages the _inbox/ transit zone: provisioning, capture, find, and status.
+# Manages the _inbox/ transit zone: provisioning, capture, correction, find, and status.
 #
 # Usage:
 #   inbox-helper.sh <command> [options]
@@ -15,6 +15,8 @@
 #   provision [<repo-path>]   Create _inbox/ structure (default: current dir)
 #   provision-workspace       Create workspace-level inbox at ~/.aidevops/.agent-workspace/inbox/
 #   add <file|--url <url>>    Capture a file or URL into _inbox/
+#   correct <item> --to <plane/path> --reason <text>
+#                             Record a human-approved routing correction
 #   find <query>              Search triage.log for matching entries
 #   status [<repo-path>]      Show item counts per sub-folder
 #   help                      Show this help
@@ -41,12 +43,14 @@ set -euo pipefail
 readonly INBOX_DIR_NAME="_inbox"
 readonly INBOX_SUB_DIRS=("_drop" "email" "web" "scan" "voice" "import" "_needs-review")
 readonly TRIAGE_LOG="triage.log"
+readonly TRIAGE_EXAMPLES="triage-examples.jsonl"
 readonly INBOX_GITIGNORE_CONTENT='# _inbox/ is a transit zone.
 # Binary captures are excluded; only README.md, .gitignore, and triage.log are tracked.
 *
 !README.md
 !.gitignore
 !triage.log
+!triage-examples.jsonl
 '
 readonly DEBOUNCE_SECS=5
 
@@ -111,6 +115,107 @@ _json_field() {
 _json_escape() {
 	local raw="$1"
 	printf '%s' "$raw" | sed 's/"/\\"/g'
+	return 0
+}
+
+# _sha256_file_local <path>
+# Returns a sha256 hash for a local file, or blank when unavailable.
+_sha256_file_local() {
+	local path="$1"
+	[[ -f "$path" ]] || { printf ''; return 0; }
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$path" | cut -d' ' -f1
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$path" | cut -d' ' -f1
+	else
+		printf ''
+	fi
+	return 0
+}
+
+# _triage_examples_path <inbox-dir>
+_triage_examples_path() {
+	local inbox_dir="$1"
+	printf '%s/%s' "$inbox_dir" "$TRIAGE_EXAMPLES"
+	return 0
+}
+
+# _parse_destination <plane/path>
+# Prints: <plane><TAB><sub-folder>. Accepts leading underscore on plane.
+_parse_destination() {
+	local destination="$1"
+	destination="${destination#./}"
+	destination="${destination#/}"
+	destination="${destination#_}"
+	local plane="$destination" sub_folder=""
+	if [[ "$destination" == */* ]]; then
+		plane="${destination%%/*}"
+		sub_folder="${destination#*/}"
+	fi
+	if [[ -z "$plane" ]]; then
+		return 1
+	fi
+	printf '%s\t%s\n' "$plane" "$sub_folder"
+	return 0
+}
+
+# _triage_find_latest_match <log-path> <query>
+# Prints the newest triage.log line matching an item path/hash/query.
+_triage_find_latest_match() {
+	local log_path="$1"
+	local query="$2"
+	local match=""
+	[[ -f "$log_path" ]] || { printf ''; return 0; }
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		if printf '%s' "$line" | grep -Fqi -- "$query" 2>/dev/null; then
+			match="$line"
+		fi
+	done < "$log_path"
+	printf '%s' "$match"
+	return 0
+}
+
+# _triage_load_examples <examples-path> [hash]
+# Prints up to five relevant approved corrections for prompt context.
+_triage_load_examples() {
+	local examples_path="$1"
+	local item_hash="${2:-}"
+	[[ -f "$examples_path" ]] || { printf ''; return 0; }
+	local selected="" line count=0
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		if [[ -n "$item_hash" ]] && printf '%s' "$line" | grep -Fq "\"item_hash\":\"${item_hash}\""; then
+			selected="${selected}${line}"$'\n'
+			count=$((count + 1))
+		fi
+	done < "$examples_path"
+	if [[ "$count" -eq 0 ]]; then
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			selected="${selected}${line}"$'\n'
+			count=$((count + 1))
+			[[ "$count" -ge 5 ]] && break
+		done < "$examples_path"
+	fi
+	printf '%s' "$selected"
+	return 0
+}
+
+# _triage_find_correction_for_hash <examples-path> <hash>
+# Prints the newest approved correction for an identical content hash.
+_triage_find_correction_for_hash() {
+	local examples_path="$1"
+	local item_hash="$2"
+	local match=""
+	[[ -n "$item_hash" && -f "$examples_path" ]] || { printf ''; return 0; }
+	while IFS= read -r line; do
+		[[ -z "$line" ]] && continue
+		if printf '%s' "$line" | grep -Fq "\"item_hash\":\"${item_hash}\""; then
+			match="$line"
+		fi
+	done < "$examples_path"
+	printf '%s' "$match"
 	return 0
 }
 
@@ -218,6 +323,11 @@ cmd_provision() {
 		touch "$log_path"
 		print_success "Created ${log_path}"
 	fi
+	local examples_path="${inbox_dir}/${TRIAGE_EXAMPLES}"
+	if [[ ! -f "$examples_path" ]]; then
+		touch "$examples_path"
+		print_success "Created ${examples_path}"
+	fi
 
 	print_success "_inbox/ provisioned at ${inbox_dir}"
 	return 0
@@ -256,6 +366,11 @@ cmd_provision_workspace() {
 	if [[ ! -f "$log_path" ]]; then
 		touch "$log_path"
 		print_success "Created ${log_path}"
+	fi
+	local examples_path="${inbox_dir}/${TRIAGE_EXAMPLES}"
+	if [[ ! -f "$examples_path" ]]; then
+		touch "$examples_path"
+		print_success "Created ${examples_path}"
 	fi
 	print_success "Workspace inbox provisioned at ${WORKSPACE_INBOX_DIR}"
 	return 0
@@ -488,6 +603,79 @@ cmd_find() {
 	if [[ "$found" -eq 0 ]]; then
 		print_info "No entries matching \"${query}\" in the last 30 days."
 	fi
+	return 0
+}
+
+# =============================================================================
+# cmd_correct — append a human-approved routing correction (GH#22295)
+# =============================================================================
+cmd_correct() {
+	local item="${1:-}"
+	[[ -n "$item" ]] && shift || true
+	local destination="" reason=""
+	while [[ $# -gt 0 ]]; do
+		local cur_arg="$1"
+		case "$cur_arg" in
+		--to) destination="${2:-}"; shift 2 ;;
+		--to=*) destination="${cur_arg#--to=}"; shift ;;
+		--reason) reason="${2:-}"; shift 2 ;;
+		--reason=*) reason="${cur_arg#--reason=}"; shift ;;
+		*) print_error "Unknown correct flag: $cur_arg"; return 1 ;;
+		esac
+	done
+
+	if [[ -z "$item" || -z "$destination" || -z "$reason" ]]; then
+		print_error "Usage: inbox-helper.sh correct <item> --to <plane/path> --reason <text>"
+		return 1
+	fi
+
+	local repo_root inbox_dir log_path examples_path
+	repo_root="$(pwd)"
+	inbox_dir="${repo_root}/${INBOX_DIR_NAME}"
+	[[ ! -d "$inbox_dir" ]] && print_warning "_inbox/ not found. Run: aidevops inbox provision" && return 1
+	log_path="${inbox_dir}/${TRIAGE_LOG}"
+	examples_path="$(_triage_examples_path "$inbox_dir")"
+	[[ ! -f "$log_path" ]] && touch "$log_path"
+	[[ ! -f "$examples_path" ]] && touch "$examples_path"
+
+	local parsed plane sub_folder
+	parsed="$(_parse_destination "$destination")" || { print_error "Invalid --to destination: ${destination}"; return 1; }
+	IFS=$'\t' read -r plane sub_folder <<< "$parsed"
+
+	local abs_item="$item"
+	[[ "$abs_item" != /* ]] && abs_item="${repo_root}/${item}"
+	local item_hash=""
+	item_hash="$(_sha256_file_local "$abs_item")"
+
+	local original_line original_status original_to original_plane original_path original_confidence original_reasoning
+	original_line="$(_triage_find_latest_match "$log_path" "$item")"
+	original_status="$(_json_field "$original_line" "$TRIAGE_KEY_STATUS")"
+	original_to="$(_json_field "$original_line" "to")"
+	original_plane="$(_json_field "$original_line" "dest_plane")"
+	original_path="$(_json_field "$original_line" "dest_path")"
+	original_confidence="$(printf '%s' "$original_line" | grep -o '"confidence":[0-9.]*' | cut -d':' -f2 || true)"
+	original_reasoning="$(_json_field "$original_line" "reasoning")"
+	[[ -z "$original_status" ]] && original_status="unknown"
+	[[ -z "$original_confidence" ]] && original_confidence="0"
+
+	local ts item_escaped dest_escaped reason_escaped original_to_escaped original_reasoning_escaped
+	ts="$(_iso_ts_full)"
+	item_escaped="$(_json_escape "$item")"
+	dest_escaped="$(_json_escape "$destination")"
+	reason_escaped="$(_json_escape "$reason")"
+	original_to_escaped="$(_json_escape "$original_to")"
+	original_reasoning_escaped="$(_json_escape "$original_reasoning")"
+
+	printf '{"ts":"%s","source":"human-correction","status":"corrected","item":"%s","item_hash":"%s","original_status":"%s","original_to":"%s","original_plane":"%s","original_path":"%s","original_confidence":%s,"original_reasoning":"%s","corrected_to":"%s","corrected_plane":"%s","corrected_sub_folder":"%s","reason":"%s"}\n' \
+		"$ts" "$item_escaped" "$item_hash" "$original_status" "$original_to_escaped" \
+		"$original_plane" "$original_path" "$original_confidence" "$original_reasoning_escaped" \
+		"$dest_escaped" "$plane" "$sub_folder" "$reason_escaped" >> "$log_path"
+
+	printf '{"ts":"%s","item":"%s","item_hash":"%s","corrected_plane":"%s","corrected_sub_folder":"%s","corrected_to":"%s","reason":"%s","original_status":"%s","original_confidence":%s,"original_reasoning":"%s"}\n' \
+		"$ts" "$item_escaped" "$item_hash" "$plane" "$sub_folder" "$dest_escaped" \
+		"$reason_escaped" "$original_status" "$original_confidence" "$original_reasoning_escaped" >> "$examples_path"
+
+	print_success "Correction recorded for ${item}: ${destination}"
 	return 0
 }
 
@@ -827,12 +1015,13 @@ _triage_build_preview() {
 	return 0
 }
 
-# _triage_run_classification <abs-path> <sensitivity> <confidence-threshold> <explain>
+# _triage_run_classification <abs-path> <sensitivity> <confidence-threshold> <examples-path> <item-hash>
 # Runs llm-routing-helper.sh to classify a file.
 # Outputs space-separated: <plane> <sub-folder> <confidence> <use-local-only> <reason>
 # On failure, outputs: "" "" 0 0 <reason>
 _triage_run_classification() {
-	local abs_path="$1" sensitivity="$2" confidence_threshold="$3" explain="$4"
+	local abs_path="$1" sensitivity="$2" confidence_threshold="$3"
+	local examples_path="$4" item_hash="$5" explain="$6"
 	local use_local_only=0
 	local tier_check
 	for tier_check in $SENSITIVITY_LOCAL_ONLY_TIERS; do
@@ -847,11 +1036,22 @@ _triage_run_classification() {
 	if [[ "$explain" -eq 1 ]]; then
 		printf '  [EXPLAIN] Classification preview for %s:\n%s\n' "$abs_path" "$content_preview" >&2
 	fi
+	local examples prompt_file tier
+	examples="$(_triage_load_examples "$examples_path" "$item_hash")"
+	prompt_file="$(mktemp "${TMPDIR:-/tmp}/aidevops-inbox-prompt.XXXXXX")"
+	{
+		printf 'Classify this _inbox item into the correct aidevops plane. Return JSON with target_plane, sub_folder, confidence, and reasoning.\n\n'
+		if [[ -n "$examples" ]]; then
+			printf 'Prior human-approved correction examples (JSONL, append-only audit facts):\n%s\n' "$examples"
+		fi
+		printf 'Item content preview:\n%s\n' "$content_preview"
+	} > "$prompt_file"
 
-	local llm_flags=("--task" "classify-inbox")
-	[[ "$use_local_only" -eq 1 ]] && llm_flags+=("--local-only")
+	tier="internal"
+	[[ "$use_local_only" -eq 1 ]] && tier="privileged"
 	local llm_output
-	llm_output="$("$routing_script" "${llm_flags[@]}" --content "$content_preview" 2>/dev/null || true)"
+	llm_output="$("$routing_script" route --tier "$tier" --task "classify-inbox" --prompt-file "$prompt_file" 2>/dev/null || true)"
+	rm -f "$prompt_file"
 
 	local plane="" sub_folder="" confidence=0 reasoning="" reason=""
 	if [[ -n "$llm_output" ]]; then
@@ -885,6 +1085,9 @@ _triage_process_item() {
 	local confidence_threshold="$6" dry_run="$7" log_path="$8" explain="$9"
 
 	local abs_path="${repo_root}/${rel_path}"
+	local item_hash examples_path
+	item_hash="$(_sha256_file_local "$abs_path")"
+	examples_path="$(_triage_examples_path "$inbox_dir")"
 
 	# Step 1: Sensitivity gate (LOCAL ONLY)
 	local sensitivity="unknown"
@@ -893,11 +1096,18 @@ _triage_process_item() {
 	# Step 2: Classification (or immediate needs-review if deps missing)
 	local needs_review_reason=""
 	local plane="" sub_folder="" confidence=0 use_local_only=0 reasoning=""
-	if [[ "$has_sd" -eq 0 || "$has_llm" -eq 0 ]]; then
+	local correction_line
+	correction_line="$(_triage_find_correction_for_hash "$examples_path" "$item_hash")"
+	if [[ -n "$correction_line" ]]; then
+		plane="$(_json_field "$correction_line" "corrected_plane")"
+		sub_folder="$(_json_field "$correction_line" "corrected_sub_folder")"
+		confidence=100
+		reasoning="reused-human-approved-correction:${item_hash}"
+	elif [[ "$has_sd" -eq 0 || "$has_llm" -eq 0 ]]; then
 		needs_review_reason="dependency-unavailable"
 	else
 		local class_out
-		class_out="$(_triage_run_classification "$abs_path" "$sensitivity" "$confidence_threshold" "$explain")"
+		class_out="$(_triage_run_classification "$abs_path" "$sensitivity" "$confidence_threshold" "$examples_path" "$item_hash" "$explain")"
 		IFS=$'\t' read -r plane sub_folder confidence use_local_only needs_review_reason reasoning <<< "$class_out"
 	fi
 
@@ -1272,6 +1482,8 @@ Commands:
   provision-workspace       Create workspace-level inbox at ~/.aidevops/.agent-workspace/inbox/
   add <file>                Capture a file (auto-detects sub-folder from extension)
   add --url <url>           Capture a web page (saves HTML + text + metadata)
+  correct <item> --to <plane/path> --reason <text>
+                            Record append-only routing correction + learning example
   find <query>              Search triage.log for entries matching query (last 30 days)
   status [<repo-path>]      Show item counts per sub-folder
   digest [options]          Show stale items in _drop/ and _needs-review/ (default: >= 7d old)
@@ -1300,6 +1512,7 @@ Triage routing (when dependencies available):
 
 Audit log:
   _inbox/triage.log — append-only JSONL; one entry per capture/triage
+  _inbox/triage-examples.jsonl — human-approved correction examples for future prompts
   Fields: ts, source, sub, orig, path, status, sensitivity, confidence, reasoning
 
 Environment variables (triage):
@@ -1321,6 +1534,7 @@ main() {
 	provision) cmd_provision "$@" ;;
 	provision-workspace) cmd_provision_workspace "$@" ;;
 	add) cmd_add "$@" ;;
+	correct) cmd_correct "$@" ;;
 	find) cmd_find "$@" ;;
 	status) cmd_status "$@" ;;
 	digest) cmd_digest "$@" ;;
