@@ -778,6 +778,42 @@ _t3077_write_preflight_sentinel() {
 	return 0
 }
 
+#######################################
+# Preserve a small worker output excerpt for failure-metric forensics.
+#
+# Args:
+#   $1 - output file path
+#   $2 - session key
+# stdout: excerpt path, or empty on failure/no file
+# Returns: 0 always (observability must fail open)
+#######################################
+_metric_failure_excerpt_path() {
+	local output_file="$1"
+	local session_key="$2"
+	if [[ -z "$output_file" || ! -f "$output_file" ]]; then
+		return 0
+	fi
+	local excerpt_dir="${HOME}/.aidevops/logs/worker-failure-excerpts"
+	mkdir -p "$excerpt_dir" 2>/dev/null || return 0
+	local safe_key timestamp excerpt_path
+	safe_key=$(printf '%s' "$session_key" | tr -c 'A-Za-z0-9._-' '_')
+	timestamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown")
+	excerpt_path="${excerpt_dir}/${safe_key:-unknown}-${timestamp}-$$.log"
+	python3 - "$output_file" "$excerpt_path" <<'PY' >/dev/null 2>&1 || return 0
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+try:
+    with open(src, "rb") as f:
+        data = f.read()[-65536:]
+    with open(dst, "wb") as f:
+        f.write(data)
+except OSError:
+    sys.exit(0)
+PY
+	[[ -s "$excerpt_path" ]] && printf '%s' "$excerpt_path"
+	return 0
+}
+
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model variant_override agent_name
@@ -1022,6 +1058,11 @@ _execute_run_attempt() {
 	# Route as exit 80 so cmd_run can release the dispatch claim without
 	# incrementing the fast-fail counter or triggering NMR backoff on the issue.
 	if [[ -f "$_rl_fast_sentinel" ]]; then
+		local _rl_metric_output_file="" _rl_metric_session_id=""
+		if [[ -f "$output_file" ]]; then
+			_rl_metric_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
+			_rl_metric_output_file=$(_metric_failure_excerpt_path "$output_file" "$session_key")
+		fi
 		rm -f "$_rl_fast_sentinel" "$output_file" 2>/dev/null || true
 		# One literal here; _cmd_run_finish elif is a second. Keeping total at 2
 		# avoids the repeated-string-literal ratchet gate (threshold: >=3).
@@ -1040,7 +1081,8 @@ _execute_run_attempt() {
 			wait "$resource_sampler_pid" 2>/dev/null || true
 			rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 		fi
-		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms"
+		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms" \
+			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id"
 		return 80
 	fi
 
@@ -1048,9 +1090,13 @@ _execute_run_attempt() {
 	# session state to the output file so the worker log captures it.
 	# OpenCode exits silently on API errors; this is our only visibility.
 	# Extract session ID BEFORE the append block to avoid SC2094 (read+write same file).
-	local _diag_session_id="" _diag_incomplete_msgs="0"
-	if [[ "$exit_code" -eq 0 && -f "$output_file" ]]; then
-		_diag_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
+	local _diag_session_id="" _diag_incomplete_msgs="0" _metric_session_id="" _metric_output_file=""
+	if [[ -f "$output_file" ]]; then
+		_metric_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
+		_metric_output_file=$(_metric_failure_excerpt_path "$output_file" "$session_key")
+	fi
+	if [[ "$exit_code" -eq 0 && -n "$_metric_session_id" ]]; then
+		_diag_session_id="$_metric_session_id"
 		if [[ -n "$_diag_session_id" ]]; then
 			_diag_incomplete_msgs=$(sqlite3 ~/.local/share/opencode/opencode.db \
 				"SELECT count(*) FROM message WHERE session_id='${_diag_session_id}' AND json_extract(data, '$.role')='assistant' AND json_extract(data, '$.time.completed') IS NULL" 2>/dev/null || echo "0")
@@ -1093,7 +1139,11 @@ _execute_run_attempt() {
 		wait "$resource_sampler_pid" 2>/dev/null || true
 		rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 	fi
-	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms"
+	if [[ "${_run_result_label:-failed}" == "success" ]]; then
+		_metric_output_file=""
+	fi
+	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
+		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id"
 	return "$handle_exit"
 }
 

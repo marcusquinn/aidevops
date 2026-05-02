@@ -109,7 +109,7 @@ T_FUTURE_SENTINEL=4102444800
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-3","result":"watchdog_stall_killed","exit_code":79}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-3","session_id":"ses_3","issue_number":22349,"repo_slug":"marcusquinn/aidevops","work_dir":"/tmp/wt-3","output_file":"/tmp/excerpt-3.log","result":"watchdog_stall_killed","failure_reason":"watchdog_stall_killed","exit_code":79}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-4","result":"watchdog_stall_continue","exit_code":0}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-5","result":"rate_limit","exit_code":1}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-6","result":"unknown_failure","exit_code":2}\n' "$T_2H_AGO"
@@ -206,6 +206,10 @@ assert_eq "2h5: future sentinel excluded from examples" "0" \
 	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-9")] | length')"
 assert_eq "2h6: missing timestamp excluded from examples" "0" \
 	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-10")] | length')"
+assert_eq "2h7: failure groups carry issue evidence" "22349" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-3") | .issue_number')"
+assert_eq "2h8: failure groups include repo evidence" "marcusquinn/aidevops" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-3") | .repo_slug')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -273,6 +277,7 @@ assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5e: human output shows pr-check opt-in note" "use --pr-check" "$OUT"
 assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
+assert_contains "5g: human output shows failure groups" "Failure groups" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 6: solved:worker attribution query excludes origin-only PR counts.

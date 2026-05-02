@@ -271,10 +271,17 @@ append_runtime_metric() {
 	local failure_reason="$7"
 	local activity="$8"
 	local duration_ms="$9"
+	local issue_number="${10:-}"
+	local repo_slug="${11:-}"
+	local work_dir="${12:-}"
+	local output_file="${13:-}"
+	local session_id="${14:-}"
 	mkdir -p "$METRICS_DIR" 2>/dev/null || true
 	ROLE="$role" SESSION_KEY="$session_key" MODEL="$model" PROVIDER="$provider" \
 		RESULT="$result" EXIT_CODE="$exit_code" FAILURE_REASON="$failure_reason" \
-		ACTIVITY="$activity" DURATION_MS="$duration_ms" METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
+		ACTIVITY="$activity" DURATION_MS="$duration_ms" ISSUE_NUMBER="$issue_number" \
+		REPO_SLUG="$repo_slug" WORK_DIR="$work_dir" OUTPUT_FILE="$output_file" \
+		SESSION_ID="$session_id" METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
 import time
@@ -291,6 +298,22 @@ record = {
     "activity": os.environ.get("ACTIVITY", "0") == "1",
     "duration_ms": int(os.environ.get("DURATION_MS", "0") or 0),
 }
+optional_fields = {
+    "issue_number": os.environ.get("ISSUE_NUMBER", ""),
+    "repo_slug": os.environ.get("REPO_SLUG", ""),
+    "work_dir": os.environ.get("WORK_DIR", ""),
+    "output_file": os.environ.get("OUTPUT_FILE", ""),
+    "session_id": os.environ.get("SESSION_ID", ""),
+}
+for key, value in optional_fields.items():
+    if value:
+        if key == "issue_number":
+            try:
+                record[key] = int(value)
+            except ValueError:
+                record[key] = value
+        else:
+            record[key] = value
 try:
     load_1min, _load_5min, _load_15min = os.getloadavg()
     cpu_count = os.cpu_count() or 0

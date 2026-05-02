@@ -127,7 +127,7 @@ _wah_metric_details_json() {
 	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
-		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[]}'
+		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[]}'
 		return 0
 	fi
 	now_epoch=$(date +%s)
@@ -135,6 +135,7 @@ _wah_metric_details_json() {
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 		| ($w | map(.duration_ms // 0)) as $durations
+		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
 		| {
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
 			timing_ms: {
@@ -145,15 +146,34 @@ _wah_metric_details_json() {
 			recent_examples: ($w | sort_by(.ts // 0) | reverse | .[0:5] | map({
 				ts,
 				session_key,
+				session_id,
+				issue_number,
+				repo_slug,
 				result,
 				exit_code,
 				failure_reason,
 				duration_ms,
+				work_dir,
+				output_file,
 				load_1min,
 				load_per_cpu
-			}))
+			})),
+			failure_groups: ([
+				$failures
+				| group_by([.result // "unknown", .failure_reason // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
+				| .[]
+				| {
+					result: (.[0].result // "unknown"),
+					failure_reason: (.[0].failure_reason // ""),
+					session_key: (.[0].session_key // ""),
+					issue_number: (.[0].issue_number // null),
+					repo_slug: (.[0].repo_slug // ""),
+					count: length,
+					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms}))
+				}
+			] | sort_by(.count) | reverse | .[0:10])
 		}' <"$metrics" 2>/dev/null || \
-		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[]}'
+		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[]}'
 	return 0
 }
 
@@ -266,6 +286,7 @@ _wah_emit_human() {
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.avg // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.max // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.samples // 0' 2>/dev/null || printf '0')"
+	printf '  Failure groups:             %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_groups // []' 2>/dev/null || printf '[]')"
 	printf '\n'
 	printf 'pulse-stats.json (dispatch-side counters):\n'
 	printf '  pulse_dispatch_circuit_broken:           %d\n' "$cb"
@@ -326,7 +347,8 @@ _wah_emit_json() {
 				other_failure: $of,
 				result_counts: $details.result_counts,
 				timing_ms: $details.timing_ms,
-				recent_examples: $details.recent_examples
+				recent_examples: $details.recent_examples,
+				failure_groups: ($details.failure_groups // [])
 			},
 			pulse_stats: {
 				pulse_dispatch_circuit_broken: $cb,
