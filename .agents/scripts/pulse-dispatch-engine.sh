@@ -237,9 +237,8 @@ build_ranked_dispatch_candidates_json() {
 				score: (
 					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
 					(if (.labels | index("priority:critical")) != null then 10000
-					 elif (.labels | index("priority:high")) != null then 9000
+					 elif ((.labels | index("priority:high")) != null or (.labels | index("bug")) != null) then 9000
 					 elif (.labels | index("priority:medium")) != null then 8000
-					 elif (.labels | index("bug")) != null then 7000
 					 elif (.labels | index("enhancement")) != null then 6000
 					 elif (.labels | index("quality-debt")) != null then 5000
 					 elif ((.labels | index("file-size-debt")) != null or (.labels | index("function-complexity-debt")) != null) then 4000
