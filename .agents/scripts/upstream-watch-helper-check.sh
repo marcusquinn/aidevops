@@ -368,7 +368,7 @@ _check_single_github_repo() {
 			--argjson pending "$new_pending" \
 			'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
 
-		# File GitHub issue on 0->1 transition (t2810)
+		# Queue GitHub issue reporting on 0->1 transition (t2810/t22495)
 		if [[ "$updates_pending_before" != "1" && "$new_pending" == "1" ]]; then
 			local update_kind="commit"
 			local update_old="$last_commit_seen"
@@ -380,7 +380,7 @@ _check_single_github_repo() {
 			fi
 			local config_entry
 			config_entry=$(echo "$config" | jq --arg slug "$slug" '.repos[] | select(.slug == $slug)')
-			_file_upstream_update_issue "$slug" "$update_kind" "$update_old" "$update_new" "$config_entry"
+			_queue_upstream_update_issue "$slug" "$update_kind" "$update_old" "$update_new" "$config_entry"
 		fi
 	else
 		_check_had_probe_failure=true
@@ -488,9 +488,9 @@ _check_non_github_upstreams() {
 				--argjson pending "$ng_new_pending" \
 				'.non_github[$name].last_checked = $now | .non_github[$name].current_value = $current | .non_github[$name].updates_pending = $pending')
 
-			# File GitHub issue on 0->1 transition (t2810)
+			# Queue GitHub issue reporting on 0->1 transition (t2810/t22495)
 			if [[ "$ng_updates_pending_before" != "1" && "$ng_new_pending" == "1" ]]; then
-				_file_upstream_update_issue "$entry_name" "update" "$last_seen_value" "$current_value" "$entry_json"
+				_queue_upstream_update_issue "$entry_name" "update" "$last_seen_value" "$current_value" "$entry_json"
 			fi
 		else
 			_check_had_probe_failure=true
@@ -562,6 +562,9 @@ cmd_check() {
 	# Shared counters updated by sub-functions
 	_check_updates_found=0
 	_check_had_probe_failure=false
+	local issue_queue_file
+	issue_queue_file=$(mktemp -t upstream-watch-issues.XXXXXX)
+	_UPSTREAM_WATCH_ISSUE_QUEUE_FILE="$issue_queue_file"
 	local now
 	now=$(_now_iso)
 
@@ -577,6 +580,10 @@ cmd_check() {
 		[[ "$target_is_non_github" == true ]] && ng_target="$target_slug"
 		_check_non_github_upstreams "$config" "$ng_target" "$now"
 	fi
+
+	_flush_upstream_update_issue_queue "$issue_queue_file"
+	rm -f "$issue_queue_file"
+	unset _UPSTREAM_WATCH_ISSUE_QUEUE_FILE
 
 	# Only advance global last_check if all probes succeeded -- partial failures
 	# should not advance the 24h gate so the caller retries on the next cycle

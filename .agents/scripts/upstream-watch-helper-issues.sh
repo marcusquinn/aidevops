@@ -43,11 +43,239 @@ fi
 _get_aidevops_slug() {
 	local slug=""
 	if [[ -f "${HOME}/.config/aidevops/repos.json" ]]; then
-		slug=$(jq -r '.initialized_repos[] | select(.is_framework_dir == true) | .slug' \
-			"${HOME}/.config/aidevops/repos.json" 2>/dev/null | head -1) || slug=""
+		slug=$(jq -r 'first(.initialized_repos[] | select(.is_framework_dir == true) | .slug) // ""' \
+			"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || slug=""
 	fi
 	[[ -z "$slug" ]] && slug="marcusquinn/aidevops"
 	printf '%s' "$slug"
+	return 0
+}
+
+#######################################
+# Check whether authenticated gh may write public upstream-watch issues.
+# Arguments:
+#   $1 - aidevops repo slug receiving upstream-watch issues
+# Returns: 0 when issue writes are authorized, 1 otherwise
+#######################################
+_upstream_watch_issue_creation_authorized() {
+	local aidevops_slug="$1"
+
+	if [[ "${AIDEVOPS_UPSTREAM_WATCH_ALLOW_PUBLIC_ISSUES:-}" == "1" ]]; then
+		return 0
+	fi
+
+	local login=""
+	login=$(gh api user --jq '.login // ""' 2>/dev/null) || login=""
+	if [[ -z "$login" ]]; then
+		_log_warn "Unable to resolve gh login -- upstream-watch public issue creation disabled for ${aidevops_slug}"
+		return 1
+	fi
+
+	local permission=""
+	permission=$(gh api "repos/${aidevops_slug}/collaborators/${login}/permission" \
+		--jq '.permission // ""' 2>/dev/null) || permission=""
+
+	case "$permission" in
+		admin | maintain | write)
+			return 0
+			;;
+		*)
+			_log_warn "Skipping public upstream-watch issue creation in ${aidevops_slug}: gh user ${login} has permission '${permission:-none}', not maintainer/collaborator write access"
+			return 1
+			;;
+	esac
+}
+
+#######################################
+# Persist a local upstream-watch report when public issue creation is not
+# authorized. The report is local to the install and avoids public repo spam.
+# Arguments:
+#   $1 - title
+#   $2 - body
+# Outputs: local report path via stdout
+#######################################
+_write_upstream_watch_local_report() {
+	local title="$1"
+	local body="$2"
+	local report_dir="${HOME}/.aidevops/reports/upstream-watch"
+	local stamp
+	stamp=$(date -u +%Y%m%dT%H%M%SZ)
+
+	mkdir -p "$report_dir"
+	local report_file
+	report_file=$(mktemp "${report_dir}/${stamp}.XXXXXX.md")
+	{
+		printf '# %s\n\n' "$title"
+		printf '%s\n' "$body"
+	} >"$report_file"
+	printf '%s' "$report_file"
+	return 0
+}
+
+#######################################
+# Queue a detected upstream update for end-of-run coalescing.
+# Falls back to immediate filing when no queue file is configured.
+# Arguments: same as _file_upstream_update_issue
+#######################################
+_queue_upstream_update_issue() {
+	local slug_or_name="$1"
+	local kind="$2"
+	local old_value="$3"
+	local new_value="$4"
+	local entry_json="$5"
+
+	if [[ -z "${_UPSTREAM_WATCH_ISSUE_QUEUE_FILE:-}" ]]; then
+		_file_upstream_update_issue "$slug_or_name" "$kind" "$old_value" "$new_value" "$entry_json"
+		return 0
+	fi
+
+	jq -nc \
+		--arg slug_or_name "$slug_or_name" \
+		--arg kind "$kind" \
+		--arg old_value "$old_value" \
+		--arg new_value "$new_value" \
+		--argjson entry "$entry_json" \
+		'{slug_or_name:$slug_or_name, kind:$kind, old_value:$old_value, new_value:$new_value, entry:$entry}' \
+		>>"$_UPSTREAM_WATCH_ISSUE_QUEUE_FILE"
+	return 0
+}
+
+#######################################
+# Compose a single batch tracker issue for multiple upstream updates.
+# Arguments:
+#   $1 - queue file containing one JSON object per update
+# Outputs: issue body text via stdout
+#######################################
+_compose_upstream_batch_issue_body() {
+	local queue_file="$1"
+
+	printf '## Summary\n\n'
+	printf 'Multiple upstream-watch sources changed in the same scan run. Review this coalesced tracker instead of one issue per upstream.\n\n'
+	printf '## Updates\n\n'
+	printf '| Upstream | Kind | Previous | Current | Relevance |\n'
+	printf '|----------|------|----------|---------|-----------|\n'
+	while IFS= read -r update_json; do
+		[[ -n "$update_json" ]] || continue
+		local slug_or_name kind old_value new_value relevance
+		slug_or_name=$(printf '%s' "$update_json" | jq -r '.slug_or_name')
+		kind=$(printf '%s' "$update_json" | jq -r '.kind')
+		old_value=$(printf '%s' "$update_json" | jq -r '.old_value // "none"')
+		new_value=$(printf '%s' "$update_json" | jq -r '.new_value')
+		relevance=$(printf '%s' "$update_json" | jq -r '.entry.relevance // .entry.description // "Review upstream changes"')
+		printf "| \`%s\` | %s | \`%s\` | \`%s\` | %s |\n" \
+			"$slug_or_name" "$kind" "${old_value:-none}" "${new_value:0:12}" "$relevance"
+	done <"$queue_file"
+	printf '\n## Action\n\n'
+	printf '1. Review each upstream source above.\n'
+	printf '2. Decide which changes warrant adoption.\n'
+	printf "3. Acknowledge reviewed sources with \`upstream-watch-helper.sh ack <upstream>\`.\n\n"
+	printf '<!-- aidevops:generator=upstream-watch batch=true -->\n'
+	return 0
+}
+
+#######################################
+# File or locally report a coalesced upstream-watch batch issue.
+# Arguments:
+#   $1 - queue file containing one JSON object per update
+# Returns: 0 always for offline/unauthorized paths
+#######################################
+_file_upstream_batch_update_issue() {
+	local queue_file="$1"
+	local title="upstream: batch review adoption"
+	local body
+	body=$(_compose_upstream_batch_issue_body "$queue_file")
+
+	if ! command -v gh &>/dev/null || ! gh auth status &>/dev/null; then
+		_log_warn "gh unavailable -- writing local upstream-watch batch report"
+		local offline_report
+		offline_report=$(_write_upstream_watch_local_report "$title" "$body")
+		echo -e "  ${YELLOW}Local upstream-watch report: ${offline_report}${NC}"
+		return 0
+	fi
+
+	local aidevops_slug
+	aidevops_slug=$(_get_aidevops_slug)
+	if ! _upstream_watch_issue_creation_authorized "$aidevops_slug"; then
+		local report_file
+		report_file=$(_write_upstream_watch_local_report "$title" "$body")
+		_log_info "Wrote local upstream-watch batch report: ${report_file}"
+		echo -e "  ${YELLOW}Skipped public issue creation; local report: ${report_file}${NC}"
+		return 0
+	fi
+
+	local existing_number=""
+	existing_number=$(gh issue list --repo "$aidevops_slug" --state open \
+		--label "$UPSTREAM_WATCH_LABEL" \
+		--search 'in:title "upstream: batch"' \
+		--paginate \
+		--json number --jq '.[0].number // empty') || existing_number=""
+
+	local sig_footer=""
+	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
+		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
+	fi
+	[[ -n "$sig_footer" ]] && body="${body}
+
+${sig_footer}"
+
+	if [[ -n "$existing_number" ]]; then
+		_log_info "Updating existing upstream-watch batch issue #${existing_number}"
+		gh_issue_edit_safe "$existing_number" --repo "$aidevops_slug" \
+			--title "$title" --body "$body" >/dev/null 2>&1 || {
+			_log_warn "Failed to update upstream-watch batch issue #${existing_number}"
+			return 0
+		}
+		echo -e "  ${BLUE}Updated batch issue #${existing_number}${NC}"
+	else
+		local issue_url=""
+		issue_url=$(gh_create_issue --repo "$aidevops_slug" \
+			--title "$title" \
+			--label "$UPSTREAM_WATCH_LABEL" \
+			--label "auto-dispatch" \
+			--label "tier:standard" \
+			--label "origin:worker" \
+			--body "$body" 2>/dev/null) || {
+			_log_warn "Failed to file upstream-watch batch issue -- will retry next cycle"
+			return 0
+		}
+		[[ -n "$issue_url" ]] && echo -e "  ${BLUE}Filed batch issue: ${issue_url}${NC}"
+	fi
+	return 0
+}
+
+#######################################
+# Flush queued upstream update issue requests, coalescing large batches.
+# Arguments:
+#   $1 - queue file containing one JSON object per update
+# Returns: 0 always for empty queues and handled issue paths
+#######################################
+_flush_upstream_update_issue_queue() {
+	local queue_file="$1"
+
+	if [[ ! -s "$queue_file" ]]; then
+		return 0
+	fi
+
+	local threshold="${UPSTREAM_WATCH_BATCH_THRESHOLD:-5}"
+	local queue_count
+	queue_count=$(wc -l <"$queue_file" | tr -d '[:space:]')
+	[[ "$queue_count" =~ ^[0-9]+$ ]] || queue_count=0
+
+	if [[ "$queue_count" -ge "$threshold" ]]; then
+		_file_upstream_batch_update_issue "$queue_file"
+		return 0
+	fi
+
+	while IFS= read -r update_json; do
+		[[ -n "$update_json" ]] || continue
+		local slug_or_name kind old_value new_value entry_json
+		slug_or_name=$(printf '%s' "$update_json" | jq -r '.slug_or_name')
+		kind=$(printf '%s' "$update_json" | jq -r '.kind')
+		old_value=$(printf '%s' "$update_json" | jq -r '.old_value')
+		new_value=$(printf '%s' "$update_json" | jq -r '.new_value')
+		entry_json=$(printf '%s' "$update_json" | jq -c '.entry')
+		_file_upstream_update_issue "$slug_or_name" "$kind" "$old_value" "$new_value" "$entry_json"
+	done <"$queue_file"
 	return 0
 }
 
@@ -188,6 +416,14 @@ _file_upstream_update_issue() {
 	local body
 	body=$(_compose_upstream_issue_body "$slug_or_name" "$kind" "${old_value:-none}" \
 		"$new_value_short" "$relevance" "$affects" "$compare_url")
+	if ! _upstream_watch_issue_creation_authorized "$aidevops_slug"; then
+		local report_file
+		report_file=$(_write_upstream_watch_local_report "$title" "$body")
+		_log_info "Wrote local upstream-watch report for ${slug_or_name}: ${report_file}"
+		echo -e "  ${YELLOW}Skipped public issue creation; local report: ${report_file}${NC}"
+		return 0
+	fi
+
 	local sig_footer=""
 	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
 		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer 2>/dev/null || true)
