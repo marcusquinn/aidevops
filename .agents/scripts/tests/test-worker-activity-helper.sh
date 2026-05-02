@@ -89,6 +89,7 @@ NOW=$(date +%s)
 T_5MIN_AGO=$((NOW - 300))
 T_2H_AGO=$((NOW - 7200))
 T_25H_AGO=$((NOW - 90000))
+T_FUTURE_SENTINEL=4102444800
 
 # Build metrics fixture covering every bucket and the regression cases that
 # the original awk implementation handled correctly:
@@ -102,6 +103,9 @@ T_25H_AGO=$((NOW - 90000))
 #                      is the t3215 of-bucket regression case. The bucket is
 #                      result-name-based fallthrough, NOT exit-code-based —
 #                      this record must count as wc, NOT as of.
+#   issue-9          — synthetic future sentinel timestamp (year 2100); must
+#                      be excluded from bounded-window metrics and examples.
+#   issue-10         — missing timestamp; must not appear in bounded windows.
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
@@ -111,6 +115,8 @@ T_25H_AGO=$((NOW - 90000))
 	printf '{"ts":%d,"role":"worker","session_key":"issue-6","result":"unknown_failure","exit_code":2}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-7","result":"success","exit_code":0}\n' "$T_25H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-8","result":"watchdog_stall_continue","exit_code":124}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
+	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
 } >"$METRICS"
 
 # Build pulse-stats fixture: counter arrays with timestamps inside and outside window.
@@ -196,6 +202,10 @@ assert_eq "2h3: timing summary includes samples" "7" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
 assert_eq "2h4: recent example carries load context" "2.0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"
+assert_eq "2h5: future sentinel excluded from examples" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-9")] | length')"
+assert_eq "2h6: missing timestamp excluded from examples" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-10")] | length')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -220,13 +230,16 @@ echo
 echo "--- Section 3: 1h window ---"
 
 JSON=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 1h --no-pr-check --json 2>&1)
-# 1h window: only events at 5min ago (issue-1, issue-4) qualify.
+# 1h window: only events at 5min ago (issue-1, issue-4) qualify; future
+# sentinel and missing-ts rows are invalid worker evidence.
 assert_eq "3a: 1h total = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "3b: 1h succeeded = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "3c: 1h watchdog_continued = 1" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
 assert_eq "3d: 1h watchdog_killed = 0" "0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
+assert_eq "3e: 1h recent examples exclude future sentinel" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.recent_examples[] | select(.session_key == "issue-9")] | length')"
 
 # ---------------------------------------------------------------------------
 # Section 4: missing files fail-open to zeros.
