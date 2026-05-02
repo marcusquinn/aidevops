@@ -32,7 +32,8 @@
 # Usage: source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
 #
 # Dependencies:
-#   - gh CLI (for pr view label fetch when pr_labels not provided)
+#   - shared-constants.sh / shared-gh-wrappers.sh (gh_pr_view, gh_pr_list,
+#     gh_issue_view wrappers)
 #   - interactive-session-helper.sh (for the actual release)
 #   - LOGFILE env var (for logging; falls back to /dev/null)
 #   - CLAIM_STAMP_DIR env var (optional; defaults to
@@ -142,7 +143,7 @@ _release_interactive_claim_on_merge() {
 # _pr_exists_for_branch_or_issue — Probe for an existing PR (t3195 / GH#21889)
 #
 # Determines whether a PR exists for a given head branch and/or linked issue.
-# Uses `gh pr list --head <branch> --state all` as the PRIMARY signal because
+# Uses `gh_pr_list --head <branch> --state all` as the PRIMARY signal because
 # the GitHub Search index lags real-time PR creation by 5-30 minutes; the
 # pulls API (which `--head` queries) hits live state. Falls back to
 # `--search <issue_number>` only when branch_name is empty (no head to query)
@@ -198,10 +199,7 @@ _pr_exists_for_branch_or_issue() {
 	# the actual pushed branch differs from the detected branch_name.
 	if [[ -n "$issue_number" ]]; then
 		local pr_count_search=0
-		# t3460: Intentional raw gh exception. gh_pr_list's REST fallback routes to
-		# /repos/{owner}/{repo}/pulls and cannot preserve --search semantics; this
-		# second-chance probe must not silently degrade to an unfiltered PR list.
-		pr_count_search=$(gh pr list --repo "$repo_slug" --search "$issue_number" \
+		pr_count_search=$(gh_pr_list --repo "$repo_slug" --search "$issue_number" \
 			--json number --jq 'length' 2>/dev/null || true)
 		[[ "$pr_count_search" =~ ^[0-9]+$ ]] || pr_count_search=0
 		if [[ "$pr_count_search" -gt 0 ]]; then

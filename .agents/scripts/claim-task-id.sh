@@ -1082,7 +1082,7 @@ _pc_sanitize_keywords() {
 	return 0
 }
 
-# _pc_search_related_prs — run gh pr list with OR query across keywords.
+# _pc_search_related_prs — run gh_pr_list with OR query across keywords.
 # Args: $1 repo_slug, $2 newline-separated keywords.
 # Emits raw JSON array on stdout. Returns 0 on success, non-zero on gh error.
 _pc_search_related_prs() {
@@ -1097,16 +1097,13 @@ _pc_search_related_prs() {
 	local query
 	query=$(printf '%s OR ' "${kws[@]}")
 	query="${query% OR }"
-	# t3460: Intentional raw gh exception. gh_pr_list's REST fallback drops
-	# --search because /repos/{owner}/{repo}/pulls has no equivalent search
-	# endpoint; duplicate detection must preserve search semantics.
-	gh pr list --repo "$repo_slug" --state all \
+	gh_pr_list --repo "$repo_slug" --state all \
 		--search "$query" --limit 5 \
 		--json number,title,state,mergedAt,createdAt 2>/dev/null
 	return $?
 }
 
-# _pc_search_related_issues — run gh issue list with OR query across keywords.
+# _pc_search_related_issues — run gh_issue_list with OR query across keywords.
 # Args: $1 repo_slug, $2 newline-separated keywords.
 # Emits raw JSON array on stdout. Returns 0 on success, non-zero on gh error.
 _pc_search_related_issues() {

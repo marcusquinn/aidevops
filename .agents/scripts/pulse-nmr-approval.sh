@@ -613,10 +613,7 @@ _find_qualifying_pr_for_stale_recovery() {
 	# is added so per-PR check-run state can be fetched via REST below — that
 	# call only fires for PRs that pass the cheap gates first.
 	local pr_json
-	# t3460: Intentional raw gh exception. This trust-boundary probe relies on
-	# PR body search; gh_pr_list's REST fallback cannot preserve --search because
-	# /repos/{owner}/{repo}/pulls has no equivalent body-search filter.
-	pr_json=$(gh pr list --search "Resolves #${issue_num} in:body" --state open \
+	pr_json=$(gh_pr_list --search "Resolves #${issue_num} in:body" --state open \
 		--repo "$slug" --json number,reviewDecision,headRefOid,authorAssociation,labels,createdAt \
 		--limit 10 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"

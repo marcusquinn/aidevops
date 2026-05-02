@@ -4,9 +4,9 @@
 #
 # test-gh-wrapper-rest-fallback.sh — t2574 / GH#20243 regression guard.
 #
-# Asserts that `gh issue *` and `gh pr create` wrappers in shared-gh-wrappers.sh
+# Asserts that `gh issue *` and `gh pr create|view|list` wrappers in shared-gh-wrappers.sh
 # fall back to REST API (`gh api -X POST|PATCH /repos/...`) when:
-#   1. the primary `gh issue *` / `gh pr create` call fails, AND
+#   1. the primary `gh issue *` / `gh pr create|view|list` call fails, AND
 #   2. `gh api rate_limit --jq .resources.graphql.remaining` returns <= 10.
 #
 # Production failure (2026-04-21 ~01:00 UTC on marcusquinn/aidevops):
@@ -50,6 +50,8 @@
 #  23. gh_pr_list routes directly to REST when GraphQL remaining is low
 #  24. gh_pr_list keeps --search on the GraphQL path when budget is low
 #  25. gh_pr_view routes directly to REST when GraphQL remaining is low
+#  26. gh_pr_list does NOT fall back for --search because REST pulls cannot
+#      preserve search semantics
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -196,23 +198,19 @@ gh() {
 		return 0
 	fi
 
-	# gh pr create/list - the primary path for PR creation/listing
-	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "list" ) ]]; then
+	# gh pr create|view|list - primary PR paths
+	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "view" || "$2" == "list" ) ]]; then
 		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
 			printf 'primary stub forced failure (rate limit)\n' >&2
 			return 1
 		fi
-		printf 'https://github.com/owner/repo/pull/9100\n'
-		return 0
-	fi
-
-	# gh pr view - the primary path for PR reads
-	if [[ "$1" == "pr" && "$2" == "view" ]]; then
-		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
-			printf 'primary stub forced failure (rate limit)\n' >&2
-			return 1
+		if [[ "$2" == "create" ]]; then
+			printf 'https://github.com/owner/repo/pull/9100\n'
+		elif [[ "$2" == "view" ]]; then
+			printf '{"number":9101}\n'
+		elif [[ "$2" == "list" ]]; then
+			printf '[]\n'
 		fi
-		printf '{"number":123,"title":"stub PR"}\n'
 		return 0
 	fi
 
@@ -594,7 +592,9 @@ _rest_pr_create \
 	--base "main" \
 	--body "auto-detect head body" >/dev/null 2>&1 || true
 
-if [[ -n "$CURRENT_BRANCH" ]] && grep -qE "head=${CURRENT_BRANCH}" "$GH_CALLS" 2>/dev/null; then
+if [[ "$CURRENT_BRANCH" == "HEAD" ]]; then
+	pass "_rest_pr_create auto-detects --head skipped in detached HEAD rebase context"
+elif [[ -n "$CURRENT_BRANCH" ]] && grep -qE "head=${CURRENT_BRANCH}" "$GH_CALLS" 2>/dev/null; then
 	pass "_rest_pr_create auto-detects --head from git HEAD when omitted"
 else
 	fail "_rest_pr_create auto-detects --head from git HEAD when omitted" \
@@ -725,6 +725,26 @@ else
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
+# =============================================================================
+# Test 26: gh_pr_list --search → no non-equivalent REST fallback
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_list --repo "owner/repo" --state open --search "Resolves #42 in:body" \
+	--json number --limit 5 >/dev/null 2>&1 || true
+
+if grep -qE '^pr list' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list --search preserves semantics by skipping REST fallback"
+else
+	fail "gh_pr_list --search preserves semantics by skipping REST fallback" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
