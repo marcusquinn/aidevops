@@ -16,6 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
+SCHEDULERS_PLATFORM_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers-platform.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -260,6 +261,27 @@ _load_schedulers_functions() {
 	# shellcheck source=/dev/null
 	source "$SCHEDULERS_SH" 2>/dev/null || {
 		echo "SKIP: could not source $SCHEDULERS_SH (missing dependencies?)"
+		exit 0
+	}
+	return 0
+}
+
+_load_schedulers_platform_functions() {
+	print_info()              { return 0; }
+	print_warning()           { echo "[WARN] $*" >&2; return 0; }
+	print_error()             { echo "[ERROR] $*" >&2; return 0; }
+	_resolve_log_dir()        { printf '%s\n' "$TEST_DIR/logs"; return 0; }
+	_install_scheduler_linux() { return 0; }
+	_uninstall_scheduler()    { return 0; }
+	_resolve_modern_bash()    { printf '%s\n' "/bin/bash"; return 0; }
+	_xml_escape()             { printf '%s' "$1"; return 0; }
+	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
+	_launchd_install_if_changed() { return 0; }
+	_launchd_kickstart_and_recover() { return 1; }
+
+	# shellcheck source=/dev/null
+	source "$SCHEDULERS_PLATFORM_SH" 2>/dev/null || {
+		echo "SKIP: could not source $SCHEDULERS_PLATFORM_SH (missing dependencies?)"
 		exit 0
 	}
 	return 0
@@ -766,6 +788,42 @@ test_xpcproxy_state_with_helper_process_not_recovered() {
 	return 0
 }
 
+test_profile_readme_install_does_not_kickstart() {
+	local fake_home="$TEST_DIR/home_profile"
+	mkdir -p "$fake_home/Library/LaunchAgents"
+	local stderr_file="$TEST_DIR/profile-stderr.log"
+	local kickstart_count=0
+
+	_launchd_install_if_changed() { return 0; }
+	_launchd_kickstart_and_recover() { kickstart_count=$((kickstart_count + 1)); return 1; }
+
+	local orig_home="$HOME"
+	HOME="$fake_home"
+
+	local rc=0
+	_install_profile_readme_launchd "sh.aidevops.profile-readme-update" "/fake/profile-readme-helper.sh" 2>"$stderr_file" || rc=$?
+
+	HOME="$orig_home"
+	unset -f _launchd_install_if_changed _launchd_kickstart_and_recover
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected install return 0, got $rc"
+		return 0
+	fi
+	if [[ "$kickstart_count" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected no kickstart during setup, got $kickstart_count"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "profile_readme_install_does_not_kickstart" 1 \
+			"profile launchd install emitted warning: $(tr '\n' ' ' <"$stderr_file")"
+		return 0
+	fi
+
+	print_result "profile_readme_install_does_not_kickstart" 0
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -790,6 +848,9 @@ main() {
 	test_generic_recovery_kickstarts_after_bootstrap
 	test_kickstart_recovers_xpcproxy
 	test_xpcproxy_state_with_helper_process_not_recovered
+
+	_load_schedulers_platform_functions
+	test_profile_readme_install_does_not_kickstart
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions
