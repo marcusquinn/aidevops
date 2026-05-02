@@ -3890,3 +3890,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3419 Relax worker timing gates now that OpenAI workers complete work #auto-dispatch #enhancement #framework ref:GH#22254
 
 - [ ] t3429 Support core-style layout in private agent source repos #auto-dispatch #enhancement ref:GH#22274
+
+- [ ] t3433 define data-plane registry and routing map #auto-dispatch #enhancement #framework ref:GH#22284
+
+- [ ] t3432 Seed and update private agent source repo structure #auto-dispatch #enhancement ref:GH#22282
+
+- [ ] t3431 add seed user-data plane directories to aidevops repo #auto-dispatch #enhancement #framework ref:GH#22281
+
+- [ ] t3430 repair stale TODO status for completed data-plane tasks #auto-dispatch #bug #framework ref:GH#22280
