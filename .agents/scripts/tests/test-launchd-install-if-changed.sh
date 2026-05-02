@@ -16,6 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
+SCHEDULERS_PLATFORM_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers-platform.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -131,7 +132,7 @@ _define_launchd_install_if_changed() {
 			return 0
 		fi
 
-		print_warning "LaunchAgent $label stuck in xpcproxy; reloading with bootout/bootstrap"
+		print_info "LaunchAgent $label reports xpcproxy; reloading with bootout/bootstrap"
 		if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
 			return 1
 		fi
@@ -260,6 +261,27 @@ _load_schedulers_functions() {
 	# shellcheck source=/dev/null
 	source "$SCHEDULERS_SH" 2>/dev/null || {
 		echo "SKIP: could not source $SCHEDULERS_SH (missing dependencies?)"
+		exit 0
+	}
+	return 0
+}
+
+_load_schedulers_platform_functions() {
+	print_info()              { return 0; }
+	print_warning()           { echo "[WARN] $*" >&2; return 0; }
+	print_error()             { echo "[ERROR] $*" >&2; return 0; }
+	_resolve_log_dir()        { printf '%s\n' "$TEST_DIR/logs"; return 0; }
+	_install_scheduler_linux() { return 0; }
+	_uninstall_scheduler()    { return 0; }
+	_resolve_modern_bash()    { printf '%s\n' "/bin/bash"; return 0; }
+	_xml_escape()             { printf '%s' "$1"; return 0; }
+	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
+	_launchd_install_if_changed() { return 0; }
+	_launchd_kickstart_and_recover() { return 1; }
+
+	# shellcheck source=/dev/null
+	source "$SCHEDULERS_PLATFORM_SH" 2>/dev/null || {
+		echo "SKIP: could not source $SCHEDULERS_PLATFORM_SH (missing dependencies?)"
 		exit 0
 	}
 	return 0
@@ -465,6 +487,67 @@ test_xpcproxy_recovered_when_content_unchanged() {
 	fi
 
 	print_result "xpcproxy_recovered_when_content_unchanged" 0
+	return 0
+}
+
+test_xpcproxy_successful_recovery_does_not_warn() {
+	local plist_dir="$TEST_DIR/la_xpcproxy_no_warn"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local recovered_marker="$plist_dir/recovered"
+	local stderr_file="$plist_dir/stderr.log"
+	printf 'some plist content\n' >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+
+	launchctl() {
+		case "${1:-}" in
+		print)
+			if [[ -f "$recovered_marker" ]]; then
+				printf 'state = not running\nlast exit code = 0\n'
+			else
+				printf 'pid = 12345\nstate = xpcproxy\n'
+			fi
+			return 0
+			;;
+		bootout)
+			return 0
+			;;
+		bootstrap)
+			: >"$recovered_marker"
+			return 0
+			;;
+		kickstart)
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local old_interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-}"
+	export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS=0
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" 2>"$stderr_file" || rc=$?
+
+	if [[ -n "$old_interval" ]]; then
+		export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS="$old_interval"
+	else
+		unset AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS
+	fi
+	unset -f launchctl _launchd_has_agent
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "xpcproxy_successful_recovery_does_not_warn" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "xpcproxy_successful_recovery_does_not_warn" 1 \
+			"successful recovery emitted warning: $(tr '\n' ' ' <"$stderr_file")"
+		return 0
+	fi
+
+	print_result "xpcproxy_successful_recovery_does_not_warn" 0
 	return 0
 }
 
@@ -705,6 +788,91 @@ test_xpcproxy_state_with_helper_process_not_recovered() {
 	return 0
 }
 
+test_profile_readme_install_does_not_kickstart() {
+	local fake_home="$TEST_DIR/home_profile"
+	mkdir -p "$fake_home/Library/LaunchAgents"
+	local plist_path="$fake_home/Library/LaunchAgents/sh.aidevops.profile-readme-update.plist"
+	local stderr_file="$TEST_DIR/profile-stderr.log"
+	local install_count=0
+	local kickstart_count=0
+	local expected_plist_content
+	expected_plist_content=$(cat <<PROFILE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.aidevops.profile-readme-update</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/fake/profile-readme-helper.sh</string>
+		<string>update</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>StandardErrorPath</key>
+	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin</string>
+		<key>HOME</key>
+		<string>${fake_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PROFILE_PLIST
+)
+	printf '%s\n' "$expected_plist_content" >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+	_launchd_install_if_changed() { install_count=$((install_count + 1)); return 1; }
+	_launchd_kickstart_and_recover() { kickstart_count=$((kickstart_count + 1)); return 1; }
+
+	local orig_home="$HOME"
+	HOME="$fake_home"
+
+	local rc=0
+	_install_profile_readme_launchd "sh.aidevops.profile-readme-update" "/fake/profile-readme-helper.sh" 2>"$stderr_file" || rc=$?
+
+	HOME="$orig_home"
+	unset -f _launchd_has_agent _launchd_install_if_changed _launchd_kickstart_and_recover
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected install return 0, got $rc"
+		return 0
+	fi
+	if [[ "$kickstart_count" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected no kickstart during setup, got $kickstart_count"
+		return 0
+	fi
+	if [[ "$install_count" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected existing loaded profile job to skip install, got $install_count"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "profile_readme_install_does_not_kickstart" 1 \
+			"profile launchd install emitted warning: $(tr '\n' ' ' <"$stderr_file")"
+		return 0
+	fi
+
+	print_result "profile_readme_install_does_not_kickstart" 0
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -724,10 +892,14 @@ main() {
 	test_mv_failure_returns_1
 	test_empty_content_rejected
 	test_xpcproxy_recovered_when_content_unchanged
+	test_xpcproxy_successful_recovery_does_not_warn
 	test_xpcproxy_recovery_waits_for_transient_state
 	test_generic_recovery_kickstarts_after_bootstrap
 	test_kickstart_recovers_xpcproxy
 	test_xpcproxy_state_with_helper_process_not_recovered
+
+	_load_schedulers_platform_functions
+	test_profile_readme_install_does_not_kickstart
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions

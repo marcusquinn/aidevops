@@ -140,7 +140,7 @@ _launchd_recover_xpcproxy_if_stuck() {
 		return 0
 	fi
 
-	print_warning "LaunchAgent $label stuck in xpcproxy; reloading with bootout/bootstrap"
+	print_info "LaunchAgent $label reports xpcproxy; reloading with bootout/bootstrap"
 	if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
 		return 1
 	fi
