@@ -836,6 +836,54 @@ JSON
 	return 0
 }
 
+test_build_ranked_dispatch_candidates_json_respects_priority_labels() {
+	local original_repos_json="$REPOS_JSON"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "maintainer": "marcusquinn"
+    }
+  ]
+}
+JSON
+
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" && "${2:-}" == "marcusquinn/aidevops" ]]; then
+			printf '%s\n' '[
+			  {"number":9100,"title":"unlabeled task","url":"#9100","updatedAt":"2026-03-31T00:00:00Z","assignees":[],"labels":[]},
+			  {"number":9101,"title":"low priority task","url":"#9101","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"priority:low"}]},
+			  {"number":9102,"title":"bug task","url":"#9102","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"bug"}]},
+			  {"number":9103,"title":"medium priority task","url":"#9103","updatedAt":"2026-03-31T00:03:00Z","assignees":[],"labels":[{"name":"priority:medium"}]},
+			  {"number":9104,"title":"high priority task","url":"#9104","updatedAt":"2026-03-31T00:04:00Z","assignees":[],"labels":[{"name":"priority:high"}]},
+			  {"number":9105,"title":"critical priority task","url":"#9105","updatedAt":"2026-03-31T00:05:00Z","assignees":[],"labels":[{"name":"priority:critical"}]}
+			]'
+			return 0
+		fi
+		return 1
+	}
+	export -f gh_issue_list
+
+	local ordered_numbers
+	ordered_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+
+	unset -f gh_issue_list
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$ordered_numbers" == $'9105\n9104\n9103\n9102\n9101\n9100' ]]; then
+		print_result "build_ranked_dispatch_candidates_json respects critical/high/medium/low labels" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json respects critical/high/medium/low labels" 1 \
+		"Unexpected order: ${ordered_numbers}"
+	return 0
+}
+
 test_dispatch_max_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
@@ -1235,6 +1283,7 @@ main() {
 	test_dispatch_with_dedup_detaches_worker_stdio
 	test_dispatch_with_dedup_passes_explicit_model_override
 	test_build_ranked_dispatch_candidates_json_scores_candidates
+	test_build_ranked_dispatch_candidates_json_respects_priority_labels
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours
 	test_dispatch_max_dispatches_up_to_capacity

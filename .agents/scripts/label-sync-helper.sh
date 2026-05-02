@@ -82,8 +82,8 @@ TIER_LABELS=(
 
 # --- Priority Labels ---
 PRIORITY_LABELS=(
-	"priority:critical|D73A4A|Critical severity — security or data loss risk"
-	"priority:high|D93F0B|High severity — significant quality issue"
+	"priority:critical|D73A4A|Critical — stopping work completely, security, or data loss risk"
+	"priority:high|D93F0B|High — systemic throughput bottleneck or significant quality issue"
 	"priority:medium|FBCA04|Medium severity — moderate quality issue"
 	"priority:low|0E8A16|Low severity — minor quality issue"
 )
