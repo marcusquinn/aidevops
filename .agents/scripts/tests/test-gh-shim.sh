@@ -164,13 +164,15 @@ body_file="$TMP/body.md"
 printf 'unsigned body content\n' >"$body_file"
 _reset_log
 "$SHIM_RUN" issue comment 456 --repo owner/repo --body-file "$body_file" 2>/dev/null
-if grep -q "<!-- aidevops:sig -->" "$body_file"; then
-	_pass "sig marker appended to --body-file"
+argv=$(_read_argv)
+resolved_body_file=$(printf '%s\n' "$argv" | awk 'prev { print; exit } $0 == "--body-file" { prev=1 }')
+if [[ -n "$resolved_body_file" && -f "$resolved_body_file" ]] && grep -q "<!-- aidevops:sig -->" "$resolved_body_file"; then
+	_pass "sig marker appended to temporary --body-file"
 else
-	_fail "--body-file sig injection" "file contents: $(cat "$body_file")"
+	_fail "--body-file sig injection" "argv: $argv"
 fi
-if grep -q "unsigned body content" "$body_file"; then
-	_pass "original --body-file content preserved"
+if grep -q "unsigned body content" "$body_file" && ! grep -q "<!-- aidevops:sig -->" "$body_file"; then
+	_pass "original --body-file content preserved without mutation"
 else
 	_fail "--body-file original preservation" ""
 fi

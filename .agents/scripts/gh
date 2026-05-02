@@ -128,6 +128,28 @@ _shim_classify_endpoint() {
 	esac
 }
 
+# _shim_caller_label <sub1> [<sub2>]
+# Return a stable instrumentation label for gh shim calls.  The old catch-all
+# `gh-shim` label hid which read/list subcommand was consuming GraphQL budget;
+# keeping the label operation-specific makes duplicate pressure visible in
+# pulse-current-state-helper without changing call semantics.
+_shim_caller_label() {
+	local sub1="${1:-}" sub2="${2:-}"
+	case "${sub1}:${sub2}" in
+	issue:list) printf 'gh_issue_list' ;;
+	issue:view) printf 'gh_issue_view' ;;
+	pr:list) printf 'gh_pr_list' ;;
+	pr:view) printf 'gh_pr_view' ;;
+	api:graphql | api:graphql/*) printf 'gh_api_graphql' ;;
+	api:*) printf 'gh_api_rest' ;;
+	search:issues) printf 'gh_search_issues' ;;
+	search:prs) printf 'gh_search_prs' ;;
+	search:*) printf 'gh_search' ;;
+	*) printf 'gh_%s%s' "${sub1:-unknown}" "${sub2:+_${sub2}}" ;;
+	esac
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Locate the REAL gh binary, excluding our own shim directory from PATH lookup
 # so we never recurse into ourselves even if PATH is unusual.
@@ -176,9 +198,9 @@ api:*)
 		echo "[aidevops] gh shim: real gh binary not found on PATH" >&2
 		exit 127
 	}
-	# GH#21857: instrument every passthrough gh call (pr merge, pr checks,
+	# GH#21857/t3448: instrument every passthrough gh call (pr merge, pr checks,
 	# run list, repo clone, etc.) that previously bypassed all recording.
-	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" gh-shim 2>/dev/null || true
+	gh_record_call "$(_shim_classify_endpoint "${1:-}" "${2:-}")" "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
 	exec "$_real_gh" "$@"
 	;;
 esac
@@ -299,8 +321,10 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# Extract repo and build stripped args.
 		_shim_extract_repo_and_args "$@" || return 1
 
-		# Record the call as "rest" with caller "gh-shim".
-		gh_record_call rest gh-shim 2>/dev/null || true
+		# Record the call as REST under the original gh operation. The REST
+		# translator records its own _rest_* label too; this shadow record keeps
+		# before/after ratios visible for the original high-frequency command.
+		gh_record_call rest "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
 
 		# Dispatch to the appropriate REST translator.
 		case "$_SHIM_READ_REWRITE" in
@@ -327,8 +351,8 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# get here when rc=1 from the function wrapper. The translator errors
 		# are already printed to stderr by the _rest_* functions.
 		# Conservative: always fall through to real gh.
-		# GH#21857: record the graphql call — the real gh will use GraphQL.
-		gh_record_call graphql gh-shim 2>/dev/null || true
+		# GH#21857/t3448: record the graphql call — the real gh will use GraphQL.
+		gh_record_call graphql "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
 		exec "$REAL_GH" "$@"
 	fi
 fi
@@ -777,5 +801,5 @@ fi
 
 # GH#21857: instrument write commands (issue comment/create/edit, pr create/
 # comment/edit) — these all use the GraphQL endpoint.
-gh_record_call graphql gh-shim 2>/dev/null || true
+gh_record_call graphql "$(_shim_caller_label "${1:-}" "${2:-}")" 2>/dev/null || true
 exec "$REAL_GH" "${_modified_args[@]}"
