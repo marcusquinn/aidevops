@@ -791,10 +791,55 @@ test_xpcproxy_state_with_helper_process_not_recovered() {
 test_profile_readme_install_does_not_kickstart() {
 	local fake_home="$TEST_DIR/home_profile"
 	mkdir -p "$fake_home/Library/LaunchAgents"
+	local plist_path="$fake_home/Library/LaunchAgents/sh.aidevops.profile-readme-update.plist"
 	local stderr_file="$TEST_DIR/profile-stderr.log"
+	local install_count=0
 	local kickstart_count=0
+	local expected_plist_content
+	expected_plist_content=$(cat <<PROFILE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>sh.aidevops.profile-readme-update</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>/fake/profile-readme-helper.sh</string>
+		<string>update</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>StandardErrorPath</key>
+	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/usr/bin:/bin</string>
+		<key>HOME</key>
+		<string>${fake_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PROFILE_PLIST
+)
+	printf '%s\n' "$expected_plist_content" >"$plist_path"
 
-	_launchd_install_if_changed() { return 0; }
+	_launchd_has_agent() { return 0; }
+	_launchd_install_if_changed() { install_count=$((install_count + 1)); return 1; }
 	_launchd_kickstart_and_recover() { kickstart_count=$((kickstart_count + 1)); return 1; }
 
 	local orig_home="$HOME"
@@ -804,7 +849,7 @@ test_profile_readme_install_does_not_kickstart() {
 	_install_profile_readme_launchd "sh.aidevops.profile-readme-update" "/fake/profile-readme-helper.sh" 2>"$stderr_file" || rc=$?
 
 	HOME="$orig_home"
-	unset -f _launchd_install_if_changed _launchd_kickstart_and_recover
+	unset -f _launchd_has_agent _launchd_install_if_changed _launchd_kickstart_and_recover
 
 	if [[ "$rc" -ne 0 ]]; then
 		print_result "profile_readme_install_does_not_kickstart" 1 "expected install return 0, got $rc"
@@ -812,6 +857,10 @@ test_profile_readme_install_does_not_kickstart() {
 	fi
 	if [[ "$kickstart_count" -ne 0 ]]; then
 		print_result "profile_readme_install_does_not_kickstart" 1 "expected no kickstart during setup, got $kickstart_count"
+		return 0
+	fi
+	if [[ "$install_count" -ne 0 ]]; then
+		print_result "profile_readme_install_does_not_kickstart" 1 "expected existing loaded profile job to skip install, got $install_count"
 		return 0
 	fi
 	if grep -q '\[WARN\]' "$stderr_file"; then

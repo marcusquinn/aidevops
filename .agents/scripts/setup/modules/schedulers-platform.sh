@@ -553,7 +553,12 @@ _install_profile_readme_launchd() {
 PR_PLIST
 	)
 
-	if _launchd_install_if_changed "$pr_label" "$pr_plist" "$pr_plist_content"; then
+	if [[ -f "$pr_plist" ]] && [[ "$(<"$pr_plist")" == "$pr_plist_content" ]] && _launchd_has_agent "$pr_label"; then
+		# Best-effort hourly job already registered. Avoid forcing launchd recovery
+		# during every setup run; on some macOS sessions launchd reports this
+		# StartInterval-only job as xpcproxy while still running it on schedule.
+		print_info "Profile README update enabled (launchd, hourly)"
+	elif _launchd_install_if_changed "$pr_label" "$pr_plist" "$pr_plist_content"; then
 		# Do not kickstart this hourly best-effort job during setup. The profile
 		# README has already been initialised above, and forced kickstarts can leave
 		# launchd reporting a persistent xpcproxy state even though the scheduled
