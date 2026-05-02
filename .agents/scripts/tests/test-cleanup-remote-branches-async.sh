@@ -142,9 +142,10 @@ test_cold_start_dry_run() {
 test_apply_requires_explicit_flag() {
 	local repo_path="${TEST_DIR}/repo-apply"
 	local marker_file="${TEST_DIR}/mock-ran"
+	local last_run_file="${TEST_DIR}/.aidevops/logs/cleanup_remote_branches.last-run"
 	make_repo "$repo_path"
 	write_repos_config "$repo_path"
-	rm -f "$marker_file"
+	rm -f "$marker_file" "$last_run_file"
 
 	AIDEVOPS_REMOTE_BRANCH_CLEANUP_APPLY=1 AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_RATE_LIMIT=1 \
 		run_helper_in_isolation
