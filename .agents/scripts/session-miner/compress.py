@@ -29,6 +29,19 @@ from typing import Optional
 
 DEFAULT_CHUNKS_DIR = Path.home() / ".aidevops/.agent-workspace/work/session-miner"
 DEFAULT_OUTPUT_NAME = "compressed_signals.json"
+INSTRUCTION_REDACTION_PLACEHOLDER = "[REDACTED secret-adjacent instruction candidate]"
+INSTRUCTION_SECRET_ADJACENT_PATTERN = re.compile(
+    r"\b(credential(?:s)?|password(?:s)?|token(?:s)?|api\s*key(?:s)?|secret(?:s)?|"
+    r"authorization|bearer|private\s+key(?:s)?)\b",
+    re.IGNORECASE,
+)
+
+
+def redact_instruction_candidate_text(text: str) -> str:
+    """Return display-safe text for instruction-candidate snippets."""
+    if INSTRUCTION_SECRET_ADJACENT_PATTERN.search(text):
+        return INSTRUCTION_REDACTION_PLACEHOLDER
+    return text
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -335,8 +348,11 @@ def _extract_instruction_candidate(record: dict, seen: set[str]):
     seen.add(norm)
 
     target_file = record.get("target_file", ".agents/AGENTS.md")
+    raw_display_text = record.get("display_text") or raw_text
+    display_text = redact_instruction_candidate_text(raw_display_text[:800])
     return target_file, {
         "text": raw_text[:800],
+        "display_text": display_text,
         "confidence": record.get("confidence", 0.5),
         "category": record.get("category", "general"),
         "session_title": record.get("session_title", "")[:80],

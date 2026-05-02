@@ -272,7 +272,22 @@ _summary_print_instruction_candidates() {
 	local compressed_file="$1"
 	python3 -c "
 import json
+import re
 from pathlib import Path
+
+REDACTION_PLACEHOLDER = '[REDACTED secret-adjacent instruction candidate]'
+SECRET_ADJACENT_PATTERN = re.compile(
+    r'\\b(credential(?:s)?|password(?:s)?|token(?:s)?|api\\s*key(?:s)?|secret(?:s)?|'
+    r'authorization|bearer|private\\s+key(?:s)?)\\b',
+    re.IGNORECASE,
+)
+
+def display_text(candidate):
+    text = candidate.get('display_text') or candidate.get('text', '')
+    if SECRET_ADJACENT_PATTERN.search(text):
+        return REDACTION_PLACEHOLDER
+    return text
+
 data = json.loads(Path('${compressed_file}').read_text())
 instruction_candidates = data.get('instruction_candidates', {})
 total_candidates = sum(len(v) for v in instruction_candidates.values())
@@ -289,7 +304,7 @@ for target_file, candidates in sorted(instruction_candidates.items()):
     for c in candidates[:5]:
         conf = c.get('confidence', 0)
         cat = c.get('category', 'general')
-        text = c.get('text', '')[:120].replace('\n', ' ')
+        text = display_text(c)[:120].replace('\n', ' ')
         session = c.get('session_title', '')[:40]
         print(f'    [{conf:.0%} {cat}] \"{text}\"')
         if session:
@@ -332,8 +347,23 @@ generate_feedback_actions() {
 	python3 - "${compressed_file}" "${actions_file}" "${report_file}" "${metrics_file}" <<'PY'
 import json
 import sys
+import re
 from datetime import datetime, timezone
 from pathlib import Path
+
+REDACTION_PLACEHOLDER = "[REDACTED secret-adjacent instruction candidate]"
+SECRET_ADJACENT_PATTERN = re.compile(
+    r"\b(credential(?:s)?|password(?:s)?|token(?:s)?|api\s*key(?:s)?|secret(?:s)?|"
+    r"authorization|bearer|private\s+key(?:s)?)\b",
+    re.IGNORECASE,
+)
+
+
+def display_instruction_candidate_text(candidate):
+    text = candidate.get("display_text") or candidate.get("text", "")
+    if SECRET_ADJACENT_PATTERN.search(text):
+        return REDACTION_PLACEHOLDER
+    return text
 
 compressed_path = Path(sys.argv[1])
 actions_path = Path(sys.argv[2])
@@ -511,7 +541,7 @@ if total_candidates > 0:
         for c in candidates[:10]:
             conf = c.get("confidence", 0)
             cat = c.get("category", "general")
-            text = c.get("text", "")[:200].replace("\n", " ")
+            text = display_instruction_candidate_text(c)[:200].replace("\n", " ")
             session = c.get("session_title", "")[:60]
             lines.append(f"- [{conf:.0%} / {cat}] {text}")
             if session:

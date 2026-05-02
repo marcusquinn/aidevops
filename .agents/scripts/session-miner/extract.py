@@ -58,6 +58,20 @@ OUTPUT_DIR = Path.home() / ".aidevops/.agent-workspace/work/session-miner"
 # with false positives. Only flag generalizable patterns, not task-specific
 # directions that reference particular files, PRs, or one-off commands.
 
+INSTRUCTION_REDACTION_PLACEHOLDER = "[REDACTED secret-adjacent instruction candidate]"
+INSTRUCTION_SECRET_ADJACENT_PATTERN = re.compile(
+    r"\b(credential(?:s)?|password(?:s)?|token(?:s)?|api\s*key(?:s)?|secret(?:s)?|"
+    r"authorization|bearer|private\s+key(?:s)?)\b",
+    re.IGNORECASE,
+)
+
+
+def redact_instruction_candidate_text(text: str) -> str:
+    """Return display-safe text for instruction-candidate snippets."""
+    if INSTRUCTION_SECRET_ADJACENT_PATTERN.search(text):
+        return INSTRUCTION_REDACTION_PLACEHOLDER
+    return text
+
 # Patterns that signal persistent/generalizable guidance
 INSTRUCTION_SIGNAL_PATTERNS = [
     # Explicit save-to-instructions requests
@@ -220,6 +234,7 @@ def _build_instruction_candidate_record(
         "session_dir": _sanitize_path(row["session_dir"] or ""),
         "timestamp": row["msg_time"],
         "text": text[:2000],
+        "display_text": redact_instruction_candidate_text(text[:2000]),
         "confidence": classification["confidence"],
         "target_file": classification["target_file"],
         "category": classification["category"],
