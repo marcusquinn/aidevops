@@ -63,17 +63,23 @@ create_gh_stub() {
 
 	cat >"${TEST_ROOT}/comments-100.json" <<EOF
 [
-  {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${old_iso}\n<!-- ops:end -->"},
-  {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
-  {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
-  {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/other session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
-  {"body":"<!-- ops:start -->\nWORKER_NOOP branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
+  [
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${old_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_NOOP branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
+  ],
+  [
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/other session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
+  ]
 ]
 EOF
 
 	cat >"${TEST_ROOT}/comments-200.json" <<EOF
 [
-  {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-200 ts=${now_iso}\n<!-- ops:end -->"}
+  [
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-200 ts=${now_iso}\n<!-- ops:end -->"}
+  ]
 ]
 EOF
 
@@ -81,8 +87,15 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ "${1:-}" == "api" && "${2:-}" =~ /issues/([0-9]+)/comments ]]; then
-	issue="${BASH_REMATCH[1]}"
+if [[ "${1:-}" == "api" ]]; then
+	issue=""
+	for arg in "$@"; do
+		if [[ "$arg" =~ /issues/([0-9]+)/comments ]]; then
+			issue="${BASH_REMATCH[1]}"
+			break
+		fi
+	done
+	[[ -n "$issue" ]] || exit 1
 	if [[ " $* " == *" --method POST "* ]]; then
 		printf '%s\n' "$*" >>"${TEST_ROOT}/posts/${issue}.argv"
 		exit 0
@@ -91,7 +104,7 @@ if [[ "${1:-}" == "api" && "${2:-}" =~ /issues/([0-9]+)/comments ]]; then
 	if [[ -f "$comments_file" ]]; then
 		cat "$comments_file"
 	else
-		printf '[]\n'
+		printf '[[]]\n'
 	fi
 	exit 0
 fi

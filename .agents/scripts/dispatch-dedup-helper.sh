@@ -833,9 +833,13 @@ check_worker_branch_orphan_loop() {
 	[[ "$window_s" =~ ^[0-9]+$ ]] || window_s=7200
 	[[ "$threshold" -gt 0 && "$window_s" -gt 0 ]] || return 1
 
-	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	# Fetch all comment pages. The issue-comments endpoint is oldest-first and may
+	# hold orphan markers beyond the first 30/100 results on noisy issues. Keep the
+	# POST endpoint separate because --paginate --slurp returns page arrays for jq.
+	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_endpoint="${comments_post_endpoint}?per_page=100"
 	local comments_json
-	comments_json=$(gh api "$comments_endpoint" 2>/dev/null) || return 1
+	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
 	[[ -n "$comments_json" ]] || return 1
 
 	local now_epoch
@@ -857,7 +861,7 @@ check_worker_branch_orphan_loop() {
 		fi
 	done < <(printf '%s' "$comments_json" |
 		jq -r --arg branch "$branch_name" '
-			.[]
+			.[][]
 			| (.body // "")
 			| select(contains("WORKER_BRANCH_ORPHAN branch=" + $branch + " "))
 			| (capture("WORKER_BRANCH_ORPHAN branch=[^ ]+ session=[^ ]+ ts=(?<ts>[^\\n ]+)")? // {})
@@ -869,7 +873,7 @@ check_worker_branch_orphan_loop() {
 	local existing_block=""
 	existing_block=$(printf '%s' "$comments_json" |
 		jq -r --arg branch "$branch_name" '
-			[.[] | (.body // "") | select(contains("worker-branch-orphan-loop:blocked branch=" + $branch + " "))] | length
+			[.[][] | (.body // "") | select(contains("worker-branch-orphan-loop:blocked branch=" + $branch + " "))] | length
 		' 2>/dev/null) || existing_block="0"
 	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
 
@@ -886,7 +890,7 @@ check_worker_branch_orphan_loop() {
 			"$branch_name" "$issue_number" "$count" "$window_s" \
 			"$count" "$issue_number" "$branch_name" "$window_s" \
 			"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$repo_slug" "$branch_name")
-		gh api "$comments_endpoint" \
+		gh api "$comments_post_endpoint" \
 			--method POST \
 			--field body="$diag" \
 			>/dev/null 2>&1 || true
