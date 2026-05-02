@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.1] - 2026-05-03
+
+### Fixed
+
+- use REST-first PR readiness checks (#22488)
+
 ## [3.14.0] - 2026-05-02
 
 ### Changed
