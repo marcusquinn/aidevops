@@ -3913,7 +3913,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3440 Review headless prompt delivery for duplication and cleanup #auto-dispatch #enhancement ref:GH#22290
 
-- [ ] t3441 Add private agent-pack manifest and capability registry #auto-dispatch #enhancement ref:GH#22291
+- [x] t3441 Add private agent-pack manifest and capability registry #auto-dispatch #enhancement ref:GH#22291 pr:#22326 completed:2026-05-02
 
 - [ ] t3442 Add data-flow contracts and privacy tiers to agent packs #auto-dispatch #enhancement ref:GH#22292
 
