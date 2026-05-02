@@ -35,6 +35,23 @@ if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/nul
 	fi
 fi
 INSTALL_DIR="$_AIDEVOPS_REAL_HOME/Git/aidevops"
+_AIDEVOPS_SOURCE_PATH="${BASH_SOURCE[0]}"
+_AIDEVOPS_SOURCE_DIR="${_AIDEVOPS_SOURCE_PATH%/*}"
+[[ "$_AIDEVOPS_SOURCE_DIR" == "$_AIDEVOPS_SOURCE_PATH" ]] && _AIDEVOPS_SOURCE_DIR="."
+_AIDEVOPS_SOURCE_DIR="$(cd "$_AIDEVOPS_SOURCE_DIR" 2>/dev/null && pwd)" || _AIDEVOPS_SOURCE_DIR=""
+if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -L "$_AIDEVOPS_SOURCE_PATH" ]]; then
+	_AIDEVOPS_LINK_TARGET="$(readlink "$_AIDEVOPS_SOURCE_PATH" 2>/dev/null || true)"
+	if [[ -n "$_AIDEVOPS_LINK_TARGET" ]]; then
+		[[ "$_AIDEVOPS_LINK_TARGET" != /* ]] && _AIDEVOPS_LINK_TARGET="$_AIDEVOPS_SOURCE_DIR/$_AIDEVOPS_LINK_TARGET"
+		_AIDEVOPS_LINK_DIR="${_AIDEVOPS_LINK_TARGET%/*}"
+		_AIDEVOPS_LINK_DIR="$(cd "$_AIDEVOPS_LINK_DIR" 2>/dev/null && pwd)" || _AIDEVOPS_LINK_DIR=""
+		[[ -n "$_AIDEVOPS_LINK_DIR" ]] && _AIDEVOPS_SOURCE_DIR="$_AIDEVOPS_LINK_DIR"
+	fi
+fi
+if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
+	INSTALL_DIR="$_AIDEVOPS_SOURCE_DIR"
+fi
+unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
 AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
 CONFIG_DIR="$_AIDEVOPS_REAL_HOME/.config/aidevops"
 REPOS_FILE="$CONFIG_DIR/repos.json"
@@ -153,29 +170,30 @@ ensure_trailing_newline() {
 	[[ -s "$file" ]] && [[ "$last" != $'\n'x ]] && printf '\n' >>"$file"
 }
 
-# Source sub-libraries (repo management, init/scaffold, skills/plugins).
-# INSTALL_DIR is the canonical location of aidevops.sh (set above).
-# Using INSTALL_DIR rather than BASH_SOURCE[0] because aidevops is installed
-# as a symlink at /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh;
-# dirname(BASH_SOURCE[0]) resolves to /usr/local/bin, not $INSTALL_DIR.
-# shellcheck source=./aidevops-repos-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-repos-lib.sh"
-# shellcheck source=./aidevops-init-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-init-lib.sh"
-# shellcheck source=./aidevops-skills-plugin-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-skills-plugin-lib.sh"
-# shellcheck source=./aidevops-status-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-status-lib.sh"
-# shellcheck source=./aidevops-update-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-update-lib.sh"
-# shellcheck source=./aidevops-upgrade-planning-lib.sh
-# shellcheck disable=SC1091  # sub-library resolved at runtime via $INSTALL_DIR
-source "${INSTALL_DIR}/aidevops-upgrade-planning-lib.sh"
+# Source CLI implementation modules from the namespaced module tree.
+# INSTALL_DIR is the canonical location of aidevops.sh (set above). Using
+# INSTALL_DIR rather than BASH_SOURCE[0] preserves installed symlink support:
+# /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh would otherwise resolve
+# BASH_SOURCE[0] to /usr/local/bin instead of the checkout/deployed tree.
+AIDEVOPS_CLI_MODULES_DIR="${INSTALL_DIR}/.agents/scripts/aidevops-cli"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
+# shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-repos-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-init-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-init-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-skills-plugin-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-skills-plugin-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-status-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-status-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-update-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
+# shellcheck source=.agents/scripts/aidevops-cli/aidevops-upgrade-planning-lib.sh
+# shellcheck disable=SC1091
+source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
 
 # Update/upgrade command
 cmd_update() {
@@ -229,11 +247,11 @@ cmd_update() {
 					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
 						# Per Gemini code-review on PR #20342: use git's path filter +
 						# `grep -q .` to detect drift across the full set of deploy-affecting
-						# paths (not just .agents/ subdirs — also setup.sh, setup-modules/,
+						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
 						# and aidevops.sh itself, which are deployed/sourced by setup).
 						if git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$local_hash" -- \
 							.agents/scripts/ .agents/agents/ .agents/workflows/ .agents/prompts/ .agents/hooks/ \
-							setup.sh setup-modules/ aidevops.sh 2>/dev/null | grep -q .; then
+							setup.sh .agents/scripts/setup/modules/ aidevops.sh 2>/dev/null | grep -q .; then
 							has_code_drift=1
 						fi
 						if [[ "$has_code_drift" -eq 1 ]]; then

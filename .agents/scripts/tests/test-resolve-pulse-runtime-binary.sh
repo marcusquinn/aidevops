@@ -4,7 +4,7 @@
 #
 # test-resolve-pulse-runtime-binary.sh — t2954 / GH#21199 regression guard.
 #
-# Verifies that `_resolve_pulse_runtime_binary` in setup-modules/schedulers.sh:
+# Verifies that `_resolve_pulse_runtime_binary` in .agents/scripts/setup/modules/schedulers.sh:
 #
 #   1. Sweeps Node version manager install roots ($HOME/.nvm,
 #      $HOME/.volta, $HOME/.local/share/fnm) for an opencode binary —
@@ -149,9 +149,9 @@ run_resolver() {
 # Both have `set -euo pipefail` at the top — capture and restore.
 set +e
 # shellcheck disable=SC1091
-source "$TEST_REPO_ROOT/setup-modules/tool-install.sh" 2>/dev/null || true
+source "$TEST_REPO_ROOT/.agents/scripts/setup/modules/tool-install.sh" 2>/dev/null || true
 # shellcheck disable=SC1091
-source "$TEST_REPO_ROOT/setup-modules/schedulers.sh" 2>/dev/null || true
+source "$TEST_REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh" 2>/dev/null || true
 set +e
 
 if ! declare -F _resolve_pulse_runtime_binary >/dev/null; then

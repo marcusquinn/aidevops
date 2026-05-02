@@ -68,12 +68,12 @@ CONFIG_DIR="$TMPDIR_TEST/config"
 REPOS_FILE="$CONFIG_DIR/repos.json"
 mkdir -p "$CONFIG_DIR" "$HOME"
 
-# shellcheck source=../../../aidevops-repos-lib.sh
-source "$REPO_ROOT/aidevops-repos-lib.sh"
-# shellcheck source=../../../aidevops-init-lib.sh
-source "$REPO_ROOT/aidevops-init-lib.sh"
-# shellcheck source=../../../aidevops-update-lib.sh
-source "$REPO_ROOT/aidevops-update-lib.sh"
+# shellcheck source=../aidevops-cli/aidevops-repos-lib.sh
+source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh"
+# shellcheck source=../aidevops-cli/aidevops-init-lib.sh
+source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
+# shellcheck source=../aidevops-cli/aidevops-update-lib.sh
+source "$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
 agent_repo="$TMPDIR_TEST/private-agent-pack"
 mkdir -p "$agent_repo"

@@ -27,7 +27,7 @@
 # SHA drift and triggers a background silent redeploy if framework code changed.
 #
 # Implementation: .agents/scripts/aidevops-update-check.sh (_check_script_drift)
-#                 setup-modules/agent-deploy.sh (deploy_aidevops_agents stamp write)
+#                 .agents/scripts/setup/modules/agent-deploy.sh (deploy_aidevops_agents stamp write)
 
 set -uo pipefail
 

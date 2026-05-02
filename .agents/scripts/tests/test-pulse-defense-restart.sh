@@ -21,7 +21,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
-SCHEDULERS_SH="$REPO_ROOT/setup-modules/schedulers.sh"
+SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
 TICK_SH="$REPO_ROOT/.agents/scripts/pulse-watchdog-tick.sh"
 
 TESTS_RUN=0

@@ -568,7 +568,7 @@ _install_cron() {
 # Install systemd user timer (Linux with systemd)
 # Arguments:
 #   $1 - script path
-# Modelled on setup-modules/schedulers.sh:_install_scheduler_systemd()
+# Modelled on .agents/scripts/setup/modules/schedulers.sh:_install_scheduler_systemd()
 #######################################
 _install_systemd() {
 	local script_path="$1"

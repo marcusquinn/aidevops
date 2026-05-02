@@ -230,7 +230,7 @@ else
 	fi
 fi
 
-SCHEDULERS_PLATFORM_FILE="${REPO_ROOT}/setup-modules/schedulers-platform.sh"
+SCHEDULERS_PLATFORM_FILE="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers-platform.sh"
 if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 	if awk '
 		BEGIN { in_func=0; has_routine_script=0; has_merge_only_arg=0 }
@@ -247,7 +247,7 @@ if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 	fi
 else
 	skip "9: scheduler uses timeout-protected pulse-merge-routine" \
-		"setup-modules/schedulers-platform.sh not found"
+		".agents/scripts/setup/modules/schedulers-platform.sh not found"
 fi
 
 if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
@@ -269,7 +269,7 @@ if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 	fi
 else
 	skip "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
-		"setup-modules/schedulers-platform.sh not found"
+		".agents/scripts/setup/modules/schedulers-platform.sh not found"
 fi
 
 # =============================================================================

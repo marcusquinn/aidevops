@@ -102,7 +102,7 @@ test_migration_removes_stale_entries() {
 		"$removed_mcp" "$removed_context" "$removed_mcp" "$removed_context" "$removed_mcp" "$removed_context" >"$tmp_config"
 
 	# shellcheck source=/dev/null
-	source "$REPO_ROOT/setup-modules/migrations.sh"
+	source "$REPO_ROOT/.agents/scripts/setup/modules/migrations.sh"
 	_remove_deprecated_mcp_entries "$tmp_config"
 
 	if jq -e --arg removed_mcp "$removed_mcp" --arg removed_context "$removed_context" \

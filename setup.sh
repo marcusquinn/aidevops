@@ -32,11 +32,11 @@ INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
 # Python compatibility floor used by setup checks and skill/tool gating.
-# Keep in sync with setup-modules/plugins.sh requirements.
+# Keep in sync with .agents/scripts/setup/modules/plugins.sh requirements.
 PYTHON_REQUIRED_MAJOR=3
 PYTHON_REQUIRED_MINOR=10
 export PYTHON_REQUIRED_MAJOR PYTHON_REQUIRED_MINOR
-# Platform constants — exported for sourced setup-modules (shell-env.sh,
+# Platform constants — exported for sourced .agents/scripts/setup/modules (shell-env.sh,
 # tool-install.sh) that reference them at runtime.
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
 PLATFORM_ARM64=$([[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && echo true || echo false)
@@ -51,7 +51,7 @@ if [[ -f "$_platform_detect_script" ]]; then
 	source "$_platform_detect_script"
 fi
 unset _platform_detect_script
-# Repo constants — exported; consumed by setup-modules/core.sh, agent-deploy.sh
+# Repo constants — exported; consumed by .agents/scripts/setup/modules/core.sh, agent-deploy.sh
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
 # INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
 # For bootstrap (curl install), this will be /dev/fd/NN and trigger re-exec after clone
@@ -226,11 +226,11 @@ validate_namespace() {
 # =============================================================================
 # Bootstrap guard: detect curl/process-substitution execution
 # When running via `bash <(curl ...)`, BASH_SOURCE[0] is /dev/fd/NN and the
-# setup-modules/ directory doesn't exist at that path. We must clone the repo
+# .agents/scripts/setup/modules/ directory doesn't exist at that path. We must clone the repo
 # first, then re-exec the local copy. This MUST run before any source lines.
 # =============================================================================
 _setup_script_dir="$(dirname "${BASH_SOURCE[0]}")"
-if [[ ! -d "$_setup_script_dir/setup-modules" ]]; then
+if [[ ! -d "$_setup_script_dir/.agents/scripts/setup/modules" ]]; then
 	# Running from curl pipe or process substitution — bootstrap the repo
 	print_info "Remote install detected — bootstrapping repository..."
 
@@ -290,37 +290,41 @@ if [[ ! -d "$_setup_script_dir/setup-modules" ]]; then
 
 	print_success "Repository ready at $_bootstrap_install_dir"
 
-	# Re-execute the local copy (which has setup-modules/ available)
+	# Re-execute the local copy (which has .agents/scripts/setup/modules/ available)
 	cd "$_bootstrap_install_dir" || exit 1
 	exec bash "./setup.sh" "$@"
 fi
 unset _setup_script_dir
 
-# Source modularized setup functions
-# shellcheck disable=SC1091  # Dynamic path via BASH_SOURCE; files exist at runtime
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/core.sh"
+# Source modularized setup functions from the canonical setup module tree.
+# The sibling .agents/scripts/setup/_*.sh files above are bootstrap/fallback
+# helpers loaded early by the root entrypoint; normal setup implementation
+# modules live under modules/ so the repository root has no module directory.
+SETUP_IMPL_MODULES_DIR="${SETUP_MODULES_DIR}/modules"
+# shellcheck disable=SC1091  # Dynamic path via $SETUP_IMPL_MODULES_DIR
+source "${SETUP_IMPL_MODULES_DIR}/core.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/migrations.sh"
+source "${SETUP_IMPL_MODULES_DIR}/migrations.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/shell-env.sh"
+source "${SETUP_IMPL_MODULES_DIR}/shell-env.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/tool-install.sh"
+source "${SETUP_IMPL_MODULES_DIR}/tool-install.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/mcp-setup.sh"
+source "${SETUP_IMPL_MODULES_DIR}/mcp-setup.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/agent-deploy.sh"
+source "${SETUP_IMPL_MODULES_DIR}/agent-deploy.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/agent-runtime.sh"
+source "${SETUP_IMPL_MODULES_DIR}/agent-runtime.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/tool-beads.sh"
+source "${SETUP_IMPL_MODULES_DIR}/tool-beads.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/config.sh"
+source "${SETUP_IMPL_MODULES_DIR}/config.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/plugins.sh"
+source "${SETUP_IMPL_MODULES_DIR}/plugins.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/schedulers.sh"
+source "${SETUP_IMPL_MODULES_DIR}/schedulers.sh"
 # shellcheck disable=SC1091
-source "$(dirname "${BASH_SOURCE[0]}")/setup-modules/post-setup.sh"
+source "${SETUP_IMPL_MODULES_DIR}/post-setup.sh"
 
 parse_args() {
 	while [[ $# -gt 0 ]]; do

@@ -7,7 +7,7 @@
 # refresh, OpenCode DB maintenance, repo sync, repo health, and peer
 # productivity monitor.
 # =============================================================================
-# This sub-library is sourced by setup-modules/schedulers.sh (the orchestrator).
+# This sub-library is sourced by .agents/scripts/setup/modules/schedulers.sh (the orchestrator).
 # It covers:
 #   - Contribution watch (t1554): passive monitoring of external issues/PRs
 #   - Complexity scan (t2903): decoupled weekly complexity scan

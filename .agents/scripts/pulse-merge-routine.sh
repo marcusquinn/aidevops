@@ -349,7 +349,7 @@ Usage:
   pulse-merge-routine.sh help          Show this help
 
 Scheduled via launchd: sh.aidevops.pulse-merge-routine (every 120s, RunAtLoad=true).
-Install via setup.sh / setup_pulse_merge_routine in setup-modules/schedulers.sh.
+Install via setup.sh / setup_pulse_merge_routine in .agents/scripts/setup/modules/schedulers.sh.
 
 Paths:
   Lock dir:    ${LOCK_DIR}

@@ -39,7 +39,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 AUTO_UPDATE_SCRIPT="${REPO_ROOT}/.agents/scripts/auto-update-freshness-lib.sh"
 HEADLESS_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
 LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
-SCHEDULERS_SCRIPT="${REPO_ROOT}/setup-modules/schedulers.sh"
+SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -72,9 +72,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/home/.aidevops/.agent-workspace/tmp"
 	mkdir -p "${TEST_ROOT}/home/.aidevops/logs"
 	mkdir -p "${TEST_ROOT}/install/.agents/scripts"
-	mkdir -p "${TEST_ROOT}/install/setup-modules"
+	mkdir -p "${TEST_ROOT}/install/.agents/scripts/setup/modules"
 	# Install a fake schedulers.sh so drift detection has something to hash
-	printf '#!/usr/bin/env bash\n# fake schedulers v1\n' >"${TEST_ROOT}/install/setup-modules/schedulers.sh"
+	printf '#!/usr/bin/env bash\n# fake schedulers v1\n' >"${TEST_ROOT}/install/.agents/scripts/setup/modules/schedulers.sh"
 	# Install a fake setup.sh so drift detection can "run" it
 	cat >"${TEST_ROOT}/install/setup.sh" <<'FSETUP'
 #!/usr/bin/env bash
@@ -162,7 +162,7 @@ test_drift_bootstrap_triggers_setup() {
 test_drift_match_skips_setup() {
 	# Pre-seed a matching hash → no drift → setup must NOT run
 	local current_hash
-	current_hash=$(shasum -a 256 "${INSTALL_DIR}/setup-modules/schedulers.sh" | awk '{print $1}')
+	current_hash=$(shasum -a 256 "${INSTALL_DIR}/.agents/scripts/setup/modules/schedulers.sh" | awk '{print $1}')
 	printf '%s\n' "$current_hash" >"${HOME}/.aidevops/.agent-workspace/tmp/schedulers-template-hash.state"
 	rm -f "${HOME}/.aidevops/.agent-workspace/tmp/plist-drift-check.stamp"
 	: >"$TEST_SETUP_LOG"

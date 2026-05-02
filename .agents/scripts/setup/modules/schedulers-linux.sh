@@ -5,7 +5,7 @@
 # Schedulers Linux Sub-Library -- systemd/cron scheduler installation and
 # uninstall functions for Linux (and macOS uninstall path).
 # =============================================================================
-# This sub-library is sourced by setup-modules/schedulers.sh (the orchestrator).
+# This sub-library is sourced by .agents/scripts/setup/modules/schedulers.sh (the orchestrator).
 # It covers:
 #   - systemd user service availability check
 #   - systemd value escaping

@@ -15,7 +15,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
-SCHEDULERS_SH="$REPO_ROOT/setup-modules/schedulers.sh"
+SCHEDULERS_SH="$REPO_ROOT/.agents/scripts/setup/modules/schedulers.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -63,7 +63,7 @@ setup() {
 # This is a COPY of the function as fixed by GH#21063; if setup.sh changes,
 # update this copy and add/adjust tests accordingly.
 # We cannot source setup.sh directly because it runs `main "$@"` at the
-# bottom and sources many setup-modules at the top level.
+# bottom and sources many .agents/scripts/setup/modules at the top level.
 # ---------------------------------------------------------------------------
 
 _define_launchd_install_if_changed() {

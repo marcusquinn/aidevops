@@ -46,7 +46,7 @@ run_freshness_checks() {
 	check_tool_freshness
 	check_upstream_watch
 	check_venv_health
-	# t2119: closes the deployment gap where setup-modules/schedulers.sh
+	# t2119: closes the deployment gap where .agents/scripts/setup/modules/schedulers.sh
 	# gets updated in-place (via git pull) without a VERSION bump, so the
 	# "up to date" branch of cmd_check never re-runs setup.sh and the
 	# installed launchd plists stay stale. PR #19079 was invisible to
@@ -188,10 +188,10 @@ _check_tool_idle_gate() {
 
 #######################################
 # t2119: Detect drift between the installed launchd plists and the
-# current setup-modules/schedulers.sh template, then auto-repair by
+# current .agents/scripts/setup/modules/schedulers.sh template, then auto-repair by
 # re-running setup.sh --non-interactive.
 #
-# Strategy: hash setup-modules/schedulers.sh itself and compare against
+# Strategy: hash .agents/scripts/setup/modules/schedulers.sh itself and compare against
 # the hash recorded by the last setup.sh run. Whole-file hash is the
 # simplest signal that any plist-generating change has occurred (FD
 # limits, env vars, StartInterval, labels) — no per-plist hashing or
@@ -230,7 +230,7 @@ check_launchd_plist_drift() {
 		fi
 	fi
 
-	local schedulers_src="$INSTALL_DIR/setup-modules/schedulers.sh"
+	local schedulers_src="$INSTALL_DIR/.agents/scripts/setup/modules/schedulers.sh"
 	local hash_state="$state_dir/schedulers-template-hash.state"
 
 	if [[ ! -f "$schedulers_src" ]]; then

@@ -5,7 +5,7 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCHEDULERS_SCRIPT="${REPO_ROOT}/setup-modules/schedulers.sh"
+SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -64,7 +64,7 @@ WRAPPER_SCRIPT="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 touch "$WRAPPER_SCRIPT"
 chmod +x "$WRAPPER_SCRIPT"
 
-# shellcheck source=setup-modules/schedulers.sh
+# shellcheck source=.agents/scripts/setup/modules/schedulers.sh
 source "$SCHEDULERS_SCRIPT"
 
 # Override sourced helpers for deterministic unit behavior.

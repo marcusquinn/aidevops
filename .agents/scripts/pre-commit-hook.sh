@@ -794,9 +794,8 @@ _init_root_file_allowlist() {
 		"package.json" "bun.lock" "requirements.txt" "requirements-lock.txt"
 		# Scripts
 		"setup.sh" "aidevops.sh"
-		# aidevops.sh sub-libraries (split from aidevops.sh to stay under 2000-line gate)
-		"aidevops-repos-lib.sh" "aidevops-init-lib.sh" "aidevops-skills-plugin-lib.sh"
-		"aidevops-status-lib.sh" "aidevops-update-lib.sh" "aidevops-upgrade-planning-lib.sh"
+		# Public shell entrypoints. Implementation modules belong under
+		# .agents/scripts/aidevops-cli/ or .agents/scripts/setup/modules/.
 		# Tool configs
 		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
 		# Test scripts (temporary - should be moved to .agents/scripts/)
