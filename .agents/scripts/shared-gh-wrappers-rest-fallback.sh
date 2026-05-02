@@ -62,6 +62,7 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
 _GH_REST_FALLBACK_RATE_LIMIT_CACHE=""
 _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
+_GH_LAST_GRAPHQL_REMAINING=""
 
 #######################################
 # Execute a gh api command with optional wall-clock timeout (t2913).
@@ -72,6 +73,18 @@ _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
 #######################################
 _rest_api_call() {
 	local _class="$1"; shift
+	local _pool="rest-core"
+	local _arg
+	for _arg in "$@"; do
+		case "$_arg" in
+		/search/*) _pool="rest-search" ;;
+		*) ;;
+		esac
+	done
+	if command -v github_app_api_call >/dev/null 2>&1; then
+		github_app_api_call "$_class" "$_pool" "$@"
+		return $?
+	fi
 	if command -v _gh_with_timeout >/dev/null 2>&1; then
 		_gh_with_timeout "$_class" "$@"
 	else
@@ -187,6 +200,7 @@ _rest_should_fallback() {
 		fi
 	fi
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
+	_GH_LAST_GRAPHQL_REMAINING="$remaining"
 	if [[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]; then
 		return 0
 	fi
@@ -1026,7 +1040,7 @@ _rest_issue_list() {
 # Returns the underlying gh api exit code.
 #######################################
 _rest_issue_search() {
-	gh_record_call rest _rest_issue_search 2>/dev/null || true
+	gh_record_call search-rest _rest_issue_search 2>/dev/null || true
 	local repo=""
 	local state=""
 	local search=""

@@ -766,6 +766,7 @@ _help_commands() {
 	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
+	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
@@ -841,6 +842,11 @@ _help_detailed_sections() {
 	echo "  aidevops secret init         # Initialize gopass encrypted store"
 	echo "  aidevops secret import       # Import from credentials.sh to gopass"
 	echo "  aidevops secret status       # Show backend status"
+	echo ""
+	echo "GitHub App Auth:"
+	echo "  aidevops github-app-auth status --json       # Show active auth mode and budgets"
+	echo "  aidevops github-app-auth route issue-list    # Explain route decision"
+	echo "  aidevops github-app-auth rate-limit --json   # Show cached per-pool budgets"
 	echo ""
 	echo "Feature Toggles:"
 	echo "  aidevops config list         # List all toggles with current values"
@@ -1500,6 +1506,7 @@ main() {
 		esac
 		;;
 	client-format) _cmd_client_format "$@" ;;
+	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;

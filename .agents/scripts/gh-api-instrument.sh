@@ -5,7 +5,8 @@
 # gh-api-instrument.sh -- Lightweight gh API call instrumentation (t2902)
 # =============================================================================
 # Records every routed gh CLI / gh api call partitioned by path (graphql, rest,
-# search-graphql, search-rest, other) and caller script. Aggregation produces
+# search-graphql, search-rest, other), auth mode, API pool, route decision, and
+# caller script. Aggregation produces
 # a JSON report at ~/.aidevops/logs/gh-api-calls-by-stage.json so heavy
 # GraphQL consumers can be identified and routed through the separate REST
 # core pool (t2574, t2689) or the Search API bucket where applicable.
@@ -29,7 +30,7 @@
 #
 # CLI usage:
 #
-#     gh-api-instrument.sh record <path> [caller]   # append a record
+#     gh-api-instrument.sh record <path> [caller] [auth] [pool] [decision] [budget]
 #     gh-api-instrument.sh report [out_path]        # aggregate to JSON
 #     gh-api-instrument.sh trim                     # rotate log if oversize
 #     gh-api-instrument.sh clear                    # wipe log + report
@@ -42,7 +43,7 @@
 #   other          — anything not covered above (counted but not partitioned)
 #
 # Log format (TSV, append-only):
-#   <unix_ts>\t<caller_basename>\t<path>
+#   <unix_ts>\t<caller_basename>\t<path>\t<auth_mode>\t<api_pool>\t<route_decision>\t<budget_remaining>
 #
 # Override env vars:
 #   AIDEVOPS_GH_API_LOG          — path to the log file (default
@@ -68,7 +69,7 @@ GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${HOME}/.aidevops/logs/gh-api-calls.log}"
 GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
 GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 
-# --- gh_record_call <path> [caller] ---------------------------------------
+# --- gh_record_call <path> [caller] [auth] [pool] [decision] [budget] ------
 # Append a record to the log. Cheapest possible: one open+append.
 # Failure is silent — instrumentation must never break the host script.
 #
@@ -76,12 +77,20 @@ GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 #   $1 path   — one of: graphql | rest | search-graphql | search-rest | other
 #   $2 caller — optional; defaults to BASH_SOURCE[1] basename. Pass an
 #               explicit caller when wrapping is multiple frames deep.
+#   $3 auth   — optional auth mode: github-app | gh-pat | unknown.
+#   $4 pool   — optional API pool: graphql | rest-core | rest-search | other.
+#   $5 route  — optional route decision string.
+#   $6 budget — optional remaining budget for the route's limiting pool.
 #
 # Returns: 0 always.
 gh_record_call() {
 	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]] && return 0
 	local path="${1:-other}"
 	local caller="${2:-}"
+	local auth_mode="${3:-${AIDEVOPS_GH_AUTH_MODE:-}}"
+	local api_pool="${4:-${AIDEVOPS_GH_API_POOL:-}}"
+	local route_decision="${5:-${AIDEVOPS_GH_ROUTE_DECISION:-}}"
+	local budget_remaining="${6:-${AIDEVOPS_GH_BUDGET_REMAINING:-${_GH_LAST_GRAPHQL_REMAINING:-}}}"
 	if [[ -z "$caller" ]]; then
 		# Default: name of the script that called us. Walk up until we find
 		# a frame outside this file (tests sometimes source us; we want the
@@ -98,6 +107,28 @@ gh_record_call() {
 		[[ -z "$caller" ]] && caller="${0##*/}"
 		[[ -z "$caller" || "$caller" == "-bash" || "$caller" == "bash" ]] && caller="unknown"
 	fi
+	if [[ -z "$api_pool" ]]; then
+		case "$path" in
+		graphql | search-graphql) api_pool="graphql" ;;
+		rest) api_pool="rest-core" ;;
+		search-rest) api_pool="rest-search" ;;
+		*) api_pool="other" ;;
+		esac
+	fi
+	if [[ -z "$auth_mode" ]]; then
+		case "$api_pool" in
+		rest-core | rest-search)
+			if command -v github_app_is_configured >/dev/null 2>&1 && github_app_is_configured; then
+				auth_mode="github-app"
+			else
+				auth_mode="gh-pat"
+			fi
+			;;
+		*) auth_mode="gh-pat" ;;
+		esac
+	fi
+	[[ -z "$route_decision" ]] && route_decision="${api_pool}-selected"
+	[[ "$budget_remaining" =~ ^[0-9]+$ ]] || budget_remaining=""
 	local ts
 	# Use bash builtin printf for timestamp when available (bash 4.2+) to avoid
 	# forking a date subprocess on every call in this high-frequency path.
@@ -108,7 +139,9 @@ gh_record_call() {
 	# AIDEVOPS_GH_API_LOG="gh.log" would expand ${GH_API_LOG%/*} to "gh.log").
 	[[ "$GH_API_LOG" == */* ]] && mkdir -p "${GH_API_LOG%/*}" 2>/dev/null || true
 	# Tab-separated; printf is atomic for short lines on POSIX file systems.
-	printf '%s\t%s\t%s\n' "$ts" "$caller" "$path" >>"$GH_API_LOG" 2>/dev/null || true
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$ts" "$caller" "$path" "$auth_mode" "$api_pool" "$route_decision" "$budget_remaining" \
+		>>"$GH_API_LOG" 2>/dev/null || true
 	return 0
 }
 
@@ -220,7 +253,8 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 gh-api-instrument.sh — gh API call instrumentation (t2902)
 
 Subcommands:
-  record <path> [caller]   Append one record to ${GH_API_LOG##*/}
+  record <path> [caller] [auth] [pool] [decision] [budget]
+                          Append one record to ${GH_API_LOG##*/}
   report [out] [window_s]  Aggregate to JSON (default ${GH_API_REPORT##*/}, 24h)
   trim                     Rotate log if larger than \$AIDEVOPS_GH_API_LOG_MAX_LINES
   clear                    Remove log + report

@@ -99,6 +99,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 GH_CALLS="${TMP}/gh_calls.log"
 GH_INFO_OUTPUT="${TMP}/info_output.log"
+GH_APP_TOKEN_CALLS="${TMP}/gh_app_token_calls.log"
 
 # Configurable stub behaviour per test via env vars:
 #   STUB_RATE_LIMIT_REMAINING  — what gh api rate_limit returns (default: 5000)
@@ -144,6 +145,7 @@ export -f _gh_with_timeout
 # Post-source stubs. Shell functions beat PATH binaries.
 gh() {
 	printf '%s\n' "$*" >>"${GH_CALLS}"
+	[[ -n "${GH_TOKEN:-}" ]] && printf '%s\n' "$GH_TOKEN" >>"${GH_APP_TOKEN_CALLS}"
 
 	# gh api rate_limit - always succeeds, returns configurable value
 	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
@@ -746,6 +748,32 @@ fi
 
 unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 27: GitHub App auth routes REST-equivalent reads through app token
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$GH_APP_TOKEN_CALLS"
+export AIDEVOPS_GITHUB_APP_CACHE_DIR="$TMP/app-cache"
+export AIDEVOPS_GITHUB_APP_ENABLED=1
+export AIDEVOPS_GITHUB_APP_ID=123
+export AIDEVOPS_GITHUB_APP_INSTALLATION_ID=456
+export AIDEVOPS_GITHUB_APP_REST_FIRST=1
+_github_app_cache_token "456" "cached-app-token" "2099-01-01T00:00:00Z"
+
+gh_issue_view 4243 --repo "owner/repo" --json number --jq '.number' >/dev/null 2>&1 || true
+
+if grep -qE '^api /repos/owner/repo/issues/4243' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue view 4243' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'cached-app-token' "$GH_APP_TOKEN_CALLS" 2>/dev/null; then
+	pass "GitHub App auth routes REST-equivalent issue view through app token"
+else
+	fail "GitHub App auth routes REST-equivalent issue view through app token" \
+		"GH_CALLS=$(cat "$GH_CALLS") | TOKENS=$(cat "$GH_APP_TOKEN_CALLS")"
+fi
+
+unset AIDEVOPS_GITHUB_APP_ENABLED AIDEVOPS_GITHUB_APP_ID AIDEVOPS_GITHUB_APP_INSTALLATION_ID AIDEVOPS_GITHUB_APP_REST_FIRST
 
 # =============================================================================
 # Summary

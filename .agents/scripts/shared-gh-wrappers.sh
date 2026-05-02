@@ -50,6 +50,10 @@ if ! command -v print_warning >/dev/null 2>&1; then
 	print_warning() { printf '[WARN] %s\n' "$*" >&2; return 0; }
 fi
 
+# t3461: optional user-owned GitHub App auth and route decisions. Source this
+# before the REST translators so _rest_api_call can use installation tokens for
+# REST core/search pools while native gh/PAT remains the fallback path.
+# Fail-open when missing so older deployed checkouts keep working.
 # t2574: REST fallback for GraphQL-exhausted gh issue wrappers (GH#20243).
 # t2689: Extended to READ paths — _rest_issue_view, _rest_issue_list.
 # t2743: Fixed CSV tokenisation for zsh compat (replaced read -ra with _rest_split_csv).
@@ -73,6 +77,10 @@ elif [[ -n "${_SC_SELF:-}" ]]; then
 	_SHARED_GH_WRAPPERS_DIR="${_SC_SELF%/*}"
 else
 	_SHARED_GH_WRAPPERS_DIR=""
+fi
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/github-app-auth-helper.sh" ]]; then
+	# shellcheck source=github-app-auth-helper.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/github-app-auth-helper.sh"
 fi
 if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh" ]]; then
 	# shellcheck source=shared-gh-wrappers-rest-fallback.sh

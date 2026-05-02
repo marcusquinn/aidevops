@@ -1,0 +1,23 @@
+{
+  "_comment": "GitHub App auth configuration. Copy to ~/.config/aidevops/github-app-auth.json and fill non-secret IDs only.",
+  "_security": "Do not put private key material in this file or in any repo. Store the PEM under ~/.config/aidevops/keys/ with chmod 600, or store only the key path via aidevops secret set GITHUB_APP_PRIVATE_KEY_PATH.",
+  "enabled": false,
+  "app_id": "",
+  "installation_id": "",
+  "private_key_path": "",
+  "private_key_path_secret": "GITHUB_APP_PRIVATE_KEY_PATH",
+  "routing": {
+    "rest_first_when_app_configured": true,
+    "graphql_reserve_threshold": 3000,
+    "rate_limit_cache_ttl_seconds": 20
+  },
+  "permissions_required": {
+    "metadata": "read",
+    "contents": "read/write only if workers push through app-scoped automation; read is enough for most issue/PR routing",
+    "issues": "read/write",
+    "pull_requests": "read/write",
+    "checks": "read",
+    "statuses": "read",
+    "actions": "read when workflow runs/check logs are queried"
+  }
+}
