@@ -466,6 +466,7 @@ _run_sweep_tools() {
 		sonar_section="${sonar_raw%%|*}"
 		IFS='|' read -r sweep_gate_status sweep_total_issues sweep_high_critical sweep_sev_inline <<<"${sonar_raw#*|}"
 		[[ -n "$sonar_section" ]] && tool_count=$((tool_count + 1))
+		_ensure_sonar_gate_blocker_issue "$repo_slug" "$sweep_gate_status" "$sonar_section"
 	fi
 
 	local codacy_section=""
