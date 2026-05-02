@@ -187,6 +187,7 @@ allows a narrower destination.
 Use `~/.aidevops/.agent-workspace/work/<pack-name>/` for private artifacts that
 must survive the session. Use `~/.aidevops/.agent-workspace/tmp/session-*` for
 throwaway intermediates. Never commit `secret-adjacent` or `never-export` content.
+
 ### Slash Command Format
 
 ```yaml
