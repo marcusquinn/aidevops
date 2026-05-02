@@ -272,9 +272,9 @@ is_agent_source_repo() {
 		local canonical_path
 		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
 		local repo_flag
-		repo_flag=$(jq -r --arg path "$canonical_path" '
+		repo_flag=$(jq -r --arg path "$canonical_path" --arg raw_path "$project_root" '
 			.initialized_repos // []
-			| map(select(.path == $path))
+			| map(select(.path == $path or .path == $raw_path))
 			| if length > 0 and (.[0].agent_source == true or .[0].role == "agent-source") then "true" else "false" end
 		' "$repos_file" 2>/dev/null || echo "false")
 		if [[ "$repo_flag" == "true" ]]; then
