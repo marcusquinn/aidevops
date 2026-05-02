@@ -9,6 +9,9 @@ mode: subagent
 
 Args: `$ARGUMENTS` — `<issue|issue,issue> [owner/repo] [--model <id>] [--agent <name>] [--batch <list>] [--dry-run]`
 
+`owner/repo` is optional. When omitted, `aidevops launch-worker` resolves the
+current git repository from `origin` and dispatches against that repo.
+
 ## What this does
 
 Runs the first-class manual worker launcher:
@@ -24,21 +27,30 @@ dispatch blocker, or launching a controlled batch with a specific model.
 ## Syntax
 
 ```bash
-# Preview one dispatch without launching
+# Preview one dispatch without launching, using the current git repo
+aidevops launch-worker 22259 --dry-run
+
+# Preview one dispatch without launching, using an explicit repo
 aidevops launch-worker 22259 marcusquinn/aidevops --dry-run
 
-# Launch one issue with default agent Build+
-aidevops launch-worker 22259 marcusquinn/aidevops
+# Launch one issue with default agent Build+ in the current repo
+aidevops launch-worker 22259
+
+# Launch multiple issues in the current repo with repeated issue arguments
+aidevops launch-worker 22259 22260 22261
+
+# Batch launch multiple issues in the current repo
+aidevops launch-worker --batch 22259,22260 --dry-run
 
 # Force a model and agent
 aidevops launch-worker 22259 marcusquinn/aidevops \
   --model anthropic/claude-opus-4-7 --agent Build+
 
-# Batch launch
+# Batch launch against an explicit repo
 aidevops launch-worker --batch 22259,22260 marcusquinn/aidevops --dry-run
 
-# Status
-aidevops launch-worker status 22259 marcusquinn/aidevops
+# Status for the current repo
+aidevops launch-worker status 22259
 ```
 
 ## Safety expectations

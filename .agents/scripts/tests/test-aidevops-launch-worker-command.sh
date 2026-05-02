@@ -47,8 +47,8 @@ test_launch_worker_help() {
 	local out rc=0
 	out=$(bash "$AIDEVOPS_SH" launch-worker --help 2>&1) || rc=$?
 	local failed=1
-	[[ "$rc" -eq 0 && "$out" == *"Usage: aidevops launch-worker"* && "$out" == *"--batch"* ]] && failed=0
-	_result "launch-worker help exposes batch syntax" "$failed" "rc=$rc out=$out"
+	[[ "$rc" -eq 0 && "$out" == *"Usage: aidevops launch-worker"* && "$out" == *"--batch"* && "$out" == *"defaults to the current git repository"* ]] && failed=0
+	_result "launch-worker help exposes batch syntax and default repo" "$failed" "rc=$rc out=$out"
 	return 0
 }
 
