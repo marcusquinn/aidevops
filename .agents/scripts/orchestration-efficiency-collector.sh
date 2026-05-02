@@ -304,7 +304,14 @@ collect_speed() {
 	if [[ -f "$PULSE_LOG" ]]; then
 		local preflight_times
 		preflight_times=$(grep -a "preflight.*duration\|preflight.*seconds\|preflight.*elapsed" "$PULSE_LOG" 2>/dev/null |
-			awk -v date="$date" '$0 ~ date { match($0, /([0-9]+(\.[0-9]+)?)s/, t); if (t[1] != "") print t[1] }' |
+			awk -v date="$date" '$0 ~ date {
+				line = $0
+				while (match(line, /[0-9][0-9.]*s/)) {
+					value = substr(line, RSTART, RLENGTH - 1)
+					if (value ~ /^[0-9]+([.][0-9]+)?$/) print value
+					line = substr(line, RSTART + RLENGTH)
+				}
+			}' |
 			sort -n)
 		if [[ -n "$preflight_times" ]]; then
 			local pf_count
