@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# test-tabby-profile-sync.sh — Regression tests for GH#22397.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
+HELPER="${REPO_ROOT}/.agents/scripts/tabby-profile-sync.py"
+
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_YELLOW='\033[1;33m'
+readonly TEST_NC='\033[0m'
+
+pass_count=0
+fail_count=0
+
+_pass() {
+	local msg="$1"
+	printf '%b  PASS:%b %s\n' "${TEST_GREEN}" "${TEST_NC}" "${msg}"
+	pass_count=$((pass_count + 1))
+	return 0
+}
+
+_fail() {
+	local msg="$1"
+	printf '%b  FAIL:%b %s\n' "${TEST_RED}" "${TEST_NC}" "${msg}" >&2
+	fail_count=$((fail_count + 1))
+	return 0
+}
+
+_info() {
+	local msg="$1"
+	printf '%b[INFO]%b %s\n' "${TEST_YELLOW}" "${TEST_NC}" "${msg}"
+	return 0
+}
+
+run_python_test() {
+	local label="$1"
+	local code="$2"
+	local output
+
+	set +e
+	output=$(HELPER="${HELPER}" PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 -c "${code}" 2>&1)
+	local rc=$?
+	set -e
+
+	if ((rc == 0)); then
+		_pass "${label}"
+	else
+		_fail "${label}: ${output}"
+	fi
+	return 0
+}
+
+load_module_code='import importlib.util, os
+spec = importlib.util.spec_from_file_location("tabby_profile_sync", os.environ["HELPER"])
+mod = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(mod)'
+
+_info "Test 1: block-list zsh -l -i -c opencode profile is repaired"
+run_python_test "block-list broken args repaired" "${load_module_code}
+config = '''profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-i'
+        - '-c'
+        - opencode
+      cwd: /tmp/aidevops
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 1, count
+assert \"- '-c'\" not in repaired, repaired
+assert 'TABBY_AUTORUN: opencode' in repaired, repaired
+assert \"- '-l'\" in repaired and \"- '-i'\" in repaired, repaired
+"
+
+_info "Test 2: inline broken args are repaired"
+run_python_test "inline broken args repaired" "${load_module_code}
+config = \"\"\"profiles:\n  - name: aidevops\n    options:\n      command: /bin/zsh\n      args: ['-l', '-i', '-c', opencode]\n      cwd: /tmp/aidevops\n\"\"\"
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 1, count
+assert \"args: ['-l', '-i', '-c', opencode]\" not in repaired, repaired
+assert 'TABBY_AUTORUN: opencode' in repaired, repaired
+"
+
+_info "Test 3: generated profiles keep safe TABBY_AUTORUN shape"
+run_python_test "generated profile uses safe launch shape" "${load_module_code}
+scheme = {'name': 'Test', 'foreground': '#fff', 'background': '#000', 'cursor': '#fff', 'colors': ['#000', '#fff']}
+profile = mod.build_profile_yaml('aidevops', '/tmp/aidevops', '#123456', scheme, 'group-1')
+assert \"- '-c'\" not in profile, profile
+assert 'TABBY_AUTORUN: opencode' in profile, profile
+assert \"- '-l'\" in profile and \"- '-i'\" in profile, profile
+"
+
+_info "Test 4: sync repairs existing profiles even when no new profile is needed"
+tmp_root="$(mktemp -d)"
+trap 'rm -rf "${tmp_root}"' EXIT
+repo_path="${tmp_root}/aidevops"
+mkdir -p "${repo_path}"
+repos_json="${tmp_root}/repos.json"
+tabby_config="${tmp_root}/config.yaml"
+python3 - "${repos_json}" "${repo_path}" <<'PY'
+import json
+import sys
+
+repos_json, repo_path = sys.argv[1:]
+with open(repos_json, "w") as handle:
+    json.dump({"initialized_repos": [{"path": repo_path}]}, handle)
+PY
+python3 - "${tabby_config}" "${repo_path}" <<'PY'
+import sys
+
+tabby_config, repo_path = sys.argv[1:]
+with open(tabby_config, "w") as handle:
+    handle.write(f"""profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-i'
+        - '-c'
+        - opencode
+      cwd: {repo_path}
+""")
+PY
+sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
+if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}" && ! grep -q -- "- '-c'" "${tabby_config}"; then
+	_pass "sync repairs existing broken profile"
+else
+	_fail "sync did not repair existing profile: ${sync_output}"
+fi
+
+echo ""
+if ((fail_count == 0)); then
+	printf '%bAll %d tests passed.%b\n' "${TEST_GREEN}" "${pass_count}" "${TEST_NC}"
+	exit 0
+else
+	printf '%b%d test(s) failed, %d passed.%b\n' \
+		"${TEST_RED}" "${fail_count}" "${pass_count}" "${TEST_NC}" >&2
+	exit 1
+fi

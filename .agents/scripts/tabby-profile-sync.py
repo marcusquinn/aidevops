@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import uuid
 from pathlib import Path
@@ -146,6 +147,110 @@ def build_group_yaml(group_id: str) -> str:
     name: Projects"""
 
 
+def _normalise_yaml_scalar(value: str) -> str:
+    """Return a plain scalar value from a simple YAML string/list item."""
+    return value.strip().strip("'").strip('"')
+
+
+def _parse_inline_args(value: str) -> list[str] | None:
+    """Parse a simple inline YAML list such as ``['-l', '-i']``."""
+    value = value.strip()
+    if not (value.startswith("[") and value.endswith("]")):
+        return None
+    inner = value[1:-1].strip()
+    if not inner:
+        return []
+    return [_normalise_yaml_scalar(part) for part in inner.split(",")]
+
+
+def _parse_block_args(lines: list[str]) -> list[str]:
+    """Parse simple ``- value`` YAML list entries from an args block."""
+    args: list[str] = []
+    for line in lines:
+        match = re.match(r"^\s*-\s*(.+?)\s*$", line)
+        if match:
+            args.append(_normalise_yaml_scalar(match.group(1)))
+    return args
+
+
+def _is_broken_opencode_args(args: list[str]) -> bool:
+    """Return True for the Tabby launch shape that breaks zsh job control."""
+    return args == ["-l", "-i", "-c", "opencode"]
+
+
+def _safe_opencode_args_block(args_indent: str, include_env: bool) -> list[str]:
+    """Build the safe Tabby args/env block using ``TABBY_AUTORUN``."""
+    child_indent = f"{args_indent}  "
+    block = [
+        f"{args_indent}args:",
+        f"{child_indent}- '-l'",
+        f"{child_indent}- '-i'",
+    ]
+    if include_env:
+        block.extend(
+            [
+                f"{args_indent}env:",
+                f"{child_indent}TABBY_AUTORUN: opencode",
+            ]
+        )
+    return block
+
+
+def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
+    """Repair Tabby profiles using ``zsh -l -i -c opencode``.
+
+    ``zsh -i -c`` enables interactive startup while executing a command string,
+    which can trigger Powerlevel10k/gitstatus job-control errors before the TUI
+    starts. The generated profile shape keeps a login interactive shell and lets
+    shell startup launch OpenCode via ``TABBY_AUTORUN`` instead.
+    """
+    lines = config_text.split("\n")
+    repaired: list[str] = []
+    repairs = 0
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        match = re.match(r"^(?P<indent>\s*)args:\s*(?P<value>.*)$", line)
+        if not match:
+            repaired.append(line)
+            i += 1
+            continue
+
+        args_indent = match.group("indent")
+        args_indent_len = len(args_indent)
+        inline_args = _parse_inline_args(match.group("value"))
+        if inline_args is not None:
+            if _is_broken_opencode_args(inline_args):
+                repaired.extend(_safe_opencode_args_block(args_indent, include_env=True))
+                repairs += 1
+            else:
+                repaired.append(line)
+            i += 1
+            continue
+
+        block_end = i + 1
+        while block_end < len(lines):
+            next_line = lines[block_end]
+            if next_line.strip():
+                next_indent_len = len(next_line) - len(next_line.lstrip(" "))
+                if next_indent_len <= args_indent_len:
+                    break
+            block_end += 1
+
+        block_args = _parse_block_args(lines[i + 1 : block_end])
+        if _is_broken_opencode_args(block_args):
+            next_line = lines[block_end] if block_end < len(lines) else ""
+            has_env = bool(re.match(rf"^{re.escape(args_indent)}env:\s*$", next_line))
+            repaired.extend(_safe_opencode_args_block(args_indent, include_env=not has_env))
+            repairs += 1
+        else:
+            repaired.extend(lines[i:block_end])
+        i = block_end
+
+    return "\n".join(repaired), repairs
+
+
 def ensure_groups_section(config_text: str, group_id: str) -> str:
     """Ensure the groups section exists with a Projects group."""
     if re.search(r"^groups:", config_text, re.MULTILINE):
@@ -260,17 +365,25 @@ def sync_profiles(args: argparse.Namespace) -> None:
     config_text = load_yaml_simple(args.tabby_config)
     existing_cwds = extract_existing_cwds(config_text)
 
+    config_text, repaired_count = repair_broken_opencode_launch_profiles(config_text)
+
     config_text, group_id = ensure_group(config_text)
     new_profiles = build_new_profiles(repos, existing_cwds, group_id)
 
     if not new_profiles:
-        print("All repos already have Tabby profiles. Nothing to do.")
+        if repaired_count:
+            save_yaml(args.tabby_config, config_text)
+            print(f"Repaired {repaired_count} existing Tabby profile(s).")
+        else:
+            print("All repos already have Tabby profiles. Nothing to do.")
         return
 
     new_block = "\n".join(p[1] for p in new_profiles)
     config_text = insert_profiles_block(config_text, new_block)
     save_yaml(args.tabby_config, config_text)
 
+    if repaired_count:
+        print(f"Repaired {repaired_count} existing Tabby profile(s).")
     print(f"Created {len(new_profiles)} new Tabby profile(s):")
     for repo, _, colour, scheme_name in new_profiles:
         print(f"  + {repo['name']} (colour: {colour}, scheme: {scheme_name})")
