@@ -165,6 +165,60 @@ run_compression() {
 	return $?
 }
 
+run_repo_scoped_extraction() {
+	local db_path="$1"
+	local output_dir="$2"
+	local repo_dir="$3"
+
+	if [[ ! -f "${EXTRACTOR}" ]]; then
+		log_error "Extractor not found at ${EXTRACTOR}"
+		return 1
+	fi
+
+	log_info "Running repo-scoped extraction from ${db_path} for ${repo_dir}..."
+	python3 "${EXTRACTOR}" --db "${db_path}" --format chunks --output "${output_dir}" --repo-dir "${repo_dir}" 2>&1
+	return $?
+}
+
+run_repo_scoped_pipeline() {
+	local db_path="$1"
+	local repo_dir="$2"
+	local slug="$3"
+
+	local slug_safe
+	slug_safe="${slug//\//_}"
+	local scoped_output_dir="${_output_dir}/contributor_${slug_safe}"
+	mkdir -p "${scoped_output_dir}"
+
+	local extract_output
+	extract_output=$(run_repo_scoped_extraction "${db_path}" "${scoped_output_dir}" "${repo_dir}" 2>&1) || {
+		log_error "Repo-scoped extraction failed for ${slug}: ${extract_output}"
+		return 1
+	}
+
+	local chunks_dir
+	chunks_dir=$(find "${scoped_output_dir}" -maxdepth 1 -type d -name "chunks_*" | head -1)
+	if [[ -z "${chunks_dir}" ]]; then
+		log_error "No repo-scoped chunks directory found for ${slug} in ${scoped_output_dir}"
+		return 1
+	fi
+
+	local compression_output
+	compression_output=$(run_compression "${chunks_dir}" 2>&1) || {
+		log_error "Repo-scoped compression failed for ${slug}: ${compression_output}"
+		return 1
+	}
+
+	local scoped_compressed_file="${scoped_output_dir}/compressed_signals.json"
+	if [[ ! -f "${scoped_compressed_file}" ]]; then
+		log_error "Repo-scoped compressed signals file not produced for ${slug}"
+		return 1
+	fi
+
+	printf '%s\n' "${scoped_compressed_file}"
+	return 0
+}
+
 # _summary_print_header prints the pulse summary header with steerage and error counts.
 _summary_print_header() {
 	local compressed_file="$1"
@@ -814,8 +868,9 @@ output_results() {
 }
 
 # file_contributor_insights files sanitized upstream issues for repos where
-# the user is a contributor (role != maintainer). Uses compressed signals
-# from the current pulse run. Skips if no contributor-role repos found.
+# the user is a contributor (role != maintainer). It re-extracts a repo-scoped
+# compressed signal file for each target so unrelated project sessions cannot
+# leak into contributor insight issues. Skips if no contributor-role repos found.
 # Arguments: $1 — dry_run (true/false)
 file_contributor_insights() {
 	local dry_run="$1"
@@ -843,6 +898,13 @@ file_contributor_insights() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
+		local repo_dir
+		repo_dir=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .path // empty' "$repos_json" 2>/dev/null) || repo_dir=""
+		if [[ -z "$repo_dir" || ! -d "$repo_dir" ]]; then
+			log_info "Skipping contributor insights for ${slug}: local repo path missing"
+			continue
+		fi
+
 		# Check explicit role first
 		local explicit_role
 		explicit_role=$(jq -r --arg s "$slug" '.initialized_repos[] | select(.slug == $s) | .role // ""' "$repos_json" 2>/dev/null) || explicit_role=""
@@ -859,11 +921,13 @@ file_contributor_insights() {
 		fi
 
 		if [[ "$is_contributor" == true ]]; then
-			log_info "Filing contributor insights for ${slug}..."
+			log_info "Filing contributor insights for ${slug} scoped to ${repo_dir}..."
+			local scoped_compressed_file
+			scoped_compressed_file=$(run_repo_scoped_pipeline "${_db_path}" "${repo_dir}" "${slug}") || continue
 			local dr_flag=""
 			[[ "$dry_run" == true ]] && dr_flag="--dry-run"
 			# shellcheck disable=SC2086
-			"$insight_helper" file $dr_flag "${_compressed_file}" "$slug" 2>&1 || true
+			"$insight_helper" file $dr_flag "${scoped_compressed_file}" "$slug" 2>&1 || true
 		fi
 	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
 
@@ -902,6 +966,7 @@ main() {
 	# Find and validate database
 	local db_path
 	db_path=$(detect_db "${_db_override}") || return 1
+	_db_path="${db_path}"
 	log_info "Using database: ${db_path}"
 
 	validate_db_size "${db_path}" || {

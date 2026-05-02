@@ -8,7 +8,7 @@ import sqlite3
 import sys
 from typing import Any, Optional
 
-from extract_shared import sanitize_path
+from extract_shared import repo_scope_clause, repo_scope_params, sanitize_path
 
 
 STEERAGE_PATTERNS = {
@@ -159,7 +159,9 @@ def _collect_steerage_from_message(
     return records
 
 
-def extract_steerage(conn: sqlite3.Connection, limit: Optional[int] = None) -> list[dict]:
+def extract_steerage(
+    conn: sqlite3.Connection, limit: Optional[int] = None, repo_dir: Optional[str] = None,
+) -> list[dict]:
     """Extract user steerage signals from sessions."""
     print("Extracting user steerage signals...", file=sys.stderr)
 
@@ -175,14 +177,15 @@ def extract_steerage(conn: sqlite3.Connection, limit: Optional[int] = None) -> l
     FROM message m
     JOIN session s ON m.session_id = s.id
     WHERE json_extract(m.data, '$.role') = 'user'
-    ORDER BY m.time_created ASC
     """
+    query += repo_scope_clause(repo_dir)
+    query += "\n    ORDER BY m.time_created ASC\n    "
     if limit:
         query += f" LIMIT {int(limit) * 10}"
 
     records: list[dict] = []
     seen_texts: set[int] = set()
-    for row in conn.execute(query):
+    for row in conn.execute(query, repo_scope_params(repo_dir)):
         records.extend(_collect_steerage_from_message(conn, row, seen_texts))
         if limit and len(records) >= limit:
             records = records[:limit]

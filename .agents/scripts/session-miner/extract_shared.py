@@ -4,7 +4,31 @@
 """Shared helpers for session-miner extraction scripts."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+
+def normalize_repo_dir(repo_dir: Optional[str]) -> Optional[str]:
+    """Return a normalized repository directory for session scoping."""
+    if not repo_dir:
+        return None
+
+    normalized = str(Path(repo_dir).expanduser().absolute()).rstrip("/")
+    return normalized or None
+
+
+def repo_scope_clause(repo_dir: Optional[str], column: str = "s.directory") -> str:
+    """Return a SQL fragment that scopes sessions to *repo_dir* when set."""
+    if normalize_repo_dir(repo_dir) is None:
+        return ""
+    return f" AND ({column} = :repo_dir OR {column} LIKE :repo_dir_prefix)"
+
+
+def repo_scope_params(repo_dir: Optional[str]) -> dict[str, str]:
+    """Return SQLite parameters for repository-directory session scoping."""
+    normalized = normalize_repo_dir(repo_dir)
+    if normalized is None:
+        return {}
+    return {"repo_dir": normalized, "repo_dir_prefix": f"{normalized}/%"}
 
 
 def sanitize_path(path: str) -> str:

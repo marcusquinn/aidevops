@@ -10,7 +10,7 @@ import sys
 from collections import defaultdict
 from typing import Any, Optional
 
-from extract_shared import sanitize_path, summarize_tool_input
+from extract_shared import repo_scope_clause, repo_scope_params, sanitize_path, summarize_tool_input
 
 
 ERROR_CATEGORIES = {
@@ -99,7 +99,9 @@ def _find_user_response_after(
     return user_after["text"][:500]
 
 
-def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> list[dict]:
+def extract_errors(
+    conn: sqlite3.Connection, limit: Optional[int] = None, repo_dir: Optional[str] = None,
+) -> list[dict]:
     """Extract tool error sequences with surrounding context."""
     print("Extracting error sequences...", file=sys.stderr)
 
@@ -120,13 +122,14 @@ def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> lis
     JOIN session s ON p.session_id = s.id
     WHERE json_extract(p.data, '$.type') = 'tool'
       AND json_extract(p.data, '$.state.status') = 'error'
-    ORDER BY p.time_created DESC
     """
+    query += repo_scope_clause(repo_dir)
+    query += "\n    ORDER BY p.time_created DESC\n    "
     if limit:
         query += f" LIMIT {int(limit)}"
 
     records = []
-    for row in conn.execute(query):
+    for row in conn.execute(query, repo_scope_params(repo_dir)):
         error_text = row["error_text"] or ""
         tool_name = row["tool_name"] or "unknown"
         tool_input = _parse_json_safe(row["tool_input_json"])
@@ -148,20 +151,23 @@ def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> lis
     return records
 
 
-def extract_error_stats(conn: sqlite3.Connection) -> dict:
+def extract_error_stats(conn: sqlite3.Connection, repo_dir: Optional[str] = None) -> dict:
     """Extract aggregate error statistics for the summary."""
     stats = {}
 
+    params = repo_scope_params(repo_dir)
     tool_rows = conn.execute("""
         SELECT
-            json_extract(data, '$.tool') as tool,
+            json_extract(p.data, '$.tool') as tool,
             COUNT(*) as total,
-            SUM(CASE WHEN json_extract(data, '$.state.status') = 'error' THEN 1 ELSE 0 END) as errors
-        FROM part
-        WHERE json_extract(data, '$.type') = 'tool'
+            SUM(CASE WHEN json_extract(p.data, '$.state.status') = 'error' THEN 1 ELSE 0 END) as errors
+        FROM part p
+        JOIN session s ON p.session_id = s.id
+        WHERE json_extract(p.data, '$.type') = 'tool'
+    """ + repo_scope_clause(repo_dir) + """
         GROUP BY tool
         ORDER BY total DESC
-    """).fetchall()
+    """, params).fetchall()
     stats["tool_error_rates"] = {
         row["tool"]: {
             "total": row["total"],
@@ -173,32 +179,36 @@ def extract_error_stats(conn: sqlite3.Connection) -> dict:
     }
 
     error_rows = conn.execute("""
-        SELECT json_extract(data, '$.state.error') as err
-        FROM part
-        WHERE json_extract(data, '$.type') = 'tool'
-          AND json_extract(data, '$.state.status') = 'error'
-    """).fetchall()
+        SELECT json_extract(p.data, '$.state.error') as err
+        FROM part p
+        JOIN session s ON p.session_id = s.id
+        WHERE json_extract(p.data, '$.type') = 'tool'
+          AND json_extract(p.data, '$.state.status') = 'error'
+    """ + repo_scope_clause(repo_dir), params).fetchall()
     category_counts = defaultdict(int)
     for row in error_rows:
         category_counts[classify_error(row["err"] or "")] += 1
     stats["error_categories"] = dict(sorted(category_counts.items(), key=lambda item: -item[1]))
 
     model_rows = conn.execute("""
-        SELECT json_extract(data, '$.modelID') as model, COUNT(*) as cnt
-        FROM message
-        WHERE json_extract(data, '$.role') = 'assistant'
+        SELECT json_extract(m.data, '$.modelID') as model, COUNT(*) as cnt
+        FROM message m
+        JOIN session s ON m.session_id = s.id
+        WHERE json_extract(m.data, '$.role') = 'assistant'
+    """ + repo_scope_clause(repo_dir) + """
         GROUP BY model
         ORDER BY cnt DESC
         LIMIT 10
-    """).fetchall()
+    """, params).fetchall()
     stats["model_usage"] = {row["model"]: row["cnt"] for row in model_rows if row["model"]}
 
     session_row = conn.execute("""
         SELECT COUNT(*) as cnt,
                MIN(time_created) as earliest,
                MAX(time_created) as latest
-        FROM session
-    """).fetchone()
+        FROM session s
+        WHERE 1 = 1
+    """ + repo_scope_clause(repo_dir), params).fetchone()
     stats["sessions"] = {
         "total": session_row["cnt"],
         "earliest": session_row["earliest"],

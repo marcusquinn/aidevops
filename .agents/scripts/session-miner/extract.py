@@ -38,7 +38,7 @@ from typing import Any, Optional
 from extract_chunking import ChunkConfig, build_chunks
 from extract_errors import extract_error_stats, extract_errors
 from extract_git import extract_git_correlation
-from extract_shared import sanitize_path as _sanitize_path
+from extract_shared import repo_scope_clause, repo_scope_params, sanitize_path as _sanitize_path
 from extract_steerage import (
     STEERAGE_PATTERNS,
     extract_steerage,
@@ -190,7 +190,7 @@ def classify_instruction_candidate(text: str) -> Optional[dict[str, Any]]:
     }
 
 
-def _build_instruction_candidate_query(limit: Optional[int]) -> str:
+def _build_instruction_candidate_query(limit: Optional[int], repo_dir: Optional[str] = None) -> str:
     """Return the SQL query used to scan user messages for instructions."""
     query = """
     SELECT
@@ -203,8 +203,9 @@ def _build_instruction_candidate_query(limit: Optional[int]) -> str:
     FROM message m
     JOIN session s ON m.session_id = s.id
     WHERE json_extract(m.data, '$.role') = 'user'
-    ORDER BY m.time_created ASC
     """
+    query += repo_scope_clause(repo_dir)
+    query += "\n    ORDER BY m.time_created ASC\n    "
     if limit:
         query += f" LIMIT {int(limit) * 10}"
     return query
@@ -260,7 +261,7 @@ def _extract_message_instruction_candidates(
 
 
 def extract_instruction_candidates(
-    conn: sqlite3.Connection, limit: Optional[int] = None,
+    conn: sqlite3.Connection, limit: Optional[int] = None, repo_dir: Optional[str] = None,
 ) -> list[dict]:
     """Extract instruction candidate signals from user messages.
 
@@ -279,7 +280,7 @@ def extract_instruction_candidates(
     candidates: list[dict] = []
     seen_texts: set[int] = set()
 
-    for row in conn.execute(_build_instruction_candidate_query(limit)):
+    for row in conn.execute(_build_instruction_candidate_query(limit, repo_dir), repo_scope_params(repo_dir)):
         candidates.extend(
             _extract_message_instruction_candidates(conn, row, seen_texts),
         )
@@ -353,6 +354,8 @@ def main():
                         help=f"Output directory (default: {OUTPUT_DIR})")
     parser.add_argument("--no-git", action="store_true",
                         help="Skip git correlation extraction")
+    parser.add_argument("--repo-dir", type=str, default=None,
+                        help="Only extract sessions whose directory is this repo or a subdirectory")
     args = parser.parse_args()
 
     print(f"Session Miner — Extracting from {args.db}", file=sys.stderr)
@@ -360,26 +363,28 @@ def main():
         print(f"Error: Database not found at {args.db}", file=sys.stderr)
         sys.exit(1)
     print(f"  DB size: {args.db.stat().st_size / 1024 / 1024:.1f} MB", file=sys.stderr)
+    if args.repo_dir:
+        print(f"  Repo scope: {args.repo_dir}", file=sys.stderr)
 
     conn = connect_db(args.db)
 
     try:
         # Phase 1a: Extract steerage
-        steerage = extract_steerage(conn, limit=args.limit)
+        steerage = extract_steerage(conn, limit=args.limit, repo_dir=args.repo_dir)
 
         # Phase 1b: Extract errors
-        errors = extract_errors(conn, limit=args.limit)
+        errors = extract_errors(conn, limit=args.limit, repo_dir=args.repo_dir)
 
         # Phase 1c: Aggregate stats
-        stats = extract_error_stats(conn)
+        stats = extract_error_stats(conn, repo_dir=args.repo_dir)
 
         # Phase 1d: Extract git correlation (unless disabled)
         git_correlations = None
         if not args.no_git:
-            git_correlations = extract_git_correlation(conn, limit=args.limit)
+            git_correlations = extract_git_correlation(conn, limit=args.limit, repo_dir=args.repo_dir)
 
         # Phase 1e: Extract instruction candidates
-        instruction_candidates = extract_instruction_candidates(conn, limit=args.limit)
+        instruction_candidates = extract_instruction_candidates(conn, limit=args.limit, repo_dir=args.repo_dir)
 
         # Phase 2: Build chunks for model analysis
         if args.format == "chunks":
