@@ -32,9 +32,10 @@
 # fails closed — write operations abort if the lock cannot be obtained.
 #
 # Usage:
-#   dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID]
+#   dispatch-ledger-helper.sh register --session-key KEY [--issue NUM] [--repo SLUG] [--pid PID] [--worktree PATH]
 #   dispatch-ledger-helper.sh check --session-key KEY
 #   dispatch-ledger-helper.sh check-issue --issue NUM [--repo SLUG]
+#   dispatch-ledger-helper.sh check-issue NUM [SLUG]
 #   dispatch-ledger-helper.sh complete --session-key KEY
 #   dispatch-ledger-helper.sh fail --session-key KEY
 #   dispatch-ledger-helper.sh expire [--ttl SECONDS]
@@ -261,6 +262,7 @@ _iso_to_epoch() {
 #   --issue NUM          (optional) GitHub issue number
 #   --repo SLUG          (optional) owner/repo
 #   --pid PID            (optional) PID of dispatch process, defaults to $$
+#   --worktree PATH      (optional) worker worktree path
 #
 # Exit codes:
 #   0 - registered successfully
@@ -273,6 +275,7 @@ cmd_register() {
 	local dispatch_pid="$$"
 	local dispatch_tier=""
 	local dispatch_model=""
+	local worktree_path=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -290,6 +293,10 @@ cmd_register() {
 			;;
 		--pid)
 			dispatch_pid="${2:-$$}"
+			shift 2
+			;;
+		--worktree)
+			worktree_path="${2:-}"
 			shift 2
 			;;
 		--tier)
@@ -338,7 +345,8 @@ cmd_register() {
 		--arg ts "$now" \
 		--arg tier "$dispatch_tier" \
 		--arg model "$dispatch_model" \
-		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts, tier: $tier, model: $model}' \
+		--arg worktree "$worktree_path" \
+		'{session_key: $sk, issue_number: $inum, repo_slug: $slug, pid: $pid, dispatched_at: $ts, status: "in-flight", updated_at: $ts, tier: $tier, model: $model, worktree_path: $worktree}' \
 		>>"$LEDGER_FILE"
 
 	# Append to tier telemetry log (append-only, never pruned)
@@ -422,6 +430,7 @@ cmd_check() {
 # Args:
 #   --issue NUM          (required)
 #   --repo SLUG          (optional) restrict to specific repo
+#   Positional form also supported: check-issue NUM [SLUG]
 #
 # Exit codes:
 #   0 - in-flight entry exists for this issue (do NOT dispatch)
@@ -442,9 +451,20 @@ cmd_check_issue() {
 			repo_slug="${2:-}"
 			shift 2
 			;;
-		*)
+		--*)
 			echo "Error: Unknown option for check-issue: $1" >&2
 			return 1
+			;;
+		*)
+			if [[ -z "$issue_number" ]]; then
+				issue_number="$1"
+			elif [[ -z "$repo_slug" ]]; then
+				repo_slug="$1"
+			else
+				echo "Error: Unexpected positional arg for check-issue: $1" >&2
+				return 1
+			fi
+			shift
 			;;
 		esac
 	done
