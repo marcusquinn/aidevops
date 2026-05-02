@@ -49,6 +49,22 @@ print_result() {
 	fi
 }
 
+find_label_color() {
+	local array_name="$1" label_name="$2"
+	local definitions=()
+	local definition name color desc
+
+	eval "definitions=(\"\${${array_name}[@]}\")"
+	for definition in "${definitions[@]}"; do
+		IFS='|' read -r name color desc <<<"$definition"
+		if [[ "$name" == "$label_name" ]]; then
+			printf '%s\n' "$color"
+			return 0
+		fi
+	done
+	return 1
+}
+
 # Sandbox HOME — side-effect-free sourcing + isolate cache writes
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
@@ -62,6 +78,8 @@ export LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 # =============================================================================
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/shared-constants.sh"
+# shellcheck source=/dev/null
+source "${TEST_SCRIPTS_DIR}/label-sync-helper.sh"
 set +e
 
 if [[ -n "${ISSUE_STATUS_LABEL_PRECEDENCE+x}" ]]; then
@@ -105,6 +123,47 @@ if [[ -n "${ISSUE_TIER_LABEL_RANK+x}" && "${ISSUE_TIER_LABEL_RANK[0]:-}" == "thi
 else
 	print_result "ISSUE_TIER_LABEL_RANK matches dedup-tier-labels.yml order" 1 \
 		"(got: ${ISSUE_TIER_LABEL_RANK[*]:-})"
+fi
+
+attention_labels=(
+	"SYSTEM_LABELS:needs-maintainer-review"
+	"SYSTEM_LABELS:security"
+	"SYSTEM_LABELS:security-adjacent"
+	"SYSTEM_LABELS:critical"
+	"PRIORITY_LABELS:priority:critical"
+	"STATUS_LABELS:status:blocked"
+	"SYSTEM_LABELS:hold-for-review"
+	"SYSTEM_LABELS:security-review"
+	"SYSTEM_LABELS:needs-review"
+	"SYSTEM_LABELS:needs-review-fixes"
+)
+
+for attention_spec in "${attention_labels[@]}"; do
+	attention_array="${attention_spec%%:*}"
+	attention_name="${attention_spec#*:}"
+	attention_color=$(find_label_color "$attention_array" "$attention_name" 2>/dev/null || true)
+	if [[ "$attention_color" == "D73A4A" ]]; then
+		print_result "canonical human-attention label $attention_name is red" 0
+	else
+		print_result "canonical human-attention label $attention_name is red" 1 "(got: '${attention_color:-missing}')"
+	fi
+done
+
+origin_labels=(origin:interactive origin:worker origin:worker-takeover)
+for origin_name in "${origin_labels[@]}"; do
+	origin_color=$(find_label_color "ORIGIN_LABELS" "$origin_name" 2>/dev/null || true)
+	if [[ "$origin_color" == "1D76DB" ]]; then
+		print_result "canonical origin label $origin_name is blue" 0
+	else
+		print_result "canonical origin label $origin_name is blue" 1 "(got: '${origin_color:-missing}')"
+	fi
+done
+
+security_tag_color=$(color_for_tag "security-adjacent")
+if [[ "$security_tag_color" == "D73A4A" ]]; then
+	print_result "security-adjacent TODO tag maps to red" 0
+else
+	print_result "security-adjacent TODO tag maps to red" 1 "(got: '$security_tag_color')"
 fi
 
 # =============================================================================
@@ -489,7 +548,7 @@ fi
 # carries `parent-task` would close the parent — wiping the open-until-
 # terminal-PR contract. Mirror of Part 4's t2137 workflow guard, applied to
 # the parallel bash-helper code path.
-HELPER_FILE="${TEST_SCRIPTS_DIR}/issue-sync-helper.sh"
+HELPER_FILE="${TEST_SCRIPTS_DIR}/issue-sync-helper-close.sh"
 
 if [[ ! -f "$HELPER_FILE" ]]; then
 	print_result "issue-sync-helper.sh exists (for close-gate guard)" 1 "(not found at $HELPER_FILE)"

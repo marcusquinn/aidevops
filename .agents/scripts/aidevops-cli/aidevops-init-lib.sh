@@ -798,7 +798,7 @@ EOF
 	local remote_url
 	remote_url=$(git -C "$project_root" remote get-url origin 2>/dev/null || true)
 	local repo_slug=""
-	if [[ -n "$remote_url" ]]; then
+	if [[ "$remote_url" == *github.com[:/]* || "$remote_url" == git@github.com:* ]]; then
 		repo_slug=$(echo "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||')
 	fi
 	if [[ -n "$remote_url" ]]; then
@@ -1232,10 +1232,16 @@ GITATTRSEOF
 	# block in fresh repos. Both operations are idempotent. Skip for local_only
 	# repos (no remote to host SVGs or run GitHub Actions).
 	local _badges_helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+	local _label_sync_helper="$AGENTS_DIR/scripts/label-sync-helper.sh"
 	local _wf_template="$AGENTS_DIR/templates/workflows/loc-badge-caller.yml"
 	local _wf_dest="$project_root/.github/workflows/loc-badge.yml"
 
 	if [[ -n "$repo_slug" ]]; then
+		local _is_local_only
+		_is_local_only=$(jq -r --arg s "$repo_slug" \
+			'.initialized_repos // [] | map(select(.slug == $s)) | if length > 0 then .[0].local_only // false else false end' \
+			"$HOME/.config/aidevops/repos.json" 2>/dev/null || echo "false")
+
 		# Install loc-badge caller workflow if template is available and file is absent
 		if [[ -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
 			mkdir -p "$project_root/.github/workflows"
@@ -1257,11 +1263,20 @@ GITATTRSEOF
 			print_info "No README.md found — skipping badge block injection (create README.md first)"
 		fi
 
+		# Sync the canonical GitHub label palette for this repo. This is a
+		# best-effort external GitHub setup step: warn on auth/API/access issues, but
+		# do not abort repo initialization.
+		if [[ "$_is_local_only" != "true" && -f "$_label_sync_helper" ]]; then
+			if bash "$_label_sync_helper" sync --repo "$repo_slug" >/dev/null; then
+				print_success "Synced canonical GitHub labels for $repo_slug"
+			else
+				print_warning "GitHub label sync failed — run manually: label-sync-helper.sh sync --repo $repo_slug"
+			fi
+		elif [[ "$_is_local_only" == "true" ]]; then
+			print_info "Skipping GitHub label sync for local-only repo"
+		fi
+
 		# Remind about SYNC_PAT if the repo has a remote and isn't local_only
-		local _is_local_only
-		_is_local_only=$(jq -r --arg s "$repo_slug" \
-			'.initialized_repos // [] | map(select(.slug == $s)) | if length > 0 then .[0].local_only // false else false end' \
-			"$HOME/.config/aidevops/repos.json" 2>/dev/null || echo "false")
 		if [[ "$_is_local_only" != "true" ]]; then
 			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can push badge SVGs — see: aidevops --help sync-pat"
 		fi
