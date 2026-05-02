@@ -48,11 +48,15 @@ function getTokenTotal(tokens) {
 function isGpt55OrNewer(input) {
   const modelID = String(input?.model?.modelID || input?.modelID || input?.model || "").toLowerCase();
   const match = modelID.match(/(?:^|[^a-z0-9])gpt-(\d+)(?:\.(\d+))?/);
-  if (!match) return false;
+  let result = false;
 
-  const major = Number.parseInt(match[1], 10);
-  const minor = Number.parseInt(match[2] || "0", 10);
-  return major > 5 || (major === 5 && minor >= 5);
+  if (match) {
+    const major = Number.parseInt(match[1], 10);
+    const minor = Number.parseInt(match[2] || "0", 10);
+    result = major > 5 || (major === 5 && minor >= 5);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
