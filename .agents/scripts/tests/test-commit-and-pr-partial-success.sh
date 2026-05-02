@@ -115,6 +115,10 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
+# Extract _rebase_and_push
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_rebase_and_push() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
 # =============================================================================
 # Post-extraction stubs (override PATH binaries and define missing deps).
 # Defined after eval so they take precedence over any stubs extracted from helper.
@@ -126,10 +130,22 @@ git() {
 		printf 'feature/t2767-test\n'
 		return 0
 	fi
+	if [[ "${1:-}" == "fetch" ]]; then
+		return 0
+	fi
+	if [[ "${1:-}" == "rebase" ]]; then
+		return 0
+	fi
+	if [[ "${1:-}" == "push" ]]; then
+		printf "branch 'feature/t2767-test' set up to track 'origin/feature/t2767-test'.\n"
+		return 0
+	fi
 	command git "$@"
 	return $?
 }
 export -f git
+
+_check_and_handle_shallow_clone() { return 0; }
 
 # Control variable: set to 1 to simulate gh_create_pr partial success
 GH_CREATE_PR_FAIL=0
@@ -319,6 +335,30 @@ else
 fi
 
 GH_CREATE_PR_STDERR_LOG=""
+
+# =============================================================================
+# Test 3c: _rebase_and_push keeps git push setup noise off stdout
+# git push -u may print "branch ... set up to track ..." on stdout. Expected:
+# helper redirects that to stderr so commit-and-pr stdout remains only PR_NUMBER.
+# =============================================================================
+: >"$STUB_LOG"
+rebase_push_output=""
+rebase_push_rc=0
+rebase_push_output=$(_rebase_and_push "feature/t2767-test" 0 2>/dev/null) || rebase_push_rc=$?
+
+if [[ "$rebase_push_rc" -eq 0 ]]; then
+	pass "push stdout hygiene: _rebase_and_push succeeds"
+else
+	fail "push stdout hygiene: _rebase_and_push succeeds" \
+		"got exit $rebase_push_rc; output '${rebase_push_output}'"
+fi
+
+if [[ -z "$rebase_push_output" ]]; then
+	pass "push stdout hygiene: _rebase_and_push emits no stdout"
+else
+	fail "push stdout hygiene: _rebase_and_push emits no stdout" \
+		"got '${rebase_push_output}'"
+fi
 
 # =============================================================================
 # Test 4: _post_merge_summary idempotency — skip when comment already exists

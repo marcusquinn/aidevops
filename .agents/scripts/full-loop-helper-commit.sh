@@ -550,9 +550,9 @@ _rebase_and_push() {
 	local push_rc
 	push_rc=0
 	if command -v timeout >/dev/null 2>&1; then
-		timeout "$push_timeout" git push "${_push_args[@]}" || push_rc=$?
+		timeout "$push_timeout" git push "${_push_args[@]}" 1>&2 || push_rc=$?
 	else
-		git push "${_push_args[@]}" || push_rc=$?
+		git push "${_push_args[@]}" 1>&2 || push_rc=$?
 	fi
 
 	if [[ "$push_rc" -eq 124 ]]; then
