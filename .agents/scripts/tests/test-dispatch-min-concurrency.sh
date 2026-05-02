@@ -46,6 +46,26 @@ get_max_workers_target() {
 }
 
 count_active_workers() {
+	if [[ -n "${TEST_ACTIVE_WORKERS_SEQUENCE_FILE:-}" && -f "$TEST_ACTIVE_WORKERS_SEQUENCE_FILE" ]]; then
+		local next remaining_file
+		next=$(awk 'NR==1 {print; exit}' "$TEST_ACTIVE_WORKERS_SEQUENCE_FILE" 2>/dev/null)
+		remaining_file="${TEST_ACTIVE_WORKERS_SEQUENCE_FILE}.next"
+		awk 'NR>1 {print}' "$TEST_ACTIVE_WORKERS_SEQUENCE_FILE" >"$remaining_file" 2>/dev/null || : >"$remaining_file"
+		mv "$remaining_file" "$TEST_ACTIVE_WORKERS_SEQUENCE_FILE"
+		[[ -n "$next" ]] || next="${TEST_ACTIVE_WORKERS:-0}"
+		printf '%s\n' "$next"
+		return 0
+	fi
+	if [[ -n "${TEST_ACTIVE_WORKERS_SEQUENCE:-}" ]]; then
+		local next="${TEST_ACTIVE_WORKERS_SEQUENCE%% *}"
+		if [[ "$TEST_ACTIVE_WORKERS_SEQUENCE" == *" "* ]]; then
+			TEST_ACTIVE_WORKERS_SEQUENCE="${TEST_ACTIVE_WORKERS_SEQUENCE#* }"
+		else
+			TEST_ACTIVE_WORKERS_SEQUENCE=""
+		fi
+		printf '%s\n' "$next"
+		return 0
+	fi
 	printf '%s\n' "${TEST_ACTIVE_WORKERS:-0}"
 	return 0
 }
@@ -131,6 +151,7 @@ exit 42
 EOF
 	chmod +x "$fake_helper"
 	HEADLESS_RUNTIME_HELPER="$fake_helper"
+	unset AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE || true
 	TEST_ACTIVE_WORKERS=5
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
 	if _dlw_canary_preflight 100 "o/r" "$worker_log" "standard" ""; then
@@ -138,6 +159,7 @@ EOF
 	else
 		print_result "canary: overload check bypassed below minimum floor" 1
 	fi
+	unset AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE || true
 	TEST_ACTIVE_WORKERS=6
 	if _dlw_canary_preflight 101 "o/r" "$worker_log" "standard" ""; then
 		print_result "canary: overload check enforced at floor" 1 "unexpected success"
@@ -147,11 +169,53 @@ EOF
 	return 0
 }
 
+test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	TEST_ACTIVE_WORKERS_SEQUENCE_FILE="${TEST_ROOT}/active-sequence.txt"
+	TEST_DISPATCH_CALLS_FILE="${TEST_ROOT}/dispatch-calls.txt"
+	TEST_DISPATCH_RETURNS_FILE="${TEST_ROOT}/dispatch-returns.txt"
+	printf '%s\n%s\n' 4 6 >"$TEST_ACTIVE_WORKERS_SEQUENCE_FILE"
+	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
+	printf '%s\n%s\n' 2 2 >"$TEST_DISPATCH_RETURNS_FILE"
+	STOP_FLAG="${HOME}/.aidevops/logs/stop"
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	dispatch_max() {
+		local calls next remaining_file
+		calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+		[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+		printf '%s\n' "$((calls + 1))" >"$TEST_DISPATCH_CALLS_FILE"
+		next=$(awk 'NR==1 {print; exit}' "$TEST_DISPATCH_RETURNS_FILE" 2>/dev/null)
+		remaining_file="${TEST_DISPATCH_RETURNS_FILE}.next"
+		awk 'NR>1 {print}' "$TEST_DISPATCH_RETURNS_FILE" >"$remaining_file" 2>/dev/null || : >"$remaining_file"
+		mv "$remaining_file" "$TEST_DISPATCH_RETURNS_FILE"
+		[[ -n "$next" ]] || next=0
+		printf '%s\n' "$next"
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function to keep the test fast.
+	_adaptive_launch_settle_wait() {
+		return 0
+	}
+
+	apply_dispatch_max
+
+	local dispatch_calls
+	dispatch_calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+	if [[ "$dispatch_calls" -eq 2 ]]; then
+		print_result "apply: refills minimum active-worker floor after partial launch" 0
+	else
+		print_result "apply: refills minimum active-worker floor after partial launch" 1 "dispatch_calls=${dispatch_calls}"
+	fi
+	unset TEST_ACTIVE_WORKERS_SEQUENCE_FILE TEST_DISPATCH_CALLS_FILE TEST_DISPATCH_RETURNS_FILE
+	return 0
+}
+
 test_capacity_raises_soft_cap_to_floor
 test_capacity_respects_existing_higher_cap
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_bypasses_overload_only_below_floor
+test_apply_dispatch_refills_until_active_floor_after_partial_launch
 
 echo ""
 echo "===================="

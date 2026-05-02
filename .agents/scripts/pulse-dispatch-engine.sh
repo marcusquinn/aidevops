@@ -633,6 +633,7 @@ apply_dispatch_max() {
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "dispatch_max"
+	_dispatch_min_worker_floor_refill
 
 	# t2749: Phase 2 — re-enumerate when consolidation created a child during
 	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
@@ -654,10 +655,61 @@ apply_dispatch_max() {
 			fill_dispatched_p2=$(dispatch_max) || fill_dispatched_p2=0
 			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
 			_adaptive_launch_settle_wait "$fill_dispatched_p2" "dispatch_max phase 2"
+			_dispatch_min_worker_floor_refill
 		else
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
 	fi
+	return 0
+}
+
+#######################################
+# Re-run dispatch_max while the active-worker count is below the configured
+# minimum floor and dispatch is still making progress.
+#
+# The floor is an active-worker floor, not merely a CPU/load throttle bypass:
+# a partial launch/failure round can leave active workers below the floor even
+# though dispatch_max attempted candidates. Hard stops remain hard because each
+# dispatch_max call re-checks STOP_FLAG, GraphQL budget, candidate eligibility,
+# and per-candidate blockers; a zero-dispatch round ends the refill.
+#
+# Returns 0 always; best-effort refill should not abort the pulse cycle.
+#######################################
+_dispatch_min_worker_floor_refill() {
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
+		min_worker_floor=6
+	fi
+	if ((min_worker_floor <= 0)); then
+		return 0
+	fi
+
+	local refill_attempt=0
+	local max_refill_attempts="$min_worker_floor"
+	local active_workers fill_dispatched
+	while ((refill_attempt < max_refill_attempts)); do
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
+			return 0
+		fi
+		active_workers=$(count_active_workers)
+		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+		if ((active_workers >= min_worker_floor)); then
+			return 0
+		fi
+
+		refill_attempt=$((refill_attempt + 1))
+		echo "[pulse-wrapper] Minimum worker floor refill: active=${active_workers}/${min_worker_floor}, attempt=${refill_attempt}/${max_refill_attempts} — re-enumerating candidates" >>"$LOGFILE"
+		fill_dispatched=$(dispatch_max) || fill_dispatched=0
+		[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
+		if ((fill_dispatched <= 0)); then
+			echo "[pulse-wrapper] Minimum worker floor refill stopped: dispatch_max returned ${fill_dispatched} (no eligible candidates or hard gate exhausted)" >>"$LOGFILE"
+			return 0
+		fi
+		_adaptive_launch_settle_wait "$fill_dispatched" "minimum worker floor refill"
+	done
+
+	echo "[pulse-wrapper] Minimum worker floor refill stopped: reached attempt cap ${max_refill_attempts}" >>"$LOGFILE"
 	return 0
 }
 
