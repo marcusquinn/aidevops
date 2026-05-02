@@ -57,7 +57,7 @@ _isc_fetch_filtered_prs() {
 	local slug="$1"
 	local cutoff_epoch="$2"
 	local prs_raw
-	prs_raw=$(gh pr list --repo "$slug" --state closed --limit 50 \
+	prs_raw=$(gh_pr_list --repo "$slug" --state closed --limit 50 \
 		--json number,title,headRefName,closedAt,mergedAt,body \
 		2>/dev/null || echo "[]")
 	[[ "$prs_raw" == "[]" || -z "$prs_raw" ]] && return 0
@@ -197,7 +197,7 @@ _isc_scan_closed_pr_orphans() {
 				[[ -z "$issue_num" ]] && continue
 
 				local issue_state
-				issue_state=$(gh issue view "$issue_num" --repo "$slug" \
+				issue_state=$(gh_issue_view "$issue_num" --repo "$slug" \
 					--json state --jq '.state' 2>/dev/null || echo "")
 				[[ -z "$issue_state" ]] && continue
 

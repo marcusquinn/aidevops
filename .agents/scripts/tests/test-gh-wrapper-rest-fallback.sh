@@ -49,6 +49,7 @@
 #  22. gh_issue_list routes low-budget --search calls to /search/issues
 #  23. gh_pr_list routes directly to REST when GraphQL remaining is low
 #  24. gh_pr_list keeps --search on the GraphQL path when budget is low
+#  25. gh_pr_view routes directly to REST when GraphQL remaining is low
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -164,6 +165,10 @@ gh() {
 
 	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
 	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
+		printf '{"number":123,"title":"stub PR"}\n'
+		return 0
+	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
 		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
@@ -198,6 +203,16 @@ gh() {
 			return 1
 		fi
 		printf 'https://github.com/owner/repo/pull/9100\n'
+		return 0
+	fi
+
+	# gh pr view - the primary path for PR reads
+	if [[ "$1" == "pr" && "$2" == "view" ]]; then
+		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
+			printf 'primary stub forced failure (rate limit)\n' >&2
+			return 1
+		fi
+		printf '{"number":123,"title":"stub PR"}\n'
 		return 0
 	fi
 
@@ -691,6 +706,26 @@ else
 	fail "gh_pr_list leaves --search on primary path when REST cannot preserve semantics" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+
+# =============================================================================
+# Test 25: gh_pr_view routes directly to REST when GraphQL remaining is low
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_view 123 --repo "owner/repo" --json number,title --jq '.number' >/dev/null 2>&1 || true
+
+if grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api /repos/owner/repo/pulls/123' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^pr view 123' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_view proactively routes to REST when GraphQL budget is low"
+else
+	fail "gh_pr_view proactively routes to REST when GraphQL budget is low" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
 # Summary

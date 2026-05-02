@@ -49,8 +49,12 @@ main() {
 	fi
 	if command -v gh >/dev/null 2>&1; then
 		printf '### Recently merged related PRs\n\n'
+		# t3460: Intentional raw gh exception. Related-PR discovery requires
+		# GitHub search semantics; gh_pr_list's REST fallback drops --search.
 		gh pr list "${repo_args[@]}" --state merged --search "$keywords" --limit 5 || true
 		printf '\n### Open related PRs\n\n'
+		# t3460: Intentional raw gh exception. Related-PR discovery requires
+		# GitHub search semantics; gh_pr_list's REST fallback drops --search.
 		gh pr list "${repo_args[@]}" --state open --search "$keywords" --limit 5 || true
 	else
 		printf 'gh unavailable; skipped PR collision checks.\n'

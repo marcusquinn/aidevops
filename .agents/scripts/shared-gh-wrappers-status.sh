@@ -249,6 +249,38 @@ gh_pr_list() {
 }
 
 #######################################
+# gh_pr_view — drop-in replacement for gh pr view.  (t3460)
+# Routes directly to REST (`gh api GET /repos/{owner}/{repo}/pulls/{N}`) when
+# GraphQL remaining is below the fallback threshold, and still falls back to
+# REST if the primary call fails during an exhaustion window. All arguments are
+# forwarded unchanged to the selected path; the REST translator supports the
+# common --repo, --json, --jq, and -q read shapes.
+#
+#   gh_pr_view 123 --repo owner/repo --json body --jq '.body // empty'
+#   gh_pr_view 123 --repo owner/repo --json labels --jq '[.labels[].name] | join(",")'
+#
+# Returns the exit code of whichever path succeeded (or the REST path's code
+# when both paths ran).
+#######################################
+gh_pr_view() {
+	local _first_num="${1:-}"
+	if _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr view #${_first_num} to REST"
+		_rest_pr_view "$@"
+		return $?
+	fi
+	gh_record_call graphql gh_pr_view 2>/dev/null || true
+	_gh_with_timeout read gh pr view "$@"
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr view #${_first_num}"
+		_rest_pr_view "$@"
+		rc=$?
+	fi
+	return $rc
+}
+
+#######################################
 # gh_issue_list — drop-in replacement for gh issue list.  (t2689, t2995)
 # Routes directly to REST when GraphQL remaining is below the fallback threshold,
 # and still falls back to REST if the primary call fails during an exhaustion

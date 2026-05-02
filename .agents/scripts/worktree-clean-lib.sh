@@ -100,7 +100,7 @@ branch_has_open_pr() {
 	command -v gh &>/dev/null || return 0
 
 	local open_count
-	if ! open_count=$(gh pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null); then
+	if ! open_count=$(gh_pr_list --state open --head "$branch" --json number --jq 'length' 2>/dev/null); then
 		# gh command failed - return 0 to skip deletion (safety-first)
 		return 0
 	fi
@@ -340,14 +340,14 @@ _clean_fetch_remotes() {
 # Usage: _clean_build_pr_lists; merged_pr_branches=...; open_pr_branches=...
 _clean_build_merged_pr_branches() {
 	if command -v gh &>/dev/null; then
-		gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
+		gh_pr_list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
 	fi
 	return 0
 }
 
 _clean_build_open_pr_branches() {
 	if command -v gh &>/dev/null; then
-		gh pr list --state open --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
+		gh_pr_list --state open --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || true
 	fi
 	return 0
 }
@@ -358,7 +358,7 @@ _clean_build_open_pr_branches() {
 # only fires on merge.
 _clean_build_closed_pr_branches() {
 	if command -v gh &>/dev/null; then
-		gh pr list --state closed --limit 200 --json headRefName,mergedAt --jq '[.[] | select(.mergedAt == null)] | .[].headRefName' 2>/dev/null || true
+		gh_pr_list --state closed --limit 200 --json headRefName,mergedAt --jq '[.[] | select(.mergedAt == null)] | .[].headRefName' 2>/dev/null || true
 	fi
 	return 0
 }
