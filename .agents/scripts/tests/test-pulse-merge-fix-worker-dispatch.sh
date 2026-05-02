@@ -177,6 +177,7 @@ teardown_test_env() {
 # for the dispatch tests to reach their assertions.
 define_helpers_under_test() {
 	local fn fn_src
+	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
 	# Functions to extract, in source order. _build_review_feedback_section
 	# is used by the "build section" tests; the three shared helpers are
 	# required by the refactored _dispatch_pr_fix_worker body.

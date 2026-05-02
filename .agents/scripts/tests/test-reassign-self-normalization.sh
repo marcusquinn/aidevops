@@ -162,6 +162,9 @@ source_function_under_test() {
 	if ! type print_info &>/dev/null; then
 		print_info() { echo "[INFO] $*"; return 0; }
 	fi
+	if ! type gh_issue_list &>/dev/null; then
+		gh_issue_list() { gh issue list "$@"; return $?; }
+	fi
 	# Stub arrays that label-invariant functions need (we don't test those here)
 	ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claimed" "available" "blocked")
 	ISSUE_TIER_LABEL_RANK=("reasoning" "standard" "simple")
