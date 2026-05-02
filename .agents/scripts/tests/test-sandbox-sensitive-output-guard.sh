@@ -85,6 +85,40 @@ test_allows_safe_command() {
 	return 0
 }
 
+test_blocks_private_key_file_read_command() {
+	local output
+	local exit_code
+
+	set +e
+	output="$(timeout 10 "$HELPER" run "cat /tmp/.ssh/id_ed25519" 2>&1)"
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 126 ]] && [[ "$output" == *"Blocked command due to secret leak risk"* ]]; then
+		print_result "blocks private key file read command" 0
+	else
+		print_result "blocks private key file read command" 1 "exit=$exit_code output=$output"
+	fi
+	return 0
+}
+
+test_allows_public_key_file_reference() {
+	local output
+	local exit_code
+
+	set +e
+	output="$(timeout 10 "$HELPER" run "cat /tmp/.ssh/id_ed25519.pub" 2>&1)"
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -ne 126 ]]; then
+		print_result "allows harmless public key reference path" 0
+	else
+		print_result "allows harmless public key reference path" 1 "exit=$exit_code output=$output"
+	fi
+	return 0
+}
+
 test_stream_stdout_returns_after_child_exit() {
 	local output
 	local exit_code
@@ -125,7 +159,9 @@ main() {
 	trap teardown_test_env EXIT
 
 	test_blocks_risky_env_print_command
+	test_blocks_private_key_file_read_command
 	test_allows_safe_command
+	test_allows_public_key_file_reference
 	test_stream_stdout_returns_after_child_exit
 	test_override_flag_allows_blocked_pattern
 

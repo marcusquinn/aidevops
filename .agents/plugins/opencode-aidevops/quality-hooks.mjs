@@ -12,9 +12,11 @@ import { extractAndStoreIntent, consumeIntent } from "./intent-tracing.mjs";
 import { recordToolStart, consumeToolDuration } from "./timing-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
+import { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
 
 // Re-export for consumers that import from this module
 export { scanForSecrets } from "./quality-logging.mjs";
+export { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
 
 // ---------------------------------------------------------------------------
 // Credential transcript scrub (GH#20207, Layer 4 of t2458)
@@ -250,6 +252,8 @@ function handleToolBefore(ctx, log, input, output) {
     // output.args.command) or block (throw) as appropriate.
     checkSignatureFooterGate(output.args?.command || "", log, ctx.scriptsDir, output);
   }
+
+  checkSecretReadGate(input.tool, output.args || {}, log);
 
   if (!isWriteOrEditTool(input.tool)) return;
 

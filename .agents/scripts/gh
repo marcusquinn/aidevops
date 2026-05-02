@@ -626,6 +626,80 @@ _shim_privacy_scan() {
 		return 0
 	fi
 
+	# Build content blob from --body / --body-file / --title args plus
+	# `-f body=...` / `-F body=@...` forms used by gh api. Secret-material
+	# egress scan runs before private-slug enumeration so it remains active even
+	# when the user has no private repos configured.
+	local _blob="" _bf _kv
+	_idx=0
+	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
+		case "${_modified_args[$_idx]}" in
+		--body)
+			_blob+="${_modified_args[_idx + 1]:-}"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--body=*) _blob+="${_modified_args[$_idx]#--body=}"$'\n' ;;
+		--body-file)
+			_bf="${_modified_args[_idx + 1]:-}"
+			[[ -n "$_bf" && -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--body-file=*)
+			_bf="${_modified_args[$_idx]#--body-file=}"
+			[[ -n "$_bf" && -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+			;;
+		--title)
+			_blob+="${_modified_args[_idx + 1]:-}"$'\n'
+			_idx=$((_idx + 2))
+			continue
+			;;
+		--title=*) _blob+="${_modified_args[$_idx]#--title=}"$'\n' ;;
+		-f | --field | -F | --raw-field)
+			_kv="${_modified_args[_idx + 1]:-}"
+			case "$_kv" in
+			body=@*)
+				_bf="${_kv#body=@}"
+				[[ -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+				;;
+			body=*) _blob+="${_kv#body=}"$'\n' ;;
+			title=*) _blob+="${_kv#title=}"$'\n' ;;
+			esac
+			_idx=$((_idx + 2))
+			continue
+			;;
+		-f* | -F* | --field=* | --raw-field=*)
+			case "${_modified_args[$_idx]}" in
+			-f*) _kv="${_modified_args[$_idx]#-f}" ;;
+			-F*) _kv="${_modified_args[$_idx]#-F}" ;;
+			--field=*) _kv="${_modified_args[$_idx]#--field=}" ;;
+			--raw-field=*) _kv="${_modified_args[$_idx]#--raw-field=}" ;;
+			esac
+			case "$_kv" in
+			body=@*)
+				_bf="${_kv#body=@}"
+				[[ -f "$_bf" ]] && _blob+="$(<"$_bf")"$'\n'
+				;;
+			body=*) _blob+="${_kv#body=}"$'\n' ;;
+			title=*) _blob+="${_kv#title=}"$'\n' ;;
+			esac
+			;;
+		esac
+		_idx=$((_idx + 1))
+	done
+
+	local _secret_hits
+	_secret_hits=$(privacy_scan_secret_material_text "$_blob")
+	local _secret_scan_rc=$?
+	if [[ $_secret_scan_rc -eq 1 ]]; then
+		printf '\n[aidevops][privacy-scan][BLOCK] Write to public %s contains secret/private-key material:\n\n' "$target_url" >&2
+		printf '%s\n' "$_secret_hits" | sed 's/^/  /' >&2
+		printf '\n  Remove secret material before posting. Use synthetic fixtures only; never paste private keys or credential values.\n' >&2
+		printf '  Bypass (audit-logged): AIDEVOPS_GH_PRIVACY_BYPASS=1 gh ...\n\n' >&2
+		return 1
+	fi
+
 	# Enumerate private slugs.
 	local _slugs_file
 	_slugs_file=$(mktemp 2>/dev/null) || return 0
@@ -635,7 +709,7 @@ _shim_privacy_scan() {
 	fi
 	# Build content blob from --body / --body-file / --title args plus
 	# `-f body=...` / `-F body=@...` forms used by gh api.
-	local _blob="" _bf _kv
+	_blob=""
 	_idx=0
 	while [[ $_idx -lt ${#_modified_args[@]} ]]; do
 		case "${_modified_args[$_idx]}" in
