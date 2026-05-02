@@ -3922,3 +3922,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3445 Ignore generated Beads export state #auto-dispatch #bug ref:GH#22297 pr:#22298 completed:2026-05-02
 
 - [ ] t3446 Document implementation seeded draft PR workflow #auto-dispatch #documentation ref:GH#22299
+
+- [ ] t3447 enforce minimum worker concurrency floor as active-worker floor #auto-dispatch #bug ref:GH#22300
