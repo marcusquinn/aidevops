@@ -3930,3 +3930,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3448 reduce pulse GraphQL budget drain without weakening gates #auto-dispatch #bug ref:GH#22301
 
 - [ ] t3450 prioritize near-merge open PRs before new dispatch #auto-dispatch #enhancement ref:GH#22303
+
+- [ ] t3451 Reconcile dispatch claims when worker spawn does not occur #auto-dispatch #bug ref:GH#22304
+
+- [ ] t3452 Harden profile README stats against missing period data #auto-dispatch #bug ref:GH#22305
+
+- [ ] t3453 Diagnose profile README launchd job stuck in xpcproxy #auto-dispatch #bug ref:GH#22306
+
+- [ ] t3454 Use app usage fallback when macOS backlit screen-time stream is sparse #auto-dispatch #bug ref:GH#22308
