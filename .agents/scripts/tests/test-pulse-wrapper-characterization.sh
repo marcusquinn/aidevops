@@ -373,7 +373,47 @@ test_source_and_function_existence() {
 }
 
 #######################################
-# Test 2: _ff_key — pure string join for fast-fail state keys.
+# Test 2: credentials sourcing warnings — OAuth pool deployments do not need
+# ANTHROPIC_API_KEY in credentials.sh, but a credentials.sh source failure
+# should still warn operators that provider credentials may be unavailable.
+#######################################
+test_credentials_sourcing_warnings() {
+	local local_root
+	local_root=$(mktemp -d)
+	local local_home="${local_root}/home"
+	mkdir -p \
+		"${local_home}/.aidevops/logs" \
+		"${local_home}/.aidevops/.agent-workspace/supervisor" \
+		"${local_home}/.aidevops/.agent-workspace/tmp/triage-cache" \
+		"${local_home}/.config/aidevops"
+
+	local credentials_file="${local_home}/.config/aidevops/credentials.sh"
+	printf '%s\n' 'export ANTHROPIC_API_KEY=' >"$credentials_file"
+
+	local stderr rc
+	stderr=$(HOME="$local_home" PULSE_JITTER_MAX=0 bash -c 'source "$1"' _ "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" 2>&1 >/dev/null) && rc=0 || rc=$?
+	if [[ "$rc" -eq 0 ]] && ! printf '%s' "$stderr" | grep -q 'ANTHROPIC_API_KEY is empty'; then
+		print_result "empty ANTHROPIC_API_KEY does not warn when credentials.sh sources" 0
+	else
+		print_result "empty ANTHROPIC_API_KEY does not warn when credentials.sh sources" 1 \
+			"rc=${rc} stderr=${stderr}"
+	fi
+
+	printf '%s\n' 'return 7' >"$credentials_file"
+	stderr=$(HOME="$local_home" PULSE_JITTER_MAX=0 bash -c 'source "$1"' _ "${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh" 2>&1 >/dev/null) && rc=0 || rc=$?
+	if [[ "$rc" -eq 0 ]] && printf '%s' "$stderr" | grep -q 'credentials.sh exists but failed to source'; then
+		print_result "credentials.sh source failure still warns" 0
+	else
+		print_result "credentials.sh source failure still warns" 1 \
+			"rc=${rc} stderr=${stderr}"
+	fi
+
+	rm -rf "$local_root"
+	return 0
+}
+
+#######################################
+# Test 3: _ff_key — pure string join for fast-fail state keys.
 # Current shape: "owner/repo/123" (slug + / + issue number).
 # Lock the format so extracted pulse-fast-fail.sh cannot silently change it
 # and invalidate persisted state files.
@@ -389,7 +429,7 @@ test_ff_key_format() {
 }
 
 #######################################
-# Test 3: normalize_count_output — pure: extract last line that is
+# Test 4: normalize_count_output — pure: extract last line that is
 # whitespace-padded digits, return "0" if none match.
 #######################################
 test_normalize_count_output() {
@@ -417,7 +457,7 @@ info: done
 }
 
 #######################################
-# Test 4: _match_terminal_blocker_pattern — pure regex scan for terminal
+# Test 5: _match_terminal_blocker_pattern — pure regex scan for terminal
 # blocker reasons in concatenated issue/comment bodies. Returns 0 when a
 # pattern matches (printing reason + user action on two lines), 1 when no
 # pattern matches.
@@ -624,7 +664,7 @@ test_sourcing_idempotency() {
 }
 
 #######################################
-# Test 9: _pulse_is_sourced returns success when sourced from bash.
+# Test 10: _pulse_is_sourced returns success when sourced from bash.
 # Every test above relies on this guard at L13786 preventing main() from
 # running. Verify it works as documented.
 #######################################
@@ -652,6 +692,7 @@ main() {
 	printf '    PULSE_SCRIPTS_DIR=%s\n' "$PULSE_SCRIPTS_DIR"
 
 	test_source_and_function_existence
+	test_credentials_sourcing_warnings
 	test_ff_key_format
 	test_normalize_count_output
 	test_match_terminal_blocker_pattern

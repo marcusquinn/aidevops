@@ -327,11 +327,7 @@ fi
 #######################################
 if [[ -f "${HOME}/.config/aidevops/credentials.sh" ]]; then
 	# shellcheck source=/dev/null
-	if . "${HOME}/.config/aidevops/credentials.sh" 2>/dev/null; then
-		if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-			printf '[pulse-wrapper] WARN: credentials.sh sourced but ANTHROPIC_API_KEY is empty; LLM-dependent pulse helpers may fail\n' >&2
-		fi
-	else
+	if ! . "${HOME}/.config/aidevops/credentials.sh" 2>/dev/null; then
 		printf '[pulse-wrapper] WARN: credentials.sh exists but failed to source; API keys may be unavailable\n' >&2
 	fi
 fi
