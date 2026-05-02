@@ -388,7 +388,8 @@ privacy_scan_local_paths() {
 	local hits=0
 	local emitted_builtin=0
 	local builtin_patterns=(
-		'(^|[[:space:]`"'\''(:=])/(Users|home)/[^[:space:]`"'\'')]+(/[[:alnum:]_.@%+=:,~ -][^[:space:]`"'\'')]*|)' 
+		'(^|[[:space:]`"'\''(:=])/Users/[^[:space:]`"'\'')]*'
+		'(^|[[:space:]`"'\''(:=])/home/[^[:space:]`"'\'')]*'
 		'(^|[[:space:]`"'\''(:=])~/(Git|Projects|Code|src|work|dev)/[^[:space:]`"'\'')]*'
 		'(^|[[:space:]`"'\''(:=])file:///(Users|home)/[^[:space:]`"'\'')]*'
 	)
@@ -436,7 +437,8 @@ _privacy_pathspec_args() {
 	local glob
 	if [[ -n "$PRIVACY_SCAN_GLOBS_TEXT" ]]; then
 		local normalized
-		normalized=$(printf '%s' "$PRIVACY_SCAN_GLOBS_TEXT" | tr ':,' '\n\n')
+		normalized=$(printf '%s' "$PRIVACY_SCAN_GLOBS_TEXT" | sed 's/[,:]/\
+/g')
 		while IFS= read -r glob || [[ -n "$glob" ]]; do
 			[[ -z "$glob" ]] && continue
 			if [[ "$glob" == */ ]]; then

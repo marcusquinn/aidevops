@@ -144,6 +144,7 @@ mkdir -p "$REPO"
 	git init --quiet
 	git config user.email 'test@example.com'
 	git config user.name 'Test'
+	git config commit.gpgsign false
 	# Initial empty commit
 	git commit --allow-empty -m 'init' --quiet
 ) || {
@@ -379,6 +380,7 @@ else
 		git init --quiet
 		git config user.email 'test@example.com'
 		git config user.name 'Test'
+		git config commit.gpgsign false
 		git commit --allow-empty -m 'init' --quiet
 		printf 'clean content no private slugs\n' >TODO.md
 		git add TODO.md
