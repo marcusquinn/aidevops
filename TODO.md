@@ -4014,3 +4014,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3489 automate safe remote branch cleanup #auto-dispatch #enhancement ref:GH#22415
 
 - [ ] t3488 Add REST fallback for PR comment wrapper on GraphQL exhaustion #auto-dispatch #bug ref:GH#22411
+
+- [ ] t3491 Fix pulse not running after release deploy #auto-dispatch #bug ref:GH#22418
