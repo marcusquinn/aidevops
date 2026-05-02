@@ -565,6 +565,23 @@ _refresh_owner_prs() {
 	return 0
 }
 
+_record_events_tickle_stats() {
+	if ! declare -F pulse_stats_increment >/dev/null 2>&1; then
+		return 0
+	fi
+	local _fi=0
+	while [[ "$_fi" -lt "$_PULSE_EVENTS_TICKLE_FRESH" ]]; do
+		pulse_stats_increment "pulse_events_tickle_fresh" 2>/dev/null || true
+		_fi=$((_fi + 1))
+	done
+	local _si=0
+	while [[ "$_si" -lt "$_PULSE_EVENTS_TICKLE_STALE" ]]; do
+		pulse_stats_increment "pulse_events_tickle_stale" 2>/dev/null || true
+		_si=$((_si + 1))
+	done
+	return 0
+}
+
 # =============================================================================
 # Subcommand: refresh
 # =============================================================================
@@ -650,18 +667,7 @@ _cmd_refresh() {
 	# fresh/stale owner). Fail-open: pulse_stats_increment is sourced from
 	# pulse-stats-helper.sh above; if it was not sourced, the declare -F
 	# guard is a no-op and the batch search continues unaffected.
-	if declare -F pulse_stats_increment >/dev/null 2>&1; then
-		local _fi=0
-		while [[ "$_fi" -lt "$_PULSE_EVENTS_TICKLE_FRESH" ]]; do
-			pulse_stats_increment "pulse_events_tickle_fresh" 2>/dev/null || true
-			_fi=$((_fi + 1))
-		done
-		local _si=0
-		while [[ "$_si" -lt "$_PULSE_EVENTS_TICKLE_STALE" ]]; do
-			pulse_stats_increment "pulse_events_tickle_stale" 2>/dev/null || true
-			_si=$((_si + 1))
-		done
-	fi
+	_record_events_tickle_stats
 
 	# Export counters for health instrumentation (parsed by _prefetch_batch_refresh
 	# in pulse-prefetch.sh and added to per-cycle health totals).
