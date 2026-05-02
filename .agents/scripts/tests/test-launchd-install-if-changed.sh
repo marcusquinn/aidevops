@@ -88,6 +88,23 @@ _define_launchd_install_if_changed() {
 		return 0
 	}
 
+	_launchd_agent_pid() {
+		local label="$1"
+		local pid=""
+		pid=$(launchctl print "gui/$(id -u)/${label}" 2>/dev/null | awk -F'= ' '/pid =/ { print $2; exit }' || true)
+		printf '%s\n' "$pid"
+		return 0
+	}
+
+	_launchd_process_args() {
+		local pid="$1"
+		if [[ -z "$pid" ]]; then
+			return 0
+		fi
+		ps -p "$pid" -o args= 2>/dev/null || true
+		return 0
+	}
+
 	_launchd_bootout_bootstrap() {
 		local label="$1"
 		local plist_path="$2"
@@ -105,6 +122,13 @@ _define_launchd_install_if_changed() {
 		local state
 		state=$(_launchd_agent_state "$label")
 		if [[ "$state" != "xpcproxy" ]]; then
+			return 0
+		fi
+		local pid process_args
+		pid=$(_launchd_agent_pid "$label")
+		process_args=$(_launchd_process_args "$pid")
+		if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
+			print_info "LaunchAgent $label reports xpcproxy but pid $pid is running: $process_args"
 			return 0
 		fi
 
@@ -476,6 +500,54 @@ test_kickstart_recovers_xpcproxy() {
 	return 0
 }
 
+test_xpcproxy_state_with_helper_process_not_recovered() {
+	local plist_dir="$TEST_DIR/la_xpcproxy_active"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	printf 'some plist content\n' >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+	_launchd_process_args() { printf '/opt/homebrew/bin/bash /Users/test/.aidevops/agents/scripts/profile-readme-helper.sh update\n'; return 0; }
+
+	local bootout_count=0
+	local bootstrap_count=0
+	launchctl() {
+		case "${1:-}" in
+		print)
+			printf 'pid = 12345\nstate = xpcproxy\n'
+			return 0
+			;;
+		bootout)
+			bootout_count=$((bootout_count + 1))
+			return 0
+			;;
+		bootstrap)
+			bootstrap_count=$((bootstrap_count + 1))
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" || rc=$?
+
+	unset -f launchctl _launchd_has_agent _launchd_process_args
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "xpcproxy_state_with_helper_process_not_recovered" 1 "expected no-op return 0, got $rc"
+		return 0
+	fi
+	if [[ "$bootout_count" -ne 0 || "$bootstrap_count" -ne 0 ]]; then
+		print_result "xpcproxy_state_with_helper_process_not_recovered" 1 \
+			"expected no reload for active helper process (bootout=$bootout_count bootstrap=$bootstrap_count)"
+		return 0
+	fi
+
+	print_result "xpcproxy_state_with_helper_process_not_recovered" 0
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -496,6 +568,7 @@ main() {
 	test_empty_content_rejected
 	test_xpcproxy_recovered_when_content_unchanged
 	test_kickstart_recovers_xpcproxy
+	test_xpcproxy_state_with_helper_process_not_recovered
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions

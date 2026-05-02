@@ -261,6 +261,23 @@ _launchd_agent_state() {
 	return 0
 }
 
+_launchd_agent_pid() {
+	local label="$1"
+	local pid=""
+	pid=$(launchctl print "gui/$(id -u)/${label}" 2>/dev/null | awk -F'= ' '/pid =/ { print $2; exit }' || true)
+	printf '%s\n' "$pid"
+	return 0
+}
+
+_launchd_process_args() {
+	local pid="$1"
+	if [[ -z "$pid" ]]; then
+		return 0
+	fi
+	ps -p "$pid" -o args= 2>/dev/null || true
+	return 0
+}
+
 _launchd_bootout_bootstrap() {
 	local label="$1"
 	local plist_path="$2"
@@ -278,6 +295,13 @@ _launchd_recover_xpcproxy_if_stuck() {
 	local state
 	state=$(_launchd_agent_state "$label")
 	if [[ "$state" != "xpcproxy" ]]; then
+		return 0
+	fi
+	local pid process_args
+	pid=$(_launchd_agent_pid "$label")
+	process_args=$(_launchd_process_args "$pid")
+	if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
+		print_info "LaunchAgent $label reports xpcproxy but pid $pid is running: $process_args"
 		return 0
 	fi
 
