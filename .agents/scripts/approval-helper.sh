@@ -353,6 +353,7 @@ _approval_lock_issue() {
 	gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || rc=$?
 	if [[ $rc -ne 0 ]] && command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
 		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for issue lock" >&2
+		rc=0
 		gh api -X PUT "/repos/${slug}/issues/${target_number}/lock" -f lock_reason=resolved >/dev/null 2>&1 || rc=$?
 	fi
 	return "$rc"
@@ -422,7 +423,7 @@ _approval_apply_issue_lifecycle_updates() {
 	_print_info "Assigned to $gh_user"
 
 	lock_err=$(_approval_lock_issue "$target_number" "$slug" 2>&1 >/dev/null) || {
-		_print_error "Failed to lock issue #$target_number"
+		_print_error "Approval advisory lock failure: issue #$target_number could not be locked after approval state updates"
 		[[ -n "$lock_err" ]] && _print_error "$lock_err"
 		return 1
 	}
@@ -632,7 +633,10 @@ _approve_target() {
 		fi
 	fi
 
-	_post_issue_approval_updates "$target_type" "$target_number" "$slug"
+	if ! _post_issue_approval_updates "$target_type" "$target_number" "$slug"; then
+		_print_error "Approval signed, but post-approval protection updates did not reach the required state"
+		return 1
+	fi
 
 	# t3068: kick the pulse to act on this approval immediately. Always
 	# returns 0 — never blocks the approval flow. See _kick_pulse_after_approval
