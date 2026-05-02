@@ -46,13 +46,13 @@ for label, path in [('source', sys.argv[1]), ('deployed', sys.argv[2])]:
         print(f'- {label}: missing ({path})')
 PY
 	if [[ -n "$claim" ]]; then
-		printf '- Claim: %s (hypothesis until code evidence below matches)\n' "$claim"
+		printf '%s\n' "- Claim: ${claim} (hypothesis until code evidence below matches)"
 	fi
 	if [[ -n "$symbol" ]]; then
 		if rg -n "(^|[[:space:]])${symbol}[[:space:]]*\(" "$source_path" >/dev/null 2>&1; then
-			printf '- Symbol check: found %s in source\n' "$symbol"
+			printf '%s\n' "- Symbol check: found ${symbol} in source"
 		else
-			printf '- Symbol check: missing %s in source\n' "$symbol"
+			printf '%s\n' "- Symbol check: missing ${symbol} in source"
 			printf 'RESULT: hypothesis-only\n'
 			return 1
 		fi
