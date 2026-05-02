@@ -31,6 +31,92 @@
 [[ -n "${_AIDEVOPS_INIT_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_INIT_LIB_LOADED=1
 
+_AGENT_SOURCE_TEMPLATE_VERSION="1"
+
+_agent_source_template_dir() {
+	printf '%s\n' "${AGENTS_DIR}/templates/agent-source-repo"
+	return 0
+}
+
+_agent_source_apply_managed_template_file() {
+	local project_root="$1"
+	local relative_path="$2"
+	local template_dir dest src dest_dir
+	template_dir=$(_agent_source_template_dir)
+	src="$template_dir/$relative_path"
+	dest="$project_root/$relative_path"
+	dest_dir="${dest%/*}"
+
+	[[ -f "$src" ]] || return 1
+	[[ "$dest_dir" != "$dest" ]] && mkdir -p "$dest_dir"
+
+	if [[ ! -f "$dest" ]]; then
+		cp "$src" "$dest"
+		return 0
+	fi
+
+	if ! grep -q '<!-- aidevops:agent-source-template:start -->' "$dest" 2>/dev/null; then
+		return 0
+	fi
+	if ! grep -q '<!-- aidevops:agent-source-template:end -->' "$dest" 2>/dev/null; then
+		return 0
+	fi
+
+	python3 - "$dest" "$src" <<'PY'
+from pathlib import Path
+import sys
+
+dest = Path(sys.argv[1])
+src = Path(sys.argv[2])
+start = "<!-- aidevops:agent-source-template:start -->"
+end = "<!-- aidevops:agent-source-template:end -->"
+old = dest.read_text()
+new = src.read_text()
+if start not in old or end not in old or start not in new or end not in new:
+    sys.exit(0)
+old_prefix = old.split(start, 1)[0]
+old_suffix = old.split(end, 1)[1]
+new_block = start + new.split(start, 1)[1].split(end, 1)[0] + end
+dest.write_text(old_prefix + new_block + old_suffix)
+PY
+	return 0
+}
+
+seed_agent_source_repo_templates() {
+	local project_root="$1"
+	local template_dir
+	template_dir=$(_agent_source_template_dir)
+
+	if [[ ! -d "$template_dir" ]]; then
+		print_warning "Agent source template directory missing: $template_dir"
+		return 1
+	fi
+
+	local rel_dir
+	for rel_dir in \
+		".agents" \
+		".agents/tools" \
+		".agents/services" \
+		".agents/workflows" \
+		".agents/reference" \
+		".agents/scripts" \
+		".agents/scripts/commands" \
+		".agents/configs" \
+		".agents/bundles" \
+		".agents/templates" \
+		".agents/rules" \
+		".agents/tests" \
+		".agents/custom" \
+		".agents/draft"; do
+		mkdir -p "$project_root/$rel_dir"
+	done
+
+	_agent_source_apply_managed_template_file "$project_root" "AGENTS.md" || return 1
+	_agent_source_apply_managed_template_file "$project_root" ".agents/AGENTS.md" || return 1
+	print_success "Seeded agent-source repository templates (v${_AGENT_SOURCE_TEMPLATE_VERSION})"
+	return 0
+}
+
 # Scaffold standard repo courtesy files if they don't exist
 # Scaffold helpers (extracted for complexity reduction)
 _scaffold_contributing() {
@@ -639,6 +725,12 @@ cmd_init() {
 	init_scope=$(_infer_init_scope "$project_root")
 	print_info "Init scope: $init_scope (controls which scaffolding files are created)"
 
+	local is_agent_source=false
+	if is_agent_source_repo "$project_root"; then
+		is_agent_source=true
+		print_info "Agent source repo: true (seeding core-style agent organization)"
+	fi
+
 	# Create .aidevops.json config
 	local config_file="$project_root/.aidevops.json"
 	local aidevops_version
@@ -650,6 +742,7 @@ cmd_init() {
   "version": "$aidevops_version",
   "initialized": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "init_scope": "$init_scope",
+  "agent_source": $is_agent_source,
   "features": {
     "planning": $enable_planning,
     "git_workflow": $enable_git_workflow,
@@ -747,19 +840,23 @@ EOF
 	# (symlinked) can see the aidevops main-agent slash commands.
 	_init_scaffold_commands_symlinks "$project_root"
 
-	# Scaffold or update .agents/AGENTS.md (idempotent — creates if missing,
-	# updates Security section if file already exists)
-	local _agents_md_existed=false
-	[[ -f "$project_root/.agents/AGENTS.md" ]] && _agents_md_existed=true
-	scaffold_agents_md "$project_root"
-	if [[ "$_agents_md_existed" == "true" ]]; then
-		print_success "Updated Security section in .agents/AGENTS.md"
+	if [[ "$is_agent_source" == "true" ]]; then
+		seed_agent_source_repo_templates "$project_root"
 	else
-		print_success "Created .agents/AGENTS.md"
+		# Scaffold or update .agents/AGENTS.md (idempotent — creates if missing,
+		# updates Security section if file already exists)
+		local _agents_md_existed=false
+		[[ -f "$project_root/.agents/AGENTS.md" ]] && _agents_md_existed=true
+		scaffold_agents_md "$project_root"
+		if [[ "$_agents_md_existed" == "true" ]]; then
+			print_success "Updated Security section in .agents/AGENTS.md"
+		else
+			print_success "Created .agents/AGENTS.md"
+		fi
 	fi
 
 	# Scaffold root AGENTS.md if missing
-	if [[ ! -f "$project_root/AGENTS.md" ]]; then
+	if [[ "$is_agent_source" != "true" && ! -f "$project_root/AGENTS.md" ]]; then
 		cat >"$project_root/AGENTS.md" <<ROOTAGENTSEOF
 # $repo_name
 

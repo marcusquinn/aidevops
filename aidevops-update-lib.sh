@@ -63,6 +63,7 @@ _update_sync_projects() {
 		[[ -z "$repo_path" ]] && continue
 		[[ -d "$repo_path" ]] && check_repo_needs_upgrade "$repo_path" && repos_needing_upgrade+=("$repo_path")
 	done < <(get_registered_repos)
+	_update_sync_agent_source_repos "$current_ver" || true
 	if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
 		print_success "All registered projects are up to date"
 		return 0
@@ -92,6 +93,34 @@ _update_sync_projects() {
 	[[ $synced -gt 0 ]] && print_success "Synced $synced project(s) to v$current_ver"
 	[[ $skipped -gt 0 ]] && print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
 	[[ $failed -gt 0 ]] && print_warning "$failed project(s) failed to sync (jq missing or write error)"
+	return 0
+}
+
+_update_sync_agent_source_repos() {
+	local current_ver="$1"
+	local synced=0 skipped=0 failed=0
+	local repo
+
+	while IFS= read -r repo; do
+		[[ -z "$repo" ]] && continue
+		if [[ ! -d "$repo" ]]; then
+			skipped=$((skipped + 1))
+			continue
+		fi
+		if seed_agent_source_repo_templates "$repo"; then
+			synced=$((synced + 1))
+			if [[ -f "$repo/.aidevops.json" ]] && command -v jq &>/dev/null; then
+				local temp_file="${repo}/.aidevops.json.tmp"
+				jq --arg version "$current_ver" '.version = $version | .agent_source = true' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && mv "$temp_file" "$repo/.aidevops.json" || rm -f "$temp_file"
+			fi
+		else
+			failed=$((failed + 1))
+		fi
+	done < <(get_agent_source_repos)
+
+	[[ $synced -gt 0 ]] && print_success "Synced $synced agent-source repo template(s)"
+	[[ $skipped -gt 0 ]] && print_info "Skipped $skipped unavailable agent-source repo(s)"
+	[[ $failed -gt 0 ]] && print_warning "$failed agent-source repo template sync(s) failed"
 	return 0
 }
 

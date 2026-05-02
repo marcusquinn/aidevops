@@ -249,6 +249,57 @@ _scope_includes() {
 	[[ $current_level -ge $required_level ]]
 }
 
+# Check whether a repo is marked as an agent source repo in local project
+# config or repos.json. Agent source repos use the same organization model as
+# the core `.agents/` tree and receive safe template seeding/updating.
+# Usage: is_agent_source_repo <project_root>
+is_agent_source_repo() {
+	local project_root="$1"
+
+	if command -v jq &>/dev/null && [[ -f "$project_root/.aidevops.json" ]]; then
+		local project_flag
+		project_flag=$(jq -r 'if .agent_source == true or .role == "agent-source" then "true" else "false" end' "$project_root/.aidevops.json" 2>/dev/null || echo "false")
+		if [[ "$project_flag" == "true" ]]; then
+			return 0
+		fi
+	fi
+
+	if command -v jq &>/dev/null && [[ -f "${REPOS_FILE:-$HOME/.config/aidevops/repos.json}" ]]; then
+		local repos_file="${REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+		local canonical_path
+		canonical_path=$(cd "$project_root" 2>/dev/null && pwd -P) || canonical_path="$project_root"
+		local repo_flag
+		repo_flag=$(jq -r --arg path "$canonical_path" '
+			.initialized_repos // []
+			| map(select(.path == $path))
+			| if length > 0 and (.[0].agent_source == true or .[0].role == "agent-source") then "true" else "false" end
+		' "$repos_file" 2>/dev/null || echo "false")
+		if [[ "$repo_flag" == "true" ]]; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Print registered repo paths marked as agent source repos.
+# Usage: get_agent_source_repos
+get_agent_source_repos() {
+	init_repos_file
+
+	if ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	jq -r '
+		.initialized_repos // []
+		| .[]
+		| select(.agent_source == true or .role == "agent-source")
+		| .path // empty
+	' "$REPOS_FILE" 2>/dev/null || true
+	return 0
+}
+
 # Resolve a worktree path to its canonical main-worktree path, if applicable.
 # Usage: resolve_canonical_repo_path <path>
 # Prints the canonical path to stdout. If the input is already the main
@@ -644,4 +695,3 @@ check_protected_branch() {
 		;;
 	esac
 }
-
