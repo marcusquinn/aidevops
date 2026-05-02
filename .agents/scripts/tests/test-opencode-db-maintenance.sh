@@ -81,9 +81,11 @@ SQL
 
 	# Insert+delete rows to create freelist pages (fragmentation)
 	local i
-	for i in $(seq 1 500); do
+	local payload
+	for i in $(seq 1 120); do
+		payload=$(printf 'payload-%04d-%01024d' "$i" 0)
 		sqlite3 "$OPENCODE_DIR/opencode.db" \
-			"INSERT INTO message VALUES ('msg$i', 'ses1', $i, $i, '$(head -c 1024 /dev/urandom | base64 | tr -d '\n' | head -c 1024)');" 2>/dev/null
+			"INSERT INTO message VALUES ('msg$i', 'ses1', $i, $i, '$payload');" 2>/dev/null
 	done
 	sqlite3 "$OPENCODE_DIR/opencode.db" "DELETE FROM message WHERE CAST(substr(id, 4) AS INTEGER) % 2 = 0;" 2>/dev/null
 }
@@ -356,6 +358,32 @@ if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' 
 	_pass "maintenance-window stops pulse, archives, maintains, and restarts pulse"
 else
 	_fail "maintenance-window mocked lifecycle failed (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 14: maintenance-window restarts pulse on early active-holder exit
+# -----------------------------------------------------------------------------
+
+cat >"$mock_bin/pgrep" <<'MOCK_PGREP'
+#!/usr/bin/env bash
+printf '%s\n' '12345'
+exit 0
+MOCK_PGREP
+chmod +x "$mock_bin/pgrep"
+: >"$mock_pulse_log"
+: >"$mock_archive_log"
+
+set +e
+out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="$mock_archive_log" \
+	OPENCODE_DB_ARCHIVE_HELPER="$mock_bin/opencode-db-archive.sh" \
+	_run_helper maintenance-window --keep-sessions 123 2>&1)
+rc=$?
+set -e
+rm -f "$mock_bin/pgrep"
+if [[ "$rc" -eq 2 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && [[ ! -s "$mock_archive_log" ]]; then
+	_pass "maintenance-window restarts pulse after active-holder early return"
+else
+	_fail "maintenance-window early-return cleanup failed (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------
