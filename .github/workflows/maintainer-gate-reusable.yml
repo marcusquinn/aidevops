@@ -67,7 +67,7 @@ jobs:
       github.event_name == 'pull_request_target'
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
-    # t3213 / GH#21947: cancel-in-progress is INTENTIONALLY true here.
+    # t3213 / GH#21947 / GH#22436: cancel-in-progress is INTENTIONALLY true here.
     #
     # check-pr is a READ-ONLY verdict job — it computes pass/fail from PR state
     # at runtime (labels, linked issues, assignees) and writes a single status
@@ -92,6 +92,10 @@ jobs:
     # the original race-condition concern was that cancelled runs might be
     # mistaken for failures, but in practice GitHub's status-resolution always
     # picks the newest run for the same context.
+    #
+    # GH#22436: the key is deliberately per PR, not repository-wide. Rapid
+    # synchronize/edit/label events on one PR supersede older verdicts for that
+    # same PR, while unrelated PRs continue independently and are not cancelled.
     #
     # Related rules: t2229 / `workflow-cascade-lint.yml` flags the OPPOSITE
     # anti-pattern (cancel-in-progress:true with cascade-vulnerable triggers

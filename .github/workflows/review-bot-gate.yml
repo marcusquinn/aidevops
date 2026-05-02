@@ -41,5 +41,21 @@ concurrency:
 
 jobs:
   gate:
+    # issue_comment fires for every PR comment/edit. Only bot review comments can
+    # change this gate's verdict; maintainer/user discussion should be skipped
+    # before the reusable workflow starts so it does not create mobile run noise.
+    if: >
+      github.event_name != 'issue_comment' ||
+      (
+        github.event.issue.pull_request &&
+        (
+          github.actor == 'coderabbitai' ||
+          github.actor == 'gemini-code-assist[bot]' ||
+          github.actor == 'augment-code[bot]' ||
+          github.actor == 'augmentcode[bot]' ||
+          github.actor == 'copilot[bot]' ||
+          github.actor == 'github-actions[bot]'
+        )
+      )
     uses: ./.github/workflows/review-bot-gate-reusable.yml
     secrets: inherit

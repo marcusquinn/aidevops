@@ -255,6 +255,67 @@ _validate_run_args() {
 	return 0
 }
 
+# _run_looks_like_issue_worker: detect issue-scoped worker dispatches from
+# independent caller-owned signals. The env contract is only mandatory for
+# issue workers; pulse/non-issue runs keep the historical path.
+_run_looks_like_issue_worker() {
+	local role_value="$1"
+	local session_key_value="$2"
+	local title_value="$3"
+	local prompt_value="$4"
+
+	[[ "$role_value" == "worker" ]] || return 1
+	if [[ "$session_key_value" =~ ^issue-[0-9]+$ ]]; then
+		return 0
+	fi
+	if [[ "$title_value" =~ ^Issue[[:space:]]+#[0-9]+ ]]; then
+		return 0
+	fi
+	if [[ "$prompt_value" =~ [Ii]ssue[[:space:]]*#?[0-9]+ ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# _validate_issue_worker_env_contract: fail before canary/model launch when an
+# issue worker lacks the dispatcher-precreated worktree contract.
+_validate_issue_worker_env_contract() {
+	local role_value="$1"
+	local session_key_value="$2"
+	local work_dir_value="$3"
+	local title_value="$4"
+	local prompt_value="$5"
+
+	if ! _run_looks_like_issue_worker "$role_value" "$session_key_value" "$title_value" "$prompt_value"; then
+		return 0
+	fi
+
+	if [[ -z "${WORKER_ISSUE_NUMBER:-}" ]]; then
+		print_error "[fatal] WORKER_ISSUE_NUMBER unset — issue worker env contract missing; aborting before model launch"
+		return 1
+	fi
+	if [[ -z "${WORKER_WORKTREE_PATH:-}" ]]; then
+		print_error "[fatal] WORKER_WORKTREE_PATH unset — issue worker env contract missing; aborting before model launch"
+		return 1
+	fi
+	if [[ ! -d "${WORKER_WORKTREE_PATH:-}" ]]; then
+		print_error "[fatal] WORKER_WORKTREE_PATH does not exist: ${WORKER_WORKTREE_PATH:-<unset>}"
+		return 1
+	fi
+
+	local env_worktree_real=""
+	local work_dir_real=""
+	env_worktree_real=$(cd "$WORKER_WORKTREE_PATH" 2>/dev/null && pwd -P) || env_worktree_real=""
+	work_dir_real=$(cd "$work_dir_value" 2>/dev/null && pwd -P) || work_dir_real=""
+	if [[ -z "$env_worktree_real" || -z "$work_dir_real" || "$env_worktree_real" != "$work_dir_real" ]]; then
+		print_error "[fatal] worker --dir does not match WORKER_WORKTREE_PATH; aborting before model launch"
+		return 1
+	fi
+
+	return 0
+}
+
 # =============================================================================
 # Runtime invocation — OpenCode and Claude CLI
 # =============================================================================
@@ -1228,6 +1289,7 @@ cmd_run() {
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
+	_validate_issue_worker_env_contract "$role" "$session_key" "$work_dir" "$title" "$prompt" || return 1
 
 	if [[ "$detach" -eq 1 ]]; then
 		_detach_worker "$session_key" "$@"

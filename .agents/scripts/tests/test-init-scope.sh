@@ -95,9 +95,21 @@ assert_negative() {
 # We need to find the repo root
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 AIDEVOPS_SH="$REPO_ROOT/aidevops.sh"
+AIDEVOPS_INIT_LIB="$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-init-lib.sh"
+AIDEVOPS_REPOS_LIB="$REPO_ROOT/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh"
 
 if [[ ! -f "$AIDEVOPS_SH" ]]; then
 	echo "ERROR: Cannot find aidevops.sh at $AIDEVOPS_SH" >&2
+	exit 1
+fi
+
+if [[ ! -f "$AIDEVOPS_INIT_LIB" ]]; then
+	echo "ERROR: Cannot find aidevops-init-lib.sh at $AIDEVOPS_INIT_LIB" >&2
+	exit 1
+fi
+
+if [[ ! -f "$AIDEVOPS_REPOS_LIB" ]]; then
+	echo "ERROR: Cannot find aidevops-repos-lib.sh at $AIDEVOPS_REPOS_LIB" >&2
 	exit 1
 fi
 
@@ -112,7 +124,7 @@ test_scope_includes() {
 
 	# Extract the function from aidevops.sh
 	local func_body
-	func_body=$(sed -n '/_scope_includes() {/,/^}/p' "$AIDEVOPS_SH")
+	func_body=$(sed -n '/_scope_includes() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
 	eval "$func_body"
 
 	# minimal includes minimal
@@ -158,7 +170,7 @@ test_infer_init_scope() {
 
 	# Extract the function from aidevops.sh
 	local func_body
-	func_body=$(sed -n '/_infer_init_scope() {/,/^}/p' "$AIDEVOPS_SH")
+	func_body=$(sed -n '/_infer_init_scope() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
 	eval "$func_body"
 
 	# Test 1: .aidevops.json with explicit init_scope takes priority
@@ -201,7 +213,7 @@ _setup_scaffold_test_env() {
 	TEST_ROOT=$(mktemp -d)
 
 	local scope_func
-	scope_func=$(sed -n '/_scope_includes() {/,/^}/p' "$AIDEVOPS_SH")
+	scope_func=$(sed -n '/_scope_includes() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
 	eval "$scope_func"
 
 	# Stub print functions
@@ -211,15 +223,15 @@ _setup_scaffold_test_env() {
 	export -f print_info print_success print_warning
 
 	local scaffold_func
-	scaffold_func=$(sed -n '/^scaffold_repo_courtesy_files() {/,/^}/p' "$AIDEVOPS_SH")
+	scaffold_func=$(sed -n '/^scaffold_repo_courtesy_files() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
 	local contributing_func
-	contributing_func=$(sed -n '/^_scaffold_contributing() {/,/^}/p' "$AIDEVOPS_SH")
+	contributing_func=$(sed -n '/^_scaffold_contributing() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
 	local security_func
-	security_func=$(sed -n '/^_scaffold_security() {/,/^}/p' "$AIDEVOPS_SH")
+	security_func=$(sed -n '/^_scaffold_security() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
 	local coc_func
-	coc_func=$(sed -n '/^_scaffold_coc() {/,/^}/p' "$AIDEVOPS_SH")
+	coc_func=$(sed -n '/^_scaffold_coc() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
 	local sec_content_func
-	sec_content_func=$(sed -n '/^_generate_security_content() {/,/^}/p' "$AIDEVOPS_SH")
+	sec_content_func=$(sed -n '/^_generate_security_content() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
 
 	eval "$contributing_func" 2>/dev/null || true
 	eval "$security_func" 2>/dev/null || true
@@ -330,7 +342,7 @@ test_backward_compat() {
 
 	# Extract the function
 	local func_body
-	func_body=$(sed -n '/_infer_init_scope() {/,/^}/p' "$AIDEVOPS_SH")
+	func_body=$(sed -n '/_infer_init_scope() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
 	eval "$func_body"
 
 	TEST_ROOT=$(mktemp -d)
@@ -353,6 +365,40 @@ test_backward_compat() {
 	return 0
 }
 
+# ---- Test GitHub label sync init hook ----
+
+test_label_sync_init_hook() {
+	echo ""
+	echo "=== Testing GitHub label sync init hook ==="
+
+	local init_tail
+	init_tail=$(sed -n '/local _label_sync_helper=/,/register_repo /p' "$AIDEVOPS_INIT_LIB")
+	local rc expected_helper expected_sync expected_local_only expected_warning
+	expected_helper="local _label_sync_helper=\"\$AGENTS_DIR/scripts/label-sync-helper.sh\""
+	expected_sync="bash \"\$_label_sync_helper\" sync --repo \"\$repo_slug\""
+	expected_local_only="\"\$_is_local_only\" != \"true\""
+	expected_warning='print_warning "GitHub label sync failed'
+
+	if [[ "$init_tail" == *"$expected_helper"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init resolves label-sync-helper path" "$rc"
+
+	if [[ "$init_tail" == *"$expected_sync"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init invokes label sync for resolved GitHub repo_slug" "$rc"
+
+	if [[ "$init_tail" == *"$expected_local_only"* && "$init_tail" == *"Skipping GitHub label sync for local-only repo"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init skips label sync for local-only repos" "$rc"
+
+	if [[ "$init_tail" == *"$expected_warning"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init warns instead of aborting when label sync fails" "$rc"
+
+	local repo_slug_block
+	repo_slug_block=$(sed -n '/local repo_slug=""/,/local repo_name/p' "$AIDEVOPS_INIT_LIB")
+	if [[ "$repo_slug_block" == *"github.com"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init only derives repo_slug for GitHub remotes" "$rc"
+
+	return 0
+}
+
 # ---- Run all tests ----
 
 echo "test-init-scope.sh — init_scope scaffolding gate tests (t2265)"
@@ -365,6 +411,7 @@ test_scaffold_standard_scope
 test_scaffold_public_scope
 test_aidevops_json_roundtrip
 test_backward_compat
+test_label_sync_init_hook
 
 echo ""
 echo "============================================================="

@@ -87,6 +87,89 @@ test_non_full_loop_prompt_unchanged() {
 	return 0
 }
 
+test_issue_worker_env_contract_rejects_missing_env() {
+	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+	local output=""
+	local status=0
+	output=$(_validate_issue_worker_env_contract \
+		"worker" "issue-22438" "$TEST_ROOT" "Issue #22438: env contract" \
+		"/full-loop Implement issue #22438" 2>&1) || status=$?
+
+	if [[ "$status" -ne 0 && "$output" == *"WORKER_ISSUE_NUMBER unset"* ]]; then
+		print_result "issue worker env contract rejects missing WORKER_ISSUE_NUMBER" 0
+		return 0
+	fi
+
+	print_result "issue worker env contract rejects missing WORKER_ISSUE_NUMBER" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
+test_issue_worker_env_contract_rejects_missing_worktree() {
+	export WORKER_ISSUE_NUMBER="22438"
+	unset WORKER_WORKTREE_PATH 2>/dev/null || true
+	local output=""
+	local status=0
+	output=$(_validate_issue_worker_env_contract \
+		"worker" "issue-22438" "$TEST_ROOT" "Issue #22438: env contract" \
+		"/full-loop Implement issue #22438" 2>&1) || status=$?
+
+	if [[ "$status" -ne 0 && "$output" == *"WORKER_WORKTREE_PATH unset"* ]]; then
+		print_result "issue worker env contract rejects missing WORKER_WORKTREE_PATH" 0
+		unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+		return 0
+	fi
+
+	print_result "issue worker env contract rejects missing WORKER_WORKTREE_PATH" 1 \
+		"status=$status output=${output:-<empty>}"
+	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+	return 0
+}
+
+test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
+	local worktree_dir="${TEST_ROOT}/precreated-worktree"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	export WORKER_WORKTREE_PATH="$worktree_dir"
+
+	if _validate_issue_worker_env_contract \
+		"worker" "issue-22438" "$worktree_dir" "Issue #22438: env contract" \
+		"/full-loop Implement issue #22438"; then
+		print_result "issue worker env contract accepts valid precreated worktree" 0
+		unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+		return 0
+	fi
+
+	print_result "issue worker env contract accepts valid precreated worktree" 1
+	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+	return 0
+}
+
+test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
+	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+	local canary_called=0
+	_run_canary_test() { canary_called=1; return 0; }
+
+	local output=""
+	local status=0
+	output=$(cmd_run \
+		--role worker \
+		--session-key issue-22438 \
+		--dir "$TEST_ROOT" \
+		--title "Issue #22438: env contract" \
+		--prompt "/full-loop Implement issue #22438" 2>&1) || status=$?
+
+	unset -f _run_canary_test 2>/dev/null || true
+	if [[ "$status" -ne 0 && "$canary_called" -eq 0 && "$output" == *"WORKER_ISSUE_NUMBER unset"* ]]; then
+		print_result "cmd_run aborts issue worker before canary when env missing" 0
+		return 0
+	fi
+
+	print_result "cmd_run aborts issue worker before canary when env missing" 1 \
+		"status=$status canary_called=$canary_called output=${output:-<empty>}"
+	return 0
+}
+
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
@@ -777,6 +860,10 @@ main() {
 	setup_test_env
 	test_appends_escalation_contract
 	test_non_full_loop_prompt_unchanged
+	test_issue_worker_env_contract_rejects_missing_env
+	test_issue_worker_env_contract_rejects_missing_worktree
+	test_issue_worker_env_contract_accepts_valid_precreated_worktree
+	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_headless_activity_timeout_default_matches_watchdog

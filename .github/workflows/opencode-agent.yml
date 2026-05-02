@@ -19,7 +19,10 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# Rate limiting: only one AI agent run at a time, queue others
+# Rate limiting: only one real AI agent run at a time, queue others.
+# The group is intentionally global because the OpenCode action can mutate the
+# repository; no-op comments are filtered at the job layer before they enter
+# this queue so ordinary discussion does not create noisy queued/cancelled runs.
 concurrency:
   group: opencode-agent
   cancel-in-progress: false
@@ -34,6 +37,7 @@ jobs:
     # but GitHub requires manual approval for workflow runs triggered by bot
     # accounts, causing permanent action_required status on PRs.
     if: >
+      (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode')) &&
       github.actor != 'coderabbitai' &&
       github.actor != 'gemini-code-assist[bot]' &&
       github.actor != 'augment-code[bot]' &&

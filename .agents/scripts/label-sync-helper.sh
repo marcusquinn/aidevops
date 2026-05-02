@@ -55,7 +55,7 @@ STATUS_LABELS=(
 	"status:in-progress|1D76DB|Worker actively running"
 	"status:in-review|5319E7|PR open, awaiting review/merge"
 	"status:done|6F42C1|Task is complete"
-	"status:blocked|D93F0B|Waiting on blocker task"
+	"status:blocked|D73A4A|Waiting on blocker task"
 )
 
 # --- Status Exceptions (out-of-band, not managed by set_issue_status) ---
@@ -68,8 +68,9 @@ STATUS_EXCEPTION_LABELS=(
 
 # --- Origin Labels ---
 ORIGIN_LABELS=(
-	"origin:worker|C5DEF5|Created by headless/pulse worker session"
-	"origin:interactive|BFD4F2|Created by interactive user session"
+	"origin:worker|1D76DB|Created by headless/pulse worker session"
+	"origin:interactive|1D76DB|Created by interactive user session"
+	"origin:worker-takeover|1D76DB|Worker took over work from another origin"
 )
 
 # --- Tier Labels (model routing) ---
@@ -81,7 +82,7 @@ TIER_LABELS=(
 
 # --- Priority Labels ---
 PRIORITY_LABELS=(
-	"priority:critical|B60205|Critical severity — security or data loss risk"
+	"priority:critical|D73A4A|Critical severity — security or data loss risk"
 	"priority:high|D93F0B|High severity — significant quality issue"
 	"priority:medium|FBCA04|Medium severity — moderate quality issue"
 	"priority:low|0E8A16|Low severity — minor quality issue"
@@ -107,15 +108,18 @@ DISPATCH_LABELS=(
 SYSTEM_LABELS=(
 	"auto-dispatch|0E8A16|Eligible for automated worker dispatch"
 	"no-auto-dispatch|EDEDED|Opt-out: block all auto-dispatch on this issue"
-	"hold-for-review|E99695|Opt-out: block auto-merge — hold PR for maintainer review"
+	"hold-for-review|D73A4A|Opt-out: block auto-merge — hold PR for maintainer review"
 	"needs-credentials|FBCA04|Opt-out: block auto-dispatch — requires credentials or account access"
 	"ai-approved|0E8A16|Issue approved for AI agent processing"
 	"persistent|FBCA04|Persistent issue — do not close"
 	"supervisor|1D76DB|Supervisor health dashboard"
 	"contributor|A2EEEF|Contributor health dashboard"
-	"needs-review|E99695|Flagged for human review by AI supervisor"
-	"needs-maintainer-review|E99695|Requires maintainer approval before work begins"
-	"security-review|D93F0B|Requires security review — suspicious AI request"
+	"critical|D73A4A|Critical human-attention issue"
+	"security|D73A4A|Security-sensitive issue"
+	"security-adjacent|D73A4A|Security-adjacent issue requiring human attention"
+	"needs-review|D73A4A|Flagged for human review by AI supervisor"
+	"needs-maintainer-review|D73A4A|Requires maintainer approval before work begins"
+	"security-review|D73A4A|Requires security review — suspicious AI request"
 	"parent-task|D4C5F9|Parent/meta task — children implement, not this issue"
 	"quality-debt|D93F0B|Unactioned review feedback from merged PRs"
 	"quality-review|7057FF|Daily code quality review"
@@ -133,7 +137,7 @@ SYSTEM_LABELS=(
 	"recheck-simplicity|D4C5F9|File flagged for simplification recheck"
 	"triage-failed|D93F0B|Automated triage could not classify this issue"
 	"circuit-breaker|D93F0B|Circuit breaker tripped — automatic retry paused"
-	"needs-review-fixes|E99695|PR has unaddressed review comments"
+	"needs-review-fixes|D73A4A|PR has unaddressed review comments"
 	"coderabbit-pulse|7057FF|Daily CodeRabbit pulse review tracking"
 	"multi-model|E99695|Cross-provider model routing"
 )
@@ -176,7 +180,7 @@ TAG_CAT_DEVOPS="ci git deploy deployment infrastructure shell setup workflow dev
 TAG_CAT_QUALITY="refactor testing quality cleanup verification shellcheck eslint prettier coderabbit sonarcloud auto-review code-quality qlty test codacy code-review evaluation convention enforcement reliability efficiency"
 
 # Category: Security — peach
-TAG_CAT_SECURITY="security audit encryption auth prompt-injection sandboxing sandbox opsec"
+TAG_CAT_SECURITY="security security-adjacent audit encryption auth prompt-injection sandboxing sandbox opsec"
 
 # Category: UI/Frontend — mint green
 TAG_CAT_UI="ui ux dashboard browser mobile responsive navigation react chrome browser-extension design"
@@ -208,7 +212,7 @@ declare -A TAG_CATEGORY_COLORS=(
 	[enhancement]="A2EEEF"
 	[devops]="BFD4F2"
 	[quality]="D4C5F9"
-	[security]="F9D0C4"
+	[security]="D73A4A"
 	[ui]="C2E0C6"
 	[backend]="FEF2C0"
 	[arch]="BFDADC"

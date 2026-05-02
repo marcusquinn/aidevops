@@ -4042,3 +4042,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3501 Fix setup worktree preservation test deleting caller worktree #auto-dispatch #bug #framework ref:GH#22441
 
 - [ ] t3502 Sync canonical label colors during repo init #auto-dispatch #bug ref:GH#22442
+
+- [ ] t3506 Fix commit-and-pr REST fallback PR-number stdout and merge summary targeting #auto-dispatch #bug ref:GH#22463
+
+- [ ] t3505 Prevent non-maintainer upstream-watch issue spam #auto-dispatch #bug ref:GH#22462

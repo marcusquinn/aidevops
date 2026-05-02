@@ -53,9 +53,45 @@ print_error() {
 }
 
 make_temp_dir() {
+	local tmp_parent=""
 	local tmp_dir=""
-	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-setup-worktree-test.XXXXXX")
+	tmp_parent=$(cd "${TMPDIR:-/tmp}" && pwd -P)
+	tmp_dir=$(mktemp -d "$tmp_parent/aidevops-setup-worktree-test.XXXXXX")
+	tmp_dir=$(cd "$tmp_dir" && pwd -P)
 	printf '%s' "$tmp_dir"
+	return 0
+}
+
+remove_test_dir() {
+	local tmp_dir="$1"
+	local tmp_parent=""
+	local resolved_tmp=""
+	local resolved_pwd=""
+	local resolved_worker=""
+	[[ -n "$tmp_dir" && -d "$tmp_dir" ]] || return 0
+
+	tmp_parent=$(cd "${TMPDIR:-/tmp}" && pwd -P)
+	resolved_tmp=$(cd "$tmp_dir" 2>/dev/null && pwd -P) || return 0
+	resolved_pwd=$(pwd -P 2>/dev/null || pwd)
+	if [[ -n "${WORKER_WORKTREE_PATH:-}" && -d "${WORKER_WORKTREE_PATH:-}" ]]; then
+		resolved_worker=$(cd "$WORKER_WORKTREE_PATH" 2>/dev/null && pwd -P) || resolved_worker=""
+	fi
+
+	case "$resolved_tmp" in
+		"$tmp_parent"/aidevops-setup-worktree-test.*)
+			;;
+		*)
+			print_warning "Refusing to remove non-fixture test directory: $resolved_tmp"
+			return 0
+			;;
+	esac
+
+	if [[ "$resolved_tmp" == "$resolved_pwd" || ( -n "$resolved_worker" && "$resolved_tmp" == "$resolved_worker" ) || "$resolved_tmp" == "$REPO_ROOT" ]]; then
+		print_warning "Refusing to remove active worktree/cwd fixture path: $resolved_tmp"
+		return 0
+	fi
+
+	rm -rf "$resolved_tmp"
 	return 0
 }
 
@@ -92,6 +128,7 @@ init_repo_with_worktrees() {
 	git -C "$canonical_path" init -q
 	git -C "$canonical_path" config user.email test@example.invalid
 	git -C "$canonical_path" config user.name "Setup Test"
+	git -C "$canonical_path" config commit.gpgsign false
 	printf 'root\n' >"$canonical_path/README.md"
 	git -C "$canonical_path" add README.md
 	git -C "$canonical_path" commit -q -m initial
@@ -122,7 +159,7 @@ test_preserves_current_worktree_entry() {
 	write_repos_json "$repos_file" "$canonical_path" "$current_worktree_path" "$stale_worktree_path"
 
 	output=$(
-		HOME="$tmp_dir/home"
+		export HOME="$tmp_dir/home"
 		load_cleanup_function
 		cd "$current_worktree_path"
 		cleanup_worktree_entries_in_repos_json
@@ -133,12 +170,12 @@ test_preserves_current_worktree_entry() {
 	stale_count=$(jq --arg path "$stale_worktree_path" '[.initialized_repos[] | select(.path == $path)] | length' "$repos_file")
 
 	if [[ "$current_count" == "1" && "$stale_count" == "0" && ! -f "$flag_file" && "$output" == *"Skipped 1 active current worktree"* ]]; then
-		rm -rf "$tmp_dir"
+		remove_test_dir "$tmp_dir"
 		print_result "cleanup preserves the current linked worktree entry" 0
 		return 0
 	fi
 
-	rm -rf "$tmp_dir"
+	remove_test_dir "$tmp_dir"
 	print_result "cleanup preserves the current linked worktree entry" 1 "current_count=${current_count} stale_count=${stale_count} output=${output}"
 	return 0
 }
@@ -163,7 +200,7 @@ test_canonical_run_removes_worktree_entries_and_writes_flag() {
 	write_repos_json "$repos_file" "$canonical_path" "$current_worktree_path" "$stale_worktree_path"
 
 	output=$(
-		HOME="$tmp_dir/home"
+		export HOME="$tmp_dir/home"
 		load_cleanup_function
 		cd "$canonical_path"
 		cleanup_worktree_entries_in_repos_json
@@ -173,12 +210,12 @@ test_canonical_run_removes_worktree_entries_and_writes_flag() {
 	worktree_count=$(jq --arg current "$current_worktree_path" --arg stale "$stale_worktree_path" '[.initialized_repos[] | select(.path == $current or .path == $stale)] | length' "$repos_file")
 
 	if [[ "$worktree_count" == "0" && -f "$flag_file" && "$output" == *"Removed 2 worktree"* ]]; then
-		rm -rf "$tmp_dir"
+		remove_test_dir "$tmp_dir"
 		print_result "canonical cleanup removes linked worktree entries" 0
 		return 0
 	fi
 
-	rm -rf "$tmp_dir"
+	remove_test_dir "$tmp_dir"
 	print_result "canonical cleanup removes linked worktree entries" 1 "worktree_count=${worktree_count} output=${output}"
 	return 0
 }
