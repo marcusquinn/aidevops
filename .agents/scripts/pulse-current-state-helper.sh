@@ -204,6 +204,10 @@ graphql_budget = {
     'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
     'gauges': {k: v for k, v in gauge_values.items() if 'graphql' in k.lower() or 'budget' in k.lower() or 'rate' in k.lower()},
 }
+dispatch_pacing = {
+    'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
+    'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
+}
 
 worktrees = []
 try:
@@ -309,6 +313,7 @@ result = {
         'load_blocked_count': load_blocked_count,
     },
     'graphql_budget': graphql_budget,
+    'dispatch_pacing': dispatch_pacing,
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
     'wrapper_activity_lines': len(wrapper_activity),
@@ -331,6 +336,7 @@ else:
     print(f'- Worker outcomes: {json.dumps(result["worker_outcomes"], sort_keys=True)}')
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
+    print(f'- Dispatch pacing: {json.dumps(result["dispatch_pacing"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     if api_consumers:

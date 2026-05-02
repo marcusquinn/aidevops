@@ -94,6 +94,277 @@ _dispatch_stats_increment() {
 }
 
 #######################################
+# Set a pulse-stats gauge when the stats helper is loaded.
+#
+# Arguments:
+#   $1 - gauge name
+#   $2 - integer value
+# Returns: 0 always (telemetry must never block dispatch).
+#######################################
+_dispatch_stats_gauge() {
+	local gauge_name="$1"
+	local gauge_value="${2:-0}"
+	if declare -F pulse_stats_set_gauge >/dev/null 2>&1; then
+		pulse_stats_set_gauge "$gauge_name" "$gauge_value" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
+# Return the latest numeric headless-runtime metric value for a key.
+#
+# Arguments:
+#   $1 - metric key
+# Stdout: numeric value, or blank when unavailable.
+#######################################
+_dispatch_latest_metric_value() {
+	local metric_key="$1"
+	local metrics_file="${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
+	[[ -f "$metrics_file" ]] || { printf '\n'; return 0; }
+	python3 - "$metrics_file" "$metric_key" <<'PY'
+import json
+import sys
+
+path, key = sys.argv[1], sys.argv[2]
+value = ""
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle.readlines()[-1000:]:
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            candidate = item.get(key)
+            if isinstance(candidate, (int, float)):
+                value = str(candidate)
+except OSError:
+    pass
+print(value)
+PY
+	return 0
+}
+
+#######################################
+# Count recent worker failure/rate-limit metrics for launch pacing.
+#
+# Stdout: "<failures> <rate_limits>".
+#######################################
+_dispatch_recent_worker_pressure_counts() {
+	local failure_override="${PULSE_DISPATCH_STAGGER_RECENT_FAILURES:-}"
+	local rate_limit_override="${PULSE_DISPATCH_STAGGER_RECENT_RATE_LIMITS:-}"
+	if [[ "$failure_override" =~ ^[0-9]+$ || "$rate_limit_override" =~ ^[0-9]+$ ]]; then
+		[[ "$failure_override" =~ ^[0-9]+$ ]] || failure_override=0
+		[[ "$rate_limit_override" =~ ^[0-9]+$ ]] || rate_limit_override=0
+		printf '%s %s\n' "$failure_override" "$rate_limit_override"
+		return 0
+	fi
+
+	local metrics_file="${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
+	local ttl_seconds="${PULSE_DISPATCH_STAGGER_FAILURE_WINDOW_SECONDS:-900}"
+	[[ "$ttl_seconds" =~ ^[0-9]+$ ]] || ttl_seconds=900
+	[[ -f "$metrics_file" ]] || { printf '0 0\n'; return 0; }
+	python3 - "$metrics_file" "$ttl_seconds" <<'PY'
+import json
+import sys
+import time
+
+path, ttl = sys.argv[1], int(sys.argv[2])
+since = time.time() - ttl
+failures = 0
+rate_limits = 0
+try:
+    with open(path, "r", encoding="utf-8", errors="replace") as handle:
+        for raw in handle.readlines()[-1000:]:
+            try:
+                item = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            ts = float(item.get("ts") or 0)
+            if ts < since:
+                continue
+            result = str(item.get("result") or "")
+            failure_reason = str(item.get("failure_reason") or "")
+            exit_code = item.get("exit_code")
+            if result in {"rate_limit", "rate_limit_fast"} or "rate_limit" in failure_reason:
+                rate_limits += 1
+            if not (result == "success" and exit_code == 0) and result not in {"worker_noop", "no_work", "noop"}:
+                failures += 1
+except (OSError, ValueError):
+    pass
+print(f"{failures} {rate_limits}")
+PY
+	return 0
+}
+
+#######################################
+# Return cached GraphQL remaining budget for launch pacing.
+#
+# Stdout: integer remaining budget, or blank when unavailable.
+#######################################
+_dispatch_graphql_remaining_cached() {
+	if [[ -n "${PULSE_DISPATCH_STAGGER_GRAPHQL_REMAINING:-}" ]]; then
+		printf '%s\n' "$PULSE_DISPATCH_STAGGER_GRAPHQL_REMAINING"
+		return 0
+	fi
+	if [[ -n "${_DISPATCH_STAGGER_GRAPHQL_REMAINING:-}" ]]; then
+		printf '%s\n' "$_DISPATCH_STAGGER_GRAPHQL_REMAINING"
+		return 0
+	fi
+	_DISPATCH_STAGGER_GRAPHQL_REMAINING=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null || printf '\n')
+	printf '%s\n' "$_DISPATCH_STAGGER_GRAPHQL_REMAINING"
+	return 0
+}
+
+_dispatch_float_scaled() {
+	local float_value="${1:-0}"
+	local fallback="${2:-0}"
+	python3 - "$float_value" "$fallback" <<'PY'
+import sys
+try:
+    print(int(float(sys.argv[1]) * 100))
+except (ValueError, IndexError):
+    print(int(float(sys.argv[2]) * 100))
+PY
+	return 0
+}
+
+_dispatch_load_pressure_points() {
+	local load_per_cpu="${PULSE_DISPATCH_STAGGER_LOAD_PER_CPU:-}"
+	[[ -n "$load_per_cpu" ]] || load_per_cpu=$(_dispatch_latest_metric_value "load_per_cpu")
+	local load_scaled=0 high_scaled moderate_scaled
+	[[ -n "$load_per_cpu" ]] && load_scaled=$(_dispatch_float_scaled "$load_per_cpu" 0)
+	high_scaled=$(_dispatch_float_scaled "${PULSE_DISPATCH_STAGGER_LOAD_HIGH:-8}" 8)
+	moderate_scaled=$(_dispatch_float_scaled "${PULSE_DISPATCH_STAGGER_LOAD_MODERATE:-4}" 4)
+	if ((load_scaled >= high_scaled && load_scaled > 0)); then
+		printf '4\n'
+		return 0
+	fi
+	if ((load_scaled >= moderate_scaled && load_scaled > 0)); then
+		printf '2\n'
+		return 0
+	fi
+	printf '0\n'
+	return 0
+}
+
+_dispatch_failure_pressure_points() {
+	local recent_failures="$1"
+	[[ "$recent_failures" =~ ^[0-9]+$ ]] || recent_failures=0
+	if ((recent_failures >= 3)); then
+		printf '4\n'
+		return 0
+	fi
+	if ((recent_failures >= 1)); then
+		printf '2\n'
+		return 0
+	fi
+	printf '0\n'
+	return 0
+}
+
+_dispatch_provider_pressure_points() {
+	local recent_rate_limits="$1"
+	local provider_backoff_active="${PULSE_DISPATCH_PROVIDER_BACKOFF_ACTIVE:-0}"
+	[[ "$recent_rate_limits" =~ ^[0-9]+$ ]] || recent_rate_limits=0
+	if [[ "$provider_backoff_active" == "1" || "$recent_rate_limits" -gt 0 || -f "${PULSE_RATE_LIMIT_FLAG:-${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}" ]]; then
+		printf '6\n'
+		return 0
+	fi
+	printf '0\n'
+	return 0
+}
+
+_dispatch_graphql_pressure_points() {
+	local graphql_remaining graphql_low graphql_critical
+	graphql_remaining=$(_dispatch_graphql_remaining_cached)
+	graphql_low="${PULSE_DISPATCH_STAGGER_GRAPHQL_LOW:-1250}"
+	graphql_critical="${PULSE_DISPATCH_STAGGER_GRAPHQL_CRITICAL:-750}"
+	[[ "$graphql_low" =~ ^[0-9]+$ ]] || graphql_low=1250
+	[[ "$graphql_critical" =~ ^[0-9]+$ ]] || graphql_critical=750
+	if [[ "$graphql_remaining" =~ ^[0-9]+$ ]]; then
+		if ((graphql_remaining < graphql_critical)); then
+			printf '4\n'
+			return 0
+		fi
+		if ((graphql_remaining < graphql_low)); then
+			printf '2\n'
+			return 0
+		fi
+	fi
+	printf '0\n'
+	return 0
+}
+
+_dispatch_finalize_stagger_delay() {
+	local pressure_points="$1"
+	local launches_so_far="$2"
+	local candidate_index="$3"
+	local candidate_json="$4"
+	[[ "$pressure_points" =~ ^[0-9]+$ ]] || pressure_points=0
+	if ((pressure_points <= 0)); then
+		printf '0\n'
+		return 0
+	fi
+	local issue_number jitter_max jitter delay cap
+	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || issue_number=0
+	jitter_max="${PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS:-3}"
+	cap="${PULSE_DISPATCH_STAGGER_MAX_SECONDS:-20}"
+	[[ "$jitter_max" =~ ^[0-9]+$ ]] || jitter_max=3
+	[[ "$cap" =~ ^[0-9]+$ ]] || cap=20
+	jitter=0
+	if ((jitter_max > 0)); then
+		jitter=$(((issue_number + candidate_index + launches_so_far) % (jitter_max + 1)))
+	fi
+	delay=$((pressure_points + jitter))
+	((delay > cap)) && delay="$cap"
+	_dispatch_stats_gauge "dispatch_inter_launch_delay_seconds" "$delay"
+	printf '%d\n' "$delay"
+	return 0
+}
+
+#######################################
+# Compute adaptive inter-launch delay for parallel worker dispatch.
+#
+# Arguments:
+#   $1 - launches already started in this round
+#   $2 - candidate index in this loop
+#   $3 - candidate JSON
+#   $4 - max parallelism for this round
+# Stdout: integer seconds to sleep before launching this candidate.
+#######################################
+_dispatch_inter_launch_delay() {
+	local launches_so_far="${1:-0}"
+	local candidate_index="${2:-0}"
+	local candidate_json="${3:-}"
+	local max_parallel="${4:-1}"
+	[[ "$launches_so_far" =~ ^[0-9]+$ ]] || launches_so_far=0
+	[[ "$candidate_index" =~ ^[0-9]+$ ]] || candidate_index=0
+	[[ "$max_parallel" =~ ^[0-9]+$ ]] || max_parallel=1
+	if [[ "${PULSE_DISPATCH_STAGGER_ADAPTIVE:-1}" == "0" || "$launches_so_far" -eq 0 ]]; then
+		printf '0\n'
+		return 0
+	fi
+
+	local pressure_points=0
+	pressure_points=$((pressure_points + $(_dispatch_load_pressure_points)))
+	local recent_failures recent_rate_limits pressure_line
+	pressure_line=$(_dispatch_recent_worker_pressure_counts)
+	read -r recent_failures recent_rate_limits <<<"$pressure_line"
+	[[ "$recent_failures" =~ ^[0-9]+$ ]] || recent_failures=0
+	[[ "$recent_rate_limits" =~ ^[0-9]+$ ]] || recent_rate_limits=0
+	pressure_points=$((pressure_points + $(_dispatch_failure_pressure_points "$recent_failures")))
+	pressure_points=$((pressure_points + $(_dispatch_provider_pressure_points "$recent_rate_limits")))
+	pressure_points=$((pressure_points + $(_dispatch_graphql_pressure_points)))
+
+	if ((max_parallel >= 4 && launches_so_far >= 4 && pressure_points > 0)); then
+		pressure_points=$((pressure_points + 1))
+	fi
+	_dispatch_finalize_stagger_delay "$pressure_points" "$launches_so_far" "$candidate_index" "$candidate_json"
+	return 0
+}
+
+#######################################
 # Compute the dispatch capacity for this round.
 #
 # Stdout: "<max_workers> <active_workers> <available_slots>" on success.
@@ -898,6 +1169,17 @@ _dispatch_max_loop() {
 		if ! _dispatch_graphql_budget_allows_next; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
 			break
+		fi
+
+		local inter_launch_delay
+		inter_launch_delay=$(_dispatch_inter_launch_delay "$((successes_so_far + ${#_pids[@]}))" "$processed_count" "$candidate_json" "$max_parallel")
+		[[ "$inter_launch_delay" =~ ^[0-9]+$ ]] || inter_launch_delay=0
+		if ((inter_launch_delay > 0)); then
+			local issue_num_for_delay
+			issue_num_for_delay=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+			_dispatch_stats_increment "dispatch_inter_launch_staggered"
+			echo "[pulse-wrapper] Dispatch_max: adaptive inter-launch stagger issue=#${issue_num_for_delay} delay=${inter_launch_delay}s launched_so_far=$((successes_so_far + ${#_pids[@]})) max_parallel=${max_parallel}" >>"$LOGFILE"
+			sleep "$inter_launch_delay"
 		fi
 
 		# Background dispatch with outcomes-file write.
