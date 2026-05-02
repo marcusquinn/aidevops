@@ -11,7 +11,7 @@
 #
 # Detection: _rest_should_fallback -- consults gh api rate_limit.
 # Write translators (t2574): _rest_issue_create, _rest_issue_comment,
-#   _rest_issue_edit, _rest_pr_create.
+#   _rest_pr_comment, _rest_issue_edit, _rest_pr_create.
 # Read translators (t2689, t2772): _rest_issue_view, _rest_issue_list, _rest_pr_list.
 #
 # Note on field mapping (_rest_issue_view): `gh issue view --json id` returns
@@ -402,6 +402,18 @@ _rest_issue_comment() {
 		printf '%s\n' "$out" >&2
 	fi
 	return $rc
+}
+
+#######################################
+# _rest_pr_comment: POST /repos/{owner}/{repo}/issues/{PR}/comments.
+# GitHub pull requests share the issue comments REST endpoint, so this mirrors
+# _rest_issue_comment while keeping instrumentation and call sites explicit.
+# Args: gh-style `pr comment` argv.
+#######################################
+_rest_pr_comment() {
+	gh_record_call rest _rest_pr_comment 2>/dev/null || true
+	_rest_issue_comment "$@"
+	return $?
 }
 
 #######################################

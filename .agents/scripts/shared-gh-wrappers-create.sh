@@ -16,7 +16,8 @@
 #     _gh_wrapper_args_have_assignee, _gh_wrapper_args_have_label,
 #     _gh_wrapper_auto_assignee, _gh_wrapper_auto_sig)
 #   - shared-gh-wrappers-rest-fallback.sh (_rest_should_fallback,
-#     _rest_issue_create, _rest_pr_create, _rest_issue_comment)
+#     _rest_issue_create, _rest_pr_create, _rest_issue_comment,
+#     _rest_pr_comment)
 #   - _gh_validate_edit_args, _gh_edit_audit_rejection (from orchestrator)
 #   - gh CLI, jq
 #
@@ -546,7 +547,13 @@ gh_pr_comment() {
 	_gh_wrapper_auto_sig "$@"
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 	gh pr comment "$@"
-	return $?
+	local rc=$?
+	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr comment"
+		_rest_pr_comment "$@"
+		rc=$?
+	fi
+	return $rc
 }
 
 # Internal: extract --repo from args and ensure labels exist (cached per repo).

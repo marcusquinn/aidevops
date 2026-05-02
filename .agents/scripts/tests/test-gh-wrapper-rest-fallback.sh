@@ -4,9 +4,9 @@
 #
 # test-gh-wrapper-rest-fallback.sh — t2574 / GH#20243 regression guard.
 #
-# Asserts that `gh issue *` and `gh pr create|view|list` wrappers in shared-gh-wrappers.sh
+# Asserts that `gh issue *` and `gh pr create|comment|view|list` wrappers in shared-gh-wrappers.sh
 # fall back to REST API (`gh api -X POST|PATCH /repos/...`) when:
-#   1. the primary `gh issue *` / `gh pr create|view|list` call fails, AND
+#   1. the primary `gh issue *` / `gh pr create|comment|view|list` call fails, AND
 #   2. `gh api rate_limit --jq .resources.graphql.remaining` returns <= 10.
 #
 # Production failure (2026-04-21 ~01:00 UTC on marcusquinn/aidevops):
@@ -39,18 +39,21 @@
 #  12. _rest_pr_create translates --title/--head/--base → POST /repos/.../pulls
 #  13. _rest_pr_create uses -F body=@file for body
 #  14. _rest_pr_create applies labels via POST /repos/.../issues/{N}/labels
-#  15. gh_create_pr falls back to REST when primary fails AND exhausted
-#  16. gh_create_pr does NOT fall back when primary succeeds
-#  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
-#  18. _rest_pr_create auto-detects --head from git HEAD when omitted
-#  19. _rest_pr_create auto-detects --base from repo default_branch via REST
-#  20. gh_issue_view routes directly to REST when GraphQL remaining is low
-#  21. gh_issue_list keeps the healthy GraphQL path
-#  22. gh_issue_list routes low-budget --search calls to /search/issues
-#  23. gh_pr_list routes directly to REST when GraphQL remaining is low
-#  24. gh_pr_list keeps --search on the GraphQL path when budget is low
-#  25. gh_pr_view routes directly to REST when GraphQL remaining is low
-#  26. gh_pr_list does NOT fall back for --search because REST pulls cannot
+#  15. gh_pr_comment falls back to REST when primary fails AND exhausted
+#  16. gh_pr_comment does NOT fall back when primary succeeds
+#  17. gh_pr_comment does NOT fall back when primary fails but graphql healthy
+#  18. gh_create_pr falls back to REST when primary fails AND exhausted
+#  19. gh_create_pr does NOT fall back when primary succeeds
+#  20. gh_create_pr does NOT fall back when primary fails but graphql healthy
+#  21. _rest_pr_create auto-detects --head from git HEAD when omitted
+#  22. _rest_pr_create auto-detects --base from repo default_branch via REST
+#  23. gh_issue_view routes directly to REST when GraphQL remaining is low
+#  24. gh_issue_list keeps the healthy GraphQL path
+#  25. gh_issue_list routes low-budget --search calls to /search/issues
+#  26. gh_pr_list routes directly to REST when GraphQL remaining is low
+#  27. gh_pr_list keeps --search on the GraphQL path when budget is low
+#  28. gh_pr_view routes directly to REST when GraphQL remaining is low
+#  29. gh_pr_list does NOT fall back for --search because REST pulls cannot
 #      preserve search semantics
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
@@ -222,8 +225,8 @@ gh() {
 		return 0
 	fi
 
-	# gh pr create|view|list - primary PR paths
-	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "view" || "$2" == "list" ) ]]; then
+	# gh pr create|comment|view|list - primary PR paths
+	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "comment" || "$2" == "view" || "$2" == "list" ) ]]; then
 		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
 			printf 'primary stub forced failure (rate limit)\n' >&2
 			return 1
@@ -522,7 +525,73 @@ else
 fi
 
 # =============================================================================
-# Test 15: gh_create_pr → falls back to REST when primary fails AND exhausted
+# Test 15: gh_pr_comment → falls back to REST when primary fails AND exhausted
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_comment 8888 --repo "owner/repo" --body "fallback pr comment" >/dev/null 2>&1 || true
+
+if grep -qE '^pr comment 8888' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api.*-X POST.*/repos/owner/repo/issues/8888/comments' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_comment falls back to REST when primary fails AND exhausted"
+else
+	fail "gh_pr_comment falls back to REST when primary fails AND exhausted" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+if grep -qE 'GraphQL exhausted.*falling back to REST' "$GH_INFO_OUTPUT" 2>/dev/null; then
+	pass "gh_pr_comment emits fallback log line"
+else
+	fail "gh_pr_comment emits fallback log line" \
+		"INFO log: $(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 16: gh_pr_comment → does NOT fall back when primary succeeds
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+gh_pr_comment 8889 --repo "owner/repo" --body "success pr comment" >/dev/null 2>&1 || true
+
+if grep -qE '^pr comment 8889' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api.*-X POST.*/repos/owner/repo/issues/8889/comments' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_comment does NOT fall back when primary succeeds"
+else
+	fail "gh_pr_comment does NOT fall back when primary succeeds" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 17: gh_pr_comment → does NOT fall back when primary fails but healthy
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_PRIMARY_FAIL=1
+export STUB_RATE_LIMIT_REMAINING=5000
+
+gh_pr_comment 8890 --repo "owner/repo" --body "healthy pr fail" >/dev/null 2>&1 || true
+
+if grep -qE '^pr comment 8890' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api.*-X POST.*/repos/owner/repo/issues/8890/comments' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_comment does NOT fall back when primary fails but healthy"
+else
+	fail "gh_pr_comment does NOT fall back when primary fails but healthy" \
+		"GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+unset STUB_PRIMARY_FAIL
+export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 18: gh_create_pr → falls back to REST when primary fails AND exhausted
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -557,7 +626,7 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 16: gh_create_pr → does NOT fall back when primary succeeds
+# Test 19: gh_create_pr → does NOT fall back when primary succeeds
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -578,7 +647,7 @@ else
 fi
 
 # =============================================================================
-# Test 17: gh_create_pr → does NOT fall back when primary fails but healthy
+# Test 20: gh_create_pr → does NOT fall back when primary fails but healthy
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
@@ -605,7 +674,7 @@ unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
 
 # =============================================================================
-# Test 18: _rest_pr_create auto-detects --head from git HEAD when omitted
+# Test 21: _rest_pr_create auto-detects --head from git HEAD when omitted
 # Verifies that omitting --head causes the current branch to be used as head.
 # =============================================================================
 CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)
@@ -626,7 +695,7 @@ else
 fi
 
 # =============================================================================
-# Test 19: _rest_pr_create auto-detects --base from repo default_branch
+# Test 22: _rest_pr_create auto-detects --base from repo default_branch
 # Uses STUB_REPO_DEFAULT_BRANCH=develop to verify REST resolution path.
 # =============================================================================
 : >"$GH_CALLS"
