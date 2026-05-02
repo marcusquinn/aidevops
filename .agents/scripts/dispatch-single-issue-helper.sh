@@ -365,7 +365,204 @@ _dsi_register_ledger() {
 		--issue "$issue_number" \
 		--repo "$repo_slug" \
 		--pid "$worker_pid" \
+		--worktree "${_DSI_WORKTREE_PATH:-}" \
 		>/dev/null 2>&1 || _dsi_warn "Dispatch ledger registration failed (non-fatal)"
+	return 0
+}
+
+#######################################
+# Extract a --dir value from a worker command line.
+# Args: $1 - command line
+# Stdout: worktree path, or empty string
+#######################################
+_dsi_extract_worktree_from_cmd() {
+	local cmd="$1"
+	local worktree_path=""
+	if [[ "$cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+		worktree_path="${BASH_REMATCH[1]}"
+	fi
+	printf '%s\n' "$worktree_path"
+	return 0
+}
+
+#######################################
+# Resolve a repo slug from a worktree path.
+# Args: $1 - worktree path
+# Stdout: owner/repo slug, or empty string
+#######################################
+_dsi_repo_slug_for_worktree() {
+	local worktree_path="$1"
+	local remote_url=""
+	if [[ -z "$worktree_path" || ! -d "$worktree_path" ]]; then
+		printf '\n'
+		return 0
+	fi
+	remote_url=$(git -C "$worktree_path" remote get-url origin 2>/dev/null || true)
+	if [[ "$remote_url" =~ github\.com[:/]([^/]+/[^/.]+)(\.git)?$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	printf '\n'
+	return 0
+}
+
+#######################################
+# Emit active worker process lines for duplicate detection.
+# Tests override this function with fixture output.
+# Stdout: ps rows: "PID STAT COMMAND..."
+#######################################
+_dsi_ps_worker_lines() {
+	ps axwwo pid=,stat=,command= 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Check if a command line belongs to a worker for an issue number.
+# Args: $1 - issue number, $2 - command line
+# Returns: 0 match, 1 no match
+#######################################
+_dsi_cmd_matches_issue() {
+	local issue_number="$1"
+	local cmd="$2"
+	local issue_re="([Ii]ssue[[:space:]]+#|[Ii]ssue[[:space:]]+|GH#)${issue_number}([^0-9]|$)"
+	if [[ "$cmd" =~ $issue_re ]]; then
+		return 0
+	fi
+	if [[ "$cmd" == *"--session-key issue-${issue_number}"* || "$cmd" == *"--session-key manual-cli-${issue_number}-"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Find a manual-dispatch log that names a worker PID.
+# Args: $1 - issue number, $2 - PID
+# Stdout: log path, or "<unknown>"
+#######################################
+_dsi_find_log_for_pid() {
+	local issue_number="$1"
+	local worker_pid="$2"
+	local candidate=""
+	for candidate in "$_DSI_LOG_DIR"/manual-dispatch-"${issue_number}"-*.log; do
+		[[ -f "$candidate" ]] || continue
+		if grep -Fq "Dispatched PID: ${worker_pid}" "$candidate" 2>/dev/null; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	printf '%s\n' "<unknown>"
+	return 0
+}
+
+#######################################
+# Find a live worker by repo+issue and/or exact worktree path.
+# Args: $1 - issue number, $2 - repo slug, $3 - worktree path (optional)
+# Stdout: TSV source, pid, log, worktree, session_key
+# Returns: 0 found, 1 none
+#######################################
+_dsi_find_live_dispatch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local target_worktree="${3:-}"
+	local line pid stat cmd worktree_path worker_repo log_path session_key
+
+	while IFS= read -r line; do
+		[[ -n "$line" ]] || continue
+		pid="${line%%[[:space:]]*}"
+		line="${line#*[[:space:]]}"
+		stat="${line%%[[:space:]]*}"
+		cmd="${line#*[[:space:]]}"
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		[[ "$stat" == *Z* || "$stat" == *T* ]] && continue
+		[[ "$cmd" == *"dispatch-single-issue-helper.sh"* ]] && continue
+
+		worktree_path=$(_dsi_extract_worktree_from_cmd "$cmd")
+		if [[ -n "$target_worktree" && "$worktree_path" == "$target_worktree" ]]; then
+			log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
+			session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
+			printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "${session_key:-<unknown>}"
+			return 0
+		fi
+
+		_dsi_cmd_matches_issue "$issue_number" "$cmd" || continue
+		worker_repo=$(_dsi_repo_slug_for_worktree "$worktree_path")
+		[[ "$worker_repo" == "$repo_slug" ]] || continue
+		log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
+		session_key=$(printf '%s' "$cmd" | sed -n 's/.*--session-key[[:space:]]\([^[:space:]]*\).*/\1/p' | head -1)
+		printf 'process\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "${worktree_path:-<unknown>}" "${session_key:-<unknown>}"
+		return 0
+	done < <(_dsi_ps_worker_lines)
+
+	return 1
+}
+
+#######################################
+# Find a live ledger entry for repo+issue.
+# Args: $1 - issue number, $2 - repo slug
+# Stdout: TSV source, pid, log, worktree, session_key
+# Returns: 0 found, 1 none
+#######################################
+_dsi_find_ledger_dispatch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local entry pid session_key worktree_path log_path
+	entry=$("$_DSI_LEDGER_HELPER" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null) || entry=""
+	[[ -n "$entry" ]] || return 1
+	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
+	session_key=$(printf '%s' "$entry" | jq -r '.session_key // "<unknown>"')
+	worktree_path=$(printf '%s' "$entry" | jq -r '.worktree_path // ""')
+	[[ -n "$worktree_path" && "$worktree_path" != "null" ]] || worktree_path="<unknown>"
+	log_path=$(_dsi_find_log_for_pid "$issue_number" "$pid")
+	printf 'ledger\t%s\t%s\t%s\t%s\n' "$pid" "$log_path" "$worktree_path" "$session_key"
+	return 0
+}
+
+#######################################
+# Print active dispatch details from a TSV record.
+# Args: TSV source, pid, log, worktree, session_key
+#######################################
+_dsi_print_dispatch_details() {
+	local record="$1"
+	local source pid log_path worktree_path session_key
+	IFS=$'\t' read -r source pid log_path worktree_path session_key <<<"$record"
+	_dsi_info "  Evidence source:  ${source}"
+	_dsi_info "  Existing PID:     ${pid}"
+	_dsi_info "  Existing log:     ${log_path}"
+	_dsi_info "  Existing worktree:${worktree_path}"
+	_dsi_info "  Existing session: ${session_key}"
+	return 0
+}
+
+#######################################
+# Print an existing active dispatch as a blocking duplicate.
+# Args: TSV source, pid, log, worktree, session_key
+#######################################
+_dsi_print_existing_dispatch() {
+	local record="$1"
+	local source="${record%%$'\t'*}"
+	_dsi_err "Active worker already owns this issue or worktree (${source})"
+	_dsi_print_dispatch_details "$record"
+	return 0
+}
+
+#######################################
+# Fail closed if an active dispatch already owns repo+issue or worktree.
+# Args: $1 - issue number, $2 - repo slug, $3 - worktree path (optional)
+# Returns: 0 clear, 1 blocked
+#######################################
+_dsi_guard_no_existing_dispatch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worktree_path="${3:-}"
+	local record=""
+	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug"); then
+		_dsi_print_existing_dispatch "$record"
+		return 1
+	fi
+	if record=$(_dsi_find_live_dispatch "$issue_number" "$repo_slug" "$worktree_path"); then
+		_dsi_print_existing_dispatch "$record"
+		return 1
+	fi
 	return 0
 }
 
@@ -643,12 +840,19 @@ cmd_dispatch() {
 	*) dedup_state="error" ;;
 	esac
 
-	# Step 4: resolve model
+	# Step 4: fail closed if an active manual/pulse worker already owns the
+	# same repo+issue. This closes the gap where labels or ledger entries are
+	# stale/missing but a live worker process is still writing in a worktree.
+	if [[ "$_DSI_ARG_DRYRUN" -ne 1 ]]; then
+		_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" || return 1
+	fi
+
+	# Step 5: resolve model
 	_dsi_resolve_model "$_DSI_ISSUE_LABELS" "$_DSI_ARG_MODEL"
 	local session_key
 	session_key="manual-cli-${issue_number}-$(date +%s)"
 
-	# Step 5: dry-run short-circuit
+	# Step 6: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
 		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result"
 		return 0
@@ -660,7 +864,7 @@ cmd_dispatch() {
 		_dsi_warn "Skipped: dispatch dedup check blocked"
 		_dsi_info "  Reason: ${dedup_result}"
 		_dsi_info "  Use a separate test issue, or release the existing claim first."
-		return 0
+		return 1
 		;;
 	error)
 		_dsi_err "Dedup check failed (exit ${dedup_rc}) — failing closed, refusing to dispatch"
@@ -679,10 +883,14 @@ cmd_dispatch() {
 			"$self_login" "$_DSI_ISSUE_META_JSON" || true
 	fi
 
-	# Step 6: pre-create worktree
+	# Step 7: pre-create worktree
 	_dsi_create_worktree "$issue_number" || return 1
 
-	# Steps 7-9 + report: launch worker, resolve real PID, register ledger,
+	# Step 7.5: re-check after worktree creation so an existing live process
+	# on the same worktree cannot be joined by a second manual launch.
+	_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" "$_DSI_WORKTREE_PATH" || return 1
+
+	# Steps 8-10 + report: launch worker, resolve real PID, register ledger,
 	# print success summary. Extracted to keep cmd_dispatch under the 100-line
 	# function-complexity gate (t3000).
 	_dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"
@@ -746,49 +954,19 @@ cmd_status() {
 		return 2
 	fi
 
-	local entry
-	entry=$("$_DSI_LEDGER_HELPER" check-issue --issue "$issue_number" --repo "$repo_slug" 2>/dev/null) || entry=""
-
-	if [[ -z "$entry" ]]; then
-		_dsi_info "No active dispatch for #${issue_number} in ${repo_slug}"
+	local record=""
+	if record=$(_dsi_find_ledger_dispatch "$issue_number" "$repo_slug"); then
+		_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}):"
+		_dsi_print_dispatch_details "$record"
+		return 0
+	fi
+	if record=$(_dsi_find_live_dispatch "$issue_number" "$repo_slug" ""); then
+		_dsi_ok "Active dispatch for #${issue_number} (${repo_slug}) from live process evidence:"
+		_dsi_print_dispatch_details "$record"
 		return 0
 	fi
 
-	# Extract ledger fields (use actual field names from ledger schema:
-	# session_key, issue_number, repo_slug, pid, dispatched_at, status,
-	# updated_at, tier, model)
-	local pid session_key ledger_status dispatched_at tier model
-	pid=$(printf '%s' "$entry" | jq -r '.pid // "?"')
-	session_key=$(printf '%s' "$entry" | jq -r '.session_key // "?"')
-	ledger_status=$(printf '%s' "$entry" | jq -r '.status // "?"')
-	dispatched_at=$(printf '%s' "$entry" | jq -r '.dispatched_at // "?"')
-	tier=$(printf '%s' "$entry" | jq -r '.tier // "?"')
-	model=$(printf '%s' "$entry" | jq -r '.model // "?"')
-
-	# PID liveness check (kill -0 tests whether the process exists, without
-	# sending a real signal). Mirrors the check in dispatch-ledger-helper.sh
-	# cmd_check_issue so the manual CLI and the pulse agree on liveness.
-	local liveness="unknown"
-	if [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -gt 0 ]]; then
-		if kill -0 "$pid" 2>/dev/null; then
-			liveness="running"
-		else
-			liveness="dead"
-		fi
-	fi
-
-	_dsi_ok "Dispatch for #${issue_number} (${repo_slug}):"
-	_dsi_info "  PID:          ${pid} (${liveness})"
-	_dsi_info "  Session key:  ${session_key}"
-	_dsi_info "  Ledger status: ${ledger_status}"
-	_dsi_info "  Dispatched:   ${dispatched_at}"
-	_dsi_info "  Tier:         ${tier}"
-	_dsi_info "  Model:        ${model}"
-
-	if [[ "$liveness" == "dead" ]]; then
-		_dsi_warn "Worker PID ${pid} is no longer running — ledger may be stale"
-		_dsi_info "  If no other worker is active, the issue is safe to re-dispatch."
-	fi
+	_dsi_info "No active dispatch for #${issue_number} in ${repo_slug}"
 	return 0
 }
 
