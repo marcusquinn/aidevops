@@ -69,7 +69,7 @@ if errors:
     print("\n".join(errors))
     sys.exit(1)
 PY
-	return 0
+	return $?
 }
 
 test_template_manifest_is_valid() {
