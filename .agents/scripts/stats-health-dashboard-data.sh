@@ -526,15 +526,9 @@ _build_health_issue_body() {
 	local person_stats_md="${15}" cross_repo_person_stats_md="${16}"
 	local session_time_md="${17}" cross_repo_session_time_md="${18}"
 	local activity_md="${19}" cross_repo_md="${20}"
-	local sys_load_ratio="${21}"
-	local sys_cpu_cores="${22}"
-	local sys_load_1m="${23}"
-	local sys_load_5m="${24}"
-	local sys_memory="${25}"
-	local sys_procs="${26}"
-	local runner_role="${27}"
-	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
-	local worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
+	local sys_load_ratio="${21}" sys_cpu_cores="${22}" sys_load_1m="${23}" sys_load_5m="${24}"
+	local sys_memory="${25}" sys_procs="${26}" runner_role="${27}"
+	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}" worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
 	local worker_zero_diagnostics_md="${32}"
 	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
