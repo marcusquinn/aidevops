@@ -188,7 +188,7 @@ append_cycle_index() {
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
-	local workers_active workers_max
+	local workers_active=0 workers_max=0
 	workers_active=$(count_active_workers 2>/dev/null || echo "0")
 	[[ "$workers_active" =~ ^[0-9]+$ ]] || workers_active=0
 	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")
@@ -273,7 +273,7 @@ write_pulse_health_file() {
 	# list (list_active_worker_processes via count_active_workers) has a brief
 	# race window after nohup launch before the process appears in ps.
 	local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
-	local workers_active workers_max
+	local workers_active=0 workers_max=0
 	workers_active=$(count_active_workers 2>/dev/null || echo "0")
 	[[ "$workers_active" =~ ^[0-9]+$ ]] || workers_active=0
 	workers_max=$(get_max_workers_target 2>/dev/null || echo "1")

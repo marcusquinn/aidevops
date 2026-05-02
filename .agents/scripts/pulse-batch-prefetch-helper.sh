@@ -227,7 +227,7 @@ _prefetch_rest_per_slug() {
 	local kind="$1"
 	local slugs="${2:-}"
 	[[ -n "$slugs" ]] || return 0
-	local slug ok
+	local slug="" ok=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		ok=0
@@ -349,66 +349,7 @@ _conditional_rest_update_cache_from_response() {
 	local slug="$2"
 	local response_file="$3"
 	local cache_file="$4"
-	python3 - "$kind" "$slug" "$response_file" "$cache_file" <<'PY'
-import datetime
-import json
-import os
-import re
-import sys
-
-kind, slug, response_file, cache_file = sys.argv[1:5]
-raw = open(response_file, 'rb').read().decode('utf-8', 'replace')
-normal = raw.replace('\r\n', '\n')
-headers, body = normal.split('\n\n', 1) if '\n\n' in normal else (normal, '')
-match = re.search(r'^HTTP/\S+\s+(\d{3})', headers, re.M)
-if not match:
-    sys.exit(1)
-status = int(match.group(1))
-etag_match = re.search(r'^etag:\s*(.+)$', headers, re.I | re.M)
-etag = etag_match.group(1).strip() if etag_match else ''
-now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-
-def write_cache(payload):
-    os.makedirs(os.path.dirname(cache_file), exist_ok=True)
-    tmp = f'{cache_file}.tmp.{os.getpid()}'
-    with open(tmp, 'w', encoding='utf-8') as handle:
-        json.dump(payload, handle, separators=(',', ':'))
-        handle.write('\n')
-    os.replace(tmp, cache_file)
-
-if status == 304:
-    if not os.path.exists(cache_file):
-        sys.exit(1)
-    with open(cache_file, encoding='utf-8') as handle:
-        payload = json.load(handle)
-    payload['timestamp'] = now
-    payload['last_success'] = now
-    payload['conditional_status'] = 304
-    payload['conditional_cache_hit'] = True
-    if etag:
-        payload['etag'] = etag
-    write_cache(payload)
-    print('304')
-    sys.exit(0)
-if status < 200 or status >= 300:
-    sys.exit(1)
-try:
-    data = json.loads(body or '[]')
-except json.JSONDecodeError:
-    sys.exit(1)
-items = []
-for item in data:
-    if kind == 'issues':
-        if item.get('pull_request') is not None:
-            continue
-        items.append({'number': item.get('number'), 'title': item.get('title'), 'labels': item.get('labels') or [], 'updatedAt': item.get('updated_at') or item.get('updatedAt'), 'assignees': item.get('assignees') or []})
-    else:
-        user = item.get('user') or {}
-        head = item.get('head') or {}
-        items.append({'number': item.get('number'), 'title': item.get('title'), 'labels': item.get('labels') or [], 'updatedAt': item.get('updated_at') or item.get('updatedAt'), 'assignees': item.get('assignees') or [], 'createdAt': item.get('created_at') or item.get('createdAt'), 'author': {'login': user.get('login')} if user.get('login') else item.get('author'), 'headRefOid': head.get('sha'), 'headRefName': head.get('ref')})
-write_cache({'timestamp': now, 'last_success': now, 'etag': etag, 'conditional_status': status, 'conditional_cache_hit': False, 'items': items})
-print(str(status))
-PY
+	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" "$kind" "$slug" "$response_file" "$cache_file"
 	return 0
 }
 
@@ -426,7 +367,7 @@ _conditional_rest_refresh_slug() {
 		[[ "$etag" == "$_JSON_NULL" ]] && etag=""
 	fi
 	[[ -n "$etag" ]] || _OWNER_CONDITIONAL_MISSES=$((_OWNER_CONDITIONAL_MISSES + 1))
-	local response_file err_file
+	local response_file="" err_file=""
 	response_file=$(mktemp)
 	err_file=$(mktemp)
 	local rc=0
@@ -462,7 +403,7 @@ _conditional_rest_per_slug() {
 	local kind="$1"
 	local slugs="${2:-}"
 	[[ -n "$slugs" ]] || return 1
-	local slug failures=0
+	local slug="" failures=0
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 		_conditional_rest_refresh_slug "$kind" "$slug" || failures=$((failures + 1))
@@ -677,7 +618,7 @@ _cmd_refresh() {
 	_PULSE_EVENTS_TICKLE_FRESH=0
 	_PULSE_EVENTS_TICKLE_STALE=0
 
-	local owner slugs
+	local owner="" slugs=""
 	while IFS='|' read -r owner slugs; do
 		[[ -n "$owner" ]] || continue
 
@@ -779,7 +720,7 @@ _cmd_cache_path() {
 		return 1
 	fi
 
-	local cache_epoch now_epoch
+	local cache_epoch=0 now_epoch=0
 	if [[ "$(uname)" == "Darwin" ]]; then
 		cache_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$cache_ts" "+%s" 2>/dev/null) || cache_epoch=0
 	else
@@ -880,7 +821,7 @@ _cmd_status() {
 		[[ -n "$file" ]] || continue
 		local basename
 		basename=$(basename "$file" .json)
-		local ts item_count age_s freshness
+		local ts="" item_count="" age_s=0 freshness=""
 		ts=$(jq -r '.timestamp // "unknown"' "$file" 2>/dev/null) || ts="unknown"
 		item_count=$(jq '.items | length' "$file" 2>/dev/null) || item_count="?"
 

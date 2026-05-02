@@ -186,11 +186,11 @@ _prefetch_repo_issues() {
 	filtered_json=$(echo "$issue_json" | _filter_non_task_issues)
 
 	# GH#10308: Split issues into dispatchable vs quality-sweep-tracked.
-	local dispatchable_json sweep_tracked_json
+	local dispatchable_json="" sweep_tracked_json=""
 	dispatchable_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")) | not)]')
 	sweep_tracked_json=$(echo "$filtered_json" | jq '[.[] | select(.labels | map(.name) | (index("source:quality-sweep") or index("source:review-feedback")))]')
 
-	local dispatchable_count sweep_tracked_count
+	local dispatchable_count=0 sweep_tracked_count=0
 	dispatchable_count=$(echo "$dispatchable_json" | jq 'length')
 	sweep_tracked_count=$(echo "$sweep_tracked_json" | jq 'length')
 
@@ -503,7 +503,7 @@ prefetch_missions() {
 	local active_count=0
 
 	for entry in "${mission_files[@]}"; do
-		local slug path mfile
+		local slug="" path="" mfile=""
 		IFS='|' read -r slug path mfile <<<"$entry"
 
 		# Extract frontmatter status — look for status: in YAML frontmatter
@@ -694,7 +694,7 @@ prefetch_triage_review_status() {
 		fi
 
 		# Get needs-maintainer-review issues for this repo
-		local nmr_json nmr_err
+	local nmr_json="" nmr_err=""
 		nmr_err=$(mktemp)
 		nmr_json=$(gh_issue_list --repo "$slug" --label "needs-maintainer-review" \
 			--state open --json number,title,createdAt,updatedAt \
@@ -732,7 +732,7 @@ prefetch_triage_review_status() {
 		# Check each issue for an existing agent review comment
 		local i=0
 		while [[ "$i" -lt "$nmr_count" ]]; do
-			local number title created_at
+		local number="" title="" created_at=""
 			number=$(echo "$nmr_json" | jq -r ".[$i].number")
 			title=$(echo "$nmr_json" | jq -r ".[$i].title")
 			created_at=$(echo "$nmr_json" | jq -r ".[$i].createdAt")
