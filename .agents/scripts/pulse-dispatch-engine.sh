@@ -979,16 +979,11 @@ _run_preflight_stages() {
 	# ceiling — so promoting it to its own schedule prevents preflight
 	# starvation entirely. The function still lives in pulse-simplification.sh
 	# and is invoked by the standalone runner.
-	run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
-		run_daily_codebase_review || true
-	run_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" \
-		_run_post_merge_review_scanner || true
-	run_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" \
-		_run_auto_decomposer_scanner || true
-	run_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" \
-		run_simplification_dedup_cleanup || true
-	run_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" \
-		fast_fail_prune_expired || true
+	_pulse_run_optional_stage_with_timeout "coderabbit_review" "$_pflt_timeout" run_daily_codebase_review || true
+	_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" _run_post_merge_review_scanner || true
+	_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" _run_auto_decomposer_scanner || true
+	_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" run_simplification_dedup_cleanup || true
+	_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" fast_fail_prune_expired || true
 	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
 		_preflight_ownership_reconcile || true
 	# t3027 (GH#21584): GraphQL budget gate.

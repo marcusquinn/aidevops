@@ -203,6 +203,13 @@ graphql_budget = {
     'circuit_broken_count': counter_hits.get('pulse_dispatch_circuit_broken', 0),
     'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
     'force_rest_reads_count': counter_hits.get('pulse_graphql_low_force_rest_reads', 0),
+    'reserve_mode_count': counter_hits.get('pulse_graphql_budget_reserve_mode', 0),
+    'deferred_stage_count': counter_hits.get('pulse_graphql_budget_stage_deferred', 0),
+    'deferred_stages': {
+        key[len('pulse_graphql_budget_stage_deferred_'):]: count
+        for key, count in sorted(counter_hits.items())
+        if key.startswith('pulse_graphql_budget_stage_deferred_')
+    },
     'gauges': {k: v for k, v in gauge_values.items() if 'graphql' in k.lower() or 'budget' in k.lower() or 'rate' in k.lower()},
 }
 dispatch_pacing = {
