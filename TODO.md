@@ -3954,3 +3954,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3460 Audit raw gh list/view call sites that bypass REST fallback wrappers #auto-dispatch #enhancement ref:GH#22321
 
 - [ ] t3459 Route eligible GitHub list/view reads to REST before GraphQL exhaustion #auto-dispatch #enhancement ref:GH#22320
+
+- [ ] t3467 Make memory audit opportunities actionable #auto-dispatch #enhancement ref:GH#22351
+
+- [ ] t3466 Harden launchd jobs still stuck in xpcproxy after setup recovery #auto-dispatch #bug ref:GH#22350
+
+- [ ] t3465 Close the worker failure feedback loop #auto-dispatch #bug ref:GH#22349
+
+- [ ] t3464 Fix gh-thread-clean-helper crash on PR comment shapes #auto-dispatch #bug ref:GH#22347
+
+- [ ] t3463 Fix gh pr list REST fallback head filtering #auto-dispatch #bug ref:GH#22344
+
+- [ ] t3462 Fix BSD awk syntax in efficiency speed collection #auto-dispatch #bug ref:GH#22339
