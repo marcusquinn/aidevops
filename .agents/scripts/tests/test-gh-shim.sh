@@ -79,6 +79,7 @@ chmod +x "$TMP/scripts/gh-signature-helper.sh"
 # instead of the real one installed in ~/.aidevops/agents/scripts/.
 cp "$SHIM" "$TMP/scripts/gh"
 chmod +x "$TMP/scripts/gh"
+cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
 
 # Put stub gh in PATH (for shim's REAL_GH discovery) and the shim in
 # $TMP/scripts (for direct invocation in tests).
@@ -263,6 +264,22 @@ if [[ "$argv" == "$expected" ]]; then
 	_pass "gh api pass-through"
 else
 	_fail "gh api pass-through" "argv: $argv"
+fi
+
+# =============================================================================
+# Test 11: gh shim records operation-specific instrumentation labels
+# =============================================================================
+echo ""
+echo "Test 11: operation-specific instrumentation labels"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+"$SHIM_RUN" issue list --repo owner/repo 2>/dev/null
+"$SHIM_RUN" pr view 123 --repo owner/repo 2>/dev/null
+if grep -q $'\tgh_issue_list\tgraphql' "$AIDEVOPS_GH_API_LOG" && grep -q $'\tgh_pr_view\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "read/list calls use operation-specific labels"
+else
+	_fail "operation-specific instrumentation labels" "log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
 fi
 
 # =============================================================================
