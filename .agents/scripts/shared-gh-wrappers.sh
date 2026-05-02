@@ -525,6 +525,6 @@ set_solved_label() {
 	done
 	_flags+=("$@")
 
-	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+	_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 	return $?
 }
