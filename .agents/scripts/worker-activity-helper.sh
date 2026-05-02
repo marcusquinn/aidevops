@@ -75,11 +75,13 @@ _wah_parse_since() {
 _wah_aggregate_metrics() {
 	local cutoff_epoch="$1"
 	local metrics="$WAH_METRICS_FILE"
+	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
 		printf '0 0 0 0 0 0\n'
 		return 0
 	fi
+	now_epoch=$(date +%s)
 
 	# Bucket semantics (must match the original awk fallthrough chain):
 	#   succ — result=="success" AND exit_code==0
@@ -92,8 +94,8 @@ _wah_aggregate_metrics() {
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
 	local result
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" '
-		[inputs | select((.ts // 0) >= $cutoff)] as $w | {
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w | {
 			total:  ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
 			wk:     ([$w[] | select(.result == "watchdog_stall_killed")] | length),
@@ -122,14 +124,16 @@ _wah_aggregate_metrics() {
 _wah_metric_details_json() {
 	local cutoff_epoch="$1"
 	local metrics="$WAH_METRICS_FILE"
+	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
 		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[]}'
 		return 0
 	fi
+	now_epoch=$(date +%s)
 
-	jq -rn --argjson cutoff "$cutoff_epoch" '
-		[inputs | select((.ts // 0) >= $cutoff)] as $w
+	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 		| ($w | map(.duration_ms // 0)) as $durations
 		| {
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
