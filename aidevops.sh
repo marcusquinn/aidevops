@@ -1542,13 +1542,20 @@ main() {
 	parent-status | ps) _dispatch_helper "parent-status-helper.sh" "parent-status-helper.sh" "$@" ;;
 	knowledge) _dispatch_helper "knowledge-helper.sh" "knowledge-helper.sh" "$@" ;;
 	campaign | campaigns)
-		# P1 provisioning: init/provision/ls → campaigns-provision-helper.sh
+		# P1 provisioning: init/provision/status/ls → campaigns-provision-helper.sh
 		# P4 asset binary: asset → campaign-asset-helper.sh
 		# P2+P6: all other subcommands → campaign-helper.sh
 		local _camp_cmd="${1:-help}"
 		case "$_camp_cmd" in
 		init | provision | ls)
 			_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+			;;
+		status)
+			if [[ $# -le 1 || -d "${2:-}" || "${2:-}" == .* || "${2:-}" == /* || "${2:-}" == ~* ]]; then
+				_dispatch_helper "campaigns-provision-helper.sh" "campaigns-provision-helper.sh" "$@"
+			else
+				_dispatch_helper "campaign-helper.sh" "campaign-helper.sh" "$@"
+			fi
 			;;
 		asset | assets)
 			shift

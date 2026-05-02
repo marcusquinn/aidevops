@@ -157,6 +157,9 @@ aidevops campaign provision [<repo-path>]
 # Show provisioning state and campaign counts
 aidevops campaign status [<repo-path>]
 
+# Show one campaign's detailed lifecycle dossier
+aidevops campaign status <campaign-id> [--repo <repo-path>]
+
 # List campaigns (active + launched)
 aidevops campaign ls [--active|--launched|--all] [<repo-path>]
 ```
