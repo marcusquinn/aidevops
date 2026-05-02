@@ -183,6 +183,10 @@ _preflight_early_dispatch() {
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag present — skipping early dispatch_max" >>"$LOGFILE"
 	else
+		# GH#22399: dispatch_max ultimately calls dispatch_with_dedup(), whose
+		# external-author gate applies needs-maintainer-review fail-closed before
+		# worker launch. Keep that trust-boundary check in the dispatch path rather
+		# than depending on the asynchronous issue-triage GitHub Actions workflow.
 		echo "[pulse-wrapper] Early dispatch_max: dispatching workers before housekeeping" >>"$LOGFILE"
 		apply_dispatch_max
 	fi

@@ -576,6 +576,70 @@ _check_nmr_approval_gate() {
 }
 
 #######################################
+# GH#22399: Fail-closed external issue author gate.
+#
+# GitHub Actions issue-triage-gate.yml applies needs-maintainer-review to
+# non-collaborator issues, but Actions can sit queued while the pulse keeps
+# dispatching. This gate repeats the trust-boundary check in the dispatch path
+# immediately before worker launch. OWNER/MEMBER/COLLABORATOR and bot-created
+# issues keep the existing fast path. External or unknown authors must carry a
+# valid cryptographic approval; otherwise the pulse applies NMR and blocks this
+# candidate in the current cycle.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#
+# Exit codes:
+#   0 - gate blocks dispatch (external/unknown author without approval)
+#   1 - gate allows dispatch
+#######################################
+_check_external_issue_author_gate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local issue_author_meta=""
+	issue_author_meta=$(gh api "repos/${repo_slug}/issues/${issue_number}" \
+		--jq '[.author_association // "NONE", .user.type // ""] | @tsv' 2>/dev/null) || issue_author_meta=""
+
+	local author_association="NONE"
+	local author_type=""
+	if [[ -n "$issue_author_meta" ]]; then
+		IFS=$'\t' read -r author_association author_type <<<"$issue_author_meta"
+	fi
+	[[ -n "$author_association" ]] || author_association="NONE"
+
+	case "$author_association" in
+		OWNER | MEMBER | COLLABORATOR)
+			return 1
+			;;
+	esac
+	if [[ "$author_type" == "Bot" ]]; then
+		return 1
+	fi
+
+	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
+	local verify_result=""
+	if [[ -f "$approval_helper" ]]; then
+		verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null) || verify_result=""
+		if [[ "$verify_result" == "VERIFIED" ]]; then
+			echo "[dispatch_with_dedup] GH#22399: external/unknown issue author for #${issue_number} in ${repo_slug} has cryptographic approval; allowing dispatch" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: author_association=${author_association}, author_type=${author_type:-unknown}; applying needs-maintainer-review until cryptographic approval lands (GH#22399)" >>"$LOGFILE"
+	if declare -F gh_issue_edit_safe >/dev/null 2>&1; then
+		gh_issue_edit_safe "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+	else
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "needs-maintainer-review" >/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
 # GH#17574 + GH#18644: Combined commit-subject dedup gate with
 # force-dispatch maintainer override.
 #
@@ -850,13 +914,14 @@ _is_task_committed_to_main() {
 # Runs all pre-dispatch safety gates in order:
 #   1. Issue state (must be OPEN)
 #   2. Management labels (supervisor/contributor/persistent/etc.)
-#   3. Cryptographic approval gate (t1894, ever-NMR)
-#   4. Supervisor telemetry title guard
-#   5. Main-commit check (GH#17574 — task already done)
-#   6. Blocked-by dependency enforcement (t1927)
-#   7. Issue consolidation pre-check
-#   8. Large-file simplification gate
-#   9. 7-layer check_dispatch_dedup chain (Layers 1–7)
+#   3. External issue author gate (GH#22399 — Actions queue race)
+#   4. Cryptographic approval gate (t1894, ever-NMR)
+#   5. Supervisor telemetry title guard
+#   6. Main-commit check (GH#17574 — task already done)
+#   7. Blocked-by dependency enforcement (t1927)
+#   8. Issue consolidation pre-check
+#   9. Large-file simplification gate
+#   10. 7-layer check_dispatch_dedup chain (Layers 1–7)
 #
 # Arguments:
 #   $1 - issue_number
@@ -951,6 +1016,16 @@ _dispatch_dedup_check_layers() {
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.label_checks" "$_dss_t0"
+
+	# GH#22399: fail closed for external/unknown issue authors before the
+	# historical ever-NMR gate. The ever-NMR gate allows never-labeled issues;
+	# this gate closes the race where GitHub Actions has not applied NMR yet.
+	_dss_t0=$(_ds_now_ns)
+	if _check_external_issue_author_gate "$issue_number" "$repo_slug"; then
+		_ds_record "$issue_number" "$repo_slug" "dedup.external_author_gate" "$_dss_t0"
+		return 1
+	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup.external_author_gate" "$_dss_t0"
 
 	# t1894/GH#18648: Cryptographic approval gate (ever-NMR) with
 	# review-followup exemption for bot-generated cleanup issues.
