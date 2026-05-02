@@ -64,6 +64,11 @@
 #
 # Called by launchd every 180s via the supervisor-pulse plist.
 
+if [[ -z "${BASH_VERSION:-}" ]]; then
+	printf '[pulse-wrapper] must be run by bash; use: bash -lc '\''source ~/.aidevops/agents/scripts/pulse-wrapper.sh; <command>'\''\n' >&2
+	return 2 2>/dev/null || exit 2
+fi
+
 set -euo pipefail
 
 #######################################
@@ -149,7 +154,9 @@ fi
 # acquire_instance_lock handles stale-lock reclaim properly.
 # Early source: _file_mtime_epoch needed before shared-constants.sh is loaded.
 # shellcheck source=./portable-stat.sh
-source "${BASH_SOURCE[0]%/*}/portable-stat.sh"
+_pw_source_path="${BASH_SOURCE[0]:-$0}"
+source "${_pw_source_path%/*}/portable-stat.sh"
+unset _pw_source_path
 if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 	_pw_ffjit_pid_file="${_pw_ffjit_lockdir}/pid"
