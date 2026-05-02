@@ -3898,3 +3898,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3431 add seed user-data plane directories to aidevops repo #auto-dispatch #enhancement #framework ref:GH#22281
 
 - [ ] t3430 repair stale TODO status for completed data-plane tasks #auto-dispatch #bug #framework ref:GH#22280
+
+- [ ] t3434 file future-plane parent tasks for projects performance feedback #auto-dispatch #enhancement #framework ref:GH#22285
