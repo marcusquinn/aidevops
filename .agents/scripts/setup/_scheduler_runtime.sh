@@ -128,12 +128,11 @@ _launchd_bootout_bootstrap() {
 _launchd_recover_xpcproxy_if_stuck() {
 	local label="$1"
 	local plist_path="$2"
-	local state
+	local state pid process_args
 	state=$(_launchd_agent_state "$label")
 	if [[ "$state" != "xpcproxy" ]]; then
 		return 0
 	fi
-	local pid process_args
 	pid=$(_launchd_agent_pid "$label")
 	process_args=$(_launchd_process_args "$pid")
 	if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
@@ -145,13 +144,36 @@ _launchd_recover_xpcproxy_if_stuck() {
 	if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
 		return 1
 	fi
+	local domain
+	domain="gui/$(id -u)"
+	launchctl kickstart -k "${domain}/${label}" 2>/dev/null || true
 
-	state=$(_launchd_agent_state "$label")
-	if [[ "$state" == "xpcproxy" ]]; then
-		print_warning "LaunchAgent $label still stuck in xpcproxy after recovery"
-		return 1
-	fi
-	return 0
+	local attempts interval attempt
+	attempts="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS:-5}"
+	interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-1}"
+	[[ "$attempts" =~ ^[0-9]+$ ]] || attempts=5
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1
+	[[ "$attempts" -gt 0 ]] || attempts=1
+	attempt=0
+	while [[ "$attempt" -lt "$attempts" ]]; do
+		state=$(_launchd_agent_state "$label")
+		if [[ "$state" != "xpcproxy" ]]; then
+			return 0
+		fi
+		pid=$(_launchd_agent_pid "$label")
+		process_args=$(_launchd_process_args "$pid")
+		if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
+			print_info "LaunchAgent $label reports xpcproxy after recovery but pid $pid is running: $process_args"
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
+			sleep "$interval"
+		fi
+	done
+
+	print_warning "LaunchAgent $label still stuck in xpcproxy after recovery (pid=${pid:-none}, args=${process_args:-none})"
+	return 1
 }
 
 _launchd_load_agent() {

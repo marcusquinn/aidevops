@@ -119,12 +119,11 @@ _define_launchd_install_if_changed() {
 	_launchd_recover_xpcproxy_if_stuck() {
 		local label="$1"
 		local plist_path="$2"
-		local state
+		local state pid process_args
 		state=$(_launchd_agent_state "$label")
 		if [[ "$state" != "xpcproxy" ]]; then
 			return 0
 		fi
-		local pid process_args
 		pid=$(_launchd_agent_pid "$label")
 		process_args=$(_launchd_process_args "$pid")
 		if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
@@ -136,13 +135,36 @@ _define_launchd_install_if_changed() {
 		if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
 			return 1
 		fi
+		local domain
+		domain="gui/$(id -u)"
+		launchctl kickstart -k "${domain}/${label}" 2>/dev/null || true
 
-		state=$(_launchd_agent_state "$label")
-		if [[ "$state" == "xpcproxy" ]]; then
-			print_warning "LaunchAgent $label still stuck in xpcproxy after recovery"
-			return 1
-		fi
-		return 0
+		local attempts interval attempt
+		attempts="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS:-5}"
+		interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-1}"
+		[[ "$attempts" =~ ^[0-9]+$ ]] || attempts=5
+		[[ "$interval" =~ ^[0-9]+$ ]] || interval=1
+		[[ "$attempts" -gt 0 ]] || attempts=1
+		attempt=0
+		while [[ "$attempt" -lt "$attempts" ]]; do
+			state=$(_launchd_agent_state "$label")
+			if [[ "$state" != "xpcproxy" ]]; then
+				return 0
+			fi
+			pid=$(_launchd_agent_pid "$label")
+			process_args=$(_launchd_process_args "$pid")
+			if [[ -n "$process_args" && "$process_args" != *xpcproxy* ]]; then
+				print_info "LaunchAgent $label reports xpcproxy after recovery but pid $pid is running: $process_args"
+				return 0
+			fi
+			attempt=$((attempt + 1))
+			if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
+				sleep "$interval"
+			fi
+		done
+
+		print_warning "LaunchAgent $label still stuck in xpcproxy after recovery (pid=${pid:-none}, args=${process_args:-none})"
+		return 1
 	}
 
 	_launchd_load_agent() {
@@ -446,6 +468,141 @@ test_xpcproxy_recovered_when_content_unchanged() {
 	return 0
 }
 
+test_xpcproxy_recovery_waits_for_transient_state() {
+	local plist_dir="$TEST_DIR/la_xpcproxy_transient"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local print_count_file="$plist_dir/print-count"
+	printf 'some plist content\n' >"$plist_path"
+	printf '0\n' >"$print_count_file"
+
+	_launchd_has_agent() { return 0; }
+
+	local bootout_count=0
+	local bootstrap_count=0
+	launchctl() {
+		case "${1:-}" in
+		print)
+			local print_count
+			print_count=$(<"$print_count_file")
+			print_count=$((print_count + 1))
+			printf '%s\n' "$print_count" >"$print_count_file"
+			if [[ "$print_count" -lt 4 ]]; then
+				printf 'state = xpcproxy\n'
+			else
+				printf 'state = not running\nlast exit code = 0\n'
+			fi
+			return 0
+			;;
+		kickstart)
+			return 0
+			;;
+		bootout)
+			bootout_count=$((bootout_count + 1))
+			return 0
+			;;
+		bootstrap)
+			bootstrap_count=$((bootstrap_count + 1))
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local old_attempts="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS:-}"
+	local old_interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-}"
+	export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS=3
+	export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS=0
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" || rc=$?
+
+	if [[ -n "$old_attempts" ]]; then
+		export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS="$old_attempts"
+	else
+		unset AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_ATTEMPTS
+	fi
+	if [[ -n "$old_interval" ]]; then
+		export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS="$old_interval"
+	else
+		unset AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS
+	fi
+	unset -f launchctl _launchd_has_agent
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "xpcproxy_recovery_waits_for_transient_state" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	local print_count
+	print_count=$(<"$print_count_file")
+	if [[ "$bootout_count" -lt 1 || "$bootstrap_count" -lt 1 || "$print_count" -lt 4 ]]; then
+		print_result "xpcproxy_recovery_waits_for_transient_state" 1 \
+			"expected bootout/bootstrap and settle polling (bootout=$bootout_count bootstrap=$bootstrap_count print=$print_count)"
+		return 0
+	fi
+
+	print_result "xpcproxy_recovery_waits_for_transient_state" 0
+	return 0
+}
+
+test_generic_recovery_kickstarts_after_bootstrap() {
+	local plist_dir="$TEST_DIR/la_xpcproxy_generic_kickstart"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local recovered_marker="$plist_dir/recovered"
+	printf 'some plist content\n' >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+
+	local kickstart_count=0
+	launchctl() {
+		case "${1:-}" in
+		print)
+			if [[ -f "$recovered_marker" ]]; then
+				printf 'state = not running\nlast exit code = 0\n'
+			else
+				printf 'pid = 12345\nstate = xpcproxy\n'
+			fi
+			return 0
+			;;
+		kickstart)
+			kickstart_count=$((kickstart_count + 1))
+			: >"$recovered_marker"
+			return 0
+			;;
+		bootout | bootstrap)
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local old_interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-}"
+	export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS=0
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" || rc=$?
+
+	if [[ -n "$old_interval" ]]; then
+		export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS="$old_interval"
+	else
+		unset AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS
+	fi
+	unset -f launchctl _launchd_has_agent
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "generic_recovery_kickstarts_after_bootstrap" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	if [[ "$kickstart_count" -ne 1 ]]; then
+		print_result "generic_recovery_kickstarts_after_bootstrap" 1 "expected one kickstart, got $kickstart_count"
+		return 0
+	fi
+
+	print_result "generic_recovery_kickstarts_after_bootstrap" 0
+	return 0
+}
+
 test_kickstart_recovers_xpcproxy() {
 	local plist_dir="$TEST_DIR/la_kickstart"
 	mkdir -p "$plist_dir"
@@ -490,7 +647,7 @@ test_kickstart_recovers_xpcproxy() {
 		print_result "kickstart_recovers_xpcproxy" 1 "expected recovery return 0, got $rc"
 		return 0
 	fi
-	if [[ "$kickstart_count" -ne 1 || "$bootstrap_count" -lt 1 ]]; then
+	if [[ "$kickstart_count" -lt 1 || "$bootstrap_count" -lt 1 ]]; then
 		print_result "kickstart_recovers_xpcproxy" 1 \
 			"expected kickstart and bootstrap recovery (kickstart=$kickstart_count bootstrap=$bootstrap_count)"
 		return 0
@@ -567,6 +724,8 @@ main() {
 	test_mv_failure_returns_1
 	test_empty_content_rejected
 	test_xpcproxy_recovered_when_content_unchanged
+	test_xpcproxy_recovery_waits_for_transient_state
+	test_generic_recovery_kickstarts_after_bootstrap
 	test_kickstart_recovers_xpcproxy
 	test_xpcproxy_state_with_helper_process_not_recovered
 
