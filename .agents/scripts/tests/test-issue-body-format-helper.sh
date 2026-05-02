@@ -185,6 +185,24 @@ shellcheck foo.sh
 \`\`\`
 "
 
+# Body accidentally passed with literal backslash-n Markdown structure.
+BODY_ESCAPED_MARKDOWN='## Task\nFix escaped body.\n\n## Files to modify\n- EDIT: .agents/scripts/foo.sh\n\n## Reference pattern\nModel on .agents/scripts/bar.sh\n\n## Verification\nshellcheck .agents/scripts/foo.sh\n\n## Acceptance\n- [ ] Published body has real Markdown headings'
+
+# Incidental backslash-n prose should not be decoded unless it forms escaped
+# Markdown structure.
+BODY_INCIDENTAL_ESCAPED="## Task
+
+Document that the literal \n token can appear in prose.
+
+## Files to modify
+
+- EDIT: .agents/scripts/foo.sh
+
+## Acceptance
+
+- [ ] Prose stays unchanged
+"
+
 # ---------------------------------------------------------------------------
 # Test suite
 # ---------------------------------------------------------------------------
@@ -306,6 +324,23 @@ if [[ $rc -ne 0 ]]; then
 	pass "12. unknown command exits non-zero"
 else
 	fail "12. unknown command exits non-zero" "got exit 0"
+fi
+
+# 13. Normalize decodes escaped Markdown newlines into real newlines
+normalized=$("$HELPER" normalize "$BODY_ESCAPED_MARKDOWN" 2>/dev/null) || true
+heading_count=$(printf '%s\n' "$normalized" | grep -cE '^##' 2>/dev/null || true)
+if [[ "$normalized" != *'\n## '* && "$heading_count" =~ ^[0-9]+$ && "$heading_count" -ge 5 ]]; then
+	pass "13. normalize decodes escaped Markdown newlines"
+else
+	fail "13. normalize decodes escaped Markdown newlines" "headings=${heading_count}; output: $(printf '%s' "$normalized")"
+fi
+
+# 14. Normalize preserves incidental backslash-n prose
+normalized=$("$HELPER" normalize "$BODY_INCIDENTAL_ESCAPED" 2>/dev/null) || true
+if [[ "$normalized" == *'literal \n token'* ]]; then
+	pass "14. normalize preserves incidental backslash-n prose"
+else
+	fail "14. normalize preserves incidental backslash-n prose" "output: $(printf '%s' "$normalized")"
 fi
 
 # ---------------------------------------------------------------------------

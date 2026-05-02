@@ -104,6 +104,29 @@ _ibfh_heading_count() {
 	return 0
 }
 
+# _ibfh_has_escaped_markdown_newlines: detect issue bodies where Markdown
+# structure was passed as literal "\n" text instead of real newlines. Keep the
+# trigger structural so incidental prose like "the string \n means newline" is
+# not rewritten.
+_ibfh_has_escaped_markdown_newlines() {
+	local body="$1"
+	case "$body" in
+	*'\n## '* | *'\n### '* | *'\n- '* | *'\n```'* | *'\n\n'*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# _ibfh_decode_escaped_markdown_newlines: convert literal backslash-n tokens
+# to real newlines after _ibfh_has_escaped_markdown_newlines has established
+# that the body contains escaped Markdown structure.
+_ibfh_decode_escaped_markdown_newlines() {
+	local body="$1"
+	printf '%s' "${body//\\n/$'\n'}"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Advisory checks (always emit to stderr, never abort on their own)
 # ---------------------------------------------------------------------------
@@ -137,11 +160,16 @@ _ibfh_warn_dense_prose() {
 
 # ---------------------------------------------------------------------------
 # normalize: auto-fix issues that can be corrected without human judgment.
-# Currently: insert blank line before code fences that lack one.
+# Currently: decode escaped Markdown newlines and insert blank lines before
+# code fences that lack one.
 # Prints corrected body on stdout.
 # ---------------------------------------------------------------------------
 cmd_normalize() {
 	local body="$1"
+	if _ibfh_has_escaped_markdown_newlines "$body"; then
+		body=$(_ibfh_decode_escaped_markdown_newlines "$body")
+	fi
+
 	local prev="" out="" line
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^'```' ]] && [[ -n "$prev" ]]; then
@@ -164,6 +192,11 @@ cmd_check() {
 	local body="$1"
 	local strict="${AIDEVOPS_BODY_FORMAT_STRICT:-0}"
 	local non_dispatchable=0
+
+	if _ibfh_has_escaped_markdown_newlines "$body"; then
+		log_warn "issue-body-format: body contains literal \\n sequences in Markdown structure; normalize before publishing"
+		body=$(_ibfh_decode_escaped_markdown_newlines "$body")
+	fi
 
 	# Advisory-only checks
 	_ibfh_warn_fence_spacing "$body"
