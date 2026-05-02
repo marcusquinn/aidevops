@@ -61,9 +61,11 @@ write_fixture() {
 check_classification() {
 	local label="$1" body="$2" expected_reason="$3" expected_provider_type="$4"
 	local expected_status="$5" expected_runtime_type="$6" expected_source="$7"
-	local path reason
+	local path reason reason_file
 	path=$(write_fixture "$label" "$body")
-	reason=$(classify_failure_reason "$path")
+	reason_file="$FIXTURE_DIR/$label.reason"
+	classify_failure_reason "$path" >"$reason_file"
+	reason=$(<"$reason_file")
 	assert_eq "$label reason" "$expected_reason" "$reason"
 	assert_eq "$label provider_error_type" "$expected_provider_type" "${_failure_provider_error_type:-}"
 	assert_eq "$label provider_status" "$expected_status" "${_failure_provider_status:-}"
@@ -82,6 +84,7 @@ check_classification \
 check_classification \
 	"openai_server_error" \
 	'{"provider":"openai","error":{"type":"server_error","message":"The server had an error"},"status":500}
+session.processor error: undefined is not an object' \
 	"provider_error" "server_error" "500" "" "output_pattern"
 
 check_classification \
