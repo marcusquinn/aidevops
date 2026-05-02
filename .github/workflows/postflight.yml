@@ -213,8 +213,13 @@ jobs:
         # Install secretlint (Bun for faster install)
         bun install -g secretlint @secretlint/secretlint-rule-preset-recommend
         
-        # Run scan
-        if secretlint "**/*" --format compact 2>/dev/null; then
+        # Run scan. Keep intentional credential-scrubber fixtures out of the
+        # release gate while scanning every other production/source path.
+        SECRET_LINT_TARGETS=(
+          "**/*"
+          "!.agents/scripts/tests/test-credential-transcript-scrub.sh"
+        )
+        if secretlint "${SECRET_LINT_TARGETS[@]}" --secretlintrc .secretlintrc.json --secretlintignore .secretlintignore --format compact 2>/dev/null; then
           echo "**Status**: No secrets detected" >> $GITHUB_STEP_SUMMARY
           echo "secrets_status=passed" >> $GITHUB_OUTPUT
         else
