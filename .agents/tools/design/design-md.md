@@ -25,10 +25,10 @@ model: sonnet
 ## Quick Reference
 
 - **What**: Plain-text markdown capturing a complete visual design system for AI agents
-- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, v0.1.0, format version `alpha`). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
+- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, format version `alpha`; aidevops tracks upstream changes beyond the original v0.1.0 adoption). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
 - **Format**: YAML front matter (machine-readable tokens) + Markdown body (human-readable rationale)
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
-- **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to tailwind/dtcg, spec)
+- **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to tailwind/dtcg, spec; use the `designmd` bin alias in Windows package scripts)
 - **Template**: `templates/DESIGN.md.template`
 - **Library**: `tools/design/library/` (55 brand examples + 12 style templates)
 - **Preview**: `tools/design/library/_template/preview.html.template`
@@ -86,7 +86,7 @@ spacing:
   <scale-level>: <Dimension | number>
 components:
   <component-name>:
-    <token-name>: <string | token reference>
+    <token-name>: <string | number | token reference>
 ---
 ```
 
@@ -102,6 +102,8 @@ components:
 **Typography object:** `fontFamily`, `fontSize`, `fontWeight`, `lineHeight`, `letterSpacing`, `fontFeature`, `fontVariation`. `lineHeight` accepts a Dimension or a unitless multiplier. `fontWeight` accepts a bare number or quoted string.
 
 **Token references** wrap a dotted path in curly braces: `{colors.primary-60}`, `{typography.body-md}`, `{rounded.sm}`. Components may reference composite tokens like `{typography.label-md}`; other groups must reference primitive values.
+
+Component properties may also use bare numeric values where CSS/design systems commonly expect numbers, such as `fontWeight: 600` or `borderWidth: 1`. The upstream model handler stores these numbers as-is.
 
 ### Canonical Section Order
 
@@ -126,7 +128,7 @@ Sections 1-8 are the Google Labs spec. Sections 9-10 are aidevops-specific exten
 
 Adopted from the spec for cross-tool consistency:
 
-- **Colors**: `primary`, `secondary`, `tertiary`, `neutral`, `surface`, `on-surface`, `error`
+- **Colors**: `primary`, `secondary`, `tertiary`, `neutral`, `background`, `surface`, `on-surface`, `error`, `outline`
 - **Typography**: `headline-display`, `headline-lg`, `headline-md`, `body-lg`, `body-md`, `body-sm`, `label-lg`, `label-md`, `label-sm`
 - **Rounded**: `none`, `sm`, `md`, `lg`, `xl`, `full`
 
@@ -146,7 +148,7 @@ components:
     backgroundColor: "{colors.tertiary-container}"
 ```
 
-Valid component properties: `backgroundColor`, `textColor`, `typography`, `rounded`, `padding`, `size`, `height`, `width`. Variants (hover, active, pressed, disabled) are expressed as **separate component entries with a related key name** — NOT nested under the base component.
+Valid component properties: `backgroundColor`, `textColor`, `typography`, `rounded`, `padding`, `size`, `height`, `width`, `fontWeight`, `borderWidth`. Variants (hover, active, pressed, disabled) are expressed as **separate component entries with a related key name** — NOT nested under the base component.
 
 ### Unknown Content Behaviour
 
@@ -162,10 +164,10 @@ Valid component properties: `backgroundColor`, `textColor`, `typography`, `round
 The `@google/design.md` npm package ships four commands. Run the linter at least once before handing a DESIGN.md to a coding agent:
 
 ```bash
-# Lint: seven rules, JSON output, exit 1 on errors
+# Lint: eight rules, JSON output, exit 1 on errors
 npx @google/design.md lint DESIGN.md
 
-# Diff: detect token regressions between versions
+# Diff: detect token regressions between versions, including components
 npx @google/design.md diff DESIGN.md DESIGN-v2.md
 
 # Export: tokens to Tailwind theme config or DTCG tokens.json
@@ -183,13 +185,13 @@ npx @google/design.md spec --rules
 | `broken-ref` | error | Broken/circular token references and unknown component sub-tokens |
 | `missing-primary` | warning | No `primary` color when other colors are defined |
 | `contrast-ratio` | warning | Component `backgroundColor`/`textColor` pairs below WCAG AA (4.5:1) |
-| `orphaned-tokens` | warning | Tokens defined but never referenced by any component |
+| `orphaned-tokens` | warning | Custom tokens defined but never referenced by any component; MD3 baseline families and siblings of referenced MD3 color tokens are exempt |
 | `missing-typography` | warning | Colors defined but no typography tokens exist |
 | `section-order` | warning | Sections out of canonical order |
 | `missing-sections` | info | Optional sections (spacing, rounded) absent when others exist |
 | `token-summary` | info | Count summary per token group |
 
-**aidevops convention**: zero errors mandatory; warnings reviewed before committing. The aidevops library examples may carry orphaned-token and missing-section warnings while migration is in progress — see the library migration task.
+**aidevops convention**: zero errors mandatory; warnings reviewed before committing. The aidevops library examples may carry missing-section or genuinely custom orphaned-token warnings while migration is in progress — see the library migration task.
 
 ## Creating a DESIGN.md
 
@@ -264,7 +266,7 @@ The spec format is `alpha` — expect changes. aidevops mitigations:
 - **Pin the spec URL** in `## Related` so workers see the version they were built against.
 - **Validate before commit** — `npx @google/design.md lint` catches most compatibility breaks.
 - **YAML tokens are forward-safe** — they track the stable DTCG-inspired schema. Prose is free-form and survives format churn.
-- **Component property set is the churn surface** — treat `size`, `height`, `width`, etc. as likely to evolve. Prefer composition (`{typography.label-md}`) over inline values where feasible.
+- **Component property set is the churn surface** — treat `size`, `height`, `width`, `fontWeight`, `borderWidth`, etc. as likely to evolve. Prefer composition (`{typography.label-md}`) over inline values where feasible, but bare numeric component values are valid when they express unitless design intent.
 
 ## Related
 
