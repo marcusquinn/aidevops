@@ -16,6 +16,8 @@ tools:
 
 # Cloudron App Publishing
 
+Distribute Cloudron apps independently using a `CloudronVersions.json` version catalog. Users add the file's URL in their dashboard or install via `cloudron install --versions-url <url>`.
+
 ## Quick Reference
 
 - **Docs**: [docs.cloudron.io/packaging/publishing](https://docs.cloudron.io/packaging/publishing)
@@ -32,6 +34,8 @@ cloudron build          # build and push image (first run prompts for Docker rep
 cloudron versions add   # add version to catalog
 # host CloudronVersions.json at a public URL
 ```
+
+`cloudron versions init` also adds missing publishing fields to `CloudronManifest.json` with placeholder values. Edit all placeholders and scaffolded files before adding a version.
 
 ## Required Manifest Fields
 
@@ -53,6 +57,11 @@ cloudron versions add   # add version to catalog
 | `cloudron build push --id <id>` | Push a remote build to a registry |
 | `cloudron build status --id <id>` | Check status of a remote build |
 
+Build behavior depends on whether a build service is configured:
+
+- **No build service configured** — `cloudron build` uses the local Docker daemon. Requires Docker and registry auth.
+- **Build service configured** — `cloudron build` sends source to the remote Docker Builder app, which builds and pushes the image.
+
 ## Versions Commands
 
 | Command | Purpose |
@@ -63,6 +72,20 @@ cloudron versions add   # add version to catalog
 | `cloudron versions revoke` | Mark latest published version as revoked |
 
 **Rules:** Do not change the manifest or image of a published version. To ship changes: revoke, bump version in `CloudronManifest.json`, rebuild, `cloudron versions add`.
+
+Typical release cycle:
+
+```bash
+# 1. Edit code, bump version in CloudronManifest.json
+# 2. Build and push
+cloudron build
+
+# 3. Add to catalog
+cloudron versions add
+
+# 4. Commit and push CloudronVersions.json to hosting
+git add CloudronVersions.json && git commit -m "release 1.1.0" && git push
+```
 
 ## Distribution
 
