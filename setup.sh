@@ -1057,7 +1057,7 @@ _setup_run_non_interactive() {
 	# Scaffold personal routines repo if not already present (idempotent).
 	# Creates local git repo + private GitHub remote for personal repo only.
 	# Org repos require explicit: aidevops init-routines --org <name>
-	_time_step "setup_routines" _setup_run_noncritical_stage_bounded "Routine setup" "${AIDEVOPS_SETUP_ROUTINES_TIMEOUT:-60}" setup_routines
+	_time_step "setup_routines" _setup_run_noncritical_stage_bounded "Routine setup" "${AIDEVOPS_SETUP_ROUTINES_TIMEOUT:-120}" setup_routines
 	# Install/refresh the privacy-guard pre-push hook in every initialized
 	# repo so TODO/todo/README/ISSUE_TEMPLATE pushes to public GitHub repos
 	# are scanned for private slug leaks (t1968).

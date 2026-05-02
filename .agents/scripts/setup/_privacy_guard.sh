@@ -79,7 +79,7 @@ setup_privacy_guard() {
 		fi
 		result=$(cd -- "$path" && bash "$installer_path" install --guard privacy 2>&1 </dev/null || true)
 		case "$result" in
-		*"pre-push guards"* | *"installed privacy guard"*)
+		*"installed guards:"* | *"installed privacy guard"*)
 			ok=$((ok + 1))
 			;;
 		*"Refusing to overwrite"* | *"NOT managed"*)

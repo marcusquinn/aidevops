@@ -83,7 +83,7 @@ setup_complexity_guard() {
 		fi
 		result=$(cd -- "$path" && bash "$installer_path" install --guard complexity 2>&1 </dev/null || true)
 		case "$result" in
-		*"pre-push guards"*)
+		*"installed guards:"*)
 			ok=$((ok + 1))
 			;;
 		*"Refusing to overwrite"* | *"NOT managed"*)
