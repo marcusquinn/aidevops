@@ -394,6 +394,43 @@ fi
 #   set_origin_label 19638 owner/repo worker \
 #       --add-assignee "$worker_login"
 #######################################
+_set_origin_label_should_rest_fallback() {
+	local err_file="$1"
+	if [[ -f "$err_file" ]] && grep -qiE 'GraphQL: API rate limit( already)? exceeded|rateLimitExceeded' "$err_file" 2>/dev/null; then
+		return 0
+	fi
+	if command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Apply origin label mutual exclusion via REST labels endpoints.
+# Args: $1=issue/pr num, $2=repo slug, $3=new origin, $4..=extra edit flags
+#######################################
+_set_origin_label_rest() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local new_origin="$3"
+	shift 3
+	local _label
+	for _label in "${ORIGIN_LABELS[@]}"; do
+		[[ "$_label" == "$new_origin" ]] && continue
+		gh api -X DELETE "/repos/${repo_slug}/issues/${issue_num}/labels/origin:${_label}" >/dev/null 2>&1 || true
+	done
+	gh api -X POST "/repos/${repo_slug}/issues/${issue_num}/labels" \
+		-f "labels[]=origin:${new_origin}" >/dev/null 2>&1 || return 1
+	if [[ $# -gt 0 ]]; then
+		if command -v _rest_issue_edit >/dev/null 2>&1; then
+			_rest_issue_edit "$issue_num" --repo "$repo_slug" "$@" || return 1
+		else
+			return 1
+		fi
+	fi
+	return 0
+}
+
 set_origin_label() {
 	local issue_num="$1"
 	local repo_slug="$2"
@@ -456,7 +493,25 @@ set_origin_label() {
 		_flags+=("${extra_flags[@]}")
 	fi
 
-	gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+	local _err_file
+	_err_file=$(mktemp -t aidevops-origin-label.XXXXXX) || {
+		gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+		return $?
+	}
+	local _gh_rc=0
+	if gh "$gh_cmd" edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>"$_err_file"; then
+		rm -f "$_err_file"
+		return 0
+	else
+		_gh_rc=$?
+	fi
+	if _set_origin_label_should_rest_fallback "$_err_file" && \
+		_set_origin_label_rest "$issue_num" "$repo_slug" "$new_origin" "${extra_flags[@]}"; then
+		rm -f "$_err_file"
+		return 0
+	fi
+	rm -f "$_err_file"
+	return "$_gh_rc"
 }
 
 #######################################
