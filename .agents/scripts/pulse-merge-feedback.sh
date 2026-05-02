@@ -193,13 +193,26 @@ _transition_issue_for_redispatch() {
 	local linked_issue="$1"
 	local repo_slug="$2"
 	local source_label="$3"
+	local _assignees=""
+	_assignees=$(gh issue view "$linked_issue" --repo "$repo_slug" --json assignees --jq '.assignees[].login' 2>/dev/null) || _assignees=""
+
+	local -a _redispatch_flags=(
+		--add-label "origin:worker"
+		--remove-label "origin:interactive"
+		--remove-label "origin:worker-takeover"
+	)
+	local _assignee
+	while IFS= read -r _assignee; do
+		[[ -n "$_assignee" ]] && _redispatch_flags+=(--remove-assignee "$_assignee")
+	done <<<"$_assignees"
 
 	if declare -F set_issue_status >/dev/null 2>&1; then
 		set_issue_status "$linked_issue" "$repo_slug" "available" \
-			--add-label "$source_label" >/dev/null 2>&1 || true
+			--add-label "$source_label" "${_redispatch_flags[@]}" >/dev/null 2>&1 || true
 	else
 		gh issue edit "$linked_issue" --repo "$repo_slug" \
 			--add-label "status:available" --add-label "$source_label" \
+			"${_redispatch_flags[@]}" \
 			--remove-label "status:queued" --remove-label "status:in-progress" \
 			--remove-label "status:in-review" --remove-label "status:claimed" \
 			>/dev/null 2>&1 || true

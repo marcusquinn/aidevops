@@ -102,6 +102,10 @@ case "$_subcmd" in
 	exit 0
 	;;
 "issue view")
+	if [[ "$*" == *"--json assignees"* ]]; then
+		printf '%s\n' 'stale-owner'
+		exit 0
+	fi
 	if [[ "$*" == *"--json body"* ]]; then
 		cat "${TEST_ROOT}/issue-body.txt"
 		exit 0
@@ -173,6 +177,7 @@ teardown_test_env() {
 # for the dispatch tests to reach their assertions.
 define_helpers_under_test() {
 	local fn fn_src
+	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
 	# Functions to extract, in source order. _build_review_feedback_section
 	# is used by the "build section" tests; the three shared helpers are
 	# required by the refactored _dispatch_pr_fix_worker body.
@@ -286,6 +291,21 @@ test_dispatch_appends_to_issue_body_and_closes_pr() {
 	if ! grep -qF 'status:available' "$GH_LOG"; then
 		print_result "dispatch transitions issue status to available" 1 \
 			"Expected 'status:available' in call log"
+		return 0
+	fi
+	if ! grep -qF 'origin:worker' "$GH_LOG"; then
+		print_result "dispatch marks issue as worker-owned for redispatch" 1 \
+			"Expected 'origin:worker' in call log"
+		return 0
+	fi
+	if ! grep -qF -- '--remove-label origin:interactive' "$GH_LOG"; then
+		print_result "dispatch clears stale interactive origin on redispatch" 1 \
+			"Expected '--remove-label origin:interactive' in call log"
+		return 0
+	fi
+	if ! grep -qF -- '--remove-assignee stale-owner' "$GH_LOG"; then
+		print_result "dispatch removes stale assignee on redispatch" 1 \
+			"Expected '--remove-assignee stale-owner' in call log"
 		return 0
 	fi
 	print_result "dispatch appends body, closes PR, transitions labels" 0

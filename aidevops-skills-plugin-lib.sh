@@ -207,6 +207,33 @@ _plugin_validate_ns() {
 _plugin_field() {
 	local pf="$1" n="$2" f="$3"
 	jq -r --arg n "$n" --arg f "$f" '.plugins[] | select(.name == $n) | .[$f] // empty' "$pf" 2>/dev/null || echo ""
+	return 0
+}
+
+_plugin_regenerate_discovery_index() {
+	local ad="$1"
+	local runtime_generator="$ad/scripts/generate-runtime-config.sh"
+	local index_helper="$ad/scripts/subagent-index-helper.sh"
+
+	if [[ -x "$runtime_generator" ]]; then
+		if bash "$runtime_generator" all >/dev/null 2>&1; then
+			print_success "Runtime config and subagent index regenerated"
+			return 0
+		fi
+		print_warning "Runtime config regeneration encountered issues; trying subagent index only"
+	fi
+
+	if [[ -x "$index_helper" ]]; then
+		if bash "$index_helper" generate >/dev/null 2>&1; then
+			print_success "Subagent index regenerated"
+			return 0
+		fi
+		print_warning "Subagent index regeneration encountered issues"
+		return 1
+	fi
+
+	print_warning "Subagent index helper not found; run 'aidevops update' to regenerate discovery"
+	return 1
 }
 
 _plugin_add() {
@@ -287,6 +314,7 @@ _plugin_add() {
 		'.plugins += [{"name": $name, "repo": $repo, "branch": $branch, "namespace": $ns, "enabled": true}]' "$pf" >"$tmp" && mv "$tmp" "$pf"
 	local loader="$ad/scripts/plugin-loader-helper.sh"
 	[[ -f "$loader" ]] && bash "$loader" hooks "$namespace" init 2>/dev/null || true
+	_plugin_regenerate_discovery_index "$ad" || true
 	print_success "Plugin '$plugin_name' installed to $clone_dir"
 	echo ""
 	echo "  Agents available at: ~/.aidevops/agents/$namespace/"
@@ -336,6 +364,7 @@ _plugin_update() {
 		if git clone --branch "$bn" --depth 1 "$repo" "$cd2" 2>&1; then
 			rm -rf "$cd2/.git"
 			print_success "Plugin '$target' updated"
+			_plugin_regenerate_discovery_index "$ad" || true
 		else
 			print_error "Failed to update plugin '$target'"
 			return 1
@@ -371,6 +400,7 @@ _plugin_update() {
 			return 1
 		}
 		print_success "All plugins updated"
+		_plugin_regenerate_discovery_index "$ad" || true
 	fi
 	return 0
 }
@@ -397,6 +427,7 @@ _plugin_toggle() {
 		}
 		local loader="$ad/scripts/plugin-loader-helper.sh"
 		[[ -f "$loader" ]] && bash "$loader" hooks "$tns" init 2>/dev/null || true
+		_plugin_regenerate_discovery_index "$ad" || true
 		print_success "Plugin '$tn' enabled"
 	else
 		local tns
@@ -410,6 +441,7 @@ _plugin_toggle() {
 		local tmp="${pf}.tmp"
 		jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = false' "$pf" >"$tmp" && mv "$tmp" "$pf"
 		[[ -d "$ad/${tns:?}" ]] && rm -rf "$ad/${tns:?}"
+		_plugin_regenerate_discovery_index "$ad" || true
 		print_success "Plugin '$tn' disabled (config preserved)"
 	fi
 	return 0

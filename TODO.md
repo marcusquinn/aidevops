@@ -3879,12 +3879,14 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3428 fix campaign status router mismatch #auto-dispatch #bug ref:GH#22271
 
-- [ ] t3427 Integrate plugin namespaces into subagent discovery #auto-dispatch #bug ref:GH#22270
+- [x] t3427 Integrate plugin namespaces into subagent discovery #auto-dispatch #bug ref:GH#22270 pr:#22275 completed:2026-05-02
 
 - [ ] t3426 Fix attribution-check-helper printf option crash #auto-dispatch #bug #framework ref:GH#22268
 
 - [ ] t3425 Fix feedback redispatch preserving interactive claim blockers #auto-dispatch #bug #framework ref:GH#22267
 
-- [ ] t3421 Improve worker resource and failure telemetry for throughput tuning #auto-dispatch #enhancement #framework #observability ref:GH#22256
+- [x] t3421 Improve worker resource and failure telemetry for throughput tuning #auto-dispatch #enhancement #framework #observability ref:GH#22256 pr:#22278 completed:2026-05-02
 
 - [ ] t3419 Relax worker timing gates now that OpenAI workers complete work #auto-dispatch #enhancement #framework ref:GH#22254
+
+- [ ] t3429 Support core-style layout in private agent source repos #auto-dispatch #enhancement ref:GH#22274

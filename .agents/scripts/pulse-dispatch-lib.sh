@@ -79,6 +79,21 @@ pulse_dispatch_debug_log() {
 }
 
 #######################################
+# Increment a pulse-stats counter when the stats helper is loaded.
+#
+# Arguments:
+#   $1 - counter name
+# Returns: 0 always (telemetry must never block dispatch).
+#######################################
+_dispatch_stats_increment() {
+	local counter_name="$1"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "$counter_name" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
 # Compute the dispatch capacity for this round.
 #
 # Stdout: "<max_workers> <active_workers> <available_slots>" on success.
@@ -101,6 +116,7 @@ _dispatch_compute_capacity() {
 		is_graphql_budget_sufficient || _cb_rc=$?
 		if [[ "$_cb_rc" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dispatch_max skipped: GraphQL rate-limit circuit breaker tripped (t2690)" >>"$LOGFILE"
+			_dispatch_stats_increment "dispatch_graphql_circuit_blocked"
 			return 1
 		fi
 		# _cb_rc == 2 means API error — fail-open, proceed with dispatch.
@@ -207,6 +223,7 @@ _dispatch_should_skip_candidate() {
 	pulse_dispatch_debug_log "#${issue_number}: check_terminal_blockers rc=${terminal_rc}"
 	if [[ "$terminal_rc" -eq 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — terminal blocker detected (check_terminal_blockers rc=0)" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_terminal_blocker"
 		return 0
 	fi
 
@@ -218,6 +235,7 @@ _dispatch_should_skip_candidate() {
 
 	if fast_fail_is_skipped "$issue_number" "$repo_slug"; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — fast-fail threshold reached" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_fast_fail"
 		return 0
 	fi
 
@@ -231,6 +249,7 @@ _dispatch_should_skip_candidate() {
 		_backoff_output=$(check_dispatch_backoff "$issue_number" "$repo_slug" 2>&1 >/dev/null) || _backoff_rc=$?
 		if [[ "$_backoff_rc" -eq 1 ]]; then
 			echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — ${_backoff_output}" >>"$LOGFILE"
+			_dispatch_stats_increment "dispatch_candidate_skipped_backoff"
 			# Apply NMR when the backoff helper signals 4th+ failure threshold.
 			if printf '%s' "$_backoff_output" | grep -q 'NMR_REQUIRED'; then
 				local _backoff_count=""
@@ -258,10 +277,12 @@ _dispatch_should_skip_candidate() {
 	pulse_dispatch_debug_log "#${issue_number}: body length=${#issue_body}"
 	if [[ -z "$issue_body" || "$issue_body" == "Task created via claim-task-id.sh" ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — placeholder/empty issue body, needs enrichment before dispatch" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_empty_body"
 		return 0
 	fi
 	if [[ "$issue_body" == *"no description provided — enrich before dispatch"* ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — claim-task-id.sh stub body, needs enrichment before dispatch" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_empty_body"
 		return 0
 	fi
 
@@ -433,6 +454,7 @@ _dispatch_graphql_budget_allows_next() {
 	local _budget_rc=0
 	is_graphql_budget_sufficient >/dev/null 2>&1 || _budget_rc=$?
 	if [[ "$_budget_rc" -eq 1 ]]; then
+		_dispatch_stats_increment "dispatch_graphql_circuit_blocked"
 		return 1
 	fi
 	return 0
@@ -532,6 +554,7 @@ _dispatch_check_model_concurrency_cap() {
 
 	if ((opus_inflight >= opus_cap)); then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) deferred — opus_concurrency_cap: inflight=${opus_inflight} cap=${opus_cap} model=${resolved_model} (retry next cycle)" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_deferred_model_cap"
 		return 1
 	fi
 	return 0
@@ -622,6 +645,11 @@ _dispatch_process_candidate() {
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
+		if [[ "$dispatch_rc" -eq 2 ]]; then
+			_dispatch_stats_increment "dispatch_candidate_noop"
+		else
+			_dispatch_stats_increment "dispatch_candidate_failed"
+		fi
 		return 1
 	fi
 
@@ -633,9 +661,11 @@ _dispatch_process_candidate() {
 	check_worker_launch "$issue_number" "$repo_slug" >/dev/null 2>&1 || launch_rc=$?
 	if [[ "$launch_rc" -ne 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) launch validation failed (rc=${launch_rc}, last_failure='${_PULSE_LAST_LAUNCH_FAILURE}')" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_worker_launch_failed"
 		_dispatch_record_launch_failure
 		return 1
 	fi
+	_dispatch_stats_increment "dispatch_worker_spawned"
 
 	# Launch confirmed. Reset consecutive streak and clear throttle if active.
 	_DISPATCH_CONSECUTIVE_NO_WORKER=0

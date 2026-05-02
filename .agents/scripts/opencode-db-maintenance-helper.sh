@@ -670,15 +670,10 @@ cmd_maintain() {
 # when a step fails. Interactive OpenCode TUIs are not stopped; they require
 # --force-opencode so the operator consciously accepts the risk.
 
-_maintenance_window_restart_pulse() {
-	if [[ "${_OCDBM_RESTART_PULSE:-0}" == "1" ]]; then
-		print_info "Restarting pulse after maintenance window..."
-		"$PULSE_LIFECYCLE_HELPER" start || print_warning "pulse restart failed; run pulse-lifecycle-helper.sh start"
-	fi
-	return 0
-}
-
 cmd_maintenance_window() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	local force_opencode=false
 	local keep_sessions="$MAINTENANCE_WINDOW_KEEP_SESSIONS"
 	local skip_archive=false
@@ -722,8 +717,9 @@ cmd_maintenance_window() {
 	if command -v "$PULSE_LIFECYCLE_HELPER" >/dev/null 2>&1; then
 		print_info "Stopping pulse for maintenance window..."
 		"$PULSE_LIFECYCLE_HELPER" stop || print_warning "pulse stop returned non-zero; continuing with DB holder checks"
-		_OCDBM_RESTART_PULSE=1
-		trap _maintenance_window_restart_pulse RETURN
+		local restart_cmd
+		restart_cmd=$(printf '%q start' "$PULSE_LIFECYCLE_HELPER")
+		push_cleanup "$restart_cmd"
 	else
 		print_warning "pulse lifecycle helper not found; skipping pulse stop/start"
 	fi
@@ -760,6 +756,8 @@ cmd_maintenance_window() {
 		print_success "post-maintenance quick_check: ok"
 	fi
 
+	trap - RETURN
+	_run_cleanups
 	return "$rc"
 }
 

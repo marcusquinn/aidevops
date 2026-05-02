@@ -103,7 +103,7 @@ T_25H_AGO=$((NOW - 90000))
 #                      result-name-based fallthrough, NOT exit-code-based —
 #                      this record must count as wc, NOT as of.
 {
-	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0}\n' "$T_5MIN_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-3","result":"watchdog_stall_killed","exit_code":79}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-4","result":"watchdog_stall_continue","exit_code":0}\n' "$T_5MIN_AGO"
@@ -190,6 +190,12 @@ assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 assert_eq "2g: rate_limited = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.rate_limited')"
 assert_eq "2h: other_failure = 1 (NOT 2 — heartbeat exclusion lock)" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
+assert_eq "2h2: rich result_counts includes success bucket" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.result_counts.success')"
+assert_eq "2h3: timing summary includes samples" "7" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
+assert_eq "2h4: recent example carries load context" "2.0" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -253,6 +259,7 @@ assert_contains "5c: human output shows succeeded count" "Succeeded:            
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5e: human output shows pr-check opt-in note" "use --pr-check" "$OUT"
+assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 6: solved:worker attribution query excludes origin-only PR counts.

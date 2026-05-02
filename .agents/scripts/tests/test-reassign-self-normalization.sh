@@ -7,9 +7,10 @@
 #   1. Self-assigns status:queued / status:in-progress issues (regression)
 #   2. Self-assigns status:available + origin:worker + feedback label issues
 #   3. Self-assigns status:available + origin:worker + body marker issues
-#   4. Skips status:available without origin:worker
-#   5. Skips status:available with existing assignees
-#   6. Skips fresh scanner issues (no feedback markers/labels)
+#   4. Normalizes stale interactive ownership on feedback-routed issues
+#   5. Skips status:available without origin:worker
+#   6. Skips status:available with existing assignees
+#   7. Skips fresh scanner issues (no feedback markers/labels)
 #
 # Requires only: bash, a stub gh binary.
 
@@ -108,12 +109,20 @@ elif [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 	exit 0
 elif [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
 	# Track which issues got assigned
+	printf '%s\n' "gh \$*" >> "${TEST_ROOT}/gh-calls.log"
 	echo "\$3" >> "${TEST_ROOT}/assigned.txt"
 	exit 0
 fi
 exit 1
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+get_gh_calls() {
+	if [[ -f "${TEST_ROOT}/gh-calls.log" ]]; then
+		cat "${TEST_ROOT}/gh-calls.log"
+	fi
 	return 0
 }
 
@@ -153,6 +162,9 @@ source_function_under_test() {
 	if ! type print_info &>/dev/null; then
 		print_info() { echo "[INFO] $*"; return 0; }
 	fi
+	if ! type gh_issue_list &>/dev/null; then
+		gh_issue_list() { gh issue list "$@"; return $?; }
+	fi
 	# Stub arrays that label-invariant functions need (we don't test those here)
 	ISSUE_STATUS_LABEL_PRECEDENCE=("done" "in-review" "in-progress" "queued" "claimed" "available" "blocked")
 	ISSUE_TIER_LABEL_RANK=("reasoning" "standard" "simple")
@@ -180,6 +192,7 @@ get_assigned_issues() {
 
 reset_assignments() {
 	rm -f "${TEST_ROOT}/assigned.txt"
+	rm -f "${TEST_ROOT}/gh-calls.log"
 	return 0
 }
 
@@ -279,7 +292,39 @@ test_available_worker_conflict_feedback_label_self_assigns() {
 	return 0
 }
 
-# ─── Test 5: status:available + origin:worker + body marker → self-assigned ───
+# ─── Test 5: stale interactive feedback-routed issue → worker ownership normalized ───
+test_available_conflict_feedback_stale_interactive_claim_normalized() {
+	setup_test_env
+	local json='[
+		{"number": 202, "assignees": [{"login": "marcusquinn"}], "labels": [{"name": "status:available"}, {"name": "origin:interactive"}, {"name": "source:conflict-feedback"}]}
+	]'
+	create_gh_stub "$json"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	source_function_under_test
+
+	_normalize_reassign_self "testrunner" "${TEST_ROOT}/repos.json" "${TEST_ROOT}/bin/dedup-stub.sh"
+
+	local assigned calls
+	assigned=$(get_assigned_issues)
+	calls=$(get_gh_calls)
+	if ! echo "$assigned" | grep -q "202"; then
+		print_result "status:available + conflict-feedback + stale interactive claim → self-assigned" 1 \
+			"Expected issue 202 to be assigned, got: ${assigned:-<empty>}"
+		cleanup_test_env
+		return 0
+	fi
+	if [[ "$calls" != *"--add-label origin:worker"* || "$calls" != *"--remove-label origin:interactive"* || "$calls" != *"--remove-assignee marcusquinn"* ]]; then
+		print_result "status:available + conflict-feedback + stale interactive claim → ownership normalized" 1 \
+			"Expected origin/assignee normalization in gh calls. Got: ${calls:-<empty>}"
+		cleanup_test_env
+		return 0
+	fi
+	print_result "status:available + conflict-feedback + stale interactive claim → normalized and self-assigned" 0
+	cleanup_test_env
+	return 0
+}
+
+# ─── Test 6: status:available + origin:worker + body marker → self-assigned ───
 test_available_worker_body_marker_self_assigns() {
 	setup_test_env
 	local body_marker='<!-- ci-feedback:PR1234 -->'
@@ -304,7 +349,7 @@ test_available_worker_body_marker_self_assigns() {
 	return 0
 }
 
-# ─── Test 6: status:available + NO origin:worker → NOT assigned ───
+# ─── Test 7: status:available + NO origin:worker → NOT assigned ───
 test_available_no_worker_label_skips() {
 	setup_test_env
 	local json='[
@@ -328,7 +373,7 @@ test_available_no_worker_label_skips() {
 	return 0
 }
 
-# ─── Test 7: status:available + existing assignees → NOT assigned ───
+# ─── Test 8: status:available + existing assignees → NOT assigned ───
 test_available_with_assignee_skips() {
 	setup_test_env
 	local json='[
@@ -352,7 +397,7 @@ test_available_with_assignee_skips() {
 	return 0
 }
 
-# ─── Test 8: Fresh scanner issue (status:available, no feedback markers) → NOT assigned ───
+# ─── Test 9: Fresh scanner issue (status:available, no feedback markers) → NOT assigned ───
 test_fresh_scanner_issue_skips() {
 	setup_test_env
 	local json='[
@@ -386,6 +431,7 @@ main() {
 	test_in_progress_no_assignee_self_assigns
 	test_available_worker_ci_feedback_label_self_assigns
 	test_available_worker_conflict_feedback_label_self_assigns
+	test_available_conflict_feedback_stale_interactive_claim_normalized
 	test_available_worker_body_marker_self_assigns
 	test_available_no_worker_label_skips
 	test_available_with_assignee_skips

@@ -17,7 +17,7 @@
 #   - aidevops update
 #   - build-agent workflow (after agent create/promote)
 #
-# Scans: shared agents, custom/, draft/ (all tiers)
+# Scans: shared agents, custom/, draft/ (all tiers), plus enabled plugins
 #
 # Source shared-constants.sh for portable stat functions
 # Performance: pure find + awk pipeline, no per-file reads
@@ -33,8 +33,20 @@ AGENTS_DIR="${HOME}/.aidevops/agents"
 INDEX_FILE="${AGENTS_DIR}/subagent-index.toon"
 
 # Directories to scan for subagents (relative to AGENTS_DIR)
-# Covers all tiers: shared, custom, draft
+# Covers all tiers: shared, custom, draft; plugins are appended separately
 SUBAGENT_DIRS="aidevops content seo tools services workflows memory custom draft"
+
+generate_plugin_agents_block() {
+	local agents_dir="$1"
+	local plugin_loader="${agents_dir}/scripts/plugin-loader-helper.sh"
+
+	if [[ ! -x "$plugin_loader" ]]; then
+		return 0
+	fi
+
+	AIDEVOPS_AGENTS_DIR="$agents_dir" "$plugin_loader" index 2>/dev/null || true
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Generate subagents block: pure find + awk (no per-file reads)
@@ -123,16 +135,18 @@ cmd_generate() {
 		return 1
 	fi
 
-	local tmpfile new_block_file result_file
+	local tmpfile new_block_file plugin_block_file result_file
 	tmpfile=$(mktemp)
 	new_block_file=$(mktemp)
+	plugin_block_file=$(mktemp)
 	result_file=$(mktemp)
 
 	generate_subagents_block "$AGENTS_DIR" >"$new_block_file"
+	generate_plugin_agents_block "$AGENTS_DIR" >"$plugin_block_file"
 
 	if [[ -f "$INDEX_FILE" ]]; then
-		# Preserve existing sections (agents, model_tiers, workflows, scripts)
-		# and replace only the subagents block
+		# Preserve existing sections (agents, model_tiers, workflows, scripts),
+		# replace the subagents block, and refresh plugin_agents at EOF.
 		# Uses sed to delete old block, then inserts new block from file
 		local in_block=0
 		while IFS= read -r line; do
@@ -141,20 +155,32 @@ cmd_generate() {
 				cat "$new_block_file"
 				continue
 			fi
+			if [[ "$line" == "<!--TOON:plugin_agents["* ]]; then
+				in_block=1
+				continue
+			fi
 			if [[ "$in_block" -eq 1 ]]; then
 				[[ "$line" == "-->" ]] && in_block=0
 				continue
 			fi
 			echo "$line"
 		done <"$INDEX_FILE" >"$result_file"
+		if [[ -s "$plugin_block_file" ]]; then
+			echo "" >>"$result_file"
+			cat "$plugin_block_file" >>"$result_file"
+		fi
 		mv "$result_file" "$tmpfile"
 	else
 		# No existing file — generate minimal index with just subagents
-		mv "$new_block_file" "$tmpfile"
+		cat "$new_block_file" >"$tmpfile"
+		if [[ -s "$plugin_block_file" ]]; then
+			echo "" >>"$tmpfile"
+			cat "$plugin_block_file" >>"$tmpfile"
+		fi
 	fi
 
 	mv "$tmpfile" "$INDEX_FILE"
-	rm -f "$new_block_file" "$result_file" 2>/dev/null
+	rm -f "$new_block_file" "$plugin_block_file" "$result_file" 2>/dev/null
 
 	# Count entries for summary
 	local entry_count
@@ -164,9 +190,10 @@ cmd_generate() {
 }
 
 cmd_check() {
+	local regenerate_hint="Regenerate with subagent-index-helper.sh generate"
 	if [[ ! -f "$INDEX_FILE" ]]; then
 		echo "Index not found: ${INDEX_FILE}"
-		echo "Run: subagent-index-helper.sh generate"
+		echo "$regenerate_hint"
 		return 1
 	fi
 
@@ -194,10 +221,30 @@ cmd_check() {
 	echo "Declared subagent rows: ${declared_rows}"
 	echo "Actual TOON rows: ${actual_block_rows}"
 
+	local declared_plugin_rows
+	declared_plugin_rows=$(sed -n 's/^<!--TOON:plugin_agents\[\([0-9][0-9]*\)\]{folder,purpose,key_files}:$/\1/p' "$INDEX_FILE")
+	if [[ -n "$declared_plugin_rows" ]]; then
+		local actual_plugin_rows
+		actual_plugin_rows=$(sed -n '/^<!--TOON:plugin_agents\[/,/^-->/p' "$INDEX_FILE" |
+			awk 'BEGIN { in_block = 0; count = 0 }
+				/^<!--TOON:plugin_agents\[/ { in_block = 1; next }
+				/^-->/ { if (in_block) { in_block = 0 }; next }
+				{ if (in_block && NF > 0) { count++ } }
+				END { print count }')
+		echo "Declared plugin rows: ${declared_plugin_rows}"
+		echo "Actual plugin rows: ${actual_plugin_rows}"
+		if [[ "$declared_plugin_rows" != "$actual_plugin_rows" ]]; then
+			echo ""
+			echo "Error: plugin_agents TOON header cardinality mismatch (declared ${declared_plugin_rows}, actual ${actual_plugin_rows})."
+			echo "$regenerate_hint"
+			return 1
+		fi
+	fi
+
 	if [[ "$declared_rows" != "$actual_block_rows" ]]; then
 		echo ""
 		echo "Error: TOON header cardinality mismatch (declared ${declared_rows}, actual ${actual_block_rows})."
-		echo "Run: subagent-index-helper.sh generate"
+		echo "$regenerate_hint"
 		return 1
 	fi
 
@@ -215,9 +262,19 @@ cmd_check() {
 
 	# Count index leaf entries (pipe-separated names)
 	local index_leaves
-	index_leaves=$(sed -n '/^<!--TOON:subagents/,/^-->/p' "$INDEX_FILE" |
-		grep -v '^<!--' | grep -v '^-->' |
-		tr ',' '\n' | grep '|' | tr '|' '\n' | wc -l | tr -d ' ')
+	index_leaves=$(awk '
+		BEGIN { in_block = 0; count = 0 }
+		/^<!--TOON:(subagents|plugin_agents)\[/ { in_block = 1; next }
+		/^-->/ { if (in_block) { in_block = 0 }; next }
+		{
+			if (in_block && NF > 0) {
+				split($0, cols, ",")
+				if (cols[3] != "") {
+					count += split(cols[3], files, "|")
+				}
+			}
+		}
+		END { print count }' "$INDEX_FILE")
 
 	echo "Actual .md files: ${actual_count}"
 	echo "Index leaf entries: ${index_leaves}"
@@ -239,7 +296,7 @@ Usage:
   subagent-index-helper.sh help        Show this help
 
 The index is read by the OpenCode plugin at startup (1 file read vs 500+).
-It covers shared, custom, and draft agent tiers.
+	It covers shared, custom, draft, and enabled plugin agent tiers.
 
 Called automatically by:
   - setup.sh / aidevops update

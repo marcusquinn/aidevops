@@ -142,6 +142,12 @@ plugin-loader-helper.sh status     # Show plugin system status
 
 Loading priority: (1) `plugin.json` `agents` array if present; (2) scan directory for `.md` files with YAML frontmatter.
 
+The shared `subagent-index.toon` discovery file is regenerated after plugin add,
+update, enable, and disable actions. `subagent-index-helper.sh generate` preserves
+the core `subagents` TOON block and appends `plugin-loader-helper.sh index` output
+as a lightweight `plugin_agents` block, so runtimes can discover plugin namespaces
+from one startup index without reading every plugin file.
+
 ## Lifecycle Hooks
 
 | Hook | When | Use Case |

@@ -114,6 +114,46 @@ _wah_aggregate_metrics() {
 }
 
 #######################################
+# Emit richer metric detail for JSON consumers.
+#
+# $1 — cutoff_epoch (entries with ts < cutoff are dropped).
+# stdout — JSON object containing result counts, duration summary, and examples.
+#######################################
+_wah_metric_details_json() {
+	local cutoff_epoch="$1"
+	local metrics="$WAH_METRICS_FILE"
+
+	if [[ ! -f "$metrics" ]]; then
+		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[]}'
+		return 0
+	fi
+
+	jq -rn --argjson cutoff "$cutoff_epoch" '
+		[inputs | select((.ts // 0) >= $cutoff)] as $w
+		| ($w | map(.duration_ms // 0)) as $durations
+		| {
+			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
+			timing_ms: {
+				samples: ($durations | length),
+				avg: (if ($durations | length) > 0 then (($durations | add) / ($durations | length) | floor) else 0 end),
+				max: (if ($durations | length) > 0 then ($durations | max) else 0 end)
+			},
+			recent_examples: ($w | sort_by(.ts // 0) | reverse | .[0:5] | map({
+				ts,
+				session_key,
+				result,
+				exit_code,
+				failure_reason,
+				duration_ms,
+				load_1min,
+				load_per_cpu
+			}))
+		}' <"$metrics" 2>/dev/null || \
+		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[]}'
+	return 0
+}
+
+#######################################
 # Count pulse-stats counter entries since cutoff.
 # Counter values in pulse-stats.json are arrays of unix-second timestamps.
 # Reading via `// []` handles missing keys without masking real counts.
@@ -193,6 +233,7 @@ _wah_emit_human() {
 	local total="$3" succ="$4" wk="$5" wc="$6" rl="$7" of="$8"
 	local cb="$9" gqlow="${10}" db_skip="${11}" nwbreaker="${12}"
 	local solved_count="${13}" pr_check_state="${14}" repo_label="${15}"
+	local details_json="${16}"
 
 	local divider="==========================================================="
 
@@ -216,6 +257,11 @@ _wah_emit_human() {
 	printf '  Watchdog stall-continued:    %d  (heartbeat, not terminal)\n' "$wc"
 	printf '  Rate-limited:                %d\n' "$rl"
 	printf '  Other failure:               %d\n' "$of"
+	printf '  Result classes:              %s\n' "$(printf '%s' "$details_json" | jq -c '.result_counts' 2>/dev/null || printf '{}')"
+	printf '  Timing ms (avg/max/samples): %s/%s/%s\n' \
+		"$(printf '%s' "$details_json" | jq -r '.timing_ms.avg // 0' 2>/dev/null || printf '0')" \
+		"$(printf '%s' "$details_json" | jq -r '.timing_ms.max // 0' 2>/dev/null || printf '0')" \
+		"$(printf '%s' "$details_json" | jq -r '.timing_ms.samples // 0' 2>/dev/null || printf '0')"
 	printf '\n'
 	printf 'pulse-stats.json (dispatch-side counters):\n'
 	printf '  pulse_dispatch_circuit_broken:           %d\n' "$cb"
@@ -240,6 +286,7 @@ _wah_emit_json() {
 	local total="$4" succ="$5" wk="$6" wc="$7" rl="$8" of="$9"
 	local cb="${10}" gqlow="${11}" db_skip="${12}" nwbreaker="${13}"
 	local solved_count="${14}" pr_check_state="${15}" repo_label="${16}"
+	local details_json="${17}"
 
 	# solved_count may be "?" on gh failure — coerce to null in JSON.
 	local solved_json="$solved_count"
@@ -260,6 +307,7 @@ _wah_emit_json() {
 		--argjson db_skip "$db_skip" \
 		--argjson nwbreaker "$nwbreaker" \
 		--argjson solved_count "$solved_json" \
+		--argjson details "$details_json" \
 		--arg pr_check_state "$pr_check_state" \
 		--arg repo "$repo_label" \
 		'{
@@ -271,7 +319,10 @@ _wah_emit_json() {
 				watchdog_killed: $wk,
 				watchdog_continued: $wc,
 				rate_limited: $rl,
-				other_failure: $of
+				other_failure: $of,
+				result_counts: $details.result_counts,
+				timing_ms: $details.timing_ms,
+				recent_examples: $details.recent_examples
 			},
 			pulse_stats: {
 				pulse_dispatch_circuit_broken: $cb,
@@ -339,9 +390,10 @@ cmd_summary() {
 		cutoff_iso="(unknown)"
 
 	# Aggregate metrics (single jq+awk pass).
-	local agg total succ wk wc rl of
+	local agg total succ wk wc rl of details_json
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch")
 	read -r total succ wk wc rl of <<<"$agg"
+	details_json=$(_wah_metric_details_json "$cutoff_epoch")
 
 	# Pulse-stats counters.
 	local cb gqlow db_skip nwbreaker
@@ -364,12 +416,12 @@ cmd_summary() {
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
 			"$total" "$succ" "$wk" "$wc" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label"
+			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
 			"$total" "$succ" "$wk" "$wc" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
-			"$pr_count" "$pr_check_state" "$repo_label"
+			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	fi
 	return 0
 }

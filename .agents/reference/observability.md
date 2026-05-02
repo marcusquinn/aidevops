@@ -231,6 +231,14 @@ If aidevops attributes are missing in a mode where they should work:
 
 - `observability-helper.sh cache-health` — prompt cache hit rate per model
 - `observability-helper.sh rate-limits` — provider quota telemetry
+- `pulse-current-state-helper.sh --window 15m [--json]` — live pulse throughput
+  snapshot. It aggregates recent dispatch stages, worker outcomes, resource
+  context, GraphQL-budget counters, and top recent examples so “is work
+  happening now?” can be answered from current evidence.
+- `worker-activity-helper.sh summary --since 1h [--json]` — historical worker
+  outcome summary. JSON output includes `metrics.result_counts`,
+  `metrics.timing_ms`, and `metrics.recent_examples` with load context from
+  `headless-runtime-metrics.jsonl`.
 - `session-miner` routine — post-hoc mining of successful/failed sessions
   into the shared memory (SQLite FTS5). Different layer: session-miner
   extracts *lessons* across sessions; OTEL captures per-call *traces*
