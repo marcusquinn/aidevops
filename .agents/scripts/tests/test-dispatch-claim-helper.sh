@@ -149,6 +149,103 @@ EOF
 	return 0
 }
 
+#######################################
+# Build a mock gh executable for stale-worker takeover claim tests.
+# Uses env vars:
+#   MOCK_GH_STATE_DIR, MOCK_DISPATCH_CREATED_AT, MOCK_CLAIM_CREATED_AT
+# Returns: path to mock gh directory via stdout
+#######################################
+create_stale_worker_mock_gh() {
+	local state_dir="$1"
+	local terminal_body="${2:-}"
+	local mock_bin_dir
+	mock_bin_dir="${state_dir}/bin"
+	mkdir -p "$mock_bin_dir"
+
+	cat >"${mock_bin_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+local_state_dir="${MOCK_GH_STATE_DIR:?}"
+post_body_file="${local_state_dir}/post_body.txt"
+terminal_body="${MOCK_TERMINAL_BODY:-}"
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 1
+fi
+shift
+
+endpoint="${1:-}"
+shift || true
+
+if [[ "$endpoint" == "user" ]]; then
+	printf 'mockrunner\n'
+	exit 0
+fi
+
+if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
+	method="GET"
+	body=""
+	while [[ "$#" -gt 0 ]]; do
+		case "$1" in
+		--method)
+			method="$2"
+			shift 2
+			;;
+		--field)
+			if [[ "$2" == body=* ]]; then
+				body="${2#body=}"
+			fi
+			shift 2
+			;;
+		--jq)
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	if [[ "$method" == "POST" ]]; then
+		printf '%s' "$body" >"$post_body_file"
+		printf '999\n'
+		exit 0
+	fi
+
+	if [[ -f "$post_body_file" ]]; then
+		new_body=$(<"$post_body_file")
+	else
+		new_body=""
+	fi
+
+	if [[ -n "$terminal_body" ]]; then
+		printf '[{"id":10,"body_start":"Dispatching worker (PID 12345)","body":"Dispatching worker (PID 12345)","created_at":"%s"},{"id":11,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+			"${MOCK_DISPATCH_CREATED_AT:?}" \
+			"$terminal_body" \
+			"$terminal_body" \
+			"${MOCK_TERMINAL_CREATED_AT:?}" \
+			"$new_body" \
+			"$new_body" \
+			"${MOCK_CLAIM_CREATED_AT:?}"
+		exit 0
+	fi
+
+	printf '[{"id":10,"body_start":"Dispatching worker (PID 12345)","body":"Dispatching worker (PID 12345)","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+		"${MOCK_DISPATCH_CREATED_AT:?}" \
+		"$new_body" \
+		"$new_body" \
+		"${MOCK_CLAIM_CREATED_AT:?}"
+	exit 0
+fi
+
+exit 1
+EOF
+	chmod +x "${mock_bin_dir}/gh"
+	MOCK_TERMINAL_BODY="$terminal_body" printf '%s' "$mock_bin_dir"
+	return 0
+}
+
 print_result() {
 	local test_name="$1"
 	local passed="$2"
@@ -327,15 +424,16 @@ test_claim_rejects_stale_same_runner_claim() {
 		print_result "stale same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# Both the stale claim (id=1) and fresh claim (id=999) should be deleted
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^1$' "${tmp_dir}/delete_ids.log" && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "stale self-claim deletes both stale and fresh claims" 0
+	# GH#17503: claim comments are retained for audit; stale same-runner claims
+	# are rejected without deleting either the old or the fresh comment.
+	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
+		print_result "stale self-claim retains audit comments" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "stale self-claim deletes both stale and fresh claims" 1 "deleted: ${delete_log:-none}"
+		print_result "stale self-claim retains audit comments" 1 "deleted: ${delete_log:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -384,16 +482,110 @@ test_claim_rejects_fresh_same_runner_claim() {
 		print_result "fresh same-runner claim emits CLAIM_STALE_SELF" 1 "output: $output"
 	fi
 
-	# Both claims should be deleted
-	if [[ -f "${tmp_dir}/delete_ids.log" ]] && grep -q '^1$' "${tmp_dir}/delete_ids.log" && grep -q '^999$' "${tmp_dir}/delete_ids.log"; then
-		print_result "fresh same-runner deletes both claims" 0
+	# GH#17503: claim comments are retained for audit; duplicate same-runner
+	# claims are rejected without deleting either comment.
+	if [[ ! -f "${tmp_dir}/delete_ids.log" ]]; then
+		print_result "fresh same-runner retains audit comments" 0
 	else
 		local delete_log=""
 		if [[ -f "${tmp_dir}/delete_ids.log" ]]; then
 			delete_log=$(<"${tmp_dir}/delete_ids.log")
 		fi
-		print_result "fresh same-runner deletes both claims" 1 "deleted: ${delete_log:-none}"
+		print_result "fresh same-runner retains audit comments" 1 "deleted: ${delete_log:-none}"
 	fi
+	return 0
+}
+
+#######################################
+# Test: stale worker takeover claims are annotated (GH#22356)
+#######################################
+test_claim_marks_stale_worker_takeover() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir")"
+
+	local dispatch_created_at claim_created_at output exit_code
+	dispatch_created_at="$(iso_seconds_ago 120)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "stale worker takeover claim exits 0" 0
+	else
+		print_result "stale worker takeover claim exits 0" 1 "got exit $exit_code output: $output"
+	fi
+
+	local post_body=""
+	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
+		post_body=$(<"${tmp_dir}/post_body.txt")
+	fi
+	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+		print_result "stale worker takeover claim includes reason" 0
+	else
+		print_result "stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: terminal worker comments suppress stale takeover annotation (GH#22356)
+#######################################
+test_claim_skips_takeover_reason_after_terminal() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir" "CLAIM_RELEASED reason=worker_complete")"
+
+	local dispatch_created_at terminal_created_at claim_created_at output exit_code
+	dispatch_created_at="$(iso_seconds_ago 120)"
+	terminal_created_at="$(iso_seconds_ago 30)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_TERMINAL_CREATED_AT="$terminal_created_at" \
+		MOCK_TERMINAL_BODY="CLAIM_RELEASED reason=worker_complete" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "terminal worker claim exits 0" 0
+	else
+		print_result "terminal worker claim exits 0" 1 "got exit $exit_code output: $output"
+	fi
+
+	local post_body=""
+	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
+		post_body=$(<"${tmp_dir}/post_body.txt")
+	fi
+	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+		print_result "terminal worker claim omits takeover reason" 1 "body: $post_body"
+	else
+		print_result "terminal worker claim omits takeover reason" 0
+	fi
+
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -413,6 +605,8 @@ main() {
 	test_env_var_defaults
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
+	test_claim_marks_stale_worker_takeover
+	test_claim_skips_takeover_reason_after_terminal
 
 	echo ""
 	echo "Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed"

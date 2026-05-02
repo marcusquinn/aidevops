@@ -199,7 +199,7 @@ set_issue_status() {
 #######################################
 gh_issue_view() {
 	local _first_num="${1:-}"
-	if _rest_should_fallback; then
+	if { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_issue_view; } || _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue view #${_first_num} to REST"
 		_rest_issue_view "$@"
 		return $?
@@ -232,7 +232,7 @@ gh_issue_view() {
 gh_pr_list() {
 	local _has_search=1
 	_rest_args_have_search "$@" || _has_search=0
-	if [[ $_has_search -eq 0 ]] && _rest_should_fallback; then
+	if [[ $_has_search -eq 0 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_pr_list; } || _rest_should_fallback; }; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr list to REST"
 		_rest_pr_list "$@"
 		return $?
@@ -264,7 +264,7 @@ gh_pr_list() {
 #######################################
 gh_pr_view() {
 	local _first_num="${1:-}"
-	if _rest_should_fallback; then
+	if { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_pr_view; } || _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr view #${_first_num} to REST"
 		_rest_pr_view "$@"
 		return $?
@@ -307,7 +307,9 @@ gh_pr_view() {
 gh_issue_list() {
 	local _has_search=1
 	_rest_args_have_search "$@" || _has_search=0
-	if _rest_should_fallback; then
+	local _pool="rest-core"
+	[[ $_has_search -eq 1 ]] && _pool="rest-search"
+	if { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest "$_pool" gh_issue_list; } || _rest_should_fallback; then
 		if [[ $_has_search -eq 1 ]]; then
 			print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue list to /search/issues (--search preserved, t2995)"
 			_rest_issue_search "$@"

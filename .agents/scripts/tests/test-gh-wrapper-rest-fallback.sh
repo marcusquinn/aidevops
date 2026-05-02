@@ -99,6 +99,7 @@ trap 'rm -rf "$TMP"' EXIT
 
 GH_CALLS="${TMP}/gh_calls.log"
 GH_INFO_OUTPUT="${TMP}/info_output.log"
+GH_APP_TOKEN_CALLS="${TMP}/gh_app_token_calls.log"
 
 # Configurable stub behaviour per test via env vars:
 #   STUB_RATE_LIMIT_REMAINING  — what gh api rate_limit returns (default: 5000)
@@ -144,6 +145,7 @@ export -f _gh_with_timeout
 # Post-source stubs. Shell functions beat PATH binaries.
 gh() {
 	printf '%s\n' "$*" >>"${GH_CALLS}"
+	[[ -n "${GH_TOKEN:-}" ]] && printf '%s\n' "$GH_TOKEN" >>"${GH_APP_TOKEN_CALLS}"
 
 	# gh api rate_limit - always succeeds, returns configurable value
 	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
@@ -169,6 +171,28 @@ gh() {
 	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
 		printf '{"number":123,"title":"stub PR"}\n'
+		return 0
+	fi
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
+		local jq_filter=""
+		local i=3
+		while [[ $i -le $# ]]; do
+			if [[ "${!i}" == "--jq" ]]; then
+				local next=$((i + 1))
+				jq_filter="${!next:-}"
+				break
+			fi
+			i=$((i + 1))
+		done
+		local fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343","head":{"ref":"other"},"base":{"ref":"main"}}]'
+		if [[ "$2" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
+			fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}}]'
+		fi
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s\n' "$fixture" | jq -c "$jq_filter"
+		else
+			printf '%s\n' "$fixture"
+		fi
 		return 0
 	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
@@ -691,6 +715,25 @@ else
 fi
 
 # =============================================================================
+# Test 23b: gh_pr_list REST fallback preserves --head and gh-shaped JSON output
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+pr_list_numbers=$(gh_pr_list --repo "owner/repo" --head "feature/auto-20260502-135611-gh22289" \
+	--state all --json number,state,mergedAt,url --jq '.[].number' 2>/dev/null || true)
+
+if [[ "$pr_list_numbers" == "22337" ]] &&
+	grep -qE '^api /repos/owner/repo/pulls\?state=all&per_page=30&head=owner%3Afeature%2Fauto-20260502-135611-gh22289' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^pr list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list REST fallback preserves --head and compact --json/--jq shape"
+else
+	fail "gh_pr_list REST fallback preserves --head and compact --json/--jq shape" \
+		"output=${pr_list_numbers} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
 # Test 24: gh_pr_list keeps --search on GraphQL path when budget is low
 # =============================================================================
 : >"$GH_CALLS"
@@ -746,6 +789,32 @@ fi
 
 unset STUB_PRIMARY_FAIL
 export STUB_RATE_LIMIT_REMAINING=5000
+
+# =============================================================================
+# Test 27: GitHub App auth routes REST-equivalent reads through app token
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$GH_APP_TOKEN_CALLS"
+export AIDEVOPS_GITHUB_APP_CACHE_DIR="$TMP/app-cache"
+export AIDEVOPS_GITHUB_APP_ENABLED=1
+export AIDEVOPS_GITHUB_APP_ID=123
+export AIDEVOPS_GITHUB_APP_INSTALLATION_ID=456
+export AIDEVOPS_GITHUB_APP_REST_FIRST=1
+_github_app_cache_token "456" "cached-app-token" "2099-01-01T00:00:00Z"
+
+gh_issue_view 4243 --repo "owner/repo" --json number --jq '.number' >/dev/null 2>&1 || true
+
+if grep -qE '^api /repos/owner/repo/issues/4243' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue view 4243' "$GH_CALLS" 2>/dev/null &&
+	grep -q 'cached-app-token' "$GH_APP_TOKEN_CALLS" 2>/dev/null; then
+	pass "GitHub App auth routes REST-equivalent issue view through app token"
+else
+	fail "GitHub App auth routes REST-equivalent issue view through app token" \
+		"GH_CALLS=$(cat "$GH_CALLS") | TOKENS=$(cat "$GH_APP_TOKEN_CALLS")"
+fi
+
+unset AIDEVOPS_GITHUB_APP_ENABLED AIDEVOPS_GITHUB_APP_ID AIDEVOPS_GITHUB_APP_INSTALLATION_ID AIDEVOPS_GITHUB_APP_REST_FIRST
 
 # =============================================================================
 # Summary

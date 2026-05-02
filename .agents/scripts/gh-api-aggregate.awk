@@ -3,7 +3,8 @@
 # =============================================================================
 # gh-api-aggregate.awk -- Aggregate gh API call records into JSON (t2902)
 # =============================================================================
-# Reads tab-separated log lines `<unix_ts>\t<caller>\t<path>` and writes a
+# Reads tab-separated log lines `<unix_ts>\t<caller>\t<path>` (legacy) or
+# `<unix_ts>\t<caller>\t<path>\t<auth>\t<pool>\t<decision>\t<budget>` and writes a
 # JSON report keyed by caller. Designed for BSD awk (macOS default) — does
 # not use systime() or other gawk extensions; receives `now` from the caller.
 #
@@ -22,16 +23,49 @@
 
 BEGIN { total = 0 }
 
+function emit_count_section(title, keys, counts,    n, i, j, tmp, key, swap) {
+	printf "  \"%s\": {\n", title
+	n = 0
+	for (key in keys) tmp[++n] = key
+	for (i = 2; i <= n; i++) {
+		for (j = i; j > 1 && tmp[j-1] > tmp[j]; j--) {
+			swap = tmp[j]; tmp[j] = tmp[j-1]; tmp[j-1] = swap
+		}
+	}
+	for (i = 1; i <= n; i++) {
+		key = tmp[i]
+		if (i > 1) print ","
+		printf "    \"%s\": {\"total\": %d}", key, counts[key] + 0
+	}
+	if (n > 0) print ""
+	print "  }"
+}
+
 # Sanity: skip lines that do not parse as <int>\t<caller>\t<path>
-$1 ~ /^[0-9]+$/ && NF == 3 && $1 >= cutoff {
+$1 ~ /^[0-9]+$/ && NF >= 3 && $1 >= cutoff {
 	caller = $2
 	path = $3
+	auth = (NF >= 4 && $4 != "") ? $4 : "unknown"
+	pool = (NF >= 5 && $5 != "") ? $5 : path
+	decision = (NF >= 6 && $6 != "") ? $6 : "unspecified"
+	budget = (NF >= 7) ? $7 : ""
 	callers[caller] = 1
+	auth_keys[auth] = 1
+	pool_keys[pool] = 1
+	decision_keys[decision] = 1
 	if      (path == "graphql")        graphql[caller]++
 	else if (path == "rest")           rest[caller]++
 	else if (path == "search-graphql") sg[caller]++
 	else if (path == "search-rest")    sr[caller]++
 	else                                other[caller]++
+	auth_counts[auth]++
+	pool_counts[pool]++
+	decision_counts[decision]++
+	if (budget ~ /^[0-9]+$/) {
+		budget_keys[pool] = 1
+		budget_last[pool] = budget
+		if (!(pool in budget_min) || budget + 0 < budget_min[pool] + 0) budget_min[pool] = budget
+	}
 	total++
 }
 
@@ -70,6 +104,27 @@ END {
 		printf "    }"
 	}
 	if (n > 0) print ""
+	print "  },"
+	emit_count_section("by_auth_mode", auth_keys, auth_counts)
+	print ","
+	emit_count_section("by_api_pool", pool_keys, pool_counts)
+	print ","
+	emit_count_section("by_route_decision", decision_keys, decision_counts)
+	print ","
+	print "  \"budget_by_pool\": {"
+	nb = 0
+	for (b in budget_keys) bkeys[++nb] = b
+	for (i = 2; i <= nb; i++) {
+		for (j = i; j > 1 && bkeys[j-1] > bkeys[j]; j--) {
+			t = bkeys[j]; bkeys[j] = bkeys[j-1]; bkeys[j-1] = t
+		}
+	}
+	for (i = 1; i <= nb; i++) {
+		b = bkeys[i]
+		if (i > 1) print ","
+		printf "    \"%s\": {\"min_remaining\": %d, \"last_remaining\": %d}", b, budget_min[b] + 0, budget_last[b] + 0
+	}
+	if (nb > 0) print ""
 	print "  }"
 	print "}"
 }

@@ -137,4 +137,18 @@ The `.agents/` directory organizes knowledge along two axes: **strategy** (what 
 
 **Flat files over nested folders:** Prefer prefix-based names over subdirectories. Max depth from `.agents/`: 2 levels. See `tools/build-agent/build-agent.md`.
 
+## Top-Level Repository Layout Policy
+
+The repository root is a public contract, not a scratch space. New top-level files or directories must fit one of these classes and be added to `.agents/configs/repo-layout-policy.conf` with a one-line rationale before they are introduced:
+
+- **Public entrypoints:** user-facing commands and repo metadata such as `setup.sh`, `aidevops.sh`, `README.md`, `LICENSE`, `VERSION`, and governance docs.
+- **Framework internals:** implementation and source-of-truth framework assets such as `.agents/`, `configs/`, `templates/`, `tests/`, `setup-modules/`, and temporary root shell modules pending cleanup.
+- **Runtime and plugin surfaces:** runtime integration packages such as `.claude-plugin/`, `.opencode/`, and editor/runtime config files.
+- **Packaging surfaces:** distribution and package-manager assets such as `bin/`, `scripts/`, `homebrew/`, `package.json`, and lock/dependency files.
+- **Repo-local data planes:** underscore-prefixed local working areas such as `_knowledge/`, `_cases/`, `_campaigns/`, `_inbox/`, `_feedback/`, `_projects/`, and `_performance/`.
+- **Docs and planning:** documentation and task surfaces such as `.wiki/`, `docs/`, `todo/`, `TODO.md`, and model/reference docs.
+- **Generated or ignored tooling surfaces:** intentionally tracked tool config and generated-input files such as `.github/`, `.qlty/`, lint configs, Repomix configs, and scanner config.
+
+Run `.agents/scripts/repo-layout-audit-helper.sh --check` to audit tracked top-level drift. The audit is non-destructive: it reports unknown paths and recommends likely homes, but never moves files.
+
 **Ingested skills** retain the `-skill` suffix as a provenance marker for automated upstream update checks. On ingestion, upstream structure is transposed to `{name}-skill.md` + `{name}-skill/`. See `tools/build-agent/add-skill.md`.

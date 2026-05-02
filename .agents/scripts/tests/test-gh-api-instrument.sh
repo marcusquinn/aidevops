@@ -74,11 +74,12 @@ gh_record_call graphql test-instrument
 gh_record_call search-graphql test-instrument
 gh_record_call search-rest test-instrument
 gh_record_call rest test-instrument
+gh_record_call rest test-instrument github-app rest-core rest-preferred 4999
 
 assert_file_exists "log file created" "$AIDEVOPS_GH_API_LOG"
 
 line_count=$(wc -l <"$AIDEVOPS_GH_API_LOG" | tr -d ' ')
-assert_eq "log has 5 lines" "5" "$line_count"
+assert_eq "log has 6 lines" "6" "$line_count"
 
 # --- Test 2: aggregate and validate JSON shape -------------------------
 gh_aggregate_calls
@@ -94,10 +95,10 @@ else
 fi
 
 total_calls=$(jq -r '._meta.total_calls' "$AIDEVOPS_GH_API_REPORT")
-assert_eq "report total_calls = 5" "5" "$total_calls"
+assert_eq "report total_calls = 6" "6" "$total_calls"
 
 rest_count=$(jq -r '.by_caller["test-instrument"].rest_calls' "$AIDEVOPS_GH_API_REPORT")
-assert_eq "rest_calls = 2" "2" "$rest_count"
+assert_eq "rest_calls = 3" "3" "$rest_count"
 
 graphql_count=$(jq -r '.by_caller["test-instrument"].graphql_calls' "$AIDEVOPS_GH_API_REPORT")
 assert_eq "graphql_calls = 1" "1" "$graphql_count"
@@ -108,8 +109,17 @@ assert_eq "search_graphql_calls = 1" "1" "$search_graphql_count"
 search_rest_count=$(jq -r '.by_caller["test-instrument"].search_rest_calls' "$AIDEVOPS_GH_API_REPORT")
 assert_eq "search_rest_calls = 1" "1" "$search_rest_count"
 
+app_auth_count=$(jq -r '.by_auth_mode["github-app"].total' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "github-app auth count = 1" "1" "$app_auth_count"
+
+rest_core_count=$(jq -r '.by_api_pool["rest-core"].total' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "rest-core pool count = 3" "3" "$rest_core_count"
+
+budget_min=$(jq -r '.budget_by_pool["rest-core"].min_remaining' "$AIDEVOPS_GH_API_REPORT")
+assert_eq "rest-core budget min recorded" "4999" "$budget_min"
+
 # --- Test 3: trim respects max-lines threshold ------------------------
-# Set a tiny max so we trigger a trim with our 5-line log.
+# Set a tiny max so we trigger a trim with our 6-line log.
 export AIDEVOPS_GH_API_LOG_MAX_LINES=4
 # Re-source so the env override is picked up by the GH_API_LOG_MAX_LINES
 # constant (it's evaluated at source time).

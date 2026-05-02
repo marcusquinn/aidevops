@@ -331,7 +331,11 @@ if [[ -n "$_SHIM_READ_REWRITE" ]]; then
 		# objects plus jq filtering, so rewriting --json calls is not semantically
 		# equivalent. Preserve gate safety by leaving those calls on GraphQL and
 		# let current-state telemetry count them as unavoidable read pressure.
-		_shim_read_has_json_flag "$@" && return 1
+		# Exception: _rest_pr_list now maps the common `gh pr list --json` contract
+		# (including --head filtering) onto REST, so it remains safe to rewrite.
+		if [[ "$_SHIM_READ_REWRITE" != "pr:list" ]]; then
+			_shim_read_has_json_flag "$@" && return 1
+		fi
 
 		# Check GraphQL budget. If above threshold, return 1 to fall through.
 		_rest_should_fallback || return 1

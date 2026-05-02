@@ -3896,7 +3896,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3421 Improve worker resource and failure telemetry for throughput tuning #auto-dispatch #enhancement #framework #observability ref:GH#22256 pr:#22278 completed:2026-05-02
 
-- [ ] t3419 Relax worker timing gates now that OpenAI workers complete work #auto-dispatch #enhancement #framework ref:GH#22254
+- [x] t3419 Relax worker timing gates now that OpenAI workers complete work #auto-dispatch #enhancement #framework ref:GH#22254 pr:#22392 completed:2026-05-02
 
 - [x] t3429 Support core-style layout in private agent source repos #auto-dispatch #enhancement ref:GH#22274 pr:#22382 completed:2026-05-02
 
@@ -3908,7 +3908,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3430 repair stale TODO status for completed data-plane tasks #auto-dispatch #bug #framework ref:GH#22280
 
-- [ ] t3434 file future-plane parent tasks for projects performance feedback #auto-dispatch #enhancement #framework ref:GH#22285
+- [x] t3434 file future-plane parent tasks for projects performance feedback #auto-dispatch #enhancement #framework ref:GH#22285 pr:#22385 completed:2026-05-02
 
 - [x] t3435 Measure CPU and RAM per pulse and worker outcome #auto-dispatch #enhancement ref:GH#22286 pr:#22342 completed:2026-05-02
 
@@ -3971,7 +3971,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3463 Fix gh pr list REST fallback head filtering #auto-dispatch #bug ref:GH#22344
 
-- [ ] t3462 Fix BSD awk syntax in efficiency speed collection #auto-dispatch #bug ref:GH#22339
+- [x] t3462 Fix BSD awk syntax in efficiency speed collection #auto-dispatch #bug ref:GH#22339 pr:#22374 completed:2026-05-02
 
 - [ ] t3474 Align research command names and add deep-research workflow #auto-dispatch #enhancement ref:GH#22369
 
@@ -3981,7 +3981,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3471 Clean up root shell script layout #auto-dispatch #bug #framework ref:GH#22366
 
-- [ ] t3470 Make manual worker origin-label ceremony REST-backed and fail-closed #auto-dispatch #bug ref:GH#22365
+- [x] t3470 Make manual worker origin-label ceremony REST-backed and fail-closed #auto-dispatch #bug ref:GH#22365 pr:#22391 completed:2026-05-02
 
 - [ ] t3469 Roll out productive headless OpenAI-first defaults and runner diagnostics #auto-dispatch #enhancement ref:GH#22363
 

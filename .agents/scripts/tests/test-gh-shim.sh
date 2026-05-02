@@ -62,6 +62,32 @@ cat >"$TMP/bin/gh" <<'EOF'
 for arg in "$@"; do
 	printf '%s\n' "$arg" >>"$STUB_GH_LOG"
 done
+if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
+	printf '%s\n' "${STUB_RATE_LIMIT_REMAINING:-5000}"
+	exit 0
+fi
+if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
+	jq_filter=""
+	i=3
+	while [[ $i -le $# ]]; do
+		if [[ "${!i}" == "--jq" ]]; then
+			next=$((i + 1))
+			jq_filter="${!next:-}"
+			break
+		fi
+		i=$((i + 1))
+	done
+	fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337"},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343"}]'
+	if [[ "$2" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
+		fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337"}]'
+	fi
+	if [[ -n "$jq_filter" ]]; then
+		printf '%s\n' "$fixture" | jq -c "$jq_filter"
+	else
+		printf '%s\n' "$fixture"
+	fi
+	exit 0
+fi
 EOF
 chmod +x "$TMP/bin/gh"
 
@@ -80,6 +106,7 @@ chmod +x "$TMP/scripts/gh-signature-helper.sh"
 cp "$SHIM" "$TMP/scripts/gh"
 chmod +x "$TMP/scripts/gh"
 cp "$REPO_DIR/.agents/scripts/gh-api-instrument.sh" "$TMP/scripts/gh-api-instrument.sh"
+cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts/shared-gh-wrappers-rest-fallback.sh"
 
 # Put stub gh in PATH (for shim's REAL_GH discovery) and the shim in
 # $TMP/scripts (for direct invocation in tests).
@@ -296,6 +323,26 @@ if [[ "$argv" == $'pr\nview\n123\n--repo\nowner/repo\n--json\nnumber,statusCheck
 	_pass "--json read stays on GraphQL with operation label"
 else
 	_fail "--json read GraphQL preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+# =============================================================================
+# Test 13: gh pr list --json can REST rewrite while preserving head and JSON shape
+# =============================================================================
+echo ""
+echo "Test 13: gh pr list --json REST rewrite preserves --head"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-json-pr-list.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+output=$(STUB_RATE_LIMIT_REMAINING=0 "$SHIM_RUN" pr list --repo owner/repo \
+	--head feature/auto-20260502-135611-gh22289 --state all \
+	--json number,state,mergedAt,url --jq '.[].number' 2>/dev/null || true)
+argv=$(_read_argv)
+if [[ "$output" == "22337" ]] &&
+	[[ "$argv" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]] &&
+	grep -q $'\tgh_pr_list\trest' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "gh pr list --json uses REST fallback with qualified --head"
+else
+	_fail "gh pr list --json REST fallback" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
 fi
 
 # =============================================================================
