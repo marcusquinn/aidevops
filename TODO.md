@@ -3910,3 +3910,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3438 Audit pulse GitHub API prefetch for need-to-know caching #auto-dispatch #enhancement ref:GH#22288
 
 - [ ] t3440 Review headless prompt delivery for duplication and cleanup #auto-dispatch #enhancement ref:GH#22290
+
+- [ ] t3441 Add private agent-pack manifest and capability registry #auto-dispatch #enhancement ref:GH#22291
+
+- [ ] t3442 Add data-flow contracts and privacy tiers to agent packs #auto-dispatch #enhancement ref:GH#22292
+
+- [ ] t3443 Investigate repeated dispatch claim comments without worker spawn #auto-dispatch #bug ref:GH#22293
+
+- [ ] t3444 Clean up stale dispatch timing recorder processes #auto-dispatch #bug ref:GH#22296
+
+- [ ] t3445 Ignore generated Beads export state #auto-dispatch #bug ref:GH#22297
