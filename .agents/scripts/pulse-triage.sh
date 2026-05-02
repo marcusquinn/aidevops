@@ -159,6 +159,7 @@ _issue_needs_consolidation() {
 			+ "|^<!-- (nmr-hold|aidevops-signed|ops:start|provenance:start)"
 			+ "|^<!-- WORKER_SUPERSEDED"
 			+ "|^<!-- stale-recovery-tick"
+			+ "|^<!-- cost-circuit-breaker:fired"
 			+ "|CLAIM_RELEASED reason="
 			+ "|^(Worker failed:|## Worker Watchdog Kill)"
 			+ "|^(\\*\\*)?Stale assignment recovered"

@@ -202,6 +202,14 @@ graphql_budget = {
     'skipped_low_count': counter_hits.get('pulse_cycle_skipped_graphql_low', 0),
     'circuit_broken_count': counter_hits.get('pulse_dispatch_circuit_broken', 0),
     'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
+    'force_rest_reads_count': counter_hits.get('pulse_graphql_low_force_rest_reads', 0),
+    'reserve_mode_count': counter_hits.get('pulse_graphql_budget_reserve_mode', 0),
+    'deferred_stage_count': counter_hits.get('pulse_graphql_budget_stage_deferred', 0),
+    'deferred_stages': {
+        key[len('pulse_graphql_budget_stage_deferred_'):]: count
+        for key, count in sorted(counter_hits.items())
+        if key.startswith('pulse_graphql_budget_stage_deferred_')
+    },
     'gauges': {k: v for k, v in gauge_values.items() if 'graphql' in k.lower() or 'budget' in k.lower() or 'rate' in k.lower()},
 }
 dispatch_pacing = {
@@ -243,6 +251,12 @@ try:
     ).strip() or graphql_budget_status
 except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
     pass
+dispatch_api_blocked = (
+    graphql_budget_status.startswith('TRIPPED:')
+    or graphql_budget['skipped_low_count'] > 0
+    or graphql_budget['circuit_broken_count'] > 0
+    or pre_launch_blockers.get('graphql_circuit_breaker', 0) > 0
+)
 
 api_consumers = []
 api_pressure = {
@@ -360,6 +374,7 @@ result = {
     'worker_worktrees': len(worktrees),
     'dispatch_alive': bool(stage_records or metrics or counter_hits or worktrees),
     'graphql_budget_status': graphql_budget_status,
+    'dispatch_api_blocked': dispatch_api_blocked,
     'top_graphql_consumers': api_consumers,
     'api_call_pressure': api_pressure,
     'prefetch_cache': prefetch_cache,
@@ -382,6 +397,7 @@ else:
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
+    print(f'- Dispatch API blocked by GraphQL: {str(dispatch_api_blocked).lower()}')
     if api_consumers:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')

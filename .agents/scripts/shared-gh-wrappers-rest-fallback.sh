@@ -180,6 +180,10 @@ _rest_should_fallback() {
 	# Test/CI override: set _GH_SHOULD_FALLBACK_OVERRIDE=1 to force true without
 	# requiring a real rate-limit state. Use in unit tests and manual smoke runs.
 	[[ "${_GH_SHOULD_FALLBACK_OVERRIDE:-0}" == "1" ]] && return 0
+	# Pulse-cycle override: when the orchestrator has already observed low
+	# GraphQL headroom, route supported read/list wrappers through REST without
+	# every subprocess re-querying rate_limit or attempting one more GraphQL call.
+	[[ "${AIDEVOPS_GH_FORCE_REST_READS:-0}" == "1" ]] && return 0
 	local remaining="${1:-}"
 	if [[ -z "$remaining" ]]; then
 		local _now=0

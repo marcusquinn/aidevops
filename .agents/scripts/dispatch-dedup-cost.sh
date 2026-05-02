@@ -54,10 +54,10 @@ _get_cost_budget_for_tier() {
 	local tier="$1"
 	local _conf="${SCRIPT_DIR}/../configs/dispatch-cost-budgets.conf"
 	# Defaults match the documented tier sizing (see dispatch-cost-budgets.conf)
-	local COST_BUDGET_SIMPLE=30000
-	local COST_BUDGET_STANDARD=100000
-	local COST_BUDGET_THINKING=300000
-	local COST_BUDGET_DEFAULT=100000
+	local COST_BUDGET_SIMPLE=800000
+	local COST_BUDGET_STANDARD=800000
+	local COST_BUDGET_THINKING=800000
+	local COST_BUDGET_DEFAULT=800000
 	if [[ -f "$_conf" ]]; then
 		# shellcheck source=/dev/null
 		source "$_conf"
@@ -305,6 +305,16 @@ _check_cost_budget() {
 	if [[ "$spent" -le "$budget" ]]; then
 		# Under budget — allow dispatch
 		return 1
+	fi
+
+	local _cost_trip_msg
+	_cost_trip_msg="cost-circuit-breaker:fired issue=#${issue_number} repo=${repo_slug} tier=${tier#tier:} spent=${spent} budget=${budget} attempts=${attempts}"
+	if [[ -n "${LOGFILE:-}" ]]; then
+		printf '[pulse-wrapper] %s\n' "$_cost_trip_msg" >>"$LOGFILE" 2>/dev/null || true
+	fi
+	local _audit_log_helper="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/audit-log-helper.sh"
+	if [[ -x "$_audit_log_helper" ]]; then
+		"$_audit_log_helper" log cost-circuit-breaker "$_cost_trip_msg" >/dev/null 2>&1 || true
 	fi
 
 	# Over budget — check if needs-maintainer-review is already set (idempotency).

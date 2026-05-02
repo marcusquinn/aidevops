@@ -521,6 +521,7 @@ _consolidation_substantive_comments() {
 			and (.body | test("^<!-- (nmr-hold|aidevops-signed|ops:start|provenance:start)") | not)
 			and (.body | test("^<!-- WORKER_SUPERSEDED") | not)
 			and (.body | test("^<!-- stale-recovery-tick") | not)
+			and (.body | test("^<!-- cost-circuit-breaker:fired") | not)
 			and (.body | test("CLAIM_RELEASED reason=") | not)
 			and (.body | test("^(Worker failed:|## Worker Watchdog Kill)") | not)
 			and (.body | test("^(\\*\\*)?Stale assignment recovered") | not)

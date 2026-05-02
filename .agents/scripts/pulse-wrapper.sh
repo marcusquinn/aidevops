@@ -346,6 +346,108 @@ if ! type config_get >/dev/null 2>&1; then
 	}
 fi
 
+# ---------------------------------------------------------------------------
+# GraphQL budget priority scheduler (GH#22479)
+#
+# Defines lightweight helpers before the extracted pulse modules are sourced so
+# modules such as pulse-dispatch-engine.sh can call them at runtime. Low budget
+# reserves GraphQL for merge readiness, dispatch capacity checks, and worker
+# launch safety gates; optional enrichment/dashboard/routine/cache stages defer.
+# ---------------------------------------------------------------------------
+_pulse_graphql_budget_priority_decision() {
+	local _threshold="${AIDEVOPS_PULSE_OPTIONAL_BUDGET_THRESHOLD:-${AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD:-1250}}"
+	[[ "$_threshold" =~ ^[0-9]+$ ]] || _threshold=1250
+	local _rate_json=""
+	if declare -F _cb_rate_limit_json >/dev/null 2>&1; then
+		_rate_json=$(_cb_rate_limit_json normal 2>/dev/null) || _rate_json=""
+	else
+		_rate_json=$(gh api rate_limit 2>/dev/null) || _rate_json=""
+	fi
+	if [[ -z "$_rate_json" ]]; then
+		printf 'unknown ? ? %s\n' "$_threshold"
+		return 0
+	fi
+	local _remaining="" _limit=""
+	_remaining=$(printf '%s' "$_rate_json" | jq -r '.resources.graphql.remaining // ""' 2>/dev/null) || _remaining=""
+	_limit=$(printf '%s' "$_rate_json" | jq -r '.resources.graphql.limit // ""' 2>/dev/null) || _limit=""
+	if [[ ! "$_remaining" =~ ^[0-9]+$ ]] || [[ ! "$_limit" =~ ^[0-9]+$ ]]; then
+		printf 'unknown ? ? %s\n' "$_threshold"
+		return 0
+	fi
+	if [[ "$_remaining" -lt "$_threshold" ]]; then
+		printf 'reserve %s %s %s\n' "$_remaining" "$_limit" "$_threshold"
+		return 0
+	fi
+	printf 'normal %s %s %s\n' "$_remaining" "$_limit" "$_threshold"
+	return 0
+}
+
+_pulse_set_graphql_budget_priority() {
+	local _decision="" _class="" _remaining="" _limit="" _threshold=""
+	_decision=$(_pulse_graphql_budget_priority_decision)
+	read -r _class _remaining _limit _threshold <<<"$_decision"
+	[[ -n "$_class" ]] || _class="unknown"
+	export AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS="$_class"
+	export AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING="$_remaining"
+	export AIDEVOPS_PULSE_GRAPHQL_BUDGET_LIMIT="$_limit"
+	export AIDEVOPS_PULSE_GRAPHQL_BUDGET_THRESHOLD="$_threshold"
+	if [[ "$_class" == "reserve" ]]; then
+		echo "[pulse-wrapper] GraphQL budget reserve mode: remaining=${_remaining}/${_limit} < optional_threshold=${_threshold}; deferring optional stages, preserving merge/dispatch budget (GH#22479)" >>"$LOGFILE"
+		if declare -F pulse_stats_increment >/dev/null 2>&1; then
+			pulse_stats_increment "pulse_graphql_budget_reserve_mode" 2>/dev/null || true
+		fi
+	elif [[ "$_class" == "unknown" ]]; then
+		echo "[pulse-wrapper] GraphQL budget priority unknown — proceeding fail-open for optional stages (GH#22479)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+_pulse_should_defer_budget_priority_stage() {
+	local _stage="$1"
+	[[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS:-normal}" == "reserve" ]] || return 1
+	case "$_stage" in
+		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
+			return 0
+			;;
+		*)
+			return 1
+			;;
+	esac
+}
+
+_pulse_defer_budget_priority_stage() {
+	local _stage="$1"
+	echo "[pulse-wrapper] budget-priority: deferred optional stage '${_stage}' (class=${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS:-unknown}, remaining=${AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING:-?}/${AIDEVOPS_PULSE_GRAPHQL_BUDGET_LIMIT:-?}, threshold=${AIDEVOPS_PULSE_GRAPHQL_BUDGET_THRESHOLD:-?})" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_graphql_budget_stage_deferred" 2>/dev/null || true
+		pulse_stats_increment "pulse_graphql_budget_stage_deferred_${_stage}" 2>/dev/null || true
+	fi
+	return 0
+}
+
+_pulse_run_optional_stage() {
+	local _stage="$1"
+	shift
+	if _pulse_should_defer_budget_priority_stage "$_stage"; then
+		_pulse_defer_budget_priority_stage "$_stage"
+		return 0
+	fi
+	"$@"
+	return $?
+}
+
+_pulse_run_optional_stage_with_timeout() {
+	local _stage="$1"
+	local _timeout="$2"
+	shift 2
+	if _pulse_should_defer_budget_priority_stage "$_stage"; then
+		_pulse_defer_budget_priority_stage "$_stage"
+		return 0
+	fi
+	run_stage_with_timeout "$_stage" "$_timeout" "$@"
+	return $?
+}
+
 # Configuration defaults, validation, path constants, and per-cycle health
 # counters extracted to pulse-wrapper-config.sh (GH#20781).
 # shellcheck source=./pulse-wrapper-config.sh
@@ -741,6 +843,9 @@ _pulse_execute_self_check() {
 		_pulse_setup_dry_run_mode
 		_pulse_run_deterministic_pipeline
 		_pulse_maybe_run_llm_supervisor
+		_pulse_set_graphql_budget_priority
+		_pulse_run_optional_stage
+		_pulse_run_optional_stage_with_timeout
 		_carry_forward_pr_diff
 		_dispatch_pr_fix_worker
 		_close_conflicting_pr
@@ -1598,25 +1703,31 @@ main() {
 		return 0
 	fi
 
-	# t3027: orchestration-level GraphQL-aware idle skip. is_graphql_budget_sufficient
-	# (sourced via pulse-dispatch-engine.sh → pulse-rate-limit-circuit-breaker.sh)
-	# returns 1 when GraphQL remaining is at or below the configured threshold
-	# (default 30% via .agents/configs/pulse-rate-limit.conf). Hoisting this
-	# check above prefetch_state and the LLM run prevents the cycle from
-	# burning a doomed ~210s prefetch + multi-minute LLM run + dispatch
-	# ceremony when budget is exhausted — the canonical t2690 invocation
-	# sits inside the dispatch_max and only stops dispatch, not
-	# the upstream API consumers. Fail-open (rc=2) proceeds so a flaky
-	# rate_limit endpoint can't wedge the pulse permanently.
-	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
-		local _t3027_rl_rc=0
-		is_graphql_budget_sufficient || _t3027_rl_rc=$?
-		if [[ "$_t3027_rl_rc" -eq 1 ]]; then
-			echo "[pulse-wrapper] Cycle skipped: GraphQL budget below circuit-breaker threshold (t3027 — orchestration-level skip; saves prefetch + LLM run cost)" >>"$LOGFILE"
-			if declare -F pulse_stats_increment >/dev/null 2>&1; then
-				pulse_stats_increment "pulse_cycle_skipped_graphql_low" 2>/dev/null || true
+	# GH#22479: classify budget for priority scheduling instead of skipping the
+	# whole cycle. Merge/dispatch/safety stages keep first claim; optional stages
+	# defer in reserve mode. The t2690 dispatch breaker still fail-closes actual
+	# worker launch at the emergency floor.
+	_pulse_set_graphql_budget_priority
+
+	# GH#22478: if the circuit breaker has not tripped but GraphQL headroom is
+	# already inside the REST fallback reserve, force supported read/list wrappers
+	# to use REST for the whole pulse cycle. This avoids every stage/subprocess
+	# spending a fresh GraphQL list call before discovering the same low-budget
+	# state. GraphQL-only operations and security gates still run through their
+	# existing paths; this only affects wrappers with REST-equivalent translators.
+	unset AIDEVOPS_GH_FORCE_REST_READS
+	if [[ "${AIDEVOPS_PULSE_FORCE_REST_READS_ON_LOW_GRAPHQL:-1}" == "1" ]] && declare -F _cb_rate_limit_json >/dev/null 2>&1; then
+		local _gh22478_rate_json="" _gh22478_remaining="" _gh22478_threshold="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"
+		_gh22478_rate_json=$(_cb_rate_limit_json normal 2>/dev/null) || _gh22478_rate_json=""
+		if [[ -n "$_gh22478_rate_json" ]]; then
+			_gh22478_remaining=$(printf '%s' "$_gh22478_rate_json" | jq -r '.resources.graphql.remaining // ""' 2>/dev/null) || _gh22478_remaining=""
+			if [[ "$_gh22478_remaining" =~ ^[0-9]+$ && "$_gh22478_threshold" =~ ^[0-9]+$ && "$_gh22478_remaining" -le "$_gh22478_threshold" ]]; then
+				export AIDEVOPS_GH_FORCE_REST_READS=1
+				echo "[pulse-wrapper] GraphQL remaining ${_gh22478_remaining} <= REST fallback threshold ${_gh22478_threshold}; forcing REST-backed read/list wrappers for this cycle (GH#22478)" >>"$LOGFILE"
+				if declare -F pulse_stats_increment >/dev/null 2>&1; then
+					pulse_stats_increment "pulse_graphql_low_force_rest_reads" 2>/dev/null || true
+				fi
 			fi
-			return 0
 		fi
 	fi
 
@@ -1626,7 +1737,7 @@ main() {
 	# launchd respawns skip via the staleness gate; first-cycle-after-deploy
 	# (or after a long quiet period) primes once. See helper comment for
 	# the launchd-bypass rationale.
-	_pulse_prime_caches_if_stale || true
+	_pulse_run_optional_stage "cache_prime" _pulse_prime_caches_if_stale || true
 
 	# GH#21756: Runaway-log self-healing detector. Catches pulse-wrapper.log
 	# growing at MB/s from tight error loops (the GH#21729 failure mode).
@@ -1640,7 +1751,7 @@ main() {
 	# observability (verbose lifecycle, tighter watchdog, preflight sentinel)
 	# and avoid the canonical broken-dispatch-can-not-fix-itself trap.
 	# Sentinel-gated hourly. Fail-open: never blocks the pulse cycle.
-	_pulse_run_fix_the_fixer_detector_if_stale || true
+	_pulse_run_optional_stage "fix_the_fixer_detector" _pulse_run_fix_the_fixer_detector_if_stale || true
 
 	# Rotate hot log to cold archive if over cap (t1886)
 	# Run before any log writes so the new cycle starts with a fresh hot log.
@@ -1701,7 +1812,7 @@ main() {
 
 	# Run LLM supervisor if stall/daily-sweep/force conditions are met.
 	# GH#18689: extracted to _pulse_maybe_run_llm_supervisor().
-	_pulse_maybe_run_llm_supervisor
+	_pulse_run_optional_stage "llm_supervisor" _pulse_maybe_run_llm_supervisor || true
 
 	# t3032: post-LLM health snapshot — captures workers dispatched by the
 	# LLM supervisor session, which runs after the deterministic pipeline's
