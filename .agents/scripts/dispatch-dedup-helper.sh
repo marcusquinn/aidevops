@@ -1697,7 +1697,7 @@ classify_dispatch_blocker_reason() {
 			printf 'runner_health_circuit_breaker\n'
 			return 0
 			;;
-		*canary*failed* | *worker_canary_preflight_failed*)
+		*canary*failed*)
 			printf 'canary_failed\n'
 			return 0
 			;;
@@ -1705,7 +1705,7 @@ classify_dispatch_blocker_reason() {
 			printf 'launch_error\n'
 			return 0
 			;;
-		*assigned* | *claim* | *ledger* | *open-pr* | *has-open-pr* | *pr*evidence* | *duplicate* | *stale_recovered*)
+		*assigned* | *claim* | *ledger* | *has-open-pr* | *pr*evidence* | *duplicate* | *stale_recovered*)
 			printf 'dedup_active_claim\n'
 			return 0
 			;;
