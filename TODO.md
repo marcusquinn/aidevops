@@ -3938,3 +3938,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3453 Diagnose profile README launchd job stuck in xpcproxy #auto-dispatch #bug ref:GH#22306
 
 - [ ] t3454 Use app usage fallback when macOS backlit screen-time stream is sparse #auto-dispatch #bug ref:GH#22308
+
+- [ ] t3455 Make shared-constants source cleanly from zsh #auto-dispatch #bug ref:GH#22311

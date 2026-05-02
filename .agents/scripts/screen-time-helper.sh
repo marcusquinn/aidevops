@@ -28,10 +28,10 @@ set -euo pipefail
 
 HISTORY_DIR="${HOME}/.aidevops/.agent-workspace/observability"
 HISTORY_FILE="${HISTORY_DIR}/screen-time.jsonl"
-OS_TYPE="$(uname -s)"
+OS_TYPE="${AIDEVOPS_SCREEN_TIME_OS_TYPE:-$(uname -s)}"
 
 # macOS-specific paths
-KNOWLEDGE_DB="${HOME}/Library/Application Support/Knowledge/knowledgeC.db"
+KNOWLEDGE_DB="${AIDEVOPS_KNOWLEDGE_DB:-${HOME}/Library/Application Support/Knowledge/knowledgeC.db}"
 
 # ============================================================
 # macOS: Knowledge DB queries
@@ -90,14 +90,98 @@ _macos_query_screen_hours() {
 		)
 		SELECT COALESCE(ROUND(SUM(off_time - on_time) / 3600.0, 1), 0) FROM pairs;" 2>/dev/null || echo "0")
 
-		# Fallback: /app/usage when isBacklit returns 0
-		if [[ "$hours" == "0" || "$hours" == "0.0" ]]; then
+		# Fallback: /app/usage when isBacklit returns 0 or has sparse coverage.
+		# macOS can keep emitting occasional /display/isBacklit events after the stream
+		# stops covering every active day. Treat sparse multi-day windows as incomplete
+		# so a single recent backlit day does not undercount 7d/28d profile totals.
+		if [[ "$hours" == "0" || "$hours" == "0.0" ]] || _macos_should_use_app_usage_for_window "$days" "$hours"; then
 			hours=$(_macos_query_screen_hours_from_app_usage "$days")
 		fi
 	fi
 
 	echo "$hours"
 	return 0
+}
+
+#######################################
+# [macOS] Count distinct local dates with events in a Knowledge DB stream window
+# Arguments:
+#   $1 - stream name
+#   $2 - timestamp column name
+#   $3 - number of days to look back
+# Returns: 0
+# Outputs: integer count
+#######################################
+_macos_count_stream_days() {
+	local stream_name="$1"
+	local timestamp_column="$2"
+	local days="$3"
+
+	if [[ ! -f "$KNOWLEDGE_DB" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	case "$timestamp_column" in
+	ZCREATIONDATE | ZSTARTDATE) ;;
+	*)
+		echo "0"
+		return 0
+		;;
+	esac
+
+	local active_days
+	local stream_filter=""
+	if [[ "$stream_name" == "/display/isBacklit" ]]; then
+		stream_filter="AND ZVALUEINTEGER = 1"
+	fi
+	active_days=$(sqlite3 "$KNOWLEDGE_DB" "
+		SELECT COUNT(DISTINCT date(${timestamp_column} + 978307200, 'unixepoch', 'localtime'))
+		FROM ZOBJECT
+		WHERE ZSTREAMNAME = '${stream_name}'
+			AND ${timestamp_column} > (strftime('%s', 'now') - 978307200 - 86400*${days})
+			${stream_filter};" 2>/dev/null || echo "0")
+
+	[[ "$active_days" =~ ^[0-9]+$ ]] || active_days="0"
+	echo "$active_days"
+	return 0
+}
+
+#######################################
+# [macOS] Decide whether /display/isBacklit coverage is too sparse for a window
+# Arguments:
+#   $1 - number of days to look back
+#   $2 - hours computed from /display/isBacklit
+# Returns: 0 when /app/usage should be used, 1 otherwise
+#######################################
+_macos_should_use_app_usage_for_window() {
+	local days="$1"
+	local backlit_hours="$2"
+
+	if [[ "$days" -le 1 ]]; then
+		return 1
+	fi
+
+	local backlit_days
+	local app_days
+	backlit_days=$(_macos_count_stream_days "/display/isBacklit" "ZCREATIONDATE" "$days")
+	app_days=$(_macos_count_stream_days "/app/usage" "ZSTARTDATE" "$days")
+
+	# A multi-day app/usage window with only one backlit event day is the regression
+	# that makes 24h and 7d totals collapse to the same value.
+	if [[ "$backlit_days" -le 1 && "$app_days" -ge 2 ]]; then
+		return 0
+	fi
+
+	# More generally, when app usage covers at least two extra active days and is
+	# materially higher than backlit, prefer the richer source for the whole window.
+	local app_hours
+	app_hours=$(_macos_query_screen_hours_from_app_usage "$days")
+	if awk "BEGIN {exit !(${app_days} >= ${backlit_days} + 1 && ${app_hours} > ${backlit_hours} * 1.25)}"; then
+		return 0
+	fi
+
+	return 1
 }
 
 #######################################
