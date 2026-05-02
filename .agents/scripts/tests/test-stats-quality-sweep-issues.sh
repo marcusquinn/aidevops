@@ -335,6 +335,55 @@ else
 fi
 
 # =============================================================================
+# Test (d): Sonar gate blocker issue is created only for failing gates
+# =============================================================================
+printf '\n%s[d] sonar-gate-blocker-create-on-failure%s\n' "$TEST_BLUE" "$TEST_NC"
+
+true >"$CREATE_CALLS"
+true >"$GH_CALLS"
+
+gh() {
+	echo "gh $*" >>"$GH_CALLS"
+	case "$*" in
+	*"issue list"*"quality-gate-blocker"*)
+		printf '0\n'
+		return 0
+		;;
+	*"label create"*)
+		return 0
+		;;
+	esac
+	return 0
+}
+export -f gh
+
+_ensure_sonar_gate_blocker_issue "test/repo" "ERROR" "### SonarCloud Quality Gate" 2>/dev/null
+
+if grep -q "quality gate: resolve SonarCloud badge blockers" "$CREATE_CALLS" 2>/dev/null; then
+	pass "sonar-gate-error-creates-issue"
+else
+	fail "sonar-gate-error-creates-issue" "gh_create_issue not called: $(cat "$CREATE_CALLS" 2>/dev/null)"
+fi
+
+if grep -q "quality-gate-blocker" "$CREATE_CALLS" 2>/dev/null; then
+	pass "sonar-gate-error-applies-blocker-label"
+else
+	fail "sonar-gate-error-applies-blocker-label" "quality-gate-blocker label missing: $(cat "$CREATE_CALLS" 2>/dev/null)"
+fi
+
+printf '\n%s[e] sonar-gate-blocker-skip-on-ok%s\n' "$TEST_BLUE" "$TEST_NC"
+
+true >"$CREATE_CALLS"
+
+_ensure_sonar_gate_blocker_issue "test/repo" "OK" "### SonarCloud Quality Gate" 2>/dev/null
+
+if [[ ! -s "$CREATE_CALLS" ]]; then
+	pass "sonar-gate-ok-no-create"
+else
+	fail "sonar-gate-ok-no-create" "gh_create_issue was called: $(cat "$CREATE_CALLS")"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
