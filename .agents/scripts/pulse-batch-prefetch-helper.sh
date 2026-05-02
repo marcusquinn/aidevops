@@ -349,6 +349,8 @@ _conditional_rest_update_cache_from_response() {
 	local slug="$2"
 	local response_file="$3"
 	local cache_file="$4"
+	# Keep response parsing in Python so this shell library stays below the
+	# function-complexity gate while preserving atomic cache writes.
 	python3 "${SCRIPT_DIR}/pulse-batch-conditional-cache.py" "$kind" "$slug" "$response_file" "$cache_file"
 	return 0
 }
