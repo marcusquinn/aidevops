@@ -175,6 +175,90 @@ _gather_system_resources() {
 	return 0
 }
 
+_dashboard_provider_auth_summary() {
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+	local openai_status="missing"
+	local anthropic_status="missing"
+
+	[[ -n "${OPENAI_API_KEY:-}" ]] && openai_status="env"
+	[[ -n "${ANTHROPIC_API_KEY:-}" ]] && anthropic_status="env"
+	if [[ -f "$auth_file" && -x "$(command -v jq 2>/dev/null || true)" ]]; then
+		if [[ "$openai_status" == "missing" ]] && jq -e '.openai | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1; then
+			openai_status="oauth"
+		fi
+		if [[ "$anthropic_status" == "missing" ]] && jq -e '.anthropic | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1; then
+			anthropic_status="oauth"
+		fi
+	fi
+
+	printf 'OpenAI: %s; Anthropic: %s; auth file: %s' "$openai_status" "$anthropic_status" "$([[ -f "$auth_file" ]] && printf present || printf missing)"
+	return 0
+}
+
+_dashboard_latest_match() {
+	local file_path="$1"
+	local pattern="$2"
+	local latest=""
+	[[ -f "$file_path" ]] || { printf '%s' "none"; return 0; }
+	while IFS= read -r _dash_line; do
+		[[ "$_dash_line" == *"$pattern"* ]] || continue
+		latest="$_dash_line"
+	done <"$file_path"
+	[[ -n "$latest" ]] || latest="none"
+	printf '%s' "$latest"
+	return 0
+}
+
+_gather_worker_zero_diagnostics() {
+	local worker_count="$1"
+	local max_workers="$2"
+	local assigned_issue_count="$3"
+	local total_issue_count="$4"
+	local sys_load_ratio="$5"
+	local sys_memory="$6"
+
+	if [[ "$worker_count" != "0" ]]; then
+		printf '%s' "_Workers are active; zero-worker diagnostics not needed._"
+		return 0
+	fi
+
+	local metrics_file="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
+	local dispatch_stages_file="${HOME}/.aidevops/logs/dispatch-stages.tsv"
+	local pulse_log="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	local last_worker_spawn last_spawn_failure last_stage auth_summary blocker_hint
+	last_worker_spawn=$(_dashboard_latest_match "$metrics_file" '"role":"worker"')
+	last_spawn_failure=$(_dashboard_latest_match "$pulse_log" 'Launch validation failed')
+	last_stage=$(_dashboard_latest_match "$dispatch_stages_file" 'dispatch')
+	auth_summary=$(_dashboard_provider_auth_summary)
+
+	blocker_hint="unknown — inspect pulse-current-state-helper.sh --window 15m"
+	if [[ "$max_workers" =~ ^[0-9]+$ && "$max_workers" -eq 0 ]]; then
+		blocker_hint="max-worker/resource gate: max_workers=0"
+	elif [[ "$assigned_issue_count" == "0" && "$total_issue_count" == "0" ]]; then
+		blocker_hint="no eligible work visible on dashboard repo"
+	elif [[ "$last_spawn_failure" != "none" ]]; then
+		blocker_hint="worker launch failure"
+	elif [[ "$auth_summary" == *"OpenAI: missing"* && "$auth_summary" == *"Anthropic: missing"* ]]; then
+		blocker_hint="auth/model unavailable"
+	elif [[ "$sys_load_ratio" =~ ^[0-9]+$ && "$sys_load_ratio" -ge 90 ]]; then
+		blocker_hint="resource gate: high CPU/load"
+	elif [[ "$sys_memory" == HIGH* ]]; then
+		blocker_hint="resource gate: memory pressure"
+	fi
+
+	cat <<DIAG
+| Signal | Value |
+| --- | --- |
+| Diagnosis | ${blocker_hint} |
+| Provider/Auth Health | ${auth_summary} |
+| Last Worker Spawn | ${last_worker_spawn} |
+| Last Launch Failure | ${last_spawn_failure} |
+| Last Dispatch Stage | ${last_stage} |
+| Next Command | \`pulse-current-state-helper.sh --window 15m\` |
+DIAG
+	return 0
+}
+
 #######################################
 # Gather live stats for the health issue body.
 #
@@ -290,6 +374,10 @@ _gather_health_stats() {
 	# PRs table — REST-derived check status by PR number (GH#21799).
 	local prs_md
 	prs_md=$(_render_open_pr_table "$pr_json" "$pr_checks_json")
+	local worker_zero_diagnostics_md
+	worker_zero_diagnostics_md=$(_gather_worker_zero_diagnostics \
+		"$worker_count" "$max_workers" "$assigned_issue_count" "$total_issue_count" \
+		"$sys_load_ratio" "$sys_memory")
 
 	# Output all stats as NUL-delimited fields.
 	printf '%s\0' \
@@ -308,7 +396,8 @@ _gather_health_stats() {
 		"$wt_count" \
 		"$max_workers" \
 		"$session_count" \
-		"$session_warning"
+		"$session_warning" \
+		"$worker_zero_diagnostics_md"
 	return 0
 }
 
@@ -417,7 +506,7 @@ PY
 #######################################
 # Build the health issue body markdown.
 #
-# Arguments: 31 positional parameters (see inline locals below)
+# Arguments: 32 positional parameters (see inline locals below)
 # Output: body markdown to stdout
 #######################################
 _build_health_issue_body() {
@@ -446,6 +535,7 @@ _build_health_issue_body() {
 	local runner_role="${27}"
 	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}"
 	local worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
+	local worker_zero_diagnostics_md="${32}"
 	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
 		"$worker_total_runs_24h" "$worker_total_runs_7d")
@@ -479,6 +569,10 @@ ${prs_md}
 ### Active Workers
 
 ${workers_md}
+
+### Worker Dispatch Diagnostics
+
+${worker_zero_diagnostics_md}
 
 ### Worker Success Rate
 
@@ -665,7 +759,7 @@ _assemble_health_issue_body() {
 	local pr_count prs_md assigned_issue_count total_issue_count
 	local workers_md worker_count sys_load_ratio sys_cpu_cores
 	local sys_load_1m sys_load_5m sys_memory sys_procs
-	local wt_count max_workers session_count session_warning
+	local wt_count max_workers session_count session_warning worker_zero_diagnostics_md
 	local stats_field
 	local -a stats_fields=()
 	while IFS= read -r -d '' stats_field; do
@@ -688,6 +782,7 @@ _assemble_health_issue_body() {
 	max_workers="${stats_fields[13]:-?}"
 	session_count="${stats_fields[14]:-0}"
 	session_warning="${stats_fields[15]:-}"
+	worker_zero_diagnostics_md="${stats_fields[16]:-_Workers are active; zero-worker diagnostics not needed._}"
 	rm -f "$stats_tmp"
 
 	local activity_md session_time_md person_stats_md
@@ -717,7 +812,8 @@ _assemble_health_issue_body() {
 		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" \
 		"$sys_memory" "$sys_procs" "$runner_role" \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
-		"$worker_total_runs_24h" "$worker_total_runs_7d"
+		"$worker_total_runs_24h" "$worker_total_runs_7d" \
+		"$worker_zero_diagnostics_md"
 	return 0
 }
 

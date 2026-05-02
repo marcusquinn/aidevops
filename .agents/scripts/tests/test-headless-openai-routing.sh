@@ -39,12 +39,15 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	export HOME="${TEST_ROOT}/home"
 	mkdir -p "${HOME}/.local/share/opencode" "${HOME}/.aidevops/logs"
-	printf '{"openai":"oauth","anthropic":"oauth"}\n' >"${HOME}/.local/share/opencode/auth.json"
+	export OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
+	unset OPENAI_API_KEY ANTHROPIC_API_KEY
+	printf '{"openai":{"type":"oauth","access":"test-openai-access"},"anthropic":{"type":"oauth","access":"test-anthropic-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
 	return 0
 }
 
 teardown_test_env() {
 	export HOME="$ORIGINAL_HOME"
+	unset OPENCODE_AUTH_FILE
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
@@ -92,11 +95,24 @@ test_openai_allowlist_selects_opus_tier_model() {
 	return 0
 }
 
+test_openai_allowlist_requires_openai_auth_entry() {
+	printf '{"anthropic":{"type":"oauth","access":"test-anthropic-access"}}\n' >"${HOME}/.local/share/opencode/auth.json"
+	local selected=""
+	selected=$(select_model sonnet 2>/dev/null || true)
+	if [[ -z "$selected" ]]; then
+		print_result "OpenAI allowlist requires provider-specific auth entry" 0
+		return 0
+	fi
+	print_result "OpenAI allowlist requires provider-specific auth entry" 1 "Expected no OpenAI model without openai auth entry, got ${selected}"
+	return 0
+}
+
 main_test() {
 	setup_test_env
 	test_openai_allowlist_selects_sonnet_tier_model
 	test_openai_allowlist_selects_haiku_tier_model
 	test_openai_allowlist_selects_opus_tier_model
+	test_openai_allowlist_requires_openai_auth_entry
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

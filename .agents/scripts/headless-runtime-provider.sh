@@ -134,7 +134,7 @@ provider_auth_available() {
 		if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
 			return 0
 		fi
-		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
+		if opencode_auth_has_provider "$provider"; then
 			return 0
 		fi
 		return 1
@@ -144,7 +144,7 @@ provider_auth_available() {
 		if [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			return 0
 		fi
-		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
+		if opencode_auth_has_provider "$provider"; then
 			return 0
 		fi
 		return 1
@@ -165,6 +165,31 @@ provider_auth_available() {
 		return 0
 		;;
 	esac
+}
+
+opencode_auth_has_provider() {
+	local provider="$1"
+	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"
+
+	[[ -f "$auth_file" ]] || return 1
+	if command -v jq >/dev/null 2>&1; then
+		jq -e --arg provider "$provider" '.[$provider] | type == "object" and ((.access // .refresh // .token // .apiKey // "") != "")' "$auth_file" >/dev/null 2>&1
+		return $?
+	fi
+	python3 - "$auth_file" "$provider" <<'PY' >/dev/null 2>&1
+import json
+import sys
+
+try:
+    data = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+entry = data.get(sys.argv[2])
+if isinstance(entry, dict) and any(entry.get(k) for k in ("access", "refresh", "token", "apiKey")):
+    sys.exit(0)
+sys.exit(1)
+PY
+	return $?
 }
 
 # --- Backoff Parsing/Recording ---
