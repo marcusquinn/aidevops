@@ -443,6 +443,12 @@ _read_brief_what_section() {
 _compose_issue_body() {
 	local title="$1"
 	local description="$2"
+	local fmt_helper="${SCRIPT_DIR}/issue-body-format-helper.sh"
+	if [[ -n "$description" && -x "$fmt_helper" ]]; then
+		local normalized_description=""
+		normalized_description=$("$fmt_helper" normalize "$description" 2>/dev/null) || normalized_description="$description"
+		description="$normalized_description"
+	fi
 
 	# Extract task ID from title (format: "tNNN: description")
 	local task_id=""
