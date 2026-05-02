@@ -66,6 +66,6 @@ Prefer flat files and prefix-based names. Add subdirectories only when a prefix 
 
 ## Sync Contract
 
-Register this repo with `aidevops sources add <path>` for private-agent sync. Mark it in `~/.config/aidevops/repos.json` with `"agent_source": true` or `"role": "agent-source"` so `aidevops init` and `aidevops update` can seed and refresh the framework-owned organization guidance.
+Register this repo with `aidevops sources add <path>` for private-agent sync. Mark it in `~/.config/aidevops/repos.json` with `"agent_source": true` or `"role": "agent-source"` so `aidevops init` and `aidevops update` can seed and refresh the framework-owned organization guidance. Sync preserves the full `.agents/` tree under `~/.aidevops/agents/custom/<source-name>/`, symlinks root `mode: primary` agents into `~/.aidevops/agents/`, and deploys slash commands from `.agents/scripts/commands/`.
 
 <!-- aidevops:agent-source-template:end -->

@@ -48,7 +48,50 @@ aidevops sources remove my-private-agents                     # Remove source, k
 - Slash command conflicts append the source slug, for example `/run-pipeline-my-private-agents`.
 - Primary agents that would overwrite core agents backed by real files, not symlinks, are skipped with a warning.
 
-## Layout
+## Layouts
+
+Use the **core-style layout** for new private agent source repos. It mirrors the
+public framework: root primary agents own strategy, matching directories hold
+optional extended context, and shared capabilities live under cross-domain
+directories. Use the older **package-style layout** only for small legacy packs
+where each agent is intentionally self-contained under one folder.
+
+### Core-style source repo (recommended)
+
+```text
+# Private repo
+my-private-agents/.agents/
+├── client-ops.md             # mode: primary
+├── client-ops/               # extended context for client-ops
+│   └── reporting.md          # mode: subagent
+├── tools/                    # reusable capabilities for any private agent
+│   └── data-cleanup.md
+├── services/
+│   └── private-crm.md
+├── workflows/
+│   └── monthly-report.md
+├── reference/
+│   └── account-boundaries.md
+└── scripts/commands/
+    └── client-report.md      # agent: → /client-report
+
+# After sync
+~/.aidevops/agents/
+├── client-ops.md → custom/my-private-agents/client-ops.md
+└── custom/my-private-agents/
+    ├── client-ops.md
+    ├── client-ops/
+    ├── tools/
+    ├── services/
+    ├── workflows/
+    ├── reference/
+    └── scripts/commands/client-report.md
+
+~/.config/opencode/command/
+└── client-report.md → symlink
+```
+
+### Package-style source repo (legacy-compatible)
 
 ```text
 # Private repo
@@ -73,6 +116,11 @@ my-private-agents/.agents/my-agent/
 ├── run-pipeline.md → symlink
 └── check-status.md → symlink
 ```
+
+Both layouts may coexist in one source repo. `aidevops sources sync` preserves
+the full `.agents/` tree under `custom/<source-name>/`, symlinks `mode: primary`
+docs from either root `.agents/<agent>.md` or package `.agents/<agent>/<agent>.md`,
+and deploys slash commands from package folders or `scripts/commands/`.
 
 ## Repo Checklist
 

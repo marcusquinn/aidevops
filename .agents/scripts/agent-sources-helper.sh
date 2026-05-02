@@ -12,8 +12,9 @@
 #   agent-sources-helper.sh status            Show sync status for all sources
 #   agent-sources-helper.sh help              Show this help
 #
-# Private agent repos contain a .agents/ directory with agent folders.
-# Each agent folder is synced into ~/.aidevops/agents/custom/<source-name>/<agent>/
+# Private agent repos contain a .agents/ directory using either package-style
+# .agents/<agent>/ folders or the core-style .agents/<agent>.md + .agents/<agent>/
+# layout. The full tree is synced into ~/.aidevops/agents/custom/<source-name>/.
 
 set -euo pipefail
 
@@ -66,8 +67,9 @@ show_help() {
 	echo "                                            OpenCode runtime dirs (self-heal)"
 	echo "  agent-sources-helper.sh help              Show this help"
 	echo ""
-	echo "Private repos must contain a .agents/ directory with agent folders."
-	echo "Agents are synced into ~/.aidevops/agents/custom/<source-name>/<agent>/"
+	echo "Private repos must contain a .agents/ directory."
+	echo "Supported layouts: package-style .agents/<agent>/ or core-style .agents/<agent>.md + .agents/<agent>/"
+	echo "The full .agents tree is synced into ~/.aidevops/agents/custom/<source-name>/"
 	return 0
 }
 
@@ -429,11 +431,28 @@ cleanup_source_symlinks() {
 
 	[[ -d "${source_dir}" ]] || return 0
 
-	# Remove primary agent symlinks from agents root
+	# Remove package-style primary agent symlinks from agents root
 	for agent_dir in "${source_dir}"/*/; do
 		[[ -d "${agent_dir}" ]] || continue
 		local agent_name
 		agent_name="$(basename "${agent_dir}")"
+		local link="${AGENTS_DIR}/${agent_name}.md"
+		if [[ -L "${link}" ]]; then
+			local target
+			target="$(readlink "${link}")"
+			if [[ "${target}" == *"${name}"* ]]; then
+				rm -f "${link}"
+				info "  Removed primary agent symlink: ${agent_name}"
+			fi
+		fi
+	done
+
+	# Remove core-style root primary agent symlinks from agents root
+	for agent_md in "${source_dir}"/*.md; do
+		[[ -f "${agent_md}" ]] || continue
+		local agent_name
+		agent_name="$(basename "${agent_md}" .md)"
+		[[ "${agent_name}" == "AGENTS" || "${agent_name}" == "README" || "${agent_name}" == "SKILL" ]] && continue
 		local link="${AGENTS_DIR}/${agent_name}.md"
 		if [[ -L "${link}" ]]; then
 			local target
@@ -460,6 +479,35 @@ cleanup_source_symlinks() {
 			fi
 		done
 	fi
+	return 0
+}
+
+# Count likely agent entries in a source .agents/ tree for status output.
+# Package-style directories and core-style root .md files both count.
+count_source_agent_entries() {
+	local source_agents_dir="$1"
+	local agent_count=0
+	local entry entry_name
+
+	for entry in "${source_agents_dir}"/*/; do
+		[[ -d "${entry}" ]] || continue
+		entry_name="$(basename "${entry}")"
+		case "${entry_name}" in
+		tools|services|workflows|reference|scripts|configs|templates|rules|tests|bundles|custom|draft)
+			continue
+			;;
+		esac
+		agent_count=$((agent_count + 1))
+	done
+
+	for entry in "${source_agents_dir}"/*.md; do
+		[[ -f "${entry}" ]] || continue
+		entry_name="$(basename "${entry}" .md)"
+		[[ "${entry_name}" == "AGENTS" || "${entry_name}" == "README" || "${entry_name}" == "SKILL" ]] && continue
+		agent_count=$((agent_count + 1))
+	done
+
+	printf '%s\n' "${agent_count}"
 	return 0
 }
 
@@ -533,21 +581,13 @@ cmd_status() {
 			echo -e "    Status:      ${RED}INVALID${NC} (no .agents/ directory)"
 		else
 			local agent_count=0
-			for agent_dir in "${path}/.agents"/*/; do
-				if [[ -d "${agent_dir}" ]]; then
-					agent_count=$((agent_count + 1))
-				fi
-			done
+			agent_count="$(count_source_agent_entries "${path}/.agents")"
 			echo -e "    Status:      ${GREEN}OK${NC} (${agent_count} agents)"
 
 			# Check if synced copy exists
 			if [[ -d "${CUSTOM_DIR}/${name}" ]]; then
 				local synced_count=0
-				for synced_dir in "${CUSTOM_DIR}/${name}"/*/; do
-					if [[ -d "${synced_dir}" ]]; then
-						synced_count=$((synced_count + 1))
-					fi
-				done
+				synced_count="$(count_source_agent_entries "${CUSTOM_DIR}/${name}")"
 				echo "    Deployed:    ${synced_count} agents in custom/${name}/"
 			else
 				echo -e "    Deployed:    ${YELLOW}NOT SYNCED${NC}"
@@ -614,30 +654,35 @@ cmd_sync() {
 			(cd "${path}" && git pull --ff-only 2>/dev/null) || warn "  Git pull failed, using current state"
 		fi
 
-		# Sync each agent directory from source .agents/ into custom/<source-name>/
+		# Sync the full source .agents/ tree into custom/<source-name>/ so
+		# private repos can use either package-style .agents/<agent>/ folders or
+		# the core-style .agents/<agent>.md + shared tools/services/workflows tree.
 		local dest_dir="${CUSTOM_DIR}/${name}"
 		mkdir -p "${dest_dir}"
 
+		# Safety: skip empty source trees to prevent --delete wiping destination.
+		if [[ -z "$(find "${path}/.agents" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+			warn "  Skipping empty .agents tree"
+			((++i))
+			continue
+		fi
+
+		rsync -a --delete "${path}/.agents/" "${dest_dir}/"
+
 		local agent_count=0
-		for agent_dir in "${path}/.agents"/*/; do
+		agent_count="$(count_source_agent_entries "${dest_dir}")"
+
+		# Post-sync: register core-style root primary agents, package-style primary
+		# agents, package-local commands, and shared scripts/commands.
+		sync_root_primary_agents "${dest_dir}"
+		local agent_dir agent_name
+		for agent_dir in "${dest_dir}"/*/; do
 			[[ -d "${agent_dir}" ]] || continue
-			local agent_name
 			agent_name="$(basename "${agent_dir}")"
-
-			# Safety: skip empty source dirs to prevent --delete wiping destination
-			if [[ -z "$(find "${agent_dir}" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
-				warn "  Skipping empty agent directory: ${agent_name}"
-				continue
-			fi
-
-			# rsync the agent directory (preserves permissions, handles deletions)
-			rsync -a --delete "${agent_dir}" "${dest_dir}/${agent_name}/"
-			((++agent_count))
-
-			# Post-sync: register primary agents and deploy slash commands
-			sync_primary_agent "${dest_dir}/${agent_name}" "${agent_name}"
-			sync_slash_commands "${dest_dir}/${agent_name}" "${agent_name}" "${name}"
+			sync_primary_agent "${agent_dir}" "${agent_name}"
+			sync_slash_commands "${agent_dir}" "${agent_name}" "${name}"
 		done
+		sync_shared_slash_commands "${dest_dir}/scripts/commands" "${name}"
 
 		update_last_synced "${name}" "${agent_count}"
 		success "  Synced ${agent_count} agent(s) to custom/${name}/"
@@ -690,6 +735,20 @@ sync_primary_agent() {
 	return 0
 }
 
+# Register all root-level core-style primary agents from a synced source tree.
+sync_root_primary_agents() {
+	local source_dir="$1"
+	local agent_md agent_name
+
+	for agent_md in "${source_dir}"/*.md; do
+		[[ -f "${agent_md}" ]] || continue
+		agent_name="$(basename "${agent_md}" .md)"
+		[[ "${agent_name}" == "AGENTS" || "${agent_name}" == "README" || "${agent_name}" == "SKILL" ]] && continue
+		sync_primary_agent "${source_dir}" "${agent_name}"
+	done
+	return 0
+}
+
 # Deploy slash commands from an agent directory to OpenCode command dir
 # Slash commands are .md files with 'agent:' in frontmatter (not the agent doc itself, not subagents)
 sync_slash_commands() {
@@ -724,6 +783,35 @@ sync_slash_commands() {
 		fi
 
 		# Symlink rather than copy — stays in sync without re-running
+		ln -sf "${md_file}" "${target}"
+		((++total_commands))
+	done
+	return 0
+}
+
+# Deploy slash commands from a shared scripts/commands directory.
+sync_shared_slash_commands() {
+	local commands_dir="$1"
+	local source_name="$2"
+	local opencode_cmd_dir="${HOME}/.config/opencode/command"
+
+	[[ -d "${commands_dir}" ]] || return 0
+	mkdir -p "${opencode_cmd_dir}"
+
+	local md_file filename cmd_name target suffixed_name
+	for md_file in "${commands_dir}"/*.md; do
+		[[ -f "${md_file}" ]] || continue
+		if ! sed -n '/^---$/,/^---$/p' "${md_file}" 2>/dev/null | grep -q '^agent:'; then
+			continue
+		fi
+		filename="$(basename "${md_file}")"
+		cmd_name="${filename%.md}"
+		target="${opencode_cmd_dir}/${cmd_name}.md"
+		if [[ -f "${target}" ]] && ! [[ -L "${target}" && "$(readlink "${target}")" == "${md_file}" ]]; then
+			suffixed_name="${cmd_name}-${source_name}"
+			target="${opencode_cmd_dir}/${suffixed_name}.md"
+			warn "  Command collision: /${cmd_name} exists, deploying as /${suffixed_name}"
+		fi
 		ln -sf "${md_file}" "${target}"
 		((++total_commands))
 	done
