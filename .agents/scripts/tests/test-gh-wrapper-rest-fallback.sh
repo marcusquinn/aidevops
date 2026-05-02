@@ -171,6 +171,28 @@ gh() {
 		printf '{"number":123,"title":"stub PR"}\n'
 		return 0
 	fi
+	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
+		local jq_filter=""
+		local i=3
+		while [[ $i -le $# ]]; do
+			if [[ "${!i}" == "--jq" ]]; then
+				local next=$((i + 1))
+				jq_filter="${!next:-}"
+				break
+			fi
+			i=$((i + 1))
+		done
+		local fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343","head":{"ref":"other"},"base":{"ref":"main"}}]'
+		if [[ "$2" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
+			fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}}]'
+		fi
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s\n' "$fixture" | jq -c "$jq_filter"
+		else
+			printf '%s\n' "$fixture"
+		fi
+		return 0
+	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
 		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
@@ -688,6 +710,25 @@ if grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null &&
 else
 	fail "gh_pr_list proactively routes to REST when GraphQL budget is low" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 23b: gh_pr_list REST fallback preserves --head and gh-shaped JSON output
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+pr_list_numbers=$(gh_pr_list --repo "owner/repo" --head "feature/auto-20260502-135611-gh22289" \
+	--state all --json number,state,mergedAt,url --jq '.[].number' 2>/dev/null || true)
+
+if [[ "$pr_list_numbers" == "22337" ]] &&
+	grep -qE '^api /repos/owner/repo/pulls\?state=all&per_page=30&head=owner%3Afeature%2Fauto-20260502-135611-gh22289' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^pr list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list REST fallback preserves --head and compact --json/--jq shape"
+else
+	fail "gh_pr_list REST fallback preserves --head and compact --json/--jq shape" \
+		"output=${pr_list_numbers} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
 # =============================================================================

@@ -863,12 +863,43 @@ _rest_pr_view() {
 #
 # Returns the underlying gh api exit code.
 #######################################
+_rest_pr_list_json_jq() {
+	local fields="$1"
+	local user_jq="$2"
+	local projection=""
+	local field=""
+	while IFS= read -r field; do
+		[[ -z "$field" ]] && continue
+		case "$field" in
+		number) projection="${projection}${projection:+,}number: .number" ;;
+		state) projection="${projection}${projection:+,}state: .state" ;;
+		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;
+		url) projection="${projection}${projection:+,}url: .html_url" ;;
+		title) projection="${projection}${projection:+,}title: .title" ;;
+		body) projection="${projection}${projection:+,}body: .body" ;;
+		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
+		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
+		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
+		baseRefName) projection="${projection}${projection:+,}baseRefName: .base.ref" ;;
+		headRefName) projection="${projection}${projection:+,}headRefName: .head.ref" ;;
+		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
+		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	[[ -z "$projection" ]] && projection="number: .number"
+	local jq_expr="[.[] | {${projection}}]"
+	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
+	printf '%s' "$jq_expr"
+	return 0
+}
+
 _rest_pr_list() {
 	gh_record_call rest _rest_pr_list 2>/dev/null || true
 	local repo=""
 	local state="open"
 	local limit=30
 	local jq_expr=""
+	local json_fields=""
 	local head_branch=""
 	local base_branch=""
 
@@ -885,8 +916,8 @@ _rest_pr_list() {
 		--base=*) base_branch="${_arg#--base=}"; shift ;;
 		--limit) limit="${2:-}"; shift 2 ;;
 		--limit=*) limit="${_arg#--limit=}"; shift ;;
-		--json) shift 2 ;;
-		--json=*) shift ;;
+		--json) json_fields="${2:-}"; shift 2 ;;
+		--json=*) json_fields="${_arg#--json=}"; shift ;;
 		--jq) jq_expr="${2:-}"; shift 2 ;;
 		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
 		-q) jq_expr="${2:-}"; shift 2 ;;
@@ -903,6 +934,9 @@ _rest_pr_list() {
 	local _query="state=${state}&per_page=${limit}"
 	if [[ -n "$head_branch" ]]; then
 		local _head_encoded
+		if [[ "$head_branch" != *:* ]]; then
+			head_branch="${repo%%/*}:${head_branch}"
+		fi
 		_head_encoded=$(jq -rn --arg v "$head_branch" '$v | @uri')
 		_query="${_query}&head=${_head_encoded}"
 	fi
@@ -914,6 +948,9 @@ _rest_pr_list() {
 
 	local _path="/repos/${repo}/pulls?${_query}"
 	local _gh_cmd=(gh api "$_path")
+	if [[ -n "$json_fields" ]]; then
+		jq_expr="$(_rest_pr_list_json_jq "$json_fields" "$jq_expr")"
+	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
