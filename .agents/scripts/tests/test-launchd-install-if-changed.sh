@@ -131,7 +131,7 @@ _define_launchd_install_if_changed() {
 			return 0
 		fi
 
-		print_warning "LaunchAgent $label stuck in xpcproxy; reloading with bootout/bootstrap"
+		print_info "LaunchAgent $label reports xpcproxy; reloading with bootout/bootstrap"
 		if ! _launchd_bootout_bootstrap "$label" "$plist_path"; then
 			return 1
 		fi
@@ -468,6 +468,67 @@ test_xpcproxy_recovered_when_content_unchanged() {
 	return 0
 }
 
+test_xpcproxy_successful_recovery_does_not_warn() {
+	local plist_dir="$TEST_DIR/la_xpcproxy_no_warn"
+	mkdir -p "$plist_dir"
+	local plist_path="$plist_dir/test.plist"
+	local recovered_marker="$plist_dir/recovered"
+	local stderr_file="$plist_dir/stderr.log"
+	printf 'some plist content\n' >"$plist_path"
+
+	_launchd_has_agent() { return 0; }
+
+	launchctl() {
+		case "${1:-}" in
+		print)
+			if [[ -f "$recovered_marker" ]]; then
+				printf 'state = not running\nlast exit code = 0\n'
+			else
+				printf 'pid = 12345\nstate = xpcproxy\n'
+			fi
+			return 0
+			;;
+		bootout)
+			return 0
+			;;
+		bootstrap)
+			: >"$recovered_marker"
+			return 0
+			;;
+		kickstart)
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local old_interval="${AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS:-}"
+	export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS=0
+
+	local rc=0
+	_launchd_install_if_changed "test-label" "$plist_path" "some plist content" 2>"$stderr_file" || rc=$?
+
+	if [[ -n "$old_interval" ]]; then
+		export AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS="$old_interval"
+	else
+		unset AIDEVOPS_LAUNCHD_XPCPROXY_SETTLE_SECONDS
+	fi
+	unset -f launchctl _launchd_has_agent
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "xpcproxy_successful_recovery_does_not_warn" 1 "expected recovery return 0, got $rc"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "xpcproxy_successful_recovery_does_not_warn" 1 \
+			"successful recovery emitted warning: $(tr '\n' ' ' <"$stderr_file")"
+		return 0
+	fi
+
+	print_result "xpcproxy_successful_recovery_does_not_warn" 0
+	return 0
+}
+
 test_xpcproxy_recovery_waits_for_transient_state() {
 	local plist_dir="$TEST_DIR/la_xpcproxy_transient"
 	mkdir -p "$plist_dir"
@@ -724,6 +785,7 @@ main() {
 	test_mv_failure_returns_1
 	test_empty_content_rejected
 	test_xpcproxy_recovered_when_content_unchanged
+	test_xpcproxy_successful_recovery_does_not_warn
 	test_xpcproxy_recovery_waits_for_transient_state
 	test_generic_recovery_kickstarts_after_bootstrap
 	test_kickstart_recovers_xpcproxy
