@@ -1668,6 +1668,54 @@ has_fix_the_fixer_label() {
 }
 
 #######################################
+# Classify a dispatch dedup/pre-launch blocker into a stable low-cardinality
+# metric reason.
+#
+# Args:
+#   $1 = blocker signal text emitted by dispatch-dedup-helper or pulse logs
+# Output: one of the dispatch_candidate_failed reason tokens
+#######################################
+classify_dispatch_blocker_reason() {
+	local signal="$1"
+	local lower_signal
+	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+
+	case "$lower_signal" in
+		*cost_budget_exceeded*)
+			printf 'cost_budget_exceeded\n'
+			return 0
+			;;
+		*dispatch_cooldown_active* | *reason=no_worker_process* | *no_worker_process*)
+			printf 'cooldown_no_worker_process\n'
+			return 0
+			;;
+		*graphql*circuit* | *circuit_broken* | *graphql*budget*below*)
+			printf 'graphql_circuit_breaker\n'
+			return 0
+			;;
+		*runner-health*circuit* | *runner_health*circuit*)
+			printf 'runner_health_circuit_breaker\n'
+			return 0
+			;;
+		*canary*failed* | *worker_canary_preflight_failed*)
+			printf 'canary_failed\n'
+			return 0
+			;;
+		*launch*error* | *launch*validation*failed* | *per-candidate*timeout*)
+			printf 'launch_error\n'
+			return 0
+			;;
+		*assigned* | *claim* | *ledger* | *open-pr* | *has-open-pr* | *pr*evidence* | *duplicate* | *stale_recovered*)
+			printf 'dedup_active_claim\n'
+			return 0
+			;;
+	esac
+
+	printf 'unknown\n'
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -1688,6 +1736,8 @@ Usage:
                                                        Emits newline-separated tokens: PARENT_TASK_BLOCKED,
                                                        NO_AUTO_DISPATCH_BLOCKED, GUARD_UNCERTAIN. Unlike is-assigned,
                                                        does not short-circuit on first match. t2894.
+  dispatch-dedup-helper.sh classify-blocker <signal>
+                                                       Classify a blocker signal into a stable metric reason.
   dispatch-dedup-helper.sh check-cost-budget <issue> <slug> [tier]
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
@@ -1789,6 +1839,10 @@ main() {
 		_require_args enumerate-blockers 2 "$#" "<issue-number> <repo-slug> [runner]" || return 1
 		local _eb_issue="$1" _eb_repo="$2" _eb_runner="${3:-}"
 		enumerate_blockers "$_eb_issue" "$_eb_repo" "$_eb_runner"
+		;;
+	classify-blocker)
+		_require_args classify-blocker 1 "$#" "a blocker signal" || return 1
+		classify_dispatch_blocker_reason "$1"
 		;;
 	check-cost-budget)
 		# t2007: cost-per-issue circuit breaker. Direct entry point for tests

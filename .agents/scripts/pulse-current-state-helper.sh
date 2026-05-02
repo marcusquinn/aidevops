@@ -208,6 +208,25 @@ dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
 }
+pre_launch_blockers = {}
+for key, count in counter_hits.items():
+    prefix = 'dispatch_candidate_failed_reason_'
+    if key.startswith(prefix):
+        pre_launch_blockers[key[len(prefix):]] = pre_launch_blockers.get(key[len(prefix):], 0) + count
+if counter_hits.get('dispatch_graphql_circuit_blocked', 0):
+    pre_launch_blockers['graphql_circuit_breaker'] = max(
+        pre_launch_blockers.get('graphql_circuit_breaker', 0),
+        counter_hits.get('dispatch_graphql_circuit_blocked', 0),
+    )
+if counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0):
+    pre_launch_blockers['runner_health_circuit_breaker'] = max(
+        pre_launch_blockers.get('runner_health_circuit_breaker', 0),
+        counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0),
+    )
+top_pre_launch_blockers = [
+    {'reason': reason, 'count': count}
+    for reason, count in sorted(pre_launch_blockers.items(), key=lambda item: (-item[1], item[0]))
+]
 
 worktrees = []
 try:
@@ -314,6 +333,8 @@ result = {
     },
     'graphql_budget': graphql_budget,
     'dispatch_pacing': dispatch_pacing,
+    'pre_launch_blockers': pre_launch_blockers,
+    'top_pre_launch_blockers': top_pre_launch_blockers[:5],
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
     'wrapper_activity_lines': len(wrapper_activity),
@@ -337,6 +358,7 @@ else:
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
     print(f'- Dispatch pacing: {json.dumps(result["dispatch_pacing"], sort_keys=True)}')
+    print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
     if api_consumers:
