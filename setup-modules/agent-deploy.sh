@@ -355,6 +355,9 @@ _restore_latest_agents_backup() {
 	local target_dir="$1"
 	local backup_base="$HOME/.aidevops/agents-backups"
 	local latest_backup=""
+	local parent_dir=""
+	local restore_staging=""
+	local old_dir=""
 
 	if [[ ! -d "$backup_base" ]]; then
 		print_warning "No agents backup directory found for restore: $backup_base"
@@ -368,14 +371,44 @@ _restore_latest_agents_backup() {
 	fi
 
 	print_warning "Restoring agents from latest backup: $latest_backup"
-	rm -rf "$target_dir"
-	mkdir -p "$(dirname "$target_dir")"
-	if cp -a "$latest_backup" "$target_dir"; then
+	parent_dir=$(dirname "$target_dir")
+	mkdir -p "$parent_dir"
+	restore_staging=$(mktemp -d "${target_dir}.restore.XXXXXX") || {
+		print_error "Failed to create agents restore staging directory"
+		return 1
+	}
+	old_dir="${target_dir}.restore-old.$$"
+	rm -rf "$old_dir"
+
+	if ! cp -a "$latest_backup/." "$restore_staging/"; then
+		print_error "Failed to stage agents backup for restore: $latest_backup"
+		rm -rf "$restore_staging"
+		return 1
+	fi
+
+	if [[ -d "$target_dir" ]]; then
+		if ! mv "$target_dir" "$old_dir"; then
+			print_error "Failed to move current agents directory aside during restore — agents directory preserved"
+			rm -rf "$restore_staging"
+			return 1
+		fi
+	fi
+
+	if mv "$restore_staging" "$target_dir"; then
+		rm -rf "$old_dir"
 		print_success "Restored agents directory from backup"
 		return 0
 	fi
 
-	print_error "Failed to restore agents directory from backup: $latest_backup"
+	print_error "Failed to move staged agents backup into place — attempting restore rollback"
+	if [[ -d "$old_dir" ]]; then
+		if mv "$old_dir" "$target_dir"; then
+			print_info "Restore rollback successful — previous agents directory restored"
+		else
+			print_error "Restore rollback failed — previous agents directory preserved in $old_dir"
+		fi
+	fi
+	rm -rf "$restore_staging"
 	return 1
 }
 

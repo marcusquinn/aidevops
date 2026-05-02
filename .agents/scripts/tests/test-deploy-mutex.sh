@@ -177,10 +177,38 @@ test_failed_deploy_verification_restores_backup() {
 	return 0
 }
 
+test_agents_backup_restore_preserves_live_tree_on_stage_failure() {
+	local test_name="backup restore preserves live agents when staging copy fails"
+	local target="${TEST_ROOT}/restore-preserve/.aidevops/agents"
+	local backup="${TEST_ROOT}/restore-preserve/.aidevops/agents-backups/20260501_130000/agents"
+	local rc=0
+	mkdir -p "$(dirname "$backup")"
+	_make_agent_tree "$target" 2
+	_make_agent_tree "$backup" 120
+
+	if ! declare -f _restore_latest_agents_backup >/dev/null; then
+		# shellcheck source=/dev/null
+		source "$AGENT_DEPLOY"
+	fi
+
+	(
+		cp() { return 1; }
+		HOME="${TEST_ROOT}/restore-preserve" _restore_latest_agents_backup "$target"
+	) || rc=$?
+
+	if [[ "$rc" -ne 0 && -f "$target/file-2.md" && ! -f "$target/file-120.md" ]]; then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "rc=$rc live_file=$([[ -f "$target/file-2.md" ]] && printf yes || printf no) backup_file=$([[ -f "$target/file-120.md" ]] && printf yes || printf no)"
+	fi
+	return 0
+}
+
 main() {
 	setup
 	test_noninteractive_setup_lock_single_owner
 	test_failed_deploy_verification_restores_backup
+	test_agents_backup_restore_preserves_live_tree_on_stage_failure
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
