@@ -11,6 +11,8 @@
 # pipeline:
 #   - merge_ready_prs_all_repos           — top-level merge pass entry point
 #   - _merge_ready_prs_for_repo           — per-repo PR iteration
+#   - _pmp_classify_pr_backlog_state      — PR backlog observability buckets
+#   - _pmp_sort_prs_by_backlog_priority   — near-merge/fix-needed ordering
 #   - _attempt_pr_update_branch           — fast-forward via update-branch
 #   - _resolve_pr_mergeable_status        — UNKNOWN→MERGEABLE retry
 #   - _pulse_merge_dismiss_coderabbit_nits — auto-dismiss CR-only reviews
@@ -50,7 +52,158 @@ _PULSE_MERGE_PROCESS_LOADED=1
 : "${STOP_FLAG:=${HOME}/.aidevops/logs/pulse-session.stop}"
 : "${PULSE_MERGE_BATCH_LIMIT:=50}"
 
+# PR backlog categories exposed in logs. These are scheduling/observability
+# buckets only; _process_single_ready_pr still enforces every merge safety gate
+# before approving, merging, closing, or dispatching a fix worker.
+readonly _PMP_BACKLOG_MERGE_READY="merge-ready"
+readonly _PMP_BACKLOG_CHECKS_IN_PROGRESS="checks-in-progress"
+readonly _PMP_BACKLOG_SMALL_FIX_NEEDED="small-fix-needed"
+readonly _PMP_BACKLOG_DIRTY_CONFLICTED="dirty-conflicted"
+readonly _PMP_BACKLOG_HUMAN_APPROVAL_NEEDED="human-approval-needed"
+readonly _PMP_BACKLOG_OTHER="other"
+
 # --- Functions ---
+
+#######################################
+# Classify one PR object into a scheduling/observability backlog bucket.
+# This is intentionally advisory: it never decides merge eligibility. The
+# existing per-PR gate stack remains authoritative.
+#
+# Args:
+#   $1 - compact PR JSON object from gh_pr_list
+# Output: one of the _PMP_BACKLOG_* values
+#######################################
+_pmp_classify_pr_backlog_state() {
+	local pr_obj="$1"
+	local _RS=$'\x1e'
+	local mergeable="" review_decision="" is_draft="" labels="" failed_count="" pending_count=""
+	IFS="$_RS" read -r mergeable review_decision is_draft labels failed_count pending_count < <(
+		printf '%s' "$pr_obj" | jq -r '
+			def up(v): (v // "" | ascii_upcase);
+			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == "FAILURE" or up(.state) == "FAILURE")] | length;
+			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
+			"\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
+	)
+
+	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
+	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
+
+	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]]; then
+		printf '%s' "$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED"
+		return 0
+	fi
+	if [[ "$mergeable" == "CONFLICTING" ]]; then
+		printf '%s' "$_PMP_BACKLOG_DIRTY_CONFLICTED"
+		return 0
+	fi
+	if [[ "$failed_count" -gt 0 ]]; then
+		printf '%s' "$_PMP_BACKLOG_SMALL_FIX_NEEDED"
+		return 0
+	fi
+	if [[ "$pending_count" -gt 0 || "$mergeable" == "UNKNOWN" ]]; then
+		printf '%s' "$_PMP_BACKLOG_CHECKS_IN_PROGRESS"
+		return 0
+	fi
+	if [[ "$mergeable" == "MERGEABLE" ]]; then
+		printf '%s' "$_PMP_BACKLOG_MERGE_READY"
+		return 0
+	fi
+	printf '%s' "$_PMP_BACKLOG_OTHER"
+	return 0
+}
+
+#######################################
+# Convert a backlog bucket to a numeric scheduling priority.
+# Lower number runs first. Merge-ready and fix-needed PRs are processed before
+# unrelated dispatch stages get any budget because this sort happens inside the
+# deterministic merge pass, which runs before dispatch_max.
+#
+# Args:
+#   $1 - backlog category string
+# Output: integer priority
+#######################################
+_pmp_backlog_priority() {
+	local category="$1"
+	case "$category" in
+	"$_PMP_BACKLOG_MERGE_READY") printf '10' ;;
+	"$_PMP_BACKLOG_SMALL_FIX_NEEDED") printf '20' ;;
+	"$_PMP_BACKLOG_CHECKS_IN_PROGRESS") printf '30' ;;
+	"$_PMP_BACKLOG_DIRTY_CONFLICTED") printf '40' ;;
+	"$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED") printf '50' ;;
+	*) printf '90' ;;
+	esac
+	return 0
+}
+
+#######################################
+# Sort a PR JSON array by backlog attention priority, preserving original
+# order inside each category. Emits a JSON array.
+#
+# Args:
+#   $1 - JSON array of PR objects
+# Output: JSON array sorted by backlog priority
+#######################################
+_pmp_sort_prs_by_backlog_priority() {
+	local pr_json="$1"
+	local pr_count=""
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ "$pr_count" -eq 0 ]]; then
+		printf '[]'
+		return 0
+	fi
+
+	local _tmp_lines=""
+	_tmp_lines=$(mktemp)
+	local i=0
+	while [[ "$i" -lt "$pr_count" ]]; do
+		local pr_obj="" category="" priority=""
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		category=$(_pmp_classify_pr_backlog_state "$pr_obj")
+		priority=$(_pmp_backlog_priority "$category")
+		printf '%03d\t%06d\t%s\n' "$priority" "$i" "$pr_obj" >>"$_tmp_lines"
+		i=$((i + 1))
+	done
+
+	LC_ALL=C sort "$_tmp_lines" | cut -f3- | jq -s '.'
+	rm -f "$_tmp_lines"
+	return 0
+}
+
+#######################################
+# Log PR backlog category counts for current-state diagnostics.
+#
+# Args:
+#   $1 - repo slug
+#   $2 - JSON array of PR objects
+#######################################
+_pmp_log_pr_backlog_counts() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local merge_ready=0 checks_in_progress=0 small_fix_needed=0 dirty_conflicted=0 human_approval_needed=0 other=0
+	local pr_count=""
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+
+	local i=0
+	while [[ "$i" -lt "$pr_count" ]]; do
+		local pr_obj="" category=""
+		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		category=$(_pmp_classify_pr_backlog_state "$pr_obj")
+		case "$category" in
+		"$_PMP_BACKLOG_MERGE_READY") merge_ready=$((merge_ready + 1)) ;;
+		"$_PMP_BACKLOG_CHECKS_IN_PROGRESS") checks_in_progress=$((checks_in_progress + 1)) ;;
+		"$_PMP_BACKLOG_SMALL_FIX_NEEDED") small_fix_needed=$((small_fix_needed + 1)) ;;
+		"$_PMP_BACKLOG_DIRTY_CONFLICTED") dirty_conflicted=$((dirty_conflicted + 1)) ;;
+		"$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED") human_approval_needed=$((human_approval_needed + 1)) ;;
+		*) other=$((other + 1)) ;;
+		esac
+		i=$((i + 1))
+	done
+
+	echo "[pulse-wrapper] PR backlog ${repo_slug}: total=${pr_count}, merge-ready=${merge_ready}, checks-in-progress=${checks_in_progress}, small-fix-needed=${small_fix_needed}, dirty-conflicted=${dirty_conflicted}, human-approval-needed=${human_approval_needed}, other=${other}" >>"$LOGFILE"
+	return 0
+}
 
 merge_ready_prs_all_repos() {
 	# Initialise required env vars with ${VAR:-default} guards so this
@@ -156,11 +309,14 @@ _merge_ready_prs_for_repo() {
 	local closed=0
 	local failed=0
 
-	# Fetch open PRs — lightweight call without statusCheckRollup (GH#15060 lesson)
+	# Fetch open PRs with the status rollup needed for backlog-first scheduling.
+	# Safety still lives in _process_single_ready_pr; this list only determines
+	# which PRs receive merge/fix attention before dispatch_max consumes worker
+	# and API budget on unrelated new tasks.
 	local pr_json pr_merge_err
 	pr_merge_err=$(mktemp)
 	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,author,title \
+		--json number,mergeable,reviewDecision,author,title,isDraft,labels,statusCheckRollup \
 		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
@@ -178,6 +334,11 @@ _merge_ready_prs_for_repo() {
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
 		return 0
 	fi
+
+	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
+	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json")
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	# Process each PR — extract its JSON object and delegate to inner helper
 	local i=0
