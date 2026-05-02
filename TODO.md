@@ -3942,3 +3942,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3455 Make shared-constants source cleanly from zsh #auto-dispatch #bug ref:GH#22311
 
 - [ ] t3456 Fix dispatch timing stale lock CPU runaway #auto-dispatch #bug ref:GH#22314
+
+- [ ] t3457 Normalize escaped newlines in issue bodies #auto-dispatch #bug ref:GH#22316
