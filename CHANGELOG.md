@@ -10,6 +10,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.13.91] - 2026-05-02
+
+### Added
+
+- prioritize PR backlog before dispatch (#22307)
+- improve worker telemetry (#22278)
+
+### Changed
+
+- Maintenance: sync ref:GH#22308 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22306 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22305 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22304 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22303 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22301 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22300 to TODO.md [skip ci]
+- Maintenance: mark t3445 complete (pr:#22298 completed:2026-05-02) [skip ci]
+- Maintenance: sync ref:GH#22299 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22297 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22296 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22293 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22292 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22291 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22290 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22288 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22287 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22286 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22285 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22267 to TODO.md [skip ci]
+- Maintenance: mark t3421 complete (pr:#22278 completed:2026-05-02) [skip ci]
+- Maintenance: mark t3427 complete (pr:#22275 completed:2026-05-02) [skip ci]
+- normalize feedback redispatch ownership (#22279)
+- Maintenance: sync ref:GH#22274 to TODO.md [skip ci]
+- integrate plugin namespaces into subagent discovery (#22275)
+- Maintenance: sync ref:GH#22271 to TODO.md [skip ci]
+- add manual worker launcher (#22269)
+- Fix dispatch-single issue state casing (#22266)
+- reduce GraphQL budget usage in diagnostics
+- Performance: scope headless startup provider state (#22261)
+- add minimum worker concurrency floor
+- Maintenance: mark t3417 complete (pr:#22252 completed:2026-05-01) [skip ci]
+- support glob-compressed subagent allowlists (#22252)
+- Maintenance: mark t3416 complete (pr:#22258 completed:2026-05-01) [skip ci]
+
+### Fixed
+
+- ignore generated Beads export state (#22298)
+- harden opencode maintenance-window cleanup (#22283)
+- use portable token advisory temp paths (#22277)
+- scope pulse merge routine scheduler test (#22276)
+- skip orphan loop check for fresh worker branches (#22273)
+- guard attribution printf hyphen output (#22272)
+
 ## [3.13.90] - 2026-05-02
 
 ### Added
