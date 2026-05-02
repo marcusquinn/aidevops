@@ -234,6 +234,122 @@ EOF
 	return 0
 }
 
+test_large_opencode_prompt_uses_file_attachment() {
+	local prompt="large-seed-prompt-with-worker-contract"
+	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
+	HEADLESS_PROMPT_FILE_THRESHOLD_BYTES=8
+
+	_prepare_runtime_prompt_transport "opencode" "$prompt"
+
+	local prompt_arg="$_HEADLESS_RUN_PROMPT_ARG"
+	local prompt_file="$_HEADLESS_RUN_PROMPT_FILE"
+	local cmd_text=""
+	cmd_text=$(
+		while IFS= read -r -d '' arg; do
+			printf '<%s>' "$arg"
+		done < <(_build_run_cmd "anthropic/claude-sonnet-4-6" "$TEST_ROOT" "$prompt_arg" \
+			"Prompt Transport Test" "" "" "" --file "$prompt_file")
+	)
+
+	if [[ "$prompt_arg" != *"$prompt"* ]] &&
+		[[ -f "$prompt_file" ]] &&
+		[[ "$(<"$prompt_file")" == "$prompt" ]] &&
+		[[ "$cmd_text" == *"<--file><${prompt_file}>"* ]] &&
+		[[ "$cmd_text" != *"$prompt"* ]]; then
+		_cleanup_headless_runtime_temp_paths
+		if [[ -n "$old_threshold" ]]; then
+			HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+		else
+			unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+		fi
+		print_result "large opencode prompts use file attachment instead of argv" 0
+		return 0
+	fi
+
+	_cleanup_headless_runtime_temp_paths
+	if [[ -n "$old_threshold" ]]; then
+		HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+	else
+		unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+	fi
+	print_result "large opencode prompts use file attachment instead of argv" 1 \
+		"prompt_arg=${prompt_arg} prompt_file=${prompt_file} cmd=${cmd_text}"
+	return 0
+}
+
+test_large_claude_prompt_uses_stdin_file() {
+	local prompt="large-claude-seed-prompt"
+	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
+	HEADLESS_PROMPT_FILE_THRESHOLD_BYTES=8
+
+	_prepare_runtime_prompt_transport "claude" "$prompt"
+
+	local prompt_arg="$_HEADLESS_RUN_PROMPT_ARG"
+	local stdin_file="$_HEADLESS_CLAUDE_STDIN_FILE"
+	local cmd_text=""
+	cmd_text=$(
+		while IFS= read -r -d '' arg; do
+			printf '<%s>' "$arg"
+		done < <(_build_claude_cmd "anthropic/claude-sonnet-4-6" "$TEST_ROOT" "$prompt_arg" \
+			"Prompt Transport Test" "")
+	)
+
+	if [[ -z "$prompt_arg" ]] &&
+		[[ -f "$stdin_file" ]] &&
+		[[ "$(<"$stdin_file")" == "$prompt" ]] &&
+		[[ "$cmd_text" == "<claude><-p>"* ]] &&
+		[[ "$cmd_text" != *"$prompt"* ]]; then
+		_cleanup_headless_runtime_temp_paths
+		if [[ -n "$old_threshold" ]]; then
+			HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+		else
+			unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+		fi
+		print_result "large claude prompts use stdin file instead of argv" 0
+		return 0
+	fi
+
+	_cleanup_headless_runtime_temp_paths
+	if [[ -n "$old_threshold" ]]; then
+		HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+	else
+		unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+	fi
+	print_result "large claude prompts use stdin file instead of argv" 1 \
+		"prompt_arg=${prompt_arg} stdin_file=${stdin_file} cmd=${cmd_text}"
+	return 0
+}
+
+test_registered_prompt_temp_cleanup_removes_dir() {
+	local prompt="cleanup-seed-prompt"
+	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
+	HEADLESS_PROMPT_FILE_THRESHOLD_BYTES=1
+
+	_prepare_runtime_prompt_transport "opencode" "$prompt"
+	local prompt_file="$_HEADLESS_RUN_PROMPT_FILE"
+	local prompt_dir="${prompt_file%/*}"
+	_cleanup_headless_runtime_temp_paths
+
+	if [[ -n "$prompt_dir" && ! -e "$prompt_dir" ]]; then
+		if [[ -n "$old_threshold" ]]; then
+			HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+		else
+			unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+		fi
+		print_result "registered prompt temp cleanup removes prompt dir" 0
+		return 0
+	fi
+
+	if [[ -n "$old_threshold" ]]; then
+		HEADLESS_PROMPT_FILE_THRESHOLD_BYTES="$old_threshold"
+	else
+		unset HEADLESS_PROMPT_FILE_THRESHOLD_BYTES
+	fi
+	print_result "registered prompt temp cleanup removes prompt dir" 1 \
+		"Prompt temp dir still exists: ${prompt_dir:-<empty>}"
+	return 0
+}
+
 # Helper: create a bare git repo and a feature branch with optional commits.
 # Each call uses work_dir-derived remote path to avoid inter-test collisions.
 # Args: $1 = work_dir path, $2 = 1 to add a commit (0 for none)
@@ -647,6 +763,9 @@ main() {
 	test_canary_uses_builtin_agent_without_default_agent
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
+	test_large_opencode_prompt_uses_file_attachment
+	test_large_claude_prompt_uses_stdin_file
+	test_registered_prompt_temp_cleanup_removes_dir
 	# Classification tests (GH#20819 refactor of _worker_produced_output)
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen

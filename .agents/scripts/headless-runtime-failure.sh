@@ -415,6 +415,9 @@ _exit_trap_handler() {
 	# t2923: Push any WIP commits before releasing the claim so re-dispatch
 	# can continue from the pushed branch instead of starting over.
 	_push_wip_commits_on_exit
+	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
+		_cleanup_headless_runtime_temp_paths
+	fi
 	_release_dispatch_claim "$session_key" "$reason" "$exit_status" "$session_count"
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"

@@ -45,6 +45,81 @@ readonly LOCK_DIR="${STATE_DIR}/locks"
 readonly METRICS_DIR="${HOME}/.aidevops/logs"
 readonly METRICS_FILE="${METRICS_DIR}/headless-runtime-metrics.jsonl"
 
+# Runtime temp paths owned by this helper. The worker EXIT trap also calls the
+# cleanup function below so prompt/auth dirs are removed after normal exits,
+# watchdog kills, and retry-path failures. Kept newline-delimited for bash 3.2.
+_HEADLESS_RUNTIME_TEMP_PATHS=""
+_HEADLESS_RUN_PROMPT_ARG=""
+_HEADLESS_RUN_PROMPT_FILE=""
+_HEADLESS_CLAUDE_STDIN_FILE=""
+
+_register_headless_runtime_temp_path() {
+	local path="$1"
+	[[ -n "$path" ]] || return 0
+	_HEADLESS_RUNTIME_TEMP_PATHS="${_HEADLESS_RUNTIME_TEMP_PATHS}${path}
+"
+	return 0
+}
+
+_cleanup_headless_runtime_temp_paths() {
+	local path=""
+	local tmp_root="${TMPDIR:-/tmp}"
+	while IFS= read -r path; do
+		[[ -n "$path" ]] || continue
+		case "$path" in
+		"$tmp_root"/aidevops-* | /tmp/aidevops-* | /var/folders/*/T/*/aidevops-*)
+			rm -rf "$path" 2>/dev/null || true
+			;;
+		*)
+			print_warning "[lifecycle] refusing to cleanup unexpected temp path: $path"
+			;;
+		esac
+	done <<EOF
+$_HEADLESS_RUNTIME_TEMP_PATHS
+EOF
+	_HEADLESS_RUNTIME_TEMP_PATHS=""
+	return 0
+}
+
+_prepare_runtime_prompt_transport() {
+	local runtime="$1"
+	local prompt_text="$2"
+	local threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-8192}"
+	_HEADLESS_RUN_PROMPT_ARG="$prompt_text"
+	_HEADLESS_RUN_PROMPT_FILE=""
+	_HEADLESS_CLAUDE_STDIN_FILE=""
+
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=8192
+	[[ "${#prompt_text}" -ge "$threshold" ]] || return 0
+
+	local prompt_dir=""
+	prompt_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-headless-prompt.XXXXXX") || return 0
+	_register_headless_runtime_temp_path "$prompt_dir"
+
+	local prompt_path="${prompt_dir}/seed-prompt.md"
+	if ! printf '%s' "$prompt_text" >"$prompt_path"; then
+		rm -rf "$prompt_dir" 2>/dev/null || true
+		return 0
+	fi
+
+	case "$runtime" in
+	claude)
+		# Claude Code -p reads the prompt from stdin when no prompt argument is
+		# supplied; keep the large seed out of argv while preserving content.
+		_HEADLESS_RUN_PROMPT_ARG=""
+		_HEADLESS_CLAUDE_STDIN_FILE="$prompt_path"
+		;;
+	opencode | *)
+		# OpenCode has no stdin prompt mode in `opencode run --help`; attach the
+		# seed file and pass a short instruction, avoiding process-table bloat.
+		_HEADLESS_RUN_PROMPT_ARG="Read and execute the complete seed prompt attached as seed-prompt.md. Treat the attached file as the user prompt for this headless run."
+		_HEADLESS_RUN_PROMPT_FILE="$prompt_path"
+		;;
+	esac
+
+	return 0
+}
+
 # Source the stable utility library (t2013 split).
 # All state DB, provider auth, backoff, output parsing, metrics, sandbox,
 # worker contract, watchdog, DB merge, dispatch ledger, failure reporting,
@@ -233,6 +308,7 @@ _invoke_opencode() {
 		else
 			isolated_data_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-worker-auth.XXXXXX")
 		fi
+		_register_headless_runtime_temp_path "$isolated_data_dir"
 		mkdir -p "${isolated_data_dir}/opencode"
 		# Copy the current auth.json so the worker has valid tokens at startup
 		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
@@ -722,6 +798,17 @@ _execute_run_attempt() {
 
 	# Determine which runtime to use. Default is opencode unless explicitly overridden.
 	local runtime="${headless_runtime:-opencode}"
+	local prompt_arg="$prompt"
+	local prompt_file_arg=""
+	local claude_stdin_file=""
+	_prepare_runtime_prompt_transport "$runtime" "$prompt"
+	prompt_arg="$_HEADLESS_RUN_PROMPT_ARG"
+	prompt_file_arg="$_HEADLESS_RUN_PROMPT_FILE"
+	claude_stdin_file="$_HEADLESS_CLAUDE_STDIN_FILE"
+	if [[ -n "$prompt_file_arg" ]]; then
+		extra_args+=(--file "$prompt_file_arg")
+	fi
+	_HEADLESS_CLAUDE_STDIN_FILE="$claude_stdin_file"
 
 	local provider persisted_session=""
 	provider=$(extract_provider "$selected_model")
@@ -744,13 +831,13 @@ _execute_run_attempt() {
 		fi
 		while IFS= read -r -d '' arg; do
 			cmd+=("$arg")
-		done < <(_build_claude_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+		done < <(_build_claude_cmd "$selected_model" "$work_dir" "$prompt_arg" "$title" \
 			"$agent_name" "${extra_args[@]+"${extra_args[@]}"}")
 		;;
 	opencode | *)
 		while IFS= read -r -d '' arg; do
 			cmd+=("$arg")
-		done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+		done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt_arg" "$title" \
 			"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 		;;
 	esac
@@ -890,8 +977,8 @@ _execute_run_attempt() {
 			cmd=()
 			while IFS= read -r -d '' arg; do
 				cmd+=("$arg")
-			done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
-				"$agent_name" "" "${extra_args[@]+"${extra_args[@]}"}")
+			done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt_arg" "$title" \
+				"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 			if [[ -f "${exit_code_file}.watchdog_killed" ]]; then

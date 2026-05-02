@@ -247,16 +247,28 @@ _invoke_claude() {
 			local passthrough_csv
 			passthrough_csv="$(build_sandbox_passthrough_csv)"
 			if [[ -n "$passthrough_csv" ]]; then
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
+				else
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				fi
 			else
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
+				else
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				fi
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
 			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare exec (no privilege isolation) (GH#20146 audit)"
 			fi
-			"${cmd[@]}" 2>&1 | tee "$output_file"
+			if [[ -n "${_HEADLESS_CLAUDE_STDIN_FILE:-}" && -f "${_HEADLESS_CLAUDE_STDIN_FILE:-}" ]]; then
+				"${cmd[@]}" <"$_HEADLESS_CLAUDE_STDIN_FILE" 2>&1 | tee "$output_file"
+			else
+				"${cmd[@]}" 2>&1 | tee "$output_file"
+			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
 	) || true
@@ -701,6 +713,9 @@ _cmd_run_finish() {
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
 	_release_session_lock "$session_key"
+	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
+		_cleanup_headless_runtime_temp_paths
+	fi
 	trap - EXIT
 	return 0
 }

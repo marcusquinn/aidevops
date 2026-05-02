@@ -495,7 +495,11 @@ _build_claude_cmd() {
 	# default-assign below so static analysis does not flag it unused (the
 	# function signature is shared with _build_run_cmd for interchangeability).
 	: "${work_dir:=}"
-	printf '%s\0' "claude" "-p" "$prompt" "--output-format" "stream-json" "--verbose"
+	printf '%s\0' "claude" "-p"
+	if [[ -n "$prompt" ]]; then
+		printf '%s\0' "$prompt"
+	fi
+	printf '%s\0' "--output-format" "stream-json" "--verbose"
 	if [[ -n "$agent_name" ]]; then
 		printf '%s\0' "--agent" "$agent_name"
 	elif type -P claude >/dev/null 2>&1; then
