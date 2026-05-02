@@ -182,6 +182,26 @@ When active workers are below the floor:
 
 Set `AIDEVOPS_MIN_WORKER_CONCURRENCY=0` to disable the floor, or set a higher/lower integer for a runner-specific target.
 
+### Adaptive Worker Launch Staggering (t3482)
+
+Pulse staggers worker launches inside the parallel `dispatch_max` loop when live pressure signals show that a back-to-back batch is likely to waste provider budget or overload the local runtime. The first launch in a clean round is immediate; subsequent launches remain near-zero delay unless one or more pressure signals are active.
+
+Signals that increase the inter-launch delay:
+
+- High `load_per_cpu` from recent headless-runtime metrics.
+- Recent non-success worker terminal metrics, especially clustered `rate_limit` results.
+- Provider/rate-limit backoff flags.
+- Low cached GraphQL remaining budget.
+- Large in-flight launch bursts while pressure is already present.
+
+Observability:
+
+```bash
+pulse-current-state-helper.sh --window 15m --json | jq '.dispatch_pacing'
+```
+
+Relevant tuning knobs: `PULSE_DISPATCH_STAGGER_ADAPTIVE=0` disables adaptive staggering, `PULSE_DISPATCH_STAGGER_MAX_SECONDS` caps the delay (default 20s), `PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS` caps deterministic jitter (default 3s), and the `PULSE_DISPATCH_STAGGER_*` threshold variables override load/failure/GraphQL sensitivity for diagnostics.
+
 ### Version Guard
 
 **Problem**: Something outside aidevops periodically upgrades OpenCode to latest. The version guard in `headless-runtime-helper.sh` runs on every dispatch and reinstalls `OPENCODE_PINNED_VERSION` from `shared-constants.sh` if drift is detected.
