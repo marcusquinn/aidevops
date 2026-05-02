@@ -143,15 +143,21 @@ _wah_metric_details_json() {
 				avg: (if ($durations | length) > 0 then (($durations | add) / ($durations | length) | floor) else 0 end),
 				max: (if ($durations | length) > 0 then ($durations | max) else 0 end)
 			},
-			recent_examples: ($w | sort_by(.ts // 0) | reverse | .[0:5] | map({
+				recent_examples: ($w | sort_by(.ts // 0) | reverse | .[0:5] | map({
 				ts,
 				session_key,
 				session_id,
 				issue_number,
 				repo_slug,
+				model,
+				provider,
 				result,
 				exit_code,
 				failure_reason,
+				provider_error_type,
+				provider_status,
+				runtime_error_type,
+				classification_source,
 				duration_ms,
 				work_dir,
 				output_file,
@@ -160,16 +166,22 @@ _wah_metric_details_json() {
 			})),
 			failure_groups: ([
 				$failures
-				| group_by([.result // "unknown", .failure_reason // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
+				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", .runtime_error_type // "", .classification_source // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
 				| .[]
 				| {
 					result: (.[0].result // "unknown"),
 					failure_reason: (.[0].failure_reason // ""),
+					provider_error_type: (.[0].provider_error_type // ""),
+					provider_status: (.[0].provider_status // ""),
+					runtime_error_type: (.[0].runtime_error_type // ""),
+					classification_source: (.[0].classification_source // ""),
+					provider: (.[0].provider // ""),
+					model: (.[0].model // ""),
 					session_key: (.[0].session_key // ""),
 					issue_number: (.[0].issue_number // null),
 					repo_slug: (.[0].repo_slug // ""),
 					count: length,
-					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms}))
+					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source}))
 				}
 			] | sort_by(.count) | reverse | .[0:10])
 		}' <"$metrics" 2>/dev/null || \
