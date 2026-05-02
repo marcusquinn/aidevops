@@ -197,7 +197,7 @@ test_ci_feedback_dedupes_by_pr_head_sha() {
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 
 	local edit_count marker_count
-	edit_count=$(grep -c 'gh issue edit' "$GH_LOG" || true)
+	edit_count=$(grep -c 'gh issue edit .*--body' "$GH_LOG" || true)
 	[[ "$edit_count" =~ ^[0-9]+$ ]] || edit_count=0
 	marker_count=$(grep -c '<!-- ci-feedback:PR100:SHAabc123 -->' "${TEST_ROOT}/issue-body.txt" || true)
 	[[ "$marker_count" =~ ^[0-9]+$ ]] || marker_count=0
