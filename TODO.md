@@ -3920,3 +3920,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3444 Clean up stale dispatch timing recorder processes #auto-dispatch #bug ref:GH#22296
 
 - [ ] t3445 Ignore generated Beads export state #auto-dispatch #bug ref:GH#22297
+
+- [ ] t3446 Document implementation seeded draft PR workflow #auto-dispatch #documentation ref:GH#22299
