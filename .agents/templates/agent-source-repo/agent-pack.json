@@ -2,7 +2,7 @@
   "$schema": "https://aidevops.sh/schemas/agent-pack.schema.json",
   "name": "example-private-agent-pack",
   "version": "1.0.0",
-  "description": "Private aidevops agent pack for a specific domain or client workflow.",
+  "description": "Private aidevops agent pack with explicit routing and data-flow contracts.",
   "domains": ["example-domain", "operations"],
   "triggers": ["example trigger", "private workflow", "client ops"],
   "primary_agents": [
@@ -42,14 +42,49 @@
       "purpose": "Authenticate to the private example API."
     }
   ],
+  "inputs": [
+    {
+      "name": "source_material",
+      "description": "Private source notes, repo files, or operational context the pack may read.",
+      "sensitivity": "private-local",
+      "allowed_sources": ["local-workspace", "private-repo"]
+    }
+  ],
   "outputs": [
     {
       "name": "status-report",
+      "description": "Generated status reports and workflow artifacts.",
       "path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/status/",
-      "purpose": "Generated status reports and workflow artifacts."
+      "artifact_path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/status/",
+      "sensitivity": "public-safe",
+      "allowed_destinations": ["chat", "github-issue-pr", "git-commit", "logs", "local-workspace"]
+    },
+    {
+      "name": "private-working-notes",
+      "description": "Intermediate notes that may reference private source material.",
+      "path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/notes/",
+      "artifact_path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/notes/",
+      "sensitivity": "private-local",
+      "allowed_destinations": ["local-workspace"]
+    },
+    {
+      "name": "secret-adjacency-report",
+      "description": "Findings that describe secret locations, credential stores, or access boundaries without exposing values.",
+      "path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/restricted/",
+      "artifact_path": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/restricted/",
+      "sensitivity": "secret-adjacent",
+      "allowed_destinations": ["local-workspace"]
     }
   ],
-  "sensitivity": "private",
+  "artifact_paths": {
+    "base": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/",
+    "status": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/status/",
+    "notes": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/notes/",
+    "restricted": "~/.aidevops/.agent-workspace/work/example-private-agent-pack/restricted/"
+  },
+  "sensitivity": "private-local",
+  "default_sensitivity": "private-local",
+  "sensitivity_tiers": ["public-safe", "private-local", "secret-adjacent", "never-export"],
   "upstream_candidate": false,
   "core_candidate": false
 }

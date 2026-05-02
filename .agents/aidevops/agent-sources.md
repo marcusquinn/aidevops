@@ -81,7 +81,9 @@ my-private-agents/.agents/my-agent/
 5. Add any helper `.sh` scripts needed for CLI automation.
 6. Add `.agents/agent-pack.json` for private packs that should advertise
    domains, triggers, commands, helpers, secrets, and outputs compactly.
-7. Follow `tools/build-agent/build-agent.md`.
+7. Keep the manifest's data-flow contract current as inputs, outputs, and
+   privacy tiers change.
+8. Follow `tools/build-agent/build-agent.md`.
 
 ## Agent Pack Manifest
 
@@ -105,8 +107,11 @@ Use the template at `.agents/templates/agent-source-repo/agent-pack.json`.
 | `commands` | Slash commands and command docs shipped by the pack |
 | `helpers` / `helper_scripts` | Deterministic scripts the pack expects agents to use |
 | `required_secrets` | Secret names and storage hints; never include secret values |
+| `inputs` | Expected source material, with source location and sensitivity metadata |
 | `outputs` / `output_artifacts` | Generated artifact locations and contracts |
-| `sensitivity` / `sensitivity_tier` | `private`, `restricted`, or another local sensitivity tier |
+| `artifact_paths` | Named durable workspace paths for private artifacts |
+| `sensitivity` / `sensitivity_tier` | Pack default sensitivity for compact capability indexing |
+| `default_sensitivity`, `sensitivity_tiers` | Data-flow defaults and supported privacy tier enum |
 | `upstream_candidate`, `core_candidate` | Whether the pack may graduate into shared aidevops |
 
 Missing manifests are allowed. Invalid manifests are recorded as
@@ -115,9 +120,57 @@ directory scan behaviour so private agents remain available while the manifest i
 fixed.
 
 Update the manifest whenever you add a new routing domain, primary agent,
-subagent, slash command, helper script, required secret, or output artifact. Do
-not list credentials or private customer identifiers; use generic secret names
-and generic artifact paths.
+subagent, slash command, helper script, required secret, input, output artifact,
+or privacy tier. Do not list credentials or private customer identifiers; use
+generic secret names and generic artifact paths.
+
+## Data-Flow Contracts
+
+The manifest teaches agents and validators what data the pack consumes, what it
+produces, where artifacts belong, and which destinations are safe.
+
+Required data-flow fields:
+
+- `inputs[]` — expected source material. Each input declares `name`,
+  `description`, `sensitivity`, and `allowed_sources`.
+- `outputs[]` — produced artifacts. Each output declares `name`, `description`,
+  `artifact_path`, `sensitivity`, and `allowed_destinations`.
+- `artifact_paths` — named local paths for durable working outputs.
+- `default_sensitivity` and `sensitivity_tiers` — default tier and supported enum.
+
+Every output must have its own `artifact_path` and sensitivity tier. Do not rely on
+a pack-level default for outputs because the destination decision is made per
+artifact.
+
+## Privacy Tiers
+
+| Tier | Definition | Chat | Git commits | Logs | Local workspace | GitHub issue/PR text |
+|------|------------|------|-------------|------|-----------------|----------------------|
+| `public-safe` | Redacted, non-private output intended for broad sharing. | Yes | Yes | Yes | Yes | Yes |
+| `private-local` | Private repo, client, operational, or unpublished context. | No | Private repo only when intentional | No | Yes | No |
+| `secret-adjacent` | Secret locations, credential-store metadata, access patterns, or redacted security findings. | Redacted summary only | No | No | Yes | No |
+| `never-export` | Secret values, tokens, private keys, recovery codes, or unredacted credential material. | No | No | No | No; use secret store | No |
+
+When in doubt, choose the stricter tier. A `public-safe` artifact can be surfaced in
+chat, GitHub issue/PR text, logs, commits, and local workspace files. All other
+tiers should stay in local workspace artifacts unless the contract explicitly
+allows a narrower destination.
+
+## Output Contract Pattern
+
+```json
+{
+  "name": "private-working-notes",
+  "description": "Intermediate notes that may reference private source material.",
+  "artifact_path": "~/.aidevops/.agent-workspace/work/<pack-name>/notes/",
+  "sensitivity": "private-local",
+  "allowed_destinations": ["local-workspace"]
+}
+```
+
+Use `~/.aidevops/.agent-workspace/work/<pack-name>/` for private artifacts that
+must survive the session. Use `~/.aidevops/.agent-workspace/tmp/session-*` for
+throwaway intermediates. Never commit `secret-adjacent` or `never-export` content.
 
 ### Slash Command Format
 
