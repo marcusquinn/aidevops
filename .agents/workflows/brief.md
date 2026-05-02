@@ -86,6 +86,38 @@ The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 m
 
 **The brief IS the product.** A vague brief dispatched to Opus wastes more money than a prescriptive brief dispatched to Haiku. Invest the effort in the brief, not the worker.
 
+## Seeded Draft PR Decision
+
+When an issue or brief is created after enough discovery to know the likely implementation path, the author MAY open a seeded draft PR that gives the worker verified implementation context. This is opt-in. Issue-only remains the default when confidence is not high.
+
+### Seed only when ALL criteria hold
+
+- **Fresh discovery:** memory recall, duplicate/in-flight discovery, and file-ref verification were completed in this session against current `HEAD`.
+- **Verified files:** every seeded change references existing files and line ranges checked immediately before composing the PR; new-file paths have verified parent directories.
+- **High-confidence pattern:** the implementation follows an existing pattern or exact skeleton already captured in the brief.
+- **Honest verification state:** any tests, lint, or build commands already run are named with results; unrun checks are explicitly marked unverified.
+- **Draft safety:** the PR is opened as a draft, linked to the issue/brief, and clearly says it is a seed for continuation, not merge-ready work.
+
+### Do NOT seed when any caution applies
+
+- The target code is moving quickly or discovery found recent related commits/PRs that need reassessment.
+- The likely implementation depends on design judgment, credentials, production state, or a human decision.
+- The seed would anchor the worker to an untested hypothesis instead of evidence.
+- The author cannot describe how to verify the seeded approach.
+- The PR would be easy to mistake for ready-to-merge work.
+
+### Required seeded PR content
+
+Seeded draft PR bodies must mentor the next worker with:
+
+- Issue link using `For #NNN` while the PR is draft-only; switch to the normal closing keyword only when the PR becomes the final implementation PR.
+- Files and line ranges already verified.
+- What was implemented or only sketched.
+- Verification already run, plus explicit `UNVERIFIED` items.
+- Stale-assumption warning: what would make the seed wrong and what to re-check before continuing.
+
+Record the decision in `templates/brief-template.md` under **Seeded Draft PR** whether a seed was created or intentionally skipped.
+
 ## Tier Classification
 
 Assess every work item against these empirical criteria (from 47-PR research):
