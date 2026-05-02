@@ -12,7 +12,8 @@
 # Dependencies:
 #   - shared-constants.sh (print_info, etc.)
 #   - shared-gh-wrappers-rest-fallback.sh (_rest_should_fallback,
-#     _rest_issue_view, _rest_issue_list, _rest_issue_search, _rest_pr_list)
+#     _rest_args_have_search, _rest_issue_view, _rest_issue_list,
+#     _rest_issue_search, _rest_pr_list)
 #   - _gh_with_timeout (from orchestrator)
 #   - ISSUE_STATUS_LABELS (from orchestrator)
 #   - gh CLI, jq
@@ -185,9 +186,10 @@ set_issue_status() {
 
 #######################################
 # gh_issue_view — drop-in replacement for gh issue view.  (t2689)
-# Falls back to REST (`gh api GET /repos/{owner}/{repo}/issues/{N}`) when the
-# primary call fails AND GraphQL is exhausted, so callers keep working during
-# rate-limit windows. All arguments are forwarded unchanged to gh issue view.
+# Routes directly to REST (`gh api GET /repos/{owner}/{repo}/issues/{N}`) when
+# GraphQL remaining is below the fallback threshold, and still falls back to
+# REST if the primary call fails during an exhaustion window. All arguments are
+# forwarded unchanged to the selected path.
 #
 #   gh_issue_view 42 --repo owner/repo --json state --jq '.state'
 #   gh_issue_view 42 --repo owner/repo --json title,body,labels,assignees
@@ -196,8 +198,13 @@ set_issue_status() {
 # when both paths ran).
 #######################################
 gh_issue_view() {
-	gh_record_call graphql gh_issue_view 2>/dev/null || true
 	local _first_num="${1:-}"
+	if _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue view #${_first_num} to REST"
+		_rest_issue_view "$@"
+		return $?
+	fi
+	gh_record_call graphql gh_issue_view 2>/dev/null || true
 	_gh_with_timeout read gh issue view "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
@@ -210,11 +217,11 @@ gh_issue_view() {
 
 #######################################
 # gh_pr_list — drop-in replacement for gh pr list.  (t2772)
-# Falls back to REST (`gh api GET /repos/{owner}/{repo}/pulls`) when the
-# primary call fails AND GraphQL is exhausted. Supports --state, --head,
-# --base, --limit, --json, --jq, -q. The --search flag is accepted but
-# silently skipped in the REST path (not supported by the /repos/.../pulls
-# endpoint). --json FIELDS is accepted for parity but ignored in REST path.
+# Routes directly to REST (`gh api GET /repos/{owner}/{repo}/pulls`) when
+# GraphQL remaining is below the fallback threshold, and still falls back to
+# REST if the primary call fails during an exhaustion window. Supports --state,
+# --head, --base, --limit, --json, --jq, -q. --search remains GraphQL-only
+# because the REST pulls endpoint has no equivalent search semantics.
 #
 #   gh_pr_list --repo owner/repo --state open --json number,title
 #   gh_pr_list --repo owner/repo --state open --limit 200 --json number --jq 'length'
@@ -223,10 +230,17 @@ gh_issue_view() {
 # when both paths ran).
 #######################################
 gh_pr_list() {
+	local _has_search=1
+	_rest_args_have_search "$@" || _has_search=0
+	if [[ $_has_search -eq 0 ]] && _rest_should_fallback; then
+		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr list to REST"
+		_rest_pr_list "$@"
+		return $?
+	fi
 	gh_record_call graphql gh_pr_list 2>/dev/null || true
 	_gh_with_timeout read gh pr list "$@"
 	local rc=$?
-	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
+	if [[ $rc -ne 0 && $_has_search -eq 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
 		_rest_pr_list "$@"
 		rc=$?
@@ -236,7 +250,9 @@ gh_pr_list() {
 
 #######################################
 # gh_issue_list — drop-in replacement for gh issue list.  (t2689, t2995)
-# Falls back to REST when the primary call fails AND GraphQL is exhausted.
+# Routes directly to REST when GraphQL remaining is below the fallback threshold,
+# and still falls back to REST if the primary call fails during an exhaustion
+# window.
 # Supports --state, --label (multiple), --assignee, --limit, --json, --jq,
 # --search.
 #
@@ -257,21 +273,23 @@ gh_pr_list() {
 # when both paths ran).
 #######################################
 gh_issue_list() {
+	local _has_search=1
+	_rest_args_have_search "$@" || _has_search=0
+	if _rest_should_fallback; then
+		if [[ $_has_search -eq 1 ]]; then
+			print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue list to /search/issues (--search preserved, t2995)"
+			_rest_issue_search "$@"
+		else
+			print_info "[INFO] gh-wrapper: GraphQL budget low, routing issue list to REST"
+			_rest_issue_list "$@"
+		fi
+		return $?
+	fi
 	gh_record_call graphql gh_issue_list 2>/dev/null || true
 	_gh_with_timeout read gh issue list "$@"
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		# t2995: use search-aware REST fallback when --search is supplied.
-		# Walk argv to detect --search; the helper itself re-parses, but we
-		# need to know whether to dispatch to /search/issues (which preserves
-		# search semantics) or /repos/.../issues (which doesn't support it).
-		local _has_search=0
-		local _arg
-		for _arg in "$@"; do
-			case "$_arg" in
-			--search|--search=*) _has_search=1; break ;;
-			esac
-		done
 		if [[ $_has_search -eq 1 ]]; then
 			print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to /search/issues for issue list (--search preserved, t2995)"
 			_rest_issue_search "$@"

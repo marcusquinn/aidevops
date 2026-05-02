@@ -52,6 +52,8 @@ _SHARED_GH_WRAPPERS_REST_FALLBACK_LOADED=1
 #                         remaining). Pair: instrumentation + earlier
 #                         fallback. Trivial revert: set back to 1000 here.
 _GH_REST_FALLBACK_THRESHOLD="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-1500}"
+_GH_REST_FALLBACK_RATE_LIMIT_CACHE=""
+_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS=0
 
 #######################################
 # Execute a gh api command with optional wall-clock timeout (t2913).
@@ -159,10 +161,42 @@ _rest_should_fallback() {
 	[[ "${_GH_SHOULD_FALLBACK_OVERRIDE:-0}" == "1" ]] && return 0
 	local remaining="${1:-}"
 	if [[ -z "$remaining" ]]; then
-		remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
+		local _now=0
+		local _ttl="${AIDEVOPS_GH_REST_FALLBACK_CACHE_TTL:-20}"
+		if [[ "${AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE:-0}" != "1" && "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]]; then
+			_now=$(date +%s 2>/dev/null || printf '0')
+			if [[ "$_GH_REST_FALLBACK_RATE_LIMIT_CACHE" =~ ^[0-9]+$ && "$_now" -gt 0 && $((_now - _GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS)) -le "$_ttl" ]]; then
+				remaining="$_GH_REST_FALLBACK_RATE_LIMIT_CACHE"
+			else
+				remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
+				if [[ "$remaining" =~ ^[0-9]+$ ]]; then
+					_GH_REST_FALLBACK_RATE_LIMIT_CACHE="$remaining"
+					_GH_REST_FALLBACK_RATE_LIMIT_CACHE_TS="$_now"
+				fi
+			fi
+		else
+			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
+		fi
 	fi
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
-	[[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]
+	if [[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Return 0 when argv contains --search or --search=... .
+# Args: gh-style argv
+#######################################
+_rest_args_have_search() {
+	local _arg
+	for _arg in "$@"; do
+		case "$_arg" in
+		--search|--search=*) return 0 ;;
+		esac
+	done
+	return 1
 }
 
 #######################################
@@ -814,7 +848,8 @@ _rest_pr_view() {
 # --json, --jq, -q) and returns a JSON array or jq-filtered output.
 # Mirrors `gh pr list` for state/head/base filtering.
 #
-# The --search flag is not supported and is silently skipped.
+# The --search flag is not supported by the REST pulls endpoint. The wrapper
+# keeps PR search on the GraphQL path instead of silently degrading semantics.
 # --json FIELDS is accepted for parity but ignored (the REST endpoint
 # returns the full object; use --jq/-q to select).
 #
@@ -847,8 +882,7 @@ _rest_pr_list() {
 		--jq) jq_expr="${2:-}"; shift 2 ;;
 		--jq=*) jq_expr="${_arg#--jq=}"; shift ;;
 		-q) jq_expr="${2:-}"; shift 2 ;;
-		--search) shift 2 ;;
-		--search=*) shift ;;
+		--search|--search=*) printf '_rest_pr_list: --search is not supported by REST fallback\n' >&2; return 2 ;;
 		*) shift ;;
 		esac
 	done

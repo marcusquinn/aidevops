@@ -44,6 +44,11 @@
 #  17. gh_create_pr does NOT fall back when primary fails but graphql healthy
 #  18. _rest_pr_create auto-detects --head from git HEAD when omitted
 #  19. _rest_pr_create auto-detects --base from repo default_branch via REST
+#  20. gh_issue_view routes directly to REST when GraphQL remaining is low
+#  21. gh_issue_list keeps the healthy GraphQL path
+#  22. gh_issue_list routes low-budget --search calls to /search/issues
+#  23. gh_pr_list routes directly to REST when GraphQL remaining is low
+#  24. gh_pr_list keeps --search on the GraphQL path when budget is low
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -115,6 +120,7 @@ export AIDEVOPS_SESSION_USER=testuser
 # the value into _GH_REST_FALLBACK_THRESHOLD inside
 # shared-gh-wrappers-rest-fallback.sh.
 export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=10
+export AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE=1
 
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
@@ -124,6 +130,13 @@ source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
 # shellcheck disable=SC2317
 print_info() { printf '[INFO] %s\n' "$*" >>"${GH_INFO_OUTPUT}"; return 0; }
 export -f print_info
+
+# Keep wrapper tests inside this shell so the gh() function stub below captures
+# both primary and REST paths. The production timeout helper may use an external
+# timeout binary, which cannot execute shell functions.
+# shellcheck disable=SC2317
+_gh_with_timeout() { shift; "$@"; return $?; }
+export -f _gh_with_timeout
 
 # Post-source stubs. Shell functions beat PATH binaries.
 gh() {
@@ -167,7 +180,7 @@ gh() {
 	fi
 
 	# gh issue create|comment|edit - the primary path
-	if [[ "$1" == "issue" && ( "$2" == "create" || "$2" == "comment" || "$2" == "edit" ) ]]; then
+	if [[ "$1" == "issue" && ( "$2" == "create" || "$2" == "comment" || "$2" == "edit" || "$2" == "view" || "$2" == "list" ) ]]; then
 		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
 			printf 'primary stub forced failure (rate limit)\n' >&2
 			return 1
@@ -178,8 +191,8 @@ gh() {
 		return 0
 	fi
 
-	# gh pr create - the primary path for PR creation
-	if [[ "$1" == "pr" && "$2" == "create" ]]; then
+	# gh pr create/list - the primary path for PR creation/listing
+	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "list" ) ]]; then
 		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
 			printf 'primary stub forced failure (rate limit)\n' >&2
 			return 1
@@ -592,6 +605,92 @@ else
 		"expected base=develop in calls; GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_REPO_DEFAULT_BRANCH
+
+# =============================================================================
+# Test 20: gh_issue_view routes directly to REST when GraphQL remaining is low
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_issue_view 4242 --repo "owner/repo" --json number --jq '.number' >/dev/null 2>&1 || true
+
+if grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api /repos/owner/repo/issues/4242' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue view 4242' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_view proactively routes to REST when GraphQL budget is low"
+else
+	fail "gh_issue_view proactively routes to REST when GraphQL budget is low" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 21: gh_issue_list keeps the primary path when GraphQL is healthy
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=5000
+
+gh_issue_list --repo "owner/repo" --state open --json number --jq length >/dev/null 2>&1 || true
+
+if grep -qE '^issue list' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/issues\?' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list uses primary path when GraphQL budget is healthy"
+else
+	fail "gh_issue_list uses primary path when GraphQL budget is healthy" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 22: gh_issue_list preserves --search by routing low-budget calls to search
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_issue_list --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number' >/dev/null 2>&1 || true
+
+if grep -qE '^api /search/issues\?' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_issue_list proactively routes --search to /search/issues"
+else
+	fail "gh_issue_list proactively routes --search to /search/issues" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 23: gh_pr_list routes directly to REST when GraphQL remaining is low
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_list --repo "owner/repo" --state open --json number --jq length >/dev/null 2>&1 || true
+
+if grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^pr list' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list proactively routes to REST when GraphQL budget is low"
+else
+	fail "gh_pr_list proactively routes to REST when GraphQL budget is low" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 24: gh_pr_list keeps --search on GraphQL path when budget is low
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+
+gh_pr_list --repo "owner/repo" --search "fallback" --state open --json number --jq length >/dev/null 2>&1 || true
+
+if grep -qE '^pr list' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list leaves --search on primary path when REST cannot preserve semantics"
+else
+	fail "gh_pr_list leaves --search on primary path when REST cannot preserve semantics" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
 
 # =============================================================================
 # Summary
