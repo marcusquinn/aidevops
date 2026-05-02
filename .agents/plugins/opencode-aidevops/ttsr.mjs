@@ -105,28 +105,32 @@ function pruneAdvisoryState(tokenAdvisoryState) {
  * @returns {{ sessionID: string, totalK: number, total: number } | null}
  */
 function checkTokenAdvisory(messages, tokenAdvisoryState, input, isHeadless) {
-  if (isHeadless()) return null;
-  if (isGpt55OrNewer(input)) return null;
+  let result = null;
 
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const info = messages[i].info;
-    if (info?.role !== "assistant" || !info.tokens) continue;
+  if (!isHeadless() && !isGpt55OrNewer(input)) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const info = messages[i].info;
+      if (info?.role !== "assistant" || !info.tokens) continue;
 
-    const total = getTokenTotal(info.tokens);
-    if (total < TOKEN_ADVISORY_INITIAL) return null;
+      const total = getTokenTotal(info.tokens);
+      if (total >= TOKEN_ADVISORY_INITIAL) {
+        const sessionID = info.sessionID || "";
+        const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
+        const stepsAboveInitial = Math.floor((total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL);
+        const currentThreshold = TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
 
-    const sessionID = info.sessionID || "";
-    const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
-    const stepsAboveInitial = Math.floor((total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL);
-    const currentThreshold = TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
+        if (currentThreshold > lastWarned) {
+          tokenAdvisoryState.set(sessionID, currentThreshold);
+          pruneAdvisoryState(tokenAdvisoryState);
+          result = { sessionID, totalK: Math.round(total / 1000), total };
+        }
+      }
 
-    if (currentThreshold <= lastWarned) return null;
-
-    tokenAdvisoryState.set(sessionID, currentThreshold);
-    pruneAdvisoryState(tokenAdvisoryState);
-    return { sessionID, totalK: Math.round(total / 1000), total };
+      break;
+    }
   }
-  return null;
+
+  return result;
 }
 
 /**
