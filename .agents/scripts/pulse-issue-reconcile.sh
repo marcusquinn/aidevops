@@ -286,6 +286,69 @@ _normalize_get_feedback_routed_rows() {
 	return 0
 }
 
+#######################################
+# Find feedback-routed status:available issues that still carry stale
+# interactive ownership and therefore need owner/assignee normalization before
+# the pulse can safely reassign them for worker dispatch.
+#
+# Outputs pipe-delimited rows: issue_number|comma-separated-assignees
+#
+# Args:
+#   $1 issue_rows_json — JSON from gh issue list (number,assignees,labels)
+#   $2 slug            — repo slug for body-marker lookups
+# Returns: 0 always
+#######################################
+_normalize_get_stale_feedback_interactive_rows() {
+	local issue_rows_json="$1"
+	local slug="$2"
+	local status_label=status:available
+	local origin_label=origin:interactive
+	local ci_label=source:ci-feedback
+	local conflict_label=source:conflict-feedback
+	local review_label=source:review-feedback
+
+	local _stale_candidates=""
+	_stale_candidates=$(printf '%s' "$issue_rows_json" | jq -r \
+		--arg status_label "$status_label" \
+		--arg origin_label "$origin_label" \
+		--arg ci_label "$ci_label" \
+		--arg conflict_label "$conflict_label" \
+		--arg review_label "$review_label" '
+		.[] | select(
+			(.labels | map(.name) as $n |
+				($n | index($status_label)) and ($n | index($origin_label))
+			) and ((.assignees | length) > 0)
+		) | [
+			.number,
+			(if (.labels | map(.name) | (index($ci_label) or index($conflict_label) or index($review_label)))
+			 then 1 else 0 end),
+			(.assignees | map(.login) | join(","))
+		] | join("|")
+	' 2>/dev/null) || _stale_candidates=""
+
+	[[ -n "$_stale_candidates" ]] || return 0
+
+	local _pair _cand_num _has_label _assignees _cand_body
+	while IFS= read -r _pair; do
+		_cand_num="${_pair%%|*}"
+		_has_label="${_pair#*|}"
+		_has_label="${_has_label%%|*}"
+		_assignees="${_pair##*|}"
+		[[ "$_cand_num" =~ ^[0-9]+$ ]] || continue
+
+		if [[ "$_has_label" == "1" ]]; then
+			printf '%s|%s\n' "$_cand_num" "$_assignees"
+		else
+			_cand_body=$(gh issue view "$_cand_num" --repo "$slug" --json body --jq '.body' 2>/dev/null) || _cand_body=""
+			if printf '%s' "$_cand_body" | grep -qE '<!-- (ci-feedback|conflict-feedback|review-followup):PR'; then
+				printf '%s|%s\n' "$_cand_num" "$_assignees"
+			fi
+		fi
+	done <<<"$_stale_candidates"
+
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -318,6 +381,41 @@ _normalize_reassign_self() {
 		# Pass 2 (t2396): status:available + origin:worker + feedback-routed
 		local feedback_rows=""
 		feedback_rows=$(_normalize_get_feedback_routed_rows "$issue_rows_json" "$slug")
+
+		# Pass 2b (t3425): status:available + feedback-routed issues that were
+		# requeued for worker dispatch but retained stale interactive ownership.
+		local stale_feedback_rows=""
+		stale_feedback_rows=$(_normalize_get_stale_feedback_interactive_rows "$issue_rows_json" "$slug")
+		local _stale_pair _stale_issue _stale_assignees _stale_assignee
+		local _origin_worker_label=origin:worker
+		local _origin_interactive_label=origin:interactive
+		local _origin_takeover_label=origin:worker-takeover
+		local _add_label_flag=--add-label
+		local _remove_label_flag=--remove-label
+		local _remove_assignee_flag=--remove-assignee
+		while IFS= read -r _stale_pair; do
+			[[ -n "$_stale_pair" ]] || continue
+			_stale_issue="${_stale_pair%%|*}"
+			_stale_assignees="${_stale_pair#*|}"
+			[[ "$_stale_issue" =~ ^[0-9]+$ ]] || continue
+
+			local -a _normalize_flags=(
+				"$_add_label_flag" "$_origin_worker_label"
+				"$_remove_label_flag" "$_origin_interactive_label"
+				"$_remove_label_flag" "$_origin_takeover_label"
+			)
+			IFS=',' read -r -a _stale_assignee_array <<<"$_stale_assignees"
+			for _stale_assignee in "${_stale_assignee_array[@]}"; do
+				[[ -n "$_stale_assignee" ]] && _normalize_flags+=("$_remove_assignee_flag" "$_stale_assignee")
+			done
+
+			if gh issue edit "$_stale_issue" --repo "$slug" "${_normalize_flags[@]}" >/dev/null 2>&1; then
+				feedback_rows=$(printf '%s\n%s\n' "$feedback_rows" "$_stale_issue")
+				echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${_stale_issue} in ${slug}" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${_stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
+			fi
+		done <<<"$stale_feedback_rows"
 
 		# Merge Pass 1 + Pass 2 rows (dedup via sort -u)
 		local all_rows=""
