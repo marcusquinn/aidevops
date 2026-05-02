@@ -26,6 +26,23 @@ Pulse cycle (every 3 min, configurable)
     → On failure: CLAIM_RELEASED posted, issue available for re-dispatch
 ```
 
+### Dispatch claim comment states
+
+Use the issue timeline to distinguish expected dispatch ownership from noisy
+claim loops:
+
+| Signal | Meaning | Expected next evidence |
+|---|---|---|
+| `DISPATCH_CLAIM ...` | A runner entered the cross-runner claim window. | Either `CLAIM_WON` in pulse logs followed by a `Dispatching worker` comment, or a later `CLAIM_DEFERRED` / `CLAIM_LOST` diagnostic. |
+| `Dispatching worker ...` with no later terminal marker | Active worker ownership. It blocks re-dispatch for the normal dispatch TTL, then for the extended non-terminal worker window (`DISPATCH_ACTIVE_WORKER_MAX_AGE`, default 7200s). | Worker log growth, PR creation, `MERGE_SUMMARY`, `CLAIM_RELEASED`, `Worker failed`, or watchdog output. |
+| `DISPATCH_CLAIM ... reason=stale_worker_takeover prior_dispatch_age_s=<n> no_terminal=true` | A later runner is deliberately taking over after the extended non-terminal worker window expired. This is not a bare duplicate claim. | A fresh `Dispatching worker` comment or a deterministic skip/failure reason. |
+| `CLAIM_RELEASED ...` / `MERGE_SUMMARY` / `Worker failed` / `Worker Watchdog Kill` / `BLOCKED` | Terminal ownership marker. Prior dispatch comments no longer block. | Re-dispatch is safe if the issue remains open and eligible. |
+
+A repeated bare `DISPATCH_CLAIM` without `Dispatching worker`, `CLAIM_DEFERRED`,
+`reason=stale_worker_takeover`, or a terminal marker is still a claim lifecycle
+bug. Diagnose with `dispatch-dedup-helper.sh is-assigned <issue> <slug>
+<runner>` and the pulse dispatch stage ledger before attributing a worker outage.
+
 ## Manual Worker Launch
 
 Use `aidevops launch-worker` when an operator needs a controlled headless

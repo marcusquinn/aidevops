@@ -1355,8 +1355,7 @@ enumerate_blockers() {
 # PR evidence dedup check functions are in dispatch-dedup-pr.sh (GH#18916).
 
 #######################################
-# Check whether a single dispatch comment is still active (within TTL and
-# backed by a live local worker process).
+# Check whether a single dispatch comment is still active.
 #
 # GH#16626: Process liveness check — if the comment is within TTL but no
 # worker process is running for this issue locally, the worker completed or
@@ -1407,6 +1406,8 @@ _is_dispatch_comment_active() {
 	local issue_number="$3"
 	local now_epoch="$4"
 	local max_age="$5"
+	local active_worker_max_age="${DISPATCH_ACTIVE_WORKER_MAX_AGE:-7200}"
+	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
 	[[ -z "$created_at" ]] && return 1
 
@@ -1416,11 +1417,19 @@ _is_dispatch_comment_active() {
 		printf '%s' "0")
 	local age=$((now_epoch - comment_epoch))
 
-	# GH#17503: Straight TTL check — no pgrep escape hatch, no grace period.
-	# The dispatch comment blocks re-dispatch for the full TTL duration.
-	# Comments are never deleted (audit trail); they just stop blocking
-	# after max_age expires, allowing a fresh dispatch attempt.
-	[[ "$age" -ge "$max_age" ]] && return 1
+	# GH#22356: the soft dispatch-comment TTL is only the normal claim window.
+	# A deterministic dispatch comment with no later terminal marker still means
+	# a worker may be live on another runner. Keep blocking until the extended
+	# non-terminal worker window expires; after that, a later claim path can emit
+	# an explicit stale-worker takeover reason instead of a bare DISPATCH_CLAIM.
+	if [[ "$age" -ge "$max_age" ]]; then
+		if [[ "$age" -lt "$active_worker_max_age" ]]; then
+			printf 'non-terminal dispatch comment by %s posted %ds ago on issue #%s (soft TTL expired; active-worker window: %ds remaining)\n' \
+				"$author" "$age" "$issue_number" "$((active_worker_max_age - age))"
+			return 0
+		fi
+		return 1
+	fi
 
 	printf 'dispatch comment by %s posted %ds ago on issue #%s (TTL: %ds remaining)\n' \
 		"$author" "$age" "$issue_number" "$((max_age - age))"

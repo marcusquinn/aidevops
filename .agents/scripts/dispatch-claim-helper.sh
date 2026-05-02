@@ -193,6 +193,7 @@ _resolve_version() {
 #   $3 = runner login
 #   $4 = nonce
 #   $5 = ISO timestamp
+#   $6 = optional reason fields (space-separated key=value tokens)
 # Returns:
 #   exit 0 + comment ID on stdout if posted
 #   exit 1 on failure
@@ -203,6 +204,7 @@ _post_claim() {
 	local runner="$3"
 	local nonce="$4"
 	local ts="$5"
+	local reason_fields="${6:-}"
 
 	# t2401: include framework version so peers can filter claims from older runners.
 	local version
@@ -210,6 +212,9 @@ _post_claim() {
 
 	local body
 	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
+	if [[ -n "$reason_fields" ]]; then
+		body+=" ${reason_fields}"
+	fi
 
 	local comment_id
 	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
@@ -226,6 +231,89 @@ _post_claim() {
 	fi
 
 	printf '%s' "$comment_id"
+	return 0
+}
+
+#######################################
+# Detect whether a new claim would be taking over a non-terminal worker.
+#
+# A dispatch comment without a later terminal marker is active ownership for
+# DISPATCH_ACTIVE_WORKER_MAX_AGE seconds. The dedup layer suppresses those
+# claims. If that extended window has expired, annotate the next claim so the
+# public issue thread shows a stale-worker takeover instead of a bare claim.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+# Returns: reason key=value tokens on stdout, or empty string.
+#######################################
+_detect_stale_worker_takeover_reason() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local active_worker_max_age="${DISPATCH_ACTIVE_WORKER_MAX_AGE:-7200}"
+	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
+
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq '[.[] | {body_start: (.body[:300]), created_at: .created_at}]' \
+		2>/dev/null) || {
+		printf '%s' ""
+		return 0
+	}
+
+	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	local last_dispatch_json dispatch_created_at
+	last_dispatch_json=$(printf '%s' "$comments_json" | jq -c '
+		[.[] | select((.body_start // "") | startswith("Dispatching worker"))]
+		| sort_by(.created_at) | reverse | first // empty
+	' 2>/dev/null) || last_dispatch_json=""
+	if [[ -z "$last_dispatch_json" || "$last_dispatch_json" == "null" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	dispatch_created_at=$(printf '%s' "$last_dispatch_json" | jq -r '.created_at // ""' 2>/dev/null) || dispatch_created_at=""
+	[[ -n "$dispatch_created_at" ]] || { printf '%s' ""; return 0; }
+
+	local has_terminal
+	has_terminal=$(printf '%s' "$comments_json" | jq -r --arg dispatch_ts "$dispatch_created_at" '
+		[.[] | select(
+			.created_at > $dispatch_ts and (
+				(.body_start | test("TASK_COMPLETE"; "i")) or
+				(.body_start | test("FULL_LOOP_COMPLETE"; "i")) or
+				(.body_start | test("Worker failed"; "i")) or
+				(.body_start | test("Worker Watchdog Kill"; "i")) or
+				(.body_start | test("BLOCKED"; "i")) or
+				(.body_start | test("Kill signal sent"; "i")) or
+				(.body_start | test("Closes #"; "i")) or
+				(.body_start | test("gh pr merge"; "i")) or
+				(.body_start | test("MERGE_SUMMARY"; "i")) or
+				(.body_start | test("Stale assignment recovered"; "i")) or
+				(.body_start | test("CLAIM_RELEASED"; "i"))
+			)
+		)] | length
+	' 2>/dev/null) || has_terminal=0
+	if [[ "$has_terminal" -gt 0 ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	local dispatch_epoch now_epoch age
+	dispatch_epoch=$(_iso_to_epoch "$dispatch_created_at")
+	now_epoch=$(_now_epoch)
+	[[ "$dispatch_epoch" =~ ^[0-9]+$ ]] || dispatch_epoch=0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	age=$((now_epoch - dispatch_epoch))
+	if [[ "$age" -ge "$active_worker_max_age" ]]; then
+		printf 'reason=stale_worker_takeover prior_dispatch_age_s=%s no_terminal=true' "$age"
+		return 0
+	fi
+
+	printf '%s' ""
 	return 0
 }
 
@@ -730,7 +818,10 @@ cmd_claim() {
 
 	# Step 1: Post claim
 	local comment_id
-	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts") || {
+	local claim_reason
+	claim_reason=$(_detect_stale_worker_takeover_reason "$issue_number" "$repo_slug")
+
+	comment_id=$(_post_claim "$issue_number" "$repo_slug" "$runner" "$nonce" "$ts" "$claim_reason") || {
 		echo "CLAIM_ERROR: failed to post claim — proceeding (fail-open)" >&2
 		return 2
 	}
