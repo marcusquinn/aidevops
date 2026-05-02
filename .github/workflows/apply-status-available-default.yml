@@ -17,9 +17,19 @@ permissions:
 
 jobs:
   apply-default:
+    # Label churn on auto-dispatch issues used to start this workflow for every
+    # label application. Only issue creation and the auto-dispatch label can
+    # make status:available newly applicable, so all other label events skip
+    # before occupying the per-issue concurrency slot below.
+    if: >
+      github.event.action == 'opened' ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-dispatch')
     runs-on: ubuntu-latest
     timeout-minutes: 2
     concurrency:
+      # Per issue: two legitimate triggers (opened + auto-dispatch labeled) must
+      # not race each other into duplicate label mutations, but unrelated issues
+      # should never cancel or queue behind each other.
       group: apply-status-default-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
