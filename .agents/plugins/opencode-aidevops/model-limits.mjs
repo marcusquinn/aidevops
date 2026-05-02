@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 //
-// model-limits.mjs — single source of truth for Claude model context/output
-// limits, with optional user override for the opus-4-7 context window.
+// model-limits.mjs — single source of truth for aidevops-managed model
+// context/output limits, with optional user override for the opus-4-7 context
+// window.
 //
 // Why this module exists (t2435):
 //   The opus-4-7 context window is intentionally capped at 250K (not the 1M
@@ -93,6 +94,18 @@ export const CLAUDE_MODEL_LIMITS = {
   // AIDEVOPS_OPUS_47_CONTEXT=<integer> if you understand the MRCR tradeoff.
   // See tools/ai-assistants/models-opus.md for the full rationale.
   "claude-opus-4-7":   { context: resolveOpus47Context(), output: 64000 },
+};
+
+/**
+ * OpenAI GPT-5.5 models report a 1M API context window, but Codex/OpenCode
+ * sessions are effectively bounded at 400K. OpenCode auto-compacts at 80% of
+ * the configured context limit, so registering 500K makes compaction trigger at
+ * 400K instead of waiting until the runtime/provider rejects the request.
+ */
+export const OPENAI_MODEL_LIMITS = {
+  "gpt-5.5":      { context: 500000, output: 128000 },
+  "gpt-5.5-fast": { context: 500000, output: 128000 },
+  "gpt-5.5-pro":  { context: 500000, output: 128000 },
 };
 
 // One-shot warn at module load when the env override changed something.

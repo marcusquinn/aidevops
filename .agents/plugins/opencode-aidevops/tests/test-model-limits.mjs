@@ -20,6 +20,7 @@ import {
   OPUS_47_CONTEXT_DEFAULT,
   OPUS_47_CONTEXT_MAX,
   CLAUDE_MODEL_LIMITS,
+  OPENAI_MODEL_LIMITS,
 } from "../model-limits.mjs";
 
 // ---------------------------------------------------------------------------
@@ -203,5 +204,21 @@ describe("CLAUDE_MODEL_LIMITS table", () => {
     // hard-coded limits regardless.
     assert.equal(CLAUDE_MODEL_LIMITS["claude-opus-4-6"].context, 1000000);
     assert.equal(CLAUDE_MODEL_LIMITS["claude-haiku-4-5"].context, 1000000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// OPENAI_MODEL_LIMITS — GPT-5.5 compaction-boundary regression guard
+// ---------------------------------------------------------------------------
+
+describe("OPENAI_MODEL_LIMITS table", () => {
+  test("sets GPT-5.5 family context to 500000 so 80% compaction lands at 400000", () => {
+    const expected = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro"];
+    for (const id of expected) {
+      assert.ok(OPENAI_MODEL_LIMITS[id], `missing OpenAI limit entry for ${id}`);
+      assert.equal(OPENAI_MODEL_LIMITS[id].context, 500000);
+      assert.equal(OPENAI_MODEL_LIMITS[id].context * 0.8, 400000);
+      assert.ok(OPENAI_MODEL_LIMITS[id].output > 0);
+    }
   });
 });
