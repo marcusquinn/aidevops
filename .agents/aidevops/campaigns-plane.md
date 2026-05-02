@@ -6,6 +6,11 @@ The `_campaigns/` plane is a peer-level user-data plane for marketing/advertisin
 work. It houses brand assets, competitive intel, inspiration swipe files, in-flight
 campaign creative, and post-launch performance + learnings. It is opt-in per repo.
 
+For cross-plane routing metadata, use `.agents/configs/data-planes.json` as the
+canonical registry. This document owns the `_campaigns/` directory contract; the
+registry owns shared facts such as default sensitivity, ingress/egress, helper,
+and retrieval surfaces.
+
 ## Why a Separate Plane
 
 Marketing/campaign work has a distinct shape from other planes:
@@ -210,6 +215,9 @@ layout to any collaborator or AI agent encountering the directory for the first 
 It is the user-facing equivalent of this framework doc.
 
 ## Cross-Plane Connections
+
+The canonical cross-plane registry is `.agents/configs/data-planes.json`; the
+table below is the campaign-specific operational view.
 
 | Direction | Connection |
 |-----------|-----------|

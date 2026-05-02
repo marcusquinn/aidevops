@@ -4,6 +4,11 @@
 
 The cases plane (`_cases/`) is an audit-trail-driven matter management system for legal, compliance, dispute, and operational case work. Each case is a directory with a structured dossier, a chronological timeline, pointers to attached knowledge sources, and sub-files for notes, communications, and drafts.
 
+For cross-plane routing metadata, use `.agents/configs/data-planes.json` as the
+canonical registry. This document owns the `_cases/` directory contract; the
+registry owns shared facts such as default sensitivity, ingress/egress, helper,
+and retrieval surfaces.
+
 ## Directory Contract
 
 ```

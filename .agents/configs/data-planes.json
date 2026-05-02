@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "description": "Canonical aidevops registry for underscore-prefixed data planes and cross-plane routing surfaces.",
+  "planes": {
+    "_knowledge": {
+      "purpose": "Curated source material, references, extracted facts, and reusable knowledge for AI-assisted retrieval.",
+      "lifecycle_state": "source-captured -> staged -> promoted -> indexed -> enriched",
+      "helper": ".agents/scripts/knowledge-helper.sh",
+      "versioning_policy": {
+        "versioned_paths": ["sources/", "collections/", "_config/"],
+        "gitignored_paths": ["inbox/", "staging/", "index/"],
+        "large_blob_policy": "Files at or above the blob threshold are stored under ~/.aidevops/.agent-workspace/knowledge-blobs/ with metadata in git."
+      },
+      "sensitivity_default": "internal",
+      "ingress": ["_inbox routed general references", "knowledge-helper add", "campaign learnings promotion", "case source attachments by reference"],
+      "egress": ["retrieval for agents", "case sources.toon attachments", "campaign RAG grounding", "document enrichment outputs"],
+      "index_retrieval_surface": ["_knowledge/index/", "knowledge-helper list", "knowledge-helper search", "document-enrich-helper extracted fields"],
+      "routing_notes": "Use for durable reference material after sensitivity classification and promotion."
+    },
+    "_cases": {
+      "purpose": "Audit-trail-driven matter management for legal, compliance, dispute, and operational case work.",
+      "lifecycle_state": "open -> hold -> closed -> archived",
+      "helper": ".agents/scripts/case-helper.sh",
+      "versioning_policy": {
+        "versioned_paths": ["case-*/dossier.toon", "case-*/timeline.jsonl", "case-*/sources.toon", "case-*/notes/", "case-*/comms/", "archived/"],
+        "gitignored_paths": ["case-*/drafts/"],
+        "large_blob_policy": "Large evidence stays in _knowledge/blob storage and cases attach source pointers rather than duplicating content."
+      },
+      "sensitivity_default": "privileged",
+      "ingress": ["_inbox routed case-specific files", "case-helper open", "case-helper attach from _knowledge/sources", "case comm logs"],
+      "egress": ["case alarms", "case chasers", "case timeline audit", "knowledge source references"],
+      "index_retrieval_surface": ["case-helper list", "case-helper show", "case dossier fields", "case timeline events"],
+      "routing_notes": "Use for matter-specific work where chronology, parties, deadlines, or privileged handling matter."
+    },
+    "_inbox": {
+      "purpose": "Transit zone for unclassified captures before sensitivity detection, triage, and routing to durable planes.",
+      "lifecycle_state": "captured -> pending -> routed|needs-review -> superseded",
+      "helper": ".agents/scripts/inbox-helper.sh",
+      "versioning_policy": {
+        "versioned_paths": ["README.md", ".gitignore", "triage.log", "triage-examples.jsonl"],
+        "gitignored_paths": ["_drop/", "email/", "web/", "scan/", "voice/", "import/", "_needs-review/"],
+        "large_blob_policy": "Captured binaries remain gitignored until routed or manually promoted."
+      },
+      "sensitivity_default": "unverified",
+      "ingress": ["inbox-helper add", "inbox-helper add --url", "watch-folder drops", "workspace inbox captures"],
+      "egress": ["_knowledge", "_cases", "_campaigns", "_projects", "_feedback", "_needs-review"],
+      "index_retrieval_surface": ["_inbox/triage.log", "_inbox/triage-examples.jsonl", "inbox-helper find", "inbox-helper status", "inbox-helper digest"],
+      "routing_notes": "Never treat as authoritative; classify sensitivity before cloud routing."
+    },
+    "_campaigns": {
+      "purpose": "Marketing, advertising, outreach, brand assets, campaign creative, and post-launch learnings.",
+      "lifecycle_state": "concept -> research -> creative -> review -> distribution -> measure -> learn",
+      "helper": ".agents/scripts/campaigns-provision-helper.sh",
+      "versioning_policy": {
+        "versioned_paths": ["lib/", "launched/", "_config/"],
+        "gitignored_paths": ["intel/", "active/", "index/"],
+        "large_blob_policy": "Campaign assets at or above the blob threshold use the knowledge-blobs store with manifest references."
+      },
+      "sensitivity_default": "internal",
+      "ingress": ["_inbox routed campaign captures", "campaign-helper new", "campaign asset add", "_feedback audience insight import"],
+      "egress": ["_knowledge/insights/marketing", "_performance/marketing", "launched campaign audit trail"],
+      "index_retrieval_surface": ["campaign-helper list", "campaign-helper status", "asset manifest", "channel specs"],
+      "routing_notes": "Use for campaign-shaped work; competitive intel remains local-only."
+    },
+    "_projects": {
+      "purpose": "Project artefacts, plans, deliverables, and execution context that are not generic framework TODOs.",
+      "lifecycle_state": "idea -> scoped -> active -> shipped -> archived",
+      "helper": "agent-managed; no single helper yet",
+      "versioning_policy": {
+        "versioned_paths": ["plans/", "deliverables/", "archive/", "README.md"],
+        "gitignored_paths": ["scratch/", "tmp/", "drafts/"],
+        "large_blob_policy": "Store large binaries in the agent workspace or a project-specific blob store and keep manifests in git."
+      },
+      "sensitivity_default": "internal",
+      "ingress": ["_inbox routed project artefacts", "agent-created project plans", "user-provided project files"],
+      "egress": ["implementation tasks", "project-specific knowledge promotion", "deliverable handoff"],
+      "index_retrieval_surface": ["project README/contracts", "agent search over versioned project files"],
+      "routing_notes": "Use for bounded project execution context when another specialised plane is not a better fit."
+    },
+    "_performance": {
+      "purpose": "Metrics, analytics snapshots, experiment results, and operational performance evidence.",
+      "lifecycle_state": "captured -> normalised -> analysed -> reported -> archived",
+      "helper": "agent-managed; no single helper yet",
+      "versioning_policy": {
+        "versioned_paths": ["reports/", "summaries/", "_config/"],
+        "gitignored_paths": ["raw/", "exports/", "index/"],
+        "large_blob_policy": "Raw exports stay gitignored or external; derived summaries and reports are versioned."
+      },
+      "sensitivity_default": "internal",
+      "ingress": ["campaign results promotion", "analytics exports", "operational measurement routines"],
+      "egress": ["campaign learnings", "decision reports", "knowledge insights"],
+      "index_retrieval_surface": ["performance reports", "agent search over summaries", "future metrics indexes"],
+      "routing_notes": "Use for measured outcomes, not unverified anecdotes."
+    },
+    "_feedback": {
+      "purpose": "User feedback, survey responses, review extracts, pain points, and qualitative signals.",
+      "lifecycle_state": "captured -> classified -> clustered -> actioned -> archived",
+      "helper": "agent-managed; no single helper yet",
+      "versioning_policy": {
+        "versioned_paths": ["summaries/", "clusters/", "_config/"],
+        "gitignored_paths": ["raw/", "pii/", "index/"],
+        "large_blob_policy": "Raw feedback exports remain gitignored; redacted summaries may be versioned."
+      },
+      "sensitivity_default": "pii",
+      "ingress": ["_inbox routed feedback", "survey exports", "support review imports", "campaign feedback command"],
+      "egress": ["_campaigns active research", "_projects backlog inputs", "_knowledge insights"],
+      "index_retrieval_surface": ["feedback clusters", "redacted summaries", "future feedback indexes"],
+      "routing_notes": "Treat raw feedback as potentially personal data until redacted or classified."
+    }
+  }
+}

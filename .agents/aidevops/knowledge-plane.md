@@ -4,6 +4,11 @@ The knowledge plane is an opt-in file staging area for AI-assisted ingestion of
 external documents, data exports, and reference material into aidevops-managed
 repos. Each repo can independently enable or disable the plane.
 
+For cross-plane routing metadata, use `.agents/configs/data-planes.json` as the
+canonical registry. This document owns the `_knowledge/` directory contract; the
+registry owns shared facts such as default sensitivity, ingress/egress, helper,
+and retrieval surfaces.
+
 ## Modes (`repos.json` field: `knowledge`)
 
 | Value | Description |

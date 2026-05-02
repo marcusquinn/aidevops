@@ -59,6 +59,7 @@ readonly WORKSPACE_INBOX_DIR="${HOME}/.aidevops/.agent-workspace/inbox"
 
 # Path to the README template
 readonly README_TEMPLATE="${SCRIPT_DIR}/../templates/inbox-readme.md"
+readonly DATA_PLANES_REGISTRY="${SCRIPT_DIR}/../configs/data-planes.json"
 
 # Triage log JSON field names and status values — defined as constants to
 # avoid repeated string literals triggering the pre-commit ratchet gate.
@@ -1041,6 +1042,11 @@ _triage_run_classification() {
 	prompt_file="$(mktemp "${TMPDIR:-/tmp}/aidevops-inbox-prompt.XXXXXX")"
 	{
 		printf 'Classify this _inbox item into the correct aidevops plane. Return JSON with target_plane, sub_folder, confidence, and reasoning.\n\n'
+		if [[ -f "$DATA_PLANES_REGISTRY" ]] && command -v jq >/dev/null 2>&1; then
+			printf 'Canonical data-plane registry excerpt (JSON):\n'
+			jq -c '{planes: .planes | with_entries({key, value: {purpose: .value.purpose, helper: .value.helper, sensitivity_default: .value.sensitivity_default, ingress: .value.ingress, egress: .value.egress, index_retrieval_surface: .value.index_retrieval_surface, routing_notes: .value.routing_notes}})}' "$DATA_PLANES_REGISTRY" 2>/dev/null || true
+			printf '\n'
+		fi
 		if [[ -n "$examples" ]]; then
 			printf 'Prior human-approved correction examples (JSONL, append-only audit facts):\n%s\n' "$examples"
 		fi
@@ -1503,11 +1509,13 @@ Sub-folder routing:
   _drop/   Everything else (or drag-drop target for watch folder)
 
 Triage routing (when dependencies available):
+  Canonical plane registry: .agents/configs/data-planes.json
   _needs-review/  Low-confidence or unknown-sensitivity items
   _knowledge/     General reference material
   _cases/         Case/matter specific files
   _campaigns/     Marketing and campaign material
   _projects/      Project artefacts
+  _performance/   Metrics, analytics snapshots, and experiment results
   _feedback/      Feedback and surveys
 
 Audit log:
