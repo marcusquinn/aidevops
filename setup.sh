@@ -1332,7 +1332,9 @@ _setup_post_setup_steps() {
 
 _setup_restart_pulse_if_running() {
 	# t2579: restart pulse if running, so newly-deployed scripts take effect.
-	# No-op if pulse is not running, or if AIDEVOPS_SKIP_PULSE_RESTART=1.
+	# t3491/GH#22418: then call idempotent start so a release deploy also
+	# recovers a stopped pulse instead of leaving dispatch dead until manual
+	# intervention. Honour AIDEVOPS_SKIP_PULSE_RESTART=1 for both operations.
 	# Uses the deployed helper (not the repo-local one) so the restart runs
 	# against the agents directory setup.sh just populated.
 	# GH#22012: bounded 120 s timeout prevents setup.sh hanging here when the
@@ -1343,8 +1345,10 @@ _setup_restart_pulse_if_running() {
 	if [[ -x "$_pulse_helper" ]]; then
 		if command -v timeout >/dev/null 2>&1; then
 			timeout 120 "$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+			timeout 120 "$_pulse_helper" start || print_warning "Pulse start failed (non-fatal)"
 		else
 			"$_pulse_helper" restart-if-running || print_warning "Pulse restart failed (non-fatal)"
+			"$_pulse_helper" start || print_warning "Pulse start failed (non-fatal)"
 		fi
 	fi
 	return 0
