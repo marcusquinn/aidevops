@@ -3932,3 +3932,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3450 prioritize near-merge open PRs before new dispatch #auto-dispatch #enhancement ref:GH#22303
 
 - [ ] t3451 Reconcile dispatch claims when worker spawn does not occur #auto-dispatch #bug ref:GH#22304
+
+- [ ] t3452 Harden profile README stats against missing period data #auto-dispatch #bug ref:GH#22305
