@@ -107,6 +107,10 @@ source "${SCRIPT_DIR}/headless-runtime-provider.sh"
 
 classify_failure_reason() {
 	local file_path="$1"
+	_failure_provider_error_type=""
+	_failure_provider_status=""
+	_failure_runtime_error_type=""
+	_failure_classification_source="output_pattern"
 	local lowered
 	lowered=$(
 		python3 - "$file_path" <<'PY'
@@ -115,23 +119,47 @@ import sys
 print(Path(sys.argv[1]).read_text(errors="ignore").lower())
 PY
 	)
-	if [[ "$lowered" == *"rate limit"* ]] || [[ "$lowered" == *"429"* ]] || [[ "$lowered" == *"too many requests"* ]]; then
+	if [[ "$lowered" == *"rate limit"* ]] || [[ "$lowered" == *"rate_limit"* ]] || [[ "$lowered" == *"429"* ]] || [[ "$lowered" == *"too many requests"* ]] || [[ "$lowered" == *"quota exceeded"* ]]; then
+		_failure_provider_error_type="rate_limit"
+		_failure_provider_status="429"
 		printf '%s' "rate_limit"
 		return 0
 	fi
-	if [[ "$lowered" =~ (unauthorized|401|invalid\ api\ key|authentication|token\ refresh\ failed|invalid_grant|invalid\ refresh\ token) ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]]; then
-		printf '%s' "auth_error"
+	if [[ "$lowered" == *"sqliteerror: disk i/o error"* ]] || [[ "$lowered" == *"sqlite_error"* && "$lowered" == *"disk i/o"* ]]; then
+		_failure_runtime_error_type="opencode_sqlite_io"
+		_failure_classification_source="opencode_runtime"
+		printf '%s' "local_error"
+		return 0
+	fi
+	if [[ "$lowered" == *"failed to list snapshot files"* ]] || { [[ "$lowered" == *"fatal: not a git repository"* ]] && [[ "$lowered" == *"snapshot"* ]]; }; then
+		_failure_runtime_error_type="opencode_snapshot_git"
+		_failure_classification_source="opencode_runtime"
+		printf '%s' "local_error"
 		return 0
 	fi
 	# Distinguish actual provider errors (5xx, connection refused, timeout)
 	# from local/worker failures (sandbox crash, bad prompt, opencode bug).
 	# Only provider errors should trigger backoff -- local failures don't
 	# mean the provider is unhealthy.
-	if [[ "$lowered" =~ (500|502|503|504|internal\ server\ error|service\ unavailable|gateway|connection\ refused|connection.*reset|overloaded) ]]; then
+	if [[ "$lowered" =~ (server_error|500|502|503|504|internal\ server\ error|service\ unavailable|bad\ gateway|gateway\ timeout|connection\ refused|connection.*reset|overloaded) ]]; then
+		_failure_provider_error_type="server_error"
+		case "$lowered" in
+		*"504"* | *"gateway timeout"*) _failure_provider_status="504" ;;
+		*"503"* | *"service unavailable"*) _failure_provider_status="503" ;;
+		*"502"* | *"bad gateway"*) _failure_provider_status="502" ;;
+		*) _failure_provider_status="500" ;;
+		esac
 		printf '%s' "provider_error"
 		return 0
 	fi
+	if [[ "$lowered" =~ (unauthorized|401|invalid\ api\ key|authentication\ failed|token\ refresh\ failed|invalid_grant|invalid\ refresh\ token) ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]]; then
+		_failure_provider_error_type="auth_error"
+		_failure_provider_status="401"
+		printf '%s' "auth_error"
+		return 0
+	fi
 	# Default: local_error -- do NOT record provider backoff for this
+	_failure_classification_source="default_local"
 	printf '%s' "local_error"
 	return 0
 }
@@ -276,12 +304,18 @@ append_runtime_metric() {
 	local work_dir="${12:-}"
 	local output_file="${13:-}"
 	local session_id="${14:-}"
+	local provider_error_type="${15:-}"
+	local provider_status="${16:-}"
+	local runtime_error_type="${17:-}"
+	local classification_source="${18:-}"
 	mkdir -p "$METRICS_DIR" 2>/dev/null || true
 	ROLE="$role" SESSION_KEY="$session_key" MODEL="$model" PROVIDER="$provider" \
 		RESULT="$result" EXIT_CODE="$exit_code" FAILURE_REASON="$failure_reason" \
 		ACTIVITY="$activity" DURATION_MS="$duration_ms" ISSUE_NUMBER="$issue_number" \
 		REPO_SLUG="$repo_slug" WORK_DIR="$work_dir" OUTPUT_FILE="$output_file" \
-		SESSION_ID="$session_id" METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
+		SESSION_ID="$session_id" PROVIDER_ERROR_TYPE="$provider_error_type" \
+		PROVIDER_STATUS="$provider_status" RUNTIME_ERROR_TYPE="$runtime_error_type" \
+		CLASSIFICATION_SOURCE="$classification_source" METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
 import time
@@ -304,6 +338,10 @@ optional_fields = {
     "work_dir": os.environ.get("WORK_DIR", ""),
     "output_file": os.environ.get("OUTPUT_FILE", ""),
     "session_id": os.environ.get("SESSION_ID", ""),
+    "provider_error_type": os.environ.get("PROVIDER_ERROR_TYPE", ""),
+    "provider_status": os.environ.get("PROVIDER_STATUS", ""),
+    "runtime_error_type": os.environ.get("RUNTIME_ERROR_TYPE", ""),
+    "classification_source": os.environ.get("CLASSIFICATION_SOURCE", ""),
 }
 for key, value in optional_fields.items():
     if value:

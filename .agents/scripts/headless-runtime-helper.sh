@@ -540,6 +540,10 @@ _handle_run_result() {
 	activity_detected=$(output_has_activity "$output_file")
 	_run_activity_detected="$activity_detected"
 	_run_result_label="failed"
+	_run_provider_error_type=""
+	_run_provider_status=""
+	_run_runtime_error_type=""
+	_run_classification_source=""
 
 	if [[ "$exit_code" -eq 0 ]]; then
 		if [[ "$activity_detected" != "1" ]]; then
@@ -612,8 +616,8 @@ _handle_run_result() {
 	#   can resume the session with a continuation prompt before giving up.
 	# - 124 + no activity → rate_limit as before (provider never responded).
 	if [[ "$exit_code" -eq 124 ]]; then
-		if _activity_output_has_provider_rate_limit "$output_file"; then
-			failure_reason="rate_limit"
+		failure_reason=$(classify_failure_reason "$output_file")
+		if [[ "$failure_reason" == "rate_limit" ]]; then
 			print_warning "$selected_model watchdog saw provider/rate-limit marker — classifying as rate_limit for rotation"
 		else
 			if [[ "$activity_detected" == "1" ]]; then
@@ -645,12 +649,19 @@ _handle_run_result() {
 				return 78
 			fi
 			failure_reason="rate_limit"
+			_failure_provider_error_type="rate_limit"
+			_failure_provider_status="429"
+			_failure_classification_source="watchdog_no_activity"
 			print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 		fi
 	else
 		failure_reason=$(classify_failure_reason "$output_file")
 	fi
 	_run_result_label="$failure_reason"
+	_run_provider_error_type="${_failure_provider_error_type:-}"
+	_run_provider_status="${_failure_provider_status:-}"
+	_run_runtime_error_type="${_failure_runtime_error_type:-}"
+	_run_classification_source="${_failure_classification_source:-}"
 
 	if attempt_pool_recovery "$provider" "$failure_reason" "$output_file"; then
 		_run_should_retry=1
@@ -1071,6 +1082,10 @@ _execute_run_attempt() {
 		# avoids the repeated-string-literal ratchet gate (threshold: >=3).
 		_run_result_label="rate_limit_fast"
 		_run_failure_reason="$_run_result_label"
+		_run_provider_error_type="rate_limit"
+		_run_provider_status="429"
+		_run_runtime_error_type=""
+		_run_classification_source="rate_limit_fast_monitor"
 		local _rl_end_ms
 		_rl_end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 		local _rl_duration_ms=0
@@ -1085,7 +1100,8 @@ _execute_run_attempt() {
 			rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 		fi
 		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms" \
-			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id"
+			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id" \
+			"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}"
 		return 80
 	fi
 
@@ -1146,7 +1162,8 @@ _execute_run_attempt() {
 		_metric_output_file=""
 	fi
 	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
-		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id"
+		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id" \
+		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}"
 	return "$handle_exit"
 }
 

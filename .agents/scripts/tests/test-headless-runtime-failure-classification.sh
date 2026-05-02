@@ -1,0 +1,126 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# test-headless-runtime-failure-classification.sh — provider/runtime subtype fixtures.
+
+set -u
+
+if [[ -t 1 ]]; then
+	TEST_GREEN=$'\033[0;32m'
+	TEST_RED=$'\033[0;31m'
+	TEST_BLUE=$'\033[0;34m'
+	TEST_NC=$'\033[0m'
+else
+	TEST_GREEN="" TEST_RED="" TEST_BLUE="" TEST_NC=""
+fi
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+assert_eq() {
+	local label="$1" expected="$2" actual="$3"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$expected" == "$actual" ]]; then
+		echo "${TEST_GREEN}PASS${TEST_NC}: $label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		echo "${TEST_RED}FAIL${TEST_NC}: $label"
+		echo "  expected: $(printf '%q' "$expected")"
+		echo "  got:      $(printf '%q' "$actual")"
+	fi
+	return 0
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FIXTURE_DIR="$(mktemp -d -t hrf-classify-XXXXXX)"
+STATE_DIR="$FIXTURE_DIR/state"
+STATE_DB="$STATE_DIR/headless-runtime-state.sqlite3"
+METRICS_DIR="$FIXTURE_DIR/metrics"
+METRICS_FILE="$METRICS_DIR/headless-runtime-metrics.jsonl"
+OPENCODE_AUTH_FILE="$FIXTURE_DIR/auth.json"
+OAUTH_POOL_HELPER="$FIXTURE_DIR/oauth-pool-helper.sh"
+
+cleanup() {
+	rm -rf "$FIXTURE_DIR"
+	return 0
+}
+trap cleanup EXIT
+
+# shellcheck source=../headless-runtime-lib.sh
+source "$SCRIPT_DIR/headless-runtime-lib.sh"
+
+write_fixture() {
+	local name="$1" body="$2"
+	local path="$FIXTURE_DIR/$name.log"
+	printf '%s\n' "$body" >"$path"
+	printf '%s' "$path"
+	return 0
+}
+
+check_classification() {
+	local label="$1" body="$2" expected_reason="$3" expected_provider_type="$4"
+	local expected_status="$5" expected_runtime_type="$6" expected_source="$7"
+	local path reason reason_file
+	path=$(write_fixture "$label" "$body")
+	reason_file="$FIXTURE_DIR/$label.reason"
+	classify_failure_reason "$path" >"$reason_file"
+	reason=$(<"$reason_file")
+	assert_eq "$label reason" "$expected_reason" "$reason"
+	assert_eq "$label provider_error_type" "$expected_provider_type" "${_failure_provider_error_type:-}"
+	assert_eq "$label provider_status" "$expected_status" "${_failure_provider_status:-}"
+	assert_eq "$label runtime_error_type" "$expected_runtime_type" "${_failure_runtime_error_type:-}"
+	assert_eq "$label classification_source" "$expected_source" "${_failure_classification_source:-}"
+	return 0
+}
+
+echo "${TEST_BLUE}=== headless runtime failure classification tests ===${TEST_NC}"
+
+check_classification \
+	"openai_rate_limit" \
+	'{"provider":"openai","error":{"type":"rate_limit","message":"Too many requests"},"status":429}' \
+	"rate_limit" "rate_limit" "429" "" "output_pattern"
+
+check_classification \
+	"openai_server_error" \
+	'{"provider":"openai","error":{"type":"server_error","message":"The server had an error"},"status":500}
+session.processor error: undefined is not an object' \
+	"provider_error" "server_error" "500" "" "output_pattern"
+
+check_classification \
+	"auth_failure" \
+	'OpenAI authentication failed: invalid API key; status 401 unauthorized' \
+	"auth_error" "auth_error" "401" "" "output_pattern"
+
+check_classification \
+	"opencode_sqlite_crash" \
+	'failed to list snapshot files in /tmp/opencode/snapshot
+fatal: not a git repository
+SQLiteError: disk I/O error' \
+	"local_error" "" "" "opencode_sqlite_io" "opencode_runtime"
+
+mkdir -p "$METRICS_DIR"
+append_runtime_metric "worker" "issue-22379" "openai/gpt-5.5" "openai" \
+	"provider_error" "1" "provider_error" "1" "1234" "22379" "marcusquinn/aidevops" \
+	"$FIXTURE_DIR/work" "$FIXTURE_DIR/openai_server_error.log" "ses_test" \
+	"server_error" "500" "" "output_pattern"
+
+assert_eq "metric provider_error_type persisted" "server_error" \
+	"$(jq -r '.provider_error_type' "$METRICS_FILE")"
+assert_eq "metric provider_status persisted" "500" \
+	"$(jq -r '.provider_status' "$METRICS_FILE")"
+assert_eq "metric classification_source persisted" "output_pattern" \
+	"$(jq -r '.classification_source' "$METRICS_FILE")"
+
+echo
+echo "${TEST_BLUE}=== Summary ===${TEST_NC}"
+echo "Tests run:    $TESTS_RUN"
+echo "Tests failed: $TESTS_FAILED"
+
+if [[ $TESTS_FAILED -eq 0 ]]; then
+	echo "${TEST_GREEN}All tests passed.${TEST_NC}"
+	exit 0
+else
+	echo "${TEST_RED}$TESTS_FAILED test(s) failed.${TEST_NC}"
+	exit 1
+fi
