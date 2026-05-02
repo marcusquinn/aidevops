@@ -283,6 +283,22 @@ else
 fi
 
 # =============================================================================
+# Test 12: --json read calls stay on GraphQL to preserve gh-shaped fields
+# =============================================================================
+echo ""
+echo "Test 12: --json read calls do not REST rewrite"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-json.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+_GH_SHOULD_FALLBACK_OVERRIDE=1 "$SHIM_RUN" pr view 123 --repo owner/repo --json number,statusCheckRollup 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == $'pr\nview\n123\n--repo\nowner/repo\n--json\nnumber,statusCheckRollup' ]] && grep -q $'\tgh_pr_view\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "--json read stays on GraphQL with operation label"
+else
+	_fail "--json read GraphQL preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
