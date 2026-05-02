@@ -17,8 +17,8 @@ Uses the composite metric `pass_rate * (1 - 0.3 * token_ratio)` to balance quali
 ## How to use
 
 1. Set the target agent and test suite in the Target and Metric sections below.
-2. Run: `/autoresearch --program todo/research/agent-optimization.md`
-3. The autoresearch subagent will iterate, keeping only changes that improve the composite score.
+2. Run: `/auto-research --program todo/research/agent-optimization.md`
+3. The auto-research subagent will iterate, keeping only changes that improve the composite score.
 
 Default target: `build-plus.md` with `smoke-test` suite. Override by editing the Target section.
 

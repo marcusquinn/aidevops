@@ -114,7 +114,9 @@ aidevops-memory store \
 
 Worktree, results.tsv, and branch HEAD persist across crashes. On resume, uncommitted changes are discarded via `git reset --hard HEAD`.
 
-Resume: re-run `/autoresearch --program {program_path}`. The subagent detects the existing worktree and results.tsv and continues from where it left off.
+Resume: re-run `/auto-research --program {program_path}`. The `/autoresearch`
+compatibility alias is also accepted. The subagent detects the existing worktree
+and results.tsv and continues from where it left off.
 
 ## Budget Enforcement
 

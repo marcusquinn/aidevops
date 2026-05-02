@@ -1,5 +1,5 @@
 ---
-description: Autonomous experiment loop — optimize code, agents, or standalone research programs
+description: Auto-research autonomous experiment loop — optimize code, agents, or standalone research programs
 agent: autoresearch
 mode: subagent
 model: sonnet
@@ -15,16 +15,26 @@ tools:
 
 Run an autonomous experiment loop that modifies code, measures a metric, and keeps only improvements.
 
+Canonical command: `/auto-research`.
+
+Compatibility alias: `/autoresearch` remains supported for existing tasks, memories,
+and older runbooks. Prefer `/auto-research` in new docs and user-facing prompts.
+
+Use `/deep-research` instead when the desired deliverable is a cited research
+report, source ledger, claim ledger, outline, and export bundle rather than a
+metric-driven modify/measure/keep loop.
+
 Arguments: $ARGUMENTS
 
 ## Invocation Patterns
 
 | Pattern | Example | Behaviour |
 |---------|---------|-----------|
-| `--program <path>` | `/autoresearch --program todo/research/optimize-build.md` | Skip interview, run directly |
-| One-liner | `/autoresearch "reduce build time"` | Infer defaults, short confirmation |
-| Bare | `/autoresearch` | Full interactive setup |
-| Init | `/autoresearch init "name"` | Scaffold standalone research repo |
+| `--program <path>` | `/auto-research --program todo/research/optimize-build.md` | Skip interview, run directly |
+| One-liner | `/auto-research "reduce build time"` | Infer defaults, short confirmation |
+| Bare | `/auto-research` | Full interactive setup |
+| Init | `/auto-research init "name"` | Scaffold standalone research repo |
+| Compatibility alias | `/autoresearch --program todo/research/optimize-build.md` | Same behaviour; deprecated spelling |
 
 ## Step 1: Resolve Invocation Pattern
 
@@ -41,9 +51,9 @@ else:                                   → Interactive Setup (Q1–Q8 below)
 
 | Flag | Example | Behaviour |
 |------|---------|-----------|
-| `--population N` | `/autoresearch --population 4` | Population-based mode: N hypotheses per iteration, keep best |
-| `--dimensions "d1,d2,d3"` | `/autoresearch --dimensions "build-perf,test-speed,bundle-size"` | Multi-dimension mode: separate agent per dimension |
-| `--concurrent N` | `/autoresearch --concurrent 3` | Shorthand: N sequential agents on different repos |
+| `--population N` | `/auto-research --population 4` | Population-based mode: N hypotheses per iteration, keep best |
+| `--dimensions "d1,d2,d3"` | `/auto-research --dimensions "build-perf,test-speed,bundle-size"` | Multi-dimension mode: separate agent per dimension |
+| `--concurrent N` | `/auto-research --concurrent 3` | Shorthand: N sequential agents on different repos |
 
 **Multi-dimension dispatch** (when `--dimensions` is provided): validate targets don't overlap (error if they do); generate shared convoy ID `autoresearch-{name}-$(date +%Y%m%d-%H%M%S)`; dispatch each dimension as a separate subagent session with its own worktree; show summary on completion.
 
@@ -169,7 +179,9 @@ Headless: begin now (option 1).
 - [ ] t{next_id} autoresearch: {name} — {description} #auto-dispatch ~{hours}h ref:GH#{issue}
 ```
 
-## Init Mode (`/autoresearch init "name"`)
+## Init Mode (`/auto-research init "name"`)
+
+`/autoresearch init "name"` is accepted as a compatibility alias.
 
 Scaffold a standalone research repo at `~/Git/autoresearch-{name}/` (`autoresearch-` prefix mandatory for discoverability).
 
@@ -224,15 +236,15 @@ On success: remove `local_only`, set `slug: "{gh_username}/autoresearch-{name}"`
 
 **I8: Optional pulse** — set `"pulse": true`; suggest `"pulse_hours": {"start": 17, "end": 5}` for overnight runs.
 
-**I9: Optional begin now** — dispatch `/autoresearch --program "$REPO_PATH/todo/research/program.md"`. Otherwise print next steps:
+**I9: Optional begin now** — dispatch `/auto-research --program "$REPO_PATH/todo/research/program.md"`. Otherwise print next steps:
 
 ```text
 Repo ready at ~/Git/autoresearch-{name}/
   1. Edit todo/research/program.md — define metric, files, budget
   2. Add starting code/data to baseline/
-  3. Run: /autoresearch --program ~/Git/autoresearch-{name}/todo/research/program.md
+  3. Run: /auto-research --program ~/Git/autoresearch-{name}/todo/research/program.md
 ```
 
 ## Related
 
-`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `todo/research/`
+`.agents/templates/research-program-template.md` · `.agents/tools/autoresearch/autoresearch.md` · `.agents/scripts/commands/deep-research.md` · `todo/research/`

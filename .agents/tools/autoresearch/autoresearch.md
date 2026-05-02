@@ -20,12 +20,18 @@ tools:
 
 Runs setup → hypothesis → modify → constrain → measure → keep/discard → log → repeat until budget exhausted or goal reached.
 
+User-facing command: `/auto-research`. `/autoresearch` remains a compatibility
+alias for existing tasks and memories. Use `/deep-research` for cited,
+deliverable-oriented research reports that do not modify code or optimize a
+metric.
+
 Arguments: `--program <path>` (required)
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
+- **Command**: `/auto-research` (`/autoresearch` compatibility alias)
 - **Program format**: `.agents/templates/research-program-template.md`
 - **Results file**: `todo/research/{name}-results.tsv`
 - **Worktree**: `experiment/{name}` (created at session start)
@@ -255,4 +261,4 @@ simplification state integration, and hypothesis type ordering.
 
 ## Related
 
-`.agents/templates/research-program-template.md` · `.agents/scripts/commands/autoresearch.md` · `todo/research/` · `todo/research/agent-optimization.md`
+`.agents/templates/research-program-template.md` · `.agents/scripts/commands/autoresearch.md` · `.agents/scripts/commands/deep-research.md` · `todo/research/` · `todo/research/agent-optimization.md`
