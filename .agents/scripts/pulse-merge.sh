@@ -570,9 +570,24 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
-	# CI failure fix-up: when required checks fail on a worker PR with a
-	# linked issue, collect failing check details, append to issue body,
-	# close the PR, and set the issue to status:available for re-dispatch.
+	# Fetch linked issue once — used in gate checks, CI repair routing, and
+	# post-merge close. Do this before CI repair routing so red/pending PRs are
+	# only re-queued after the same maintainer/security/review-bot gates that
+	# would have allowed a green merge have passed.
+	local linked_issue
+	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
+
+	# Run all skip-gate checks (review decision, collaborator, workflow scope,
+	# maintainer gate, external-contributor gate, review bot gate) before both
+	# merge and CI-repair paths. This preserves the security boundary for PRs
+	# that are red but would not be trusted if green.
+	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue"; then
+		return 1
+	fi
+
+	# CI failure fix-up: when required checks fail on a worker/trusted PR with a
+	# linked issue, collect check details, append to issue body, close the PR,
+	# and set the issue to status:available for re-dispatch.
 	# The next worker sees the CI failure context and can fix it. t2189:
 	# idle interactive PRs are handed over via origin:worker-takeover and
 	# then routed through the same pipeline — human session must be gone
@@ -603,21 +618,9 @@ _process_single_ready_pr() {
 				return 1
 			fi
 			# CI failure: route to fix worker if applicable (t2203: consolidated).
-			local _ci_linked_issue
-			_ci_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_ci_linked_issue" "ci" || true
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" || true
 			return 1
 		fi
-	fi
-
-	# Fetch linked issue once — used in gate checks and post-merge close
-	local linked_issue
-	linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-
-	# Run all skip-gate checks (review decision, collaborator, workflow scope,
-	# maintainer gate, external-contributor gate, review bot gate)
-	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue"; then
-		return 1
 	fi
 
 	# Dry-run must stop before every write side effect. The standalone merge
