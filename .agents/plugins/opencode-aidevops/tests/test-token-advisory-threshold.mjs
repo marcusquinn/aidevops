@@ -13,7 +13,7 @@ import { join } from "node:path";
 
 import { createTtsrHooks } from "../ttsr.mjs";
 
-function createHooks() {
+function createHooks(options = {}) {
   const logs = [];
   const tempPrefix = `${Date.now()}-${process.pid}-${randomUUID()}-aidevops-token-advisory-test`;
   const hooks = createTtsrHooks({
@@ -23,6 +23,7 @@ function createHooks() {
     qualityLog: (level, message) => logs.push({ level, message }),
     run: () => "",
     intentField: "agent__intent",
+    isHeadless: options.isHeadless || (() => false),
   });
   return { hooks, logs };
 }
@@ -65,6 +66,33 @@ describe("token cost advisory threshold", () => {
     assert.equal(advisories.length, 1);
     assert.match(advisories[0].parts[0].text, /approximately 250k tokens/);
     assert.deepEqual(logs, [{ level: "INFO", message: "Token advisory: session token-advisory-test-session at ~250k tokens" }]);
+  });
+
+  test("does not inject advisory in headless sessions", async () => {
+    const { hooks } = createHooks({ isHeadless: () => true });
+    const output = outputForTokens(250_000);
+
+    await hooks.messagesTransformHook({}, output);
+
+    assert.equal(advisoryMessages(output).length, 0);
+  });
+
+  test("does not inject advisory for GPT-5.5 family models", async () => {
+    const { hooks } = createHooks();
+    const output = outputForTokens(250_000);
+
+    await hooks.messagesTransformHook({ model: { modelID: "gpt-5.5-fast" } }, output);
+
+    assert.equal(advisoryMessages(output).length, 0);
+  });
+
+  test("does not inject advisory for models newer than GPT-5.5", async () => {
+    const { hooks } = createHooks();
+    const output = outputForTokens(250_000);
+
+    await hooks.messagesTransformHook({ model: { modelID: "gpt-6" } }, output);
+
+    assert.equal(advisoryMessages(output).length, 0);
   });
 
   test("does not repeat at the same threshold for a session", async () => {
