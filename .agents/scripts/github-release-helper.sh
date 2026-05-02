@@ -162,6 +162,7 @@ _create_flag_notes_file=""
 _create_flag_generate_notes=false
 _create_flag_draft=false
 _create_flag_prerelease=false
+_create_already_exists=false
 # Resolved values (set by _resolve_create_inputs)
 _create_repo=""
 _create_tag=""
@@ -262,8 +263,9 @@ _resolve_create_inputs() {
 
 	# Guard: duplicate release
 	if release_exists "$_create_repo" "$_create_tag"; then
-		print_error "Release '$_create_tag' already exists on $_create_repo. Use a different version or delete the existing release first."
-		return 1
+		print_warning "Release '$_create_tag' already exists on $_create_repo — treating as already complete"
+		_create_already_exists=true
+		return 0
 	fi
 	return 0
 }
@@ -271,6 +273,10 @@ _resolve_create_inputs() {
 # Build gh CLI arguments and execute the release creation.
 # Reads _create_* variables set by earlier phases.
 _execute_release_create() {
+	if [[ "$_create_already_exists" == true ]]; then
+		return 0
+	fi
+
 	local gh_args=()
 	gh_args+=("$_create_tag")
 	gh_args+=("--repo" "$_create_repo")
@@ -300,6 +306,10 @@ _execute_release_create() {
 		print_success "Release '$_create_tag' created on $_create_repo"
 		return 0
 	else
+		if release_exists "$_create_repo" "$_create_tag"; then
+			print_warning "Release '$_create_tag' now exists on $_create_repo — treating duplicate create as already complete"
+			return 0
+		fi
 		print_error "Failed to create release '$_create_tag' on $_create_repo"
 		return 1
 	fi
@@ -320,6 +330,7 @@ cmd_create() {
 	_create_flag_generate_notes=false
 	_create_flag_draft=false
 	_create_flag_prerelease=false
+	_create_already_exists=false
 
 	_parse_create_args "$@" || return 1
 	_resolve_create_inputs || return 1

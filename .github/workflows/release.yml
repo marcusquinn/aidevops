@@ -35,6 +35,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
-            --notes "${{ steps.changelog.outputs.body }}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; updating metadata"
+            gh release edit "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "${{ steps.changelog.outputs.body }}"
+          else
+            if gh release create "$GITHUB_REF_NAME" \
+              --title "$GITHUB_REF_NAME" \
+              --notes "${{ steps.changelog.outputs.body }}"; then
+              echo "Release $GITHUB_REF_NAME created"
+            elif gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              echo "Release $GITHUB_REF_NAME appeared after create failed; updating metadata"
+              gh release edit "$GITHUB_REF_NAME" \
+                --title "$GITHUB_REF_NAME" \
+                --notes "${{ steps.changelog.outputs.body }}"
+            else
+              exit 1
+            fi
+          fi
