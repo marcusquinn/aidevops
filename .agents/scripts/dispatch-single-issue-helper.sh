@@ -332,7 +332,13 @@ _dsi_apply_dispatch_ceremony() {
 	# ensure_origin_labels_exist, producing dual-label issues when re-dispatching
 	# an origin:interactive issue (observed: t3005 session, PRs #21451–#21455).
 	if ! set_origin_label "$issue_number" "$repo_slug" "worker" >/dev/null 2>&1; then
-		_dsi_warn "Origin label update failed (non-fatal — worker will still launch; fix origin label manually if needed)"
+		_dsi_warn "Origin label update failed after REST fallback — dispatch ceremony degraded"
+		if set_issue_status "$issue_number" "$repo_slug" "available" --remove-assignee "$self_login" >/dev/null 2>&1; then
+			_dsi_warn "Ceremony degraded — origin:worker not applied; status/assignment rollback attempted"
+		else
+			_dsi_warn "Ceremony degraded — origin:worker not applied; rollback also failed; manual recovery required"
+		fi
+		return 1
 	fi
 
 	_dsi_info "Ceremony applied — status:queued, origin:worker, assignee=${self_login}"

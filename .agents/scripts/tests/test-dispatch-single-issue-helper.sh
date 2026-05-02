@@ -310,23 +310,23 @@ test_ceremony_handles_set_issue_status_failure() {
 	return 0
 }
 
-# t3007: Verify that a failing set_origin_label is non-fatal — the ceremony
-# still returns 0 and the worker launches. This mirrors the best-effort design
-# of the ceremony itself (gh API flakiness must not block dispatch).
+# t3470: Verify that a failing set_origin_label is explicit degradation — the
+# ceremony must not claim origin:worker success, and it must attempt to roll
+# back status/assignment so the issue does not sit in a misleading queued state.
 test_ceremony_origin_label_failure_is_nonfatal() {
 	reset_test_state
 	_install_mock_set_issue_status success
 	_install_mock_set_origin_label failure
 
 	local issue_meta='{"assignees":[]}'
-	local rc=0
-	_dsi_apply_dispatch_ceremony 42 owner/repo runner-self "$issue_meta" >/dev/null 2>&1 || rc=$?
+	local rc=0 output=""
+	output=$(_dsi_apply_dispatch_ceremony 42 owner/repo runner-self "$issue_meta" 2>&1) || rc=$?
 
-	# Ceremony must return 0 even when set_origin_label fails.
+	# Ceremony must return non-zero when origin:worker was not actually applied.
 	local rc_check=1
-	[[ "$rc" -eq 0 ]] && rc_check=0
-	print_result "ceremony returns 0 when set_origin_label fails (non-fatal)" "$rc_check" \
-		"expected rc=0, got rc=$rc"
+	[[ "$rc" -eq 1 ]] && rc_check=0
+	print_result "ceremony returns 1 when set_origin_label fails (degraded)" "$rc_check" \
+		"expected rc=1, got rc=$rc"
 
 	# Verify set_origin_label was still called (the attempt was made).
 	local origin_call_count
@@ -335,6 +335,20 @@ test_ceremony_origin_label_failure_is_nonfatal() {
 	local attempted=1
 	[[ "$origin_call_count" -ge 1 ]] && attempted=0
 	print_result "set_origin_label was attempted despite subsequent failure" "$attempted"
+
+	local rollback_logged=1
+	if grep -q '^set_issue_status 42 owner/repo available --remove-assignee runner-self' "$SET_ISSUE_STATUS_LOG" 2>/dev/null; then
+		rollback_logged=0
+	fi
+	print_result "ceremony attempts status/assignee rollback on origin failure" "$rollback_logged"
+
+	local degraded_msg=1 no_applied_msg=0
+	[[ "$output" == *"Ceremony degraded"* ]] && degraded_msg=0
+	[[ "$output" == *"Ceremony applied"* ]] && no_applied_msg=1
+	print_result "ceremony reports degraded launch when origin update fails" "$degraded_msg" \
+		"output: $output"
+	print_result "ceremony does not claim origin:worker when origin update fails" "$no_applied_msg" \
+		"output: $output"
 
 	return 0
 }

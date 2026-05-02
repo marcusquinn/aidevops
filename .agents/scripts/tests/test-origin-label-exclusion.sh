@@ -53,8 +53,15 @@ MOCK_BIN_DIR="${TEST_ROOT}/mockbin"
 mkdir -p "$MOCK_BIN_DIR"
 cat >"${MOCK_BIN_DIR}/gh" <<'MOCK'
 #!/usr/bin/env bash
-# Mock gh: record all arguments and exit 0
+# Mock gh: record all arguments and optionally fail selected calls.
 printf '%s\n' "$*" >> "${GH_RECORD_FILE}"
+if [[ "${GH_FAIL_ISSUE_EDIT:-0}" == "1" && "$1" == "issue" && "$2" == "edit" ]]; then
+	printf 'GraphQL: API rate limit already exceeded for user ID 99999\n' >&2
+	exit 1
+fi
+if [[ "$1" == "api" ]] && grep -q 'issues/801/labels' "${GH_RECORD_FILE}" 2>/dev/null && grep -q 'api -X POST' "${GH_RECORD_FILE}" 2>/dev/null; then
+	exit 1
+fi
 exit 0
 MOCK
 chmod +x "${MOCK_BIN_DIR}/gh"
@@ -204,7 +211,44 @@ else
 fi
 
 # =============================================================================
-# Part 9 — Structural check: pulse-dispatch-worker-launch.sh includes sibling
+# Part 9 — GraphQL failure falls back to REST label endpoints
+# =============================================================================
+: >"$GH_RECORD_FILE"
+export GH_FAIL_ISSUE_EDIT=1 GH_FAIL_REST_LABEL_POST=0
+set_origin_label 800 "owner/repo" "worker" >/dev/null 2>&1
+rc=$?
+if [[ "$rc" -eq 0 ]] &&
+	grep -q 'api -X DELETE /repos/owner/repo/issues/800/labels/origin:interactive' "$GH_RECORD_FILE" 2>/dev/null &&
+	grep -q 'api -X DELETE /repos/owner/repo/issues/800/labels/origin:worker-takeover' "$GH_RECORD_FILE" 2>/dev/null &&
+	grep -q 'api -X POST /repos/owner/repo/issues/800/labels -f labels\[\]=origin:worker' "$GH_RECORD_FILE" 2>/dev/null; then
+	print_result "set_origin_label GraphQL exhaustion: REST DELETE/POST fallback succeeds" 0
+else
+	print_result "set_origin_label GraphQL exhaustion: REST DELETE/POST fallback succeeds" 1 \
+		"(rc=$rc calls: $(tr '\n' ';' <"$GH_RECORD_FILE"))"
+fi
+unset GH_FAIL_ISSUE_EDIT GH_FAIL_REST_LABEL_POST
+
+# =============================================================================
+# Part 10 — GraphQL failure + REST failure stays failed
+# =============================================================================
+: >"$GH_RECORD_FILE"
+_set_origin_label_rest() {
+	printf '%s\n' "rest fallback forced failure $*" >>"$GH_RECORD_FILE"
+	return 1
+}
+export GH_FAIL_ISSUE_EDIT=1 GH_FAIL_REST_LABEL_POST=1
+set_origin_label 801 "owner/repo" "worker" >/dev/null 2>&1
+rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result "set_origin_label GraphQL exhaustion: REST failure returns non-zero" 0
+else
+	print_result "set_origin_label GraphQL exhaustion: REST failure returns non-zero" 1 \
+		"(expected non-zero, calls: $(tr '\n' ';' <"$GH_RECORD_FILE"))"
+fi
+unset GH_FAIL_ISSUE_EDIT GH_FAIL_REST_LABEL_POST
+
+# =============================================================================
+# Part 11 — Structural check: pulse-dispatch-worker-launch.sh includes sibling
 #           removal flags inline (t2200 compliance)
 # =============================================================================
 launch_file="${TEST_SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"
