@@ -4050,3 +4050,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3507 Clarify launch-worker current repo default #documentation ref:GH#22471
 
 - [ ] t3508 Add PR repair loop for greenable unmerged worker PRs #auto-dispatch #bug ref:GH#22472
+
+- [ ] t3509 Suppress assignment notifications for available worker feedback issues #auto-dispatch #bug ref:GH#22473
