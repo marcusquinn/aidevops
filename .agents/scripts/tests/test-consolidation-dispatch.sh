@@ -159,6 +159,19 @@ _setup_gh_stub_globals() {
 	# the stub in tests/test-gh-wrapper-guard.sh.
 	gh_create_issue() {
 		gh issue create "$@"
+		return $?
+	}
+	gh_issue_comment() {
+		gh issue comment "$@"
+		return $?
+	}
+	gh_issue_list() {
+		gh issue list "$@"
+		return $?
+	}
+	gh_pr_list() {
+		gh pr list "$@"
+		return $?
 	}
 	return 0
 }
