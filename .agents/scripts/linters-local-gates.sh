@@ -174,7 +174,32 @@ _run_gate_checks_static() {
 		echo ""
 	fi
 
+	if ! should_skip_gate "repo-layout"; then
+		check_repo_layout || exit_code=1
+		echo ""
+	fi
+
 	return $exit_code
+}
+
+check_repo_layout() {
+	echo -e "${BLUE}Checking Repository Layout Policy (warn-only drift audit)...${NC}"
+
+	local audit_script="${SCRIPT_DIR}/repo-layout-audit-helper.sh"
+	if [[ ! -x "$audit_script" ]]; then
+		print_warning "repo-layout-audit-helper.sh not found at $audit_script"
+		return 0
+	fi
+
+	local output status=0
+	output=$(bash "$audit_script" --check --warn-only 2>&1) || status=$?
+	printf '%s\n' "$output"
+	if [[ "$status" -ne 0 ]]; then
+		print_warning "Repository layout audit failed to run; not blocking local lint in warn-only mode"
+		return 0
+	fi
+
+	return 0
 }
 
 check_shell_portability() {
