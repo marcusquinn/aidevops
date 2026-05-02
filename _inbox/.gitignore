@@ -1,0 +1,6 @@
+# _inbox/ transit zone — ignore raw captures, keep policy and audit seed.
+
+*
+!README.md
+!.gitignore
+!triage.log

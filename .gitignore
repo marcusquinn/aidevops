@@ -252,3 +252,16 @@ bv
 # Re-negate .agents/ directory (the binary ignore above overrides the earlier !.agents/)
 !.agents/
 aidevops-bugfix-upgrade-planning-subsections
+
+# User-data plane safety rails
+# Keep unreviewed, generated, transient, and private plane data out of git.
+_knowledge/inbox/
+_knowledge/staging/
+_knowledge/index/
+_campaigns/intel/
+_campaigns/active/
+_campaigns/index/
+_inbox/*
+!_inbox/README.md
+!_inbox/.gitignore
+!_inbox/triage.log

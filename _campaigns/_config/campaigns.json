@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "campaign_id_prefix": "camp",
+  "sensitivity": {
+    "intel": "sensitive",
+    "active": "internal",
+    "lib": "internal",
+    "launched": "public"
+  },
+  "llm_policy": {
+    "intel": "local-only",
+    "active": "cloud-ok",
+    "lib": "cloud-ok",
+    "launched": "cloud-ok"
+  },
+  "blob_threshold_bytes": 31457280,
+  "swipe_auto_tag": true,
+  "cross_plane": {
+    "feedback_source": "_feedback/",
+    "knowledge_promotion_path": "_knowledge/insights/marketing/",
+    "performance_path": "_performance/marketing/"
+  }
+}

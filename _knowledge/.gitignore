@@ -1,0 +1,6 @@
+# Knowledge plane — gitignore rules
+# Keep unreviewed drops and generated indexes out of git.
+
+inbox/
+staging/
+index/
