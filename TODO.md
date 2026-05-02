@@ -4002,3 +4002,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3480 Add auto-reason agent and slash command #auto-dispatch #enhancement ref:GH#22380
 
 - [ ] t3479 Classify provider and runtime worker failures precisely #auto-dispatch #bug #framework ref:GH#22379
+
+- [ ] t3487 Fix approval lock REST fallback false errors #auto-dispatch #bug #framework #security ref:GH#22400
+
+- [ ] t3486 Block external issue dispatch while issue-triage gate is queued #auto-dispatch #bug #security ref:GH#22399
+
+- [ ] t3484 Repair broken Tabby OpenCode launch profiles #auto-dispatch #bug #framework ref:GH#22397
