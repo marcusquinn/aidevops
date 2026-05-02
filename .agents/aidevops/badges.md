@@ -105,6 +105,12 @@ Available variables (computed from `repos.json` + live `gh` probes):
 To add or remove a badge, edit the template — never edit the rendered
 block in any README directly.
 
+Public badge blocks should show deterministic, repo-owned health signals.
+Avoid volatile third-party quality-gate badges unless they are backed by a
+repo-owned ratchet gate and a current remediation loop; otherwise analyzer
+rule churn or delayed reindexing can make the project look broken after the
+merge authority has already accepted the code.
+
 ## Local development
 
 Test the LOC helper against this repo:
