@@ -1657,7 +1657,7 @@ _apply_terminal_blocker() {
 
 	# Check if already labelled
 	local existing_labels
-	existing_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+	existing_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || existing_labels=""
 
 	local already_blocked=false

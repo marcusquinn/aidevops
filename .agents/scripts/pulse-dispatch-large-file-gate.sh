@@ -125,7 +125,7 @@ _large_file_gate_precheck_labels() {
 	# status label hasn't been applied yet (race window between assign and label).
 	if [[ ",$issue_labels," == *",origin:worker,"* ]]; then
 		local assignee_count
-		assignee_count=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		assignee_count=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json assignees --jq '.assignees | length' 2>/dev/null) || assignee_count="0"
 		if [[ "$assignee_count" -gt 0 ]]; then
 			return 1
@@ -332,7 +332,7 @@ _large_file_gate_verify_prior_reduced_size() {
 	# Skip wc -l entirely when the label is present.
 	if [[ -n "$repo_slug" && -n "$existing_issue" ]]; then
 		local _sc_labels=""
-		_sc_labels=$(gh issue view "$existing_issue" --repo "$repo_slug" \
+		_sc_labels=$(gh_issue_view "$existing_issue" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _sc_labels=""
 		if [[ ",$_sc_labels," == *",simplification-incomplete,"* ]]; then
 			echo "[pulse-wrapper] Large-file gate: prior issue #${existing_issue} has simplification-incomplete label; filing fresh debt (outcome-check short-circuit) (t2169)" >>"$LOGFILE"
@@ -810,7 +810,7 @@ _issue_targets_large_files() {
 		&& printf '%s' "$pre_fetched_json" | jq -e '.labels' >/dev/null 2>&1; then
 		issue_labels=$(printf '%s' "$pre_fetched_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 	else
-		issue_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		issue_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 	fi
 
@@ -849,7 +849,7 @@ _issue_targets_large_files() {
 		&& printf '%s' "$pre_fetched_json" | jq -e '.title' >/dev/null 2>&1; then
 		_surgical_title=$(printf '%s' "$pre_fetched_json" | jq -r '.title // ""' 2>/dev/null) || _surgical_title=""
 	else
-		_surgical_title=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		_surgical_title=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 			--json title --jq '.title // ""' 2>/dev/null) || _surgical_title=""
 	fi
 	if _large_file_gate_check_surgical_brief \

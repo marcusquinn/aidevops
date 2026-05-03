@@ -67,6 +67,11 @@
 
 set -uo pipefail
 
+# Keep the harness hermetic: production pulse sessions may export REST-first
+# routing globally, but this test enables it only in the dedicated scenarios.
+unset AIDEVOPS_GH_REST_FIRST_READS
+unset AIDEVOPS_GH_FORCE_REST_READS
+
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
 

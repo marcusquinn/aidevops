@@ -33,6 +33,9 @@
 #      stays at zero (all calls are now in `dispatch_with_dedup` itself).
 #   7. The t2996 marker is present at every threading site so future
 #      auditors can `rg t2996` to find the budget invariant.
+#   8. Fallback metadata reads in dispatch helpers use gh_issue_view wrappers,
+#      not raw `gh issue view`, so REST-first routing is explicit when metadata
+#      is not available in the canonical bundle (GH#22525).
 #
 # Why static checks instead of mocking and counting live invocations:
 # the dispatch path depends on disk-space probes, git fetches, signal
@@ -287,6 +290,24 @@ test_dispatch_skip_candidate_body_uses_rest() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# Test 10: fallback metadata reads in dispatch helpers use the gh_issue_view
+# wrapper instead of raw `gh issue view`, so AIDEVOPS_GH_REST_FIRST_READS can
+# route them through REST and reduce GraphQL pressure (GH#22525).
+# ---------------------------------------------------------------------------
+test_dispatch_fallback_reads_use_wrapper() {
+	local offending
+	offending=$(grep -RInE 'gh issue view ' "$CORE_SH" "$LARGE_FILE_GATE_SH" 2>/dev/null \
+		| grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' || true)
+	if [[ -z "$offending" ]]; then
+		_print_result "dispatch fallback metadata reads avoid raw gh issue view" 1
+	else
+		_print_result "dispatch fallback metadata reads avoid raw gh issue view" 0 \
+			"raw GraphQL-prone call sites: ${offending}"
+	fi
+	return 0
+}
+
 main() {
 	test_canonical_bundle_includes_body || true
 	test_dispatch_with_dedup_single_gh_call || true
@@ -297,6 +318,7 @@ main() {
 	test_check_dispatch_dedup_passes_meta_env || true
 	test_t2996_markers_present || true
 	test_dispatch_skip_candidate_body_uses_rest || true
+	test_dispatch_fallback_reads_use_wrapper || true
 
 	printf '\n--- Tests run: %d, failed: %d ---\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]

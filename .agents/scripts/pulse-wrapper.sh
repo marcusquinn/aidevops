@@ -1686,6 +1686,18 @@ main() {
 		return 0
 	fi
 
+	# GH#22525: enable REST-first read routing before any post-lock pulse gate
+	# runs. GH#22507 originally flipped this after session/dedup gates, leaving
+	# early-cycle issue/pr list/view reads on GraphQL and visible as top pressure
+	# callers in pulse-current-state-helper. The env var is inherited by raw gh
+	# shim invocations and sourced gh_* wrappers; semantic-safety checks still
+	# keep GraphQL-only fields on GraphQL.
+	unset AIDEVOPS_GH_REST_FIRST_READS
+	if [[ "${AIDEVOPS_PULSE_REST_FIRST_READS:-1}" == "1" ]]; then
+		export AIDEVOPS_GH_REST_FIRST_READS=1
+		echo "[pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22525)" >>"$LOGFILE"
+	fi
+
 	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
 	# and acquire_instance_lock have all passed cleanly. The EXIT trap releases
 	# the lock. Return 0 without entering the pulse loop, session gate, dedup,
@@ -1708,17 +1720,6 @@ main() {
 	# defer in reserve mode. The t2690 dispatch breaker still fail-closes actual
 	# worker launch at the emergency floor.
 	_pulse_set_graphql_budget_priority
-
-	# GH#22507: prefer REST-equivalent read/list wrappers for pulse cycles even
-	# while GraphQL is healthy. This is quota-pool sharing, not a synthetic lower
-	# GraphQL budget: GraphQL-only operations and safety gates stay on GraphQL,
-	# while issue/pr list/view reads with REST parity preserve GraphQL availability
-	# for the operations that actually need it.
-	unset AIDEVOPS_GH_REST_FIRST_READS
-	if [[ "${AIDEVOPS_PULSE_REST_FIRST_READS:-1}" == "1" ]]; then
-		export AIDEVOPS_GH_REST_FIRST_READS=1
-		echo "[pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22507)" >>"$LOGFILE"
-	fi
 
 	# GH#22478: if GraphQL headroom is already inside the REST fallback reserve,
 	# force all supported read/list wrappers through REST for the whole pulse

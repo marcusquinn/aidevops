@@ -20,6 +20,11 @@
 
 set -euo pipefail
 
+# Keep the harness hermetic: production pulse sessions may export REST-first
+# routing globally, but tests opt into that per scenario below.
+unset AIDEVOPS_GH_REST_FIRST_READS
+unset AIDEVOPS_GH_FORCE_REST_READS
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
 SHIM="${REPO_DIR}/.agents/scripts/gh"
