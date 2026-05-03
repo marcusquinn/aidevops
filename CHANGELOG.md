@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- dedupe circuit breaker comments after NMR approval loops (#22689)
+
 ## [3.14.31] - 2026-05-03
 
 ### Fixed
