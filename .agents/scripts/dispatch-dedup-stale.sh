@@ -402,7 +402,7 @@ _is_stale_assignment() {
 	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
 	# that the assignment is stale — block this pulse cycle and retry next cycle.
 	local comments_json _comments_rc=0
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
 		--jq '[.[] | {created_at: .created_at, author: .user.login, body_start: (.body[:200])}] | sort_by(.created_at) | reverse' \
 		2>/dev/null) || _comments_rc=$?
 
