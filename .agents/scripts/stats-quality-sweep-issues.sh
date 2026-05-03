@@ -261,6 +261,91 @@ _ensure_quality_issue() {
 }
 
 #######################################
+# Ensure an actionable issue exists for a failing SonarCloud quality gate.
+#
+# Public README badges are useful confidence signals only when failures route
+# to work automatically. This helper deduplicates one open badge-blocker issue
+# per repo and keeps the persistent dashboard as the summary surface.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - gate status
+#   $3 - SonarCloud markdown section with failing-condition diagnostics
+# Returns: 0 always (best-effort; quality sweep should still finish)
+#######################################
+_ensure_sonar_gate_blocker_issue() {
+	local repo_slug="$1"
+	local gate_status="$2"
+	local sonar_section="$3"
+
+	case "$gate_status" in
+	ERROR | WARN) ;;
+	*) return 0 ;;
+	esac
+
+	local issue_title="quality gate: resolve SonarCloud badge blockers"
+	local existing_count existing_output
+	if ! existing_output=$(gh issue list --repo "$repo_slug" \
+		--label "sonarcloud" --label "quality-gate-blocker" --state open \
+		--search "in:title \"$issue_title\"" \
+		--json number --jq 'length' 2>/dev/null); then
+		echo "[stats] SonarCloud quality gate issue search failed for ${repo_slug}; skipping create" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+	existing_count="$existing_output"
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	if [[ "$existing_count" -gt 0 ]]; then
+		echo "[stats] SonarCloud quality gate issue already open for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	gh label create "sonarcloud" --repo "$repo_slug" --color "4E9BCD" \
+		--description "SonarCloud quality findings" --force 2>/dev/null || true
+	gh label create "quality-gate-blocker" --repo "$repo_slug" --color "D93F0B" \
+		--description "Public quality badge or gate is failing" --force 2>/dev/null || true
+
+	local issue_body="## What
+SonarCloud reports a failing quality gate for this repository, which makes the public README quality badge show a failure state.
+
+## Why
+Public verification badges are user-confidence signals. When one goes red, the framework should route the cause to implementation work automatically instead of hiding the badge or leaving the failure as dashboard noise.
+
+## How
+Files to inspect:
+- EDIT: sonar-project.properties — check whether the failing rule is a validated false positive that belongs in project-level exclusions.
+- EDIT: cited source files from the SonarCloud diagnostics below — fix real vulnerabilities, bugs, smells, duplication, or hotspot review gaps.
+
+Reference pattern:
+- Model config-level false-positive handling on the existing \`sonar.issue.ignore.multicriteria.*\` entries in \`sonar-project.properties\`.
+- Model real code fixes on neighbouring functions in the cited source files.
+
+Verification:
+- Run the SonarCloud API check: \`curl -s \"https://sonarcloud.io/api/qualitygates/project_status?projectKey=<project-key>\" | jq '.projectStatus'\`.
+- The failing condition should clear after the next SonarCloud analysis.
+- The README Quality Gate badge should return to passing.
+
+## Current diagnostics
+
+${sonar_section}"
+
+	local gate_sig=""
+	gate_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
+	issue_body="${issue_body}${gate_sig}"
+
+	if gh_create_issue --repo "$repo_slug" \
+		--title "$issue_title" \
+		--body "$issue_body" \
+		--label "auto-dispatch" --label "tier:standard" --label "quality-debt" \
+		--label "source:quality-sweep" --label "sonarcloud" --label "quality-gate-blocker" >/dev/null 2>&1; then
+		echo "[stats] Created SonarCloud quality gate blocker issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	else
+		echo "[stats] Failed to create SonarCloud quality gate blocker issue for ${repo_slug}" >>"${LOGFILE:-/dev/null}"
+	fi
+
+	return 0
+}
+
+#######################################
 # Load previous quality sweep state for a repo
 #
 # Reads gate_status, total_issues, high_critical, and qlty_smells from the
