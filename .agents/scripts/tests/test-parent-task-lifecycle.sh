@@ -337,10 +337,43 @@ assert_grep_fixed \
 	'local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"' \
 	"$ACTIONS_TARGET"
 
-# B7: guard fires when declared_count > child_count
+# B7: declared-vs-filed mismatch composes a closing-comment note
+# instead of blocking close (t3544). Pre-t3544 behaviour returned 1
+# and posted a one-time nudge that produced no follow-on action; this
+# left single-filed-child parents (#22371, #22372) silently rotting
+# with all filed children closed and the parent still OPEN.
 assert_grep_fixed \
-	'B7: guard skips close when declared_count > child_count' \
+	'B7a: declared-vs-filed branch evaluates without returning 1' \
 	'if [[ "$_declared_count" -gt "$child_count" ]]; then' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7b: declared-vs-filed branch composes _unfiled_note for closing comment' \
+	'_unfiled_note=' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	'B7c: closing comment template embeds the unfiled-phases note' \
+	'${_unfiled_note}' \
+	"$ACTIONS_TARGET"
+
+# B7d: t3544 — the `child_count >= 2` short-circuit MUST be removed.
+# Single-filed-child parents are legitimate (incremental phase rollout);
+# the prior `[[ "$child_count" -ge 2 ]] || return 1` blocked them from
+# both closing AND from receiving the declared-vs-filed nudge, causing
+# silent rot. Verify the source no longer carries the literal guard.
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE '\[\[[[:space:]]+"\$child_count"[[:space:]]+-ge[[:space:]]+2[[:space:]]+\]\][[:space:]]+\|\|[[:space:]]+return[[:space:]]+1' "$ACTIONS_TARGET" 2>/dev/null; then
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: B7d: t3544 — child_count >= 2 short-circuit must be removed from $ACTIONS_TARGET"
+else
+	echo "${TEST_GREEN}PASS${TEST_NC}: B7d: t3544 — child_count >= 2 short-circuit removed (single-filed-child parents can close)"
+fi
+
+# B7e: closing comment heading reflects "filed" semantics so maintainers
+# understand the close is scoped to currently-filed children, not all
+# declared phases.
+assert_grep_fixed \
+	'B7e: closing-comment heading uses "filed child tasks" wording' \
+	'## All filed child tasks completed' \
 	"$ACTIONS_TARGET"
 
 # B8: call site passes issue_body as 5th arg

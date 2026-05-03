@@ -281,10 +281,16 @@ _Detected by \`_try_close_parent_tracker\` (pulse-issue-reconcile.sh, t2786). Po
 }
 
 #######################################
-# t2138: extract per-parent close logic. Keeps reconcile_completed_parent_tasks
-# under the 100-line shell-complexity threshold and makes the close decision
-# independently testable. Returns 0 if the parent was closed, 1 if skipped
-# (fewer than 2 known children, any child still open, or close call failed).
+# t2138 / t3544: extract per-parent close logic. Keeps
+# reconcile_completed_parent_tasks under the 100-line shell-complexity
+# threshold and makes the close decision independently testable.
+#
+# Returns 0 if the parent was closed, 1 if skipped (no known children,
+# any child still open, or close call failed). When the parent body
+# declares more phases in `## Phases` than have been filed, the closing
+# comment is augmented with an unfiled-phases note instead of blocking
+# the close (t3544 — pre-t3544 behaviour silently rotted single-filed
+# parents like #22371 / #22372).
 _try_close_parent_tracker() {
 	local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"
 	local all_closed="true" child_summary="" child_count=0
@@ -311,19 +317,34 @@ _try_close_parent_tracker() {
 		fi
 	done <<<"$child_nums"
 
-	# Need at least 2 children (1 = probably just a reference, not a parent).
-	[[ "$child_count" -ge 2 ]] || return 1
+	# t3544: dropped the `child_count >= 2` heuristic that previously
+	# short-circuited single-filed-child parents. Pre-union-extraction
+	# (before GH#20872), a single ref was often a spurious mention rather
+	# than a true child. The current union extractor (graph + body + prose)
+	# only counts numeric IDs that survived `## Children` / `## Sub-tasks` /
+	# sub-issue-graph filtering, so a single survivor is a legitimate child.
+	# Filtering it out here meant single-child parents could never close
+	# OR receive the declared-vs-filed nudge — they silently rotted (canonical:
+	# #22371 / #22372 with one filed Phase 1 child closed for hours with
+	# no action). The remaining gates (all_closed, declared-vs-filed
+	# augmentation, gh issue close result) are sufficient.
 	[[ "$all_closed" == "true" ]] || return 1
 
-	# t2786 / GH#20871: declared-vs-filed guard. If the parent body declares
-	# more phases in a ## Phases section than have been filed as child issues,
-	# skip close and post a one-time nudge.
+	# t2786 / GH#20871 / t3544: declared-vs-filed augmentation. If the
+	# parent body declares more phases in a ## Phases section than have
+	# been filed as child issues, append the unfiled phase list to the
+	# closing comment so the maintainer can re-open and file the rest if
+	# more work is planned. Pre-t3544 this *blocked* close and posted a
+	# one-time nudge; the nudge produced no further action and the parent
+	# stayed open forever (silent rot). The closing comment now carries
+	# the same information directly, and re-opening is recoverable.
 	#
-	# Counting is over the structured parser's row output (see _parse_phases_section
-	# delegation comment near top of this module). Each row represents one
-	# canonically-declared phase (list-form or bold-form). Rows starting with
-	# a digit form the count; rows with an empty 4th tab field (child_ref)
-	# are unfiled.
+	# Counting is over the structured parser's row output (see
+	# _parse_phases_section delegation comment near top of this module).
+	# Each row represents one canonically-declared phase (list-form or
+	# bold-form). Rows starting with a digit form the count; rows with
+	# an empty 4th tab field (child_ref) are unfiled.
+	local _unfiled_note=""
 	if [[ -n "$parent_body" ]]; then
 		local _phases_section
 		_phases_section=$(_parse_phases_section "$parent_body")
@@ -331,26 +352,27 @@ _try_close_parent_tracker() {
 			local _declared_count
 			_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
 			if [[ "$_declared_count" -gt "$child_count" ]]; then
-				local _unfiled_phases
-				# Rows where field 4 (child_ref) is empty — phases declared
-				# but not yet linked to a child issue. Format human-readable
-				# for the nudge body: "Phase N: description".
+				local _unfiled_phases="" _unfiled_count=""
 				_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
-					awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "Phase %s: %s\n", $1, $2 }')
-				_post_parent_phases_unfiled_nudge \
-					"$slug" "$parent_num" "$_declared_count" "$child_count" "$_unfiled_phases"
-				echo "[pulse-wrapper] Reconcile parent-task: skip close #${parent_num} in ${slug} — declared ${_declared_count} phases but only ${child_count} filed (t2786)" >>"${LOGFILE:-/dev/null}"
-				return 1
+					awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "- Phase %s: %s\n", $1, $2 }')
+				_unfiled_count=$((_declared_count - child_count))
+				_unfiled_note="
+
+**Note:** ${_unfiled_count} declared phase(s) remain unfiled:
+
+${_unfiled_phases}
+Re-open this parent and file additional phase children if more work is planned. The \`## Phases\` section is a roadmap, not a contract — closing here reflects that all *filed* children are done."
+				echo "[pulse-wrapper] Reconcile parent-task: closing #${parent_num} in ${slug} with unfiled-phases note — declared ${_declared_count} phases, ${child_count} filed (t3544)" >>"${LOGFILE:-/dev/null}"
 			fi
 		fi
 	fi
 
 	gh issue close "$parent_num" --repo "$slug" \
-		--comment "## All child tasks completed — closing parent tracker
+		--comment "## All filed child tasks completed — closing parent tracker
 
 ${child_summary}
 
-All ${child_count} child issues are resolved. Parent tracker closed automatically.
+All ${child_count} filed child issue(s) are resolved. Parent tracker closed automatically.${_unfiled_note}
 
 _Detected by reconcile_completed_parent_tasks (pulse-issue-reconcile.sh)._" \
 		>/dev/null 2>&1 || return 1
