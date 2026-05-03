@@ -286,10 +286,54 @@ test_guard_refuses_current_cwd() {
 }
 
 # =============================================================================
-# Test 8: permanent helper removes only after guard passes and logs mode
+# Test 8: shared guard refuses another live process with cwd in worktree
+# =============================================================================
+test_guard_refuses_other_process_cwd() {
+	local log_file="${TEST_DIR}/t8-cleanup.log"
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+
+	local wt_path="${TEST_DIR}/active-process-wt"
+	mkdir -p "$wt_path"
+
+	local sleeper_pid=""
+	(
+		cd "$wt_path" || exit 2
+		sleep 30
+	) &
+	sleeper_pid=$!
+
+	local rc=0
+	local attempts=0
+	while [[ "$attempts" -lt 20 ]]; do
+		(
+			unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+			# shellcheck source=../audit-worktree-removal-helper.sh
+			source "$AUDIT_HELPER"
+			if worktree_removal_guard "$wt_path" "test.sh" "manual"; then
+				exit 1
+			fi
+		) && break
+		rc=$?
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+
+	kill "$sleeper_pid" 2>/dev/null || true
+	wait "$sleeper_pid" 2>/dev/null || true
+
+	if [[ "$rc" -eq 0 ]]; then
+		assert_file_contains "$log_file" "worktree-skipped.*active-cwd.*mode=skipped" || rc=$?
+	fi
+	print_result "guard_refuses_other_process_cwd" "$rc" \
+		"Expected active-cwd skip. Log: $(cat "$log_file" 2>/dev/null)"
+	return 0
+}
+
+# =============================================================================
+# Test 9: permanent helper removes only after guard passes and logs mode
 # =============================================================================
 test_permanent_helper_removes_and_logs() {
-	local log_file="${TEST_DIR}/t8-cleanup.log"
+	local log_file="${TEST_DIR}/t9-cleanup.log"
 	export AIDEVOPS_CLEANUP_LOG="$log_file"
 
 	local wt_path="${TEST_DIR}/old-wt"
@@ -323,6 +367,7 @@ test_all_event_types
 test_should_skip_cleanup_owned_skip_logs
 test_idempotent_sourcing
 test_guard_refuses_current_cwd
+test_guard_refuses_other_process_cwd
 test_permanent_helper_removes_and_logs
 
 echo ""
