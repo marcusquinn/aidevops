@@ -43,6 +43,7 @@ import { initObservability, handleEvent } from "./observability.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createPoolTool, initPoolAuth, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
+import { installOpenAIProviderFetchRotation } from "./openai-provider-auth.mjs";
 import { startCursorProxy, ensureCursorProxyServer } from "./cursor-proxy.mjs";
 import { startGoogleProxy, ensureGoogleProxyServer } from "./google-proxy.mjs";
 import { startClaudeProxy } from "./claude-proxy.mjs";
@@ -329,6 +330,7 @@ export async function AidevopsPlugin({ directory, client }) {
     auth: (() => {
       const poolHook = createPoolAuthHook(client);
       const providerHook = createProviderAuthHook(client);
+      installOpenAIProviderFetchRotation(client);
       return {
         provider: "anthropic",
         methods: poolHook.methods,

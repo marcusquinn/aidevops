@@ -135,9 +135,7 @@ export async function injectPoolToken(client, skipEmail) {
   return true;
 }
 
-export async function injectOpenAIPoolToken(client, skipEmail) {
-  const account = await selectPoolAccount("openai", skipEmail);
-  if (!account) return false;
+export async function applyOpenAIPoolAccount(client, account) {
   process.env.OPENAI_API_KEY = account.access;
   try {
     await client.auth.set({
@@ -147,7 +145,17 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
   } catch { /* best-effort */ }
   patchAccount("openai", account.email, { lastUsed: new Date().toISOString(), status: "active" });
   console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
-  return true;
+  return account;
+}
+
+export async function rotateOpenAIPoolToken(client, skipEmail) {
+  const account = await selectPoolAccount("openai", skipEmail);
+  if (!account) return false;
+  return applyOpenAIPoolAccount(client, account);
+}
+
+export async function injectOpenAIPoolToken(client, skipEmail) {
+  return !!(await rotateOpenAIPoolToken(client, skipEmail));
 }
 
 // ---------------------------------------------------------------------------
