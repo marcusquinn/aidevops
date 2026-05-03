@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.20] - 2026-05-03
+
+### Changed
+
+- Documentation: extract worker discipline guidance (#22653)
+
 ## [3.14.19] - 2026-05-03
 
 ### Changed
