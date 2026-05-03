@@ -47,6 +47,39 @@ function getModelId(input) {
 }
 
 /**
+ * Env vars that mark a shell as headless worker context. Shell commands run by
+ * an interactive OpenCode TUI may inherit stale worker-origin env from a parent
+ * process; the plugin must stamp the intended session origin explicitly so
+ * issue/PR creation helpers do not mislabel maintainer-directed work.
+ */
+const HEADLESS_ENV_VARS = [
+  "FULL_LOOP_HEADLESS",
+  "AIDEVOPS_HEADLESS",
+  "OPENCODE_HEADLESS",
+  "GITHUB_ACTIONS",
+];
+
+/**
+ * @param {string | undefined} value
+ * @returns {boolean}
+ */
+function isTruthyEnv(value) {
+  return !!value && value !== "0" && value !== "false";
+}
+
+/**
+ * Determine the origin label intent for shell subprocesses.
+ * @param {object} env
+ * @returns {"worker" | "interactive"}
+ */
+function shellSessionOrigin(env) {
+  const headless = HEADLESS_ENV_VARS.some((key) =>
+    isTruthyEnv(env?.[key] || process.env[key]),
+  );
+  return headless ? "worker" : "interactive";
+}
+
+/**
  * Create the shell environment hook.
  * @param {object} deps - { agentsDir, scriptsDir, workspaceDir }
  * @returns {Function} Shell env hook function
@@ -71,6 +104,7 @@ export function createShellEnvHook(deps) {
     // Set aidevops workspace directory
     output.env.AIDEVOPS_AGENTS_DIR = agentsDir;
     output.env.AIDEVOPS_WORKSPACE_DIR = workspaceDir;
+    output.env.AIDEVOPS_SESSION_ORIGIN = shellSessionOrigin(output.env);
 
     // Set aidevops version if available
     const version = readIfExists(join(agentsDir, "..", "version"));
