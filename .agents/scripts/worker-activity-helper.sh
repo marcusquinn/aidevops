@@ -72,6 +72,7 @@ _wah_parse_since() {
 # memory before filtering the append-only jsonl.
 #
 # $1 — cutoff_epoch (entries with ts < cutoff are dropped).
+# $2 — optional now_epoch (entries with ts > now are dropped).
 # stdout — six space-separated integers:
 #   total succeeded watchdog_killed watchdog_continued rate_limited other_failure
 #######################################
@@ -84,7 +85,7 @@ _wah_aggregate_metrics() {
 		printf '0 0 0 0 0 0\n'
 		return 0
 	fi
-	now_epoch=$(date +%s)
+	now_epoch="${2:-$(date +%s)}"
 
 	# Bucket semantics (must match the original awk fallthrough chain):
 	#   succ — result=="success" AND exit_code==0
@@ -122,6 +123,7 @@ _wah_aggregate_metrics() {
 # Emit richer metric detail for JSON consumers.
 #
 # $1 — cutoff_epoch (entries with ts < cutoff are dropped).
+# $2 — optional now_epoch (entries with ts > now are dropped).
 # stdout — JSON object containing result counts, duration summary, and examples.
 #######################################
 _wah_metric_details_json() {
@@ -133,7 +135,7 @@ _wah_metric_details_json() {
 		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[]}'
 		return 0
 	fi
-	now_epoch=$(date +%s)
+	now_epoch="${2:-$(date +%s)}"
 
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
@@ -539,9 +541,9 @@ cmd_summary() {
 
 	# Aggregate metrics (single jq+awk pass).
 	local agg total succ wk wc rl of details_json
-	agg=$(_wah_aggregate_metrics "$cutoff_epoch")
+	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch")
 	read -r total succ wk wc rl of <<<"$agg"
-	details_json=$(_wah_metric_details_json "$cutoff_epoch")
+	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch")
 
 	# Pulse-stats counters.
 	local cb gqlow db_skip nwbreaker
