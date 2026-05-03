@@ -138,6 +138,14 @@ test("OpenAI startup injection honors current auth availability", async () => {
 
     assert.equal(rotated.ok, true);
     assert.equal(rotated.authWrites[0].body.accountId, "acct_fresh");
+
+    const authErrorRotated = await injectWithPool({ openai: [
+      { email: "auth-error@example.com", access: "auth-error-token", refresh: "auth-error-refresh", expires: Date.now() + 3600_000, status: "auth-error", cooldownUntil: Date.now() + 86400_000, lastUsed: "2026-01-03T00:00:00Z", accountId: "acct_auth_error" },
+      { email: "fallback@example.com", access: "fallback-token", refresh: "fallback-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_fallback" },
+    ] }, { type: "oauth", access: "auth-error-token", refresh: "auth-error-refresh", expires: Date.now() + 3600_000, accountId: "acct_auth_error" });
+
+    assert.equal(authErrorRotated.ok, true);
+    assert.equal(authErrorRotated.authWrites[0].body.accountId, "acct_fallback");
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
     cwd: join(import.meta.dirname, ".."),
