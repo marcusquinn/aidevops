@@ -35,6 +35,7 @@
 #   B6. _try_close_parent_tracker accepts parent_body as 5th parameter
 #   B7. Guard skips close when declared_count > child_count
 #   B8. _action_cpt_single passes issue_body to _try_close_parent_tracker
+#   B9. _action_cpt_single bootstraps phase-only parents before advisory nudges
 
 set -u
 
@@ -154,9 +155,10 @@ _parse_phases_section() {
 # --- Locate source file for structural tests ---
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET="$SCRIPT_DIR/pulse-issue-reconcile.sh"
+ACTIONS_TARGET="$SCRIPT_DIR/pulse-issue-reconcile-actions.sh"
 
-if [[ ! -f "$TARGET" ]]; then
-	echo "${TEST_RED}FATAL${TEST_NC}: $TARGET not found"
+if [[ ! -f "$TARGET" || ! -f "$ACTIONS_TARGET" ]]; then
+	echo "${TEST_RED}FATAL${TEST_NC}: reconcile source files not found"
 	exit 1
 fi
 
@@ -309,43 +311,53 @@ assert_grep_fixed \
 assert_grep \
 	"B2: _post_parent_phases_unfiled_nudge function defined in source" \
 	'^_post_parent_phases_unfiled_nudge\(\) \{' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B3: canonical marker present
 assert_grep_fixed \
 	"B3: canonical marker <!-- parent-declared-phases-unfiled --> present" \
 	'<!-- parent-declared-phases-unfiled -->' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B4: idempotency check via gh api --paginate
 assert_grep \
 	"B4: nudge function queries comments via gh api --paginate for idempotency" \
 	'gh api --paginate "repos/\$\{slug\}/issues/\$\{parent_num\}/comments"' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B5: nudge posts via gh_issue_comment wrapper
 assert_grep \
 	"B5: nudge posts via gh_issue_comment wrapper" \
 	'gh_issue_comment "\$parent_num" --repo "\$slug"' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B6: _try_close_parent_tracker accepts 5th param parent_body
 assert_grep_fixed \
 	"B6: _try_close_parent_tracker signature includes parent_body 5th param" \
 	'local slug="$1" parent_num="$2" child_nums="$3" child_source="$4" parent_body="${5:-}"' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B7: guard fires when declared_count > child_count
 assert_grep_fixed \
 	'B7: guard skips close when declared_count > child_count' \
 	'if [[ "$_declared_count" -gt "$child_count" ]]; then' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
 
 # B8: call site passes issue_body as 5th arg
 assert_grep_fixed \
 	"B8: _action_cpt_single passes issue_body to _try_close_parent_tracker" \
 	'_try_close_parent_tracker "$slug" "$issue_num" "$child_nums" "$child_source" "$issue_body"' \
-	"$TARGET"
+	"$ACTIONS_TARGET"
+
+# B9: phase-only parent bootstrap runs before advisory-only nudge/escalation
+assert_grep_fixed \
+	"B9a: _action_cpt_single calls phase-only bootstrap helper" \
+	'auto_file_next_unfiled_parent_phase "$issue_num" "$slug"' \
+	"$ACTIONS_TARGET"
+assert_grep_fixed \
+	"B9b: shared phase bootstrap helper is defined" \
+	'auto_file_next_unfiled_parent_phase() {' \
+	"$SHARED_TARGET"
 
 # ============================================================
 echo ""

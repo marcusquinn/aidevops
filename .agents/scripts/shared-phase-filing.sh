@@ -13,6 +13,9 @@
 #       Finds the parent-task issue for the closed child, parses its ## Phases
 #       section, and files the next unfiled phase marked [auto-fire:on-prior-merge].
 #       Best-effort; failures are logged but never propagate.
+#   - auto_file_next_unfiled_parent_phase <parent_issue> <repo_slug>
+#       Bootstraps phase-only parent-task issues that have planned phases but
+#       zero filed children by filing the first unfiled phase as a child issue.
 #
 # Feature flag:
 #   AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=0|1 (default 1, ON since t2787)
@@ -20,11 +23,13 @@
 #
 # Phase line format in parent issue body's ## Phases section:
 #   - Phase <N> - <description> [auto-fire:on-prior-merge] [#<child_issue>]
+#   - **Phase <N> — <description>** [#<child_issue>]
 #   - Phase <N> - <description> [requires-decision]
 #
 # The marker [auto-fire:on-prior-merge] opts a phase into auto-filing.
 # The marker [requires-decision] explicitly blocks auto-filing.
-# Phases with NO marker are also skipped (conservative default).
+# Sequential post-merge filing requires [auto-fire:on-prior-merge]. Bootstrap
+# filing accepts unmarked phases unless [requires-decision] is present.
 # Phases that already have a #<child_issue> reference are skipped (dedup).
 #
 # Parent discovery:
@@ -187,7 +192,7 @@ _parse_phase_line_list_form() {
 #######################################
 _parse_phase_line_bold_form() {
 	local line="$1" global_auto_fire="${2:-none}"
-	printf '%s' "$line" | grep -qE '^\*\*[Pp]hase[[:space:]]+[0-9]+' || return 0
+	printf '%s' "$line" | grep -qE '^[[:space:]]*([-*+][[:space:]]+)?\*\*[Pp]hase[[:space:]]+[0-9]+' || return 0
 
 	local phase_num description marker child_ref
 	phase_num=$(printf '%s' "$line" | grep -oE '\*\*[Pp]hase[[:space:]]+[0-9]+' | grep -oE '[0-9]+')
@@ -201,9 +206,10 @@ _parse_phase_line_bold_form() {
 	#      the closing `**` (**Phase N — desc [auto-fire:on-prior-merge]**) are
 	#      peeled cleanly.
 	description=$(printf '%s' "$line" \
+		| sed -E 's/^[[:space:]]*[-*+][[:space:]]+//' \
 		| sed -E 's/^\*\*[Pp]hase[[:space:]]+[0-9]+[[:space:]]*//' \
 		| sed -E 's/^[^[:alnum:]]*//' \
-		| sed -E 's/[[:space:]]*#[0-9]+[[:space:]]*\*\*[[:space:]]*$//;s/[[:space:]]*#[0-9]+[[:space:]]*$//;s/\*\*[[:space:]]*$//;s/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\][[:space:]]*$//')
+		| sed -E 's/[[:space:]]*#[0-9]+[[:space:]]*\*\*[[:space:]]*$//;s/[[:space:]]*#[0-9]+[[:space:]]*$//;s/\*\*[[:space:]]*:?[[:space:]]*//;s/[[:space:]]*\[(auto-fire|requires-decision)[^]]*\][[:space:]]*$//')
 
 	marker=$(_phase_marker_for_line "$line" "$global_auto_fire")
 
@@ -285,6 +291,16 @@ _build_phase_child_body() {
 	local phase_num="$3"
 	local phase_desc="$4"
 	local repo_slug="$5"
+	local trigger_reason="${6:-post-merge}"
+	local why_detail="This phase was auto-filed after the prior phase's PR merged successfully.
+Parent task #${parent_issue} (_${parent_title}_) uses sequential phase
+decomposition. Phase $((phase_num - 1)) has been completed and merged."
+	if [[ "$trigger_reason" == "bootstrap" ]]; then
+		why_detail="This phase was auto-filed because parent task #${parent_issue} (_${parent_title}_)
+declares planned phases but had no worker-dispatchable child issue for the next
+phase. Filing Phase ${phase_num} moves the parent out of the parent-task dispatch
+block while preserving the parent as the tracker."
+	fi
 
 	cat <<MD
 <!-- aidevops:generator=phase-autofile parent=${parent_issue} phase=${phase_num} -->
@@ -295,9 +311,7 @@ Implement Phase ${phase_num} of parent-task [#${parent_issue}](https://github.co
 
 ## Why
 
-This phase was auto-filed after the prior phase's PR merged successfully.
-Parent task #${parent_issue} (_${parent_title}_) uses sequential phase
-decomposition. Phase $((phase_num - 1)) has been completed and merged.
+${why_detail}
 
 ## How
 
@@ -349,7 +363,7 @@ _update_parent_phases_section() {
 	# where <N> is exactly $phase_num (word-bounded by whitespace/punctuation),
 	# and appends the child ref only if it's not already present.
 	local updated_body
-	updated_body=$(printf '%s' "$parent_body" | sed -E "/^[[:space:]]*-[[:space:]]+[Pp]hase[[:space:]]+${phase_num}([^0-9]|$)/ {
+	updated_body=$(printf '%s' "$parent_body" | sed -E "/^[[:space:]]*[-*+][[:space:]]+(\*\*)?[Pp]hase[[:space:]]+${phase_num}([^0-9]|$)/ {
 		/#${child_issue_num}([^0-9]|$)/!s/[[:space:]]*$/ #${child_issue_num}/
 	}")
 
@@ -425,11 +439,12 @@ _create_phase_child_issue() {
 	local phase_num="$3"
 	local phase_desc="$4"
 	local repo_slug="$5"
+	local trigger_reason="${6:-post-merge}"
 	local _log="${LOGFILE:-/dev/null}"
 
 	local issue_body
 	issue_body=$(_build_phase_child_body \
-		"$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug")
+		"$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug" "$trigger_reason")
 
 	# Append signature footer
 	local _phase_sig=""
@@ -452,6 +467,69 @@ _create_phase_child_issue() {
 		--body "${issue_body}${_phase_sig}" 2>>"$_log")
 
 	printf '%s' "${new_issue_url:-}"
+	return 0
+}
+
+#######################################
+# File the first unfiled phase for a parent-task issue that has a ## Phases
+# plan but no filed children. This is the bootstrap path used by parent-task
+# reconciliation; post-merge sequencing still uses auto_file_next_phase.
+#
+# Args: $1=parent_issue, $2=repo_slug
+# Returns: 0 if a phase child was filed, 1 otherwise
+#######################################
+auto_file_next_unfiled_parent_phase() {
+	local parent_issue="$1"
+	local repo_slug="$2"
+	[[ "$parent_issue" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
+	[[ "${AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE:-0}" == "1" ]] || return 1
+
+	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
+	local parent_body parent_title parent_labels _parent_json
+	_parent_json=$(gh api "$parent_api" \
+		--jq '{body: (.body // ""), title: (.title // ""), labels: [.labels[].name]}' 2>/dev/null) || _parent_json=""
+	[[ -n "$_parent_json" ]] || return 1
+	parent_body=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
+	parent_title=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
+	parent_labels=$(printf '%s' "$_parent_json" | jq -r '.labels | join(",")')
+	case ",${parent_labels}," in
+	*,no-auto-dispatch,*)
+		_phase_log "Parent #${parent_issue}: carries no-auto-dispatch, skip phase bootstrap"
+		return 1
+		;;
+	esac
+
+	local phases
+	phases=$(_parse_phases_section "$parent_body")
+	[[ -n "$phases" ]] || return 1
+
+	local next_phase_num="" next_desc="" next_marker="" next_child=""
+	while IFS=$'\t' read -r p_num p_desc p_marker p_child; do
+		[[ "$p_num" =~ ^[0-9]+$ ]] || continue
+		[[ -z "$p_child" ]] || continue
+		[[ "$p_marker" != "$_PHASE_MARKER_REQUIRES_DECISION" ]] || continue
+		next_phase_num="$p_num"
+		next_desc="$p_desc"
+		next_marker="$p_marker"
+		next_child="$p_child"
+		break
+	done <<< "$phases"
+	[[ -n "$next_phase_num" && -n "$next_desc" && -z "$next_child" ]] || return 1
+
+	_phase_log "Bootstrapping Phase ${next_phase_num} ('${next_desc}', marker=${next_marker}) for parent #${parent_issue}"
+	local new_issue_url
+	new_issue_url=$(_create_phase_child_issue \
+		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug" "bootstrap")
+	[[ -n "$new_issue_url" ]] || return 1
+
+	local new_issue_num; new_issue_num=$(printf '%s' "$new_issue_url" | grep -oE '[0-9]+$')
+	[[ -n "$new_issue_num" ]] || return 1
+	_update_parent_phases_section "$parent_issue" "$repo_slug" "$next_phase_num" "$new_issue_num"
+	gh_issue_comment "$parent_issue" --repo "$repo_slug" \
+		--body "Phase-only parent bootstrap: auto-filed Phase ${next_phase_num} as #${new_issue_num}: ${next_desc}
+
+_Sequential phase bootstrap by \`shared-phase-filing.sh\` (t2740)._" >/dev/null 2>&1 || true
+	_phase_log "Bootstrapped Phase ${next_phase_num} as #${new_issue_num} for parent #${parent_issue}"
 	return 0
 }
 

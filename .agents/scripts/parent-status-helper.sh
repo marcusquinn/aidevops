@@ -224,6 +224,10 @@ _parse_phase_lines() {
 			gsub(/[[:space:]]+$/, "", name)
 			gsub(/[[:space:]]+/, " ", name)
 			gsub(/^[[:space:]]*/, "", name)
+			# Output is pipe-delimited; phase prose can contain CLI alternation
+			# examples like `new|list|status`, so neutralize literal pipes before
+			# rendering to avoid shifting fields and hallucinating child refs.
+			gsub(/\|/, "/", name)
 
 			print phase_num "|" name "|" ref_issue
 		}

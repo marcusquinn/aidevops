@@ -59,6 +59,8 @@ Env override: `PARENT_DECOMPOSITION_ESCALATION_HOURS` (default 168). Capped at `
 
 The sequential phase auto-file mechanism reads phase declarations from the parent-task issue body and files the **next unfiled phase** as a child issue automatically once the prior phase's PR merges.
 
+Parent reconciliation also bootstraps phase-only parents with zero filed children: when a `parent-task` issue has a parseable `## Phases` section but no `## Children`, GraphQL sub-issues, or prose child references, the reconcile pass files the first unfiled phase as a worker-dispatchable child before falling back to advisory decomposition nudges. This prevents phase-only parents from sitting open forever with `parent-task` blocking dispatch and `auto-decomposer-scanner.sh` skipping because a phase plan exists.
+
 **Feature flag:** `AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE` — defaults to `1` (ON) since t2787. Set to `0` to disable.
 
 ### Canonical Phase Formats
@@ -71,6 +73,13 @@ Two formats are supported. Both are parsed by `_extract_sequential_phases` in `s
 - Phase 1 - description [auto-fire:on-prior-merge]
 - Phase 2 - description [auto-fire:on-prior-merge]
 - Phase 3 - description
+```
+
+Bullet-wrapped bold headings are also accepted, which is the common parent-brief style:
+
+```
+- **Phase 1 — description**: optional detail text.
+- **Phase 2 — design CLI `new|list|status` surface**: pipes in CLI prose are text, not child references.
 ```
 
 **Narrative bold-heading format (for prose-style decomposition plans):**
@@ -89,7 +98,7 @@ Detailed implementation notes for Phase 2...
 |--------|-----------|
 | `[auto-fire:on-prior-merge]` | File this phase when the prior phase PR merges (recommended) |
 | `[auto-fire:on]` | File immediately — no wait for prior merge |
-| *(no marker — list format)* | Filed in sequence (same as `on-prior-merge`) |
+| *(no marker — list/bullet-bold format)* | Eligible for the initial zero-child bootstrap; post-merge sequencing still requires an explicit auto-fire marker |
 | *(no marker — narrative format)* | NOT auto-filed unless `<!-- phase-auto-fire:on -->` appears in the issue body |
 
 The `<!-- phase-auto-fire:on -->` HTML comment is the opt-in for narrative phases without per-phase markers. It applies the `on-prior-merge` behaviour to every unmarked narrative phase in the issue.

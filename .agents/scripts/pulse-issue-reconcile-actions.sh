@@ -662,6 +662,12 @@ _action_cpt_single() {
 				return 0
 			fi
 		fi
+		if declare -F auto_file_next_unfiled_parent_phase >/dev/null 2>&1; then
+			if auto_file_next_unfiled_parent_phase "$issue_num" "$slug" >>"${LOGFILE:-/dev/null}" 2>&1; then
+				echo "[pulse-wrapper] Reconcile parent-task: phase bootstrap filed next child for #${issue_num} in ${slug} (GH#22534)" >>"${LOGFILE:-/dev/null}"
+				return 0
+			fi
+		fi
 		if [[ "$can_nudge" == "1" ]]; then
 			if _post_parent_decomposition_nudge "$slug" "$issue_num" "$issue_title"; then
 				_SP_CPT_NUDGED=1

@@ -288,6 +288,17 @@ _extract_children_from_body() {
 	return 0
 }
 
+# Return 0 when the parent body has a ## Phases plan but no concrete child
+# references. These parents are not "decomposed" yet; parent reconciliation
+# should bootstrap the first phase child via shared-phase-filing.sh.
+_body_has_phase_plan_without_children() {
+	local body="$1"
+	[[ -n "$body" ]] || return 1
+	printf '%s' "$body" | grep -qE '^##[[:space:]]+Phases?([[:space:]]+.*)?[[:space:]]*$' 2>/dev/null || return 1
+	[[ -z "$(_extract_children_from_body "$body")" ]] || return 1
+	return 0
+}
+
 # GH#21017: Return 0 if the issue has at least one OWNER/MEMBER comment
 # created after the supplied ISO-8601 cutoff timestamp, EXCLUDING
 # framework-automated comments (nudge, ops, provenance markers).
@@ -381,7 +392,7 @@ _decompose_issue_exists() {
 	local title_prefix="Decompose parent-task #${parent_num}:"
 	local count
 	count=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
-		--state all --paginate \
+		--state all --limit 1000 \
 		--json title \
 		| jq --arg prefix "$title_prefix" \
 			'[.[] | select(.title | startswith($prefix))] | length' \
@@ -523,25 +534,32 @@ _create_decompose_issue() {
 # the full check inline-readable in this file.
 #
 # Logic:
-#   1. If parent body declares decomposition (## Children/Phase/prose
+#   1. If parent body declares phase-only decomposition with zero filed refs,
+#      emit "phase-plan-awaiting-reconcile" (the reconcile pass bootstraps it).
+#   2. If parent body declares decomposition (## Children/Phase/prose
 #      ref), emit "has-children".
-#   2. Otherwise, if the parent OR any extracted child has an
+#   3. Otherwise, if the parent OR any extracted child has an
 #      OWNER/MEMBER comment in the last MAINTAINER_ACTIVITY_HOURS
 #      (capped by MAINTAINER_ACTIVITY_CHILD_CAP for the children
 #      sweep), emit "maintainer-activity".
-#   3. Otherwise, emit "" (caller proceeds with existing nudge-age
+#   4. Otherwise, emit "" (caller proceeds with existing nudge-age
 #      gate).
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - parent issue number
 #   $3 - parent body (already fetched once by the caller)
-# Stdout: "has-children" | "maintainer-activity" | ""
+# Stdout: "phase-plan-awaiting-reconcile" | "has-children" | "maintainer-activity" | ""
 # Returns: 0 always (caller inspects the printed value).
 _evaluate_gh21017_skip_reason() {
 	local repo="$1"
 	local parent_num="$2"
 	local parent_body="$3"
+
+	if _body_has_phase_plan_without_children "$parent_body"; then
+		printf 'phase-plan-awaiting-reconcile'
+		return 0
+	fi
 
 	if _body_has_decomposition_markers "$parent_body"; then
 		printf 'has-children'
@@ -596,7 +614,7 @@ do_scan() {
 
 	local issues_created=0 total_seen=0 skipped_no_nudge=0 skipped_too_young=0 skipped_existing=0 skipped_refiled=0
 	# GH#21017: counters for the new skip paths.
-	local skipped_has_children=0 skipped_maintainer_activity=0
+	local skipped_has_children=0 skipped_maintainer_activity=0 skipped_phase_reconcile=0
 	while IFS=$'\t' read -r parent_num parent_title; do
 		[[ -z "$parent_num" ]] && continue
 		total_seen=$((total_seen + 1))
@@ -631,6 +649,7 @@ do_scan() {
 		parent_body=$(gh api "repos/${repo}/issues/${parent_num}" --jq '.body // ""' 2>/dev/null || echo "")
 		skip_reason=$(_evaluate_gh21017_skip_reason "$repo" "$parent_num" "$parent_body")
 		case "$skip_reason" in
+			phase-plan-awaiting-reconcile) log "[skip:phase-plan-awaiting-reconcile] parent #${parent_num}: ## Phases has zero child refs; parent reconcile will bootstrap the next phase child"; skipped_phase_reconcile=$((skipped_phase_reconcile + 1)); continue ;;
 			has-children) log "[skip:has-children] parent #${parent_num}: body declares decomposition (## Children/Phase/prose ref)"; skipped_has_children=$((skipped_has_children + 1)); continue ;;
 			maintainer-activity) log "[skip:recent-maintainer-activity] parent #${parent_num}: OWNER/MEMBER comment in last ${MAINTAINER_ACTIVITY_HOURS}h on parent or child"; skipped_maintainer_activity=$((skipped_maintainer_activity + 1)); continue ;;
 		esac
@@ -672,7 +691,7 @@ do_scan() {
 		fi
 	done < <(printf '%s' "$parents_json" | jq -r '.[] | "\(.number)\t\(.title)"')
 
-	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}, skipped(re-file gate): ${skipped_refiled}, skipped(has-children): ${skipped_has_children}, skipped(maintainer-activity): ${skipped_maintainer_activity}"
+	log "Scan done. Parents seen: ${total_seen}, created: ${issues_created}, skipped(existing): ${skipped_existing}, skipped(no-nudge): ${skipped_no_nudge}, skipped(too-young): ${skipped_too_young}, skipped(re-file gate): ${skipped_refiled}, skipped(phase-reconcile): ${skipped_phase_reconcile}, skipped(has-children): ${skipped_has_children}, skipped(maintainer-activity): ${skipped_maintainer_activity}"
 	return 0
 }
 

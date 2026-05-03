@@ -3,6 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # test-shared-phase-filing.sh — t2740 regression guard.
+# shellcheck disable=SC2016  # test fixtures intentionally contain literal CLI syntax
 #
 # Tests the sequential phase auto-filing logic in shared-phase-filing.sh.
 # Covers:
@@ -577,6 +578,40 @@ if [[ "$gh20871_unfiled_count" -eq 2 ]]; then
 	pass "Unfiled extraction: Phase 1 + Phase 2 unfiled, Phase 3 (with #20768) excluded"
 else
 	fail "Expected 2 unfiled phases, got ${gh20871_unfiled_count}" "Output: ${gh20871_unfiled}"
+fi
+
+# =============================================================================
+# Test 16: _parse_phases_section — bullet-wrapped bold phases with CLI pipes
+#          parse as phases without treating `new|list|status` as references
+#          (GH#22534)
+# =============================================================================
+printf '%s--- Test 16: bullet bold phases and CLI pipes ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+PARENT_BODY_GH22534='## Phases
+
+- **Phase 1 — directory contract**: define `_projects/<project-id>/` layout.
+- **Phase 2 — lifecycle mapping**: model project states.
+- **Phase 3 — CLI surface**: design `aidevops project new|list|status|link|archive`.
+
+## Acceptance
+
+- Something'
+
+gh22534_output=$(_parse_phases_section "$PARENT_BODY_GH22534")
+gh22534_count=$(printf '%s\n' "$gh22534_output" | grep -c '^[0-9]')
+gh22534_p3_desc=$(printf '%s\n' "$gh22534_output" | sed -n '3p' | cut -f2)
+gh22534_p3_child=$(printf '%s\n' "$gh22534_output" | sed -n '3p' | cut -f4)
+
+if [[ "$gh22534_count" -eq 3 ]]; then
+	pass "Bullet-wrapped bold phases parsed: 3 rows"
+else
+	fail "Expected 3 bullet-wrapped bold phases, got ${gh22534_count}" "Output: ${gh22534_output}"
+fi
+
+if [[ "$gh22534_p3_desc" == *'new|list|status|link|archive'* && -z "$gh22534_p3_child" ]]; then
+	pass "CLI pipe prose remains description text, not a child ref"
+else
+	fail "CLI pipe prose parsed incorrectly" "desc='${gh22534_p3_desc}' child='${gh22534_p3_child}'"
 fi
 
 # =============================================================================

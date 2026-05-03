@@ -80,11 +80,12 @@ assert_rc() {
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCANNER="$SCRIPT_DIR/auto-decomposer-scanner.sh"
-WRAPPER="$SCRIPT_DIR/pulse-simplification.sh"
+WRAPPER="$SCRIPT_DIR/pulse-simplification-review.sh"
+SCAN_LIB="$SCRIPT_DIR/pulse-simplification-scan.sh"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
-BOOTSTRAP="$SCRIPT_DIR/pulse-wrapper.sh"
+BOOTSTRAP="$SCRIPT_DIR/pulse-wrapper-config.sh"
 
-for required in "$SCANNER" "$WRAPPER" "$ENGINE" "$BOOTSTRAP"; do
+for required in "$SCANNER" "$WRAPPER" "$SCAN_LIB" "$ENGINE" "$BOOTSTRAP"; do
 	if [[ ! -f "$required" ]]; then
 		echo "${TEST_RED}FATAL${TEST_NC}: $required not found"
 		exit 1
@@ -214,7 +215,7 @@ assert_grep_fixed \
 
 assert_grep \
 	"12: dispatch engine registers _run_auto_decomposer_scanner via run_stage_with_timeout" \
-	'run_stage_with_timeout "auto_decomposer_scanner".*_run_auto_decomposer_scanner' \
+	'_run_optional_stage_with_timeout "auto_decomposer_scanner".*_run_auto_decomposer_scanner' \
 	"$ENGINE"
 
 # --- Constants in pulse-wrapper.sh bootstrap ---
@@ -226,7 +227,7 @@ assert_grep \
 
 assert_grep \
 	"13b: AUTO_DECOMPOSER_INTERVAL constant defined with 604800 default (7d per-parent gate, t2573)" \
-	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-604800\}"' \
+	'^AUTO_DECOMPOSER_INTERVAL="\$\{AUTO_DECOMPOSER_INTERVAL:-\$\{PARENT_TASK_REFILE_GATE_SECONDS\}\}"' \
 	"$BOOTSTRAP"
 
 assert_grep \
@@ -239,7 +240,7 @@ assert_grep \
 assert_grep \
 	"14: _pulse_enabled_repo_slugs helper defined (de-dupes jq filter)" \
 	'^_pulse_enabled_repo_slugs\(\) \{' \
-	"$WRAPPER"
+	"$SCAN_LIB"
 
 # --- Shellcheck cleanliness ---
 
@@ -287,11 +288,17 @@ assert_grep_fixed "16g: do_scan emits [skip:has-children] log line" \
 assert_grep_fixed "16h: do_scan emits [skip:recent-maintainer-activity] log line" \
 	'[skip:recent-maintainer-activity]' "$SCANNER"
 
+assert_grep_fixed "16h2: do_scan emits [skip:phase-plan-awaiting-reconcile] log line" \
+	'[skip:phase-plan-awaiting-reconcile]' "$SCANNER"
+
 assert_grep_fixed "16i: do_scan declares skipped_has_children counter" \
 	'skipped_has_children=0' "$SCANNER"
 
 assert_grep_fixed "16j: do_scan declares skipped_maintainer_activity counter" \
 	'skipped_maintainer_activity=0' "$SCANNER"
+
+assert_grep_fixed "16j2: do_scan declares skipped_phase_reconcile counter" \
+	'skipped_phase_reconcile=0' "$SCANNER"
 
 assert_grep_fixed "16k: final summary includes skipped(has-children) counter" \
 	'skipped(has-children): ${skipped_has_children}' "$SCANNER"
@@ -299,8 +306,14 @@ assert_grep_fixed "16k: final summary includes skipped(has-children) counter" \
 assert_grep_fixed "16l: final summary includes skipped(maintainer-activity) counter" \
 	'skipped(maintainer-activity): ${skipped_maintainer_activity}' "$SCANNER"
 
+assert_grep_fixed "16l2: final summary includes skipped(phase-reconcile) counter" \
+	'skipped(phase-reconcile): ${skipped_phase_reconcile}' "$SCANNER"
+
 assert_grep_fixed "16m: help text documents MAINTAINER_ACTIVITY_HOURS" \
 	'MAINTAINER_ACTIVITY_HOURS' "$SCANNER"
+
+assert_grep "16n: _body_has_phase_plan_without_children helper defined" \
+	'^_body_has_phase_plan_without_children\(\) \{' "$SCANNER"
 
 # --- Function-level checks: source the script and exercise pure helpers ---
 #
@@ -403,6 +416,24 @@ if [[ -z "$bare_out" ]]; then
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
 	echo "${TEST_RED}FAIL${TEST_NC}: 17k: _extract_children_from_body wrongly extracted: $bare_out"
+fi
+
+# _body_has_phase_plan_without_children — detects phase-only parents that
+# need parent reconciliation rather than a silent has-children skip.
+TESTS_RUN=$((TESTS_RUN + 1))
+if _body_has_phase_plan_without_children $'## Phases\n\n- **Phase 1 — contract**: design `new|list|status`.\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17k2: _body_has_phase_plan_without_children detects zero-child phase plan"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17k2: _body_has_phase_plan_without_children missed zero-child phase plan"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if ! _body_has_phase_plan_without_children $'## Phases\n\n- Phase 1 - contract #20001\n' >/dev/null 2>&1; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 17k3: _body_has_phase_plan_without_children rejects phase plan with child refs"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 17k3: _body_has_phase_plan_without_children accepted phase plan with child refs"
 fi
 
 # _iso_cutoff_hours_ago — produces a parseable ISO-8601 UTC timestamp
