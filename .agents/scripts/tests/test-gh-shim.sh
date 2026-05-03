@@ -384,6 +384,39 @@ else
 fi
 
 # =============================================================================
+# Test 15: REST-first mode rewrites safe reads without low GraphQL budget
+# =============================================================================
+echo ""
+echo "Test 15: REST-first read routing"
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-rest-first.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+output=$(AIDEVOPS_GH_REST_FIRST_READS=1 STUB_RATE_LIMIT_REMAINING=5000 "$SHIM_RUN" issue list --repo owner/repo \
+	--state open --json number,title --jq '.[0].number' 2>/dev/null || true)
+argv=$(_read_argv)
+if [[ "$output" == "22430" ]] &&
+	[[ "$argv" == *"/repos/owner/repo/issues?state=open&per_page=30"* ]] &&
+	grep -q $'\tgh_issue_list\trest' "$AIDEVOPS_GH_API_LOG" &&
+	! grep -q $'\tgh_issue_list\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "REST-first rewrites equivalent issue list without GraphQL"
+else
+	_fail "REST-first equivalent issue list rewrite" "output: $output argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+_reset_log
+export AIDEVOPS_GH_API_LOG="$TMP/gh-api-calls-rest-first-unsafe.log"
+rm -f "$AIDEVOPS_GH_API_LOG"
+AIDEVOPS_GH_REST_FIRST_READS=1 "$SHIM_RUN" pr list --repo owner/repo \
+	--state open --json number,reviewDecision,headRefOid 2>/dev/null || true
+argv=$(_read_argv)
+if [[ "$argv" == $'pr\nlist\n--repo\nowner/repo\n--state\nopen\n--json\nnumber,reviewDecision,headRefOid' ]] &&
+	grep -q $'\tgh_pr_list\tgraphql' "$AIDEVOPS_GH_API_LOG"; then
+	_pass "REST-first leaves GraphQL-only pr list fields on GraphQL"
+else
+	_fail "REST-first GraphQL-only pr list preservation" "argv: $argv log: $(cat "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""

@@ -1709,12 +1709,21 @@ main() {
 	# worker launch at the emergency floor.
 	_pulse_set_graphql_budget_priority
 
-	# GH#22478: if the circuit breaker has not tripped but GraphQL headroom is
-	# already inside the REST fallback reserve, force supported read/list wrappers
-	# to use REST for the whole pulse cycle. This avoids every stage/subprocess
-	# spending a fresh GraphQL list call before discovering the same low-budget
-	# state. GraphQL-only operations and security gates still run through their
-	# existing paths; this only affects wrappers with REST-equivalent translators.
+	# GH#22507: prefer REST-equivalent read/list wrappers for pulse cycles even
+	# while GraphQL is healthy. This is quota-pool sharing, not a synthetic lower
+	# GraphQL budget: GraphQL-only operations and safety gates stay on GraphQL,
+	# while issue/pr list/view reads with REST parity preserve GraphQL availability
+	# for the operations that actually need it.
+	unset AIDEVOPS_GH_REST_FIRST_READS
+	if [[ "${AIDEVOPS_PULSE_REST_FIRST_READS:-1}" == "1" ]]; then
+		export AIDEVOPS_GH_REST_FIRST_READS=1
+		echo "[pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22507)" >>"$LOGFILE"
+	fi
+
+	# GH#22478: if GraphQL headroom is already inside the REST fallback reserve,
+	# force all supported read/list wrappers through REST for the whole pulse
+	# cycle. This remains as a stronger low-budget fallback for paths not covered
+	# by REST-first semantic-safety checks.
 	unset AIDEVOPS_GH_FORCE_REST_READS
 	if [[ "${AIDEVOPS_PULSE_FORCE_REST_READS_ON_LOW_GRAPHQL:-1}" == "1" ]] && declare -F _cb_rate_limit_json >/dev/null 2>&1; then
 		local _gh22478_rate_json="" _gh22478_remaining="" _gh22478_threshold="${AIDEVOPS_GH_REST_FALLBACK_THRESHOLD:-3000}"

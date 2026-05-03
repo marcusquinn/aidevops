@@ -226,6 +226,72 @@ _rest_args_have_search() {
 }
 
 #######################################
+# Return 0 when pulse/workflow routing should prefer REST for semantically
+# equivalent read calls even while GraphQL is healthy. This is not a lower
+# synthetic budget; it shares traffic across GitHub's native REST and GraphQL
+# pools so GraphQL remains available for GraphQL-only operations.
+#######################################
+_rest_read_first_enabled() {
+	[[ "${AIDEVOPS_GH_REST_FIRST_READS:-0}" == "1" ]] && return 0
+	return 1
+}
+
+#######################################
+# Extract the gh-style --json field list from argv. Emits empty when absent.
+# Args: gh-style argv
+#######################################
+_rest_args_json_fields() {
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--json) printf '%s' "${2:-}"; return 0 ;;
+		--json=*) printf '%s' "${_arg#--json=}"; return 0 ;;
+		*) shift ;;
+		esac
+	done
+	return 0
+}
+
+#######################################
+# Return 0 when gh pr list argv is safe to translate to REST proactively.
+# Search and GraphQL-only fields stay on GraphQL unless budget exhaustion forces
+# legacy fallback, preserving workflow correctness over read redistribution.
+# Args: gh-style argv
+#######################################
+_rest_pr_list_can_preserve_args() {
+	_rest_args_have_search "$@" && return 1
+	local fields
+	fields="$(_rest_args_json_fields "$@")"
+	[[ -z "$fields" ]] && return 0
+	local field
+	while IFS= read -r field; do
+		case "$field" in
+		mergeable|reviewDecision|statusCheckRollup|reviews|latestReviews|comments|autoMergeRequest|mergeStateStatus) return 1 ;;
+		*) ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	return 0
+}
+
+#######################################
+# Return 0 when gh pr view argv is safe to translate to REST proactively.
+# Args: gh-style argv
+#######################################
+_rest_pr_view_can_preserve_args() {
+	local fields
+	fields="$(_rest_args_json_fields "$@")"
+	[[ -z "$fields" ]] && return 0
+	local field
+	while IFS= read -r field; do
+		case "$field" in
+		statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files) return 1 ;;
+		*) ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	return 0
+}
+
+#######################################
 # Internal: If first arg looks like a GitHub issue URL, extract the repo slug
 # and issue number. Returns via stdout on two lines (repo, then num) so we
 # stay bash 3.2-compatible (nameref `local -n` is bash 4.3+).
@@ -768,10 +834,10 @@ _rest_pr_create() {
 # Parses gh-style args (positional number or URL, --repo, --json, --jq)
 # and returns the issue JSON or a jq-filtered value. Mirrors `gh issue view`.
 #
-# The --json FIELDS flag is accepted for interface parity but ignored — the
-# REST endpoint always returns the full issue object. Use --jq to extract
-# specific fields. Field names align with `gh issue view --json` for all
-# common fields (state, title, body, labels, assignees, createdAt).
+# The --json FIELDS flag maps common gh field names onto REST fields so
+# proactive REST-first routing can preserve compact gh-shaped output. Field
+# names align with `gh issue view --json` for common fields (state, title,
+# body, labels, assignees, createdAt).
 # Exception: `id` maps to the numeric issue id in REST, not the GraphQL
 # node_id — see the file header for the benign impact of this discrepancy.
 #
@@ -782,6 +848,7 @@ _rest_issue_view() {
 	local num_or_url=""
 	local repo=""
 	local jq_expr=""
+	local json_fields=""
 
 	local _first="${1:-}"
 	if [[ $# -gt 0 && "$_first" != --* ]]; then
@@ -794,8 +861,8 @@ _rest_issue_view() {
 		case "$_arg" in
 		--repo) repo="${2:-}"; shift 2 ;;
 		--repo=*) repo="${_arg#--repo=}"; shift ;;
-		--json) shift 2 ;;
-		--json=*) shift ;;
+		--json) json_fields="${2:-}"; shift 2 ;;
+		--json=*) json_fields="${_arg#--json=}"; shift ;;
 		# t3027: accept -q as gh's documented shorthand for --jq. Without this,
 		# callers using `gh issue view ... -q '.field'` (the idiomatic gh form)
 		# silently lost the jq filter on REST fallback and got the full issue
@@ -820,9 +887,42 @@ _rest_issue_view() {
 
 	local _path="/repos/${repo}/issues/${num}"
 	local _gh_cmd=(gh api "$_path")
+	if [[ -n "$json_fields" ]]; then
+		jq_expr="$(_rest_issue_object_json_jq "$json_fields" "$jq_expr")"
+	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
 	return $?
+}
+
+_rest_issue_object_json_jq() {
+	local fields="$1"
+	local user_jq="$2"
+	local projection=""
+	local field=""
+	while IFS= read -r field; do
+		[[ -z "$field" ]] && continue
+		case "$field" in
+		number) projection="${projection}${projection:+,}number: .number" ;;
+		state) projection="${projection}${projection:+,}state: .state" ;;
+		url) projection="${projection}${projection:+,}url: .html_url" ;;
+		title) projection="${projection}${projection:+,}title: (.title // \"\")" ;;
+		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
+		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
+		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
+		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
+		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
+		assignees) projection="${projection}${projection:+,}assignees: (.assignees // [])" ;;
+		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
+		comments) projection="${projection}${projection:+,}comments: .comments" ;;
+		*) projection="${projection}${projection:+,}${field}: .${field}" ;;
+		esac
+	done < <(_rest_split_csv "$fields")
+	[[ -z "$projection" ]] && projection="number: .number"
+	local jq_expr="{${projection}}"
+	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
+	printf '%s' "$jq_expr"
+	return 0
 }
 
 #######################################

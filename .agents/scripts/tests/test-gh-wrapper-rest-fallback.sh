@@ -57,6 +57,8 @@
 #      a rate-limit probe
 #  30. gh_pr_list does NOT fall back for --search because REST pulls cannot
 #      preserve search semantics
+#  31. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
+#      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -898,7 +900,42 @@ fi
 unset AIDEVOPS_GH_FORCE_REST_READS
 
 # =============================================================================
-# Test 27: gh_pr_list --search → no non-equivalent REST fallback
+# Test 27: REST-first read mode shares pools without probing GraphQL budget
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=5000
+export AIDEVOPS_GH_REST_FIRST_READS=1
+
+gh_issue_list --repo "owner/repo" --state open --json number --jq length >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state all --json createdAt --limit 200 >/dev/null 2>&1 || true
+
+if grep -qE '^api /repos/owner/repo/issues\?' "$GH_CALLS" 2>/dev/null &&
+	grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api rate_limit' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^(issue|pr) list' "$GH_CALLS" 2>/dev/null; then
+	pass "AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without rate_limit probe"
+else
+	fail "AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without rate_limit probe" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+gh_pr_list --repo "owner/repo" --state open --json number,reviewDecision,headRefOid --limit 30 >/dev/null 2>&1 || true
+
+if grep -qE '^pr list' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE '^api /repos/owner/repo/pulls' "$GH_CALLS" 2>/dev/null; then
+	pass "AIDEVOPS_GH_REST_FIRST_READS leaves GraphQL-only pr list fields on GraphQL"
+else
+	fail "AIDEVOPS_GH_REST_FIRST_READS leaves GraphQL-only pr list fields on GraphQL" \
+		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+unset AIDEVOPS_GH_REST_FIRST_READS
+
+# =============================================================================
+# Test 28: gh_pr_list --search → no non-equivalent REST fallback
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
