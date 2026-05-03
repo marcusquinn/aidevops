@@ -6,14 +6,16 @@
 #
 # test-pulse-dispatch-engine-stage-wiring.sh — regression guard for t2443
 #
-# Verifies that daily scan stages are registered as independent top-level
-# stages in _run_preflight_stages() with their own run_stage_with_timeout
-# calls, not wrapped in a shared-budget group.
+# Verifies that post-dispatch housekeeping stages remain independently timed
+# and are wired through the async housekeeping launcher, not wrapped in a
+# shared-budget group that blocks worker refill.
 #
 # Background: _preflight_daily_scans() wrapped 4+ children under a single
 # 600s timeout. A slow complexity_scan (200-340s) would exhaust the budget
 # before auto_decomposer_scanner could run. t2443 promoted each scanner to
-# an independent top-level stage so each gets its own timeout budget.
+# an independent stage so each gets its own timeout budget; t3055 then moved
+# those independent stages behind an async post-dispatch lock so housekeeping
+# cannot hold the dispatch cycle open while worker slots drain.
 
 set -u
 
@@ -64,7 +66,7 @@ echo "=== t2443 + t2903: pulse-dispatch-engine stage wiring regression tests ===
 echo "Engine: $ENGINE"
 echo ""
 
-# --- Each daily scanner has its own independent run_stage_with_timeout ---
+# --- Each daily scanner is still independently timed inside housekeeping ---
 #
 # t2903 (#21049): complexity_scan was REMOVED from the dispatch engine and
 # moved to its own launchd plist (sh.aidevops.complexity-scan) backed by
@@ -79,13 +81,12 @@ assert_not_grep \
 
 # Assertions 2-6: each stage uses two separate greps (2a/2b pattern) because the
 # dispatch engine wires stages with a backslash line-continuation:
-#   run_stage_with_timeout "coderabbit_review" "$_pflt_timeout" \
-#       run_daily_codebase_review || true
+#   _pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || true
 # Single-line grep -E cannot span the newline, so split into stage-name + function-name.
 
 assert_grep \
 	"2a: coderabbit_review stage call present" \
-	'run_stage_with_timeout "coderabbit_review"' \
+	'_pulse_run_optional_stage_with_timeout "coderabbit_review"' \
 	"$ENGINE"
 assert_grep \
 	"2b: coderabbit_review function name present" \
@@ -94,7 +95,7 @@ assert_grep \
 
 assert_grep \
 	"3a: post_merge_scanner stage call present" \
-	'run_stage_with_timeout "post_merge_scanner"' \
+	'_pulse_run_optional_stage_with_timeout "post_merge_scanner"' \
 	"$ENGINE"
 assert_grep \
 	"3b: post_merge_scanner function name present" \
@@ -103,7 +104,7 @@ assert_grep \
 
 assert_grep \
 	"4a: auto_decomposer_scanner stage call present" \
-	'run_stage_with_timeout "auto_decomposer_scanner"' \
+	'_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner"' \
 	"$ENGINE"
 assert_grep \
 	"4b: auto_decomposer_scanner function name present" \
@@ -112,7 +113,7 @@ assert_grep \
 
 assert_grep \
 	"5a: dedup_cleanup stage call present" \
-	'run_stage_with_timeout "dedup_cleanup"' \
+	'_pulse_run_optional_stage_with_timeout "dedup_cleanup"' \
 	"$ENGINE"
 assert_grep \
 	"5b: dedup_cleanup function name present" \
@@ -121,7 +122,7 @@ assert_grep \
 
 assert_grep \
 	"6a: fast_fail_prune_expired stage call present" \
-	'run_stage_with_timeout "fast_fail_prune_expired"' \
+	'_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired"' \
 	"$ENGINE"
 assert_grep \
 	"6b: fast_fail_prune_expired function name present" \
@@ -140,13 +141,13 @@ assert_not_grep \
 	'run_stage_with_timeout "preflight_daily_scans"' \
 	"$ENGINE"
 
-# --- All daily stages use the same timeout variable as peer preflight groups ---
+# --- The async launcher receives the same timeout variable as peer preflight groups ---
 # (complexity_scan removed in t2903 — moved to standalone launchd plist;
-# kept auto_decomposer_scanner as the canary for _pflt_timeout wiring.)
+# kept the launcher call as the canary for _pflt_timeout wiring.)
 
 assert_grep \
-	"9: auto_decomposer_scanner uses _pflt_timeout" \
-	'run_stage_with_timeout "auto_decomposer_scanner" "\$_pflt_timeout"' \
+	"9: async post-dispatch housekeeping uses _pflt_timeout" \
+	'_pulse_start_post_dispatch_housekeeping "\$_pflt_timeout"' \
 	"$ENGINE"
 
 # --- Summary ---

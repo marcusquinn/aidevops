@@ -23,5 +23,6 @@ assert_reason 'COST_BUDGET_EXCEEDED (spent=123 budget=100)' 'cost_budget_exceede
 assert_reason 'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=assigned to runner' 'dedup_active_claim'
 assert_reason 'GraphQL budget below circuit-breaker threshold' 'graphql_circuit_breaker'
 assert_reason 'DISPATCH_COOLDOWN_ACTIVE until=2026-05-02T23:00:00Z reason=no_worker_process' 'cooldown_no_worker_process'
+assert_reason 'dispatch_with_dedup: BLOCKED #3638 in awardsapp/awardsapp — requires cryptographic approval (ever-NMR)' 'ever_nmr_without_approval'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'

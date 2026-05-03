@@ -257,10 +257,11 @@ _dlw_resolve_tier_and_model() {
 # exited 0 with zero model activity because the tool-loading error
 # prevented the session from starting.
 #
-# Fix: after creating or resetting a worktree, copy node_modules from
-# the canonical repo for any directory that has a package.json tracked
-# in git. Uses fast_cp (clonefile/reflink CoW where available — sub-
-# second on APFS, near-zero disk delta), offline, and idempotent.
+# Fix: after creating or resetting a worktree, copy scoped node_modules from
+# the canonical repo for package directories that have package.json tracked
+# in git. Root node_modules can be multi-GB and block the pulse before worker
+# spawn, so headless dispatch skips it by default unless explicitly enabled
+# with WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1.
 #
 # Arguments: worktree_path, repo_path
 ###############################################################################
@@ -328,6 +329,7 @@ _dlw_restore_worktree_deps() {
 	local _pkg_dir=""
 	local _restored=0
 	local _max_dirs="${WORKTREE_NODE_MODULES_RESTORE_MAX_DIRS:-2}"
+	local _restore_root="${WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED:-0}"
 	[[ "$_max_dirs" =~ ^[0-9]+$ ]] || _max_dirs=2
 	while IFS= read -r _pkg_dir; do
 		if ((_restored >= _max_dirs)); then
@@ -338,6 +340,10 @@ _dlw_restore_worktree_deps() {
 		local _rel_dir=""
 		_rel_dir="${_dir#"$worktree_path"}" || continue
 		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
+		if [[ -z "$_rel_dir" && "$_restore_root" != "1" ]]; then
+			echo "[dispatch_with_dedup] Skipping root node_modules restore for ${worktree_path} (set WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1 to enable)" >>"$LOGFILE"
+			continue
+		fi
 		local _src_nm="${repo_path}${_rel_dir}/node_modules"
 		local _dst_nm="${worktree_path}${_rel_dir}/node_modules"
 		if [[ -d "$_src_nm" && ! -d "$_dst_nm" ]]; then

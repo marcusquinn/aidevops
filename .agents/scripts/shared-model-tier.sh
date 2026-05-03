@@ -97,13 +97,13 @@ resolve_model_tier() {
 	# Static fallback: map tier names to concrete models
 	case "$tier" in
 	opus | coding)
-		echo "anthropic/claude-opus-4-6"
+		echo "openai/gpt-5.5"
 		;;
 	sonnet | eval)
-		echo "anthropic/claude-sonnet-4-6"
+		echo "openai/gpt-5.5"
 		;;
 	haiku | health)
-		echo "anthropic/claude-haiku-4-5"
+		echo "openai/gpt-5.4-mini"
 		;;
 	flash)
 		echo "google/gemini-2.5-flash"

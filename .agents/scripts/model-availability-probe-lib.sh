@@ -440,7 +440,7 @@ _probe_allows_oauth_fallback_after_rejected_key() {
 		key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || key_vars=""
 		IFS=',' read -r -a var_names <<<"$key_vars"
 		for var_name in "${var_names[@]}"; do
-			if [[ "$key_source" == "env:${var_name}" || -n "${!var_name:-}" ]]; then
+			if [[ "$key_source" == "env:${var_name}" ]]; then
 				return 1
 			fi
 		done

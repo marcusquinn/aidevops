@@ -323,6 +323,26 @@ else
 	print_result "historical 'has used' pattern aggregated alongside 'spent'" 1 "(got: '$sum_output')"
 fi
 
+# =============================================================================
+# Assertion 11 — signed approval resets the cost aggregation window
+# =============================================================================
+# A maintainer approval after a cost trip is an explicit permission to retry.
+# Historical worker spend before that approval must not immediately re-trip the
+# breaker and deadlock dispatch on the same old comments.
+cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
+[
+  {"created_at":"2026-05-03T19:00:00Z","body":"Old worker.\n---\nclaude-sonnet-4-6 spent 900000 tokens on this as a headless worker."},
+  {"created_at":"2026-05-03T19:25:00Z","body":"<!-- aidevops-signed-approval -->\nMaintainer approval."},
+  {"created_at":"2026-05-03T19:30:00Z","body":"Retry worker.\n---\nclaude-sonnet-4-6 spent 50000 tokens on this as a headless worker."}
+]
+JSON
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18011 "owner/repo" 2>/dev/null)
+if [[ "$sum_output" == "50000|1" ]]; then
+	print_result "signed approval resets cost aggregation window" 0
+else
+	print_result "signed approval resets cost aggregation window" 1 "(got: '$sum_output')"
+fi
+
 export PATH="$OLD_PATH"
 
 # =============================================================================

@@ -612,7 +612,7 @@ Mandatory behavior:
 6. Reading the issue and reading docs are SETUP -- not completion. You MUST continue through implementation, commit, push, and PR creation after setup.
 7. Do not stop at "PR opened" or "in review" states. Continue through review polling, merge readiness checks, merge, and required closing comments.
 8. If merge/close cannot complete, exit only with a clear BLOCKED outcome and evidence (failing check, missing permission, unresolved conflict, or explicit policy gate).
-9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt model escalation -- retry with the next tier (sonnet -> opus via --model anthropic/claude-opus-4-6). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
+9. Model escalation before BLOCKED (GH#14964): BLOCKED is only valid after exhausting all autonomous solution paths. Before exiting BLOCKED, attempt escalation through the configured OpenAI tier resolver (for example, retry opus-tier work with --model openai/gpt-5.5). Review-policy metadata, nominal GitHub states, and lower-tier model limits are NOT valid blockers on their own.
 
 Activity watchdog constraint -- CRITICAL:
 A continuous watchdog monitors your output. If you produce no tool calls or text

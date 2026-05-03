@@ -92,6 +92,7 @@ fi
 : "${PULSE_LLM_STALL_THRESHOLD:=3600}"
 : "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
 : "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
+: "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:=1}"
 
 # t2690: Source rate-limit circuit breaker (proactive dispatch pause on GraphQL exhaustion).
 # shellcheck source=pulse-rate-limit-circuit-breaker.sh
@@ -614,6 +615,126 @@ _adaptive_launch_settle_wait() {
 	return 0
 }
 
+#######################################
+# Return the async post-dispatch housekeeping lock directory path.
+#
+# Returns 0 always; emits path on stdout.
+#######################################
+_pulse_post_dispatch_housekeeping_lockdir() {
+	printf '%s\n' "${HOME}/.aidevops/logs/pulse-post-dispatch-housekeeping.lock"
+	return 0
+}
+
+#######################################
+# Acquire the post-dispatch housekeeping lock.
+#
+# Args:
+#   $1 - lock directory path
+# Returns 0 if acquired, 1 if another live runner owns it.
+#######################################
+_pulse_acquire_post_dispatch_housekeeping_lock() {
+	local lockdir="$1"
+	local lock_parent
+	lock_parent="$(dirname "$lockdir")"
+	mkdir -p "$lock_parent" 2>/dev/null || return 1
+
+	if mkdir "$lockdir" 2>/dev/null; then
+		printf '%s\n' "${BASHPID:-$$}" >"${lockdir}/pid" 2>/dev/null || true
+		return 0
+	fi
+
+	local lock_pid=""
+	if [[ -f "${lockdir}/pid" ]]; then
+		read -r lock_pid <"${lockdir}/pid" 2>/dev/null || lock_pid=""
+	fi
+	if [[ "$lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$lock_pid" 2>/dev/null; then
+		echo "[pulse-wrapper] Async post-dispatch housekeeping already running (pid=${lock_pid}) — skipping duplicate" >>"$LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] Async post-dispatch housekeeping: reclaiming stale lock (pid=${lock_pid:-missing})" >>"$LOGFILE"
+	rm -rf "$lockdir" 2>/dev/null || true
+	if mkdir "$lockdir" 2>/dev/null; then
+		printf '%s\n' "${BASHPID:-$$}" >"${lockdir}/pid" 2>/dev/null || true
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Release the post-dispatch housekeeping lock.
+#
+# Args:
+#   $1 - lock directory path
+# Returns 0 always.
+#######################################
+_pulse_release_post_dispatch_housekeeping_lock() {
+	local lockdir="$1"
+	rm -rf "$lockdir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Run non-dispatch post-dispatch housekeeping stages.
+#
+# These stages are intentionally after early dispatch and do not protect the
+# immediate worker claim/ledger safety boundary. They can therefore run under a
+# separate lock while the main pulse proceeds to prefetch + the next refill.
+#
+# Args:
+#   $1 - per-stage timeout seconds
+# Returns 0 always.
+#######################################
+_pulse_run_post_dispatch_housekeeping_stages() {
+	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
+	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+
+	local lockdir
+	lockdir="$(_pulse_post_dispatch_housekeeping_lockdir)"
+	if ! _pulse_acquire_post_dispatch_housekeeping_lock "$lockdir"; then
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Async post-dispatch housekeeping: started (timeout=${stage_timeout}s)" >>"$LOGFILE"
+	_pulse_run_optional_stage_with_timeout "coderabbit_review" "$stage_timeout" run_daily_codebase_review || true
+	_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$stage_timeout" _run_post_merge_review_scanner || true
+	_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$stage_timeout" _run_auto_decomposer_scanner || true
+	_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$stage_timeout" run_simplification_dedup_cleanup || true
+	_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$stage_timeout" fast_fail_prune_expired || true
+	run_stage_with_timeout "preflight_ownership_reconcile" "$stage_timeout" \
+		_preflight_ownership_reconcile || true
+	echo "[pulse-wrapper] Async post-dispatch housekeeping: complete" >>"$LOGFILE"
+
+	_pulse_release_post_dispatch_housekeeping_lock "$lockdir"
+	return 0
+}
+
+#######################################
+# Start post-dispatch housekeeping synchronously or asynchronously.
+#
+# Args:
+#   $1 - per-stage timeout seconds
+# Returns 0 always.
+#######################################
+_pulse_start_post_dispatch_housekeeping() {
+	local stage_timeout="${1:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
+	[[ "$stage_timeout" =~ ^[0-9]+$ ]] || stage_timeout=600
+
+	if [[ "${AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING:-1}" != "1" ]]; then
+		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+		return 0
+	fi
+
+	(
+		trap - EXIT INT TERM
+		_pulse_run_post_dispatch_housekeeping_stages "$stage_timeout"
+	) >>"$LOGFILE" 2>&1 &
+	local housekeeping_pid=$!
+	echo "[pulse-wrapper] Async post-dispatch housekeeping: launched pid=${housekeeping_pid}" >>"$LOGFILE"
+	disown "$housekeeping_pid" 2>/dev/null || true
+	return 0
+}
+
 #
 # Dispatches dispatch_max, then waits adaptively based on
 # how many workers were launched so they can appear in process lists
@@ -968,24 +1089,13 @@ _run_preflight_stages() {
 	local _pflt_ed_rc=0
 	_preflight_early_dispatch || _pflt_ed_rc=$?
 	_log_substage_timing "preflight_early_dispatch" "$_pflt_ed_start" "$_pflt_ed_rc"
-	# t2443: Daily scans promoted to independent top-level stages so each
-	# scanner gets its own timeout budget. Previously wrapped in a single
-	# _preflight_daily_scans() group with a shared 600s budget — a slow
-	# complexity_scan (200-340s) would starve downstream scanners
-	# (auto_decomposer, post_merge, dedup) from ever running.
-	# t2903 (#21049): complexity_scan extracted to its own launchd plist
-	# (sh.aidevops.complexity-scan, hourly) via complexity-scan-runner.sh.
-	# Observed cost was 470s per cycle — 26%+ of the 1800s pulse stale
-	# ceiling — so promoting it to its own schedule prevents preflight
-	# starvation entirely. The function still lives in pulse-simplification.sh
-	# and is invoked by the standalone runner.
-	_pulse_run_optional_stage_with_timeout "coderabbit_review" "$_pflt_timeout" run_daily_codebase_review || true
-	_pulse_run_optional_stage_with_timeout "post_merge_scanner" "$_pflt_timeout" _run_post_merge_review_scanner || true
-	_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner" "$_pflt_timeout" _run_auto_decomposer_scanner || true
-	_pulse_run_optional_stage_with_timeout "dedup_cleanup" "$_pflt_timeout" run_simplification_dedup_cleanup || true
-	_pulse_run_optional_stage_with_timeout "fast_fail_prune_expired" "$_pflt_timeout" fast_fail_prune_expired || true
-	run_stage_with_timeout "preflight_ownership_reconcile" "$_pflt_timeout" \
-		_preflight_ownership_reconcile || true
+	# t3055: Post-dispatch housekeeping runs under a separate async lock by
+	# default. These stages do not protect the immediate worker claim/ledger
+	# safety boundary, so blocking the dispatch lock on them lets a 24-worker
+	# wave drain before the next refill can start. Set
+	# AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0 to restore the legacy
+	# synchronous path for debugging.
+	_pulse_start_post_dispatch_housekeeping "$_pflt_timeout"
 	# t3027 (GH#21584): GraphQL budget gate.
 	# prefetch_state is the largest single GraphQL consumer in the pulse
 	# cycle (~170s avg, 3 calls per repo × 13 repos). When budget is

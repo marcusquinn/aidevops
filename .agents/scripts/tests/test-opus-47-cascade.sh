@@ -125,16 +125,16 @@ cat >"$sandbox/model-availability-helper.sh" <<'HELPER'
 #!/usr/bin/env bash
 # Stub: mirrors the real tier → model mapping for test assertions.
 if [[ "${1:-}" == "check" ]]; then
- if [[ "${2:-}" == "anthropic/claude-opus-4-7" && "${OPUS_47_AVAILABLE:-true}" != "false" ]]; then
+ if [[ "${2:-}" == "${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.5}" && "${OPUS_ESCALATION_AVAILABLE:-true}" != "false" ]]; then
   exit 0
  fi
  exit 1
 fi
 if [[ "${1:-}" == "resolve" ]]; then
  case "${2:-}" in
- opus)   printf '%s' "${MODEL_RESOLVE_OPUS:-anthropic/claude-opus-4-6}" ;;
- sonnet) printf '%s' "${MODEL_RESOLVE_SONNET:-anthropic/claude-sonnet-4-6}" ;;
- haiku)  printf '%s' "${MODEL_RESOLVE_HAIKU:-anthropic/claude-haiku-4-5}" ;;
+ opus)   printf '%s' "${MODEL_RESOLVE_OPUS:-openai/gpt-5.5}" ;;
+ sonnet) printf '%s' "${MODEL_RESOLVE_SONNET:-openai/gpt-5.5}" ;;
+ haiku)  printf '%s' "${MODEL_RESOLVE_HAIKU:-openai/gpt-5.4-mini}" ;;
  *)      printf '%s' "" ;;
  esac
  exit 0
@@ -162,33 +162,33 @@ source "$AGENTS_SCRIPTS/pulse-model-routing.sh"
 
 # 1a — model:opus-4-7 alone resolves directly
 actual=$(resolve_dispatch_model_for_labels "model:opus-4-7")
-assert_equals "anthropic/claude-opus-4-7" "$actual" \
-	"label alone: model:opus-4-7 → anthropic/claude-opus-4-7"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"label alone: model:opus-4-7 → OpenAI opus-tier model"
 
 # 1b — model:opus-4-7 override wins over tier:standard
 actual=$(resolve_dispatch_model_for_labels "tier:standard,model:opus-4-7")
-assert_equals "anthropic/claude-opus-4-7" "$actual" \
-	"override wins: tier:standard + model:opus-4-7 → anthropic/claude-opus-4-7"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"override wins: tier:standard + model:opus-4-7 → OpenAI opus-tier model"
 
 # 1c — model:opus-4-7 override wins over tier:thinking (cascade terminal state)
 actual=$(resolve_dispatch_model_for_labels "tier:thinking,model:opus-4-7")
-assert_equals "anthropic/claude-opus-4-7" "$actual" \
-	"override wins: tier:thinking + model:opus-4-7 → anthropic/claude-opus-4-7"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"override wins: tier:thinking + model:opus-4-7 → OpenAI opus-tier model"
 
-# 1d — no override, tier:thinking still resolves to opus-4.6 (unchanged default)
+# 1d — no override, tier:thinking resolves to OpenAI opus-tier default
 actual=$(resolve_dispatch_model_for_labels "tier:thinking")
-assert_equals "anthropic/claude-opus-4-6" "$actual" \
-	"tier-only: tier:thinking → anthropic/claude-opus-4-6 (default unchanged)"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"tier-only: tier:thinking → OpenAI opus-tier model"
 
 # 1e — tier:standard resolves to sonnet unchanged
 actual=$(resolve_dispatch_model_for_labels "tier:standard")
-assert_equals "anthropic/claude-sonnet-4-6" "$actual" \
-	"tier-only: tier:standard → anthropic/claude-sonnet-4-6 (unchanged)"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"tier-only: tier:standard → OpenAI model"
 
 # 1f — tier:simple resolves to haiku unchanged
 actual=$(resolve_dispatch_model_for_labels "tier:simple")
-assert_equals "anthropic/claude-haiku-4-5" "$actual" \
-	"tier-only: tier:simple → anthropic/claude-haiku-4-5 (unchanged)"
+assert_equals "openai/gpt-5.4-mini" "$actual" \
+	"tier-only: tier:simple → OpenAI mini model"
 
 # 1g — no labels: empty (caller decides fallback)
 actual=$(resolve_dispatch_model_for_labels "")
@@ -197,29 +197,28 @@ assert_equals "" "$actual" \
 
 # 1h — label order independence: override wins whether first or last
 actual=$(resolve_dispatch_model_for_labels "model:opus-4-7,tier:thinking,enhancement")
-assert_equals "anthropic/claude-opus-4-7" "$actual" \
+assert_equals "openai/gpt-5.5" "$actual" \
 	"order-independent: override wins when listed first"
 
 actual=$(resolve_dispatch_model_for_labels "enhancement,bug,model:opus-4-7")
-assert_equals "anthropic/claude-opus-4-7" "$actual" \
+assert_equals "openai/gpt-5.5" "$actual" \
 	"order-independent: override wins when listed last"
 
 # 1i — unavailable override falls back through the opus tier resolver. This
 # catches GH#21988: model:* labels must not hardcode unavailable Anthropic.
-export OPUS_47_AVAILABLE=false
+export OPUS_ESCALATION_AVAILABLE=false
 export MODEL_RESOLVE_OPUS="openai/gpt-5.5-xhigh"
 actual=$(resolve_dispatch_model_for_labels "tier:thinking,model:opus-4-7")
 assert_equals "openai/gpt-5.5-xhigh" "$actual" \
 	"availability fallback: unavailable model:opus-4-7 → resolved opus fallback"
-unset OPUS_47_AVAILABLE MODEL_RESOLVE_OPUS
+unset OPUS_ESCALATION_AVAILABLE MODEL_RESOLVE_OPUS
 
-# 1j — provider allowlist also bypasses the exact-model pin even if the model
-# would otherwise be available.
+# 1j — provider allowlist keeps the OpenAI exact-model pin available.
 export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"
 export MODEL_RESOLVE_OPUS="openai/gpt-5.5-xhigh"
 actual=$(resolve_dispatch_model_for_labels "tier:thinking,model:opus-4-7")
-assert_equals "openai/gpt-5.5-xhigh" "$actual" \
-	"allowlist fallback: disallowed Anthropic override → resolved opus fallback"
+assert_equals "openai/gpt-5.5" "$actual" \
+	"allowlist: OpenAI opus override remains allowed"
 unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST MODEL_RESOLVE_OPUS
 
 # ========================================================================

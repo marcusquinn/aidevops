@@ -143,7 +143,8 @@ _issue_needs_consolidation() {
 	# Defaults are set at module level (: "${VAR:=value}" block above).
 	# Bare $VAR reference is safe; the module-level block guarantees non-empty.
 	local min_chars="$ISSUE_CONSOLIDATION_COMMENT_MIN_CHARS"
-	substantive_count=$(printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
+	substantive_count=$(printf '%s' "$comments_json" | jq -s --argjson min "$min_chars" '
+		add as $comments |
 		# Combine all operational-noise patterns into a single regex for efficiency
 		# (1 test() invocation per comment instead of 15).
 		#
@@ -171,7 +172,7 @@ _issue_needs_consolidation() {
 			+ "|sudo aidevops approve"
 			+ "|^_Automated by"
 		) as $patterns |
-		[.[] | select(
+		[$comments[] | select(
 			(.body | length) >= $min
 			and .user.type != "Bot"
 			and (.body | test($patterns) | not)

@@ -489,6 +489,51 @@ JSON
 	return 0
 }
 
+# Fixture: gh api --paginate --jq '.' emits one JSON array per page. The
+# consolidation filter must slurp and combine those pages before counting.
+fixture_paginated_substantive_comments() {
+	cat <<'JSON'
+[
+  {"user": {"login": "maintainer-one", "type": "User"}, "created_at": "2026-05-03T19:00:00Z", "body": "First substantive maintainer comment with enough detail to clear the configured consolidation threshold."}
+]
+[
+  {"user": {"login": "maintainer-two", "type": "User"}, "created_at": "2026-05-03T19:05:00Z", "body": "Second substantive maintainer comment with enough detail to clear the configured consolidation threshold."}
+]
+JSON
+	return 0
+}
+
+test_paginated_comments_are_combined_for_consolidation() {
+	setup_gh_stub
+	GH_ISSUE_VIEW_LABELS="bug,tier:standard"
+	GH_API_COMMENTS_JSON=$(fixture_paginated_substantive_comments)
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_ISSUE_LIST_CHILD_CLOSED_JSON="[]"
+	export GH_ISSUE_VIEW_LABELS GH_API_COMMENTS_JSON
+	export GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON
+
+	if _issue_needs_consolidation 25000 "marcusquinn/aidevops"; then
+		print_result "paginated comments are slurped before consolidation count" 0
+	else
+		print_result "paginated comments are slurped before consolidation count" 1 \
+			"_issue_needs_consolidation returned 1 despite two substantive comments across pages"
+	fi
+
+	local substantive_json
+	substantive_json=$(_consolidation_substantive_comments 25000 "marcusquinn/aidevops")
+	local substantive_count
+	substantive_count=$(printf '%s' "$substantive_json" | jq -r 'length') || substantive_count=0
+	if [[ "$substantive_count" -eq 2 ]]; then
+		print_result "paginated comments are slurped for consolidation body" 0
+	else
+		print_result "paginated comments are slurped for consolidation body" 1 \
+			"(substantive_count=${substantive_count}; substantive_json=${substantive_json})"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
 # t2144 A1 regression: WORKER_SUPERSEDED comments must NOT count as substantive.
 test_worker_superseded_comments_are_filtered() {
 	setup_gh_stub
@@ -838,6 +883,7 @@ main() {
 	test_needs_consolidation_skips_with_child
 
 	# t2144 regression suite
+	test_paginated_comments_are_combined_for_consolidation
 	test_worker_superseded_comments_are_filtered
 	test_stale_recovery_tick_comments_are_filtered
 	test_cost_circuit_breaker_comments_are_filtered
