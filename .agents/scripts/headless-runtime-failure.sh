@@ -77,7 +77,6 @@ _release_dispatch_claim() {
 		return 0
 	fi
 
-	local comment_body
 	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
 	if declare -F aidevops_find_version >/dev/null 2>&1; then
 		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
@@ -86,15 +85,21 @@ _release_dispatch_claim() {
 		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
 		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
 	fi
-	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+
+	local runner_name=""
+	runner_name=$(whoami)
+	local release_ts=""
+	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	local machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
 	if [[ -n "$exit_code_arg" ]]; then
-		comment_body="${comment_body} exit=${exit_code_arg}"
+		machine_readable_part+=" exit=${exit_code_arg}"
 	fi
 	if [[ -n "$session_count_arg" ]]; then
-		comment_body="${comment_body} session_count=${session_count_arg}"
+		machine_readable_part+=" session_count=${session_count_arg}"
 	fi
-	comment_body="${comment_body}
+
+	local comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${machine_readable_part}
 <!-- ops:end -->"
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
