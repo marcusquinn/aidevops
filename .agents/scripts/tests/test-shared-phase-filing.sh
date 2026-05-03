@@ -615,6 +615,52 @@ else
 fi
 
 # =============================================================================
+# Test 17: phase filing lock serializes same parent/phase attempts (GH#22636)
+# =============================================================================
+printf '%s--- Test 17: phase filing lock serializes duplicate attempts ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+export AIDEVOPS_PHASE_FILING_LOCK_ROOT="${TMP}/phase-locks"
+lock_one=$(_phase_acquire_filing_lock "owner/repo" "22616" "4")
+lock_two=$(_phase_acquire_filing_lock "owner/repo" "22616" "4")
+
+if [[ -n "$lock_one" && -z "$lock_two" ]]; then
+	pass "Second same parent/phase lock acquisition is blocked"
+else
+	fail "Expected first lock acquired and second blocked" "lock_one='${lock_one}' lock_two='${lock_two}'"
+fi
+
+_phase_release_filing_lock "$lock_one"
+lock_three=$(_phase_acquire_filing_lock "owner/repo" "22616" "4")
+if [[ -n "$lock_three" ]]; then
+	pass "Lock can be reacquired after owner release"
+else
+	fail "Expected lock reacquire after release"
+fi
+_phase_release_filing_lock "$lock_three"
+
+# =============================================================================
+# Test 18: deterministic-title search reuses an already-open phase child
+# =============================================================================
+printf '%s--- Test 18: deterministic-title open issue dedup ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+gh() {
+	if [[ " $* " == *" issue list "* ]]; then
+		printf '22636\tPhase 4 of #22616: Extract Shell Quality block\n'
+		printf '22637\tPhase 4 of #22616: Extract Shell Quality block\n'
+		printf '22638\tPhase 5 of #22616: Extract gh Command Discipline block\n'
+		return 0
+	fi
+	return 1
+}
+
+existing_phase=$(_find_existing_phase_child_issue "owner/repo" "22616" "4" "Extract Shell Quality block")
+if [[ "$existing_phase" == "22636" ]]; then
+	pass "Existing duplicate phase child lookup returns lowest matching issue"
+else
+	fail "Expected existing phase child #22636, got '${existing_phase}'"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n%s=== Results: %d/%d passed ===%s\n' \

@@ -378,6 +378,159 @@ _update_parent_phases_section() {
 }
 
 #######################################
+# Build a filesystem-safe lock key for a parent/phase pair.
+#
+# Args: $1=repo_slug, $2=parent_issue, $3=phase_num
+# Output: sanitized lock key on stdout
+# Returns: 0 always
+#######################################
+_phase_filing_lock_key() {
+	local repo_slug="$1"
+	local parent_issue="$2"
+	local phase_num="$3"
+	printf '%s' "${repo_slug}-parent-${parent_issue}-phase-${phase_num}" \
+		| tr '/[:space:]' '---' \
+		| tr -cd 'A-Za-z0-9._-'
+	return 0
+}
+
+#######################################
+# Acquire a local mkdir mutex for a parent/phase filing transition.
+# Prevents same-host pulse/full-loop workers from both observing an unfiled
+# phase and creating duplicate child issues before either updates the parent.
+#
+# Args: $1=repo_slug, $2=parent_issue, $3=phase_num
+# Output: acquired lockdir on stdout
+# Returns: 0 when acquired, 1 when another live owner holds the lock
+#######################################
+_phase_acquire_filing_lock() {
+	local repo_slug="$1"
+	local parent_issue="$2"
+	local phase_num="$3"
+	local lock_root="${AIDEVOPS_PHASE_FILING_LOCK_ROOT:-${HOME}/.aidevops/locks/phase-filing}"
+	local lock_key
+	lock_key=$(_phase_filing_lock_key "$repo_slug" "$parent_issue" "$phase_num")
+	local lock_dir="${lock_root}/${lock_key}.lockdir"
+
+	mkdir -p "$lock_root" 2>/dev/null || return 1
+	if mkdir "$lock_dir" 2>/dev/null; then
+		printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || true
+		printf '%s' "$lock_dir"
+		return 0
+	fi
+
+	local owner_pid=""
+	if [[ -f "${lock_dir}/pid" ]]; then
+		owner_pid=$(tr -cd '0-9' <"${lock_dir}/pid" 2>/dev/null || true)
+	fi
+	if [[ -n "$owner_pid" ]] && kill -0 "$owner_pid" 2>/dev/null; then
+		_phase_log "Parent #${parent_issue}: Phase ${phase_num} filing lock held by PID ${owner_pid} — skip duplicate filing attempt"
+		return 1
+	fi
+
+	_phase_log "Parent #${parent_issue}: Phase ${phase_num} filing lock stale — reclaiming"
+	rm -rf "$lock_dir" 2>/dev/null || true
+	if mkdir "$lock_dir" 2>/dev/null; then
+		printf '%s\n' "$$" >"${lock_dir}/pid" 2>/dev/null || true
+		printf '%s' "$lock_dir"
+		return 0
+	fi
+	_phase_log "Parent #${parent_issue}: Phase ${phase_num} filing lock race lost after stale cleanup"
+	return 1
+}
+
+#######################################
+# Release a phase filing lock only when still owned by this process.
+#
+# Args: $1=lock_dir
+# Returns: 0 always
+#######################################
+_phase_release_filing_lock() {
+	local lock_dir="$1"
+	[[ -n "$lock_dir" && -d "$lock_dir" ]] || return 0
+	local owner_pid=""
+	if [[ -f "${lock_dir}/pid" ]]; then
+		owner_pid=$(tr -cd '0-9' <"${lock_dir}/pid" 2>/dev/null || true)
+	fi
+	[[ -z "$owner_pid" || "$owner_pid" == "$$" ]] || return 0
+	rm -rf "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Find an already-open child issue for the deterministic parent/phase title.
+# This is a GitHub-side idempotency guard used after taking the local mutex.
+#
+# Args: $1=repo_slug, $2=parent_issue, $3=phase_num, $4=phase_desc
+# Output: issue number on stdout (empty if none found)
+# Returns: 0 always
+#######################################
+_find_existing_phase_child_issue() {
+	local repo_slug="$1"
+	local parent_issue="$2"
+	local phase_num="$3"
+	local phase_desc="$4"
+	local issue_title="Phase ${phase_num} of #${parent_issue}: ${phase_desc}"
+	local search_query="Phase ${phase_num} of #${parent_issue} in:title"
+	local issue_num=""
+
+	issue_num=$(gh issue list --repo "$repo_slug" \
+		--state open \
+		--search "$search_query" \
+		--json number,title \
+		--jq '.[] | [.number, .title] | @tsv' 2>/dev/null \
+		| while IFS=$'\t' read -r candidate_num candidate_title; do
+			if [[ "$candidate_title" == "$issue_title" ]]; then
+				printf '%s\n' "$candidate_num"
+			fi
+		done \
+		| sort -n \
+		| head -1) || issue_num=""
+	printf '%s' "$issue_num"
+	return 0
+}
+
+#######################################
+# Create a phase child issue under an idempotency lock, or reuse an already
+# open deterministic-title child if another worker created it first.
+#
+# Args: $1=parent_issue, $2=parent_title, $3=phase_num, $4=phase_desc,
+#       $5=repo_slug, $6=trigger_reason
+# Output: child issue URL on stdout (empty on failure/lock contention)
+# Returns: 0 always
+#######################################
+_create_or_reuse_phase_child_issue() {
+	local parent_issue="$1"
+	local parent_title="$2"
+	local phase_num="$3"
+	local phase_desc="$4"
+	local repo_slug="$5"
+	local trigger_reason="${6:-post-merge}"
+	local lock_dir=""
+
+	lock_dir=$(_phase_acquire_filing_lock "$repo_slug" "$parent_issue" "$phase_num") || lock_dir=""
+	if [[ -z "$lock_dir" ]]; then
+		return 0
+	fi
+
+	local existing_issue_num
+	existing_issue_num=$(_find_existing_phase_child_issue "$repo_slug" "$parent_issue" "$phase_num" "$phase_desc")
+	if [[ -n "$existing_issue_num" ]]; then
+		_phase_log "Parent #${parent_issue}: Phase ${phase_num} already has open child #${existing_issue_num} by deterministic-title search — reuse"
+		_phase_release_filing_lock "$lock_dir"
+		printf 'https://github.com/%s/issues/%s' "$repo_slug" "$existing_issue_num"
+		return 0
+	fi
+
+	local new_issue_url
+	new_issue_url=$(_create_phase_child_issue \
+		"$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug" "$trigger_reason")
+	_phase_release_filing_lock "$lock_dir"
+	printf '%s' "${new_issue_url:-}"
+	return 0
+}
+
+#######################################
 # Identify which phase number a merged child issue belongs to.
 # First tries matching by child reference in phases data.
 # Falls back to matching by phase number in the child issue's title.
@@ -518,7 +671,7 @@ auto_file_next_unfiled_parent_phase() {
 
 	_phase_log "Bootstrapping Phase ${next_phase_num} ('${next_desc}', marker=${next_marker}) for parent #${parent_issue}"
 	local new_issue_url
-	new_issue_url=$(_create_phase_child_issue \
+	new_issue_url=$(_create_or_reuse_phase_child_issue \
 		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug" "bootstrap")
 	[[ -n "$new_issue_url" ]] || return 1
 
@@ -669,7 +822,7 @@ auto_file_next_phase() {
 
 	# Build and create the new phase child issue
 	local new_issue_url
-	new_issue_url=$(_create_phase_child_issue \
+	new_issue_url=$(_create_or_reuse_phase_child_issue \
 		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug")
 	if [[ -z "$new_issue_url" ]]; then
 		_phase_log "Failed to create Phase ${next_phase_num} issue for parent #${parent_issue}"
