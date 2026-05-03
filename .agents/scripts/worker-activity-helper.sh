@@ -26,6 +26,8 @@
 #                                     [--json]
 #                                     [--pr-check|--no-pr-check]
 #                                     [--repo OWNER/REPO]
+#   worker-activity-helper.sh providers [--since 1h|6h|24h|48h|7d]
+#                                      [--json]
 #   worker-activity-helper.sh help
 
 set -euo pipefail
@@ -41,6 +43,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 WAH_METRICS_FILE="${WAH_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
 WAH_PULSE_STATS_FILE="${WAH_PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
 WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-prs.json}"
+WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 
 #######################################
@@ -190,6 +193,76 @@ _wah_metric_details_json() {
 }
 
 #######################################
+# Emit bounded provider/model/account-pool usage from canonical metrics.
+# This is the narrow diagnostic path for recent worker provider questions; it
+# intentionally avoids recursive searches over logs or OpenCode storage.
+#
+# $1 — cutoff_epoch (entries with ts < cutoff are dropped).
+# stdout — JSON object containing provider/model counts, recent worker samples,
+#          and redacted OAuth pool aggregate counts (no emails/tokens).
+#######################################
+_wah_provider_usage_json() {
+	local cutoff_epoch="$1"
+	local metrics="$WAH_METRICS_FILE"
+	local pool="$WAH_OAUTH_POOL_FILE"
+	local now_epoch input_file
+
+	now_epoch=$(date +%s)
+	input_file="/dev/null"
+	[[ -f "$metrics" ]] && input_file="$metrics"
+
+	if [[ -f "$pool" ]]; then
+		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+			($pool[0] // {}) as $pool_data
+			| [inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
+			| {
+				provider_model_usage: (
+					$w
+					| group_by([.provider // "unknown", .model // "unknown"])
+					| map({
+						provider: (.[0].provider // "unknown"),
+						model: (.[0].model // "unknown"),
+						count: length,
+						success: ([.[] | select(.result == "success" and (.exit_code // 1) == 0)] | length),
+						rate_limited: ([.[] | select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")] | length),
+						other_failure: ([.[] | select((.result // "") != "success" and (.result // "") != "rate_limit")] | length),
+						latest_ts: (map(.ts // 0) | max)
+					})
+					| sort_by(.count, .latest_ts) | reverse | .[0:12]
+				),
+				recent_events: (
+					$w | sort_by(.ts // 0) | reverse | .[0:10]
+					| map({ts, provider, model, result, exit_code, issue_number, repo_slug, session_key})
+				),
+				account_pool: (
+					$pool_data
+					| to_entries
+					| map(select(.key == "anthropic" or .key == "openai" or .key == "cursor" or .key == "google"))
+					| map({
+						provider: .key,
+						total: (.value | length),
+						available: (.value | map(select(((.cooldownUntil // 0) == 0) or ((.cooldownUntil // 0) <= ($now * 1000)))) | length),
+						active_idle: (.value | map(select((.status // "idle") == "active" or (.status // "idle") == "idle")) | length),
+						rate_limited: (.value | map(select((.status // "") == "rate-limited" and ((.cooldownUntil // 0) > ($now * 1000)))) | length),
+						auth_errors: (.value | map(select((.status // "") == "auth-error")) | length),
+						latest_last_used: ([.value[]? | .lastUsed? // empty] | max // "")
+					})
+					| sort_by(.provider)
+				)
+			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
+	else
+		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+			[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
+			| {
+				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: ([.[] | select(.result == "success" and (.exit_code // 1) == 0)] | length), rate_limited: ([.[] | select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")] | length), other_failure: ([.[] | select((.result // "") != "success" and (.result // "") != "rate_limit")] | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
+				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, repo_slug, session_key})),
+				account_pool: []
+			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
+	fi
+	return 0
+}
+
+#######################################
 # Count pulse-stats counter entries since cutoff.
 # Counter values in pulse-stats.json are arrays of unix-second timestamps.
 # Reading via `// []` handles missing keys without masking real counts.
@@ -298,6 +371,7 @@ _wah_emit_human() {
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.avg // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.max // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.samples // 0' 2>/dev/null || printf '0')"
+	printf '  Provider/model usage:        worker-activity-helper.sh providers --since %s\n' "$since_label"
 	printf '  Failure groups:             %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_groups // []' 2>/dev/null || printf '[]')"
 	printf '\n'
 	printf 'pulse-stats.json (dispatch-side counters):\n'
@@ -311,6 +385,42 @@ _wah_emit_human() {
 	[[ "$pr_check_state" == "skipped" ]] && printf '  (skipped; use --pr-check)'
 	[[ "$pr_check_state" == "failed" ]] && printf '  (gh query failed)'
 	printf '\n'
+	printf '%s\n' "$divider"
+	return 0
+}
+
+#######################################
+# Render provider/model/account-pool usage in human-readable form.
+# Args: since_label cutoff_iso usage_json
+#######################################
+_wah_emit_providers_human() {
+	local since_label="$1" cutoff_iso="$2" usage_json="$3"
+	local divider="==========================================================="
+
+	printf '%s\n' "$divider"
+	printf 'Worker provider/model/account usage since %s (cutoff: %s)\n' "$since_label" "$cutoff_iso"
+	printf '%s\n' "$divider"
+	printf '\n'
+	printf 'Provider/model usage (from headless-runtime-metrics.jsonl):\n'
+	printf '%s' "$usage_json" | jq -r '
+		(.provider_model_usage // []) as $rows
+		| if ($rows | length) == 0 then "  (no worker metric events in window)"
+		else $rows[] | "  \(.provider)/\(.model): count=\(.count) success=\(.success) rate_limited=\(.rate_limited) other_failure=\(.other_failure) latest_ts=\(.latest_ts)"
+		end' 2>/dev/null || printf '  (provider/model usage unavailable)\n'
+	printf '\n'
+	printf 'OAuth account pool aggregate (redacted; no emails/tokens):\n'
+	printf '%s' "$usage_json" | jq -r '
+		(.account_pool // []) as $rows
+		| if ($rows | length) == 0 then "  (no oauth-pool.json account summary available)"
+		else $rows[] | "  \(.provider): total=\(.total) available=\(.available) active_idle=\(.active_idle) rate_limited=\(.rate_limited) auth_errors=\(.auth_errors) latest_last_used=\(.latest_last_used // "")"
+		end' 2>/dev/null || printf '  (account pool summary unavailable)\n'
+	printf '\n'
+	printf 'Recent worker samples (bounded to 10):\n'
+	printf '%s' "$usage_json" | jq -r '
+		(.recent_events // []) as $rows
+		| if ($rows | length) == 0 then "  (no recent samples)"
+		else $rows[] | "  ts=\(.ts) provider=\(.provider // "") model=\(.model // "") result=\(.result // "") issue=\(.issue_number // "") repo=\(.repo_slug // "") session=\(.session_key // "")"
+		end' 2>/dev/null || printf '  (recent samples unavailable)\n'
 	printf '%s\n' "$divider"
 	return 0
 }
@@ -465,6 +575,60 @@ cmd_summary() {
 }
 
 #######################################
+# Orchestrate bounded provider/model/account-pool diagnostics.
+#######################################
+cmd_providers() {
+	local since_label="24h" emit_json=0
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--since)
+			since_label="${2:-}"
+			shift 2
+			;;
+		--json)
+			emit_json=1
+			shift
+			;;
+		-h | --help)
+			cmd_help
+			return 0
+			;;
+		*)
+			printf 'unknown flag: %s\n' "$arg" >&2
+			return 2
+			;;
+		esac
+	done
+
+	local since_seconds
+	since_seconds=$(_wah_parse_since "$since_label") || {
+		printf 'invalid --since value: %s (use 1h|6h|24h|48h|7d)\n' "$since_label" >&2
+		return 2
+	}
+
+	local now_epoch cutoff_epoch cutoff_iso usage_json
+	now_epoch=$(date +%s)
+	cutoff_epoch=$((now_epoch - since_seconds))
+	cutoff_iso=$(date -u -r "$cutoff_epoch" +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) ||
+		cutoff_iso=$(date -u -d "@${cutoff_epoch}" +'%Y-%m-%dT%H:%M:%SZ' 2>/dev/null) ||
+		cutoff_iso="(unknown)"
+	usage_json=$(_wah_provider_usage_json "$cutoff_epoch")
+
+	if [[ $emit_json -eq 1 ]]; then
+		jq -n \
+			--arg since "$since_label" \
+			--arg cutoff_iso "$cutoff_iso" \
+			--argjson cutoff_epoch "$cutoff_epoch" \
+			--argjson usage "$usage_json" \
+			'{window: {since: $since, cutoff_iso: $cutoff_iso, cutoff_epoch: $cutoff_epoch}, provider_diagnostics: $usage}'
+	else
+		_wah_emit_providers_human "$since_label" "$cutoff_iso" "$usage_json"
+	fi
+	return 0
+}
+
+#######################################
 # Help text.
 #######################################
 cmd_help() {
@@ -473,6 +637,7 @@ worker-activity-helper.sh — Canonical worker activity summary
 
 Usage:
   worker-activity-helper.sh summary [OPTIONS]
+  worker-activity-helper.sh providers [OPTIONS]
   worker-activity-helper.sh help
 
 Options:
@@ -494,6 +659,9 @@ Examples:
   # Last 6 hours as JSON.
   worker-activity-helper.sh summary --since 6h --json
 
+  # Bounded provider/model/account-pool diagnostics; no recursive log search.
+  worker-activity-helper.sh providers --since 1h
+
   # Last 7 days, single repo, no network call.
   worker-activity-helper.sh summary --since 7d --repo marcusquinn/aidevops --no-pr-check
 
@@ -503,6 +671,7 @@ Examples:
 NOT a substitute for:
   - worker-NNN.log mtime → file touch time, not outcome.
   - pgrep -fc 'headless-runtime-helper.sh run' → live worker count.
+  - recursive grep over ~/.aidevops/logs or OpenCode storage → unbounded noise.
   - pulse-runner-health-helper.sh diagnose → per-runner zero-attempt breaker.
 
 Filed under: t3215 / GH#21949
@@ -518,6 +687,7 @@ main() {
 	[[ $# -gt 0 ]] && shift
 	case "$cmd" in
 	summary) cmd_summary "$@" ;;
+	providers | provider-usage) cmd_providers "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		printf 'unknown command: %s\n' "$cmd" >&2

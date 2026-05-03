@@ -167,7 +167,18 @@ Use this when a runner's dashboard is fresh but **Active Workers = 0**.
    AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai headless-runtime-helper.sh select --role worker --tier sonnet
    ```
 
-3. Verify OAuth-pool health without printing secrets:
+3. Verify recent provider/model/account usage with bounded structured output before
+   reading raw logs:
+
+   ```bash
+   worker-activity-helper.sh providers --since 1h
+   ```
+
+   This reads `headless-runtime-metrics.jsonl` plus a redacted aggregate of
+   `oauth-pool.json` (counts only; no emails/tokens). Do not recursively search
+   `~/.aidevops/logs` or OpenCode storage for routine provider/account checks.
+
+4. Verify OAuth-pool health without printing secrets:
 
    ```bash
    oauth-pool-helper.sh status
@@ -175,16 +186,16 @@ Use this when a runner's dashboard is fresh but **Active Workers = 0**.
    oauth-pool-helper.sh check anthropic
    ```
 
-4. Read the dashboard's **Worker Dispatch Diagnostics** section. It is rendered only when Active Workers is 0 and distinguishes:
+5. Read the dashboard's **Worker Dispatch Diagnostics** section. It is rendered only when Active Workers is 0 and distinguishes:
    - no eligible work (`Assigned Issues=0`, `Total Issues=0`)
    - auth/model unavailable (OpenAI/Anthropic both missing)
    - canary or worker launch failure (`Last Launch Failure`)
    - max-worker/resource gate (`Max Workers=0`, high CPU/load, memory pressure)
    - API budget/dispatch blockers (inspect `Last Dispatch Stage` and the current-state helper output)
 
-5. Linux process counting must use the shared worker discovery path, which calls `ps axwwo pid,stat,etime,command` so long OpenCode commands are not truncated. A direct `pgrep` snapshot is not canonical because dispatch is bursty and can land between waves.
+6. Linux process counting must use the shared worker discovery path, which calls `ps axwwo pid,stat,etime,command` so long OpenCode commands are not truncated. A direct `pgrep` snapshot is not canonical because dispatch is bursty and can land between waves.
 
-6. If the selected provider is OpenAI but the auth file contains only an Anthropic entry, model selection now treats OpenAI as unavailable rather than assuming any OpenCode `auth.json` is sufficient. Re-run OAuth pool rotation/checks and then retry selection.
+7. If the selected provider is OpenAI but the auth file contains only an Anthropic entry, model selection now treats OpenAI as unavailable rather than assuming any OpenCode `auth.json` is sufficient. Re-run OAuth pool rotation/checks and then retry selection.
 
 ### Canary Smoke Test (v3.6.123)
 
@@ -704,14 +715,22 @@ either live output growth or completed work attributed to workers:
 ```bash
 pulse-current-state-helper.sh --window 15m
 worker-activity-helper.sh summary --since 1h --repo <owner/repo> --no-pr-check
+worker-activity-helper.sh providers --since 1h
 ```
 
 The current-state helper is the cheapest live signal: local logs + cached
 GraphQL budget + instrumentation report. The worker-activity helper combines
 canonical worker metrics with local pulse counters by default; add `--pr-check`
 only when you need the `solved:worker` closed-issue count and have GraphQL
-budget available. Treat `origin:worker` PR counts as branch-creation telemetry
-only; they are not sufficient evidence of worker productivity.
+budget available. Use the `providers` subcommand for recent provider/model
+usage and redacted OAuth account-pool availability. Treat `origin:worker` PR
+counts as branch-creation telemetry only; they are not sufficient evidence of
+worker productivity.
+
+Routine operational questions should not start with broad recursive searches
+over `~/.aidevops/logs` or `~/.local/share/opencode`. Reach for the bounded
+helpers above first, then inspect a named log file only when a structured
+summary points to a specific failure class and timeframe.
 
 For “right now” diagnosis, prefer the current-state helper:
 

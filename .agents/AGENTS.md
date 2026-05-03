@@ -506,6 +506,8 @@ When the user asks any variant of "is the pulse working?" / "are workers running
 
 Run `pulse-current-state-helper.sh --window 15m` before answering. It summarizes dispatch stages, worker terminal events, pulse counters, wrapper activity, and worker worktrees from a current evidence window.
 
+For provider/model/account questions, use `worker-activity-helper.sh providers --since 1h` before reading raw logs. Do not run broad recursive searches over `~/.aidevops/logs` or OpenCode storage for routine diagnostics; use bounded helpers first, then inspect a named log only if the helper identifies a specific timeframe or failure class.
+
 **Anti-patterns (forbidden answers to productivity questions):**
 
 - "113 PRs merged in 48h, 87% rate" — historical, says nothing about now.
