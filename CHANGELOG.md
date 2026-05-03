@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.5] - 2026-05-03
+
+### Changed
+
+- fix GPT-5.5 compaction input limit (#22508)
+- reduce setup postflight degradation noise (#22505)
+- Maintenance: sync ref:GH#22507 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22506 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22481 to TODO.md [skip ci]
+- add conditional pulse prefetch caching (#22494)
+
 ## [3.14.4] - 2026-05-03
 
 ### Changed
