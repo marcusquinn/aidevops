@@ -212,12 +212,13 @@ describe("CLAUDE_MODEL_LIMITS table", () => {
 // ---------------------------------------------------------------------------
 
 describe("OPENAI_MODEL_LIMITS table", () => {
-  test("sets GPT-5.5 family context to 500000 so 80% compaction lands at 400000", () => {
+  test("sets GPT-5.5 family input to preserve a 400K OpenCode compaction boundary", () => {
     const expected = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro"];
     for (const id of expected) {
       assert.ok(OPENAI_MODEL_LIMITS[id], `missing OpenAI limit entry for ${id}`);
       assert.equal(OPENAI_MODEL_LIMITS[id].context, 500000);
-      assert.equal(OPENAI_MODEL_LIMITS[id].context * 0.8, 400000);
+      assert.equal(OPENAI_MODEL_LIMITS[id].input, 420000);
+      assert.equal(OPENAI_MODEL_LIMITS[id].input - 20000, 400000);
       assert.ok(OPENAI_MODEL_LIMITS[id].output > 0);
     }
   });

@@ -98,14 +98,15 @@ export const CLAUDE_MODEL_LIMITS = {
 
 /**
  * OpenAI GPT-5.5 models report a 1M API context window, but Codex/OpenCode
- * sessions are effectively bounded at 400K. OpenCode auto-compacts at 80% of
- * the configured context limit, so registering 500K makes compaction trigger at
- * 400K instead of waiting until the runtime/provider rejects the request.
+ * sessions are effectively bounded at 400K. Current OpenCode auto-compacts at
+ * `limit.input - reserved` when `limit.input` exists, and models.dev supplies a
+ * stale 272K input limit. Registering input=420K preserves a 400K usable window
+ * with OpenCode's default 20K reserved buffer instead of compacting near 252K.
  */
 export const OPENAI_MODEL_LIMITS = {
-  "gpt-5.5":      { context: 500000, output: 128000 },
-  "gpt-5.5-fast": { context: 500000, output: 128000 },
-  "gpt-5.5-pro":  { context: 500000, output: 128000 },
+  "gpt-5.5":      { context: 500000, input: 420000, output: 128000 },
+  "gpt-5.5-fast": { context: 500000, input: 420000, output: 128000 },
+  "gpt-5.5-pro":  { context: 500000, input: 420000, output: 128000 },
 };
 
 // One-shot warn at module load when the env override changed something.
