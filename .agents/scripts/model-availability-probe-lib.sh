@@ -729,11 +729,14 @@ _model_routing_table_path() {
 
 _expand_config_path() {
 	local path="$1"
-	if [[ "${path#\~/}" != "$path" ]]; then
-		printf '%s/%s\n' "$HOME" "${path#\~/}"
-		return 0
-	fi
-	printf '%s\n' "$path"
+	case "$path" in
+		\~/*)
+			printf '%s/%s\n' "$HOME" "${path#\~/}"
+			;;
+		*)
+			printf '%s\n' "$path"
+			;;
+	esac
 	return 0
 }
 
