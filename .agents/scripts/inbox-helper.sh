@@ -1044,7 +1044,7 @@ _triage_run_classification() {
 		printf 'Classify this _inbox item into the correct aidevops plane. Return JSON with target_plane, sub_folder, confidence, and reasoning.\n\n'
 		if [[ -f "$DATA_PLANES_REGISTRY" ]] && command -v jq >/dev/null 2>&1; then
 			printf 'Canonical data-plane registry excerpt (JSON):\n'
-			jq -c '{planes: .planes | with_entries({key, value: {purpose: .value.purpose, helper: .value.helper, sensitivity_default: .value.sensitivity_default, ingress: .value.ingress, egress: .value.egress, index_retrieval_surface: .value.index_retrieval_surface, routing_notes: .value.routing_notes}})}' "$DATA_PLANES_REGISTRY" 2>/dev/null || true
+			jq -c '{planes: (.planes | map_values({purpose, helper, sensitivity_default, ingress, egress, index_retrieval_surface, routing_notes}))}' "$DATA_PLANES_REGISTRY" 2>/dev/null || true
 			printf '\n'
 		fi
 		if [[ -n "$examples" ]]; then
