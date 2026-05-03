@@ -7,14 +7,15 @@
 #   1. Admin fallback fires all three signaling artifacts (PR comment, audit log, label)
 #   2. Explicit --admin caller does NOT trigger extra signaling (back-compat)
 #   3. Non-branch-protection errors do NOT trigger fallback
+#   4. GraphQL rate-limit merge failures fall back to REST with verified head SHA
+#   5. REST fallback remains behind review-bot-gate success
 #
 # Strategy: stub gh, audit-log-helper.sh, and gh-signature-helper.sh in a temp
-# directory prepended to PATH, then source the functions from full-loop-helper.sh.
+# directory prepended to PATH, then source the merge sub-library.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-HELPER_SCRIPT="${SCRIPT_DIR}/../full-loop-helper.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -78,6 +79,7 @@ teardown_test_env() {
 #   $1 = "fallback" — first merge fails with branch-protection error, --admin succeeds
 #   $2 = "explicit-admin" — merge with --admin succeeds immediately (no fallback)
 #   $3 = "other-error" — merge fails with non-branch-protection error
+#   $4 = "graphql-rate-limit" — merge fails with GraphQL rate-limit, REST succeeds
 create_gh_stub() {
 	local mode="$1"
 
@@ -111,6 +113,22 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 	elif [[ "$mode" == "other-error" ]]; then
 		echo "Something completely different went wrong" >&2
 		exit 1
+	elif [[ "$mode" == "graphql-rate-limit" ]]; then
+		echo "GraphQL: API rate limit already exceeded" >&2
+		exit 1
+	fi
+fi
+
+if [[ "\$_gh_cmd" == "api" ]]; then
+	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
+		echo "rest merge \$*" >> "${TEST_ROOT}/logs/rest-merge-calls.txt"
+		echo '{"merged":true,"sha":"merge-sha"}'
+		exit 0
+	fi
+	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		echo "head sha lookup \$*" >> "${TEST_ROOT}/logs/rest-head-calls.txt"
+		echo 'abc123headsha'
+		exit 0
 	fi
 fi
 
@@ -132,9 +150,8 @@ GHSTUB
 }
 
 # Run _merge_execute in an isolated subprocess.
-# Sources full-loop-helper.sh with init lines stripped (SCRIPT_DIR assignment,
-# shared-constants source, readonly SCRIPT_DIR, and main "$@" call) so we get
-# all function definitions without side effects.
+# Sources the merge sub-library directly so we get merge functions without
+# executing the full-loop-helper.sh main dispatcher.
 # Args: pr_number repo merge_method has_admin has_auto
 run_merge_execute() {
 	local pr_number="$1"
@@ -145,7 +162,7 @@ run_merge_execute() {
 
 	local scripts_dir="${SCRIPT_DIR}/.."
 
-	# Build a temporary script that sources the helper with init lines stripped.
+	# Build a temporary script that sources the merge helper directly.
 	# Using a temp file avoids heredoc/process-substitution escaping issues with $.
 	local tmp_runner=""
 	tmp_runner=$(mktemp)
@@ -154,13 +171,40 @@ run_merge_execute() {
 set -euo pipefail
 SCRIPT_DIR='${scripts_dir}'
 source '${scripts_dir}/shared-constants.sh'
-# Strip: line 10 (SCRIPT_DIR=), line 11 (source shared-constants), line 13 (readonly SCRIPT_DIR), last line (main "\$@")
-source <(sed -e '10d' -e '11d' -e '13d' -e '\$d' '${HELPER_SCRIPT}')
+source '${scripts_dir}/full-loop-helper-merge.sh'
 _merge_execute '$pr_number' '$repo' '$merge_method' '$has_admin' '$has_auto'
 RUNNER_EOF
 	chmod +x "$tmp_runner"
 
 	# Run in a subprocess with our stubs on PATH
+	local rc=0
+	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
+		AIDEVOPS_MODEL="test-model" \
+		bash "$tmp_runner" 2>&1 || rc=$?
+	rm -f "$tmp_runner"
+	return $rc
+}
+
+run_cmd_merge_with_gate() {
+	local pr_number="$1"
+	local repo="$2"
+	local gate_rc="$3"
+
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local tmp_runner=""
+	tmp_runner=$(mktemp)
+	cat >"$tmp_runner" <<RUNNER_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${scripts_dir}'
+source '${scripts_dir}/shared-constants.sh'
+cmd_pre_merge_gate() { return ${gate_rc}; }
+release_interactive_claim_on_merge() { return 0; }
+source '${scripts_dir}/full-loop-helper-merge.sh'
+cmd_merge '${pr_number}' '${repo}'
+RUNNER_EOF
+	chmod +x "$tmp_runner"
+
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		AIDEVOPS_MODEL="test-model" \
@@ -176,8 +220,7 @@ test_admin_fallback_signals() {
 
 	create_gh_stub "fallback"
 
-	local output=""
-	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0") || true
+	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || true
 
 	# (a) Check PR comment was posted
 	local pr_comment_posted=0
@@ -216,8 +259,7 @@ test_explicit_admin_no_signaling() {
 
 	create_gh_stub "explicit-admin"
 
-	local output=""
-	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0") || true
+	run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0" >/dev/null 2>&1 || true
 
 	# PR comment should NOT have been posted (explicit --admin is not a fallback)
 	local pr_comment_posted=0
@@ -274,6 +316,49 @@ test_other_error_no_fallback() {
 	return 0
 }
 
+test_graphql_rate_limit_rest_fallback() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "graphql-rate-limit"
+
+	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || true
+
+	local head_lookup=0
+	if [[ -f "${TEST_ROOT}/logs/rest-head-calls.txt" ]] && grep -q "head sha lookup" "${TEST_ROOT}/logs/rest-head-calls.txt"; then
+		head_lookup=1
+	fi
+	print_result "graphql fallback: head SHA fetched via REST before merge" "$((1 - head_lookup))"
+
+	local rest_merge=0
+	if [[ -f "${TEST_ROOT}/logs/rest-merge-calls.txt" ]] &&
+		grep -q "repos/testorg/testrepo/pulls/42/merge" "${TEST_ROOT}/logs/rest-merge-calls.txt" &&
+		grep -q "sha=abc123headsha" "${TEST_ROOT}/logs/rest-merge-calls.txt" &&
+		grep -q "merge_method=squash" "${TEST_ROOT}/logs/rest-merge-calls.txt"; then
+		rest_merge=1
+	fi
+	print_result "graphql fallback: REST merge uses verified SHA" "$((1 - rest_merge))"
+
+	return 0
+}
+
+test_graphql_fallback_after_gate_only() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "graphql-rate-limit"
+
+	local exit_code=0
+	run_cmd_merge_with_gate "42" "testorg/testrepo" "1" >/dev/null 2>&1 || exit_code=$?
+	print_result "gate failure: cmd_merge exits non-zero" "$((exit_code == 0 ? 1 : 0))"
+
+	local rest_called=0
+	if [[ -f "${TEST_ROOT}/logs/rest-head-calls.txt" ]] || [[ -f "${TEST_ROOT}/logs/rest-merge-calls.txt" ]]; then
+		rest_called=1
+	fi
+	print_result "gate failure: REST fallback not attempted" "$rest_called"
+
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -284,6 +369,8 @@ main() {
 	test_admin_fallback_signals
 	test_explicit_admin_no_signaling
 	test_other_error_no_fallback
+	test_graphql_rate_limit_rest_fallback
+	test_graphql_fallback_after_gate_only
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

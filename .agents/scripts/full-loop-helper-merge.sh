@@ -115,6 +115,74 @@ ${_sig_footer}"
 
 # --- Merge Execution ---
 
+_merge_method_for_rest() {
+	local merge_method="$1"
+	case "$merge_method" in
+	--merge)
+		printf '%s\n' "merge"
+		;;
+	--rebase)
+		printf '%s\n' "rebase"
+		;;
+	*)
+		printf '%s\n' "squash"
+		;;
+	esac
+	return 0
+}
+
+_merge_is_graphql_rate_limited() {
+	local error_output="$1"
+	printf '%s' "$error_output" | grep -qiE 'GraphQL:.*rate limit|rate limit already exceeded'
+	return $?
+}
+
+_merge_fetch_head_sha_rest() {
+	local pr_number="$1"
+	local repo="$2"
+	local head_sha=""
+	head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" --jq '.head.sha // empty' 2>/dev/null || true)
+	if [[ -z "$head_sha" ]]; then
+		return 1
+	fi
+	printf '%s\n' "$head_sha"
+	return 0
+}
+
+_merge_rest_fallback() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local expected_head_sha="$4"
+
+	if [[ -z "$expected_head_sha" ]]; then
+		print_error "REST merge fallback unavailable: PR head SHA was not verified before merge"
+		return 1
+	fi
+
+	local rest_method=""
+	rest_method=$(_merge_method_for_rest "$merge_method")
+
+	print_info "GraphQL rate limit blocked gh pr merge; falling back to REST pull merge with verified head SHA ${expected_head_sha}..."
+	local rest_out="" rest_rc=0
+	if rest_out=$(gh api -X PUT "repos/${repo}/pulls/${pr_number}/merge" \
+		-f sha="$expected_head_sha" \
+		-f merge_method="$rest_method" 2>&1); then
+		rest_rc=0
+	else
+		rest_rc=$?
+	fi
+
+	printf '%s\n' "$rest_out"
+	if [[ "$rest_rc" -ne 0 ]]; then
+		print_error "REST merge fallback failed for PR #${pr_number}"
+		return 1
+	fi
+
+	print_success "PR #${pr_number} merged successfully via REST fallback"
+	return 0
+}
+
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
 #
 # GH#18538: branch protection that requires an approving review rejects plain
@@ -146,6 +214,14 @@ _merge_execute() {
 	[[ ${#merge_flags[@]} -gt 0 ]] && merge_desc+=" ${merge_flags[*]}"
 	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
 
+	local pre_merge_head_sha=""
+	if [[ "$has_auto" -eq 0 ]]; then
+		pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
+		if [[ -z "$pre_merge_head_sha" ]]; then
+			print_warning "Could not verify PR head SHA before merge; REST rate-limit fallback will be unavailable"
+		fi
+	fi
+
 	# Capture output AND exit code under set -e. A bare assignment `out=$(cmd)`
 	# triggers errexit before `rc=$?` is reached; the if-form keeps both available.
 	# (GH#18538 follow-up to PR #18748 — the bare-assignment form shipped as a bug.)
@@ -158,6 +234,10 @@ _merge_execute() {
 
 	if [[ $_merge_rc -ne 0 ]]; then
 		printf '%s\n' "$_merge_out"
+		if [[ "$has_auto" -eq 0 ]] && _merge_is_graphql_rate_limited "$_merge_out"; then
+			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$pre_merge_head_sha" || return 1
+			return 0
+		fi
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		if [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
