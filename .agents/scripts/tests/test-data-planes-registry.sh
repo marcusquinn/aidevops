@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 REGISTRY="$REPO_ROOT/.agents/configs/data-planes.json"
 
+# shellcheck source=../shared-constants.sh
+source "$SCRIPT_DIR/../shared-constants.sh"
+
 TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
@@ -103,7 +106,10 @@ test_registry_contract_valid() {
 
 test_missing_required_field_fails() {
 	local tmp_registry
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 	tmp_registry="$(mktemp)"
+	push_cleanup "rm -f '${tmp_registry}'"
 	python3 - "$REGISTRY" "$tmp_registry" <<'PY'
 import json
 import sys
@@ -120,6 +126,7 @@ PY
 		print_result "missing required registry field fails validation" 0
 	fi
 	rm -f "$tmp_registry"
+	tmp_registry=""
 	return 0
 }
 
