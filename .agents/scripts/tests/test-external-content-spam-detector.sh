@@ -131,64 +131,110 @@ test_C_max_host_repetition_zero_when_only_github() {
 	return 0
 }
 
-test_D_count_fileline_refs_counts_known_extensions() {
+test_D_extract_external_hosts_handles_empty_exclusions() {
+	EXCLUDE_HOSTS_RAW=""
+
+	local body="https://github.com/foo https://example.com/bar"
+	local hosts
+	hosts=$(_priv_extract_external_hosts "$body")
+
+	local github_present
+	github_present=$(printf '%s\n' "$hosts" | grep -c '^github\.com$' || true)
+	[[ "$github_present" =~ ^[0-9]+$ ]] || github_present=0
+	local example_present
+	example_present=$(printf '%s\n' "$hosts" | grep -c '^example\.com$' || true)
+	[[ "$example_present" =~ ^[0-9]+$ ]] || example_present=0
+
+	if [[ "$github_present" -eq 1 && "$example_present" -eq 1 ]]; then
+		print_result "D: extract_external_hosts keeps hosts when exclusion list is empty" 0
+	else
+		print_result "D: extract_external_hosts keeps hosts when exclusion list is empty" 1 \
+			"github_present=$github_present example_present=$example_present (wanted 1/1)"
+	fi
+	return 0
+}
+
+test_E_extract_external_hosts_lowercases_exclusions() {
+	EXCLUDE_HOSTS_RAW="GitHub.COM"
+
+	local body="https://github.com/foo https://api.github.com/bar https://example.com/baz"
+	local hosts
+	hosts=$(_priv_extract_external_hosts "$body")
+
+	local github_present
+	github_present=$(printf '%s\n' "$hosts" | grep -c 'github\.com$' || true)
+	[[ "$github_present" =~ ^[0-9]+$ ]] || github_present=0
+	local example_present
+	example_present=$(printf '%s\n' "$hosts" | grep -c '^example\.com$' || true)
+	[[ "$example_present" =~ ^[0-9]+$ ]] || example_present=0
+
+	if [[ "$github_present" -eq 0 && "$example_present" -eq 1 ]]; then
+		print_result "E: extract_external_hosts lowercases exclusion hosts" 0
+	else
+		print_result "E: extract_external_hosts lowercases exclusion hosts" 1 \
+			"github_present=$github_present example_present=$example_present (wanted 0/1)"
+	fi
+	return 0
+}
+
+test_F_count_fileline_refs_counts_known_extensions() {
 	local body="See foo.sh:42, bar/baz.py:100, qux.json:7. Also random text. Not a ref: 1.2.3"
 	local count
 	count=$(_priv_count_fileline_refs "$body")
 
 	if [[ "$count" -eq 3 ]]; then
-		print_result "D: count_fileline_refs counts file:line for known extensions only" 0
+		print_result "F: count_fileline_refs counts file:line for known extensions only" 0
 	else
-		print_result "D: count_fileline_refs counts file:line for known extensions only" 1 \
+		print_result "F: count_fileline_refs counts file:line for known extensions only" 1 \
 			"count=$count (wanted 3)"
 	fi
 	return 0
 }
 
-test_E_count_fileline_refs_zero_for_no_refs() {
+test_G_count_fileline_refs_zero_for_no_refs() {
 	local body="A plain narrative bug report with no file references at all."
 	local count
 	count=$(_priv_count_fileline_refs "$body")
 
 	if [[ "$count" -eq 0 ]]; then
-		print_result "E: count_fileline_refs returns 0 for narrative text" 0
+		print_result "G: count_fileline_refs returns 0 for narrative text" 0
 	else
-		print_result "E: count_fileline_refs returns 0 for narrative text" 1 \
+		print_result "G: count_fileline_refs returns 0 for narrative text" 1 \
 			"count=$count (wanted 0)"
 	fi
 	return 0
 }
 
-test_F_is_non_collaborator_treats_owner_as_trusted() {
+test_H_is_non_collaborator_treats_owner_as_trusted() {
 	# TRUSTED_ASSOCIATIONS must be in scope for the helper.
 	TRUSTED_ASSOCIATIONS=("OWNER" "MEMBER" "COLLABORATOR")
 
 	local result
 	result=$(_priv_is_non_collaborator "OWNER")
 	if [[ "$result" -eq 0 ]]; then
-		print_result "F: is_non_collaborator returns 0 (trusted) for OWNER" 0
+		print_result "H: is_non_collaborator returns 0 (trusted) for OWNER" 0
 	else
-		print_result "F: is_non_collaborator returns 0 (trusted) for OWNER" 1 \
+		print_result "H: is_non_collaborator returns 0 (trusted) for OWNER" 1 \
 			"result=$result (wanted 0)"
 	fi
 	return 0
 }
 
-test_G_is_non_collaborator_treats_none_as_untrusted() {
+test_I_is_non_collaborator_treats_none_as_untrusted() {
 	TRUSTED_ASSOCIATIONS=("OWNER" "MEMBER" "COLLABORATOR")
 
 	local result
 	result=$(_priv_is_non_collaborator "NONE")
 	if [[ "$result" -eq 1 ]]; then
-		print_result "G: is_non_collaborator returns 1 (untrusted) for NONE" 0
+		print_result "I: is_non_collaborator returns 1 (untrusted) for NONE" 0
 	else
-		print_result "G: is_non_collaborator returns 1 (untrusted) for NONE" 1 \
+		print_result "I: is_non_collaborator returns 1 (untrusted) for NONE" 1 \
 			"result=$result (wanted 1)"
 	fi
 	return 0
 }
 
-test_H_is_non_collaborator_treats_contributor_as_untrusted() {
+test_J_is_non_collaborator_treats_contributor_as_untrusted() {
 	TRUSTED_ASSOCIATIONS=("OWNER" "MEMBER" "COLLABORATOR")
 
 	# Per the brief: only OWNER/MEMBER/COLLABORATOR are trusted; CONTRIBUTOR
@@ -196,9 +242,9 @@ test_H_is_non_collaborator_treats_contributor_as_untrusted() {
 	local result
 	result=$(_priv_is_non_collaborator "CONTRIBUTOR")
 	if [[ "$result" -eq 1 ]]; then
-		print_result "H: is_non_collaborator returns 1 (untrusted) for CONTRIBUTOR" 0
+		print_result "J: is_non_collaborator returns 1 (untrusted) for CONTRIBUTOR" 0
 	else
-		print_result "H: is_non_collaborator returns 1 (untrusted) for CONTRIBUTOR" 1 \
+		print_result "J: is_non_collaborator returns 1 (untrusted) for CONTRIBUTOR" 1 \
 			"result=$result (wanted 1)"
 	fi
 	return 0
@@ -208,36 +254,48 @@ test_H_is_non_collaborator_treats_contributor_as_untrusted() {
 # CLI smoke tests — no network
 # ============================================================
 
-test_I_help_command_succeeds() {
+test_K_help_command_succeeds() {
 	"$SCRIPT_UNDER_TEST" help >/dev/null 2>&1
 	local rc=$?
 	if [[ $rc -eq 0 ]]; then
-		print_result "I: help command exits 0" 0
+		print_result "K: help command exits 0" 0
 	else
-		print_result "I: help command exits 0" 1 "rc=$rc (wanted 0)"
+		print_result "K: help command exits 0" 1 "rc=$rc (wanted 0)"
 	fi
 	return 0
 }
 
-test_J_unknown_command_returns_error() {
+test_L_help_lists_non_collaborator_weight_two() {
+	local help_text
+	help_text=$("$SCRIPT_UNDER_TEST" help 2>/dev/null)
+	if printf '%s\n' "$help_text" | grep -q '^  +2  non-collaborator author'; then
+		print_result "L: help text lists non-collaborator weight as +2" 0
+	else
+		print_result "L: help text lists non-collaborator weight as +2" 1 \
+			"help text did not contain expected +2 scoring line"
+	fi
+	return 0
+}
+
+test_M_unknown_command_returns_error() {
 	"$SCRIPT_UNDER_TEST" not-a-real-command >/dev/null 2>&1
 	local rc=$?
 	# Helper exit 3 = error.
 	if [[ $rc -eq 3 ]]; then
-		print_result "J: unknown command exits 3 (error)" 0
+		print_result "M: unknown command exits 3 (error)" 0
 	else
-		print_result "J: unknown command exits 3 (error)" 1 "rc=$rc (wanted 3)"
+		print_result "M: unknown command exits 3 (error)" 1 "rc=$rc (wanted 3)"
 	fi
 	return 0
 }
 
-test_K_check_without_args_returns_error() {
+test_N_check_without_args_returns_error() {
 	"$SCRIPT_UNDER_TEST" check >/dev/null 2>&1
 	local rc=$?
 	if [[ $rc -eq 3 ]]; then
-		print_result "K: check without args exits 3" 0
+		print_result "N: check without args exits 3" 0
 	else
-		print_result "K: check without args exits 3" 1 "rc=$rc (wanted 3)"
+		print_result "N: check without args exits 3" 1 "rc=$rc (wanted 3)"
 	fi
 	return 0
 }
@@ -262,14 +320,17 @@ main() {
 	test_A_extract_external_hosts_strips_github
 	test_B_max_host_repetition_finds_top_host
 	test_C_max_host_repetition_zero_when_only_github
-	test_D_count_fileline_refs_counts_known_extensions
-	test_E_count_fileline_refs_zero_for_no_refs
-	test_F_is_non_collaborator_treats_owner_as_trusted
-	test_G_is_non_collaborator_treats_none_as_untrusted
-	test_H_is_non_collaborator_treats_contributor_as_untrusted
-	test_I_help_command_succeeds
-	test_J_unknown_command_returns_error
-	test_K_check_without_args_returns_error
+	test_D_extract_external_hosts_handles_empty_exclusions
+	test_E_extract_external_hosts_lowercases_exclusions
+	test_F_count_fileline_refs_counts_known_extensions
+	test_G_count_fileline_refs_zero_for_no_refs
+	test_H_is_non_collaborator_treats_owner_as_trusted
+	test_I_is_non_collaborator_treats_none_as_untrusted
+	test_J_is_non_collaborator_treats_contributor_as_untrusted
+	test_K_help_command_succeeds
+	test_L_help_lists_non_collaborator_weight_two
+	test_M_unknown_command_returns_error
+	test_N_check_without_args_returns_error
 
 	printf '\n=== %d test(s), %d failure(s) ===\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
