@@ -10,9 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.32] - 2026-05-03
+
 ### Fixed
 
-- dedupe circuit breaker comments after NMR approval loops (#22689)
+- dedupe circuit breaker comments (#22688)
+- repo-qualify all approval prompts (#22686)
+- include repo slug in sudo approval prompts (#22683)
+- paginate stale assignment comments (#22682)
 
 ## [3.14.31] - 2026-05-03
 
