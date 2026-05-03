@@ -186,6 +186,15 @@ Use this when a runner's dashboard is fresh but **Active Workers = 0**.
    oauth-pool-helper.sh check anthropic
    ```
 
+   Rate-limit cooldowns derived from provider retry hints are capped at 6h by
+   default (`AIDEVOPS_OAUTH_POOL_MAX_RATE_LIMIT_COOLDOWN_SECONDS`) so a stale
+   multi-day `Retry-After` cannot sideline usable accounts for days. Missing or
+   unparseable rate-limit retry hints still fall back to 60s; auth-error
+   cooldowns remain on the separate 1h path. If status shows several accounts
+   stuck behind stale `cooldownUntil` values, run
+   `oauth-pool-helper.sh reset-cooldowns <provider>` after confirming the
+   provider is healthy.
+
 5. Read the dashboard's **Worker Dispatch Diagnostics** section. It is rendered only when Active Workers is 0 and distinguishes:
    - no eligible work (`Assigned Issues=0`, `Total Issues=0`)
    - auth/model unavailable (OpenAI/Anthropic both missing)

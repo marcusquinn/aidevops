@@ -211,6 +211,82 @@ class MarkFailureTests(PoolOpsTestCase):
         self.assertEqual(a["status"], "rate-limited")
         self.assertGreater(a["cooldownUntil"], int(time.time() * 1000))
 
+    def test_rate_limit_fallback_retry_seconds_remains_short(self) -> None:
+        self._make_pool([{"email": "a@example.com", "access": "tok"}])
+        self._make_auth({"access": "tok"})
+        before = int(time.time() * 1000)
+        result = run_pool_ops(
+            "mark-failure",
+            {
+                "POOL_FILE_PATH": str(self.pool_path),
+                "AUTH_FILE_PATH": str(self.auth_path),
+                "PROVIDER": "anthropic",
+                "REASON": "rate_limit",
+                "RETRY_SECONDS": "60",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cooldown_delta = read_json(self.pool_path)["anthropic"][0]["cooldownUntil"] - before
+        self.assertGreaterEqual(cooldown_delta, 55_000)
+        self.assertLess(cooldown_delta, 70_000)
+
+    def test_short_retry_after_is_preserved(self) -> None:
+        self._make_pool([{"email": "a@example.com", "access": "tok"}])
+        self._make_auth({"access": "tok"})
+        before = int(time.time() * 1000)
+        result = run_pool_ops(
+            "mark-failure",
+            {
+                "POOL_FILE_PATH": str(self.pool_path),
+                "AUTH_FILE_PATH": str(self.auth_path),
+                "PROVIDER": "anthropic",
+                "REASON": "rate_limit",
+                "RETRY_SECONDS": "120",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cooldown_delta = read_json(self.pool_path)["anthropic"][0]["cooldownUntil"] - before
+        self.assertGreaterEqual(cooldown_delta, 115_000)
+        self.assertLess(cooldown_delta, 130_000)
+
+    def test_over_max_rate_limit_retry_after_is_clamped(self) -> None:
+        self._make_pool([{"email": "a@example.com", "access": "tok"}])
+        self._make_auth({"access": "tok"})
+        before = int(time.time() * 1000)
+        result = run_pool_ops(
+            "mark-failure",
+            {
+                "POOL_FILE_PATH": str(self.pool_path),
+                "AUTH_FILE_PATH": str(self.auth_path),
+                "PROVIDER": "anthropic",
+                "REASON": "rate_limit",
+                "RETRY_SECONDS": str(2 * 24 * 60 * 60),
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cooldown_delta = read_json(self.pool_path)["anthropic"][0]["cooldownUntil"] - before
+        self.assertGreaterEqual(cooldown_delta, (6 * 60 * 60 - 5) * 1000)
+        self.assertLess(cooldown_delta, (6 * 60 * 60 + 10) * 1000)
+
+    def test_auth_error_cooldown_is_not_rate_limit_clamped(self) -> None:
+        self._make_pool([{"email": "a@example.com", "access": "tok"}])
+        self._make_auth({"access": "tok"})
+        before = int(time.time() * 1000)
+        result = run_pool_ops(
+            "mark-failure",
+            {
+                "POOL_FILE_PATH": str(self.pool_path),
+                "AUTH_FILE_PATH": str(self.auth_path),
+                "PROVIDER": "anthropic",
+                "REASON": "auth_error",
+                "RETRY_SECONDS": "3600",
+            },
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        cooldown_delta = read_json(self.pool_path)["anthropic"][0]["cooldownUntil"] - before
+        self.assertGreaterEqual(cooldown_delta, (60 * 60 - 5) * 1000)
+        self.assertLess(cooldown_delta, (60 * 60 + 10) * 1000)
+
     def test_falls_back_to_openai_account_id(self) -> None:
         write_json(
             self.pool_path,

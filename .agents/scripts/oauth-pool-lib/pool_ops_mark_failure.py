@@ -28,6 +28,8 @@ _REASON_TO_STATUS = {
     "provider_error": "rate-limited",
 }
 
+_DEFAULT_MAX_RATE_LIMIT_COOLDOWN_SECONDS = 6 * 60 * 60
+
 
 def _find_index_by_access(accounts: list[dict], current_access: str) -> int:
     if not current_access:
@@ -61,6 +63,25 @@ def _find_index_by_most_recent(accounts: list[dict]) -> int:
             best_last = last
             best_i = i
     return best_i
+
+
+def _max_rate_limit_cooldown_seconds() -> int:
+    raw = os.environ.get("AIDEVOPS_OAUTH_POOL_MAX_RATE_LIMIT_COOLDOWN_SECONDS", "")
+    try:
+        value = int(raw) if raw else _DEFAULT_MAX_RATE_LIMIT_COOLDOWN_SECONDS
+    except ValueError:
+        return _DEFAULT_MAX_RATE_LIMIT_COOLDOWN_SECONDS
+    if value <= 0:
+        return _DEFAULT_MAX_RATE_LIMIT_COOLDOWN_SECONDS
+    return value
+
+
+def _clamp_retry_seconds(reason: str, retry_seconds: int) -> int:
+    if retry_seconds < 0:
+        return 0
+    if reason not in {"rate_limit", "provider_error"}:
+        return retry_seconds
+    return min(retry_seconds, _max_rate_limit_cooldown_seconds())
 
 
 def _resolve_failed_index(accounts: list[dict], current_auth: dict, provider: str) -> int:
@@ -104,7 +125,7 @@ def cmd_mark_failure() -> None:
     auth_path = os.environ["AUTH_FILE_PATH"]
     provider = os.environ["PROVIDER"]
     reason = os.environ["REASON"]
-    retry_seconds = int(os.environ["RETRY_SECONDS"])
+    retry_seconds = _clamp_retry_seconds(reason, int(os.environ["RETRY_SECONDS"]))
 
     target_status = _REASON_TO_STATUS.get(reason, "rate-limited")
 

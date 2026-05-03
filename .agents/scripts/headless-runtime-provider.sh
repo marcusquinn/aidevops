@@ -274,6 +274,33 @@ PY
 	return 0
 }
 
+clamp_rate_limit_retry_seconds() {
+	local reason="$1"
+	local retry_seconds="$2"
+	local max_seconds="${AIDEVOPS_OAUTH_POOL_MAX_RATE_LIMIT_COOLDOWN_SECONDS:-21600}"
+
+	if [[ ! "$retry_seconds" =~ ^[0-9]+$ ]]; then
+		printf '%s' "0"
+		return 0
+	fi
+	if [[ ! "$max_seconds" =~ ^[0-9]+$ ]] || [[ "$max_seconds" -le 0 ]]; then
+		max_seconds=21600
+	fi
+	case "$reason" in
+	rate_limit | provider_error)
+		if [[ "$retry_seconds" -gt "$max_seconds" ]]; then
+			printf '%s' "$max_seconds"
+		else
+			printf '%s' "$retry_seconds"
+		fi
+		;;
+	*)
+		printf '%s' "$retry_seconds"
+		;;
+	esac
+	return 0
+}
+
 attempt_pool_recovery() {
 	local provider="$1"
 	local reason="$2"
@@ -321,6 +348,7 @@ attempt_pool_recovery() {
 		*) retry_seconds=300 ;;
 		esac
 	fi
+	retry_seconds=$(clamp_rate_limit_retry_seconds "$reason" "$retry_seconds")
 
 	# Safe: mark the account as failed in pool metadata (no auth file mutation)
 	"$OAUTH_POOL_HELPER" mark-failure "$provider" "$reason" "$retry_seconds" >/dev/null 2>&1 || true

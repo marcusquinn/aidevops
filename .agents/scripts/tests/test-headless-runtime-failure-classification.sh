@@ -112,6 +112,45 @@ assert_eq "metric provider_status persisted" "500" \
 assert_eq "metric classification_source persisted" "output_pattern" \
 	"$(jq -r '.classification_source' "$METRICS_FILE")"
 
+write_retry_fixture() {
+	local name="$1"
+	local body="$2"
+	local path="$FIXTURE_DIR/$name.retry.log"
+	printf '%s\n' "$body" >"$path"
+	printf '%s' "$path"
+	return 0
+}
+
+check_pool_retry_seconds() {
+	local label="$1"
+	local body="$2"
+	local reason="$3"
+	local expected_seconds="$4"
+	local path
+	path=$(write_retry_fixture "$label" "$body")
+	: >"$FIXTURE_DIR/oauth-pool-helper.calls"
+	attempt_pool_recovery "anthropic" "$reason" "$path" >/dev/null 2>&1
+	assert_eq "$label pool retry seconds" "$expected_seconds" \
+		"$(awk '{print $4}' "$FIXTURE_DIR/oauth-pool-helper.calls")"
+	return 0
+}
+
+cat >"$OAUTH_POOL_HELPER" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${FIXTURE_DIR}/oauth-pool-helper.calls"
+exit 0
+STUB
+chmod +x "$OAUTH_POOL_HELPER"
+export FIXTURE_DIR OAUTH_POOL_HELPER
+HOME="$FIXTURE_DIR/home"
+mkdir -p "$HOME/.aidevops"
+export HOME
+
+check_pool_retry_seconds "missing_retry_after" "status 429 with no retry hint" "rate_limit" "60"
+check_pool_retry_seconds "short_retry_after" "retry after 120 seconds" "rate_limit" "120"
+check_pool_retry_seconds "over_max_retry_after" "retry after 2 days" "rate_limit" "21600"
+check_pool_retry_seconds "auth_error_fallback" "authentication failed" "auth_error" "3600"
+
 echo
 echo "${TEST_BLUE}=== Summary ===${TEST_NC}"
 echo "Tests run:    $TESTS_RUN"
