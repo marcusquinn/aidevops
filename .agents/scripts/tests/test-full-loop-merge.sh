@@ -120,6 +120,15 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 	fi
 fi
 
+if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$*" == *"--json body"* ]]; then
+		echo 'Resolves #22621'
+		exit 0
+	fi
+	echo '{}'
+	exit 0
+fi
+
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
@@ -209,6 +218,7 @@ source '${scripts_dir}/full-loop-helper-merge.sh'
 cmd_pre_merge_gate() { return '${gate_rc}'; }
 _retarget_stacked_children_interactive() { return 0; }
 release_interactive_claim_on_merge() { return 0; }
+auto_file_next_phase() { printf '%s %s\n' "\$1" "\$2" >> "${TEST_ROOT}/logs/phase-autofile.txt"; return 0; }
 cmd_merge '$pr_number' '$repo'
 RUNNER_EOF
 	chmod +x "$tmp_runner"
@@ -346,7 +356,27 @@ test_graphql_rate_limit_rest_fallback() {
 	return 0
 }
 
-# Test 5: REST fallback is not used for --auto because it would merge immediately.
+# Test 5: GraphQL REST fallback through cmd_merge triggers sequential phase auto-filing.
+test_graphql_rate_limit_cmd_merge_phase_autofile() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "graphql-rate-limit"
+
+	local exit_code=0
+	run_cmd_merge_with_gate "42" "testorg/testrepo" "0" >/dev/null 2>&1 || exit_code=$?
+	print_result "GraphQL rate-limit cmd_merge: REST fallback succeeds" "$exit_code"
+
+	local phase_called=0
+	if [[ -f "${TEST_ROOT}/logs/phase-autofile.txt" ]] &&
+		grep -q "22621 testorg/testrepo" "${TEST_ROOT}/logs/phase-autofile.txt"; then
+		phase_called=1
+	fi
+	print_result "GraphQL rate-limit cmd_merge: phase autofile called for linked issue" "$((1 - phase_called))"
+
+	return 0
+}
+
+# Test 6: REST fallback is not used for --auto because it would merge immediately.
 test_graphql_rate_limit_auto_no_rest_fallback() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
 
@@ -363,7 +393,7 @@ test_graphql_rate_limit_auto_no_rest_fallback() {
 	return 0
 }
 
-# Test 6: Review-bot gate failure prevents both gh pr merge and REST fallback.
+# Test 7: Review-bot gate failure prevents both gh pr merge and REST fallback.
 test_review_gate_failure_blocks_rest_fallback() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
 
@@ -397,6 +427,7 @@ main() {
 	test_explicit_admin_no_signaling
 	test_other_error_no_fallback
 	test_graphql_rate_limit_rest_fallback
+	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
 
