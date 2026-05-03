@@ -489,8 +489,8 @@ test_launch_worker_forwards_agent() {
 
 test_launch_worker_forwards_repo_contract() {
 	local failed=1
-	if grep -Fq 'WORKER_REPO_SLUG="$repo_slug"' "$HELPER_PATH" &&
-		grep -Fq 'GITHUB_REPOSITORY="$repo_slug"' "$HELPER_PATH"; then
+	if grep -Fq "WORKER_REPO_SLUG=\"\$repo_slug\"" "$HELPER_PATH" &&
+		grep -Fq "GITHUB_REPOSITORY=\"\$repo_slug\"" "$HELPER_PATH"; then
 		failed=0
 	fi
 	print_result "worker launch forwards target repo contract" "$failed"
@@ -499,9 +499,9 @@ test_launch_worker_forwards_repo_contract() {
 
 test_create_worktree_uses_target_repo_path() {
 	local failed=1
-	if grep -Fq 'repo_path=$(_dsi_repo_path_for_slug "$repo_slug")' "$HELPER_PATH" &&
-		grep -Fq 'cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1' "$HELPER_PATH" &&
-		grep -Fq 'git -C "$repo_path" worktree list --porcelain' "$HELPER_PATH"; then
+	if grep -Fq "repo_path=\$(_dsi_repo_path_for_slug \"\$repo_slug\")" "$HELPER_PATH" &&
+		grep -Fq "cd \"\$repo_path\" && AIDEVOPS_SKIP_AUTO_CLAIM=1" "$HELPER_PATH" &&
+		grep -Fq "git -C \"\$repo_path\" worktree list --porcelain" "$HELPER_PATH"; then
 		failed=0
 	fi
 	print_result "worktree creation uses target repo path" "$failed"
