@@ -4147,3 +4147,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623
 
 - [ ] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622
+
+- [ ] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629
