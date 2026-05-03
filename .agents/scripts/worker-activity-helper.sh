@@ -232,7 +232,7 @@ _wah_provider_usage_json() {
 				),
 				recent_events: (
 					$w | sort_by(.ts // 0) | reverse | .[0:10]
-					| map({ts, provider, model, result, exit_code, issue_number, repo_slug, session_key})
+					| map({ts, provider, model, result, exit_code, issue_number, session_key})
 				),
 				account_pool: (
 					$pool_data
@@ -255,7 +255,7 @@ _wah_provider_usage_json() {
 			[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 			| {
 				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: ([.[] | select(.result == "success" and (.exit_code // 1) == 0)] | length), rate_limited: ([.[] | select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")] | length), other_failure: ([.[] | select((.result // "") != "success" and (.result // "") != "rate_limit")] | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
-				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, repo_slug, session_key})),
+				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, session_key})),
 				account_pool: []
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
 	fi
@@ -419,7 +419,7 @@ _wah_emit_providers_human() {
 	printf '%s' "$usage_json" | jq -r '
 		(.recent_events // []) as $rows
 		| if ($rows | length) == 0 then "  (no recent samples)"
-		else $rows[] | "  ts=\(.ts) provider=\(.provider // "") model=\(.model // "") result=\(.result // "") issue=\(.issue_number // "") repo=\(.repo_slug // "") session=\(.session_key // "")"
+		else $rows[] | "  ts=\(.ts) provider=\(.provider // "") model=\(.model // "") result=\(.result // "") issue=\(.issue_number // "") session=\(.session_key // "")"
 		end' 2>/dev/null || printf '  (recent samples unavailable)\n'
 	printf '%s\n' "$divider"
 	return 0
