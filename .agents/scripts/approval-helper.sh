@@ -9,7 +9,7 @@
 #
 # Usage (must be run with sudo for issue/pr approval):
 #   sudo aidevops approve setup          # One-time: generate approval key pair
-#   sudo aidevops approve issue <number> # Approve an issue for development
+#   sudo aidevops approve issue <number> [owner/repo] # Approve an issue for development
 #   sudo aidevops approve pr <number>    # Approve a PR for merge
 #   aidevops approve verify <number>     # Verify approval on an issue (no sudo)
 #   aidevops approve status              # Show approval key setup status
@@ -794,8 +794,8 @@ cmd_setup() {
 	echo "Workers cannot read it, even though they run as your user account."
 	echo ""
 	echo "You can now approve issues/PRs with:"
-	echo "  sudo aidevops approve issue <number>"
-	echo "  sudo aidevops approve pr <number>"
+	echo "  sudo aidevops approve issue <number> <owner/repo>"
+	echo "  sudo aidevops approve pr <number> <owner/repo>"
 	return 0
 }
 
@@ -920,8 +920,7 @@ cmd_help() {
 	echo ""
 	echo "Examples:"
 	echo "  sudo aidevops approve setup"
-	echo "  sudo aidevops approve issue 17438"
-	echo "  sudo aidevops approve issue 17438 marcusquinn/aidevops"
+	echo "  sudo aidevops approve issue 17438 <owner/repo>"
 	echo "  aidevops approve verify 17438"
 	echo ""
 	echo "Security: The approval signing key is stored root-only. Workers run as your"

@@ -485,7 +485,7 @@ _nmr_applied_by_maintainer() {
 		# automation_signature short-circuit the breaker check because
 		# scanner labels persist for the issue's lifetime.
 		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
-			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386/GH#20758)" >>"$LOGFILE"
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/GH#20758)" >>"$LOGFILE"
 			# t3049: check if a subsequent worker produced a clean approved PR
 			# that resolves the stale-recovery false positive. Posts a one-shot
 			# notification to the maintainer if so. Does NOT clear NMR.
