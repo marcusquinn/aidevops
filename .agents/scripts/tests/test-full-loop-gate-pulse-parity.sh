@@ -4,9 +4,9 @@
 #
 # test-full-loop-gate-pulse-parity.sh — t2890 regression guard.
 #
-# Asserts that `_check_linked_issue_gate` in `.agents/scripts/full-loop-helper.sh`
+# Asserts that `_check_linked_issue_gate` in `.agents/scripts/full-loop-helper-state.sh`
 # inherits the pulse-side structural dispatch gates by calling
-# `dispatch-dedup-helper.sh is-assigned` and translating PARENT_TASK_BLOCKED
+# `dispatch-dedup-helper.sh enumerate-blockers` and translating PARENT_TASK_BLOCKED
 # and NO_AUTO_DISPATCH_BLOCKED signals into hard blocks.
 #
 # Background: pre-t2890, the interactive `/full-loop` path only checked
@@ -46,7 +46,7 @@ print_result() {
 # Resolve the helper file relative to the test (tests live in .agents/scripts/tests/)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-HELPER_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper.sh"
+HELPER_FILE="${REPO_ROOT}/.agents/scripts/full-loop-helper-state.sh"
 
 if [[ ! -f "$HELPER_FILE" ]]; then
 	print_result "helper file exists" 1 "not found: $HELPER_FILE"
@@ -132,13 +132,13 @@ assert_in_gate \
 	"_check_linked_issue_gate loop reads from dedup_out heredoc string (t2894)"
 
 # -------------------------------------------------------------------
-# Assertion F: full-loop-helper.sh shellcheck-clean
+# Assertion F: full-loop-helper-state.sh shellcheck-clean
 # -------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
 	if shellcheck "$HELPER_FILE" >/dev/null 2>&1; then
-		print_result "full-loop-helper.sh passes shellcheck" 0
+		print_result "full-loop-helper-state.sh passes shellcheck" 0
 	else
-		print_result "full-loop-helper.sh passes shellcheck" 1 "shellcheck reported violations"
+		print_result "full-loop-helper-state.sh passes shellcheck" 1 "shellcheck reported violations"
 	fi
 else
 	# Linter binary unavailable in the runner — skip without failing.
