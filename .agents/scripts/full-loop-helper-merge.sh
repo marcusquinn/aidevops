@@ -14,6 +14,7 @@
 #   - shared-constants.sh (print_error, print_info, print_success, print_warning,
 #     gh_pr_comment, release_interactive_claim_on_merge)
 #   - shared-claim-lifecycle.sh (release_interactive_claim_on_merge)
+#   - shared-phase-filing.sh (auto_file_next_phase)
 #   - full-loop-helper-commit.sh (cmd_pre_merge_gate)
 #   - Globals: SCRIPT_DIR
 #
@@ -33,6 +34,11 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	SCRIPT_DIR="$(cd "$_lib_path" && pwd)"
 	unset _lib_path
 fi
+
+# Sequential phase auto-filing parity with pulse-merge.sh (t2740/GH#22629).
+# shellcheck source=./shared-phase-filing.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/shared-phase-filing.sh"
 
 # --- Repo Resolution ---
 
@@ -437,6 +443,15 @@ cmd_merge() {
 		grep -oE '[0-9]+' | head -1) || _linked_issue_for_release=""
 	if [[ -n "$_linked_issue_for_release" ]]; then
 		release_interactive_claim_on_merge "$pr_number" "$repo" "$_linked_issue_for_release" || true
+	fi
+
+	# Sequential phase auto-filing parity with pulse-merge.sh. Worker self-merge
+	# bypasses the deterministic pulse post-merge hook, so trigger the shared
+	# best-effort phase filer here after any immediate merge path succeeds,
+	# including the REST merge fallback used when GraphQL quota is exhausted.
+	# Do not fire for --auto: the PR is only queued, not merged yet.
+	if [[ "$has_auto" -eq 0 && -n "$_linked_issue_for_release" ]]; then
+		auto_file_next_phase "$_linked_issue_for_release" "$repo" || true
 	fi
 
 	_merge_unlock_resources "$pr_number" "$repo"
