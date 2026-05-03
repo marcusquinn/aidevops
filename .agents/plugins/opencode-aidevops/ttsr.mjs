@@ -190,14 +190,64 @@ function buildCorrectionMessage(violations, sessionID) {
 // Hook implementations (module-level, accept state + deps as parameters)
 // ---------------------------------------------------------------------------
 
+function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
+  const cachePath = join(agentsDir, "..", "cache", "session-greeting.txt");
+  const cacheLines = readIfExists(cachePath).split("\n").map((line) => line.trim()).filter(Boolean);
+  const cacheLine = cacheLines[0] || "";
+  const cacheMatch = cacheLine.match(/^aidevops v(\S+) running in (.+?) v(\S+)(?:\s|$)/);
+  const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).split("\n")[0] || "X";
+  const runtime = cacheMatch?.[2] || "OpenCode";
+  const runtimeVersion = cacheMatch?.[3];
+  const advisoryLines = cacheLines.filter((line) =>
+    line.startsWith("[SECURITY ADVISORY]") ||
+    line.startsWith("[ERROR]") ||
+    line.startsWith("[WARN]") ||
+    line.startsWith("[WARNING]") ||
+    line.startsWith("Pulse stalled") ||
+    line.startsWith("[OPENCODE MAINTENANCE]") ||
+    /contribution\(s\) need/i.test(line));
+  const versionLine = runtimeVersion
+    ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
+    : `We're running aidevops v${version}.`;
+  const advisoryInstruction = advisoryLines.length > 0
+    ? [
+        "",
+        "After the greeting, include this short startup advisory before answering the user's request:",
+        "",
+        ...advisoryLines.map((line) => `- ${line}`),
+      ]
+    : [];
+
+  return [
+    "## Session-start greeting order",
+    "On the first assistant turn of an interactive session, the first visible text in the assistant response MUST be this exact aidevops greeting:",
+    "",
+    "Hi!",
+    "",
+    versionLine,
+    "",
+    "What would you like to work on?",
+    "",
+    "Do this before tool calls, status updates, analysis summaries, or task work.",
+    ...advisoryInstruction,
+    "If the user launched the session with an initial message, greet first in the assistant response, then answer that message.",
+    "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast content.",
+  ].join("\n");
+}
+
 /**
- * system.transform hook: prepend identity prefix and inject quality rules.
+ * system.transform hook: prepend session-start greeting order, identity prefix,
+ * and quality rules.
  */
-async function ttsrSystemTransform(input, output, state, intentField) {
+async function ttsrSystemTransform(input, output, state, intentField, isHeadless, agentsDir, readIfExists) {
   if (input.model?.providerID === "anthropic") {
     const prefix = "You are Claude Code, Anthropic's official CLI for Claude.";
     output.system.unshift(prefix);
     if (output.system[1]) output.system[1] = prefix + "\n\n" + output.system[1];
+  }
+
+  if (!isHeadless()) {
+    output.system.unshift(buildSessionStartGreetingInstruction(agentsDir, readIfExists));
   }
 
   const rules = loadTtsrRules(state);
@@ -318,7 +368,7 @@ export function createTtsrHooks(deps) {
 
   return {
     loadTtsrRules: () => loadTtsrRules(state),
-    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField),
+    systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField, isHeadless, agentsDir, readIfExists),
     messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
     textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
   };

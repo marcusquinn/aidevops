@@ -19,7 +19,7 @@ function createHooks(options = {}) {
   const hooks = createTtsrHooks({
     agentsDir: join(tmpdir(), `${tempPrefix}-agents`),
     scriptsDir: join(tmpdir(), `${tempPrefix}-scripts`),
-    readIfExists: () => "",
+    readIfExists: options.readIfExists || (() => ""),
     qualityLog: (level, message) => logs.push({ level, message }),
     run: () => "",
     intentField: "agent__intent",
@@ -47,6 +47,89 @@ function advisoryMessages(output) {
 }
 
 describe("token cost advisory threshold", () => {
+  test("prepends session greeting order to system prompt", async () => {
+    const { hooks } = createHooks({
+      readIfExists: (path) => path.endsWith("session-greeting.txt")
+        ? "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main"
+        : "",
+    });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.match(output.system[0], /Session-start greeting order/);
+    assert.match(output.system[0], /this exact aidevops greeting/);
+    assert.match(output.system[0], /We're running aidevops v3\.14\.23 in OpenCode v1\.14\.33\./);
+  });
+
+  test("falls back to aidevops version when greeting cache is missing", async () => {
+    const { hooks } = createHooks({
+      readIfExists: (path) => path.endsWith("VERSION") ? "3.14.23\n" : "",
+    });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.match(output.system[0], /We're running aidevops v3\.14\.23\./);
+  });
+
+  test("includes startup advisory only for warning and error cache lines", async () => {
+    const { hooks } = createHooks({
+      readIfExists: (path) => path.endsWith("session-greeting.txt")
+        ? [
+            "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
+            "Security: all protections active",
+            "[SECURITY ADVISORY] Rotate test credentials",
+            "[WARN] Pulse stalled for 12 minutes",
+          ].join("\n")
+        : "",
+    });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.match(output.system[0], /After the greeting, include this short startup advisory/);
+    assert.match(output.system[0], /\[SECURITY ADVISORY\] Rotate test credentials/);
+    assert.match(output.system[0], /\[WARN\] Pulse stalled for 12 minutes/);
+    assert.doesNotMatch(output.system[0], /Security: all protections active/);
+  });
+
+  test("omits startup advisory section for clean cache", async () => {
+    const { hooks } = createHooks({
+      readIfExists: (path) => path.endsWith("session-greeting.txt")
+        ? [
+            "aidevops v3.14.23 running in OpenCode v1.14.33 | aidevops/main",
+            "Security: all protections active",
+          ].join("\n")
+        : "",
+    });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.doesNotMatch(output.system[0], /startup advisory/);
+  });
+
+  test("does not inject session greeting order in headless sessions", async () => {
+    const { hooks } = createHooks({ isHeadless: () => true });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.equal(output.system[0], "base system prompt");
+  });
+
+  test("keeps Anthropic identity prefix separate from greeting order", async () => {
+    const { hooks } = createHooks();
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "anthropic" } }, output);
+
+    assert.match(output.system[0], /Session-start greeting order/);
+    assert.equal(output.system[1], "You are Claude Code, Anthropic's official CLI for Claude.");
+    assert.match(output.system[2], /^You are Claude Code, Anthropic's official CLI for Claude\.\n\nbase system prompt/);
+  });
+
   test("does not inject advisory below 250k tokens", async () => {
     const { hooks } = createHooks();
     const output = outputForTokens(249_999);
