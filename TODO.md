@@ -4168,8 +4168,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3558 Remove CPU-based canary throttling #auto-dispatch #bug ref:GH#22634 pr:#22639 completed:2026-05-03
 
-- [x] t3560 Add /goals mission command ref:GH#22649 pr:#22650 completed:2026-05-03
-
 - [ ] t3562 Audit ops markers for machine-generated GitHub comments #auto-dispatch #bug ref:GH#22660
 
 - [ ] t3561 Fix duplicate TODO entry after release auto-mark #auto-dispatch #bug ref:GH#22655
