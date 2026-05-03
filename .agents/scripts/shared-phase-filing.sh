@@ -517,7 +517,6 @@ _create_or_reuse_phase_child_issue() {
 	existing_issue_num=$(_find_existing_phase_child_issue "$repo_slug" "$parent_issue" "$phase_num" "$phase_desc")
 	if [[ -n "$existing_issue_num" ]]; then
 		_phase_log "Parent #${parent_issue}: Phase ${phase_num} already has open child #${existing_issue_num} by deterministic-title search — reuse"
-		_update_parent_phases_section "$parent_issue" "$repo_slug" "$phase_num" "$existing_issue_num"
 		_phase_release_filing_lock "$lock_dir"
 		printf 'https://github.com/%s/issues/%s' "$repo_slug" "$existing_issue_num"
 		return 0
