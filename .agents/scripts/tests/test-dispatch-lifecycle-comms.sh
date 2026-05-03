@@ -22,8 +22,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
+TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+SCRIPTS_DIR="$(cd "${TEST_DIR}/.." && pwd)" || exit 1
+SCRIPT_DIR="$SCRIPTS_DIR"
 
 # Isolated environment
 TMP_HOME=$(mktemp -d)
@@ -112,6 +113,22 @@ gh() {
 		shift || true
 		case "$path" in
 		repos/*/issues/*/comments)
+			local is_post=0 body="" prev=""
+			local arg
+			for arg in "$@"; do
+				if [[ "$prev" == "--method" && "$arg" == "POST" ]]; then
+					is_post=1
+				fi
+				if [[ "$arg" == body=* ]]; then
+					body="${arg#body=}"
+				fi
+				prev="$arg"
+			done
+			if [[ "$is_post" -eq 1 ]]; then
+				printf '%s\n---END_COMMENT---\n' "$body" >>"$GH_COMMENT_LOG"
+				printf '{"id":123456}\n'
+				return 0
+			fi
 			_mock_gh_response "$GH_API_COMMENTS_RESPONSE" "$@"
 			;;
 		repos/*/branches)
@@ -282,6 +299,25 @@ if [[ "$crash_type_no_repo" == "no_work" ]]; then
 	print_result "Fix B: no_work on empty repo slug" 0
 else
 	print_result "Fix B: no_work on empty repo slug" 1 "got '$crash_type_no_repo'"
+fi
+
+# --- Fix C: post-claim aborts release their dispatch claim ---
+
+reset_gh_state
+_claim_comment_id="claim-123"
+_release_dispatch_claim_on_abort "12345" "owner/repo" "runner-a" "worker_launch_rc_2"
+count_abort_release=$(count_gh_comments)
+if [[ "$count_abort_release" -eq 1 ]] &&
+	grep -q 'CLAIM_RELEASED reason=dispatch_aborted:worker_launch_rc_2 runner=runner-a' "$GH_COMMENT_LOG"; then
+	print_result "Fix C: post-claim launch abort emits CLAIM_RELEASED" 0
+else
+	print_result "Fix C: post-claim launch abort emits CLAIM_RELEASED" 1 "log: $(cat "$GH_COMMENT_LOG")"
+fi
+
+if [[ -z "${_claim_comment_id:-}" ]]; then
+	print_result "Fix C: release helper clears retained claim id" 0
+else
+	print_result "Fix C: release helper clears retained claim id" 1 "claim id still set: ${_claim_comment_id}"
 fi
 
 # Cleanup

@@ -1171,6 +1171,47 @@ _run_eligibility_gate_or_abort() {
 }
 
 #######################################
+# Release a dispatch claim when a post-claim pre-launch step aborts.
+#
+# dispatch-claim-helper.sh posts DISPATCH_CLAIM before later gates and launch
+# sub-stages run. When those later steps abort before the worker wrapper starts,
+# neither the worker EXIT trap nor _dlw_post_launch_hooks can emit lifecycle
+# evidence. Post CLAIM_RELEASED here so peer runners see a terminal marker and
+# the issue thread records why no worker comment appeared.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - self_login
+#   $4 - reason suffix for dispatch_aborted:<reason>
+#######################################
+_release_dispatch_claim_on_abort() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local reason="$4"
+
+	[[ -n "${_claim_comment_id:-}" ]] || return 0
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+	[[ -n "$self_login" ]] || self_login="$(whoami 2>/dev/null || printf '%s' unknown)"
+	case "$reason" in
+	*[^A-Za-z0-9_.:-]* | "") reason="unknown" ;;
+	esac
+
+	local body
+	body="CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--method POST \
+		--field body="$body" \
+		>/dev/null 2>>"$LOGFILE" || {
+		echo "[dispatch_with_dedup] Warning: failed to release dispatch claim for aborted #${issue_number} (${reason})" >>"$LOGFILE"
+	}
+	echo "[dispatch_with_dedup] Released dispatch claim ${_claim_comment_id} for aborted #${issue_number} (${reason})" >>"$LOGFILE"
+	_claim_comment_id=""
+	return 0
+}
+
+#######################################
 # Dispatch a worker for the given issue, guarded by all dedup and
 # pre-dispatch safety layers. Thin orchestrator: delegates to
 # _dispatch_dedup_check_layers (decision) and _dispatch_launch_worker
@@ -1290,6 +1331,7 @@ dispatch_with_dedup() {
 	_ds_record "$issue_number" "$repo_slug" "predispatch_validator" "$_ds_t0"
 	if [[ "$_validator_rc" -eq 10 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator falsified premise for #${issue_number} in ${repo_slug} — issue closed, not dispatching" >>"$LOGFILE"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_closed"
 		return 1
 	fi
 	if [[ "$_validator_rc" -eq 20 ]]; then
@@ -1300,6 +1342,7 @@ dispatch_with_dedup() {
 	_ds_t0=$(_ds_now_ns)
 	if ! _run_eligibility_gate_or_abort "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "eligibility_gate"
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "eligibility_gate" "$_ds_t0"
@@ -1312,6 +1355,9 @@ dispatch_with_dedup() {
 		"$self_login" "$repo_path" "$prompt" "$session_key" \
 		"$model_override" "$issue_meta_json" || _launch_rc=$?
 	_ds_record "$issue_number" "$repo_slug" "worker_launch_total" "$_ds_t0"
+	if [[ "$_launch_rc" -ne 0 ]]; then
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "worker_launch_rc_${_launch_rc}"
+	fi
 
 	# t3034: record total ceremony time
 	_ds_record "$issue_number" "$repo_slug" "ceremony_total" "$_ds_ceremony_t0"
