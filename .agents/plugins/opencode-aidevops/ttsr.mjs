@@ -12,16 +12,16 @@ import {
 // ---------------------------------------------------------------------------
 // Token Cost Advisory
 // ---------------------------------------------------------------------------
-// Injects a synthetic message when session context exceeds a token threshold,
-// prompting the LLM to advise the user to run /compact. Fires at 250k tokens,
-// then every 50k above that (300k, 350k, ...). Uses the last assistant
-// message's token counts — which represent the full context sent to the model
-// on that turn — so the number tracks real cost, not model capacity.
+// Injects a synthetic message for interactive sessions when session context
+// exceeds a token threshold, prompting the LLM to advise the user to run
+// /compact. Fires at 250k tokens, then every 50k above that (300k, 350k, ...).
+// Uses the last assistant message's token counts — which represent the full
+// context sent to the model on that turn — so the number tracks real cost, not
+// model capacity.
 //
-// For headless sessions: autocompact already fires at ~(limit - 20k), so
-// this advisory primarily helps interactive sessions on large-context models
-// (Gemini 1M+, future models) where autocompact is far above 250k, or when
-// autocompact is disabled.
+// Headless sessions and GPT-5.5+ models are excluded: headless workers should
+// not spend output budget on user-facing cost advice, and GPT-5.5+ models are
+// registered with a 500k context limit so OpenCode auto-compacts around 400k.
 
 const TOKEN_ADVISORY_INITIAL = 250_000;
 const TOKEN_ADVISORY_INTERVAL = 50_000;
@@ -38,6 +38,25 @@ function getTokenTotal(tokens) {
     (tokens.reasoning || 0) +
     (tokens.cache?.read || 0) +
     (tokens.cache?.write || 0);
+}
+
+/**
+ * Check whether the active model is GPT-5.5 or newer.
+ * @param {object} input
+ * @returns {boolean}
+ */
+function isGpt55OrNewer(input) {
+  const modelID = String(input?.model?.modelID || input?.modelID || input?.model || "").toLowerCase();
+  const match = modelID.match(/(?:^|[^a-z0-9])gpt-(\d+)(?:\.(\d+))?/);
+  let result = false;
+
+  if (match) {
+    const major = Number.parseInt(match[1], 10);
+    const minor = Number.parseInt(match[2] || "0", 10);
+    result = major > 5 || (major === 5 && minor >= 5);
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -81,28 +100,37 @@ function pruneAdvisoryState(tokenAdvisoryState) {
  * Check whether the token cost advisory should fire for this message set.
  * @param {Array<object>} messages
  * @param {Map<string, number>} tokenAdvisoryState
+ * @param {object} input
+ * @param {() => boolean} isHeadless
  * @returns {{ sessionID: string, totalK: number, total: number } | null}
  */
-function checkTokenAdvisory(messages, tokenAdvisoryState) {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const info = messages[i].info;
-    if (info?.role !== "assistant" || !info.tokens) continue;
+function checkTokenAdvisory(messages, tokenAdvisoryState, input, isHeadless) {
+  let result = null;
 
-    const total = getTokenTotal(info.tokens);
-    if (total < TOKEN_ADVISORY_INITIAL) return null;
+  if (!isHeadless() && !isGpt55OrNewer(input)) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const info = messages[i].info;
+      if (info?.role !== "assistant" || !info.tokens) continue;
 
-    const sessionID = info.sessionID || "";
-    const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
-    const stepsAboveInitial = Math.floor((total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL);
-    const currentThreshold = TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
+      const total = getTokenTotal(info.tokens);
+      if (total >= TOKEN_ADVISORY_INITIAL) {
+        const sessionID = info.sessionID || "";
+        const lastWarned = tokenAdvisoryState.get(sessionID) || 0;
+        const stepsAboveInitial = Math.floor((total - TOKEN_ADVISORY_INITIAL) / TOKEN_ADVISORY_INTERVAL);
+        const currentThreshold = TOKEN_ADVISORY_INITIAL + stepsAboveInitial * TOKEN_ADVISORY_INTERVAL;
 
-    if (currentThreshold <= lastWarned) return null;
+        if (currentThreshold > lastWarned) {
+          tokenAdvisoryState.set(sessionID, currentThreshold);
+          pruneAdvisoryState(tokenAdvisoryState);
+          result = { sessionID, totalK: Math.round(total / 1000), total };
+        }
+      }
 
-    tokenAdvisoryState.set(sessionID, currentThreshold);
-    pruneAdvisoryState(tokenAdvisoryState);
-    return { sessionID, totalK: Math.round(total / 1000), total };
+      break;
+    }
   }
-  return null;
+
+  return result;
 }
 
 /**
@@ -195,10 +223,10 @@ async function ttsrSystemTransform(input, output, state, intentField) {
 /**
  * messages.transform hook: inject token advisory and TTSR violation corrections.
  */
-async function ttsrMessagesTransform(_input, output, state, qualityLog) {
+async function ttsrMessagesTransform(input, output, state, qualityLog, isHeadless) {
   if (!output.messages || output.messages.length === 0) return;
 
-  const advisory = checkTokenAdvisory(output.messages, state.tokenAdvisoryState);
+  const advisory = checkTokenAdvisory(output.messages, state.tokenAdvisoryState, input, isHeadless);
   if (advisory) {
     output.messages.push(buildTokenAdvisoryMessage(advisory));
     qualityLog("INFO", `Token advisory: session ${advisory.sessionID} at ~${advisory.totalK}k tokens`);
@@ -283,6 +311,7 @@ async function ttsrTextComplete(input, output, state, execDeps, qualityLog) {
  */
 export function createTtsrHooks(deps) {
   const { agentsDir, scriptsDir, readIfExists, qualityLog, run, intentField } = deps;
+  const isHeadless = deps.isHeadless || (() => false);
   const ttsrRulesPath = join(agentsDir, "configs", "ttsr-rules.json");
   const state = createTtsrState(ttsrRulesPath, readIfExists);
   const execDeps = { scriptsDir, run };
@@ -290,7 +319,7 @@ export function createTtsrHooks(deps) {
   return {
     loadTtsrRules: () => loadTtsrRules(state),
     systemTransformHook: (input, output) => ttsrSystemTransform(input, output, state, intentField),
-    messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog),
+    messagesTransformHook: (_input, output) => ttsrMessagesTransform(_input, output, state, qualityLog, isHeadless),
     textCompleteHook: (input, output) => ttsrTextComplete(input, output, state, execDeps, qualityLog),
   };
 }

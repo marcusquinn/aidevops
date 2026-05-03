@@ -928,6 +928,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t3519 Investigate setup launchd xpcproxy recovery warnings #auto-dispatch #bug ref:GH#22500
 
+- [ ] t3517 Gate OpenCode compaction advisory ref:GH#22496
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4068,9 +4070,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3516 Respect all priority labels in dispatch scoring #auto-dispatch #bug ref:GH#22482
 
 - [ ] t3518 Investigate setup postflight degraded stages #auto-dispatch #bug ref:GH#22499
-
-- [ ] t3517 Gate OpenCode compaction advisory ref:GH#22496
-
 - [ ] t3520 Fix GPT-5.5 auto-compaction limit input override #auto-dispatch #bug ref:GH#22503
 
 - [ ] t3521 Detect stale OpenCode plugin deploy after setup #auto-dispatch #bug ref:GH#22506

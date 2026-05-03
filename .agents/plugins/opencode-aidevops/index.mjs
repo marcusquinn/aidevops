@@ -227,6 +227,7 @@ export async function AidevopsPlugin({ directory, client }) {
     qualityLog,
     run,
     intentField: INTENT_FIELD,
+    isHeadless,
   });
 
   // Lazy-start dispatch table for local proxies. Keys are OpenCode
