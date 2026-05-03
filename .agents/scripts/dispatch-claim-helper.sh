@@ -15,7 +15,7 @@
 # Protocol:
 #   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO max_age_s=SECONDS
 #   2. Sleep consensus window (DISPATCH_CLAIM_WINDOW, default 8s)
-#   3. Re-read comments, find all DISPATCH_CLAIM within the window
+#   3. Re-read paginated comments, find all DISPATCH_CLAIM within the window
 #   4. Oldest active claim wins — others back off and delete their claim
 #
 # Usage:
