@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.25] - 2026-05-03
+
+### Fixed
+
+- correct signature footer session mode (#22669)
+- paginate dispatch claim comment fetch (#22668)
+
 ## [3.14.24] - 2026-05-03
 
 ### Changed
