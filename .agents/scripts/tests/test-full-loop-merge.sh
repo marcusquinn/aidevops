@@ -11,12 +11,11 @@
 #   5. Review-gate failures prevent both CLI merge and REST fallback
 #
 # Strategy: stub gh, audit-log-helper.sh, and gh-signature-helper.sh in a temp
-# directory prepended to PATH, then source the functions from full-loop-helper.sh.
+# directory prepended to PATH, then source the merge sub-library.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-HELPER_SCRIPT="${SCRIPT_DIR}/../full-loop-helper.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -123,11 +122,19 @@ fi
 
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
-	if [[ "$mode" == "graphql-rate-limit-rest-fail" ]]; then
-		echo "REST merge failed" >&2
-		exit 1
+	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
+		if [[ "$mode" == "graphql-rate-limit-rest-fail" ]]; then
+			echo "REST merge failed" >&2
+			exit 1
+		fi
+		echo '{"merged":true,"message":"Pull Request successfully merged"}'
+		exit 0
 	fi
-	echo '{"merged":true,"message":"Pull Request successfully merged"}'
+	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42"* ]]; then
+		echo 'abc123headsha'
+		exit 0
+	fi
+	echo '{}'
 	exit 0
 fi
 
@@ -221,8 +228,7 @@ test_admin_fallback_signals() {
 
 	create_gh_stub "fallback"
 
-	local output=""
-	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0") || true
+	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || true
 
 	# (a) Check PR comment was posted
 	local pr_comment_posted=0
@@ -261,8 +267,7 @@ test_explicit_admin_no_signaling() {
 
 	create_gh_stub "explicit-admin"
 
-	local output=""
-	output=$(run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0") || true
+	run_merge_execute "42" "testorg/testrepo" "--squash" "1" "0" >/dev/null 2>&1 || true
 
 	# PR comment should NOT have been posted (explicit --admin is not a fallback)
 	local pr_comment_posted=0
@@ -332,10 +337,11 @@ test_graphql_rate_limit_rest_fallback() {
 	local rest_called=0
 	if [[ -f "${TEST_ROOT}/logs/gh-api-calls.txt" ]] &&
 		grep -q "repos/testorg/testrepo/pulls/42/merge" "${TEST_ROOT}/logs/gh-api-calls.txt" &&
+		grep -q "sha=abc123headsha" "${TEST_ROOT}/logs/gh-api-calls.txt" &&
 		grep -q "merge_method=squash" "${TEST_ROOT}/logs/gh-api-calls.txt"; then
 		rest_called=1
 	fi
-	print_result "GraphQL rate-limit: REST pull merge endpoint called" "$((1 - rest_called))"
+	print_result "GraphQL rate-limit: REST pull merge endpoint called with verified SHA" "$((1 - rest_called))"
 
 	return 0
 }
