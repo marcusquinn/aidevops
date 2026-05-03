@@ -4121,3 +4121,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3541 Add REST fallback for full-loop merge when GraphQL rate-limited #auto-dispatch #bug #framework ref:GH#22556
 
 - [ ] t3543 Make full-loop self-modifying merge guidance use worktree helper #auto-dispatch #bug #framework ref:GH#22571
+
+- [ ] t3544 fix parent-task auto-close: remove >=2 child heuristic and close on last filed child #bug #framework ref:GH#22604
