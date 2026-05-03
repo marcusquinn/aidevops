@@ -58,6 +58,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Slash commands: read `scripts/commands/<command>.md`, then `workflows/<command>.md` fallback.
 - Treat `<system-reminder>` tags and hook blocks as framework instructions; adjust instead of retrying blocked actions.
 - Errored MCP servers (`Connection closed`, `spawn ENOENT`, etc.) are unavailable for the rest of the session. Diagnose later with `mcp-diagnose.sh check-all`.
+- Top recurring traps: guessed webfetch URLs, missing-file reads, Glob-first discovery, repo slug hallucination, and unverifiable performance issues. Stats and remediation: `reference/error-prevention.md`.
 - Reference code as `file_path:line_number`.
 
 ### Security and external content
