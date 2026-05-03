@@ -36,6 +36,9 @@ import {
   CURSOR_PROXY_HOST, CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_BASE_URL,
   POOL_PROVIDER_IDS,
 } from "./oauth-pool-constants.mjs";
+import { existsSync, readFileSync } from "fs";
+import { homedir } from "os";
+import { join } from "path";
 import { getAccounts, patchAccount } from "./oauth-pool-storage.mjs";
 import { ensureValidToken, normalizeExpiredCooldowns } from "./oauth-pool-refresh.mjs";
 
@@ -93,6 +96,34 @@ function compareAccountPriority(a, b) {
   return new Date(a.lastUsed || 0).getTime() - new Date(b.lastUsed || 0).getTime();
 }
 
+function openCodeAuthPath() {
+  const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
+  return join(dataHome, "opencode", "auth.json");
+}
+
+export function readCurrentOpenAIAuth() {
+  const authPath = openCodeAuthPath();
+  if (!existsSync(authPath)) return null;
+  try {
+    return JSON.parse(readFileSync(authPath, "utf-8")).openai || null;
+  } catch {
+    return null;
+  }
+}
+
+function matchesOpenAIAuth(account, auth) {
+  if (!auth) return false;
+  return Boolean(
+    (auth.accountId && account.accountId && auth.accountId === account.accountId) ||
+    (auth.access && account.access && auth.access === account.access) ||
+    (auth.refresh && account.refresh && auth.refresh === account.refresh),
+  );
+}
+
+function isAvailableAccount(account, now = Date.now()) {
+  return ["active", "idle"].includes(account.status) && (!account.cooldownUntil || account.cooldownUntil <= now);
+}
+
 /**
  * Generic pool account selection (shared by all inject functions).
  * Finds the best available account with a valid token.
@@ -102,18 +133,26 @@ async function selectPoolAccount(provider, skipEmail) {
   if (accounts.length === 0) return null;
   normalizeExpiredCooldowns(provider, accounts);
   const now = Date.now();
-  const isAvailable = (a) =>
-    ["active", "idle"].includes(a.status) && (!a.cooldownUntil || a.cooldownUntil <= now);
   const sorted = [...accounts]
-    .filter((a) => isAvailable(a) && a.email !== skipEmail)
+    .filter((a) => isAvailableAccount(a, now) && a.email !== skipEmail)
     .sort(compareAccountPriority);
   for (const c of sorted) {
     if (await ensureValidToken(provider, c)) return c;
     console.error(`[aidevops] OAuth pool: skipping invalid ${provider} token for ${c.email}`);
   }
-  const fb = accounts.find((a) => isAvailable(a) && a.email !== skipEmail);
+  const fb = accounts.find((a) => isAvailableAccount(a, now) && a.email !== skipEmail);
   if (fb && await ensureValidToken(provider, fb)) return fb;
   return null;
+}
+
+export async function selectOpenAIStartupAccount(skipEmail) {
+  const accounts = getAccounts("openai");
+  if (accounts.length === 0) return null;
+  normalizeExpiredCooldowns("openai", accounts);
+  const currentAuth = readCurrentOpenAIAuth();
+  const current = accounts.find((a) => a.email !== skipEmail && matchesOpenAIAuth(a, currentAuth));
+  if (current && isAvailableAccount(current) && await ensureValidToken("openai", current)) return current;
+  return selectPoolAccount("openai", skipEmail);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,7 +194,10 @@ export async function rotateOpenAIPoolToken(client, skipEmail) {
 }
 
 export async function injectOpenAIPoolToken(client, skipEmail) {
-  return !!(await rotateOpenAIPoolToken(client, skipEmail));
+  const account = await selectOpenAIStartupAccount(skipEmail);
+  if (!account) return false;
+  await applyOpenAIPoolAccount(client, account);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
