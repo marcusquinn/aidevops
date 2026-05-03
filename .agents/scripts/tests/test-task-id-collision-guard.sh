@@ -739,7 +739,7 @@ test_repo_wide_claim_in_prose() {
 	# Create a temporary git repo with a prior merged claim commit
 	local base_repo="${tmpdir}/base"
 	mkdir -p "$base_repo"
-	git -C "$base_repo" init -q
+	git -C "$base_repo" init -q -b main
 	git -C "$base_repo" config user.email "test@test.local"
 	git -C "$base_repo" config user.name "Test"
 	git -C "$base_repo" config commit.gpgsign false
