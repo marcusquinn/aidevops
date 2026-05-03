@@ -130,6 +130,11 @@ _resolve_current_counter() {
 # Falls back to the root commit.
 # ---------------------------------------------------------------------------
 _find_merge_base() {
+	if [[ -n "${_TASK_ID_GUARD_MERGE_BASE_CACHE:-}" ]]; then
+		printf '%s' "$_TASK_ID_GUARD_MERGE_BASE_CACHE"
+		return 0
+	fi
+
 	local base="" ref
 	# Try main first, then master
 	for branch in main master; do
@@ -195,6 +200,7 @@ _TASK_ID_GUARD_BRANCH_SUBJECTS=""
 _TASK_ID_GUARD_BRANCH_SUBJECTS_HOT="0"
 _TASK_ID_GUARD_REPO_SUBJECTS=""
 _TASK_ID_GUARD_REPO_SUBJECTS_HOT="0"
+_TASK_ID_GUARD_MERGE_BASE_CACHE=""
 
 # Emit `git log --format='%s' BASE..HEAD` output, using the cache when hot.
 # Args:
@@ -202,7 +208,7 @@ _TASK_ID_GUARD_REPO_SUBJECTS_HOT="0"
 _branch_subjects() {
 	local base="${1:-}"
 	if [[ "$_TASK_ID_GUARD_BRANCH_SUBJECTS_HOT" == "1" ]]; then
-		printf '%s' "$_TASK_ID_GUARD_BRANCH_SUBJECTS"
+		[[ -n "$_TASK_ID_GUARD_BRANCH_SUBJECTS" ]] && printf '%s\n' "$_TASK_ID_GUARD_BRANCH_SUBJECTS"
 		return 0
 	fi
 	[[ -n "$base" ]] && git log --format='%s' "${base}..HEAD" 2>/dev/null
@@ -212,7 +218,7 @@ _branch_subjects() {
 # Emit `git log --all --format='%s'` output, using the cache when hot.
 _repo_subjects() {
 	if [[ "$_TASK_ID_GUARD_REPO_SUBJECTS_HOT" == "1" ]]; then
-		printf '%s' "$_TASK_ID_GUARD_REPO_SUBJECTS"
+		[[ -n "$_TASK_ID_GUARD_REPO_SUBJECTS" ]] && printf '%s\n' "$_TASK_ID_GUARD_REPO_SUBJECTS"
 		return 0
 	fi
 	git log --all --format='%s' 2>/dev/null
@@ -232,6 +238,7 @@ _populate_check_pr_caches() {
 	fi
 	_TASK_ID_GUARD_REPO_SUBJECTS=$(git log --all --format='%s' 2>/dev/null)
 	_TASK_ID_GUARD_REPO_SUBJECTS_HOT="1"
+	_TASK_ID_GUARD_MERGE_BASE_CACHE="$base"
 	return 0
 }
 
