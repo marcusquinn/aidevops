@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.13] - 2026-05-03
+
+### Changed
+
+- replace load-based canary overload gate with CPU saturation classifier (#22617)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#22619 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22615 to TODO.md [skip ci]
+
 ## [3.14.12] - 2026-05-03
 
 ### Changed
