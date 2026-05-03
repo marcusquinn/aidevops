@@ -127,12 +127,15 @@ if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
 		new_body=""
 	fi
 
-	printf '[{"id":1,"body":"DISPATCH_CLAIM nonce=old-nonce runner=%s ts=%s max_age_s=120","created_at":"%s"},{"id":999,"body":"%s","created_at":"%s"}]\n' \
-		"${MOCK_OLD_CLAIM_RUNNER:?}" \
-		"${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		"${MOCK_OLD_CLAIM_CREATED_AT:?}" \
-		"$new_body" \
-		"${MOCK_NEW_CLAIM_CREATED_AT:?}"
+	jq -n \
+		--arg runner "${MOCK_OLD_CLAIM_RUNNER:?}" \
+		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
+		--arg new_body "$new_body" \
+		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
+		'[
+			{id: 1, body: ("DISPATCH_CLAIM nonce=old-nonce runner=" + $runner + " ts=" + $old_ts + " max_age_s=120"), created_at: $old_ts},
+			{id: 999, body: $new_body, created_at: $new_ts}
+		]'
 	exit 0
 fi
 
@@ -221,26 +224,30 @@ if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
 	fi
 
 	if [[ -n "$terminal_body" ]]; then
-		printf '[{"id":10,"body_start":"%s","body":"%s","created_at":"%s"},{"id":11,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
-			"$dispatch_body" \
-			"$dispatch_body" \
-			"${MOCK_DISPATCH_CREATED_AT:?}" \
-			"$terminal_body" \
-			"$terminal_body" \
-			"${MOCK_TERMINAL_CREATED_AT:?}" \
-			"$new_body" \
-			"$new_body" \
-			"${MOCK_CLAIM_CREATED_AT:?}"
+		jq -n \
+			--arg dispatch_body "$dispatch_body" \
+			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
+			--arg terminal_body "$terminal_body" \
+			--arg terminal_ts "${MOCK_TERMINAL_CREATED_AT:?}" \
+			--arg new_body "$new_body" \
+			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
+			'[
+				{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
+				{id: 11, body_start: $terminal_body, body: $terminal_body, created_at: $terminal_ts},
+				{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
+			]'
 		exit 0
 	fi
 
-	printf '[{"id":10,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
-		"$dispatch_body" \
-		"$dispatch_body" \
-		"${MOCK_DISPATCH_CREATED_AT:?}" \
-		"$new_body" \
-		"$new_body" \
-		"${MOCK_CLAIM_CREATED_AT:?}"
+	jq -n \
+		--arg dispatch_body "$dispatch_body" \
+		--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
+		--arg new_body "$new_body" \
+		--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
+		'[
+			{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
+			{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
+		]'
 	exit 0
 fi
 
@@ -263,7 +270,7 @@ test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
 	local dispatch_created_at claim_created_at output exit_code dispatch_body
 	dispatch_created_at="$(iso_seconds_ago 120)"
 	claim_created_at="$(iso_seconds_ago 1)"
-	dispatch_body='<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\nDispatching worker (deterministic).'
+	dispatch_body=$'<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\nDispatching worker (deterministic).'
 
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
@@ -292,6 +299,11 @@ test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
 		print_result "ops-wrapped stale worker takeover claim includes reason" 0
 	else
 		print_result "ops-wrapped stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
+	fi
+	if printf '%s' "$post_body" | grep -q '<!-- ops:start' && printf '%s' "$post_body" | grep -q '<!-- ops:end -->'; then
+		print_result "claim comments are ops-wrapped" 0
+	else
+		print_result "claim comments are ops-wrapped" 1 "body: ${post_body:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -600,7 +612,9 @@ test_claim_skips_takeover_reason_after_terminal() {
 	local tmp_dir
 	tmp_dir="$(mktemp -d)"
 	local mock_path
-	mock_path="$(create_stale_worker_mock_gh "$tmp_dir" "CLAIM_RELEASED reason=worker_complete")"
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir" "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=worker_complete
+<!-- ops:end -->")"
 
 	local dispatch_created_at terminal_created_at claim_created_at output exit_code
 	dispatch_created_at="$(iso_seconds_ago 120)"
@@ -612,7 +626,9 @@ test_claim_skips_takeover_reason_after_terminal() {
 		MOCK_GH_STATE_DIR="$tmp_dir" \
 		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
 		MOCK_TERMINAL_CREATED_AT="$terminal_created_at" \
-		MOCK_TERMINAL_BODY="CLAIM_RELEASED reason=worker_complete" \
+		MOCK_TERMINAL_BODY="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=worker_complete
+<!-- ops:end -->" \
 		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
 		DISPATCH_CLAIM_WINDOW=0 \
 		DISPATCH_CLAIM_MAX_AGE=300 \

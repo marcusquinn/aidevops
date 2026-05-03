@@ -66,13 +66,16 @@ _release_dispatch_claim() {
 	fi
 
 	local comment_body
-	comment_body="CLAIM_RELEASED reason=${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	if [[ -n "$exit_code_arg" ]]; then
 		comment_body="${comment_body} exit=${exit_code_arg}"
 	fi
 	if [[ -n "$session_count_arg" ]]; then
 		comment_body="${comment_body} session_count=${session_count_arg}"
 	fi
+	comment_body="${comment_body}
+<!-- ops:end -->"
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \

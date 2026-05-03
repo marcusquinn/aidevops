@@ -1235,7 +1235,9 @@ _release_dispatch_claim_on_abort() {
 	fi
 
 	local body
-	body="CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+<!-- ops:end -->"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \
 		--field body="$body" \

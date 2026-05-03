@@ -147,7 +147,8 @@ _stale_recovery_escalate() {
 
 	# Post escalation comment explaining the suspension
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- stale-recovery-tick:escalated (threshold=${_threshold}) -->
 **Stale recovery threshold reached** (t2008)
 
 This issue has been stale-recovered **${_prior_ticks}** consecutive time(s) without producing a PR. Further automated dispatch is suspended until a human reviews the root cause.
@@ -158,7 +159,8 @@ Recovery count: ${_prior_ticks} (threshold: ${_threshold})
 
 Marked \`needs-maintainer-review\`. Remove this label after investigating why workers keep failing (wrong brief, unimplementable scope, missing dependency, etc.) to re-enable dispatch.
 
-_This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._" \
+_This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 parent-task guard and t2007 cost circuit breaker)._
+<!-- ops:end -->" \
 		2>/dev/null || true
 	printf 'STALE_ESCALATED: issue #%s in %s — unassigned %s, applied needs-maintainer-review (threshold %s reached after %s ticks)\n' \
 		"$issue_number" "$repo_slug" "$stale_assignees" "$_threshold" "$_prior_ticks"
@@ -206,7 +208,8 @@ _stale_recovery_apply() {
 	local _now_ts
 	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
 **Stale assignment recovered** (GH#15060)
 
 Previously assigned to: ${stale_assignees}
@@ -215,7 +218,8 @@ Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
 
 The assigned runner had no active worker process and produced no progress within the threshold. Unassigned and relabeled \`status:available\` for re-dispatch.
 
-_This recovery prevents the orphaned-assignment deadlock where offline runners permanently block all dispatch._" 2>/dev/null || true
+_This recovery prevents the orphaned-assignment deadlock where offline runners permanently block all dispatch._
+<!-- ops:end -->" 2>/dev/null || true
 
 	printf 'STALE_RECOVERED: issue #%s in %s — unassigned %s (%s)\n' \
 		"$issue_number" "$repo_slug" "$stale_assignees" "$reason"
@@ -261,8 +265,10 @@ _recover_stale_assignment() {
 	if [[ -n "$_open_pr" ]]; then
 		# Open PR exists — counter resets; post a reset marker and allow normal recovery
 		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->
-Stale recovery tick reset — open PR #${_open_pr} detected (t2008)" \
+			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- stale-recovery-tick:0 (reset: open PR #${_open_pr} detected) -->
+Stale recovery tick reset — open PR #${_open_pr} detected (t2008)
+<!-- ops:end -->" \
 			2>/dev/null || true
 	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
 		# Threshold reached — escalate and bail out (no normal recovery)
@@ -272,8 +278,10 @@ Stale recovery tick reset — open PR #${_open_pr} detected (t2008)" \
 		# Under threshold — increment tick counter, continue normal recovery
 		local _next_tick=$((_prior_ticks + 1))
 		gh_issue_comment "$issue_number" --repo "$repo_slug" \
-			--body "<!-- stale-recovery-tick:${_next_tick} -->
-Stale recovery tick ${_next_tick}/${_threshold} (t2008)" \
+			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- stale-recovery-tick:${_next_tick} -->
+Stale recovery tick ${_next_tick}/${_threshold} (t2008)
+<!-- ops:end -->" \
 			2>/dev/null || true
 	fi
 	# ── End stale-recovery escalation check ──────────────────────────────

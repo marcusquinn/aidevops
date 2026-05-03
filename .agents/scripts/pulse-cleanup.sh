@@ -622,7 +622,9 @@ _record_orphan_crash_classification() {
 	# the worker is dead. "Worker failed" is a recognised completion
 	# signal in dispatch-dedup-helper.sh has_dispatch_comment().
 	gh_issue_comment "$orphan_issue_num" --repo "$repo_slug_age" \
-		--body "Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch." \
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 commits). Cleared for re-dispatch.
+<!-- ops:end -->" \
 		>/dev/null 2>&1 || true
 
 	return 0
@@ -985,7 +987,8 @@ _post_launch_recovery_claim_released() {
 	local failure_reason="$4"
 
 	local body
-	body="CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 	# t2814: append worker-log tail when available so the failure is
 	# diagnosable from the audit trail alone (no log-file forensics needed).
@@ -1013,6 +1016,8 @@ ${_WORKER_LOG_TAIL_CONTENT}
 </details>"
 		fi
 	fi
+	body="${body}
+<!-- ops:end -->"
 
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \

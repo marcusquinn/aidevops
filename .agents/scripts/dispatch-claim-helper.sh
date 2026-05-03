@@ -211,10 +211,13 @@ _post_claim() {
 	version=$(_resolve_version)
 
 	local body
-	body="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
 	if [[ -n "$reason_fields" ]]; then
 		body+=" ${reason_fields}"
 	fi
+	body+="
+<!-- ops:end -->"
 
 	local comment_id
 	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \

@@ -186,7 +186,8 @@ _apply_cost_breaker_side_effects() {
 	local _budget_k=$((budget / 1000))
 
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- cost-circuit-breaker:fired tier=${tier} spent=${spent} budget=${budget} -->
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- cost-circuit-breaker:fired tier=${tier} spent=${spent} budget=${budget} -->
 🛑 **Cost circuit breaker fired** (t2007)
 
 Cumulative spend **${_spent_k}K tokens** across **${attempts}** worker attempt(s) exceeds \`tier:${tier}\` budget of **${_budget_k}K tokens**.
@@ -201,7 +202,8 @@ Maintainer review required before further dispatch. Possible causes:
 
 Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
 
-_This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task guard and t2008 stale-recovery escalation)._" 2>/dev/null || true
+_This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task guard and t2008 stale-recovery escalation)._
+<!-- ops:end -->" 2>/dev/null || true
 
 	# t3076: file root-cause meta-issue with forensics and dispatch a
 	# tier:thinking worker against it. Idempotent — second trip on the

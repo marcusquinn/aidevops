@@ -972,7 +972,8 @@ _log_no_work_skip_escalation() {
 	local safe_reason
 	safe_reason=$(_sanitize_markdown "$reason")
 
-	local comment_body="${marker}
+	local comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${marker}
 ## Tier Escalation Skipped: Infrastructure Failure (no_work)
 
 **Trigger:** ${failure_count} worker failure(s) classified as \`no_work\` — the worker exited during setup without reading any target files.
@@ -983,7 +984,8 @@ _log_no_work_skip_escalation() {
 
 After ${nmr_threshold} consecutive \`no_work\` failures the per-issue no_work circuit breaker (t2769) applies \`needs-maintainer-review\` with a \`cost-circuit-breaker:no_work_loop\` marker that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval correctly preserves NMR.
 
-_Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle-common.sh_"
+_Automated by \`escalate_issue_tier()\` no_work skip (t2387) in worker-lifecycle-common.sh_
+<!-- ops:end -->"
 
 	gh_issue_comment "$issue_number" --repo "$repo_slug" \
 		--body "$comment_body" 2>/dev/null || true

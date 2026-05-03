@@ -493,7 +493,9 @@ _release_claim() {
 	fi
 
 	local comment_body
-	comment_body="CLAIM_RELEASED reason=watchdog_kill:${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=watchdog_kill:${reason} runner=$(whoami) ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+<!-- ops:end -->"
 
 	# Best-effort — don't fail the watchdog if gh is unavailable
 	if command -v gh >/dev/null 2>&1; then
