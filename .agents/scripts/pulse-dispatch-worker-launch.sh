@@ -800,7 +800,6 @@ _dlw_nohup_launch() {
 	)
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
-			AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1
 			AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1
 		)
 	fi
@@ -1045,8 +1044,8 @@ _dlw_canary_preflight() {
 	fi
 	local -a _canary_env=()
 	if _dlw_min_worker_floor_active; then
-		_canary_env+=(AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1 AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1)
-		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — bypassing canary CPU/load overload preflight only" >>"$LOGFILE"
+		_canary_env+=(AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE=1)
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: minimum worker floor active — canary still checks runtime/model health only" >>"$LOGFILE"
 	fi
 
 	if env "${_canary_env[@]}" "${_canary_cmd[@]}" >>"$worker_log" 2>&1; then

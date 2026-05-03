@@ -364,9 +364,9 @@ dispatch_max() {
 	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
-	# t3418: if the minimum worker floor is active, recent CPU/load throttling
-	# is a soft signal and must not collapse dispatch below the floor. Explicit
-	# dispatch_floor() callers still force the floor path.
+	# t3418/t3558: if the minimum worker floor is active, runtime launch
+	# throttling is a soft signal and must not collapse dispatch below the
+	# floor. Explicit dispatch_floor() callers still force the floor path.
 	# _dispatch_should_use_floor_path returns 0 when the runtime is degraded
 	# (throttle file present) OR when an explicit caller invoked dispatch_floor
 	# (which sets _DISPATCH_FORCE_FLOOR=1). The floor path preserves the
@@ -672,7 +672,7 @@ apply_dispatch_max() {
 # Re-run dispatch_max while the active-worker count is below the configured
 # minimum floor and dispatch is still making progress.
 #
-# The floor is an active-worker floor, not merely a CPU/load throttle bypass:
+# The floor is an active-worker floor, not merely a launch-throttle bypass:
 # a partial launch/failure round can leave active workers below the floor even
 # though dispatch_max attempted candidates. Hard stops remain hard because each
 # dispatch_max call re-checks STOP_FLAG, GraphQL budget, candidate eligibility,

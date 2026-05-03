@@ -4,18 +4,16 @@
 #
 # test-canary-saturation-classification.sh — t3549 (GH#22615)
 #
-# Regression test for the saturation-aware canary failure classifier.
-# Replaces the load-average-based pre-flight overload check with a
-# post-failure decision: timeout-class exits classify as `overload` only
-# when cpu-saturation-helper.sh reports sustained saturation; otherwise
-# they classify as `timeout` (90s TTL) so transient blips recover quickly.
+# Regression test for advisory-only CPU saturation handling. The load-average
+# pre-flight overload check is gone, and timeout-class canary exits classify
+# as `timeout` regardless of cpu-saturation-helper.sh output.
 #
 # Test cases:
-#   1. Timeout exit + saturated samples → reason=overload (300s TTL)
+#   1. Timeout exit + saturated samples → reason=timeout (no CPU throttle)
 #   2. Timeout exit + idle samples → reason=timeout (90s TTL)
 #   3. Timeout exit + insufficient samples → reason=timeout (fail-open)
 #   4. Auth-error pattern → reason=auth_error (saturation ignored)
-#   5. Helper missing → reason=timeout (fail-open)
+#   5. Helper missing → reason=timeout (no helper dependency)
 #   6. cpu-saturation-helper.sh check returns matching exit codes for
 #      saturated, mixed, and short-span sample windows.
 
@@ -188,13 +186,12 @@ print_step() { return 0; }
 print_success() { return 0; }
 print_header() { return 0; }
 
-# Surgically extract just the two functions we care about from the lib via
-# eval — sourcing the whole file pulls in many side effects. The functions
-# are pure logic over their args plus the helper script.
+# Surgically extract just the classifier from the lib via eval — sourcing
+# the whole file pulls in many side effects. The function deliberately does
+# not consult CPU/load helpers.
 extract_classifier() {
 	awk '
 		/^_classify_canary_failure_reason\(\)/ { in_fn = 1 }
-		/^_classify_is_saturated\(\)/ { in_fn = 1 }
 		in_fn { print }
 		in_fn && /^}$/ { in_fn = 0 }
 	' "${SCRIPT_DIR}/headless-runtime-lib.sh"
@@ -229,13 +226,13 @@ run_classifier() {
 	_classify_canary_failure_reason "$output_file" "$exit_code"
 }
 
-test_classifier_timeout_saturated_to_overload() {
+test_classifier_timeout_saturated_to_timeout() {
 	local result
 	result=$(run_classifier saturated 124 "")
-	if [[ "$result" == "overload" ]]; then
-		print_result "classifier: exit=124 + saturated → overload" 0
+	if [[ "$result" == "timeout" ]]; then
+		print_result "classifier: exit=124 + saturated → timeout (no CPU throttle)" 0
 	else
-		print_result "classifier: exit=124 + saturated → overload" 1 "got=$result"
+		print_result "classifier: exit=124 + saturated → timeout (no CPU throttle)" 1 "got=$result"
 	fi
 	return 0
 }
@@ -284,17 +281,17 @@ test_classifier_runtime_error_unaffected() {
 	return 0
 }
 
-test_classifier_helper_missing_fail_open() {
-	# Point at a non-existent helper to verify fail-open behaviour.
+test_classifier_helper_missing_no_dependency() {
+	# Point at a non-existent helper to verify there is no CPU helper dependency.
 	local saved_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="${TEST_ROOT}/no-such-dir"
 	local result
 	result=$(run_classifier saturated 124 "")
 	SCRIPT_DIR="$saved_script_dir"
 	if [[ "$result" == "timeout" ]]; then
-		print_result "classifier: helper missing → timeout (fail-open)" 0
+		print_result "classifier: helper missing → timeout (no CPU dependency)" 0
 	else
-		print_result "classifier: helper missing → timeout (fail-open)" 1 "got=$result"
+		print_result "classifier: helper missing → timeout (no CPU dependency)" 1 "got=$result"
 	fi
 	return 0
 }
@@ -307,12 +304,12 @@ test_helper_check_mixed_idle
 test_helper_check_short_span
 test_helper_check_no_samples
 test_helper_report_summary_format
-test_classifier_timeout_saturated_to_overload
+test_classifier_timeout_saturated_to_timeout
 test_classifier_timeout_idle_to_timeout
 test_classifier_timeout_no_samples_to_timeout
 test_classifier_auth_error_ignores_saturation
 test_classifier_runtime_error_unaffected
-test_classifier_helper_missing_fail_open
+test_classifier_helper_missing_no_dependency
 
 echo ""
 echo "===================="
