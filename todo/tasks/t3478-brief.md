@@ -48,7 +48,9 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
   filed child owns `_feedback/captures/` and the required source/timestamp/
   actor/context/channel/sentiment/sensitivity/consent/retention/provenance
   capture metadata in `.agents/aidevops/feedback.md`.
-- t3524 / #22512 — Phase 2: retention and sensitivity policy.
+- t3524 / #22512 — Phase 2: retention and sensitivity policy; filed child owns
+  retention outcomes, sensitivity tiers, anonymization requirements, and
+  cross-plane promotion constraints in `.agents/aidevops/feedback.md`.
 - t3525 / #22515 — Phase 3: mining workflow and evidence thresholds; filed as
   the child that documents clustering, deduplication, review gates, and promotion
   thresholds in `.agents/aidevops/feedback.md`.
@@ -64,7 +66,7 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
 Decomposition planned as 5 phases:
 
 - **Phase 1 — capture contract**: define `_feedback/captures/` and normalized fields for source, timestamp, actor/segment, context, channel, sentiment, sensitivity, and consent/retention.
-- **Phase 2 — retention and sensitivity policy**: define which feedback can be long-lived, anonymized, privileged, client-scoped, or deleted; align with Markdoc sensitivity tags when available.
+- **Phase 2 — retention and sensitivity policy**: define which feedback can be long-lived, anonymized, privileged, client-scoped, or deleted; align with Markdoc sensitivity tags when available. Child #22512 owns this policy without closing parent #22373.
 - **Phase 3 — mining workflow**: design clustering, deduplication, theme extraction, evidence thresholds, and review gates before promotion.
 - **Phase 4 — promotion paths**: specify when feedback becomes `_knowledge/insights/`, a `_campaigns` research input, a `_projects` requirement, a `_cases` note, or a new TODO/GitHub task.
 - **Phase 5 — CLI and routines**: design `aidevops feedback capture|list|mine|promote|retire` plus recurring mining/reporting cadence; child #22519 owns the design contract without closing parent #22373.
