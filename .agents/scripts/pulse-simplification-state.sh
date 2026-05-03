@@ -298,7 +298,7 @@ _simplification_state_prune() {
 		local stale_paths_json
 		stale_paths_json=$(printf '%b' "$stale_paths" | jq -R . | jq -s .)
 		jq --argjson paths "${stale_paths_json:-[]}" \
-			'reduce $paths[] as $p (.; del(.files[$p])) | {"files": .files}' \
+			'reduce $paths[] as $p (.; del(.files[$p]))' \
 			"$state_file" >"$tmp_file" 2>/dev/null || {
 			# Fallback: remove entries one at a time using safe --arg (not string concat)
 			cp "$state_file" "$tmp_file"
