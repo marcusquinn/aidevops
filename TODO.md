@@ -4139,3 +4139,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3551 Phase 1 of #22616 - extract Diagnostics Discipline block to reference/diagnostics-discipline.md #aidevops #auto-dispatch #docs #self-improvement ref:GH#22619
 
 - [ ] t3550 AGENTS.md progressive disclosure - slim ~26.5K tokens to ~5K via phased extraction #aidevops #docs #parent #self-improvement ref:GH#22616
+
+- [ ] t3555 Make OpenAI availability checks match OpenCode provider auth precedence #auto-dispatch #bug ref:GH#22627
+
+- [ ] t3554 Add gpt-5.4-mini session rename model ref:GH#22624
+
+- [ ] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623
+
+- [ ] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622
