@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.26] - 2026-05-03
+
+### Fixed
+
+- keep startup advisories out of chat (#22671)
+- avoid TODO sync stashes during canonical recovery (#22670)
+
 ## [3.14.25] - 2026-05-03
 
 ### Fixed
