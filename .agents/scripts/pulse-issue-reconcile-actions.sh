@@ -352,7 +352,7 @@ _try_close_parent_tracker() {
 			local _declared_count
 			_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
 			if [[ "$_declared_count" -gt "$child_count" ]]; then
-				local _unfiled_phases _unfiled_count
+				local _unfiled_phases="" _unfiled_count=""
 				_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
 					awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "- Phase %s: %s\n", $1, $2 }')
 				_unfiled_count=$((_declared_count - child_count))
