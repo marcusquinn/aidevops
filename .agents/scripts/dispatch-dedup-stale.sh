@@ -404,7 +404,7 @@ _is_stale_assignment() {
 	# overall activity timestamp. Use --paginate --slurp so gh combines all
 	# pages before jq sorts them; `gh api --paginate --jq ...` applies jq per
 	# page, which can leave page-1 timestamps ahead of newer activity on long
-	# issue threads and trigger false stale recovery (GH#3894 / t2769 incident).
+	# issue threads and trigger false stale recovery in the t2769 no_work path.
 	#
 	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
 	# that the assignment is stale — block this pulse cycle and retry next cycle.
