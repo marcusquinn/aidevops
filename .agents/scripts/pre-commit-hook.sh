@@ -790,6 +790,8 @@ _init_root_file_allowlist() {
 		".secretlintignore" ".secretlintrc.json"
 		# Tool configs (non-dotfile)
 		"biome.json"
+		"eslint.config.js" "eslint.config.mjs" "eslint.config.cjs"
+		"eslint.config.ts" "eslint.config.mts" "eslint.config.cts"
 		# Build/package files
 		"package.json" "bun.lock" "requirements.txt" "requirements-lock.txt"
 		# Scripts

@@ -95,9 +95,9 @@ test_dispatcher_exists() {
 test_pre_commit_no_slow_checks() {
 	local hook_file="$TEST_SCRIPTS_DIR/pre-commit-hook.sh"
 
-	# Extract main_pre_commit body (from function start to next function)
+	# Extract main_pre_commit body (from function start to closing brace)
 	local body
-	body=$(sed -n '/^main_pre_commit()/,/^main_pre_push()/p' "$hook_file")
+	body=$(sed -n '/^main_pre_commit()/,/^}/p' "$hook_file")
 
 	local rc=0
 	if echo "$body" | grep -q 'check_secrets'; then
@@ -125,7 +125,7 @@ test_pre_push_has_slow_checks() {
 
 	# Extract main_pre_push body
 	local body
-	body=$(sed -n '/^main_pre_push()/,/^main()/p' "$hook_file")
+	body=$(sed -n '/^main_pre_push()/,/^}/p' "$hook_file")
 
 	local rc=0
 	if ! echo "$body" | grep -q 'check_secrets'; then
@@ -148,7 +148,7 @@ test_pre_commit_has_fast_checks() {
 	local hook_file="$TEST_SCRIPTS_DIR/pre-commit-hook.sh"
 
 	local body
-	body=$(sed -n '/^main_pre_commit()/,/^main_pre_push()/p' "$hook_file")
+	body=$(sed -n '/^main_pre_commit()/,/^}/p' "$hook_file")
 
 	local rc=0
 	if ! echo "$body" | grep -q 'validate_duplicate_task_ids'; then
@@ -243,6 +243,44 @@ test_pre_push_dispatcher_sets_mode() {
 	return 0
 }
 
+# --- Test 13: ESLint flat config root files are allowlisted ---
+test_eslint_flat_config_root_allowlist() {
+	local hook_file="$TEST_SCRIPTS_DIR/pre-commit-hook.sh"
+	local rc=0
+	local config_file
+
+	for config_file in \
+		"eslint.config.js" \
+		"eslint.config.mjs" \
+		"eslint.config.cjs" \
+		"eslint.config.ts" \
+		"eslint.config.mts" \
+		"eslint.config.cts"; do
+		if ! grep -q "\"${config_file}\"" "$hook_file"; then
+			print_result "root allowlist permits ${config_file}" 1
+			rc=1
+		fi
+	done
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "root allowlist permits ESLint flat config variants" 0
+	fi
+	return 0
+}
+
+# --- Test 14: arbitrary root artifacts remain rejected ---
+test_arbitrary_root_artifact_not_allowlisted() {
+	local hook_file="$TEST_SCRIPTS_DIR/pre-commit-hook.sh"
+	local artifact_file="VERIFY-ROOT-ARTIFACT.md"
+
+	if grep -q "\"${artifact_file}\"" "$hook_file"; then
+		print_result "root allowlist rejects arbitrary verification artifacts" 1
+	else
+		print_result "root allowlist rejects arbitrary verification artifacts" 0
+	fi
+	return 0
+}
+
 # --- Run all tests ---
 echo "=== t2207: pre-commit/pre-push split regression test ==="
 echo ""
@@ -259,6 +297,8 @@ test_pre_push_marker
 test_status_reports_pre_push
 test_pre_commit_dispatcher_sets_mode
 test_pre_push_dispatcher_sets_mode
+test_eslint_flat_config_root_allowlist
+test_arbitrary_root_artifact_not_allowlisted
 
 echo ""
 echo "=== Results: $TESTS_RUN tests, $TESTS_FAILED failed ==="
