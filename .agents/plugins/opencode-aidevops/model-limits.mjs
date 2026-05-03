@@ -97,13 +97,20 @@ export const CLAUDE_MODEL_LIMITS = {
 };
 
 /**
- * OpenAI GPT-5.5 models report a 1M API context window, but Codex/OpenCode
- * sessions are effectively bounded at 400K. Current OpenCode auto-compacts at
- * `limit.input - reserved` when `limit.input` exists, and models.dev supplies a
- * stale 272K input limit. Registering input=420K preserves a 400K usable window
- * with OpenCode's default 20K reserved buffer instead of compacting near 252K.
+ * OpenAI GPT-5.x models can report model metadata that is either stale or
+ * absent from OpenCode's built-in provider list. Registering the models here
+ * keeps aidevops routing-table entries selectable in OpenCode and gives
+ * OpenCode a stable compaction boundary. GPT-5.5 models report a 1M API
+ * context window, but Codex/OpenCode sessions are effectively bounded at 400K.
+ * Current OpenCode auto-compacts at `limit.input - reserved` when `limit.input`
+ * exists, and models.dev supplies a stale 272K input limit. Registering
+ * input=420K preserves a 400K usable window with OpenCode's default 20K
+ * reserved buffer instead of compacting near 252K. GPT-5.4 mini is registered
+ * so OpenAI-backed low-cost tasks (including session-title repair prompts) can
+ * select the same model aidevops already routes for haiku/local tiers.
  */
 export const OPENAI_MODEL_LIMITS = {
+  "gpt-5.4-mini": { context: 200000, input: 180000, output: 64000 },
   "gpt-5.5":      { context: 500000, input: 420000, output: 128000 },
   "gpt-5.5-fast": { context: 500000, input: 420000, output: 128000 },
   "gpt-5.5-pro":  { context: 500000, input: 420000, output: 128000 },
