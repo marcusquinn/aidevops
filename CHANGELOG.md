@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.17] - 2026-05-03
+
+### Changed
+
+- prevent duplicate phase auto-filing (#22642)
+- Maintenance: mark t3557 complete (pr:#22641 completed:2026-05-03) [skip ci]
+- trigger phase autofile after REST fallback merge (#22635)
+- Maintenance: sync ref:GH#22640 to TODO.md [skip ci]
+
+### Fixed
+
+- remove CPU-based canary throttling (#22639)
+- reset pulse blockers when work is available (#22641)
+
 ## [3.14.16] - 2026-05-03
 
 ### Changed
