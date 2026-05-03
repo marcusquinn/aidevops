@@ -198,25 +198,9 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
   const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).split("\n")[0] || "X";
   const runtime = cacheMatch?.[2] || "OpenCode";
   const runtimeVersion = cacheMatch?.[3];
-  const advisoryLines = cacheLines.filter((line) =>
-    line.startsWith("[SECURITY ADVISORY]") ||
-    line.startsWith("[ERROR]") ||
-    line.startsWith("[WARN]") ||
-    line.startsWith("[WARNING]") ||
-    line.startsWith("Pulse stalled") ||
-    line.startsWith("[OPENCODE MAINTENANCE]") ||
-    /contribution\(s\) need/i.test(line));
   const versionLine = runtimeVersion
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
-  const advisoryInstruction = advisoryLines.length > 0
-    ? [
-        "",
-        "After the greeting, include this short startup advisory before answering the user's request:",
-        "",
-        ...advisoryLines.map((line) => `- ${line}`),
-      ]
-    : [];
 
   return [
     "## Session-start greeting order",
@@ -229,9 +213,10 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
     "What would you like to work on?",
     "",
     "Do this before tool calls, status updates, analysis summaries, or task work.",
-    ...advisoryInstruction,
+    "Do not include startup advisory/status/cache lines in chat; those are already shown by the OpenCode toast/sidebar surfaces.",
     "If the user launched the session with an initial message, greet first in the assistant response, then answer that message.",
-    "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast content.",
+    "If the initial user message is only a greeting/salutation, do not add another greeting or a second 'what would you like to work on' line after the exact greeting above.",
+    "Do not repeat the greeting after the first assistant turn, and do not duplicate the framework-status toast/sidebar content.",
   ].join("\n");
 }
 
