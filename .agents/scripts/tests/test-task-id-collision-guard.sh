@@ -4,7 +4,7 @@
 #
 # test-task-id-collision-guard.sh — Test harness for task-id-collision-guard.sh
 #
-# Covers all 18 acceptance criteria cases:
+# Covers all 19 acceptance criteria cases:
 #   1. Reject: t-ID > counter AND not in linked issue title
 #   2. Allow: t-ID ≤ counter (claimed)
 #   3. Allow: cross-reference confirmed via linked issue title
@@ -23,6 +23,7 @@
 #  16. Allow: check-pr skips merge commits via --no-merges regardless of subject (t2895)
 #  17. Allow: subagent/library name with t<digits> substring not extracted as t-ID (GH#21402 / t2993)
 #  18. Allow: multiple product names with embedded t<digits> cause no false positives (GH#21402 / t2993)
+#  19. Allow: cached branch-subject range claim is read even when it is the final line (GH#22558)
 
 set -u
 
@@ -738,7 +739,7 @@ test_repo_wide_claim_in_prose() {
 	# Create a temporary git repo with a prior merged claim commit
 	local base_repo="${tmpdir}/base"
 	mkdir -p "$base_repo"
-	git -C "$base_repo" init -q
+	git -C "$base_repo" init -q -b main
 	git -C "$base_repo" config user.email "test@test.local"
 	git -C "$base_repo" config user.name "Test"
 	git -C "$base_repo" config commit.gpgsign false
@@ -759,7 +760,6 @@ test_repo_wide_claim_in_prose() {
 	touch "${work_repo}/t50-marker.txt"
 	git -C "$work_repo" add "t50-marker.txt"
 	git -C "$work_repo" commit -q -m "chore: claim t50 [prior-merge]"
-	git -C "$work_repo" push -q origin main
 
 	# Create a feature branch for the new PR
 	git -C "$work_repo" checkout -q -b feature/t51-new-feature
@@ -880,6 +880,68 @@ test_check_pr_skips_merge_commits_via_no_merges() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 19: cached branch subjects keep a trailing newline for while-read loops
+# (GH#22558 — command substitution strips trailing newlines when populating the
+# cache. Range claims are found by a `while read` loop rather than the single-ID
+# grep path, so the final cached line must still be delivered to the loop.)
+# ---------------------------------------------------------------------------
+test_check_pr_cached_branch_subjects_read_final_range_claim() {
+	local name="case-19: cached branch subjects preserve final range-claim line"
+
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	# shellcheck disable=SC2064
+	trap "rm -rf '$tmpdir'" RETURN
+
+	local base_repo="${tmpdir}/base"
+	mkdir -p "$base_repo"
+	git -C "$base_repo" init -q -b main
+	git -C "$base_repo" config user.email "test@test.local"
+	git -C "$base_repo" config user.name "Test"
+	git -C "$base_repo" config commit.gpgsign false
+	git -C "$base_repo" config tag.gpgsign false
+	printf '200' >"${base_repo}/.task-counter"
+	git -C "$base_repo" add .task-counter
+	git -C "$base_repo" commit -q -m "init: counter=200"
+
+	local work_repo="${tmpdir}/work"
+	git clone -q "$base_repo" "$work_repo" 2>/dev/null
+	git -C "$work_repo" config user.email "test@test.local"
+	git -C "$work_repo" config user.name "Test"
+	git -C "$work_repo" config commit.gpgsign false
+	git -C "$work_repo" config tag.gpgsign false
+	git -C "$work_repo" checkout -q -b feature/test-branch
+
+	# The range claim is the oldest commit in base..HEAD, so `git log` emits it
+	# last. This reproduces the cached-output missing-newline failure path.
+	printf 'claim' >"${work_repo}/claim.txt"
+	git -C "$work_repo" add claim.txt
+	git -C "$work_repo" commit -q -m "chore: claim t120..t130 [test-nonce]"
+
+	printf 'feature' >"${work_repo}/feature.txt"
+	git -C "$work_repo" add feature.txt
+	git -C "$work_repo" commit -q -m "feat: implement t123 feature"
+
+	local fake_bin="${tmpdir}/bin"
+	mkdir -p "$fake_bin"
+	printf '#!/usr/bin/env bash\nexit 1\n' >"${fake_bin}/gh"
+	chmod +x "${fake_bin}/gh"
+
+	local rc
+	PATH="${fake_bin}:$PATH" \
+		GIT_DIR="${work_repo}/.git" \
+		bash "$GUARD" check-pr 9999 2>/dev/null
+	rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		pass "$name"
+	else
+		fail "$name" "expected exit 0 (final cached range claim read by while loop), got $rc"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Case 17: Allow — subagent/library name containing t<digits> is not a t-ID
 #           (GH#21402 / t2993 — context7 false-positive class)
 # ---------------------------------------------------------------------------
@@ -946,6 +1008,7 @@ main() {
 	test_check_pr_allows_pr_title_tid_confirmed_via_body
 	test_repo_wide_claim_in_prose
 	test_check_pr_skips_merge_commits_via_no_merges
+	test_check_pr_cached_branch_subjects_read_final_range_claim
 	test_no_false_positive_subagent_name
 	test_no_false_positive_multiple_subagent_names
 
