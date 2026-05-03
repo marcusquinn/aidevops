@@ -91,6 +91,18 @@ merge_branch_to_main() {
 	return 0
 }
 
+advance_origin_main() {
+	local origin_repo="$1"
+	local update_repo="$2"
+	local update_name="${update_repo##*/}"
+	git clone -q "$origin_repo" "$update_repo"
+	git -C "$update_repo" config user.email test@example.invalid
+	git -C "$update_repo" config user.name "Remote Branch Cleanup Test"
+	make_commit "$update_repo" "${update_name}.txt" "$update_name"
+	git -C "$update_repo" push -q origin main
+	return 0
+}
+
 install_gh_stub() {
 	local bin_dir="$1"
 	mkdir -p "$bin_dir"
@@ -174,10 +186,60 @@ run_apply_assertions() {
 	return 0
 }
 
+run_sync_assertions() {
+	local origin_repo="$TEST_ROOT/sync-origin.git"
+	local repo="$TEST_ROOT/sync-repo"
+	local output ahead_count
+	git init -q --bare "$origin_repo"
+	git clone -q "$origin_repo" "$repo"
+	git -C "$repo" config user.email test@example.invalid
+	git -C "$repo" config user.name "Remote Branch Cleanup Test"
+	make_commit "$repo" base.txt base
+	git -C "$repo" branch -M main
+	git -C "$repo" push -q -u origin main
+	git -C "$origin_repo" symbolic-ref HEAD refs/heads/main
+
+	advance_origin_main "$origin_repo" "$TEST_ROOT/sync-updater"
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo")
+	assert_contains "$output" "would-ff" "dry-run reports pending default-branch fast-forward"
+	assert_contains "$output" "behind origin/main; dry-run only" "dry-run explains sync is not applied"
+	ahead_count=$(git -C "$repo" rev-list --count HEAD..origin/main)
+	[[ "$ahead_count" == "1" ]] || fail "dry-run must not fast-forward local main"
+	pass "dry-run leaves local main behind origin/main"
+
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo" --apply)
+	assert_contains "$output" "fast-fwd" "apply fast-forwards clean default branch"
+	ahead_count=$(git -C "$repo" rev-list --count HEAD..origin/main)
+	[[ "$ahead_count" == "0" ]] || fail "apply should fast-forward local main"
+	pass "apply reconciles local main with origin/main"
+
+	git -C "$repo" checkout -qb feature-work
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo" --apply)
+	assert_contains "$output" "not default branch (main)" "non-default branch sync is skipped"
+
+	git -C "$repo" checkout -q main
+	advance_origin_main "$origin_repo" "$TEST_ROOT/sync-updater-dirty"
+	printf '%s\n' dirty >>"${repo}/base.txt"
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo" --apply)
+	assert_contains "$output" "worktree or index is dirty" "dirty default branch sync is skipped"
+	git -C "$repo" reset --hard -q HEAD
+	git -C "$repo" merge --ff-only -q origin/main
+
+	make_commit "$repo" local-ahead.txt local-ahead
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo" --apply)
+	assert_contains "$output" "local branch is ahead of origin/main" "ahead default branch sync is skipped"
+
+	advance_origin_main "$origin_repo" "$TEST_ROOT/sync-updater-diverged"
+	output=$(AIDEVOPS_REMOTE_BRANCH_CLEANUP_SKIP_GH=1 bash "$HELPER" --repo "$repo" --apply)
+	assert_contains "$output" "local branch has diverged from origin/main" "diverged default branch sync is skipped"
+	return 0
+}
+
 main() {
 	setup_repo
 	run_dry_run_assertions "$TEST_ROOT/repo"
 	run_apply_assertions "$TEST_ROOT/repo"
+	run_sync_assertions
 	return 0
 }
 

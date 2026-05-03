@@ -185,6 +185,81 @@ delete_branch() {
 	return 0
 }
 
+print_sync() {
+	local action="$1"
+	local branch="$2"
+	local reason="$3"
+	printf '%-10s %-55s %s\n' "$action" "$branch" "$reason"
+	return 0
+}
+
+sync_default_branch_after_cleanup() {
+	local default="$1"
+	local current upstream expected local_sha remote_sha merge_base
+
+	printf '\nDefault branch sync check:\n'
+	current=$(repo_git symbolic-ref --quiet --short HEAD 2>/dev/null) || current=""
+	if [[ -z "$current" ]]; then
+		print_sync "skip-sync" "$default" "detached HEAD"
+		return 0
+	fi
+	if [[ "$current" != "$default" ]]; then
+		print_sync "skip-sync" "$current" "not default branch (${default})"
+		return 0
+	fi
+
+	upstream=$(repo_git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null) || upstream=""
+	expected="${REMOTE_NAME}/${default}"
+	if [[ -z "$upstream" ]]; then
+		print_sync "skip-sync" "$current" "no upstream configured"
+		return 0
+	fi
+	if [[ "$upstream" != "$expected" ]]; then
+		print_sync "skip-sync" "$current" "upstream is ${upstream}, expected ${expected}"
+		return 0
+	fi
+	if ! repo_git diff --quiet || ! repo_git diff --cached --quiet; then
+		print_sync "skip-sync" "$current" "worktree or index is dirty"
+		return 0
+	fi
+
+	local_sha=$(repo_git rev-parse HEAD 2>/dev/null) || local_sha=""
+	remote_sha=$(repo_git rev-parse "$upstream" 2>/dev/null) || remote_sha=""
+	if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
+		print_sync "skip-sync" "$current" "unable to resolve local or upstream SHA"
+		return 0
+	fi
+	if [[ "$local_sha" == "$remote_sha" ]]; then
+		print_sync "up-to-date" "$current" "matches ${upstream}"
+		return 0
+	fi
+	merge_base=$(repo_git merge-base HEAD "$upstream" 2>/dev/null) || merge_base=""
+	if [[ -z "$merge_base" ]]; then
+		print_sync "skip-sync" "$current" "no merge-base with ${upstream}"
+		return 0
+	fi
+	if [[ "$remote_sha" == "$merge_base" ]]; then
+		print_sync "skip-sync" "$current" "local branch is ahead of ${upstream}"
+		return 0
+	fi
+	if [[ "$local_sha" != "$merge_base" ]]; then
+		print_sync "skip-sync" "$current" "local branch has diverged from ${upstream}"
+		return 0
+	fi
+
+	if [[ "$APPLY" != "1" ]]; then
+		print_sync "would-ff" "$current" "behind ${upstream}; dry-run only"
+		return 0
+	fi
+	if repo_git merge --ff-only "$upstream" >/dev/null 2>&1; then
+		remote_sha=$(repo_git rev-parse --short HEAD 2>/dev/null) || remote_sha="unknown"
+		print_sync "fast-fwd" "$current" "updated to ${remote_sha} from ${upstream}"
+	else
+		print_sync "failed" "$current" "git merge --ff-only ${upstream} failed"
+	fi
+	return 0
+}
+
 scan_branches() {
 	if [[ ! -d "$REPO_PATH/.git" && ! -f "$REPO_PATH/.git" ]]; then
 		print_error "Not a git worktree: $REPO_PATH"
@@ -260,6 +335,7 @@ scan_branches() {
 	if [[ "$APPLY" != "1" ]]; then
 		printf 'Dry-run only. Re-run with --apply to delete safe candidates.\n'
 	fi
+	sync_default_branch_after_cleanup "$default"
 	return 0
 }
 
