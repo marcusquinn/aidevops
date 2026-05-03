@@ -281,7 +281,10 @@ _deploy_agents_to_runtimes_bounded() {
 		sleep 1
 	done
 
-	wait "$_pid" 2>/dev/null
-	_rc=$?
-	return "$_rc"
+	wait "$_pid" 2>/dev/null || _rc=$?
+	if [[ "$_rc" -ne 0 ]]; then
+		print_warning "Runtime agent deployment exited non-zero (${_rc}) — skipping (non-critical)"
+		return 0
+	fi
+	return 0
 }

@@ -248,7 +248,12 @@ _install_complexity_scan_launchd() {
 CS_PLIST
 	)
 
-	if _launchd_install_if_changed "$cs_label" "$cs_plist" "$cs_plist_content"; then
+	if [[ -f "$cs_plist" ]] && [[ "$(<"$cs_plist")" == "$cs_plist_content" ]] && _launchd_has_agent "$cs_label"; then
+		# Best-effort hourly job already registered. Avoid forcing launchd recovery
+		# during every setup run; long-running background jobs can transiently report
+		# xpcproxy even while launchd will continue the scheduled interval normally.
+		print_info "Complexity scan enabled (launchd, hourly run)"
+	elif _launchd_install_if_changed "$cs_label" "$cs_plist" "$cs_plist_content"; then
 		print_info "Complexity scan enabled (launchd, hourly run)"
 	else
 		print_warning "Failed to load complexity scan LaunchAgent"
@@ -1021,7 +1026,12 @@ _install_peer_productivity_monitor_launchd() {
 PPM_PLIST
 	)
 
-	if _launchd_install_if_changed "$ppm_label" "$ppm_plist" "$ppm_plist_content"; then
+	if [[ -f "$ppm_plist" ]] && [[ "$(<"$ppm_plist")" == "$ppm_plist_content" ]] && _launchd_has_agent "$ppm_label"; then
+		# Best-effort interval job already registered. Avoid forcing setup-time
+		# launchd recovery for transient xpcproxy states; the monitor remains
+		# scheduled and any real install/update failure is still surfaced below.
+		print_info "Peer productivity monitor enabled (launchd, every 30 min)"
+	elif _launchd_install_if_changed "$ppm_label" "$ppm_plist" "$ppm_plist_content"; then
 		print_info "Peer productivity monitor enabled (launchd, every 30 min)"
 	else
 		print_warning "Failed to load peer-productivity-monitor LaunchAgent"

@@ -109,9 +109,12 @@ _deploy_agents_to_runtimes_bounded() {
 		sleep 1
 	done
 
-	wait "\$_pid" 2>/dev/null
-	_rc=\$?
-	return "\$_rc"
+	wait "\$_pid" 2>/dev/null || _rc=\$?
+	if [[ "\$_rc" -ne 0 ]]; then
+		print_warning "bounded: exited non-zero (\${_rc}) — non-critical"
+		return 0
+	fi
+	return 0
 }
 
 _deploy_agents_to_runtimes_bounded
@@ -262,6 +265,49 @@ test_bounded_wrapper_timeout_env_respected() {
 	return 0
 }
 
+test_bounded_wrapper_child_failure_is_noncritical_without_err_trap_noise() {
+	local test_tmp_dir
+	test_tmp_dir=$(make_test_tmp_dir)
+	local script="${test_tmp_dir}/child_failure.sh"
+	local wrapper_definition=""
+
+	wrapper_definition=$(awk '
+		/^_deploy_agents_to_runtimes_bounded\(\)/{found=1; depth=0}
+		found {print}
+		found && /\{/{depth++}
+		found && /\}/{depth--; if(depth<=0){exit}}
+	' "$AGENT_RUNTIME_SH")
+
+	if [[ -z "$wrapper_definition" ]]; then
+		print_result "child failure wrapper extraction succeeds" 1 "function not found in ${AGENT_RUNTIME_SH}"
+		return 0
+	fi
+
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'set -Eeuo pipefail'
+		printf '%s\n' 'trap '\''rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2'\'' ERR'
+		printf '%s\n' 'print_warning() { printf "[WARNING] %s\n" "$*"; return 0; }'
+		printf '%s\n' 'deploy_agents_to_runtimes() { return 7; }'
+		printf '%s\n' 'AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT=5'
+		printf '%s\n' "$wrapper_definition"
+		printf '%s\n' '_deploy_agents_to_runtimes_bounded'
+	} >"$script"
+	chmod +x "$script"
+
+	local output=""
+	local rc=0
+	output=$(bash "$script" 2>&1) || rc=$?
+
+	if [[ "$rc" -eq 0 && "$output" == *"non-critical"* && "$output" != *"[ERROR]"* ]]; then
+		print_result "child deploy failure is non-critical without ERR trap noise" 0
+	else
+		print_result "child deploy failure is non-critical without ERR trap noise" 1 \
+			"rc=$rc output=${output}"
+	fi
+	return 0
+}
+
 test_real_bounded_wrapper_timeout_returns_zero() {
 	local test_tmp_dir
 	test_tmp_dir=$(make_test_tmp_dir)
@@ -316,6 +362,7 @@ main() {
 	test_bounded_wrapper_fast_path
 	test_bounded_wrapper_kills_slow_deployment_without_failing_setup
 	test_bounded_wrapper_timeout_env_respected
+	test_bounded_wrapper_child_failure_is_noncritical_without_err_trap_noise
 	test_real_bounded_wrapper_timeout_returns_zero
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"

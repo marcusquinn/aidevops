@@ -873,6 +873,151 @@ PROFILE_PLIST
 	return 0
 }
 
+test_interval_jobs_skip_unchanged_loaded_recovery() {
+	local fake_home="$TEST_DIR/home_interval_jobs"
+	mkdir -p "$fake_home/Library/LaunchAgents" "$fake_home/logs"
+	local complexity_plist="$fake_home/Library/LaunchAgents/sh.aidevops.complexity-scan.plist"
+	local peer_plist="$fake_home/Library/LaunchAgents/sh.aidevops.peer-productivity-monitor.plist"
+	local stderr_file="$TEST_DIR/interval-jobs-stderr.log"
+	local install_count=0
+
+	_launchd_has_agent() { return 0; }
+	_launchd_install_if_changed() { install_count=$((install_count + 1)); return 1; }
+
+	local orig_home="$HOME"
+	HOME="$fake_home"
+
+	local complexity_content peer_content
+	complexity_content=$(_install_complexity_scan_launchd_render_fixture "sh.aidevops.complexity-scan" "/fake/complexity-scan-runner.sh" "$fake_home/logs")
+	peer_content=$(_install_peer_productivity_monitor_launchd_render_fixture "sh.aidevops.peer-productivity-monitor" "/fake/peer-productivity-monitor.sh" "$fake_home/logs")
+	printf '%s\n' "$complexity_content" >"$complexity_plist"
+	printf '%s\n' "$peer_content" >"$peer_plist"
+
+	local rc=0
+	_install_complexity_scan_launchd "sh.aidevops.complexity-scan" "/fake/complexity-scan-runner.sh" "$fake_home/logs" 2>"$stderr_file" || rc=$?
+	_install_peer_productivity_monitor_launchd "sh.aidevops.peer-productivity-monitor" "/fake/peer-productivity-monitor.sh" "$fake_home/logs" 2>>"$stderr_file" || rc=$?
+
+	HOME="$orig_home"
+	unset -f _launchd_has_agent _launchd_install_if_changed
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "interval_jobs_skip_unchanged_loaded_recovery" 1 "expected install return 0, got $rc"
+		return 0
+	fi
+	if [[ "$install_count" -ne 0 ]]; then
+		print_result "interval_jobs_skip_unchanged_loaded_recovery" 1 "expected unchanged loaded jobs to skip install, got $install_count"
+		return 0
+	fi
+	if grep -q '\[WARN\]' "$stderr_file"; then
+		print_result "interval_jobs_skip_unchanged_loaded_recovery" 1 \
+			"interval launchd install emitted warning: $(tr '\n' ' ' <"$stderr_file")"
+		return 0
+	fi
+
+	print_result "interval_jobs_skip_unchanged_loaded_recovery" 0
+	return 0
+}
+
+_install_complexity_scan_launchd_render_fixture() {
+	local cs_label="$1"
+	local cs_script="$2"
+	local _cs_log_dir="$3"
+	local _xml_cs_script _xml_cs_home _xml_cs_log_dir
+	_xml_cs_script=$(_xml_escape "$cs_script")
+	_xml_cs_home=$(_xml_escape "$HOME")
+	_xml_cs_log_dir=$(_xml_escape "$_cs_log_dir")
+	cat <<CS_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${cs_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_cs_script}</string>
+		<string>run</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_cs_log_dir}/complexity-scan-runner.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_cs_log_dir}/complexity-scan-runner.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(aidevops_launchd_sanitized_path)</string>
+		<key>HOME</key>
+		<string>${_xml_cs_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+CS_PLIST
+	return 0
+}
+
+_install_peer_productivity_monitor_launchd_render_fixture() {
+	local ppm_label="$1"
+	local ppm_script="$2"
+	local _ppm_log_dir="$3"
+	local _xml_ppm_script _xml_ppm_home _xml_ppm_log_dir
+	_xml_ppm_script=$(_xml_escape "$ppm_script")
+	_xml_ppm_home=$(_xml_escape "$HOME")
+	_xml_ppm_log_dir=$(_xml_escape "$_ppm_log_dir")
+	cat <<PPM_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${ppm_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_ppm_script}</string>
+		<string>observe</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>1800</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_ppm_log_dir}/peer-productivity-launchd.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_ppm_log_dir}/peer-productivity-launchd.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>$(aidevops_launchd_sanitized_path)</string>
+		<key>HOME</key>
+		<string>${_xml_ppm_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PPM_PLIST
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -900,6 +1045,7 @@ main() {
 
 	_load_schedulers_platform_functions
 	test_profile_readme_install_does_not_kickstart
+	test_interval_jobs_skip_unchanged_loaded_recovery
 
 	# Test (b) needs _install_pulse_launchd from schedulers.sh
 	_load_schedulers_functions
