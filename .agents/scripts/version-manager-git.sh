@@ -251,10 +251,48 @@ find_pr_for_task_from_commits() {
 # Changes [ ] to [x], adds proof-log (pr:#NNN or verified:date) and completed: timestamp.
 # Arguments: task_id todo_file today_short
 # Returns: 0 if marked, 1 if already complete, 2 if not found
+_dedupe_completed_task_lines() {
+	local task_id="$1"
+	local todo_file="$2"
+	local escaped_id completed_pattern duplicate_count tmp_file
+
+	escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
+	completed_pattern="^[[:space:]]*- \\[x\\] ${escaped_id}[[:space:]]"
+	duplicate_count=$(grep -Ec "$completed_pattern" "$todo_file" 2>/dev/null || true)
+
+	if [[ "$duplicate_count" -le 1 ]]; then
+		return 1
+	fi
+
+	tmp_file=$(mktemp "${todo_file}.dedupe.XXXXXX") || return 2
+	if ! awk -v task_pattern="$escaped_id" '
+		BEGIN { pattern = "^[[:space:]]*- \\[x\\] " task_pattern "[[:space:]]" }
+		$0 ~ pattern {
+			seen += 1
+			if (seen > 1) {
+				next
+			}
+		}
+		{ print }
+	' "$todo_file" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 2
+	fi
+
+	if ! mv "$tmp_file" "$todo_file"; then
+		rm -f "$tmp_file"
+		return 2
+	fi
+
+	print_warning "Removed duplicate completed TODO.md entries for $task_id"
+	return 0
+}
+
 _mark_single_task_complete() {
 	local task_id="$1"
 	local todo_file="$2"
 	local today_short="$3"
+	local dedupe_rc=0
 
 	# Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
 	local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
@@ -285,9 +323,22 @@ _mark_single_task_complete() {
 			sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log} completed:$today_short/" "$todo_file"
 		fi
 
+		_dedupe_completed_task_lines "$task_id" "$todo_file" || dedupe_rc=$?
+		if [[ "$dedupe_rc" -eq 2 ]]; then
+			print_error "Failed to remove duplicate completed TODO.md entries for $task_id"
+			return 2
+		fi
+
 		print_success "Marked $task_id as complete (${proof_log# })"
 		return 0
 	elif grep -qE "$checked_pattern" "$todo_file"; then
+		_dedupe_completed_task_lines "$task_id" "$todo_file" || dedupe_rc=$?
+		if [[ "$dedupe_rc" -eq 0 ]]; then
+			return 0
+		elif [[ "$dedupe_rc" -eq 2 ]]; then
+			print_error "Failed to remove duplicate completed TODO.md entries for $task_id"
+			return 2
+		fi
 		print_info "Task $task_id already marked complete"
 		return 1
 	else
