@@ -172,6 +172,12 @@ assert_contains "credential replacement present" "[redacted-credential]" "$resul
 result=$(bash "$HELPER" sanitize "Use ghp_1234567890abcdefghijklmnop for auth")
 assert_not_contains "GH token redacted" "ghp_1234567890" "$result"
 
+# Test 4b: Fine-grained GitHub PATs are redacted
+fake_fine_grained_pat="github_pat_abcdefghij1234567890"
+result=$(bash "$HELPER" sanitize "Use ${fake_fine_grained_pat} for auth")
+assert_not_contains "fine-grained GH token redacted" "$fake_fine_grained_pat" "$result"
+assert_contains "fine-grained GH replacement present" "[redacted-credential]" "$result"
+
 # Test 5: Email addresses are redacted
 result=$(bash "$HELPER" sanitize "Contact user@company.com for access")
 assert_not_contains "email redacted" "user@company.com" "$result"
