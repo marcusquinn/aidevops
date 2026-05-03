@@ -478,10 +478,56 @@ _find_existing_phase_child_issue() {
 		--state open \
 		--search "$search_query" \
 		--json number,title \
-		--jq ".[] | select(.title == \"${issue_title}\") | .number" 2>/dev/null \
+		--jq '.[] | [.number, .title] | @tsv' 2>/dev/null \
+		| while IFS=$'\t' read -r candidate_num candidate_title; do
+			if [[ "$candidate_title" == "$issue_title" ]]; then
+				printf '%s\n' "$candidate_num"
+			fi
+		done \
 		| sort -n \
 		| head -1) || issue_num=""
 	printf '%s' "$issue_num"
+	return 0
+}
+
+#######################################
+# Create a phase child issue under an idempotency lock, or reuse an already
+# open deterministic-title child if another worker created it first.
+#
+# Args: $1=parent_issue, $2=parent_title, $3=phase_num, $4=phase_desc,
+#       $5=repo_slug, $6=trigger_reason
+# Output: child issue URL on stdout (empty on failure/lock contention)
+# Returns: 0 always
+#######################################
+_create_or_reuse_phase_child_issue() {
+	local parent_issue="$1"
+	local parent_title="$2"
+	local phase_num="$3"
+	local phase_desc="$4"
+	local repo_slug="$5"
+	local trigger_reason="${6:-post-merge}"
+	local lock_dir=""
+
+	lock_dir=$(_phase_acquire_filing_lock "$repo_slug" "$parent_issue" "$phase_num") || lock_dir=""
+	if [[ -z "$lock_dir" ]]; then
+		return 0
+	fi
+
+	local existing_issue_num
+	existing_issue_num=$(_find_existing_phase_child_issue "$repo_slug" "$parent_issue" "$phase_num" "$phase_desc")
+	if [[ -n "$existing_issue_num" ]]; then
+		_phase_log "Parent #${parent_issue}: Phase ${phase_num} already has open child #${existing_issue_num} by deterministic-title search — reuse"
+		_update_parent_phases_section "$parent_issue" "$repo_slug" "$phase_num" "$existing_issue_num"
+		_phase_release_filing_lock "$lock_dir"
+		printf 'https://github.com/%s/issues/%s' "$repo_slug" "$existing_issue_num"
+		return 0
+	fi
+
+	local new_issue_url
+	new_issue_url=$(_create_phase_child_issue \
+		"$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug" "$trigger_reason")
+	_phase_release_filing_lock "$lock_dir"
+	printf '%s' "${new_issue_url:-}"
 	return 0
 }
 
