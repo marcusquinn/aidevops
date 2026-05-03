@@ -281,6 +281,54 @@ _Detected by \`_try_close_parent_tracker\` (pulse-issue-reconcile.sh, t2786). Po
 }
 
 #######################################
+# t2786 / GH#20871 / t3544: compose the unfiled-phases note that the
+# parent-close path appends to its closing comment. Returns "" on
+# stdout when there is no `## Phases` section, no parent body, or no
+# unfiled rows. Otherwise returns a multi-line note listing each
+# unfiled phase and a count.
+#
+# Counting is over the structured parser's row output (see
+# _parse_phases_section in shared-phase-filing.sh). Each row is
+# `phase_num\tdescription\tmarker\tchild_ref`. Rows whose 4th tab
+# field (child_ref) is empty are unfiled.
+#
+# IMPORTANT: do NOT compute unfiled count as `_declared_count - child_count`.
+# child_count is a union over graph + body + prose extractors and may
+# include children sourced outside `## Phases`. Counting unfiled rows
+# directly from the phases section keeps the count and the listed
+# phases in sync (Gemini review of PR #22605, t3544).
+#
+# Args: $1=parent_body, $2=parent_num, $3=slug, $4=child_count (for log)
+# Output: composed note (possibly empty) on stdout
+# Returns: 0 always
+#######################################
+_compose_unfiled_phases_note() {
+	local parent_body="$1" parent_num="$2" slug="$3" child_count="$4"
+	[[ -n "$parent_body" ]] || return 0
+
+	local _phases_section
+	_phases_section=$(_parse_phases_section "$parent_body")
+	[[ -n "$_phases_section" ]] || return 0
+
+	local _declared_count _unfiled_phases _unfiled_count
+	_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
+	_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
+		awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "- Phase %s: %s\n", $1, $2 }')
+	_unfiled_count=$(printf '%s\n' "$_phases_section" | \
+		awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { c++ } END { print c+0 }')
+	[[ "$_unfiled_count" -gt 0 ]] || return 0
+
+	# shellcheck disable=SC2016
+	# Single quotes intentional: literal markdown backticks around `## Phases`
+	# must be preserved in the output — no shell expansion is intended.
+	printf '\n\n**Note:** %s declared phase(s) remain unfiled:\n\n%s\nRe-open this parent and file additional phase children if more work is planned. The `## Phases` section is a roadmap, not a contract — closing here reflects that all *filed* children are done.' \
+		"$_unfiled_count" "$_unfiled_phases"
+
+	echo "[pulse-wrapper] Reconcile parent-task: closing #${parent_num} in ${slug} with unfiled-phases note — declared ${_declared_count} phases, ${_unfiled_count} unfiled, ${child_count} children counted (t3544)" >>"${LOGFILE:-/dev/null}"
+	return 0
+}
+
+#######################################
 # t2138 / t3544: extract per-parent close logic. Keeps
 # reconcile_completed_parent_tasks under the 100-line shell-complexity
 # threshold and makes the close decision independently testable.
@@ -326,46 +374,25 @@ _try_close_parent_tracker() {
 	# Filtering it out here meant single-child parents could never close
 	# OR receive the declared-vs-filed nudge — they silently rotted (canonical:
 	# #22371 / #22372 with one filed Phase 1 child closed for hours with
-	# no action). The remaining gates (all_closed, declared-vs-filed
-	# augmentation, gh issue close result) are sufficient.
-	[[ "$all_closed" == "true" ]] || return 1
-
-	# t2786 / GH#20871 / t3544: declared-vs-filed augmentation. If the
-	# parent body declares more phases in a ## Phases section than have
-	# been filed as child issues, append the unfiled phase list to the
-	# closing comment so the maintainer can re-open and file the rest if
-	# more work is planned. Pre-t3544 this *blocked* close and posted a
-	# one-time nudge; the nudge produced no further action and the parent
-	# stayed open forever (silent rot). The closing comment now carries
-	# the same information directly, and re-opening is recoverable.
+	# no action). The remaining gates (all_closed, child_count>0,
+	# declared-vs-filed augmentation, gh issue close result) are sufficient.
 	#
-	# Counting is over the structured parser's row output (see
-	# _parse_phases_section delegation comment near top of this module).
-	# Each row represents one canonically-declared phase (list-form or
-	# bold-form). Rows starting with a digit form the count; rows with
-	# an empty 4th tab field (child_ref) are unfiled.
+	# child_count > 0 is required: pre-t3544 the heuristic implicitly
+	# guarded this, but with the heuristic gone, a parent whose only
+	# refs are non-issue (PRs, external) would skip the per-child
+	# accounting loop entirely (`continue` on `state == unknown`),
+	# leave child_count=0, all_closed defaulting to "true" (no
+	# child set it false), and produce the absurd close-comment
+	# "All 0 filed child task(s) are resolved." Require at least
+	# one real child issue (Gemini review of PR #22605, t3544).
+	[[ "$all_closed" == "true" && "$child_count" -gt 0 ]] || return 1
+
+	# t2786 / GH#20871 / t3544: declared-vs-filed augmentation —
+	# delegated to _compose_unfiled_phases_note to keep this function
+	# under the 100-line shell-complexity gate. Returns "" when there
+	# is no `## Phases` section, no parent body, or no unfiled rows.
 	local _unfiled_note=""
-	if [[ -n "$parent_body" ]]; then
-		local _phases_section
-		_phases_section=$(_parse_phases_section "$parent_body")
-		if [[ -n "$_phases_section" ]]; then
-			local _declared_count
-			_declared_count=$(printf '%s\n' "$_phases_section" | safe_grep_count -E '^[0-9]+	')
-			if [[ "$_declared_count" -gt "$child_count" ]]; then
-				local _unfiled_phases="" _unfiled_count=""
-				_unfiled_phases=$(printf '%s\n' "$_phases_section" | \
-					awk -F'\t' '$1 ~ /^[0-9]+$/ && $4 == "" { printf "- Phase %s: %s\n", $1, $2 }')
-				_unfiled_count=$((_declared_count - child_count))
-				_unfiled_note="
-
-**Note:** ${_unfiled_count} declared phase(s) remain unfiled:
-
-${_unfiled_phases}
-Re-open this parent and file additional phase children if more work is planned. The \`## Phases\` section is a roadmap, not a contract — closing here reflects that all *filed* children are done."
-				echo "[pulse-wrapper] Reconcile parent-task: closing #${parent_num} in ${slug} with unfiled-phases note — declared ${_declared_count} phases, ${child_count} filed (t3544)" >>"${LOGFILE:-/dev/null}"
-			fi
-		fi
-	fi
+	_unfiled_note=$(_compose_unfiled_phases_note "$parent_body" "$parent_num" "$slug" "$child_count")
 
 	gh issue close "$parent_num" --repo "$slug" \
 		--comment "## All filed child tasks completed — closing parent tracker

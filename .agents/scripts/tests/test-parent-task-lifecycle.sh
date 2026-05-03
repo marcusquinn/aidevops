@@ -342,18 +342,42 @@ assert_grep_fixed \
 # and posted a one-time nudge that produced no follow-on action; this
 # left single-filed-child parents (#22371, #22372) silently rotting
 # with all filed children closed and the parent still OPEN.
+#
+# B7a (post-Gemini-review of PR #22605): note composition is delegated
+# to _compose_unfiled_phases_note. The helper computes _unfiled_count
+# directly from phases-section rows (not _declared_count - child_count)
+# so the count always agrees with the listed unfiled phases even when
+# child_count includes non-Phases-section children.
 assert_grep_fixed \
-	'B7a: declared-vs-filed branch evaluates without returning 1' \
-	'if [[ "$_declared_count" -gt "$child_count" ]]; then' \
+	'B7a: unfiled-phases helper exists and gates on _unfiled_count > 0' \
+	'_compose_unfiled_phases_note() {' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
-	'B7b: declared-vs-filed branch composes _unfiled_note for closing comment' \
-	'_unfiled_note=' \
+	'B7b: _try_close_parent_tracker captures helper output as _unfiled_note' \
+	'_unfiled_note=$(_compose_unfiled_phases_note "$parent_body" "$parent_num" "$slug" "$child_count")' \
 	"$ACTIONS_TARGET"
 assert_grep_fixed \
 	'B7c: closing comment template embeds the unfiled-phases note' \
 	'${_unfiled_note}' \
 	"$ACTIONS_TARGET"
+# B7c-vacuous: t3544 + Gemini — close path requires child_count > 0
+# alongside all_closed. Pre-fix, a parent referencing only PRs/external
+# refs would skip the per-child loop, leave child_count=0, all_closed
+# defaulting to "true", and produce "All 0 filed child task(s) are
+# resolved." Verify the guard is in place.
+assert_grep_fixed \
+	'B7c-vacuous: close gate requires child_count > 0 (no vacuous-truth close)' \
+	'[[ "$all_closed" == "true" && "$child_count" -gt 0 ]] || return 1' \
+	"$ACTIONS_TARGET"
+# B7c-direct-count: helper computes _unfiled_count from phases-section
+# rows directly, NOT by subtracting child_count from _declared_count.
+TESTS_RUN=$((TESTS_RUN + 1))
+if grep -qE '_unfiled_count=\$\(\(_declared_count[[:space:]]*-[[:space:]]*child_count\)\)' "$ACTIONS_TARGET" 2>/dev/null; then
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: B7c-direct-count: _unfiled_count must not be derived as _declared_count - child_count (Gemini review of PR #22605)"
+else
+	echo "${TEST_GREEN}PASS${TEST_NC}: B7c-direct-count: _unfiled_count computed directly from phases-section rows"
+fi
 
 # B7d: t3544 — the `child_count >= 2` short-circuit MUST be removed.
 # Single-filed-child parents are legitimate (incremental phase rollout);
