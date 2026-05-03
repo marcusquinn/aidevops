@@ -222,8 +222,14 @@ _gh_idempotent_comment() {
 		existing_comments=$(gh pr view "$entity_number" --repo "$repo_slug" \
 			--json comments --jq '.comments[].body' 2>/dev/null)
 	else
-		existing_comments=$(gh api "repos/${repo_slug}/issues/${entity_number}/comments" \
-			--jq '.[].body' 2>/dev/null)
+		# t3565: GitHub's issue-comments REST endpoint defaults to the oldest
+		# 30 comments. Long-running issues can have idempotency markers beyond
+		# page 1, so normalize paginated gh output before grepping for markers.
+		existing_comments=$(gh api "repos/${repo_slug}/issues/${entity_number}/comments?per_page=100" \
+			--paginate --slurp 2>/dev/null | jq -r '
+				(if (type == "array" and ((.[0]? | type) == "array")) then .[] else . end)[]
+				| .body // ""
+			' 2>/dev/null)
 	fi
 	local api_exit=$?
 
