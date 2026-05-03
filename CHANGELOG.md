@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.24] - 2026-05-03
+
+### Changed
+
+- Maintenance: sync ref:GH#22664 to TODO.md [skip ci]
+
+### Fixed
+
+- preserve startup greeting advisories (#22666)
+- preserve gpt-5.5 compaction boundary (#22663)
+
 ## [3.14.23] - 2026-05-03
 
 ### Fixed
