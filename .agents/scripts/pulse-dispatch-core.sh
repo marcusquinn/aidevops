@@ -1198,6 +1198,42 @@ _release_dispatch_claim_on_abort() {
 	*[^A-Za-z0-9_.:-]* | "") reason="unknown" ;;
 	esac
 
+	# t3549 (GH#22615): for pre-launch aborts where the worker never
+	# started (canary preflight fail, eligibility gate, predispatch
+	# validator close, worktree precreation fail), the claim comment is
+	# noise — no audit trail value (no worker existed) and the issue
+	# thread accumulates 89+ DISPATCH_CLAIM/CLAIM_RELEASED pairs over a
+	# canary-failure storm. DELETE the original claim instead of posting a
+	# release receipt. The negative cache (90s timeout / 300s overload)
+	# carries the dedup signal locally; cross-runner dedup loses the lock
+	# but the next runner will face the same canary failure and back off
+	# the same way. For any other abort reason the legacy CLAIM_RELEASED
+	# audit comment is preserved.
+	local _is_pre_launch_abort=0
+	case "$reason" in
+		worker_launch_rc_2 | predispatch_validator_closed | eligibility_gate)
+			_is_pre_launch_abort=1
+			;;
+	esac
+
+	if [[ "$_is_pre_launch_abort" == "1" ]]; then
+		local _claim_helper="${SCRIPT_DIR}/dispatch-claim-helper.sh"
+		if [[ -x "$_claim_helper" ]]; then
+			# Use the helper's _delete_comment if exposed via subcommand,
+			# otherwise fall back to a direct gh api DELETE.
+			gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
+				--method DELETE >/dev/null 2>>"$LOGFILE" || {
+				echo "[dispatch_with_dedup] Warning: failed to delete dispatch claim ${_claim_comment_id} on pre-launch abort #${issue_number} (${reason})" >>"$LOGFILE"
+			}
+		else
+			gh api "repos/${repo_slug}/issues/comments/${_claim_comment_id}" \
+				--method DELETE >/dev/null 2>>"$LOGFILE" || true
+		fi
+		echo "[dispatch_with_dedup] Deleted dispatch claim ${_claim_comment_id} for pre-launch abort #${issue_number} (${reason}) — no worker started, audit trail noise eliminated (t3549)" >>"$LOGFILE"
+		_claim_comment_id=""
+		return 0
+	fi
+
 	local body
 	body="CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
