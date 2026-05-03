@@ -98,8 +98,8 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
   });
 });
 
-test("OpenAI startup injection preserves current auth when available", async () => {
-  const home = mkdtempSync(join(tmpdir(), "aidevops-openai-startup-preserve-"));
+test("OpenAI startup injection honors current auth availability", async () => {
+  const home = mkdtempSync(join(tmpdir(), "aidevops-openai-startup-"));
   const script = String.raw`
     import assert from "node:assert/strict";
     import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -113,48 +113,31 @@ test("OpenAI startup injection preserves current auth when available", async () 
     const poolPath = join(aidevopsDir, "oauth-pool.json");
     const authPath = join(opencodeDir, "auth.json");
 
-    writeFileSync(poolPath, JSON.stringify({ openai: [
+    async function injectWithPool(pool, auth) {
+      writeFileSync(poolPath, JSON.stringify(pool));
+      writeFileSync(authPath, JSON.stringify({ openai: auth }));
+      const authWrites = [];
+      const { injectOpenAIPoolToken } = await import("./oauth-pool.mjs?case=" + Math.random());
+      const ok = await injectOpenAIPoolToken({ auth: { set: async (entry) => authWrites.push(entry) } });
+      return { ok, authWrites, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
+    }
+
+    const preserved = await injectWithPool({ openai: [
       { email: "old@example.com", access: "old-token", refresh: "old-refresh", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_old" },
       { email: "current@example.com", access: "current-token", refresh: "current-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z", accountId: "acct_current" },
-    ] }));
-    writeFileSync(authPath, JSON.stringify({ openai: { type: "oauth", access: "current-token", refresh: "current-refresh", expires: Date.now() + 3600_000, accountId: "acct_current" } }));
+    ] }, { type: "oauth", access: "current-token", refresh: "current-refresh", expires: Date.now() + 3600_000, accountId: "acct_current" });
 
-    const authWrites = [];
-    const { injectOpenAIPoolToken } = await import("./oauth-pool.mjs?case=" + Math.random());
-    assert.equal(await injectOpenAIPoolToken({ auth: { set: async (entry) => authWrites.push(entry) } }), true);
-    assert.equal(authWrites[0].body.accountId, "acct_current");
-    const pool = JSON.parse(readFileSync(poolPath, "utf-8"));
-    assert.equal(pool.openai[1].status, "active");
-  `;
-  execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
-    cwd: join(import.meta.dirname, ".."),
-    env: { ...process.env, HOME: home, XDG_DATA_HOME: join(home, ".local", "share") },
-    stdio: "pipe",
-  });
-});
+    assert.equal(preserved.ok, true);
+    assert.equal(preserved.authWrites[0].body.accountId, "acct_current");
+    assert.equal(preserved.pool.openai[1].status, "active");
 
-test("OpenAI startup injection rotates away from unavailable current auth", async () => {
-  const home = mkdtempSync(join(tmpdir(), "aidevops-openai-startup-rotate-"));
-  const script = String.raw`
-    import assert from "node:assert/strict";
-    import { mkdirSync, writeFileSync } from "node:fs";
-    import { join } from "node:path";
-
-    const home = process.env.HOME;
-    const aidevopsDir = join(home, ".aidevops");
-    const opencodeDir = join(home, ".local", "share", "opencode");
-    mkdirSync(aidevopsDir, { recursive: true });
-    mkdirSync(opencodeDir, { recursive: true });
-    writeFileSync(join(aidevopsDir, "oauth-pool.json"), JSON.stringify({ openai: [
+    const rotated = await injectWithPool({ openai: [
       { email: "cooldown@example.com", access: "cooldown-token", refresh: "cooldown-refresh", expires: Date.now() + 3600_000, status: "rate-limited", cooldownUntil: Date.now() + 86400_000, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_cooldown" },
       { email: "fresh@example.com", access: "fresh-token", refresh: "fresh-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z", accountId: "acct_fresh" },
-    ] }));
-    writeFileSync(join(opencodeDir, "auth.json"), JSON.stringify({ openai: { type: "oauth", access: "cooldown-token", refresh: "cooldown-refresh", expires: Date.now() + 3600_000, accountId: "acct_cooldown" } }));
+    ] }, { type: "oauth", access: "cooldown-token", refresh: "cooldown-refresh", expires: Date.now() + 3600_000, accountId: "acct_cooldown" });
 
-    const authWrites = [];
-    const { injectOpenAIPoolToken } = await import("./oauth-pool.mjs?case=" + Math.random());
-    assert.equal(await injectOpenAIPoolToken({ auth: { set: async (entry) => authWrites.push(entry) } }), true);
-    assert.equal(authWrites[0].body.accountId, "acct_fresh");
+    assert.equal(rotated.ok, true);
+    assert.equal(rotated.authWrites[0].body.accountId, "acct_fresh");
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
     cwd: join(import.meta.dirname, ".."),
