@@ -169,6 +169,7 @@ set -euo pipefail
 local_state_dir="${MOCK_GH_STATE_DIR:?}"
 post_body_file="${local_state_dir}/post_body.txt"
 terminal_body="${MOCK_TERMINAL_BODY:-}"
+dispatch_body="${MOCK_DISPATCH_BODY:-Dispatching worker (PID 12345)}"
 
 if [[ "${1:-}" != "api" ]]; then
 	exit 1
@@ -220,7 +221,9 @@ if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
 	fi
 
 	if [[ -n "$terminal_body" ]]; then
-		printf '[{"id":10,"body_start":"Dispatching worker (PID 12345)","body":"Dispatching worker (PID 12345)","created_at":"%s"},{"id":11,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+		printf '[{"id":10,"body_start":"%s","body":"%s","created_at":"%s"},{"id":11,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+			"$dispatch_body" \
+			"$dispatch_body" \
 			"${MOCK_DISPATCH_CREATED_AT:?}" \
 			"$terminal_body" \
 			"$terminal_body" \
@@ -231,7 +234,9 @@ if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
 		exit 0
 	fi
 
-	printf '[{"id":10,"body_start":"Dispatching worker (PID 12345)","body":"Dispatching worker (PID 12345)","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+	printf '[{"id":10,"body_start":"%s","body":"%s","created_at":"%s"},{"id":999,"body_start":"%s","body":"%s","created_at":"%s"}]\n' \
+		"$dispatch_body" \
+		"$dispatch_body" \
 		"${MOCK_DISPATCH_CREATED_AT:?}" \
 		"$new_body" \
 		"$new_body" \
@@ -243,6 +248,53 @@ exit 1
 EOF
 	chmod +x "${mock_bin_dir}/gh"
 	MOCK_TERMINAL_BODY="$terminal_body" printf '%s' "$mock_bin_dir"
+	return 0
+}
+
+#######################################
+# Test: ops-wrapped dispatch comments still annotate stale takeover (t355x)
+#######################################
+test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir")"
+
+	local dispatch_created_at claim_created_at output exit_code dispatch_body
+	dispatch_created_at="$(iso_seconds_ago 120)"
+	claim_created_at="$(iso_seconds_ago 1)"
+	dispatch_body='<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\nDispatching worker (deterministic).'
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_DISPATCH_BODY="$dispatch_body" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "ops-wrapped stale worker takeover claim exits 0" 0
+	else
+		print_result "ops-wrapped stale worker takeover claim exits 0" 1 "got exit $exit_code output: $output"
+	fi
+
+	local post_body=""
+	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
+		post_body=$(<"${tmp_dir}/post_body.txt")
+	fi
+	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+		print_result "ops-wrapped stale worker takeover claim includes reason" 0
+	else
+		print_result "ops-wrapped stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
+	fi
+
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -606,6 +658,7 @@ main() {
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
 	test_claim_marks_stale_worker_takeover
+	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment
 	test_claim_skips_takeover_reason_after_terminal
 
 	echo ""

@@ -1548,7 +1548,7 @@ has_dispatch_comment() {
 	# Find the most recent dispatch comment (newest first)
 	local last_dispatch_json
 	last_dispatch_json=$(printf '%s' "$comments_json" | jq -c '
-		[.[] | select((.body_start // "") | startswith("Dispatching worker"))]
+		[.[] | select((.body_start // "") | test("(^|\\n)Dispatching worker"))]
 		| sort_by(.created_at) | reverse | first // empty
 	' 2>/dev/null) || last_dispatch_json=""
 
