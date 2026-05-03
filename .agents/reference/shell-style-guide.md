@@ -190,6 +190,73 @@ New pre-commit validators and CI gates should block regressions, not all histori
 - `.agents/scripts/qlty-regression-helper.sh` (t2065)
 - `.agents/scripts/qlty-new-file-gate-helper.sh` (t2068)
 
+## Quality gate pattern reference (t2065/t2068/t2229/t2047)
+
+Quality gates should be narrow, diff-scoped where possible, and paired with a
+documented local check plus an explicit override path. The gate should teach the
+worker what to fix; the override should require evidence, not a maintainer guess.
+
+### Qlty regression gate (t2065, GH#18773)
+
+`.github/workflows/qlty-regression.yml` fails when a PR introduces a net increase
+in `qlty smells` count. Docs-only PRs skip automatically. The helper
+`.agents/scripts/qlty-regression-helper.sh` supports local dry runs and reports
+the per-rule/per-file breakdown so the worker fixes the new regression instead
+of chasing unrelated historical debt.
+
+Override: apply the `ratchet-bump` label only with a PR-body justification that
+explains why the increase is intentional or why the baseline must absorb drift.
+
+### Qlty new-file smell gate (t2068)
+
+`.github/workflows/qlty-new-file-gate.yml` fails when newly-added source files
+ship with qlty smells. This complements t2065: modified existing files are
+covered by the regression delta; brand-new files are held to a zero-smell
+baseline so new subsystems do not import debt on day one.
+
+Local check:
+
+```bash
+.agents/scripts/qlty-new-file-gate-helper.sh new-files --base origin/main --dry-run
+```
+
+Override: apply `new-file-smell-ok` and include a `## New File Smell
+Justification` section in the PR body. Both are required; the label alone should
+not stick.
+
+### Workflow cascade vulnerability lint (t2229)
+
+`.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows
+containing the cascade-vulnerable combination: label-like event types (`labeled`,
+`unlabeled`, `assigned`, etc.), `cancel-in-progress: true`, and no mitigation
+such as `paths-ignore` or an event-action guard. The canonical failure mode was
+t2220: 15 cancelled runs in about 2 seconds after label churn retriggered the
+same workflow repeatedly.
+
+Local check:
+
+```bash
+.agents/scripts/workflow-cascade-lint.sh --dry-run
+```
+
+Override: apply `workflow-cascade-ok` and include a `## Workflow Cascade
+Justification` section in the PR body explaining why the event/action mix cannot
+cascade or why the mitigation is equivalent.
+
+### Task-ID collision guard (t2047)
+
+t-IDs in commit subjects must be allocated by `claim-task-id.sh`; invented IDs
+break the audit trail and can collide with already-claimed work. Enforcement is
+two-layered:
+
+- Client-side commit-msg hook installed by
+  `.agents/scripts/install-task-id-guard.sh install`.
+- Server-side CI workflow installed alongside the hook, covering commits made
+  outside the local hook path.
+
+The guard permits cross-references to other tasks when the linked issue title or
+body provides that context, but the primary commit task ID must be real.
+
 ## Self-modifying tooling test discipline (GH#18538 / t2062)
 
 When you edit a script that participates in the test or verification loop you subsequently invoke, the working tree is part of the test environment. Running `full-loop-helper.sh`, `pre-edit-check.sh`, `claim-task-id.sh`, or another wrapper from the same worktree can execute uncommitted changes rather than the version that will ship.
