@@ -672,7 +672,7 @@ auto_file_next_unfiled_parent_phase() {
 
 	_phase_log "Bootstrapping Phase ${next_phase_num} ('${next_desc}', marker=${next_marker}) for parent #${parent_issue}"
 	local new_issue_url
-	new_issue_url=$(_create_phase_child_issue \
+	new_issue_url=$(_create_or_reuse_phase_child_issue \
 		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug" "bootstrap")
 	[[ -n "$new_issue_url" ]] || return 1
 
@@ -823,7 +823,7 @@ auto_file_next_phase() {
 
 	# Build and create the new phase child issue
 	local new_issue_url
-	new_issue_url=$(_create_phase_child_issue \
+	new_issue_url=$(_create_or_reuse_phase_child_issue \
 		"$parent_issue" "$parent_title" "$next_phase_num" "$next_desc" "$repo_slug")
 	if [[ -z "$new_issue_url" ]]; then
 		_phase_log "Failed to create Phase ${next_phase_num} issue for parent #${parent_issue}"
