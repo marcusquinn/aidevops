@@ -92,8 +92,15 @@ fi
 # no `=~` / BASH_REMATCH — so it works identically under bash and zsh.
 
 WRAPPERS_FILE="${TEST_SCRIPTS_DIR}/shared-gh-wrappers.sh"
+WRAPPERS_CREATE_FILE="${TEST_SCRIPTS_DIR}/shared-gh-wrappers-create.sh"
 if [[ ! -f "$WRAPPERS_FILE" ]]; then
 	print_result "t2688: shared-gh-wrappers.sh exists" 1 "(missing: $WRAPPERS_FILE)"
+	printf '\n%sTests run: %d, failed: %d%s\n' \
+		"$TEST_RED" "$TESTS_RUN" "$TESTS_FAILED" "$TEST_RESET"
+	exit 1
+fi
+if [[ ! -f "$WRAPPERS_CREATE_FILE" ]]; then
+	print_result "t2688: shared-gh-wrappers-create.sh exists" 1 "(missing: $WRAPPERS_CREATE_FILE)"
 	printf '\n%sTests run: %d, failed: %d%s\n' \
 		"$TEST_RED" "$TESTS_RUN" "$TESTS_FAILED" "$TEST_RESET"
 	exit 1
@@ -116,9 +123,9 @@ TMPFILE=$(mktemp "${TMPDIR:-/tmp}/t2688-zsh-snippet.XXXXXX")
 trap 'rm -f "$TMPFILE"' EXIT
 
 {
-	extract_function _gh_wrapper_extract_task_id_from_title "$WRAPPERS_FILE"
+	extract_function _gh_wrapper_extract_task_id_from_title "$WRAPPERS_CREATE_FILE"
 	printf '\n'
-	extract_function _gh_wrapper_extract_task_id_from_title_step "$WRAPPERS_FILE"
+	extract_function _gh_wrapper_extract_task_id_from_title_step "$WRAPPERS_CREATE_FILE"
 	printf '\n'
 	# shellcheck disable=SC2016 # Intentional: emit literal $() / $result for zsh to evaluate.
 	printf '%s\n' 'result=$(_gh_wrapper_extract_task_id_from_title --todo-task-id t2688 2>&1)'
@@ -188,7 +195,7 @@ if awk '
 	in_fn && /[[:space:]]local -n / { found=1 }
 	in_fn && /^}$/ { in_fn=0 }
 	END { exit (found ? 1 : 0) }
-' "$WRAPPERS_FILE"; then
+' "$WRAPPERS_CREATE_FILE"; then
 	print_result "$msg_3" 0
 else
 	print_result "$msg_3" 1 "(found 'local -n' — fix regressed)"
