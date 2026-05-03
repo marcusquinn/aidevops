@@ -725,6 +725,45 @@ _sum_issue_tokens() {
 }
 
 # =============================================================================
+# Detect prior OpenCode version context from issue signature footers
+# =============================================================================
+# Used by automation (for example GitHub Actions close comments) that is not
+# itself running inside OpenCode but is summarising work that was done by an
+# OpenCode worker. Returns "OpenCode|VERSION" or an empty string.
+
+_detect_issue_cli_context() {
+	local issue_ref="$1"
+
+	if [[ -z "$issue_ref" ]] || ! command -v gh &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local repo_slug issue_number
+	repo_slug="${issue_ref%%#*}"
+	issue_number="${issue_ref##*#}"
+
+	if [[ -z "$repo_slug" ]] || [[ -z "$issue_number" ]] || ! [[ "$issue_number" =~ ^[0-9]+$ ]]; then
+		echo ""
+		return 0
+	fi
+
+	local version
+	version=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '.[].body // ""' 2>/dev/null |
+		grep -oE 'plugin for \[OpenCode\]\([^)]*\) v[0-9]+\.[0-9]+\.[0-9]+' |
+		grep -oE '[0-9]+\.[0-9]+\.[0-9]+' |
+		tail -1 || echo "")
+
+	if [[ -n "$version" ]]; then
+		printf 'OpenCode|%s\n' "$version"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# =============================================================================
 # Detect total time from issue creation to now
 # =============================================================================
 # Accepts --issue OWNER/REPO#NUMBER or --issue-created ISO-TIMESTAMP.

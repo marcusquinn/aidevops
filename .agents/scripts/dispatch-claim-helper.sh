@@ -105,10 +105,19 @@ DISPATCH_TIEBREAKER_WINDOW="${DISPATCH_TIEBREAKER_WINDOW:-5}"
 # its main() is gated by BASH_SOURCE. If the resolver is missing (partial
 # deploy), _apply_structured_filter short-circuits as a no-op.
 DISPATCH_CLAIM_HELPER_DIR="${DISPATCH_CLAIM_HELPER_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/lib/version.sh" ]]; then
+	# shellcheck source=lib/version.sh
+	source "${DISPATCH_CLAIM_HELPER_DIR}/lib/version.sh"
+fi
+if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/gh-signature-helper-detect.sh" ]]; then
+	# shellcheck source=gh-signature-helper-detect.sh
+	source "${DISPATCH_CLAIM_HELPER_DIR}/gh-signature-helper-detect.sh"
+fi
 if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh" ]]; then
 	# shellcheck disable=SC1091
 	source "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh"
 fi
+: "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
 #######################################
 # Generate a unique nonce for this claim attempt.
@@ -176,6 +185,14 @@ _resolve_runner() {
 # Always exit 0 — claim emission must never fail on a missing VERSION file.
 #######################################
 _resolve_version() {
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		local detected
+		detected=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
+		if [[ -n "$detected" && "$detected" != "$AIDEVOPS_UNKNOWN_VERSION" ]]; then
+			printf '%s' "$detected"
+			return 0
+		fi
+	fi
 	if [[ -r "$AIDEVOPS_VERSION_FILE" ]]; then
 		local ver
 		ver=$(head -n1 "$AIDEVOPS_VERSION_FILE" 2>/dev/null | tr -d '[:space:]')
@@ -184,7 +201,7 @@ _resolve_version() {
 			return 0
 		fi
 	fi
-	printf '%s' "unknown"
+	printf '%s' "$AIDEVOPS_UNKNOWN_VERSION"
 	return 0
 }
 
@@ -214,10 +231,15 @@ _post_claim() {
 	# t2401: include framework version so peers can filter claims from older runners.
 	local version
 	version=$(_resolve_version)
+	local opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	if declare -F _detect_opencode_version >/dev/null 2>&1; then
+		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
+		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
+	fi
 
 	local body
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version}"
+${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version}"
 	if [[ -n "$reason_fields" ]]; then
 		body+=" ${reason_fields}"
 	fi

@@ -70,6 +70,26 @@ _cli_url() {
 _detect_opencode_version() {
 	local ver=""
 
+	# Explicit override for non-interactive wrappers and CI jobs.
+	if [[ -n "${AIDEVOPS_SIG_CLI_VERSION:-}" ]]; then
+		echo "$AIDEVOPS_SIG_CLI_VERSION"
+		return 0
+	fi
+	if [[ -n "${OPENCODE_VERSION:-}" ]]; then
+		echo "$OPENCODE_VERSION"
+		return 0
+	fi
+
+	# Session-start cache is written by the OpenCode plugin before first turn.
+	local greeting_file="${HOME}/.aidevops/cache/session-greeting.txt"
+	if [[ -r "$greeting_file" ]]; then
+		ver=$(grep -oE 'OpenCode v[0-9]+\.[0-9]+\.[0-9]+' "$greeting_file" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+		if [[ -n "$ver" ]]; then
+			echo "$ver"
+			return 0
+		fi
+	fi
+
 	# Method 1: opencode --version (if in PATH)
 	ver=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
 	if [[ -n "$ver" ]]; then

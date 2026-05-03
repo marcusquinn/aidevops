@@ -139,6 +139,12 @@ _resolve_cli_inputs() {
 				cli_version=""
 			fi
 		fi
+	elif [[ -z "$cli_version" ]]; then
+		local cli_lower
+		cli_lower=$(printf '%s' "$cli_name" | tr '[:upper:]' '[:lower:]')
+		if [[ "$cli_lower" == *opencode* ]]; then
+			cli_version=$(_detect_opencode_version)
+		fi
 	fi
 
 	printf '%s|%s\n' "$cli_name" "$cli_version"
@@ -304,6 +310,14 @@ cmd_generate() {
 	cli_resolved=$(_resolve_cli_inputs "$cli_name" "$cli_version")
 	cli_name="${cli_resolved%%|*}"
 	cli_version="${cli_resolved##*|}"
+	if [[ -z "$cli_name" && -n "$issue_ref" ]]; then
+		local issue_cli_context
+		issue_cli_context=$(_detect_issue_cli_context "$issue_ref")
+		if [[ -n "$issue_cli_context" ]]; then
+			cli_name="${issue_cli_context%%|*}"
+			cli_version="${issue_cli_context##*|}"
+		fi
+	fi
 
 	# Skip session DB detection when --no-session is set (GH#13046).
 	# Used by callers running outside OpenCode (e.g., pulse-wrapper via launchd)

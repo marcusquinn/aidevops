@@ -26,6 +26,32 @@
 [[ -n "${_PULSE_DISPATCH_WORKER_LAUNCH_LOADED:-}" ]] && return 0
 _PULSE_DISPATCH_WORKER_LAUNCH_LOADED=1
 
+_DLW_SCRIPT_DIR="${BASH_SOURCE[0]%/*}"
+if [[ -r "${_DLW_SCRIPT_DIR}/lib/version.sh" ]]; then
+	# shellcheck source=lib/version.sh
+	source "${_DLW_SCRIPT_DIR}/lib/version.sh"
+fi
+if [[ -r "${_DLW_SCRIPT_DIR}/gh-signature-helper-detect.sh" ]]; then
+	# shellcheck source=gh-signature-helper-detect.sh
+	source "${_DLW_SCRIPT_DIR}/gh-signature-helper-detect.sh"
+fi
+unset _DLW_SCRIPT_DIR
+: "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
+
+_dlw_display_version_or_unknown() {
+	local raw_version="$1"
+	if declare -F aidevops_display_version >/dev/null 2>&1; then
+		aidevops_display_version "$raw_version"
+	else
+		if [[ -n "$raw_version" && "$raw_version" != "$AIDEVOPS_UNKNOWN_VERSION" ]]; then
+			printf 'v%s' "$raw_version"
+		else
+			printf '%s' "$AIDEVOPS_UNKNOWN_VERSION"
+		fi
+	fi
+	return 0
+}
+
 #######################################
 # Post-clearance worker launch for dispatch_with_dedup.
 # Extracted from dispatch_with_dedup (t1999, Phase 12) to reduce the
@@ -887,12 +913,22 @@ _dlw_post_launch_hooks() {
 
 	local dispatch_comment_body
 	local display_model="${selected_model:-auto-select (round-robin)}"
+	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
+	fi
+	if declare -F _detect_opencode_version >/dev/null 2>&1; then
+		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
+		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
+	fi
 	dispatch_comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 Dispatching worker (deterministic).
 - **Worker PID**: ${worker_pid}
 - **Model**: ${display_model}
 - **Tier**: ${dispatch_tier}
 - **Runner**: ${self_login}
+- **aidevops**: $(_dlw_display_version_or_unknown "$aidevops_version")
+- **OpenCode**: $(_dlw_display_version_or_unknown "$opencode_version")
 - **Issue**: #${issue_number}
 <!-- ops:end -->"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \

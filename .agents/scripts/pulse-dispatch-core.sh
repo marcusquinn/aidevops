@@ -1235,8 +1235,16 @@ _release_dispatch_claim_on_abort() {
 	fi
 
 	local body
+	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
+	fi
+	if declare -F _detect_opencode_version >/dev/null 2>&1; then
+		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
+		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
+	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+CLAIM_RELEASED reason=dispatch_aborted:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) aidevops_version=${aidevops_version} opencode_version=${opencode_version}
 <!-- ops:end -->"
 	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 		--method POST \

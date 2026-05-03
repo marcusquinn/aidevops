@@ -504,6 +504,21 @@ result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS OPENCODE_HEADLESS=true \
 assert_contains "OPENCODE_HEADLESS marks worker" "as a headless worker" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Test 21: CI checkout version fallback prevents vunknown signatures
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 21: repo-relative version fallback"
+tmp_home_21=$(mktemp -d 2>/dev/null || mktemp -d -t sighelper21)
+result=$(HOME="$tmp_home_21" AIDEVOPS_SIG_CLI="OpenCode" AIDEVOPS_SIG_CLI_VERSION="1.14.33" \
+	"$HELPER" generate --no-session)
+assert_contains "repo VERSION used when HOME has no install" "[aidevops.sh](https://aidevops.sh) v" "$result"
+assert_not_contains "signature does not emit vunknown" "vunknown" "$result"
+assert_contains "explicit OpenCode version shown" "plugin for [OpenCode](https://opencode.ai) v1.14.33" "$result"
+result=$(HOME="$tmp_home_21" OPENCODE_VERSION="1.14.34" "$HELPER" generate --no-session --cli "OpenCode")
+assert_contains "OpenCode CLI override still detects version" "plugin for [OpenCode](https://opencode.ai) v1.14.34" "$result"
+rm -rf "$tmp_home_21"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""

@@ -374,6 +374,7 @@ test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
 		DISPATCH_CLAIM_WINDOW=0 \
 		DISPATCH_CLAIM_MAX_AGE=300 \
 		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		OPENCODE_VERSION=1.14.33 \
 		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
 	exit_code=$?
 	set -e
@@ -714,6 +715,7 @@ test_claim_marks_stale_worker_takeover() {
 		DISPATCH_CLAIM_WINDOW=0 \
 		DISPATCH_CLAIM_MAX_AGE=300 \
 		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		OPENCODE_VERSION=1.14.33 \
 		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
 	exit_code=$?
 	set -e
@@ -732,6 +734,16 @@ test_claim_marks_stale_worker_takeover() {
 		print_result "stale worker takeover claim includes reason" 0
 	else
 		print_result "stale worker takeover claim includes reason" 1 "body: ${post_body:-none}"
+	fi
+	if printf '%s' "$post_body" | grep -q 'version=[0-9][0-9.]*'; then
+		print_result "claim includes aidevops version" 0
+	else
+		print_result "claim includes aidevops version" 1 "body: ${post_body:-none}"
+	fi
+	if printf '%s' "$post_body" | grep -q 'opencode_version=1.14.33'; then
+		print_result "claim includes OpenCode version" 0
+	else
+		print_result "claim includes OpenCode version" 1 "body: ${post_body:-none}"
 	fi
 
 	rm -rf "$tmp_dir"

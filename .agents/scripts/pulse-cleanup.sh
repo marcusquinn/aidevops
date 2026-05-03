@@ -62,7 +62,16 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/audit-wo
 	# shellcheck source=audit-worktree-removal-helper.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/audit-worktree-removal-helper.sh"
 fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/lib/version.sh" ]]; then
+	# shellcheck source=lib/version.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/lib/version.sh"
+fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signature-helper-detect.sh" ]]; then
+	# shellcheck source=gh-signature-helper-detect.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signature-helper-detect.sh"
+fi
 unset _PULSE_CLEANUP_SCRIPT_DIR
+: "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 # Caller ID constant for audit log calls (avoids repeated literals).
 _WTAR_PC_CALLER="pulse-cleanup.sh"
 
@@ -987,8 +996,16 @@ _post_launch_recovery_claim_released() {
 	local failure_reason="$4"
 
 	local body
+	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
+	fi
+	if declare -F _detect_opencode_version >/dev/null 2>&1; then
+		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
+		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
+	fi
 	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+CLAIM_RELEASED reason=launch_recovery:${failure_reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ) aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
 
 	# t2814: append worker-log tail when available so the failure is
 	# diagnosable from the audit trail alone (no log-file forensics needed).
