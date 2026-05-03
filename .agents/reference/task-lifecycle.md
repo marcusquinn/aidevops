@@ -1,0 +1,142 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
+
+# Task Lifecycle
+
+Source: extracted from `.agents/AGENTS.md` Task Lifecycle and Git Workflow sections (Phase 2 of #22616 — progressive-disclosure decomposition). Read this file before filing or queueing tasks, changing task/issue/PR lifecycle labels, creating cross-repo tasks, reasoning about parent-task decomposition, or diagnosing auto-dispatch, auto-merge, cryptographic approval, and NMR behaviour.
+
+When to load:
+
+- Creating tasks with `/define`, `/new-task`, or `claim-task-id.sh`.
+- Deciding whether a task should be auto-dispatched, parent-blocked, or implemented interactively.
+- Updating task completion state or linking verification evidence.
+- Creating tasks in another registered repo or editing `repos.json`.
+- Diagnosing issue/PR lifecycle labels, origin labels, auto-merge eligibility, cryptographic approvals, or NMR automation.
+
+For prompt-economy reasons these rules live here rather than in always-on AGENTS.md context. The pointer in AGENTS.md (`## Task Lifecycle`) names the key lifecycle topics so a `grep` in AGENTS.md still finds this forwarding address.
+
+## Task Creation
+
+1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
+2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
+3. Brief must include: session origin, what, why, how, acceptance criteria, context
+4. Ask user: implement now or queue for runner?
+5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
+6. Queue: add to TODO.md for supervisor dispatch
+7. Never skip testing. Never declare "done" without verification.
+8. **Performance/optimization issues require evidence** (GH#17832-17835): actual measurements (timing, profiling), verified line references, and data scale assessment. "May cause O(n^2)" without data is not actionable — use the "Performance Optimization" issue template. See "Framework Rules > AI-Generated Issue Quality" above.
+
+Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
+
+Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
+
+## Briefs, Tiers, and Dispatchability
+
+- **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.
+
+- **`### Files Scope` field:** Section in the brief template (nested under `## How`) for declaring allowed file paths (globs supported). The `scope-guard-pre-push.sh` hook uses this to block out-of-scope pushes, preventing accidental scope-leak. One path or glob per bullet line. Older briefs may use `## Files Scope`; both heading levels are accepted by the guard.
+
+- **`### Complexity Impact` field (t2803):** Section for tasks modifying shell functions. Author must estimate growth: 80-100 lines projected post-change requires a warning; >100 lines (the `function-complexity` gate) REQUIRES a pre-planned refactor. Prevents the recurring pattern where workers grow a function past the gate threshold and trigger repeated dispatch failures (canonical: 8 workers on GH#20702). Include this section for any `EDIT:` targeting an existing function body; delete it when the task creates only new files or new functions. Full guidance: `reference/large-file-split.md §0`.
+
+- **Worker-ready issue body heuristic (t2417):** Before creating a full brief, `/define`, `/new-task`, and `task-brief-helper.sh` check whether the linked issue body is already worker-ready — i.e., it contains 4+ of the 7 known heading signals (`## Task`, `## Why`, `## How`, `## Acceptance`, `## What`, `## Session Origin`, `## Files to modify`). When the issue body is worker-ready, the brief file is either skipped (headless default) or replaced with a stub that links to the issue as the canonical brief. This prevents brief/issue body duplication and the collision surface it creates (see GH#20015). Helper: `scripts/brief-readiness-helper.sh`. Threshold override: `BRIEF_READINESS_THRESHOLD` env var.
+
+**Brief composition**: All GitHub-written content (issue bodies, briefs, PR descriptions, comments, escalation reports, worker guidance) follows `workflows/brief.md` — the centralised formatting workflow. Load it before publishing; optional seeded draft PRs are governed there, not in this root guide.
+
+**Model tiers and dispatchability**: Use GitHub `tier:*` labels; default to `tier:standard` when uncertain. Before recommending a tier or queueing work, run `task-dispatchability-helper.sh check --task-id tNNN [--issue N]`. Full tier rules live in `reference/task-taxonomy.md`; `tier-simple-body-shape-helper.sh` still enforces high-confidence simple-tier downgrades pre-dispatch.
+
+## Auto-Dispatch and Completion
+
+**Auto-dispatch default**: Always add `#auto-dispatch` unless an exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging".
+- **Exclusions**: Needs credentials, decomposition, or explicit user preference. Dispatch-path files are **not** excluded post-t2920; they auto-dispatch with opus-4-7 elevation. Canonical blocker label set: `reference/dispatch-blockers.md`.
+- **Dispatch-path advisory (t2821, t2832, t2920)**: When a task's `### Files Scope` or `## How` section references any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, dispatch-dedup-helper.sh, etc.), use `#auto-dispatch` as normal. The t2819 pre-dispatch detector auto-elevates these workers to `model:opus-4-7`; combined with worker worktree isolation, CI gates, watchdog kills, and the t2690 circuit breaker, the protection cascade replaces the historical t2821 `no-auto-dispatch` default (reverted t2920). **Opt-out (rare):** use `#no-auto-dispatch #interactive` only when you specifically want to implement interactively to observe the running system. Full decision tree: `reference/auto-dispatch.md` "Dispatch-Path Default (t2821 / t2920)".
+- **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
+- **Interactive workflow**: Add `assignee:` before pushing if working interactively.
+- **Server-side safety net (t2798)**: `.github/workflows/apply-status-available-default.yml` applies `status:available` to issues that carry `auto-dispatch` but have no `status:*` label — catches bypass-path creations (bare `gh issue create`, web UI) that skip `claim-task-id.sh`.
+
+**Session origin labels**: Issues and PRs are automatically tagged with `origin:worker` (headless/pulse dispatch) or `origin:interactive` (user session). Applied by `claim-task-id.sh`, `issue-sync-helper.sh`, and `pulse-wrapper.sh`. In TODO.md, use `#worker` or `#interactive` tags to set origin explicitly; these map to the corresponding labels on push.
+
+**Origin label mutual exclusion (t2200)**: `origin:interactive`, `origin:worker`, and `origin:worker-takeover` are mutually exclusive. Use `set_origin_label <num> <slug> <kind>` from `shared-constants.sh` to change an existing label atomically. One-shot reconciliation: `reconcile-origin-labels.sh`. Full detail: `reference/auto-dispatch.md`.
+
+**`#auto-dispatch` skips `origin:interactive` self-assignment**: Issues tagged `#auto-dispatch` are NOT self-assigned even from interactive sessions — self-assignment creates a permanent dispatch block. For heal after the fact: `interactive-session-helper.sh post-merge <PR>` (t2225). Full rule and background: `reference/auto-dispatch.md`.
+
+**`origin:interactive` implies maintainer approval**: PRs tagged `origin:interactive` pass the maintainer gate automatically when the PR author is `OWNER` or `MEMBER` — the maintainer was present and directing the work. No separate `sudo aidevops approve` is needed. Contributors (`COLLABORATOR`) with `origin:interactive` still go through the normal gate — the label alone is not sufficient. The pulse also never auto-closes `origin:interactive` PRs via the deterministic merge pass, even if the task ID appears in recent commits (incremental work on the same issue is legitimate).
+
+**Auto-merge timing (t2411):** `origin:interactive` PRs from `OWNER`/`MEMBER` auto-merge when: CI passes, no CHANGES_REQUESTED, not draft, no `hold-for-review` label. Apply `hold-for-review` to opt out. Merge within ~4-10 min of checks going green. Full 6-criterion checklist and bot-nit options: `reference/auto-merge.md`.
+
+**Auto-merge timing (t2449, t3052, t3062) — `origin:worker` (worker-briefed):** `origin:worker` PRs auto-merge when the linked issue was filed by `OWNER`/`MEMBER` OR the issue author login is in the trusted-issue-author allowlist (`.agents/configs/trusted-issue-authors.conf`, t3062) OR the linked issue has a cryptographic approval signature from a maintainer (`sudo aidevops approve issue N`), NMR was never applied OR was cleared via **cryptographic** approval (not `auto_approve_maintainer_issues`), and CI passes. Feature flag: `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE` (default 1=on). Full 9-criterion checklist + security rationale: `reference/auto-merge.md`.
+
+**Admin merge authority:** Interactive sessions run as the repo admin/owner. For maintainer-owned or maintainer-approved work (`OWNER`/`MEMBER` PR author, maintainer-authored linked issue, trusted issue author, or valid crypto approval), `REVIEW_REQUIRED`, stale branch-protection state, or a self-blocking framework gate is not a user-action blocker once non-gate CI is green and no human `CHANGES_REQUESTED` review exists. Use `gh pr merge <N> --repo <slug> --admin --squash --delete-branch` when needed and record the evidence. Only keep the merge gated when the issue/PR originates from a non-maintainer and lacks cryptographic maintainer approval.
+
+**`origin:interactive` also skips pulse dispatch (GH#18352)**: When an issue carries `origin:interactive` AND has any human assignee, the pulse's deterministic dedup guard (`dispatch-dedup-helper.sh is-assigned`) treats the assignee as blocking — even if that assignee is the repo owner or maintainer, and regardless of the current `status:*` label. This closes the race where an interactive session claimed a task via `claim-task-id.sh` (applying `status:claimed` + owner assignment) and the pulse dispatched a duplicate worker before the session could open its PR. The full active lifecycle is now recognised: `status:queued`, `status:in-progress`, `status:in-review`, and `status:claimed` all keep owner/maintainer assignees in the blocking set.
+
+**Implementing a `#auto-dispatch` task interactively (MANDATORY):** Start with `interactive-start-helper.sh --issue N --repo owner/repo --task "description" --auto-dispatch`. It claims with `--implementing`, runs the pre-edit loop check, and starts full-loop before any code is written.
+
+**General dedup rule — combined signal (t1996):** The dispatch dedup signal is `(active status label) AND (non-self assignee)` — both required, neither sufficient alone. Every code path that emits a dispatch claim must consult `dispatch-dedup-helper.sh is-assigned` (or apply an equivalent combined check inline) before assigning a worker. Label-only or assignee-only filters are not safe in multi-operator conditions. Specifically:
+- A status label without an assignee = degraded state (worker died mid-claim) — safe to reclaim after `normalize_active_issue_assignments` / stale recovery.
+- A non-owner/maintainer assignee without a status label = active contributor claim — always blocks dispatch regardless of labels.
+- An owner/maintainer assignee with an active status label = active pulse claim — blocks dispatch (GH#18352).
+- An owner/maintainer assignee without an active status label = passive backlog bookkeeping — allows dispatch (GH#10521).
+
+Architecture: `dispatch_with_dedup` → `check_dispatch_dedup` Layer 6 is the canonical enforcement point. Full detail: `reference/auto-dispatch.md`.
+
+**Parent / meta tasks (`#parent` tag, t1986)**: Mark planning-only or roadmap-tracker tasks with the `#parent` (alias: `#parent-task`, `#meta`) TODO tag. The tag maps to the protected `parent-task` label, which: (1) survives reconciliation — `_is_protected_label` prevents cleanup from stripping it; (2) blocks dispatch unconditionally — pulse will never run a worker on a `parent-task` issue; (3) is applied synchronously at creation (t2436) — before the issue is created, closing the race window.
+
+Use for: decomposition epics, roadmap trackers, research summaries. **Do not use for:** issues that should be implemented as a single unit.
+
+**Maintainer-authored research tasks MUST use `#parent` (t2211):** if a maintainer files an issue without `#auto-dispatch` and it later escalates to `needs-maintainer-review` (e.g. because a worker picked it up anyway via stale-recovery or a TODO-first flow), `auto_approve_maintainer_issues()` at `pulse-nmr-approval.sh:468-470` unconditionally adds the `auto-dispatch` label when removing NMR. Body prose like "Do NOT `#auto-dispatch`" is silently overridden — the auto-approval path intentionally converts NMR'd maintainer-authored issues into dispatchable ones (approver intent wins). `#parent` is the only reliable dispatch block in this case because its `parent-task` label short-circuits `dispatch-dedup-helper.sh is-assigned` with `PARENT_TASK_BLOCKED` upstream of the approval path. Practical rule: any investigation, research, or "think-before-acting" issue the maintainer files should carry `#parent` from the start.
+
+**Parent-task decomposition lifecycle (t2442):** A `parent-task` label must be paired with a decomposition plan or it becomes backlog rot. Five cooperating enforcement mechanisms: no-markers warning at creation, prose-pattern child extraction, advisory nudge (posted on next pulse cycle after ≥4h, env `PARENT_TASK_NUDGE_SECONDS`), auto-decomposer scanner (every pulse cycle, 4h nudge-age threshold, 4h re-file gate, env `PARENT_TASK_REFILE_GATE_SECONDS`), and 7-day NMR escalation. Escalation never removes `parent-task`. Full detail: `reference/parent-task-lifecycle.md`.
+
+Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
+
+**Known limitation — issue-sync TODO auto-completion (t2029 → t2166):** `issue-sync.yml` cannot auto-push to `main` without `SYNC_PAT` (fine-grained PAT, Contents: Read and write). **Guided fix:** run `/setup-git` in your AI assistant — it walks all affected repos with pre-filled token-creation URLs (see `reference/sync-pat-platforms.md`). Manual fix per repo: create the PAT, then `gh secret set SYNC_PAT --repo <owner>/<repo>` (interactive prompt, NOT `--body` which leaks to shell history). Without SYNC_PAT, the workflow posts a remediation comment with a `task-complete-helper.sh` workaround. `SYNC_PAT` is per-repo. Full setup and known false-positive (t2252): `reference/auto-dispatch.md`.
+
+Code changes need worktree + PR. Implementation workers do not edit `TODO.md` as part of code fixes; supervisor/routine/issue-sync bookkeeping may update planning files under the allowlist below.
+
+**Main-branch planning exception (headless bookkeeping only, t1990):** `TODO.md`, `todo/*`, and `README.md` may go direct to `main` only for headless supervisor/routine/issue-sync bookkeeping or an explicitly planning-only worker task. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()`.
+
+**Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
+
+## Routines
+
+Recurring operational jobs live in `TODO.md` under `## Routines`, not in a separate registry. Use `r`-prefixed IDs (`r001`, `r002`) to distinguish them from `t`-prefixed tasks.
+
+- `repeat:` defines the schedule with `daily(@HH:MM)`, `weekly(day@HH:MM)`, `monthly(N@HH:MM)`, or `cron(expr)`
+- `run:` points to a deterministic script relative to `~/.aidevops/agents/`
+- `agent:` names the LLM agent to dispatch with `headless-runtime-helper.sh`
+- `[x]` means enabled; `[ ]` means disabled/paused and should be skipped
+- Dispatch rule: prefer `run:` when present; otherwise use `agent:`; if neither is set, default to `run:custom/scripts/{routine_id}.sh` (e.g. `r001.sh`) when it exists, else `agent:Build+`
+
+Use `/routine` to design, dry-run, and schedule these definitions. Reference: `.agents/reference/routines.md`.
+
+## Cross-Repo Task Management
+
+**Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
+
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). After registering, run `/setup-git` to apply per-repo platform secrets (currently `SYNC_PAT` for GitHub, with GitLab/Gitea/Bitbucket coming) — see `reference/sync-pat-platforms.md`.
+
+**repos.json structure (CRITICAL):** The file is `{"initialized_repos": [...], "git_parent_dirs": [...]}`. New repo entries MUST be appended inside the `initialized_repos` array — NEVER as top-level keys. After ANY write, validate: `jq . ~/.config/aidevops/repos.json > /dev/null`. A malformed file silently breaks the pulse for ALL repos.
+
+Set fields based on the repo's purpose. Full field reference — `pulse`, `pulse_hours`, `pulse_interval`, `pulse_expires`, `contributed`, `foss`, `foss_config`, `review_gate`, `platform`, `role`, `init_scope`, `priority`, `maintainer`, `local_only`: `reference/repos-json-fields.md`.
+
+**Cross-repo task creation**: When creating a task in a *different* repo, follow the full workflow — not just the TODO edit:
+
+1. **Claim the ID atomically**: `claim-task-id.sh --repo-path <target-repo> --title "description"` — allocates via CAS. NEVER grep TODO.md for the next ID; concurrent sessions collide.
+2. **Create the GitHub issue BEFORE pushing TODO.md**: Let `claim-task-id.sh` create it (default) or run `gh issue create` manually. Get the issue number first.
+3. **Add the TODO entry WITH `ref:GH#NNN` in a single commit+push**: issue-sync triggers on TODO.md pushes and creates issues for entries missing `ref:GH#`. A second commit creates a duplicate. Always include the ref in the same commit.
+4. **Code changes still need a worktree + PR**: TODO/issue creation is planning; direct-to-main applies only to headless bookkeeping flows. Interactive sessions still use a linked worktree/PR for planning edits.
+
+Full rules: `reference/planning-detail.md`
+
+For multi-runner coordination (concurrent pulse runners across machines), see `reference/cross-runner-coordination.md`.
+
+## Cryptographic approval and NMR automation
+
+**Cryptographic issue/PR approval (human-only gate):** `sudo aidevops approve issue <number> [owner/repo]` — SSH-signed approval comment; workers cannot forge it (private key is root-only). Setup once with `sudo aidevops approve setup`. Verify: `aidevops approve verify <number>`. This is distinct from the `ai-approved` label (which is a simple collaborator gate, not cryptographic).
+
+**NMR automation signatures (t2386, split semantics):** `auto_approve_maintainer_issues` in `pulse-nmr-approval.sh` distinguishes three cases:
+- **Creation-default** (`source:review-scanner` marker/label) → auto-approval CLEARS NMR so the issue can dispatch.
+- **Circuit-breaker trip** (`stale-recovery-tick:escalated`, `cost-circuit-breaker:fired` markers) → auto-approval PRESERVES NMR. Clear with `sudo aidevops approve issue <N>` once the problem is fixed.
+- **Manual hold** (no markers) → auto-approval PRESERVES NMR.
+
+Background and infinite-loop root cause (t2386): `reference/auto-merge.md` (NMR section).
