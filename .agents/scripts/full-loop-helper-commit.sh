@@ -330,10 +330,33 @@ _detect_node_project() {
 # Sets caller-scope `fix_changes` to 1 if amend happened, 0 otherwise.
 # Args: $1=pm (npm|pnpm|yarn) $2=timeout_secs $3=timeout_available (0|1)
 # Returns 0 on success, 1 if amend failed.
+_restore_validator_repo_root() {
+	local repo_root="$1"
+	local phase="$2"
+
+	if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
+		print_error "[validators] repository root disappeared during ${phase}: ${repo_root:-<unknown>}"
+		print_error "[validators] refusing to run git amend from a missing working directory"
+		return 1
+	fi
+	if ! cd "$repo_root" 2>/dev/null; then
+		print_error "[validators] failed to restore repository root after ${phase}: $repo_root"
+		return 1
+	fi
+	return 0
+}
+
 _run_node_auto_fix() {
 	local pm="$1"
 	local t="$2"
 	local timeout_available="${3:-0}"
+	local repo_root=""
+	repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || echo "")
+	if [[ -z "$repo_root" ]]; then
+		print_error "[validators] cannot determine repository root before auto-fix"
+		return 1
+	fi
+	_restore_validator_repo_root "$repo_root" "startup" || return 1
 	# Build a timeout prefix array; empty when timeout(1) is not available.
 	local -a timeout_prefix=()
 	[[ "$timeout_available" == "1" ]] && timeout_prefix=("timeout" "$t")
@@ -343,6 +366,7 @@ _run_node_auto_fix() {
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
 			print_info "[validators] $pm run $script_name (auto-fix)"
 			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			_restore_validator_repo_root "$repo_root" "$script_name" || return 1
 			break
 		fi
 	done
@@ -352,9 +376,11 @@ _run_node_auto_fix() {
 		if jq -e --arg s "$script_name" '.scripts[$s] // empty' package.json >/dev/null 2>&1; then
 			print_info "[validators] $pm run $script_name (auto-fix)"
 			"${timeout_prefix[@]}" "$pm" run "$script_name" >/dev/null 2>&1 || true
+			_restore_validator_repo_root "$repo_root" "$script_name" || return 1
 			break
 		fi
 	done
+	_restore_validator_repo_root "$repo_root" "auto-fix" || return 1
 	if git diff --quiet 2>/dev/null; then
 		return 0
 	fi

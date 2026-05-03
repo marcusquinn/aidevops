@@ -61,6 +61,13 @@ mkdir -p "$FAKE_BIN"
 cat >"${FAKE_BIN}/npm" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "npm should not run for shell-only diffs" >>"${NPM_CALL_LOG:?}"
+if [[ "${NPM_FAKE_ACTION:-}" == "delete-cwd-after-edit" ]]; then
+	printf '%s\n' 'fixed' >>"${NPM_FIX_TARGET:?}"
+	if [[ -n "${NPM_DELETE_DIR:-}" ]]; then
+		rm -rf "$NPM_DELETE_DIR"
+	fi
+	exit 0
+fi
 exit "${NPM_FAKE_RC:-2}"
 EOF
 chmod +x "${FAKE_BIN}/npm"
@@ -71,6 +78,8 @@ make_repo() {
 	(
 		cd "$repo_dir" || exit 1
 		git init -q
+		git config commit.gpgsign false
+		git config tag.gpgsign false
 		cat >package.json <<'EOF'
 {"scripts":{"typecheck":"tsc --noEmit"}}
 EOF
@@ -119,6 +128,39 @@ if [[ "$case2_rc" -ne 0 && -s "$NPM_CALL_LOG" ]]; then
 	print_result "TypeScript diff runs failing typecheck" 0
 else
 	print_result "TypeScript diff runs failing typecheck" 1 "rc=${case2_rc}, npm_log=$(wc -c <"$NPM_CALL_LOG" 2>/dev/null || printf 0)"
+fi
+
+# Case 3: if an auto-fix command removes the process' current subdirectory,
+# the validator restores the repository root before running git diff/add/amend.
+# This guards the GH#22526 failure class where amend hit getcwd() from a stale
+# cwd and reported: fatal: Unable to read current working directory.
+CWD_REPO="${TEST_ROOT}/cwd-restore"
+make_repo "$CWD_REPO"
+mkdir -p "${CWD_REPO}/vanishing"
+(
+	cd "$CWD_REPO" || exit 1
+	cat >package.json <<'EOF'
+{"scripts":{"format:fix":"node scripts/fix.js"}}
+EOF
+	printf '%s\n' 'before' >tracked.txt
+	git add package.json tracked.txt
+	git -c user.name='Test User' -c user.email='test@example.invalid' commit -qm 'node project'
+)
+NPM_CALL_LOG="${TEST_ROOT}/npm-cwd.log"
+NPM_FIX_TARGET="${CWD_REPO}/tracked.txt"
+NPM_DELETE_DIR="${CWD_REPO}/vanishing"
+export NPM_CALL_LOG NPM_FIX_TARGET NPM_DELETE_DIR NPM_FAKE_ACTION=delete-cwd-after-edit NPM_FAKE_RC=0
+(
+	cd "${CWD_REPO}/vanishing" || exit 1
+	PATH="${FAKE_BIN}:$PATH" fix_changes=0 _run_node_auto_fix npm 30 0
+)
+case3_rc=$?
+case3_head_subject=$(git -C "$CWD_REPO" log -1 --format=%s 2>/dev/null || printf '')
+case3_file=$(git -C "$CWD_REPO" show HEAD:tracked.txt 2>/dev/null || printf '')
+if [[ "$case3_rc" -eq 0 && "$case3_head_subject" == "node project" && "$case3_file" == $'before\nfixed' ]]; then
+	print_result "auto-fix restores repo root before amend when cwd disappears" 0
+else
+	print_result "auto-fix restores repo root before amend when cwd disappears" 1 "rc=${case3_rc}, subject=${case3_head_subject}, file=${case3_file}"
 fi
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
