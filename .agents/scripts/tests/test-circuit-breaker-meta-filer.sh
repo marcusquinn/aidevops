@@ -190,6 +190,13 @@ else
 	print_result "first-trip: created exactly 1 issue" 1 "got count=$CREATE_COUNT"
 fi
 
+if grep -q 'dispatch-dedup-stale.sh' "$STUB_LOG" 2>/dev/null; then
+	print_result "first-trip: no_work guidance includes stale recovery path" 0
+else
+	print_result "first-trip: no_work guidance includes stale recovery path" 1 \
+		"meta body did not mention dispatch-dedup-stale.sh"
+fi
+
 # =============================================================================
 # Test 2: Idempotency — second trip with marker present returns existing
 # =============================================================================

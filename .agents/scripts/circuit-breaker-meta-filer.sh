@@ -242,6 +242,7 @@ Treat the original (#${issue_number}) as evidence, not as the work to do. The wo
 ### Files to inspect first
 
 - \`EDIT: .agents/scripts/dispatch-dedup-cost.sh\` — t2007 cost breaker definition and trip site.
+- \`EDIT: .agents/scripts/dispatch-dedup-stale.sh\` — stale-assignment recovery; false stale recovery can record \`stale_timeout\` / \`no_work\` fast-fails without a worker reaching the brief.
 - \`EDIT: .agents/scripts/worker-lifecycle-common.sh\` — t2769 no_work breaker definition and trip site (around the \`no_work_loop\` marker).
 - \`EDIT: .agents/scripts/headless-runtime-failure.sh\` — worker exit classifier (the prime suspect for misclassification).
 - \`EDIT: .agents/scripts/circuit-breaker-meta-filer.sh\` — this filer; if it filed too eagerly, fix the trip-detection upstream rather than the filer.
@@ -250,6 +251,7 @@ Treat the original (#${issue_number}) as evidence, not as the work to do. The wo
 ### Reference pattern
 
 - Existing breaker NMR application paths in \`worker-lifecycle-common.sh\` (no_work) and \`dispatch-dedup-cost.sh\` (cost) for the trip → label → comment flow that this filer hooks into.
+- \`dispatch-dedup-stale.sh::_is_stale_assignment\` for the comment-activity pagination path; it must aggregate all pages before sorting activity timestamps.
 - \`pulse-nmr-approval.sh::_nmr_application_is_circuit_breaker_trip\` for the marker-recognition pattern (this filer's marker \`${_CB_META_MARKER}\` is also recognised).
 
 ### Forensics: pulse log slice (last ${max_lines} lines mentioning the issue)
@@ -296,6 +298,7 @@ _cb_meta_body_tail() {
 ## Files Scope
 
 - `.agents/scripts/dispatch-dedup-cost.sh`
+- `.agents/scripts/dispatch-dedup-stale.sh`
 - `.agents/scripts/worker-lifecycle-common.sh`
 - `.agents/scripts/headless-runtime-failure.sh`
 - `.agents/scripts/headless-runtime-helper.sh`
