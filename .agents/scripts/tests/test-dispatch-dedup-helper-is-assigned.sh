@@ -155,6 +155,7 @@ create_dispatch_comment_gh_stub() {
 	local dispatch_created_at="$1"
 	local terminal_body="${2:-}"
 	local terminal_created_at="${3:-}"
+	local dispatch_body="${4:-Dispatching worker (PID 12345)}"
 
 	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
 #!/usr/bin/env bash
@@ -162,10 +163,10 @@ set -euo pipefail
 
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -q '/comments'; then
 	if [[ -n "${terminal_body}" ]]; then
-		printf '%s\n' '[{"created_at":"${dispatch_created_at}","author":"runner1","body_start":"Dispatching worker (PID 12345)"},{"created_at":"${terminal_created_at}","author":"runner1","body_start":"${terminal_body}"}]'
+		printf '%s\n' '[{"created_at":"${dispatch_created_at}","author":"runner1","body_start":"${dispatch_body}"},{"created_at":"${terminal_created_at}","author":"runner1","body_start":"${terminal_body}"}]'
 		exit 0
 	fi
-	printf '%s\n' '[{"created_at":"${dispatch_created_at}","author":"runner1","body_start":"Dispatching worker (PID 12345)"}]'
+	printf '%s\n' '[{"created_at":"${dispatch_created_at}","author":"runner1","body_start":"${dispatch_body}"}]'
 	exit 0
 fi
 
@@ -478,6 +479,27 @@ test_dispatch_comment_blocks_inside_active_worker_window() {
 	return 0
 }
 
+test_ops_wrapped_dispatch_comment_blocks_inside_active_worker_window() {
+	local dispatch_created_at output dispatch_body
+	dispatch_created_at=$(date -u -v-120S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '120 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
+	dispatch_body='<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\nDispatching worker (deterministic).'
+	create_dispatch_comment_gh_stub "$dispatch_created_at" "" "" "$dispatch_body"
+
+	if output=$(DISPATCH_COMMENT_MAX_AGE=60 DISPATCH_ACTIVE_WORKER_MAX_AGE=300 "$HELPER_SCRIPT" has-dispatch-comment 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'active-worker window'*)
+			print_result "ops-wrapped dispatch comment blocks inside active-worker window" 0
+			return 0
+			;;
+		esac
+		print_result "ops-wrapped dispatch comment blocks inside active-worker window" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "ops-wrapped dispatch comment blocks inside active-worker window" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
 test_dispatch_comment_expires_after_active_worker_window() {
 	local dispatch_created_at
 	dispatch_created_at=$(date -u -v-400S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '400 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
@@ -528,6 +550,7 @@ main() {
 	test_maintainer_assigned_with_origin_interactive_blocks
 	test_owner_assigned_no_status_no_origin_allows_dispatch
 	test_dispatch_comment_blocks_inside_active_worker_window
+	test_ops_wrapped_dispatch_comment_blocks_inside_active_worker_window
 	test_dispatch_comment_expires_after_active_worker_window
 	test_dispatch_comment_terminal_marker_allows
 
