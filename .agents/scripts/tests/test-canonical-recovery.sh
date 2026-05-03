@@ -205,6 +205,18 @@ advance_origin() {
 	return 0
 }
 
+add_todo_to_origin_and_pull() {
+	local origin="$1" canon="$2"
+	(
+		cd "$origin" || exit 1
+		printf '%s\n' '- [ ] t123 sync metadata fixture #auto-dispatch logged:2026-01-01' >TODO.md
+		git add TODO.md
+		git commit -qm "add TODO"
+	)
+	git -C "$canon" pull --ff-only --no-rebase >/dev/null 2>&1
+	return 0
+}
+
 reset_call_logs() {
 	: >"$GH_CALL_LOG"
 	: >"$AUDIT_CALL_LOG"
@@ -326,6 +338,57 @@ grep -q "operation.verify" "$AUDIT_CALL_LOG" \
 grep -q "canonical-recovery.success" "$AUDIT_CALL_LOG" \
 	&& print_result "recover: audit log records canonical-recovery.success" 0 \
 	|| print_result "recover: audit log records canonical-recovery.success" 1
+
+# =============================================================================
+# Test 3b: generated TODO.md sync metadata is reset before refresh without stash.
+# =============================================================================
+
+make_repo_pair "todo-generated"
+add_todo_to_origin_and_pull "$ORIGIN_DIR" "$CANON_DIR"
+advance_origin "$ORIGIN_DIR"
+printf '%s\n' '- [x] t123 sync metadata fixture #auto-dispatch logged:2026-01-01 pr:#42 completed:2026-01-02' >"${CANON_DIR}/TODO.md"
+reset_call_logs
+
+if pulse_canonical_recover "$CANON_DIR" >/dev/null 2>&1; then
+	print_result "todo sync: generated metadata recovers without stash" 0
+else
+	print_result "todo sync: generated metadata recovers without stash" 1 "exit nonzero"
+fi
+stash_count=$(git -C "$CANON_DIR" stash list 2>/dev/null | wc -l | tr -d ' ')
+[[ "$stash_count" == "0" ]] \
+	&& print_result "todo sync: no stash created" 0 \
+	|| print_result "todo sync: no stash created" 1 "count: $stash_count"
+git -C "$CANON_DIR" diff --quiet -- TODO.md \
+	&& print_result "todo sync: TODO.md returned to clean HEAD" 0 \
+	|| print_result "todo sync: TODO.md returned to clean HEAD" 1
+[[ "$(git -C "$CANON_DIR" rev-parse HEAD)" == "$(git -C "$ORIGIN_DIR" rev-parse HEAD)" ]] \
+	&& print_result "todo sync: canonical refreshed to origin HEAD" 0 \
+	|| print_result "todo sync: canonical refreshed to origin HEAD" 1
+
+# =============================================================================
+# Test 3c: human/unknown TODO.md edits block without stashing or discarding.
+# =============================================================================
+
+make_repo_pair "todo-human"
+add_todo_to_origin_and_pull "$ORIGIN_DIR" "$CANON_DIR"
+printf '%s\n' '- [ ] t123 human-edited task description #auto-dispatch logged:2026-01-01' >"${CANON_DIR}/TODO.md"
+reset_call_logs
+
+if pulse_canonical_recover "$CANON_DIR" >/dev/null 2>&1; then
+	print_result "todo human: recovery blocks unknown TODO edit" 1 "unexpected success"
+else
+	print_result "todo human: recovery blocks unknown TODO edit" 0
+fi
+stash_count=$(git -C "$CANON_DIR" stash list 2>/dev/null | wc -l | tr -d ' ')
+[[ "$stash_count" == "0" ]] \
+	&& print_result "todo human: no stash created" 0 \
+	|| print_result "todo human: no stash created" 1 "count: $stash_count"
+grep -q 'human-edited task description' "${CANON_DIR}/TODO.md" \
+	&& print_result "todo human: edit preserved" 0 \
+	|| print_result "todo human: edit preserved" 1
+[[ -f "$(advisory_file_for "$CANON_DIR")" ]] \
+	&& print_result "todo human: advisory filed" 0 \
+	|| print_result "todo human: advisory filed" 1
 
 # =============================================================================
 # Test 4: unmerged path — merge --abort suffices
