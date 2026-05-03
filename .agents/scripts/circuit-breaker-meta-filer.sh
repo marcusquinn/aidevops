@@ -208,6 +208,7 @@ _cb_meta_body_hypothesis() {
 	if [[ "$breaker_type" == "$_CB_BREAKER_NO_WORK" ]]; then
 		cat <<'EOF'
 - **Worker exit classifier defect** — workers killed by SIGTERM/SIGKILL before producing a session may be misclassified as `reason=clean` (see #21818 / #21754). Check `headless-runtime-failure.sh::classify_worker_exit` and the wait_status sentinel propagation.
+- **Stale-recovery false positive** — assignment recovery may mark active work as stale and record `stale_timeout` / `no_work` fast-fails. Check `dispatch-dedup-stale.sh::_is_stale_assignment`, especially comment pagination/slurping and last-activity aggregation on long issue threads.
 - **Plugin init crash** — opencode plugin (`opencode-aidevops`) failing during boot due to FD exhaustion, env pollution, or a stale cache. Check the worker's stderr in `~/.aidevops/logs/worker-*-stderr.log`.
 - **Branch naming race** — worker tries to checkout a branch that another concurrent worker just consumed.
 - **Auth refresh race** — `gh` token rotation interrupts the worker mid-setup.
@@ -243,6 +244,7 @@ Treat the original (#${issue_number}) as evidence, not as the work to do. The wo
 
 - \`EDIT: .agents/scripts/dispatch-dedup-cost.sh\` — t2007 cost breaker definition and trip site.
 - \`EDIT: .agents/scripts/worker-lifecycle-common.sh\` — t2769 no_work breaker definition and trip site (around the \`no_work_loop\` marker).
+- \`EDIT: .agents/scripts/dispatch-dedup-stale.sh::_is_stale_assignment\` — stale assignment recovery path; for \`no_work\` trips, verify comment pagination/slurping and last-activity aggregation before changing exit classification.
 - \`EDIT: .agents/scripts/headless-runtime-failure.sh\` — worker exit classifier (the prime suspect for misclassification).
 - \`EDIT: .agents/scripts/circuit-breaker-meta-filer.sh\` — this filer; if it filed too eagerly, fix the trip-detection upstream rather than the filer.
 - \`EDIT: .agents/scripts/pulse-merge.sh::_handle_post_merge_actions\` — meta-PR merge cleanup that unblocks the original.
@@ -279,8 +281,9 @@ ${stages_slice:-(no matching stage records)}
 gh issue view ${issue_number} --repo ${repo_slug} --json labels --jq '[.labels[].name]'
 # Expect: no needs-maintainer-review, no blocked-by:#<this>
 
-# Re-run the regression test:
+# Re-run the regression tests:
 bash .agents/scripts/tests/test-circuit-breaker-meta-filer.sh
+bash .agents/scripts/tests/test-dispatch-dedup-stale-pagination.sh
 \`\`\`
 EOF
 	return 0
@@ -296,6 +299,7 @@ _cb_meta_body_tail() {
 ## Files Scope
 
 - `.agents/scripts/dispatch-dedup-cost.sh`
+- `.agents/scripts/dispatch-dedup-stale.sh`
 - `.agents/scripts/worker-lifecycle-common.sh`
 - `.agents/scripts/headless-runtime-failure.sh`
 - `.agents/scripts/headless-runtime-helper.sh`

@@ -190,6 +190,21 @@ else
 	print_result "first-trip: created exactly 1 issue" 1 "got count=$CREATE_COUNT"
 fi
 
+# Assert: no_work generated briefs include the stale-recovery path and its
+# dedicated regression test, so workers investigate the relevant false-positive
+# route before changing generic exit-classifier or breaker code.
+if grep -q 'dispatch-dedup-stale.sh::_is_stale_assignment' "$STUB_LOG"; then
+	print_result "first-trip: no_work guidance names stale assignment path" 0
+else
+	print_result "first-trip: no_work guidance names stale assignment path" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+if grep -q 'test-dispatch-dedup-stale-pagination.sh' "$STUB_LOG"; then
+	print_result "first-trip: no_work verification includes stale pagination test" 0
+else
+	print_result "first-trip: no_work verification includes stale pagination test" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
 # =============================================================================
 # Test 2: Idempotency — second trip with marker present returns existing
 # =============================================================================
