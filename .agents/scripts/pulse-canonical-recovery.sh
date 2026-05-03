@@ -184,6 +184,104 @@ _pcr_detect_state() {
 	return 0
 }
 
+_pcr_only_todo_dirty() {
+	local repo_path="$1"
+	local status_line path
+	while IFS= read -r status_line; do
+		[[ -n "$status_line" ]] || continue
+		path="${status_line#?? }"
+		case "$path" in
+			TODO.md)
+				;;
+			*)
+				return 1
+				;;
+		esac
+	done < <(git -C "$repo_path" status --porcelain --untracked-files=all 2>/dev/null)
+	return 0
+}
+
+_pcr_normalise_todo_sync_line() {
+	local line="$1"
+	printf '%s\n' "$line" \
+		| sed -E 's/^- \[[ xX]\] /- [?] /; s/[[:space:]]+(assignee|started|completed|logged|pr|actual|dispatched|origin|status):[^[:space:]]+//g; s/[[:space:]]+/ /g; s/[[:space:]]$//'
+	return 0
+}
+
+_pcr_todo_line_is_task() {
+	local line="$1"
+	if [[ "$line" =~ ^-\ \[[xX\ ]\]\ [tr][0-9] ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_pcr_todo_diff_is_generated_sync() {
+	local repo_path="$1"
+	local old_tmp new_tmp diff_line content saw_change=0 ok=1
+	old_tmp=$(mktemp "${TMPDIR:-/tmp}/pcr-todo-old.XXXXXX") || return 1
+	new_tmp=$(mktemp "${TMPDIR:-/tmp}/pcr-todo-new.XXXXXX") || { rm -f "$old_tmp"; return 1; }
+
+	while IFS= read -r diff_line; do
+		case "$diff_line" in
+			---*|+++*|@@*)
+				continue
+				;;
+			-*)
+				content="${diff_line#-}"
+				if ! _pcr_todo_line_is_task "$content"; then
+					ok=0
+					break
+				fi
+				_pcr_normalise_todo_sync_line "$content" >>"$old_tmp"
+				saw_change=1
+				;;
+			+*)
+				content="${diff_line#+}"
+				if ! _pcr_todo_line_is_task "$content"; then
+					ok=0
+					break
+				fi
+				_pcr_normalise_todo_sync_line "$content" >>"$new_tmp"
+				saw_change=1
+				;;
+		esac
+	done < <({ git -C "$repo_path" diff -- TODO.md; git -C "$repo_path" diff --cached -- TODO.md; } 2>/dev/null)
+
+	if [[ "$ok" -eq 1 && "$saw_change" -eq 1 ]] && cmp -s "$old_tmp" "$new_tmp"; then
+		rm -f "$old_tmp" "$new_tmp"
+		return 0
+	fi
+	rm -f "$old_tmp" "$new_tmp"
+	return 1
+}
+
+_pcr_recover_todo_sync_dirty_state() {
+	local repo_path="$1"
+	if ! _pcr_only_todo_dirty "$repo_path"; then
+		return 1
+	fi
+	if ! _pcr_todo_diff_is_generated_sync "$repo_path"; then
+		_pcr_audit "todo-dirty-blocked" "$repo_path" "advisory:human-or-unknown"
+		_pcr_log "TODO.md is dirty but does not match generated sync metadata — filing advisory without stashing"
+		_pcr_file_advisory "$repo_path" "todo-dirty-blocked"
+		return 2
+	fi
+
+	_pcr_audit "todo-sync-reset" "$repo_path" "ok:generated-metadata-only"
+	_pcr_log "discarding generated TODO.md sync metadata before canonical refresh"
+	git -C "$repo_path" reset -q -- TODO.md >/dev/null 2>&1 || return 2
+	git -C "$repo_path" checkout -- TODO.md >/dev/null 2>&1 || return 2
+	if git -C "$repo_path" fetch --quiet origin >>"${LOGFILE:-/dev/null}" 2>&1 \
+		&& git -C "$repo_path" pull --ff-only --no-rebase >>"${LOGFILE:-/dev/null}" 2>&1; then
+		_pcr_audit "todo-sync-refresh" "$repo_path" "ok:no-stash"
+		return 0
+	fi
+	_pcr_audit "todo-sync-refresh-failed" "$repo_path" "advisory:no-stash"
+	_pcr_file_advisory "$repo_path" "todo-sync-refresh-failed"
+	return 2
+}
+
 # Count attempts in the hot window for this repo. Echoes integer.
 # When jq is missing, returns MAX_ATTEMPTS so the caller's threshold check
 # trips and we escalate straight to advisory rather than silently looping
@@ -465,6 +563,25 @@ pulse_canonical_recover() {
 
 	_pcr_record_attempt "$repo_path"
 	_pcr_log "recovering ${repo_path} (state=${state})"
+
+	# Generated TODO.md sync metadata can appear in the canonical checkout while
+	# a worker is cleaning up from a linked worktree. Do not create a long-lived
+	# stash for that bookkeeping diff: either reset metadata-only generated state
+	# and refresh, or fail closed with a local advisory when TODO.md looks
+	# human-authored/unknown (GH#22664).
+	if [[ "$state" == "uncommitted" ]]; then
+		local todo_recovery_rc=0
+		_pcr_recover_todo_sync_dirty_state "$repo_path"
+		todo_recovery_rc=$?
+		case "$todo_recovery_rc" in
+			0)
+				return 0
+				;;
+			2)
+				return 1
+				;;
+		esac
+	fi
 
 	# Step 1: clear unmerged state if present.
 	if [[ "$state" == "unmerged" ]]; then
