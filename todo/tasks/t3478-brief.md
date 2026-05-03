@@ -42,6 +42,14 @@ Without a dedicated plane, feedback scatters across inbox notes, case files, cam
 
 This is a parent-task. Initial planning PR uses `For #` keyword (planning only). Children's PRs use `For #THIS-ISSUE` until the final phase, which uses a closing keyword for this parent.
 
+## Children
+
+- t3523 / #22510 — Phase 1: capture contract and normalized metadata fields.
+- t3524 / #22512 — Phase 2: retention and sensitivity policy.
+- t3525 / #22515 — Phase 3: mining workflow and evidence thresholds.
+- t3527 / #22518 — Phase 4: promotion paths into knowledge, campaigns, projects, cases, performance, and tasks.
+- t3528 / #22519 — Phase 5: CLI and routines design.
+
 ## Phases
 
 Decomposition planned as 5 phases:
@@ -52,7 +60,7 @@ Decomposition planned as 5 phases:
 - **Phase 4 — promotion paths**: specify when feedback becomes `_knowledge/insights/`, a `_campaigns` research input, a `_projects` requirement, a `_cases` note, or a new TODO/GitHub task.
 - **Phase 5 — CLI and routines**: design `aidevops feedback capture|list|mine|promote|retire` plus recurring mining/reporting cadence.
 
-Children are NOT pre-filed. File them when capture formats and sensitivity policy can be scoped against the data-plane registry and Markdoc tag work.
+Children are filed above so parent-task automation can track progress. Each child remains independently scoped and may block on the data-plane registry or Markdoc tag work when implementation begins.
 
 ## Out of Scope (for this parent)
 
@@ -74,6 +82,7 @@ This parent ships:
 
 - Decomposition plan in this brief.
 - A parent GitHub issue with `## Phases` so parent-task automation can understand the tracker.
+- Child issue links for each phase so the parent no longer stalls as an undecomposed tracker.
 - TODO entry with `#parent` and `ref:GH#22373`.
 
 ### Files Scope
@@ -88,7 +97,7 @@ This parent ships:
 - [ ] Mining workflow and evidence thresholds are explicit.
 - [ ] Promotion paths to `_knowledge`, `_campaigns`, `_projects`, `_cases`, and TODO/GitHub task creation are documented.
 - [ ] TODO entry includes `ref:GH#22373`, `#parent`, and this brief link.
-- [ ] Phase children are not filed prematurely.
+- [ ] Phase children are filed and linked from this parent brief.
 
 ## Context & Decisions
 
