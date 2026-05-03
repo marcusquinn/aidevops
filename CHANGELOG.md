@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.19] - 2026-05-03
+
+### Changed
+
+- Maintenance: mark t3560 complete (pr:#22650 completed:2026-05-03) [skip ci]
+- add /goals mission command
+
 ## [3.14.18] - 2026-05-03
 
 ### Changed
