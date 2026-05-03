@@ -54,7 +54,7 @@ _filter_non_task_issues() {
 	local _ntl_json
 	_ntl_json=$(printf '%s\n' "${NON_TASK_LABELS[@]}" | jq -R . | jq -sc .) || _ntl_json="[]"
 	jq --argjson ntl "$_ntl_json" \
-		'[.[] | select(.labels | map(.name) | any(. as $n | $ntl[] | . == $n) | not)]' \
+		'[.[] | select((.labels // []) | map(.name) | any(. as $n | $ntl[] | . == $n) | not)]' \
 		2>/dev/null || echo "[]"
 	return 0
 }

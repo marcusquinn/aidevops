@@ -5,9 +5,12 @@
 #
 # Verifies that _normalize_reassign_self correctly:
 #   1. Self-assigns status:queued / status:in-progress issues (regression)
-#   2. Self-assigns status:available + origin:worker + feedback label issues
-#   3. Self-assigns status:available + origin:worker + body marker issues
-#   4. Normalizes stale interactive ownership on feedback-routed issues
+#   2. Leaves status:available + origin:worker + feedback label issues unassigned
+#      until the atomic dispatch claim transitions them to status:queued
+#   3. Leaves status:available + origin:worker + body marker issues unassigned
+#      until the atomic dispatch claim transitions them to status:queued
+#   4. Normalizes stale interactive ownership on feedback-routed issues without
+#      assigning the issue before dispatch
 #   5. Skips status:available without origin:worker
 #   6. Skips status:available with existing assignees
 #   7. Skips fresh scanner issues (no feedback markers/labels)
@@ -110,7 +113,9 @@ elif [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 elif [[ "\$1" == "issue" && "\$2" == "edit" ]]; then
 	# Track which issues got assigned
 	printf '%s\n' "gh \$*" >> "${TEST_ROOT}/gh-calls.log"
-	echo "\$3" >> "${TEST_ROOT}/assigned.txt"
+	case " \$* " in
+	*" --add-assignee "*) echo "\$3" >> "${TEST_ROOT}/assigned.txt" ;;
+	esac
 	exit 0
 fi
 exit 1
@@ -244,8 +249,8 @@ test_in_progress_no_assignee_self_assigns() {
 	return 0
 }
 
-# ─── Test 3: status:available + origin:worker + source:ci-feedback → self-assigned ───
-test_available_worker_ci_feedback_label_self_assigns() {
+# ─── Test 3: status:available + origin:worker + source:ci-feedback → skipped ───
+test_available_worker_ci_feedback_label_skips_until_dispatch() {
 	setup_test_env
 	local json='[
 		{"number": 200, "assignees": [], "labels": [{"name": "status:available"}, {"name": "origin:worker"}, {"name": "source:ci-feedback"}]}
@@ -258,18 +263,18 @@ test_available_worker_ci_feedback_label_self_assigns() {
 
 	local assigned
 	assigned=$(get_assigned_issues)
-	if echo "$assigned" | grep -q "200"; then
-		print_result "status:available + origin:worker + source:ci-feedback → self-assigned" 0
+	if [[ -z "$assigned" ]]; then
+		print_result "status:available + origin:worker + source:ci-feedback → skipped until dispatch" 0
 	else
-		print_result "status:available + origin:worker + source:ci-feedback → self-assigned" 1 \
-			"Expected issue 200 to be assigned, got: ${assigned:-<empty>}"
+		print_result "status:available + origin:worker + source:ci-feedback → skipped until dispatch" 1 \
+			"Expected no assignment before dispatch, got: ${assigned}"
 	fi
 	cleanup_test_env
 	return 0
 }
 
-# ─── Test 4: status:available + origin:worker + source:conflict-feedback → self-assigned ───
-test_available_worker_conflict_feedback_label_self_assigns() {
+# ─── Test 4: status:available + origin:worker + source:conflict-feedback → skipped ───
+test_available_worker_conflict_feedback_label_skips_until_dispatch() {
 	setup_test_env
 	local json='[
 		{"number": 201, "assignees": [], "labels": [{"name": "status:available"}, {"name": "origin:worker"}, {"name": "source:conflict-feedback"}]}
@@ -282,11 +287,11 @@ test_available_worker_conflict_feedback_label_self_assigns() {
 
 	local assigned
 	assigned=$(get_assigned_issues)
-	if echo "$assigned" | grep -q "201"; then
-		print_result "status:available + origin:worker + source:conflict-feedback → self-assigned" 0
+	if [[ -z "$assigned" ]]; then
+		print_result "status:available + origin:worker + source:conflict-feedback → skipped until dispatch" 0
 	else
-		print_result "status:available + origin:worker + source:conflict-feedback → self-assigned" 1 \
-			"Expected issue 201 to be assigned, got: ${assigned:-<empty>}"
+		print_result "status:available + origin:worker + source:conflict-feedback → skipped until dispatch" 1 \
+			"Expected no assignment before dispatch, got: ${assigned}"
 	fi
 	cleanup_test_env
 	return 0
@@ -307,9 +312,9 @@ test_available_conflict_feedback_stale_interactive_claim_normalized() {
 	local assigned calls
 	assigned=$(get_assigned_issues)
 	calls=$(get_gh_calls)
-	if ! echo "$assigned" | grep -q "202"; then
-		print_result "status:available + conflict-feedback + stale interactive claim → self-assigned" 1 \
-			"Expected issue 202 to be assigned, got: ${assigned:-<empty>}"
+	if [[ -z "$calls" ]]; then
+		print_result "status:available + conflict-feedback + stale interactive claim → ownership normalized" 1 \
+			"Expected origin/assignee normalization call, got: <empty>"
 		cleanup_test_env
 		return 0
 	fi
@@ -319,13 +324,19 @@ test_available_conflict_feedback_stale_interactive_claim_normalized() {
 		cleanup_test_env
 		return 0
 	fi
-	print_result "status:available + conflict-feedback + stale interactive claim → normalized and self-assigned" 0
+	if [[ -n "$assigned" ]]; then
+		print_result "status:available + conflict-feedback + stale interactive claim → not assigned before dispatch" 1 \
+			"Expected no assignment before dispatch, got: ${assigned}"
+		cleanup_test_env
+		return 0
+	fi
+	print_result "status:available + conflict-feedback + stale interactive claim → normalized only" 0
 	cleanup_test_env
 	return 0
 }
 
-# ─── Test 6: status:available + origin:worker + body marker → self-assigned ───
-test_available_worker_body_marker_self_assigns() {
+# ─── Test 6: status:available + origin:worker + body marker → skipped ───
+test_available_worker_body_marker_skips_until_dispatch() {
 	setup_test_env
 	local body_marker='<!-- ci-feedback:PR1234 -->'
 	local json='[
@@ -339,11 +350,11 @@ test_available_worker_body_marker_self_assigns() {
 
 	local assigned
 	assigned=$(get_assigned_issues)
-	if echo "$assigned" | grep -q "300"; then
-		print_result "status:available + origin:worker + body marker → self-assigned" 0
+	if [[ -z "$assigned" ]]; then
+		print_result "status:available + origin:worker + body marker → skipped until dispatch" 0
 	else
-		print_result "status:available + origin:worker + body marker → self-assigned" 1 \
-			"Expected issue 300 to be assigned, got: ${assigned:-<empty>}"
+		print_result "status:available + origin:worker + body marker → skipped until dispatch" 1 \
+			"Expected no assignment before dispatch, got: ${assigned}"
 	fi
 	cleanup_test_env
 	return 0
@@ -429,10 +440,10 @@ main() {
 
 	test_queued_no_assignee_self_assigns
 	test_in_progress_no_assignee_self_assigns
-	test_available_worker_ci_feedback_label_self_assigns
-	test_available_worker_conflict_feedback_label_self_assigns
+	test_available_worker_ci_feedback_label_skips_until_dispatch
+	test_available_worker_conflict_feedback_label_skips_until_dispatch
 	test_available_conflict_feedback_stale_interactive_claim_normalized
-	test_available_worker_body_marker_self_assigns
+	test_available_worker_body_marker_skips_until_dispatch
 	test_available_no_worker_label_skips
 	test_available_with_assignee_skips
 	test_fresh_scanner_issue_skips
