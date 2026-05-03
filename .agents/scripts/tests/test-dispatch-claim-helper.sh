@@ -91,7 +91,7 @@ if [[ "$endpoint" == "user" ]]; then
 	exit 0
 fi
 
-if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
+if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	method="GET"
 	body=""
 	while [[ "$#" -gt 0 ]]; do
@@ -187,7 +187,7 @@ if [[ "$endpoint" == "user" ]]; then
 	exit 0
 fi
 
-if [[ "$endpoint" == repos/*/issues/*/comments ]]; then
+if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	method="GET"
 	body=""
 	while [[ "$#" -gt 0 ]]; do
@@ -255,6 +255,99 @@ exit 1
 EOF
 	chmod +x "${mock_bin_dir}/gh"
 	MOCK_TERMINAL_BODY="$terminal_body" printf '%s' "$mock_bin_dir"
+	return 0
+}
+
+#######################################
+# Build a mock gh executable that returns gh --paginate --slurp shaped output:
+# an array of pages. The active claim is only present on the second page, which
+# catches regressions where claim readers inspect only the oldest REST page.
+# Uses env vars:
+#   MOCK_GH_STATE_DIR, MOCK_OLD_CLAIM_CREATED_AT, MOCK_NEW_CLAIM_CREATED_AT
+# Returns: path to mock gh directory via stdout
+#######################################
+create_paginated_mock_gh() {
+	local state_dir="$1"
+	local mock_bin_dir
+	mock_bin_dir="${state_dir}/bin"
+	mkdir -p "$mock_bin_dir"
+
+	cat >"${mock_bin_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+local_state_dir="${MOCK_GH_STATE_DIR:?}"
+post_body_file="${local_state_dir}/post_body.txt"
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 1
+fi
+shift
+
+endpoint="${1:-}"
+shift || true
+
+if [[ "$endpoint" == "user" ]]; then
+	printf 'mockrunner\n'
+	exit 0
+fi
+
+if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
+	method="GET"
+	body=""
+	while [[ "$#" -gt 0 ]]; do
+		case "$1" in
+		--method)
+			method="$2"
+			shift 2
+			;;
+		--field)
+			if [[ "$2" == body=* ]]; then
+				body="${2#body=}"
+			fi
+			shift 2
+			;;
+		--paginate | --slurp)
+			shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	if [[ "$method" == "POST" ]]; then
+		printf '%s' "$body" >"$post_body_file"
+		printf '999\n'
+		exit 0
+	fi
+
+	if [[ -f "$post_body_file" ]]; then
+		new_body=$(<"$post_body_file")
+	else
+		new_body=""
+	fi
+
+	jq -n \
+		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
+		--arg new_body "$new_body" \
+		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
+		'[
+			[
+				{id: 1, body: "human discussion", created_at: "2026-05-01T00:00:00Z"}
+			],
+			[
+				{id: 2, body: ("DISPATCH_CLAIM nonce=old-nonce runner=mockrunner ts=" + $old_ts + " max_age_s=1800 version=3.14.23"), created_at: $old_ts},
+				{id: 999, body: $new_body, created_at: $new_ts}
+			]
+		]'
+	exit 0
+fi
+
+exit 1
+EOF
+	chmod +x "${mock_bin_dir}/gh"
+	printf '%s' "$mock_bin_dir"
 	return 0
 }
 
@@ -561,6 +654,46 @@ test_claim_rejects_fresh_same_runner_claim() {
 }
 
 #######################################
+# Test: long issue threads still see active claims beyond the first REST page.
+#######################################
+test_claim_reads_paginated_comment_tail() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_paginated_mock_gh "$tmp_dir")"
+
+	local old_created_at new_created_at output exit_code
+	old_created_at="$(iso_seconds_ago 10)"
+	new_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "paginated comments find prior same-runner claim" 0
+	else
+		print_result "paginated comments find prior same-runner claim" 1 "got exit $exit_code output: $output"
+	fi
+
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "paginated prior claim emits CLAIM_STALE_SELF" 0
+	else
+		print_result "paginated prior claim emits CLAIM_STALE_SELF" 1 "output: $output"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
 # Test: stale worker takeover claims are annotated (GH#22356)
 #######################################
 test_claim_marks_stale_worker_takeover() {
@@ -673,6 +806,7 @@ main() {
 	test_env_var_defaults
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
+	test_claim_reads_paginated_comment_tail
 	test_claim_marks_stale_worker_takeover
 	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment
 	test_claim_skips_takeover_reason_after_terminal
