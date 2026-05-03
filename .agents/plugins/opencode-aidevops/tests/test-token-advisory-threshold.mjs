@@ -73,7 +73,7 @@ describe("token cost advisory threshold", () => {
     assert.match(output.system[0], /We're running aidevops v3\.14\.23\./);
   });
 
-  test("includes startup advisory only for warning and error cache lines", async () => {
+  test("keeps startup advisory cache lines out of chat instructions", async () => {
     const { hooks } = createHooks({
       readIfExists: (path) => path.endsWith("session-greeting.txt")
         ? [
@@ -88,13 +88,13 @@ describe("token cost advisory threshold", () => {
 
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
-    assert.match(output.system[0], /After the greeting, include this short startup advisory/);
-    assert.match(output.system[0], /\[SECURITY ADVISORY\] Rotate test credentials/);
-    assert.match(output.system[0], /\[WARN\] Pulse stalled for 12 minutes/);
+    assert.match(output.system[0], /Do not include startup advisory\/status\/cache lines in chat/);
+    assert.doesNotMatch(output.system[0], /\[SECURITY ADVISORY\] Rotate test credentials/);
+    assert.doesNotMatch(output.system[0], /\[WARN\] Pulse stalled for 12 minutes/);
     assert.doesNotMatch(output.system[0], /Security: all protections active/);
   });
 
-  test("omits startup advisory section for clean cache", async () => {
+  test("avoids duplicate greeting after salutation-only launch input", async () => {
     const { hooks } = createHooks({
       readIfExists: (path) => path.endsWith("session-greeting.txt")
         ? [
@@ -107,7 +107,7 @@ describe("token cost advisory threshold", () => {
 
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
-    assert.doesNotMatch(output.system[0], /startup advisory/);
+    assert.match(output.system[0], /do not add another greeting or a second 'what would you like to work on' line/);
   });
 
   test("does not inject session greeting order in headless sessions", async () => {
