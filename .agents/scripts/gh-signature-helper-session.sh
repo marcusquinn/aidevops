@@ -478,8 +478,8 @@ _detect_explicit_session_type() {
 		return 0
 	fi
 
-	if [[ "${OPENCODE:-}" == "1" ]] || [[ -n "${OPENCODE_SESSION_ID:-}" ]] ||
-		[[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+	if _gh_sig_env_truthy "${OPENCODE:-}" || [[ -n "${OPENCODE_SESSION_ID:-}" ]] ||
+		_gh_sig_env_truthy "${CLAUDE_CODE:-}" || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
 		echo "interactive"
 		return 0
 	fi
