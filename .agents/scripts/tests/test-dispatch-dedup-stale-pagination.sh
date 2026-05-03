@@ -4,10 +4,10 @@
 #
 # Regression guard for GH#3894 / t2769 no_work false trips.
 #
-# _is_stale_assignment must paginate issue comments. Without --paginate, long
-# issue threads can return only the first page of old dispatch comments; the
-# stale-recovery path then ignores recent activity, unassigns a live issue, and
-# records a stale_timeout no_work fast-fail that can trip the t2769 breaker.
+# _is_stale_assignment must paginate and slurp issue comments. Without --slurp,
+# `gh api --paginate --jq ...` runs jq per page; long issue threads can leave the
+# first page of old dispatch comments before newer page-2 activity, causing stale
+# recovery to record stale_timeout/no_work fast-fails that trip t2769.
 
 set -uo pipefail
 
@@ -82,11 +82,16 @@ gh() {
 	fi
 
 	local has_paginate=0
+	local has_slurp=0
 	local jq_filter=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--paginate)
 			has_paginate=1
+			shift
+			;;
+		--slurp)
+			has_slurp=1
 			shift
 			;;
 		--jq)
@@ -99,10 +104,15 @@ gh() {
 		esac
 	done
 
+	local recent_ts
+	recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	local response
-	if [[ "$has_paginate" -eq 1 ]]; then
-		printf 'comments_paginated\n' >>"$GH_CALL_LOG"
-		response=$(printf '[{"created_at":"2020-01-01T00:00:00Z","user":{"login":"runner"},"body":"Dispatching worker (deterministic)."},{"created_at":"%s","user":{"login":"runner"},"body":"CLAIM_RELEASED reason=clean runner=runner exit=0 session_count=1"}]\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+	if [[ "$has_paginate" -eq 1 && "$has_slurp" -eq 1 ]]; then
+		printf 'comments_slurped\n' >>"$GH_CALL_LOG"
+		response=$(printf '[[{"created_at":"2020-01-01T00:00:00Z","user":{"login":"runner"},"body":"Dispatching worker (deterministic)."}],[{"created_at":"%s","user":{"login":"runner"},"body":"CLAIM_RELEASED reason=clean runner=runner exit=0 session_count=1"}]]\n' "$recent_ts")
+	elif [[ "$has_paginate" -eq 1 ]]; then
+		printf 'comments_paginated_per_page\n' >>"$GH_CALL_LOG"
+		response=$(printf '[{"created_at":"2020-01-01T00:00:00Z","author":"runner","body_start":"Dispatching worker (deterministic)."}]\n[{"created_at":"%s","author":"runner","body_start":"CLAIM_RELEASED reason=clean runner=runner exit=0 session_count=1"}]\n' "$recent_ts")
 	else
 		printf 'comments_unpaginated\n' >>"$GH_CALL_LOG"
 		response='[{"created_at":"2020-01-01T00:00:00Z","user":{"login":"runner"},"body":"Dispatching worker (deterministic)."}]'
@@ -126,10 +136,10 @@ else
 	fi
 fi
 
-if grep -q '^comments_paginated$' "$GH_CALL_LOG" 2>/dev/null; then
-	pass "comments API is called with --paginate"
+if grep -q '^comments_slurped$' "$GH_CALL_LOG" 2>/dev/null; then
+	pass "comments API is called with --paginate --slurp"
 else
-	fail "comments API is called with --paginate" "mock observed a non-paginated comments request"
+	fail "comments API is called with --paginate --slurp" "mock did not observe a slurped comments request"
 fi
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
