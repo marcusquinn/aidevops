@@ -55,7 +55,7 @@ Answer each question for `tier:simple`. If **any** answer is "no", use `tier:sta
 - [ ] **No cross-package or cross-module changes?** (no `packages/a/` + `packages/b/`, no changes spanning unrelated subsystems)
 - [ ] **Estimate 1h or less?**
 - [ ] **4 or fewer acceptance criteria?**
-- [ ] **Dispatch-path classification (t2821/t2920):** Does the `### Files Scope` or `## How` section reference any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, etc.)? If yes, keep the normal `#auto-dispatch` default; the pre-dispatch detector auto-elevates to `model:opus-4-7`. Opt out only with `#no-auto-dispatch #interactive` when intentionally implementing interactively.
+- [ ] **Dispatch-path classification (t2821/t2920):** Does the `### Files Scope` or `## How` section reference any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, etc.)? If yes, this is **not** `tier:simple`: keep the normal `#auto-dispatch` default, use `tier:thinking`, and rely on the pre-dispatch detector to auto-elevate to `model:opus-4-7`. Opt out only with `#no-auto-dispatch #interactive` when intentionally implementing interactively. See `.agents/reference/task-taxonomy.md` and `.agents/reference/auto-dispatch.md` for details.
 
 All checked = `tier:simple`. Any unchecked = `tier:standard` (default) or `tier:thinking` (no existing pattern to follow).
 
