@@ -18,18 +18,34 @@ function makeHook() {
   });
 }
 
+async function withCleanHeadlessProcessEnv(fn) {
+  const keys = ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS", "GITHUB_ACTIONS"];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    for (const key of keys) delete process.env[key];
+    await fn();
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+}
+
 test("interactive OpenCode shell overrides stale worker origin", async () => {
-  const hook = makeHook();
-  const output = {
-    env: {
-      PATH: "/usr/bin:/bin",
-      AIDEVOPS_SESSION_ORIGIN: "worker",
-    },
-  };
+  await withCleanHeadlessProcessEnv(async () => {
+    const hook = makeHook();
+    const output = {
+      env: {
+        PATH: "/usr/bin:/bin",
+        AIDEVOPS_SESSION_ORIGIN: "worker",
+      },
+    };
 
-  await hook({ sessionID: "interactive-session" }, output);
+    await hook({ sessionID: "interactive-session" }, output);
 
-  assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "interactive");
+    assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "interactive");
+  });
 });
 
 test("headless OpenCode shell stamps worker origin", async () => {
