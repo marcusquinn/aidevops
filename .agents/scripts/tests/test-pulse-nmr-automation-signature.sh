@@ -79,6 +79,7 @@ if [[ "${1:-}" == "api" ]]; then
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 			--paginate) shift ;;
+			--slurp) shift ;;
 			--jq) jq_filter="$2"; shift 2 ;;
 			*) shift ;;
 		esac
@@ -385,6 +386,21 @@ test_breaker_trip_detects_cost_circuit_breaker_marker() {
 	return 0
 }
 
+test_breaker_trip_detects_paginated_marker_on_later_page() {
+	# GH paginates issue comments. Pre-fix, `gh api --paginate --jq` emitted one
+	# count per page (for example "0\n1"), failed numeric coercion, and missed
+	# breaker markers outside the first page — allowing repeated auto-approval
+	# comments after a cost/no_work circuit breaker.
+	set_comments '[[{"created_at":"2026-05-03T19:18:00Z","body":"regular earlier comment"}],[{"created_at":"2026-05-03T19:19:38Z","body":"<!-- cost-circuit-breaker:no_work_loop count=3 threshold=3 -->\nPer-issue no_work circuit breaker fired."}]]'
+	if _nmr_application_is_circuit_breaker_trip 3778 awardsapp/awardsapp "2026-05-03T19:19:36Z"; then
+		print_result "breaker_trip detects marker on later paginated page" 0
+		return 0
+	fi
+	print_result "breaker_trip detects marker on later paginated page" 1 \
+		"Expected exit 0 — paginated breaker marker within window must preserve NMR"
+	return 0
+}
+
 test_breaker_trip_detects_legacy_escalated_marker() {
 	set_comments '[{"created_at":"2026-04-13T05:00:00Z","body":"<!-- circuit-breaker-escalated -->"}]'
 	if _nmr_application_is_circuit_breaker_trip 18641 marcusquinn/aidevops "2026-04-13T05:00:00Z"; then
@@ -521,6 +537,7 @@ main() {
 	# _nmr_application_is_circuit_breaker_trip (breaker trips only)
 	test_breaker_trip_detects_stale_recovery_escalation_marker
 	test_breaker_trip_detects_cost_circuit_breaker_marker
+	test_breaker_trip_detects_paginated_marker_on_later_page
 	test_breaker_trip_detects_legacy_escalated_marker
 	test_breaker_trip_rejects_source_review_scanner_marker
 	test_breaker_trip_ignores_marker_outside_window
