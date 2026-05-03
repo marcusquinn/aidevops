@@ -940,6 +940,14 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t3550 AGENTS.md progressive disclosure — slim ~26.5K tokens to ~5K via 8-phase extraction #parent #docs #self-improvement #aidevops #interactive ref:GH#22616
 
+- [ ] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622
+
+- [ ] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623
+
+- [ ] t3554 Add gpt-5.4-mini session rename model ref:GH#22624
+
+- [ ] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22

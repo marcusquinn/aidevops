@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.15] - 2026-05-03
+
+### Changed
+
+- Maintenance: sync TODO issue refs
+- Maintenance: sync ref:GH#22629 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22627 to TODO.md [skip ci]
+
+### Fixed
+
+- rotate OpenAI OAuth pool on usage limits (#22630)
+
 ## [3.14.14] - 2026-05-03
 
 ### Changed
