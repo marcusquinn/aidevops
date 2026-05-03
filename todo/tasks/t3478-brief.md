@@ -46,7 +46,9 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
 
 - t3523 / #22510 — Phase 1: capture contract and normalized metadata fields.
 - t3524 / #22512 — Phase 2: retention and sensitivity policy.
-- t3525 / #22515 — Phase 3: mining workflow and evidence thresholds.
+- t3525 / #22515 — Phase 3: mining workflow and evidence thresholds; filed as
+  the child that documents clustering, deduplication, review gates, and promotion
+  thresholds in `.agents/aidevops/feedback.md`.
 - t3527 / #22518 — Phase 4: promotion paths into knowledge, campaigns, projects, cases, performance, and tasks.
 - t3528 / #22519 — Phase 5: CLI and routines design.
 
