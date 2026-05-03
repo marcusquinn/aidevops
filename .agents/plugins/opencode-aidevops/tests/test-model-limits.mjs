@@ -212,6 +212,15 @@ describe("CLAUDE_MODEL_LIMITS table", () => {
 // ---------------------------------------------------------------------------
 
 describe("OPENAI_MODEL_LIMITS table", () => {
+  test("registers GPT-5.4 mini for low-cost OpenAI tasks", () => {
+    const limit = OPENAI_MODEL_LIMITS["gpt-5.4-mini"];
+    assert.ok(limit, "missing OpenAI limit entry for gpt-5.4-mini");
+    assert.equal(limit.context, 200000);
+    assert.equal(limit.input, 180000);
+    assert.equal(limit.input - 20000, 160000);
+    assert.equal(limit.output, 64000);
+  });
+
   test("sets GPT-5.5 family input to preserve a 400K OpenCode compaction boundary", () => {
     const expected = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro"];
     for (const id of expected) {
