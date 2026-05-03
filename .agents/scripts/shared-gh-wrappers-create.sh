@@ -202,7 +202,11 @@ gh_create_issue() {
 	# t2436: Derive creation-time labels from TODO.md tags + filter --todo-task-id.
 	# Helper writes _GH_CI_FILTERED_ARGS and _GH_CI_TODO_LABEL_ARGS globals.
 	_gh_ci_prepare_todo_labels "$@"
-	set -- "${_GH_CI_FILTERED_ARGS[@]+"${_GH_CI_FILTERED_ARGS[@]}"}"
+	if [[ ${#_GH_CI_FILTERED_ARGS[@]} -gt 0 ]]; then
+		set -- "${_GH_CI_FILTERED_ARGS[@]}"
+	else
+		set --
+	fi
 	local -a _todo_label_args=()
 	if [[ ${#_GH_CI_TODO_LABEL_ARGS[@]} -gt 0 ]]; then
 		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")

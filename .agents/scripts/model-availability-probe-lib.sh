@@ -684,25 +684,75 @@ _parse_rate_limits() {
 # must override before any cache-positive lookup marks a model available.
 # Canonical config: .agents/configs/model-routing-table.json chatgpt_oauth_restrictions.
 
-# Known-unsupported model IDs under OpenAI ChatGPT OAuth (Codex auth).
-# Source: OpenCode CLI smoke tests (2026-04-30 session, GH#21990).
-# Update this list only after a live ChatGPT OAuth smoke test confirms support.
-_CHATGPT_OAUTH_UNSUPPORTED_MODELS=(
-	"gpt-5.5-pro"
-	"gpt-5.4-pro"
-	"gpt-5.2-pro"
-	"o3-pro"
-)
+# ChatGPT OAuth restriction settings are loaded lazily from the model routing
+# table so the config remains the single source of truth.
+_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=""
+_OPENAI_OAUTH_AUTH_FILE_CACHE=""
+_OPENAI_OAUTH_AUTH_TYPE_CACHE=""
+
+_model_routing_table_path() {
+	printf '%s\n' "${SCRIPT_DIR}/../configs/model-routing-table.json"
+	return 0
+}
+
+_expand_config_path() {
+	local path="$1"
+	case "$path" in
+	~/*) printf '%s/%s\n' "$HOME" "${path#~/}" ;;
+	*) printf '%s\n' "$path" ;;
+	esac
+	return 0
+}
+
+_openai_oauth_auth_file() {
+	if [[ -n "$_OPENAI_OAUTH_AUTH_FILE_CACHE" ]]; then
+		printf '%s\n' "$_OPENAI_OAUTH_AUTH_FILE_CACHE"
+		return 0
+	fi
+
+	local routing_table
+	routing_table=$(_model_routing_table_path)
+	local configured_path=""
+	if [[ -r "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
+		configured_path=$(jq -r '.providers.openai.oauth_auth_file // empty' "$routing_table" 2>/dev/null || true)
+	fi
+	[[ -n "$configured_path" ]] || configured_path="${HOME}/.local/share/opencode/auth.json"
+	_OPENAI_OAUTH_AUTH_FILE_CACHE=$(_expand_config_path "$configured_path")
+	printf '%s\n' "$_OPENAI_OAUTH_AUTH_FILE_CACHE"
+	return 0
+}
+
+_chatgpt_oauth_unsupported_models() {
+	if [[ -n "$_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE" ]]; then
+		printf '%s\n' "$_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE"
+		return 0
+	fi
+
+	local routing_table
+	routing_table=$(_model_routing_table_path)
+	if [[ -r "$routing_table" ]] && command -v jq >/dev/null 2>&1; then
+		_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE=$(jq -r '.chatgpt_oauth_restrictions.openai_unsupported[]? // empty' "$routing_table" 2>/dev/null || true)
+	fi
+	printf '%s\n' "$_CHATGPT_OAUTH_UNSUPPORTED_MODELS_CACHE"
+	return 0
+}
 
 # Returns 0 if the OpenAI provider is authenticated via ChatGPT OAuth (Codex).
-# Checks ~/.local/share/opencode/auth.json for openai.type == "oauth".
+# Checks the configured OpenCode auth file for openai.type == "oauth".
 # Returns 1 if using an API key, auth.json is absent, or jq is unavailable.
 _is_openai_chatgpt_oauth() {
-	local auth_file="${HOME}/.local/share/opencode/auth.json"
+	if [[ -n "$_OPENAI_OAUTH_AUTH_TYPE_CACHE" ]]; then
+		[[ "$_OPENAI_OAUTH_AUTH_TYPE_CACHE" == "oauth" ]]
+		return $?
+	fi
+
+	local auth_file
+	auth_file=$(_openai_oauth_auth_file)
 	[[ -f "$auth_file" ]] || return 1
 
 	local auth_type
 	auth_type=$(jq -r '.openai.type // empty' "$auth_file" 2>/dev/null) || auth_type=""
+	_OPENAI_OAUTH_AUTH_TYPE_CACHE="$auth_type"
 	[[ "$auth_type" == "oauth" ]]
 	return $?
 }
@@ -725,11 +775,12 @@ _chatgpt_oauth_denylist_check() {
 
 	# Check if model_id is in the unsupported list
 	local denied
-	for denied in "${_CHATGPT_OAUTH_UNSUPPORTED_MODELS[@]}"; do
+	while IFS= read -r denied; do
+		[[ -n "$denied" ]] || continue
 		if [[ "$model_id" == "$denied" ]]; then
 			return 0 # denied
 		fi
-	done
+	done < <(_chatgpt_oauth_unsupported_models)
 	return 1 # allowed
 }
 
@@ -781,7 +832,6 @@ check_model_available() {
 	# in /v1/models but fail at inference under ChatGPT OAuth (Codex auth).
 	# Must run before DB cache to override stale "available" entries. GH#21990.
 	if _chatgpt_oauth_denylist_check "$provider" "$model_id"; then
-		_record_model_availability "$model_id" "$provider" 0
 		[[ "$quiet" != "true" ]] && print_warning "$model_spec: unavailable (ChatGPT OAuth denylist — not supported with Codex account, GH#21990)"
 		return 1
 	fi
@@ -1048,4 +1098,3 @@ resolve_tier_chain() {
 	[[ "$quiet" != "true" ]] && print_error "No available model for tier: $tier (fallback chain exhausted)"
 	return 1
 }
-

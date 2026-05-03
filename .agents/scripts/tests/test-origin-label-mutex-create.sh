@@ -403,6 +403,22 @@ else
 fi
 unset GH_ARGV_RECORD_FILE
 
+# B'6: only --todo-task-id filtered out → no empty argv element
+# Regression for shared-gh-wrappers-create.sh:203 where an empty filtered arg
+# array could become a single "" argument after set --.
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_issue_todo_only.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --todo-task-id t999 >/dev/null 2>&1
+if grep -qx '<>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B'6: gh_create_issue todo-only filter passes no empty argv element" 1 \
+		"empty argv element reached gh: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B'6: gh_create_issue todo-only filter passes no empty argv element" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh
 # ---------------------------------------------------------------------------

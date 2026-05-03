@@ -27,6 +27,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_TMP_DIR=""
+TEST_TMP_DIRS=()
 
 print_result() {
 	local test_name="$1"
@@ -48,9 +49,23 @@ print_result() {
 }
 
 cleanup() {
+	local tmp_dir
+	for tmp_dir in "${TEST_TMP_DIRS[@]}"; do
+		if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
+			rm -rf "$tmp_dir"
+		fi
+	done
 	if [[ -n "$TEST_TMP_DIR" && -d "$TEST_TMP_DIR" ]]; then
 		rm -rf "$TEST_TMP_DIR"
 	fi
+	return 0
+}
+
+make_test_tmp_dir() {
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	TEST_TMP_DIRS+=("$tmp_dir")
+	printf '%s\n' "$tmp_dir"
 	return 0
 }
 
@@ -83,7 +98,7 @@ _deploy_agents_to_runtimes_bounded() {
 	_pid=\$!
 
 	while kill -0 "\$_pid" 2>/dev/null; do
-		if (( SECONDS - _start_s >= timeout_s )); then
+		if (( \${SECONDS:-0} - \${_start_s:-0} >= \${timeout_s:-0} )); then
 			kill -TERM "\$_pid" 2>/dev/null || true
 			sleep 2
 			kill -KILL "\$_pid" 2>/dev/null || true
@@ -177,8 +192,9 @@ ${bg_usages}"
 }
 
 test_bounded_wrapper_fast_path() {
-	TEST_TMP_DIR="$(mktemp -d)"
-	local script="${TEST_TMP_DIR}/fast.sh"
+	local test_tmp_dir
+	test_tmp_dir=$(make_test_tmp_dir)
+	local script="${test_tmp_dir}/fast.sh"
 
 	_write_bounded_wrapper_script "$script" "  return 0" "5"
 
@@ -195,8 +211,9 @@ test_bounded_wrapper_fast_path() {
 }
 
 test_bounded_wrapper_kills_slow_deployment_without_failing_setup() {
-	TEST_TMP_DIR="$(mktemp -d)"
-	local script="${TEST_TMP_DIR}/slow.sh"
+	local test_tmp_dir
+	test_tmp_dir=$(make_test_tmp_dir)
+	local script="${test_tmp_dir}/slow.sh"
 
 	_write_bounded_wrapper_script "$script" "  sleep 30; return 0" "3"
 
@@ -223,8 +240,9 @@ test_bounded_wrapper_kills_slow_deployment_without_failing_setup() {
 }
 
 test_bounded_wrapper_timeout_env_respected() {
-	TEST_TMP_DIR="$(mktemp -d)"
-	local script="${TEST_TMP_DIR}/env_check.sh"
+	local test_tmp_dir
+	test_tmp_dir=$(make_test_tmp_dir)
+	local script="${test_tmp_dir}/env_check.sh"
 
 	# Deploy that sleeps 10s; AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT=2 should terminate it
 	# without failing setup's non-interactive path.
@@ -245,8 +263,9 @@ test_bounded_wrapper_timeout_env_respected() {
 }
 
 test_real_bounded_wrapper_timeout_returns_zero() {
-	TEST_TMP_DIR="$(mktemp -d)"
-	local script="${TEST_TMP_DIR}/real_wrapper_timeout.sh"
+	local test_tmp_dir
+	test_tmp_dir=$(make_test_tmp_dir)
+	local script="${test_tmp_dir}/real_wrapper_timeout.sh"
 	local wrapper_definition=""
 
 	wrapper_definition=$(awk '

@@ -270,7 +270,7 @@ _deploy_agents_to_runtimes_bounded() {
 	_pid=$!
 
 	while kill -0 "$_pid" 2>/dev/null; do
-		if (( SECONDS - _start_s >= timeout_s )); then
+		if (( ${SECONDS:-0} - ${_start_s:-0} >= ${timeout_s:-0} )); then
 			kill -TERM "$_pid" 2>/dev/null || true
 			sleep 2
 			kill -KILL "$_pid" 2>/dev/null || true

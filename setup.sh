@@ -650,7 +650,7 @@ _setup_lock_started_age_seconds() {
 	if [[ -r "$lock_dir/started_at" ]]; then
 		started_str=$(tr -d '[:space:]' <"$lock_dir/started_at" 2>/dev/null || true)
 		started_epoch=$(date -d "$started_str" +%s 2>/dev/null || \
-			date -jf '%Y-%m-%dT%H:%M:%SZ' "$started_str" +%s 2>/dev/null || true)
+			date -u -jf '%Y-%m-%dT%H:%M:%SZ' "$started_str" +%s 2>/dev/null || true)
 		now_epoch=$(date +%s 2>/dev/null || true)
 		if [[ "$started_epoch" =~ ^[0-9]+$ && "$now_epoch" =~ ^[0-9]+$ && "$now_epoch" -ge "$started_epoch" ]]; then
 			printf '%s\n' $((now_epoch - started_epoch))
@@ -1048,7 +1048,7 @@ _setup_run_non_interactive() {
 	# Use the bounded wrapper so a slow file-system traversal across many agent
 	# files does not consume the remaining postflight budget and trip the outer
 	# timeout (GH#22087). AIDEVOPS_DEPLOY_RUNTIMES_TIMEOUT controls the deadline.
-	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded
+	_time_step "deploy_agents_to_runtimes" _deploy_agents_to_runtimes_bounded || true
 	_time_step "update_opencode_config" _setup_run_noncritical_stage_bounded "OpenCode config update" "${AIDEVOPS_UPDATE_OPENCODE_CONFIG_TIMEOUT:-60}" update_opencode_config
 	_time_step "update_claude_config" update_claude_config
 	_time_step "update_codex_config" update_codex_config

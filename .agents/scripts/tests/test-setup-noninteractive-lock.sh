@@ -237,6 +237,7 @@ test_contention_message_includes_elapsed_and_stage() {
 		cp "$fake_stl" "$tmp_dir/.aidevops/logs/setup-stage-timings.log"
 		load_lock_functions
 		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'exit=%s\n' "$?"
 		return 0
 	) 2>&1 || true
 
@@ -251,6 +252,8 @@ test_contention_message_includes_elapsed_and_stage() {
 	[[ "$output" == *"stage: deploy_aidevops_agents"* ]] || passed=3
 	# Diagnose log path hint must appear.
 	[[ "$output" == *"setup-stage-timings.log"* ]] || passed=4
+	# The contention path must preserve the expected timeout exit code.
+	[[ "$output" == *"exit=75"* ]] || passed=5
 
 	if [[ "$passed" -eq 1 ]]; then
 		print_result "lock contention message includes age and stage" 0
