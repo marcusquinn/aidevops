@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-05-03T16:18:42Z",
-      "hash": "1806b18f45698cc6c5700350d47960650a6f38e5",
-      "passes": 70,
+      "at": "2026-05-03T16:48:02Z",
+      "hash": "8f63a0e36ca4fe3a51a677e4ba38545a10a09fd6",
+      "passes": 71,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -1994,9 +1994,9 @@
       "pr": 15701
     },
     ".agents/scripts/commands/mission.md": {
-      "at": "2026-04-11T04:09:31Z",
-      "hash": "a375e9f6438301448a509e2b5a75c933fbb05c31",
-      "passes": 2,
+      "at": "2026-05-03T16:48:51Z",
+      "hash": "85468373babfc20b2b419eacb63f9239e467a95a",
+      "passes": 3,
       "pr": 12959
     },
     ".agents/scripts/commands/models-pool-check.md": {
@@ -2352,9 +2352,9 @@
       "pr": 15752
     },
     ".agents/scripts/model-availability-helper.sh": {
-      "at": "2026-05-01T21:34:07Z",
-      "hash": "77807cddbdc0dc6e377ac1ca9aea2db4e738a5ba",
-      "passes": 4,
+      "at": "2026-05-03T16:49:01Z",
+      "hash": "12f076fd28b0364a9ef8cfebbec89a359160a605",
+      "passes": 5,
       "pr": 17797
     },
     ".agents/scripts/new-task-helper.sh": {
@@ -7253,9 +7253,9 @@
       "pr": 14996
     },
     ".agents/workflows/mission.md": {
-      "at": "2026-04-11T04:09:50Z",
-      "hash": "a375e9f6438301448a509e2b5a75c933fbb05c31",
-      "passes": 1,
+      "at": "2026-05-03T16:51:56Z",
+      "hash": "85468373babfc20b2b419eacb63f9239e467a95a",
+      "passes": 2,
       "pr": 18132
     },
     ".agents/workflows/models-pool-check.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-05-03T16:22:15Z",
-      "hash": "8d3fd1d1a439f5f8e932f0fe0a04c99c32069675",
-      "passes": 127,
+      "at": "2026-05-03T16:52:04Z",
+      "hash": "1ed1db79594e42470fb006be22b0332101486aad",
+      "passes": 128,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-03T16:22:15Z",
-      "hash": "99333c1ad6599c209c190915edb8c87e483c3253",
-      "passes": 128,
+      "at": "2026-05-03T16:52:04Z",
+      "hash": "a802af5667029c10380fcdb3c468c1768ed71a84",
+      "passes": 129,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-03T16:22:15Z",
-      "hash": "b4f65f29dafb142a188a7e9088e48be8f3f70874",
-      "passes": 124,
+      "at": "2026-05-03T16:52:04Z",
+      "hash": "09e6458d08969b687f672913f8031b61d2508763",
+      "passes": 125,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
