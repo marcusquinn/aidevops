@@ -86,6 +86,42 @@ log_worktree_removal_event() {
 	return 0
 }
 
+# Return 0 when any live process has its current working directory inside the
+# candidate worktree. `pgrep -f "$path"` only sees argv; commands such as
+# linters often run with cwd inside the worktree while their argv contains no
+# path, so deletion would make them fail with getcwd/uv_cwd ENOENT.
+_worktree_has_process_cwd() {
+	local wt_path="$1"
+	local wt_path_real="$2"
+
+	if [[ -d /proc ]]; then
+		local cwd_link=""
+		local cwd_target=""
+		for cwd_link in /proc/[0-9]*/cwd; do
+			[[ -e "$cwd_link" ]] || continue
+			cwd_target=$(readlink "$cwd_link" 2>/dev/null || true)
+			[[ -n "$cwd_target" ]] || continue
+			case "$cwd_target" in
+			"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+				return 0
+				;;
+			esac
+		done
+	fi
+
+	if command -v lsof >/dev/null 2>&1; then
+		local lsof_output=""
+		lsof_output=$(lsof -n -F f +D "$wt_path_real" 2>/dev/null || true)
+		case "$lsof_output" in
+			fcwd | fcwd$'\n'* | *$'\n'fcwd | *$'\n'fcwd$'\n'*)
+				return 0
+				;;
+		esac
+	fi
+
+	return 1
+}
+
 # =============================================================================
 # worktree_removal_guard — shared destructive-path guard for production cleanup
 #
@@ -94,7 +130,8 @@ log_worktree_removal_event() {
 #   $2  caller   — audit caller constant
 #   $3  reason   — reason to log on skip
 #
-# Refuses registered canonical repos and the caller's current working directory.
+# Refuses registered canonical repos, the caller's current working directory,
+# and worktrees that still have any live process cwd inside them.
 # Returns 0 when callers may continue, 1 when removal must be skipped.
 # =============================================================================
 worktree_removal_guard() {
@@ -128,6 +165,11 @@ worktree_removal_guard() {
 			return 1
 			;;
 		esac
+	fi
+
+	if _worktree_has_process_cwd "$wt_path" "$wt_path_real"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$caller" "$wt_path" "active-cwd" "skipped"
+		return 1
 	fi
 
 	: "$reason"
