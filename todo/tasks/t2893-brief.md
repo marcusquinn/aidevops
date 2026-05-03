@@ -93,18 +93,22 @@ Leaf task — not a parent-task. PR body uses `Resolves #NNN`.
    };
    ```
 
-2. **Refactor `_repairBodyFile` to return `{ status: "ok"|"fail", reason?: string, detail?: string }`** instead of cmd|null:
+2. **Refactor `_repairBodyFile` to return `{ status: "ok"|"fail", reason?: string, detail?: string }`** instead of cmd|null. `_generateSignature` should return `{ status: "ok", signature: string }` on success so callers never append a structured object by mistake:
 
    ```js
    function _repairBodyFile(cmd, filePath, helperPath, log) {
      try {
        const current = readFileSync(filePath, "utf-8");
        if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
-       const sig = _generateSignature(helperPath, current, log);
-       if (sig === null) {
-         return { status: "fail", reason: FAIL_REASON.HELPER_FAILED, detail: filePath };
-       }
-       appendFileSync(filePath, sig);
+        const sigResult = _generateSignature(helperPath, current, log);
+        if (sigResult == null || typeof sigResult !== "object" || sigResult.status !== "ok") {
+          return {
+            status: "fail",
+            reason: sigResult?.reason || FAIL_REASON.HELPER_FAILED,
+            detail: sigResult?.detail || filePath,
+          };
+        }
+        appendFileSync(filePath, sigResult.signature);
        log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
        return { status: "ok", cmd };
      } catch (e) {
@@ -130,14 +134,24 @@ Leaf task — not a parent-task. PR body uses `Resolves #NNN`.
      if (_hasUnparseableBody(cmd)) {
        return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
      }
-     const bodyFileMatch = cmd.match(/--body-file(?:=(['"]?)([^\s'"]+)\1|\s+(['"]?)([^\s'"]+)\3)/);
-     if (bodyFileMatch) {
-       const filePath = bodyFileMatch[2] || bodyFileMatch[4];
-       return _repairBodyFile(cmd, filePath, helperPath, log);
-     }
-     const parsed = _matchBodyArg(cmd);
-     if (!parsed) return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
-     return _repairBodyArg(cmd, parsed, helperPath, log);
+      const bodyFileMatch = cmd.match(/--body-file(?:=(?:"([^"]+)"|'([^']+)'|([^\s'"]+))|\s+(?:"([^"]+)"|'([^']+)'|([^\s'"]+)))/);
+      if (bodyFileMatch) {
+        const filePath = bodyFileMatch[1] || bodyFileMatch[2] || bodyFileMatch[3]
+          || bodyFileMatch[4] || bodyFileMatch[5] || bodyFileMatch[6];
+        return _repairBodyFile(cmd, filePath, helperPath, log);
+      }
+      const parsed = _matchBodyArg(cmd);
+      if (parsed == null || typeof parsed !== "object") {
+        return { status: "fail", reason: FAIL_REASON.BODY_ARG_NO_MATCH };
+      }
+      if (parsed.status !== "ok") {
+        return {
+          status: "fail",
+          reason: parsed.reason || FAIL_REASON.BODY_ARG_NO_MATCH,
+          detail: parsed.detail,
+        };
+      }
+      return _repairBodyArg(cmd, parsed, helperPath, log);
    }
    ```
 
