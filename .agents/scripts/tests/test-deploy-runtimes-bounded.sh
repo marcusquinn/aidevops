@@ -286,6 +286,7 @@ test_bounded_wrapper_child_failure_is_noncritical_without_err_trap_noise() {
 	{
 		printf '%s\n' '#!/usr/bin/env bash'
 		printf '%s\n' 'set -Eeuo pipefail'
+		# shellcheck disable=SC2016  # generated script must expand trap variables at runtime
 		printf '%s\n' 'trap '\''rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2'\'' ERR'
 		printf '%s\n' 'print_warning() { printf "[WARNING] %s\n" "$*"; return 0; }'
 		printf '%s\n' 'deploy_agents_to_runtimes() { return 7; }'
