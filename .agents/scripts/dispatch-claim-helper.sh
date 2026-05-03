@@ -45,6 +45,11 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 # deleted (audit trail), so the TTL must cover a full worker lifecycle.
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-1800}"
 
+# Number of issue comments to request per GitHub REST page when reading claim
+# markers. GitHub defaults to the oldest 30 comments, which misses fresh claims
+# on long issue threads; always paginate with the maximum page size.
+DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE="${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE:-100}"
+
 # GH#15317: Self-reclaim removed. Previously, same-runner stale claims were
 # "reclaimed" after this threshold, creating dispatch loops. Now stale self-
 # claims are cleaned up and treated as lost. Variable kept for backward compat.
@@ -340,6 +345,48 @@ _delete_comment() {
 }
 
 #######################################
+# Fetch all claim/release marker comments from a GitHub issue.
+#
+# GitHub's issue-comments REST endpoint defaults to page 1 (oldest 30). Long
+# issue threads can place fresh DISPATCH_CLAIM comments beyond that page, making
+# runners unable to see their own just-posted claim. Use per_page=100 plus
+# --paginate/--slurp, then normalize real gh output (array of pages) and test
+# mocks (single array) before filtering.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+# Returns: JSON array of {id, body, created_at} marker comments.
+#######################################
+_fetch_claim_marker_comments() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local raw_comments
+	raw_comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
+		--paginate --slurp 2>/dev/null) || {
+		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
+		return 1
+	}
+
+	printf '%s' "$raw_comments" | jq -c --arg pattern "${CLAIM_MARKER} nonce=|CLAIM_RELEASED" '
+		[ (
+			if (type == "array" and ((.[0]? | type) == "array")) then
+				.[]
+			else
+				.
+			end
+		)[]
+		| select((.body // "") | test($pattern))
+		| {id: .id, body: .body, created_at: .created_at} ]
+	' || {
+		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
+		return 1
+	}
+	return 0
+}
+
+#######################################
 # Fetch recent claim comments on an issue.
 # Returns JSON array of {id, nonce, runner, ts, ts_epoch} objects.
 #
@@ -355,16 +402,11 @@ _fetch_claims() {
 	local now_epoch
 	now_epoch=$(_now_epoch)
 
-	# Fetch last 30 comments — look for both DISPATCH_CLAIM and CLAIM_RELEASED.
+	# Fetch claim/release markers from every issue-comment page.
 	# A CLAIM_RELEASED comment posted after the most recent DISPATCH_CLAIM
 	# invalidates all prior claims (the worker died or completed).
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce=|CLAIM_RELEASED")) | {id: .id, body: .body, created_at: .created_at}]' \
-		2>/dev/null) || {
-		echo "Error: failed to fetch comments for #${issue_number} in ${repo_slug}" >&2
-		return 1
-	}
+	comments_json=$(_fetch_claim_marker_comments "$issue_number" "$repo_slug") || return 1
 
 	if [[ -z "$comments_json" || "$comments_json" == "null" || "$comments_json" == "[]" ]]; then
 		printf '[]'
