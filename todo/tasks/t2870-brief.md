@@ -50,7 +50,7 @@ Decomposition planned as 6 phases (children filed when t2840 MVP exits):
 - Phase 1 — `_campaigns/` directory contract + sub-folder structure (`lib/`, `intel/`, `active/`, `launched/`)
 - Phase 2 — campaign CLI surface (`aidevops campaign new|list|status|launch|archive`) + campaign-id provisioning
 - Phase 3 — sensitivity tier integration (`competitive` tier added to P0.5a sensitivity classifier; intel sub-folder enforces local-LLM-only)
-- Phase 4 — asset binary integration (large files routed to `~/.aidevops/.agent-workspace/knowledge-blobs/`; thumbnail/preview generation)
+- Phase 4 — asset binary integration (large files routed to `~/.aidevops/.agent-workspace/knowledge-blobs/` with path traversal validation and filename collision avoidance to prevent writes outside the managed workspace or accidental data loss; thumbnail/preview generation)
 - Phase 5 — AI creative agent (`aidevops campaign draft <id> --channel <name>`) — RAG-grounded in `lib/brand/`, human-gated, channel-aware
 - Phase 6 — performance integration + learnings promotion (`launched/<id>/results.md` → `_performance/marketing/`; `learnings.md` → `_knowledge/insights/marketing/`)
 
