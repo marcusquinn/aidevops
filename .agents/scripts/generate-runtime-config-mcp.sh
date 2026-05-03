@@ -43,6 +43,12 @@ _generate_mcp_for_runtime() {
 
 	print_info "Registering MCP servers for $display_name..."
 
+	if [[ "$runtime_id" == "claude" || "$runtime_id" == "claude-code" ]]; then
+		if declare -f _mcp_adapter_reset_claude_registration_cache >/dev/null 2>&1; then
+			_mcp_adapter_reset_claude_registration_cache
+		fi
+	fi
+
 	local mcp_count=0
 
 	# Shared MCP definitions -- defined once, registered for each runtime
