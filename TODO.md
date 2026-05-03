@@ -4161,3 +4161,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629
 
 - [ ] t3557 Reset pulse blockers when eligible work exists #auto-dispatch #bug ref:GH#22631
+
+- [ ] t3559 Preserve current OpenAI OAuth pool account on startup #auto-dispatch #bug ref:GH#22640
+
+- [ ] t3558 Remove CPU-based canary throttling #auto-dispatch #bug ref:GH#22634

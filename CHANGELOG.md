@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.16] - 2026-05-03
+
+### Changed
+
+- extract Git Workflow body to workflow reference (#22632)
+- Maintenance: sync ref:GH#22631 to TODO.md
+- Maintenance: mark t3554 complete (pr:#22628 completed:2026-05-03) [skip ci]
+- Maintenance: sync ref:GH#22631 to TODO.md [skip ci]
+
+### Fixed
+
+- clamp oauth pool retry-after cooldowns (#22633)
+
 ## [3.14.15] - 2026-05-03
 
 ### Changed
