@@ -4115,3 +4115,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3540 Recover pulse wrapper when launched from removed worktree path #auto-dispatch #bug ref:GH#22545
 
 - [ ] t3539 Prevent active interactive worktree cleanup during verification #auto-dispatch #bug #framework ref:GH#22544
+
+- [ ] t3542 Add REST fallback for GraphQL-limited full-loop merges #auto-dispatch #bug #framework ref:GH#22557
+
+- [ ] t3541 Add REST fallback for full-loop merge when GraphQL rate-limited #auto-dispatch #bug #framework ref:GH#22556
