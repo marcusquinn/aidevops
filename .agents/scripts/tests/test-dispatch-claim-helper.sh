@@ -542,7 +542,7 @@ test_env_var_defaults() {
 }
 
 #######################################
-# Test: override ignore lists never strip this runner's own claim.
+# Test: override ignore lists never strip this runner's own claim (GH#22678).
 #######################################
 test_ignore_filter_preserves_self_claim() {
 	local claims output
