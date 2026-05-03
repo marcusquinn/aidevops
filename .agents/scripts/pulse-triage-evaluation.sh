@@ -363,6 +363,25 @@ _reevaluate_simplification_labels() {
 # Returns: 0 if an open-or-recently-closed child exists OR lock label is
 #          present, 1 otherwise.
 #######################################
+_consolidation_dispatch_comment_exists() {
+	local parent_num="$1"
+	local repo_slug="$2"
+
+	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
+
+	local marker_count
+	marker_count=$(gh api "repos/${repo_slug}/issues/${parent_num}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null | jq -r '
+			[ (if (type == "array" and ((.[0]? | type) == "array")) then .[] else . end)[]
+			| select((.body // "") | contains("## Issue Consolidation Dispatched")) ] | length
+	' 2>/dev/null) || return 1
+	[[ "$marker_count" =~ ^[0-9]+$ ]] || marker_count=0
+	if [[ "$marker_count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
 _consolidation_child_exists() {
 	local parent_num="$1"
 	local repo_slug="$2"
@@ -370,12 +389,24 @@ _consolidation_child_exists() {
 
 	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
 
+	# t3565: Parent pointer comments are an idempotency signal too. Search API
+	# can time out or lag on large repos; a previously posted dispatch comment
+	# means a child was already created, so block repeat child creation.
+	if _consolidation_dispatch_comment_exists "$parent_num" "$repo_slug"; then
+		return 0
+	fi
+
 	# Fast path: any open child immediately owns the parent.
-	local open_count
+	local open_count open_exit=0
 	open_count=$(gh_issue_list --repo "$repo_slug" --state open \
 		--label "consolidation-task" \
 		--search "in:body \"Consolidation target: #${parent_num}\"" \
-		--json number --jq 'length' --limit 5 2>/dev/null) || open_count=0
+		--json number --jq 'length' --limit 5 2>/dev/null) || open_exit=$?
+	if [[ "$open_exit" -ne 0 ]]; then
+		# Fail closed: creating a duplicate consolidation child is worse than
+		# retrying after a transient GitHub search/API issue.
+		return 0
+	fi
 	[[ "$open_count" =~ ^[0-9]+$ ]] || open_count=0
 	if [[ "$open_count" -gt 0 ]]; then
 		return 0

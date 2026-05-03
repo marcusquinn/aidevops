@@ -150,7 +150,11 @@ export async function selectOpenAIStartupAccount(skipEmail) {
   normalizeExpiredCooldowns("openai", accounts);
   const currentAuth = readCurrentOpenAIAuth();
   const current = accounts.find((a) => a.email !== skipEmail && matchesOpenAIAuth(a, currentAuth));
+  // Startup should preserve a manually rotated, still-valid OpenAI auth entry.
+  // Only fall through to pool priority/LRU selection when that current account
+  // is unavailable or cannot be refreshed.
   if (current && isAvailableAccount(current) && await ensureValidToken("openai", current)) return current;
+  if (current) return selectPoolAccount("openai", current.email);
   return selectPoolAccount("openai", skipEmail);
 }
 
