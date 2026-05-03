@@ -32,11 +32,14 @@ Goal request: $ARGUMENTS
    pass it through to the mission dashboard helper:
 
    ```bash
-   ~/.aidevops/agents/scripts/mission-dashboard-helper.sh $ARGUMENTS
+   cmd=(~/.aidevops/agents/scripts/mission-dashboard-helper.sh "$ARGUMENTS")
+   "${cmd[@]}"
    ```
 
 3. Otherwise, treat `$ARGUMENTS` as the objective for a new mission and follow
-   `scripts/commands/mission.md` from Step 1 onward. Say explicitly:
+   `.agents/workflows/mission.md` from Step 0 onward. Step 0 initializes the
+   mission state, including argument parsing, headless mode handling,
+   decomposition, `MISSION_ID`, and `MISSION_DIR`. Say explicitly:
 
    ```text
    I'll track this as a mission goal so it has milestones, budget, and completion evidence.
@@ -78,7 +81,7 @@ Before marking a goal completed:
 
 ## Related
 
-- `scripts/commands/mission.md` — Mission creation and decomposition
+- `.agents/workflows/mission.md` — Mission creation and decomposition
 - `workflows/mission-orchestrator.md` — Active goal execution engine
 - `scripts/commands/dashboard.md` — Mission dashboard
 - `templates/mission-template.md` — Durable goal state file
