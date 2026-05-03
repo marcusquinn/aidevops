@@ -141,14 +141,20 @@ _priv_extract_external_hosts() {
 	local h
 	for h in $EXCLUDE_HOSTS_RAW; do
 		[[ -z "$h" ]] && continue
-		# Escape dots in the literal host before assembling the alternation.
-		local escaped="${h//./\\.}"
+		# Match extraction's lowercase hosts, then escape dots in the literal host.
+		local h_lower
+		h_lower=$(printf '%s' "$h" | tr '[:upper:]' '[:lower:]')
+		local escaped="${h_lower//./\\.}"
 		if [[ -z "$excl_re" ]]; then
 			excl_re="(^|\.)${escaped}\$"
 		else
 			excl_re="${excl_re}|(^|\.)${escaped}\$"
 		fi
 	done
+	local grep_exclude=(cat)
+	if [[ -n "$excl_re" ]]; then
+		grep_exclude=(grep -vE "$excl_re")
+	fi
 
 	# Extract URLs (http/https), strip scheme, take the host portion (up to
 	# first / : ? # ), lowercase, then drop excluded hosts.
@@ -156,7 +162,7 @@ _priv_extract_external_hosts() {
 		grep -oEi 'https?://[A-Za-z0-9.-]+' 2>/dev/null |
 		sed -E 's|^https?://||I' |
 		tr '[:upper:]' '[:lower:]' |
-		grep -vE "${excl_re}" 2>/dev/null || true
+		"${grep_exclude[@]}" 2>/dev/null || true
 	return 0
 }
 
@@ -210,7 +216,9 @@ _priv_get_author_association() {
 	*) endpoint="repos/${slug}/issues/${num}" ;;
 	esac
 	local assoc
-	assoc=$(gh api "$endpoint" --jq ".author_association // \"${ECSD_UNKNOWN_ASSOC}\"" 2>/dev/null || echo "$ECSD_UNKNOWN_ASSOC")
+	if ! assoc=$(gh api "$endpoint" --jq ".author_association // \"${ECSD_UNKNOWN_ASSOC}\"" 2>/dev/null); then
+		assoc="$ECSD_UNKNOWN_ASSOC"
+	fi
 	[[ -z "$assoc" ]] && assoc="$ECSD_UNKNOWN_ASSOC"
 	echo "$assoc"
 	return 0
@@ -275,13 +283,16 @@ _priv_get_body() {
 }
 
 # Compose composite score and pipe-delimited breakdown.
-# Args: $1 = body, $2 = type, $3 = number, $4 = slug
+# Args: $1 = body, $2 = type, $3 = number, $4 = slug, $5 = optional precomputed author_association
 # Output: score|verdict|assoc=X|domain_max=N|patterns=N|fileline=N
 _priv_compute_score() {
 	local body="$1" type="$2" num="$3" slug="$4"
 
 	local assoc
-	assoc=$(_priv_get_author_association "$type" "$num" "$slug")
+	assoc="${5:-}"
+	if [[ -z "$assoc" ]]; then
+		assoc=$(_priv_get_author_association "$type" "$num" "$slug")
+	fi
 	local non_collab
 	non_collab=$(_priv_is_non_collaborator "$assoc")
 
@@ -441,16 +452,24 @@ cmd_score() {
 	result=$(_priv_compute_score "$body" "$type" "$num" "$slug")
 
 	if [[ "$json" -eq 1 ]]; then
-		# Convert pipe-delimited output to JSON object for programmatic use.
-		local score verdict assoc domain patterns fileline
-		score=$(printf '%s' "$result" | cut -d'|' -f1)
-		verdict=$(printf '%s' "$result" | cut -d'|' -f2)
-		assoc=$(printf '%s' "$result" | cut -d'|' -f3 | cut -d'=' -f2)
-		domain=$(printf '%s' "$result" | cut -d'|' -f4 | cut -d'=' -f2)
-		patterns=$(printf '%s' "$result" | cut -d'|' -f5 | cut -d'=' -f2)
-		fileline=$(printf '%s' "$result" | cut -d'|' -f6 | cut -d'=' -f2)
-		printf '{"type":"%s","number":%d,"repo":"%s","score":%d,"verdict":"%s","author_association":"%s","domain_max":%d,"patterns":%d,"fileline_refs":%d}\n' \
-			"$type" "$num" "$slug" "$score" "$verdict" "$assoc" "$domain" "$patterns" "$fileline"
+		# Use jq to keep JSON valid if string fields contain special characters.
+		local score verdict assoc_raw domain_raw patterns_raw fileline_raw
+		IFS='|' read -r score verdict assoc_raw domain_raw patterns_raw fileline_raw <<<"$result"
+		local assoc="${assoc_raw#*=}"
+		local domain="${domain_raw#*=}"
+		local patterns="${patterns_raw#*=}"
+		local fileline="${fileline_raw#*=}"
+		jq -n \
+			--arg type "$type" \
+			--argjson number "$num" \
+			--arg repo "$slug" \
+			--argjson score "$score" \
+			--arg verdict "$verdict" \
+			--arg author_association "$assoc" \
+			--argjson domain_max "$domain" \
+			--argjson patterns "$patterns" \
+			--argjson fileline_refs "$fileline" \
+			'{type: $type, number: $number, repo: $repo, score: $score, verdict: $verdict, author_association: $author_association, domain_max: $domain_max, patterns: $patterns, fileline_refs: $fileline_refs}'
 	else
 		printf '%s\n' "$result"
 	fi
@@ -486,27 +505,32 @@ cmd_batch() {
 
 	_ecsd_log_info "Scanning open issues with label=${label} in ${slug} (dry-run=$([[ $apply -eq 0 ]] && echo yes || echo no))"
 
-	# Use shared wrapper so REST fallback kicks in under GraphQL pressure.
+	# Fetch body + author association in one REST sweep, avoiding per-issue API calls.
+	local label_q
+	label_q=$(jq -rn --arg label "$label" '$label | @uri')
 	local issues
-	issues=$(gh_issue_list --repo "$slug" --state open --label "$label" \
-		--limit 200 --json number --jq '.[].number' 2>/dev/null || true)
+	issues=$(gh api --paginate "repos/${slug}/issues?state=open&labels=${label_q}&per_page=100" \
+		--jq '.[] | select(.pull_request | not) | {number, body: (.body // ""), author_association: (.author_association // "UNKNOWN")} | @base64' \
+		2>/dev/null || true)
 
 	if [[ -z "$issues" ]]; then
 		_ecsd_log_info "No open issues with label=${label}"
 		return 0
 	fi
 
-	local n
-	while IFS= read -r n; do
-		[[ -z "$n" ]] && continue
-		local body
-		body=$(_priv_get_body "issue" "$n" "$slug")
+	local row
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
+		local n body assoc
+		n=$(jq -rn --arg row "$row" '$row | @base64d | fromjson | .number')
+		body=$(jq -rn --arg row "$row" '$row | @base64d | fromjson | .body // ""')
+		assoc=$(jq -rn --arg row "$row" '$row | @base64d | fromjson | .author_association // "UNKNOWN"')
 		if [[ -z "$body" ]]; then
 			printf 'issue#%s\tERROR\tcould not fetch body\n' "$n"
 			continue
 		fi
 		local result
-		result=$(_priv_compute_score "$body" "issue" "$n" "$slug")
+		result=$(_priv_compute_score "$body" "issue" "$n" "$slug" "$assoc")
 		local verdict
 		verdict=$(printf '%s' "$result" | cut -d'|' -f2)
 		printf 'issue#%s\t%s\t%s\n' "$n" "$verdict" "$result"
@@ -536,7 +560,7 @@ EXIT CODES (check):
   3  error               could not fetch body / resolve repo / parse args
 
 SCORING (composed):
-  +3  non-collaborator author     (author_association not OWNER/MEMBER/COLLABORATOR)
+  +2  non-collaborator author     (author_association not OWNER/MEMBER/COLLABORATOR)
   +2  any external host appears >=ECSD_DOMAIN_REPEAT_MIN times (default 3)
   +1  per pattern match in unsolicited_disclosure_marketing category
   +1  >=ECSD_FILELINE_MIN evidence-styled file:line refs (default 3)
