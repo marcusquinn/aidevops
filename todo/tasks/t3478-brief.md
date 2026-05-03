@@ -48,7 +48,7 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
 - t3524 / #22512 — Phase 2: retention and sensitivity policy.
 - t3525 / #22515 — Phase 3: mining workflow and evidence thresholds.
 - t3527 / #22518 — Phase 4: promotion paths into knowledge, campaigns, projects, cases, performance, and tasks.
-- t3528 / #22519 — Phase 5: CLI and routines design.
+- t3528 / #22519 — Phase 5: CLI and routines design (filed; design contract in `.agents/aidevops/feedback.md`).
 
 ## Phases
 
@@ -58,7 +58,7 @@ Decomposition planned as 5 phases:
 - **Phase 2 — retention and sensitivity policy**: define which feedback can be long-lived, anonymized, privileged, client-scoped, or deleted; align with Markdoc sensitivity tags when available.
 - **Phase 3 — mining workflow**: design clustering, deduplication, theme extraction, evidence thresholds, and review gates before promotion.
 - **Phase 4 — promotion paths**: specify when feedback becomes `_knowledge/insights/`, a `_campaigns` research input, a `_projects` requirement, a `_cases` note, or a new TODO/GitHub task.
-- **Phase 5 — CLI and routines**: design `aidevops feedback capture|list|mine|promote|retire` plus recurring mining/reporting cadence.
+- **Phase 5 — CLI and routines**: design `aidevops feedback capture|list|mine|promote|retire` plus recurring mining/reporting cadence; child #22519 owns the design contract without closing parent #22373.
 
 Children are filed above so parent-task automation can track progress. Each child remains independently scoped and may block on the data-plane registry or Markdoc tag work when implementation begins.
 
