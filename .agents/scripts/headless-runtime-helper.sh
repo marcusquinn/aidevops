@@ -255,6 +255,37 @@ _validate_run_args() {
 	return 0
 }
 
+# _ensure_valid_launch_cwd: recover from callers whose inherited cwd was deleted.
+#
+# OpenCode validates the process cwd before it processes --dir. When the pulse
+# starts a worker from a worktree that cleanup removed, OpenCode exits with
+# "The current working directory was deleted" before reading the launch prompt.
+# Move the helper itself into the worker worktree early so canary, sandbox, and
+# runtime startup all inherit a valid cwd.
+_ensure_valid_launch_cwd() {
+	local work_dir_value="$1"
+	local fallback_dir="${HOME:-/tmp}"
+
+	if pwd -P >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if [[ -n "$work_dir_value" && -d "$work_dir_value" ]]; then
+		if cd "$work_dir_value" 2>/dev/null; then
+			print_warning "Recovered deleted launch cwd by switching to worker directory: $work_dir_value"
+			return 0
+		fi
+	fi
+
+	if [[ -d "$fallback_dir" ]] && cd "$fallback_dir" 2>/dev/null; then
+		print_warning "Recovered deleted launch cwd by switching to fallback directory: $fallback_dir"
+		return 0
+	fi
+
+	print_error "[fatal] launch cwd is deleted and no valid fallback directory is available"
+	return 1
+}
+
 # _run_looks_like_issue_worker: detect issue-scoped worker dispatches from
 # independent caller-owned signals. The env contract is only mandatory for
 # issue workers; pulse/non-issue runs keep the historical path.
@@ -1289,6 +1320,7 @@ cmd_run() {
 
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
+	_ensure_valid_launch_cwd "$work_dir" || return 1
 	_validate_issue_worker_env_contract "$role" "$session_key" "$work_dir" "$title" "$prompt" || return 1
 
 	if [[ "$detach" -eq 1 ]]; then

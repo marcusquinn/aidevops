@@ -170,6 +170,30 @@ test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 	return 0
 }
 
+test_deleted_launch_cwd_recovers_to_work_dir() {
+	local stale_dir="${TEST_ROOT}/stale-cwd"
+	local worktree_dir="${TEST_ROOT}/worker-worktree"
+	mkdir -p "$stale_dir" "$worktree_dir"
+
+	local output=""
+	local status=0
+	output=$(
+		cd "$stale_dir" || exit 1
+		rmdir "$stale_dir" || exit 1
+		_ensure_valid_launch_cwd "$worktree_dir" || exit $?
+		pwd -P
+	) 2>&1 || status=$?
+
+	if [[ "$status" -eq 0 && "$output" == *"$worktree_dir"* ]]; then
+		print_result "deleted launch cwd recovers to worker worktree before runtime startup" 0
+		return 0
+	fi
+
+	print_result "deleted launch cwd recovers to worker worktree before runtime startup" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
@@ -864,6 +888,7 @@ main() {
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
+	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_headless_activity_timeout_default_matches_watchdog
