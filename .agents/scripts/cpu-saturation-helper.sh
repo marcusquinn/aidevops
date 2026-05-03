@@ -186,14 +186,24 @@ _csh_append_sample() {
 	printf '%s\t%s\n' "$now" "$pct" >>"${CPU_SATURATION_STATE_FILE}" || return 1
 
 	# Cheap trim: only when file gets noticeably oversized, rewrite tail.
+	# mkdir-based mutex prevents concurrent samplers from racing on the
+	# tail+mv pair (which can drop samples written between tail and mv).
+	# If we can't get the lock, skip trim — another caller will trim later.
 	local line_count
 	line_count=$(wc -l <"${CPU_SATURATION_STATE_FILE}" 2>/dev/null | tr -d ' ')
 	[[ "$line_count" =~ ^[0-9]+$ ]] || line_count=0
 	if [[ "$line_count" -gt "$((CPU_SATURATION_MAX_RETAIN * 2))" ]]; then
-		local tmpfile
-		tmpfile=$(mktemp "${CPU_SATURATION_STATE_DIR}/.samples.XXXXXX") || return 0
-		tail -n "$CPU_SATURATION_MAX_RETAIN" "${CPU_SATURATION_STATE_FILE}" >"$tmpfile" 2>/dev/null || true
-		mv "$tmpfile" "${CPU_SATURATION_STATE_FILE}" 2>/dev/null || rm -f "$tmpfile" 2>/dev/null
+		local lockdir="${CPU_SATURATION_STATE_FILE}.trim.lock"
+		if mkdir "$lockdir" 2>/dev/null; then
+			local tmpfile
+			tmpfile=$(mktemp "${CPU_SATURATION_STATE_DIR}/.samples.XXXXXX") || {
+				rmdir "$lockdir" 2>/dev/null || true
+				return 0
+			}
+			tail -n "$CPU_SATURATION_MAX_RETAIN" "${CPU_SATURATION_STATE_FILE}" >"$tmpfile" 2>/dev/null || true
+			mv "$tmpfile" "${CPU_SATURATION_STATE_FILE}" 2>/dev/null || rm -f "$tmpfile" 2>/dev/null
+			rmdir "$lockdir" 2>/dev/null || true
+		fi
 	fi
 	return 0
 }
