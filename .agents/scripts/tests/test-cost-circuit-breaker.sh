@@ -147,6 +147,16 @@ write_fixture_comments() {
 	printf '[%s]' "$comments" >"$FIXTURE_COMMENTS_JSON"
 }
 
+write_fixture_comments_with_existing_cost_marker() {
+	local spends="$1"
+	write_fixture_comments "$spends"
+	local tmp_json="${TEST_ROOT}/comments-with-cost-marker.json"
+	jq '. + [{"body":"<!-- cost-circuit-breaker:fired tier=standard spent=900000 budget=800000 -->\nCost circuit breaker fired already."}]' \
+		<"$FIXTURE_COMMENTS_JSON" >"$tmp_json"
+	mv "$tmp_json" "$FIXTURE_COMMENTS_JSON"
+	return 0
+}
+
 write_stub_gh
 OLD_PATH="$PATH"
 export PATH="${STUB_DIR}:${PATH}"
@@ -199,6 +209,12 @@ if grep -q 'cost-circuit-breaker:fired issue=#18002 repo=owner/repo tier=standar
 	print_result "cost breaker trip writes diagnostic log line" 0
 else
 	print_result "cost breaker trip writes diagnostic log line" 1 "(log=$(tr '\n' ' ' <"$LOGFILE" 2>/dev/null))"
+fi
+
+if grep -q 'sudo aidevops approve issue 18002 owner/repo' "$STUB_LOG" 2>/dev/null; then
+	print_result "cost breaker comment includes approval command" 0
+else
+	print_result "cost breaker comment includes approval command" 1 "(stub_log=$(tr '\n' ' ' <"$STUB_LOG" 2>/dev/null))"
 fi
 
 # =============================================================================
@@ -282,12 +298,43 @@ else
 fi
 
 # =============================================================================
-# Assertion 8 — unknown tier falls back to default budget (800K)
+# Assertion 8 — side-effect idempotency: when the NMR label was removed after a
+# prior cost-breaker trip, re-apply the label but do NOT post another
+# explanatory comment.
+# =============================================================================
+: >"$STUB_LOG"
+write_fixture_issue '[{"name":"tier:standard"},{"name":"pulse"}]'
+write_fixture_comments_with_existing_cost_marker "500000,400000"
+run_check_cost_budget 18008 "owner/repo" "standard"
+if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then
+	prior_marker_signal_ok=0
+else
+	prior_marker_signal_ok=1
+fi
+if grep -qE '^issue edit ' "$STUB_LOG"; then
+	prior_marker_label_ok=0
+else
+	prior_marker_label_ok=1
+fi
+if grep -qE '^issue comment ' "$STUB_LOG"; then
+	prior_marker_no_comment_ok=1
+else
+	prior_marker_no_comment_ok=0
+fi
+if [[ "$prior_marker_signal_ok" -eq 0 && "$prior_marker_label_ok" -eq 0 && "$prior_marker_no_comment_ok" -eq 0 ]]; then
+	print_result "side-effect idempotency (prior marker → relabel without double-comment)" 0
+else
+	print_result "side-effect idempotency (prior marker → relabel without double-comment)" 1 \
+		"(signal_ok=$prior_marker_signal_ok label_ok=$prior_marker_label_ok no_comment_ok=$prior_marker_no_comment_ok output='$output')"
+fi
+
+# =============================================================================
+# Assertion 9 — unknown tier falls back to default budget (800K)
 # =============================================================================
 # Spend 900K on an issue with no tier:* label → should block (default = 800K).
 write_fixture_issue '[{"name":"pulse"}]'
 write_fixture_comments "450000,450000"
-run_check_cost_budget 18008 "owner/repo" "unknown-tier-name"
+run_check_cost_budget 18009 "owner/repo" "unknown-tier-name"
 if [[ "$rc" -eq 0 && "$output" == *"COST_BUDGET_EXCEEDED"* ]]; then
 	print_result "unknown-tier falls back to default budget (900K > 800K default)" 0
 else
@@ -296,10 +343,10 @@ else
 fi
 
 # =============================================================================
-# Assertion 9 — sum-issue-token-spend CLI returns parseable spent|attempts
+# Assertion 10 — sum-issue-token-spend CLI returns parseable spent|attempts
 # =============================================================================
 write_fixture_comments "10000,20000,30000"
-sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18009 "owner/repo" 2>/dev/null)
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18010 "owner/repo" 2>/dev/null)
 if [[ "$sum_output" == "60000|3" ]]; then
 	print_result "sum-issue-token-spend CLI returns 'spent|attempts'" 0
 else
@@ -307,7 +354,7 @@ else
 fi
 
 # =============================================================================
-# Assertion 10 — historical "has used N tokens" pattern still aggregated
+# Assertion 11 — historical "has used N tokens" pattern still aggregated
 # =============================================================================
 # Write fixture with the older signature footer wording.
 cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
@@ -316,7 +363,7 @@ cat >"$FIXTURE_COMMENTS_JSON" <<'JSON'
   {"body":"Newer worker.\n---\nclaude-sonnet-4-6 spent 70000 tokens on this."}
 ]
 JSON
-sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18010 "owner/repo" 2>/dev/null)
+sum_output=$("$DEDUP_HELPER" sum-issue-token-spend 18011 "owner/repo" 2>/dev/null)
 if [[ "$sum_output" == "120000|2" ]]; then
 	print_result "historical 'has used' pattern aggregated alongside 'spent'" 0
 else

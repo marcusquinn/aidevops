@@ -402,13 +402,36 @@ _nmr_application_is_circuit_breaker_trip() {
 	# the marker comment immediately after applying the NMR label,
 	# so the two events are always co-temporal.
 	#
+	# Use --slurp with paginated comment reads. Without flattening all pages,
+	# gh --paginate --jq can emit one count per page; shell numeric coercion then
+	# turns "0\n1" into 0 and misses breaker markers on later pages.
+	#
 	# t3076: the meta-filer posts its `circuit-breaker-meta-filed` marker
 	# as a sibling comment on the same trip-cycle, so it falls inside the
 	# same ±60s window — no separate query needed.
+	local comments_json
+	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
+		comments_json="[]"
+	fi
+
+	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed'
 	local has_breaker_trip
-	has_breaker_trip=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed\"))] | length" \
-		2>/dev/null) || has_breaker_trip=0
+	has_breaker_trip=$(printf '%s' "$comments_json" | jq -r \
+		--arg label_at "$label_at" \
+		--arg breaker_pattern "$breaker_pattern" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) >= (($label_at | fromdateiso8601) - 5)
+				and (.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+			| select((.body // "") | test($breaker_pattern))
+		]
+		| length
+	' 2>/dev/null) || has_breaker_trip=0
 	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
 
 	if [[ "$has_breaker_trip" -gt 0 ]]; then
@@ -485,7 +508,7 @@ _nmr_applied_by_maintainer() {
 		# automation_signature short-circuit the breaker check because
 		# scanner labels persist for the issue's lifetime.
 		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
-			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num}' (t2386/GH#20758)" >>"$LOGFILE"
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/GH#20758)" >>"$LOGFILE"
 			# t3049: check if a subsequent worker produced a clean approved PR
 			# that resolves the stale-recovery false positive. Posts a one-shot
 			# notification to the maintainer if so. Does NOT clear NMR.
@@ -576,7 +599,7 @@ notify_ever_nmr_without_approval() {
 > Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
 >
 > \`\`\`
-> sudo aidevops approve issue ${issue_number}
+> sudo aidevops approve issue ${issue_number} ${repo_slug}
 > \`\`\`
 >
 > This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
@@ -777,7 +800,7 @@ _notify_stale_recovery_resolved_by_pr() {
 PR #${matching_pr} is APPROVED with all quality/security gates green. To merge, run:
 
 \`\`\`
-sudo aidevops approve issue ${issue_num}
+sudo aidevops approve issue ${issue_num} ${slug}
 \`\`\`
 
 This issue's NMR was applied by stale-recovery (t2008) — the cryptographic approval clears it and the merge gate flips to PASS." \

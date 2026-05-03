@@ -80,9 +80,15 @@ _stale_recovery_load_threshold() {
 _stale_recovery_count_ticks() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local _prior_ticks
-	_prior_ticks=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))] | length' \
+	local _comments_pages _prior_ticks
+	_comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --slurp 2>/dev/null) || _comments_pages=""
+	if [[ -z "$_comments_pages" ]]; then
+		printf '0'
+		return 0
+	fi
+	_prior_ticks=$(printf '%s' "$_comments_pages" | jq \
+		'[.[] | .[]? | select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))] | length' \
 		2>/dev/null) || _prior_ticks=0
 	[[ "$_prior_ticks" =~ ^[0-9]+$ ]] || _prior_ticks=0
 	printf '%s' "$_prior_ticks"
@@ -395,16 +401,21 @@ _is_stale_assignment() {
 	_issue_too_young_for_staleness "$issue_created_at" "$effective_threshold" "$now_epoch" && return 1
 
 	# Fetch issue comments to find the most recent dispatch claim and
-	# overall activity timestamp. Use --paginate to catch all comments
-	# on issues with long histories, but cap with --jq to only extract
-	# what we need (timestamp + body snippet for matching).
+	# overall activity timestamp. Use --paginate --slurp so gh combines all
+	# pages before jq sorts them; `gh api --paginate --jq ...` applies jq per
+	# page, which can leave page-1 timestamps ahead of newer activity on long
+	# issue threads and trigger false stale recovery (GH#3894 / t2769 incident).
 	#
 	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
 	# that the assignment is stale — block this pulse cycle and retry next cycle.
-	local comments_json _comments_rc=0
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | {created_at: .created_at, author: .user.login, body_start: (.body[:200])}] | sort_by(.created_at) | reverse' \
-		2>/dev/null) || _comments_rc=$?
+	local comments_json _comments_pages _comments_rc=0
+	_comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --slurp 2>/dev/null) || _comments_rc=$?
+	if [[ "$_comments_rc" -eq 0 ]]; then
+		comments_json=$(printf '%s' "$_comments_pages" | jq \
+			'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
+			2>/dev/null) || _comments_rc=$?
+	fi
 
 	if [[ "$_comments_rc" -ne 0 ]]; then
 		# Cannot fetch comments — cannot determine staleness. Fail-CLOSED:

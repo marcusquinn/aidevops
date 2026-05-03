@@ -370,11 +370,11 @@ _consolidation_dispatch_comment_exists() {
 	[[ -n "$parent_num" && -n "$repo_slug" ]] || return 1
 
 	local marker_count
-	marker_count=$(gh api "repos/${repo_slug}/issues/${parent_num}/comments?per_page=100" \
-		--paginate --slurp 2>/dev/null | jq -r '
+	marker_count=$(set -o pipefail; gh api "repos/${repo_slug}/issues/${parent_num}/comments?per_page=100" \
+		--paginate --slurp | jq -r '
 			[ (if (type == "array" and ((.[0]? | type) == "array")) then .[] else . end)[]
 			| select((.body // "") | contains("## Issue Consolidation Dispatched")) ] | length
-	' 2>/dev/null) || return 1
+	') || return 1
 	[[ "$marker_count" =~ ^[0-9]+$ ]] || marker_count=0
 	if [[ "$marker_count" -gt 0 ]]; then
 		return 0

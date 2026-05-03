@@ -13,6 +13,7 @@
 # Functions in this module (in source order):
 #   - _get_cost_budget_for_tier
 #   - _sum_issue_token_spend
+#   - _issue_has_cost_breaker_comment
 #   - _apply_cost_breaker_side_effects
 #   - _check_cost_budget
 
@@ -25,9 +26,8 @@ _DISPATCH_DEDUP_COST_LOADED=1
 # Tracks cumulative token spend across all worker attempts on an issue
 # by parsing signature-footer patterns ("spent N tokens" / "has used N
 # tokens") from comments. When spend exceeds the tier-appropriate budget
-# the breaker fires: applies needs-maintainer-review label, posts an
-# explanatory comment (idempotent on the label), and emits the
-# COST_BUDGET_EXCEEDED signal.
+# the breaker fires: applies needs-maintainer-review label, posts one
+# explanatory comment per issue, and emits the COST_BUDGET_EXCEEDED signal.
 #
 # Design (paired with t1986 parent-task guard and t2008 stale escalation):
 #   1. The breaker check runs in is_assigned() AFTER the parent-task
@@ -40,9 +40,9 @@ _DISPATCH_DEDUP_COST_LOADED=1
 #   3. Failure mode: fail-open. If we can't compute spend (gh failure,
 #      no comments, jq error), allow dispatch. The breaker is a safety
 #      net, not a hard gate. The other dedup layers still apply.
-#   4. Side effects are idempotent on the needs-maintainer-review label.
-#      If the label is already present, the signal is still emitted but
-#      no comment/edit is performed (no double-comment on every cycle).
+#   4. Side effects are idempotent on both the needs-maintainer-review label
+#      and prior cost-circuit-breaker:fired marker. If the label is missing
+#      after an approval loop, re-apply NMR but do not post another comment.
 #######################################
 
 #######################################
@@ -164,7 +164,50 @@ _sum_issue_token_spend() {
 }
 
 #######################################
-# Apply cost-breaker side effects: label + explanatory comment.
+# Check whether a cost-breaker explanatory comment already exists.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+#
+# Returns:
+#   0 = prior cost-circuit-breaker:fired marker found
+#   1 = no marker found or comments could not be inspected (fail-open)
+#######################################
+_issue_has_cost_breaker_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate --slurp 2>/dev/null) || return 1
+	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
+		return 1
+	fi
+
+	local marker_count
+	marker_count=$(printf '%s' "$comments_json" | jq -r '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [.[] | select((.body // "") | test("cost-circuit-breaker:fired"))]
+		| length
+	' 2>/dev/null) || return 1
+	if ! [[ "$marker_count" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	if [[ "$marker_count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Apply cost-breaker side effects: label + at most one explanatory comment.
 # Idempotent — if needs-maintainer-review is already present, no-op.
 #
 # Args:
@@ -197,8 +240,14 @@ _apply_cost_breaker_side_effects() {
 	local _spent_k=$((spent / 1000))
 	local _budget_k=$((budget / 1000))
 
-	gh_issue_comment "$issue_number" --repo "$repo_slug" \
-		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+	local already_commented="false"
+	if _issue_has_cost_breaker_comment "$issue_number" "$repo_slug"; then
+		already_commented="true"
+	fi
+
+	if [[ "$already_commented" != "true" ]]; then
+		gh_issue_comment "$issue_number" --repo "$repo_slug" \
+			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 <!-- cost-circuit-breaker:fired tier=${tier} spent=${spent} budget=${budget} -->
 🛑 **Cost circuit breaker fired** (t2007)
 
@@ -212,10 +261,17 @@ Maintainer review required before further dispatch. Possible causes:
 - Worker stuck in a loop (model can't decompose the task — escalate tier)
 - Wrong tier assigned (downgrade a tier:thinking task to standard, or vice versa)
 
+After investigating, approve another dispatch with:
+
+\`\`\`bash
+sudo aidevops approve issue ${issue_number} ${repo_slug}
+\`\`\`
+
 Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
 
 _This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task guard and t2008 stale-recovery escalation)._
 <!-- ops:end -->" 2>/dev/null || true
+	fi
 
 	# t3076: file root-cause meta-issue with forensics and dispatch a
 	# tier:thinking worker against it. Idempotent — second trip on the

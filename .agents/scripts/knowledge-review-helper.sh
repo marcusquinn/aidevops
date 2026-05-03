@@ -320,6 +320,7 @@ _build_nmr_body_file() {
 	local source_id="$2"
 	local meta_json="$3"
 	local trust_class="$4"
+	local repo_slug="$5"
 
 	local kind sha256 size_bytes ingested_by sensitivity
 	kind=$(printf '%s' "$meta_json" | jq -r '.kind // "unknown"' 2>/dev/null) \
@@ -345,6 +346,7 @@ _build_nmr_body_file() {
 	local tmpl="${SCRIPT_TEMPLATES_DIR}/knowledge-review-nmr-body.md"
 	if [[ -f "$tmpl" ]]; then
 		sed -e "s|{{SOURCE_ID}}|${source_id}|g" \
+			-e "s|{{REPO_SLUG}}|${repo_slug}|g" \
 			-e "s|{{KIND}}|${kind}|g" \
 			-e "s|{{SHA256}}|${sha256}|g" \
 			-e "s|{{SIZE_BYTES}}|${size_bytes}|g" \
@@ -380,7 +382,7 @@ ${preview}
 
 ## Review Actions
 
-- Approve: \`sudo aidevops approve issue <this-issue-number>\`
+- Approve: \`sudo aidevops approve issue <this-issue-number> ${repo_slug}\`
   This triggers \`knowledge-review-helper.sh promote ${source_id}\`
 - Reject: close the issue without approving (source stays in staging/)
 
@@ -407,7 +409,7 @@ _file_nmr_issue() {
 	[[ -z "$repo_slug" ]] && return 1
 
 	local body_file
-	body_file=$(_build_nmr_body_file "$root" "$source_id" "$meta_json" "$trust_class") \
+	body_file=$(_build_nmr_body_file "$root" "$source_id" "$meta_json" "$trust_class" "$repo_slug") \
 		|| return 1
 
 	# Append signature footer (two-call pattern: write file, then post)
@@ -709,7 +711,7 @@ Trust classification (from _knowledge/_config/knowledge.json .trust):
   untrusted     default ("*")           → kind:knowledge-review + needs-maintainer-review
 
 Crypto-approval flow (untrusted sources):
-  sudo aidevops approve issue <N>  →  promotes source from staging/ to sources/
+  sudo aidevops approve issue <N> <owner/repo>  →  promotes source from staging/ to sources/
 
 Audit log location: _knowledge/index/audit.log (JSONL)
 HELP

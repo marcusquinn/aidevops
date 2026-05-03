@@ -716,7 +716,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue <N>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`sudo aidevops approve issue <N> <owner/repo>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.
@@ -821,7 +821,7 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 **What happens next:** a maintainer will triage this issue and either
 
-- approve it cryptographically with \`sudo aidevops approve issue <N>\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
+- approve it cryptographically with \`sudo aidevops approve issue ${issue_num} ${slug}\` (which clears \`needs-maintainer-review\`), after which the pulse may dispatch a worker, OR
 - claim a fresh internal task ID via \`claim-task-id.sh\` and file a maintainer-authored follow-up that credits you as reporter.
 
 **Why this gate exists:** the aidevops pulse auto-dispatches workers on issues that carry maintainer-trust labels. For issues from contributors outside the maintainer team, a human in the loop catches injection attempts, scope/trust mismatches, and speculative work the pulse shouldn't burn a worker on. This is a soft gate, not a rejection — the content of the issue has not been judged.

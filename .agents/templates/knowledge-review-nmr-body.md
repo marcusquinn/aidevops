@@ -25,7 +25,7 @@ verify the content is safe to commit.
 **Approve** (promote source to `sources/` and close this issue):
 
 ```bash
-sudo aidevops approve issue <this-issue-number>
+sudo aidevops approve issue <this-issue-number> {{REPO_SLUG}}
 ```
 
 This triggers `knowledge-review-helper.sh promote {{SOURCE_ID}}`, which moves
