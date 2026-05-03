@@ -102,6 +102,9 @@ issue-view)
 	esac
 	;;
 issue-list)
+	if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
+		exit 1
+	fi
 	# t2144: --state dispatch so tests can fixture open and closed child
 	# lists independently (grace-window regression tests).
 	eval "$(_stub_parse_args "$@")"
@@ -201,6 +204,7 @@ teardown_gh_stub() {
 	GH_LOG=""
 	unset GH_ISSUE_VIEW_TITLE GH_ISSUE_VIEW_BODY GH_ISSUE_VIEW_LABELS
 	unset GH_API_COMMENTS_JSON GH_ISSUE_LIST_CHILD_JSON GH_ISSUE_LIST_CHILD_CLOSED_JSON GH_ISSUE_CREATE_URL
+	unset GH_ISSUE_LIST_FAIL
 	unset GH_PR_LIST_RESOLVING_JSON
 	unset CONSOLIDATION_RECENT_CLOSE_GRACE_MIN
 	return 0
@@ -348,6 +352,62 @@ test_consolidation_child_exists_detects_existing() {
 			"returned 0 with empty child list"
 	else
 		print_result "_consolidation_child_exists returns 1 when no child" 0
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_consolidation_child_exists_detects_parent_dispatch_comment_on_later_page() {
+	setup_gh_stub
+	GH_ISSUE_LIST_CHILD_JSON="[]"
+	GH_API_COMMENTS_JSON=$(jq -n '[[{"body":"old operational comment"}],[{"body":"## Issue Consolidation Dispatched\n\nA consolidation task has been filed as **#9005**."}]]')
+	export GH_ISSUE_LIST_CHILD_JSON GH_API_COMMENTS_JSON
+
+	if _consolidation_child_exists 123 "owner/repo"; then
+		print_result "_consolidation_child_exists blocks when parent dispatch marker is paginated" 0
+	else
+		print_result "_consolidation_child_exists blocks when parent dispatch marker is paginated" 1 \
+			"returned non-zero despite existing parent dispatch comment"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_consolidation_child_exists_fails_closed_on_search_error() {
+	setup_gh_stub
+	GH_API_COMMENTS_JSON="[]"
+	GH_ISSUE_LIST_FAIL=1
+	export GH_API_COMMENTS_JSON GH_ISSUE_LIST_FAIL
+
+	if _consolidation_child_exists 123 "owner/repo"; then
+		print_result "_consolidation_child_exists fails closed on child search error" 0
+	else
+		print_result "_consolidation_child_exists fails closed on child search error" 1 \
+			"returned non-zero despite child search API failure"
+	fi
+
+	teardown_gh_stub
+	return 0
+}
+
+test_idempotent_comment_reads_paginated_issue_comments() {
+	setup_gh_stub
+	GH_API_COMMENTS_JSON=$(jq -n '[[{"body":"older page"}],[{"body":"## Issue Consolidation Dispatched\n\nA consolidation task exists."}]]')
+	export GH_API_COMMENTS_JSON
+
+	_gh_idempotent_comment 123 "owner/repo" \
+		"## Issue Consolidation Dispatched" \
+		"## Issue Consolidation Dispatched
+
+Duplicate body should not post."
+
+	if grep -q 'issue comment' "$GH_LOG" 2>/dev/null; then
+		print_result "_gh_idempotent_comment skips marker on paginated issue comments" 1 \
+			"gh issue comment was invoked despite marker on later page"
+	else
+		print_result "_gh_idempotent_comment skips marker on paginated issue comments" 0
 	fi
 
 	teardown_gh_stub
@@ -772,6 +832,9 @@ main() {
 	test_child_body_contains_parent_content_and_authors
 	test_dedup_skips_when_child_exists
 	test_consolidation_child_exists_detects_existing
+	test_consolidation_child_exists_detects_parent_dispatch_comment_on_later_page
+	test_consolidation_child_exists_fails_closed_on_search_error
+	test_idempotent_comment_reads_paginated_issue_comments
 	test_needs_consolidation_skips_with_child
 
 	# t2144 regression suite
