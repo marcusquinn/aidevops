@@ -179,15 +179,25 @@ extract_task_ids_from_commits() {
 
 		# Pattern 3: "complete/completes/closes tXXX" - task ID immediately after keyword
 		# e.g., "complete t037", "closes t001"
-		if [[ "$commit" =~ (^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+(t[0-9]+(\.[0-9]+)*)([^[:alnum:]_]|$) ]]; then
-			task_ids+=("${BASH_REMATCH[3]}")
-		fi
+		local completion_match
+		while IFS= read -r completion_match; do
+			[[ -n "$completion_match" ]] || continue
+			local id
+			id=$(printf '%s\n' "$completion_match" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
+			[[ -n "$id" ]] || continue
+			task_ids+=("$id")
+		done < <(printf '%s\n' "$commit" | grep -oE '(^|[^[:alnum:]_])(completes?|closes?)[[:space:]]+t[0-9]+(\.[0-9]+)*([^[:alnum:]_]|$)' || true)
 
 		# Pattern 4: "tXXX complete/done/finished" - task ID before completion word
 		# e.g., "t001 complete", "t002 done"
-		if [[ "$commit" =~ (^|[^[:alnum:]_])(t[0-9]+(\.[0-9]+)*)[[:space:]]+(complete|done|finished)($|[^[:alnum:]_]) ]]; then
-			task_ids+=("${BASH_REMATCH[2]}")
-		fi
+		local task_before_completion_match
+		while IFS= read -r task_before_completion_match; do
+			[[ -n "$task_before_completion_match" ]] || continue
+			local id
+			id=$(printf '%s\n' "$task_before_completion_match" | grep -oE 't[0-9]+(\.[0-9]+)*' || true)
+			[[ -n "$id" ]] || continue
+			task_ids+=("$id")
+		done < <(printf '%s\n' "$commit" | grep -oE '(^|[^[:alnum:]_])t[0-9]+(\.[0-9]+)*[[:space:]]+(complete|done|finished)($|[^[:alnum:]_])' || true)
 
 	done <<<"$commits"
 

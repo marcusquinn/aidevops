@@ -77,6 +77,14 @@ printf 'prefix-boundary\n' >>work.txt
 git add work.txt
 git commit -q -m 'chore: at9876 complete should stay ignored'
 
+printf 'multi-after-keyword\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: complete t124 and closes t125'
+
+printf 'multi-before-keyword\n' >>work.txt
+git add work.txt
+git commit -q -m 'chore: t126 complete and t127 done'
+
 SCRIPT_DIR="$TEST_SCRIPTS_DIR"
 REPO_ROOT="$REPO_DIR"
 VERSION_FILE="${REPO_DIR}/VERSION"
@@ -84,7 +92,7 @@ VERSION_FILE="${REPO_DIR}/VERSION"
 source "${TEST_SCRIPTS_DIR}/version-manager-git.sh"
 
 actual=$(extract_task_ids_from_commits)
-expected=$'t123\nt3375\nt3376\nt3377.2'
+expected=$'t123\nt124\nt125\nt126\nt127\nt3375\nt3376\nt3377.2'
 assert_lines_equal 'extract_task_ids_from_commits: supports four digit and dotted task IDs' "$expected" "$actual"
 
 if [[ "$actual" != *$'t337\n'* && "$actual" != "t337" ]]; then
