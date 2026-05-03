@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Tests for `_notify_stale_recovery_resolved_by_pr` in pulse-nmr-approval.sh
+# Tests for NMR approval notification helpers in pulse-nmr-approval.sh
 # (GH#21752 / t3049).
 #
 # Verifies that the notification helper correctly:
@@ -15,6 +15,7 @@
 #   f. Does NOT post when a security/quality check fails
 #   g. Does NOT post for cost-circuit-breaker:fired NMR
 #   h. Does NOT post a duplicate when the marker already exists
+#   i. Includes the repo slug in generated sudo approval commands
 
 set -euo pipefail
 
@@ -222,14 +223,17 @@ define_helper_under_test() {
 	# shellcheck disable=SC1090
 	source "$checks_lib"
 
-	local finder_src notify_src
+	local finder_src notify_src ever_notify_src
 	finder_src=$(awk '
 		/^_find_qualifying_pr_for_stale_recovery\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	notify_src=$(awk '
 		/^_notify_stale_recovery_resolved_by_pr\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
-	if [[ -z "$finder_src" || -z "$notify_src" ]]; then
+	ever_notify_src=$(awk '
+		/^notify_ever_nmr_without_approval\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	if [[ -z "$finder_src" || -z "$notify_src" || -z "$ever_notify_src" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$NMR_SCRIPT" >&2
 		return 1
 	fi
@@ -237,8 +241,27 @@ define_helper_under_test() {
 	eval "$finder_src"
 	# shellcheck disable=SC1090
 	eval "$notify_src"
+	# shellcheck disable=SC1090
+	eval "$ever_notify_src"
 	return 0
 }
+
+issue_was_ever_nmr() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	[[ -n "$issue_num" && -n "$repo_slug" ]]
+	return $?
+}
+export -f issue_was_ever_nmr
+
+issue_has_required_approval() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local known_status="${3:-}"
+	[[ -n "$issue_num" && -n "$repo_slug" && -n "$known_status" ]] || return 0
+	return 1
+}
+export -f issue_has_required_approval
 
 # --- Helper: build a PR JSON object for the fixture ---
 # GH#21799: PR JSON now carries headRefOid (not statusCheckRollup); the
@@ -312,6 +335,12 @@ test_a_stale_recovery_with_approved_pr_posts_notification() {
 	else
 		print_result "Case A: stale-recovery + approved OWNER PR -> notification posted" 1 \
 			"Expected notification comment to be posted"
+	fi
+	if posted_comment_contains "sudo aidevops approve issue 21699 marcusquinn/aidevops"; then
+		print_result "Case A2: stale-recovery notification includes repo slug" 0
+	else
+		print_result "Case A2: stale-recovery notification includes repo slug" 1 \
+			"Expected sudo command to include repo slug"
 	fi
 	return 0
 }
@@ -471,6 +500,23 @@ test_i_empty_nmr_timestamp_no_candidate() {
 	return 0
 }
 
+# Case J: ever-NMR remediation comments include the target repo slug in the
+# sudo command so the maintainer can approve from outside the target repo.
+test_j_ever_nmr_remediation_includes_repo_slug() {
+	reset_posted_comment
+	set_comments '[]'
+
+	notify_ever_nmr_without_approval 3733 "awardsapp/awardsapp"
+
+	if was_comment_posted && posted_comment_contains "sudo aidevops approve issue 3733 awardsapp/awardsapp"; then
+		print_result "Case J: ever-NMR remediation includes repo slug" 0
+	else
+		print_result "Case J: ever-NMR remediation includes repo slug" 1 \
+			"Expected ever-NMR remediation sudo command to include repo slug"
+	fi
+	return 0
+}
+
 # ============================================================
 # Main
 # ============================================================
@@ -493,6 +539,7 @@ main() {
 	test_g_cost_breaker_no_notification
 	test_h_idempotency_no_duplicate
 	test_i_empty_nmr_timestamp_no_candidate
+	test_j_ever_nmr_remediation_includes_repo_slug
 
 	printf '\n%d tests run, %d failures\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

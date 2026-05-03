@@ -576,7 +576,7 @@ notify_ever_nmr_without_approval() {
 > Label \`needs-maintainer-review\` was removed, but the \`ever-NMR\` history flag is still set. Pulse will continue to skip dispatch until cryptographic approval lands:
 >
 > \`\`\`
-> sudo aidevops approve issue ${issue_number}
+> sudo aidevops approve issue ${issue_number} ${repo_slug}
 > \`\`\`
 >
 > This gate cannot be bypassed by label manipulation (security design — see \`reference/auto-merge.md\` NMR section)." \
@@ -777,7 +777,7 @@ _notify_stale_recovery_resolved_by_pr() {
 PR #${matching_pr} is APPROVED with all quality/security gates green. To merge, run:
 
 \`\`\`
-sudo aidevops approve issue ${issue_num}
+sudo aidevops approve issue ${issue_num} ${slug}
 \`\`\`
 
 This issue's NMR was applied by stale-recovery (t2008) — the cryptographic approval clears it and the merge gate flips to PASS." \

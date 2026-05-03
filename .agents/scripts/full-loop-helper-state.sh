@@ -277,7 +277,7 @@ _check_linked_issue_gate() {
 	if [[ "$blocked" == "true" ]]; then
 		print_error "Maintainer gate pre-check BLOCKED — cannot start work:"
 		printf '%b' "$reasons" >&2
-		printf "To unblock:\n  1. Run: sudo aidevops approve issue %s\n  2. Assign the issue to yourself\n" "$issue_num" >&2
+		printf "To unblock:\n  1. Run: sudo aidevops approve issue %s %s\n  2. Assign the issue to yourself\n" "$issue_num" "$repo" >&2
 		return 1
 	fi
 
