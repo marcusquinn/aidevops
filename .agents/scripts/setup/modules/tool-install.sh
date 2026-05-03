@@ -1642,7 +1642,7 @@ _setup_validate_opencode_binary() {
 	[[ "$v" == *"(Claude Code)"* ]] && return 1
 
 	# opencode is at 1.x; any 2.x+ is wrong (claude CLI is 2.1.x).
-	[[ "$v" =~ ^[2-9][0-9]*\. ]] && return 1
+	[[ "$v" =~ ^([2-9]|[1-9][[:digit:]]+)\. ]] && return 1
 
 	# Sanity: must look like a semver (X.Y.Z).
 	[[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
@@ -1674,7 +1674,9 @@ _setup_opencode_force_heal() {
 	fi
 
 	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
-	if run_with_spinner "Reinstalling OpenCode (heal)" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
+	# npm_global_install is the shared generic helper; despite its historic
+	# name, it uses bun when available and falls back to npm.
+	if run_with_spinner "Reinstalling OpenCode via $installer (heal)" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
 		print_success "OpenCode reinstalled via $installer"
 	else
 		print_warning "Heal install failed via $installer"
@@ -1692,8 +1694,11 @@ _setup_opencode_force_heal() {
 		printf '%s\n' "$new_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
 	else
 		local v_after
-		v_after=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf '<missing>')")
-		print_warning "Post-heal validation still failing: '$new_bin' returns '$v_after'"
+		v_after="<missing>"
+		if [[ -n "$new_bin" ]] && [[ -x "$new_bin" ]]; then
+			v_after=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf 'unknown')")
+		fi
+		print_warning "Post-heal validation still failing: '${new_bin:-opencode}' returns '$v_after'"
 		print_info "Check PATH: 'which -a opencode' — npm/bun global bin dir must come first"
 	fi
 	return 0
@@ -1716,11 +1721,7 @@ setup_opencode_cli() {
 	local current_bin
 	current_bin=$(command -v opencode 2>/dev/null || echo "")
 	local validate_rc=0
-	if [[ -n "$current_bin" ]]; then
-		_setup_validate_opencode_binary "$current_bin" || validate_rc=$?
-	else
-		validate_rc=2
-	fi
+	_setup_validate_opencode_binary "$current_bin" || validate_rc=$?
 
 	# Already valid → record + early return.
 	if [[ $validate_rc -eq 0 ]]; then

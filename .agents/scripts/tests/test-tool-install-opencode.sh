@@ -76,7 +76,14 @@ source_extracted() {
 	# shellcheck disable=SC2317
 	print_warning() { echo "WARN: $*"; return 0; }
 	# shellcheck disable=SC2317
-	setup_prompt() { local _var="$1" _prompt="$2" _default="$3"; eval "$_var='$_default'"; return 0; }
+	setup_prompt() {
+		local _var="$1"
+		local _prompt="$2"
+		local _default="$3"
+		: "$_prompt"
+		printf -v "$_var" '%s' "$_default"
+		return $?
+	}
 	# shellcheck disable=SC2317
 	run_with_spinner() { shift; "$@"; return $?; }
 	# shellcheck disable=SC2317
@@ -126,6 +133,21 @@ chmod +x "$SANDBOX/bin/opencode-claude"
 	echo "$rc"
 ) >"$SANDBOX/out2" 2>&1
 assert_eq "claude shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2")"
+
+# --- Test 2b: validator rejects multi-digit non-opencode majors ------------
+echo "Test 2b: _setup_validate_opencode_binary rejects major >=10"
+cat >"$SANDBOX/bin/opencode-major10" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "10.0.0"
+EOF
+chmod +x "$SANDBOX/bin/opencode-major10"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-major10" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2b" 2>&1
+assert_eq "major 10 shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2b")"
 
 # --- Test 3: validator on missing path -------------------------------------
 echo "Test 3: _setup_validate_opencode_binary on missing path"
