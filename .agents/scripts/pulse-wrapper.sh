@@ -71,6 +71,50 @@ fi
 
 set -euo pipefail
 
+_pulse_wrapper_deployed_scripts_dir() {
+	local agents_dir="${AIDEVOPS_AGENTS_DIR:-}"
+	local home_dir="${HOME:-}"
+
+	if [[ -n "$agents_dir" && -d "${agents_dir}/scripts" ]]; then
+		(cd "${agents_dir}/scripts" && pwd -P) || return 1
+		return 0
+	fi
+
+	if [[ -n "$home_dir" && -d "${home_dir}/.aidevops/agents/scripts" ]]; then
+		(cd "${home_dir}/.aidevops/agents/scripts" && pwd -P) || return 1
+		return 0
+	fi
+
+	return 1
+}
+
+_pulse_wrapper_resolve_script_dir() {
+	local source_path="${1:-}"
+	local source_dir=""
+	local resolved_dir=""
+
+	if [[ -n "$source_path" ]]; then
+		source_dir="${source_path%/*}"
+		if [[ "$source_dir" == "$source_path" ]]; then
+			source_dir="."
+		fi
+
+		if [[ -d "$source_dir" ]]; then
+			(cd "$source_dir" && pwd -P) || return 1
+			return 0
+		fi
+	fi
+
+	if resolved_dir="$(_pulse_wrapper_deployed_scripts_dir)"; then
+		printf '[pulse-wrapper] WARN: script directory unavailable (%s); recovering with deployed scripts directory: %s\n' \
+			"${source_dir:-<unknown>}" "$resolved_dir" >&2
+		printf '%s\n' "$resolved_dir"
+		return 0
+	fi
+
+	return 1
+}
+
 #######################################
 # PATH normalisation
 # The MCP shell environment may have a minimal PATH that excludes /bin
@@ -155,8 +199,12 @@ fi
 # Early source: _file_mtime_epoch needed before shared-constants.sh is loaded.
 # shellcheck source=./portable-stat.sh
 _pw_source_path="${BASH_SOURCE[0]:-$0}"
-source "${_pw_source_path%/*}/portable-stat.sh"
-unset _pw_source_path
+_pw_bootstrap_script_dir="$(_pulse_wrapper_resolve_script_dir "$_pw_source_path")" || {
+	printf '[pulse-wrapper] FATAL: cannot resolve script directory for %s\n' "$_pw_source_path" >&2
+	return 2 2>/dev/null || exit 2
+}
+source "${_pw_bootstrap_script_dir}/portable-stat.sh"
+unset _pw_source_path _pw_bootstrap_script_dir
 if [[ "$_pulse_skip_jitter" -eq 0 ]]; then
 	_pw_ffjit_lockdir="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 	_pw_ffjit_pid_file="${_pw_ffjit_lockdir}/pid"
@@ -197,7 +245,7 @@ PULSE_START_EPOCH=$(date +%s)
 # in zsh, which is the MCP shell environment. This fallback ensures SCRIPT_DIR
 # resolves correctly whether the script is executed directly (bash) or sourced
 # from zsh. See GH#3931.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || return 2>/dev/null || exit
+SCRIPT_DIR="$(_pulse_wrapper_resolve_script_dir "${BASH_SOURCE[0]:-$0}")" || return 2>/dev/null || exit
 # Source shared-constants.sh BEFORE config-helper.sh so the bash 4+ re-exec
 # guard (t2087/t2176) fires at BASH_SOURCE depth 1, where the outermost caller
 # is unambiguously pulse-wrapper.sh. If config-helper.sh is sourced first and it
