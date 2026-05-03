@@ -94,7 +94,7 @@ create_gh_stub() {
 	local assignees_csv="$1"
 	local labels_csv="${2:-}"
 	local state="${3:-OPEN}"
-	local assignees_json labels_json recent_ts
+	local assignees_json labels_json recent_ts issue_created_ts
 
 	assignees_json=$(
 		ASSIGNEES_CSV="$assignees_csv" python3 - <<'PY'
@@ -116,6 +116,7 @@ PY
 	# Fresh UTC timestamp so the synthetic comment is always "recent"
 	# regardless of when the test runs.
 	recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	issue_created_ts=$(date -u -v-120S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '120 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
 
 	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
 #!/usr/bin/env bash
@@ -123,6 +124,36 @@ set -euo pipefail
 
 if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
 	printf '%s\n' '{"state":"${state}","assignees":${assignees_json},"labels":${labels_json}}'
+	exit 0
+fi
+
+# REST-fallback issue view path used when shared-gh-wrappers routes reads away
+# from GraphQL: gh api /repos/<slug>/issues/<num> --jq '<projection>'.
+if [[ "\${1:-}" == "api" ]] && [[ "\${2:-}" == /repos/*/issues/* || "\${2:-}" == repos/*/issues/* ]]; then
+	endpoint="\${2:-}"
+	shift 2
+	jq_expr=""
+	while [[ "\$#" -gt 0 ]]; do
+		case "\$1" in
+		--jq | -q)
+			jq_expr="\${2:-}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+	issue_json='{"state":"${state}","assignees":${assignees_json},"labels":${labels_json},"created_at":"${issue_created_ts}"}'
+	if [[ "\$endpoint" == */comments* ]]; then
+		printf '%s\n' '[{"created_at":"${recent_ts}","author":"runner1","body_start":"Dispatching worker (PID 12345)"}]'
+		exit 0
+	fi
+	if [[ -n "\$jq_expr" ]]; then
+		printf '%s\n' "\$issue_json" | jq -c "\$jq_expr"
+		exit 0
+	fi
+	printf '%s\n' "\$issue_json"
 	exit 0
 fi
 
@@ -459,6 +490,50 @@ test_owner_assigned_no_status_no_origin_allows_dispatch() {
 	return 0
 }
 
+test_override_ignore_preserves_self_assignee() {
+	create_gh_stub "runner1" "status:queued"
+	cat >"${TEST_ROOT}/config/aidevops/dispatch-override.conf" <<'EOF'
+DISPATCH_OVERRIDE_RUNNER1="ignore"
+EOF
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'runner1'*)
+			print_result "override ignore preserves self assignee" 0
+			return 0
+			;;
+		esac
+		print_result "override ignore preserves self assignee" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "override ignore preserves self assignee" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
+test_peer_quarantine_preserves_self_assignee() {
+	create_gh_stub "runner1" "status:queued"
+	cat >"${TEST_ROOT}/config/aidevops/dispatch-override.conf" <<'EOF'
+DISPATCH_OVERRIDE_RUNNER1="peer-quarantine-until=2999-01-01T00:00:00Z"
+EOF
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 2>/dev/null); then
+		case "$output" in
+		*'ASSIGNED:'*'runner1'*)
+			print_result "peer quarantine preserves self assignee" 0
+			return 0
+			;;
+		esac
+		print_result "peer quarantine preserves self assignee" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "peer quarantine preserves self assignee" 1 "Expected exit 0 (blocked) but got exit 1 (safe)"
+	return 0
+}
+
 test_dispatch_comment_blocks_inside_active_worker_window() {
 	local dispatch_created_at output
 	dispatch_created_at=$(date -u -v-120S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '120 seconds ago' +%Y-%m-%dT%H:%M:%SZ)
@@ -549,6 +624,8 @@ main() {
 	test_owner_assigned_with_origin_interactive_blocks
 	test_maintainer_assigned_with_origin_interactive_blocks
 	test_owner_assigned_no_status_no_origin_allows_dispatch
+	test_override_ignore_preserves_self_assignee
+	test_peer_quarantine_preserves_self_assignee
 	test_dispatch_comment_blocks_inside_active_worker_window
 	test_ops_wrapped_dispatch_comment_blocks_inside_active_worker_window
 	test_dispatch_comment_expires_after_active_worker_window

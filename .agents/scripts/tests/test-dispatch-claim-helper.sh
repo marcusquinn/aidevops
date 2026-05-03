@@ -173,6 +173,7 @@ local_state_dir="${MOCK_GH_STATE_DIR:?}"
 post_body_file="${local_state_dir}/post_body.txt"
 terminal_body="${MOCK_TERMINAL_BODY:-}"
 dispatch_body="${MOCK_DISPATCH_BODY:-Dispatching worker (PID 12345)}"
+paginated_comments="${MOCK_PAGINATED_COMMENTS:-false}"
 
 if [[ "${1:-}" != "api" ]]; then
 	exit 1
@@ -224,6 +225,24 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	fi
 
 	if [[ -n "$terminal_body" ]]; then
+		if [[ "$paginated_comments" == "true" ]]; then
+			jq -n \
+				--arg dispatch_body "$dispatch_body" \
+				--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
+				--arg terminal_body "$terminal_body" \
+				--arg terminal_ts "${MOCK_TERMINAL_CREATED_AT:?}" \
+				--arg new_body "$new_body" \
+				--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
+				'[
+					[{id: 1, body_start: "human discussion", body: "human discussion", created_at: "2026-05-01T00:00:00Z"}],
+					[
+						{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
+						{id: 11, body_start: $terminal_body, body: $terminal_body, created_at: $terminal_ts},
+						{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
+					]
+				]'
+			exit 0
+		fi
 		jq -n \
 			--arg dispatch_body "$dispatch_body" \
 			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
@@ -235,6 +254,22 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 				{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
 				{id: 11, body_start: $terminal_body, body: $terminal_body, created_at: $terminal_ts},
 				{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
+			]'
+		exit 0
+	fi
+
+	if [[ "$paginated_comments" == "true" ]]; then
+		jq -n \
+			--arg dispatch_body "$dispatch_body" \
+			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" \
+			--arg new_body "$new_body" \
+			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
+			'[
+				[{id: 1, body_start: "human discussion", body: "human discussion", created_at: "2026-05-01T00:00:00Z"}],
+				[
+					{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
+					{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
+				]
 			]'
 		exit 0
 	fi
@@ -695,6 +730,90 @@ test_claim_reads_paginated_comment_tail() {
 }
 
 #######################################
+# Test: override filters are peer-only and preserve this runner's own claim.
+#######################################
+test_claim_ignore_filter_preserves_self_claim() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_mock_gh "$tmp_dir")"
+
+	local old_created_at new_created_at output exit_code
+	old_created_at="$(iso_seconds_ago 10)"
+	new_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="mockrunner" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_CLAIM_IGNORE_RUNNERS="mockrunner" \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "legacy ignore filter preserves self claim" 0
+	else
+		print_result "legacy ignore filter preserves self claim" 1 "got exit $exit_code output: $output"
+	fi
+
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "self-preserved ignored claim remains authoritative" 0
+	else
+		print_result "self-preserved ignored claim remains authoritative" 1 "output: $output"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: structured dispatch overrides are peer-only for this runner's claim.
+#######################################
+test_claim_structured_override_preserves_self_claim() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_mock_gh "$tmp_dir")"
+
+	local old_created_at new_created_at output exit_code
+	old_created_at="$(iso_seconds_ago 10)"
+	new_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="mockrunner" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_OVERRIDE_MOCKRUNNER="ignore" \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "structured override preserves self claim" 0
+	else
+		print_result "structured override preserves self claim" 1 "got exit $exit_code output: $output"
+	fi
+
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "self-preserved structured claim remains authoritative" 0
+	else
+		print_result "self-preserved structured claim remains authoritative" 1 "output: $output"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
 # Test: stale worker takeover claims are annotated (GH#22356)
 #######################################
 test_claim_marks_stale_worker_takeover() {
@@ -744,6 +863,52 @@ test_claim_marks_stale_worker_takeover() {
 		print_result "claim includes OpenCode version" 0
 	else
 		print_result "claim includes OpenCode version" 1 "body: ${post_body:-none}"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: stale takeover detection scans every paginated issue-comment page.
+#######################################
+test_claim_marks_paginated_stale_worker_takeover() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir")"
+
+	local dispatch_created_at claim_created_at output exit_code
+	dispatch_created_at="$(iso_seconds_ago 120)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_PAGINATED_COMMENTS=true \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "paginated stale worker takeover claim exits 0" 0
+	else
+		print_result "paginated stale worker takeover claim exits 0" 1 "got exit $exit_code output: $output"
+	fi
+
+	local post_body=""
+	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
+		post_body=$(<"${tmp_dir}/post_body.txt")
+	fi
+	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+		print_result "paginated stale worker takeover includes reason" 0
+	else
+		print_result "paginated stale worker takeover includes reason" 1 "body: ${post_body:-none}"
 	fi
 
 	rm -rf "$tmp_dir"
@@ -819,7 +984,10 @@ main() {
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
 	test_claim_reads_paginated_comment_tail
+	test_claim_ignore_filter_preserves_self_claim
+	test_claim_structured_override_preserves_self_claim
 	test_claim_marks_stale_worker_takeover
+	test_claim_marks_paginated_stale_worker_takeover
 	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment
 	test_claim_skips_takeover_reason_after_terminal
 
