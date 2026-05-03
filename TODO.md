@@ -4105,3 +4105,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3533 Fix headless worker launch from deleted current directory #auto-dispatch #bug ref:GH#22527
 
 - [ ] t3535 Fix phase-only parent tasks not auto-filing children #auto-dispatch #bug #framework ref:GH#22534
+
+- [ ] t3537 Define _performance KPI result schema #auto-dispatch #enhancement #framework ref:GH#22538
+
+- [ ] t3536 Define _projects directory contract #auto-dispatch #enhancement #framework ref:GH#22537
