@@ -490,12 +490,7 @@ Pattern-aware reroutes use declarative registries, not inline prompt rules: conf
 
 - ShellCheck zero violations. `local var="$1"` pattern. Explicit returns.
 - Shell helpers MUST source `shared-constants.sh` OR guard color/constant fallbacks with `[[ -z "${VAR+x}" ]] && VAR='…'`. Unguarded top-level assignments of shared variable names (`RED`, `GREEN`, `YELLOW`, `BLUE`, `PURPLE`, `CYAN`, `WHITE`, `NC`) are forbidden; `readonly` on those names outside `shared-constants.sh` is forbidden. See `reference/shell-style-guide.md` (root cause: GH#18702/PR #18728).
-- **Counter safety (t2763):** `count=$(grep -c 'pat' file || echo "0")` is BANNED — it stacks `"0\n0"` on the zero-match path (grep -c exits 1 after printing 0). Use `safe_grep_count 'pat' file` (from `shared-constants.sh`) in sourcing scripts, or the inline guard `count=$(grep -c 'pat' file 2>/dev/null || true); [[ "$count" =~ ^[0-9]+$ ]] || count=0` in YAML/bootstrap. CI gate: `.github/workflows/counter-stack-check.yml` (diff-scoped). Full rule: `reference/shell-style-guide.md` § Counter Safety. Canonical failure: #20402.
-- **Stat portability (t3046):** `stat -f %m` is BSD/macOS-only — GNU `stat` uses `stat -c %Y`. NEVER use `stat -f` in `.agents/scripts/**` outside platform-guarded `case "$(uname)" in Darwin*|FreeBSD*)` branches. Use `_file_mtime_epoch "$file"` (from `shared-constants.sh`) and `_file_size_bytes`/`_file_perms` for other stat fields. CI gate: `.github/workflows/stat-portability-check.yml` (diff-scoped). Local check: `.agents/scripts/stat-portability-check.sh --dry-run --base origin/main`. Override: `stat-portability-ok` label + `## Stat Portability Justification` section in PR body. Related: GH#21617, PR#21689.
-
-### Bash 3.2 Compatibility (macOS default)
-
-Full rules: `reference/bash-compat.md`.
+- Counter safety, stat portability, ratchet gate design, self-modifying tooling tests, and Bash 3.2 shell specifics live in `reference/shell-style-guide.md` and `reference/bash-compat.md`.
 
 ### Write-Time Quality Enforcement
 
@@ -504,31 +499,9 @@ Full rules: `reference/bash-compat.md`.
 - Fix immediately, don't batch for commit time.
 - Deterministic prompt rules should migrate to hooks/validators and shrink back to short pointers. Track rule status in `.agents/configs/prompt-hook-candidates.conf`; rubric: `reference/progressive-disclosure.md` "Prompt-to-Hook Migration".
 
-### Gate design — ratchet, not absolute (t2228 class)
+### Gate design and self-modifying tooling
 
-Any new pre-commit validator or CI gate MUST be ratchet-based: baseline the violation count at activation, block only on regressions. Absolute-count gating traps pre-existing debt every time a legacy file is touched, wasting worker context tokens on unrelated cleanup.
-
-Exception: security/credentials checks (secrets, hardcoded tokens, dangerous commands) are absolute — a new violation is a P1 regardless of baseline. Classify explicitly in the validator.
-
-`print_warning` output MUST NOT increment the violation counter. If a finding is "warning", it means "inform, do not block" — returning a non-zero count from a warning path is a lie to the caller.
-
-Patterns to copy: `.agents/scripts/qlty-regression-helper.sh` (t2065), `.agents/scripts/qlty-new-file-gate-helper.sh` (t2068).
-
-### Self-modifying tooling test discipline (GH#18538 / t2062)
-
-When you edit a script that's part of the test/verification loop you'll subsequently invoke (e.g., `full-loop-helper.sh`, `pre-edit-check.sh`, `claim-task-id.sh`, anything in your own dev wrapper chain), the local working copy IS your test environment. Running the script from the worktree path executes uncommitted edits, not what's in git.
-
-Failure mode: the wrapper succeeds locally because of an uncommitted fix; you commit a different (incomplete) version; main ships broken; next worker silently fails. Invisible until someone notices nothing is merging.
-
-Rule:
-
-1. Commit the change BEFORE running it as part of verification, OR
-2. Re-test after `git stash && git checkout origin/main -- <script>` to confirm the committed version actually does what you tested.
-3. For wrappers that invoke themselves (`full-loop-helper.sh merge` being the canonical case), prefer #2 because #1 can't catch the "I forgot to stage one of the files" variant.
-
-This rule applies to scripts only. Product code where the runtime is separate from the source tree (built binaries, deployed services, language runtimes) doesn't have this footgun.
-
-Canonical evidence: GH#18538 → PR #18748 (shipped a `set -e` bug that the local self-test passed because of an uncommitted if-form fix) → PR #18750 (hotfix). Both PRs verified the rule end-to-end.
+Ratchet validators, warning semantics, and self-testing rules for scripts that participate in their own verification loop live in `reference/shell-style-guide.md`.
 
 ### Review Bot Gate (t1382)
 

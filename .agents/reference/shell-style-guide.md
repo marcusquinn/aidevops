@@ -157,6 +157,73 @@ The scanner skips any file with that directive.
 - Parent issue #20581 (t2762) — systemic sweep and prevention
 - Canonical reference implementation: `.agents/scripts/progressive-load-check.sh:80-97` (pre-existing correct counter usage)
 
+## Stat portability (t3046)
+
+BSD/macOS and GNU `stat` use incompatible flags. `stat -f %m` is BSD/macOS-only; GNU `stat` uses `stat -c %Y`. Do not use `stat -f` in `.agents/scripts/**` unless it is inside a platform-guarded branch such as `case "$(uname)" in Darwin*|FreeBSD*)`.
+
+### Allowed patterns
+
+- Use `_file_mtime_epoch "$file"` from `shared-constants.sh` for modification time.
+- Use `_file_size_bytes "$file"` and `_file_perms "$file"` for size and permissions.
+- If a script cannot source `shared-constants.sh`, define a small platform wrapper rather than inlining one platform’s `stat` flags at call sites.
+
+### Enforcement
+
+- CI gate: `.github/workflows/stat-portability-check.yml` (diff-scoped).
+- Local check: `.agents/scripts/stat-portability-check.sh --dry-run --base origin/main`.
+- Override: apply the `stat-portability-ok` label and include a `## Stat Portability Justification` section in the PR body.
+
+Related incidents: GH#21617 and PR #21689. Earlier cross-platform failures are summarized in `reference/bash-compat.md`.
+
+## Gate design — ratchet, not absolute (t2228 class)
+
+New pre-commit validators and CI gates should block regressions, not all historical debt. Baseline the violation count at activation and fail only when the proposed change increases it. Absolute-count gates trap legacy files whenever they are touched and waste worker time on unrelated cleanup.
+
+### Required gate semantics
+
+- Security and credentials checks are the exception: new secrets, dangerous commands, and trust-boundary violations are absolute P1 findings. Classify that exception explicitly.
+- `print_warning` output must not increment a violation counter. A warning is informational; returning non-zero from a warning path lies to the caller and turns advice into a blocker.
+- New-file ratchets usually baseline at zero. Document that stricter rule so workers do not assume legacy grandfathering applies to new helpers.
+
+### Patterns to copy
+
+- `.agents/scripts/qlty-regression-helper.sh` (t2065)
+- `.agents/scripts/qlty-new-file-gate-helper.sh` (t2068)
+
+## Self-modifying tooling test discipline (GH#18538 / t2062)
+
+When you edit a script that participates in the test or verification loop you subsequently invoke, the working tree is part of the test environment. Running `full-loop-helper.sh`, `pre-edit-check.sh`, `claim-task-id.sh`, or another wrapper from the same worktree can execute uncommitted changes rather than the version that will ship.
+
+Failure mode: a wrapper succeeds locally because of an uncommitted fix; a different or incomplete version is committed; main ships broken; the next worker fails with no obvious link to the local test.
+
+### Required rule
+
+1. Commit the change before running that script as verification, or
+2. Re-test after restoring the committed/base version, for example `git stash && git checkout origin/main -- <script>`, to prove the committed state is what passed.
+3. For wrappers that invoke themselves (`full-loop-helper.sh merge` is the canonical case), prefer the second pattern because it catches unstaged-file mistakes.
+
+This applies to scripts and wrappers where source and runtime are the same file. It does not apply to product code that is built, packaged, or deployed before execution.
+
+Canonical evidence: GH#18538 → PR #18748 shipped a `set -e` bug that local self-tests missed because an uncommitted if-form fix was present; PR #18750 hotfixed it and verified the rule end-to-end.
+
+## Bash 3.2 compatibility (macOS default shell)
+
+macOS ships bash 3.2.57. Shell helpers must avoid Bash 4+ features and parser traps even when CI or a developer shell uses newer bash. Full compatibility details live in `reference/bash-compat.md`; this section lists the shell-style implications that most often affect `.agents/scripts/**` edits.
+
+### Common forbidden or risky constructs
+
+- `declare -A` / `local -A`; use indexed arrays, delimiter-separated records, or grep-based lookup.
+- `mapfile` / `readarray`; use `while IFS= read -r line; do arr+=("$line"); done < <(cmd)`.
+- `${var,,}` / `${var^^}`; use `tr '[:upper:]' '[:lower:]'` or `tr '[:lower:]' '[:upper:]'`.
+- `|&` and `&>>`; use `2>&1 |` and `>>file 2>&1`.
+- Heredocs inside `$()`; assign quoted strings or write to a temp file instead.
+- Literal ASCII apostrophes inside unquoted heredocs; quote the heredoc tag, use U+2019, or reword.
+
+### Verification
+
+- Run `/bin/bash -n script.sh` on macOS for parser compatibility.
+- The `Bash 3.2 Compatibility` and `cross-platform-shellcheck` CI jobs catch known parser and syntax classes, but they do not replace review for BSD/GNU behaviour differences.
+
 ## Code-generators and the string-literal ratchet (t2834)
 
 The string-literal ratchet (`pre-commit-hook.sh::validate_string_literals`) flags any `"..."`-quoted substring of 4+ chars that appears 3+ times in a single file, with the ratchet baselined at zero for **new** files (existing files are grandfathered at HEAD). Helpers that emit SVG, HTML, XML, or any other attribute-rich markup trip this trivially because every element repeats `width="`, `height="`, `fill="`, etc. as boundary fragments.
@@ -309,10 +376,10 @@ The lint deliberately ignores `mktemp -d` and `mktemp -u` invocations (the bug o
 GH#21408 (t2997) — `pulse-prefetch-fetch.sh:1107` `update_repo_tier_check_timestamp` produced 142 `mkstemp failed` lines/day in `pulse-wrapper.log` during launchd respawn races. 42 production callsites had the same bug. Reproduction:
 
 ```bash
-$ mktemp /tmp/x-XXXXXX.json    # macOS: /tmp/x-XXXXXX.json (literal!)
-$ mktemp /tmp/x-XXXXXX.json    # macOS: mkstemp failed: File exists
-$ mktemp /tmp/x.json.XXXXXX    # macOS: /tmp/x.json.TW5AIa (correct)
-$ mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
+mktemp /tmp/x-XXXXXX.json    # macOS: /tmp/x-XXXXXX.json (literal!)
+mktemp /tmp/x-XXXXXX.json    # macOS: mkstemp failed: File exists
+mktemp /tmp/x.json.XXXXXX    # macOS: /tmp/x.json.TW5AIa (correct)
+mktemp /tmp/x-XXXXXX         # macOS: /tmp/x-mGVJcx (correct)
 ```
 
 GNU `mktemp` (Linux) accepts both forms, masking the bug in CI. The lint gate enforces the BSD-safe form everywhere so future macOS regressions are caught at PR time.
