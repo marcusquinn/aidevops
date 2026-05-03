@@ -88,7 +88,7 @@ describe("token cost advisory threshold", () => {
 
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
-    assert.match(output.system[0], /Do not include startup advisory\/status\/cache lines in chat/);
+    assert.match(output.system[0], /Do not include startup status or advisory messages in chat/);
     assert.doesNotMatch(output.system[0], /\[SECURITY ADVISORY\] Rotate test credentials/);
     assert.doesNotMatch(output.system[0], /\[WARN\] Pulse stalled for 12 minutes/);
     assert.doesNotMatch(output.system[0], /Security: all protections active/);
@@ -107,7 +107,7 @@ describe("token cost advisory threshold", () => {
 
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
-    assert.match(output.system[0], /do not add another greeting or a second 'what would you like to work on' line/);
+    assert.match(output.system[0], /do not add any additional salutations, greetings, introductory questions, or equivalent help prompts/);
   });
 
   test("does not inject session greeting order in headless sessions", async () => {
