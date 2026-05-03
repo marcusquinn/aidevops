@@ -52,8 +52,12 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
 - t3525 / #22515 — Phase 3: mining workflow and evidence thresholds; filed as
   the child that documents clustering, deduplication, review gates, and promotion
   thresholds in `.agents/aidevops/feedback.md`.
-- t3527 / #22518 — Phase 4: promotion paths into knowledge, campaigns, projects, cases, performance, and tasks.
-- t3528 / #22519 — Phase 5: CLI and routines design (filed; design contract in `.agents/aidevops/feedback.md`).
+- t3527 / #22518 — Phase 4: promotion paths into knowledge, campaigns,
+  projects, cases, performance, and tasks; filed as the child that documents
+  promotion criteria, evidence requirements, privacy rules, and retire/no-promote
+  outcomes in `.agents/aidevops/feedback.md`.
+- t3528 / #22519 — Phase 5: CLI and routines design (filed; design contract in
+  `.agents/aidevops/feedback.md`).
 
 ## Phases
 
@@ -80,6 +84,17 @@ Children are filed above so parent-task automation can track progress. Each chil
 - `_projects/<id>/requirements/` receives validated product/project requirements.
 - `_cases/<id>/feedback/` or case notes receive client-specific signal.
 - `_performance/` receives qualitative context around metric movements.
+- TODO/GitHub tasks receive only public-safe, worker-ready summaries; private/client evidence stays in `_feedback/` or the relevant private plane.
+
+## Phase Filing Status
+
+| Phase | Child | Status | Notes |
+|-------|-------|--------|-------|
+| Phase 1 — capture contract | t3523 / #22510 | Filed | Defines normalized capture metadata. |
+| Phase 2 — retention and sensitivity policy | t3524 / #22512 | Filed | Defines retention and sensitivity rules. |
+| Phase 3 — mining workflow | t3525 / #22515 | Filed | Defines theme extraction and evidence thresholds. |
+| Phase 4 — promotion paths | t3527 / #22518 | Filed | Documents promotion criteria and destination evidence in `.agents/aidevops/feedback.md`. |
+| Phase 5 — CLI and routines | t3528 / #22519 | Filed | Designs feedback commands and recurring mining cadence. |
 
 ## How (decomposition only — no code changes)
 
