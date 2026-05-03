@@ -458,20 +458,47 @@ _detect_session_model() {
 }
 
 # =============================================================================
-# Detect session type: "interactive" (>1 user messages) or "worker" (0-1)
+# Detect session type: explicit headless markers, then interactive runtime,
+# then legacy DB heuristic ("interactive" >1 user messages, "worker" 0-1).
 # =============================================================================
 
+_gh_sig_env_truthy() {
+	local value="$1"
+	case "$value" in
+	"" | "0" | "false" | "FALSE" | "no" | "NO") return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+_detect_explicit_session_type() {
+	if _gh_sig_env_truthy "${FULL_LOOP_HEADLESS:-}" ||
+		_gh_sig_env_truthy "${AIDEVOPS_HEADLESS:-}" ||
+		_gh_sig_env_truthy "${OPENCODE_HEADLESS:-}"; then
+		echo "worker"
+		return 0
+	fi
+
+	if [[ "${OPENCODE:-}" == "1" ]] || [[ -n "${OPENCODE_SESSION_ID:-}" ]] ||
+		[[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
+		echo "interactive"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
 _detect_session_type() {
+	local explicit_type
+	explicit_type=$(_detect_explicit_session_type)
+	if [[ -n "$explicit_type" ]]; then
+		echo "$explicit_type"
+		return 0
+	fi
+
 	# Guard: only query OpenCode DB in OpenCode runtime (GH#17689)
 	if ! _is_opencode_runtime; then
-		# Claude Code: infer session type from environment
-		if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]] || [[ -n "${AIDEVOPS_HEADLESS:-}" ]]; then
-			echo "worker"
-		elif [[ -n "${CLAUDE_CODE:-}" ]] || [[ -n "${CLAUDE_SESSION_ID:-}" ]]; then
-			echo "interactive"
-		else
-			echo ""
-		fi
+		echo ""
 		return 0
 	fi
 

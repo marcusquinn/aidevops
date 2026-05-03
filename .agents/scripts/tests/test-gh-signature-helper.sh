@@ -285,7 +285,7 @@ VALUES
 "
 
 	if [[ -n "$issue_created_iso" ]]; then
-		result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_created_iso")
+		result=$(XDG_DATA_HOME="${tmp_home}/.local/share" HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_created_iso")
 		assert_contains "issue window uses scoped tokens" "220 tokens on this" "$result"
 		assert_not_contains "issue window excludes pre-issue tokens" "330 tokens on this" "$result"
 
@@ -293,7 +293,7 @@ VALUES
 		issue_after_iso=$(date -u -r "$issue_after_epoch" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null ||
 			date -u -d "@${issue_after_epoch}" "+%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 		if [[ -n "$issue_after_iso" ]]; then
-			result=$(HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_after_iso")
+			result=$(XDG_DATA_HOME="${tmp_home}/.local/share" HOME="$tmp_home" "$HELPER" generate --cli "OpenCode" --model "m" --issue-created "$issue_after_iso")
 			assert_not_contains "post-window excludes pre-issue fallback" "330 tokens on this" "$result"
 			assert_not_contains "post-window omits scoped zero token phrase" "0 tokens on this" "$result"
 		else
@@ -479,6 +479,29 @@ else
 fi
 
 rm -rf "$tmp_home_19"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test 20: session-mode footer detection uses explicit mode markers only
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 20: session-mode footer detection"
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+	OPENCODE=1 AIDEVOPS_HEADLESS_VARIANT_SONNET="high" \
+	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
+assert_contains "variant config alone remains interactive" "with the user in an interactive session" "$result"
+assert_not_contains "variant config does not imply worker" "as a headless worker" "$result"
+
+result=$(env -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS FULL_LOOP_HEADLESS=true \
+	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
+assert_contains "FULL_LOOP_HEADLESS marks worker" "as a headless worker" "$result"
+
+result=$(env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS AIDEVOPS_HEADLESS=true \
+	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
+assert_contains "AIDEVOPS_HEADLESS marks worker" "as a headless worker" "$result"
+
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS OPENCODE_HEADLESS=true \
+	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
+assert_contains "OPENCODE_HEADLESS marks worker" "as a headless worker" "$result"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
