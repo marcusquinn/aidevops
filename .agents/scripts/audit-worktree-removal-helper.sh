@@ -25,6 +25,9 @@
 #   grace-period      — within WORKTREE_CLEAN_GRACE_HOURS, not safe to remove yet
 #   open-pr           — branch has an open PR; active work in progress
 #   zero-commit-dirty — 0 commits ahead + dirty files = in-progress, not merged
+#   empty-branch      — 0 commits ahead = pre-work branch (t3545/GH#22606)
+#   active-claim      — interactive-session claim stamp present (t2916/GH#21074)
+#   current-worktree  — caller is inside this worktree (GH#22154)
 #   dirty-skip        — uncommitted changes present, --force-merged not set
 #   fixture           — test fixture teardown path
 #

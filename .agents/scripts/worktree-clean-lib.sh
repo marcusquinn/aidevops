@@ -256,10 +256,34 @@ should_skip_cleanup() {
 		return 0
 	fi
 
-	# GH#5694 Safety check C: Zero-commit + dirty
-	# A branch with 0 commits ahead of default AND uncommitted changes is in-progress,
-	# not truly merged. git branch --merged treats 0-commit branches as merged because
-	# they share the same HEAD as the default branch.
+	# t3545/GH#22606 Safety check C-pre: Empty branch (zero commits ahead).
+	# A branch with 0 commits ahead of default IS pre-work, not merged work.
+	# git branch --merged matches 0-commit branches because they share HEAD
+	# with the default branch — semantically wrong: a freshly-created worktree
+	# may be mid-edit but uncommitted, or about to receive its first commit.
+	# Permanent removal of an empty branch can destroy uncommitted edits with
+	# NO recovery path (mode=permanent, branch deleted, no trash backing).
+	#
+	# Skip unconditionally on the non-force-merged path — covers both clean
+	# (model not yet edited) and dirty (model edited but didn't commit). This
+	# is a superset of the legacy zero-commit-dirty check below.
+	#
+	# When --force-merged is set the user has explicitly opted into removing
+	# even questionable worktrees, so we fall through to the existing
+	# dirty-check + per-merge-classification handling rather than blocking.
+	if [[ "$force_merged_flag" != "true" ]] && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead = empty/pre-work branch - skipping)"
+		echo "    $wt_path"
+		echo ""
+		# t2976: audit log — cleanup skipped, empty-branch safety check (t3545)
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "empty-branch" "skipped"
+		return 0
+	fi
+
+	# GH#5694 Safety check C: Zero-commit + dirty (legacy — kept for the
+	# --force-merged path; the empty-branch check above already covers the
+	# non-force path). Retained so the audit-log reason "zero-commit-dirty"
+	# remains a valid emission and existing diagnostics stay readable.
 	if worktree_has_changes "$wt_path" && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
 		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead + dirty files = in-progress, not merged - skipping)"
 		echo "    $wt_path"
@@ -382,7 +406,13 @@ _clean_classify_worktree() {
 	local merge_type=""
 
 	# Check 1: Traditional merge detection
-	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$"; then
+	# t3545/GH#22606: require ≥1 commit ahead of default. git branch --merged
+	# matches 0-commit branches because their HEAD == default's HEAD, but a
+	# zero-commit branch is pre-work, not merged work. Misclassifying it as
+	# "merged" routes it through permanent removal and destroys any
+	# uncommitted edits the worktree holds.
+	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" \
+		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
 		is_merged=true
 		merge_type="merged"
 	# Check 2: Remote branch deleted (indicates squash merge or PR closed)
