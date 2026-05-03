@@ -31,7 +31,7 @@ The reusable pattern solves all three at once:
 
 ## Architecture
 
-```
+```text
 aidevops repo (source of truth):
   .github/workflows/issue-sync-reusable.yml       ← on: workflow_call:
                                                      All jobs. All logic. 1300+ lines.
@@ -105,6 +105,10 @@ Keep pinned callers in sync with aidevops releases via:
 aidevops check-workflows        # detect drift
 aidevops sync-workflows --apply # update pins to current aidevops version
 ```
+
+These are the canonical drift tools for managed downstream repos. Use
+`check-workflows` when auditing, and `sync-workflows --apply` when you are ready
+to update caller YAMLs to the current framework template/pin.
 
 See also [`auto-dispatch.md`](auto-dispatch.md) for the `SYNC_PAT` requirement (unchanged under the reusable pattern — still per-repo secret).
 

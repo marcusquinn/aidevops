@@ -229,22 +229,22 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Review Bot Gate (t1382):** Before merging: `review-bot-gate-helper.sh check <PR_NUMBER>` and read bot reviews. Additive bot suggestions become follow-up tasks, not PR scope creep. Full workflow/overrides: `reference/review-bot-gate.md`.
 
-**Qlty Regression Gate (t2065, GH#18773):** CI fails if a PR introduces a net increase in `qlty smells` count. Docs-only PRs skip automatically. Override: add `ratchet-bump` label with justification. Helper: `qlty-regression-helper.sh` (supports `--dry-run`).
+**Qlty Regression Gate (t2065, GH#18773):** CI fails on net `qlty smells` increases; details/override/local check: `reference/shell-style-guide.md` "Quality gate pattern reference".
 
-**Qlty New-File Smell Gate (t2068):** CI fails if newly-added files ship with smells. Complements t2065 (which catches increases in existing files). Override: `new-file-smell-ok` label AND a `## New File Smell Justification` section in the PR body — both required. Local check: `qlty-new-file-gate-helper.sh new-files --base origin/main --dry-run`.
+**Qlty New-File Smell Gate (t2068):** CI fails when brand-new source files ship with smells; details/override/local check: `reference/shell-style-guide.md` "Quality gate pattern reference".
 
 **Cryptographic approval + NMR automation (t2386):** moved to `reference/task-lifecycle.md`; read before approving issues/PRs or clearing/preserving NMR.
 
-**Task-ID collision guard (t2047):** t-IDs in commit subjects MUST be claimed via `claim-task-id.sh`. The commit-msg hook (`install-task-id-guard.sh install`) enforces this client-side; the CI check (`.github/workflows/task-id-collision-check.yml`) enforces it server-side for commits authored outside the hook.
+**Task-ID collision guard (t2047):** t-IDs in commit subjects MUST be claimed via `claim-task-id.sh`; enforcement details live in `reference/shell-style-guide.md` "Quality gate pattern reference".
 
-**Large-file splits (t2368):** When splitting a shell library into sub-libraries (responding to `file-size-debt`, `function-complexity`, or `nesting-depth` scanner issues), read `reference/large-file-split.md` first. It covers the canonical orchestrator + sub-library pattern, identity-key preservation rules, known CI false-positive classes, pre-commit hook gotchas, and a complete PR body template. A worker reading only this doc + the scanner-filed issue body can complete a split PR end-to-end without re-discovering any lesson.
+**Large-file splits (t2368):** file-size/function-complexity/nesting-depth scanner issues start with `reference/large-file-split.md`.
 
-**Complexity Bump Override (t2370):** The `complexity-bump-ok` label overrides the complexity regression gates in `code-quality.yml` (nesting-depth, file-size, function-complexity, bash32-compat). Workers and maintainers may self-apply this label when the PR body contains a validated `## Complexity Bump Justification` section with: (1) at least one `file:line` reference citing the scanner evidence, and (2) at least one numeric measurement (`base=N, head=M, new=K` or similar). Workflow: `.github/workflows/complexity-bump-justification-check.yml` — triggers on `labeled` event, validates the section, and removes the label with a remediation comment if justification is incomplete. This mirrors the `new-file-smell-ok` + justification-section pattern. Primary use case: file splits that trigger nesting-depth false positives from identity-key changes (see `reference/large-file-split.md` section 4.1).
+**Complexity Bump Override (t2370):** `complexity-bump-ok` label requirements live in `reference/large-file-split.md` "Known CI false-positive classes".
 
-**Workflow Cascade Vulnerability Lint (t2229):** `.github/workflows/workflow-cascade-lint.yml` flags PRs that modify workflows containing the cascade-vulnerable combination: label-like event types (`labeled`, `unlabeled`, `assigned`, etc.) + `cancel-in-progress: true` + no mitigation (`paths-ignore` or event-action guard). See t2220 for the failure mode (15 cancelled runs in ~2s). Helper: `.agents/scripts/workflow-cascade-lint.sh` (supports `--dry-run` for local checks). Override: apply `workflow-cascade-ok` label AND add a `## Workflow Cascade Justification` section to the PR body.
+**Workflow Cascade Vulnerability Lint (t2229):** workflow cascade detection/override details live in `reference/shell-style-guide.md` "Quality gate pattern reference".
 
-**Reusable workflows:** downstream repos use thin caller YAMLs that reference aidevops reusable workflows. Drift tools: `aidevops check-workflows`, `aidevops sync-workflows --apply`. Full architecture/pinning: `reference/reusable-workflows.md`.
+**Reusable workflows:** downstream repos use thin caller YAMLs that reference aidevops reusable workflows. Full architecture/pinning/drift tools: `reference/reusable-workflows.md`.
 
-**Badge management (t2975):** `aidevops badges render|check|sync|install` manages README badge blocks and LOC badge workflows. Full docs: `.agents/aidevops/badges.md`.
+**Badge management (t2975):** README badge blocks and LOC badge workflows are managed by `aidevops badges`; full docs: `.agents/aidevops/badges.md`.
 
 Related workflow reference: `reference/session.md`

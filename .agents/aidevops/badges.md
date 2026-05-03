@@ -8,10 +8,15 @@ badges for stats GitHub already exposes, plus a self-hosted SVG for lines
 of code (the only badge that needs custom infrastructure because shields.io's
 tokei endpoint is too unreliable to depend on).
 
-This is **Phase 1** — the framework artifacts. **Phase 2** (filed as a
-follow-up issue) adds the `aidevops badges check|sync|render|install`
-CLI subcommand and an `aidevops init` hook to apply badges automatically
-to every managed repo from `repos.json`.
+Use `aidevops badges render|check|sync|install` to manage README badge blocks
+and LOC badge workflows for repos listed in `repos.json`.
+
+Subcommands:
+
+- `render` — print the badge block that would be inserted.
+- `check` — fail on README badge drift.
+- `sync` — update the README badge block and managed LOC workflow caller.
+- `install` — install managed badge assets for a repo.
 
 ## What you get
 

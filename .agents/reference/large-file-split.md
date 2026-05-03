@@ -199,6 +199,12 @@ justification is complete -- no maintainer intervention required for
 legitimate splits. This mirrors the `new-file-smell-ok` + justification-section
 pattern from `qlty-new-file-gate.yml`.
 
+Primary use case: file splits that trigger identity-key artifacts in
+file-size/function-complexity/bash32-compat gates. Do not use the label to hide
+real complexity growth; the PR body must show the scanner evidence and the
+measurement (`base=N, head=M, new=K` or similar) so the automated validator and
+human reviewer can distinguish a split artifact from new debt.
+
 ### 4.2 Pre-push complexity guard
 
 The client-side `complexity-regression-pre-push.sh` hook rejects on the same
