@@ -56,6 +56,10 @@ readonly DEFAULT_HEALTH_TTL=300   # 5 minutes for health checks
 readonly DEFAULT_RATELIMIT_TTL=60 # 1 minute for rate limit data
 readonly PROBE_TIMEOUT=10         # HTTP request timeout in seconds
 
+# Last successful resolve_api_key source. Probe helpers use this to distinguish
+# runtime-auth precedence from mere credential presence without printing secrets.
+RESOLVED_API_KEY_SOURCE=""
+
 # Known providers list (opencode is a meta-provider routing through its gateway;
 # local/ollama are local inference providers with no API key requirement)
 readonly KNOWN_PROVIDERS="anthropic openai google openrouter groq deepseek opencode local ollama"
@@ -380,6 +384,7 @@ resolve_api_key() {
 	local provider="$1"
 	local key_vars
 	key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || key_vars=""
+	RESOLVED_API_KEY_SOURCE=""
 
 	# Sources 1-3 require key_vars to be non-empty (env var name to look up).
 	# Source 4 (OAuth auth.json) works even without key_vars — it looks up
@@ -391,12 +396,12 @@ resolve_api_key() {
 		IFS=',' read -ra var_names <<<"$key_vars"
 		for var_name in "${var_names[@]}"; do
 			# Source 1: Environment variable
-			# NOTE (t3229): if this key is stale/invalid and the HTTP probe
-			# rejects it (HTTP 401/403), probe_provider falls back to Source 4
-			# (auth.json OAuth) via _probe_check_oauth_fallback in
-			# model-availability-probe-lib.sh — so a stale env key does not
-			# permanently mask a working OAuth account.
+			# NOTE (t3555): if this env key is stale/invalid and the HTTP probe
+			# rejects it (HTTP 401/403), built-in providers may still use the
+			# rejected env key at inference time. The probe library checks this
+			# source before allowing any auth.json OAuth fallback.
 			if [[ -n "${!var_name:-}" ]]; then
+				RESOLVED_API_KEY_SOURCE="env:${var_name}"
 				echo "${!var_name}"
 				return 0
 			fi
@@ -410,6 +415,7 @@ resolve_api_key() {
 					local key_val
 					key_val=$(gopass show "$gopass_path" 2>/dev/null)
 					if [[ -n "$key_val" ]]; then
+						RESOLVED_API_KEY_SOURCE="gopass:${var_name}"
 						echo "$key_val"
 						return 0
 					fi
@@ -425,6 +431,7 @@ resolve_api_key() {
 			source "$creds_file"
 			for var_name in "${var_names[@]}"; do
 				if [[ -n "${!var_name:-}" ]]; then
+					RESOLVED_API_KEY_SOURCE="credentials:${var_name}"
 					echo "${!var_name}"
 					return 0
 				fi
@@ -452,6 +459,7 @@ resolve_api_key() {
 		if [[ "$auth_type" == "oauth" ]]; then
 			# OAuth entry: presence of the entry means the runtime can
 			# authenticate. Probe records healthy and skips HTTP.
+			RESOLVED_API_KEY_SOURCE="auth-json-oauth:${provider}"
 			echo "oauth-refresh-available"
 			return 0
 		fi
@@ -459,6 +467,7 @@ resolve_api_key() {
 		local api_key_entry
 		api_key_entry=$(jq -r --arg p "$provider" '.[$p].key // empty' "$auth_file" 2>/dev/null) || api_key_entry=""
 		if [[ -n "$api_key_entry" ]]; then
+			RESOLVED_API_KEY_SOURCE="auth-json-key:${provider}"
 			echo "$api_key_entry"
 			return 0
 		fi

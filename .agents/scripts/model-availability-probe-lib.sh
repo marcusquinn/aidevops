@@ -422,20 +422,52 @@ _probe_resolve_and_validate_key() {
 	return 0
 }
 
+# _probe_allows_oauth_fallback_after_rejected_key: distinguish providers where
+# OpenCode's selected runtime path can genuinely ignore a rejected helper key
+# from built-in providers where env vars still win at inference time.
+_probe_allows_oauth_fallback_after_rejected_key() {
+	local provider="$1"
+	local key_source="${2:-${RESOLVED_API_KEY_SOURCE:-}}"
+	local key_vars=""
+	local var_name
+	local -a var_names=()
+
+	# t3555: OpenCode's built-in openai provider uses @ai-sdk/openai. When
+	# OPENAI_API_KEY is present, inference follows that env key even if
+	# auth.json also contains ChatGPT OAuth. Do not mark the provider healthy
+	# after the same env key was rejected by the /models probe.
+	if [[ "$provider" == openai ]]; then
+		key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || key_vars=""
+		IFS=',' read -r -a var_names <<<"$key_vars"
+		for var_name in "${var_names[@]}"; do
+			if [[ "$key_source" == "env:${var_name}" || -n "${!var_name:-}" ]]; then
+				return 1
+			fi
+		done
+	fi
+
+	return 0
+}
+
 # _probe_check_oauth_fallback: called when an HTTP probe rejected the resolved
 # key with exit code 3 (HTTP 401/403). Checks whether auth.json has an OAuth
-# entry for the provider — if so, the OpenCode runtime can authenticate at
-# session start via its own OAuth flow, so the provider IS available.
-# Records healthy and returns 0 on OAuth hit; returns 3 if no OAuth found.
+# entry for the provider and whether the runtime path can actually prefer that
+# OAuth entry over the rejected key. Records healthy and returns 0 on an allowed
+# OAuth hit; returns 3 if no usable OAuth fallback exists.
 #
-# t3229: prevents a stale/invalid env OPENAI_API_KEY (or any provider key)
-# from permanently masking a working OAuth account in auth.json. Without this
-# fallback, resolve_api_key returns the stale env key (Source 1), the HTTP
-# probe 401s/403s, and the provider is marked key_invalid — even though
-# auth.json has a valid OAuth entry the runtime would use.
+# t3229: prevents a stale/invalid non-runtime key source from permanently
+# masking a working OAuth account in auth.json. t3555 narrows that fallback
+# for built-in openai env-key failures because OpenCode inference would reuse
+# the rejected OPENAI_API_KEY before auth.json OAuth.
 _probe_check_oauth_fallback() {
 	local provider="$1"
 	local quiet="${2:-false}"
+	local key_source="${3:-${RESOLVED_API_KEY_SOURCE:-}}"
+
+	if ! _probe_allows_oauth_fallback_after_rejected_key "$provider" "$key_source"; then
+		[[ "$quiet" != "true" ]] && print_warning "$provider: env key rejected (HTTP 401/403); OpenCode built-in provider will still use that env key, not auth.json OAuth"
+		return 3
+	fi
 
 	local auth_file="${HOME}/.local/share/opencode/auth.json"
 	[[ -f "$auth_file" ]] || return 3
@@ -697,10 +729,11 @@ _model_routing_table_path() {
 
 _expand_config_path() {
 	local path="$1"
-	case "$path" in
-	~/*) printf '%s/%s\n' "$HOME" "${path#~/}" ;;
-	*) printf '%s\n' "$path" ;;
-	esac
+	if [[ "${path#\~/}" != "$path" ]]; then
+		printf '%s/%s\n' "$HOME" "${path#\~/}"
+		return 0
+	fi
+	printf '%s\n' "$path"
 	return 0
 }
 
@@ -741,14 +774,17 @@ _chatgpt_oauth_unsupported_models() {
 # Checks the configured OpenCode auth file for openai.type == "oauth".
 # Returns 1 if using an API key, auth.json is absent, or jq is unavailable.
 _is_openai_chatgpt_oauth() {
+	local auth_file
+	auth_file=$(_openai_oauth_auth_file)
+	if [[ ! -f "$auth_file" ]]; then
+		_OPENAI_OAUTH_AUTH_TYPE_CACHE=""
+		return 1
+	fi
+
 	if [[ -n "$_OPENAI_OAUTH_AUTH_TYPE_CACHE" ]]; then
 		[[ "$_OPENAI_OAUTH_AUTH_TYPE_CACHE" == "oauth" ]]
 		return $?
 	fi
-
-	local auth_file
-	auth_file=$(_openai_oauth_auth_file)
-	[[ -f "$auth_file" ]] || return 1
 
 	local auth_type
 	auth_type=$(jq -r '.openai.type // empty' "$auth_file" 2>/dev/null) || auth_type=""
