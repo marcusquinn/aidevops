@@ -3,7 +3,7 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # test-dispatch-min-concurrency.sh — t3418 regression tests for the minimum
-# pulse worker concurrency floor under CPU/load throttling.
+# pulse worker concurrency floor under runtime launch throttling.
 
 set -uo pipefail
 
@@ -138,33 +138,37 @@ test_throttle_forces_serial_above_floor() {
 	return 0
 }
 
-test_canary_preflight_bypasses_overload_only_below_floor() {
+test_canary_preflight_marks_floor_without_cpu_bypass() {
 	local fake_helper worker_log
 	fake_helper="${TEST_ROOT}/fake-headless-runtime-helper.sh"
 	worker_log="${TEST_ROOT}/worker.log"
 	cat >"$fake_helper" <<'EOF'
 #!/usr/bin/env bash
-if [[ "${AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK:-}" == "1" ]]; then
-	exit 0
-fi
-exit 42
+printf 'skip_overload=%s min_floor=%s\n' \
+	"${AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK:-}" \
+	"${AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE:-}"
+exit 0
 EOF
 	chmod +x "$fake_helper"
 	HEADLESS_RUNTIME_HELPER="$fake_helper"
 	unset AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE || true
 	TEST_ACTIVE_WORKERS=5
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
-	if _dlw_canary_preflight 100 "o/r" "$worker_log" "standard" ""; then
-		print_result "canary: overload check bypassed below minimum floor" 0
+	: >"$worker_log"
+	_dlw_canary_preflight 100 "o/r" "$worker_log" "standard" "" >/dev/null 2>&1 || true
+	if grep -q 'skip_overload= min_floor=1' "$worker_log" 2>/dev/null; then
+		print_result "canary: minimum floor no longer sets CPU/load bypass" 0
 	else
-		print_result "canary: overload check bypassed below minimum floor" 1
+		print_result "canary: minimum floor no longer sets CPU/load bypass" 1 "log=$(cat "$worker_log" 2>/dev/null)"
 	fi
 	unset AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK AIDEVOPS_MIN_WORKER_FLOOR_BYPASS_ACTIVE || true
 	TEST_ACTIVE_WORKERS=6
-	if _dlw_canary_preflight 101 "o/r" "$worker_log" "standard" ""; then
-		print_result "canary: overload check enforced at floor" 1 "unexpected success"
+	: >"$worker_log"
+	_dlw_canary_preflight 101 "o/r" "$worker_log" "standard" "" >/dev/null 2>&1 || true
+	if grep -q 'skip_overload= min_floor=' "$worker_log" 2>/dev/null; then
+		print_result "canary: at floor runs without CPU/load bypass marker" 0
 	else
-		print_result "canary: overload check enforced at floor" 0
+		print_result "canary: at floor runs without CPU/load bypass marker" 1 "log=$(cat "$worker_log" 2>/dev/null)"
 	fi
 	return 0
 }
@@ -279,7 +283,7 @@ test_capacity_raises_soft_cap_to_floor
 test_capacity_respects_existing_higher_cap
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
-test_canary_preflight_bypasses_overload_only_below_floor
+test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence

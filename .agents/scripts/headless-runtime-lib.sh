@@ -1045,17 +1045,11 @@ CANARY_NEGATIVE_TTL_SECONDS="${CANARY_NEGATIVE_TTL_SECONDS:-90}"
 # still allowing recovery within a single pulse-update cycle.
 CANARY_CONFIG_ERROR_TTL_SECONDS="${CANARY_CONFIG_ERROR_TTL_SECONDS:-3600}"
 
-# t3210: System overload TTL. The canary spawns a fresh `opencode run` that
-# does a one-time DB migration on each invocation; under heavy disk/CPU
-# contention from many concurrent workers (canonical: load avg >> NCPU on
-# a developer macbook), the migration + LLM round-trip exceeds
-# CANARY_TIMEOUT_SECONDS even when opencode, auth, and the API all work
-# in isolation. Treating overload as `transient` (90s TTL) causes the
-# circuit-breaker re-trip cycle (#21919, #21556, #4360, #4318, #2293,
-# #2292): 90s expires → still overloaded → canary times out → 3x
-# no_worker_process → trip → auto-reset → repeat. Overload self-resolves
-# in 5-15 min as concurrent workers complete and exit. 300s default gives
-# load time to subside without wasting canary CPU on doomed attempts.
+# t3558 (GH#22634): CPU/load/saturation is never a dispatch throttle.
+# The OS scheduler should arbitrate CPU contention; local RAM/disk capacity,
+# auth, provider availability, and runtime health are the meaningful launch
+# constraints. Keep this deprecated variable for env compatibility only — it
+# is no longer read by the negative-cache TTL logic.
 CANARY_OVERLOAD_TTL_SECONDS="${CANARY_OVERLOAD_TTL_SECONDS:-300}"
 
 # t3449: Soft canary failures (timeouts/provider/rate-limit blips) may be
@@ -1064,23 +1058,19 @@ CANARY_OVERLOAD_TTL_SECONDS="${CANARY_OVERLOAD_TTL_SECONDS:-300}"
 # bypass so a stale success cannot mask a real outage indefinitely.
 CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS="${CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS:-900}"
 
-# t3549 (GH#22615): replaces t3210's pre-canary load-based gate with a
-# post-failure CPU-saturation classifier. Load average is the wrong signal
-# (counts uninterruptible-IO waits, inflates while CPU sits idle); the new
-# classifier consults cpu-saturation-helper.sh, which samples real per-core
-# utilisation across a rolling window. The canary always runs; only its
-# failure interpretation changes.
+# t3549/t3558: CPU/load checks are advisory-only. Load average is the wrong
+# dispatch signal (counts uninterruptible-IO waits, inflates while CPU sits
+# idle), and even real CPU saturation is not a useful launch blocker on a
+# RAM-sufficient local runner. The canary tests runtime/model health only.
 #
-# CANARY_SATURATION_WINDOW_SECONDS — window over which the saturation
-# classifier requires sustained high utilisation (default 120s).
-# CANARY_SATURATION_PERCENT — minimum per-sample utilisation for the
-# window to count as "saturated" (default 98%).
+# CANARY_SATURATION_WINDOW_SECONDS / CANARY_SATURATION_PERCENT — deprecated
+# env compatibility for the advisory cpu-saturation-helper.sh. The canary
+# and dispatch path no longer read these values.
 CANARY_SATURATION_WINDOW_SECONDS="${CANARY_SATURATION_WINDOW_SECONDS:-120}"
 CANARY_SATURATION_PERCENT="${CANARY_SATURATION_PERCENT:-98}"
 
-# t3549 (DEPRECATED): kept for one release for env compatibility. The
-# pre-canary load-based gate no longer fires regardless of this value;
-# saturation is measured post-failure via cpu-saturation-helper.sh.
+# t3549/t3558 (DEPRECATED): kept for env compatibility. CPU/load/saturation
+# no longer affects canary preflight, classification, or dispatch throttling.
 # Remove from any user shell profile that still exports it.
 CANARY_OVERLOAD_LOAD_MULTIPLIER="${CANARY_OVERLOAD_LOAD_MULTIPLIER:-4}"
 
@@ -1247,14 +1237,12 @@ _enforce_opencode_version_pin() {
 	return 0
 }
 
-# t3549 (GH#22615, supersedes t3210): the pre-canary load-based overload
-# gate is removed. Load average inflates under uninterruptible IO waits and
-# fired pre-emptively when CPU was actually idle; the symmetric failure mode
-# was that a generously-set threshold missed genuine sustained saturation.
-# The canary now always runs (modulo the existing negative cache and
-# binary-validity checks); failure interpretation is delegated to the
-# saturation classifier in _classify_canary_failure_reason, which consults
-# cpu-saturation-helper.sh against the rolling per-core utilisation window.
+# t3549/t3558: CPU/load/saturation must never gate dispatch. Load average
+# inflates under uninterruptible IO waits, and CPU spikes are often caused by
+# the pulse/runners themselves. The canary now always runs (modulo the
+# existing negative cache and binary-validity checks) and timeout-class
+# failures stay `timeout`; RAM/disk/provider/runtime checks are responsible
+# for real launch blocking.
 #
 # This stub is retained for one release so existing callers and tests that
 # invoke `_check_system_overload` continue to compile. It always returns
@@ -1263,11 +1251,9 @@ _check_system_overload() {
 	return 0
 }
 
-# t3549 (GH#22615): saturation-aware classifier for canary failures.
-# Consults cpu-saturation-helper.sh on timeout-class exits so the negative
-# cache can pick the right TTL: `overload` (300s) when CPU is genuinely
-# saturated for the full window, `timeout` (90s) when the failure is
-# transient. Idle-CPU timeouts no longer accumulate `overload` stamps.
+# t3558 (GH#22634): CPU saturation is advisory-only. Timeout-class canary
+# exits classify as `timeout` regardless of load/CPU state so pulse/runner
+# CPU spikes cannot lengthen dispatch backoff.
 _classify_canary_failure_reason() {
 	local output_file="$1"
 	local exit_code="$2"
@@ -1281,12 +1267,6 @@ _classify_canary_failure_reason() {
 	esac
 	case "$exit_code" in
 		124 | 137 | 142)
-			# Timeout-class. Consult the saturation helper to distinguish
-			# transient blip from sustained CPU saturation.
-			if _classify_is_saturated; then
-				printf '%s' "overload"
-				return 0
-			fi
 			printf '%s' "timeout"
 			return 0
 			;;
@@ -1297,18 +1277,6 @@ _classify_canary_failure_reason() {
 	esac
 	printf '%s' "local_error"
 	return 0
-}
-
-# Helper: returns 0 if cpu-saturation-helper.sh reports sustained saturation
-# over CANARY_SATURATION_WINDOW_SECONDS at >= CANARY_SATURATION_PERCENT.
-# Returns 1 if not saturated OR if the helper is missing (fail-open: keep
-# the short `timeout` TTL so transient blips recover quickly).
-_classify_is_saturated() {
-	local helper="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/cpu-saturation-helper.sh"
-	[[ -x "$helper" ]] || return 1
-	local window="${CANARY_SATURATION_WINDOW_SECONDS:-120}"
-	local pct="${CANARY_SATURATION_PERCENT:-98}"
-	"$helper" check --window "$window" --threshold "$pct" >/dev/null 2>&1
 }
 
 _run_canary_test() {
@@ -1349,13 +1317,13 @@ _run_canary_test() {
 		neg_now=$(date +%s)
 		neg_age=$((neg_now - last_fail))
 		fail_reason=$(cat "$fail_reason_file" 2>/dev/null || echo "transient")
-		# t2887/t3210: TTL is reason-aware. Each failure class has its own
+		# t2887/t3558: TTL is reason-aware. Each failure class has its own
 		# self-resolution timescale, so a one-size-fits-all TTL either spams
 		# the canary on structural problems (90s on a missing binary) or
-		# delays recovery on transient ones (1h on an auth blip).
+		# delays recovery on transient ones (1h on an auth blip). CPU/load
+		# overload is intentionally not a distinct TTL class anymore.
 		case "$fail_reason" in
 			config_error) active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS" ;;
-			overload) active_ttl="$CANARY_OVERLOAD_TTL_SECONDS" ;;
 			*) active_ttl="$CANARY_NEGATIVE_TTL_SECONDS" ;;
 		esac
 		if [[ "$last_fail" =~ ^[0-9]+$ ]] && [[ "$neg_age" -ge 0 ]] && [[ "$neg_age" -lt "$active_ttl" ]]; then
@@ -1364,22 +1332,9 @@ _run_canary_test() {
 		fi
 	fi
 
-	# t3549 (supersedes t3210): pre-canary load-based overload gate
-	# removed. The canary now always runs; if it times out, the
-	# saturation-aware classifier in _classify_canary_failure_reason
-	# consults cpu-saturation-helper.sh and stamps `overload` only when
-	# CPU has been sustained-saturated for the full window. This kills
-	# the false-positive backoff that fired during high-load-low-CPU
-	# (uninterruptible IO) periods while still breaking the 90s
-	# claim-then-die loop on genuine saturation. The
-	# AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK env var is honoured as a no-op
-	# for backward compatibility with downstream test fixtures.
-	# Sample once per cycle to keep the rolling window populated for the
-	# classifier — cheap (~50ms on macOS, ~100ms on Linux).
-	local _saturation_helper="${SCRIPT_DIR:-${HOME}/.aidevops/agents/scripts}/cpu-saturation-helper.sh"
-	if [[ -x "$_saturation_helper" ]]; then
-		"$_saturation_helper" sample >/dev/null 2>&1 || true
-	fi
+	# t3558: no CPU/load/saturation preflight or sampling. The canary below
+	# tests only OpenCode/runtime/model health; RAM/disk/provider gates live
+	# elsewhere in the dispatch path.
 
 	# t2887: Pre-canary binary validation. Detect the case where
 	# $OPENCODE_BIN_DEFAULT resolves to anthropic/claude CLI instead of

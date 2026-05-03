@@ -1093,7 +1093,7 @@ _dispatch_max_compute_parallel() {
 		max_parallel="$effective_slots"
 	fi
 	# In throttle mode, _effective_slots is already 1 → max_parallel=1 (serial).
-	# t3418: when the minimum worker floor is active, CPU/load launch throttles
+	# t3418/t3558: when the minimum worker floor is active, launch throttles
 	# are soft signals; keep parallelism eligible until the floor is reached.
 	# Defensive: also short-circuit on direct file presence in case caller
 	# passes a non-throttled effective_slots while throttle is active.

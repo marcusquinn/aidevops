@@ -319,7 +319,6 @@ EOF
 		OPENCODE_BIN="${fake_bin_dir}/opencode" \
 		AIDEVOPS_CANARY_ARGS_FILE="$args_file" \
 		AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
-		AIDEVOPS_SKIP_CANARY_OVERLOAD_CHECK=1 \
 		CANARY_CACHE_TTL_SECONDS=0 \
 		CANARY_TIMEOUT_SECONDS=5 \
 		bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
