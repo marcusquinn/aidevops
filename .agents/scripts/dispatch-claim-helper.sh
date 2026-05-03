@@ -284,9 +284,11 @@ _detect_stale_worker_takeover_reason() {
 	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
 	local comments_json
-	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq '[.[] | {body_start: (.body[:300]), created_at: .created_at}]' \
-		2>/dev/null) || {
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=${DISPATCH_CLAIM_COMMENT_FETCH_PER_PAGE}" \
+		--paginate --slurp 2>/dev/null | jq -c '
+			[ (if (type == "array" and ((.[0]? | type) == "array")) then .[] else . end)[]
+			| {body_start: (.body[:300]), created_at: .created_at} ]
+		' 2>/dev/null) || {
 		printf '%s' ""
 		return 0
 	}
@@ -627,6 +629,7 @@ _structured_filter_classify_claims() {
 	local rows="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local self_runner="${4:-}"
 
 	# Iterate via IFS=newline `for` rather than `while read <<<"$rows"` — the
 	# complexity-regression scanner's nesting-depth heuristic treats
@@ -641,6 +644,10 @@ _structured_filter_classify_claims() {
 		[[ -z "$line" ]] && { IFS=$'\n'; continue; }
 		IFS=$'\t' read -r id runner version <<<"$line"
 		[[ -z "$id" ]] && { IFS=$'\n'; continue; }
+		if [[ -n "$self_runner" && "$runner" == "$self_runner" ]]; then
+			IFS=$'\n'
+			continue
+		fi
 		action=$(_override_resolve "$runner" "$version" 2>/dev/null) || action="honour"
 		case "$action" in
 		ignore) printf '%s\n' "$id" ;;
@@ -663,6 +670,7 @@ _apply_structured_filter() {
 	local parsed="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local self_runner="${4:-}"
 
 	# No-op fast paths: master switch off, resolver missing, or no config.
 	if [[ "${DISPATCH_OVERRIDE_ENABLED:-true}" != "true" ]] \
@@ -678,7 +686,7 @@ _apply_structured_filter() {
 		printf '%s' "$parsed"
 		return 0
 	}
-	to_strip_newline=$(_structured_filter_classify_claims "$rows" "$issue_number" "$repo_slug")
+	to_strip_newline=$(_structured_filter_classify_claims "$rows" "$issue_number" "$repo_slug" "$self_runner")
 
 	if [[ -z "$to_strip_newline" ]]; then
 		printf '%s' "$parsed"
@@ -735,6 +743,7 @@ _apply_ignore_filter() {
 	local parsed="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
+	local self_runner="${4:-}"
 
 	if [[ "$DISPATCH_OVERRIDE_ENABLED" != "true" ]]; then
 		printf '%s' "$parsed"
@@ -762,6 +771,9 @@ _apply_ignore_filter() {
 
 	local pre_count
 	pre_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)
+	if [[ -z "$self_runner" ]]; then
+		self_runner=$(_resolve_runner "" 2>/dev/null || printf '%s' "")
+	fi
 
 	# Login filter (t2400, deprecated — still supported for backward compat)
 	if [[ -n "$DISPATCH_CLAIM_IGNORE_RUNNERS" ]]; then
@@ -770,8 +782,8 @@ _apply_ignore_filter() {
 		ignored_json=$(printf '%s' "$DISPATCH_CLAIM_IGNORE_RUNNERS" | tr ',' ' ' | tr -s ' ' '\n' | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || ignored_json="[]"
 		if [[ "$ignored_json" != "[]" ]]; then
 			local filtered_login
-			filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" '
-				map(select(.runner as $r | $ignored | index($r) | not))
+			filtered_login=$(printf '%s' "$parsed" | jq -c --argjson ignored "$ignored_json" --arg self "$self_runner" '
+				map(select(.runner == $self or (.runner as $r | $ignored | index($r) | not)))
 			' 2>/dev/null)
 			if [[ -n "$filtered_login" ]]; then
 				parsed="$filtered_login"
@@ -785,7 +797,7 @@ _apply_ignore_filter() {
 	fi
 
 	# Structured per-runner filter (t2422)
-	parsed=$(_apply_structured_filter "$parsed" "$issue_number" "$repo_slug")
+	parsed=$(_apply_structured_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
 
 	local post_count
 	post_count=$(printf '%s' "$parsed" | jq 'length' 2>/dev/null || echo 0)

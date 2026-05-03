@@ -542,6 +542,28 @@ test_env_var_defaults() {
 }
 
 #######################################
+# Test: override ignore lists never strip this runner's own claim.
+#######################################
+test_ignore_filter_preserves_self_claim() {
+	local claims output
+	claims='[{"id":1,"runner":"alex-solovyev","version":"3.14.27"},{"id":2,"runner":"marcusquinn","version":"3.14.27"}]'
+	output=$(DISPATCH_CLAIM_IGNORE_RUNNERS="alex-solovyev marcusquinn" \
+		DISPATCH_OVERRIDE_CONF="${TMPDIR:-/tmp}/missing-dispatch-override.conf" \
+		DISPATCH_OVERRIDE_ENABLED=true \
+		DISPATCH_CLAIM_MIN_VERSION="" \
+		CLAIMS_JSON="$claims" \
+		bash -c 'source "'"$CLAIM_HELPER"'" 2>/dev/null; _apply_ignore_filter "$CLAIMS_JSON" 42 owner/repo alex-solovyev' 2>/dev/null) || output="[]"
+	output="${output##*$'\n'}"
+
+	if printf '%s' "$output" | jq -e 'length == 1 and .[0].runner == "alex-solovyev"' >/dev/null 2>&1; then
+		print_result "ignore filter preserves self claim" 0
+	else
+		print_result "ignore filter preserves self claim" 1 "output: $output"
+	fi
+	return 0
+}
+
+#######################################
 # Test: stale same-runner oldest claim is cleaned up and rejected (GH#15317)
 #
 # Previously this tested self-reclaim (CLAIM_RECLAIMED, exit 0). After
@@ -816,6 +838,7 @@ main() {
 	test_unknown_command
 	test_dedup_claim_routing
 	test_env_var_defaults
+	test_ignore_filter_preserves_self_claim
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
 	test_claim_reads_paginated_comment_tail

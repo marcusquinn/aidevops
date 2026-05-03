@@ -1186,6 +1186,16 @@ is_assigned() {
 		local _a _upper _override_val _now_epoch _q_until _q_until_epoch
 		_now_epoch=$(date -u '+%s')
 		for _a in "${_override_array[@]}"; do
+			# Override/quarantine config is peer-only. Never let a runner ignore its
+			# own assignee state, or it can repeatedly reclaim an issue it already owns.
+			if [[ -n "$self_login" && "$_a" == "$self_login" ]]; then
+				if [[ -n "$_filtered_assignees" ]]; then
+					_filtered_assignees="${_filtered_assignees},${_a}"
+				else
+					_filtered_assignees="$_a"
+				fi
+				continue
+			fi
 			# Slug normalisation matches pulse-peer-quarantine-helper.sh's
 			# _pq_login_to_var: dash/dot/@ → underscore, uppercase.
 			_upper="$(printf '%s' "$_a" | tr 'a-z\-.@' 'A-Z___')"
