@@ -167,7 +167,7 @@ Source: extracted from `.agents/AGENTS.md` Framework Rules and User Guide Git Wo
 
 ## AGENTS.md Framework Rules Git Workflow
 
-Git is the audit trail. Procedures: see the "## Git Workflow" section below.
+Git is the audit trail. Procedures: see the "## AGENTS.md User Guide Git Workflow" section below.
 
 **Origin labelling (MANDATORY):**
 
@@ -211,7 +211,7 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Interactive issue ownership:** Mandatory claim/release rules live in Framework Rules > Git Workflow. Use `interactive-session-helper.sh claim <N> <slug>` for existing issues, `--implementing` for interactive takeover of `auto-dispatch` issues, `lockdown` for full pulse insulation, and `release` on handoff/abandonment. Session-start stale-claim details and idle handover: `reference/session.md`.
 
-**Traceability and signature footer:** Hard rules: see "Framework Rules > Git Workflow > Traceability" and "Framework Rules > Signature footer hallucination" above. Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
+**Traceability and signature footer:** Hard rules: see "Traceability" above and "Framework Rules > Signature footer hallucination" in `.agents/AGENTS.md`. Link both sides when closing (issue→PR, PR→issue). Do NOT pass `--issue` when creating new issues (the issue doesn't exist yet). See `scripts/commands/pulse.md` for dispatch/kill/merge comment templates.
 
 **Stacked PRs (t2412):** Stacked PRs (`--base feature/<other-branch>`) are auto-retargeted to default branch before the parent merges — handled automatically by `pulse-merge.sh` and `full-loop-helper.sh merge`. For bare `gh pr merge` calls, retarget manually first: `gh pr list --base <head-ref> --state open --json number -q '.[].number' | xargs -I{} gh pr edit {} --base main`. Only direct children are retargeted; grandchildren handled when their own parent merges.
 
@@ -247,4 +247,4 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 **Badge management (t2975):** `aidevops badges render|check|sync|install` manages README badge blocks and LOC badge workflows. Full docs: `.agents/aidevops/badges.md`.
 
-Full workflow: `workflows/git-workflow.md`, `reference/session.md`
+Related workflow reference: `reference/session.md`
