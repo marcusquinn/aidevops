@@ -617,23 +617,25 @@ _find_qualifying_pr_for_stale_recovery() {
 		--repo "$slug" --json number,reviewDecision,headRefOid,authorAssociation,labels,createdAt \
 		--limit 10 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || pr_json="[]"
+	[[ -n "$nmr_at" ]] || return 0
 
 	local candidate_prs
 	candidate_prs=$(printf '%s' "$pr_json" | jq -r \
 		--arg nmr_at "$nmr_at" \
-		--arg blank "" \
 		--arg approved "APPROVED" \
 		--arg owner "OWNER" \
 		--arg member "MEMBER" \
 		--arg origin_worker "origin:worker" \
 		--arg origin_interactive "origin:interactive" '
+		($nmr_at | fromdateiso8601) as $target_ts
+		|
 		.[]?
-		| select((.createdAt // $blank) != $blank)
-		| select((.createdAt | fromdateiso8601) > ($nmr_at | fromdateiso8601))
+		| select(.createdAt != null)
+		| select((.createdAt | fromdateiso8601) > $target_ts)
 		| select(.reviewDecision == $approved)
 		| select(.authorAssociation == $owner or .authorAssociation == $member)
 		| select([.labels[]?.name] | any(. == $origin_worker or . == $origin_interactive))
-		| select((.headRefOid // $blank) != $blank)
+		| select(.headRefOid != null and .headRefOid != "")
 		| [.number, .headRefOid]
 		| @tsv
 	' 2>/dev/null) || candidate_prs=""

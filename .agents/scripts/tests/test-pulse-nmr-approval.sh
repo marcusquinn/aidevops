@@ -201,6 +201,14 @@ gh_issue_comment() {
 }
 export -f gh_issue_comment
 
+# Keep the finder test isolated from any ambient gh_pr_list wrapper loaded by
+# the developer shell; this fixture wants the local gh stub above.
+gh_pr_list() {
+	gh pr list "$@"
+	return $?
+}
+export -f gh_pr_list
+
 # Extract the functions under test from the source file.
 define_helper_under_test() {
 	# GH#21799: source the REST check-runs helper sub-library so the extracted
@@ -445,6 +453,24 @@ test_h_idempotency_no_duplicate() {
 	return 0
 }
 
+# Case I: missing NMR timestamp -> no jq date parse error and no candidate PR
+test_i_empty_nmr_timestamp_no_candidate() {
+	reset_posted_comment
+	local pr_data candidate
+	pr_data=$(build_pr_json 21716 "APPROVED" "OWNER" "2026-04-29T09:19:00Z" "origin:worker" "SUCCESS" "FAILURE")
+	set_pr_list "[${pr_data}]"
+
+	candidate=$(_find_qualifying_pr_for_stale_recovery 21699 "marcusquinn/aidevops" "")
+
+	if [[ -n "$candidate" ]]; then
+		print_result "Case I: empty NMR timestamp -> no candidate" 1 \
+			"Expected no candidate when NMR timestamp is empty, got: ${candidate}"
+	else
+		print_result "Case I: empty NMR timestamp -> no candidate" 0
+	fi
+	return 0
+}
+
 # ============================================================
 # Main
 # ============================================================
@@ -466,6 +492,7 @@ main() {
 	test_f_failing_quality_check_no_notification
 	test_g_cost_breaker_no_notification
 	test_h_idempotency_no_duplicate
+	test_i_empty_nmr_timestamp_no_candidate
 
 	printf '\n%d tests run, %d failures\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
