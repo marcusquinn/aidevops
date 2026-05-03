@@ -249,6 +249,12 @@ Maintainer review required before further dispatch. Possible causes:
 - Worker stuck in a loop (model can't decompose the task — escalate tier)
 - Wrong tier assigned (downgrade a tier:thinking task to standard, or vice versa)
 
+After investigating, approve another dispatch with:
+
+\`\`\`bash
+sudo aidevops approve issue ${issue_number} ${repo_slug}
+\`\`\`
+
 Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
 
 _This is the cost-runaway fail-safe from t2007 (paired with t1986 parent-task guard and t2008 stale-recovery escalation)._

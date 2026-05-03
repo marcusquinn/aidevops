@@ -211,6 +211,12 @@ else
 	print_result "cost breaker trip writes diagnostic log line" 1 "(log=$(tr '\n' ' ' <"$LOGFILE" 2>/dev/null))"
 fi
 
+if grep -q 'sudo aidevops approve issue 18002 owner/repo' "$STUB_LOG" 2>/dev/null; then
+	print_result "cost breaker comment includes approval command" 0
+else
+	print_result "cost breaker comment includes approval command" 1 "(stub_log=$(tr '\n' ' ' <"$STUB_LOG" 2>/dev/null))"
+fi
+
 # =============================================================================
 # Assertion 3 — no comments → fail-open (treated as 0 spend, allow)
 # =============================================================================
