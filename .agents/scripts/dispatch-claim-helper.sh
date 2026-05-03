@@ -268,7 +268,7 @@ _detect_stale_worker_takeover_reason() {
 
 	local last_dispatch_json dispatch_created_at
 	last_dispatch_json=$(printf '%s' "$comments_json" | jq -c '
-		[.[] | select((.body_start // "") | startswith("Dispatching worker"))]
+		[.[] | select((.body_start // "") | test("(^|\\n)Dispatching worker"))]
 		| sort_by(.created_at) | reverse | first // empty
 	' 2>/dev/null) || last_dispatch_json=""
 	if [[ -z "$last_dispatch_json" || "$last_dispatch_json" == "null" ]]; then
