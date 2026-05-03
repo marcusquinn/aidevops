@@ -4165,3 +4165,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3559 Preserve current OpenAI OAuth pool account on startup #auto-dispatch #bug ref:GH#22640
 
 - [x] t3558 Remove CPU-based canary throttling #auto-dispatch #bug ref:GH#22634 pr:#22639 completed:2026-05-03
+
+- [ ] t3560 Add /goals mission command ref:GH#22649
