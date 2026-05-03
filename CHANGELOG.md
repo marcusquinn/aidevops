@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.30] - 2026-05-03
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- sync default branch after remote cleanup (#22680)
+- report runtime versions in automation messages
+
 ## [3.14.29] - 2026-05-03
 
 ### Changed
