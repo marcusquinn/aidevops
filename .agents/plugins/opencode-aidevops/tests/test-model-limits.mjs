@@ -221,13 +221,17 @@ describe("OPENAI_MODEL_LIMITS table", () => {
     assert.equal(limit.output, 64000);
   });
 
-  test("sets GPT-5.5 family input to preserve a 400K OpenCode compaction boundary", () => {
+  test("sets GPT-5.5 family limits to preserve a 400K OpenCode compaction boundary", () => {
     const expected = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro"];
     for (const id of expected) {
       assert.ok(OPENAI_MODEL_LIMITS[id], `missing OpenAI limit entry for ${id}`);
-      assert.equal(OPENAI_MODEL_LIMITS[id].context, 500000);
+      // OpenCode >= upstream/dev preserves config limit.input, so the modern
+      // boundary is input - reserved. OpenCode 1.14.33 dropped config
+      // limit.input, so keep context - 32K output cap at the same boundary.
+      assert.equal(OPENAI_MODEL_LIMITS[id].context, 432000);
       assert.equal(OPENAI_MODEL_LIMITS[id].input, 420000);
       assert.equal(OPENAI_MODEL_LIMITS[id].input - 20000, 400000);
+      assert.equal(OPENAI_MODEL_LIMITS[id].context - 32000, 400000);
       assert.ok(OPENAI_MODEL_LIMITS[id].output > 0);
     }
   });
