@@ -469,7 +469,7 @@ Do NOT respond to a `FILE_NOT_FOUND` block by debugging temp-file paths, file co
 
 ### Diagnostics discipline (t2036, t2204, t3215, t3222)
 
-Stale-symptom, Attribution before verification, Pulse activity verification, Productivity questions current-state — see `.agents/reference/diagnostics-discipline.md` before publishing attribution or productivity claims.
+Stale-symptom, Attribution before verification, Pulse activity verification, Productivity questions current-state — see `reference/diagnostics-discipline.md` before publishing attribution or productivity claims.
 
 **Pre-edit rules:**
 
@@ -489,7 +489,7 @@ Stale-symptom, Attribution before verification, Pulse activity verification, Pro
 4. Authorization does NOT extend to subsequent commits. Each self-blocking class gets its own explicit authorization.
 5. File sibling validator bugs discovered during the session as separate issues with `blocked-by:<this-PR-task>` until the base fix lands.
 
-See also `reference/pre-commit-hooks.md` for the full playbook and "Stale-symptom investigations" section above (t2036) for the runtime-debugging analogue.
+See also `reference/pre-commit-hooks.md` for the full playbook and `reference/diagnostics-discipline.md` "Stale-symptom investigations" (t2036) for the runtime-debugging analogue.
 
 **Post-edit commit rule (data loss prevention):**
 
