@@ -55,6 +55,11 @@ From `tools/build-agent/build-agent.md`:
 4. **Code examples**: Only when authoritative (use `file:line` refs otherwise)
 5. **Self-assessment**: Flag issues with evidence, complete task first
 
+Contributor rule: changes that add or expand always-loaded guidance (`AGENTS.md`,
+`.agents/AGENTS.md`, `prompts/build.txt`) must prefer a short pointer plus a
+reference/workflow document, keep `.agents/AGENTS.md` under the CI size ratchet,
+and justify any intentional baseline increase in the PR body.
+
 ## Security
 
 Security rules: see `.agents/AGENTS.md` "Framework Rules > Security Rules". Additional contributor rule:

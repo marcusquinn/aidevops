@@ -1,0 +1,54 @@
+name: AGENTS.md size check
+
+on:
+  pull_request:
+    paths:
+      - '.agents/AGENTS.md'
+      - 'AGENTS.md'
+      - 'prompts/build.txt'
+      - '.github/workflows/agents-md-size-check.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - '.agents/AGENTS.md'
+      - 'AGENTS.md'
+      - 'prompts/build.txt'
+      - '.github/workflows/agents-md-size-check.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  size:
+    name: Check always-loaded prompt size
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce AGENTS.md byte ratchet
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          max_bytes=24000
+          file='.agents/AGENTS.md'
+
+          if [[ ! -f "${file}" ]]; then
+            echo "::error::${file} is missing"
+            exit 1
+          fi
+
+          bytes=$(wc -c < "${file}" | tr -d ' ')
+          approx_tokens=$(( (bytes + 3) / 4 ))
+
+          echo "${file}: ${bytes} bytes (~${approx_tokens} tokens by chars/4)"
+          echo "Limit: ${max_bytes} bytes (~6000 tokens)"
+
+          if (( bytes > max_bytes )); then
+            echo "::error::${file} is ${bytes} bytes, above ${max_bytes}. Move detail to reference/workflow docs and keep only pointers in always-loaded context."
+            exit 1
+          fi
+
+          echo "AGENTS.md size check passed"

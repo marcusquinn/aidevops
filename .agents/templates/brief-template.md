@@ -210,12 +210,20 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
               setup_sandbox(), EXPECTED_FUNCTIONS array, declare -F loop, print_result
               helper, main() calling all test_* functions"
 
-     PLAN-SKETCH VERIFICATION (GH#18458):
-     When code sketches from a plan document are included in a brief, verify every
-     function call against the actual source file signatures BEFORE filing the child
-     task. Plan sketches are written during planning (before implementation); function
-     signatures may have been updated since. A wrong signature in a brief causes the
-     worker to write broken code and burn tokens debugging. -->
+      PLAN-SKETCH VERIFICATION (GH#18458):
+      When code sketches from a plan document are included in a brief, verify every
+      function call against the actual source file signatures BEFORE filing the child
+      task. Plan sketches are written during planning (before implementation); function
+      signatures may have been updated since. A wrong signature in a brief causes the
+      worker to write broken code and burn tokens debugging.
+
+      ALWAYS-LOADED PROMPT BUDGET RULE (Phase 8 of #22616):
+      If this task edits AGENTS.md, .agents/AGENTS.md, prompts/build.txt, or another
+      always-loaded instruction surface, require progressive disclosure by default:
+      keep the startup file to a short rule/pointer, move long rationale/examples to
+      a reference or workflow doc, and verify `.agents/AGENTS.md` stays under the
+      agents-md-size-check CI ratchet unless the PR explicitly justifies a baseline
+      bump. -->
 
 ### Worker Quick-Start
 
