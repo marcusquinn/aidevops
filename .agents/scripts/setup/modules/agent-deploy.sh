@@ -437,6 +437,41 @@ _verify_deployed_agents_tree() {
 	return 0
 }
 
+# _verify_deployed_core_plugin_freshness source_dir target_dir
+# Verifies core plugin files that are runtime-critical copied byte-for-byte from
+# the canonical agents tree before .deployed-sha is written. This catches stale
+# plugin deploys where setup reports success and advances the stamp while OpenCode
+# still loads an older deployed plugin file.
+_verify_deployed_core_plugin_freshness() {
+	local source_dir="$1"
+	local target_dir="$2"
+	local rel_path
+	local source_file
+	local target_file
+	local -a core_plugin_files=(
+		"plugins/opencode-aidevops/model-limits.mjs"
+	)
+
+	for rel_path in "${core_plugin_files[@]}"; do
+		source_file="$source_dir/$rel_path"
+		target_file="$target_dir/$rel_path"
+
+		if [[ ! -f "$source_file" ]]; then
+			continue
+		fi
+		if [[ ! -f "$target_file" ]]; then
+			print_error "Deploy verification failed: $target_file missing after swap"
+			return 1
+		fi
+		if ! cmp -s "$source_file" "$target_file"; then
+			print_error "Deploy verification failed: $target_file is stale versus $source_file"
+			return 1
+		fi
+	done
+
+	return 0
+}
+
 # _install_opencode_plugin_deps target_dir
 # Installs node_modules for the opencode-aidevops plugin.
 # GH#17829: @bufbuild/protobuf was missing; GH#17891: only symlink on first run.
@@ -792,6 +827,11 @@ deploy_aidevops_agents() {
 	# next retry even though agents/ is empty or partial.
 	if ! _verify_deployed_agents_tree "$target_dir"; then
 		print_error "The agents directory was not correctly deployed — setup cannot continue"
+		_restore_latest_agents_backup "$target_dir" || true
+		return 1
+	fi
+	if ! _verify_deployed_core_plugin_freshness "$source_dir" "$target_dir"; then
+		print_error "The agents directory contains stale core plugin files — setup cannot continue"
 		_restore_latest_agents_backup "$target_dir" || true
 		return 1
 	fi

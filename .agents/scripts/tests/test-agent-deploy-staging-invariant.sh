@@ -18,6 +18,7 @@
 #   5. deploy_aidevops_agents postcondition: returns 1 when scripts/ missing
 #   6. no-change deploy with corrupt live scripts/ and reserved plugin namespace
 #      still copies canonical scripts/ instead of excluding them from staging
+#   7. stale core OpenCode plugin content blocks .deployed-sha advancement
 
 set -euo pipefail
 
@@ -367,6 +368,58 @@ test_rsync_copy_uses_io_timeout() {
 	return 0
 }
 
+test_stale_core_plugin_blocks_deployed_sha_stamp() {
+	local repo="${TEST_DIR}/repo8"
+	local target="${TEST_DIR}/.aidevops/agents"
+	local source_plugin="$repo/.agents/plugins/opencode-aidevops/model-limits.mjs"
+	local target_plugin="$target/plugins/opencode-aidevops/model-limits.mjs"
+	local sha="fresh-plugin-sha"
+
+	mkdir -p "$repo/.agents/scripts" "$(dirname "$source_plugin")" "$target/scripts" "$(dirname "$target_plugin")"
+	rm -f "${TEST_DIR}/.aidevops/.deployed-sha"
+	printf 'canonical script\n' >"$repo/.agents/scripts/hello.sh"
+	printf 'export const MODEL_LIMITS = { fresh: true };\n' >"$source_plugin"
+	printf 'export const MODEL_LIMITS = { fresh: false };\n' >"$target_plugin"
+
+	git() {
+		local first_arg="${1:-}"
+		local third_arg="${3:-}"
+		local fourth_arg="${4:-}"
+		if [[ "$first_arg" == "-C" && "$third_arg" == "rev-parse" && "$fourth_arg" == "HEAD" ]]; then
+			printf '%s\n' "$sha"
+			return 0
+		fi
+		command git "$@"
+		return $?
+	}
+	_atomic_stage_and_deploy_agents() {
+		local _src="$1"
+		local _tgt="$2"
+		mkdir -p "$_tgt/scripts" "$_tgt/plugins/opencode-aidevops"
+		printf 'canonical script\n' >"$_tgt/scripts/hello.sh"
+		printf 'export const MODEL_LIMITS = { fresh: false };\n' >"$_tgt/plugins/opencode-aidevops/model-limits.mjs"
+		return 0
+	}
+	_deploy_agents_post_copy() { return 0; }
+	_warn_deployed_script_drift() { return 0; }
+	create_backup_with_rotation() { return 0; }
+	_restore_latest_agents_backup() { return 0; }
+
+	local rc=0
+	HOME="${TEST_DIR}" INSTALL_DIR="$repo" AIDEVOPS_AGENT_DEPLOY_MIN_FILES=1 deploy_aidevops_agents || rc=$?
+
+	unset -f git _atomic_stage_and_deploy_agents _deploy_agents_post_copy
+	unset -f _warn_deployed_script_drift create_backup_with_rotation _restore_latest_agents_backup
+
+	if [[ "$rc" -ne 0 && ! -f "${TEST_DIR}/.aidevops/.deployed-sha" ]]; then
+		print_result "stale core plugin: deploy fails before deployed-sha stamp" 0
+	else
+		print_result "stale core plugin: deploy fails before deployed-sha stamp" 1 \
+			"rc=$rc, deployed-sha present=$([[ -f "${TEST_DIR}/.aidevops/.deployed-sha" ]] && printf yes || printf no)"
+	fi
+	return 0
+}
+
 main() {
 	setup
 
@@ -377,6 +430,7 @@ main() {
 	test_rsync_copy_uses_io_timeout
 	test_fixed_staging_cleanup_does_not_abort_copy
 	test_postcondition_fails_when_scripts_absent
+	test_stale_core_plugin_blocks_deployed_sha_stamp
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
