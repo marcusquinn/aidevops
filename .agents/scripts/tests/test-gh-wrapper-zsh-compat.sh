@@ -145,7 +145,36 @@ else
 fi
 
 # =============================================================================
-# Scenario 2 — source guard: no `local -n` anywhere in the two functions
+# Scenario 2 — _gh_with_timeout detects zsh shell functions directly
+# =============================================================================
+#
+# PR #22359 taught _gh_with_timeout to bypass coreutils timeout when the wrapped
+# command is a shell function (test stubs cannot be exec'd by timeout). The first
+# implementation used bash-only `type -t`, which silently failed under zsh and
+# routed function stubs through timeout anyway. Keep a zsh regression guard for
+# the direct function-dispatch path.
+
+{
+	extract_function _gh_with_timeout "$WRAPPERS_FILE"
+	printf '\n'
+	# shellcheck disable=SC2016 # Intentional: emit zsh function definitions literally.
+	printf '%s\n' 'fake_gh(){ echo "fake-gh-called:$*"; return 0; }'
+	# shellcheck disable=SC2016 # If function detection regresses, this captures the timeout route.
+	printf '%s\n' 'timeout(){ echo "timeout-called:$*"; return 88; }'
+	printf '%s\n' '_gh_with_timeout write fake_gh issue edit 123'
+} >"$TMPFILE"
+
+zsh_timeout_output=$(zsh "$TMPFILE" 2>&1)
+
+msg_2="2: _gh_with_timeout calls zsh function stubs directly"
+if [[ "$zsh_timeout_output" == "fake-gh-called:issue edit 123" ]]; then
+	print_result "$msg_2" 0
+else
+	print_result "$msg_2" 1 "(expected direct function call, got: '${zsh_timeout_output}')"
+fi
+
+# =============================================================================
+# Scenario 3 — source guard: no `local -n` anywhere in the two functions
 # =============================================================================
 #
 # Syntactic guard — prevents a future edit from re-introducing namerefs.
@@ -153,16 +182,16 @@ fi
 # `local -n` usages elsewhere in the file (if any ever appeared) wouldn't
 # affect this assertion.
 
-msg_2="2: no 'local -n' in _gh_wrapper_extract_task_id_from_title{,_step}"
+msg_3="3: no 'local -n' in _gh_wrapper_extract_task_id_from_title{,_step}"
 if awk '
 	/^_gh_wrapper_extract_task_id_from_title(_step)?\(\) \{/ { in_fn=1 }
 	in_fn && /[[:space:]]local -n / { found=1 }
 	in_fn && /^}$/ { in_fn=0 }
 	END { exit (found ? 1 : 0) }
 ' "$WRAPPERS_FILE"; then
-	print_result "$msg_2" 0
+	print_result "$msg_3" 0
 else
-	print_result "$msg_2" 1 "(found 'local -n' — fix regressed)"
+	print_result "$msg_3" 1 "(found 'local -n' — fix regressed)"
 fi
 
 # =============================================================================

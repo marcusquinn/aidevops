@@ -140,7 +140,7 @@ _gh_with_timeout() {
 	*) secs=30 ;;
 	esac
 	local cmd="${1:-}"
-	if [[ -n "$cmd" && "$(type -t "$cmd" 2>/dev/null || true)" == "function" ]]; then
+	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		"$@"
 		return $?
 	fi
