@@ -13,6 +13,72 @@ For shared plane metadata, use `.agents/configs/data-planes.json` when a registr
 entry exists. This document owns feedback mining, CLI, and routine design; capture
 and retention details stay with the feedback capture and sensitivity contracts.
 
+## Retention and Sensitivity Policy
+
+Raw feedback is evidence, not durable knowledge. Every capture MUST carry a
+sensitivity tier, consent/provenance note, and retention outcome before mining or
+promotion. If Markdoc-style tags are available, tag the capture or sensitive
+region with `{% sensitivity tier="..." /%}` and keep the same value in metadata
+until the tag schema becomes canonical.
+
+### Sensitivity tiers
+
+| Tier | Use for | Default handling |
+|------|---------|------------------|
+| `public` | Already-public comments, public issues, public reviews, or quoted material cleared for reuse | Can be retained long-lived and summarized publicly with source links when provenance allows |
+| `internal` | Operator notes, private team observations, internal support summaries, or non-public product feedback without client identifiers | Retain locally; promote only summarized and provenance-backed excerpts |
+| `client-scoped` | Feedback tied to a named client, account, project, or private engagement | Keep scoped to that client/project/case; public surfaces receive anonymized summaries only |
+| `privileged` | Legal, HR, finance, contract, security-response, or other privileged case notes | Keep local and access-restricted; promotion requires explicit maintainer approval and usually targets `_cases/` only |
+| `personal` | Feedback containing personal data, identifiable health/family/employment details, private contact details, or unique actor identifiers | Anonymize before mining or promotion; delete raw details when no longer needed |
+| `delete-after-review` | Accidental captures, unsupported consent, sensitive one-off reports, or content the source revoked | Review once, record non-sensitive disposition, then delete or retire raw content |
+
+### Retention outcomes
+
+| Outcome | Meaning | Allowed promotion |
+|---------|---------|-------------------|
+| `long-lived` | The capture may remain as evidence with provenance and a stable ID | `_knowledge/`, `_campaigns/`, `_projects/`, `_performance/`, or tasks when review gates pass |
+| `anonymized` | Raw identifying details are removed or replaced with placeholders before reuse | Durable planes receive only redacted excerpts, actor segments, counts, hashes, and source IDs |
+| `client-scoped` | The capture remains inside the relevant client/project/case boundary | `_cases/` or `_projects/` for that scope; public TODO/GitHub tasks get privacy-safe summaries |
+| `privileged-local` | Raw content is retained only in local/private storage for privileged review | `_cases/` only after approval; never copied into public issues, PRs, TODO entries, or shared docs |
+| `deleted` / `retired` | Raw feedback is removed, revoked, obsolete, duplicate, or consent-expired | No raw promotion; keep only a minimal audit note with capture ID, reason, and date when safe |
+
+### Consent, provenance, and promotion constraints
+
+- Promotion into `_knowledge/` requires `public`, `internal`, or already
+  `anonymized` evidence with enough provenance to recheck the source. Personal,
+  client-scoped, and privileged captures must be summarized before becoming
+  reusable knowledge.
+- Promotion into `_campaigns/` may use public language, anonymized themes, or
+  aggregated objections. Do not copy client names, private competitive notes, or
+  personal details into campaign research unless that campaign is scoped to the
+  same authorized audience.
+- Promotion into `_projects/` may preserve client/project context only when the
+  project scope matches the feedback scope. Cross-project requirements use
+  anonymized segments, not actor names.
+- Promotion into `_cases/` can retain client-scoped and privileged context, but
+  must keep provenance, access scope, and approval state visible to authorized
+  reviewers.
+- TODO/GitHub tasks receive the smallest privacy-safe summary: problem, segment,
+  evidence count, severity, affected files or decision surface, and verification.
+  Raw captures, private repo names, personal details, and privileged notes stay in
+  `_feedback/` or the scoped case/project store.
+
+### Placeholder examples
+
+- Public: `public + long-lived` — a public issue comment reports confusion in a
+  setup step; promote a summarized theme with the public issue reference.
+- Client-scoped: `client-scoped + client-scoped` — `[client-a]` asks for a report
+  change in a private delivery call; keep the raw note under that case and create
+  a public task saying "a managed client requested clearer report labels".
+- Personal: `personal + anonymized` — `[user-42]` mentions a family emergency while
+  describing onboarding friction; remove the personal detail and retain only the
+  onboarding theme.
+- Privileged: `privileged + privileged-local` — `[case-id]` includes legal advice
+  about a contract dispute; keep local to `_cases/` and do not mine for general
+  knowledge without explicit approval.
+- Delete after review: `delete-after-review + deleted` — a capture includes
+  revoked consent; record the deletion reason and do not promote the raw content.
+
 ## Mining Loop
 
 Mining MUST be recoverable from cold start. Each stage reads the current capture
