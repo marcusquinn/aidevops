@@ -4131,3 +4131,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3546 issue-sync workflow marks task complete on PR open/sync events #auto-dispatch #bug #framework ref:GH#22607
 
 - [ ] t3548 fix: initialise multi-var locals in _compose_unfiled_phases_note (t3547 regression) #bug ref:GH#22610
+
+- [ ] t3549 Dispatch claim-without-spawn loop: canary timeout under moderate load mis-classified as transient #auto-dispatch #bug ref:GH#22615
