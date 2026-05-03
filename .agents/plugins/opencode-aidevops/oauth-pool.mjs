@@ -113,11 +113,10 @@ export function readCurrentOpenAIAuth() {
 
 function matchesOpenAIAuth(account, auth) {
   if (!auth) return false;
-  return Boolean(
-    (auth.accountId && account.accountId && auth.accountId === account.accountId) ||
-    (auth.access && account.access && auth.access === account.access) ||
-    (auth.refresh && account.refresh && auth.refresh === account.refresh),
-  );
+  const same = (left, right) => Boolean(left && right && left === right);
+  if (same(auth.accountId, account.accountId)) return true;
+  if (same(auth.access, account.access)) return true;
+  return same(auth.refresh, account.refresh);
 }
 
 function isAvailableAccount(account, now = Date.now()) {
