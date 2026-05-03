@@ -10,6 +10,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.12] - 2026-05-03
+
+### Changed
+
+- Maintenance: update simplification state registry
+- classify zero-commit branches as empty-branch, not merged (#22612)
+- Maintenance: sync ref:GH#22610 to TODO.md [skip ci]
+- address Gemini review of PR #22605 — vacuous-close + count derivation (#22609)
+- Maintenance: sync ref:GH#22607 to TODO.md [skip ci]
+- parent-task auto-close fires on single-filed-child parents (#22605)
+- Maintenance: sync ref:GH#22606 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#22604 to TODO.md [skip ci]
+- make gh timeout function detection zsh-compatible (#22601)
+- Documentation: clarify dispatch-path tier guidance (#22599)
+- Documentation: add campaign asset safety checks (#22582)
+- Documentation: add feedback retention policy (#22573)
+- fix task-id guard cache follow-up (#22581)
+- Performance: filter maintainer comments by since (#22579)
+- Documentation: address t2893 brief review feedback (#22577)
+- Documentation: clarify self-modifying full-loop merge path (#22572)
+- Maintenance: sync ref:GH#22571 to TODO.md [skip ci]
+- add REST fallback for GraphQL-limited full-loop merges (#22569)
+- Maintenance: sync ref:GH#22538 to TODO.md [skip ci]
+- Define _performance KPI result schema
+- prevent active worktree cleanup during verification
+- Fix phase-only parent auto-filing (#22555)
+- Fix interactive issue origin labels
+- Define _projects directory contract (#22554)
+- document feedback promotion paths (#22551)
+- define feedback capture contract
+- Fix setup noninteractive stale-lock false reclaim (#22540)
+- Maintenance: sync ref:GH#22525 to TODO.md [skip ci]
+- clarify setup postflight advisory noise (#22546)
+- route failing verification badges to tasks (#22543)
+- Maintenance: sync ref:GH#22539 to TODO.md [skip ci]
+- Limit broad log searches in interactive diagnostics (#22541)
+
+### Fixed
+
+- re-checkout framework after caller checkout in sync-on-pr-merge (#22614)
+- initialise multi-var locals in _compose_unfiled_phases_note (#22611)
+- guard NMR timestamp jq parsing (#22603)
+- verify pulse merge label fetch behavior (#22602)
+- extract all release completion task IDs (#22600)
+- tolerate missing preflight log matches (#22597)
+- reuse worker activity summary timestamp (#22596)
+- allow ESLint flat configs in root allowlist (#22595)
+- harden opencode install validation (#22584)
+- tighten external content spam detector followups (#22580)
+- align full-loop gate parity test with split helper (#22578)
+- harden fast_cp portability (#22576)
+- add REST fallback for GraphQL-limited full-loop merge (#22568)
+
 ## [3.14.11] - 2026-05-03
 
 ### Changed
