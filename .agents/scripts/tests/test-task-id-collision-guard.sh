@@ -760,7 +760,6 @@ test_repo_wide_claim_in_prose() {
 	touch "${work_repo}/t50-marker.txt"
 	git -C "$work_repo" add "t50-marker.txt"
 	git -C "$work_repo" commit -q -m "chore: claim t50 [prior-merge]"
-	git -C "$work_repo" push -q origin main
 
 	# Create a feature branch for the new PR
 	git -C "$work_repo" checkout -q -b feature/t51-new-feature
