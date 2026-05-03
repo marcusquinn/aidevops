@@ -398,7 +398,7 @@ _fetch_claim_marker_comments() {
 		return 1
 	}
 
-	printf '%s' "$raw_comments" | jq -c --arg pattern "${CLAIM_MARKER} nonce=|CLAIM_RELEASED" '
+	printf '%s' "$raw_comments" | jq -c --arg marker "${CLAIM_MARKER}" '
 		[ (
 			if (type == "array" and ((.[0]? | type) == "array")) then
 				.[]
@@ -406,7 +406,7 @@ _fetch_claim_marker_comments() {
 				.
 			end
 		)[]
-		| select((.body // "") | test($pattern))
+		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released")))
 		| {id: .id, body: .body, created_at: .created_at} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
@@ -448,18 +448,18 @@ _fetch_claims() {
 	# posted AFTER the latest release are considered active.
 	local latest_release_ts
 	latest_release_ts=$(printf '%s' "$comments_json" | jq -r '
-		[.[] | select(.body | test("CLAIM_RELEASED")) | .created_at] |
+		[.[] | select(.body | ascii_downcase | contains("claim_released")) | .created_at] |
 		sort | last // ""
 	' 2>/dev/null) || latest_release_ts=""
 
 	# Filter to DISPATCH_CLAIM comments posted after the latest release
 	local claims_only
 	if [[ -n "$latest_release_ts" ]]; then
-		claims_only=$(printf '%s' "$comments_json" | jq -c --arg release_ts "$latest_release_ts" '
-			[.[] | select((.body | test("'"${CLAIM_MARKER}"' nonce=")) and (.created_at > $release_ts))]
+		claims_only=$(printf '%s' "$comments_json" | jq -c --arg marker "${CLAIM_MARKER}" --arg release_ts "$latest_release_ts" '
+			[.[] | select((.body | ascii_downcase | contains(($marker | ascii_downcase) + " nonce=")) and (.created_at > $release_ts))]
 		' 2>/dev/null) || claims_only="[]"
 	else
-		claims_only=$(printf '%s' "$comments_json" | jq -c '[.[] | select(.body | test("'"${CLAIM_MARKER}"' nonce="))]' 2>/dev/null) || claims_only="[]"
+		claims_only=$(printf '%s' "$comments_json" | jq -c --arg marker "${CLAIM_MARKER}" '[.[] | select(.body | ascii_downcase | contains(($marker | ascii_downcase) + " nonce="))]' 2>/dev/null) || claims_only="[]"
 	fi
 
 	if [[ "$claims_only" == "[]" ]]; then

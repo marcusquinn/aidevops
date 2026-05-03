@@ -364,6 +364,7 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	fi
 
 	jq -n \
+		--arg marker "${MOCK_OLD_CLAIM_MARKER:-DISPATCH_CLAIM}" \
 		--arg old_ts "${MOCK_OLD_CLAIM_CREATED_AT:?}" \
 		--arg new_body "$new_body" \
 		--arg new_ts "${MOCK_NEW_CLAIM_CREATED_AT:?}" \
@@ -372,7 +373,7 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 				{id: 1, body: "human discussion", created_at: "2026-05-01T00:00:00Z"}
 			],
 			[
-				{id: 2, body: ("DISPATCH_CLAIM nonce=old-nonce runner=mockrunner ts=" + $old_ts + " max_age_s=1800 version=3.14.23"), created_at: $old_ts},
+				{id: 2, body: ($marker + " nonce=old-nonce runner=mockrunner ts=" + $old_ts + " max_age_s=1800 version=3.14.23"), created_at: $old_ts},
 				{id: 999, body: $new_body, created_at: $new_ts}
 			]
 		]'
@@ -730,6 +731,47 @@ test_claim_reads_paginated_comment_tail() {
 }
 
 #######################################
+# Test: claim marker detection is literal and case-insensitive.
+#######################################
+test_claim_reads_lowercase_paginated_claim_marker() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_paginated_mock_gh "$tmp_dir")"
+
+	local old_created_at new_created_at output exit_code
+	old_created_at="$(iso_seconds_ago 10)"
+	new_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$new_created_at" \
+		MOCK_OLD_CLAIM_MARKER="dispatch_claim" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "lowercase paginated claim marker is detected" 0
+	else
+		print_result "lowercase paginated claim marker is detected" 1 "got exit $exit_code output: $output"
+	fi
+
+	if printf '%s' "$output" | grep -q "CLAIM_STALE_SELF:"; then
+		print_result "lowercase claim marker remains authoritative" 0
+	else
+		print_result "lowercase claim marker remains authoritative" 1 "output: $output"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
 # Test: override filters are peer-only and preserve this runner's own claim.
 #######################################
 test_claim_ignore_filter_preserves_self_claim() {
@@ -984,6 +1026,7 @@ main() {
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
 	test_claim_reads_paginated_comment_tail
+	test_claim_reads_lowercase_paginated_claim_marker
 	test_claim_ignore_filter_preserves_self_claim
 	test_claim_structured_override_preserves_self_claim
 	test_claim_marks_stale_worker_takeover
