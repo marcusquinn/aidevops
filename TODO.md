@@ -4078,3 +4078,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3520 Fix GPT-5.5 auto-compaction limit input override #auto-dispatch #bug ref:GH#22503
 
 - [ ] t3521 Detect stale OpenCode plugin deploy after setup #auto-dispatch #bug ref:GH#22506
+
+- [ ] t3522 Optimize high-volume GitHub reader paths for pulse throughput #auto-dispatch #bug ref:GH#22507
