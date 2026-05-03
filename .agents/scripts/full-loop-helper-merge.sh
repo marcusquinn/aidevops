@@ -115,6 +115,60 @@ ${_sig_footer}"
 
 # --- Merge Execution ---
 
+# _merge_output_is_graphql_rate_limit — classify GitHub CLI GraphQL quota failures.
+#
+# Args: merge_output
+# Returns: 0 when the failure is specifically a GraphQL rate-limit/transport
+# exhaustion class; 1 for policy, checks, conflict, and generic merge errors.
+_merge_output_is_graphql_rate_limit() {
+	local merge_output="$1"
+
+	printf '%s' "$merge_output" | grep -qiE 'GraphQL:.*API rate limit|GraphQL.*rate limit|rateLimitExceeded'
+	return $?
+}
+
+# _merge_rest_fallback — squash/merge/rebase a PR via the REST pull merge endpoint.
+#
+# This is a transport fallback only. It is called after review-bot-gate has
+# passed and only when `gh pr merge` failed because its GraphQL path was rate
+# limited. The REST endpoint still enforces branch protection and mergeability;
+# failures remain failures.
+#
+# Args: pr_number repo merge_method
+# Returns: 0 = merged, 1 = REST merge failed
+_merge_rest_fallback() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local rest_method="${merge_method#--}"
+	local rest_out="" rest_rc=0
+
+	case "$rest_method" in
+	squash | merge | rebase) ;;
+	*)
+		print_error "Unsupported merge method for REST fallback: ${merge_method}"
+		return 1
+		;;
+	esac
+
+	print_info "GraphQL rate limit blocked gh pr merge; retrying via REST pull merge endpoint..."
+	if rest_out=$(gh api -X PUT "repos/${repo}/pulls/${pr_number}/merge" \
+		-f "merge_method=${rest_method}" 2>&1); then
+		rest_rc=0
+	else
+		rest_rc=$?
+	fi
+
+	printf '%s\n' "$rest_out"
+	if [[ $rest_rc -eq 0 ]]; then
+		print_success "PR #${pr_number} merged via REST fallback (${rest_method})"
+		return 0
+	fi
+
+	print_error "REST merge fallback failed for PR #${pr_number}"
+	return 1
+}
+
 # _merge_execute — attempt `gh pr merge` with optional --admin fallback on branch-protection errors.
 #
 # GH#18538: branch protection that requires an approving review rejects plain
@@ -158,8 +212,14 @@ _merge_execute() {
 
 	if [[ $_merge_rc -ne 0 ]]; then
 		printf '%s\n' "$_merge_out"
+		# Only use REST fallback for GraphQL quota transport failures after the
+		# caller reached the merge execution stage (cmd_merge runs review-bot-gate
+		# first). Do not turn --auto into an immediate REST merge.
+		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
+			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" && return 0
+			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
-		if [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
+		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
 			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
