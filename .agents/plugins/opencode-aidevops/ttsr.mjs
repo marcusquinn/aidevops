@@ -186,6 +186,18 @@ function buildCorrectionMessage(violations, sessionID) {
   };
 }
 
+function isStartupAdvisoryLine(line) {
+  const advisoryPrefixes = [
+    "[SECURITY ADVISORY]",
+    "[ERROR]",
+    "[WARN]",
+    "[WARNING]",
+    "Pulse stalled",
+    "[OPENCODE MAINTENANCE]",
+  ];
+  return advisoryPrefixes.some((prefix) => line.startsWith(prefix)) || /contribution\(s\) need/i.test(line);
+}
+
 // ---------------------------------------------------------------------------
 // Hook implementations (module-level, accept state + deps as parameters)
 // ---------------------------------------------------------------------------
@@ -198,14 +210,7 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
   const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).split("\n")[0] || "X";
   const runtime = cacheMatch?.[2] || "OpenCode";
   const runtimeVersion = cacheMatch?.[3];
-  const advisoryLines = cacheLines.filter((line) =>
-    line.startsWith("[SECURITY ADVISORY]") ||
-    line.startsWith("[ERROR]") ||
-    line.startsWith("[WARN]") ||
-    line.startsWith("[WARNING]") ||
-    line.startsWith("Pulse stalled") ||
-    line.startsWith("[OPENCODE MAINTENANCE]") ||
-    /contribution\(s\) need/i.test(line));
+  const advisoryLines = cacheLines.filter(isStartupAdvisoryLine);
   const versionLine = runtimeVersion
     ? `We're running aidevops v${version} in ${runtime} v${runtimeVersion}.`
     : `We're running aidevops v${version}.`;
