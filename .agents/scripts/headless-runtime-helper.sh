@@ -316,6 +316,39 @@ _validate_issue_worker_env_contract() {
 	return 0
 }
 
+# _recover_deleted_cwd_before_launch: ensure runtime launch starts from a real cwd.
+# A parent shell can dispatch a worker after its current directory has been
+# removed (for example after worktree cleanup). OpenCode fails before reading the
+# prompt in that state, even when --dir points at a valid worker worktree.
+_recover_deleted_cwd_before_launch() {
+	local work_dir_value="$1"
+	local reason_value="${2:-prelaunch}"
+	local recovery_dir=""
+
+	if pwd -P >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if [[ -n "${WORKER_WORKTREE_PATH:-}" && -d "${WORKER_WORKTREE_PATH:-}" ]]; then
+		recovery_dir="$WORKER_WORKTREE_PATH"
+	elif [[ -n "$work_dir_value" && -d "$work_dir_value" ]]; then
+		recovery_dir="$work_dir_value"
+	fi
+
+	if [[ -z "$recovery_dir" ]]; then
+		print_error "[lifecycle] deleted_cwd_recovery_failed reason=$reason_value target=none"
+		return 1
+	fi
+
+	if ! cd "$recovery_dir"; then
+		print_error "[lifecycle] deleted_cwd_recovery_failed reason=$reason_value target=$recovery_dir"
+		return 1
+	fi
+
+	print_warning "[lifecycle] recovered_deleted_cwd reason=$reason_value dir=$recovery_dir"
+	return 0
+}
+
 # =============================================================================
 # Runtime invocation — OpenCode and Claude CLI
 # =============================================================================
@@ -909,6 +942,8 @@ _execute_run_attempt() {
 	shift 8
 	local -a extra_args=("$@")
 
+	_recover_deleted_cwd_before_launch "$work_dir" "execute_run_attempt" || return 1
+
 	# Determine which runtime to use. Default is opencode unless explicitly overridden.
 	local runtime="${headless_runtime:-opencode}"
 	local prompt_arg="$prompt"
@@ -1290,6 +1325,7 @@ cmd_run() {
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
 	_validate_issue_worker_env_contract "$role" "$session_key" "$work_dir" "$title" "$prompt" || return 1
+	_recover_deleted_cwd_before_launch "$work_dir" "cmd_run" || return 1
 
 	if [[ "$detach" -eq 1 ]]; then
 		_detach_worker "$session_key" "$@"

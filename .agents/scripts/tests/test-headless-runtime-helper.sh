@@ -145,6 +145,35 @@ test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
 	return 0
 }
 
+test_deleted_cwd_recovery_uses_worker_worktree() {
+	local worktree_dir="${TEST_ROOT}/deleted-cwd-worktree"
+	local stale_dir="${TEST_ROOT}/deleted-cwd-stale"
+	local output=""
+	local status=0
+	mkdir -p "$worktree_dir" "$stale_dir"
+	export WORKER_WORKTREE_PATH="$worktree_dir"
+
+	set +e
+	output=$(
+		cd "$stale_dir" || exit 20
+		rmdir "$stale_dir" || exit 21
+		_recover_deleted_cwd_before_launch "$TEST_ROOT" "test" 2>&1 || exit $?
+		pwd -P
+	)
+	status=$?
+	set -e
+
+	unset WORKER_WORKTREE_PATH 2>/dev/null || true
+	if [[ "$status" -eq 0 && "$output" == *"recovered_deleted_cwd"* && "$output" == *"$worktree_dir"* ]]; then
+		print_result "deleted cwd recovery cd's to worker worktree before launch" 0
+		return 0
+	fi
+
+	print_result "deleted cwd recovery cd's to worker worktree before launch" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
 test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
 	local canary_called=0
@@ -863,6 +892,7 @@ main() {
 	test_issue_worker_env_contract_rejects_missing_env
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
+	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
