@@ -340,7 +340,7 @@ _has_recent_maintainer_comment() {
 
 	local count api_path
 	api_path=$(_issue_comments_api_path "$repo" "$issue_num")
-	count=$(gh api --paginate "$api_path" \
+	count=$(gh api --method GET --paginate "$api_path" -f since="$cutoff_iso" \
 		--jq "[.[] | select(.created_at > \"${cutoff_iso}\")
 			| select(.author_association == \"OWNER\" or .author_association == \"MEMBER\")
 			| select(.body | contains(\"<!-- parent-needs-decomposition -->\") | not)
@@ -350,7 +350,10 @@ _has_recent_maintainer_comment() {
 		] | length" \
 		2>/dev/null || echo "0")
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
-	[[ "$count" -gt 0 ]]
+	if [[ "$count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # GH#21017: Compute the ISO-8601 UTC timestamp `lookback_hours` ago.

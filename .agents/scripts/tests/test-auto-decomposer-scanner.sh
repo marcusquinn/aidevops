@@ -279,6 +279,12 @@ assert_grep "16d: _extract_children_from_body helper defined" \
 assert_grep "16e: _has_recent_maintainer_comment helper defined" \
 	'^_has_recent_maintainer_comment\(\) \{' "$SCANNER"
 
+assert_grep_fixed "16e2: recent maintainer comment API uses server-side since filter" \
+	'gh api --method GET --paginate "$api_path" -f since="$cutoff_iso"' "$SCANNER"
+
+assert_grep_fixed "16e3: recent maintainer comment preserves created_at cutoff semantics" \
+	'| select(.created_at > \"${cutoff_iso}\")' "$SCANNER"
+
 assert_grep "16f: _iso_cutoff_hours_ago helper defined" \
 	'^_iso_cutoff_hours_ago\(\) \{' "$SCANNER"
 
