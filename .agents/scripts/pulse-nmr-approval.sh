@@ -402,13 +402,36 @@ _nmr_application_is_circuit_breaker_trip() {
 	# the marker comment immediately after applying the NMR label,
 	# so the two events are always co-temporal.
 	#
+	# Use --slurp with paginated comment reads. Without flattening all pages,
+	# gh --paginate --jq can emit one count per page; shell numeric coercion then
+	# turns "0\n1" into 0 and misses breaker markers on later pages.
+	#
 	# t3076: the meta-filer posts its `circuit-breaker-meta-filed` marker
 	# as a sibling comment on the same trip-cycle, so it falls inside the
 	# same ±60s window — no separate query needed.
+	local comments_json
+	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
+		comments_json="[]"
+	fi
+
+	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed'
 	local has_breaker_trip
-	has_breaker_trip=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate \
-		--jq "[.[] | select((.created_at | fromdateiso8601) >= ((\"${label_at}\" | fromdateiso8601) - 5) and (.created_at | fromdateiso8601) <= ((\"${label_at}\" | fromdateiso8601) + 60)) | .body | select(test(\"stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed\"))] | length" \
-		2>/dev/null) || has_breaker_trip=0
+	has_breaker_trip=$(printf '%s' "$comments_json" | jq -r \
+		--arg label_at "$label_at" \
+		--arg breaker_pattern "$breaker_pattern" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) >= (($label_at | fromdateiso8601) - 5)
+				and (.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+			| select((.body // "") | test($breaker_pattern))
+		]
+		| length
+	' 2>/dev/null) || has_breaker_trip=0
 	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
 
 	if [[ "$has_breaker_trip" -gt 0 ]]; then
