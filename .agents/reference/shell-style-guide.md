@@ -196,6 +196,14 @@ Quality gates should be narrow, diff-scoped where possible, and paired with a
 documented local check plus an explicit override path. The gate should teach the
 worker what to fix; the override should require evidence, not a maintainer guess.
 
+### Critical rules for override documentation
+
+- Keep required PR-body section names on one line so workers can copy exact
+  headings, Markdown renders consistently, and validators can match the required
+  identifier without whitespace-normalisation edge cases.
+- State the technical reason for every override requirement so workers know when
+  the label is evidence-backed rather than a bypass for unrelated gate failures.
+
 ### Qlty regression gate (t2065, GH#18773)
 
 `.github/workflows/qlty-regression.yml` fails when a PR introduces a net increase
@@ -220,9 +228,10 @@ Local check:
 .agents/scripts/qlty-new-file-gate-helper.sh new-files --base origin/main --dry-run
 ```
 
-Override: apply `new-file-smell-ok` and include a `## New File Smell
-Justification` section in the PR body. Both are required; the label alone should
-not stick.
+Override: apply `new-file-smell-ok` and include a
+`## New File Smell Justification` section in the PR body. Both are required; the
+label alone should not stick because new-file gates start from a zero-smell
+baseline and need explicit evidence when importing debt is intentional.
 
 ### Workflow cascade vulnerability lint (t2229)
 
@@ -239,9 +248,11 @@ Local check:
 .agents/scripts/workflow-cascade-lint.sh --dry-run
 ```
 
-Override: apply `workflow-cascade-ok` and include a `## Workflow Cascade
-Justification` section in the PR body explaining why the event/action mix cannot
-cascade or why the mitigation is equivalent.
+Override: apply `workflow-cascade-ok` and include a
+`## Workflow Cascade Justification` section in the PR body explaining why the
+event/action mix cannot cascade or why the mitigation is equivalent. Both are
+required because cascade-prone workflow triggers can create runaway CI churn even
+when a single workflow edit looks harmless in isolation.
 
 ### Task-ID collision guard (t2047)
 
