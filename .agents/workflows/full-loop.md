@@ -117,6 +117,8 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
 
 Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. On rebase conflict: aborts and returns 1 — resolve and retry.
 
+**Self-modifying helper fixes:** If this PR edits `full-loop-helper.sh` or its sourced helper libraries, run the committed worktree helper explicitly for merge verification instead of resolving `full-loop-helper.sh` from PATH. Commit first, then use `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"` so the merge path exercises the code that will ship, not the deployed helper copy.
+
 **Partial-success recovery (t2767):** If `gh pr create` exits non-zero but GitHub actually created the PR (common with transient GraphQL errors like `"Something went wrong while executing your query"`), `commit-and-pr` automatically detects the existing PR via `gh pr list --head <branch>` and continues with all post-create steps (labels, merge-summary comment, issue status). Exit code 0. If the PR does not exist after the failure, the command exits 1 as before. The merge-summary post is idempotent: if a `<!-- MERGE_SUMMARY -->` comment already exists on the PR (from a previous partial run), the second call skips posting and returns 0.
 
 **Manual alternative:** rebase onto `origin/main`, push, create PR. Body MUST include `Resolves #NNN`. Add `origin:worker` or `origin:interactive` label.
@@ -146,7 +148,7 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
-Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path.
+Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
 

@@ -602,6 +602,9 @@ Commit and PR shortcut:
 After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
   PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue $WORKER_ISSUE_NUMBER --message "feat: description" --summary "what was done" --testing "how verified")
 Then merge: full-loop-helper.sh merge "$PR_NUMBER"
+Exception: if your changes modify full-loop-helper.sh or its sourced helper libraries, commit first and then merge with the committed worktree helper path:
+  "$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "${GITHUB_REPOSITORY:-marcusquinn/aidevops}"
+This verifies the code that will ship instead of the deployed helper copy from PATH.
 
 Mandatory behavior:
 4. Never ask for user confirmation, approval, or next steps. No user will respond.
