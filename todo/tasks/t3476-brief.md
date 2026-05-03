@@ -83,10 +83,15 @@ This parent ships:
 
 ## Acceptance Criteria
 
-- [ ] `_projects/` has a parent issue/brief defining lifecycle, directory contract goals, and relation to TODO/full-loop.
-- [ ] TODO entry includes `ref:GH#22371`, `#parent`, and this brief link.
-- [ ] Phase children are not filed prematurely.
-- [ ] Cross-plane links to `_knowledge`, `_cases`, `_performance`, and `_feedback` are documented.
+- [x] `_projects/` has a parent issue/brief defining lifecycle, directory contract goals, and relation to TODO/full-loop.
+- [x] TODO entry includes `ref:GH#22371`, `#parent`, and this brief link.
+- [x] Phase children are not filed prematurely.
+- [x] Cross-plane links to `_knowledge`, `_cases`, `_performance`, and `_feedback` are documented.
+
+## Parent State
+
+- **Verified:** 2026-05-03 — parent issue GH#22371 exists with `parent-task`, TODO.md contains the canonical linked entry, and this brief defines the future phase sequence.
+- **Closure policy:** keep GH#22371 open while it is a planning parent; child implementation tasks should reference it with `For #22371` until the final phase is ready to close the parent.
 
 ## Context & Decisions
 
