@@ -733,7 +733,7 @@ ${text}
 #
 # Switches to OS-native CoW (clonefile/reflink) when supported, eliminating
 # real disk duplication and slashing wall time on large trees. Measured on a
-# 3.4GB / 215k-file node_modules: cp -a 166s vs cp -cR 78s on macOS APFS,
+# 3.4GB / 215k-file node_modules: cp -a 166s vs cp -ac 78s on macOS APFS,
 # near-zero disk delta (CoW shared blocks).
 #
 # Falls back transparently to plain cp -a when CoW isn't available (cross-
@@ -741,8 +741,8 @@ ${text}
 # functionally indistinguishable from cp -a; only disk usage and copy time
 # differ.
 #
-# - macOS:   cp -cR  (clonefile syscall, APFS CoW)
-# - Linux:   cp -a --reflink=auto  (btrfs/xfs CoW, falls back to copy)
+# - macOS:   cp -ac  (clonefile syscall, APFS CoW, preserves symlinks/attrs)
+# - Linux:   cp -a --reflink=auto, then cp -a if reflink flag unsupported
 # - Other:   cp -a  (regular recursive copy)
 #
 # Usage: fast_cp <src> <dst>
@@ -753,11 +753,11 @@ fast_cp() {
 	local dst="$2"
 	case "$(uname -s)" in
 		Darwin)
-			cp -cR "$src" "$dst"
+			cp -ac "$src" "$dst"
 			return $?
 			;;
 		Linux)
-			cp -a --reflink=auto "$src" "$dst"
+			cp -a --reflink=auto "$src" "$dst" 2>/dev/null || cp -a "$src" "$dst"
 			return $?
 			;;
 		*)
