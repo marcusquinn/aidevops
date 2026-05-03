@@ -159,6 +159,7 @@ Mission dirs: `research/` (comparisons, API evals), `agents/` (temp agents, draf
 
 ## Related
 
+- `scripts/commands/goals.md` — Goal-oriented alias and dashboard entrypoint for missions
 - `scripts/commands/define.md` — Interview technique (reused for scoping)
 - `scripts/commands/full-loop.md` — Worker execution (dispatched per feature)
 - `scripts/commands/pulse.md` — Supervisor dispatch (mission-aware)
