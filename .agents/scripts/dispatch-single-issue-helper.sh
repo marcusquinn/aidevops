@@ -219,14 +219,21 @@ _dsi_resolve_model() {
 #######################################
 # Pre-create the worker worktree. Sets _DSI_WORKTREE_PATH and _DSI_WORKTREE_BRANCH.
 # Args:
-#   $1 - issue number
+#   $1 - issue number, $2 - repo slug
 # Returns: 0 success, 1 failure (worktree creation failed after all retries)
 #######################################
 _dsi_create_worktree() {
 	local issue_number="$1"
+	local repo_slug="$2"
+	local repo_path
+	repo_path=$(_dsi_repo_path_for_slug "$repo_slug") || repo_path=""
+	if [[ -z "$repo_path" || ! -d "$repo_path" ]]; then
+		_dsi_err "Cannot resolve local repo path for ${repo_slug}; check ~/.config/aidevops/repos.json"
+		return 1
+	fi
 	local ts
 	ts=$(date -u +%Y%m%d-%H%M%S)
-	local branch="auto-${ts}-gh${issue_number}"
+	local branch="feature/auto-${ts}-gh${issue_number}"
 
 	local attempt max_attempts
 	max_attempts=3
@@ -237,14 +244,14 @@ _dsi_create_worktree() {
 	for attempt in 1 2 3; do
 		# worktree-helper.sh add: outputs creation messages to stderr; the
 		# branch name is what we passed in.
-		if AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
-			--base "origin/$(_dsi_default_branch)" --issue "$issue_number" >&2; then
+		if (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
+			--base "origin/$(_dsi_default_branch "$repo_path")" --issue "$issue_number") >&2; then
 			# Query git for the actual worktree path. worktree-helper.sh uses its
 			# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
 			# that here is fragile. Read it back from `git worktree list` instead.
 			# Awk inlined to one line to avoid tripping the positional-ratchet (its
 			# single-quote-strip is line-local; multi-line awk scripts get false-positives).
-			_DSI_WORKTREE_PATH=$(git worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
+			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
 			_DSI_WORKTREE_BRANCH="$branch"
 			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
 				return 0
@@ -267,9 +274,27 @@ _dsi_create_worktree() {
 # Resolve repo's default branch (cached per call). Falls back to "main".
 #######################################
 _dsi_default_branch() {
+	local repo_path="$1"
 	local b
-	b=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
+	b=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || true)
 	echo "${b:-main}"
+	return 0
+}
+
+#######################################
+# Resolve a repo slug to its registered canonical local path.
+# Args: $1 - repo slug (owner/repo)
+# Outputs: canonical path, if registered
+#######################################
+_dsi_repo_path_for_slug() {
+	local repo_slug="$1"
+	local repos_file="${AIDEVOPS_REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
+	[[ -n "$repo_slug" && -f "$repos_file" ]] || return 1
+	jq -r --arg slug "$repo_slug" '
+		.initialized_repos[]?
+		| select((.slug // "") == $slug and (.local_only // false) == false)
+		| .path
+	' "$repos_file" 2>/dev/null | head -n 1
 	return 0
 }
 
@@ -627,6 +652,7 @@ _dsi_build_prompt() {
 #   $7 - agent_name
 #   $8 - worker_log path
 #   $9 - issue_number
+#   $10 - repo_slug
 # Stdout (on success): worker PID (single line)
 # Returns: 0 launched, 1 failed
 #######################################
@@ -640,6 +666,7 @@ _dsi_launch_worker() {
 	local agent_name="$7"
 	local worker_log="$8"
 	local issue_number="$9"
+	local repo_slug="${10:-}"
 
 	local -a cmd=(
 		env
@@ -647,6 +674,8 @@ _dsi_launch_worker() {
 		FULL_LOOP_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_WORKTREE_PATH="$worktree_path"
+		WORKER_REPO_SLUG="$repo_slug"
+		GITHUB_REPOSITORY="$repo_slug"
 		"$_DSI_HEADLESS" run
 		--role worker
 		--session-key "$session_key"
@@ -884,7 +913,7 @@ cmd_dispatch() {
 	fi
 
 	# Step 7: pre-create worktree
-	_dsi_create_worktree "$issue_number" || return 1
+	_dsi_create_worktree "$issue_number" "$repo_slug" || return 1
 
 	# Step 7.5: re-check after worktree creation so an existing live process
 	# on the same worktree cannot be joined by a second manual launch.
@@ -918,7 +947,7 @@ _dsi_launch_and_report() {
 	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
-		"$_DSI_ARG_AGENT" "$worker_log" "$issue_number") || return 1
+		"$_DSI_ARG_AGENT" "$worker_log" "$issue_number" "$repo_slug") || return 1
 
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")

@@ -344,6 +344,17 @@ _validate_issue_worker_env_contract() {
 		return 1
 	fi
 
+	if [[ -n "${WORKER_REPO_SLUG:-}" ]]; then
+		local remote_url=""
+		local actual_slug=""
+		remote_url=$(git -C "$WORKER_WORKTREE_PATH" remote get-url origin 2>/dev/null) || remote_url=""
+		actual_slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||') || actual_slug=""
+		if [[ -z "$actual_slug" || "$actual_slug" != "$WORKER_REPO_SLUG" ]]; then
+			print_error "[fatal] worker worktree repo mismatch: expected ${WORKER_REPO_SLUG}, got ${actual_slug:-<unknown>}"
+			return 1
+		fi
+	fi
+
 	return 0
 }
 
