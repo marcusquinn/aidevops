@@ -949,13 +949,37 @@ jobs:
           # See todo/tasks/t2038-brief.md Decision section for rationale.
           token: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
 
-      # t3204: framework scripts already pulled by the early "Checkout
-      # aidevops framework scripts (early — for gh shim)" step at the top of
-      # this job. The previous duplicate checkout here would clone the repo
-      # a second time over the same `__aidevops` path on every PR merge —
-      # ~30s of wasted work. The "Checkout repo for TODO.md update" above
-      # checks out the caller repo at the workspace root; `__aidevops/`
-      # remains the framework checkout untouched.
+      # GH#22613: re-checkout the framework scripts AFTER the caller-repo
+      # checkout above. The "Checkout repo for TODO.md update" step uses
+      # `actions/checkout@v4` without `clean: false`, which deletes the
+      # workspace contents (including the `__aidevops/` subdirectory created
+      # by the early "Checkout aidevops framework scripts (early — for gh
+      # shim)" step at the top of this job). Without this re-checkout, the
+      # subsequent "Update TODO.md proof-log" step fails with
+      # `bash: __aidevops/.agents/scripts/issue-sync-git-push-helper.sh: No
+      # such file or directory` on every merged PR — the proof-log commit
+      # is created locally but never pushed.
+      #
+      # Why a second checkout (not `clean: false` on the caller-repo checkout):
+      # `clean: false` semantics are version-dependent on `actions/checkout`
+      # and could silently regress on a future action upgrade. An explicit
+      # re-checkout is deterministic and matches the proven pattern used by
+      # the other three jobs (sync-on-push, sync-on-issue, manual-sync) which
+      # only have a single framework checkout because they don't run a
+      # caller-repo checkout afterwards.
+      #
+      # This reverts the t3204 optimization for this one job. The t3204
+      # comment block claiming `__aidevops/` is preserved was incorrect —
+      # confirmed by run 25277909003 log line "Deleting the contents of
+      # '/home/runner/work/aidevops/aidevops'".
+      - name: Re-checkout aidevops framework scripts (workspace wipe restoration)
+        if: steps.extract.outputs.task_id != ''
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: marcusquinn/aidevops
+          path: __aidevops
+          ref: ${{ inputs.aidevops_ref || 'main' }}
+          fetch-depth: 1
 
       - name: Update TODO.md proof-log
         if: steps.extract.outputs.task_id != ''
