@@ -1709,6 +1709,10 @@ classify_dispatch_blocker_reason() {
 			printf 'runner_health_circuit_breaker\n'
 			return 0
 			;;
+		*ever-nmr* | *requires*cryptographic*approval*)
+			printf 'ever_nmr_without_approval\n'
+			return 0
+			;;
 		*canary*failed*)
 			printf 'canary_failed\n'
 			return 0

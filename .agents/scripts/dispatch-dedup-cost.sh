@@ -98,17 +98,29 @@ _sum_issue_token_spend() {
 		return 1
 	fi
 
-	# Extract comment bodies, excluding interactive-session signature footers.
+	# Extract comment bodies, excluding interactive-session signature footers and
+	# comments predating the latest maintainer approval / cost reset marker.
 	# Interactive footers are maintainer triage/review activity that should
 	# NOT count toward the per-issue worker cost budget — including them
 	# produces false-positive circuit-breaker trips every time a maintainer
 	# comments on an active issue (t2425 / GH#20047). Comments without either
 	# marker (historical or non-standard footers) are kept: worker is the
 	# fail-open default, matching the function's existing fail-open posture.
+	#
+	# t3077: a signed maintainer approval is also a budget reset boundary. Without
+	# this, approving/removing NMR after a cost trip immediately re-trips on the
+	# same historical worker footers and no new dispatch can occur.
 	local bodies
 	bodies=$(printf '%s' "$comments_json" | jq -r '
+		def epoch: try ((.created_at // "") | fromdateiso8601) catch 0;
+		(map(select(
+				((.body // "") | contains("<!-- aidevops-signed-approval -->"))
+				or ((.body // "") | contains("<!-- cost-circuit-breaker:reset"))
+			) | epoch) | max // 0) as $reset_epoch
+		|
 		.[]
 		| select((.body // "") | contains("with the user in an interactive session") | not)
+		| select(($reset_epoch == 0) or (epoch > $reset_epoch))
 		| .body // empty
 	' 2>/dev/null) || return 1
 	if [[ -z "$bodies" ]]; then

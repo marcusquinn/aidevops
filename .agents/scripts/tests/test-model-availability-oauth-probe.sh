@@ -222,6 +222,21 @@ else
 		"(got rc=$rc — expected 0; non-env stale key should not mask OAuth in auth.json)"
 fi
 
+# Assertion 4b.1 — Sourced credentials.sh-style variables are not process env.
+# resolve_api_key sources credentials.sh into the helper process, leaving an
+# OPENAI_API_KEY shell variable behind even though key_source is credentials:*.
+# That variable must not be mistaken for an exported runtime env key.
+OPENAI_API_KEY="[redacted-credential]"
+_probe_check_oauth_fallback openai true "credentials:OPENAI_API_KEY"
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "rejected-credentials-key+openai-oauth: sourced variable does not block OAuth fallback" 0
+else
+	print_result "rejected-credentials-key+openai-oauth: sourced variable does not block OAuth fallback" 1 \
+		"(got rc=$rc — expected 0; sourced credentials variable should not mask OAuth)"
+fi
+unset OPENAI_API_KEY
+
 # Assertion 4c — no OAuth in auth.json → fallback returns 3 (no override).
 rm -f "$AUTH_FILE"
 _probe_check_oauth_fallback openai true

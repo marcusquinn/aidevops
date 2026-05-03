@@ -60,11 +60,11 @@ _resolve_model_override_label() {
  # Prefer the named model when its provider is allowed and the availability
  # helper says it is usable; otherwise fall back through the same tier resolver
  # as normal tier labels.
- case ",${labels_csv}," in
- *,model:opus-4-7,*)
-  override_model="anthropic/claude-opus-4-7"
-  fallback_tier="opus"
-  ;;
+	case ",${labels_csv}," in
+	*,model:opus-4-7,*)
+		override_model="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.5}"
+		fallback_tier="opus"
+		;;
  *)
   return 1
   ;;

@@ -50,5 +50,24 @@ if [[ -d "$lock_dir" ]]; then
 	fail "lock release left lock dir behind"
 fi
 
+repo_dir="${TEST_TMP}/repo"
+wt_dir="${TEST_TMP}/worktree"
+mkdir -p "${repo_dir}/node_modules/example" "$wt_dir" || fail "failed to create restore fixture dirs"
+printf '{}\n' >"${repo_dir}/package.json" || fail "failed to create repo package.json"
+printf '{}\n' >"${wt_dir}/package.json" || fail "failed to create worktree package.json"
+printf 'fixture\n' >"${repo_dir}/node_modules/example/file.txt" || fail "failed to create node_modules fixture"
+
+LOGFILE="${TEST_TMP}/pulse.log" \
+	AIDEVOPS_WORKSPACE_DIR="$TEST_TMP" \
+	WORKTREE_NODE_MODULES_RESTORE_ENABLED=1 \
+	WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=0 \
+	WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S=1 \
+	_dlw_restore_worktree_deps "$wt_dir" "$repo_dir"
+
+if [[ -d "${wt_dir}/node_modules" ]]; then
+	fail "root node_modules restore was not skipped"
+fi
+
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
+printf 'PASS: root node_modules restore is skipped by default\n'
 exit 0

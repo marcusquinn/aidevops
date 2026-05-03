@@ -146,7 +146,7 @@ _dsi_check_parent_task() {
 # Resolve model + tier for dispatch.
 # Priority order (mirrors pulse-model-routing.sh::resolve_dispatch_model_for_labels):
 #   1. Explicit --model CLI flag (operator intent, always wins)
-#   2. model:opus-4-7 label (highest-priority override, t2239 — before tier labels)
+#   2. model:opus-4-7 label (highest-priority opus intent, t2239 — before tier labels)
 #   3. Tier labels: tier:thinking → opus, tier:standard → sonnet, tier:simple → haiku
 #   4. Default tier: sonnet
 #
@@ -155,7 +155,7 @@ _dsi_check_parent_task() {
 # is not replicated here because it requires inspecting the issue body + brief
 # file scope, which is a heavier operation than this helper performs. If you are
 # dispatching a dispatch-path issue manually and want the safety-net tier, pass
-# --model anthropic/claude-opus-4-7 explicitly.
+# --model openai/gpt-5.5 explicitly.
 #
 # Args:
 #   $1 - labels CSV
@@ -189,13 +189,13 @@ _dsi_resolve_model() {
 	local needle=",${labels_lower},"
 
 	# model:opus-4-7 label and tier:thinking both elevate to the opus tier.
-	# model:opus-4-7 also pins the specific model and takes precedence over
+	# model:opus-4-7 also pins the configured OpenAI opus-tier model and takes precedence over
 	# tier:* labels (t2239 — same priority order as pulse-model-routing.sh
 	# resolve_dispatch_model_for_labels).
 	if [[ "$needle" == *",model:opus-4-7,"* || "$needle" == *",tier:thinking,"* ]]; then
 		_DSI_TIER="opus"
 		if [[ "$needle" == *",model:opus-4-7,"* ]]; then
-			_DSI_SELECTED_MODEL="anthropic/claude-opus-4-7"
+			_DSI_SELECTED_MODEL="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.5}"
 		fi
 		return 0
 	fi
@@ -211,7 +211,15 @@ _dsi_resolve_model() {
 	m=$(printf '%s\n' "${labels_lower//,/$'\n'}" | grep -oE '^model:[a-z0-9.-]+' | head -1 || true)
 	if [[ -n "$m" ]]; then
 		local short="${m#model:}"
-		_DSI_SELECTED_MODEL="anthropic/claude-${short}"
+		case "$short" in
+		*haiku*)
+			_DSI_TIER="haiku"
+			_DSI_SELECTED_MODEL="openai/gpt-5.4-mini"
+			;;
+		*)
+			_DSI_SELECTED_MODEL="openai/gpt-5.5"
+			;;
+		esac
 	fi
 	return 0
 }

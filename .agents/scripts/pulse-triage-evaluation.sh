@@ -543,8 +543,9 @@ _consolidation_substantive_comments() {
 	# _issue_needs_consolidation above. Divergence between the two filters
 	# would mean the child ISSUE shows WORKER_SUPERSEDED comments as
 	# "substantive" even though they can no longer trigger dispatch.
-	printf '%s' "$comments_json" | jq --argjson min "$min_chars" '
-		[.[] | select(
+	printf '%s' "$comments_json" | jq -s --argjson min "$min_chars" '
+		add as $comments |
+		[$comments[] | select(
 			(.body | length) >= $min
 			and (.user.type != "Bot")
 			and (.body | test("DISPATCH_CLAIM nonce=") | not)
