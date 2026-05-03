@@ -1130,9 +1130,49 @@ is_no_work_rate_acceptable() {
 #
 # Counter side effect: increments _PULSE_HEALTH_IDLE_CYCLE_SKIPPED on skip.
 # ---------------------------------------------------------------------------
+_pulse_scope_repos_for_available_work_gate() {
+	local _scope="${PULSE_SCOPE_REPOS:-}"
+	if [[ -z "$_scope" && -f "${SCOPE_FILE:-}" ]]; then
+		read -r _scope <"$SCOPE_FILE" 2>/dev/null || _scope=""
+	fi
+	if [[ -z "$_scope" && -f "${REPOS_JSON:-}" ]]; then
+		_scope=$(jq -r '[.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug] | join(",")' "$REPOS_JSON" 2>/dev/null) || _scope=""
+	fi
+	local _slug=""
+	while IFS= read -r _slug; do
+		_slug="${_slug// /}"
+		[[ -n "$_slug" ]] || continue
+		printf '%s\n' "$_slug"
+	done < <(printf '%s\n' "$_scope" | tr ',' '\n')
+	return 0
+}
+
+_pulse_available_auto_dispatch_work_exists() {
+	[[ "${AIDEVOPS_SKIP_PULSE_IDLE_AVAILABLE_WORK_CHECK:-0}" == "1" ]] && return 1
+	local _slug=""
+	while IFS= read -r _slug; do
+		[[ -n "$_slug" ]] || continue
+		local _count=""
+		_count=$(gh api -X GET search/issues \
+			-f "q=repo:${_slug} is:issue is:open label:auto-dispatch label:status:available no:assignee" \
+			-f per_page=1 \
+			--jq '.total_count // 0' 2>/dev/null) || _count=""
+		[[ "$_count" =~ ^[0-9]+$ ]] || _count=0
+		if [[ "$_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] Idle backoff bypass: eligible auto-dispatch work is visible in ${_slug} (GH#22631)" >>"$WRAPPER_LOGFILE"
+			return 0
+		fi
+	done < <(_pulse_scope_repos_for_available_work_gate)
+	return 1
+}
+
 _pulse_check_idle_backoff_gate() {
 	local _ib_helper="${SCRIPT_DIR}/pulse-idle-backoff-helper.sh"
 	[[ -x "$_ib_helper" ]] || return 0
+	local _ib_available_work=0
+	if _pulse_available_auto_dispatch_work_exists; then
+		_ib_available_work=1
+	fi
 	local _ib_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 	local _ib_last=0
 	if [[ -f "$_ib_ts_file" ]]; then
@@ -1142,7 +1182,7 @@ _pulse_check_idle_backoff_gate() {
 	# Helper convention: exit 0 = "skip this cycle", exit 1 = "proceed".
 	# Mirrors should-skip semantics so the helper composes naturally with
 	# `if helper should-skip; then return; fi` at the call site.
-	if "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
+	if AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK="$_ib_available_work" "$_ib_helper" should-skip "$_ib_last" >/dev/null 2>&1; then
 		local _ib_state="" _ib_count="" _ib_interval=""
 		_ib_state=$("$_ib_helper" state 2>/dev/null || echo '{}')
 		_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
@@ -1154,6 +1194,19 @@ _pulse_check_idle_backoff_gate() {
 		fi
 		return 1
 	fi
+	return 0
+}
+
+_pulse_refresh_supervisor_circuit_breaker() {
+	local _cb_helper="${SCRIPT_DIR}/circuit-breaker-helper.sh"
+	[[ -x "$_cb_helper" ]] || return 0
+	local _cb_rc=0
+	"$_cb_helper" check >/dev/null 2>>"$WRAPPER_LOGFILE" || _cb_rc=$?
+	if [[ "$_cb_rc" -eq 0 ]]; then
+		echo "[pulse-wrapper] Supervisor circuit breaker check passed or auto-reset completed (GH#22631)" >>"$WRAPPER_LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] Supervisor circuit breaker remains open after check (rc=${_cb_rc}) (GH#22631)" >>"$WRAPPER_LOGFILE"
 	return 0
 }
 
@@ -1754,6 +1807,11 @@ main() {
 		printf 'canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock passed)\n'
 		return 0
 	fi
+
+	# GH#22631: `circuit-breaker-helper.sh status` can report an overdue
+	# supervisor breaker until `check` is invoked. Refresh once per real pulse
+	# cycle so expired cooldowns auto-close without manual operator action.
+	_pulse_refresh_supervisor_circuit_breaker || true
 
 	if ! check_session_gate; then
 		return 0

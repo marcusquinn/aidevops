@@ -62,6 +62,14 @@ open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activit
 PY
 
 output="$TMP_DIR/out.txt"
+export AIDEVOPS_PULSE_RATE_LIMIT_CACHE="$TMP_DIR/rate-limit-cache.json"
+python3 - "$AIDEVOPS_PULSE_RATE_LIMIT_CACHE" <<'PY'
+import json, sys, time
+json.dump({
+    'ts': int(time.time()),
+    'rate': {'resources': {'graphql': {'remaining': 4980, 'limit': 5000, 'reset': int(time.time()) + 3600}}},
+}, open(sys.argv[1], 'w'))
+PY
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m >"$output"
 
 grep -q 'Dispatch alive: true' "$output"
@@ -69,7 +77,7 @@ grep -q 'Worker terminal events: 4' "$output"
 grep -q 'dispatch_backoff_skipped' "$output"
 grep -q 'GraphQL budget:' "$output"
 grep -q 'Top pre-launch blockers:' "$output"
-grep -q 'Dispatch API blocked by GraphQL: true' "$output"
+grep -q 'Dispatch API blocked by GraphQL: false' "$output"
 grep -q 'API call pressure:' "$output"
 grep -q 'Prefetch cache:' "$output"
 grep -q 'worker_launch_total' "$output"
@@ -86,7 +94,7 @@ jq -e '.worker_outcomes.no_op == 1' "$json_output" >/dev/null
 jq -e '.worker_outcomes.canary_failed == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.skipped_low_count == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.force_rest_reads_count == 1' "$json_output" >/dev/null
-jq -e '.dispatch_api_blocked == true' "$json_output" >/dev/null
+jq -e '.dispatch_api_blocked == false' "$json_output" >/dev/null
 jq -e '.graphql_budget.reserve_mode_count == 1' "$json_output" >/dev/null
 jq -e '.graphql_budget.deferred_stage_count == 2' "$json_output" >/dev/null
 jq -e '.graphql_budget.deferred_stages.dashboard_freshness_check == 1' "$json_output" >/dev/null

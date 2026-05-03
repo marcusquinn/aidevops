@@ -232,6 +232,13 @@ rc=0
 AIDEVOPS_SKIP_PULSE_IDLE_BACKOFF=1 "$HELPER" should-skip "$((now - 100))" >/dev/null 2>&1 || rc=$?
 assert_exit "deep backoff with disable flag → proceed (exit 1)" "1" "$rc"
 
+# With visible eligible work — should PROCEED and reset stale idle state.
+rc=0
+AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK=1 "$HELPER" should-skip "$((now - 100))" >/dev/null 2>&1 || rc=$?
+assert_exit "deep backoff with available work → proceed (exit 1)" "1" "$rc"
+post_available_count=$("$HELPER" state | jq -r '.consecutive_idle')
+assert_eq "available work resets consecutive_idle" "0" "$post_available_count"
+
 # -----------------------------------------------------------------------------
 # Test 7: state file is always valid JSON after writes
 # -----------------------------------------------------------------------------

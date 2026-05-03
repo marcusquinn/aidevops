@@ -179,11 +179,40 @@ test_dry_run_short_circuit_present() {
 	return 0
 }
 
+# Test 5: Static check — pulse refreshes overdue supervisor circuit breaker.
+#
+# Guards GH#22631: a normal pulse cycle must invoke circuit-breaker-helper.sh
+# check so overdue cooldowns reset without manual operator action.
+test_supervisor_circuit_breaker_refresh_present() {
+	if grep -q '_pulse_refresh_supervisor_circuit_breaker' "$WRAPPER_SCRIPT" && \
+		grep -q 'circuit-breaker-helper.sh' "$WRAPPER_SCRIPT"; then
+		print_result "supervisor circuit breaker refresh present in pulse-wrapper.sh" 0
+		return 0
+	fi
+	print_result "supervisor circuit breaker refresh present in pulse-wrapper.sh" 1 \
+		"Expected _pulse_refresh_supervisor_circuit_breaker and circuit-breaker-helper.sh reference in $WRAPPER_SCRIPT"
+	return 0
+}
+
+# Test 6: Static check — idle backoff observes eligible auto-dispatch work.
+test_idle_backoff_available_work_bypass_present() {
+	if grep -q '_pulse_available_auto_dispatch_work_exists' "$WRAPPER_SCRIPT" && \
+		grep -q 'AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK' "$WRAPPER_SCRIPT"; then
+		print_result "idle backoff available-work bypass present in pulse-wrapper.sh" 0
+		return 0
+	fi
+	print_result "idle backoff available-work bypass present in pulse-wrapper.sh" 1 \
+		"Expected available-work check and env bridge in $WRAPPER_SCRIPT"
+	return 0
+}
+
 main_test() {
 	test_dry_run_exits_zero_quickly
 	test_dry_run_prints_ok_line
 	test_include_guard_present
 	test_dry_run_short_circuit_present
+	test_supervisor_circuit_breaker_refresh_present
+	test_idle_backoff_available_work_bypass_present
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

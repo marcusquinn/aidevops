@@ -76,6 +76,11 @@
 #   AIDEVOPS_SKIP_PULSE_IDLE_BACKOFF         (default 0;   set to 1 to disable
 #                                              all backoff — should-skip always
 #                                              exits 1 / proceed)
+#   AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK       (default 0;   set to 1 when the
+#                                              caller has already observed
+#                                              eligible auto-dispatch work;
+#                                              should-skip resets state and
+#                                              exits 1 / proceed)
 #
 # Failure mode:
 #   Fail-OPEN. Any I/O error, malformed JSON, missing jq, etc. → should-skip
@@ -251,6 +256,13 @@ cmd_should_skip() {
 		return 1
 	fi
 
+	if [[ "${AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK:-0}" == "1" ]]; then
+		cmd_reset >/dev/null 2>&1 || true
+		printf 'decision=proceed reason=available_work effective_interval_s=%s consecutive_idle=0 elapsed_s=unknown\n' \
+			"$_PIB_BASE_INTERVAL_S"
+		return 1
+	fi
+
 	local _last_run="${1:-0}"
 	[[ "$_last_run" =~ ^[0-9]+$ ]] || _last_run=0
 
@@ -386,6 +398,7 @@ ENVIRONMENT (overrides for backoff schedule):
   AIDEVOPS_PULSE_IDLE_BACKOFF_THRESHOLD_30 (default 30)
   AIDEVOPS_PULSE_IDLE_BACKOFF_STEP_30_S    (default 1800)
   AIDEVOPS_SKIP_PULSE_IDLE_BACKOFF         (default 0; set 1 to disable)
+  AIDEVOPS_PULSE_IDLE_AVAILABLE_WORK       (default 0; set 1 when eligible work exists)
   AIDEVOPS_PULSE_IDLE_STATE_FILE           (default ~/.aidevops/cache/pulse-idle-state.json)
 EOF
 	return 0
