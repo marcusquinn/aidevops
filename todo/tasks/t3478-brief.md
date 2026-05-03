@@ -44,7 +44,10 @@ This is a parent-task. Initial planning PR uses `For #` keyword (planning only).
 
 ## Children
 
-- t3523 / #22510 — Phase 1: capture contract and normalized metadata fields.
+- t3523 / #22510 — Phase 1: capture contract and normalized metadata fields;
+  filed child owns `_feedback/captures/` and the required source/timestamp/
+  actor/context/channel/sentiment/sensitivity/consent/retention/provenance
+  capture metadata in `.agents/aidevops/feedback.md`.
 - t3524 / #22512 — Phase 2: retention and sensitivity policy.
 - t3525 / #22515 — Phase 3: mining workflow and evidence thresholds; filed as
   the child that documents clustering, deduplication, review gates, and promotion
