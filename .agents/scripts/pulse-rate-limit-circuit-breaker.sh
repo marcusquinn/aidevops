@@ -64,7 +64,7 @@ if [[ -f "${SCRIPT_DIR}/pulse-stats-helper.sh" ]]; then
 fi
 
 # Source canonical circuit-breaker threshold from conf file (GH#20638, t2768).
-# Env var takes precedence; conf supplies the default; 0.30 is the hardcoded fallback
+# Env var takes precedence; conf supplies the default; 0.05 is the hardcoded fallback
 # if the conf file is missing (graceful degradation). Sourced here so standalone
 # invocations (not via pulse-wrapper.sh) also use the canonical value.
 _CB_RL_CONF="${SCRIPT_DIR}/../configs/pulse-rate-limit.conf"
@@ -150,7 +150,7 @@ is_graphql_budget_sufficient() {
 		return 0
 	fi
 
-	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.30}"
+	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"
 
 	# Disabled if threshold is explicitly 0 (any zero representation).
 	if awk -v t="$threshold" 'BEGIN { exit (t + 0 == 0) ? 0 : 1 }' 2>/dev/null; then
@@ -254,7 +254,7 @@ _circuit_breaker_status() {
 		return 0
 	fi
 
-	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.30}"
+	local threshold="${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD:-0.05}"
 	if awk -v t="$threshold" 'BEGIN { exit (t + 0 == 0) ? 0 : 1 }' 2>/dev/null; then
 		printf 'DISABLED: threshold=0\n'
 		return 0
@@ -451,7 +451,7 @@ _main() {
 			echo "  pulse-rate-limit-circuit-breaker.sh status [--cached]              # human-readable status line"
 			echo ""
 			echo "Environment (GraphQL):"
-			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.30 = 30%)"
+			echo "  AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD  fraction threshold (default 0.05 = 5%)"
 			echo "  AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER=1     emergency bypass"
 			echo "  AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL       rate_limit cache TTL seconds (default 20)"
 			echo ""
