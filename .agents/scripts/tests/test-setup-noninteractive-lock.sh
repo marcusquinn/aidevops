@@ -177,36 +177,39 @@ test_reclaims_reused_owner_pid_lock() {
 	return 0
 }
 
-test_reclaims_stale_started_at_with_reused_setup_pid() {
+test_preserves_live_setup_owner_with_old_lock_timestamp() {
 	local tmp_dir=""
 	local output=""
 	local owner_pid=""
+	local stale_epoch=0
 	tmp_dir=$(make_temp_dir)
 	owner_pid=$(start_fake_setup_owner)
 	mkdir -p "$tmp_dir/lock.d"
 	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
 	printf '%s\n' './setup.sh --non-interactive' >"$tmp_dir/lock.d/command"
+	stale_epoch=$(( $(date +%s 2>/dev/null || echo "0") - 10000 ))
+	printf '%s\n' "$stale_epoch" >"$tmp_dir/lock.d/started_at_epoch"
 	printf '%s\n' '2000-01-01T00:00:00Z' >"$tmp_dir/lock.d/started_at"
 
 	output=$(
 		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=1800
 		load_lock_functions
 		_setup_acquire_noninteractive_setup_lock --non-interactive
-		printf 'held=%s owner=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}" "$(tr -d '[:space:]' <"$tmp_dir/lock.d/owner.pid")"
-		_setup_release_noninteractive_setup_lock
-		printf 'exists=%s\n' "$([[ -d "$tmp_dir/lock.d" ]] && printf yes || printf no)"
+		printf 'held=%s\n' "${SETUP_NONINTERACTIVE_LOCK_HELD:-false}"
 		return 0
 	) 2>&1 || true
 
 	kill "$owner_pid" 2>/dev/null || true
 	wait "$owner_pid" 2>/dev/null || true
 	rm -rf "$tmp_dir"
-	if [[ "$output" == *"lock age "* && "$output" == *"older than owner pid ${owner_pid} runtime"* && "$output" == *"held=true owner="* && "$output" == *"exists=no"* ]]; then
-		print_result "stale started_at with reused setup pid is reclaimed" 0
+	if [[ "$output" == *"Timed out"* && "$output" == *"held=false"* && "$output" != *"Removing stale setup.sh --non-interactive lock"* ]]; then
+		print_result "live setup owner with old lock timestamp is preserved" 0
 		return 0
 	fi
 
-	print_result "stale started_at with reused setup pid is reclaimed" 1 "output=${output}"
+	print_result "live setup owner with old lock timestamp is preserved" 1 "output=${output}"
 	return 0
 }
 
@@ -355,16 +358,17 @@ test_stale_live_owner_past_ceiling_is_reclaimed() {
 	mkdir -p "$tmp_dir/lock.d"
 
 	# Use a fake setup owner so kill -0 reports it alive and the command shape
-	# matches setup.sh --non-interactive, then set started_at_epoch far in the
-	# past to simulate a hung setup.
+	# matches setup.sh --non-interactive, then wait long enough for its PID
+	# runtime to exceed a deliberately low stale-live ceiling.
 	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
-	stale_epoch=$(( $(date +%s 2>/dev/null || echo "0") - 10000 ))
+	sleep 2
+	stale_epoch=$(( $(date +%s 2>/dev/null || echo "0") - 2 ))
 	printf '%s\n' "$stale_epoch" >"$tmp_dir/lock.d/started_at_epoch"
 	printf '%s\n' './setup.sh --non-interactive (simulated stale)' >"$tmp_dir/lock.d/command"
 
 	output=$(
 		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
-		AIDEVOPS_SETUP_STALE_TIMEOUT_S=1800
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=1
 		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=300
 		load_lock_functions
 		_setup_acquire_noninteractive_setup_lock --non-interactive
@@ -435,7 +439,7 @@ main() {
 	test_blocks_concurrent_live_owner
 	test_reclaims_stale_lock
 	test_reclaims_reused_owner_pid_lock
-	test_reclaims_stale_started_at_with_reused_setup_pid
+	test_preserves_live_setup_owner_with_old_lock_timestamp
 	test_stale_live_owner_past_ceiling_is_reclaimed
 	test_wait_ceiling_prevents_indefinite_block
 	test_contention_message_includes_elapsed_and_stage

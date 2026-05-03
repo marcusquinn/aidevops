@@ -807,18 +807,25 @@ _setup_noninteractive_signal_exit() {
 	exit "$exit_code"
 }
 
-# Compute how many seconds the lock owner PID has been running.
-# Uses started_at_epoch (most accurate) falling back to ps etimes.
+# Compute how many seconds the live lock owner has held the setup lock.
+# Uses started_at_epoch when it agrees with the owner PID runtime; falls back to
+# the PID runtime when an old lock timestamp points at a newer live setup owner.
 # Prints the age in seconds on stdout; prints 0 when unknown.
 _setup_lock_owner_age() {
 	local lock_dir="$1"
 	local owner_pid="$2"
-	local _start_epoch="" _now_epoch="" _age_tmp=""
+	local _start_epoch="" _now_epoch="" _age_tmp="" _pid_age=""
 	if [[ -r "$lock_dir/started_at_epoch" ]]; then
 		_start_epoch=$(tr -d '[:space:]' <"$lock_dir/started_at_epoch" 2>/dev/null || true)
 		_now_epoch=$(date +%s 2>/dev/null || printf '0')
 		if [[ "$_start_epoch" =~ ^[0-9]+$ && "$_now_epoch" =~ ^[0-9]+$ && "$_now_epoch" -ge "$_start_epoch" ]]; then
-			printf '%s' "$((_now_epoch - _start_epoch))"
+			_age_tmp="$((_now_epoch - _start_epoch))"
+			_pid_age=$(_setup_pid_elapsed_seconds "$owner_pid" 2>/dev/null || true)
+			if [[ "$_pid_age" =~ ^[0-9]+$ && "$_age_tmp" -gt $((_pid_age + 300)) ]]; then
+				printf '%s' "$_pid_age"
+				return 0
+			fi
+			printf '%s' "$_age_tmp"
 			return 0
 		fi
 	fi
@@ -900,17 +907,6 @@ _setup_acquire_noninteractive_setup_lock() {
 				return 75
 			fi
 			print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}; owner pid ${owner_pid} no longer appears to be setup.sh --non-interactive (age ${_owner_lock_age}s)"
-			rm -rf "$lock_dir" 2>/dev/null || true
-			reclaim_attempts=$((reclaim_attempts + 1))
-			continue
-		fi
-
-		local _owner_started_age=""
-		local _owner_pid_age=""
-		_owner_started_age=$(_setup_lock_started_age_seconds "$lock_dir" 2>/dev/null || true)
-		_owner_pid_age=$(_setup_pid_elapsed_seconds "$owner_pid" 2>/dev/null || true)
-		if [[ "$_owner_started_age" =~ ^[0-9]+$ && "$_owner_pid_age" =~ ^[0-9]+$ && "$_owner_started_age" -gt 300 && "$_owner_started_age" -gt $((_owner_pid_age + 300)) ]]; then
-			print_warning "Removing stale setup.sh --non-interactive lock at ${lock_dir}; lock age ${_owner_started_age}s is older than owner pid ${owner_pid} runtime ${_owner_pid_age}s"
 			rm -rf "$lock_dir" 2>/dev/null || true
 			reclaim_attempts=$((reclaim_attempts + 1))
 			continue
