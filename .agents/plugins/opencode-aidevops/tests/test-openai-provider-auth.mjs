@@ -26,6 +26,17 @@ test("detects OpenAI usage-limit responses", async () => {
   assert.equal(await isOpenAIUsageLimitResponse(new Response("ok", { status: 200 })), false);
 });
 
+test("detects OpenAI overloaded responses and stream chunks", async () => {
+  const { isOpenAIOverloadResponse, isOpenAIOverloadText } = await loadModule();
+  const overloaded = new Response(
+    JSON.stringify({ error: { type: "service_unavailable_error", code: "server_is_overloaded" } }),
+    { status: 503, headers: { "content-type": "application/json" } },
+  );
+  assert.equal(await isOpenAIOverloadResponse(overloaded), true);
+  assert.equal(isOpenAIOverloadText('{"type":"error","error":{"code":"server_is_overloaded"}}'), true);
+  assert.equal(await isOpenAIOverloadResponse(new Response("ok", { status: 200 })), false);
+});
+
 test("installed fetch guard rotates on response failures and pre-request cooldowns", async () => {
   const home = mkdtempSync(join(tmpdir(), "aidevops-openai-rotation-"));
   const script = String.raw`
@@ -90,10 +101,34 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
 
     assert.equal(cooldownPreflight.response.status, 200);
     assert.deepEqual(cooldownPreflight.calls, ["Bearer fresh-token"]);
+
+    const streamRetry = await withInstalledGuard({
+      openai: [
+        { email: "active@example.com", access: "active-token", refresh: "active-refresh", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z" },
+      ],
+    }, async (input, init, calls) => {
+      calls.push(new Headers(init?.headers).get("authorization"));
+      if (calls.length === 1) {
+        return new Response('data: {"type":"error","sequence_number":2,"error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later.","param":null}}\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response('data: {"type":"response.output_text.delta","delta":"ok"}\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }, {
+      url: "https://api.openai.com/v1/responses",
+      init: { method: "POST", headers: { authorization: "Bearer active-token" }, body: "{}" },
+    });
+
+    assert.equal(await streamRetry.response.text(), 'data: {"type":"response.output_text.delta","delta":"ok"}\n\n');
+    assert.deepEqual(streamRetry.calls, ["Bearer active-token", "Bearer active-token"]);
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
     cwd: join(import.meta.dirname, ".."),
-    env: { ...process.env, HOME: home },
+    env: { ...process.env, HOME: home, AIDEVOPS_OPENAI_OVERLOAD_RETRY_DELAYS_MS: "0,0" },
     stdio: "pipe",
   });
 });
