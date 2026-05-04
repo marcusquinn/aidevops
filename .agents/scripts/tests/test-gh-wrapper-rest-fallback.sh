@@ -201,7 +201,23 @@ gh() {
 	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
 	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
-		printf '{"number":123,"title":"stub PR"}\n'
+		local jq_filter=""
+		local i=3
+		while [[ $i -le $# ]]; do
+			if [[ "${!i}" == "--jq" ]]; then
+				local next=$((i + 1))
+				jq_filter="${!next:-}"
+				break
+			fi
+			i=$((i + 1))
+		done
+		local fixture='{"number":123,"title":"stub PR"}'
+		fixture="${STUB_PR_VIEW_FIXTURE:-$fixture}"
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s\n' "$fixture" | jq -r "$jq_filter"
+		else
+			printf '%s\n' "$fixture"
+		fi
 		return 0
 	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
@@ -216,6 +232,7 @@ gh() {
 			i=$((i + 1))
 		done
 		local fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343","head":{"ref":"other"},"base":{"ref":"main"}}]'
+		fixture="${STUB_PR_LIST_FIXTURE:-$fixture}"
 		if [[ "$2" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
 			fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}}]'
 		fi
@@ -883,6 +900,42 @@ else
 	fail "gh_pr_view proactively routes to REST when GraphQL budget is low" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+
+# =============================================================================
+# Test 25b: REST PR view normalizes REST boolean mergeable to gh GraphQL enum
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_VIEW_FIXTURE='{"number":123,"mergeable":true}'
+
+pr_view_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+
+if [[ "$pr_view_mergeable" == "MERGEABLE" ]]; then
+	pass "gh_pr_view REST fallback normalizes mergeable=true to MERGEABLE"
+else
+	fail "gh_pr_view REST fallback normalizes mergeable=true to MERGEABLE" \
+		"output=${pr_view_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
+
+# =============================================================================
+# Test 25c: REST PR list normalizes REST boolean mergeable to gh GraphQL enum
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_LIST_FIXTURE='[{"number":22337,"mergeable":false,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/rest-mergeable"},"base":{"ref":"main"}}]'
+
+pr_list_mergeable=$(gh_pr_list --repo "owner/repo" --state open --json mergeable --jq '.[0].mergeable' 2>/dev/null || true)
+
+if [[ "$pr_list_mergeable" == "CONFLICTING" || "$pr_list_mergeable" == '"CONFLICTING"' ]]; then
+	pass "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING"
+else
+	fail "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING" \
+		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_LIST_FIXTURE
 
 # =============================================================================
 # Test 26: forced REST read mode routes supported list calls without rate_limit

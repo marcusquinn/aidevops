@@ -97,6 +97,11 @@ EOF
 	return 0
 }
 
+gh_pr_view() {
+	gh pr view "$@"
+	return $?
+}
+
 # Extract helpers from pulse-merge-process.sh (post-GH#21595)
 # and eval it into the test shell. Matches the define_helper_under_test
 # pattern used by test-pulse-merge-rebase-nudge.sh.
@@ -315,9 +320,9 @@ test_mergeable_refetch_after_update_branch() {
 		/_attempt_pr_update_branch/,/_close_conflicting_pr/ { print }
 	' "$MERGE_SCRIPT")
 
-	if [[ "$block" != *"gh pr view"*"--json mergeable"* ]]; then
+	if [[ "$block" != *"gh pr view"*"--json mergeable"* && "$block" != *"gh_pr_view"*"--json mergeable"* ]]; then
 		print_result "mergeable re-fetched after successful update-branch" 1 \
-			"Expected 'gh pr view ... --json mergeable' between update-branch and close"
+			"Expected 'gh pr view/gh_pr_view ... --json mergeable' between update-branch and close"
 		return 0
 	fi
 
