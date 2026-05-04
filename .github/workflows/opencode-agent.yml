@@ -45,10 +45,11 @@ jobs:
       github.actor != 'copilot[bot]' &&
       github.actor != 'github-actions[bot]' &&
       github.actor != 'dependabot[bot]'
-    # Needs write permissions to post rejection replies on untrusted comments.
-    # Without this, the GITHUB_TOKEN defaults to read-only and the
-    # createReplyForReviewComment/createComment calls fail with 403. GH#2973.
+    # Needs read access for context plus write access for best-effort rejection
+    # replies/labels on denied commands. Comment/label failures must not turn a
+    # safe deny into a failed workflow. GH#2973, GH#22803.
     permissions:
+      contents: read
       pull-requests: write
       issues: write
     outputs:
@@ -67,6 +68,18 @@ jobs:
             // For pull_request_review_comment: context.payload.pull_request exists, issue is undefined
             const issue = context.payload.issue || context.payload.pull_request;
             const isPRReviewComment = context.eventName === 'pull_request_review_comment';
+
+            const safeGitHubWrite = async (description, fn) => {
+              try {
+                await fn();
+              } catch (error) {
+                if (error.status === 403 || error.status === 404) {
+                  core.warning(`${description} skipped: ${error.message}`);
+                  return;
+                }
+                throw error;
+              }
+            };
             
             // Must contain /oc or /opencode trigger at start of line or after whitespace.
             // The previous regex /\/(oc|opencode)\b/ matched file paths in bot review
@@ -88,20 +101,20 @@ jobs:
               
               // Post warning comment (use appropriate API based on event type)
               if (isPRReviewComment) {
-                await github.rest.pulls.createReplyForReviewComment({
+                await safeGitHubWrite('Security notice PR review reply', () => github.rest.pulls.createReplyForReviewComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   pull_number: issue.number,
                   comment_id: comment.id,
                   body: `> **Security Notice**: AI agent commands are restricted to repository collaborators.\n\n@${sender.login} your request was not processed. If you believe this is an error, please contact a maintainer.`
-                });
+                }));
               } else {
-                await github.rest.issues.createComment({
+                await safeGitHubWrite('Security notice issue comment', () => github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
                   body: `> **Security Notice**: AI agent commands are restricted to repository collaborators.\n\n@${sender.login} your request was not processed. If you believe this is an error, please contact a maintainer.`
-                });
+                }));
               }
               return;
             }
@@ -115,12 +128,12 @@ jobs:
                 core.setOutput('allowed', 'false');
                 core.setOutput('reason', `Issue missing 'ai-approved' label. Add label first for security.`);
                 
-                await github.rest.issues.createComment({
+                await safeGitHubWrite('AI approval security notice issue comment', () => github.rest.issues.createComment({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
                   body: `> **Security Notice**: AI agent requires the \`ai-approved\` label on issues before processing.\n\nA maintainer must add this label to confirm the issue content is safe for AI processing.`
-                });
+                }));
                 return;
               }
             }
@@ -151,28 +164,28 @@ jobs:
                 
                 // Post warning (use appropriate API based on event type)
                 if (isPRReviewComment) {
-                  await github.rest.pulls.createReplyForReviewComment({
+                  await safeGitHubWrite('Suspicious command PR review reply', () => github.rest.pulls.createReplyForReviewComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     pull_number: issue.number,
                     comment_id: comment.id,
                     body: `> **Security Notice**: AI agent detected potentially unsafe content in the command and has blocked execution.\n\nPlease review your request and try again with a clearer, safer instruction.`
-                  });
+                  }));
                 } else {
-                  await github.rest.issues.createComment({
+                  await safeGitHubWrite('Suspicious command issue comment', () => github.rest.issues.createComment({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: issue.number,
                     body: `> **Security Notice**: AI agent detected potentially unsafe content in the command and has blocked execution.\n\nPlease review your request and try again with a clearer, safer instruction.`
-                  });
+                  }));
                   
                   // Also create a security alert for maintainers (only for issues, not PR comments)
-                  await github.rest.issues.addLabels({
+                  await safeGitHubWrite('Suspicious command security-review label', () => github.rest.issues.addLabels({
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     issue_number: issue.number,
                     labels: ['security-review']
-                  });
+                  }));
                 }
                 return;
               }

@@ -31,7 +31,7 @@ tools:
 | Pattern detection | Blocks prompt injection attempts |
 | Audit logging | All invocations logged |
 | Timeout | 15 minute max execution |
-| Permissions | Minimal required only |
+| Permissions | Minimal required only; denial notices are best-effort |
 
 <!-- AI-CONTEXT-END -->
 
@@ -116,6 +116,8 @@ View: Repository > Actions > OpenCode AI Agent > Select run > audit-log job.
 External contributors (CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, NONE) cannot trigger the agent.
 
 **Maintainers — approving issues**: Review content for safety, check raw markdown for hidden content, add `ai-approved` label. For `security-review` alerts: check Actions log, review triggering comment, remove label or take action.
+
+Denied-command comments, review replies, and `security-review` labels are best-effort. A 403/404 from GitHub must log a warning, but must not fail the security-validation job after `allowed=false` has already blocked agent execution.
 
 ## Monitoring
 
