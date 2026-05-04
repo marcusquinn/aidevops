@@ -91,7 +91,7 @@ runtime_audit_check() {
 		return 0
 	fi
 
-	local evidence_table="| Recent count | Normalised template |\n| --- | --- |"
+	local evidence_table="| Recent count | Normalised template |"$'\n'"| --- | --- |"
 	local entry c t
 	for entry in "${novel[@]}"; do
 		IFS='|' read -r c t <<<"$entry"
@@ -99,7 +99,7 @@ runtime_audit_check() {
 		[[ ${#t} -gt 200 ]] && t="${t:0:200}..."
 		# Escape pipes inside template for markdown
 		t="${t//|/\\|}"
-		evidence_table+="\n| ${c} | \`${t}\` |"
+		evidence_table+=$'\n'"| ${c} | \`${t}\` |"
 	done
 
 	local title="runtime-audit: ${#novel[@]} novel high-frequency log pattern(s) in last ${recent} lines"

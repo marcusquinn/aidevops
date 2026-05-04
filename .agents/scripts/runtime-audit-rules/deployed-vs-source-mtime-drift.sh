@@ -58,11 +58,11 @@ runtime_audit_check() {
 		return 0
 	fi
 
-	local evidence_table="| File | Drift | Deployed mtime | Source mtime |\n| --- | --- | --- | --- |"
+	local evidence_table="| File | Drift | Deployed mtime | Source mtime |"$'\n'"| --- | --- | --- | --- |"
 	local entry name d_str dm sm
 	for entry in "${drifted[@]}"; do
 		IFS='|' read -r name d_str dm sm <<<"$entry"
-		evidence_table+="\n| \`${name}\` | ${d_str}s | $(date -r "$dm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$dm") | $(date -r "$sm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$sm") |"
+		evidence_table+=$'\n'"| \`${name}\` | ${d_str}s | $(date -r "$dm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$dm") | $(date -r "$sm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$sm") |"
 	done
 
 	local first_file
