@@ -73,6 +73,18 @@ describe("token cost advisory threshold", () => {
     assert.match(output.system[0], /We're running aidevops v3\.14\.23\./);
   });
 
+  test("trims fallback aidevops version whitespace", async () => {
+    const { hooks } = createHooks({
+      readIfExists: (path) => path.endsWith("VERSION") ? "3.14.23\r\n" : "",
+    });
+    const output = { system: ["base system prompt"] };
+
+    await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
+
+    assert.match(output.system[0], /We're running aidevops v3\.14\.23\./);
+    assert.doesNotMatch(output.system[0], /v3\.14\.23\r/);
+  });
+
   test("keeps startup advisory cache lines out of chat instructions", async () => {
     const { hooks } = createHooks({
       readIfExists: (path) => path.endsWith("session-greeting.txt")

@@ -195,7 +195,7 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
   const cacheLines = readIfExists(cachePath).split("\n").map((line) => line.trim()).filter(Boolean);
   const cacheLine = cacheLines[0] || "";
   const cacheMatch = cacheLine.match(/^aidevops v(\S+) running in (.+?) v(\S+)(?:\s|$)/);
-  const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).split("\n")[0] || "X";
+  const version = cacheMatch?.[1] || readIfExists(join(agentsDir, "VERSION")).trim().split("\n")[0] || "X";
   const runtime = cacheMatch?.[2] || "OpenCode";
   const runtimeVersion = cacheMatch?.[3];
   const versionLine = runtimeVersion
