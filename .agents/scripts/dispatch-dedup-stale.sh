@@ -81,18 +81,88 @@ _stale_recovery_count_ticks() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local _comments_pages _prior_ticks
-	_comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--paginate --slurp 2>/dev/null) || _comments_pages=""
+	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug") || _comments_pages=""
 	if [[ -z "$_comments_pages" ]]; then
 		printf '0'
 		return 0
 	fi
-	_prior_ticks=$(printf '%s' "$_comments_pages" | jq \
-		'[.[] | .[]? | select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))] | length' \
-		2>/dev/null) || _prior_ticks=0
+	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages") || _prior_ticks=0
 	[[ "$_prior_ticks" =~ ^[0-9]+$ ]] || _prior_ticks=0
 	printf '%s' "$_prior_ticks"
 	return 0
+}
+
+#######################################
+# Fetch issue comments as one slurped JSON document.
+# Args: $1 = issue number, $2 = repo slug
+# Output: slurped comments pages JSON, or empty on gh failure
+#######################################
+_stale_recovery_fetch_comments_pages() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --slurp 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Count non-reset stale recovery ticks from a slurped comments JSON document.
+# Args: $1 = slurped comments pages JSON
+# Output: integer tick count
+#######################################
+_stale_recovery_count_ticks_from_pages() {
+	local comments_pages="$1"
+	local prior_ticks
+	prior_ticks=$(printf '%s' "$comments_pages" | jq \
+		'[
+			.[] | .[]?
+			| select(.body | (test("<!-- stale-recovery-tick:[1-9]") and (test("reset") | not)))
+		] | length' \
+		2>/dev/null) || prior_ticks=0
+	[[ "$prior_ticks" =~ ^[0-9]+$ ]] || prior_ticks=0
+	printf '%s' "$prior_ticks"
+	return 0
+}
+
+#######################################
+# Find the latest dispatch/claim timestamp in slurped GitHub comments.
+# GitHub comments remain the multi-user/multi-machine coordination source.
+# Args: $1 = slurped comments pages JSON
+# Output: ISO timestamp or empty
+#######################################
+_stale_recovery_latest_dispatch_ts_from_pages() {
+	local comments_pages="$1"
+	printf '%s' "$comments_pages" | jq -r '
+		[
+			.[] | .[]?
+			| select((.body // "") | test("Dispatching worker|DISPATCH_CLAIM|Worker \\(PID|Interactive session claimed"; "i"))
+		] | sort_by(.created_at) | last | .created_at // empty
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Check for terminal worker-failure evidence after a dispatch timestamp.
+# Stale escalation should not infer failure from GitHub silence alone; in a
+# multi-runner system, the issue comment stream must contain an explicit worker
+# terminal marker before historical stale ticks suspend future dispatch.
+# Args: $1 = slurped comments pages JSON, $2 = dispatch timestamp
+# Returns: 0 if terminal evidence exists, 1 otherwise
+#######################################
+_stale_recovery_has_terminal_evidence_since() {
+	local comments_pages="$1"
+	local since_ts="$2"
+	[[ -z "$since_ts" ]] && return 1
+	if printf '%s' "$comments_pages" | jq -e --arg since "$since_ts" '
+		[
+			.[] | .[]?
+			| select((.created_at // "") > $since)
+			| select((.body // "") | test("CLAIM_RELEASED reason=worker_failed|Worker Watchdog Kill|provider is backed off|reason=rate_limit|headless-runtime state DB"; "i"))
+		] | length > 0
+	' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -237,14 +307,17 @@ _This recovery prevents the orphaned-assignment deadlock where offline runners p
 #
 # Decision flow (t2008 escalation check):
 #   1. Load threshold from config (default 2).
-#   2. Count prior non-reset tick comments.
-#   3. Look up any open PR referencing this issue.
+#   2. Count prior non-reset tick comments from the GitHub issue comment log.
+#   3. Find the latest dispatch marker and terminal worker evidence in that same
+#      GitHub comment log (the cross-machine coordination source).
+#   4. Look up any open PR referencing this issue.
 #      - If an open PR exists: reset tick counter (progress is being made),
 #        continue to normal recovery.
-#      - Else if prior_ticks >= threshold: escalate to needs-maintainer-review
-#        and return immediately (no normal recovery).
+#      - Else if prior_ticks >= threshold and the latest dispatch attempt has
+#        terminal evidence: escalate to needs-maintainer-review and return
+#        immediately (no normal recovery).
 #      - Else: increment the tick counter and continue to normal recovery.
-#   4. Normal recovery: unassign stale users, set status:available, post audit.
+#   5. Normal recovery: unassign stale users, set status:available, post audit.
 #
 # Args:
 #   $1 = issue number
@@ -263,9 +336,14 @@ _recover_stale_assignment() {
 	# resetting to status:available and apply needs-maintainer-review instead.
 	# Counter is stored as structured comment markers for cross-runner correctness.
 	# Config: .agents/configs/dispatch-stale-recovery.conf
-	local _threshold _prior_ticks _open_pr
+	local _threshold _prior_ticks _open_pr _comments_pages _latest_dispatch_ts _terminal_evidence=false
 	_threshold=$(_stale_recovery_load_threshold)
-	_prior_ticks=$(_stale_recovery_count_ticks "$issue_number" "$repo_slug")
+	_comments_pages=$(_stale_recovery_fetch_comments_pages "$issue_number" "$repo_slug")
+	_prior_ticks=$(_stale_recovery_count_ticks_from_pages "$_comments_pages")
+	_latest_dispatch_ts=$(_stale_recovery_latest_dispatch_ts_from_pages "$_comments_pages")
+	if _stale_recovery_has_terminal_evidence_since "$_comments_pages" "$_latest_dispatch_ts"; then
+		_terminal_evidence=true
+	fi
 	_open_pr=$(_stale_recovery_find_open_pr "$issue_number" "$repo_slug")
 
 	if [[ -n "$_open_pr" ]]; then
@@ -276,12 +354,15 @@ _recover_stale_assignment() {
 Stale recovery tick reset — open PR #${_open_pr} detected (t2008)
 <!-- ops:end -->" \
 			2>/dev/null || true
-	elif [[ "$_prior_ticks" -ge "$_threshold" ]]; then
-		# Threshold reached — escalate and bail out (no normal recovery)
+	elif [[ "$_prior_ticks" -ge "$_threshold" && "$_terminal_evidence" == "true" ]]; then
+		# Threshold reached with explicit worker terminal evidence — escalate and
+		# bail out (no normal recovery). GH#22780: Do not suspend a fresh multi-runner
+		# dispatch solely because GitHub has been quiet for one stale window.
 		_stale_recovery_escalate "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "$_threshold" "$_prior_ticks"
 		return 0
 	else
-		# Under threshold — increment tick counter, continue normal recovery
+		# Under threshold, or over threshold without terminal worker evidence —
+		# increment the GitHub-backed counter and continue normal recovery.
 		local _next_tick=$((_prior_ticks + 1))
 		gh_issue_comment "$issue_number" --repo "$repo_slug" \
 			--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
