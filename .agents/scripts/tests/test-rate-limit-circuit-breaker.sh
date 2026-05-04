@@ -429,6 +429,22 @@ test_graphql_exhausted_rest_core_low_blocks_dispatch() {
 	return 0
 }
 
+# --- Test 17: REST fallback can be explicitly disabled ---
+test_graphql_exhausted_rest_fallback_disabled_blocks_dispatch() {
+	reset_test_state
+	STUB_GH_REMAINING=0
+	STUB_GH_CORE_REMAINING=4994
+	export AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK=0
+	local rc=0
+	is_graphql_budget_sufficient || rc=$?
+	if [[ "$rc" -eq 1 && "${AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE:-0}" != "1" && "${AIDEVOPS_GH_FORCE_REST_READS:-0}" != "1" ]]; then
+		pass "GraphQL exhausted blocks dispatch when REST fallback is disabled"
+	else
+		fail "disabled REST fallback should not allow dispatch" "rc=$rc active=${AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE:-unset} force_rest=${AIDEVOPS_GH_FORCE_REST_READS:-unset}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Part 2: no_work rate circuit breaker (t2770, GH#20640)
 #
@@ -740,6 +756,7 @@ test_status_cached_only_uses_cache
 test_log_message_on_trip
 test_graphql_exhausted_rest_core_healthy_allows_dispatch
 test_graphql_exhausted_rest_core_low_blocks_dispatch
+test_graphql_exhausted_rest_fallback_disabled_blocks_dispatch
 
 # =============================================================================
 # Summary
