@@ -35,6 +35,14 @@ print_header() {
 	return 0
 }
 
+_increment_named_counter() {
+	local var_name="$1"
+	local delta="$2"
+	local current="${!var_name}"
+	printf -v "$var_name" '%s' "$((current + delta))"
+	return 0
+}
+
 # =============================================================================
 # Spam Content Analysis
 # =============================================================================
@@ -43,8 +51,8 @@ print_header() {
 # output vars passed by name. Prints warnings directly.
 _analyze_subject_line() {
 	local content="$1"
-	local -n _subj_score="$2"
-	local -n _subj_issues="$3"
+	local score_var="$2"
+	local issues_var="$3"
 
 	local subject=""
 	subject=$(grep -oiE '<title>[^<]+</title>' <<<"$content" | sed 's/<[^>]*>//g' | head -1 || true)
@@ -66,8 +74,8 @@ _analyze_subject_line() {
 		caps_ratio=$(((upper_chars * 100) / total_chars))
 		if [[ "$caps_ratio" -gt 50 && "$total_chars" -gt 10 ]]; then
 			print_warning "Subject is >50% uppercase ($caps_ratio%) - spam trigger"
-			_subj_score=$((_subj_score + 10))
-			_subj_issues=$((_subj_issues + 1))
+			_increment_named_counter "$score_var" 10
+			_increment_named_counter "$issues_var" 1
 		fi
 	fi
 
@@ -76,23 +84,23 @@ _analyze_subject_line() {
 	exclaim_count=$(echo "$subject" | tr -cd '!' | wc -c | tr -d ' ')
 	if [[ "$exclaim_count" -gt 1 ]]; then
 		print_warning "Multiple exclamation marks in subject ($exclaim_count) - spam trigger"
-		_subj_score=$((_subj_score + 5))
-		_subj_issues=$((_subj_issues + 1))
+		_increment_named_counter "$score_var" 5
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	local question_count
 	question_count=$(echo "$subject" | tr -cd '?' | wc -c | tr -d ' ')
 	if [[ "$question_count" -gt 2 ]]; then
 		print_warning "Excessive question marks in subject ($question_count)"
-		_subj_score=$((_subj_score + 3))
-		_subj_issues=$((_subj_issues + 1))
+		_increment_named_counter "$score_var" 3
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# Dollar signs / currency
 	if echo "$subject" | grep -qiE '[$£€]|free|winner|prize|congratulations'; then
 		print_warning "Financial/prize language in subject - high spam trigger"
-		_subj_score=$((_subj_score + 15))
-		_subj_issues=$((_subj_issues + 1))
+		_increment_named_counter "$score_var" 15
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	return 0
@@ -101,8 +109,8 @@ _analyze_subject_line() {
 # Scan content for high-risk spam phrases; returns count via nameref.
 _analyze_high_risk_phrases() {
 	local content="$1"
-	local -n _hr_score="$2"
-	local -n _hr_issues="$3"
+	local score_var="$2"
+	local issues_var="$3"
 
 	local -a high_risk_phrases=(
 		"act now"
@@ -149,8 +157,8 @@ _analyze_high_risk_phrases() {
 	done
 
 	if [[ "$high_risk_found" -gt 0 ]]; then
-		_hr_score=$((_hr_score + high_risk_found * 5))
-		_hr_issues=$((_hr_issues + high_risk_found))
+		_increment_named_counter "$score_var" "$((high_risk_found * 5))"
+		_increment_named_counter "$issues_var" "$high_risk_found"
 		print_error "$high_risk_found high-risk spam phrases detected"
 	else
 		print_success "No high-risk spam phrases found"
@@ -162,8 +170,8 @@ _analyze_high_risk_phrases() {
 # Scan content for medium-risk spam phrases; updates score/issues via nameref.
 _analyze_medium_risk_phrases() {
 	local content="$1"
-	local -n _mr_score="$2"
-	local -n _mr_issues="$3"
+	local score_var="$2"
+	local issues_var="$3"
 
 	local -a medium_risk_phrases=(
 		"as seen on"
@@ -208,8 +216,8 @@ _analyze_medium_risk_phrases() {
 	done
 
 	if [[ "$medium_risk_found" -gt 0 ]]; then
-		_mr_score=$((_mr_score + medium_risk_found * 2))
-		_mr_issues=$((_mr_issues + 1))
+		_increment_named_counter "$score_var" "$((medium_risk_found * 2))"
+		_increment_named_counter "$issues_var" 1
 		print_warning "$medium_risk_found medium-risk phrases detected"
 	else
 		print_success "No medium-risk spam phrases found"
@@ -221,8 +229,8 @@ _analyze_medium_risk_phrases() {
 # Check structural spam signals (images, URLs, hidden text, JS, forms, compliance).
 _analyze_structural_signals() {
 	local content="$1"
-	local -n _struct_score="$2"
-	local -n _struct_issues="$3"
+	local score_var="$2"
+	local issues_var="$3"
 
 	print_header "Structural Analysis"
 
@@ -236,8 +244,8 @@ _analyze_structural_signals() {
 	if [[ "$img_count" -gt 0 && "$text_length" -lt 200 ]]; then
 		print_warning "Low text-to-image ratio ($text_length chars, $img_count images)"
 		print_info "Image-heavy emails with little text are flagged as spam"
-		_struct_score=$((_struct_score + 10))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 10
+		_increment_named_counter "$issues_var" 1
 	elif [[ "$img_count" -gt 0 ]]; then
 		print_success "Text-to-image ratio OK ($text_length chars, $img_count images)"
 	fi
@@ -248,8 +256,8 @@ _analyze_structural_signals() {
 	url_count="${url_count:-0}"
 	if [[ "$url_count" -gt 20 ]]; then
 		print_warning "Excessive URLs ($url_count) - may trigger spam filters"
-		_struct_score=$((_struct_score + 5))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 5
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# Shortened URLs
@@ -259,15 +267,15 @@ _analyze_structural_signals() {
 	if [[ "$short_url_count" -gt 0 ]]; then
 		print_warning "URL shorteners detected ($short_url_count) - spam trigger"
 		print_info "Use full URLs instead of shortened links"
-		_struct_score=$((_struct_score + 8))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 8
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# Hidden text (white text on white, font-size: 0, display: none)
 	if grep -qiE 'color:\s*(#fff|#ffffff|white).*background.*white|font-size:\s*0|display:\s*none.*[a-z]' <<<"$content"; then
 		print_error "Possible hidden text detected - major spam signal"
-		_struct_score=$((_struct_score + 20))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 20
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# JavaScript (should never be in email)
@@ -276,23 +284,23 @@ _analyze_structural_signals() {
 	js_count="${js_count:-0}"
 	if [[ "$js_count" -gt 0 ]]; then
 		print_error "JavaScript detected ($js_count) - will be stripped and may trigger spam"
-		_struct_score=$((_struct_score + 15))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 15
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# Form elements
 	if grep -qiE '<form|<input|<select|<textarea' <<<"$content"; then
 		print_warning "Form elements detected - not supported in most email clients"
-		_struct_score=$((_struct_score + 5))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 5
+		_increment_named_counter "$issues_var" 1
 	fi
 
 	# Unsubscribe link check
 	if ! grep -qi 'unsubscribe' <<<"$content"; then
 		print_error "No unsubscribe link found - required for marketing emails"
 		print_info "Missing unsubscribe is a CAN-SPAM violation and spam trigger"
-		_struct_score=$((_struct_score + 10))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 10
+		_increment_named_counter "$issues_var" 1
 	else
 		print_success "Unsubscribe link found"
 	fi
@@ -300,8 +308,8 @@ _analyze_structural_signals() {
 	# Physical address check (CAN-SPAM requirement)
 	if ! grep -qiE '[0-9]+\s+[A-Za-z]+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|suite|ste)' <<<"$content"; then
 		print_warning "No physical address detected - required by CAN-SPAM"
-		_struct_score=$((_struct_score + 5))
-		_struct_issues=$((_struct_issues + 1))
+		_increment_named_counter "$score_var" 5
+		_increment_named_counter "$issues_var" 1
 	else
 		print_success "Physical address detected"
 	fi
@@ -440,14 +448,14 @@ check_spamassassin() {
 # Check Gmail SPF, DKIM, and DMARC; updates score via nameref.
 _check_gmail_dns_auth() {
 	local domain="$1"
-	local -n _gdns_score="$2"
+	local score_var="$2"
 
 	# 1. SPF alignment
 	local spf_record
 	spf_record=$(dig TXT "$domain" +short 2>/dev/null | grep -i "v=spf1" | tr -d '"' || true)
 	if [[ -n "$spf_record" && ("$spf_record" == *"-all"* || "$spf_record" == *"~all"*) ]]; then
 		print_success "SPF: Configured with enforcement"
-		_gdns_score=$((_gdns_score + 1))
+		_increment_named_counter "$score_var" 1
 	else
 		print_error "SPF: Missing or weak — Gmail requires SPF"
 	fi
@@ -464,7 +472,7 @@ _check_gmail_dns_auth() {
 	done
 	if [[ "$dkim_found" == true ]]; then
 		print_success "DKIM: Valid selector found"
-		_gdns_score=$((_gdns_score + 1))
+		_increment_named_counter "$score_var" 1
 	else
 		print_error "DKIM: No valid selector — Gmail requires DKIM"
 	fi
@@ -475,10 +483,10 @@ _check_gmail_dns_auth() {
 	if [[ -n "$dmarc_record" ]]; then
 		if [[ "$dmarc_record" == *"p=reject"* || "$dmarc_record" == *"p=quarantine"* ]]; then
 			print_success "DMARC: Enforcing policy (Gmail bulk sender requirement met)"
-			_gdns_score=$((_gdns_score + 2))
+			_increment_named_counter "$score_var" 2
 		elif [[ "$dmarc_record" == *"p=none"* ]]; then
 			print_warning "DMARC: p=none — Gmail requires p=quarantine+ for bulk senders (>5000/day)"
-			_gdns_score=$((_gdns_score + 1))
+			_increment_named_counter "$score_var" 1
 		fi
 	else
 		print_error "DMARC: Not configured — required by Gmail since Feb 2024"
@@ -490,7 +498,7 @@ _check_gmail_dns_auth() {
 # Check PTR (reverse DNS) for the domain's MX host; updates score via nameref.
 _check_gmail_ptr() {
 	local domain="$1"
-	local -n _ptr_score="$2"
+	local score_var="$2"
 
 	local mx_host
 	mx_host=$(dig MX "$domain" +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//' || true)
@@ -502,7 +510,7 @@ _check_gmail_ptr() {
 			ptr=$(dig -x "$mx_ip" +short 2>/dev/null | sed 's/\.$//' || true)
 			if [[ -n "$ptr" ]]; then
 				print_success "PTR: Reverse DNS configured for mail server"
-				_ptr_score=$((_ptr_score + 1))
+				_increment_named_counter "$score_var" 1
 			else
 				print_warning "PTR: No reverse DNS for $mx_ip"
 			fi
@@ -567,14 +575,14 @@ check_gmail_deliverability() {
 # Check Outlook SPF, DKIM, DMARC, and MTA-STS; updates score via nameref.
 _check_outlook_dns_auth() {
 	local domain="$1"
-	local -n _odns_score="$2"
+	local score_var="$2"
 
 	# 1. SPF
 	local spf_record
 	spf_record=$(dig TXT "$domain" +short 2>/dev/null | grep -i "v=spf1" | tr -d '"' || true)
 	if [[ -n "$spf_record" ]]; then
 		print_success "SPF: Configured"
-		_odns_score=$((_odns_score + 1))
+		_increment_named_counter "$score_var" 1
 	else
 		print_error "SPF: Not configured"
 	fi
@@ -591,7 +599,7 @@ _check_outlook_dns_auth() {
 	done
 	if [[ "$dkim_found" == true ]]; then
 		print_success "DKIM: Valid selector found"
-		_odns_score=$((_odns_score + 1))
+		_increment_named_counter "$score_var" 1
 	else
 		print_error "DKIM: No valid selector found"
 	fi
@@ -602,10 +610,10 @@ _check_outlook_dns_auth() {
 	if [[ -n "$dmarc_record" ]]; then
 		if [[ "$dmarc_record" == *"p=reject"* || "$dmarc_record" == *"p=quarantine"* ]]; then
 			print_success "DMARC: Enforcing policy"
-			_odns_score=$((_odns_score + 2))
+			_increment_named_counter "$score_var" 2
 		else
 			print_warning "DMARC: p=none (monitoring only)"
-			_odns_score=$((_odns_score + 1))
+			_increment_named_counter "$score_var" 1
 		fi
 	else
 		print_error "DMARC: Not configured"
@@ -616,7 +624,7 @@ _check_outlook_dns_auth() {
 	mta_sts=$(dig TXT "_mta-sts.${domain}" +short 2>/dev/null | tr -d '"' || true)
 	if [[ -n "$mta_sts" && "$mta_sts" == *"v=STSv1"* ]]; then
 		print_success "MTA-STS: Configured"
-		_odns_score=$((_odns_score + 1))
+		_increment_named_counter "$score_var" 1
 	else
 		print_info "MTA-STS: Not configured (recommended for Outlook)"
 	fi
@@ -627,7 +635,7 @@ _check_outlook_dns_auth() {
 # Check Spamhaus blacklist for the domain's A record; updates score via nameref.
 _check_outlook_blacklist() {
 	local domain="$1"
-	local -n _bl_score="$2"
+	local score_var="$2"
 
 	local domain_ip
 	domain_ip=$(dig A "$domain" +short 2>/dev/null | head -1 || true)
@@ -638,7 +646,7 @@ _check_outlook_blacklist() {
 		bl_result=$(dig A "${reversed_ip}.zen.spamhaus.org" +short 2>/dev/null || true)
 		if [[ -z "$bl_result" || "$bl_result" == *"NXDOMAIN"* ]]; then
 			print_success "Blacklist: Clean on Spamhaus"
-			_bl_score=$((_bl_score + 1))
+			_increment_named_counter "$score_var" 1
 		else
 			print_error "Blacklist: Listed on Spamhaus — will affect Outlook delivery"
 		fi

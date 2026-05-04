@@ -194,15 +194,27 @@ _get_meta_field() {
 # Rule matching
 # =============================================================================
 
+_lowercase() {
+	local value="$1"
+	printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+	return 0
+}
+
 _match_contains() {
 	local haystack="$1" needle="$2"
+	local haystack_lower needle_lower
 	[[ -z "$needle" ]] && return 0
-	[[ "${haystack,,}" == *"${needle,,}"* ]] && return 0 || return 1
+	haystack_lower="$(_lowercase "$haystack")"
+	needle_lower="$(_lowercase "$needle")"
+	[[ "$haystack_lower" == *"$needle_lower"* ]] && return 0 || return 1
 }
 
 _match_equals() {
 	local a="$1" b="$2"
-	[[ "${a,,}" == "${b,,}" ]] && return 0 || return 1
+	local a_lower b_lower
+	a_lower="$(_lowercase "$a")"
+	b_lower="$(_lowercase "$b")"
+	[[ "$a_lower" == "$b_lower" ]] && return 0 || return 1
 }
 
 _match_subject_contains_any() {

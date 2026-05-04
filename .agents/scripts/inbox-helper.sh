@@ -232,7 +232,7 @@ _detect_sub_folder() {
 	# Extension-based mapping
 	local ext
 	ext="${input##*.}"
-	ext="${ext,,}"  # lowercase
+	ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
 	case "$ext" in
 	eml | msg) echo "email" ;;
 	png | jpg | jpeg | heic | heif | tiff | tif | gif | bmp | webp | pdf)
@@ -839,7 +839,7 @@ _triage_file_kind() {
 	local abs_path="$1"
 	local ext
 	ext="${abs_path##*.}"
-	ext="${ext,,}"
+	ext=$(printf '%s' "$ext" | tr '[:upper:]' '[:lower:]')
 	case "$ext" in
 	eml | emlx | msg) printf 'email' ;;
 	pdf) printf 'pdf' ;;
