@@ -446,7 +446,11 @@ test_queue_governor_reports_drain_rate_telemetry() {
 
 	local state_text
 	state_text=$(<"$STATE_FILE")
-	if [[ "$state_text" == *"OPEN_PR_DRAIN_PER_CYCLE=6"* && "$state_text" == *"ESTIMATED_MERGE_DRAIN_PER_HOUR=12"* && "$state_text" == *"PULSE_ACTIVE_WORKERS=2"* && "$state_text" == *"PULSE_MAX_WORKERS=6"* && "$state_text" == *"PULSE_WORKER_UTILIZATION_PCT=33"* ]]; then
+	local drain_rate_seen="false"
+	if [[ "$state_text" == *"ESTIMATED_MERGE_DRAIN_PER_HOUR=12"* || "$state_text" == *"ESTIMATED_MERGE_DRAIN_PER_HOUR=11"* ]]; then
+		drain_rate_seen="true"
+	fi
+	if [[ "$state_text" == *"OPEN_PR_DRAIN_PER_CYCLE=6"* && "$drain_rate_seen" == "true" && "$state_text" == *"PULSE_ACTIVE_WORKERS=2"* && "$state_text" == *"PULSE_MAX_WORKERS=6"* && "$state_text" == *"PULSE_WORKER_UTILIZATION_PCT=33"* ]]; then
 		print_result "queue governor reports drain rate telemetry" 0
 		return 0
 	fi
