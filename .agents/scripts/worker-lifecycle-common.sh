@@ -963,7 +963,8 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 }
 
 #######################################
-# Detect no_work reasons that happened before a worker launch.
+# Detect failures that happened before a worker launch or during launch
+# preflight.
 #
 # These launch-control skips are not evidence that a worker reached the brief,
 # so they must not participate in the t2769 per-issue no_work NMR breaker.
@@ -971,14 +972,21 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 # still flow through the existing breaker path unchanged.
 #
 # Args: $1=reason
-# Returns: 0 when reason is a pre-worker-launch skip, 1 otherwise.
+# Returns: 0 when reason is a pre-worker-launch/preflight skip, 1 otherwise.
 #######################################
-_no_work_reason_is_prelaunch_skip() {
+_worker_failure_reason_is_launch_preflight() {
 	local reason="${1:-}"
 
 	case "$reason" in
+	worker_launch_rc_2 | \
+	dispatch_aborted:worker_launch_rc_2 | \
+	canary_preflight | \
+	*"canary preflight failed"* | \
 	*"before worktree pre-creation"* | \
 	*"worktree pre-creation failed"* | \
+	*"precreation failed"* | \
+	*"predispatch_validator_closed"* | \
+	*"eligibility_gate"* | \
 	*"pre-worker-launch"* | \
 	*"pre-launch"*)
 		return 0
@@ -987,6 +995,12 @@ _no_work_reason_is_prelaunch_skip() {
 		return 1
 		;;
 	esac
+}
+
+_no_work_reason_is_prelaunch_skip() {
+	local reason="${1:-}"
+	_worker_failure_reason_is_launch_preflight "$reason"
+	return $?
 }
 
 _log_no_work_skip_escalation() {
