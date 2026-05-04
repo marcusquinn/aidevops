@@ -90,6 +90,15 @@ _try_cached_health_issue_lookup() {
 		return 0
 	fi
 
+	# gh issue view has returned both GraphQL-style uppercase enums (OPEN/CLOSED)
+	# and REST-style lowercase values (open/closed) depending on fallback path.
+	# Normalize before branching so REST fallback cache validation does not log
+	# healthy open dashboards as "unexpected state" every stats-wrapper cycle.
+	case "$issue_state" in
+		[Oo][Pp][Ee][Nn]) issue_state="OPEN" ;;
+		[Cc][Ll][Oo][Ss][Ee][Dd]) issue_state="CLOSED" ;;
+	esac
+
 	if [[ "$issue_state" == "CLOSED" ]]; then
 		[[ "$runner_role" == "$_ROLE_SUPERVISOR" ]] && _unpin_health_issue "$cached_number" "$repo_slug"
 		rm -f "$health_issue_file" 2>/dev/null || true
