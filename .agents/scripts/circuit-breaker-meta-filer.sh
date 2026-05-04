@@ -30,6 +30,16 @@
 #                                                 auto-dispatch,tier:thinking,
 #                                                 model:opus-4-7,bug,pulse,
 #                                                 framework,circuit-breaker-meta
+#   AIDEVOPS_CIRCUIT_BREAKER_META_TARGET_REPO   force the repo where the
+#                                               meta-issue is filed. By default,
+#                                               public repos without framework
+#                                               script sources route to the
+#                                               framework source repo so workers
+#                                               land in a repo containing the
+#                                               files named by the brief.
+#   AIDEVOPS_CIRCUIT_BREAKER_META_FRAMEWORK_REPO
+#                                               framework source repo fallback.
+#                                               Default: marcusquinn/aidevops.
 #   AIDEVOPS_CIRCUIT_BREAKER_META_FORENSIC_LINES
 #                                               max log lines included in the
 #                                               body. Default 50.
@@ -71,24 +81,113 @@ readonly _CB_BREAKER_COST='cost'
 readonly _CB_BREAKER_NO_WORK='no_work'
 readonly _CB_LABEL_COST='t2007 cost'
 readonly _CB_LABEL_NO_WORK='t2769 no_work'
+readonly _CB_DEFAULT_FRAMEWORK_REPO='marcusquinn/aidevops'
+
+#######################################
+# Return the blocked-by label that links an original issue to its meta-issue.
+# Same-repo links keep the legacy short label; cross-repo links include the
+# meta repo so unblock-on-merge can remove the exact label later.
+# Args: $1=original_repo, $2=meta_repo, $3=meta_number
+# Stdout: label
+# Returns: 0 always
+#######################################
+_cb_meta_blocked_label() {
+	local original_repo="$1"
+	local meta_repo="$2"
+	local meta_number="$3"
+
+	if [[ "$original_repo" == "$meta_repo" ]]; then
+		printf 'blocked-by:#%s' "$meta_number"
+	else
+		printf 'blocked-by:%s#%s' "$meta_repo" "$meta_number"
+	fi
+	return 0
+}
+
+#######################################
+# Does the repo contain the framework source script named in generated briefs?
+# Args: $1=repo_slug
+# Returns: 0 if present, 1 otherwise
+#######################################
+_cb_meta_repo_has_framework_sources() {
+	local repo_slug="$1"
+
+	if gh api "repos/${repo_slug}/contents/.agents/scripts/circuit-breaker-meta-filer.sh" \
+		>/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Is the original repo private? Fail closed on API errors to avoid leaking
+# private repo names into a public framework issue.
+# Args: $1=repo_slug
+# Returns: 0 if private/unknown, 1 if public
+#######################################
+_cb_meta_repo_is_private_or_unknown() {
+	local repo_slug="$1"
+	local is_private=""
+
+	is_private=$(gh api "repos/${repo_slug}" --jq '.private // true' 2>/dev/null) || return 0
+	if [[ "$is_private" == "true" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Choose where to file the meta-issue.
+#
+# Root cause fixed for awardsapp#4003: framework breaker meta-issues were filed
+# into application repos that do not contain aidevops framework scripts, so the
+# dispatched worker had no target files to edit and exited clean/no-work. Public
+# repos that lack the framework source route to the framework repo by default;
+# private/unknown repos stay local to avoid leaking private repo names.
+# Args: $1=original_repo
+# Stdout: target repo slug
+# Returns: 0 always
+#######################################
+_cb_meta_target_repo() {
+	local original_repo="$1"
+
+	if [[ -n "${AIDEVOPS_CIRCUIT_BREAKER_META_TARGET_REPO:-}" ]]; then
+		printf '%s' "$AIDEVOPS_CIRCUIT_BREAKER_META_TARGET_REPO"
+		return 0
+	fi
+
+	if _cb_meta_repo_has_framework_sources "$original_repo"; then
+		printf '%s' "$original_repo"
+		return 0
+	fi
+
+	if _cb_meta_repo_is_private_or_unknown "$original_repo"; then
+		printf '%s' "$original_repo"
+		return 0
+	fi
+
+	printf '%s' "${AIDEVOPS_CIRCUIT_BREAKER_META_FRAMEWORK_REPO:-$_CB_DEFAULT_FRAMEWORK_REPO}"
+	return 0
+}
 
 #######################################
 # Idempotency check: has a meta-issue marker already been recorded
-# on this issue? Returns the existing meta-issue number on stdout
+# on this issue? Returns the existing meta-issue ref on stdout
 # when found, empty otherwise.
 #
 # Marker format on the original issue (in a comment body):
 #   <!-- circuit-breaker-meta-filed:#<NNN> -->
+#   <!-- circuit-breaker-meta-filed:<owner>/<repo>#<NNN> -->
 #
 # Args: $1=issue_number, $2=repo_slug
-# Stdout: existing meta-issue number, or empty
+# Stdout: existing meta-issue ref (owner/repo#number), or empty
 # Returns: 0 always (best-effort)
 #######################################
 _cb_meta_existing() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local marker_re
-	marker_re='<!-- '"${_CB_META_MARKER}"':#([0-9]+) -->'
+	marker_re='<!-- '"${_CB_META_MARKER}"':([^[:space:]#]+/[^[:space:]#]+)?#[0-9]+ -->'
 
 	local comments
 	comments=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate 2>/dev/null) || comments=""
@@ -100,10 +199,17 @@ _cb_meta_existing() {
 	hit=$(printf '%s' "$comments" |
 		jq -r '.[].body // ""' 2>/dev/null |
 		grep -oE "$marker_re" |
-		head -1 |
-		grep -oE '#[0-9]+' |
-		tr -d '#' || true)
-	[[ -n "$hit" ]] && printf '%s' "$hit"
+		head -1 || true)
+	[[ -n "$hit" ]] || return 0
+
+	local marker_value
+	marker_value="${hit#*"${_CB_META_MARKER}":}"
+	marker_value="${marker_value% -->}"
+	if [[ "$marker_value" == \#* ]]; then
+		printf '%s%s' "$repo_slug" "$marker_value"
+	else
+		printf '%s' "$marker_value"
+	fi
 	return 0
 }
 
@@ -181,7 +287,7 @@ The breaker tripping is the SYMPTOM. This issue is for finding and fixing the RO
 
 The existing breaker (\`${breaker_label}\`) halts dispatch and applies \`needs-maintainer-review\` on the original, but does not move the underlying problem forward. NMR is a maintainer-queue dead-end. Filing this meta-issue converts the trip into a self-healing cycle: forensics → hypothesis → fix → original unblocks automatically.
 
-The original (#${issue_number}) gets \`blocked-by:#<this>\` and clears automatically when this meta-issue's PR merges (handled by \`pulse-merge.sh::_unblock_circuit_breaker_meta_original\`).
+The original (#${issue_number}) gets a \`blocked-by\` label pointing at this meta-issue and clears automatically when this meta-issue's PR merges (handled by \`pulse-merge.sh::_unblock_circuit_breaker_meta_original\`).
 
 ## Tracking original issue
 
@@ -270,7 +376,7 @@ ${stages_slice:-(no matching stage records)}
 
 1. Root cause identified and named explicitly in the PR description (which file/function/race).
 2. Fix lands as a normal PR with \`Resolves #<this>\` (NOT \`Resolves #${issue_number}\` — this meta-issue is the unit of work, the original is downstream).
-3. PR merge automatically removes \`blocked-by:#<this>\` from #${issue_number} via \`_unblock_circuit_breaker_meta_original\`.
+3. PR merge automatically removes the meta \`blocked-by\` label from #${issue_number} via \`_unblock_circuit_breaker_meta_original\`.
 4. If no other circuit-breaker markers remain on #${issue_number}, NMR is also cleared automatically.
 5. A regression test exists for the specific failure mode identified (test in \`.agents/scripts/tests/\`).
 
@@ -279,7 +385,7 @@ ${stages_slice:-(no matching stage records)}
 \`\`\`bash
 # After the fix lands and #${issue_number} unblocks, dispatch should proceed normally:
 gh issue view ${issue_number} --repo ${repo_slug} --json labels --jq '[.labels[].name]'
-# Expect: no needs-maintainer-review, no blocked-by:#<this>
+# Expect: no needs-maintainer-review, no blocked-by label for the meta-issue
 
 # Re-run the regression tests:
 bash .agents/scripts/tests/test-circuit-breaker-meta-filer.sh
@@ -365,18 +471,19 @@ _cb_meta_body() {
 }
 
 #######################################
-# Apply blocked-by:#<meta> label to the original issue and post the
+# Apply blocked-by:<meta-ref> label to the original issue and post the
 # marker comment that records the meta-issue number for idempotency.
 #
-# Args: $1=original_issue, $2=repo_slug, $3=meta_issue_number,
-#        $4=breaker_type, $5=failure_count
+# Args: $1=original_issue, $2=original_repo, $3=meta_repo,
+#       $4=meta_issue_number, $5=breaker_type, $6=failure_count
 #######################################
 _cb_meta_link_original() {
 	local original_issue="$1"
 	local repo_slug="$2"
-	local meta_number="$3"
-	local breaker_type="$4"
-	local failure_count="$5"
+	local meta_repo="$3"
+	local meta_number="$4"
+	local breaker_type="$5"
+	local failure_count="$6"
 
 	local breaker_label="$_CB_LABEL_NO_WORK"
 	[[ "$breaker_type" == "$_CB_BREAKER_COST" ]] && breaker_label="$_CB_LABEL_COST"
@@ -384,21 +491,27 @@ _cb_meta_link_original() {
 	# Best-effort: ensure the blocked-by label exists, then apply it.
 	# We use a per-meta label so multiple concurrent breakers can each
 	# unblock independently (matches t2442 parent-task linkage style).
-	local blocked_label="blocked-by:#${meta_number}"
+	local blocked_label
+	blocked_label=$(_cb_meta_blocked_label "$repo_slug" "$meta_repo" "$meta_number")
 	gh issue edit "$original_issue" --repo "$repo_slug" \
 		--add-label "$blocked_label" 2>/dev/null || true
+
+	local tracking_ref="#${meta_number}"
+	if [[ "$repo_slug" != "$meta_repo" ]]; then
+		tracking_ref="${meta_repo}#${meta_number}"
+	fi
 
 	# Marker comment for idempotency. The HTML marker line is the canonical
 	# idempotency signal; the human-readable text is for maintainers.
 	local body
-	body="<!-- ${_CB_META_MARKER}:#${meta_number} -->
+	body="<!-- ${_CB_META_MARKER}:${tracking_ref} -->
 ## Circuit Breaker Meta-Issue Filed (t3076)
 
 The **${breaker_label}** breaker tripped after ${failure_count} consecutive failure(s) on this issue. A root-cause meta-issue has been filed:
 
-→ Tracking: #${meta_number}
+→ Tracking: ${tracking_ref}
 
-This issue is now \`blocked-by:#${meta_number}\` and will unblock automatically when the meta-issue's PR merges. NMR will also clear if no other breaker markers remain.
+This issue is now \`${blocked_label}\` and will unblock automatically when the meta-issue's PR merges. NMR will also clear if no other breaker markers remain.
 
 _Auto-filed by \`circuit-breaker-meta-filer.sh\` (t3076). Set \`AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE=1\` to suppress._"
 
@@ -468,6 +581,7 @@ cmd_file() {
 	local tier="$_CB_ARG_TIER"
 	local spent="$_CB_ARG_SPENT"
 	local budget="$_CB_ARG_BUDGET"
+	local meta_repo=""
 
 	if [[ "${AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE:-0}" == "1" ]]; then
 		log_info "[circuit-breaker-meta-filer] disabled via AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE — skip" >&2
@@ -489,12 +603,17 @@ cmd_file() {
 		return 1
 	fi
 
+	meta_repo=$(_cb_meta_target_repo "$repo_slug")
+	[[ -n "$meta_repo" ]] || meta_repo="$repo_slug"
+
 	# Idempotency: bail out if a meta-issue already exists for this original.
 	local existing_meta
 	existing_meta=$(_cb_meta_existing "$issue_number" "$repo_slug")
 	if [[ -n "$existing_meta" ]]; then
-		log_info "[circuit-breaker-meta-filer] idempotent: meta-issue #${existing_meta} already filed for ${repo_slug}#${issue_number}" >&2
-		printf 'https://github.com/%s/issues/%s\n' "$repo_slug" "$existing_meta"
+		local existing_repo="${existing_meta%#*}"
+		local existing_number="${existing_meta##*#}"
+		log_info "[circuit-breaker-meta-filer] idempotent: meta-issue ${existing_meta} already filed for ${repo_slug}#${issue_number}" >&2
+		printf 'https://github.com/%s/issues/%s\n' "$existing_repo" "$existing_number"
 		return 0
 	fi
 
@@ -509,7 +628,7 @@ cmd_file() {
 	local labels="${AIDEVOPS_CIRCUIT_BREAKER_META_LABELS:-${_CB_META_DEFAULT_LABELS}}"
 
 	local meta_url
-	if ! meta_url=$(gh_create_issue --repo "$repo_slug" \
+	if ! meta_url=$(gh_create_issue --repo "$meta_repo" \
 		--title "$title" \
 		--body "$body" \
 		--label "$labels" 2>&1); then
@@ -519,28 +638,31 @@ cmd_file() {
 
 	# Extract issue number from URL
 	local meta_number
-	meta_number=$(printf '%s' "$meta_url" | grep -oE '[0-9]+$' | head -1)
+	meta_number=$(printf '%s' "$meta_url" |
+		grep -oE 'github\.com/[^[:space:]]+/[^[:space:]]+/issues/[0-9]+' |
+		head -1 |
+		grep -oE '[0-9]+$' || true)
 	if [[ -z "$meta_number" ]]; then
 		log_error "[circuit-breaker-meta-filer] could not parse meta-issue number from URL: ${meta_url}" >&2
 		return 2
 	fi
 
-	_cb_meta_link_original "$issue_number" "$repo_slug" "$meta_number" \
-		"$breaker_type" "$failure_count"
+	_cb_meta_link_original "$issue_number" "$repo_slug" "$meta_repo" \
+		"$meta_number" "$breaker_type" "$failure_count"
 
-	log_success "[circuit-breaker-meta-filer] filed meta-issue ${meta_url} for ${repo_slug}#${issue_number} (${breaker_label}, count=${failure_count})" >&2
+	log_success "[circuit-breaker-meta-filer] filed meta-issue ${meta_url} in ${meta_repo} for ${repo_slug}#${issue_number} (${breaker_label}, count=${failure_count})" >&2
 	printf '%s\n' "$meta_url"
 	return 0
 }
 
 #######################################
-# Extract the original issue number from a meta-issue's body.
+# Extract the original issue ref from a meta-issue's body.
 # The meta-issue body contains a "## Tracking original issue" section
 # with a line "- Original: <slug>#<NNN>". This function returns that
-# number for the given meta-issue number.
+# full ref for the given meta-issue number.
 #
 # Args: $1=meta_issue_number, $2=repo_slug
-# Stdout: original issue number, or empty
+# Stdout: original issue ref (owner/repo#number), or empty
 # Returns: 0 always (best-effort)
 #######################################
 _cb_meta_extract_original() {
@@ -553,13 +675,12 @@ _cb_meta_extract_original() {
 	[[ -z "$body" || "$body" == "null" ]] && return 0
 
 	# Match "- Original: owner/repo#NNN" — slug-aware so cross-repo metas
-	# (a future possibility) still resolve to the right number.
+	# resolve the repo to unblock, not just the issue number.
 	printf '%s' "$body" |
 		grep -E '^- Original: ' |
 		head -1 |
-		grep -oE '#[0-9]+' |
-		head -1 |
-		tr -d '#' || true
+		grep -oE '[^[:space:]#]+/[^[:space:]#]+#[0-9]+' |
+		head -1 || true
 	return 0
 }
 
@@ -601,7 +722,7 @@ _cb_meta_other_markers_remain() {
 
 #######################################
 # Unblock an original issue when its meta-issue's PR has merged.
-# Removes blocked-by:#<meta>; if no other breaker markers remain,
+# Removes the blocked-by label for the meta; if no other breaker markers remain,
 # also clears needs-maintainer-review and posts an unblock comment.
 # Idempotent — second call is a no-op.
 #
@@ -635,29 +756,41 @@ cmd_unblock_on_merge() {
 		return 1
 	fi
 
-	local original_issue
-	original_issue=$(_cb_meta_extract_original "$meta_number" "$repo_slug")
-	if [[ -z "$original_issue" ]]; then
+	local original_ref
+	original_ref=$(_cb_meta_extract_original "$meta_number" "$repo_slug")
+	if [[ -z "$original_ref" ]]; then
 		log_info "[circuit-breaker-meta-filer] unblock: no original-issue line in #${meta_number} body — not a meta-issue, skip" >&2
 		return 0
 	fi
 
-	local blocked_label="blocked-by:#${meta_number}"
-	gh issue edit "$original_issue" --repo "$repo_slug" \
+	local original_repo="${original_ref%#*}"
+	local original_issue="${original_ref##*#}"
+	if [[ -z "$original_repo" || ! "$original_issue" =~ ^[0-9]+$ ]]; then
+		log_info "[circuit-breaker-meta-filer] unblock: invalid original ref '${original_ref}' in #${meta_number} body — skip" >&2
+		return 0
+	fi
+
+	local blocked_label
+	blocked_label=$(_cb_meta_blocked_label "$original_repo" "$repo_slug" "$meta_number")
+	gh issue edit "$original_issue" --repo "$original_repo" \
 		--remove-label "$blocked_label" 2>/dev/null || true
+	if [[ "$blocked_label" != "blocked-by:#${meta_number}" ]]; then
+		gh issue edit "$original_issue" --repo "$original_repo" \
+			--remove-label "blocked-by:#${meta_number}" 2>/dev/null || true
+	fi
 
 	local nmr_cleared="no"
-	if ! _cb_meta_other_markers_remain "$original_issue" "$repo_slug"; then
-		gh issue edit "$original_issue" --repo "$repo_slug" \
+	if ! _cb_meta_other_markers_remain "$original_issue" "$original_repo"; then
+		gh issue edit "$original_issue" --repo "$original_repo" \
 			--remove-label "needs-maintainer-review" 2>/dev/null || true
 		nmr_cleared="yes"
 	fi
 
-	gh_issue_comment "$original_issue" --repo "$repo_slug" \
+	gh_issue_comment "$original_issue" --repo "$original_repo" \
 		--body "<!-- circuit-breaker-meta-unblocked:#${meta_number} -->
 ## Circuit Breaker Meta-Issue Resolved (t3076)
 
-The meta-issue #${meta_number} (which was diagnosing the breaker trip on this issue) has merged its fix. \`blocked-by:#${meta_number}\` has been removed.
+The meta-issue ${repo_slug}#${meta_number} (which was diagnosing the breaker trip on this issue) has merged its fix. \`${blocked_label}\` has been removed.
 
 NMR cleared: **${nmr_cleared}** _(no other breaker markers remained)_.
 
@@ -665,7 +798,7 @@ If dispatch should now proceed, the next pulse cycle will pick this up.
 
 _Auto-released by \`circuit-breaker-meta-filer.sh\` (t3076) via \`pulse-merge.sh::_handle_post_merge_actions\`._" 2>/dev/null || true
 
-	log_success "[circuit-breaker-meta-filer] unblocked ${repo_slug}#${original_issue} (meta=#${meta_number}, nmr_cleared=${nmr_cleared})" >&2
+	log_success "[circuit-breaker-meta-filer] unblocked ${original_repo}#${original_issue} (meta=${repo_slug}#${meta_number}, nmr_cleared=${nmr_cleared})" >&2
 	return 0
 }
 
@@ -685,6 +818,8 @@ USAGE:
 ENVIRONMENT:
   AIDEVOPS_CIRCUIT_BREAKER_META_FILE_DISABLE   set to 1 to disable
   AIDEVOPS_CIRCUIT_BREAKER_META_LABELS         override labels (CSV)
+  AIDEVOPS_CIRCUIT_BREAKER_META_TARGET_REPO    force meta-issue target repo
+  AIDEVOPS_CIRCUIT_BREAKER_META_FRAMEWORK_REPO framework source repo fallback
   AIDEVOPS_CIRCUIT_BREAKER_META_FORENSIC_LINES max log lines (default 50)
 
 EXIT CODES:
@@ -698,7 +833,7 @@ WIRED BY:
 
 CLEANUP:
   pulse-merge.sh::_unblock_circuit_breaker_meta_original removes
-  blocked-by:#<meta> from the original when the meta-PR merges.
+  the meta blocked-by label from the original when the meta-PR merges.
 EOF
 	return 0
 }

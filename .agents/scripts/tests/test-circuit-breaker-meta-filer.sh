@@ -59,8 +59,12 @@ printf '0' >"$ISSUE_CREATE_COUNT_FILE"
 # Fixture state files — the stub reads these to vary behaviour per scenario.
 FIXTURE_COMMENTS_JSON="${TEST_ROOT}/fixture-comments.json"
 FIXTURE_META_BODY="${TEST_ROOT}/fixture-meta-body"
+FIXTURE_HAS_FRAMEWORK_SOURCE="${TEST_ROOT}/fixture-has-framework-source"
+FIXTURE_REPO_PRIVATE="${TEST_ROOT}/fixture-repo-private"
 echo '[]' >"$FIXTURE_COMMENTS_JSON"
 echo '' >"$FIXTURE_META_BODY"
+printf '1' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
+printf 'false' >"$FIXTURE_REPO_PRIVATE"
 
 write_stub_gh() {
 	cat >"${STUB_DIR}/gh" <<STUB
@@ -70,22 +74,41 @@ echo "\$@" >>"${STUB_LOG}"
 
 # gh issue create --repo SLUG --title T --body B --label L
 if [[ "\$1" == "issue" && "\$2" == "create" ]]; then
+	repo='marcusquinn/aidevops'
+	while [[ "\$#" -gt 0 ]]; do
+		if [[ "\$1" == "--repo" ]]; then
+			repo="\${2:-\$repo}"
+			shift 2
+			continue
+		fi
+		shift
+	done
 	# Increment counter so we can assert idempotency
 	cnt=\$(cat "${ISSUE_CREATE_COUNT_FILE}")
 	printf '%s' "\$((cnt + 1))" >"${ISSUE_CREATE_COUNT_FILE}"
-	echo 'https://github.com/marcusquinn/aidevops/issues/99999'
+	echo "https://github.com/\${repo}/issues/99999"
 	exit 0
 fi
 
 # gh api repos/SLUG/issues/N/comments --paginate
 if [[ "\$1" == "api" ]]; then
 	case "\$2" in
+		repos/*/contents/.agents/scripts/circuit-breaker-meta-filer.sh*)
+			if [[ "\$(cat "${FIXTURE_HAS_FRAMEWORK_SOURCE}")" == "1" ]]; then
+				echo '{"type":"file"}'
+				exit 0
+			fi
+			echo '{"message":"Not Found"}' >&2
+			exit 1 ;;
 		repos/*/issues/*/comments)
 			cat "${FIXTURE_COMMENTS_JSON}" 2>/dev/null || echo '[]'
 			exit 0 ;;
 		repos/*/issues/*)
 			# gh api repos/SLUG/issues/N --jq '.body'
 			cat "${FIXTURE_META_BODY}" 2>/dev/null || echo ''
+			exit 0 ;;
+		repos/*)
+			cat "${FIXTURE_REPO_PRIVATE}" 2>/dev/null || echo 'false'
 			exit 0 ;;
 		user)
 			echo '{"login":"test-runner"}'
@@ -149,6 +172,8 @@ reset_stubs() {
 	printf '0' >"$ISSUE_CREATE_COUNT_FILE"
 	echo '[]' >"$FIXTURE_COMMENTS_JSON"
 	echo '' >"$FIXTURE_META_BODY"
+	printf '1' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
+	printf 'false' >"$FIXTURE_REPO_PRIVATE"
 	return 0
 }
 
@@ -206,6 +231,49 @@ else
 fi
 
 # =============================================================================
+# Test 1b: Public app repos without framework sources route metas to aidevops
+# =============================================================================
+reset_stubs
+printf '0' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
+printf 'false' >"$FIXTURE_REPO_PRIVATE"
+
+OUT=$("$META_FILER" file \
+	--issue 4003 --repo awardsapp/awardsapp \
+	--breaker no_work --failure-count 3 \
+	--reason "worker canary preflight failed before worktree pre-creation" 2>&1)
+RC=$?
+
+if [[ "$RC" -eq 0 ]]; then
+	print_result "cross-repo: exit 0" 0
+else
+	print_result "cross-repo: exit 0" 1 "got rc=$RC, output: $OUT"
+fi
+
+if printf '%s' "$OUT" | tail -1 | grep -q 'github.com/marcusquinn/aidevops/issues/99999'; then
+	print_result "cross-repo: files meta in framework repo" 0
+else
+	print_result "cross-repo: files meta in framework repo" 1 "stdout: $OUT"
+fi
+
+if grep -qE 'issue create --repo marcusquinn/aidevops' "$STUB_LOG"; then
+	print_result "cross-repo: create call targets framework repo" 0
+else
+	print_result "cross-repo: create call targets framework repo" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+if grep -qE 'issue edit 4003 --repo awardsapp/awardsapp --add-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+	print_result "cross-repo: original gets full blocked-by label" 0
+else
+	print_result "cross-repo: original gets full blocked-by label" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+if grep -q 'circuit-breaker-meta-filed:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+	print_result "cross-repo: marker records full meta ref" 0
+else
+	print_result "cross-repo: marker records full meta ref" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+# =============================================================================
 # Test 2: Idempotency — second trip with marker present returns existing
 # =============================================================================
 reset_stubs
@@ -237,6 +305,41 @@ if printf '%s' "$OUT" | tail -1 | grep -q '/issues/42424'; then
 	print_result "idempotent: returns existing meta-issue URL (#42424)" 0
 else
 	print_result "idempotent: returns existing meta-issue URL (#42424)" 1 "stdout: $OUT"
+fi
+
+# =============================================================================
+# Test 2b: Idempotency handles cross-repo markers
+# =============================================================================
+reset_stubs
+printf '0' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
+printf 'false' >"$FIXTURE_REPO_PRIVATE"
+cat >"$FIXTURE_COMMENTS_JSON" <<'EOF'
+[{"body":"<!-- circuit-breaker-meta-filed:marcusquinn/aidevops#51515 -->\n## prior cross-repo trip"}]
+EOF
+
+OUT=$("$META_FILER" file \
+	--issue 4003 --repo awardsapp/awardsapp \
+	--breaker no_work --failure-count 4 \
+	--reason "second cross-repo trip" 2>&1)
+RC=$?
+
+if [[ "$RC" -eq 0 ]]; then
+	print_result "idempotent-cross-repo: exit 0" 0
+else
+	print_result "idempotent-cross-repo: exit 0" 1 "rc=$RC"
+fi
+
+CREATE_COUNT=$(count_issue_creates)
+if [[ "$CREATE_COUNT" == "0" ]]; then
+	print_result "idempotent-cross-repo: NO new issue created" 0
+else
+	print_result "idempotent-cross-repo: NO new issue created" 1 "got count=$CREATE_COUNT"
+fi
+
+if printf '%s' "$OUT" | tail -1 | grep -q 'github.com/marcusquinn/aidevops/issues/51515'; then
+	print_result "idempotent-cross-repo: returns existing framework URL" 0
+else
+	print_result "idempotent-cross-repo: returns existing framework URL" 1 "stdout: $OUT"
 fi
 
 # =============================================================================
@@ -316,6 +419,40 @@ if grep -qE 'issue comment 21840 ' "$STUB_LOG"; then
 	print_result "unblock: posts unblock comment on original" 0
 else
 	print_result "unblock: posts unblock comment on original" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+# =============================================================================
+# Test 5b: unblock-on-merge — cross-repo meta unblocks original repo
+# =============================================================================
+reset_stubs
+
+cat >"$FIXTURE_META_BODY" <<'EOF'
+## Tracking original issue
+
+- Original: awardsapp/awardsapp#4003
+- Breaker: `t2769 no_work` (`cost-circuit-breaker:no_work_loop`)
+EOF
+
+OUT=$("$META_FILER" unblock-on-merge \
+	--meta 99999 --repo marcusquinn/aidevops 2>&1)
+RC=$?
+
+if [[ "$RC" -eq 0 ]]; then
+	print_result "unblock-cross-repo: exit 0" 0
+else
+	print_result "unblock-cross-repo: exit 0" 1 "rc=$RC, output: $OUT"
+fi
+
+if grep -qE 'issue edit 4003 --repo awardsapp/awardsapp --remove-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+	print_result "unblock-cross-repo: removes full blocked-by label" 0
+else
+	print_result "unblock-cross-repo: removes full blocked-by label" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
+if grep -qE 'issue comment 4003 --repo awardsapp/awardsapp' "$STUB_LOG"; then
+	print_result "unblock-cross-repo: posts comment on original repo" 0
+else
+	print_result "unblock-cross-repo: posts comment on original repo" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
 # =============================================================================
