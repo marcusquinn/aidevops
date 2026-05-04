@@ -187,7 +187,7 @@ _build_oimp_lookup_for_slug() {
 	printf '%s' "$merged_prs_json" | jq -r '
 		[
 			.[] | . as $pr |
-			select(($pr.mergedAt // $pr.merged_at // "") != "") |
+			select((.mergedAt // .merged_at // "") != "") |
 			(.body // "") |
 			scan("(?i)(?:resolves|closes|fixes)\\s+#([0-9]+)") |
 			"\(.[0])=\($pr.number)"
