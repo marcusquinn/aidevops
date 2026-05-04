@@ -728,6 +728,14 @@ _handle_run_result() {
 				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
 				return 77
 			fi
+			if output_has_blocked_signal "$output_file"; then
+				_run_result_label="blocked"
+				_run_failure_reason="blocked"
+				_run_classification_source="model_blocked_signal"
+				rm -f "$output_file"
+				print_warning "$selected_model worker reported BLOCKED terminal state — recording blocked instead of success"
+				return 0
+			fi
 		fi
 
 		_run_result_label="success"

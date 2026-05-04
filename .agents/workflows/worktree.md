@@ -22,7 +22,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Separate working directories per branch — no branch-switching conflicts
-- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
+- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. Create durable worktrees under `~/Git/`, not runtime temp dirs. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`) — full docs: `tools/git/worktrunk.md`
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
 

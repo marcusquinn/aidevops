@@ -52,10 +52,12 @@ fi
 
 repo_dir="${TEST_TMP}/repo"
 wt_dir="${TEST_TMP}/worktree"
-mkdir -p "${repo_dir}/node_modules/example" "$wt_dir" || fail "failed to create restore fixture dirs"
+mkdir -p "${repo_dir}/node_modules/example" "${repo_dir}/node_modules/.bin" "${repo_dir}/node_modules/prettier/bin" "$wt_dir" || fail "failed to create restore fixture dirs"
 printf '{}\n' >"${repo_dir}/package.json" || fail "failed to create repo package.json"
 printf '{}\n' >"${wt_dir}/package.json" || fail "failed to create worktree package.json"
 printf 'fixture\n' >"${repo_dir}/node_modules/example/file.txt" || fail "failed to create node_modules fixture"
+printf '#!/usr/bin/env node\n' >"${repo_dir}/node_modules/prettier/bin/prettier.cjs" || fail "failed to create prettier fixture"
+ln -s ../prettier/bin/prettier.cjs "${repo_dir}/node_modules/.bin/prettier" || fail "failed to create prettier bin symlink"
 
 LOGFILE="${TEST_TMP}/pulse.log" \
 	AIDEVOPS_WORKSPACE_DIR="$TEST_TMP" \
@@ -64,10 +66,15 @@ LOGFILE="${TEST_TMP}/pulse.log" \
 	WORKTREE_NODE_MODULES_RESTORE_LOCK_TIMEOUT_S=1 \
 	_dlw_restore_worktree_deps "$wt_dir" "$repo_dir"
 
-if [[ -d "${wt_dir}/node_modules" ]]; then
-	fail "root node_modules restore was not skipped"
+if [[ -d "${wt_dir}/node_modules/example" ]]; then
+	fail "root node_modules payload was copied"
+fi
+
+if [[ ! -L "${wt_dir}/node_modules/.bin" ]]; then
+	fail "root node_modules .bin tooling link was not created"
 fi
 
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
-printf 'PASS: root node_modules restore is skipped by default\n'
+printf 'PASS: root node_modules payload is skipped by default\n'
+printf 'PASS: root node_modules .bin tooling is linked by default\n'
 exit 0

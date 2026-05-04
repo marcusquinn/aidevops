@@ -636,8 +636,43 @@ _dispatch_should_skip_candidate() {
 		_dispatch_stats_increment "dispatch_candidate_skipped_empty_body"
 		return 0
 	fi
+	if _dispatch_issue_body_missing_worker_context "$issue_body"; then
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — missing Worker Guidance/How implementation context, needs enrichment before dispatch" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_missing_worker_context"
+		return 0
+	fi
 
 	pulse_dispatch_debug_log "#${issue_number}: passed all skip checks — proceeding to dispatch"
+	return 1
+}
+
+#######################################
+# Detect issue bodies that explicitly say implementation context is missing and
+# would therefore deterministically make /full-loop stop with BLOCKED before
+# implementation. Do not reject every body that lacks Worker Guidance here:
+# dispatch_with_dedup has a later brief-enrichment layer that can repair older
+# issue bodies when a local task brief exists.
+#
+# Arguments:
+#   $1 - issue body
+# Returns:
+#   0 - body is missing worker implementation context
+#   1 - body appears dispatchable
+#######################################
+_dispatch_issue_body_missing_worker_context() {
+	local issue_body="$1"
+
+	if [[ -z "$issue_body" ]]; then
+		return 0
+	fi
+	case "$issue_body" in
+	*"missing implementation context"* | *"Missing implementation context"* | \
+		*"needs implementation context"* | *"Needs implementation context"* | \
+		*"no implementation details"* | *"No implementation details"* | \
+		*"no worker guidance"* | *"No worker guidance"*)
+		return 0
+		;;
+	esac
 	return 1
 }
 
