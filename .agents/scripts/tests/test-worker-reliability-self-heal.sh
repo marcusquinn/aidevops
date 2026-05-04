@@ -38,6 +38,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 # auto-update-helper.sh was split in GH#20343.
 AUTO_UPDATE_SCRIPT="${REPO_ROOT}/.agents/scripts/auto-update-freshness-lib.sh"
 HEADLESS_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-helper.sh"
+HEADLESS_WORKER_SCRIPT="${REPO_ROOT}/.agents/scripts/headless-runtime-worker.sh"
 LIFECYCLE_SCRIPT="${REPO_ROOT}/.agents/scripts/worker-lifecycle-common.sh"
 SCHEDULERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/modules/schedulers.sh"
 
@@ -129,8 +130,14 @@ define_preserve_helper() {
 	helper_src=$(awk '
 		/^_preserve_no_activity_output\(\) \{/,/^}$/ { print }
 	' "$HEADLESS_SCRIPT")
+	if [[ -z "$helper_src" && -f "$HEADLESS_WORKER_SCRIPT" ]]; then
+		helper_src=$(awk '
+			/^_preserve_no_activity_output\(\) \{/,/^}$/ { print }
+		' "$HEADLESS_WORKER_SCRIPT")
+	fi
 	if [[ -z "$helper_src" ]]; then
-		printf 'ERROR: could not extract _preserve_no_activity_output\n' >&2
+		printf 'ERROR: could not extract _preserve_no_activity_output from %s or %s\n' \
+			"$HEADLESS_SCRIPT" "$HEADLESS_WORKER_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090
@@ -395,7 +402,7 @@ NMR_APPROVAL_SCRIPT="${NMR_APPROVAL_SCRIPT:-$(dirname "$LIFECYCLE_SCRIPT")/pulse
 
 test_no_work_circuit_breaker_threshold_guard() {
 	# _log_no_work_skip_escalation must reference NO_WORK_NMR_THRESHOLD
-	# and apply needs-maintainer-review when the threshold is reached.
+	# and delegate to the NMR breaker when the threshold is reached.
 
 	# Assertion 1: NO_WORK_NMR_THRESHOLD is referenced in the function body.
 	local fn_src
@@ -412,17 +419,17 @@ test_no_work_circuit_breaker_threshold_guard() {
 		return 0
 	fi
 
-	# Assertion 2: the function applies needs-maintainer-review.
-	if ! printf '%s\n' "$fn_src" | grep -q 'needs-maintainer-review'; then
+	# Assertion 2: the function delegates to the dedicated NMR breaker helper.
+	if ! printf '%s\n' "$fn_src" | grep -q '_apply_no_work_nmr_breaker'; then
 		print_result "t2769: no_work circuit breaker threshold guard" 1 \
-			"needs-maintainer-review label not applied in _log_no_work_skip_escalation"
+			"_apply_no_work_nmr_breaker not called in _log_no_work_skip_escalation"
 		return 0
 	fi
 
 	# Assertion 3: the NMR path appears BEFORE the below-threshold diagnostic path
 	# (threshold check is the first branch; diagnostic is the fallthrough).
 	local nmr_line diag_line
-	nmr_line=$(printf '%s\n' "$fn_src" | grep -n 'needs-maintainer-review' | head -1 | cut -d: -f1)
+	nmr_line=$(printf '%s\n' "$fn_src" | grep -n '_apply_no_work_nmr_breaker' | head -1 | cut -d: -f1)
 	diag_line=$(printf '%s\n' "$fn_src" | grep -n 'no-work-escalation-skip' | head -1 | cut -d: -f1)
 	if [[ -z "$nmr_line" || -z "$diag_line" ]]; then
 		print_result "t2769: no_work circuit breaker threshold guard" 1 \

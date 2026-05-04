@@ -19,6 +19,7 @@
 #   _sanitize_log_field()     Strip control characters from log fields
 #   _sanitize_markdown()      Strip @ mentions and backticks from markdown
 #   _validate_int()           Validate and sanitize integer config values
+#   _count_issue_comments_containing_marker() Pagination-safe comment marker count
 #   _count_worker_commits()   Count commits in a worktree since elapsed seconds ago
 #   _count_worker_messages()  Count session DB messages for a worker
 #   _determine_struggle_flag() Determine struggle flag from ratio/commit/elapsed metrics
@@ -825,6 +826,36 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 }
 
 #######################################
+# Count issue comments containing a marker across all paginated comment pages.
+#
+# Root cause fixed for awardsapp/awardsapp#4007: long issue threads can push
+# breaker markers onto page 2+. `gh api --paginate --jq ...` applies jq per
+# page instead of across the full comment stream, so a page-local count can
+# miss existing t2769 markers and re-file/noise a no_work breaker. Slurping
+# all pages before jq keeps marker idempotency consistent with the stale
+# activity detector's pagination fix.
+#
+# Args: $1=issue_number, $2=repo_slug, $3=marker substring
+# Stdout: numeric count, or empty on gh/jq failure
+# Returns: 0 on count success, 1 on gh/jq failure
+#######################################
+_count_issue_comments_containing_marker() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local marker="$3"
+	local comments_pages=""
+	local count=""
+
+	comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --slurp 2>/dev/null) || return 1
+	count=$(printf '%s' "$comments_pages" | jq --arg marker "$marker" \
+		'[.[] | .[]? | select((.body // "") | contains($marker))] | length' \
+		2>/dev/null) || return 1
+	printf '%s' "$count"
+	return 0
+}
+
+#######################################
 # t3076: file a root-cause meta-issue with forensics when the no_work
 # breaker fires. Idempotent — second trip on the same original is a
 # no-op (filer self-checks via marker comment). Best-effort: failures
@@ -888,9 +919,8 @@ _apply_no_work_nmr_breaker() {
 	local nmr_marker='cost-circuit-breaker:no_work_loop'
 
 	local existing_nmr=""
-	existing_nmr=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
-		--jq "[.[] | select(.body | contains(\"${nmr_marker}\"))] | length" \
-		2>/dev/null) || existing_nmr=""
+	existing_nmr=$(_count_issue_comments_containing_marker \
+		"$issue_number" "$repo_slug" "$nmr_marker") || existing_nmr=""
 	if [[ "$existing_nmr" =~ ^[1-9][0-9]*$ ]]; then
 		printf '[worker-lifecycle][t2769] no_work NMR circuit breaker already applied for #%s (%s, count=%s)\n' \
 			"$issue_number" "$repo_slug" "$failure_count" >&2 || true
@@ -911,13 +941,14 @@ _apply_no_work_nmr_breaker() {
 **Action:** Applied \`needs-maintainer-review\`. Further automated dispatch is suspended.
 **Last failure reason:** ${safe_reason}
 
-**Why this class of failure does not cascade tiers:** \`no_work\` means the worker crashed during runtime setup before reading any target files (FD exhaustion, plugin init failure, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached.
+**Why this class of failure does not cascade tiers:** \`no_work\` usually means the worker crashed during runtime setup before reading any target files (FD exhaustion, plugin init failure, auth refresh race) or stale-recovery falsely concluded no progress. A more expensive model cannot fix an infrastructure problem it never reached.
 
 **Possible causes:**
 - Brief not yet merged or branch missing at dispatch time
 - Auth token stale or missing
 - Plugin init crash (FD exhaustion, env pollution)
 - Branch naming race at dispatch time
+- Stale-recovery false positive on long issue threads (check dispatch-dedup-stale comment pagination and recent-activity aggregation)
 
 Remove \`needs-maintainer-review\` after investigating the root cause to re-enable dispatch.
 
@@ -958,9 +989,8 @@ _log_no_work_skip_escalation() {
 	# Best-effort — if gh api fails, fall through and post (better to repeat
 	# once than to lose the diagnostic entirely).
 	local existing=""
-	existing=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
-		2>/dev/null) || existing=""
+	existing=$(_count_issue_comments_containing_marker \
+		"$issue_number" "$repo_slug" "$marker") || existing=""
 	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
 		# Already posted once — nothing more to do. Still emit a one-line
 		# log so operators can track the skip rate if they're tailing logs.
@@ -980,7 +1010,7 @@ ${marker}
 **Action:** Tier escalation **skipped**. The issue stays at its current tier so the next retry can succeed cheaply once the infrastructure issue resolves.
 **Reason:** ${safe_reason}
 
-**Why no cascade:** \`no_work\` means the worker never engaged with the brief — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race). A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
+**Why no cascade:** \`no_work\` means the worker never produced reliable implementation evidence — it crashed during runtime setup (FD exhaustion, plugin init failure, branch naming race, auth refresh race) or stale-recovery falsely concluded no progress. A more expensive model cannot fix an infrastructure problem it never reached. Cascading to \`tier:thinking\` would burn opus tokens on a problem sonnet (or haiku) will handle once the infra clears.
 
 After ${nmr_threshold} consecutive \`no_work\` failures the per-issue no_work circuit breaker (t2769) applies \`needs-maintainer-review\` with a \`cost-circuit-breaker:no_work_loop\` marker that \`_nmr_application_is_circuit_breaker_trip\` (t2386) recognises, so auto-approval correctly preserves NMR.
 
