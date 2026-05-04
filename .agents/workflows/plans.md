@@ -61,7 +61,7 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 
 ## Auto-Dispatch Tagging
 
-Add `#auto-dispatch` only when ALL inclusion criteria pass and NO exclusion criteria apply:
+Default worker-ready issues/tasks to `#auto-dispatch`; omit it only when an exclusion applies. The include column is the readiness gate: if any include item is missing, finish the brief instead of filing a non-dispatchable implementation issue.
 
 | Include (ALL required) | Exclude (ANY blocks) |
 |------------------------|----------------------|
@@ -98,7 +98,7 @@ Extract from conversation: title, description, estimate (`~Xh (ai:Xh test:Xh rea
 
 Format elements (all optional except id and description): `@owner`, `#tag`, `~estimate`, `logged:YYYY-MM-DD`, `blocked-by:t001,t002`, `blocks:t003`.
 
-**Auto-dispatch gate**: Only add `#auto-dispatch` if the brief has at least 2 specific acceptance criteria, a non-empty How section with file references, and a clear What section.
+**Auto-dispatch gate**: Add `#auto-dispatch` by default once the brief has at least 2 specific acceptance criteria, a non-empty How section with file references, and a clear What section. Omit only for blocker labels, decomposition/human-decision work, credentials/purchases, or explicit user preference.
 
 **Complex** — present: `This looks like complex work. Creating execution plan. Title: {title} | Estimate: ~{estimate} | Phases: {count} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context`
 
