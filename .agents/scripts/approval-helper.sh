@@ -829,16 +829,9 @@ cmd_verify() {
 	_require_number_arg "$issue_number" "Issue" "Usage: aidevops approve verify <number> [owner/repo]" || return 1
 	slug=$(_resolve_slug_or_fail "$slug" "Could not detect repo slug") || return 1
 
-	# Load public key
-	local pub_key="$HOME/.aidevops/approval-keys/approval.pub"
-	if [[ ! -f "$pub_key" ]]; then
-		echo "NO_KEY"
-		return 1
-	fi
-
 	# Fetch comments looking for approval marker
 	local comments_json
-	comments_json=$(gh api "repos/${slug}/issues/${issue_number}/comments" \
+	comments_json=$(gh api "repos/${slug}/issues/${issue_number}/comments" --paginate \
 		--jq "[.[] | select(.body | contains(\"$APPROVAL_MARKER\"))]" 2>/dev/null || echo "[]")
 
 	local comment_count
@@ -846,6 +839,15 @@ cmd_verify() {
 
 	if [[ "$comment_count" -eq 0 ]]; then
 		echo "NO_APPROVAL"
+		return 1
+	fi
+
+	# Load public key only after proving an approval marker exists. This keeps
+	# callers able to distinguish "no approval" from "approval exists but this
+	# worker cannot verify it" and avoids re-applying NMR over a signed approval.
+	local pub_key="${AIDEVOPS_APPROVAL_PUB:-$APPROVAL_PUB}"
+	if [[ ! -f "$pub_key" ]]; then
+		echo "NO_KEY"
 		return 1
 	fi
 
