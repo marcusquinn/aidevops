@@ -962,6 +962,33 @@ _Per-issue no_work circuit breaker (t2769). The \`${nmr_marker}\` marker is reco
 	return 0
 }
 
+#######################################
+# Detect no_work reasons that happened before a worker launch.
+#
+# These launch-control skips are not evidence that a worker reached the brief,
+# so they must not participate in the t2769 per-issue no_work NMR breaker.
+# Legitimate post-launch no_work reasons (for example worker_noop_zero_output)
+# still flow through the existing breaker path unchanged.
+#
+# Args: $1=reason
+# Returns: 0 when reason is a pre-worker-launch skip, 1 otherwise.
+#######################################
+_no_work_reason_is_prelaunch_skip() {
+	local reason="${1:-}"
+
+	case "$reason" in
+	*"before worktree pre-creation"* | \
+	*"worktree pre-creation failed"* | \
+	*"pre-worker-launch"* | \
+	*"pre-launch"*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 _log_no_work_skip_escalation() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -972,6 +999,12 @@ _log_no_work_skip_escalation() {
 	[[ -n "$repo_slug" ]] || return 0
 
 	local nmr_threshold="${NO_WORK_NMR_THRESHOLD:-3}"
+
+	if _no_work_reason_is_prelaunch_skip "$reason"; then
+		printf '[worker-lifecycle][t2769] no_work NMR breaker skipped for pre-launch reason on #%s (%s, count=%s): %s\n' \
+			"$issue_number" "$repo_slug" "$failure_count" "$reason" >&2 || true
+		return 0
+	fi
 
 	# Circuit-breaker path (t2769): when failure_count >= threshold,
 	# apply NMR + file root-cause meta-issue. Auto-approval preserves NMR
