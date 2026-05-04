@@ -205,9 +205,6 @@ _pcr_normalise_todo_sync_line() {
 	local line="$1"
 	local normalised="$line"
 	local field=""
-	local words=()
-	local word=""
-	local joined=""
 
 	case "$normalised" in
 		'- [ ] '*) normalised="- [?] ${normalised#'- [ ] '}" ;;
@@ -221,16 +218,20 @@ _pcr_normalise_todo_sync_line() {
 		done
 	done
 
-	read -r -a words <<<"$normalised"
-	for word in "${words[@]}"; do
-		if [[ -z "$joined" ]]; then
-			joined="$word"
-		else
-			joined="${joined} ${word}"
-		fi
+	# Keep this hot-path normalisation pure Bash: TODO sync diffs can contain
+	# many task lines, and spawning sed/awk here would multiply process churn.
+	normalised="${normalised//$'\t'/ }"
+	while [[ "$normalised" == *"  "* ]]; do
+		normalised="${normalised//  / }"
+	done
+	while [[ "$normalised" == " "* ]]; do
+		normalised="${normalised# }"
+	done
+	while [[ "$normalised" == *" " ]]; do
+		normalised="${normalised% }"
 	done
 
-	printf '%s\n' "$joined"
+	printf '%s\n' "$normalised"
 	return 0
 }
 
