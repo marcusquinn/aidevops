@@ -7,6 +7,9 @@
  */
 
 import { getAccounts, patchAccount, rotateOpenAIPoolToken } from "./oauth-pool.mjs";
+import { isOpenAIOverloadText, overloadRetryDelaysMs, sleep, wrapOpenAIOverloadStream } from "./openai-overload-retry.mjs";
+
+export { isOpenAIOverloadText } from "./openai-overload-retry.mjs";
 
 const OPENAI_API_HOST = "api.openai.com";
 const OPENAI_API_PREFIX = "/v1/";
@@ -62,6 +65,13 @@ export async function isOpenAIUsageLimitResponse(response) {
   const code = String(error?.code || error?.type || "").toLowerCase();
   const message = String(error?.message || "").toLowerCase();
   return [code, message].some((text) => USAGE_LIMIT_MARKERS.some((marker) => text.includes(marker)));
+}
+
+export async function isOpenAIOverloadResponse(response) {
+  if (![500, 502, 503, 504, 529].includes(response.status)) return false;
+  const payload = await readOpenAIErrorPayload(response);
+  const error = payload?.error || payload;
+  return isOpenAIOverloadText([error?.code, error?.type, error?.message].join(" "));
 }
 
 function headersFrom(input, init) {
@@ -122,6 +132,18 @@ async function handleOpenAIUsageLimit(ctx) {
   return originalFetch(retryInput, retryInit);
 }
 
+async function handleOpenAIOverload(ctx) {
+  const { originalFetch, retryInput, init, response } = ctx;
+  const retryDelays = overloadRetryDelaysMs();
+  let lastResponse = response;
+  for (const delayMs of retryDelays) {
+    if (delayMs > 0) await sleep(delayMs);
+    lastResponse = await originalFetch(buildRetryRequest(retryInput), init);
+    if (!(await isOpenAIOverloadResponse(lastResponse))) return lastResponse;
+  }
+  return lastResponse;
+}
+
 async function maybeRotateBeforeOpenAIFetch(client, input, init) {
   const current = resolveOpenAIAccount(extractBearerToken(input, init));
   if (!isUnavailableAccount(current)) return init;
@@ -132,17 +154,32 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
   return buildRetryInit(input, init, rotated.access);
 }
 
+async function handleOpenAIFetchRequest(ctx) {
+  const { client, originalFetch, input, init } = ctx;
+  const openaiRequest = isOpenAIProviderRequest(input);
+  const retryInput = openaiRequest ? buildRetryRequest(input) : input;
+  const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
+  const response = await originalFetch(input, firstInit);
+
+  if (!openaiRequest) return response;
+  if (await isOpenAIUsageLimitResponse(response)) {
+    return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
+  }
+  if (await isOpenAIOverloadResponse(response)) {
+    return handleOpenAIOverload({ originalFetch, init: firstInit, response, retryInput });
+  }
+  if (response.ok) {
+    return wrapOpenAIOverloadStream({ originalFetch, response, retryInput, init: firstInit, buildRetryRequest });
+  }
+  return response;
+}
+
 export function installOpenAIProviderFetchRotation(client) {
   if (installed || typeof globalThis.fetch !== "function") return false;
   installed = true;
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (input, init) => {
-    const openaiRequest = isOpenAIProviderRequest(input);
-    const retryInput = openaiRequest ? buildRetryRequest(input) : input;
-    const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
-    const response = await originalFetch(input, firstInit);
-    if (!openaiRequest || !(await isOpenAIUsageLimitResponse(response))) return response;
-    return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
+    return handleOpenAIFetchRequest({ client, originalFetch, input, init });
   };
   return true;
 }

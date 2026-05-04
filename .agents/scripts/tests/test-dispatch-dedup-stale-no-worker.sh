@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression guard for GH#4011/GH#4012 / t2769 no_work false trips.
+# Regression guard for GH#4011/GH#4012 and a private app meta issue's t2769
+# no_work false trips.
 #
 # A stale active label + assignee with no dispatch claim comment can be cleaned
 # up by stale recovery, but it is not evidence that a worker ever started. That
@@ -53,6 +54,10 @@ if [[ "$cmd" == "is-assigned" ]]; then
 	case "${TEST_STALE_MODE:-no_worker}" in
 	no_worker)
 		printf '%s\n' 'STALE_RECOVERED: issue #2905 in awardsapp/awardsapp - unassigned runner (no dispatch claim comment found, no recent activity (threshold=600s, interactive=false))'
+		exit 1
+		;;
+	prelaunch_canary)
+		printf '%s\n' 'STALE_RECOVERED: issue #2905 in owner/repo - unassigned runner (no dispatch claim comment found, worker canary preflight failed before worktree pre-creation; will retry next cycle)'
 		exit 1
 		;;
 	worker)
@@ -136,6 +141,32 @@ test_stale_recovery_without_claim_skips_fast_fail() {
 	return 0
 }
 
+test_prelaunch_canary_stale_recovery_skips_fast_fail() {
+	export TEST_STALE_MODE="prelaunch_canary"
+	reset_observations
+	local rc=0
+	_dedup_layer6_assignee_and_stale "2905" "awardsapp/awardsapp" "runner" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		fail "prelaunch canary stale recovery continues dispatch" "expected rc=1, got rc=${rc}"
+		return 0
+	fi
+	if [[ "$FAST_FAIL_CALLS" -ne 0 ]]; then
+		fail "prelaunch canary stale recovery skips fast-fail" "fast_fail_record called ${FAST_FAIL_CALLS} time(s): ${LAST_FAST_FAIL}"
+		return 0
+	fi
+	if [[ -s "$CLASSIFY_LOG" ]]; then
+		fail "prelaunch canary stale recovery skips classifier" "classifier log: $(tr '\n' ' ' <"$CLASSIFY_LOG")"
+		return 0
+	fi
+	if ! grep -q 'without worker evidence' "$LOGFILE" 2>/dev/null; then
+		fail "prelaunch canary stale recovery logs skip reason" "log: $(tr '\n' ' ' <"$LOGFILE")"
+		return 0
+	fi
+	pass "prelaunch canary stale recovery skips no_work fast-fail"
+	return 0
+}
+
 test_stale_recovery_with_dispatch_claim_records_fast_fail() {
 	export TEST_STALE_MODE="worker"
 	reset_observations
@@ -163,6 +194,7 @@ test_stale_recovery_with_dispatch_claim_records_fast_fail() {
 }
 
 test_stale_recovery_without_claim_skips_fast_fail
+test_prelaunch_canary_stale_recovery_skips_fast_fail
 test_stale_recovery_with_dispatch_claim_records_fast_fail
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
