@@ -124,44 +124,32 @@ _check_single_worker() {
 		return 0
 	fi
 
-	# Check 2: Runtime ceiling candidate (transcript gate decides kill/defer)
-	if [[ "$elapsed_seconds" -ge "$WORKER_MAX_RUNTIME" ]]; then
-		if ! transcript_allows_intervention "runtime" "$cmd" "$elapsed_seconds"; then
-			return 1
-		fi
-		log_msg "RUNTIME CEILING: PID=${pid} elapsed=${duration} (max=$(_format_duration "$WORKER_MAX_RUNTIME"))"
-		kill_worker "$pid" "runtime" "$cmd" "$elapsed_seconds" "$INTERVENTION_EVIDENCE_SUMMARY"
-		return 0
+	# Check 2: Runtime ceiling advisory. Quiet/long-running workers may be doing
+	# legitimate wait work for hours or days, so runtime never kills by itself.
+	if [[ "$WORKER_MAX_RUNTIME" -gt 0 && "$elapsed_seconds" -ge "$WORKER_MAX_RUNTIME" ]]; then
+		log_msg "RUNTIME ADVISORY: PID=${pid} elapsed=${duration} (max=$(_format_duration "$WORKER_MAX_RUNTIME"))"
 	fi
 
-	# Check 3: zero-commit high-message thrash detection
+	# Check 3: zero-commit high-message thrash advisory. This is useful evidence
+	# for humans, but it is not explicit fatal evidence and must not kill workers.
 	if check_zero_commit_thrashing "$pid" "$cmd" "$elapsed_seconds"; then
-		_check_single_worker_thrash "$pid" "$cmd" "$elapsed_seconds" "$duration"
-		return $?
+		log_msg "THRASH ADVISORY: PID=${pid} elapsed=${duration} commits=${THRASH_COMMITS} messages=${THRASH_MESSAGES} ratio=${THRASH_RATIO}"
 	fi
 
-	# Check 4: CPU idle detection
+	# Check 4: CPU idle advisory. Low CPU is normal while waiting on provider,
+	# network, tools, or file IO; never kill solely because the worker is quiet.
 	if check_idle "$pid" "$tree_cpu"; then
-		if ! transcript_allows_intervention "idle" "$cmd" "$elapsed_seconds"; then
-			return 1
-		fi
-		log_msg "IDLE DETECTED: PID=${pid} cpu=${tree_cpu}% elapsed=${duration}"
-		kill_worker "$pid" "idle" "$cmd" "$elapsed_seconds" "$INTERVENTION_EVIDENCE_SUMMARY"
-		return 0
+		log_msg "IDLE ADVISORY: PID=${pid} cpu=${tree_cpu}% elapsed=${duration} action=defer"
 	fi
 
-	# Check 5: Progress stall detection
+	# Check 5: Progress stall advisory. Transcript/session growth can lag or be
+	# absent while real work is happening, so a stall is not a kill reason.
 	if check_progress_stall "$pid" "$cmd" "$elapsed_seconds"; then
-		if ! transcript_allows_intervention "stall" "$cmd" "$elapsed_seconds"; then
-			return 1
-		fi
 		local sanitized_evidence=""
 		if [[ -n "$STALL_EVIDENCE_SUMMARY" ]]; then
 			sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")
 		fi
-		log_msg "PROGRESS STALL: PID=${pid} elapsed=${duration}${sanitized_evidence:+ evidence=${sanitized_evidence}}"
-		kill_worker "$pid" "stall" "$cmd" "$elapsed_seconds" "$STALL_EVIDENCE_SUMMARY"
-		return 0
+		log_msg "PROGRESS STALL ADVISORY: PID=${pid} elapsed=${duration}${sanitized_evidence:+ evidence=${sanitized_evidence}} action=defer"
 	fi
 
 	return 1

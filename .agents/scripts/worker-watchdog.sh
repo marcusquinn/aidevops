@@ -7,17 +7,15 @@
 # have no monitoring. Workers that crash, hang, or enter the OpenCode idle-state
 # bug sit indefinitely consuming resources and blocking issue re-dispatch.
 #
-# Five failure modes detected:
-#   1. CPU idle: Worker completed but sits in file-watcher (OpenCode idle bug).
-#      Signal: tree CPU < WORKER_IDLE_CPU_THRESHOLD for WORKER_IDLE_TIMEOUT.
-#   2. Progress stall: Worker is running but producing no output (stuck on API,
-#      rate-limited, spinning). Signal: no log growth for WORKER_PROGRESS_TIMEOUT,
-#      then inspect recent transcript tail evidence before killing.
-#   3. Zero-commit thrash: Worker runs for long time with heavy message volume
-#      but no commits. Signal: elapsed >= WORKER_THRASH_ELAPSED_THRESHOLD,
-#      commits == 0, messages >= WORKER_THRASH_MESSAGE_THRESHOLD.
-#   4. Runtime ceiling: Worker has been running too long regardless of activity.
-#      Signal: elapsed > WORKER_MAX_RUNTIME. Prevents infinite loops.
+# Five signals detected:
+#   1. CPU idle advisory: Worker may be quiet or waiting. This is diagnostic
+#      only; quiet workers are not killed automatically.
+#   2. Progress stall advisory: Worker is running but producing no output. This
+#      is diagnostic only because long-running workers may wait legitimately.
+#   3. Zero-commit thrash advisory: Worker runs for long time with heavy message
+#      volume but no commits. This is diagnostic only.
+#   4. Runtime ceiling advisory: Disabled by default. Set WORKER_MAX_RUNTIME to
+#      a positive value for local diagnostics; it still does not kill workers.
 #   5. Provider backoff stall (GH#5650): Worker's provider hit auth_error or
 #      rate-limit and is backed off in headless-runtime state DB. Worker process
 #      stays alive but makes no progress. Signal: provider_backoff table has an
@@ -27,8 +25,8 @@
 # On kill:
 #   - Posts a comment on the associated GitHub issue explaining the kill reason
 #   - Removes the worker's status:in-progress label
-#   - Adds status:available for recoverable exits (idle, stall, runtime, backoff)
-#   - Adds status:blocked for zero-commit thrash to prevent blind relaunch loops
+#   - Adds status:available for recoverable exits (backoff)
+#   - Leaves quiet, stalled, long-running, and thrashing workers alive
 #   - Logs the action to the watchdog log file
 #
 # Usage:
@@ -40,14 +38,14 @@
 #   worker-watchdog.sh --help           # Show usage
 #
 # Environment:
-#   WORKER_IDLE_TIMEOUT          Seconds of low CPU before kill (default: 300)
-#   WORKER_IDLE_CPU_THRESHOLD    CPU% below this = idle (default: 5)
-#   WORKER_PROGRESS_TIMEOUT      Seconds without log growth = stuck (default: 600)
+#   WORKER_IDLE_TIMEOUT          Seconds of low CPU before quiet advisory (default: 300)
+#   WORKER_IDLE_CPU_THRESHOLD    CPU% below this = quiet/idle advisory (default: 5)
+#   WORKER_PROGRESS_TIMEOUT      Seconds without log growth before advisory (default: 600)
 #   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime before thrash check (default: 3600)
 #   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash check (default: 120)
 #   WORKER_THRASH_RATIO_THRESHOLD    Struggle ratio threshold for time-weighted check (default: 10)
 #   WORKER_THRASH_RATIO_ELAPSED      Minimum elapsed seconds for ratio-only thrash (default: 25200 = 7h)
-#   WORKER_MAX_RUNTIME           Hard ceiling in seconds (default: 10800 = 3h)
+#   WORKER_MAX_RUNTIME           Runtime advisory in seconds (default: 0 = disabled)
 #   WORKER_DRY_RUN               Set to "true" to log but not kill (default: false)
 #   WORKER_WATCHDOG_NOTIFY       Set to "false" to disable macOS notifications
 #   WORKER_PROCESS_PATTERN       CLI name to match (default: opencode)
@@ -77,14 +75,14 @@ source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 readonly SCRIPT_NAME="worker-watchdog"
 readonly SCRIPT_VERSION="1.0.0"
 
-WORKER_IDLE_TIMEOUT="${WORKER_IDLE_TIMEOUT:-300}"                          # 5 min idle = completed, sitting in file watcher
-WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}"                # CPU% below this = idle
-WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"                  # 10 min no log output = stuck
+WORKER_IDLE_TIMEOUT="${WORKER_IDLE_TIMEOUT:-300}"                          # 5 min low CPU before quiet advisory
+WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}"                # CPU% below this = quiet advisory
+WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"                  # 10 min no log output before advisory
 WORKER_THRASH_ELAPSED_THRESHOLD="${WORKER_THRASH_ELAPSED_THRESHOLD:-3600}" # 1h minimum runtime before zero-commit thrash checks (GH#4400: lowered from 2h)
 WORKER_THRASH_MESSAGE_THRESHOLD="${WORKER_THRASH_MESSAGE_THRESHOLD:-120}"  # ~2 messages/min over 1h before thrash checks (GH#4400: lowered from 180)
 WORKER_THRASH_RATIO_THRESHOLD="${WORKER_THRASH_RATIO_THRESHOLD:-10}"       # Struggle ratio threshold for time-weighted check (GH#5650)
 WORKER_THRASH_RATIO_ELAPSED="${WORKER_THRASH_RATIO_ELAPSED:-25200}"        # 7h: ratio-only thrash check for long-running zero-commit workers (GH#5650)
-WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-10800}"                          # 3 hour hard ceiling
+WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-0}"                              # disabled by default; quiet workers can run indefinitely
 WORKER_DRY_RUN="${WORKER_DRY_RUN:-false}"
 WORKER_WATCHDOG_NOTIFY="${WORKER_WATCHDOG_NOTIFY:-true}"
 WORKER_PROCESS_PATTERN="${WORKER_PROCESS_PATTERN:-opencode}" # CLI name to match (update if CLI changes)
@@ -97,7 +95,7 @@ WORKER_THRASH_ELAPSED_THRESHOLD=$(_validate_int WORKER_THRASH_ELAPSED_THRESHOLD 
 WORKER_THRASH_MESSAGE_THRESHOLD=$(_validate_int WORKER_THRASH_MESSAGE_THRESHOLD "$WORKER_THRASH_MESSAGE_THRESHOLD" 120 30)
 WORKER_THRASH_RATIO_THRESHOLD=$(_validate_int WORKER_THRASH_RATIO_THRESHOLD "$WORKER_THRASH_RATIO_THRESHOLD" 10 1)
 WORKER_THRASH_RATIO_ELAPSED=$(_validate_int WORKER_THRASH_RATIO_ELAPSED "$WORKER_THRASH_RATIO_ELAPSED" 25200 3600)
-WORKER_MAX_RUNTIME=$(_validate_int WORKER_MAX_RUNTIME "$WORKER_MAX_RUNTIME" 10800 600)
+WORKER_MAX_RUNTIME=$(_validate_int WORKER_MAX_RUNTIME "$WORKER_MAX_RUNTIME" 0)
 
 # Paths
 readonly LOG_DIR="${HOME}/.aidevops/logs"

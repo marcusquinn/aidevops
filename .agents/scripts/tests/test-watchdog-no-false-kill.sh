@@ -13,7 +13,8 @@
 #   5. Hard-kill fires regardless of CPU (safety net)
 #   6. pulse-watchdog.sh kill sites emit [lifecycle] lines
 #   7. pulse-dispatch-engine.sh timeout handler emits [lifecycle] line
-#   8. All modified scripts pass ShellCheck
+#   8. worker-watchdog.sh does not auto-kill quiet long-running workers
+#   9. All modified scripts pass ShellCheck
 #
 # Tests are structural — no live worker processes required.
 
@@ -96,6 +97,8 @@ echo ""
 # Test 1: _watchdog_tree_cpu function exists
 #######################################
 watchdog_source=$(< "${SCRIPT_DIR}/worker-activity-watchdog.sh")
+worker_watchdog_source=$(< "${SCRIPT_DIR}/worker-watchdog.sh")
+worker_watchdog_cmd_source=$(< "${SCRIPT_DIR}/worker-watchdog-cmd.sh")
 assert_contains \
 	"1. _watchdog_tree_cpu function exists in worker-activity-watchdog.sh" \
 	"_watchdog_tree_cpu()" \
@@ -174,7 +177,31 @@ assert_contains \
 	"$dispatch_source"
 
 #######################################
-# Test 8: All modified scripts pass ShellCheck
+# Test 8: legacy worker watchdog quiet signals are advisory only
+#######################################
+assert_contains \
+	"8a. worker-watchdog runtime cap disabled by default" \
+	'WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-0}"' \
+	"$worker_watchdog_source"
+assert_contains \
+	"8b. worker-watchdog emits idle advisory instead of kill" \
+	"IDLE ADVISORY" \
+	"$worker_watchdog_cmd_source"
+assert_not_contains \
+	"8c. worker-watchdog no longer kills on idle" \
+	'kill_worker "$pid" "idle"' \
+	"$worker_watchdog_cmd_source"
+assert_not_contains \
+	"8d. worker-watchdog no longer kills on stall" \
+	'kill_worker "$pid" "stall"' \
+	"$worker_watchdog_cmd_source"
+assert_not_contains \
+	"8e. worker-watchdog no longer kills on runtime" \
+	'kill_worker "$pid" "runtime"' \
+	"$worker_watchdog_cmd_source"
+
+#######################################
+# Test 9: All modified scripts pass ShellCheck
 #######################################
 echo ""
 echo "${TEST_BLUE}--- ShellCheck validation ---${TEST_NC}"
@@ -182,6 +209,8 @@ echo "${TEST_BLUE}--- ShellCheck validation ---${TEST_NC}"
 shellcheck_pass=true
 for script in \
 	"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
+	"${SCRIPT_DIR}/worker-watchdog.sh" \
+	"${SCRIPT_DIR}/worker-watchdog-cmd.sh" \
 	"${SCRIPT_DIR}/pulse-watchdog.sh" \
 	"${SCRIPT_DIR}/pulse-dispatch-lib.sh"; do
 
@@ -191,16 +220,16 @@ for script in \
 		if [[ -n "$sc_out" ]]; then
 			TESTS_RUN=$((TESTS_RUN + 1))
 			TESTS_FAILED=$((TESTS_FAILED + 1))
-			echo "${TEST_RED}FAIL${TEST_NC}: 8. ShellCheck ${local_name}"
+			echo "${TEST_RED}FAIL${TEST_NC}: 9. ShellCheck ${local_name}"
 			echo "  $sc_out"
 			shellcheck_pass=false
 		else
 			TESTS_RUN=$((TESTS_RUN + 1))
-			echo "${TEST_GREEN}PASS${TEST_NC}: 8. ShellCheck ${local_name}"
+			echo "${TEST_GREEN}PASS${TEST_NC}: 9. ShellCheck ${local_name}"
 		fi
 	else
 		TESTS_RUN=$((TESTS_RUN + 1))
-		echo "${TEST_GREEN}PASS${TEST_NC}: 8. ShellCheck ${local_name} (skipped — shellcheck not installed)"
+		echo "${TEST_GREEN}PASS${TEST_NC}: 9. ShellCheck ${local_name} (skipped — shellcheck not installed)"
 	fi
 done
 
