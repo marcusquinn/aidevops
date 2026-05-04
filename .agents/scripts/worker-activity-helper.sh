@@ -163,6 +163,7 @@ _wah_metric_details_json() {
 				provider_status,
 				runtime_error_type,
 				classification_source,
+				classification_pattern,
 				duration_ms,
 				work_dir,
 				output_file,
@@ -171,7 +172,7 @@ _wah_metric_details_json() {
 			})),
 			failure_groups: ([
 				$failures
-				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", .runtime_error_type // "", .classification_source // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
+				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", .runtime_error_type // "", .classification_source // "", .classification_pattern // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
 				| .[]
 				| {
 					result: (.[0].result // "unknown"),
@@ -180,13 +181,14 @@ _wah_metric_details_json() {
 					provider_status: (.[0].provider_status // ""),
 					runtime_error_type: (.[0].runtime_error_type // ""),
 					classification_source: (.[0].classification_source // ""),
+					classification_pattern: (.[0].classification_pattern // ""),
 					provider: (.[0].provider // ""),
 					model: (.[0].model // ""),
 					session_key: (.[0].session_key // ""),
 					issue_number: (.[0].issue_number // null),
 					repo_slug: (.[0].repo_slug // ""),
 					count: length,
-					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source}))
+					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern}))
 				}
 			] | sort_by(.count) | reverse | .[0:10])
 		}' <"$metrics" 2>/dev/null || \

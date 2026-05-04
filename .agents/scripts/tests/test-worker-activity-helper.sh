@@ -111,8 +111,8 @@ T_FUTURE_SENTINEL=4102444800
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-3","session_id":"ses_3","issue_number":22349,"repo_slug":"marcusquinn/aidevops","work_dir":"/tmp/wt-3","output_file":"/tmp/excerpt-3.log","result":"watchdog_stall_killed","failure_reason":"watchdog_stall_killed","exit_code":79}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-4","result":"watchdog_stall_continue","exit_code":0}\n' "$T_5MIN_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-5","model":"openai/gpt-5.5","provider":"openai","result":"rate_limit","failure_reason":"rate_limit","provider_error_type":"rate_limit","provider_status":"429","classification_source":"output_pattern","exit_code":1}\n' "$T_2H_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-6","model":"openai/gpt-5.5","provider":"openai","result":"provider_error","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"500","classification_source":"output_pattern","exit_code":2}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-5","model":"openai/gpt-5.5","provider":"openai","result":"rate_limit","failure_reason":"rate_limit","provider_error_type":"rate_limit","provider_status":"429","classification_source":"output_pattern","classification_pattern":"rate_limit|rate_limit|429|too_many_requests|quota_exceeded","exit_code":1}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-6","model":"openai/gpt-5.5","provider":"openai","result":"provider_error","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"500","classification_source":"output_pattern","classification_pattern":"server_error|5xx|connection_failure|overloaded","exit_code":2}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-7","result":"success","exit_code":0}\n' "$T_25H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-8","result":"watchdog_stall_continue","exit_code":124}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
@@ -214,6 +214,8 @@ assert_eq "2h9: failure groups expose provider subtype" "server_error" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .provider_error_type')"
 assert_eq "2h10: failure groups expose provider status" "500" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .provider_status')"
+assert_eq "2h10b: failure groups expose classification pattern" "server_error|5xx|connection_failure|overloaded" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .classification_pattern')"
 assert_eq "2h11: recent examples carry provider evidence" "openai/gpt-5.5" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-5") | .model')"
 

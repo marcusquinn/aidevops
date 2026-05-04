@@ -60,9 +60,12 @@ test_appends_escalation_contract() {
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
-	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V8'* ]] &&
+	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V9'* ]] &&
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
+		[[ "$output" == *'Progressive context loading'* ]] &&
+		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
+		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
 		[[ "$output" == *'The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.'* ]]; then
 		print_result "appends escalation-before-blocked contract to full-loop prompts" 0
@@ -310,6 +313,29 @@ test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait() {
 		print_result "activity watchdog detects CI-wait marker" 1
 	fi
 
+	return 0
+}
+
+test_failure_classifier_records_provenance() {
+	local output_file="${TEST_ROOT}/failure-classifier.out"
+	local reason_file="${TEST_ROOT}/failure-classifier.reason"
+	printf 'Provider returned HTTP 429: Too Many Requests\n' >"$output_file"
+
+	local reason
+	classify_failure_reason "$output_file" >"$reason_file"
+	reason=$(<"$reason_file")
+
+	if [[ "$reason" == "rate_limit" ]] &&
+		[[ "${_failure_provider_error_type:-}" == "rate_limit" ]] &&
+		[[ "${_failure_provider_status:-}" == "429" ]] &&
+		[[ "${_failure_classification_source:-}" == "output_pattern" ]] &&
+		[[ "${_failure_classification_pattern:-}" == *"too_many_requests"* ]]; then
+		print_result "failure classifier records provider provenance" 0
+		return 0
+	fi
+
+	print_result "failure classifier records provider provenance" 1 \
+		"reason=$reason type=${_failure_provider_error_type:-} status=${_failure_provider_status:-} source=${_failure_classification_source:-} pattern=${_failure_classification_pattern:-}"
 	return 0
 }
 
@@ -942,6 +968,7 @@ main() {
 	test_blocked_completion_records_blocked_label
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
+	test_failure_classifier_records_provenance
 	test_canary_uses_builtin_agent_without_default_agent
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only

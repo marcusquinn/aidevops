@@ -121,6 +121,9 @@ reset_test_state() {
 	unset AIDEVOPS_SKIP_DISPATCH_BACKOFF 2>/dev/null || true
 	export DISPATCH_BACKOFF_LOOKBACK_SECS=604800   # 7 days
 	export DISPATCH_BACKOFF_NMR_THRESHOLD=4
+	export DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS=900
+	export DISPATCH_PROVIDER_BACKOFF_THRESHOLD=6
+	export DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS=300
 	return 0
 }
 
@@ -377,6 +380,31 @@ test_different_issue_not_affected() {
 	return 0
 }
 
+# --- Test 13: Provider/model pressure blocks different issues during a rate-limit storm ---
+test_provider_pressure_blocks_pool() {
+	reset_test_state
+	local now
+	now=$(date +%s)
+	local past=$(( now - 60 ))
+	write_rate_limit_entries "12001" 3 "$past"
+	write_rate_limit_entries "12002" 3 "$past"
+
+	local rc=0
+	local output=""
+	output=$(check_dispatch_backoff "12003" "owner/repo" 2>&1 >/dev/null) || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "provider pressure blocks unrelated issue during rate-limit storm"
+	else
+		fail "provider pressure blocks unrelated issue during rate-limit storm" "got exit ${rc} output=${output}"
+	fi
+	if printf '%s' "$output" | grep -q 'reason=provider_rate_limit_pressure'; then
+		pass "provider pressure output names pressure reason"
+	else
+		fail "provider pressure output names pressure reason" "output: ${output}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -392,6 +420,7 @@ test_stats_counter_incremented
 test_ac3_two_failures_blocks_third
 test_old_events_ignored
 test_different_issue_not_affected
+test_provider_pressure_blocks_pool
 
 printf '\n'
 printf '%s/%s tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
