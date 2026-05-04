@@ -237,13 +237,13 @@ _post_claim() {
 		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
 	fi
 
-	local body
-	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
-${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version}"
+	local machine_readable_part="${CLAIM_MARKER} nonce=${nonce} runner=${runner} ts=${ts} max_age_s=${DISPATCH_CLAIM_MAX_AGE} version=${version} opencode_version=${opencode_version}"
 	if [[ -n "$reason_fields" ]]; then
-		body+=" ${reason_fields}"
+		machine_readable_part+=" ${reason_fields}"
 	fi
-	body+="
+
+	local body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+${machine_readable_part}
 <!-- ops:end -->"
 
 	local comment_id

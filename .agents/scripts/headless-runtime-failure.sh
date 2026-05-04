@@ -118,7 +118,7 @@ ${machine_readable_part}
 	# set by authoritative paths. Defensive skip if origin:interactive.
 	# Non-fatal: failure does not block the release comment path.
 	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-		clear_active_status_on_release "$issue_number" "$repo_slug" "$(whoami)" \
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
 	return 0
