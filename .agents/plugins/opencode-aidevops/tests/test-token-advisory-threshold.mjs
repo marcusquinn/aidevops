@@ -85,7 +85,7 @@ describe("token cost advisory threshold", () => {
     assert.doesNotMatch(output.system[0], /v3\.14\.23\r/);
   });
 
-  test("keeps startup advisory cache lines out of chat instructions", async () => {
+  test("keeps startup advisory messages out of chat instructions", async () => {
     const { hooks } = createHooks({
       readIfExists: (path) => path.endsWith("session-greeting.txt")
         ? [
@@ -101,6 +101,7 @@ describe("token cost advisory threshold", () => {
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
     assert.match(output.system[0], /Do not include startup status or advisory messages in chat/);
+    assert.doesNotMatch(output.system[0], /cache lines/);
     assert.doesNotMatch(output.system[0], /\[SECURITY ADVISORY\] Rotate test credentials/);
     assert.doesNotMatch(output.system[0], /\[WARN\] Pulse stalled for 12 minutes/);
     assert.doesNotMatch(output.system[0], /Security: all protections active/);
@@ -120,6 +121,7 @@ describe("token cost advisory threshold", () => {
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
     assert.match(output.system[0], /do not add any additional salutations, greetings, introductory questions, or equivalent help prompts/);
+    assert.doesNotMatch(output.system[0], /How can I help you\?/);
   });
 
   test("does not inject session greeting order in headless sessions", async () => {
