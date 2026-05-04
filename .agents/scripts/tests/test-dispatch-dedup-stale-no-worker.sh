@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression guard for GH#4012 / t2769 no_work false trips.
+# Regression guard for GH#4011/GH#4012 / t2769 no_work false trips.
 #
 # A stale active label + assignee with no dispatch claim comment can be cleaned
 # up by stale recovery, but it is not evidence that a worker ever started. That

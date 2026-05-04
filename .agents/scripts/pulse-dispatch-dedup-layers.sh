@@ -95,7 +95,7 @@ _classify_stale_recovery_crash_type() {
 #######################################
 # Decide whether a stale-recovery event is evidence of a worker failure.
 #
-# t4012/GH#4012: pre-launch abort cleanup can leave an old active label +
+# GH#4011/GH#4012: pre-launch abort cleanup can leave an old active label +
 # assignee without any dispatch claim comment because no worker ever started
 # and the claim comment was deleted as audit noise. Stale recovery should clean
 # that orphaned state, but it must not feed the no_work fast-fail counter: a
@@ -275,7 +275,7 @@ _dedup_layer6_assignee_and_stale() {
 		# with 0 PRs and 0 fast-fail entries (GH#17700, GH#17701, GH#17702).
 		if [[ "$assigned_output" == *STALE_RECOVERED* ]]; then
 			if ! _stale_recovery_has_worker_evidence "$assigned_output"; then
-				echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} without worker evidence — skipping fast-fail record (t4012)" >>"$LOGFILE"
+				echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} without worker evidence — skipping fast-fail record (GH#4011/GH#4012)" >>"$LOGFILE"
 				return 1
 			fi
 			# t2042: classify what (if anything) the dead worker produced
