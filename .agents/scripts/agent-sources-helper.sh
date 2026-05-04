@@ -138,14 +138,14 @@ add_source_to_config() {
 		CONFIG_PATH="${CONFIG_FILE}" node -e "
         const fs = require('fs');
         const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
-        if (!cfg.sources) cfg.sources = [];
+        if(!cfg.sources) cfg.sources = [];
         const name = process.env.SOURCE_NAME;
         const local_path = process.env.SOURCE_PATH;
         const remote_url = process.env.SOURCE_URL || '';
 
         // Check for duplicate
         const existing = cfg.sources.findIndex(s => s.name === name);
-        if (existing >= 0) {
+        if(existing >= 0) {
             cfg.sources[existing].local_path = local_path;
             cfg.sources[existing].remote_url = remote_url;
             cfg.sources[existing].updated_at = new Date().toISOString();
@@ -185,7 +185,7 @@ update_last_synced() {
         const fs = require('fs');
         const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
         const src = (cfg.sources || []).find(s => s.name === process.env.SOURCE_NAME);
-        if (src) {
+        if(src) {
             src.last_synced = new Date().toISOString();
             src.agent_count = parseInt(process.env.AGENT_COUNT, 10);
         }
@@ -205,14 +205,14 @@ const fs = require('fs');
 const path = require('path');
 
 function asArray(value) {
-  if (!value) return [];
+  if(!value) return [];
   return Array.isArray(value) ? value : [value];
 }
 
 function text(value) {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value;
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if(value === null || value === undefined) return '';
+  if(typeof value === 'string') return value;
+  if(typeof value === 'number' || typeof value === 'boolean') return String(value);
   return value.name || value.file || value.path || value.command || '';
 }
 
@@ -235,11 +235,11 @@ function outputNames(manifest) {
 
 const cfg = JSON.parse(fs.readFileSync(process.env.CONFIG_PATH, 'utf8'));
 const rows = [];
-for (const src of cfg.sources || []) {
+for(const src of cfg.sources || []) {
   const sourceName = scalar(src.name || 'unknown');
   const localPath = src.local_path || '';
   const manifestPath = path.join(localPath, '.agents', 'agent-pack.json');
-  if (!localPath || !fs.existsSync(manifestPath)) continue;
+  if(!localPath || !fs.existsSync(manifestPath)) continue;
   try {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     rows.push([
@@ -547,6 +547,60 @@ cmd_list() {
 }
 
 # Show detailed status for all sources: path, remote, sync state, git status, deploy count
+print_source_git_status() {
+	local path="$1"
+
+	if [[ ! -d "${path}/.git" ]]; then
+		return 0
+	fi
+
+	local dirty
+	dirty="$(cd "${path}" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
+	if [[ "${dirty}" != "0" ]]; then
+		echo -e "    Git:         ${YELLOW}${dirty} uncommitted change(s)${NC}"
+		return 0
+	fi
+
+	echo -e "    Git:         ${GREEN}clean${NC}"
+	return 0
+}
+
+print_source_deploy_status() {
+	local name="$1"
+
+	if [[ ! -d "${CUSTOM_DIR}/${name}" ]]; then
+		echo -e "    Deployed:    ${YELLOW}NOT SYNCED${NC}"
+		return 0
+	fi
+
+	local synced_count=0
+	synced_count="$(count_source_agent_entries "${CUSTOM_DIR}/${name}")"
+	echo "    Deployed:    ${synced_count} agents in custom/${name}/"
+	return 0
+}
+
+print_source_status_detail() {
+	local name="$1"
+	local path="$2"
+
+	if [[ ! -d "${path}" ]]; then
+		echo -e "    Status:      ${RED}MISSING${NC} (directory not found)"
+		return 0
+	fi
+
+	if [[ ! -d "${path}/.agents" ]]; then
+		echo -e "    Status:      ${RED}INVALID${NC} (no .agents/ directory)"
+		return 0
+	fi
+
+	local agent_count=0
+	agent_count="$(count_source_agent_entries "${path}/.agents")"
+	echo -e "    Status:      ${GREEN}OK${NC} (${agent_count} agents)"
+	print_source_deploy_status "${name}"
+	print_source_git_status "${path}"
+	return 0
+}
+
 cmd_status() {
 	ensure_config
 	local count
@@ -574,36 +628,7 @@ cmd_status() {
 		[[ -n "${remote_url}" ]] && echo "    Remote:      $(sanitize_url "${remote_url}")"
 		echo "    Last synced: ${synced:-never}"
 
-		# Check if path exists
-		if [[ ! -d "${path}" ]]; then
-			echo -e "    Status:      ${RED}MISSING${NC} (directory not found)"
-		elif [[ ! -d "${path}/.agents" ]]; then
-			echo -e "    Status:      ${RED}INVALID${NC} (no .agents/ directory)"
-		else
-			local agent_count=0
-			agent_count="$(count_source_agent_entries "${path}/.agents")"
-			echo -e "    Status:      ${GREEN}OK${NC} (${agent_count} agents)"
-
-			# Check if synced copy exists
-			if [[ -d "${CUSTOM_DIR}/${name}" ]]; then
-				local synced_count=0
-				synced_count="$(count_source_agent_entries "${CUSTOM_DIR}/${name}")"
-				echo "    Deployed:    ${synced_count} agents in custom/${name}/"
-			else
-				echo -e "    Deployed:    ${YELLOW}NOT SYNCED${NC}"
-			fi
-
-			# Check for uncommitted changes in source
-			if [[ -d "${path}/.git" ]]; then
-				local dirty
-				dirty="$(cd "${path}" && git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
-				if [[ "${dirty}" != "0" ]]; then
-					echo -e "    Git:         ${YELLOW}${dirty} uncommitted change(s)${NC}"
-				else
-					echo -e "    Git:         ${GREEN}clean${NC}"
-				fi
-			fi
-		fi
+		print_source_status_detail "${name}" "${path}"
 		echo ""
 		((++i))
 	done
