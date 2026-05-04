@@ -358,57 +358,59 @@ def _build_canonical_off_default_deny(
     }
 
 
-def _extract_git_switch_target(command: str) -> str:
-    """Return the target branch for a git switch/checkout command, if obvious.
+TAKES_BRANCH_ARG = {"-b", "-B", "-c", "-C", "--create", "--force-create"}
+OPTION_WITH_VALUE = {"-t", "--track", "--orphan", "--conflict", "--pathspec-from-file"}
 
-    This is intentionally conservative: path checkouts and unrecognised option
-    layouts return an empty string rather than guessing.
-    """
+
+def _split_git_switch_command(command: str) -> tuple[str, list[str]]:
+    """Return the git switch/checkout subcommand and args, or empty values."""
+    subcommand = ""
+    args: list[str] = []
     try:
         tokens = shlex.split(command)
     except ValueError:
-        return ""
-    if len(tokens) < 3 or tokens[0] != "git" or tokens[1] not in ("switch", "checkout"):
-        return ""
-    subcommand = tokens[1]
-    args = tokens[2:]
-    if "--" in args:
-        return ""
+        tokens = []
+    if len(tokens) >= 3 and tokens[0] == "git" and tokens[1] in ("switch", "checkout"):
+        subcommand = tokens[1]
+        args = tokens[2:]
+    return subcommand, args
 
-    takes_branch_arg = {"-b", "-B", "-c", "-C", "--create", "--force-create"}
-    option_with_value = {"-t", "--track", "--orphan", "--conflict", "--pathspec-from-file"}
+
+def _scan_git_switch_args(subcommand: str, args: list[str]) -> str:
+    """Return the first branch-like target in git switch/checkout args."""
+    target = ""
     index = 0
-    while index < len(args):
+    while index < len(args) and not target:
         arg = args[index]
-        if arg in takes_branch_arg:
+        if arg in TAKES_BRANCH_ARG:
             if index + 1 < len(args):
-                return args[index + 1]
-            return ""
-        if arg in option_with_value:
+                target = args[index + 1]
+        elif arg in OPTION_WITH_VALUE:
             index += 2
             continue
-        if arg.startswith("-"):
+        elif arg.startswith("-"):
             index += 1
             continue
-        if subcommand == "checkout" and any(ch in arg for ch in ("/", ".")):
+        elif subcommand == "checkout" and any(ch in arg for ch in ("/", ".")):
             # Likely a file/path checkout, not a branch switch.
-            return ""
-        return arg
-    return ""
+            target = ""
+        else:
+            target = arg
+        index += 1
+    return target
 
 
-def _check_canonical_branch_switch_command(command: str) -> "dict | None":
-    """Deny git switch/checkout to non-default refs in the canonical checkout."""
-    cwd = os.getcwd()
-    repo_root = _get_repo_root(cwd)
-    if not repo_root or _is_linked_worktree(repo_root):
-        return None
-    target = _extract_git_switch_target(command)
-    if not target:
-        return None
-    default_branch = _get_default_branch(repo_root)
-    if target in (default_branch, "main", "master", "-"):
-        return None
+def _extract_git_switch_target(command: str) -> str:
+    """Return the target branch for a git switch/checkout command, if obvious."""
+    subcommand, args = _split_git_switch_command(command)
+    target = ""
+    if subcommand and "--" not in args:
+        target = _scan_git_switch_args(subcommand, args)
+    return target
+
+
+def _canonical_branch_switch_deny(target: str, default_branch: str) -> dict:
+    """Return a deny payload for canonical workspace branch switches."""
     return {
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -423,6 +425,19 @@ def _check_canonical_branch_switch_command(command: str) -> "dict | None":
             ),
         }
     }
+
+
+def _check_canonical_branch_switch_command(command: str) -> "dict | None":
+    """Deny git switch/checkout to non-default refs in the canonical checkout."""
+    cwd = os.getcwd()
+    repo_root = _get_repo_root(cwd)
+    target = ""
+    if repo_root and not _is_linked_worktree(repo_root):
+        target = _extract_git_switch_target(command)
+    default_branch = _get_default_branch(repo_root) if target else ""
+    if target and target not in (default_branch, "main", "master", "-"):
+        return _canonical_branch_switch_deny(target, default_branch)
+    return None
 
 
 def _check_main_branch_allowlist(file_path: str) -> "dict | None":
