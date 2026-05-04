@@ -39,7 +39,8 @@ _close_dupe() {
 	# Check current state — skip if already closed
 	local state
 	state=$(gh issue view "$num" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-	if [[ "${state,,}" == "closed" ]]; then
+	state=$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')
+	if [[ "$state" == "closed" ]]; then
 		printf '  %sSKIP%s #%s (already closed)\n' "$GREEN" "$NC" "$num"
 		return 0
 	fi

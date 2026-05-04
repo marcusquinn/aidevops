@@ -238,7 +238,7 @@ color_for_tag() {
 	}
 
 	# Normalise: lowercase, strip leading #
-	tag="${tag,,}"
+	tag=$(printf '%s' "$tag" | tr '[:upper:]' '[:lower:]')
 	tag="${tag#\#}"
 
 	# Check each category
@@ -324,11 +324,12 @@ _apply_label() {
 # Usage: _apply_label_set "owner/repo" ARRAY_NAME [--dry-run]
 _apply_label_set() {
 	local repo="$1"
-	local -n label_array="$2"
+	local label_array_name="$2"
 	local dry_run="${3:-}"
 
 	local definition
-	for definition in "${label_array[@]}"; do
+	eval "set -- \"\${${label_array_name}[@]}\""
+	for definition in "$@"; do
 		_apply_label "$repo" "$definition" "$dry_run"
 	done
 	return 0
