@@ -94,6 +94,11 @@ CLEAN_ANALYZE_RC=$?
 assert_exit_code "clean output passes" 0 "$CLEAN_ANALYZE_RC"
 assert_contains "clean output states no actionable warnings" "LINT_WARNINGS_CLEAN" "$CLEAN_ANALYZE_OUTPUT"
 
+MISSING_PROJECT_OUTPUT=$("$HELPER" run --project-dir 2>&1)
+MISSING_PROJECT_RC=$?
+assert_exit_code "missing --project-dir value fails cleanly" 1 "$MISSING_PROJECT_RC"
+assert_contains "missing --project-dir value prints usage" "Usage:" "$MISSING_PROJECT_OUTPUT"
+
 if [[ $TESTS_FAILED -eq 0 ]]; then
 	printf '\n%sAll %s tests passed%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_NC"
 	exit 0

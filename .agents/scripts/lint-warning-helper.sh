@@ -84,6 +84,10 @@ run_lint_command() {
 		current_arg="${1:-}"
 		case "$current_arg" in
 		--project-dir)
+			if [[ $# -lt 2 ]]; then
+				usage >&2
+				return 1
+			fi
 			next_arg="${2:-}"
 			project_dir="$next_arg"
 			shift 2
