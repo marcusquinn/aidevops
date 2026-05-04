@@ -27,6 +27,7 @@
 # Test scenarios:
 #   1. cache-hit + gh issue view fails (rc=4)     → cache preserved, cached number echoed
 #   2. cache-hit + gh issue view returns CLOSED   → cache cleared, fall through
+#   2b. cache-hit + gh issue view returns open    → cache preserved, cached number echoed
 #   3. no cache + gh issue list label fails (rc=4) → sentinel emitted
 #   4. no cache + gh issue list title fails (rc=4) → sentinel emitted
 #   5. no cache + two issues via label search      → older closed, newer returned
@@ -45,6 +46,13 @@ set -uo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
+
+# Keep this unit deterministic even when the caller's shell has enabled
+# REST-first/fallback GitHub reads. These scenarios stub the gh CLI's GraphQL
+# `issue view/list` shape directly unless a scenario explicitly opts into REST.
+export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=-1
+export AIDEVOPS_GH_FORCE_REST_READS=0
+export AIDEVOPS_GH_REST_FIRST_READS=0
 
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'
@@ -148,14 +156,28 @@ gh() {
 # to be sourced by stats-functions.sh. We source it directly — it doesn't
 # actually exercise the orchestrator's bootstrap constants at parse time.
 # shellcheck source=../stats-health-dashboard.sh
+source "${SCRIPTS_DIR}/portable-stat.sh"
 source "${SCRIPTS_DIR}/stats-health-dashboard.sh"
 
-# Override _unpin_health_issue and _create_health_issue after source —
-# the module defines them, and we want to observe rather than execute.
+# Override GitHub wrapper functions plus _unpin_health_issue and
+# _create_health_issue after source — the module defines/imports them, and we
+# want deterministic stub calls rather than environment-dependent REST fallback.
 CREATE_CALLS="${TMP}/create_calls.log"
 UNPIN_CALLS="${TMP}/unpin_calls.log"
 : >"$CREATE_CALLS"
 : >"$UNPIN_CALLS"
+
+# shellcheck disable=SC2317
+gh_issue_view() {
+	gh issue view "$@"
+	return $?
+}
+
+# shellcheck disable=SC2317
+gh_issue_list() {
+	gh issue list "$@"
+	return $?
+}
 
 # shellcheck disable=SC2317
 _unpin_health_issue() {
@@ -230,6 +252,22 @@ if [[ ! -f "$CACHE_FILE" ]]; then
 	pass "cache file removed when issue is CLOSED"
 else
 	fail "cache file removed when issue is CLOSED" "file still exists"
+fi
+
+section "Scenario 2b: cache-hit + gh view returns lowercase open → cache preserved"
+reset_stubs
+setup_cache "42"
+stub_gh_for "issue view 42" "open" 0
+result=$(_find_health_issue "$REPO" "$RUNNER_USER" "$RUNNER_ROLE" "$RUNNER_PREFIX" "$ROLE_LABEL" "$ROLE_DISPLAY" "$CACHE_FILE")
+if [[ "$result" == "42" ]]; then
+	pass "echoes cached number when REST fallback returns lowercase open"
+else
+	fail "echoes cached number when REST fallback returns lowercase open" "got '$result'"
+fi
+if ! grep -q "unexpected state" "$LOGFILE"; then
+	pass "does not log lowercase open as unexpected state"
+else
+	fail "does not log lowercase open as unexpected state" "log: $(grep 'unexpected state' "$LOGFILE")"
 fi
 
 section "Scenario 3: no cache + label list fails (rc=4) → __QUERY_FAILED__ sentinel"
