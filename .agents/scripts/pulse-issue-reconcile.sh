@@ -153,15 +153,17 @@ _gh_pr_list_merged() {
 # prefix-substring false matches (e.g. lookup `|10=`, search `|1=` — the
 # required `=` after the issue number anchors the match boundary).
 #
-# Body-keyword check is built into the lookup itself: the jq scan only
-# emits pairs from PR bodies actually containing Resolves|Closes|Fixes #N.
+# Body-keyword and merge-evidence checks are built into the lookup itself: the
+# jq scan only emits pairs from PRs that have a non-empty mergedAt/merged_at and
+# bodies actually containing Resolves|Closes|Fixes #N.
 # This collapses what was previously two gh API calls per issue (search +
 # pr view --json body) into the single per-repo prefetch.
 #
-# Limit 200 most-recent merged PRs per repo. Sufficient for the typical
-# case (open issue resolved by a PR within days/weeks of merge); a 6-month
-# old open-but-already-merged-by-an-old-PR is degenerate and falls
-# through to next-cycle retry without harm (issue stays open).
+# Limit 200 most-recent closed PRs per repo, then filter to mergedAt locally.
+# GH#22802: REST fallback cannot represent gh's synthetic --state merged; it
+# can return closed-but-unmerged/open-adjacent data. Requiring mergedAt in the
+# jq filter fails closed and prevents the reconciler from closing issues while
+# their linked PR is still open or merely closed-unmerged.
 #
 # Args:    $1 = slug (owner/repo)
 # Returns: prints lookup string on stdout (may be empty); exit 0 always.
@@ -174,8 +176,8 @@ _build_oimp_lookup_for_slug() {
 	# --json body costs more bytes per call but the trip count goes from
 	# ~200/cycle to 8/cycle — net ~30x reduction in API round-trips.
 	local merged_prs_json
-	merged_prs_json=$(_gh_pr_list_merged --repo "$slug" --state merged \
-		--json number,body --limit 200 2>/dev/null) || merged_prs_json="[]"
+	merged_prs_json=$(_gh_pr_list_merged --repo "$slug" --state closed \
+		--json number,body,mergedAt --limit 200 2>/dev/null) || merged_prs_json="[]"
 	[[ -n "$merged_prs_json" && "$merged_prs_json" != "null" ]] || return 0
 
 	# jq scan() with one capture group returns ["issue_num"] per match.
@@ -185,6 +187,7 @@ _build_oimp_lookup_for_slug() {
 	printf '%s' "$merged_prs_json" | jq -r '
 		[
 			.[] | . as $pr |
+			select(($pr.mergedAt // $pr.merged_at // "") != "") |
 			(.body // "") |
 			scan("(?i)(?:resolves|closes|fixes)\\s+#([0-9]+)") |
 			"\(.[0])=\($pr.number)"
