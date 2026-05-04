@@ -10,11 +10,12 @@
 #      in-progress, in-review) in a single gh issue edit call
 #   2. Preserves terminal states — NEVER emits --remove-label for
 #      status:done, status:blocked, or status:available
-#   3. Removes the worker_login as assignee when provided
-#   4. Skips assignee mutation when worker_login is empty
-#   5. Defensively skips entirely when origin:interactive is present,
+#   3. Adds status:available when no linked PR owns the issue
+#   4. Removes the worker_login as assignee when provided
+#   5. Skips assignee mutation when worker_login is empty
+#   6. Defensively skips entirely when origin:interactive is present,
 #      preserving interactive-session ownership (t2056)
-#   6. Returns 0 on empty issue_num or repo_slug (idempotent no-op)
+#   7. Returns 0 on empty issue_num or repo_slug (idempotent no-op)
 #
 # Failure history motivating this test: production observation 2026-04-20
 # of #19864 and #19738 pinned as status:queued/claimed for 40+ minutes
@@ -135,6 +136,7 @@ assert_grep "remove-label status:queued" "removes status:queued"
 assert_grep "remove-label status:claimed" "removes status:claimed"
 assert_grep "remove-label status:in-progress" "removes status:in-progress"
 assert_grep "remove-label status:in-review" "removes status:in-review"
+assert_grep "add-label status:available" "adds status:available when no linked PR"
 assert_not_grep "remove-label status:done" "preserves status:done"
 assert_not_grep "remove-label status:blocked" "preserves status:blocked"
 assert_not_grep "remove-label status:available" "preserves status:available"
