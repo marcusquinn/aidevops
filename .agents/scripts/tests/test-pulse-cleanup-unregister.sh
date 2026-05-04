@@ -90,7 +90,122 @@ test_orphan_removal_unregisters() {
 	return 0
 }
 
+write_kill_stub() {
+	local bin_dir="$1"
+	mkdir -p "$bin_dir"
+	cat >"${bin_dir}/kill" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >>"${KILL_LOG:?}"
+exit 0
+STUB
+	chmod +x "${bin_dir}/kill"
+	return 0
+}
+
+write_ledger_stub() {
+	local scripts_dir="$1"
+	local mode="$2"
+	mkdir -p "$scripts_dir"
+	if [[ "$mode" == "missing" ]]; then
+		cat >"${scripts_dir}/dispatch-ledger-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+	else
+		cat >"${scripts_dir}/dispatch-ledger-helper.sh" <<'STUB'
+#!/usr/bin/env bash
+cmd="${1:-}"
+if [[ "$cmd" == "check" ]]; then
+	printf '%s\n' '{"session_key":"issue-3964","issue_number":"3964","repo_slug":"awardsapp/awardsapp","pid":123,"status":"in-flight"}'
+	exit 0
+fi
+exit 1
+STUB
+	fi
+	chmod +x "${scripts_dir}/dispatch-ledger-helper.sh"
+	return 0
+}
+
+ps() {
+	local subcommand="${1:-}"
+	if [[ "$subcommand" == "aux" ]]; then
+		printf '%s\n' 'runner 123 0.0 0.0 ?? ?? S 0:00 headless-runtime-helper.sh run --role worker --session-key issue-3964 --dir /tmp/wt'
+	fi
+	return 0
+}
+
+gh() {
+	local subcommand="${1:-}"
+	local action="${2:-}"
+	printf '%s\n' "$*" >>"${GH_LOG:?}"
+	if [[ "$subcommand" == "pr" && "$action" == "list" ]]; then
+		printf '%s\n' "${GH_MERGED_PR:-3964}"
+		return 0
+	fi
+	return 1
+}
+
+test_zombie_reaper_requires_ledger_repo() {
+	local original_script_dir="$SCRIPT_DIR"
+	local scripts_dir="${TEST_ROOT}/scripts-no-ledger"
+	local bin_dir="${TEST_ROOT}/bin-no-ledger"
+	local kill_log="${TEST_ROOT}/kill-no-ledger.log"
+	local gh_log="${TEST_ROOT}/gh-no-ledger.log"
+	local old_path="$PATH"
+
+	: >"$kill_log"
+	: >"$gh_log"
+	LOGFILE="${TEST_ROOT}/pulse-no-ledger.log"
+	printf '%s\n' '{"initialized_repos":[{"slug":"marcusquinn/aidevops","pulse":true}]}' >"${TEST_ROOT}/repos.json"
+	REPOS_JSON="${TEST_ROOT}/repos.json"
+	write_ledger_stub "$scripts_dir" "missing"
+	write_kill_stub "$bin_dir"
+
+	SCRIPT_DIR="$scripts_dir"
+	PATH="${bin_dir}:${PATH}"
+	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR="3964"
+	reap_zombie_workers
+	PATH="$old_path"
+	SCRIPT_DIR="$original_script_dir"
+
+	[[ ! -s "$kill_log" ]] || fail "zombie reaper killed a worker without a ledger repo"
+	[[ ! -s "$gh_log" ]] || fail "zombie reaper queried merged PRs without a ledger repo"
+	grep -q 'no live ledger repo' "$LOGFILE" || fail "missing no-ledger skip audit log"
+	pass "zombie reaper refuses repo-less merged-PR lookup"
+	return 0
+}
+
+test_zombie_reaper_uses_ledger_repo_and_pid() {
+	local original_script_dir="$SCRIPT_DIR"
+	local scripts_dir="${TEST_ROOT}/scripts-with-ledger"
+	local bin_dir="${TEST_ROOT}/bin-with-ledger"
+	local kill_log="${TEST_ROOT}/kill-with-ledger.log"
+	local gh_log="${TEST_ROOT}/gh-with-ledger.log"
+	local old_path="$PATH"
+
+	: >"$kill_log"
+	: >"$gh_log"
+	LOGFILE="${TEST_ROOT}/pulse-with-ledger.log"
+	write_ledger_stub "$scripts_dir" "present"
+	write_kill_stub "$bin_dir"
+
+	SCRIPT_DIR="$scripts_dir"
+	PATH="${bin_dir}:${PATH}"
+	export GH_LOG="$gh_log" KILL_LOG="$kill_log" GH_MERGED_PR="5000"
+	reap_zombie_workers
+	PATH="$old_path"
+	SCRIPT_DIR="$original_script_dir"
+
+	grep -Fxq '123' "$kill_log" || fail "zombie reaper did not kill the ledger PID"
+	grep -q -- '--repo awardsapp/awardsapp' "$gh_log" || fail "zombie reaper did not query the ledger repo"
+	grep -q 'PR #5000 already merged in awardsapp/awardsapp' "$LOGFILE" || fail "missing ledger-repo reap audit log"
+	pass "zombie reaper uses ledger repo and PID"
+	return 0
+}
+
 test_current_cwd_skip
 test_orphan_removal_unregisters
+test_zombie_reaper_requires_ledger_repo
+test_zombie_reaper_uses_ledger_repo_and_pid
 
 exit 0
