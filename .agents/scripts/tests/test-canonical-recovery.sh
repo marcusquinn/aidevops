@@ -376,22 +376,27 @@ printf '%s\n' '- [x] t123 sync metadata fixture #auto-dispatch logged:2026-01-01
 reset_call_logs
 reset_stderr="${TEST_ROOT}/todo-reset-failure.stderr"
 
-git() {
-	local arg1="${1:-}" arg2="${2:-}" arg3="${3:-}" arg4="${4:-}"
-	if [[ "$arg1" == "-C" && "$arg2" == "$CANON_DIR" && "$arg3" == "reset" && "$arg4" == "-q" ]]; then
-		printf '%s\n' 'simulated reset failure' >&2
-		return 1
-	fi
-	command git "$@"
-	return $?
-}
+REAL_GIT_BIN=$(command -v git)
+GIT_STUB_DIR="${TEST_ROOT}/git-reset-failure-stub"
+mkdir -p "$GIT_STUB_DIR"
+cat >"${GIT_STUB_DIR}/git" <<STUB
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-C" && "\${2:-}" == "$CANON_DIR" && "\${3:-}" == "reset" && "\${4:-}" == "-q" ]]; then
+	printf '%s\n' 'simulated reset failure' >&2
+	exit 1
+fi
+exec "$REAL_GIT_BIN" "\$@"
+STUB
+chmod +x "${GIT_STUB_DIR}/git"
+OLD_PATH="$PATH"
+PATH="${GIT_STUB_DIR}:${PATH}"
 
 if pulse_canonical_recover "$CANON_DIR" >/dev/null 2>"$reset_stderr"; then
 	print_result "todo reset failure: recovery blocks" 1 "unexpected success"
 else
 	print_result "todo reset failure: recovery blocks" 0
 fi
-unset -f git
+PATH="$OLD_PATH"
 grep -q 'simulated reset failure' "$reset_stderr" \
 	&& print_result "todo reset failure: stderr remains visible" 0 \
 	|| print_result "todo reset failure: stderr remains visible" 1
