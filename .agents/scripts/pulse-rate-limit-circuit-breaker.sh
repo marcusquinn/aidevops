@@ -102,7 +102,7 @@ _CB_RL_UNKNOWN="?"
 #######################################
 _cb_rate_limit_json() {
 	local mode="${1:-normal}"
-	local now cached_ts age rate_json tmp
+	local now="" cached_ts="" age="" rate_json="" tmp=""
 	now=$(date +%s 2>/dev/null) || now=0
 
 	if [[ -f "$_CB_RL_CACHE_FILE" ]]; then
@@ -132,16 +132,58 @@ _cb_rate_limit_json() {
 }
 
 #######################################
+# Allow degraded dispatch when only GraphQL is exhausted.
+#
+# Args:
+#   $1 - rate_limit JSON
+#   $2 - GraphQL remaining count
+#   $3 - GraphQL limit count
+#   $4 - GraphQL threshold count
+#   $5 - configured GraphQL threshold string
+#
+# Returns: 0 if REST fallback is active and dispatch may proceed, 1 otherwise.
+#######################################
+_cb_allow_dispatch_with_rest_fallback() {
+	local rate_json="$1"
+	local graphql_remaining="$2"
+	local graphql_limit="$3"
+	local graphql_threshold_count="$4"
+	local threshold="$5"
+
+	if [[ "${AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK:-1}" != "1" ]]; then
+		return 1
+	fi
+
+	local core_remaining="" core_limit="" min_core=""
+	core_remaining=$(printf '%s' "$rate_json" | jq -r '.resources.core.remaining // ""') || core_remaining=""
+	core_limit=$(printf '%s' "$rate_json" | jq -r '.resources.core.limit // ""') || core_limit=""
+	min_core="${AIDEVOPS_PULSE_REST_DISPATCH_MIN_CORE_REMAINING:-250}"
+
+	if [[ ! "$core_remaining" =~ ^[0-9]+$ ]] || [[ ! "$core_limit" =~ ^[0-9]+$ ]] || [[ ! "$min_core" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	if [[ "$core_remaining" -lt "$min_core" ]]; then
+		echo "${_CB_RL_LOG_PREFIX} GraphQL budget exhausted and REST fallback unavailable: core remaining=${core_remaining}/${core_limit} < min_core=${min_core}" >>"$LOGFILE"
+		return 1
+	fi
+
+	export AIDEVOPS_GH_FORCE_REST_READS=1
+	export AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE=1
+	export AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_CORE_REMAINING="$core_remaining"
+	echo "${_CB_RL_LOG_PREFIX} GraphQL budget EXHAUSTED: remaining=${graphql_remaining}/${graphql_limit} (threshold=${graphql_threshold_count}, configured=${threshold}) — dispatch_rest_fallback=true; proceeding with REST-backed dispatch reads (core=${core_remaining}/${core_limit}, min_core=${min_core})" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "pulse_dispatch_rest_fallback" 2>/dev/null || true
+	fi
+	return 0
+}
+
+#######################################
 # Check whether the GitHub GraphQL rate-limit budget is sufficient for dispatch.
+# Falls back to REST-backed dispatch when GraphQL is exhausted but REST core has
+# enough headroom for issue/comment/label operations.
 #
-# Queries `gh api rate_limit` (free endpoint — does not consume quota),
-# extracts GraphQL remaining and limit, computes the ratio, and compares
-# against the configured threshold.
-#
-# Exit codes:
-#   0 — budget sufficient; dispatch may proceed
-#   1 — budget exhausted or below threshold; dispatch should be deferred
-#   2 — API error (fail-open: dispatch proceeds with warning)
+# Returns: 0 when dispatch may proceed, 1 when dispatch should defer, 2 on API error.
 #######################################
 is_graphql_budget_sufficient() {
 	# Emergency bypass.
@@ -166,7 +208,7 @@ is_graphql_budget_sufficient() {
 		return 2
 	fi
 
-	local remaining limit
+	local remaining="" limit=""
 	remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // ""') || remaining=""
 	limit=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.limit // ""') || limit=""
 
@@ -186,6 +228,10 @@ is_graphql_budget_sufficient() {
 	threshold_count=$(_compute_threshold_count "$threshold" "$limit") || threshold_count=0
 
 	if [[ "$remaining" -le "$threshold_count" ]]; then
+		if _cb_allow_dispatch_with_rest_fallback "$rate_json" "$remaining" "$limit" "$threshold_count" "$threshold"; then
+			return 0
+		fi
+
 		# Breaker trips.
 		echo "${_CB_RL_LOG_PREFIX} GraphQL budget EXHAUSTED: remaining=${remaining}/${limit} (threshold=${threshold_count}, configured=${threshold}) — deferring dispatch until next cycle" >>"$LOGFILE"
 
@@ -273,7 +319,7 @@ _circuit_breaker_status() {
 		return 0
 	fi
 
-	local remaining limit reset_epoch
+	local remaining="" limit="" reset_epoch=""
 	remaining=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.remaining // \"${_CB_RL_UNKNOWN}\"") || remaining="$_CB_RL_UNKNOWN"
 	limit=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.limit // \"${_CB_RL_UNKNOWN}\"") || limit="$_CB_RL_UNKNOWN"
 	reset_epoch=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.reset // \"${_CB_RL_UNKNOWN}\"") || reset_epoch="$_CB_RL_UNKNOWN"

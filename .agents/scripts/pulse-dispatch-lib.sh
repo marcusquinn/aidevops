@@ -355,7 +355,7 @@ _dispatch_provider_pressure_points() {
 }
 
 _dispatch_graphql_pressure_points() {
-	local graphql_remaining graphql_low graphql_critical
+	local graphql_remaining="" graphql_low="" graphql_critical=""
 	graphql_remaining=$(_dispatch_graphql_remaining_cached)
 	graphql_low="${PULSE_DISPATCH_STAGGER_GRAPHQL_LOW:-1250}"
 	graphql_critical="${PULSE_DISPATCH_STAGGER_GRAPHQL_CRITICAL:-750}"
@@ -385,7 +385,7 @@ _dispatch_finalize_stagger_delay() {
 		printf '0\n'
 		return 0
 	fi
-	local issue_number jitter_max jitter delay cap
+	local issue_number="" jitter_max="" jitter="" delay="" cap=""
 	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || issue_number=0
 	jitter_max="${PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS:-3}"
@@ -428,7 +428,7 @@ _dispatch_inter_launch_delay() {
 
 	local pressure_points=0
 	pressure_points=$((pressure_points + $(_dispatch_load_pressure_points)))
-	local recent_failures recent_rate_limits pressure_line
+	local recent_failures="" recent_rate_limits="" pressure_line=""
 	pressure_line=$(_dispatch_recent_worker_pressure_counts)
 	read -r recent_failures recent_rate_limits <<<"$pressure_line"
 	[[ "$recent_failures" =~ ^[0-9]+$ ]] || recent_failures=0
@@ -459,9 +459,9 @@ _dispatch_compute_capacity() {
 		return 1
 	fi
 
-	# t2690: Proactive rate-limit circuit breaker — pause dispatch when GraphQL
-	# budget is nearly exhausted. One cheap API call (free endpoint) prevents
-	# spawning workers that would fail at step 1 and burn $0.05-$0.25 each.
+	# t2690/t3424: Proactive rate-limit circuit breaker — pause dispatch when
+	# GraphQL budget is nearly exhausted unless REST-backed dispatch fallback is
+	# active and REST core has enough headroom for issue/comment/label calls.
 	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
 		local _cb_rc=0
 		is_graphql_budget_sufficient || _cb_rc=$?
