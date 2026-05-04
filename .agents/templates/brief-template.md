@@ -407,7 +407,7 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
   ```
 
 - [ ] Tests pass (`npm test` / `bun test` / project-specific)
-- [ ] Lint clean (`eslint` / `shellcheck` / project-specific)
+- [ ] Lint clean (`eslint` / `shellcheck` / project-specific; React/TypeScript ESLint warnings such as `react-hooks/exhaustive-deps` count as actionable even when lint exits `0`)
 - [ ] Qlty smells resolved (for `#simplification` tasks): `~/.qlty/bin/qlty smells --all 2>&1 | grep '<target_file>' | grep -c . | grep -q '^0$'`
 
   ```yaml
