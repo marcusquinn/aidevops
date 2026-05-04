@@ -937,6 +937,22 @@ else
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export AIDEVOPS_GH_PR_LIST_CACHE_DIR="$TMP/pr-list-cache"
+export AIDEVOPS_GH_PR_LIST_CACHE_TTL=30
+gh_pr_list --repo "owner/repo" --state open --json number --jq length --limit 200 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number --jq length --limit 200 >/dev/null 2>&1 || true
+
+pr_pull_calls=$(grep -cE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$pr_pull_calls" == "1" ]]; then
+	pass "gh_pr_list short-lived snapshot cache coalesces identical open PR reads"
+else
+	fail "gh_pr_list short-lived snapshot cache coalesces identical open PR reads" \
+		"pull_calls=${pr_pull_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
+
 unset AIDEVOPS_GH_REST_FIRST_READS
 
 # =============================================================================

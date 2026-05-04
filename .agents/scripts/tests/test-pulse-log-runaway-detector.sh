@@ -148,11 +148,18 @@ test_repetition_pattern_hit() {
 
 	bash "$DETECTOR" check-and-heal 2>/dev/null
 
-	# Check that advisory was written (repetition detection is advisory-only,
-	# doesn't necessarily rotate on its own if under size cap)
+	# Check that advisory was written and the repeated log was rotated.
 	local advisory_result=1
 	[[ -f "${HOME}/.aidevops/cache/pulse-wrapper-log-runaway-advisory.txt" ]] && advisory_result=0
 	_assert "advisory written on repetition pattern" "$advisory_result"
+
+	local after_size=0
+	after_size=$(wc -c <"$WRAPPER_LOGFILE" 2>/dev/null || echo "999999999")
+	after_size="${after_size//[[:space:]]/}"
+	[[ "$after_size" =~ ^[0-9]+$ ]] || after_size=999999999
+	local rotation_result=1
+	[[ "$after_size" -lt 1024 ]] && rotation_result=0
+	_assert "wrapper log rotated on repetition pattern" "$rotation_result"
 
 	_teardown
 	return 0

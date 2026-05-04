@@ -1721,13 +1721,29 @@ classify_dispatch_blocker_reason() {
 			printf 'launch_error\n'
 			return 0
 			;;
+		*missing*worker*context* | *needs-brief* | *missing*implementation*context*)
+			printf 'missing_worker_context\n'
+			return 0
+			;;
+		*worktree*cap* | *max*worktree* | *disk*space* | *large*file*)
+			printf 'local_capacity_gate\n'
+			return 0
+			;;
+		*no-auto-dispatch* | *external*author*gate* | *nmr*gate* | *approval*required*)
+			printf 'policy_gate\n'
+			return 0
+			;;
 		*assigned* | *claim* | *ledger* | *has-open-pr* | *pr*evidence* | *duplicate* | *stale_recovered*)
 			printf 'dedup_active_claim\n'
 			return 0
 			;;
+		"")
+			printf 'no_recent_log_evidence\n'
+			return 0
+			;;
 	esac
 
-	printf 'unknown\n'
+	printf 'unclassified_signal\n'
 	return 0
 }
 
