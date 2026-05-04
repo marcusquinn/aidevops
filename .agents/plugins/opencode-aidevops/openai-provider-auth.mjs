@@ -154,26 +154,32 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
   return buildRetryInit(input, init, rotated.access);
 }
 
+async function handleOpenAIFetchRequest(ctx) {
+  const { client, originalFetch, input, init } = ctx;
+  const openaiRequest = isOpenAIProviderRequest(input);
+  const retryInput = openaiRequest ? buildRetryRequest(input) : input;
+  const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
+  const response = await originalFetch(input, firstInit);
+
+  if (!openaiRequest) return response;
+  if (await isOpenAIUsageLimitResponse(response)) {
+    return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
+  }
+  if (await isOpenAIOverloadResponse(response)) {
+    return handleOpenAIOverload({ originalFetch, init: firstInit, response, retryInput });
+  }
+  if (response.ok) {
+    return wrapOpenAIOverloadStream({ originalFetch, response, retryInput, init: firstInit, buildRetryRequest });
+  }
+  return response;
+}
+
 export function installOpenAIProviderFetchRotation(client) {
   if (installed || typeof globalThis.fetch !== "function") return false;
   installed = true;
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (input, init) => {
-    const openaiRequest = isOpenAIProviderRequest(input);
-    const retryInput = openaiRequest ? buildRetryRequest(input) : input;
-    const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
-    const response = await originalFetch(input, firstInit);
-    if (!openaiRequest) return response;
-    if (await isOpenAIUsageLimitResponse(response)) {
-      return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
-    }
-    if (await isOpenAIOverloadResponse(response)) {
-      return handleOpenAIOverload({ originalFetch, init: firstInit, response, retryInput });
-    }
-    if (response.ok) {
-      return wrapOpenAIOverloadStream({ originalFetch, response, retryInput, init: firstInit, buildRetryRequest });
-    }
-    return response;
+    return handleOpenAIFetchRequest({ client, originalFetch, input, init });
   };
   return true;
 }
