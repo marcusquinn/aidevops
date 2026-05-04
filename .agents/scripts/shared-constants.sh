@@ -1049,7 +1049,9 @@ clear_active_status_on_release() {
 	# t2746/GH#20520.
 	#
 	# We still remove queued, claimed, and in-progress — those never
-	# outlive the worker process regardless of PR state.
+	# outlive the worker process regardless of PR state. When no linked PR
+	# exists, add status:available in the same edit so failed workers do not
+	# leave issues pinned as assigned-but-queued until the next stale sweep.
 	#
 	# CLOSED-not-merged PRs do NOT trigger preserve: the work didn't
 	# complete, and leaving the assignee on the issue would block
@@ -1081,6 +1083,7 @@ clear_active_status_on_release() {
 
 	if [[ "$has_linked_pr" != "true" ]]; then
 		_flags+=(--remove-label "status:in-review")
+		_flags+=(--add-label "status:available")
 		if [[ -n "$worker_login" ]]; then
 			_flags+=(--remove-assignee "$worker_login")
 		fi
