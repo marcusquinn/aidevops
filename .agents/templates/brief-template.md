@@ -225,6 +225,20 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
       agents-md-size-check CI ratchet unless the PR explicitly justifies a baseline
       bump. -->
 
+### Progressive Context Plan
+
+<!-- REQUIRED when the brief cites 3+ workflow/reference/command docs OR the
+     Research/read estimate exceeds ~2,000 lines. Keep this section inside
+     `## How` so issue-sync promotes it into `## Worker Guidance` for headless
+     workers. Purpose: tell the worker what to load, when, why, and when to stop
+     instead of expanding always-loaded AGENTS.md guidance. Delete for simple
+     tasks where Implementation Steps are enough. -->
+
+- **Read first:** `{path:line-range or section}` — {decision this unlocks}
+- **Load only if:** `{path or doc}` — {trigger condition; e.g., conflict, CI failure, shell complexity gate}
+- **Why:** {the implementation choice or safety constraint this context informs}
+- **Stop when:** {evidence gathered; e.g., target function, reference pattern, constraints, and verification command are clear}
+
 ### Worker Quick-Start
 
 <!-- OPTIONAL but RECOMMENDED for tasks with 3+ reference files or >2,000 lines of

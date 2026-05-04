@@ -158,12 +158,39 @@ else
 		"expected '## Worker Guidance' in output — case-insensitive match failed"
 fi
 
-# Test A3: no brief file → returns input unchanged
+# Test A3: progressive context plan inside ## How is promoted to Worker Guidance
+cat >"$TMP/brief-progressive-context.md" <<'BRIEF'
+# t9004: progressive context brief
+
+## What
+Progressive context task.
+
+## How
+
+### Progressive Context Plan
+- **Read first:** `.agents/reference/progressive-disclosure.md:1-80` — understand trigger contract
+- **Load only if:** `.agents/workflows/brief.md` — when changing brief composition
+- **Why:** Prevent broad reading before implementation
+- **Stop when:** target files and verification commands are clear
+
+### Files to Modify
+- EDIT: baz.sh
+BRIEF
+
+result=$(_compose_issue_worker_guidance "base body" "$TMP/brief-progressive-context.md")
+if [[ "$result" == *"## Worker Guidance"* ]] && [[ "$result" == *"### Progressive Context Plan"* ]] && [[ "$result" == *"Stop when"* ]]; then
+	pass "A3 Progressive Context Plan is promoted into Worker Guidance"
+else
+	fail "A3 progressive context guidance extraction" \
+		"expected Progressive Context Plan inside Worker Guidance"
+fi
+
+# Test A4: no brief file → returns input unchanged
 result=$(_compose_issue_worker_guidance "base body" "$TMP/nonexistent.md")
 if [[ "$result" == "base body" ]]; then
-	pass "A3 no brief file returns input body unchanged"
+	pass "A4 no brief file returns input body unchanged"
 else
-	fail "A3 no brief file" "expected 'base body', got '$result'"
+	fail "A4 no brief file" "expected 'base body', got '$result'"
 fi
 
 # =============================================================================

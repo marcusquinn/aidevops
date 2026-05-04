@@ -37,6 +37,9 @@
 #                                       (default: ~/.aidevops/logs/headless-runtime-metrics.jsonl)
 #   DISPATCH_BACKOFF_LOOKBACK_SECS    — how far back to count failures (default 604800 = 7 days)
 #   DISPATCH_BACKOFF_NMR_THRESHOLD    — failure count at which to request NMR (default 4)
+#   DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS — provider/model pressure window (default 900 = 15 min)
+#   DISPATCH_PROVIDER_BACKOFF_THRESHOLD   — rate_limit count that trips pressure cooldown (default 6)
+#   DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS — provider/model cooldown after last event (default 300 = 5 min)
 #   AIDEVOPS_SKIP_DISPATCH_BACKOFF=1  — emergency bypass (dispatch proceeds unconditionally)
 #
 # Integration:
@@ -73,6 +76,9 @@ LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 DISPATCH_BACKOFF_METRICS_FILE="${DISPATCH_BACKOFF_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
 DISPATCH_BACKOFF_LOOKBACK_SECS="${DISPATCH_BACKOFF_LOOKBACK_SECS:-604800}"  # 7 days
 DISPATCH_BACKOFF_NMR_THRESHOLD="${DISPATCH_BACKOFF_NMR_THRESHOLD:-4}"       # 4+ failures → NMR
+DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS="${DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS:-900}"
+DISPATCH_PROVIDER_BACKOFF_THRESHOLD="${DISPATCH_PROVIDER_BACKOFF_THRESHOLD:-6}"
+DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS="${DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS:-300}"
 
 # Backoff intervals in seconds (indexed by failure count; index 0 unused).
 # Index >= NMR_THRESHOLD uses the last entry (86400 = 24h).
@@ -142,6 +148,94 @@ _db_count_rate_limit_events() {
 }
 
 #######################################
+# Count recent provider/model-wide rate_limit pressure.
+#
+# Stdout: "<count> <last_ts> <provider> <model>" for the hottest provider/model,
+# or "0 0 unknown unknown" when no pressure exists. This protects the pool from
+# launching many different issues into the same constrained provider account.
+#
+# Args:
+#   $1 - since_epoch
+#######################################
+_db_count_provider_rate_limit_pressure() {
+	local since_epoch="$1"
+	local metrics_file="$DISPATCH_BACKOFF_METRICS_FILE"
+
+	if [[ ! -f "$metrics_file" ]]; then
+		printf '0 0 unknown unknown\n'
+		return 0
+	fi
+
+	local result
+	result=$(jq -rs --argjson since "$since_epoch" '
+		map(select(((.result // "") == "rate_limit" or (.provider_error_type // "") == "rate_limit" or (.provider_status // "") == "429") and (.ts // 0) >= $since))
+		| group_by([.provider // "unknown", .model // "unknown"])
+		| map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, last: (map(.ts // 0) | max)})
+		| sort_by(.count, .last)
+		| last // {provider:"unknown", model:"unknown", count:0, last:0}
+		| "\(.count) \(.last) \(.provider) \(.model)"
+	' "$metrics_file" 2>/dev/null) || result="0 0 unknown unknown"
+
+	[[ -n "$result" ]] || result="0 0 unknown unknown"
+	printf '%s\n' "$result"
+	return 0
+}
+
+#######################################
+# Check provider/model-wide pressure backoff.
+#
+# Args:
+#   $1 - now epoch
+#######################################
+_db_check_provider_pressure_backoff() {
+	local now="$1"
+	local threshold="$DISPATCH_PROVIDER_BACKOFF_THRESHOLD"
+	local window_secs="$DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS"
+	local cooldown_secs="$DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS"
+
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=6
+	[[ "$window_secs" =~ ^[0-9]+$ ]] || window_secs=900
+	[[ "$cooldown_secs" =~ ^[0-9]+$ ]] || cooldown_secs=300
+	if [[ "$threshold" -le 0 || "$window_secs" -le 0 || "$cooldown_secs" -le 0 ]]; then
+		return 0
+	fi
+
+	local since=$(( now - window_secs ))
+	[[ "$since" -lt 0 ]] && since=0
+
+	local pressure_result
+	pressure_result=$(_db_count_provider_rate_limit_pressure "$since") || pressure_result="0 0 unknown unknown"
+
+	local count last_ts provider model
+	read -r count last_ts provider model <<<"$pressure_result"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$last_ts" =~ ^[0-9]+$ ]] || last_ts=0
+
+	if [[ "$count" -lt "$threshold" ]]; then
+		return 0
+	fi
+
+	local next_eligible=$(( last_ts + cooldown_secs ))
+	if [[ "$now" -ge "$next_eligible" ]]; then
+		return 0
+	fi
+
+	local wait_remaining=$(( next_eligible - now ))
+	local next_human
+	next_human=$(date -r "$next_eligible" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -d "@${next_eligible}" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		printf 'epoch:%s' "$next_eligible")
+
+	printf 'BACKOFF_ACTIVE reason=provider_rate_limit_pressure provider=%s model=%s count=%s window=%ss cooldown=%ss wait=%ss next=%s\n' \
+		"$provider" "$model" "$count" "$window_secs" "$cooldown_secs" "$wait_remaining" "$next_human" >&2
+	echo "${_DB_LOG_PREFIX} BACKOFF_ACTIVE provider_pressure provider=${provider} model=${model} count=${count} window=${window_secs}s cooldown=${cooldown_secs}s wait=${wait_remaining}s next=${next_human}" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "dispatch_provider_backoff_skipped" 2>/dev/null || true
+	fi
+	return 1
+}
+
+#######################################
 # Check whether dispatch backoff is active for an issue.
 #
 # Reads headless-runtime-metrics.jsonl for recent rate_limit events,
@@ -185,6 +279,12 @@ check_dispatch_backoff() {
 
 	local since=$(( now - DISPATCH_BACKOFF_LOOKBACK_SECS ))
 	[[ "$since" -lt 0 ]] && since=0
+
+	local provider_pressure_rc=0
+	_db_check_provider_pressure_backoff "$now" || provider_pressure_rc=$?
+	if [[ "$provider_pressure_rc" -eq 1 ]]; then
+		return 1
+	fi
 
 	# Count recent rate_limit events.
 	local count_result
