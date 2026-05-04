@@ -210,13 +210,14 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 | 2026-05-04T03:45Z | Progressive context fix implemented locally | Updated headless contract to V9 with Progressive context loading rules; added `### Progressive Context Plan` to brief template and workflow pointer; tests passed: `test-headless-runtime-helper.sh`, `test-brief-inline-classifier.sh`, `shellcheck` on changed shell files |
 | 2026-05-04T03:52Z | Broader lint attempted | `.agents/scripts/linters-local.sh` passed Sonar, secretlint, Markdown, TOON, skill frontmatter, secret policy, pulse canary, layout; timed out after reporting pre-existing Bash 3.2 compatibility violations in unrelated scripts |
 | 2026-05-04T04:15Z | Classifier provenance and provider pressure throttle implemented locally | Metrics now carry `classification_pattern`; worker activity groups expose it; dispatch backoff now blocks provider/model-wide rate-limit storms. Targeted tests passed: `test-headless-runtime-helper.sh`, `test-brief-inline-classifier.sh`, `test-worker-activity-helper.sh`, `test-dispatch-backoff-helper.sh`, and `shellcheck` on changed shell files |
+| 2026-05-04T04:25Z | Worktree rebased | Rebasing onto `origin/main` hit one conflict in `test-headless-runtime-helper.sh` (`V8` vs `V9` contract expectation); resolved to V9 while preserving upstream BLOCKED-signal test. Post-rebase targeted tests and shellcheck passed. |
 
 ## Next actions
 
-1. Refresh worktree against `origin/main` without losing local mission changes, then run scoped diff review.
-2. Run broader quality gate again or document pre-existing unrelated failures with evidence.
-3. Create PR for the combined local fixes, merge, release, and verify setup/update path.
-4. Monitor worker productivity (`worker-activity-helper.sh summary --since 24h --json`, solved:worker rate, repeated comments/attempts per issue). Convert any remaining comment-thread loops into systemic fixes.
+1. Run broader quality gate again or document pre-existing unrelated failures with evidence.
+2. Create PR for the combined local fixes, merge, release, and verify setup/update path.
+3. Monitor worker productivity (`worker-activity-helper.sh summary --since 24h --json`, solved:worker rate, repeated comments/attempts per issue).
+4. Add diagnostics for repeated worker comment threads that do not solve issues; convert remaining loops into systemic fixes.
 
 ## Perpetual Todo / Compaction Checkpoint
 
@@ -225,7 +226,7 @@ This mission continues until pulse and workers are fully productive: open issues
 - [x] Create mission state and baseline evidence.
 - [x] Capture first failure taxonomy, progressive context, and dispatch retry audits.
 - [x] Implement local Progressive Context Plan guidance for headless workers and briefs.
-- [ ] Refresh worktree against `origin/main` without losing local mission changes.
+- [x] Refresh worktree against `origin/main` without losing local mission changes.
 - [ ] Create/merge/release the combined progressive-context, classifier-provenance, and provider-pressure throttle fix.
 - [x] Add structured classifier provenance so rate-limit/provider/local/watchdog classifications cite source, matched pattern, exit code, and kill reason.
 - [x] Add provider/model-wide rate-limit pressure throttle so pulse does not launch many workers into one constrained account/model.
@@ -235,7 +236,7 @@ This mission continues until pulse and workers are fully productive: open issues
 
 Compaction resume facts:
 
-- Worktree: `/Users/marcusquinn/Git/aidevops-feature-auto-20260504-031114`.
+- Worktree: `/Users/marcusquinn/Git/aidevops-feature-auto-20260504-031114` at commit `337d701a4` after rebase.
 - Active files already changed locally: `.agents/scripts/headless-runtime-lib.sh`, `.agents/scripts/headless-runtime-helper.sh`, `.agents/scripts/worker-activity-helper.sh`, `.agents/scripts/dispatch-backoff-helper.sh`, `.agents/templates/brief-template.md`, `.agents/workflows/brief.md`, `.agents/scripts/tests/test-headless-runtime-helper.sh`, `.agents/scripts/tests/test-brief-inline-classifier.sh`, `.agents/scripts/tests/test-worker-activity-helper.sh`, `.agents/scripts/tests/test-dispatch-backoff-helper.sh`, and this mission file.
 - Verified local tests: `bash .agents/scripts/tests/test-headless-runtime-helper.sh && bash .agents/scripts/tests/test-brief-inline-classifier.sh && bash .agents/scripts/tests/test-worker-activity-helper.sh && bash .agents/scripts/tests/test-dispatch-backoff-helper.sh`, and targeted `shellcheck` passed.
 - Broader `linters-local.sh` timed out after pre-existing unrelated Bash 3.2 findings; do not claim full lint success until rerun or scoped exception is justified.
