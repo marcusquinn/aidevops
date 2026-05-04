@@ -1271,12 +1271,30 @@ test_hook() {
 
 	local pass=0
 	local fail=0
+	local test_root=""
+	test_root=$(mktemp -d) || return 1
+	test_root=$(cd "$test_root" && pwd -P) || return 1
+	git -C "$test_root" init -b main >/dev/null 2>&1 || {
+		git -C "$test_root" init >/dev/null 2>&1
+		git -C "$test_root" checkout -b main >/dev/null 2>&1
+	}
+	git -C "$test_root" config user.name "Aidevops Hook Test"
+	git -C "$test_root" config user.email "test@example.com"
+	git -C "$test_root" config commit.gpgsign false
+	printf 'seed\n' >"${test_root}/README.md"
+	git -C "$test_root" add README.md >/dev/null 2>&1
+	git -C "$test_root" commit -m "test: seed hook self-test" >/dev/null 2>&1
+
+	local linked_worktree="${test_root}/linked-wt"
+	git -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
 
 	# Test blocked commands
 	local -a blocked_cmds=(
 		"git checkout -- test.txt"
 		"git reset --hard"
 		"git clean -f"
+		"git checkout -b new-branch"
+		"git checkout --orphan gh-pages"
 		"git push --force origin main"
 		"git push -f origin main"
 		"git branch -D old-branch"
@@ -1289,7 +1307,7 @@ test_hook() {
 
 	for cmd in "${blocked_cmds[@]}"; do
 		local result
-		result=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
+		result=$(cd "$test_root" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
 		if echo "$result" | grep -q "permissionDecision.*deny" 2>/dev/null; then
 			pass=$((pass + 1))
 		else
@@ -1301,7 +1319,6 @@ test_hook() {
 	# Test allowed commands
 	local -a allowed_cmds=(
 		"git status"
-		"git checkout -b new-branch"
 		"git restore --staged file.txt"
 		"git clean -fn"
 		"git clean --dry-run"
@@ -1313,7 +1330,7 @@ test_hook() {
 
 	for cmd in "${allowed_cmds[@]}"; do
 		local result
-		result=$(echo "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
+		result=$(cd "$test_root" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
 		if [[ -z "$result" ]]; then
 			pass=$((pass + 1))
 		else
@@ -1321,6 +1338,25 @@ test_hook() {
 			fail=$((fail + 1))
 		fi
 	done
+
+	local -a linked_allowed_cmds=(
+		"git checkout -b linked-branch"
+		"git checkout --orphan linked-pages"
+	)
+
+	for cmd in "${linked_allowed_cmds[@]}"; do
+		local result
+		result=$(cd "$linked_worktree" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
+		if [[ -z "$result" ]]; then
+			pass=$((pass + 1))
+		else
+			print_error "  FAIL: should allow in linked worktree: $cmd"
+			fail=$((fail + 1))
+		fi
+	done
+
+	git -C "$test_root" worktree remove "$linked_worktree" >/dev/null 2>&1 || rm -rf "$linked_worktree"
+	rm -rf "$test_root"
 
 	if [[ "$fail" -eq 0 ]]; then
 		print_success "All $pass tests passed"

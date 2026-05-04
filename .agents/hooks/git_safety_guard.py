@@ -131,8 +131,11 @@ DESTRUCTIVE_PATTERNS = [
 
 # Patterns that are safe even if they match above (allowlist)
 SAFE_PATTERNS = [
-    r"git\s+checkout\s+-b\s+",  # Creating new branch
-    r"git\s+checkout\s+--orphan\s+",  # Creating orphan branch
+    # Branch creation is only safe inside linked worktrees. The canonical
+    # workspace branch-switch guard runs before this allowlist and denies these
+    # commands there; linked worktrees skip that guard and keep these safe.
+    r"git\s+checkout\s+-b\s+",  # Creating new branch in linked worktree
+    r"git\s+checkout\s+--orphan\s+",  # Creating orphan branch in linked worktree
     # Unstaging is safe, BUT NOT if --worktree/-W is also present
     r"git\s+restore\s+--staged\s+(?!.*--worktree)(?!.*-W\b)",
     r"git\s+restore\s+-S\s+(?!.*--worktree)(?!.*-W\b)",
@@ -358,8 +361,16 @@ def _build_canonical_off_default_deny(
     }
 
 
-TAKES_BRANCH_ARG = {"-b", "-B", "-c", "-C", "--create", "--force-create"}
-OPTION_WITH_VALUE = {"-t", "--track", "--orphan", "--conflict", "--pathspec-from-file"}
+TAKES_BRANCH_ARG = {
+    "-b",
+    "-B",
+    "-c",
+    "-C",
+    "--create",
+    "--force-create",
+    "--orphan",
+}
+OPTION_WITH_VALUE = {"-t", "--track", "--conflict", "--pathspec-from-file"}
 
 
 def _split_git_switch_command(command: str) -> tuple[str, list[str]]:

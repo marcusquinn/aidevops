@@ -74,9 +74,10 @@ run_case() {
 	local description="$1"
 	local input_json="$2"
 	local expect_blocked="$3"
+	local run_cwd="${4:-${_TEST_CANONICAL_CWD:-$PWD}}"
 
 	local result
-	result=$(echo "${input_json}" | python3 "${_TEST_HOOK_PATH}" 2>/dev/null) || true
+	result=$(cd "${run_cwd}" && printf '%s\n' "${input_json}" | python3 "${_TEST_HOOK_PATH}" 2>/dev/null) || true
 
 	local is_blocked="false"
 	if echo "${result}" | grep -q '"permissionDecision".*"deny"' 2>/dev/null; then
@@ -139,10 +140,10 @@ _run_blocked_cases() {
 _run_allowed_cases() {
 	run_case "git status (safe)" \
 		'{"tool_name":"Bash","tool_input":{"command":"git status"}}' "false"
-	run_case "git checkout -b new-branch (safe)" \
-		'{"tool_name":"Bash","tool_input":{"command":"git checkout -b new-branch"}}' "false"
-	run_case "git checkout --orphan gh-pages (safe)" \
-		'{"tool_name":"Bash","tool_input":{"command":"git checkout --orphan gh-pages"}}' "false"
+	run_case "git checkout -b new-branch (blocked in canonical workspace)" \
+		'{"tool_name":"Bash","tool_input":{"command":"git checkout -b new-branch"}}' "true"
+	run_case "git checkout --orphan gh-pages (blocked in canonical workspace)" \
+		'{"tool_name":"Bash","tool_input":{"command":"git checkout --orphan gh-pages"}}' "true"
 	run_case "git restore --staged file.txt (safe)" \
 		'{"tool_name":"Bash","tool_input":{"command":"git restore --staged file.txt"}}' "false"
 	run_case "git clean -n (safe dry run)" \
@@ -172,16 +173,60 @@ _run_allowed_cases() {
 	return 0
 }
 
+# _run_linked_worktree_cases - Verify branch creation remains allowed in linked worktrees.
+_run_linked_worktree_cases() {
+	run_case "git checkout -b linked-branch (safe in linked worktree)" \
+		'{"tool_name":"Bash","tool_input":{"command":"git checkout -b linked-branch"}}' "false" "${_TEST_LINKED_CWD}"
+	run_case "git checkout --orphan linked-pages (safe in linked worktree)" \
+		'{"tool_name":"Bash","tool_input":{"command":"git checkout --orphan linked-pages"}}' "false" "${_TEST_LINKED_CWD}"
+	return 0
+}
+
+# _prepare_test_repo - Create deterministic canonical and linked-worktree contexts.
+_prepare_test_repo() {
+	_TEST_REPO_ROOT=$(mktemp -d) || return 1
+	_TEST_REPO_ROOT=$(cd "${_TEST_REPO_ROOT}" && pwd -P) || return 1
+	git -C "${_TEST_REPO_ROOT}" init -b main >/dev/null 2>&1 || {
+		git -C "${_TEST_REPO_ROOT}" init >/dev/null 2>&1
+		git -C "${_TEST_REPO_ROOT}" checkout -b main >/dev/null 2>&1
+	}
+	git -C "${_TEST_REPO_ROOT}" config user.name "Aidevops Hook Test"
+	git -C "${_TEST_REPO_ROOT}" config user.email "test@example.com"
+	git -C "${_TEST_REPO_ROOT}" config commit.gpgsign false
+	printf 'seed\n' >"${_TEST_REPO_ROOT}/README.md"
+	git -C "${_TEST_REPO_ROOT}" add README.md >/dev/null 2>&1
+	git -C "${_TEST_REPO_ROOT}" commit -m "test: seed hook self-test" >/dev/null 2>&1
+	_TEST_CANONICAL_CWD="${_TEST_REPO_ROOT}"
+	_TEST_LINKED_CWD="${_TEST_REPO_ROOT}/linked-wt"
+	git -C "${_TEST_REPO_ROOT}" worktree add "${_TEST_LINKED_CWD}" -b feature/hook-linked-test >/dev/null 2>&1
+	return 0
+}
+
+# _cleanup_test_repo - Remove deterministic test contexts.
+_cleanup_test_repo() {
+	if [[ -n "${_TEST_REPO_ROOT:-}" && -d "${_TEST_REPO_ROOT}" ]]; then
+		git -C "${_TEST_REPO_ROOT}" worktree remove "${_TEST_LINKED_CWD}" >/dev/null 2>&1 || rm -rf "${_TEST_LINKED_CWD}"
+		rm -rf "${_TEST_REPO_ROOT}"
+	fi
+	return 0
+}
+
 run_test() {
 	local hook_path="${1:-${HOOK_SOURCE}}"
 	_TEST_HOOK_PATH="${hook_path}"
 	_TEST_PASS=0
 	_TEST_FAIL=0
+	_TEST_REPO_ROOT=""
+	_TEST_CANONICAL_CWD=""
+	_TEST_LINKED_CWD=""
 
 	printf "${BLUE}Testing git_safety_guard.py...${NC}\n\n"
 
+	_prepare_test_repo || return 1
 	_run_blocked_cases
 	_run_allowed_cases
+	_run_linked_worktree_cases
+	_cleanup_test_repo
 
 	printf "\n${BLUE}Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" \
 		"${_TEST_PASS}" "${_TEST_FAIL}"
