@@ -107,6 +107,8 @@ The result: an AI operations platform that manages projects across every busines
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `aidevops security` - Full security assessment (posture, secrets, supply chain)
 - `/onboarding` - Interactive setup wizard (in AI assistant)
+- `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work
+- `/open-design` - Manage the optional Open Design companion studio
 
 ### Agent Structure
 
@@ -216,6 +218,34 @@ aidevops upgrade-planning # Upgrade TODO.md/PLANS.md to latest templates
 aidevops update-tools     # Check and update installed tools
 aidevops uninstall        # Remove aidevops
 ```
+
+### Optional Design Artifact Studio
+
+aidevops now treats design as a self-contained stack with optional peripherals:
+
+- **Google `DESIGN.md` standard**: AI-readable design systems with YAML tokens, linting, previews, and brand/style libraries (`.agents/tools/design/design-md.md`).
+- **Design agents and skills**: brand identity, palettes, UI inspiration, product UI rules, shadcn/Tailwind/UI skills, Nothing-style design, email rendering, Remotion/video, and browser-based UI verification.
+- **Artifact routing commands**: `/design-artifact` decides whether to use aidevops-native implementation or a companion artifact studio; `/open-design` manages optional Open Design workflows.
+- **Verification gates**: Playwright screenshots, accessibility/contrast checks, email rendering, deck export/fidelity checks, and media smoke tests before generated artifacts are accepted.
+
+Optional companion: [Open Design](https://github.com/nexu-io/open-design) by nexu-io (Apache-2.0) is supported as a **peripheral** for live sandboxed previews, design-skill pickers, `.od/` artifact workspaces, and HTML/PDF/PPTX/ZIP-style exports. aidevops remains canonical for agents, skill ingestion, Google `DESIGN.md`, local hosting, and verification.
+
+```bash
+# Inspect optional companion status
+open-design-helper.sh status
+
+# Print safe install plan only
+open-design-helper.sh install
+
+# Install alongside aidevops only after opting in
+open-design-helper.sh install --execute
+
+# Start through aidevops local HTTPS if Open Design only prints localhost
+open-design-helper.sh start --https-local open-design
+# → https://open-design.local when localdev is configured
+```
+
+Imported Open Design skills are not copied verbatim. They are evaluated through aidevops build-agent methodology, deduplicated against existing agents, flattened into aidevops `*-skill.md` structure, attributed to upstream, and given verification commands. See `.agents/tools/design/open-design-ingestion.md` for the full skill-value matrix.
 
 **Project tracking:** When you run `aidevops init`, the project is automatically registered in `~/.config/aidevops/repos.json`. Running `aidevops update` checks all registered projects for version updates.
 
@@ -1141,6 +1171,15 @@ The setup script offers to install these tools automatically.
 - **[Langflow](https://langflow.org/)**: Visual drag-and-drop builder for AI workflows (MIT, localhost:7860)
 - **[CrewAI](https://crewai.com/)**: Multi-agent teams with role-based orchestration (MIT, localhost:8501)
 - **[AutoGen](https://microsoft.github.io/autogen/)**: Microsoft's agentic AI framework with MCP support (MIT, localhost:8081)
+
+### **Design, UI & Artifact Creation**
+
+- **Google `DESIGN.md` standard**: Canonical AI-readable design systems with YAML tokens, Markdown rationale, linting, Tailwind/DTCG export, and preview generation. aidevops keeps `DESIGN.md` as the source of truth for UI agents.
+- **Design library**: 54 brand examples and 12 original style archetypes for agent-ready visual direction, plus palette, brand identity, and UI inspiration workflows.
+- **Artifact commands**: `/design-artifact` routes prototype, deck, email, poster, social carousel, and mobile mockup requests; `/open-design` manages optional Open Design companion workflows.
+- **[Open Design](https://github.com/nexu-io/open-design)** *Optional peripheral*: Local-first design artifact studio by nexu-io (Apache-2.0) for sandboxed previews, design-skill pickers, `.od/` workspaces, and exports. It installs alongside aidevops only when requested; selected skills are ingested via aidevops build-agent optimisation, not imported verbatim.
+- **Local HTTPS previews**: `localdev-helper.sh` can wrap Open Design or other dev servers with mkcert-backed `.local` routes when tools only expose localhost.
+- **Verification**: `workflows/ui-verification.md`, `email-design-test-helper.sh`, design preview screenshots, and deck/media smoke tests provide evidence before generated artifacts ship.
 
 ### **Video Creation**
 
