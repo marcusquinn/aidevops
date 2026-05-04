@@ -175,6 +175,75 @@ async function handleOpenAIOverload(ctx) {
   return lastResponse;
 }
 
+function enqueueChunks(controller, chunks) {
+  for (const chunk of chunks) controller.enqueue(chunk);
+}
+
+async function pipeRemainingStream(reader, controller) {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      controller.close();
+      return;
+    }
+    controller.enqueue(value);
+  }
+}
+
+async function inspectStreamPrefix(reader, controller, decoder, retryAvailable) {
+  const buffered = [];
+  let bufferedText = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) {
+      enqueueChunks(controller, buffered);
+      controller.close();
+      return "closed";
+    }
+
+    const text = decoder.decode(value, { stream: true });
+    buffered.push(value);
+    bufferedText += text;
+
+    if (isOpenAIOverloadText(bufferedText)) {
+      if (retryAvailable) {
+        await reader.cancel().catch(() => {});
+        return "retry";
+      }
+      enqueueChunks(controller, buffered);
+      return "pipe";
+    }
+
+    if (isOpenAIStreamContentText(bufferedText) || bufferedText.length > 65_536) {
+      enqueueChunks(controller, buffered);
+      return "pipe";
+    }
+  }
+}
+
+async function retryOpenAIOverloadStream(ctx) {
+  const { originalFetch, response, retryInput, init, controller, retryDelays } = ctx;
+  const decoder = new TextDecoder();
+  let currentResponse = response;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const reader = currentResponse.body.getReader();
+    const outcome = await inspectStreamPrefix(reader, controller, decoder, attempt < retryDelays.length);
+    if (outcome === "closed") return;
+    if (outcome === "pipe") return pipeRemainingStream(reader, controller);
+
+    const delayMs = retryDelays[attempt];
+    console.error(`[aidevops] OpenAI provider: overloaded stream error — retrying request (${attempt + 1}/${retryDelays.length})`);
+    if (delayMs > 0) await sleep(delayMs);
+    currentResponse = await originalFetch(buildRetryRequest(retryInput), init);
+    if (!currentResponse.body) {
+      controller.close();
+      return;
+    }
+  }
+}
+
 function wrapOpenAIOverloadStream(ctx) {
   const { originalFetch, response, retryInput, init } = ctx;
   if (!response.body) return response;
@@ -182,75 +251,13 @@ function wrapOpenAIOverloadStream(ctx) {
   if (!contentType.includes("text/event-stream")) return response;
 
   const retryDelays = overloadRetryDelaysMs();
-  const decoder = new TextDecoder();
 
   const stream = new ReadableStream({
     async start(controller) {
-      let currentResponse = response;
-      let attempt = 0;
-
-      while (true) {
-        const reader = currentResponse.body.getReader();
-        const buffered = [];
-        let bufferedText = "";
-        let shouldRetry = false;
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) {
-              for (const chunk of buffered) controller.enqueue(chunk);
-              controller.close();
-              return;
-            }
-
-            const text = decoder.decode(value, { stream: true });
-            buffered.push(value);
-            bufferedText += text;
-
-            if (isOpenAIOverloadText(bufferedText)) {
-              shouldRetry = attempt < retryDelays.length;
-              if (!shouldRetry) {
-                for (const chunk of buffered) controller.enqueue(chunk);
-                buffered.length = 0;
-                bufferedText = "";
-                break;
-              }
-              await reader.cancel().catch(() => {});
-              break;
-            }
-
-            if (isOpenAIStreamContentText(bufferedText) || bufferedText.length > 65_536) {
-              for (const chunk of buffered) controller.enqueue(chunk);
-              buffered.length = 0;
-              bufferedText = "";
-              break;
-            }
-          }
-
-          if (!shouldRetry) {
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) {
-                controller.close();
-                return;
-              }
-              controller.enqueue(value);
-            }
-          }
-        } catch (err) {
-          controller.error(err);
-          return;
-        }
-
-        const delayMs = retryDelays[attempt++];
-        console.error(`[aidevops] OpenAI provider: overloaded stream error — retrying request (${attempt}/${retryDelays.length})`);
-        if (delayMs > 0) await sleep(delayMs);
-        currentResponse = await originalFetch(buildRetryRequest(retryInput), init);
-        if (!currentResponse.body) {
-          controller.close();
-          return;
-        }
+      try {
+        await retryOpenAIOverloadStream({ originalFetch, response, retryInput, init, controller, retryDelays });
+      } catch (err) {
+        controller.error(err);
       }
     },
   });
