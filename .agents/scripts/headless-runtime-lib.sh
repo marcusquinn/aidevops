@@ -558,28 +558,8 @@ build_sandbox_passthrough_csv() {
 # Output: prompt text (possibly appended)
 # Env:
 #   AIDEVOPS_HEADLESS_APPEND_CONTRACT=0 disables prompt augmentation.
-append_worker_headless_contract() {
-	local prompt_text="$1"
-	local append_enabled="${AIDEVOPS_HEADLESS_APPEND_CONTRACT:-1}"
-
-	if [[ "$append_enabled" == "0" ]]; then
-		printf '%s' "$prompt_text"
-		return 0
-	fi
-
-	if [[ "$prompt_text" != *"/full-loop"* ]]; then
-		printf '%s' "$prompt_text"
-		return 0
-	fi
-
-	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
-		printf '%s' "$prompt_text"
-		return 0
-	fi
-
-	local contract
-	contract=$(
-		cat <<'EOF'
+_worker_headless_contract_setup_text() {
+	cat <<'EOF'
 [HEADLESS_CONTINUATION_CONTRACT_V9]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
@@ -615,6 +595,12 @@ Progressive context loading:
 
 Empty tool results:
 If a tool call returns empty output, it usually means the path or pattern was wrong, not that the resource is missing. Common causes: missing .agents/ prefix on paths, wrong glob pattern, file moved/renamed. Retry with corrected paths before giving up. If retries also fail, log what you tried and continue with the next step. Do NOT stop the session over one empty result.
+EOF
+	return 0
+}
+
+_worker_headless_contract_execution_text() {
+	cat <<'EOF'
 
 Commit and PR shortcut:
 After implementing, use full-loop-helper.sh commit-and-pr to collapse commit+push+PR+merge-summary into one call:
@@ -640,6 +626,12 @@ output for 300 seconds, you will be killed. Therefore:
   - If a CI check or merge is slow, emit a status message between waits to keep
     the watchdog alive. Any tool call or text output resets the 300s timer.
   - Prefer short poll intervals (30-60s) with status output between iterations.
+EOF
+	return 0
+}
+
+_worker_headless_contract_exit_text() {
+	cat <<'EOF'
 
 GitHub API fallback discipline:
 If a command reports `GraphQL: API rate limit already exceeded`, do NOT stop
@@ -661,9 +653,37 @@ Before ending your session, verify ALL of these:
   - If any check fails, you are NOT done -- continue working.
   - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
 EOF
-	)
+	return 0
+}
 
-	printf '%s\n\n%s' "$prompt_text" "$contract"
+_worker_headless_contract_text() {
+	_worker_headless_contract_setup_text
+	_worker_headless_contract_execution_text
+	_worker_headless_contract_exit_text
+	return 0
+}
+
+append_worker_headless_contract() {
+	local prompt_text="$1"
+	local append_enabled="${AIDEVOPS_HEADLESS_APPEND_CONTRACT:-1}"
+
+	if [[ "$append_enabled" == "0" ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	if [[ "$prompt_text" != *"/full-loop"* ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	if [[ "$prompt_text" == *"HEADLESS_CONTINUATION_CONTRACT_V"* ]]; then
+		printf '%s' "$prompt_text"
+		return 0
+	fi
+
+	printf '%s\n\n' "$prompt_text"
+	_worker_headless_contract_text
 	return 0
 }
 
