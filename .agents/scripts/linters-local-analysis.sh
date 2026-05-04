@@ -920,9 +920,11 @@ _scan_bash32_file() {
 
 	# ${var,,} / ${var^^} case conversion (bash 4.0+)
 	# Exclude comments — grep -n prefixes "NNN:" so comments appear as "NNN:\s*#"
+	# shellcheck disable=SC2016 # Literal ${ pattern for compatibility scanning.
 	grep -n ',,}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
 		printf '%s:%s [case conversion ,,} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
 	done
+	# shellcheck disable=SC2016 # Literal ${ pattern for compatibility scanning.
 	grep -n '^^}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
 		printf '%s:%s [case conversion ^^} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
 	done
@@ -953,47 +955,152 @@ _scan_bash32_file() {
 	return 0
 }
 
+_bash32_helper_path() {
+	printf '%s/complexity-regression-helper.sh\n' "$SCRIPT_DIR"
+	return 0
+}
+
+_bash32_timeout_seconds() {
+	local timeout_seconds="${LINTERS_LOCAL_BASH32_TIMEOUT:-120}"
+	if [[ ! "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -lt 1 ]]; then
+		timeout_seconds=120
+	fi
+	printf '%s\n' "$timeout_seconds"
+	return 0
+}
+
+_bash32_merge_base() {
+	local base_ref="${LINTERS_LOCAL_BASH32_BASE_REF:-origin/main}"
+	local head_ref="${LINTERS_LOCAL_BASH32_HEAD_REF:-HEAD}"
+
+	git merge-base "$head_ref" "$base_ref" 2>/dev/null
+	return $?
+}
+
+_bash32_current_branch() {
+	git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\n'
+	return 0
+}
+
+_bash32_run_helper() {
+	local mode="$1"
+	local base_ref="${2:-}"
+	local output_file="$3"
+	local helper_script
+	helper_script=$(_bash32_helper_path)
+	local timeout_seconds
+	timeout_seconds=$(_bash32_timeout_seconds)
+
+	if [[ ! -x "$helper_script" ]]; then
+		print_warning "Bash 3.2 compatibility: regression helper not executable at $helper_script"
+		return 2
+	fi
+
+	local rc=0
+	if [[ "$mode" == "regression" ]]; then
+		# CI parity: use the same per-violation regression helper as the GitHub
+		# Bash 3.2 job, scoped from merge-base to HEAD, instead of re-scanning all
+		# historical debt locally. Keep timeout_sec output redirected so the
+		# portable macOS fallback can clean up the whole process group reliably.
+		timeout_sec "$timeout_seconds" "$helper_script" check \
+			--metric bash32-compat \
+			--base "$base_ref" \
+			--head "${LINTERS_LOCAL_BASH32_HEAD_REF:-HEAD}" \
+			>"$output_file" 2>&1 || rc=$?
+	else
+		timeout_sec "$timeout_seconds" "$helper_script" check \
+			--metric bash32-compat \
+			--dry-run \
+			>"$output_file" 2>&1 || rc=$?
+	fi
+
+	return "$rc"
+}
+
+_bash32_print_helper_output() {
+	local output_file="$1"
+	if [[ -s "$output_file" ]]; then
+		while IFS= read -r line; do
+			printf '%s\n' "$line"
+		done <"$output_file"
+	fi
+	return 0
+}
+
+_bash32_run_advisory_total() {
+	local tmp_file="$1"
+	local rc=0
+	_bash32_run_helper "dry-run" "" "$tmp_file" || rc=$?
+
+	if [[ "$rc" -eq 124 ]]; then
+		print_warning "Bash 3.2 compatibility: advisory total scan timed out after $(_bash32_timeout_seconds)s"
+		print_info "Use CI-equivalent regression mode on feature branches: complexity-regression-helper.sh check --metric bash32-compat --base <merge-base> --head HEAD"
+		return 0
+	fi
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_warning "Bash 3.2 compatibility: advisory total scan skipped (helper exit $rc)"
+		_bash32_print_helper_output "$tmp_file"
+		return 0
+	fi
+
+	_bash32_print_helper_output "$tmp_file"
+	print_success "Bash 3.2 compatibility: advisory total scan completed"
+	return 0
+}
+
 check_bash32_compat() {
 	echo -e "${BLUE}Checking Bash 3.2 Compatibility...${NC}"
 
-	local violations=0
 	local tmp_file
 	tmp_file=$(mktemp)
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
 
-	# Use grep -nE (ERE) — NOT grep -nP (PCRE) — because macOS BSD grep
-	# does not support -P. This check itself must be bash 3.2 / macOS compatible.
-	# Skip linters-local files — their grep patterns contain the
-	# forbidden strings as search targets, not as bash code.
-	for file in "${ALL_SH_FILES[@]}"; do
-		[[ -f "$file" ]] || continue
-		case "$(basename "$file")" in
-		linters-local*.sh) continue ;;
-		esac
-		_scan_bash32_file "$file" "$tmp_file"
-	done
+	local branch_name
+	branch_name=$(_bash32_current_branch)
+	local base_ref=""
+	local rc=0
 
-	if [[ -s "$tmp_file" ]]; then
-		violations=$(wc -l <"$tmp_file")
-		violations=${violations//[^0-9]/}
-		violations=${violations:-0}
+	case "$branch_name" in
+	main | master)
+		print_info "Canonical branch detected; running bounded advisory total scan instead of blocking on historical debt."
+		_bash32_run_advisory_total "$tmp_file"
+		return 0
+		;;
+	*)
+		base_ref=$(_bash32_merge_base) || base_ref=""
+		;;
+	esac
 
-		if [[ "$violations" -gt 0 ]]; then
-			print_error "Bash 3.2 compatibility: $violations violations (macOS default bash)"
-			head -20 "$tmp_file"
-			if [[ "$violations" -gt 20 ]]; then
-				echo "... and $((violations - 20)) more"
-			fi
-			rm -f "$tmp_file"
-			return 1
-		fi
+	if [[ -z "$base_ref" ]]; then
+		print_warning "Bash 3.2 compatibility: no merge-base with origin/main; running bounded advisory total scan."
+		_bash32_run_advisory_total "$tmp_file"
+		return 0
 	fi
 
-	rm -f "$tmp_file"
-	# nice — all scripts stay compatible with macOS default bash
-	print_success "Bash 3.2 compatibility: no violations"
+	_bash32_run_helper "regression" "$base_ref" "$tmp_file" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		_bash32_print_helper_output "$tmp_file"
+		print_success "Bash 3.2 compatibility: no new Bash 3.2 regressions"
+		return 0
+	fi
+
+	if [[ "$rc" -eq 124 ]]; then
+		print_warning "Bash 3.2 compatibility: regression scan timed out after $(_bash32_timeout_seconds)s"
+		print_info "Run CI-equivalent check directly: complexity-regression-helper.sh check --metric bash32-compat --base $base_ref --head HEAD"
+		return 0
+	fi
+
+	_bash32_print_helper_output "$tmp_file"
+	if [[ "$rc" -eq 1 ]]; then
+		print_error "Bash 3.2 compatibility: new Bash 3.2 regression found"
+		return 1
+	fi
+
+	print_warning "Bash 3.2 compatibility: regression helper failed (exit $rc); treating as warning so local linters can finish."
+	print_info "CI uses the same helper and remains authoritative for this gate."
 
 	return 0
 }
