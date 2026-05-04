@@ -10,6 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.34] - 2026-05-04
+
+### Changed
+
+- Documentation: clarify quality gate override justification (#22721)
+- Documentation: preserve error prevention guidance (#22720)
+- Maintenance: align package version with 3.14.33 (#22694)
+
+### Fixed
+
+- align skill frontmatter names (#22728)
+- respect false runtime markers in signature session mode (#22718)
+- correct goals mission routing (#22722)
+- route no_work meta briefs to stale recovery (#22719)
+- harden self assignment cleanup (#22717)
+- match dispatch claim markers literally (#22715)
+- simplify claim release comment construction (#22714)
+- sustain OpenAI worker dispatch (#22709)
+- clarify OpenCode startup greeting guidance (#22712)
+- harden pulse TODO sync recovery (#22711)
+- propagate consolidation comment API failures (#22708)
+- preserve comment fetch API errors (#22707)
+- slurp stale assignment comments (#22695)
+- add cost breaker approval command (#22693)
+- bound Claude MCP registration listing (#22690)
+
 ## [3.14.32] - 2026-05-03
 
 ### Fixed
