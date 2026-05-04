@@ -16,12 +16,18 @@ SCRIPTS_DIR="$(cd "${TEST_DIR}/.." && pwd)" || exit 1
 
 # shellcheck source=../worker-lifecycle-common.sh
 source "${SCRIPTS_DIR}/worker-lifecycle-common.sh"
+# shellcheck source=../pulse-fast-fail.sh
+source "${SCRIPTS_DIR}/pulse-fast-fail.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
 BREAKER_CALLS=0
 COMMENT_CALLS=0
 LAST_BREAKER_PAYLOAD=""
+TMP_DIR="$(mktemp -d -t no-work-prelaunch.XXXXXX)" || exit 1
+trap 'rm -rf "$TMP_DIR"' EXIT
+export LOGFILE="${TMP_DIR}/pulse.log"
+export FAST_FAIL_STATE_FILE="${TMP_DIR}/fast-fail-counter.json"
 
 pass() {
 	local name="$1"
@@ -95,6 +101,47 @@ test_prelaunch_reason_skips_nmr_breaker() {
 	return 0
 }
 
+test_worker_launch_rc_2_skips_nmr_breaker() {
+	reset_observations
+	local output=""
+	output=$(_log_no_work_skip_escalation \
+		"4003" "awardsapp/awardsapp" "3" \
+		"dispatch_aborted:worker_launch_rc_2" 2>&1)
+
+	if [[ "$BREAKER_CALLS" -ne 0 ]]; then
+		fail "worker_launch_rc_2 skip does not apply NMR" "breaker payload: ${LAST_BREAKER_PAYLOAD}"
+		return 0
+	fi
+	if [[ "$output" != *"NMR breaker skipped for pre-launch reason"* ]]; then
+		fail "worker_launch_rc_2 skip logs audit line" "output: ${output}"
+		return 0
+	fi
+	pass "worker_launch_rc_2 bypasses no_work NMR breaker"
+	return 0
+}
+
+test_launch_preflight_reason_skips_fast_fail_state() {
+	reset_observations
+	: >"$LOGFILE"
+	printf '{"awardsapp/awardsapp/4003":{"count":2,"ts":1,"reason":"prior","retry_after":1,"backoff_secs":600}}\n' >"$FAST_FAIL_STATE_FILE"
+
+	_fast_fail_record_locked "4003" "awardsapp/awardsapp" \
+		"worker_launch_rc_2" "anthropic" "no_work"
+
+	local count=""
+	count=$(jq -r '."awardsapp/awardsapp/4003".count' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || count=""
+	if [[ "$count" != "2" ]]; then
+		fail "launch/preflight fast-fail skip preserves counter" "count: ${count:-unset}"
+		return 0
+	fi
+	if ! grep -q 'skipped launch/preflight reason=worker_launch_rc_2' "$LOGFILE" 2>/dev/null; then
+		fail "launch/preflight fast-fail skip logs reason" "log: $(tr '\n' ' ' <"$LOGFILE")"
+		return 0
+	fi
+	pass "launch/preflight failures do not accrue fast-fail state"
+	return 0
+}
+
 test_postlaunch_noop_still_applies_nmr_breaker() {
 	reset_observations
 	_log_no_work_skip_escalation \
@@ -114,6 +161,8 @@ test_postlaunch_noop_still_applies_nmr_breaker() {
 }
 
 test_prelaunch_reason_skips_nmr_breaker
+test_worker_launch_rc_2_skips_nmr_breaker
+test_launch_preflight_reason_skips_fast_fail_state
 test_postlaunch_noop_still_applies_nmr_breaker
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
