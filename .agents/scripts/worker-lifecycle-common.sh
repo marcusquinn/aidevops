@@ -881,6 +881,29 @@ _file_circuit_breaker_meta_no_work() {
 }
 
 #######################################
+# Detect dispatch skips that happened before a worker could start.
+#
+# These reasons are launch-control outcomes, not evidence that a worker read
+# setup context and then produced no actionable work. They must not trip the
+# t2769 no_work breaker even if stale recovery or an older fast-fail record
+# path accidentally forwards them with crash_type=no_work.
+#
+# Args: $1=reason text
+# Returns: 0 when reason is a pre-worker-launch skip, 1 otherwise
+#######################################
+_no_work_reason_is_pre_worker_launch_skip() {
+	local reason="${1:-}"
+	if [[ "$reason" == *"worker canary preflight failed before worktree pre-creation"* \
+		|| "$reason" == *"canary preflight failed before worktree pre-creation"* \
+		|| "$reason" == *"pre-creation failed; will retry next cycle"* \
+		|| "$reason" == *"worktree pre-creation failed"* \
+		|| "$reason" == *"worker_launch_rc_2"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Post an idempotent diagnostic comment when tier escalation is skipped
 # because the worker crashed with crash_type=no_work (infrastructure
 # failure — FD exhaustion, plugin init crash, branch naming race, auth
@@ -972,6 +995,16 @@ _log_no_work_skip_escalation() {
 	[[ -n "$repo_slug" ]] || return 0
 
 	local nmr_threshold="${NO_WORK_NMR_THRESHOLD:-3}"
+
+	# GH#4044: canary/precreation skips before worktree pre-creation are not
+	# productive worker executions. If an older stale-recovery or fast-fail path
+	# forwards such a reason as crash_type=no_work, do not count it as actionable
+	# no_work-loop evidence and do not apply the t2769 NMR breaker.
+	if _no_work_reason_is_pre_worker_launch_skip "$reason"; then
+		printf '[worker-lifecycle][t2769] pre-worker-launch skip ignored for no_work breaker #%s (%s, count=%s, reason=%s)\n' \
+			"$issue_number" "$repo_slug" "$failure_count" "$reason" >&2 || true
+		return 0
+	fi
 
 	# Circuit-breaker path (t2769): when failure_count >= threshold,
 	# apply NMR + file root-cause meta-issue. Auto-approval preserves NMR
