@@ -282,16 +282,27 @@ test_bash_destructive_commands_blocked() {
 		passed=1
 	fi
 
-	# git checkout -b (safe branch creation) should be allowed
+	# git checkout -b in the canonical workspace should be denied; branch work
+	# must happen in a linked worktree.
 	json='{"tool_name":"Bash","tool_input":{"command":"git checkout -b feature/new-branch"}}'
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if [[ -n "$output" ]]; then
-		print_result "git checkout -b allowed by Bash matcher (safe)" 1 "output=${output}"
+	if ! hook_is_deny "$output" "Canonical workspace cannot switch"; then
+		print_result "git checkout -b blocked in canonical workspace" 1 "output=${output}"
 		passed=1
 	fi
 
+	local worktree_path="${TEST_ROOT}/bash-linked-wt"
+	git -C "$TEST_ROOT" worktree add "$worktree_path" -b feature/bash-linked-base >/dev/null 2>&1
+	output=$(run_hook "$worktree_path" "$json") || true
+	if [[ -n "$output" ]]; then
+		print_result "git checkout -b allowed inside linked worktree" 1 "output=${output}"
+		passed=1
+	fi
+	git -C "$TEST_ROOT" worktree remove "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
+	git -C "$TEST_ROOT" branch -D feature/bash-linked-base 2>/dev/null || true
+
 	if [[ "$passed" -eq 0 ]]; then
-		print_result "Bash matcher unchanged: destructive blocked, safe allowed" 0
+		print_result "Bash matcher: destructive blocked and branch creation requires worktree" 0
 	fi
 	return 0
 }
