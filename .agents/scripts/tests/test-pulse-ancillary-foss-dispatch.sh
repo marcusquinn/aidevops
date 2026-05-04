@@ -100,8 +100,11 @@ available_after_null="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$
 [[ ! -f "$HEADLESS_INVOCATION_LOG" ]] || fail "null selection launched a worker"
 
 GH_ISSUE_LIST_OUTPUT='42|Fix duplicate dispatch'
-available_after_duplicate="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json")" || fail "duplicate selection dispatch failed"
+available_output="${TEST_TMP}/available.out"
+FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json" >"$available_output" || fail "duplicate selection dispatch failed"
+available_after_duplicate="$(<"$available_output")"
 [[ "$available_after_duplicate" == "1" ]] || fail "duplicate selection did not consume exactly one worker slot"
+wait
 
 launch_count="$(wc -l <"$HEADLESS_INVOCATION_LOG" | tr -d ' ')"
 [[ "$launch_count" == "1" ]] || fail "expected one duplicate-guarded launch, got ${launch_count}"
