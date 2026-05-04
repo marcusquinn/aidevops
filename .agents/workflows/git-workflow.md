@@ -43,7 +43,7 @@ Remote has new commits → pull/rebase first. Uncommitted local changes → stas
 
 **Worktrees** (DEFAULT for all feature work):
 
-Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. All work in worktree directories.
+Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. All work in worktree directories under `~/Git/`; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature

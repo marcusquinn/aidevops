@@ -143,14 +143,12 @@ test_empty_body_skip_logs() {
 	reset_logfile
 	check_terminal_blockers() { return 1; }
 	fast_fail_is_skipped() { return 1; }
-	# Mock gh issue view to return empty body.
+	# Mock gh REST read to return empty body.
 	gh() {
 		case "$1" in
-		issue)
-			[[ "$2" == "view" ]] && {
-				printf '\n'
-				return 0
-			}
+		api)
+			printf '\n'
+			return 0
 			;;
 		esac
 		return 0
@@ -179,11 +177,9 @@ test_stub_body_skip_logs() {
 	fast_fail_is_skipped() { return 1; }
 	gh() {
 		case "$1" in
-		issue)
-			[[ "$2" == "view" ]] && {
-				printf 'placeholder body — no description provided — enrich before dispatch\n'
-				return 0
-			}
+		api)
+			printf 'placeholder body — no description provided — enrich before dispatch\n'
+			return 0
 			;;
 		esac
 		return 0
@@ -204,7 +200,38 @@ test_stub_body_skip_logs() {
 }
 
 #######################################
-# Test 5: malformed candidate JSON in _dispatch_process_candidate logs the skip
+# Test 5: missing worker context skip writes per-candidate log line.
+#######################################
+test_missing_worker_context_skip_logs() {
+	reset_logfile
+	check_terminal_blockers() { return 1; }
+	fast_fail_is_skipped() { return 1; }
+	gh() {
+		case "$1" in
+		api)
+			printf 'Brief summary only; no implementation details for a worker.\n'
+			return 0
+			;;
+		esac
+		return 0
+	}
+
+	local rc=0
+	_dispatch_should_skip_candidate "45679" "owner/repo" || rc=$?
+	unset -f check_terminal_blockers fast_fail_is_skipped gh
+
+	local skip_logged=1
+	if grep -q "skipping #45679 (owner/repo) — missing Worker Guidance/How implementation context" "$LOGFILE"; then
+		skip_logged=0
+	fi
+	print_result "missing worker context skip writes per-candidate log line" "$skip_logged" \
+		"LOGFILE contents: $(cat "$LOGFILE" || true)"
+	print_result "missing worker context skip returns 0 (skip)" $((rc == 0 ? 0 : 1)) "got rc=$rc"
+	return 0
+}
+
+#######################################
+# Test 6: malformed candidate JSON in _dispatch_process_candidate logs the skip
 # instead of returning silently. Pre-GH#18804 this was a silent return 1.
 #######################################
 test_malformed_candidate_logs_skip() {
@@ -226,7 +253,7 @@ test_malformed_candidate_logs_skip() {
 }
 
 #######################################
-# Test 6: missing repo_path in _dispatch_process_candidate logs the skip.
+# Test 7: missing repo_path in _dispatch_process_candidate logs the skip.
 #######################################
 test_missing_repo_path_logs_skip() {
 	reset_logfile
@@ -247,7 +274,7 @@ test_missing_repo_path_logs_skip() {
 }
 
 #######################################
-# Test 7: PULSE_DEBUG=1 produces DFF DEBUG: lines for every candidate.
+# Test 8: PULSE_DEBUG=1 produces DFF DEBUG: lines for every candidate.
 #######################################
 test_pulse_debug_emits_per_candidate_logs() {
 	reset_logfile
@@ -256,11 +283,9 @@ test_pulse_debug_emits_per_candidate_logs() {
 	fast_fail_is_skipped() { return 1; }
 	gh() {
 		case "$1" in
-		issue)
-			[[ "$2" == "view" ]] && {
-				printf 'a real implementation context\n'
-				return 0
-			}
+		api)
+			printf '## Worker Guidance\nImplement the requested change.\n\n## Verification\nRun tests.\n'
+			return 0
 			;;
 		esac
 		return 0
@@ -286,7 +311,7 @@ test_pulse_debug_emits_per_candidate_logs() {
 }
 
 #######################################
-# Test 8: PULSE_DEBUG unset = no DFF DEBUG: lines (default behaviour).
+# Test 9: PULSE_DEBUG unset = no DFF DEBUG: lines (default behaviour).
 #######################################
 test_pulse_debug_unset_quiet_default() {
 	reset_logfile
@@ -295,11 +320,9 @@ test_pulse_debug_unset_quiet_default() {
 	fast_fail_is_skipped() { return 1; }
 	gh() {
 		case "$1" in
-		issue)
-			[[ "$2" == "view" ]] && {
-				printf 'a real implementation context\n'
-				return 0
-			}
+		api)
+			printf '## Worker Guidance\nImplement the requested change.\n\n## Verification\nRun tests.\n'
+			return 0
 			;;
 		esac
 		return 0
@@ -329,6 +352,7 @@ main() {
 	test_fast_fail_skip_logs
 	test_empty_body_skip_logs
 	test_stub_body_skip_logs
+	test_missing_worker_context_skip_logs
 	test_malformed_candidate_logs_skip
 	test_missing_repo_path_logs_skip
 	test_pulse_debug_emits_per_candidate_logs

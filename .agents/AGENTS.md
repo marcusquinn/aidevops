@@ -74,7 +74,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 ### Git workflow
 
 - Git is the audit trail. Use wrapper-created GitHub writes with origin labels, claim interactive issues before work, include task IDs in PR titles, `Resolves #NNN` for leaf PRs, and `For #NNN`/`Ref #NNN` for parent references. Never invent task IDs.
-- Interactive sessions: no direct edits on canonical `main`/`master`; all work uses a linked worktree. Headless implementation workers use worktree+PR unless explicitly planning-only.
+- Interactive sessions: no direct edits on canonical `main`/`master`; all work uses a linked worktree under `~/Git/`, never runtime temp dirs. Headless implementation workers use worktree+PR unless explicitly planning-only.
 - Pre-edit exit codes: 0 proceed, 1 stop on main, 2 create worktree, 3 warn off-main. Do not revert others' changes without explicit request.
 - After each logical change, commit WIP (`git add -A && git commit -m "wip: ..."`) unless generated/temp gitignored. Squash/amend later as needed.
 - Hook self-block: verify self-block cause, request explicit `--no-verify` authorization, include a regression test, and file sibling validator bugs separately.

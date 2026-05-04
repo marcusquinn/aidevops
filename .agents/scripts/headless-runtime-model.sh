@@ -629,3 +629,41 @@ sys.exit(1)
 PY
 	return $?
 }
+
+# output_has_blocked_signal: check if the model explicitly ended with BLOCKED.
+# This is a valid terminal state for unattended workers, but it is not a
+# successful implementation and must not inflate PR-throughput success metrics.
+#
+# Args: $1 = output file path
+# Returns: 0 if the model emitted BLOCKED, 1 otherwise
+output_has_blocked_signal() {
+	local file_path="$1"
+	[[ -f "$file_path" ]] || return 1
+	python3 - "$file_path" <<'PY'
+import sys, json
+from pathlib import Path
+
+raw = Path(sys.argv[1]).read_text(errors="ignore")
+model_text_parts = []
+for line in raw.splitlines():
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    if obj.get("type", "") != "text":
+        continue
+    part = obj.get("part", {})
+    text = obj.get("text") or part.get("text") or ""
+    if text:
+        model_text_parts.append(text)
+
+model_text = "\n".join(model_text_parts)
+if model_text.strip():
+    sys.exit(0 if "BLOCKED" in model_text else 1)
+sys.exit(0 if "BLOCKED" in raw else 1)
+PY
+	return $?
+}

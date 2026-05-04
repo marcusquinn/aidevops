@@ -60,7 +60,7 @@ test_appends_escalation_contract() {
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
-	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V7'* ]] &&
+	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V8'* ]] &&
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
 		[[ "$output" == *'Never ask for user confirmation, approval, or next steps. No user will respond.'* ]] &&
@@ -226,7 +226,7 @@ test_deleted_launch_cwd_recovers_to_work_dir() {
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
-[HEADLESS_CONTINUATION_CONTRACT_V7]
+[HEADLESS_CONTINUATION_CONTRACT_V8]
 This worker run is unattended.'
 	local output
 	output=$(append_worker_headless_contract "$prompt")
@@ -257,6 +257,25 @@ EOF
 	fi
 
 	print_result "extract_session_id_from_output returns latest session id" 1 "Expected ses_latest, got ${session_id:-<empty>}"
+	return 0
+}
+
+test_blocked_completion_records_blocked_label() {
+	local output_file="${TEST_ROOT}/blocked-output.jsonl"
+	cat >"$output_file" <<'EOF'
+{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}
+EOF
+
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
+
+	if [[ "$rc" -eq 0 && "${_run_result_label:-}" == "blocked" && "${_run_failure_reason:-}" == "blocked" && "${_run_classification_source:-}" == "model_blocked_signal" ]]; then
+		print_result "BLOCKED terminal signal records blocked label" 0
+		return 0
+	fi
+
+	print_result "BLOCKED terminal signal records blocked label" 1 \
+		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} source=${_run_classification_source:-<unset>}"
 	return 0
 }
 
@@ -920,6 +939,7 @@ main() {
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
+	test_blocked_completion_records_blocked_label
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_canary_uses_builtin_agent_without_default_agent

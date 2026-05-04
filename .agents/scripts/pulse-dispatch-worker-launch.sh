@@ -140,7 +140,7 @@ _dlw_assign_and_label() {
 _dlw_setup_worker_log() {
 	local repo_slug="$1"
 	local issue_number="$2"
-	local safe_slug worker_log worker_log_fallback
+	local safe_slug="" worker_log="" worker_log_fallback=""
 	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
 	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
 	worker_log_fallback="/tmp/pulse-${issue_number}.log"
@@ -279,7 +279,7 @@ _dlw_node_modules_restore_acquire_lock() {
 	mkdir -p "${lock_dir%/*}" 2>/dev/null || return 1
 	while ! mkdir "$lock_dir" 2>/dev/null; do
 		if [[ -d "$lock_dir" ]]; then
-			local lock_mtime now_epoch age_s
+			local lock_mtime="" now_epoch="" age_s=""
 			lock_mtime=$(_file_mtime_epoch "$lock_dir")
 			now_epoch=$(date +%s)
 			age_s=$((now_epoch - lock_mtime))
@@ -305,6 +305,27 @@ _dlw_node_modules_restore_release_lock() {
 	local lock_dir="$1"
 	rm -f "${lock_dir}/pid" 2>/dev/null || true
 	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+_dlw_restore_root_node_tool_links() {
+	local worktree_path="$1"
+	local repo_path="$2"
+	[[ "${WORKTREE_NODE_MODULES_BIN_LINK_ENABLED:-1}" == "1" ]] || return 0
+
+	local _src_bin="${repo_path}/node_modules/.bin"
+	local _dst_nm="${worktree_path}/node_modules"
+	local _dst_bin="${_dst_nm}/.bin"
+	[[ -d "$_src_bin" ]] || return 0
+	if [[ -e "$_dst_bin" || -L "$_dst_bin" ]]; then
+		return 0
+	fi
+	if [[ -e "$_dst_nm" && ! -d "$_dst_nm" ]]; then
+		return 0
+	fi
+	mkdir -p "$_dst_nm" 2>/dev/null || return 0
+	ln -s "$_src_bin" "$_dst_bin" 2>/dev/null || return 0
+	echo "[dispatch_with_dedup] Linked root node_modules/.bin tooling for ${worktree_path} without copying root node_modules" >>"$LOGFILE"
 	return 0
 }
 
@@ -341,6 +362,7 @@ _dlw_restore_worktree_deps() {
 		_rel_dir="${_dir#"$worktree_path"}" || continue
 		# _rel_dir is now e.g. "/.opencode" or "" (for root package.json)
 		if [[ -z "$_rel_dir" && "$_restore_root" != "1" ]]; then
+			_dlw_restore_root_node_tool_links "$worktree_path" "$repo_path"
 			echo "[dispatch_with_dedup] Skipping root node_modules restore for ${worktree_path} (set WORKTREE_NODE_MODULES_RESTORE_ROOT_ENABLED=1 to enable)" >>"$LOGFILE"
 			continue
 		fi
@@ -519,7 +541,7 @@ _dlw_exec_detached() {
 		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 		# Log the detached PGID for diagnostics (should differ from pulse PGID)
-		local worker_pgid pulse_pgid
+		local worker_pgid="" pulse_pgid=""
 		worker_pgid=$(ps -o pgid= -p "$worker_pid" 2>/dev/null | tr -d ' ')
 		[[ -n "$worker_pgid" ]] || worker_pgid="unknown"
 		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
@@ -988,7 +1010,7 @@ _dlw_check_worker_branch_orphan_loop() {
 }
 
 _dlw_min_worker_floor_active() {
-	local active_workers min_worker_floor
+	local active_workers="" min_worker_floor=""
 	active_workers=$(count_active_workers 2>/dev/null || echo 0)
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
@@ -1005,7 +1027,7 @@ _dlw_headless_state_dir() {
 }
 
 _dlw_canary_last_failure_reason() {
-	local state_dir reason_file reason
+	local state_dir="" reason_file="" reason=""
 	state_dir=$(_dlw_headless_state_dir)
 	reason_file="${state_dir}/canary-last-fail.reason"
 	reason=$(cat "$reason_file" 2>/dev/null || printf '%s' "transient")
@@ -1024,7 +1046,7 @@ _dlw_canary_failure_is_soft() {
 }
 
 _dlw_recent_worker_evidence() {
-	local ttl ledger_file
+	local ttl="" ledger_file=""
 	ttl="${CANARY_SOFT_FAILURE_RECENT_SUCCESS_TTL_SECONDS:-900}"
 	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl=900
 	ledger_file="${AIDEVOPS_DISPATCH_LEDGER_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}/dispatch-ledger.jsonl"
