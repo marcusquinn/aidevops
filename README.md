@@ -626,6 +626,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 **Quality Control & Monitoring:**
 
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
+- **Review gate preferences**: choose whether true review-bot rate limits block merges (`aidevops review-gate owner/repo wait`) or allow merge with follow-up quality coverage (`aidevops review-gate owner/repo pass`, the default). Per-tool overrides are supported, for example `aidevops review-gate owner/repo --tool coderabbitai wait`. Failed, skipped, or placeholder bot states are not treated as rate limits and continue to block until a real review/status appears or a human resolves them.
 - **Performance Auditing**: PageSpeed Insights, Lighthouse, WebPageTest, Core Web Vitals (`/performance` command)
 - **SEO Toolchain**: 40+ SEO subagents including Semrush, Ahrefs, ContentKing, Screaming Frog, Bing Webmaster Tools, Rich Results Test, programmatic SEO, analytics tracking, schema validation, content analysis, keyword mapping, and AI readiness
 - **SEO Debugging**: Open Graph validation, favicon checker, social preview testing

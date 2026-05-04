@@ -429,6 +429,56 @@ test_two_phase_env_override_respected_non_two_phase() {
 	return 0
 }
 
+# ---------- Integration tests: do_check decision buckets (GH#22802) ----------
+
+test_do_check_passes_true_rate_limit_only() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	bot_has_real_review() { return 1; }
+	bot_has_non_rate_limit_non_review_notice() { return 1; }
+	bot_has_rate_limit_notice() { return 0; }
+	any_bot_has_success_status() { return 1; }
+
+	local output status
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 0 && "$output" == "PASS_RATE_LIMITED" ]]; then
+		print_result "do_check passes true rate-limit notices by default" 0
+	else
+		print_result "do_check passes true rate-limit notices by default" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_blocks_non_rate_limit_non_review_states() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	bot_has_real_review() { return 1; }
+	bot_has_non_rate_limit_non_review_notice() { return 0; }
+	bot_has_rate_limit_notice() { return 0; }
+	any_bot_has_success_status() { return 1; }
+
+	local output status
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 1 && "$output" == "WAITING" ]]; then
+		print_result "do_check blocks non-rate-limit non-review states" 0
+	else
+		print_result "do_check blocks non-rate-limit non-review states" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
 # ---------- Run ----------
 
 main() {
@@ -472,6 +522,11 @@ main() {
 	test_two_phase_coderabbitai_any_edit_settled
 	test_two_phase_unknown_bot_or_semantics_preserved
 	test_two_phase_env_override_respected_non_two_phase
+
+	echo ""
+	echo "=== do_check decision buckets (GH#22802) ==="
+	test_do_check_passes_true_rate_limit_only
+	test_do_check_blocks_non_rate_limit_non_review_states
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

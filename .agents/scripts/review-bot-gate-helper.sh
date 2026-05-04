@@ -400,6 +400,72 @@ is_rate_limit_only_comment() {
 	return 1
 }
 
+bot_has_rate_limit_notice() {
+	# Return success only when the bot posted a true rate-limit/quota notice.
+	# Broader non-review states ("Review failed", "Review skipped", closed
+	# during review) must keep blocking instead of entering PASS_RATE_LIMITED.
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	local jq_filter
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | (.body // \"\" | @base64)"
+
+	local api_endpoints=(
+		"repos/${repo}/pulls/${pr_number}/reviews"
+		"repos/${repo}/issues/${pr_number}/comments"
+		"repos/${repo}/pulls/${pr_number}/comments"
+	)
+
+	local endpoint records encoded body
+	for endpoint in "${api_endpoints[@]}"; do
+		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+		[[ -z "$records" ]] && continue
+		while IFS= read -r encoded; do
+			[[ -z "$encoded" ]] && continue
+			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+			[[ -z "$body" ]] && continue
+			if is_rate_limit_only_comment "$body"; then
+				return 0
+			fi
+		done <<<"$records"
+	done
+	return 1
+}
+
+bot_has_non_rate_limit_non_review_notice() {
+	# Return success when the bot posted a known non-review notice that is not a
+	# true rate-limit/quota notice. This takes precedence over older rate-limit
+	# notices from the same bot so failed/skipped states keep blocking.
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	local jq_filter
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | (.body // \"\" | @base64)"
+
+	local api_endpoints=(
+		"repos/${repo}/pulls/${pr_number}/reviews"
+		"repos/${repo}/issues/${pr_number}/comments"
+		"repos/${repo}/pulls/${pr_number}/comments"
+	)
+
+	local endpoint records encoded body
+	for endpoint in "${api_endpoints[@]}"; do
+		records=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
+		[[ -z "$records" ]] && continue
+		while IFS= read -r encoded; do
+			[[ -z "$encoded" ]] && continue
+			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+			[[ -z "$body" ]] && continue
+			if is_non_review_comment "$body" && ! is_rate_limit_only_comment "$body"; then
+				return 0
+			fi
+		done <<<"$records"
+	done
+	return 1
+}
+
 bot_has_real_review() {
 	# t2139 (GH#19251): Check if a bot has posted at least one comment that
 	# is BOTH (a) not a known non-review notice AND (b) "settled" — meaning
@@ -564,19 +630,21 @@ do_check() {
 
 	local found_bots=""
 	local rate_limited_bots=""
+	local non_review_bots=""
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
 			# Bot commented — but is it a real review or a non-review notice?
-			# t2799: "rate_limited_bots" is a legacy variable name — it covers
-			# all bots without a real review (rate-limited, "Review failed",
-			# "Review skipped", etc.). The grace-period / pass behaviour is the
-			# same for all non-review states; the semantic split lives in the
-			# pattern arrays (RATE_LIMIT_PATTERNS vs NON_REVIEW_PATTERNS).
 			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				found_bots="${found_bots}${bot} "
-			else
+			elif bot_has_non_rate_limit_non_review_notice "$pr_number" "$repo" "$bot"; then
+				non_review_bots="${non_review_bots}${bot} "
+				echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
+			elif bot_has_rate_limit_notice "$pr_number" "$repo" "$bot"; then
 				rate_limited_bots="${rate_limited_bots}${bot} "
-				echo "non-review notice (not a real review): ${bot}" >&2
+				echo "rate-limit notice (not a real review): ${bot}" >&2
+			else
+				non_review_bots="${non_review_bots}${bot} "
+				echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
 			fi
 		fi
 	done
@@ -585,6 +653,15 @@ do_check() {
 		echo "PASS" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
 		return 0
+	elif [[ -n "$non_review_bots" ]]; then
+		# GH#22802: Failed/skipped/placeholder bot states are not capacity
+		# constraints and must not inherit the user preference for true rate
+		# limits. Keep waiting so a follow-up issue or human decision can happen
+		# from the actual non-review state instead of silently merging.
+		echo "WAITING"
+		echo "Bots posted non-review states that are not rate limits: ${non_review_bots}" >&2
+		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
+		return 1
 	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
 		# GH#3005: All bots are rate-limited in comments, but at least one
 		# posted a SUCCESS commit status check. Treat as reviewed.
