@@ -893,10 +893,8 @@ cleanup_stashes() {
 # This function runs each pulse cycle (before worker counting) to kill
 # workers that are still running after their work is done.
 #
-# Uses the dispatch ledger session keys (issue-{N}) to find the issue
-# number and the worker's owning repo, then checks if a merged PR exists
-# for that issue in that same repo. If so, sends SIGTERM to the worker
-# process tree.
+# Uses the dispatch ledger session keys (issue-{N}) to bind the issue,
+# repo, and PID before checking for merged PRs and terminating the worker.
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
@@ -904,7 +902,6 @@ reap_zombie_workers() {
 	local reaped=0
 	local worker_pids worker_key issue_number
 
-	# Get unique session keys from active worker processes
 	local session_keys
 	session_keys=$(ps aux | grep '[h]eadless-runtime.*--role worker' | grep -v grep |
 		sed 's/.*--session-key //' | awk '{print $1}' | sort -u) || return 0
@@ -914,10 +911,8 @@ reap_zombie_workers() {
 		issue_number="${worker_key#issue-}"
 		[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 
-		# Check dispatch ledger for the live worker's repo slug. Session keys are
-		# issue-number only (issue-{N}), so a repo-less fallback can collide with
-		# a different repository that has the same issue/PR number and kill active
-		# work before the worker reads its brief (t3076 / awardsapp#4081).
+		# Session keys are issue-number only, so require the live ledger's repo
+		# and PID to avoid same-number cross-repo PR/issue collisions.
 		local repo_slug="" ledger_entry="" ledger_issue="" ledger_pid=""
 		local _ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
 		if [[ -x "$_ledger_helper" ]]; then
@@ -940,9 +935,6 @@ reap_zombie_workers() {
 			echo "[pulse-wrapper] Zombie reap skipped for ${worker_key}: no ledger PID; refusing session-key-wide kill" >>"$LOGFILE"
 			continue
 		fi
-		[[ -n "$repo_slug" ]] || continue
-
-		# Check if a merged PR exists that closes this issue
 		local merged_pr
 		merged_pr=$(gh pr list --repo "$repo_slug" --state merged --search "closes #${issue_number} OR Closes #${issue_number} OR Resolves #${issue_number} OR resolves #${issue_number}" \
 			--limit 1 --json number --jq '.[0].number // ""' 2>/dev/null) || merged_pr=""
