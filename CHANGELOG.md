@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.50] - 2026-05-04
+
+### Added
+
+- diagnose hermetic pnpm Vitest test failures (#22810)
+
+### Changed
+
+- require merge evidence before reconcile close (#22807)
+
+### Fixed
+
+- harden OpenCode security-validation denies (#22808)
+
 ## [3.14.49] - 2026-05-04
 
 ### Fixed

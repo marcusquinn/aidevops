@@ -730,7 +730,7 @@ _classify_ci_failures_by_pattern() {
 	done < <(printf '%s\n' "$name_list")
 
 	# Group by classification, preserving conf-file priority order.
-	local all_classes="FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE OTHER"
+	local all_classes="FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE OTHER"
 	for class in $all_classes; do
 		local names_for_class=
 		while IFS= read -r entry; do

@@ -498,7 +498,8 @@ test_t2984_budget_env_validation() {
 # Verifies the per-repo prefetch helper that replaces _action_oimp_single's
 # per-issue `gh pr list --search` calls. The helper:
 #   1. Calls _gh_pr_list_merged for the slug (stubbed in test).
-#   2. jq scan() extracts (issue_num, pr_num) pairs from PR bodies that
+#   2. Filters to PRs with mergedAt evidence, then jq scan() extracts
+#      (issue_num, pr_num) pairs from PR bodies that
 #      contain Resolves|Closes|Fixes #N (case-insensitive).
 #   3. Returns a "|num=pr|...|" string for grep-based lookup downstream.
 #
@@ -508,15 +509,17 @@ test_t2984_budget_env_validation() {
 #   - PRs with no closing keyword (must be skipped).
 #   - PRs with null body (must not crash).
 #   - Case-insensitivity (resolves/RESOLVES/Resolves all match).
+#   - PRs without mergedAt evidence (must be skipped; GH#22802).
 # ---------------------------------------------------------------------------
 test_t2985_oimp_lookup_builder() {
-	# Fixture: 4 PRs covering the cases above.
+	# Fixture: 5 PRs covering the cases above.
 	local fixture_json
 	fixture_json=$(jq -nc '[
-		{number: 1234, body: "Resolves #42\nFixes #99\nCloses #50"},
-		{number: 5678, body: "closes #100"},
-		{number: 9999, body: "merge candidate, no keyword"},
-		{number: 1111, body: null}
+		{number: 1234, mergedAt: "2026-05-04T12:00:00Z", body: "Resolves #42\nFixes #99\nCloses #50"},
+		{number: 5678, mergedAt: "2026-05-04T12:01:00Z", body: "closes #100"},
+		{number: 9999, mergedAt: "2026-05-04T12:02:00Z", body: "merge candidate, no keyword"},
+		{number: 1111, mergedAt: "2026-05-04T12:03:00Z", body: null},
+		{number: 22806, mergedAt: null, body: "Resolves #22802"}
 	]')
 
 	# Extract the helper definition from RECONCILE_SH.
@@ -538,12 +541,46 @@ test_t2985_oimp_lookup_builder() {
 
 	# Expected output: pipe-delimited |num=pr| pairs, one per scan match.
 	# PR 1234 contributes 3 pairs (42, 99, 50); PR 5678 contributes 1 (100);
-	# PRs 9999 and 1111 contribute 0.
+	# PRs 9999, 1111, and unmerged 22806 contribute 0.
 	local expected="|42=1234|99=1234|50=1234|100=5678|"
 	if [[ "$result" == "$expected" ]]; then
 		_pass "t2985: lookup builder extracts 4 pairs from 2 keyword-bearing PRs"
 	else
 		_fail "t2985: lookup builder — expected '${expected}', got '${result}'"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 13b (GH#22802): open/closed-unmerged PRs never enter OIMP lookup
+# ---------------------------------------------------------------------------
+test_gh22802_oimp_lookup_requires_merged_at() {
+	local fixture_json
+	fixture_json=$(jq -nc '[
+		{number: 22806, state: "OPEN", mergedAt: null, body: "Resolves #22802"},
+		{number: 22807, state: "CLOSED", mergedAt: "", body: "Fixes #22803"},
+		{number: 22808, state: "MERGED", mergedAt: "2026-05-04T12:04:00Z", body: "Closes #22804"}
+	]')
+
+	local helper_def
+	helper_def=$(sed -n '/^_build_oimp_lookup_for_slug()/,/^}$/p' "${RECONCILE_SH}")
+	if [[ -z "$helper_def" ]]; then
+		_fail "GH#22802: _build_oimp_lookup_for_slug not found in ${RECONCILE_SH}"
+		return 0
+	fi
+
+	local result
+	result=$(bash -c "
+		${helper_def}
+		_gh_pr_list_merged() { printf '%s' '${fixture_json}'; return 0; }
+		_build_oimp_lookup_for_slug 'test/repo'
+	" 2>/dev/null)
+
+	local expected="|22804=22808|"
+	if [[ "$result" == "$expected" ]]; then
+		_pass "GH#22802: OIMP lookup requires mergedAt and skips open/closed-unmerged PRs"
+	else
+		_fail "GH#22802: expected '${expected}', got '${result}'"
 	fi
 	return 0
 }
@@ -720,6 +757,7 @@ test_batched_field_extraction_parity
 test_t2984_time_budget_present
 test_t2984_budget_env_validation
 test_t2985_oimp_lookup_builder
+test_gh22802_oimp_lookup_requires_merged_at
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
 test_available_feedback_worker_issue_not_assigned
