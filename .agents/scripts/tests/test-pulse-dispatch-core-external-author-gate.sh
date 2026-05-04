@@ -90,7 +90,11 @@ if [[ "\${1:-}" == "verify" && "${approval_result}" == "VERIFIED" ]]; then
 	printf 'VERIFIED\n'
 	exit 0
 fi
-printf 'UNVERIFIED\n'
+if [[ "\${1:-}" == "verify" && "${approval_result}" == "NO_KEY" ]]; then
+	printf 'NO_KEY\n'
+	exit 1
+fi
+printf 'NO_APPROVAL\n'
 exit 1
 EOF
 	chmod +x "${AGENTS_DIR}/scripts/approval-helper.sh"
@@ -162,6 +166,23 @@ test_external_author_with_crypto_approval_allows_dispatch() {
 	return 0
 }
 
+test_external_author_with_unverifiable_approval_blocks_without_reapplying_nmr() {
+	setup_case "CONTRIBUTOR" "User" "NO_KEY"
+	if _check_external_issue_author_gate 22733 "owner/repo"; then
+		if grep -q -- '--add-label needs-maintainer-review' "$GH_CALLS_FILE"; then
+			print_result "unverifiable approval marker does not reapply NMR" 1 "NMR label was re-applied: $(<"$GH_CALLS_FILE")"
+			cleanup_case
+			return 0
+		fi
+		print_result "unverifiable approval marker does not reapply NMR" 0
+		cleanup_case
+		return 0
+	fi
+	print_result "unverifiable approval marker does not reapply NMR" 1 "Expected gate to block dispatch while preserving labels"
+	cleanup_case
+	return 0
+}
+
 test_author_lookup_failure_fails_closed() {
 	setup_case "" "" ""
 	rm -f "${TEST_ROOT}/issue-meta.tsv"
@@ -190,6 +211,7 @@ main() {
 	test_owner_author_allows_dispatch
 	test_collaborator_author_allows_dispatch
 	test_external_author_with_crypto_approval_allows_dispatch
+	test_external_author_with_unverifiable_approval_blocks_without_reapplying_nmr
 	test_author_lookup_failure_fails_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
