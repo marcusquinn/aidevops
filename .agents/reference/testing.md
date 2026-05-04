@@ -135,3 +135,17 @@ for `BASH_SOURCE`-relative helper resolution.
 - Clean up tmpdirs via `trap 'rm -rf "$TMPDIR_TEST"' EXIT`.
 - Stub PATH commands (e.g., `gh`) by prepending a per-test `stub-bin`
   directory to `PATH` in the test, not by globally shadowing them.
+
+## Hermetic pnpm/Vitest preflight triage
+
+When full-loop or CI feedback reports a failing `pnpm test`/Vitest gate in a
+workspace, diagnose hermeticity before assuming a production code regression:
+
+1. Reproduce the repo-level gate (`pnpm test`), then isolate with
+   `pnpm --filter <package> test` for the first failing package.
+2. Treat missing env variables, import-time env validation, and private config
+   requirements as test-harness defects. Unit tests must use safe defaults or
+   mocks, not production secrets.
+3. Treat `vi.mock`/`@workspace/*` missing-export errors as stale shared mocks;
+   prefer partial mocks with `vi.importActual` when practical.
+4. Keep changes test-only unless the failing log proves a production defect.

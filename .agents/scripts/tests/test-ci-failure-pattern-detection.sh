@@ -6,20 +6,22 @@
 # pattern-aware CI-failure resolution guidance in pulse-merge-feedback.sh.
 #
 # Verifies:
-#   1. ci-failure-patterns.conf exists and contains all four classifications
+#   1. ci-failure-patterns.conf exists and contains all five classifications
 #   2. _classify_ci_failures_by_pattern identifies FORMAT_FAILURE checks
 #   3. _classify_ci_failures_by_pattern identifies LINT_FAILURE checks
 #   4. _classify_ci_failures_by_pattern identifies TYPECHECK_FAILURE checks
-#   5. _classify_ci_failures_by_pattern falls back to OTHER for unmatched
-#   6. Mixed-pattern CI: multiple classifications emitted on separate lines
-#   7. Empty input: no classification output
-#   8. _build_ci_feedback_section emits ### Pattern-Specific Resolution
+#   5. _classify_ci_failures_by_pattern identifies TEST_FAILURE checks
+#   6. _classify_ci_failures_by_pattern falls back to OTHER for unmatched
+#   7. Mixed-pattern CI: multiple classifications emitted on separate lines
+#   8. Empty input: no classification output
+#   9. _build_ci_feedback_section emits ### Pattern-Specific Resolution
 #      Guidance block when non-OTHER patterns are present
-#   9. _build_ci_feedback_section does NOT emit guidance for OTHER-only
-#  10. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
-#  11. LINT_FAILURE guidance contains lint --fix command
-#  12. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
-#  13. pulse-merge-feedback.sh passes shellcheck after t3225 changes
+#  10. _build_ci_feedback_section does NOT emit guidance for OTHER-only
+#  11. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
+#  12. LINT_FAILURE guidance contains lint --fix command
+#  13. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
+#  14. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
+#  15. pulse-merge-feedback.sh passes shellcheck after t3225 changes
 #
 # Tests are structural — no live GitHub API calls.
 
@@ -111,7 +113,7 @@ else
 	echo "${TEST_RED}FAIL${TEST_NC}: 1a: ci-failure-patterns.conf NOT found at $CONF_FILE"
 fi
 
-for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE OTHER; do
+for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE OTHER; do
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if grep -qE "^${class}" "$CONF_FILE" 2>/dev/null; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf contains ${class} entry"
@@ -172,13 +174,25 @@ assert_contains "2j: Typecheck → TYPECHECK_FAILURE" "TYPECHECK_FAILURE" "$tc_o
 tc_low_out=$(_classify_ci_failures_by_pattern "typecheck" "$CONF_FILE")
 assert_contains "2k: typecheck (lowercase) → TYPECHECK_FAILURE" "TYPECHECK_FAILURE" "$tc_low_out"
 
-# 2l: Unknown / catch-all → OTHER
-other_out=$(_classify_ci_failures_by_pattern "SonarCloud Analysis" "$CONF_FILE")
-assert_contains "2l: 'SonarCloud Analysis' → OTHER" "OTHER" "$other_out"
+# 2l: Test check name
+test_out=$(_classify_ci_failures_by_pattern "Test" "$CONF_FILE")
+assert_contains "2l: Test → TEST_FAILURE" "TEST_FAILURE" "$test_out"
 
-# 2m: Empty input → empty output
+# 2m: Vitest check name
+vitest_out=$(_classify_ci_failures_by_pattern "Vitest" "$CONF_FILE")
+assert_contains "2m: Vitest → TEST_FAILURE" "TEST_FAILURE" "$vitest_out"
+
+# 2n: pnpm test check name
+pnpm_test_out=$(_classify_ci_failures_by_pattern "pnpm test" "$CONF_FILE")
+assert_contains "2n: pnpm test → TEST_FAILURE" "TEST_FAILURE" "$pnpm_test_out"
+
+# 2o: Unknown / catch-all → OTHER
+other_out=$(_classify_ci_failures_by_pattern "SonarCloud Analysis" "$CONF_FILE")
+assert_contains "2o: 'SonarCloud Analysis' → OTHER" "OTHER" "$other_out"
+
+# 2p: Empty input → empty output
 empty_out=$(_classify_ci_failures_by_pattern "" "$CONF_FILE")
-assert_empty "2m: empty input → empty output" "$empty_out"
+assert_empty "2p: empty input → empty output" "$empty_out"
 
 echo ""
 
@@ -187,18 +201,19 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Section 3: mixed-pattern CI failures ---"
 
-# Three checks: one Format, one Lint, one Typecheck — expect three lines
-mixed_input=$(printf '%s\n' "Format" "Lint" "Typecheck")
+# Four checks: one Format, one Lint, one Typecheck, one Test — expect four lines
+mixed_input=$(printf '%s\n' "Format" "Lint" "Typecheck" "Test")
 mixed_out=$(_classify_ci_failures_by_pattern "$mixed_input" "$CONF_FILE")
 assert_contains "3a: mixed has FORMAT_FAILURE" "FORMAT_FAILURE" "$mixed_out"
 assert_contains "3b: mixed has LINT_FAILURE" "LINT_FAILURE" "$mixed_out"
 assert_contains "3c: mixed has TYPECHECK_FAILURE" "TYPECHECK_FAILURE" "$mixed_out"
+assert_contains "3d: mixed has TEST_FAILURE" "TEST_FAILURE" "$mixed_out"
 
 # Mix with OTHER
 mixed_other=$(printf '%s\n' "Format" "Random Bot Check")
 mixed_other_out=$(_classify_ci_failures_by_pattern "$mixed_other" "$CONF_FILE")
-assert_contains "3d: mixed format+other has FORMAT_FAILURE" "FORMAT_FAILURE" "$mixed_other_out"
-assert_contains "3e: mixed format+other has OTHER" "OTHER" "$mixed_other_out"
+assert_contains "3e: mixed format+other has FORMAT_FAILURE" "FORMAT_FAILURE" "$mixed_other_out"
+assert_contains "3f: mixed format+other has OTHER" "OTHER" "$mixed_other_out"
 
 echo ""
 
@@ -238,6 +253,18 @@ other_class=$(_classify_ci_failures_by_pattern "Random Bot Check" "$CONF_FILE")
 other_guidance=$(_emit_ci_failure_guidance_blocks "$other_class" "$CONF_FILE")
 assert_empty "4i: OTHER-only classification emits no guidance block" "$other_guidance"
 
+# 4j: TEST_FAILURE classification → hermeticity guidance emitted
+test_class=$(_classify_ci_failures_by_pattern "Vitest" "$CONF_FILE")
+test_guidance=$(_emit_ci_failure_guidance_blocks "$test_class" "$CONF_FILE")
+assert_contains "4j: TEST guidance emitted" \
+	"### Pattern-Specific Resolution Guidance" "$test_guidance"
+assert_contains "4k: TEST guidance mentions pnpm filter rerun" \
+	"pnpm --filter <package> test" "$test_guidance"
+assert_contains "4l: TEST guidance warns against production secrets" \
+	"Do NOT require production secrets" "$test_guidance"
+assert_contains "4m: TEST guidance mentions stale Vitest mocks" \
+	"vi.mock" "$test_guidance"
+
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -250,7 +277,7 @@ sample_failing="- **Format**: fail — [link](https://example.com)"
 fmt_class_input=$(_classify_ci_failures_by_pattern "Format" "$CONF_FILE")
 section_with_guidance=$(_build_ci_feedback_section "12345" "$sample_failing" "$fmt_class_input")
 assert_contains "5a: section header present" \
-	"## CI Failure Feedback" "$section_with_guidance"
+	"## CI Repair Feedback" "$section_with_guidance"
 assert_contains "5b: failing checks list present" \
 	"- **Format**" "$section_with_guidance"
 assert_contains "5c: Pattern-Specific guidance present (FORMAT case)" \
