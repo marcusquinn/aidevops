@@ -82,6 +82,7 @@ export -f pulse_stats_increment pulse_stats_get_24h
 # Configurable stub behaviour per test via env vars:
 #   STUB_GH_REMAINING — GraphQL remaining value (default 5000)
 #   STUB_GH_LIMIT     — GraphQL limit value (default 5000)
+#   STUB_GH_CORE_REMAINING — REST core remaining value (unset omits core budget)
 #   STUB_GH_RESET     — GraphQL reset epoch (default: now+3600)
 #   STUB_GH_FAIL      — 1 to make gh api rate_limit fail entirely
 gh() {
@@ -91,6 +92,10 @@ gh() {
 		fi
 		local remaining="${STUB_GH_REMAINING:-5000}"
 		local limit="${STUB_GH_LIMIT:-5000}"
+		local core_json=""
+		if [[ -n "${STUB_GH_CORE_REMAINING:-}" ]]; then
+			core_json=",\"core\":{\"remaining\":${STUB_GH_CORE_REMAINING},\"limit\":${STUB_GH_CORE_LIMIT:-5000}}"
+		fi
 		local reset="${STUB_GH_RESET:-$(($(date +%s) + 3600))}"
 		# Handle --jq flag for direct extraction
 		if [[ "${3:-}" == "--jq" ]]; then
@@ -101,8 +106,8 @@ gh() {
 			fi
 		fi
 		# Full JSON response
-		printf '{"resources":{"graphql":{"remaining":%s,"limit":%s,"reset":%s}}}\n' \
-			"$remaining" "$limit" "$reset"
+		printf '{"resources":{"graphql":{"remaining":%s,"limit":%s,"reset":%s}%s}}\n' \
+			"$remaining" "$limit" "$reset" "$core_json"
 		return 0
 	fi
 	# Default: succeed silently for unknown calls
@@ -143,6 +148,11 @@ reset_test_state() {
 	rm -f "${HOME}/.aidevops/cache/pulse-graphql-rate-limit.json"
 	unset AIDEVOPS_SKIP_PULSE_CIRCUIT_BREAKER 2>/dev/null || true
 	unset AIDEVOPS_PULSE_RATE_LIMIT_CACHE_TTL 2>/dev/null || true
+	unset AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK 2>/dev/null || true
+	unset AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE 2>/dev/null || true
+	unset AIDEVOPS_GH_FORCE_REST_READS 2>/dev/null || true
+	unset STUB_GH_CORE_REMAINING 2>/dev/null || true
+	unset STUB_GH_CORE_LIMIT 2>/dev/null || true
 	unset STUB_GH_FAIL 2>/dev/null || true
 	STUB_GH_REMAINING=5000
 	STUB_GH_LIMIT=5000
@@ -383,6 +393,38 @@ test_log_message_on_trip() {
 		pass "log message emitted on trip"
 	else
 		fail "should emit 'GraphQL budget EXHAUSTED' log message on trip"
+	fi
+	return 0
+}
+
+# --- Test 15: GraphQL exhausted proceeds with REST fallback when core is healthy ---
+test_graphql_exhausted_rest_core_healthy_allows_dispatch() {
+	reset_test_state
+	STUB_GH_REMAINING=0
+	STUB_GH_CORE_REMAINING=4994
+	local rc=0
+	is_graphql_budget_sufficient || rc=$?
+	local fallback_count
+	fallback_count=$(grep -c "^pulse_dispatch_rest_fallback$" "$STATS_COUNTER_FILE" 2>/dev/null) || fallback_count=0
+	if [[ "$rc" -eq 0 && "${AIDEVOPS_GH_FORCE_REST_READS:-0}" == "1" && "${AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE:-0}" == "1" && "$fallback_count" -eq 1 ]]; then
+		pass "GraphQL exhausted with healthy REST core enables dispatch_rest_fallback"
+	else
+		fail "REST fallback should allow dispatch" "rc=$rc force_rest=${AIDEVOPS_GH_FORCE_REST_READS:-unset} active=${AIDEVOPS_PULSE_DISPATCH_REST_FALLBACK_ACTIVE:-unset} fallback_count=$fallback_count"
+	fi
+	return 0
+}
+
+# --- Test 16: GraphQL exhausted still blocks when REST core is low ---
+test_graphql_exhausted_rest_core_low_blocks_dispatch() {
+	reset_test_state
+	STUB_GH_REMAINING=0
+	STUB_GH_CORE_REMAINING=10
+	local rc=0
+	is_graphql_budget_sufficient || rc=$?
+	if [[ "$rc" -eq 1 && "${AIDEVOPS_GH_FORCE_REST_READS:-0}" != "1" ]]; then
+		pass "GraphQL exhausted with low REST core still blocks dispatch"
+	else
+		fail "low REST core should not allow fallback" "rc=$rc force_rest=${AIDEVOPS_GH_FORCE_REST_READS:-unset}"
 	fi
 	return 0
 }
@@ -696,6 +738,8 @@ test_status_output_ok
 test_status_output_tripped
 test_status_cached_only_uses_cache
 test_log_message_on_trip
+test_graphql_exhausted_rest_core_healthy_allows_dispatch
+test_graphql_exhausted_rest_core_low_blocks_dispatch
 
 # =============================================================================
 # Summary

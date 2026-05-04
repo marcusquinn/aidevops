@@ -459,9 +459,9 @@ _dispatch_compute_capacity() {
 		return 1
 	fi
 
-	# t2690: Proactive rate-limit circuit breaker — pause dispatch when GraphQL
-	# budget is nearly exhausted. One cheap API call (free endpoint) prevents
-	# spawning workers that would fail at step 1 and burn $0.05-$0.25 each.
+	# t2690/t3424: Proactive rate-limit circuit breaker — pause dispatch when
+	# GraphQL budget is nearly exhausted unless REST-backed dispatch fallback is
+	# active and REST core has enough headroom for issue/comment/label calls.
 	if declare -F is_graphql_budget_sufficient >/dev/null 2>&1; then
 		local _cb_rc=0
 		is_graphql_budget_sufficient || _cb_rc=$?
