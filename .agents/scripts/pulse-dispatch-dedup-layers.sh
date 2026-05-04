@@ -11,6 +11,7 @@
 #
 # Functions in this module (in source order):
 #   - _classify_stale_recovery_crash_type
+#   - _stale_recovery_has_worker_evidence
 #   - _dedup_layer1_ledger_check
 #   - _dedup_layer2_process_match
 #   - _dedup_layer3_title_match
@@ -88,6 +89,25 @@ _classify_stale_recovery_crash_type() {
 	# artifact. Classify as no_work so the cascade tier escalation
 	# comment renders the "Likely infrastructure/transient failure" line.
 	printf 'no_work'
+	return 0
+}
+
+#######################################
+# Decide whether a stale-recovery event is evidence of a worker failure.
+#
+# t4012/GH#4012: pre-launch abort cleanup can leave an old active label +
+# assignee without any dispatch claim comment because no worker ever started
+# and the claim comment was deleted as audit noise. Stale recovery should clean
+# that orphaned state, but it must not feed the no_work fast-fail counter: a
+# missing dispatch claim proves there is no worker artifact to classify.
+#
+# Args: $1 - captured dispatch-dedup-helper output
+# Returns: 0 if stale recovery found worker evidence, 1 otherwise
+#######################################
+_stale_recovery_has_worker_evidence() {
+	local assigned_output="$1"
+	[[ "$assigned_output" == *STALE_RECOVERED* ]] || return 1
+	[[ "$assigned_output" != *"no dispatch claim comment found"* ]] || return 1
 	return 0
 }
 
@@ -229,7 +249,8 @@ _dedup_layer5_dispatch_comment() {
 #######################################
 # Layer 6 (GH#6891): cross-machine assignee guard + stale recovery.
 # Prevents runners from dispatching workers for issues already assigned to
-# another login. On STALE_RECOVERED, records fast-fail (t1927/t2042).
+# another login. On STALE_RECOVERED with worker evidence, records fast-fail
+# (t1927/t2042).
 # Arguments: issue_number, repo_slug, self_login
 # Exit: 0 = blocked, 1 = continue
 #######################################
@@ -253,6 +274,10 @@ _dedup_layer6_assignee_and_stale() {
 		# dispatch→timeout→stale-recovery cycles. Observed: 8+ dispatches in 6h
 		# with 0 PRs and 0 fast-fail entries (GH#17700, GH#17701, GH#17702).
 		if [[ "$assigned_output" == *STALE_RECOVERED* ]]; then
+			if ! _stale_recovery_has_worker_evidence "$assigned_output"; then
+				echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} without worker evidence — skipping fast-fail record (t4012)" >>"$LOGFILE"
+				return 1
+			fi
 			# t2042: classify what (if anything) the dead worker produced
 			# before stalling so the cascade tier escalation comment can
 			# render a "Crash type: no_work | partial" diagnostic line
