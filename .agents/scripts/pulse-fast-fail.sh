@@ -376,6 +376,17 @@ _fast_fail_record_locked() {
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
 
+	# Pre-launch/preflight failures (for example worker_launch_rc_2 and canary
+	# preflight aborts) do not prove a worker reached the issue brief. Keep them
+	# out of the per-issue fast-fail state so they cannot cascade into no_work or
+	# stale_timeout circuit-breaker trips.
+	if declare -F _worker_failure_reason_is_launch_preflight >/dev/null 2>&1; then
+		if _worker_failure_reason_is_launch_preflight "$reason"; then
+			echo "[pulse-wrapper] fast_fail_record: #${issue_number} (${repo_slug}) skipped launch/preflight reason=${reason}" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
 	local key now state
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)

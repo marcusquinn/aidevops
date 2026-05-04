@@ -614,6 +614,16 @@ _report_failure_to_fast_fail() {
 		return 0
 	fi
 
+	# Launch/preflight aborts happen before a worker reaches the brief. They are
+	# useful launch diagnostics, but they must not accrue as per-issue fast-fail
+	# / no_work circuit-breaker evidence.
+	if declare -F _worker_failure_reason_is_launch_preflight >/dev/null 2>&1; then
+		if _worker_failure_reason_is_launch_preflight "$reason"; then
+			print_info "[fast-fail] skipped launch/preflight failure #${issue_number} (${repo_slug}) reason=${reason}"
+			return 0
+		fi
+	fi
+
 	local state_file="${HOME}/.aidevops/.agent-workspace/supervisor/fast-fail-counter.json"
 	local state_dir
 	state_dir=$(dirname "$state_file")
