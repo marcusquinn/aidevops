@@ -355,7 +355,7 @@ _dispatch_provider_pressure_points() {
 }
 
 _dispatch_graphql_pressure_points() {
-	local graphql_remaining graphql_low graphql_critical
+	local graphql_remaining="" graphql_low="" graphql_critical=""
 	graphql_remaining=$(_dispatch_graphql_remaining_cached)
 	graphql_low="${PULSE_DISPATCH_STAGGER_GRAPHQL_LOW:-1250}"
 	graphql_critical="${PULSE_DISPATCH_STAGGER_GRAPHQL_CRITICAL:-750}"
@@ -385,7 +385,7 @@ _dispatch_finalize_stagger_delay() {
 		printf '0\n'
 		return 0
 	fi
-	local issue_number jitter_max jitter delay cap
+	local issue_number="" jitter_max="" jitter="" delay="" cap=""
 	issue_number=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || issue_number=0
 	jitter_max="${PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS:-3}"
@@ -428,7 +428,7 @@ _dispatch_inter_launch_delay() {
 
 	local pressure_points=0
 	pressure_points=$((pressure_points + $(_dispatch_load_pressure_points)))
-	local recent_failures recent_rate_limits pressure_line
+	local recent_failures="" recent_rate_limits="" pressure_line=""
 	pressure_line=$(_dispatch_recent_worker_pressure_counts)
 	read -r recent_failures recent_rate_limits <<<"$pressure_line"
 	[[ "$recent_failures" =~ ^[0-9]+$ ]] || recent_failures=0

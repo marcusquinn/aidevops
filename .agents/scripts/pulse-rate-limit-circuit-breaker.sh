@@ -102,7 +102,7 @@ _CB_RL_UNKNOWN="?"
 #######################################
 _cb_rate_limit_json() {
 	local mode="${1:-normal}"
-	local now cached_ts age rate_json tmp
+	local now="" cached_ts="" age="" rate_json="" tmp=""
 	now=$(date +%s 2>/dev/null) || now=0
 
 	if [[ -f "$_CB_RL_CACHE_FILE" ]]; then
@@ -154,7 +154,7 @@ _cb_allow_dispatch_with_rest_fallback() {
 		return 1
 	fi
 
-	local core_remaining core_limit min_core
+	local core_remaining="" core_limit="" min_core=""
 	core_remaining=$(printf '%s' "$rate_json" | jq -r '.resources.core.remaining // ""') || core_remaining=""
 	core_limit=$(printf '%s' "$rate_json" | jq -r '.resources.core.limit // ""') || core_limit=""
 	min_core="${AIDEVOPS_PULSE_REST_DISPATCH_MIN_CORE_REMAINING:-250}"
@@ -208,7 +208,7 @@ is_graphql_budget_sufficient() {
 		return 2
 	fi
 
-	local remaining limit
+	local remaining="" limit=""
 	remaining=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.remaining // ""') || remaining=""
 	limit=$(printf '%s' "$rate_json" | jq -r '.resources.graphql.limit // ""') || limit=""
 
@@ -319,7 +319,7 @@ _circuit_breaker_status() {
 		return 0
 	fi
 
-	local remaining limit reset_epoch
+	local remaining="" limit="" reset_epoch=""
 	remaining=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.remaining // \"${_CB_RL_UNKNOWN}\"") || remaining="$_CB_RL_UNKNOWN"
 	limit=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.limit // \"${_CB_RL_UNKNOWN}\"") || limit="$_CB_RL_UNKNOWN"
 	reset_epoch=$(printf '%s' "$rate_json" | jq -r ".resources.graphql.reset // \"${_CB_RL_UNKNOWN}\"") || reset_epoch="$_CB_RL_UNKNOWN"
