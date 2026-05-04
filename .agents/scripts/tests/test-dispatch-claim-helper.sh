@@ -1010,6 +1010,58 @@ CLAIM_RELEASED reason=worker_complete
 }
 
 #######################################
+# Test: terminal worker marker matching is case-insensitive.
+#######################################
+test_claim_skips_takeover_reason_after_lowercase_terminal() {
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local mock_path
+	mock_path="$(create_stale_worker_mock_gh "$tmp_dir" "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+claim_released reason=worker_complete
+<!-- ops:end -->")"
+
+	local dispatch_created_at terminal_created_at claim_created_at output exit_code
+	dispatch_created_at="$(iso_seconds_ago 120)"
+	terminal_created_at="$(iso_seconds_ago 30)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_TERMINAL_CREATED_AT="$terminal_created_at" \
+		MOCK_TERMINAL_BODY="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+claim_released reason=worker_complete
+<!-- ops:end -->" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_ACTIVE_WORKER_MAX_AGE=60 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "lowercase terminal worker claim exits 0" 0
+	else
+		print_result "lowercase terminal worker claim exits 0" 1 "got exit $exit_code output: $output"
+	fi
+
+	local post_body=""
+	if [[ -f "${tmp_dir}/post_body.txt" ]]; then
+		post_body=$(<"${tmp_dir}/post_body.txt")
+	fi
+	if printf '%s' "$post_body" | grep -q 'reason=stale_worker_takeover'; then
+		print_result "lowercase terminal marker omits takeover reason" 1 "body: $post_body"
+	else
+		print_result "lowercase terminal marker omits takeover reason" 0
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -1033,6 +1085,7 @@ main() {
 	test_claim_marks_paginated_stale_worker_takeover
 	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment
 	test_claim_skips_takeover_reason_after_terminal
+	test_claim_skips_takeover_reason_after_lowercase_terminal
 
 	echo ""
 	echo "Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed"
