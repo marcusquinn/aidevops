@@ -190,7 +190,7 @@ New pre-commit validators and CI gates should block regressions, not all histori
 - `.agents/scripts/qlty-regression-helper.sh` (t2065)
 - `.agents/scripts/qlty-new-file-gate-helper.sh` (t2068)
 
-## Quality gate pattern reference (t2065/t2068/t2229/t2047)
+## Quality gate pattern reference
 
 Quality gates should be narrow, diff-scoped where possible, and paired with a
 documented local check plus an explicit override path. The gate should teach the
@@ -228,10 +228,10 @@ Local check:
 .agents/scripts/qlty-new-file-gate-helper.sh new-files --base origin/main --dry-run
 ```
 
-Override: apply `new-file-smell-ok` and include a
-`## New File Smell Justification` section in the PR body. Both are required; the
-label alone should not stick because new-file gates start from a zero-smell
-baseline and need explicit evidence when importing debt is intentional.
+Override: apply `new-file-smell-ok` and include the PR-body section
+`## New File Smell Justification`. Both are required; the label alone should not
+stick because new-file gates start from a zero-smell baseline and need explicit
+evidence when importing debt is intentional.
 
 ### Workflow cascade vulnerability lint (t2229)
 
@@ -248,11 +248,11 @@ Local check:
 .agents/scripts/workflow-cascade-lint.sh --dry-run
 ```
 
-Override: apply `workflow-cascade-ok` and include a
-`## Workflow Cascade Justification` section in the PR body explaining why the
-event/action mix cannot cascade or why the mitigation is equivalent. Both are
-required because cascade-prone workflow triggers can create runaway CI churn even
-when a single workflow edit looks harmless in isolation.
+Override: apply `workflow-cascade-ok` and include the PR-body section
+`## Workflow Cascade Justification` explaining why the event/action mix cannot
+cascade or why the mitigation is equivalent. Both are required because
+cascade-prone workflow triggers can create runaway CI churn even when a single
+workflow edit looks harmless in isolation.
 
 ### Task-ID collision guard (t2047)
 
