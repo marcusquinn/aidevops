@@ -63,7 +63,7 @@ Start: `~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --back
 Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 
 **Completion criteria (ALL required):**
-1. Requirements implemented; tests pass; lint/shellcheck/type-check clean.
+1. Requirements implemented; tests pass; lint/shellcheck/type-check clean. For React/TypeScript ESLint, a `0` exit with warnings is not clean; use `lint-warning-helper.sh run -- <lint command>` or an equivalent `--max-warnings=0` gate and track/fix warnings such as `react-hooks/exhaustive-deps`.
 2. **README gate (t099):** update if user-facing features change; skip for refactor/bugfix.
 3. Conventional commits; headless rules observed; deferred findings → tracked tasks (`findings-to-tasks-helper.sh create`).
 4. **Runtime testing gate (t1660.7):** risk-appropriate verification (see below).
