@@ -142,7 +142,7 @@ Narrative phases without a per-phase marker are NOT auto-filed unless `<!-- phas
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
 
-**Auto-dispatch:** Default to `#auto-dispatch` for worker-ready tasks, including issues created by interactive agents or workers. The readiness gate is: (1) 2+ acceptance criteria beyond "tests pass"/"lint clean", (2) non-empty "How" with file references, (3) clear deliverable in "What". If the task fails the gate, complete the brief or mark `#parent`/blocked instead; omit `#auto-dispatch` only for credentials/purchases, decomposition, human preference/approval, incomplete dependencies, or explicit user preference. Canonical dispatch-blocker labels: `reference/dispatch-blockers.md`.
+**Auto-dispatch default:** Worker-ready implementation tasks default to `#auto-dispatch`. Readiness means the brief has: (1) 2+ acceptance criteria beyond "tests pass"/"lint clean", (2) non-empty "How" with file references, (3) clear deliverable in "What", and (4) automatable verification. If any readiness element is missing, finish the brief before filing/queueing; if the work needs decomposition, research, human preference/approval, credentials, or unresolved dependencies, mark it `#parent`/blocked instead. Canonical dispatch-blocker labels: `reference/dispatch-blockers.md`.
 
 ### Step 5: Label, Commit, Push
 
