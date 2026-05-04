@@ -233,7 +233,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **`persistent` label** → NEVER close. CI guard auto-reopens accidental closures.
 - **Has merged PR** → comment linking PR, then close.
 - **`status:blocked` but blockers resolved** → remove label, add `status:available`, comment.
-- **`status:queued`/`status:in-progress`/`status:in-review`/`status:claimed`** → if updated within 3h, skip. If 3+ hours with no PR/worker, relabel `status:available`, unassign, comment recovery.
+- **`status:queued`/`status:in-progress`/`status:in-review`/`status:claimed`** → if the latest relevant issue/PR event is within 3h, skip. If 3+ hours with no worker, no open PR activity, and no useful timeline event, relabel `status:available`, unassign, comment recovery.
 - **`origin:interactive` + human assignee** → NEVER dispatch. An active interactive session owns this work; dispatching would race the user's in-flight PR. Skip silently regardless of status label state (GH#18352).
 - **`needs-maintainer-review`** → dispatch triage review worker (step 3.5), NOT implementation worker.
 - **`status:needs-info`** → check pre-fetched reply status (step 4.5).

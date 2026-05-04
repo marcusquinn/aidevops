@@ -47,12 +47,15 @@ source "${SCRIPTS_DIR}/dispatch-dedup-stale.sh"
 RECOVERY_CALLED=0
 GH_CALL_LOG="${TMP_HOME}/gh-calls.log"
 : >"$GH_CALL_LOG"
+ISSUE_UPDATED_AT=""
+OPEN_PR_ACTIVITY=""
+COMMENTS_RECENT=1
 
 _resolve_stale_threshold() {
 	local _issue_number="$1"
 	local _repo_slug="$2"
 	: "$_issue_number" "$_repo_slug"
-	printf 'false\n600\n2020-01-01T00:00:00Z\n'
+	printf 'false\n600\n2020-01-01T00:00:00Z\n%s\n' "$ISSUE_UPDATED_AT"
 	return 0
 }
 
@@ -69,6 +72,16 @@ _recover_stale_assignment() {
 gh() {
 	local cmd="${1:-}"
 	shift || true
+	if [[ "$cmd" == "pr" && "${1:-}" == "list" ]]; then
+		if [[ -n "$OPEN_PR_ACTIVITY" ]]; then
+			local _number="${OPEN_PR_ACTIVITY%%|*}"
+			local _updated="${OPEN_PR_ACTIVITY#*|}"
+			printf '[{"number":%s,"updatedAt":"%s"}]\n' "$_number" "$_updated" | jq -r '.[0] | if . then "\(.number)|\(.updatedAt // "")" else "" end'
+		else
+			printf '\n'
+		fi
+		return 0
+	fi
 	if [[ "$cmd" != "api" ]]; then
 		printf '{}\n'
 		return 0
@@ -105,7 +118,11 @@ gh() {
 	done
 
 	local recent_ts
-	recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	if [[ "$COMMENTS_RECENT" -eq 1 ]]; then
+		recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	else
+		recent_ts="2020-01-01T00:10:00Z"
+	fi
 	local response
 	if [[ "$has_paginate" -eq 1 && "$has_slurp" -eq 1 ]]; then
 		printf 'comments_slurped\n' >>"$GH_CALL_LOG"
@@ -140,6 +157,36 @@ if grep -q '^comments_slurped$' "$GH_CALL_LOG" 2>/dev/null; then
 	pass "comments API is called with --paginate --slurp"
 else
 	fail "comments API is called with --paginate --slurp" "mock did not observe a slurped comments request"
+fi
+
+RECOVERY_CALLED=0
+ISSUE_UPDATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+OPEN_PR_ACTIVITY=""
+COMMENTS_RECENT=0
+: >"$GH_CALL_LOG"
+if _is_stale_assignment "123" "owner/repo" "runner"; then
+	fail "recent issue timeline event prevents stale recovery" "_is_stale_assignment returned stale"
+else
+	if [[ "$RECOVERY_CALLED" -eq 0 ]]; then
+		pass "recent issue timeline event prevents stale recovery"
+	else
+		fail "recent issue timeline event prevents stale recovery" "recovery hook was called"
+	fi
+fi
+
+RECOVERY_CALLED=0
+ISSUE_UPDATED_AT="2020-01-01T00:00:00Z"
+OPEN_PR_ACTIVITY="456|$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+COMMENTS_RECENT=0
+: >"$GH_CALL_LOG"
+if _is_stale_assignment "123" "owner/repo" "runner"; then
+	fail "recent open PR activity prevents stale recovery" "_is_stale_assignment returned stale"
+else
+	if [[ "$RECOVERY_CALLED" -eq 0 ]]; then
+		pass "recent open PR activity prevents stale recovery"
+	else
+		fail "recent open PR activity prevents stale recovery" "recovery hook was called"
+	fi
 fi
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

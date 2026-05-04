@@ -183,6 +183,25 @@ _stale_recovery_find_open_pr() {
 }
 
 #######################################
+# Look up the most recent open PR activity referencing this issue.
+# This is a targeted fallback only used after issue comments look stale, so
+# branch pushes / draft PR updates can act as natural liveness signals without
+# posting extra heartbeat comments on the issue.
+# Args: $1 = issue number, $2 = repo slug
+# Output: "<number>|<updatedAt>" (or empty)
+#######################################
+_stale_recovery_find_open_pr_activity() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local _open_pr
+	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:body" --limit 1 \
+		--json number,updatedAt --jq '.[0] | if . then "\(.number)|\(.updatedAt // "")" else "" end' 2>/dev/null) || _open_pr=""
+	printf '%s' "$_open_pr"
+	return 0
+}
+
+#######################################
 # Escalate to needs-maintainer-review after the stale-recovery threshold
 # is reached (t2008).
 #
@@ -407,24 +426,27 @@ Stale recovery tick ${_next_tick}/${_threshold} (t2008)
 #
 # t2153 (GH#19424): Also returns the issue's createdAt timestamp so the
 # caller can apply the age-floor guard. A single `gh issue view --json
-# labels,createdAt` round-trip serves both needs — no extra API call.
+# labels,createdAt,updatedAt` round-trip serves the age-floor and issue-level
+# timeline liveness checks — no extra API call.
 #
 # Args: $1 = issue number, $2 = repo slug
-# Stdout: three lines —
+# Stdout: four lines —
 #   1. "is_interactive" ("true"/"false")
 #   2. threshold (seconds)
 #   3. createdAt (ISO 8601, or empty on API failure)
+#   4. updatedAt (ISO 8601, or empty on API failure)
 #######################################
 _resolve_stale_threshold() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local _issue_meta_json _meta_rc=0
 	_issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json labels,createdAt 2>/dev/null) || _meta_rc=$?
+		--json labels,createdAt,updatedAt 2>/dev/null) || _meta_rc=$?
 
 	local is_interactive='false'
 	local threshold="$STALE_ASSIGNMENT_THRESHOLD_SECONDS"
 	local created_at=''
+	local updated_at=''
 
 	if [[ "$_meta_rc" -eq 0 && -n "$_issue_meta_json" ]]; then
 		if printf '%s' "$_issue_meta_json" | jq -e '.labels | map(.name) | index("origin:interactive")' >/dev/null 2>&1; then
@@ -432,8 +454,9 @@ _resolve_stale_threshold() {
 			threshold="$INTERACTIVE_STALE_THRESHOLD_SECONDS"
 		fi
 		created_at=$(printf '%s' "$_issue_meta_json" | jq -r '.createdAt // empty' 2>/dev/null) || created_at=''
+		updated_at=$(printf '%s' "$_issue_meta_json" | jq -r '.updatedAt // empty' 2>/dev/null) || updated_at=''
 	fi
-	printf '%s\n%s\n%s\n' "$is_interactive" "$threshold" "$created_at"
+	printf '%s\n%s\n%s\n%s\n' "$is_interactive" "$threshold" "$created_at" "$updated_at"
 	return 0
 }
 
@@ -473,9 +496,9 @@ _is_stale_assignment() {
 	local repo_slug="$2"
 	local blocking_assignees="$3"
 
-	# t2132+t2153: resolve interactive flag, threshold, issue createdAt.
-	local is_interactive effective_threshold issue_created_at now_epoch
-	read -r is_interactive effective_threshold issue_created_at \
+	# t2132+t2153: resolve interactive flag, threshold, issue createdAt/updatedAt.
+	local is_interactive effective_threshold issue_created_at issue_updated_at now_epoch
+	read -r is_interactive effective_threshold issue_created_at issue_updated_at \
 		< <(_resolve_stale_threshold "$issue_number" "$repo_slug" | tr '\n' ' ')
 	now_epoch=$(date +%s)
 	# t2153 age-floor guard: issue cannot be stale before it could signal.
@@ -519,11 +542,16 @@ _is_stale_assignment() {
 		)] | first | .created_at // empty
 	' 2>/dev/null) || last_dispatch_ts=""
 
-	# Find the most recent comment of any kind (progress signal)
+	# Find the most recent GitHub-visible activity. Comments are the detailed
+	# event log; issue updatedAt covers lightweight timeline events such as label,
+	# assignee, cross-reference, or state transitions without an extra API call.
 	local last_activity_ts=""
 	last_activity_ts=$(printf '%s' "$comments_json" | jq -r '
 		first | .created_at // empty
 	' 2>/dev/null) || last_activity_ts=""
+	if [[ -n "$issue_updated_at" && ( -z "$last_activity_ts" || "$issue_updated_at" > "$last_activity_ts" ) ]]; then
+		last_activity_ts="$issue_updated_at"
+	fi
 
 	# If no dispatch comment exists at all, the assignment is from a
 	# non-worker source (e.g., auto-assignment at issue creation). Treat
@@ -565,6 +593,25 @@ _is_stale_assignment() {
 		if [[ "$activity_age" -lt "$effective_threshold" ]]; then
 			# Old dispatch but recent activity — worker may still be alive
 			return 1
+		fi
+	fi
+
+	# Issue comments/updatedAt are quiet. Check for an open PR only now so normal
+	# dispatch checks do not burn PR-list API budget; branch pushes and draft PR
+	# updates are better liveness signals than synthetic issue heartbeats.
+	local open_pr_activity open_pr_number open_pr_updated_at open_pr_epoch open_pr_age
+	open_pr_activity=$(_stale_recovery_find_open_pr_activity "$issue_number" "$repo_slug")
+	if [[ -n "$open_pr_activity" ]]; then
+		open_pr_number="${open_pr_activity%%|*}"
+		open_pr_updated_at="${open_pr_activity#*|}"
+		if [[ -n "$open_pr_number" && -n "$open_pr_updated_at" && "$open_pr_updated_at" != "$open_pr_activity" ]]; then
+			open_pr_epoch=$(_ts_to_epoch "$open_pr_updated_at")
+			if [[ "$open_pr_epoch" -gt 0 ]]; then
+				open_pr_age=$((now_epoch - open_pr_epoch))
+				if [[ "$open_pr_age" -lt "$effective_threshold" ]]; then
+					return 1
+				fi
+			fi
 		fi
 	fi
 

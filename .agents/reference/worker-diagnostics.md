@@ -35,8 +35,17 @@ claim loops:
 |---|---|---|
 | `DISPATCH_CLAIM ...` | A runner entered the cross-runner claim window. | Either `CLAIM_WON` in pulse logs followed by a `Dispatching worker` comment, or a later `CLAIM_DEFERRED` / `CLAIM_LOST` diagnostic. |
 | `Dispatching worker ...` with no later terminal marker | Active worker ownership. It blocks re-dispatch for the normal dispatch TTL, then for the extended non-terminal worker window (`DISPATCH_ACTIVE_WORKER_MAX_AGE`, default 7200s). | Worker log growth, PR creation, `MERGE_SUMMARY`, `CLAIM_RELEASED`, `Worker failed`, or watchdog output. |
+| Draft/open PR or recent issue/PR timeline event after dispatch | Natural liveness signal. Prefer these durable events over synthetic heartbeat comments. | Continue from the referenced branch/PR if the worker later goes silent. Stale recovery uses the latest visible issue activity and targeted open-PR activity before reclaiming. |
 | `DISPATCH_CLAIM ... reason=stale_worker_takeover prior_dispatch_age_s=<n> no_terminal=true` | A later runner is deliberately taking over after the extended non-terminal worker window expired. This is not a bare duplicate claim. | A fresh `Dispatching worker` comment or a deterministic skip/failure reason. |
 | `CLAIM_RELEASED ...` / `MERGE_SUMMARY` / `Worker failed` / `Worker Watchdog Kill` / `BLOCKED` | Terminal ownership marker. Prior dispatch comments no longer block. | Re-dispatch is safe if the issue remains open and eligible. |
+
+Headless workers should emit the smallest append-only GitHub-visible signal that
+helps watchdogs and recovery. Do not post routine "still working" comments when
+GitHub already has a natural event, such as a branch push reflected in an open
+draft PR, PR update, check run, label/assignee transition, or useful issue/PR
+comment. When silence is extraordinary, a signal comment should include only the
+current mode, branch/PR/commit if known, verification state, and the next useful
+recovery step.
 
 A repeated bare `DISPATCH_CLAIM` without `Dispatching worker`, `CLAIM_DEFERRED`,
 `reason=stale_worker_takeover`, or a terminal marker is still a claim lifecycle
