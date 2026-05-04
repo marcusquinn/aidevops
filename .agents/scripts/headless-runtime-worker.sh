@@ -608,6 +608,58 @@ _handle_worker_branch_orphan() {
 # Run lifecycle — prepare, finish, retry, detach
 # =============================================================================
 
+_hrw_current_worktree_branch() {
+	local work_dir="$1"
+	local branch=""
+
+	branch=$(git -C "$work_dir" branch --show-current 2>/dev/null || true)
+	if [[ -z "$branch" ]]; then
+		branch="detached"
+	fi
+	printf '%s\n' "$branch"
+	return 0
+}
+
+_hrw_claim_worker_worktree() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	# Only dispatcher-created issue workers need this transfer. Interactive
+	# sessions already hold either a registry entry or an interactive claim stamp.
+	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || -z "$work_dir" || ! -d "$work_dir" ]]; then
+		return 0
+	fi
+
+	local branch=""
+	branch=$(_hrw_current_worktree_branch "$work_dir")
+
+	# t3550: dispatcher pre-creation registers the worktree to a short-lived
+	# pulse subshell. After that subshell exits, cleanup sees a dead owner and
+	# can remove the worker's cwd while validators/merge-gate fixes still run.
+	# Transfer ownership to the long-lived headless-runtime-helper PID so
+	# worktree cleanup treats the active worker as the canonical owner.
+	if ! claim_worktree_ownership "$work_dir" "$branch" \
+		--session "$session_key" \
+		--task "${WORKER_ISSUE_NUMBER:-}" \
+		--owner-pid "$$"; then
+		print_error "[fatal] worker worktree already has a live owner: $work_dir"
+		return 1
+	fi
+
+	print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
+	return 0
+}
+
+_hrw_release_worker_worktree() {
+	local work_dir="$1"
+
+	if [[ -z "${WORKER_ISSUE_NUMBER:-}" || -z "$work_dir" ]]; then
+		return 0
+	fi
+	unregister_worktree "$work_dir" 2>/dev/null || true
+	return 0
+}
+
 _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
@@ -713,6 +765,7 @@ _cmd_run_finish() {
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
 	_release_session_lock "$session_key"
+	_hrw_release_worker_worktree "$work_dir"
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
@@ -770,6 +823,7 @@ _cmd_run_prepare() {
 	# t2923: Expose worktree path to exit trap handler so _push_wip_commits_on_exit
 	# can push any local-only commits before the worker releases its claim.
 	export _WORKER_WORKTREE_PATH="$work_dir"
+	_hrw_claim_worker_worktree "$session_key" "$work_dir" || return 1
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
 	# can detect workers that haven't created PRs yet. The ledger bridges

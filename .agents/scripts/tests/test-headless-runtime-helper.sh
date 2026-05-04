@@ -148,6 +148,55 @@ test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
 	return 0
 }
 
+test_worker_worktree_claim_transfers_to_runtime_pid() {
+	local worktree_dir="${TEST_ROOT}/claim-worktree"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+
+	local claimed_path="" claimed_branch="" claimed_session="" claimed_task="" claimed_pid=""
+	claim_worktree_ownership() {
+		claimed_path="$1"
+		claimed_branch="$2"
+		shift 2
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--session)
+				claimed_session="${2:-}"
+				shift 2
+				;;
+			--task)
+				claimed_task="${2:-}"
+				shift 2
+				;;
+			--owner-pid)
+				claimed_pid="${2:-}"
+				shift 2
+				;;
+			*) shift ;;
+			esac
+		done
+		return 0
+	}
+
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null
+
+	unset -f claim_worktree_ownership 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+
+	if [[ "$claimed_path" == "$worktree_dir" ]] &&
+		[[ "$claimed_branch" == "detached" ]] &&
+		[[ "$claimed_session" == "issue-22438" ]] &&
+		[[ "$claimed_task" == "22438" ]] &&
+		[[ "$claimed_pid" == "$$" ]]; then
+		print_result "worker worktree claim transfers ownership to runtime PID" 0
+		return 0
+	fi
+
+	print_result "worker worktree claim transfers ownership to runtime PID" 1 \
+		"path=$claimed_path branch=$claimed_branch session=$claimed_session task=$claimed_task pid=$claimed_pid"
+	return 0
+}
+
 test_deleted_cwd_recovery_uses_worker_worktree() {
 	local worktree_dir="${TEST_ROOT}/deleted-cwd-worktree"
 	local stale_dir="${TEST_ROOT}/deleted-cwd-stale"
@@ -960,6 +1009,7 @@ main() {
 	test_issue_worker_env_contract_rejects_missing_env
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
+	test_worker_worktree_claim_transfers_to_runtime_pid
 	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
 	test_deleted_launch_cwd_recovers_to_work_dir
