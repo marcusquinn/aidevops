@@ -1187,6 +1187,7 @@ dispatch_foss_workers() {
 	local repos_json="${2:-${REPOS_JSON:-~/.config/aidevops/repos.json}}"
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
+	local foss_session_keys_seen=$'\n'
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
@@ -1209,6 +1210,17 @@ dispatch_foss_workers() {
 
 		foss_issue_num="${foss_issue%%|*}"
 		foss_issue_title="${foss_issue#*|}"
+		if [[ ! "$foss_issue_num" =~ ^[0-9]+$ || -z "$foss_issue_title" || "$foss_issue_title" == "null" ]]; then
+			echo "[pulse-wrapper] FOSS dispatch skipped invalid issue selection for ${foss_slug}: number='${foss_issue_num}' title='${foss_issue_title}'" >>"$LOGFILE"
+			continue
+		fi
+
+		local foss_session_key="foss-${foss_slug}-${foss_issue_num}"
+		if [[ "${foss_session_keys_seen}" == *$'\n'"${foss_session_key}"$'\n'* ]]; then
+			echo "[pulse-wrapper] FOSS dispatch skipped duplicate session key ${foss_session_key} in this cycle" >>"$LOGFILE"
+			continue
+		fi
+		foss_session_keys_seen="${foss_session_keys_seen}${foss_session_key}"$'\n'
 
 		local disclosure_flag=""
 		local disclosure
@@ -1219,7 +1231,7 @@ dispatch_foss_workers() {
 
 		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
-			--session-key "foss-${foss_slug}-${foss_issue_num}" \
+			--session-key "$foss_session_key" \
 			--dir "$foss_path" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
