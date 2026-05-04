@@ -59,6 +59,92 @@ _filter_non_task_issues() {
 	return 0
 }
 
+#######################################
+# Return 0 when a gh_pr_list argv shape is safe to serve from the short-lived
+# cross-process PR snapshot cache. The cache is deliberately scoped to open PR
+# list reads because those dominate pulse dedup/merge pressure and can tolerate
+# a small freshness window while keeping dispatch pipelines full.
+# Args: gh-style argv
+#######################################
+_gh_pr_list_snapshot_cacheable() {
+	_rest_args_have_search "$@" && return 1
+	_rest_pr_list_can_preserve_args "$@" || return 1
+	local _state="open"
+	while [[ $# -gt 0 ]]; do
+		local _arg="$1"
+		case "$_arg" in
+		--state) _state="${2:-open}"; shift 2 ;;
+		--state=*) _state="${_arg#--state=}"; shift ;;
+		*) shift ;;
+		esac
+	done
+	[[ "$_state" == "open" ]] && return 0
+	return 1
+}
+
+#######################################
+# Build a filesystem-safe key for an exact gh_pr_list argv shape.
+# Args: gh-style argv
+# Stdout: cache key
+#######################################
+_gh_pr_list_snapshot_key() {
+	local _joined=""
+	local _arg
+	for _arg in "$@"; do
+		_joined="${_joined}${_arg}"$'\034'
+	done
+	if command -v shasum >/dev/null 2>&1; then
+		printf '%s' "$_joined" | shasum | awk '{print $1}'
+	else
+		printf '%s' "$_joined" | cksum | awk '{print $1}'
+	fi
+	return 0
+}
+
+#######################################
+# Read a cached gh_pr_list snapshot when present and fresh.
+# Args: gh-style argv
+# Stdout: cached command output
+#######################################
+_gh_pr_list_snapshot_get() {
+	local _ttl="${AIDEVOPS_GH_PR_LIST_CACHE_TTL:-15}"
+	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 1
+	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 1
+	_gh_pr_list_snapshot_cacheable "$@" || return 1
+	local _key _path _now _mtime _age
+	_key="$(_gh_pr_list_snapshot_key "$@")"
+	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_key}.json"
+	[[ -f "$_path" ]] || return 1
+	_now=$(date +%s 2>/dev/null || printf '0')
+	_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$_path" 2>/dev/null || printf '0')
+	[[ "$_now" =~ ^[0-9]+$ && "$_mtime" =~ ^[0-9]+$ ]] || return 1
+	_age=$(( _now - _mtime ))
+	[[ "$_age" -ge 0 && "$_age" -le "$_ttl" ]] || return 1
+	printf '%s' "$(<"$_path")"
+	return 0
+}
+
+#######################################
+# Store a successful gh_pr_list snapshot for a short freshness window.
+# Args: $1 = command output, $2.. = gh-style argv
+#######################################
+_gh_pr_list_snapshot_put() {
+	local _body="$1"; shift
+	local _ttl="${AIDEVOPS_GH_PR_LIST_CACHE_TTL:-15}"
+	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 0
+	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 0
+	_gh_pr_list_snapshot_cacheable "$@" || return 0
+	local _dir _key _path _tmp
+	_dir="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}"
+	mkdir -p "$_dir" 2>/dev/null || return 0
+	_key="$(_gh_pr_list_snapshot_key "$@")"
+	_path="${_dir}/${_key}.json"
+	_tmp=$(mktemp "${_dir}/.pr-list-${_key}.XXXXXX" 2>/dev/null) || return 0
+	printf '%s' "$_body" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$_path" 2>/dev/null || rm -f "$_tmp"
+	return 0
+}
+
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
 # The helper relies on --remove-label being idempotent for *unset* labels (gh
 # returns exit 0 when a label exists in the repo but isn't applied to the issue),
@@ -237,23 +323,43 @@ gh_issue_view() {
 gh_pr_list() {
 	local _has_search=1
 	_rest_args_have_search "$@" || _has_search=0
+	local _cached_output=""
+	if _cached_output=$(_gh_pr_list_snapshot_get "$@" 2>/dev/null); then
+		printf '%s' "$_cached_output"
+		return 0
+	fi
+	local _out="" _rc=0
 	if [[ $_has_search -eq 0 ]] && _rest_read_first_enabled && _rest_pr_list_can_preserve_args "$@"; then
 		print_info "[INFO] gh-wrapper: REST-first read mode, routing pr list to REST"
-		_rest_pr_list "$@"
-		return $?
+		_out=$(_rest_pr_list "$@")
+		_rc=$?
+		if [[ $_rc -eq 0 ]]; then
+			_gh_pr_list_snapshot_put "$_out" "$@"
+			printf '%s' "$_out"
+		fi
+		return $_rc
 	fi
 	if [[ $_has_search -eq 0 ]] && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_pr_list; } || _rest_should_fallback; }; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr list to REST"
-		_rest_pr_list "$@"
-		return $?
+		_out=$(_rest_pr_list "$@")
+		_rc=$?
+		if [[ $_rc -eq 0 ]]; then
+			_gh_pr_list_snapshot_put "$_out" "$@"
+			printf '%s' "$_out"
+		fi
+		return $_rc
 	fi
 	gh_record_call graphql gh_pr_list 2>/dev/null || true
-	_gh_with_timeout read gh pr list "$@"
+	_out=$(_gh_with_timeout read gh pr list "$@")
 	local rc=$?
 	if [[ $rc -ne 0 && $_has_search -eq 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr list"
-		_rest_pr_list "$@"
+		_out=$(_rest_pr_list "$@")
 		rc=$?
+	fi
+	if [[ $rc -eq 0 ]]; then
+		_gh_pr_list_snapshot_put "$_out" "$@"
+		printf '%s' "$_out"
 	fi
 	return $rc
 }

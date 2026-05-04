@@ -24,5 +24,10 @@ assert_reason 'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=assigned t
 assert_reason 'GraphQL budget below circuit-breaker threshold' 'graphql_circuit_breaker'
 assert_reason 'DISPATCH_COOLDOWN_ACTIVE until=2026-05-02T23:00:00Z reason=no_worker_process' 'cooldown_no_worker_process'
 assert_reason 'dispatch_with_dedup: BLOCKED #3638 in awardsapp/awardsapp — requires cryptographic approval (ever-NMR)' 'ever_nmr_without_approval'
+assert_reason 'pre-dispatch validator failed: missing worker context; needs-brief label present' 'missing_worker_context'
+assert_reason 'dedup.worktree_cap blocked by max worktree count' 'local_capacity_gate'
+assert_reason 'external_author_gate blocked no-auto-dispatch policy' 'policy_gate'
+assert_reason '' 'no_recent_log_evidence'
+assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
 
 printf 'PASS dispatch-candidate-failure-reasons\n'

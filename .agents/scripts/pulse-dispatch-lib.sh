@@ -104,10 +104,10 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | unknown)
+		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | unclassified_signal)
 			;;
 		*)
-			reason="unknown"
+			reason="unclassified_signal"
 			;;
 	esac
 	_dispatch_stats_increment "dispatch_candidate_failed"
@@ -129,7 +129,7 @@ _dispatch_candidate_failure_reason() {
 	local repo_slug="$2"
 	local dispatch_rc="$3"
 	local recent_lines=""
-	local reason="unknown"
+	local reason="no_recent_log_evidence"
 
 	if [[ "$dispatch_rc" -eq 124 ]]; then
 		printf 'launch_error\n'
@@ -158,15 +158,15 @@ _dispatch_candidate_failure_reason() {
 				sub(/^DISPATCH_BLOCK_REASON reason=/, "", reason)
 			}
 			END { if (reason != "") { print reason } }
-		') || reason="unknown"
-		[[ -n "$reason" ]] || reason="unknown"
+		') || reason="unclassified_signal"
+		[[ -n "$reason" ]] || reason="unclassified_signal"
 		printf '%s\n' "$reason"
 		return 0
 	fi
 
 	if [[ -x "${SCRIPT_DIR:-}/dispatch-dedup-helper.sh" && -n "$recent_lines" ]]; then
-		reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$recent_lines" 2>/dev/null) || reason="unknown"
-		[[ -n "$reason" ]] || reason="unknown"
+		reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$recent_lines" 2>/dev/null) || reason="unclassified_signal"
+		[[ -n "$reason" ]] || reason="unclassified_signal"
 	fi
 
 	printf '%s\n' "$reason"

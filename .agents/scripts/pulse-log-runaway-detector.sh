@@ -239,6 +239,7 @@ _check_repetition_pattern() {
 			dominant_line=$(tail -n 1000 "$WRAPPER_LOGFILE" 2>/dev/null | sort | uniq -c | sort -rn | head -1 | sed 's/^[[:space:]]*[0-9]* //' 2>/dev/null || echo "unknown")
 			_log "RUNAWAY DETECTED: ${unique_pct}% unique lines in last 1000 (threshold: ${PULSE_WRAPPER_LOG_REPETITION_THRESHOLD}%). Dominant line: ${dominant_line:0:200}"
 			_write_advisory "Runaway repetition detected: ${unique_pct}% unique lines. Dominant: ${dominant_line:0:200}"
+			_rotate_wrapper_log
 			_RUNAWAY_DETECTED=1
 		fi
 	fi
