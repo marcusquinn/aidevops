@@ -65,6 +65,28 @@ readonly _PMP_BACKLOG_OTHER="other"
 # --- Functions ---
 
 #######################################
+# Normalize PR mergeable values from mixed GitHub API paths.
+#
+# gh GraphQL returns MERGEABLE/CONFLICTING/UNKNOWN, while REST fallback and
+# some cached jq paths can surface true/false/null. The merge gate is enum-
+# based, so normalize before comparing to avoid treating boolean `true` as a
+# non-mergeable state.
+#
+# Args: $1=raw mergeable value
+# Stdout: normalized mergeable enum
+#######################################
+_pmp_normalize_mergeable_state() {
+	local raw_state="$1"
+	case "$raw_state" in
+	MERGEABLE|mergeable|true|TRUE) printf 'MERGEABLE' ;;
+	CONFLICTING|conflicting|false|FALSE) printf 'CONFLICTING' ;;
+	UNKNOWN|unknown|''|null|NULL) printf 'UNKNOWN' ;;
+	*) printf '%s' "$raw_state" ;;
+	esac
+	return 0
+}
+
+#######################################
 # Classify one PR object into a scheduling/observability backlog bucket.
 # This is intentionally advisory: it never decides merge eligibility. The
 # existing per-PR gate stack remains authoritative.
@@ -84,6 +106,7 @@ _pmp_classify_pr_backlog_state() {
 			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
 			"\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
 	)
+	mergeable=$(_pmp_normalize_mergeable_state "$mergeable")
 
 	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
 	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
@@ -426,16 +449,19 @@ _resolve_pr_mergeable_status() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local pr_mergeable="$3"
+	local original_mergeable="$pr_mergeable"
+	pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
 
 	if [[ "$pr_mergeable" == "UNKNOWN" || -z "$pr_mergeable" ]]; then
-		local _was_label="$pr_mergeable"
-		[[ -z "$pr_mergeable" ]] && _was_label="empty"
+		local _was_label="$original_mergeable"
+		[[ -z "$original_mergeable" ]] && _was_label="empty"
 		# Separate local declaration from assignment to preserve exit code (SC2181).
 		local _retry_output _retry_exit
 		_retry_output=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json mergeable --jq '.mergeable // ""')
 		_retry_exit=$?
 		[[ $_retry_exit -eq 0 && -n "$_retry_output" ]] && pr_mergeable="$_retry_output" || pr_mergeable="UNKNOWN"
+		pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
 		if [[ "$pr_mergeable" == "MERGEABLE" ]]; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
 		else

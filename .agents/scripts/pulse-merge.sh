@@ -499,6 +499,7 @@ _process_single_ready_pr() {
 		printf '%s' "$pr_obj" | jq -r \
 			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")"'
 	)
+	pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
@@ -544,6 +545,7 @@ _process_single_ready_pr() {
 			_refetched_mergeable=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 				--json mergeable --jq '.mergeable // "UNKNOWN"' 2>/dev/null) || _refetched_mergeable="UNKNOWN"
 			pr_mergeable="$_refetched_mergeable"
+			pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — update-branch succeeded, refetched mergeable=${pr_mergeable} (t2116)" >>"$LOGFILE"
 			# If still CONFLICTING after a successful update-branch, the
 			# conflict is semantic and unsalvageable. Fall through to close.

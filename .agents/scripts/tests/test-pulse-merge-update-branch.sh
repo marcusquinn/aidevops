@@ -108,10 +108,11 @@ gh_pr_view() {
 define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
+		/^_pmp_normalize_mergeable_state\(\) \{/,/^}$/ { print }
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
 		/^_resolve_pr_mergeable_status\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$helper_src" || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
+	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_normalize_mergeable_state"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
 		printf 'ERROR: could not extract pulse-merge-process helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
@@ -214,6 +215,50 @@ test_resolve_mergeable_retries_unknown() {
 	fi
 
 	print_result "UNKNOWN mergeable retry can resolve to MERGEABLE" 0
+	return 0
+}
+
+test_resolve_mergeable_accepts_boolean_true() {
+	install_gh_stub
+	: >"$LOGFILE"
+	local rc=0
+	_resolve_pr_mergeable_status "21950" "marcusquinn/aidevops" "true" || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		print_result "boolean true mergeable normalizes to MERGEABLE" 1 \
+			"Expected return 0 for boolean true, got ${rc}"
+		return 0
+	fi
+
+	if [[ -s "$LOGFILE" ]]; then
+		print_result "boolean true mergeable normalizes to MERGEABLE" 1 \
+			"Expected no skip log for boolean true. Contents: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "boolean true mergeable normalizes to MERGEABLE" 0
+	return 0
+}
+
+test_resolve_mergeable_retries_boolean_true() {
+	install_gh_stub
+	: >"$LOGFILE"
+	local rc=0
+	GH_VIEW_MERGEABLE=true _resolve_pr_mergeable_status "21950" "marcusquinn/aidevops" "UNKNOWN" || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		print_result "UNKNOWN retry boolean true normalizes to MERGEABLE" 1 \
+			"Expected return 0 after retry emitted true, got ${rc}"
+		return 0
+	fi
+
+	if ! grep -q "mergeable resolved to MERGEABLE after retry" "$LOGFILE"; then
+		print_result "UNKNOWN retry boolean true normalizes to MERGEABLE" 1 \
+			"Expected retry success log. Contents: $(cat "$LOGFILE")"
+		return 0
+	fi
+
+	print_result "UNKNOWN retry boolean true normalizes to MERGEABLE" 0
 	return 0
 }
 
@@ -343,6 +388,8 @@ main() {
 	test_update_branch_failure_returns_one
 	test_update_branch_tags_log_with_task_id
 	test_resolve_mergeable_retries_unknown
+	test_resolve_mergeable_accepts_boolean_true
+	test_resolve_mergeable_retries_boolean_true
 	test_resolve_mergeable_retries_empty_and_logs_empty
 	test_nmr_guard_exists_before_close
 	test_mergeable_refetch_after_update_branch
