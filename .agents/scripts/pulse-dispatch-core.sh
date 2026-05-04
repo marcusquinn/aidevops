@@ -622,10 +622,18 @@ _check_external_issue_author_gate() {
 	local approval_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/approval-helper.sh"
 	local verify_result=""
 	if [[ -f "$approval_helper" ]]; then
-		verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null) || verify_result=""
+		verify_result=$(bash "$approval_helper" verify "$issue_number" "$repo_slug" 2>/dev/null || true)
 		if [[ "$verify_result" == "VERIFIED" ]]; then
 			echo "[dispatch_with_dedup] GH#22399: external/unknown issue author for #${issue_number} in ${repo_slug} has cryptographic approval; allowing dispatch" >>"$LOGFILE"
 			return 1
+		fi
+		# <!-- aidevops:trust-boundary -->
+		# Distinguish an absent approval from an unverifiable approval marker. A
+		# worker missing the approval public key must fail closed for dispatch, but
+		# must not mutate lifecycle labels over a maintainer's signed handoff.
+		if [[ -n "$verify_result" && "$verify_result" != "NO_APPROVAL" ]]; then
+			echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: cryptographic approval marker present but verification returned ${verify_result}; not re-applying needs-maintainer-review (GH#22733)" >>"$LOGFILE"
+			return 0
 		fi
 	fi
 
