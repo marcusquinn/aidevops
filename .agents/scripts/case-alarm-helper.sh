@@ -505,9 +505,125 @@ _fire_alarm() {
 # Core tick logic — scan all open cases
 # =============================================================================
 
+_CASE_ALARM_STATE=""
+_CASE_ALARM_CASES_FOUND=0
+_CASE_ALARM_ALARMS_FIRED=0
+_CASE_ALARM_ALARMS_CLOSED=0
+
+_tick_handle_passed_deadline() {
+	local case_id="$1" deadline_label="$2" repo_root="$3"
+	local record
+	record="$(_get_alarm_record "$_CASE_ALARM_STATE" "$case_id" "$deadline_label")"
+	if [[ -z "$record" ]]; then
+		return 0
+	fi
+
+	local existing_gh
+	existing_gh="$(printf '%s\n' "$record" | jq -r '.gh_issue // empty' 2>/dev/null || true)"
+	if [[ -n "$existing_gh" && "$existing_gh" != "$JQ_NULL" ]]; then
+		_close_gh_alarm_issue "$case_id" "$deadline_label" \
+			"$existing_gh" "$repo_root" "deadline passed"
+		_CASE_ALARM_ALARMS_CLOSED=$(( _CASE_ALARM_ALARMS_CLOSED + 1 ))
+	fi
+	_CASE_ALARM_STATE="$(_clear_alarm_record "$_CASE_ALARM_STATE" "$case_id" "$deadline_label")"
+	return 0
+}
+
+_tick_existing_alarm_context() {
+	local case_id="$1" deadline_label="$2"
+	local existing_record
+	existing_record="$(_get_alarm_record "$_CASE_ALARM_STATE" "$case_id" "$deadline_label")"
+	_TICK_EXISTING_STAGE=""
+	_TICK_EXISTING_GH=""
+
+	if [[ -n "$existing_record" ]]; then
+		_TICK_EXISTING_STAGE="$(printf '%s\n' "$existing_record" | jq -r '.stage // ""' 2>/dev/null || true)"
+		_TICK_EXISTING_GH="$(printf '%s\n' "$existing_record" | jq -r '.gh_issue // empty' 2>/dev/null || true)"
+		[[ "$_TICK_EXISTING_GH" == "$JQ_NULL" ]] && _TICK_EXISTING_GH=""
+	fi
+	return 0
+}
+
+_tick_stage_has_escalated() {
+	local case_id="$1" deadline_label="$2" stage="$3" existing_stage="$4"
+	local current_idx existing_idx
+	current_idx="$(_stage_index "$stage")"
+	existing_idx="$(_stage_index "${existing_stage:-$STAGE_GREEN}")"
+
+	if [[ "$current_idx" -le "$existing_idx" ]]; then
+		log_info "No escalation for ${case_id}/${deadline_label}: ${existing_stage} -> ${stage} (same or lower)"
+		return 1
+	fi
+	return 0
+}
+
+_tick_fire_escalated_alarm() {
+	local case_id="$1" deadline_label="$2" deadline_date="$3" days="$4"
+	local stage="$5" config="$6" repo_root="$7" existing_gh="$8"
+	local gh_num new_gh
+
+	log_info "Firing ${stage} alarm for ${case_id}/${deadline_label} (${days}d until ${deadline_date})"
+	gh_num="$(_fire_alarm "$case_id" "$deadline_label" "$deadline_date" \
+		"$days" "$stage" "$config" "$repo_root")"
+	_CASE_ALARM_ALARMS_FIRED=$(( _CASE_ALARM_ALARMS_FIRED + 1 ))
+
+	new_gh="${gh_num:-$existing_gh}"
+	_CASE_ALARM_STATE="$(_set_alarm_record "$_CASE_ALARM_STATE" "$case_id" "$deadline_label" "$stage" "${new_gh:-}")"
+	return 0
+}
+
+_tick_process_deadline() {
+	local deadline_json="$1" case_id="$2" stages_json="$3" config="$4" repo_root="$5"
+	local deadline_label deadline_date days stage
+
+	deadline_label="$(printf '%s\n' "$deadline_json" | jq -r '.label // "deadline"')"
+	deadline_date="$(printf '%s\n' "$deadline_json" | jq -r '.date // ""')"
+	[[ -n "$deadline_date" ]] || return 0
+
+	days="$(_days_until "$deadline_date")"
+	stage="$(_classify_stage "$days" "$stages_json")"
+	[[ "$stage" == "$STAGE_GREEN" ]] && return 0
+
+	if [[ "$stage" == "$STAGE_PASSED" ]]; then
+		_tick_handle_passed_deadline "$case_id" "$deadline_label" "$repo_root"
+		return 0
+	fi
+
+	_tick_existing_alarm_context "$case_id" "$deadline_label"
+	if ! _tick_stage_has_escalated "$case_id" "$deadline_label" "$stage" "$_TICK_EXISTING_STAGE"; then
+		return 0
+	fi
+
+	_tick_fire_escalated_alarm "$case_id" "$deadline_label" "$deadline_date" \
+		"$days" "$stage" "$config" "$repo_root" "$_TICK_EXISTING_GH"
+	return 0
+}
+
+_tick_process_case() {
+	local case_dir="$1" config="$2" repo_root="$3"
+	local case_id dossier_file dossier status stages_json deadline_json
+
+	case_id="$(basename "$case_dir")"
+	dossier_file="${case_dir}dossier.toon"
+	[[ -f "$dossier_file" ]] || return 0
+
+	dossier="$(< "$dossier_file")"
+	status="$(printf '%s\n' "$dossier" | jq -r '.status // "open"')"
+	[[ "$status" == "open" ]] || return 0
+
+	_CASE_ALARM_CASES_FOUND=$(( _CASE_ALARM_CASES_FOUND + 1 ))
+	stages_json="$(_config_stages "$config" "$case_id")"
+
+	while IFS= read -r deadline_json; do
+		_tick_process_deadline "$deadline_json" "$case_id" "$stages_json" "$config" "$repo_root"
+	done < <(printf '%s\n' "$dossier" | jq -c '.deadlines[]?' 2>/dev/null || true)
+	return 0
+}
+
 cmd_tick() {
+	local repo_arg="${1:-}"
 	local repo_root
-	repo_root="$(_resolve_repo_root "${1:-}")"
+	repo_root="$(_resolve_repo_root "$repo_arg")"
 	local cases_dir
 	cases_dir="$(_resolve_cases_dir "$repo_root")"
 
@@ -516,111 +632,22 @@ cmd_tick() {
 		return 0
 	fi
 
-	local config_file
+	local config_file config state_file case_dir
 	config_file="$(_resolve_config_file "$repo_root")"
-	local config
 	config="$(_load_config "$config_file")"
-
-	local state_file
 	state_file="$(_resolve_alarm_state "$repo_root")"
-	local state
-	state="$(_load_alarm_state "$state_file")"
+	_CASE_ALARM_STATE="$(_load_alarm_state "$state_file")"
+	_CASE_ALARM_CASES_FOUND=0
+	_CASE_ALARM_ALARMS_FIRED=0
+	_CASE_ALARM_ALARMS_CLOSED=0
 
-	local cases_found=0
-	local alarms_fired=0
-	local alarms_closed=0
-
-	# Iterate over active case directories (not archived/)
-	local case_dir case_id dossier_file
 	for case_dir in "${cases_dir}"/case-*/; do
 		[[ -d "$case_dir" ]] || continue
-		case_id="$(basename "$case_dir")"
-		dossier_file="${case_dir}dossier.toon"
-		[[ -f "$dossier_file" ]] || continue
-
-		local dossier
-		dossier="$(cat "$dossier_file")"
-
-		# Skip non-open cases
-		local status
-		status="$(echo "$dossier" | jq -r '.status // "open"')"
-		[[ "$status" == "open" ]] || continue
-
-		cases_found=$(( cases_found + 1 ))
-
-		# Get stages for this case (may have per-case override)
-		local stages_json
-		stages_json="$(_config_stages "$config" "$case_id")"
-
-		# Iterate over deadlines in dossier
-		local deadline_label deadline_date days stage
-
-		while IFS= read -r deadline_json; do
-			deadline_label="$(echo "$deadline_json" | jq -r '.label // "deadline"')"
-			deadline_date="$(echo "$deadline_json" | jq -r '.date // ""')"
-			[[ -n "$deadline_date" ]] || continue
-
-			days="$(_days_until "$deadline_date")"
-			stage="$(_classify_stage "$days" "$stages_json")"
-
-			# Green stage = no alarm needed
-			if [[ "$stage" == "$STAGE_GREEN" ]]; then
-				continue
-			fi
-
-			# Passed stage: auto-close existing gh alarm and clear state
-			if [[ "$stage" == "$STAGE_PASSED" ]]; then
-				local record
-				record="$(_get_alarm_record "$state" "$case_id" "$deadline_label")"
-				if [[ -n "$record" ]]; then
-					local existing_gh
-					existing_gh="$(echo "$record" | jq -r '.gh_issue // empty' 2>/dev/null || true)"
-					if [[ -n "$existing_gh" && "$existing_gh" != "$JQ_NULL" ]]; then
-						_close_gh_alarm_issue "$case_id" "$deadline_label" \
-							"$existing_gh" "$repo_root" "deadline passed"
-						alarms_closed=$(( alarms_closed + 1 ))
-					fi
-					state="$(_clear_alarm_record "$state" "$case_id" "$deadline_label")"
-				fi
-				continue
-			fi
-
-			# For active stages (amber, red): check if we already alarmed at this stage
-			local existing_record
-			existing_record="$(_get_alarm_record "$state" "$case_id" "$deadline_label")"
-			local existing_stage=""
-			local existing_gh=""
-			if [[ -n "$existing_record" ]]; then
-				existing_stage="$(echo "$existing_record" | jq -r '.stage // ""' 2>/dev/null || true)"
-				existing_gh="$(echo "$existing_record" | jq -r '.gh_issue // empty' 2>/dev/null || true)"
-				[[ "$existing_gh" == "$JQ_NULL" ]] && existing_gh=""
-			fi
-
-			local current_idx existing_idx
-			current_idx="$(_stage_index "$stage")"
-			existing_idx="$(_stage_index "${existing_stage:-$STAGE_GREEN}")"
-
-			# Only fire alarm if stage has escalated
-			if [[ "$current_idx" -le "$existing_idx" ]]; then
-				log_info "No escalation for ${case_id}/${deadline_label}: ${existing_stage} -> ${stage} (same or lower)"
-				continue
-			fi
-
-			log_info "Firing ${stage} alarm for ${case_id}/${deadline_label} (${days}d until ${deadline_date})"
-			local gh_num
-			gh_num="$(_fire_alarm "$case_id" "$deadline_label" "$deadline_date" \
-				"$days" "$stage" "$config" "$repo_root")"
-			alarms_fired=$(( alarms_fired + 1 ))
-
-			# Update state with new stage (and gh issue number if we have one)
-			local new_gh="${gh_num:-$existing_gh}"
-			state="$(_set_alarm_record "$state" "$case_id" "$deadline_label" "$stage" "${new_gh:-}")"
-
-		done < <(echo "$dossier" | jq -c '.deadlines[]?' 2>/dev/null || true)
+		_tick_process_case "$case_dir" "$config" "$repo_root"
 	done
 
-	_save_alarm_state "$state_file" "$state"
-	log_info "Tick complete: ${cases_found} open cases, ${alarms_fired} alarms fired, ${alarms_closed} closed"
+	_save_alarm_state "$state_file" "$_CASE_ALARM_STATE"
+	log_info "Tick complete: ${_CASE_ALARM_CASES_FOUND} open cases, ${_CASE_ALARM_ALARMS_FIRED} alarms fired, ${_CASE_ALARM_ALARMS_CLOSED} closed"
 	return 0
 }
 
