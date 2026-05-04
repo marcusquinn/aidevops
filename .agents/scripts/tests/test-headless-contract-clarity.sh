@@ -72,17 +72,17 @@ export AIDEVOPS_BASH_REEXECED=1
 source "$LIB_FILE"
 
 # ---------------------------------------------------------------------------
-# Case 1: Contract marker is V7 (not the contradictory V6)
+# Case 1: Contract marker is V8 (not the contradictory V6)
 # ---------------------------------------------------------------------------
-test_contract_version_is_v7() {
+test_contract_version_is_v8() {
 	local output
 	output=$(append_worker_headless_contract "/full-loop Implement GH#1")
 
-	if [[ "$output" == *"HEADLESS_CONTINUATION_CONTRACT_V7"* ]]; then
-		_pass "contract_version_is_v7"
+	if [[ "$output" == *"HEADLESS_CONTINUATION_CONTRACT_V8"* ]]; then
+		_pass "contract_version_is_v8"
 	else
-		_fail "contract_version_is_v7" \
-			"Expected HEADLESS_CONTINUATION_CONTRACT_V7 in output, not found"
+		_fail "contract_version_is_v8" \
+			"Expected HEADLESS_CONTINUATION_CONTRACT_V8 in output, not found"
 	fi
 	return 0
 }
@@ -213,15 +213,36 @@ test_opt_out_env_var() {
 }
 
 # ---------------------------------------------------------------------------
+# Case 8: GraphQL exhaustion guidance preserves autonomous progress
+# ---------------------------------------------------------------------------
+test_graphql_rate_limit_fallback_guidance() {
+	local output
+	output=$(append_worker_headless_contract "/full-loop Implement GH#1")
+
+	if [[ "$output" == *"GraphQL: API rate limit already exceeded"* ]] && \
+		[[ "$output" == *"gh api rate_limit"* ]] && \
+		[[ "$output" == *"REST-backed"* ]] && \
+		[[ "$output" == *"sleep <= 240s"* ]] && \
+		[[ "$output" == *"Commit safe local changes before waiting/retrying PR creation"* ]]; then
+		_pass "graphql_rate_limit_fallback_guidance"
+	else
+		_fail "graphql_rate_limit_fallback_guidance" \
+			"Expected bounded wait, REST fallback, and commit-before-wait guidance"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
-test_contract_version_is_v7
+test_contract_version_is_v8
 test_no_worktree_creation_fallback
 test_unconditional_do_not_call_worktree_helper
 test_no_simultaneous_prohibit_and_permit
 test_non_fullloop_passthrough
 test_no_double_injection
 test_opt_out_env_var
+test_graphql_rate_limit_fallback_guidance
 
 # ---------------------------------------------------------------------------
 # Summary

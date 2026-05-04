@@ -570,7 +570,7 @@ append_worker_headless_contract() {
 	local contract
 	contract=$(
 		cat <<'EOF'
-[HEADLESS_CONTINUATION_CONTRACT_V7]
+[HEADLESS_CONTINUATION_CONTRACT_V8]
 This is a HEADLESS worker session. No user is present. No user input is available.
 You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
@@ -622,6 +622,18 @@ output for 300 seconds, you will be killed. Therefore:
   - If a CI check or merge is slow, emit a status message between waits to keep
     the watchdog alive. Any tool call or text output resets the 300s timer.
   - Prefer short poll intervals (30-60s) with status output between iterations.
+
+GitHub API fallback discipline:
+If a command reports `GraphQL: API rate limit already exceeded`, do NOT stop
+immediately and do NOT keep retrying GraphQL-backed `gh issue/pr list/view`
+commands. First run `gh api rate_limit`. If REST core budget remains, continue
+with REST-backed `gh api -X GET repos/...` requests for issues, comments, PRs,
+checks, and labels where possible. If GraphQL reset is soon, wait in bounded
+chunks (sleep <= 240s) with status output before each wait; otherwise continue
+implementation from the issue body already supplied by the dispatcher and local
+repo state. Commit safe local changes before waiting/retrying PR creation. Exit
+BLOCKED only when the required remaining operation is GraphQL-only and the reset
+time exceeds the safe worker runtime budget.
 
 Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
