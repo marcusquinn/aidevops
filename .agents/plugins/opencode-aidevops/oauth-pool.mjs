@@ -154,7 +154,6 @@ export async function selectOpenAIStartupAccount(skipEmail) {
   // Only fall through to pool priority/LRU selection when that current account
   // is unavailable or cannot be refreshed.
   if (current && isAvailableAccount(current) && await ensureValidToken("openai", current)) return current;
-  if (current) return selectPoolAccount("openai", current.email);
   return selectPoolAccount("openai", skipEmail);
 }
 

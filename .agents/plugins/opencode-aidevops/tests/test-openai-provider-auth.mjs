@@ -113,12 +113,12 @@ test("OpenAI startup injection honors current auth availability", async () => {
     const poolPath = join(aidevopsDir, "oauth-pool.json");
     const authPath = join(opencodeDir, "auth.json");
 
-    async function injectWithPool(pool, auth) {
+    async function injectWithPool(pool, auth, skipEmail) {
       writeFileSync(poolPath, JSON.stringify(pool));
       writeFileSync(authPath, JSON.stringify({ openai: auth }));
       const authWrites = [];
       const { injectOpenAIPoolToken } = await import("./oauth-pool.mjs?case=" + Math.random());
-      const ok = await injectOpenAIPoolToken({ auth: { set: async (entry) => authWrites.push(entry) } });
+      const ok = await injectOpenAIPoolToken({ auth: { set: async (entry) => authWrites.push(entry) } }, skipEmail);
       return { ok, authWrites, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
     }
 
@@ -146,6 +146,15 @@ test("OpenAI startup injection honors current auth availability", async () => {
 
     assert.equal(authErrorRotated.ok, true);
     assert.equal(authErrorRotated.authWrites[0].body.accountId, "acct_fallback");
+
+    const skippedAccountAvoided = await injectWithPool({ openai: [
+      { email: "current@example.com", access: "current-token", refresh: "current-refresh", expires: Date.now() + 3600_000, status: "rate-limited", cooldownUntil: Date.now() + 86400_000, lastUsed: "2026-01-03T00:00:00Z", accountId: "acct_current" },
+      { email: "skip@example.com", access: "skip-token", refresh: "skip-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_skip" },
+      { email: "fallback@example.com", access: "fallback-token", refresh: "fallback-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z", accountId: "acct_fallback" },
+    ] }, { type: "oauth", access: "current-token", refresh: "current-refresh", expires: Date.now() + 3600_000, accountId: "acct_current" }, "skip@example.com");
+
+    assert.equal(skippedAccountAvoided.ok, true);
+    assert.equal(skippedAccountAvoided.authWrites[0].body.accountId, "acct_fallback");
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
     cwd: join(import.meta.dirname, ".."),
