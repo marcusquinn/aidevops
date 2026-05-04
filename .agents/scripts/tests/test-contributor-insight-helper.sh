@@ -124,11 +124,21 @@ cat >"$TEST_SIGNALS" <<'JSON'
       },
       {
         "tool": "bash",
-        "error_category": "file_not_found",
+        "error_category": "workdir_not_found",
         "count": 200,
         "model_count": 4,
         "models": ["sonnet", "haiku", "opus", "gpt-4o"],
-        "severity": "medium"
+        "severity": "medium",
+        "examples": [
+          {
+            "error": "NotFound: FileSystem.access (/Users/testuser/Git/secret-corp/private-api)",
+            "input": "bash: git status --short --branch in /Users/testuser/Git/secret-corp/private-api",
+            "user_response": "Ran git worktree list and retried from /Users/testuser/Git/aidevops"
+          }
+        ],
+        "recovery_patterns": [
+          "bash: git worktree list"
+        ]
       },
       {
         "tool": "glob",
@@ -211,7 +221,12 @@ echo "=== Error Pattern Tests ==="
 
 # Test 11: high-frequency error patterns are included
 assert_contains "edit:not_read_first in output" "not_read_first" "$output"
-assert_contains "bash:file_not_found in output" "file_not_found" "$output"
+assert_contains "bash:workdir_not_found in output" "workdir_not_found" "$output"
+assert_contains "sanitized example error included" "sanitized error" "$output"
+assert_contains "summarized command included" "summarized command" "$output"
+assert_contains "expected recovery included" "expected recovery" "$output"
+assert_not_contains "error example has no private path" "/Users/testuser" "$output"
+assert_not_contains "error example has no private slug" "secret-corp/private-api" "$output"
 
 # Test 12: low-frequency errors filtered (count < 20 or model_count < 2)
 assert_not_contains "low-freq glob:other filtered" "glob:other" "$output"

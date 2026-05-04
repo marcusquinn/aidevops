@@ -191,6 +191,7 @@ _SEVERITY_RANK = {
     "edit_stale_read": "medium",
     "edit_mismatch": "medium",
     "edit_multiple": "medium",
+    "workdir_not_found": "medium",
     "file_not_found": "medium",
     "timeout": "low",
     "exit_code": "low",

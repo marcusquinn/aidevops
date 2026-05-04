@@ -14,6 +14,7 @@ from extract_shared import repo_scope_clause, repo_scope_params, sanitize_path, 
 
 
 ERROR_CATEGORIES = {
+    "workdir_not_found": re.compile(r"NotFound:\s*FileSystem\.access\s*\(", re.IGNORECASE),
     "file_not_found": re.compile(r"(file not found|no such file|ENOENT)", re.IGNORECASE),
     "edit_stale_read": re.compile(r"modified since.*(last read|was read)", re.IGNORECASE),
     "edit_mismatch": re.compile(r"(oldString|could not find).*in (the )?file", re.IGNORECASE),
