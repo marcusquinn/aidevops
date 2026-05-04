@@ -155,7 +155,7 @@ if: |
    github.event.comment.author_association == 'COLLABORATOR')
 ```
 
-**Full security implementation** (trusted user validation, `ai-approved` label gates, prompt injection detection, audit logging): see `git/opencode-github-security.md`.
+**Full security implementation** (trusted user validation, `ai-approved` label gates, prompt injection detection, best-effort denial notices, audit logging): see `git/opencode-github-security.md`.
 
 Quick setup with max security:
 
