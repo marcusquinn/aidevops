@@ -128,6 +128,35 @@ _dsi_load_issue_meta() {
 }
 
 #######################################
+# Determine whether the target number is a pull request, not a plain Issue.
+#
+# Manual dispatch can be pointed at an arbitrary number, and `gh issue view`
+# accepts PR numbers through the issue facade. Use the REST issue object's
+# `pull_request` marker as a trust-boundary guard before any ceremony writes.
+#
+# Args:
+#   $1 - issue number
+#   $2 - owner/repo slug
+# Returns:
+#   0 target is a PR, 1 target is a plain Issue, 2 unable to verify
+#######################################
+_dsi_target_is_pull_request() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local target_json="" has_pull_request=""
+
+	target_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 2
+	has_pull_request=$(printf '%s' "$target_json" | jq -r 'has("pull_request")' 2>/dev/null) || return 2
+	if [[ "$has_pull_request" == "true" ]]; then
+		return 0
+	fi
+	if [[ "$has_pull_request" == "false" ]]; then
+		return 1
+	fi
+	return 2
+}
+
+#######################################
 # Check parent-task gate. parent-task is always a hard block (never single-dispatch).
 # Args: $1 - labels CSV (from _dsi_load_issue_meta)
 # Returns: 0 not parent-task, 1 IS parent-task (block)
@@ -856,6 +885,16 @@ cmd_dispatch() {
 
 	# Step 1-2: validate + load + parent-task gate
 	_dsi_load_issue_meta "$issue_number" "$repo_slug" || return 1
+	local target_pr_rc=0
+	_dsi_target_is_pull_request "$issue_number" "$repo_slug" || target_pr_rc=$?
+	if [[ "$target_pr_rc" -eq 0 ]]; then
+		_dsi_err "Target #${issue_number} in ${repo_slug} is a pull request, not a dispatchable issue (GH#22948)"
+		return 1
+	fi
+	if [[ "$target_pr_rc" -ne 1 ]]; then
+		_dsi_err "Unable to verify #${issue_number} in ${repo_slug} is not a pull request; refusing dispatch (GH#22948, rc=${target_pr_rc})"
+		return 1
+	fi
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
