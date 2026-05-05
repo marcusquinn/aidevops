@@ -63,6 +63,9 @@ test_appends_escalation_contract() {
 	if [[ "$output" == *'HEADLESS_CONTINUATION_CONTRACT_V9'* ]] &&
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
+		[[ "$output" == *'do bounded discovery instead of stopping'* ]] &&
+		[[ "$output" == *'Exit BLOCKED with reason "missing implementation context" only after bounded discovery'* ]] &&
+		[[ "$output" == *'Worktree edit verification (GH#22816)'* ]] &&
 		[[ "$output" == *'Progressive context loading'* ]] &&
 		[[ "$output" == *'Load only referenced workflow/reference docs'* ]] &&
 		[[ "$output" == *'Stop reading once target files, reference pattern, constraints, and verification are clear.'* ]] &&

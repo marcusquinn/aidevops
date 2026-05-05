@@ -32,7 +32,7 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 
 Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d+` via TODO.md or `gh issue list`. Extract issue number: `sed -En 's/.*[Ii]ssue[[:space:]]*#*([0-9]+).*/\1/p'`.
 
-**Implementation context (t1901):** Read issue body's "Worker Guidance"/"How" section — follow file paths, implementation steps, and verification commands directly. Read only referenced files. If absent, exit BLOCKED: "missing implementation context". Do NOT explore broadly to compensate.
+**Implementation context (t1901):** Read issue body's "Worker Guidance"/"How" section first. When present, follow file paths, implementation steps, and verification commands directly. When absent or incomplete, do not stop by default: do bounded discovery from the issue title/body, search exact error terms, inspect likely target files, and proceed if the problem is actionable. Exit `BLOCKED` for "missing implementation context" only when the issue is too vague to identify expected behaviour, target area, or safe verification after bounded discovery.
 
 - **Interactive claim (t2056 — STRUCTURAL):** `full-loop-helper.sh start` automatically calls `interactive-session-helper.sh claim` for non-headless sessions when an issue number is present in the prompt. This applies `status:in-review` + self-assigns + posts a claim comment, blocking pulse dispatch for the entire window between start and PR creation. No agent action required; the helper handles it.
 - **Maintainer gate pre-check (GH#17810 — MANDATORY):** Verify issue lacks `needs-maintainer-review` and has an assignee. `full-loop-helper.sh start` enforces this — exit BLOCKED if either fails.
@@ -70,6 +70,7 @@ Iterate until emitting `<promise>TASK_COMPLETE</promise>`.
 5. **Commit+PR gate (GH#5317 — MANDATORY):** Commit all changes, push, ensure PR exists. Do NOT emit `TASK_COMPLETE` with uncommitted changes or no PR.
 6. **Signature footer gate (GH#12805 — MANDATORY):** PR body and issue closing comment MUST contain `aidevops.sh` signature footer.
 7. **Pre-close verification gate (GH#17372 — MANDATORY):** NEVER close an issue citing an existing PR unless: (a) the PR was created by this session, OR (b) `verify-issue-close-helper.sh check <issue> <pr> <slug>` returns exit 0. If verification fails, leave the issue open and comment with your analysis.
+8. **Worktree edit verification gate (GH#22816):** After file edits in a linked worktree, verify the worktree still exists and the changes are visible before reporting completion or asking to push. Minimum evidence: `git status --short --branch` from the worktree plus a diff/stat or the intended commit. If the worktree vanished or the files are not visible, stop, reconstruct from evidence, and do not claim the edit succeeded.
 
 ### Runtime Testing Gate (t1660.7 — MANDATORY)
 
