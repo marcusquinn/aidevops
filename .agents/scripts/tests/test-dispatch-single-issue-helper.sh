@@ -122,6 +122,11 @@ gh() {
 		return 0
 	fi
 
+	if [[ "$gh_subcommand" == "api" && "$gh_resource" == "user" ]]; then
+		printf '%s\n' 'runner-self'
+		return 0
+	fi
+
 	if [[ "$gh_subcommand" == "api" && "$gh_resource" == repos/*/issues/* ]]; then
 		case "$MOCK_GH_TARGET_IS_PR" in
 		1) printf '{"number":123,"pull_request":{"url":"https://api.example.invalid/pulls/123"}}\n' ;;
@@ -532,6 +537,26 @@ test_pr_target_guard_fails_closed_on_api_error() {
 	return 0
 }
 
+test_interactive_hold_guard_blocks_review_label() {
+	local rc=0
+	_dsi_guard_no_interactive_hold "bug,status:in-review,auto-dispatch" >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 ]] && check=0
+	print_result "interactive hold guard blocks status:in-review" "$check" "rc=$rc"
+	return 0
+}
+
+test_interactive_hold_guard_blocks_origin_interactive() {
+	local rc=0
+	_dsi_guard_no_interactive_hold "bug,origin:interactive,auto-dispatch" >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 ]] && check=0
+	print_result "interactive hold guard blocks origin:interactive" "$check" "rc=$rc"
+	return 0
+}
+
 test_launch_worker_forwards_agent() {
 	local failed=1
 	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
@@ -644,6 +669,8 @@ _run_tests() {
 	test_pr_target_guard_detects_pull_request
 	test_pr_target_guard_allows_plain_issue
 	test_pr_target_guard_fails_closed_on_api_error
+	test_interactive_hold_guard_blocks_review_label
+	test_interactive_hold_guard_blocks_origin_interactive
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract

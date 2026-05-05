@@ -27,6 +27,8 @@
 #   - _has_force_dispatch_label
 #   - _is_bot_generated_cleanup_issue
 #   - _is_task_committed_to_main
+#   - _dispatch_target_is_pull_request
+#   - _dispatch_has_interactive_hold
 #   - _dispatch_dedup_check_layers  (t1999: extracted from dispatch_with_dedup)
 #   - dispatch_with_dedup           (t1999: thin orchestrator, <80 lines)
 #   - _ensure_issue_body_has_brief
@@ -949,6 +951,27 @@ _is_task_committed_to_main() {
 }
 
 #######################################
+# Detect labels that mean a human/review workflow owns the target.
+#
+# status:in-review is the interactive hold label applied by full-loop and
+# interactive-session-helper. origin:interactive is equivalent protection for
+# PRs/issues created by a human session. These labels must block dispatch even
+# when the assignee is the same runner login, otherwise a maintainer's local
+# pulse can race their own interactive PR/worktree (GH#22948).
+#
+# Args:
+#   $1 - issue metadata JSON with .labels[].name
+# Returns: 0 when an interactive hold label is present, 1 otherwise
+#######################################
+_dispatch_has_interactive_hold() {
+	local issue_meta_json="$1"
+	[[ -n "$issue_meta_json" ]] || return 1
+	printf '%s' "$issue_meta_json" |
+		jq -e '.labels | map(.name) | (index("status:in-review") or index("origin:interactive"))' >/dev/null 2>&1
+	return $?
+}
+
+#######################################
 # Pre-dispatch validation + dedup check layers for dispatch_with_dedup.
 # Extracted from dispatch_with_dedup (t1999, Phase 12) to reduce the
 # parent function to a thin orchestrator.
@@ -999,6 +1022,17 @@ _dispatch_dedup_check_layers() {
 	# GraphQL is exhausted, silently blocking all dispatch for 30+ min.
 	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
+
+	# GH#22948: interactive/review hold guard independent of assignee identity.
+	# The Layer 6 assignment guard intentionally lets self-assignment through;
+	# status:in-review/origin:interactive must still prevent worker dispatch.
+	_dss_t0=$(_ds_now_ns)
+	if _dispatch_has_interactive_hold "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: interactive review hold label present (GH#22948)" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
+		return 1
+	fi
+	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 
 	# GH#18987: Disk-space pre-check — refuse dispatch if /home filesystem
 	# has less than 5 GB available. Prevents cascading failures where workers
@@ -1127,7 +1161,7 @@ _dispatch_dedup_check_layers() {
 	# t2996: pass meta_json through so the gate skips its `gh issue view --json
 	# labels` AND `--json title` calls (both derived from the bundled JSON).
 	_dss_t0=$(_ds_now_ns)
-	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path" "false" "$issue_meta_json"; then
+	if _issue_targets_large_files "$issue_number" "$repo_slug" "$_dispatch_issue_body" "$repo_path" "" "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch deferred for #${issue_number} in ${repo_slug}: targets large file(s), simplification gate" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.large_file" "$_dss_t0"
 		return 1
@@ -1763,14 +1797,14 @@ _apply_terminal_blocker() {
 	existing_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || existing_labels=""
 
-	local already_blocked=false
+	local already_blocked=0
 	if [[ ",${existing_labels}," == *",status:blocked,"* ]]; then
-		already_blocked=true
+		already_blocked=1
 	fi
 
 	# Add label if not already present (t2033: use set_issue_status to atomically
 	# clear all sibling status:* labels, not just available/queued)
-	if [[ "$already_blocked" == "false" ]]; then
+	if [[ "$already_blocked" -eq 0 ]]; then
 		set_issue_status "$issue_number" "$repo_slug" "blocked" || true
 	fi
 

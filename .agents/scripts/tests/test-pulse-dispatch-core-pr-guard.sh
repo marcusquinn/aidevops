@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Tests for GH#22948 dispatch guards: PR objects and interactive/review hold
+# labels must block worker dispatch before label/assignee mutation.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+
+readonly TEST_RED='\033[0;31m'
+readonly TEST_GREEN='\033[0;32m'
+readonly TEST_RESET='\033[0m'
+
+TESTS_RUN=0
+TESTS_FAILED=0
+MOCK_GH_TARGET_IS_PR="0"
+
+print_result() {
+	local test_name="$1"
+	local passed="$2"
+	local message="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+
+	if [[ "$passed" -eq 0 ]]; then
+		printf '%bPASS%b %s\n' "$TEST_GREEN" "$TEST_RESET" "$test_name"
+		return 0
+	fi
+
+	printf '%bFAIL%b %s\n' "$TEST_RED" "$TEST_RESET" "$test_name"
+	if [[ -n "$message" ]]; then
+		printf '       %s\n' "$message"
+	fi
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+define_helpers_under_test() {
+	local helper_src
+	helper_src=$(python3 - "$CORE_SCRIPT" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+for name in ("_dispatch_target_is_pull_request", "_dispatch_has_interactive_hold"):
+    start = text.index(f"{name}() {{")
+    depth = 0
+    end = None
+    for offset, char in enumerate(text[start:]):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                end = start + offset + 1
+                break
+    if end is None:
+        raise SystemExit(f"could not extract {name}")
+    print(text[start:end])
+PY
+	)
+	if [[ -z "$helper_src" ]]; then
+		printf 'ERROR: could not extract dispatch guard helpers from %s\n' "$CORE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090
+	eval "$helper_src"
+	return 0
+}
+
+# shellcheck disable=SC2317
+gh() {
+	if [[ "${1:-}" == "api" && "${2:-}" == repos/*/issues/* ]]; then
+		case "$MOCK_GH_TARGET_IS_PR" in
+		1) printf '{"number":1108,"pull_request":{"url":"https://api.github.invalid/pulls/1108"}}\n' ;;
+		api_fail) return 1 ;;
+		*) printf '{"number":22948}\n' ;;
+		esac
+		return 0
+	fi
+	printf 'unexpected gh call: %s\n' "$*" >&2
+	return 1
+}
+
+test_pr_guard_uses_rest_issue_object() {
+	MOCK_GH_TARGET_IS_PR="1"
+	if _dispatch_target_is_pull_request 1108 owner/repo; then
+		print_result "PR guard blocks REST pull_request objects" 0
+		return 0
+	fi
+	print_result "PR guard blocks REST pull_request objects" 1 "expected PR detection from gh api"
+	return 0
+}
+
+test_pr_guard_allows_plain_issue() {
+	MOCK_GH_TARGET_IS_PR="0"
+	if _dispatch_target_is_pull_request 22948 owner/repo; then
+		print_result "PR guard allows plain issue objects" 1 "plain issue was classified as PR"
+		return 0
+	fi
+	print_result "PR guard allows plain issue objects" 0
+	return 0
+}
+
+test_interactive_hold_blocks_in_review() {
+	local meta='{"labels":[{"name":"auto-dispatch"},{"name":"status:in-review"}]}'
+	if _dispatch_has_interactive_hold "$meta"; then
+		print_result "interactive hold blocks status:in-review" 0
+		return 0
+	fi
+	print_result "interactive hold blocks status:in-review" 1 "expected status:in-review to block"
+	return 0
+}
+
+test_interactive_hold_blocks_origin_interactive() {
+	local meta='{"labels":[{"name":"origin:interactive"},{"name":"bug"}]}'
+	if _dispatch_has_interactive_hold "$meta"; then
+		print_result "interactive hold blocks origin:interactive" 0
+		return 0
+	fi
+	print_result "interactive hold blocks origin:interactive" 1 "expected origin:interactive to block"
+	return 0
+}
+
+test_interactive_hold_allows_worker_issue() {
+	local meta='{"labels":[{"name":"auto-dispatch"},{"name":"origin:worker"}]}'
+	if _dispatch_has_interactive_hold "$meta"; then
+		print_result "interactive hold allows worker-labelled issue" 1 "origin:worker should not block this guard"
+		return 0
+	fi
+	print_result "interactive hold allows worker-labelled issue" 0
+	return 0
+}
+
+main() {
+	if ! define_helpers_under_test; then
+		return 1
+	fi
+
+	test_pr_guard_uses_rest_issue_object
+	test_pr_guard_allows_plain_issue
+	test_interactive_hold_blocks_in_review
+	test_interactive_hold_blocks_origin_interactive
+	test_interactive_hold_allows_worker_issue
+
+	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+main "$@"

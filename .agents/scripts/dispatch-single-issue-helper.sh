@@ -157,6 +157,21 @@ _dsi_target_is_pull_request() {
 }
 
 #######################################
+# Block manual dispatch when interactive/review hold labels are present.
+# Args: $1 - labels CSV
+# Returns: 0 when safe, 1 when held
+#######################################
+_dsi_guard_no_interactive_hold() {
+	local labels_csv="$1"
+	local labels_with_commas=",${labels_csv},"
+	if [[ "$labels_with_commas" == *",status:in-review,"* || "$labels_with_commas" == *",origin:interactive,"* ]]; then
+		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Check parent-task gate. parent-task is always a hard block (never single-dispatch).
 # Args: $1 - labels CSV (from _dsi_load_issue_meta)
 # Returns: 0 not parent-task, 1 IS parent-task (block)
@@ -895,6 +910,7 @@ cmd_dispatch() {
 		_dsi_err "Unable to verify #${issue_number} in ${repo_slug} is not a pull request; refusing dispatch (GH#22948, rc=${target_pr_rc})"
 		return 1
 	fi
+	_dsi_guard_no_interactive_hold "$_DSI_ISSUE_LABELS" || return 1
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).
