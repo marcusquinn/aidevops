@@ -116,6 +116,7 @@ GH_ISSUE_BODY=""
 : >"${TMP}/gh-calls.log"
 write_state 4
 GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=""
 _dlw_hold_repeated_zero_output 123 owner/repo
 hold_rc=$?
 gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
@@ -131,6 +132,7 @@ fi
 : >"${TMP}/gh-calls.log"
 write_state 1
 GH_COMMENT_ZERO_COUNT=4
+GH_COMMENT_METRICS=""
 _dlw_hold_repeated_zero_output 123 owner/repo
 comment_hold_rc=$?
 comment_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
@@ -142,8 +144,24 @@ else
 		"rc=${comment_hold_rc}; gh_calls=${comment_gh_calls}"
 fi
 
+: >"${TMP}/gh-calls.log"
+write_state 4
+GH_COMMENT_ZERO_COUNT=4
+GH_COMMENT_METRICS=$'275\t260\t87\t81500'
+_dlw_hold_repeated_zero_output 123 owner/repo
+clean_room_hold_rc=$?
+clean_room_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
+if [[ "$clean_room_hold_rc" -eq 1 ]] \
+	&& ! printf '%s' "$clean_room_gh_calls" | grep -q 'needs-brief-rewrite'; then
+	pass "comment-bloated issues bypass repeated zero-output hold"
+else
+	fail "comment-bloated issues bypass repeated zero-output hold" \
+		"rc=${clean_room_hold_rc}; gh_calls=${clean_room_gh_calls}"
+fi
+
 write_state 4 runtime partial
 GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=""
 non_zero_count=$(_dlw_zero_output_failure_count 123 owner/repo)
 if [[ "$non_zero_count" == "0" ]]; then
 	pass "non-zero-output failure reasons do not trigger URL-only fallback"
