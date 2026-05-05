@@ -765,7 +765,7 @@ _cmd_run_finish() {
 
 	_update_dispatch_ledger "$session_key" "$ledger_status"
 	_release_session_lock "$session_key"
-	_hrw_release_worker_worktree "$work_dir"
+	_hrw_release_worker_worktree "${work_dir:-${_WORKER_WORKTREE_PATH:-}}"
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi
