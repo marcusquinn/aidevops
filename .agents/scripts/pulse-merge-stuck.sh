@@ -920,16 +920,57 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3193). The detector resets the
 
 #######################################
 # Count PRs in $repo_slug that are eligible-but-unmerged this cycle —
-# APPROVED + MERGEABLE + !draft + !hold-for-review (NOT age-gated).
+# APPROVED + MERGEABLE + !draft + !hold-for-review, then narrowed to PRs
+# that are not known to be blocked by the read-only merge gates (NOT age-gated).
 # Used by pulse-merge.sh to feed the zero-progress signal across all repos.
 #
 # Distinct from pulse_merge_stuck_run_pass which adds the AIDEVOPS_MERGE_STUCK_AGE_MINUTES
 # age gate — zero-progress detection wants the wider population (any cycle
 # with eligible-unmerged > 0 + zero merges is a candidate, regardless of age).
+# It must still exclude PRs that the merge pass already proved are not mergeable
+# in this cycle (for example failing required checks or origin:worker PRs with
+# no linked issue), otherwise a legitimate skip becomes a false zero-progress
+# structural-block signal.
 #
 # Args: $1 = repo_slug
 # Stdout: integer count
 #######################################
+#######################################
+# Decide whether a basic eligible PR should contribute to the zero-progress
+# denominator. This is intentionally read-only and narrower than the full
+# _check_pr_merge_gates stack because that stack can route workers/comments.
+#
+# Args: $1=repo_slug, $2=pr_number, $3=labels_str (comma-separated)
+# Returns: 0=count it, 1=exclude it from the zero-progress signal
+#######################################
+_pms_pr_counts_for_zero_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local labels_str="$3"
+
+	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+
+	if declare -F _check_required_checks_passing >/dev/null 2>&1; then
+		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
+			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — required checks are not provably passing" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	if [[ ",${labels_str}," == *",origin:worker,"* ]]; then
+		local linked_issue=""
+		if declare -F _extract_linked_issue >/dev/null 2>&1; then
+			linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
+		fi
+		if [[ -z "$linked_issue" ]]; then
+			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — origin:worker PR has no linked issue" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
 _pms_count_eligible_unmerged_for_repo() {
 	local repo_slug="$1"
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
@@ -940,12 +981,12 @@ _pms_count_eligible_unmerged_for_repo() {
 		--limit 50 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
 
-	# Count PRs matching the eligibility criteria via jq. .mergeable and
+	# Enumerate PRs matching the basic eligibility criteria via jq. .mergeable and
 	# .reviewDecision are already upper-case in the GraphQL response — no
 	# ascii_upcase needed (the FAILURE selector keeps it because legacy
 	# commit-status `.state` values can be lower-case).
-	local count
-	count=$(printf '%s' "$pr_json" | jq -r '
+	local candidates
+	candidates=$(printf '%s' "$pr_json" | jq -r '
 		[ .[]
 		  | select(
 			(.mergeable // "") == "MERGEABLE"
@@ -953,8 +994,20 @@ _pms_count_eligible_unmerged_for_repo() {
 			and (.isDraft // false) == false
 			and (([.labels[].name] | index("hold-for-review")) == null)
 		  )
-		] | length' 2>/dev/null)
-	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+		  | "\(.number // "")\u001e\([.labels[].name] | join(","))"
+		] | .[]' 2>/dev/null) || candidates=""
+
+	local count=0
+	local _RS=$'\x1e'
+	local pr_number=""
+	local labels_str=""
+	while IFS="$_RS" read -r pr_number labels_str; do
+		[[ -n "$pr_number" ]] || continue
+		if _pms_pr_counts_for_zero_progress "$repo_slug" "$pr_number" "$labels_str"; then
+			count=$((count + 1))
+		fi
+	done <<<"$candidates"
+
 	printf '%s' "$count"
 	return 0
 }
