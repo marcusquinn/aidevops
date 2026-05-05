@@ -400,6 +400,16 @@ is_rate_limit_only_comment() {
 	return 1
 }
 
+bot_body_base64_jq_filter() {
+	local bot_login="$1"
+
+	printf '%s%s%s\n' \
+		'.[] | select(.user.login | ascii_downcase | test("' \
+		"$bot_login" \
+		'")) | (.body // "" | @base64)'
+	return 0
+}
+
 bot_has_rate_limit_notice() {
 	# Return success only when the bot posted a true rate-limit/quota notice.
 	# Broader non-review states ("Review failed", "Review skipped", closed
@@ -409,7 +419,7 @@ bot_has_rate_limit_notice() {
 	local bot_login="$3"
 
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | (.body // \"\" | @base64)"
+	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
@@ -442,7 +452,7 @@ bot_has_non_rate_limit_non_review_notice() {
 	local bot_login="$3"
 
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | (.body // \"\" | @base64)"
+	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
@@ -467,24 +477,49 @@ bot_has_non_rate_limit_non_review_notice() {
 }
 
 bot_get_notice_category() {
-	# Classify a bot's non-review notice state once so do_check() cannot drift
-	# from tests that stub only one half of the decision bucket. Non-rate-limit
-	# notices take precedence over rate-limit notices from the same bot.
+	# Classify a bot's non-review notice state in one pass over the three GitHub
+	# comment sources. Non-rate-limit notices take precedence over rate-limit
+	# notices from the same bot, even when an older rate-limit notice appears
+	# first in another stream.
 	local pr_number="$1"
 	local repo="$2"
 	local bot_login="$3"
 
-	if bot_has_non_rate_limit_non_review_notice "$pr_number" "$repo" "$bot_login"; then
-		echo "non-rate-limit"
-		return 0
-	fi
-	if bot_has_rate_limit_notice "$pr_number" "$repo" "$bot_login"; then
-		echo "rate-limit"
-		return 0
-	fi
+	local jq_filter
+	jq_filter=$(bot_body_base64_jq_filter "$bot_login")
 
-	echo "none"
-	return 1
+	local api_endpoints=(
+		"repos/${repo}/pulls/${pr_number}/reviews"
+		"repos/${repo}/issues/${pr_number}/comments"
+		"repos/${repo}/pulls/${pr_number}/comments"
+	)
+
+	local category="none"
+	local endpoint records rc encoded body
+	for endpoint in "${api_endpoints[@]}"; do
+		if records=$(gh api "$endpoint" --paginate --jq "$jq_filter"); then
+			:
+		else
+			rc=$?
+			return "$rc"
+		fi
+		[[ -z "$records" ]] && continue
+		while IFS= read -r encoded; do
+			[[ -z "$encoded" ]] && continue
+			body=$(echo "$encoded" | base64 -d 2>/dev/null || echo "")
+			[[ -z "$body" ]] && continue
+			if is_non_review_comment "$body" && ! is_rate_limit_only_comment "$body"; then
+				echo "non-rate-limit"
+				return 0
+			fi
+			if is_rate_limit_only_comment "$body"; then
+				category="rate-limit"
+			fi
+		done <<<"$records"
+	done
+
+	echo "$category"
+	return 0
 }
 
 bot_has_real_review() {
@@ -652,14 +687,19 @@ do_check() {
 	local found_bots=""
 	local rate_limited_bots=""
 	local non_review_bots=""
-	local notice_category
+	local notice_category notice_rc
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
 			# Bot commented — but is it a real review or a non-review notice?
 			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				found_bots="${found_bots}${bot} "
 			else
-				notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot" || echo "none")
+				if notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot"); then
+					:
+				else
+					notice_rc=$?
+					return "$notice_rc"
+				fi
 				case "$notice_category" in
 					rate-limit)
 						rate_limited_bots="${rate_limited_bots}${bot} "
@@ -677,6 +717,14 @@ do_check() {
 	if [[ -n "$found_bots" ]]; then
 		echo "PASS" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
+		return 0
+	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
+		# GH#22884: Some bots expose review completion only through a SUCCESS
+		# commit status after leaving a placeholder/non-review issue comment. Do
+		# not bridge to a raw skip; require the bot-authored success status before
+		# treating the gate as reviewed.
+		echo "PASS"
+		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$non_review_bots" ]]; then
 		# GH#22802: Failed/skipped/placeholder bot states are not capacity

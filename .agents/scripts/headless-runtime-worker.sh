@@ -666,7 +666,7 @@ _cmd_run_finish() {
 	# work_dir is optional ($3). When present and ledger_status != "fail",
 	# _worker_produced_output() classifies tangible output to distinguish
 	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
-	local work_dir="${3:-}"
+	local work_dir="${3:-${_WORKER_WORKTREE_PATH:-}}"
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the

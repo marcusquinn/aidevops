@@ -94,7 +94,9 @@ _gh_pr_list_snapshot_key() {
 		_joined="${_joined}${_arg}"$'\034'
 	done
 	if command -v shasum >/dev/null 2>&1; then
-		printf '%s' "$_joined" | shasum | awk '{print $1}'
+		printf '%s' "$_joined" | shasum -a 256 | awk '{print $1}'
+	elif command -v openssl >/dev/null 2>&1; then
+		printf '%s' "$_joined" | openssl dgst -sha256 | awk '{print $NF}'
 	else
 		printf '%s' "$_joined" | cksum | awk '{print $1}'
 	fi

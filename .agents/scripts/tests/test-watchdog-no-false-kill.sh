@@ -187,17 +187,29 @@ assert_contains \
 	"8b. worker-watchdog emits idle advisory instead of kill" \
 	"IDLE ADVISORY" \
 	"$worker_watchdog_cmd_source"
+assert_contains \
+	"8c. worker-watchdog emits stall advisory instead of kill" \
+	"PROGRESS STALL ADVISORY" \
+	"$worker_watchdog_cmd_source"
+assert_contains \
+	"8d. worker-watchdog emits thrash advisory instead of kill" \
+	"THRASH ADVISORY" \
+	"$worker_watchdog_cmd_source"
 assert_not_contains \
-	"8c. worker-watchdog no longer kills on idle" \
+	"8e. worker-watchdog no longer kills on idle" \
 	'kill_worker "$pid" "idle"' \
 	"$worker_watchdog_cmd_source"
 assert_not_contains \
-	"8d. worker-watchdog no longer kills on stall" \
+	"8f. worker-watchdog no longer kills on stall" \
 	'kill_worker "$pid" "stall"' \
 	"$worker_watchdog_cmd_source"
 assert_not_contains \
-	"8e. worker-watchdog no longer kills on runtime" \
+	"8g. worker-watchdog no longer kills on runtime" \
 	'kill_worker "$pid" "runtime"' \
+	"$worker_watchdog_cmd_source"
+assert_not_contains \
+	"8h. worker-watchdog no longer kills on thrash" \
+	'kill_worker "$pid" "thrash"' \
 	"$worker_watchdog_cmd_source"
 
 #######################################
