@@ -1220,7 +1220,7 @@ _release_dispatch_claim_on_abort() {
 	# audit comment is preserved.
 	local _is_pre_launch_abort=0
 	case "$reason" in
-		worker_launch_rc_2 | predispatch_validator_closed | eligibility_gate)
+		worker_launch_rc_* | predispatch_validator_closed | eligibility_gate)
 			_is_pre_launch_abort=1
 			;;
 	esac

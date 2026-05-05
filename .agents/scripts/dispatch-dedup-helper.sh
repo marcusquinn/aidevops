@@ -1367,6 +1367,19 @@ enumerate_blockers() {
 # PR evidence dedup check functions are in dispatch-dedup-pr.sh (GH#18916).
 
 #######################################
+# Check whether a local process currently covers an issue.
+#######################################
+_dd_has_local_worker_for_issue() {
+	local issue_number="$1"
+	local running_keys=""
+	running_keys=$(list_running_keys 2>/dev/null || true)
+	if printf '%s\n' "$running_keys" | grep -Eq "\|(issue|ref)-${issue_number}$"; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Check whether a single dispatch comment is still active.
 #
 # GH#16626: Process liveness check — if the comment is within TTL but no
@@ -1381,6 +1394,7 @@ enumerate_blockers() {
 #   $3 = issue number (for process search)
 #   $4 = now_epoch (seconds since epoch)
 #   $5 = max_age (seconds)
+#   $6 = self login (optional, for local stale-worker reconciliation)
 # Returns: exit 0 if comment is active (blocks dispatch), exit 1 if stale/expired
 # Outputs: reason string on stdout when active
 #
@@ -1418,6 +1432,7 @@ _is_dispatch_comment_active() {
 	local issue_number="$3"
 	local now_epoch="$4"
 	local max_age="$5"
+	local self_login="${6:-}"
 	local active_worker_max_age="${DISPATCH_ACTIVE_WORKER_MAX_AGE:-7200}"
 	[[ "$active_worker_max_age" =~ ^[0-9]+$ ]] || active_worker_max_age=7200
 
@@ -1435,6 +1450,11 @@ _is_dispatch_comment_active() {
 	# non-terminal worker window expires; after that, a later claim path can emit
 	# an explicit stale-worker takeover reason instead of a bare DISPATCH_CLAIM.
 	if [[ "$age" -ge "$max_age" ]]; then
+		if [[ -n "$self_login" && "$author" == "$self_login" ]]; then
+			if ! _dd_has_local_worker_for_issue "$issue_number"; then
+				return 1
+			fi
+		fi
 		if [[ "$age" -lt "$active_worker_max_age" ]]; then
 			printf 'non-terminal dispatch comment by %s posted %ds ago on issue #%s (soft TTL expired; active-worker window: %ds remaining)\n' \
 				"$author" "$age" "$issue_number" "$((active_worker_max_age - age))"
@@ -1573,7 +1593,7 @@ has_dispatch_comment() {
 	dispatch_author=$(printf '%s' "$last_dispatch_json" | jq -r '.author // ""' 2>/dev/null) || dispatch_author=""
 
 	# Check if the dispatch comment is within TTL
-	if ! _is_dispatch_comment_active "$dispatch_created_at" "$dispatch_author" "$issue_number" "$now_epoch" "$max_age"; then
+	if ! _is_dispatch_comment_active "$dispatch_created_at" "$dispatch_author" "$issue_number" "$now_epoch" "$max_age" "${3:-}"; then
 		return 1
 	fi
 

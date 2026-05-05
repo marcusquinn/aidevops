@@ -14,7 +14,7 @@
 #   CI flakes). Manual recovery required touching the counter file — operators
 #   rarely do this, leaving issues permanently stuck.
 #
-# Tests (7):
+# Tests (8):
 #   1. HARD STOP + age > 24h → counter reset to 0
 #   2. HARD STOP + age < 24h → NOT reset (quiet-period guard)
 #   3. count < HARD STOP (below threshold) → NOT affected
@@ -22,6 +22,7 @@
 #   5. reset_count increments on each age-out
 #   6. After FAST_FAIL_AGE_OUT_MAX_RESETS resets, NMR label applied (not reset again)
 #   7. Issue comment posted once per age-out event
+#   8. Infra/no_work hard stops use FAST_FAIL_INFRA_AGE_OUT_SECONDS
 #
 # Stub strategy:
 #   - Set FAST_FAIL_STATE_FILE to a tmpdir path so tests are hermetic.
@@ -133,12 +134,14 @@ _write_ff_entry() {
 	local count="$2"
 	local ts_offset="$3"
 	local rcount="${4:-0}"
+	local reason="${5:-crash}"
+	local crash_type="${6:-}"
 	local slug="test/repo"
 	local now
 	now=$(date +%s)
 	local ts=$((now - ts_offset))
-	printf '{"test/repo/%s":{"count":%s,"ts":%s,"reason":"crash","retry_after":0,"backoff_secs":600,"crash_type":"","reset_count":%s}}\n' \
-		"$issue" "$count" "$ts" "$rcount" >"$FAST_FAIL_STATE_FILE"
+	printf '{"test/repo/%s":{"count":%s,"ts":%s,"reason":"%s","retry_after":0,"backoff_secs":600,"crash_type":"%s","reset_count":%s}}\n' \
+		"$issue" "$count" "$ts" "$reason" "$crash_type" "$rcount" >"$FAST_FAIL_STATE_FILE"
 	return 0
 }
 
@@ -260,6 +263,23 @@ if printf '%s' "$gh_calls_content" | grep -q "issue comment"; then
 else
 	fail "age-out fires → issue comment posted" \
 		"expected 'issue comment' in gh calls: ${gh_calls_content}"
+fi
+
+# =============================================================================
+# Test 8 — infra/no_work hard stops use shorter recovery age
+# =============================================================================
+export FAST_FAIL_INFRA_AGE_OUT_SECONDS=5
+export FAST_FAIL_AGE_OUT_SECONDS=100
+_write_ff_entry "107" "6" "20" "0" "stale_timeout" "no_work"
+
+fast_fail_age_out "107" "test/repo" 2>/dev/null || true
+
+result_count=$(jq -r '."test/repo/107".count // -1' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || result_count="-1"
+if [[ "$result_count" == "0" ]]; then
+	pass "infra/no_work HARD STOP uses shorter age-out threshold"
+else
+	fail "infra/no_work HARD STOP uses shorter age-out threshold" \
+		"expected count=0, got count=${result_count}"
 fi
 
 # =============================================================================
