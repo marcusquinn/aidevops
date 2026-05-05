@@ -87,7 +87,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Every issue, PR, and comment that describes work MUST include worker-ready context: files to modify, reference pattern, verification, and explicit note when paths cannot be known. Brief template source: `templates/brief-template.md`.
 - Use GitHub wrappers for issue/PR creation so origin labels and signatures are applied; never hand-compose signature footers. PR/issue/comment bodies must satisfy same-command `--body-file` discipline. Thread-clean reading and non-collaborator body immunity: `reference/gh-command-discipline.md`.
 - Auto-generated issue triage outcomes: verify premise first; falsified → close with rationale; correct+obvious → implement+PR; correct+ambiguous only → decision-ready comment + `needs-maintainer-review`. Scope/style uncertainty is not NMR. Full templates: `reference/worker-discipline.md`.
-- Parent/research tasks: `parent-task` is a permanent dispatch block; PRs against parent issues use `For #NNN`/`Ref #NNN` until the final child/phase. New worker-ready tasks default to auto-dispatch; if implementing an auto-dispatch issue interactively, use `interactive-start-helper.sh --issue N --repo owner/repo --task "..." --auto-dispatch`.
+- Parent/research tasks: `parent-task` is a permanent dispatch block; PRs against parent issues use `For #NNN`/`Ref #NNN` until the final child/phase. New worker-ready tasks default to auto-dispatch; if implementing an auto-dispatch issue interactively, use `interactive-start-helper.sh --issue <N> --repo <owner/repo> --task "..." --auto-dispatch`.
 
 ### Quality and diagnostics
 
