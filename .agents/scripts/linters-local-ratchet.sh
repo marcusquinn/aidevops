@@ -51,6 +51,84 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 #   linters-local.sh --strict         # blocking ratchet check
 #   linters-local.sh --update-baseline # re-count and write new baseline
 
+# _ratchet_step_timeout_seconds: read and validate per-ratchet timeout.
+# Returns: timeout seconds via stdout
+_ratchet_step_timeout_seconds() {
+	local configured="${RATCHET_STEP_TIMEOUT_SECONDS:-120}"
+	if [[ ! "$configured" =~ ^[0-9]+$ ]] || [[ "$configured" -lt 1 ]]; then
+		configured=120
+	fi
+	echo "$configured"
+	return 0
+}
+
+# _ratchet_count_with_progress: run one ratchet counter with progress + timeout.
+# Arguments: $1=display_name $2=counter_function $3=scripts_dir_or_empty
+# Returns: counter output via stdout, 1 on timeout/counter failure
+_ratchet_count_with_progress() {
+	local display_name="$1"
+	local counter_function="$2"
+	local scripts_dir="${3:-}"
+	local timeout_seconds
+	timeout_seconds=$(_ratchet_step_timeout_seconds)
+	local progress_interval=30
+	local output_file error_file
+	output_file=$(mktemp "${TMPDIR:-/tmp}/ratchet-count.XXXXXX") || return 1
+	error_file=$(mktemp "${TMPDIR:-/tmp}/ratchet-count.err.XXXXXX") || {
+		rm -f "$output_file"
+		return 1
+	}
+
+	print_info "Ratchets: counting ${display_name} (timeout ${timeout_seconds}s)..." >&2
+	(
+		if [[ -n "$scripts_dir" ]]; then
+			"$counter_function" "$scripts_dir"
+		else
+			"$counter_function"
+		fi
+	) >"$output_file" 2>"$error_file" &
+	local counter_pid="$!"
+	local start_time elapsed now status result
+	start_time=$(date +%s)
+
+	while kill -0 "$counter_pid" 2>"$error_file"; do
+		now=$(date +%s)
+		elapsed=$((now - start_time))
+		if [[ "$elapsed" -ge "$timeout_seconds" ]]; then
+			print_error "Ratchets: ${display_name} timed out after ${timeout_seconds}s; rerun with RATCHET_STEP_TIMEOUT_SECONDS=<seconds> for diagnostics" >&2
+			kill "$counter_pid" 2>"$error_file"
+			if wait "$counter_pid" 2>"$error_file"; then
+				status=0
+			else
+				status=$?
+			fi
+			rm -f "$output_file" "$error_file"
+			return 1
+		fi
+		if [[ "$elapsed" -gt 0 ]] && [[ $((elapsed % progress_interval)) -eq 0 ]]; then
+			print_info "Ratchets: still counting ${display_name} (${elapsed}s elapsed)..." >&2
+		fi
+		sleep 1
+	done
+
+	if wait "$counter_pid"; then
+		status=0
+	else
+		status=$?
+	fi
+	if [[ "$status" -ne 0 ]]; then
+		print_error "Ratchets: ${display_name} counter failed with exit ${status}" >&2
+		rm -f "$output_file" "$error_file"
+		return 1
+	fi
+
+	result=$(tr -d '[:space:]' <"$output_file")
+	rm -f "$output_file" "$error_file"
+	[[ "$result" =~ ^[0-9]+$ ]] || result=0
+	echo "$result"
+	return 0
+}
+
 # _ratchet_count_bare_positional: count $1-$9 in function bodies (not local assignments)
 # Returns: count via stdout
 _ratchet_count_bare_positional() {
@@ -178,11 +256,11 @@ _ratchet_check_pattern() {
 _ratchet_count_all() {
 	local scripts_dir="$1"
 	local count_bare count_hardcoded count_broad count_silent count_missing
-	count_bare=$(_ratchet_count_bare_positional "$scripts_dir")
-	count_hardcoded=$(_ratchet_count_hardcoded_path "$scripts_dir")
-	count_broad=$(_ratchet_count_broad_catch "$scripts_dir")
-	count_silent=$(_ratchet_count_silent_errors "$scripts_dir")
-	count_missing=$(_ratchet_count_missing_return)
+	count_bare=$(_ratchet_count_with_progress "bare_positional_params" "_ratchet_count_bare_positional" "$scripts_dir") || return 1
+	count_hardcoded=$(_ratchet_count_with_progress "hardcoded_aidevops_path" "_ratchet_count_hardcoded_path" "$scripts_dir") || return 1
+	count_broad=$(_ratchet_count_with_progress "broad_catch_or_true" "_ratchet_count_broad_catch" "$scripts_dir") || return 1
+	count_silent=$(_ratchet_count_with_progress "silent_errors" "_ratchet_count_silent_errors" "$scripts_dir") || return 1
+	count_missing=$(_ratchet_count_with_progress "missing_return_files" "_ratchet_count_missing_return" "") || return 1
 	echo "$count_bare $count_hardcoded $count_broad $count_silent $count_missing"
 	return 0
 }
@@ -346,7 +424,10 @@ check_ratchets() {
 
 	# Count current values for all patterns
 	local counts count_bare count_hardcoded count_broad count_silent count_missing
-	counts=$(_ratchet_count_all "$scripts_dir")
+	if ! counts=$(_ratchet_count_all "$scripts_dir"); then
+		print_error "Ratchets: aborted because a ratchet counter failed or timed out"
+		return 1
+	fi
 	read -r count_bare count_hardcoded count_broad count_silent count_missing <<<"$counts"
 
 	# --update-baseline / --init-baseline: write new baseline and exit
