@@ -423,6 +423,11 @@ _dlw_hold_repeated_zero_output() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
+	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug"; then
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: bypassing zero-output hold because clean-room brief mode is available" >>"$LOGFILE"
+		return 1
+	fi
+
 	local zero_count=""
 	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
 	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0

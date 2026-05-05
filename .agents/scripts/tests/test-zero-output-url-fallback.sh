@@ -116,6 +116,22 @@ GH_ISSUE_BODY=""
 : >"${TMP}/gh-calls.log"
 write_state 4
 GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=$'275\t260\t87\t81500'
+_dlw_hold_repeated_zero_output 123 owner/repo
+clean_room_hold_rc=$?
+clean_room_hold_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
+if [[ "$clean_room_hold_rc" -eq 1 ]] \
+	&& ! printf '%s' "$clean_room_hold_calls" | grep -q 'needs-brief-rewrite'; then
+	pass "comment-bloated issues bypass repeated zero-output hold"
+else
+	fail "comment-bloated issues bypass repeated zero-output hold" \
+		"rc=${clean_room_hold_rc}; gh_calls=${clean_room_hold_calls}"
+fi
+GH_COMMENT_METRICS=""
+
+: >"${TMP}/gh-calls.log"
+write_state 4
+GH_COMMENT_ZERO_COUNT=0
 _dlw_hold_repeated_zero_output 123 owner/repo
 hold_rc=$?
 gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
