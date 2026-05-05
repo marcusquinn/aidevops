@@ -32,11 +32,21 @@ FAST_FAIL_STATE_FILE="${TMP}/fast-fail-counter.json"
 export LOGFILE FAST_FAIL_STATE_FILE
 
 gh() {
-	if [[ "${1:-}" == "api" && "${GH_COMMENT_ZERO_COUNT:-0}" =~ ^[0-9]+$ ]]; then
+	local command_name="${1:-}"
+	shift || true
+	if [[ "$command_name" == "api" && -n "${GH_COMMENT_METRICS:-}" ]]; then
+		printf '%s\n' "$GH_COMMENT_METRICS"
+		return 0
+	fi
+	if [[ "$command_name" == "api" && "${GH_COMMENT_ZERO_COUNT:-0}" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$GH_COMMENT_ZERO_COUNT"
 		return 0
 	fi
-	printf '%s\n' "$*" >>"${TMP}/gh-calls.log"
+	if [[ "$command_name" == "issue" && "${1:-}" == "view" && -n "${GH_ISSUE_BODY:-}" ]]; then
+		printf '%s\n' "$GH_ISSUE_BODY"
+		return 0
+	fi
+	printf '%s\n' "$command_name $*" >>"${TMP}/gh-calls.log"
 	return 0
 }
 export -f gh
@@ -57,6 +67,7 @@ write_state() {
 }
 
 write_state 2
+GH_COMMENT_METRICS=""
 fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if printf '%s' "$fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
 	&& ! printf '%s' "$fallback_prompt" | grep -q 'FULL EMBEDDED BRIEF'; then
@@ -67,6 +78,7 @@ fi
 
 write_state 1
 GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=""
 normal_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if [[ "$normal_prompt" == "FULL EMBEDDED BRIEF" ]]; then
 	pass "below fallback threshold keeps embedded prompt"
@@ -76,6 +88,7 @@ fi
 
 write_state 1
 GH_COMMENT_ZERO_COUNT=2
+GH_COMMENT_METRICS=""
 comment_fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if printf '%s' "$comment_fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
 	&& ! printf '%s' "$comment_fallback_prompt" | grep -q 'FULL EMBEDDED BRIEF'; then
@@ -83,6 +96,22 @@ if printf '%s' "$comment_fallback_prompt" | grep -q 'gh issue view 123 --repo ow
 else
 	fail "comment evidence triggers URL-only fallback when state count is low" "$comment_fallback_prompt"
 fi
+
+write_state 1
+GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=$'275\t260\t87\t81500'
+GH_ISSUE_BODY="Clean body only: change app notifications query usage."
+clean_room_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF WITH COMMENTS")
+if printf '%s' "$clean_room_prompt" | grep -q 'clean-room brief mode' \
+	&& printf '%s' "$clean_room_prompt" | grep -q 'Clean body only' \
+	&& ! printf '%s' "$clean_room_prompt" | grep -q 'FULL EMBEDDED BRIEF WITH COMMENTS'; then
+	pass "comment-bloated issues switch to clean-room body-only prompt"
+else
+	fail "comment-bloated issues switch to clean-room body-only prompt" "$clean_room_prompt"
+fi
+
+GH_COMMENT_METRICS=""
+GH_ISSUE_BODY=""
 
 : >"${TMP}/gh-calls.log"
 write_state 4
