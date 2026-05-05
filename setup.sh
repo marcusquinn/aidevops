@@ -839,10 +839,34 @@ _setup_lock_owner_age() {
 	return 0
 }
 
+_setup_sanitize_lock_diagnostic_value() {
+	local value="$1"
+	local word=""
+	local key=""
+	local sanitized=""
+	local separator=""
+	for word in $value; do
+		key="${word%%=*}"
+		case "$key" in
+			*TOKEN*|*Token*|*token*|*SECRET*|*Secret*|*secret*|*PASSWORD*|*Password*|*password*|*PASS*|*Pass*|*pass*|*KEY*|*Key*|*key*|*CREDENTIAL*|*Credential*|*credential*)
+				if [[ "$word" == *=* ]]; then
+					word="${key}=<redacted>"
+				else
+					word="<redacted>"
+				fi
+				;;
+		esac
+		sanitized="${sanitized}${separator}${word}"
+		separator=" "
+	done
+	printf '%s' "$sanitized"
+	return 0
+}
+
 _setup_acquire_noninteractive_setup_lock() {
 	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
 	# Max seconds to wait for a live, non-stale owner before timing out.
-	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-300}"
+	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-900}"
 	# Max seconds a live owner may hold the lock before it is treated as
 	# stale and reclaimed (0 disables stale-live reclaim).
 	local stale_ceiling="${AIDEVOPS_SETUP_STALE_TIMEOUT_S:-1800}"
@@ -916,10 +940,12 @@ _setup_acquire_noninteractive_setup_lock() {
 		owner_age=$(_setup_lock_owner_age "$lock_dir" "$owner_pid")
 		owner_cmd=""
 		[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+		[[ -n "$owner_cmd" ]] && owner_cmd=$(_setup_sanitize_lock_diagnostic_value "$owner_cmd")
 		local _diag_stage=""
 		if [[ -r "$_diag_stl" ]]; then
 			local _diag_cur_stage=""
 			_diag_cur_stage=$(awk -F'\t' '$4=="RUNNING"{s=$2} END{if(s)printf "%s",s}' "$_diag_stl" 2>/dev/null || true)
+			[[ -n "$_diag_cur_stage" ]] && _diag_cur_stage=$(_setup_sanitize_lock_diagnostic_value "$_diag_cur_stage")
 			[[ -n "$_diag_cur_stage" ]] && _diag_stage=", stage: ${_diag_cur_stage}"
 		fi
 
@@ -945,7 +971,7 @@ _setup_acquire_noninteractive_setup_lock() {
 		if [[ "$waited" -eq 0 ]]; then
 			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S). Diagnose: ${_diag_stl}"
 		elif [[ $(( waited % 60 )) -eq 0 ]]; then
-			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s, waited ${waited}s of ${wait_ceiling}s max)."
+			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}, waited ${waited}s of ${wait_ceiling}s max). Diagnose: ${_diag_stl}"
 		fi
 
 		sleep 10

@@ -267,6 +267,57 @@ test_contention_message_includes_elapsed_and_stage() {
 	return 0
 }
 
+test_contention_message_redacts_secret_like_command_values() {
+	local tmp_dir=""
+	local output=""
+	local owner_pid=""
+	tmp_dir=$(make_temp_dir)
+	owner_pid=$(start_fake_setup_owner)
+	mkdir -p "$tmp_dir/lock.d"
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' "$(date +%s 2>/dev/null || echo "0")" >"$tmp_dir/lock.d/started_at_epoch"
+	printf '%s\n' './setup.sh --non-interactive API_TOKEN=super-secret safe_arg=visible' >"$tmp_dir/lock.d/command"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=5
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=3600
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'exit=%s\n' "$?"
+		return 0
+	) 2>&1 || true
+
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
+	rm -rf "$tmp_dir"
+
+	if [[ "$output" == *"API_TOKEN=<redacted>"* && "$output" == *"safe_arg=visible"* && "$output" != *"super-secret"* ]]; then
+		print_result "lock contention command diagnostics redact secret-like values" 0
+		return 0
+	fi
+
+	print_result "lock contention command diagnostics redact secret-like values" 1 "output=${output}"
+	return 0
+}
+
+test_default_wait_ceiling_is_long_enough_for_slow_owner() {
+	local snippet=""
+	snippet=$(awk '
+		/^_setup_acquire_noninteractive_setup_lock\(\) \{/ { in_block=1 }
+		in_block { print }
+		in_block && /^\}/ { exit }
+	' "$SETUP_SCRIPT")
+
+	if [[ "$snippet" == *'AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-900'* ]]; then
+		print_result "default setup lock wait ceiling allows slow owner progress" 0
+		return 0
+	fi
+
+	print_result "default setup lock wait ceiling allows slow owner progress" 1 "snippet=${snippet}"
+	return 0
+}
+
 test_signal_cleanup_terminates_registered_children() {
 	local output=""
 
@@ -443,6 +494,8 @@ main() {
 	test_stale_live_owner_past_ceiling_is_reclaimed
 	test_wait_ceiling_prevents_indefinite_block
 	test_contention_message_includes_elapsed_and_stage
+	test_contention_message_redacts_secret_like_command_values
+	test_default_wait_ceiling_is_long_enough_for_slow_owner
 	test_signal_cleanup_terminates_registered_children
 	test_signal_cleanup_terminates_unregistered_child_tree
 	test_bounded_noncritical_stage_times_out_child_tree
