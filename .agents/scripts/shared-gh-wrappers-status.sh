@@ -73,7 +73,14 @@ _gh_pr_list_snapshot_cacheable() {
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
 		case "$_arg" in
-		--state) _state="${2:-open}"; shift 2 ;;
+		--state)
+			if [[ $# -gt 1 ]]; then
+				_state="$2"
+				shift 2
+			else
+				shift
+			fi
+			;;
 		--state=*) _state="${_arg#--state=}"; shift ;;
 		*) shift ;;
 		esac
