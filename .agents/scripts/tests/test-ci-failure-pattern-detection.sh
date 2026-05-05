@@ -6,7 +6,8 @@
 # pattern-aware CI-failure resolution guidance in pulse-merge-feedback.sh.
 #
 # Verifies:
-#   1. ci-failure-patterns.conf exists and contains all five classifications
+#   1. ci-failure-patterns.conf exists, contains all five classifications,
+#      and keeps TEST_FAILURE guidance reachable through one broad entry
 #   2. _classify_ci_failures_by_pattern identifies FORMAT_FAILURE checks
 #   3. _classify_ci_failures_by_pattern identifies LINT_FAILURE checks
 #   4. _classify_ci_failures_by_pattern identifies TYPECHECK_FAILURE checks
@@ -122,6 +123,23 @@ for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE OTHER; d
 		echo "${TEST_RED}FAIL${TEST_NC}: 1: conf missing ${class} entry"
 	fi
 done
+
+test_entry_count=$(grep -Ec '^TEST_FAILURE[[:space:]]*\|' "$CONF_FILE" 2>/dev/null || true)
+TESTS_RUN=$((TESTS_RUN + 1))
+if [[ "$test_entry_count" == "1" ]]; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf has one reachable TEST_FAILURE entry"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 1: expected one TEST_FAILURE entry, got $test_entry_count"
+fi
+
+TESTS_RUN=$((TESTS_RUN + 1))
+if ! grep -Eq '^TEST_FAILURE[[:space:]]*\|[[:space:]]*\*(Vitest|pnpm\*test)\*' "$CONF_FILE" 2>/dev/null; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf omits unreachable Vitest/pnpm duplicate entries"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 1: conf contains unreachable Vitest/pnpm duplicate entries"
+fi
 
 echo ""
 
