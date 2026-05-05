@@ -291,6 +291,90 @@ test_worker_worktree_claim_transfers_to_runtime_pid() {
 	return 0
 }
 
+test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
+	local worktree_dir="${TEST_ROOT}/claim-stale-live-owner"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	export AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS="1"
+	local claim_calls=0 unregister_called=0
+	local live_pid="$$"
+
+	claim_worktree_ownership() {
+		local claim_path="$1"
+		local claim_branch="$2"
+		shift 2
+		claim_calls=$((claim_calls + 1))
+		[[ -n "$claim_path" && -n "$claim_branch" ]] || return 1
+		[[ "$claim_calls" -gt 1 ]] && return 0
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "old-session" "" "22438" "2000-01-01T00:00:00Z"
+		return 0
+	}
+	unregister_worktree() {
+		local unregister_path="$1"
+		[[ -n "$unregister_path" ]] || return 1
+		unregister_called=$((unregister_called + 1))
+		return 0
+	}
+
+	local status=0
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
+
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$unregister_called" -eq 1 ]]; then
+		print_result "worker worktree claim reclaims stale live same-task owner" 0
+		return 0
+	fi
+
+	print_result "worker worktree claim reclaims stale live same-task owner" 1 \
+		"status=$status calls=$claim_calls unregister=$unregister_called"
+	return 0
+}
+
+test_worker_worktree_claim_classifies_unreclaimed_live_owner() {
+	local worktree_dir="${TEST_ROOT}/claim-live-owner-blocked"
+	mkdir -p "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	local live_pid="$$"
+
+	claim_worktree_ownership() {
+		local claim_path="$1"
+		local claim_branch="$2"
+		shift 2
+		[[ -n "$claim_path" && -n "$claim_branch" ]] || return 1
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "active-session" "" "99999" "2000-01-01T00:00:00Z"
+		return 0
+	}
+	unregister_worktree() { local unregister_path="$1"; [[ -n "$unregister_path" ]] || return 1; return 0; }
+
+	local status=0
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null 2>&1 || status=$?
+	local reason="${_WORKER_PRELAUNCH_FAILURE_REASON:-}"
+
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+
+	if [[ "$status" -ne 0 && "$reason" == "worker_worktree_live_owner" ]]; then
+		print_result "worker worktree claim classifies unreclaimed live owner" 0
+		return 0
+	fi
+
+	print_result "worker worktree claim classifies unreclaimed live owner" 1 \
+		"status=$status reason=${reason:-<empty>}"
+	return 0
+}
+
 test_deleted_cwd_recovery_uses_worker_worktree() {
 	local worktree_dir="${TEST_ROOT}/deleted-cwd-worktree"
 	local stale_dir="${TEST_ROOT}/deleted-cwd-stale"
@@ -1108,6 +1192,8 @@ main() {
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
 	test_worker_worktree_claim_transfers_to_runtime_pid
+	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
+	test_worker_worktree_claim_classifies_unreclaimed_live_owner
 	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
 	test_deleted_launch_cwd_recovers_to_work_dir

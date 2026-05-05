@@ -437,30 +437,34 @@ _exit_trap_handler() {
 
 	local reason="$_HRFF_FALLBACK_EXIT"
 	local session_count=0
-
-	if declare -F classify_worker_exit >/dev/null 2>&1; then
-		local _start_ms="${_WORKER_START_EPOCH_MS:-0}"
-		local _classified=""
-		_classified=$(classify_worker_exit "$exit_status" "$_start_ms" 2>/dev/null) || true
-		if [[ -n "$_classified" ]]; then
-			reason="$_classified"
-		else
-			print_warning "[exit-trap] classify_worker_exit returned empty — using process_exit fallback"
-		fi
-
-		# Re-read session count for the enriched comment (best-effort)
-		local _db="${_WORKER_ISOLATED_DB_PATH:-}"
-		local _shared="${HOME}/.local/share/opencode/opencode.db"
-		[[ -z "$_db" || ! -f "$_db" ]] && _db="$_shared"
-		if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_db" && "$_start_ms" =~ ^[0-9]+$ ]] && (( _start_ms > 0 )); then
-			local _cnt=""
-			_cnt=$(sqlite3 "$_db" \
-				"SELECT count(*) FROM session WHERE time_created >= ${_start_ms}" \
-				2>/dev/null) || _cnt=""
-			[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
-		fi
+	if [[ -n "${_WORKER_PRELAUNCH_FAILURE_REASON:-}" ]]; then
+		reason="$_WORKER_PRELAUNCH_FAILURE_REASON"
+		print_info "[exit-trap] using prelaunch failure reason: $reason"
 	else
-		print_warning "[exit-trap] classify_worker_exit not available — using process_exit fallback"
+		if declare -F classify_worker_exit >/dev/null 2>&1; then
+			local _start_ms="${_WORKER_START_EPOCH_MS:-0}"
+			local _classified=""
+			_classified=$(classify_worker_exit "$exit_status" "$_start_ms" 2>/dev/null) || true
+			if [[ -n "$_classified" ]]; then
+				reason="$_classified"
+			else
+				print_warning "[exit-trap] classify_worker_exit returned empty — using process_exit fallback"
+			fi
+
+			# Re-read session count for the enriched comment (best-effort)
+			local _db="${_WORKER_ISOLATED_DB_PATH:-}"
+			local _shared="${HOME}/.local/share/opencode/opencode.db"
+			[[ -z "$_db" || ! -f "$_db" ]] && _db="$_shared"
+			if command -v sqlite3 >/dev/null 2>&1 && [[ -f "$_db" && "$_start_ms" =~ ^[0-9]+$ ]] && (( _start_ms > 0 )); then
+				local _cnt=""
+				_cnt=$(sqlite3 "$_db" \
+					"SELECT count(*) FROM session WHERE time_created >= ${_start_ms}" \
+					2>/dev/null) || _cnt=""
+				[[ "$_cnt" =~ ^[0-9]+$ ]] && session_count="$_cnt"
+			fi
+		else
+			print_warning "[exit-trap] classify_worker_exit not available — using process_exit fallback"
+		fi
 	fi
 
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
