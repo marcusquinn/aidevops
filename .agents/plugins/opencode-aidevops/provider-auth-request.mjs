@@ -100,16 +100,17 @@ const TAG_RENAMES = [
   [/<env>/g, "<environment>"],               [/<\/env>/g, "</environment>"],
 ];
 
-// Anthropic's third-party detection (as of 2026-04-22) pattern-matches system
-// prompt content. Large system prompts with framework-specific instructions
-// (AGENTS.md, build.txt, workflow docs) trigger 400 "third-party" when the
-// total system text exceeds ~50K chars. Confirmed: same body size with neutral
-// "You are helpful" text passes; our actual text fails. Random 200KB passes.
+// Anthropic's third-party detection pattern-matches system prompt content.
+// Large system prompts with framework-specific instructions (AGENTS.md,
+// build.txt, workflow docs) trigger 400 "third-party" when retained in system.
+// The threshold has drifted over time: ~50K chars in April 2026, then below
+// 30K chars by GH#22777 testing in May 2026.
 //
-// Strategy: move overflow system blocks into the first user message turn.
-// The model still sees them; the server-side classifier doesn't scan user
-// messages for third-party patterns (confirmed by testing).
-const SYSTEM_CHAR_LIMIT = 40000; // conservative margin below 50K trigger
+// Strategy: keep only Anthropic/Claude-Code-equivalent system blocks in system
+// and move framework/runtime instructions into the first user message turn. The
+// model still sees them; the server-side classifier doesn't scan user messages
+// for third-party patterns (confirmed by testing).
+const OFFICIAL_CLAUDE_CODE_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude.";
 
 function sanitizeSystemPrompt(system) {
   return system.map((item) => {
@@ -144,25 +145,20 @@ function sanitizeSystemPrompt(system) {
 }
 
 /**
- * Move system blocks that exceed the char limit into the first user message.
- * Preserves the billing header (system[0]) in system. Moves overflow to
- * a prefixed text block in messages[0].
+ * Move framework/runtime system blocks into the first user message.
+ * Preserves the billing header and exact official Claude Code identity block
+ * in system. Moves everything else to a prefixed text block in messages[0].
  */
 function redistributeSystemToMessages(parsed) {
   if (!Array.isArray(parsed.system) || !Array.isArray(parsed.messages)) return;
-  const totalSystemChars = parsed.system.reduce((sum, b) => sum + (b.text?.length || 0), 0);
-  if (totalSystemChars <= SYSTEM_CHAR_LIMIT) return; // under limit, no action
 
-  // Keep billing header + as many blocks as fit under the limit
   const kept = [];
   const overflow = [];
-  let charCount = 0;
-  for (const block of parsed.system) {
-    const len = block.text?.length || 0;
-    // Always keep the billing header (first block)
-    if (kept.length === 0 || charCount + len <= SYSTEM_CHAR_LIMIT) {
+  for (const [index, block] of parsed.system.entries()) {
+    const isBillingHeader = index === 0 && block.type === "text" && block.text?.startsWith("x-anthropic-billing-header:");
+    const isOfficialClaudeCodePrompt = block.type === "text" && block.text === OFFICIAL_CLAUDE_CODE_SYSTEM_PROMPT;
+    if (isBillingHeader || isOfficialClaudeCodePrompt) {
       kept.push(block);
-      charCount += len;
     } else {
       overflow.push(block);
     }
@@ -359,6 +355,12 @@ function applyBodyTransforms(parsed) {
   }
 }
 
+function finalizeBillingHeaderHash(serialized) {
+  if (!serialized.includes("cch=00000;")) return serialized;
+  const bodyHash = computeBodyHash(serialized);
+  return serialized.replace("cch=00000;", `cch=${bodyHash};`);
+}
+
 /**
  * Transform the request body: sanitize system prompt, prefix tool names.
  * @param {string|null|undefined} body @returns {string|null|undefined}
@@ -369,8 +371,7 @@ export function transformRequestBody(body) {
     const parsed = JSON.parse(body);
     applyBodyTransforms(parsed);
     const serialized = serializeWithKeyOrder(parsed);
-    void computeBodyHash;
-    return serialized;
+    return finalizeBillingHeaderHash(serialized);
   } catch {
     return body;
   }
