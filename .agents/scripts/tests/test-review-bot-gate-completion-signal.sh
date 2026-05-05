@@ -594,6 +594,29 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 	return 0
 }
 
+test_do_check_accepts_non_review_with_success_status() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	bot_has_real_review() { return 1; }
+	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	any_bot_has_success_status() { return 0; }
+
+	local output status
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 0 && "$output" == "PASS" ]]; then
+		print_result "do_check accepts non-review state with success status" 0
+	else
+		print_result "do_check accepts non-review state with success status" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
 # ---------- Run ----------
 
 main() {
@@ -648,6 +671,7 @@ main() {
 	echo "=== do_check decision buckets (GH#22802) ==="
 	test_do_check_passes_true_rate_limit_only
 	test_do_check_blocks_non_rate_limit_non_review_states
+	test_do_check_accepts_non_review_with_success_status
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

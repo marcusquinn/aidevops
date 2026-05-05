@@ -718,6 +718,14 @@ do_check() {
 		echo "PASS" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
 		return 0
+	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
+		# GH#22884: Some bots expose review completion only through a SUCCESS
+		# commit status after leaving a placeholder/non-review issue comment. Do
+		# not bridge to a raw skip; require the bot-authored success status before
+		# treating the gate as reviewed.
+		echo "PASS"
+		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
+		return 0
 	elif [[ -n "$non_review_bots" ]]; then
 		# GH#22802: Failed/skipped/placeholder bot states are not capacity
 		# constraints and must not inherit the user preference for true rate
