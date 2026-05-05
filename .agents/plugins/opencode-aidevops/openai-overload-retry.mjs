@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-const DEFAULT_OVERLOAD_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
-const OVERLOAD_MARKERS = ["service_unavailable_error", "server_is_overloaded", "servers are currently overloaded"];
+export { annotateOpenAIOverloadResponse, isOpenAIOverloadText } from "./openai-overload-annotation.mjs";
+import { annotateOpenAIOverloadText, isOpenAIOverloadText } from "./openai-overload-annotation.mjs";
+
+const DEFAULT_OVERLOAD_RETRY_DELAYS_MS = [3_000, 10_000, 30_000, 60_000, 120_000, 180_000];
 const STREAM_CONTENT_MARKERS = [
   "response.output_text.delta",
   "response.function_call_arguments.delta",
@@ -23,17 +25,21 @@ export function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export function isOpenAIOverloadText(text) {
-  const lowered = String(text || "").toLowerCase();
-  return OVERLOAD_MARKERS.some((marker) => lowered.includes(marker));
-}
-
 function isOpenAIStreamContentText(text) {
   return STREAM_CONTENT_MARKERS.some((marker) => String(text || "").includes(marker));
 }
 
 function enqueueChunks(controller, chunks) {
   for (const chunk of chunks) controller.enqueue(chunk);
+}
+
+export function formatRetryDelay(delayMs) {
+  if (delayMs < 1000) return `${delayMs}ms`;
+  const seconds = Math.round(delayMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
 async function pipeRemainingStream(reader, controller) {
@@ -61,7 +67,7 @@ async function inspectStreamPrefix(reader, controller, decoder, retryAvailable) 
 
     if (isOpenAIOverloadText(bufferedText)) {
       if (!retryAvailable) {
-        enqueueChunks(controller, buffered);
+        controller.enqueue(new TextEncoder().encode(annotateOpenAIOverloadText(bufferedText)));
         return "pipe";
       }
       await reader.cancel().catch(() => {});
@@ -76,7 +82,7 @@ async function inspectStreamPrefix(reader, controller, decoder, retryAvailable) 
 }
 
 async function retryOpenAIOverloadStream(ctx) {
-  const { originalFetch, response, retryInput, init, controller, retryDelays, buildRetryRequest } = ctx;
+  const { originalFetch, response, retryInput, init, controller, retryDelays, buildRetryRequest, onRetry } = ctx;
   const decoder = new TextDecoder();
   let currentResponse = response;
 
@@ -88,6 +94,12 @@ async function retryOpenAIOverloadStream(ctx) {
 
     const delayMs = retryDelays[attempt];
     console.error(`[aidevops] OpenAI provider: overloaded stream error — retrying request (${attempt + 1}/${retryDelays.length})`);
+    await onRetry?.({
+      attempt: attempt + 1,
+      totalAttempts: retryDelays.length,
+      delayMs,
+      delayLabel: formatRetryDelay(delayMs),
+    });
     if (delayMs > 0) await sleep(delayMs);
     currentResponse = await originalFetch(buildRetryRequest(retryInput), init);
     if (!currentResponse.body) return controller.error(new Error(`OpenAI provider: retry response missing body (status: ${currentResponse.status})`));
