@@ -121,6 +121,16 @@ assert_in_gate \
 	"_check_linked_issue_gate sets blocked=true on hard-block signals"
 
 # -------------------------------------------------------------------
+# Assertion F (GH#22854): missing assignee remains a headless-only block
+# -------------------------------------------------------------------
+assert_in_gate \
+	'! is_headless' \
+	"_check_linked_issue_gate exempts interactive sessions from missing-assignee block (GH#22854)"
+assert_in_gate \
+	'headless workers' \
+	"_check_linked_issue_gate documents headless-only missing-assignee enforcement (GH#22854)"
+
+# -------------------------------------------------------------------
 # Assertion G (t2894): gate iterates over enumerate-blockers output
 # with a loop so ALL blockers are reported (not just the first).
 # -------------------------------------------------------------------
@@ -132,7 +142,7 @@ assert_in_gate \
 	"_check_linked_issue_gate loop reads from dedup_out heredoc string (t2894)"
 
 # -------------------------------------------------------------------
-# Assertion F: full-loop-helper-state.sh shellcheck-clean
+# Assertion H: full-loop-helper-state.sh shellcheck-clean
 # -------------------------------------------------------------------
 if command -v shellcheck >/dev/null 2>&1; then
 	if shellcheck "$HELPER_FILE" >/dev/null 2>&1; then
