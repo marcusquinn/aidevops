@@ -11,6 +11,11 @@
 
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+readonly SCRIPT_DIR
+# shellcheck source=/dev/null
+source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+
 usage() {
 	printf 'Usage:\n'
 	printf '  %s analyze <lint-output-file> [project-dir]\n' "${0##*/}"
@@ -76,6 +81,9 @@ analyze_lint_output() {
 }
 
 run_lint_command() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	local project_dir="$PWD"
 	local current_arg=""
 	local next_arg=""
@@ -109,6 +117,7 @@ run_lint_command() {
 
 	local output_file
 	output_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-lint-output.XXXXXX") || return 1
+	push_cleanup "rm -f '${output_file}'"
 
 	local lint_rc=0
 	"$@" >"$output_file" 2>&1 || lint_rc=$?
