@@ -32,6 +32,7 @@
 #   --update-baseline   Re-count all patterns and write new ratchets.json baseline
 #   --init-baseline     Same as --update-baseline (alias for first-time setup)
 #   --strict            Make ratchet failures blocking (default: advisory)
+#   RATCHET_STEP_TIMEOUT_SECONDS=N bounds each ratchet counter (default: 120)
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
