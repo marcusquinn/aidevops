@@ -3,8 +3,13 @@
 # Templates use .json.txt extension and are safe to commit
 configs/*.json
 
+# Ignore local per-repo runtime config files
+# Templates use .json.txt extension and are safe to commit
+_config/*.json
+
 # Allow template files (.json.txt) to be committed for spacebar preview
 !configs/*.json.txt
+!_config/*.json.txt
 !configs/mcp-templates/
 
 # Allow agent directory to be committed
