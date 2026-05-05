@@ -142,7 +142,7 @@ Narrative phases without a per-phase marker are NOT auto-filed unless `<!-- phas
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
 
-**Auto-dispatch default:** Worker-ready implementation tasks default to `#auto-dispatch`, including issues created by interactive agents or workers.
+**Auto-dispatch default:** Worker-ready implementation tasks default to `#auto-dispatch`, including issues created by interactive agents (user-facing sessions) or workers.
 
 The readiness gate is:
 
@@ -153,6 +153,7 @@ The readiness gate is:
 
 If any readiness element is missing, finish the brief before filing/queueing; if the task fails the gate, mark it `#parent`/blocked instead. Omit `#auto-dispatch` only for:
 
+- Blocker labels
 - Credentials, accounts, or purchases
 - Decomposition or human-decision work
 - Hardware or external service setup

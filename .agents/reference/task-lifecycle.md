@@ -46,14 +46,23 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 ## Auto-Dispatch and Completion
 
-- **Auto-dispatch default**: Worker-ready implementation issues/tasks created by main agents or workers default to `#auto-dispatch`; readiness is the gate, not an opt-in. Add the tag only when the brief/body has:
+- **Auto-dispatch default**: Worker-ready implementation issues/tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; readiness is the gate, not an opt-in. Add the tag only when the brief/body has:
   - a clear deliverable in the `What` section;
   - referenced files or patterns in the `How` section;
   - automatable verification; and
   - 2+ acceptance criteria beyond generic tests/lint.
 
   If readiness is missing, finish the brief first or mark the work `#parent`/blocked instead of filing a non-dispatchable implementation issue. See `workflows/plans.md` "Auto-Dispatch Tagging".
-- **Exclusions**: Needs credentials, decomposition, research, human preference/approval, unresolved dependencies, or explicit user preference. Dispatch-path files are **not** excluded post-t2920; they auto-dispatch with opus-4-7 elevation. Canonical blocker label set: `reference/dispatch-blockers.md`.
+- **Exclusions**: Omit `#auto-dispatch` only for:
+  - blocker labels;
+  - credentials, accounts, or purchases;
+  - decomposition or human-decision work;
+  - hardware or external service setup;
+  - investigation/evaluation without a clear deliverable;
+  - incomplete dependencies; or
+  - explicit user preference for interactive/manual handling.
+
+  Dispatch-path files are **not** excluded post-t2920; they auto-dispatch with opus-4-7 elevation. Canonical blocker label set: `reference/dispatch-blockers.md`.
 - **Dispatch-path advisory (t2821, t2832, t2920)**: When a task's `### Files Scope` or `## How` section references any file in `.agents/configs/self-hosting-files.conf` (pulse-wrapper.sh, pulse-dispatch-*, headless-runtime-helper.sh, dispatch-dedup-helper.sh, etc.), use `#auto-dispatch` as normal. The t2819 pre-dispatch detector auto-elevates these workers to `model:opus-4-7`; combined with worker worktree isolation, CI gates, watchdog kills, and the t2690 circuit breaker, the protection cascade replaces the historical t2821 `no-auto-dispatch` default (reverted t2920). **Opt-out (rare):** use `#no-auto-dispatch #interactive` only when you specifically want to implement interactively to observe the running system. Full decision tree: `reference/auto-dispatch.md` "Dispatch-Path Default (t2821 / t2920)".
 - **Quality gate**: Same readiness definition as `#auto-dispatch` above; do not maintain a second criteria list.
 - **Interactive workflow**: Add `assignee:` before pushing if working interactively.

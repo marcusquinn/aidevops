@@ -61,7 +61,7 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 
 ## Auto-Dispatch Tagging
 
-Worker-ready implementation tasks created by main agents or workers default to `#auto-dispatch`; readiness is the gate. Add the tag when ALL Include column criteria pass and NO exclusion criteria apply. If readiness is missing, finish the brief/body first or mark the item `#parent`/blocked instead of saving a non-dispatchable implementation issue:
+Worker-ready implementation tasks created by interactive agents (user-facing sessions) or workers default to `#auto-dispatch`; readiness is the gate. Add the tag when ALL Include column criteria pass and NO exclusion criteria apply. If readiness is missing, finish the brief/body first or mark the item `#parent`/blocked instead of saving a non-dispatchable implementation issue:
 
 | Include (ALL required) | Exclude (ANY blocks) |
 |------------------------|----------------------|
