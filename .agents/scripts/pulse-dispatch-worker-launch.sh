@@ -212,6 +212,100 @@ _dlw_resolve_tier_and_model() {
 	return 0
 }
 
+_dlw_zero_output_failure_count() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
+	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
+	[[ -n "${FAST_FAIL_STATE_FILE:-}" && -f "$FAST_FAIL_STATE_FILE" ]] || { printf '0'; return 0; }
+
+	local key="${repo_slug}/${issue_number}"
+	local entry=""
+	entry=$(jq -r --arg k "$key" '.[$k] // empty' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || entry=""
+	[[ -n "$entry" ]] || { printf '0'; return 0; }
+
+	local reason="" crash_type="" count=""
+	reason=$(printf '%s' "$entry" | jq -r '.reason // ""' 2>/dev/null) || reason=""
+	crash_type=$(printf '%s' "$entry" | jq -r '.crash_type // ""' 2>/dev/null) || crash_type=""
+	count=$(printf '%s' "$entry" | jq -r '.count // 0' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+
+	case "${reason}:${crash_type}" in
+	worker_noop_zero_output:* | *:no_work | no_work:*) printf '%s' "$count" ;;
+	*) printf '0' ;;
+	esac
+	return 0
+}
+
+_dlw_zero_output_fallback_prompt() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+
+	cat <<EOF
+You are assigned to work on issue #${issue_number} in ${repo_slug}.
+
+Previous dispatch attempts for this issue launched a worker but produced zero session output. Do not rely on embedded issue content from the dispatcher.
+
+First actions:
+1. Read the issue directly with: gh issue view ${issue_number} --repo ${repo_slug}
+2. Ignore ops/provenance/audit comments as implementation context.
+3. Summarize the actionable task, files, and verification before editing.
+4. If the issue brief is malformed, too broad, or not worker-ready, rewrite the brief or split it into smaller worker-ready issues instead of attempting a speculative implementation.
+
+Issue title: ${issue_title:-Issue #${issue_number}}
+EOF
+	return 0
+}
+
+_dlw_prepare_prompt_for_launch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+	local original_prompt="$4"
+
+	local zero_count=""
+	zero_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
+	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
+	local fallback_threshold="${ZERO_OUTPUT_URL_FALLBACK_THRESHOLD:-2}"
+	[[ "$fallback_threshold" =~ ^[0-9]+$ ]] || fallback_threshold=2
+
+	if [[ "$zero_count" -ge "$fallback_threshold" ]]; then
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: using URL-only bootstrap prompt after ${zero_count} zero-output launches" >>"$LOGFILE"
+		_dlw_zero_output_fallback_prompt "$issue_number" "$repo_slug" "$issue_title"
+		return 0
+	fi
+
+	printf '%s' "$original_prompt"
+	return 0
+}
+
+_dlw_hold_repeated_zero_output() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local zero_count=""
+	zero_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
+	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
+	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
+	[[ "$hold_threshold" =~ ^[0-9]+$ ]] || hold_threshold=4
+
+	if [[ "$zero_count" -lt "$hold_threshold" ]]; then
+		return 1
+	fi
+
+	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${zero_count} zero-output launches; applying brief-rewrite triage labels" >>"$LOGFILE"
+	gh label create "needs-brief-rewrite" --repo "$repo_slug" \
+		--description "Issue brief should be rewritten or split before redispatch" \
+		--color "FBCA04" --force >/dev/null 2>&1 || true
+	gh issue edit "$issue_number" --repo "$repo_slug" \
+		--add-label "needs-brief-rewrite" \
+		--add-label "needs-maintainer-review" \
+		--remove-label "status:queued" >/dev/null 2>&1 || true
+	return 0
+}
+
 #######################################
 # Pre-create a worker worktree so the worker can start coding immediately
 # instead of spending 5-8 tool calls on worktree setup. Populates two
@@ -1187,6 +1281,10 @@ _dispatch_launch_worker() {
 	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
+	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug"; then
+		return 2
+	fi
+
 	# t1894/t1934: Lock issue and linked PRs during worker execution
 	_ds_t0=$(_ds_now_ns)
 	lock_issue_for_worker "$issue_number" "$repo_slug"
@@ -1220,8 +1318,10 @@ _dispatch_launch_worker() {
 
 	_ds_t0=$(_ds_now_ns)
 	local worker_pid
+	local launch_prompt=""
+	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt")
 	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
-		"$session_key" "$worker_log" "$prompt" "$repo_path" \
+		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
 		"$worker_worktree_path" "$worker_worktree_branch")
 	_ds_record "$issue_number" "$repo_slug" "worker_spawn" "$_ds_t0"
