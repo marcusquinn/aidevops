@@ -879,7 +879,10 @@ _dlw_nohup_launch() {
 		--prompt "$prompt"
 	)
 	if [[ -n "$selected_model" ]]; then
-		worker_cmd+=(--model "$selected_model")
+		# Dispatcher-selected models are initial preferences, not user-pinned
+		# overrides. Let headless-runtime-helper.sh retry/rotate on transient
+		# no-activity/provider failures while preserving explicit --model pins.
+		worker_cmd+=(--initial-model "$selected_model")
 	fi
 
 	# t2757: Detach worker via setsid (extracted to helper)

@@ -93,6 +93,97 @@ test_non_full_loop_prompt_unchanged() {
 	return 0
 }
 
+test_parse_initial_model_does_not_set_explicit_override() {
+	local role="worker" session_key="issue-22862" work_dir="$TEST_ROOT" title="Issue #22862" prompt="/full-loop test" prompt_file=""
+	local model_override="" initial_model="" tier_override="" variant_override="" agent_name="" headless_runtime="" detach=0
+	local -a extra_args=()
+
+	_parse_run_args --initial-model openai/gpt-5.5 --tier sonnet --opencode-arg --print-logs
+
+	if [[ "$initial_model" == "openai/gpt-5.5" && -z "$model_override" && "$tier_override" == "sonnet" ]]; then
+		print_result "--initial-model does not set explicit model override" 0
+		return 0
+	fi
+
+	print_result "--initial-model does not set explicit model override" 1 \
+		"initial_model=${initial_model:-<empty>} model_override=${model_override:-<empty>} tier=${tier_override:-<empty>}"
+	return 0
+}
+
+test_startup_no_activity_timeout_returns_watchdog_continue() {
+	local output_file="${TEST_ROOT}/startup-stall.log"
+	printf '%s\n' 'sqlite-migration:done' >"$output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_should_retry=0
+
+	local status=0
+	_handle_run_result 124 "$output_file" "worker" "openai" "issue-22862" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 78 && "$_run_result_label" == "watchdog_startup_continue" && ! -f "$output_file" ]]; then
+		print_result "startup no-activity timeout attempts bounded continuation" 0
+		return 0
+	fi
+
+	print_result "startup no-activity timeout attempts bounded continuation" 1 \
+		"status=$status label=${_run_result_label:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	return 0
+}
+
+test_dispatcher_initial_model_can_rotate_after_rate_limit() {
+	local result status action next_model
+	result=$(
+		cmd_run_action=""
+		cmd_run_next_model=""
+		_run_failure_reason="rate_limit"
+		_run_should_retry=0
+		_HRW_STATUS_FAIL="fail"
+		print_warning() { return 0; }
+		choose_model() { printf '%s' 'anthropic/claude-sonnet-4-6'; return 0; }
+		_cmd_run_finish() { return 0; }
+		local retry_status=0
+		_cmd_run_prepare_retry "worker" "issue-22862" "" 1 3 "openai/gpt-5.5" 124 || retry_status=$?
+		printf '%s|%s|%s' "$retry_status" "$cmd_run_action" "$cmd_run_next_model"
+	)
+	IFS='|' read -r status action next_model <<<"$result"
+
+	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-4-6" ]]; then
+		print_result "dispatcher-selected initial model can rotate after rate limit" 0
+		return 0
+	fi
+
+	print_result "dispatcher-selected initial model can rotate after rate limit" 1 \
+		"status=$status action=${action:-<empty>} next=${next_model:-<empty>}"
+	return 0
+}
+
+test_explicit_model_override_remains_pinned_on_rate_limit() {
+	local result status finished_status action
+	result=$(
+		cmd_run_action=""
+		cmd_run_next_model=""
+		_run_failure_reason="rate_limit"
+		_run_should_retry=0
+		_HRW_STATUS_FAIL="fail"
+		print_warning() { return 0; }
+		local finished_inner=""
+		_cmd_run_finish() { local status_arg="$2"; finished_inner="$status_arg"; return 0; }
+		local retry_status=0
+		_cmd_run_prepare_retry "worker" "issue-22862" "openai/gpt-5.5" 1 3 "openai/gpt-5.5" 124 || retry_status=$?
+		printf '%s|%s|%s' "$retry_status" "$finished_inner" "$cmd_run_action"
+	)
+	IFS='|' read -r status finished_status action <<<"$result"
+
+	if [[ "$status" -eq 124 && "$finished_status" == "fail" && "$action" == "retry" ]]; then
+		print_result "explicit model override remains pinned on rate limit" 0
+		return 0
+	fi
+
+	print_result "explicit model override remains pinned on rate limit" 1 \
+		"status=$status finish=${finished_status:-<empty>} action=${action:-<empty>}"
+	return 0
+}
+
 test_issue_worker_env_contract_rejects_missing_env() {
 	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
 	local output=""
@@ -1009,6 +1100,10 @@ main() {
 	setup_test_env
 	test_appends_escalation_contract
 	test_non_full_loop_prompt_unchanged
+	test_parse_initial_model_does_not_set_explicit_override
+	test_startup_no_activity_timeout_returns_watchdog_continue
+	test_dispatcher_initial_model_can_rotate_after_rate_limit
+	test_explicit_model_override_remains_pinned_on_rate_limit
 	test_issue_worker_env_contract_rejects_missing_env
 	test_issue_worker_env_contract_rejects_missing_worktree
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree

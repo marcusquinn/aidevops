@@ -159,7 +159,7 @@ HEADLESS_ACTIVITY_TIMEOUT_SECONDS="${HEADLESS_ACTIVITY_TIMEOUT_SECONDS:-600}"
 
 # _parse_run_args: parse cmd_run flags into caller-scoped variables.
 # Caller must declare: role session_key work_dir title prompt prompt_file
-#                      model_override tier_override variant_override agent_name extra_args
+#                      model_override initial_model tier_override variant_override agent_name extra_args
 # Returns 1 on unknown flag.
 _parse_run_args() {
 	while [[ $# -gt 0 ]]; do
@@ -190,6 +190,10 @@ _parse_run_args() {
 			;;
 		--model)
 			model_override="${2:-}"
+			shift 2
+			;;
+		--initial-model)
+			initial_model="${2:-}"
 			shift 2
 			;;
 		--tier)
@@ -759,7 +763,9 @@ _handle_run_result() {
 	#   (t2956 / Issue #21231)
 	# - 124 + activity → return 78 (watchdog_stall_continue) so the retry loop
 	#   can resume the session with a continuation prompt before giving up.
-	# - 124 + no activity → rate_limit as before (provider never responded).
+	# - 124 + startup output but no activity → return 78 so the retry loop can
+	#   try a bounded fresh continuation before provider backoff/rotation.
+	# - 124 + no output or explicit provider marker → rate_limit as before.
 	if [[ "$exit_code" -eq 124 ]]; then
 		failure_reason=$(classify_failure_reason "$output_file")
 		if [[ "$failure_reason" == "rate_limit" ]]; then
@@ -791,6 +797,12 @@ _handle_run_result() {
 				_run_result_label="watchdog_stall_continue"
 				rm -f "$output_file"
 				print_warning "$selected_model watchdog stall with prior activity — will attempt session continuation"
+				return 78
+			fi
+			if [[ -s "$output_file" && "$role" != "pulse" ]]; then
+				_run_result_label="watchdog_startup_continue"
+				rm -f "$output_file"
+				print_warning "$selected_model watchdog startup stall without model activity — will attempt bounded continuation before provider backoff"
 				return 78
 			fi
 			failure_reason="rate_limit"
@@ -1369,6 +1381,7 @@ cmd_run() {
 	local prompt=""
 	local prompt_file=""
 	local model_override=""
+	local initial_model=""
 	local tier_override=""
 	local variant_override=""
 	local agent_name=""
@@ -1388,7 +1401,7 @@ cmd_run() {
 	fi
 
 	local selected_model
-	selected_model=$(choose_model "$role" "$model_override" "$tier_override") || {
+	selected_model=$(choose_model "$role" "${model_override:-$initial_model}" "$tier_override") || {
 		local choose_exit=$?
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
@@ -1666,7 +1679,7 @@ headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Cla
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
   headless-runtime-helper.sh canary [--role pulse|worker] [--model provider/model] [--tier haiku|sonnet|opus|...]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
+  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
