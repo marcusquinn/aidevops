@@ -65,10 +65,15 @@ _load_private_slugs() {
 
 # sanitize_text strips private slugs, non-framework file paths,
 # credential patterns, and home directory references from text.
-# Arguments: $1 — text to sanitize
+# Arguments: $1 — text to sanitize, $2 — optional preloaded private slugs
 # Outputs: sanitized text to stdout
 sanitize_text() {
 	local text="$1"
+	local private_slugs="${2-}"
+
+	if [[ -z "$private_slugs" ]]; then
+		private_slugs=$(_load_private_slugs)
+	fi
 
 	# 1. Strip private repo slugs
 	local slug
@@ -78,7 +83,7 @@ sanitize_text() {
 		local escaped
 		escaped=$(printf '%s' "$slug" | sed 's/[.[\/*^$]/\\&/g')
 		text=$(printf '%s' "$text" | sed "s|${escaped}|[private-repo]|g")
-	done < <(_load_private_slugs)
+	done <<<"$private_slugs"
 
 	# 2. Strip absolute file paths outside .agents/ (user project paths)
 	text=$(printf '%s' "$text" | sed -E 's|/Users/[^ ]*|[local-path]|g')
@@ -157,36 +162,43 @@ _compose_error_pattern_issue() {
 
 	local count
 	count=$(printf '%s' "$patterns_json" | jq -r 'length' 2>/dev/null) || count=0
+	local private_slugs
+	private_slugs=$(_load_private_slugs)
 	local i=0
 	while [[ "$i" -lt "$count" && "$i" -lt 10 ]]; do
-		local tool category pcount models examples_len recovery_len
-		tool=$(printf '%s' "$patterns_json" | jq -r ".[$i].tool // \"unknown\"" 2>/dev/null) || tool="unknown"
-		category=$(printf '%s' "$patterns_json" | jq -r ".[$i].error_category // \"other\"" 2>/dev/null) || category="other"
-		pcount=$(printf '%s' "$patterns_json" | jq -r ".[$i].count // 0" 2>/dev/null) || pcount=0
-		models=$(printf '%s' "$patterns_json" | jq -r ".[$i].model_count // 0" 2>/dev/null) || models=0
+		local tool category pcount models examples_len recovery_len example_error example_input example_user recovery
+		local pattern_fields
+		pattern_fields=$(printf '%s' "$patterns_json" | jq -r --argjson idx "$i" '
+			.[$idx] as $pattern
+			| [
+				($pattern.tool // "unknown"),
+				($pattern.error_category // "other"),
+				($pattern.count // 0),
+				($pattern.model_count // 0),
+				(($pattern.examples // []) | length),
+				(($pattern.recovery_patterns // []) | length),
+				($pattern.examples[0].error // ""),
+				($pattern.examples[0].input // ""),
+				($pattern.examples[0].user_response // ""),
+				($pattern.recovery_patterns[0] // "")
+			]
+			| @tsv' 2>/dev/null) || pattern_fields=$'unknown\tother\t0\t0\t0\t0\t\t\t\t'
+		IFS=$'\t' read -r tool category pcount models examples_len recovery_len example_error example_input example_user recovery <<<"$pattern_fields"
 
 		body+="- \`${tool}:${category}\` — ${pcount}x across ${models} model(s)"$'\n'
-		examples_len=$(printf '%s' "$patterns_json" | jq -r ".[$i].examples | length // 0" 2>/dev/null) || examples_len=0
 		if [[ "$examples_len" -gt 0 ]]; then
-			local example_error example_input example_user
-			example_error=$(printf '%s' "$patterns_json" | jq -r ".[$i].examples[0].error // \"\"" 2>/dev/null) || example_error=""
-			example_input=$(printf '%s' "$patterns_json" | jq -r ".[$i].examples[0].input // \"\"" 2>/dev/null) || example_input=""
-			example_user=$(printf '%s' "$patterns_json" | jq -r ".[$i].examples[0].user_response // \"\"" 2>/dev/null) || example_user=""
-			example_error=$(sanitize_text "$example_error")
-			example_input=$(sanitize_text "$example_input")
-			example_user=$(sanitize_text "$example_user")
+			example_error=$(sanitize_text "$example_error" "$private_slugs")
+			example_input=$(sanitize_text "$example_input" "$private_slugs")
+			example_user=$(sanitize_text "$example_user" "$private_slugs")
 			[[ ${#example_error} -gt 240 ]] && example_error="${example_error:0:240}..."
 			[[ ${#example_input} -gt 240 ]] && example_input="${example_input:0:240}..."
 			[[ ${#example_user} -gt 240 ]] && example_user="${example_user:0:240}..."
 			[[ -n "$example_error" ]] && body+="  - sanitized error: \`${example_error}\`"$'\n'
 			[[ -n "$example_input" ]] && body+="  - summarized command: \`${example_input}\`"$'\n'
-			[[ -n "$example_user" && "$example_user" != "null" ]] && body+="  - observed user recovery: ${example_user}"$'\n'
+			[[ -n "$example_user" ]] && body+="  - observed user recovery: ${example_user}"$'\n'
 		fi
-		recovery_len=$(printf '%s' "$patterns_json" | jq -r ".[$i].recovery_patterns | length // 0" 2>/dev/null) || recovery_len=0
 		if [[ "$recovery_len" -gt 0 ]]; then
-			local recovery
-			recovery=$(printf '%s' "$patterns_json" | jq -r ".[$i].recovery_patterns[0] // \"\"" 2>/dev/null) || recovery=""
-			recovery=$(sanitize_text "$recovery")
+			recovery=$(sanitize_text "$recovery" "$private_slugs")
 			[[ ${#recovery} -gt 240 ]] && recovery="${recovery:0:240}..."
 			[[ -n "$recovery" ]] && body+="  - expected recovery: ${recovery}"$'\n'
 		fi
