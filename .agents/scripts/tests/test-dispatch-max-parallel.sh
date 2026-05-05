@@ -163,6 +163,26 @@ test_count_outcomes_empty_file() {
 	return 0
 }
 
+test_wait_tracked_pids_suppresses_stale_child() {
+	local stale_pid stderr_file rc stderr_output
+	stderr_file=$(mktemp)
+	(
+		exit 0
+	) &
+	stale_pid=$!
+	wait "$stale_pid" 2>/dev/null || true
+	rc=0
+	_dispatch_max_wait_tracked_pids "$stale_pid" 2>"$stderr_file" || rc=$?
+	stderr_output=$(cat "$stderr_file" 2>/dev/null || true)
+	rm -f "$stderr_file"
+	if [[ "$rc" -eq 0 && -z "$stderr_output" ]]; then
+		print_result "wait_tracked_pids: suppresses stale child stderr" 0
+	else
+		print_result "wait_tracked_pids: suppresses stale child stderr" 1 "rc=${rc} stderr=${stderr_output}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Test 3: _dispatch_max_aggregate_outcomes populates module-globals + invalidates cache
 # =============================================================================
@@ -539,6 +559,7 @@ test_compute_max_parallel_throttle_forces_serial
 test_compute_max_parallel_invalid_var
 test_count_outcomes_success_and_fail
 test_count_outcomes_empty_file
+test_wait_tracked_pids_suppresses_stale_child
 test_aggregate_outcomes_basic
 test_aggregate_outcomes_invalidates_canary_cache
 test_aggregate_outcomes_clears_throttle_on_success

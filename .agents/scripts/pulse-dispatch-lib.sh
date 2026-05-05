@@ -1323,11 +1323,31 @@ _dispatch_max_loop() {
 		_pids+=($!)
 	done <"$candidate_file"
 
-	# Wait for all in-flight dispatches to complete
-	wait
+	# Wait only for tracked in-flight dispatches. A bare wait can repeat
+	# stale child diagnostics into pulse-wrapper.log after another wait site
+	# has already reaped a child (GH#22919).
+	_dispatch_max_wait_tracked_pids "${_pids[@]+${_pids[@]}}"
+	_pids=()
 	local dispatched_count
 	dispatched_count=$(_dispatch_max_count_outcomes "$outcomes_file")
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# t3005/GH#22919: Wait only for tracked parallel-dispatch children.
+#
+# Avoids bare `wait`, which can emit repeated "pid is not a child" diagnostics
+# when tracked PIDs were already reaped by earlier cap-loop cleanup.
+#
+# Arguments: $@ - pids to wait for
+#######################################
+_dispatch_max_wait_tracked_pids() {
+	local pid
+	for pid in "$@"; do
+		[[ -n "$pid" ]] || continue
+		wait "$pid" 2>/dev/null || true
+	done
 	return 0
 }
 
