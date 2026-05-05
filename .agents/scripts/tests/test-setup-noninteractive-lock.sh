@@ -267,6 +267,81 @@ test_contention_message_includes_elapsed_and_stage() {
 	return 0
 }
 
+test_default_wait_ceiling_is_longer_than_observed_slow_owner() {
+	local output=""
+
+	output=$(
+		load_lock_functions
+		declare -f _setup_acquire_noninteractive_setup_lock
+		return 0
+	) 2>&1 || true
+
+	if [[ "$output" == *'AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-900'* ]]; then
+		print_result "default lock wait ceiling covers slow setup owners" 0
+		return 0
+	fi
+
+	print_result "default lock wait ceiling covers slow setup owners" 1 "output=${output}"
+	return 0
+}
+
+test_contention_command_redacts_secret_like_values() {
+	local output=""
+
+	output=$(
+		load_lock_functions
+		_setup_redact_secret_like_command_values './setup.sh --non-interactive --token TOKEN_VALUE_PLACEHOLDER password=PASSWORD_VALUE_PLACEHOLDER --api-key API_KEY_VALUE_PLACEHOLDER --safe value'
+		return 0
+	) 2>&1 || true
+
+	if [[ "$output" == *'--token [redacted]'* && "$output" == *'password=[redacted]'* && "$output" == *'--api-key [redacted]'* && "$output" == *'--safe value'* && "$output" != *'TOKEN_VALUE_PLACEHOLDER'* && "$output" != *'PASSWORD_VALUE_PLACEHOLDER'* && "$output" != *'API_KEY_VALUE_PLACEHOLDER'* ]]; then
+		print_result "lock diagnostics redact secret-like command values" 0
+		return 0
+	fi
+
+	print_result "lock diagnostics redact secret-like command values" 1 "output=${output}"
+	return 0
+}
+
+test_periodic_wait_message_preserves_stage_and_command() {
+	local tmp_dir=""
+	local output=""
+	local owner_pid=""
+	local past_epoch=0
+	tmp_dir=$(make_temp_dir)
+	owner_pid=$(start_fake_setup_owner)
+	mkdir -p "$tmp_dir/lock.d" "$tmp_dir/.aidevops/logs"
+	printf '%s\n' "$owner_pid" >"$tmp_dir/lock.d/owner.pid"
+	printf '%s\n' './setup.sh --non-interactive --token TOKEN_VALUE_PLACEHOLDER' >"$tmp_dir/lock.d/command"
+	past_epoch=$(( $(date +%s 2>/dev/null || echo "0") - 5 ))
+	printf '%s\n' "$past_epoch" >"$tmp_dir/lock.d/started_at_epoch"
+	printf '%s\t%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "deploy_aidevops_agents" "0.00" "RUNNING" >"$tmp_dir/.aidevops/logs/setup-stage-timings.log"
+
+	output=$(
+		AIDEVOPS_SETUP_LOCK_DIR="$tmp_dir/lock.d"
+		AIDEVOPS_SETUP_WAIT_TIMEOUT_S=15
+		AIDEVOPS_SETUP_STALE_TIMEOUT_S=3600
+		AIDEVOPS_SETUP_LOCK_DIAG_INTERVAL_S=10
+		HOME="$tmp_dir"
+		load_lock_functions
+		_setup_acquire_noninteractive_setup_lock --non-interactive
+		printf 'exit=%s\n' "$?"
+		return 0
+	) 2>&1 || true
+
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
+	rm -rf "$tmp_dir"
+
+	if [[ "$output" == *"Still waiting for setup lock"* && "$output" == *"stage: deploy_aidevops_agents"* && "$output" == *"command: ./setup.sh --non-interactive --token [redacted]"* && "$output" == *"setup-stage-timings.log"* && "$output" != *"TOKEN_VALUE_PLACEHOLDER"* ]]; then
+		print_result "periodic lock wait keeps stage and redacted command diagnostics" 0
+		return 0
+	fi
+
+	print_result "periodic lock wait keeps stage and redacted command diagnostics" 1 "output=${output}"
+	return 0
+}
+
 test_signal_cleanup_terminates_registered_children() {
 	local output=""
 
@@ -443,6 +518,9 @@ main() {
 	test_stale_live_owner_past_ceiling_is_reclaimed
 	test_wait_ceiling_prevents_indefinite_block
 	test_contention_message_includes_elapsed_and_stage
+	test_default_wait_ceiling_is_longer_than_observed_slow_owner
+	test_contention_command_redacts_secret_like_values
+	test_periodic_wait_message_preserves_stage_and_command
 	test_signal_cleanup_terminates_registered_children
 	test_signal_cleanup_terminates_unregistered_child_tree
 	test_bounded_noncritical_stage_times_out_child_tree
