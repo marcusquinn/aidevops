@@ -666,10 +666,14 @@ _dispatch_issue_body_missing_worker_context() {
 		return 0
 	fi
 	case "$issue_body" in
-	*"missing implementation context"* | *"Missing implementation context"* | \
-		*"needs implementation context"* | *"Needs implementation context"* | \
-		*"no implementation details"* | *"No implementation details"* | \
-		*"no worker guidance"* | *"No worker guidance"*)
+	*"needs enrichment before dispatch"* | *"Needs enrichment before dispatch"* | \
+		*"missing Worker Guidance/How implementation context"* | \
+		*"Missing Worker Guidance/How implementation context"* | \
+		*"needs implementation context before dispatch"* | \
+		*"Needs implementation context before dispatch"* | \
+		*"no implementation details provided"* | \
+		*"No implementation details provided"* | \
+		*"no worker guidance provided"* | *"No worker guidance provided"*)
 		return 0
 		;;
 	esac

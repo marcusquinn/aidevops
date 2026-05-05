@@ -77,6 +77,17 @@ test_detects_source_review_scanner_label() {
 	return 0
 }
 
+test_detects_source_review_feedback_label() {
+	local meta='{"number":22832,"labels":[{"name":"quality-debt"},{"name":"source:review-feedback"}]}'
+	if _is_bot_generated_cleanup_issue "$meta"; then
+		print_result "detects source:review-feedback label" 0
+		return 0
+	fi
+	print_result "detects source:review-feedback label" 1 \
+		"Expected exit 0 when source:review-feedback is present"
+	return 0
+}
+
 test_detects_both_labels() {
 	local meta='{"number":2294,"labels":[{"name":"review-followup"},{"name":"source:review-scanner"}]}'
 	if _is_bot_generated_cleanup_issue "$meta"; then
@@ -160,6 +171,7 @@ main() {
 
 	test_detects_review_followup_label
 	test_detects_source_review_scanner_label
+	test_detects_source_review_feedback_label
 	test_detects_both_labels
 	test_ignores_non_cleanup_issue
 	test_empty_labels_array
