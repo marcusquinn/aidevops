@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.57] - 2026-05-05
+
+### Changed
+
+- Documentation: clarify auto-dispatch readiness exclusions (#22847)
+
+### Fixed
+
+- expose pulse merge gauges (#22845)
+
 ## [3.14.56] - 2026-05-05
 
 ### Fixed
