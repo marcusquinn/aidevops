@@ -57,7 +57,7 @@ if [[ "$cmd" == "is-assigned" ]]; then
 		exit 1
 		;;
 	prelaunch_canary)
-		printf '%s\n' 'STALE_RECOVERED: issue #2905 in owner/repo - unassigned runner (no dispatch claim comment found, worker canary preflight failed before worktree pre-creation; will retry next cycle)'
+		printf '%s\n' 'STALE_RECOVERED: issue #2905 in awardsapp/awardsapp - unassigned runner (no dispatch claim comment found, worker canary preflight failed before worktree pre-creation; will retry next cycle)'
 		exit 1
 		;;
 	worker)
