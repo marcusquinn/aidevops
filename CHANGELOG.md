@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.55] - 2026-05-05
+
+### Changed
+
+- Documentation: restore auto-dispatch default guidance (#22820)
+
+### Fixed
+
+- respect worker liveness events (#22819)
+
 ## [3.14.54] - 2026-05-05
 
 ### Changed
