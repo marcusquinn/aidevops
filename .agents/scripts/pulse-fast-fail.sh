@@ -521,10 +521,12 @@ _fast_fail_age_out_locked() {
 	now=$(date +%s)
 	state=$(_ff_load)
 
-	local existing_ts existing_count existing_reset_count
+	local existing_ts existing_count existing_reset_count existing_reason existing_crash_type
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
 	existing_reset_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].reset_count // 0' 2>/dev/null) || existing_reset_count=0
+	existing_reason=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].reason // ""' 2>/dev/null) || existing_reason=""
+	existing_crash_type=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].crash_type // ""' 2>/dev/null) || existing_crash_type=""
 	[[ "$existing_ts" =~ ^[0-9]+$ ]] || existing_ts=0
 	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
 	[[ "$existing_reset_count" =~ ^[0-9]+$ ]] || existing_reset_count=0
@@ -536,7 +538,15 @@ _fast_fail_age_out_locked() {
 	fi
 
 	# Quiet-period check: last failure must be >= AGE_OUT_SECONDS ago.
+	# Infra/no-work hard stops are cheaper to retry once the runner/provider
+	# recovers. Use a shorter default so review-cleanup issues do not remain
+	# stranded behind stale runtime failures for a full operator cycle.
 	local age_out_secs="${FAST_FAIL_AGE_OUT_SECONDS:-3600}"
+	case "${existing_reason}:${existing_crash_type}" in
+	no_worker_process:* | worker_noop_zero_output:* | rate_limit*:* | backoff:* | stale_timeout:no_work)
+		age_out_secs="${FAST_FAIL_INFRA_AGE_OUT_SECONDS:-900}"
+		;;
+	esac
 	local age
 	age=$((now - existing_ts))
 	if [[ "$age" -lt "$age_out_secs" ]]; then
