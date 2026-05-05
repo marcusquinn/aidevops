@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.14.70] - 2026-05-05
 
+### Changed
+
+- Documentation: prepare 3.14.70 changelog
+
+### Fixed
+
+- qualify Anthropic OAuth requests for plan usage (#22956)
+
+## [3.14.70] - 2026-05-05
+
 ### Fixed
 
 - qualify Anthropic OAuth requests for plan usage (#22956)
