@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.59] - 2026-05-05
+
+### Fixed
+
+- recover startup-stalled workers
+- unlock issues on worker release (#22860)
+- allow interactive self-claim for unassigned issues (#22857)
+- order dispatch lifecycle comments (#22858)
+- harden lint warning temp cleanup (#22852)
+- classify review bot notice categories (#22853)
+
 ## [3.14.58] - 2026-05-05
 
 ### Fixed
