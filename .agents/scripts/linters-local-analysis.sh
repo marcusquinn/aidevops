@@ -1020,9 +1020,7 @@ _bash32_run_helper() {
 _bash32_print_helper_output() {
 	local output_file="$1"
 	if [[ -s "$output_file" ]]; then
-		while IFS= read -r line; do
-			printf '%s\n' "$line"
-		done <"$output_file"
+		cat "$output_file"
 	fi
 	return 0
 }
