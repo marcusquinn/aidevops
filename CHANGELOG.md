@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.66] - 2026-05-05
+
+### Fixed
+
+- retry failures after recovery releases (#22946)
+- suppress completed PR salvage recoveries (#22945)
+
 ## [3.14.65] - 2026-05-05
 
 ### Changed
