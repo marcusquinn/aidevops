@@ -466,6 +466,27 @@ bot_has_non_rate_limit_non_review_notice() {
 	return 1
 }
 
+bot_get_notice_category() {
+	# Classify a bot's non-review notice state once so do_check() cannot drift
+	# from tests that stub only one half of the decision bucket. Non-rate-limit
+	# notices take precedence over rate-limit notices from the same bot.
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	if bot_has_non_rate_limit_non_review_notice "$pr_number" "$repo" "$bot_login"; then
+		echo "non-rate-limit"
+		return 0
+	fi
+	if bot_has_rate_limit_notice "$pr_number" "$repo" "$bot_login"; then
+		echo "rate-limit"
+		return 0
+	fi
+
+	echo "none"
+	return 1
+}
+
 bot_has_real_review() {
 	# t2139 (GH#19251): Check if a bot has posted at least one comment that
 	# is BOTH (a) not a known non-review notice AND (b) "settled" — meaning
@@ -631,20 +652,24 @@ do_check() {
 	local found_bots=""
 	local rate_limited_bots=""
 	local non_review_bots=""
+	local notice_category
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
 			# Bot commented — but is it a real review or a non-review notice?
 			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
 				found_bots="${found_bots}${bot} "
-			elif bot_has_non_rate_limit_non_review_notice "$pr_number" "$repo" "$bot"; then
-				non_review_bots="${non_review_bots}${bot} "
-				echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
-			elif bot_has_rate_limit_notice "$pr_number" "$repo" "$bot"; then
-				rate_limited_bots="${rate_limited_bots}${bot} "
-				echo "rate-limit notice (not a real review): ${bot}" >&2
 			else
-				non_review_bots="${non_review_bots}${bot} "
-				echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
+				notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot" || echo "none")
+				case "$notice_category" in
+					rate-limit)
+						rate_limited_bots="${rate_limited_bots}${bot} "
+						echo "rate-limit notice (not a real review): ${bot}" >&2
+						;;
+					non-rate-limit | none | *)
+						non_review_bots="${non_review_bots}${bot} "
+						echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
+						;;
+				esac
 			fi
 		fi
 	done
