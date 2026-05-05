@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.58] - 2026-05-05
+
+### Fixed
+
+- reduce full-loop context blockers (#22851)
+
 ## [3.14.57] - 2026-05-05
 
 ### Changed
