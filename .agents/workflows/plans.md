@@ -61,7 +61,7 @@ Analyze conversation for complexity signals when `/save-todo` is invoked:
 
 ## Auto-Dispatch Tagging
 
-Worker-ready implementation tasks created by main agents or workers default to `#auto-dispatch`; readiness is the gate. Add the tag when ALL inclusion criteria pass and NO exclusion criteria apply. If readiness is missing, finish the brief/body first or mark the item `#parent`/blocked instead of saving a non-dispatchable implementation issue:
+Worker-ready implementation tasks created by main agents or workers default to `#auto-dispatch`; readiness is the gate. Add the tag when ALL Include criteria pass and NO exclusion criteria apply. If readiness is missing, finish the brief/body first or mark the item `#parent`/blocked instead of saving a non-dispatchable implementation issue:
 
 | Include (ALL required) | Exclude (ANY blocks) |
 |------------------------|----------------------|
@@ -99,7 +99,19 @@ Extract from conversation: title, description, estimate (`~Xh (ai:Xh test:Xh rea
 
 Format elements (all optional except id and description): `@owner`, `#tag`, `~estimate`, `logged:YYYY-MM-DD`, `blocked-by:t001,t002`, `blocks:t003`.
 
-**Auto-dispatch default**: Add `#auto-dispatch` for worker-ready implementation tasks. The brief must have at least 2 specific acceptance criteria, a non-empty How section with file references, a clear What section, and automatable verification. If any element is missing, complete the brief before saving; for decomposition, credentials, human preference/approval, unresolved dependencies, or explicit user preference, save as `#parent`/blocked or interactive/manual instead.
+**Auto-dispatch default**: Add `#auto-dispatch` for worker-ready implementation tasks once the brief has:
+
+- At least 2 specific acceptance criteria
+- A non-empty How section with file references
+- A clear What section
+- Automatable verification
+
+If any element is missing, complete the brief before saving. Omit `#auto-dispatch` for:
+
+- Decomposition or human-decision work
+- Credentials, accounts, purchases, hardware, or external service setup
+- Incomplete dependencies, including unresolved `blocked-by:` tasks
+- Explicit user preference for interactive/manual handling
 
 **Complex** — present: `This looks like complex work. Creating execution plan. Title: {title} | Estimate: ~{estimate} | Phases: {count} | Creating brief: todo/tasks/{task_id}-brief.md | 1. Confirm and create plan + brief  2. Simplify to TODO.md + brief  3. Add more context`
 

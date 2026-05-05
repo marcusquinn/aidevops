@@ -110,10 +110,11 @@ JSON
 # Shared pool: the cooldown-marked account carries both email AND access
 # so either lookup path would resolve it. The rotation path exercised
 # here is access-token match (because isolated has no email).
+cooldown_until=$(($(date +%s) * 1000 + 60000))
 cat >"$TMP/pool.json" <<JSON
 {
   "anthropic": [
-    {"email": "marcusquinn@mac.com", "access": "PROD-access-marcusquinn-at-mac-com", "cooldownUntil": $(($(date +%s) * 1000 + 60000)), "status": "rate_limited", "priority": 10},
+    {"email": "marcusquinn@mac.com", "access": "PROD-access-marcusquinn-at-mac-com", "cooldownUntil": ${cooldown_until}, "status": "rate_limited", "priority": 10},
     {"email": "healthy@example.com", "access": "healthy-access-token", "cooldownUntil": 0, "status": "available", "priority": 1}
   ]
 }

@@ -109,10 +109,11 @@ define_helper_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_pmp_normalize_mergeable_state\(\) \{/,/^}$/ { print }
+		/^_pmp_normalize_mergeable_state_into\(\) \{/,/^}$/ { print }
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
 		/^_resolve_pr_mergeable_status\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_normalize_mergeable_state"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
+	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_normalize_mergeable_state"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
 		printf 'ERROR: could not extract pulse-merge-process helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi

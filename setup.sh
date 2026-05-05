@@ -839,16 +839,60 @@ _setup_lock_owner_age() {
 	return 0
 }
 
+_setup_command_key_looks_secret() {
+	local key="$1"
+	key="${key#--}"
+	key="${key#-}"
+	case "$key" in
+		*password*|*passwd*|*secret*|*token*|*credential*|*api-key*|*api_key*|*apikey*|*access-key*|*access_key*|*private-key*|*private_key*|bearer)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+_setup_redact_secret_like_command_values() {
+	local command_text="$1"
+	local redacted=""
+	local separator=""
+	local word=""
+	local lower_word=""
+	local key_part=""
+	local redact_next=false
+
+	for word in $command_text; do
+		lower_word=$(printf '%s' "$word" | tr '[:upper:]' '[:lower:]')
+		if [[ "$redact_next" == "true" ]]; then
+			word="[redacted]"
+			redact_next=false
+		elif [[ "$lower_word" == *=* ]]; then
+			key_part="${lower_word%%=*}"
+			if _setup_command_key_looks_secret "$key_part"; then
+				word="${word%%=*}=[redacted]"
+			fi
+		elif _setup_command_key_looks_secret "$lower_word"; then
+			redact_next=true
+		fi
+		redacted="${redacted}${separator}${word}"
+		separator=" "
+	done
+
+	printf '%s' "$redacted"
+	return 0
+}
+
 _setup_acquire_noninteractive_setup_lock() {
 	local lock_dir="${AIDEVOPS_SETUP_LOCK_DIR:-$HOME/.aidevops/locks/setup-noninteractive.lock.d}"
 	# Max seconds to wait for a live, non-stale owner before timing out.
-	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-300}"
+	local wait_ceiling="${AIDEVOPS_SETUP_WAIT_TIMEOUT_S:-900}"
 	# Max seconds a live owner may hold the lock before it is treated as
 	# stale and reclaimed (0 disables stale-live reclaim).
 	local stale_ceiling="${AIDEVOPS_SETUP_STALE_TIMEOUT_S:-1800}"
 	local owner_pid="" owner_cmd="" owner_age=0
 	local reclaim_attempts=0 waited=0
 	local _diag_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
+	local _diag_interval_s="${AIDEVOPS_SETUP_LOCK_DIAG_INTERVAL_S:-60}"
+	[[ "$_diag_interval_s" =~ ^[0-9]+$ && "$_diag_interval_s" -gt 0 ]] || _diag_interval_s=60
 	mkdir -p "$(dirname "$lock_dir")" 2>/dev/null || true
 	while true; do
 		if mkdir "$lock_dir" 2>/dev/null; then
@@ -916,6 +960,7 @@ _setup_acquire_noninteractive_setup_lock() {
 		owner_age=$(_setup_lock_owner_age "$lock_dir" "$owner_pid")
 		owner_cmd=""
 		[[ -r "$lock_dir/command" ]] && owner_cmd=$(tr '\n' ' ' <"$lock_dir/command" 2>/dev/null || true)
+		[[ -n "$owner_cmd" ]] && owner_cmd=$(_setup_redact_secret_like_command_values "$owner_cmd")
 		local _diag_stage=""
 		if [[ -r "$_diag_stl" ]]; then
 			local _diag_cur_stage=""
@@ -941,11 +986,11 @@ _setup_acquire_noninteractive_setup_lock() {
 			return 75
 		fi
 
-		# Emit diagnostics on first block and every 60 s thereafter.
+		# Emit diagnostics on first block and every diagnostic interval thereafter.
 		if [[ "$waited" -eq 0 ]]; then
 			print_info "Another setup.sh --non-interactive is running (pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}). Waiting up to ${wait_ceiling}s (AIDEVOPS_SETUP_WAIT_TIMEOUT_S). Diagnose: ${_diag_stl}"
-		elif [[ $(( waited % 60 )) -eq 0 ]]; then
-			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s, waited ${waited}s of ${wait_ceiling}s max)."
+		elif [[ $(( waited % _diag_interval_s )) -eq 0 ]]; then
+			print_info "Still waiting for setup lock (owner pid ${owner_pid}, age ${owner_age}s${_diag_stage}${owner_cmd:+, command: ${owner_cmd}}, waited ${waited}s of ${wait_ceiling}s max). Diagnose: ${_diag_stl}"
 		fi
 
 		sleep 10
