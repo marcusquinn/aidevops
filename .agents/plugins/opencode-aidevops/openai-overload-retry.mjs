@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
-const DEFAULT_OVERLOAD_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
+const DEFAULT_OVERLOAD_RETRY_DELAYS_MS = [3_000, 10_000, 30_000, 60_000, 120_000, 180_000];
 const OVERLOAD_MARKERS = ["service_unavailable_error", "server_is_overloaded", "servers are currently overloaded"];
+const OVERLOAD_RECOVERY_NOTE = "aidevops attempted automatic recovery for this OpenAI overload. If the request still stopped, use the prepared continuation prompt to pick up where the work left off.";
 const STREAM_CONTENT_MARKERS = [
   "response.output_text.delta",
   "response.function_call_arguments.delta",
@@ -36,6 +37,57 @@ function enqueueChunks(controller, chunks) {
   for (const chunk of chunks) controller.enqueue(chunk);
 }
 
+function formatRetryDelay(delayMs) {
+  if (delayMs < 1000) return `${delayMs}ms`;
+  const seconds = Math.round(delayMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
+}
+
+function appendRecoveryNote(message) {
+  const text = String(message || "").trim();
+  if (text.includes(OVERLOAD_RECOVERY_NOTE)) return text;
+  return text ? `${text}\n\n${OVERLOAD_RECOVERY_NOTE}` : OVERLOAD_RECOVERY_NOTE;
+}
+
+function appendRecoveryNoteToPayload(payload) {
+  if (!payload || typeof payload !== "object") return false;
+  const error = payload.error && typeof payload.error === "object" ? payload.error : payload;
+  if (!isOpenAIOverloadText([error.code, error.type, error.message].join(" "))) return false;
+  error.message = appendRecoveryNote(error.message || "OpenAI is overloaded. Please try again later.");
+  return true;
+}
+
+function annotateOpenAIOverloadText(text) {
+  const raw = String(text || "");
+  const lines = raw.split("\n");
+  let changed = false;
+  const annotated = lines.map((line) => {
+    if (!line.startsWith("data: ")) return line;
+    const data = line.slice(6);
+    try {
+      const payload = JSON.parse(data);
+      if (!appendRecoveryNoteToPayload(payload)) return line;
+      changed = true;
+      return `data: ${JSON.stringify(payload)}`;
+    } catch {
+      return line;
+    }
+  }).join("\n");
+
+  if (changed) return annotated;
+
+  try {
+    const payload = JSON.parse(raw);
+    if (appendRecoveryNoteToPayload(payload)) return JSON.stringify(payload);
+  } catch {
+    // Not a standalone JSON payload; leave unchanged.
+  }
+  return raw;
+}
+
 async function pipeRemainingStream(reader, controller) {
   while (true) {
     const { done, value } = await reader.read();
@@ -61,7 +113,7 @@ async function inspectStreamPrefix(reader, controller, decoder, retryAvailable) 
 
     if (isOpenAIOverloadText(bufferedText)) {
       if (!retryAvailable) {
-        enqueueChunks(controller, buffered);
+        controller.enqueue(new TextEncoder().encode(annotateOpenAIOverloadText(bufferedText)));
         return "pipe";
       }
       await reader.cancel().catch(() => {});
@@ -76,7 +128,7 @@ async function inspectStreamPrefix(reader, controller, decoder, retryAvailable) 
 }
 
 async function retryOpenAIOverloadStream(ctx) {
-  const { originalFetch, response, retryInput, init, controller, retryDelays, buildRetryRequest } = ctx;
+  const { originalFetch, response, retryInput, init, controller, retryDelays, buildRetryRequest, onRetry } = ctx;
   const decoder = new TextDecoder();
   let currentResponse = response;
 
@@ -88,9 +140,29 @@ async function retryOpenAIOverloadStream(ctx) {
 
     const delayMs = retryDelays[attempt];
     console.error(`[aidevops] OpenAI provider: overloaded stream error — retrying request (${attempt + 1}/${retryDelays.length})`);
+    await onRetry?.({
+      attempt: attempt + 1,
+      totalAttempts: retryDelays.length,
+      delayMs,
+      delayLabel: formatRetryDelay(delayMs),
+    });
     if (delayMs > 0) await sleep(delayMs);
     currentResponse = await originalFetch(buildRetryRequest(retryInput), init);
     if (!currentResponse.body) return controller.error(new Error(`OpenAI provider: retry response missing body (status: ${currentResponse.status})`));
+  }
+}
+
+export async function annotateOpenAIOverloadResponse(response) {
+  try {
+    const text = await response.text();
+    const annotated = annotateOpenAIOverloadText(text);
+    return new Response(annotated, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    });
+  } catch {
+    return response;
   }
 }
 

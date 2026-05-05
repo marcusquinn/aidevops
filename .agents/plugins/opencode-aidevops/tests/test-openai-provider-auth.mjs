@@ -54,10 +54,14 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
       const calls = [];
       globalThis.fetch = async (input, init) => fetchImpl(input, init, calls);
       const authWrites = [];
+      const toasts = [];
       const { installOpenAIProviderFetchRotation } = await import("./openai-provider-auth.mjs?case=" + Math.random());
-      installOpenAIProviderFetchRotation({ auth: { set: async (entry) => authWrites.push(entry) } });
+      installOpenAIProviderFetchRotation({
+        auth: { set: async (entry) => authWrites.push(entry) },
+        tui: { showToast: async (toast) => toasts.push(toast) },
+      });
       const response = await fetch(request.url, request.init);
-      return { response, calls, authWrites, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
+      return { response, calls, authWrites, toasts, pool: JSON.parse(readFileSync(poolPath, "utf-8")) };
     }
 
     const responseRotation = await withInstalledGuard({
@@ -125,6 +129,7 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
 
     assert.equal(await streamRetry.response.text(), 'data: {"type":"response.output_text.delta","delta":"ok"}\n\n');
     assert.deepEqual(streamRetry.calls, ["Bearer active-token", "Bearer active-token"]);
+    assert.match(streamRetry.toasts[0].body.message, /OpenAI overloaded\. Retrying in 0ms/);
 
     const missingBodyRetry = await withInstalledGuard({
       openai: [

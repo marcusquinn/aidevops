@@ -32,3 +32,29 @@ test("retry missing-body errors include retry response status", async () => {
 
   await readStreamFailure(wrapped);
 });
+
+test("default overload retry delays span minutes", async () => {
+  delete process.env.AIDEVOPS_OPENAI_OVERLOAD_RETRY_DELAYS_MS;
+  const { overloadRetryDelaysMs } = await import(`../openai-overload-retry.mjs?test=${Date.now()}-${Math.random()}`);
+  assert.deepEqual(overloadRetryDelaysMs(), [3_000, 10_000, 30_000, 60_000, 120_000, 180_000]);
+});
+
+test("stream retries notify before delay and annotate exhausted overload", async () => {
+  process.env.AIDEVOPS_OPENAI_OVERLOAD_RETRY_DELAYS_MS = "0";
+  const { wrapOpenAIOverloadStream } = await import(`../openai-overload-retry.mjs?test=${Date.now()}-${Math.random()}`);
+  const retries = [];
+  const response = streamResponse('data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}\n\n');
+  const wrapped = wrapOpenAIOverloadStream({
+    response,
+    originalFetch: async () => streamResponse('data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}\n\n'),
+    retryInput: "https://api.openai.example/v1/responses",
+    init: {},
+    buildRetryRequest: (input) => input,
+    onRetry: (retry) => retries.push(retry),
+  });
+
+  const text = await wrapped.text();
+  assert.equal(retries.length, 1);
+  assert.equal(retries[0].delayLabel, "0ms");
+  assert.match(text, /aidevops attempted automatic recovery/);
+});
