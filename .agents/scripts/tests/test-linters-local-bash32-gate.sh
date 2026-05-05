@@ -42,7 +42,10 @@ teardown() {
 make_feature_repo() {
 	local repo_dir="$1"
 	mkdir -p "$repo_dir" || return 1
-	git -C "$repo_dir" init -q -b main || return 1
+	git -C "$repo_dir" init -q || return 1
+	if [[ "$(git -C "$repo_dir" symbolic-ref --short HEAD 2>/dev/null)" != "main" ]]; then
+		git -C "$repo_dir" checkout -q -b main || git -C "$repo_dir" checkout -q -b master || return 1
+	fi
 	printf '#!/usr/bin/env bash\nprintf '\''base\\n'\''\n' >"${repo_dir}/example.sh"
 	git -C "$repo_dir" add example.sh || return 1
 	git -C "$repo_dir" -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -q -m init || return 1
