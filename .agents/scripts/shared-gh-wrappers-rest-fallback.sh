@@ -994,7 +994,7 @@ _rest_pr_object_json_jq() {
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
 		state) projection="${projection}${projection:+,}state: .state" ;;
-		mergeable) projection="${projection}${projection:+,}mergeable: (if .mergeable == true then \"MERGEABLE\" elif .mergeable == false then \"CONFLICTING\" elif .mergeable == null then \"UNKNOWN\" else .mergeable end)" ;;
+		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
 		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
 		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
@@ -1039,7 +1039,7 @@ _rest_pr_list_json_jq() {
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
 		state) projection="${projection}${projection:+,}state: .state" ;;
-		mergeable) projection="${projection}${projection:+,}mergeable: (if .mergeable == true then \"MERGEABLE\" elif .mergeable == false then \"CONFLICTING\" elif .mergeable == null then \"UNKNOWN\" else .mergeable end)" ;;
+		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
 		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
 		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;

@@ -920,6 +920,24 @@ fi
 unset STUB_PR_VIEW_FIXTURE
 
 # =============================================================================
+# Test 25d: REST PR view normalizes null mergeable to UNKNOWN
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_VIEW_FIXTURE='{"number":123,"mergeable":null}'
+
+pr_view_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+
+if [[ "$pr_view_mergeable" == "UNKNOWN" ]]; then
+	pass "gh_pr_view REST fallback normalizes mergeable=null to UNKNOWN"
+else
+	fail "gh_pr_view REST fallback normalizes mergeable=null to UNKNOWN" \
+		"output=${pr_view_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
+
+# =============================================================================
 # Test 25c: REST PR list normalizes REST boolean mergeable to gh GraphQL enum
 # =============================================================================
 : >"$GH_CALLS"
@@ -933,6 +951,24 @@ if [[ "$pr_list_mergeable" == "CONFLICTING" || "$pr_list_mergeable" == '"CONFLIC
 	pass "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING"
 else
 	fail "gh_pr_list REST fallback normalizes mergeable=false to CONFLICTING" \
+		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_LIST_FIXTURE
+
+# =============================================================================
+# Test 25e: REST PR list normalizes missing mergeable to UNKNOWN
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_LIST_FIXTURE='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/rest-mergeable"},"base":{"ref":"main"}}]'
+
+pr_list_mergeable=$(gh_pr_list --repo "owner/repo" --state open --json mergeable --jq '.[0].mergeable' 2>/dev/null || true)
+
+if [[ "$pr_list_mergeable" == "UNKNOWN" || "$pr_list_mergeable" == '"UNKNOWN"' ]]; then
+	pass "gh_pr_list REST fallback normalizes missing mergeable to UNKNOWN"
+else
+	fail "gh_pr_list REST fallback normalizes missing mergeable to UNKNOWN" \
 		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_LIST_FIXTURE
