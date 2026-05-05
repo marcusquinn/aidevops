@@ -147,7 +147,7 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
       init: { method: "POST", headers: { authorization: "Bearer active-token" }, body: "{}" },
     });
 
-    await assert.rejects(() => missingBodyRetry.response.text(), /retry response missing body/);
+    await assert.rejects(() => missingBodyRetry.response.text(), /retry response missing body \(status: 204\)/);
     assert.deepEqual(missingBodyRetry.calls, ["Bearer active-token", "Bearer active-token"]);
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
