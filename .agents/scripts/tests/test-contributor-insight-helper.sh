@@ -147,6 +147,22 @@ cat >"$TEST_SIGNALS" <<'JSON'
         "model_count": 1,
         "models": ["sonnet"],
         "severity": "low"
+      },
+      {
+        "tool": "bash",
+        "error_category": "timeout",
+        "count": 25,
+        "model_count": 2,
+        "models": ["sonnet", "opus"],
+        "severity": "medium",
+        "examples": [
+          {
+            "error": "Command timed out",
+            "input": "bash: long-running verification",
+            "user_response": null
+          }
+        ],
+        "recovery_patterns": []
       }
     ]
   },
@@ -227,6 +243,8 @@ assert_contains "summarized command included" "summarized command" "$output"
 assert_contains "expected recovery included" "expected recovery" "$output"
 assert_not_contains "error example has no private path" "/Users/testuser" "$output"
 assert_not_contains "error example has no private slug" "secret-corp/private-api" "$output"
+assert_contains "null user recovery pattern included" "bash:timeout" "$output"
+assert_not_contains "null user recovery omitted" "observed user recovery: null" "$output"
 
 # Test 12: low-frequency errors filtered (count < 20 or model_count < 2)
 assert_not_contains "low-freq glob:other filtered" "glob:other" "$output"
