@@ -23,6 +23,7 @@
 #   2. The branch still exists on the remote (code is recoverable)
 #   3. The branch has commits ahead of the default branch (actual code)
 #   4. No replacement PR exists (open PR targeting the same issue)
+#   5. No closed recovery issue already documents completed salvage for the PR
 #
 # Author: AI DevOps Framework
 # Version: 1.0.0
@@ -116,6 +117,40 @@ has_replacement_pr() {
 	open_count=$(gh pr list --repo "$slug" --state open \
 		--head "$branch" --json number --jq 'length' 2>/dev/null) || open_count="0"
 	if [[ "${open_count:-0}" -gt 0 ]]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
+
+#######################################
+# Check if a closed issue already completed recovery for a closed PR.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - PR number
+# Output: "true" or "false" to stdout
+#######################################
+has_completed_recovery_issue() {
+	local slug="$1"
+	local pr_number="$2"
+	local issues
+	issues=$(gh issue list --repo "$slug" --state closed \
+		--search "\"PR #${pr_number}\" recover" \
+		--json number,title,body,state,closedAt --limit 50 2>/dev/null) || issues="[]"
+
+	local match_count
+	match_count=$(echo "$issues" | jq --arg pr "PR #${pr_number}" '
+		[
+			.[]
+			| ((.title // "") + "\n" + (.body // "")) as $text
+			| ($text | ascii_downcase) as $lower
+			| select($text | contains($pr))
+			| select($lower | test("recover|recovery|salvage|restore|cherry-pick|cherrypick"))
+		] | length
+	') || match_count="0"
+
+	if [[ "${match_count:-0}" -gt 0 ]]; then
 		echo "true"
 	else
 		echo "false"
@@ -238,9 +273,15 @@ scan_repo() {
 	local salvageable="[]"
 	local pr_json
 	while IFS= read -r pr_json; do
-		local branch additions branch_exists risk entry
+		local pr_number branch additions branch_exists risk entry
+		pr_number=$(echo "$pr_json" | jq -r '.number')
 		branch=$(echo "$pr_json" | jq -r '.headRefName')
 		additions=$(echo "$pr_json" | jq -r '.additions')
+
+		# Skip PRs whose salvage has already been completed and documented in a closed issue.
+		if [[ "$(has_completed_recovery_issue "$slug" "$pr_number")" == "true" ]]; then
+			continue
+		fi
 
 		# Skip PRs that already have a replacement open
 		if [[ "$(has_replacement_pr "$slug" "$branch")" == "true" ]]; then
