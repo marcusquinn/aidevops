@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+set -uo pipefail
+
+SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+pass() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	printf 'PASS %s\n' "$1"
+	return 0
+}
+
+fail() {
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	printf 'FAIL %s\n' "$1"
+	[[ -n "${2:-}" ]] && printf '     %s\n' "$2"
+	return 0
+}
+
+TMP=$(mktemp -d -t fast-fail-release-reset.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT
+
+LOGFILE="${TMP}/pulse.log"
+FAST_FAIL_STATE_FILE="${TMP}/fast-fail-counter.json"
+AGENTS_DIR="${TMP}/agents"
+export LOGFILE FAST_FAIL_STATE_FILE AGENTS_DIR
+mkdir -p "$AGENTS_DIR"
+printf '3.14.64\n' >"${AGENTS_DIR}/VERSION"
+
+export FAST_FAIL_SKIP_THRESHOLD=5
+export FAST_FAIL_EXPIRY_SECS=604800
+export FAST_FAIL_INITIAL_BACKOFF_SECS=600
+export FAST_FAIL_MAX_BACKOFF_SECS=604800
+
+print_info() { :; return 0; }
+print_warning() { :; return 0; }
+print_error() { :; return 0; }
+print_success() { :; return 0; }
+log_verbose() { :; return 0; }
+export -f print_info print_warning print_error print_success log_verbose
+
+gh() { return 0; }
+export -f gh
+
+escalate_issue_tier() { return 0; }
+export -f escalate_issue_tier
+
+# shellcheck source=../shared-constants.sh
+source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true
+# shellcheck source=../pulse-fast-fail.sh
+source "${SCRIPTS_DIR}/pulse-fast-fail.sh" >/dev/null 2>&1 || {
+	printf 'FATAL Could not source pulse-fast-fail.sh\n'
+	exit 1
+}
+
+write_entry() {
+	local issue="$1"
+	local count="$2"
+	local retry_after="$3"
+	local version="$4"
+	printf '{"owner/repo/%s":{"count":%s,"ts":1,"reason":"rate_limit","retry_after":%s,"backoff_secs":600,"crash_type":"","aidevops_version":"%s"}}\n' \
+		"$issue" "$count" "$retry_after" "$version" >"$FAST_FAIL_STATE_FILE"
+	return 0
+}
+
+future=$(( $(date +%s) + 3600 ))
+
+write_entry 123 1 "$future" "3.14.63"
+reset_rc=0
+fast_fail_is_skipped 123 owner/repo || reset_rc=$?
+reset_count=$(jq -r '."owner/repo/123".count' "$FAST_FAIL_STATE_FILE")
+reset_retry=$(jq -r '."owner/repo/123".retry_after' "$FAST_FAIL_STATE_FILE")
+reset_version=$(jq -r '."owner/repo/123".release_retry_reset_version' "$FAST_FAIL_STATE_FILE")
+if [[ "$reset_rc" -eq 1 && "$reset_count" == "0" && "$reset_retry" == "0" && "$reset_version" == "3.14.64" ]]; then
+	pass "new aidevops version clears old-version backoff once"
+else
+	fail "new aidevops version clears old-version backoff once" \
+		"rc=${reset_rc}; count=${reset_count}; retry=${reset_retry}; reset_version=${reset_version}"
+fi
+
+skip_rc=0
+fast_fail_is_skipped 123 owner/repo || skip_rc=$?
+if [[ "$skip_rc" -eq 1 ]]; then
+	pass "release retry reset is not repeatedly reapplied after reset marker"
+else
+	fail "release retry reset is not repeatedly reapplied after reset marker" "rc=${skip_rc}"
+fi
+
+write_entry 124 1 "$future" "3.14.64"
+same_rc=0
+fast_fail_is_skipped 124 owner/repo || same_rc=$?
+if [[ "$same_rc" -eq 0 ]]; then
+	pass "same-version backoff remains respected"
+else
+	fail "same-version backoff remains respected" "rc=${same_rc}"
+fi
+
+fast_fail_record 125 owner/repo worker_noop_zero_output anthropic no_work
+recorded_version=$(jq -r '."owner/repo/125".aidevops_version' "$FAST_FAIL_STATE_FILE")
+if [[ "$recorded_version" == "3.14.64" ]]; then
+	pass "fast_fail_record stores aidevops version metadata"
+else
+	fail "fast_fail_record stores aidevops version metadata" "version=${recorded_version}"
+fi
+
+printf '\n'
+if [[ "$TESTS_FAILED" -eq 0 ]]; then
+	printf 'All %d tests passed\n' "$TESTS_RUN"
+	exit 0
+fi
+printf '%d / %d tests failed\n' "$TESTS_FAILED" "$TESTS_RUN"
+exit 1

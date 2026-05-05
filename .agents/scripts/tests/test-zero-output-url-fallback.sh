@@ -32,6 +32,10 @@ FAST_FAIL_STATE_FILE="${TMP}/fast-fail-counter.json"
 export LOGFILE FAST_FAIL_STATE_FILE
 
 gh() {
+	if [[ "${1:-}" == "api" && "${GH_COMMENT_ZERO_COUNT:-0}" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$GH_COMMENT_ZERO_COUNT"
+		return 0
+	fi
 	printf '%s\n' "$*" >>"${TMP}/gh-calls.log"
 	return 0
 }
@@ -62,6 +66,7 @@ else
 fi
 
 write_state 1
+GH_COMMENT_ZERO_COUNT=0
 normal_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if [[ "$normal_prompt" == "FULL EMBEDDED BRIEF" ]]; then
 	pass "below fallback threshold keeps embedded prompt"
@@ -69,8 +74,19 @@ else
 	fail "below fallback threshold keeps embedded prompt" "$normal_prompt"
 fi
 
+write_state 1
+GH_COMMENT_ZERO_COUNT=2
+comment_fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
+if printf '%s' "$comment_fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
+	&& ! printf '%s' "$comment_fallback_prompt" | grep -q 'FULL EMBEDDED BRIEF'; then
+	pass "comment evidence triggers URL-only fallback when state count is low"
+else
+	fail "comment evidence triggers URL-only fallback when state count is low" "$comment_fallback_prompt"
+fi
+
 : >"${TMP}/gh-calls.log"
 write_state 4
+GH_COMMENT_ZERO_COUNT=0
 _dlw_hold_repeated_zero_output 123 owner/repo
 hold_rc=$?
 gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
@@ -83,7 +99,22 @@ else
 		"rc=${hold_rc}; gh_calls=${gh_calls}"
 fi
 
+: >"${TMP}/gh-calls.log"
+write_state 1
+GH_COMMENT_ZERO_COUNT=4
+_dlw_hold_repeated_zero_output 123 owner/repo
+comment_hold_rc=$?
+comment_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
+if [[ "$comment_hold_rc" -eq 0 ]] \
+	&& printf '%s' "$comment_gh_calls" | grep -q 'needs-brief-rewrite'; then
+	pass "comment evidence triggers brief-rewrite hold when state count is low"
+else
+	fail "comment evidence triggers brief-rewrite hold when state count is low" \
+		"rc=${comment_hold_rc}; gh_calls=${comment_gh_calls}"
+fi
+
 write_state 4 runtime partial
+GH_COMMENT_ZERO_COUNT=0
 non_zero_count=$(_dlw_zero_output_failure_count 123 owner/repo)
 if [[ "$non_zero_count" == "0" ]]; then
 	pass "non-zero-output failure reasons do not trigger URL-only fallback"

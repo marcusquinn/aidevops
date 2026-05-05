@@ -238,6 +238,40 @@ _dlw_zero_output_failure_count() {
 	return 0
 }
 
+_dlw_zero_output_comment_count() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "${ZERO_OUTPUT_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { printf '0'; return 0; }
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
+	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
+
+	local count=""
+	count=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--jq '[.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output"))] | length' 2>/dev/null | \
+		awk '{ total += $1 } END { print total + 0 }') || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
+	return 0
+}
+
+_dlw_zero_output_evidence_count() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local state_count="" comment_count=""
+	state_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
+	comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+	[[ "$state_count" =~ ^[0-9]+$ ]] || state_count=0
+	[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+	if [[ "$comment_count" -gt "$state_count" ]]; then
+		printf '%s' "$comment_count"
+	else
+		printf '%s' "$state_count"
+	fi
+	return 0
+}
+
 _dlw_zero_output_fallback_prompt() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -266,7 +300,7 @@ _dlw_prepare_prompt_for_launch() {
 	local original_prompt="$4"
 
 	local zero_count=""
-	zero_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
+	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
 	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
 	local fallback_threshold="${ZERO_OUTPUT_URL_FALLBACK_THRESHOLD:-2}"
 	[[ "$fallback_threshold" =~ ^[0-9]+$ ]] || fallback_threshold=2
@@ -286,7 +320,7 @@ _dlw_hold_repeated_zero_output() {
 	local repo_slug="$2"
 
 	local zero_count=""
-	zero_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
+	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
 	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
 	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
 	[[ "$hold_threshold" =~ ^[0-9]+$ ]] || hold_threshold=4

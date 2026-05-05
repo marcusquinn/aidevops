@@ -344,6 +344,71 @@ _ff_compute_failure_strategy() {
 	return 0
 }
 
+_ff_current_aidevops_version() {
+	local version_file=""
+	for version_file in \
+		"${AGENTS_DIR:-${HOME}/.aidevops/agents}/VERSION" \
+		"${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/../VERSION" \
+		"${SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/../../VERSION"; do
+		if [[ -f "$version_file" ]]; then
+			tr -d '[:space:]' <"$version_file" 2>/dev/null || true
+			return 0
+		fi
+	done
+	printf '0.0.0'
+	return 0
+}
+
+_ff_version_gt() {
+	local left="$1"
+	local right="$2"
+	python3 - "$left" "$right" <<'PY'
+import re
+import sys
+
+def parts(value):
+    nums = [int(x) for x in re.findall(r"\d+", value or "")[:3]]
+    return tuple((nums + [0, 0, 0])[:3])
+
+sys.exit(0 if parts(sys.argv[1]) > parts(sys.argv[2]) else 1)
+PY
+	return $?
+}
+
+_ff_release_retry_reset_if_newer() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "${FAST_FAIL_RELEASE_RETRY_RESET_ENABLED:-1}" == "1" ]] || return 1
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
+	local key="" state="" current_version="" failure_version="" reset_version=""
+	key=$(_ff_key "$issue_number" "$repo_slug")
+	state=$(_ff_load)
+	current_version=$(_ff_current_aidevops_version)
+	failure_version=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].aidevops_version // ""' 2>/dev/null) || failure_version=""
+	reset_version=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].release_retry_reset_version // ""' 2>/dev/null) || reset_version=""
+
+	[[ -n "$failure_version" ]] || failure_version="0.0.0"
+	[[ -n "$current_version" ]] || return 1
+	[[ "$reset_version" != "$current_version" ]] || return 1
+	_ff_version_gt "$current_version" "$failure_version" || return 1
+
+	local now="" updated_state=""
+	now=$(date +%s)
+	updated_state=$(printf '%s' "$state" | jq \
+		--arg k "$key" \
+		--arg current "$current_version" \
+		--arg previous "$failure_version" \
+		--argjson ts "$now" \
+		'.[$k].count = 0 | .[$k].retry_after = 0 | .[$k].release_retry_reset_version = $current | .[$k].release_retry_reset_from = $previous | .[$k].release_retry_reset_ts = $ts' \
+		2>/dev/null) || return 1
+	_ff_save "$updated_state"
+	echo "[pulse-wrapper] fast_fail_release_retry_reset: #${issue_number} (${repo_slug}) reset stale failure from aidevops ${failure_version} under current ${current_version}" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # Record a worker failure for an issue with cause-aware retry strategy.
 #
@@ -414,7 +479,8 @@ _fast_fail_record_locked() {
 	fi
 
 	# Write updated state (include crash_type for diagnostics).
-	local updated_state
+	local updated_state aidevops_version
+	aidevops_version=$(_ff_current_aidevops_version)
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
 		--argjson count "$new_count" \
@@ -423,7 +489,8 @@ _fast_fail_record_locked() {
 		--argjson retry_after "$retry_after" \
 		--argjson backoff_secs "$new_backoff" \
 		--arg crash_type "${crash_type:-}" \
-		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type}' 2>/dev/null) || return 0
+		--arg aidevops_version "$aidevops_version" \
+		'.[$k] = {"count": $count, "ts": $ts, "reason": $reason, "retry_after": $retry_after, "backoff_secs": $backoff_secs, "crash_type": $crash_type, "aidevops_version": $aidevops_version}' 2>/dev/null) || return 0
 
 	# Flag for enrichment on first non-rate-limit failure: a thinking-tier worker
 	# will analyze the issue and add implementation guidance before re-dispatch.
@@ -612,6 +679,12 @@ fast_fail_is_skipped() {
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
+	if printf '%s' "$state" | jq -e --arg k "$key" '.[$k] != null' >/dev/null 2>&1; then
+		if _ff_release_retry_reset_if_newer "$issue_number" "$repo_slug"; then
+			return 1
+		fi
+		state=$(_ff_load)
+	fi
 
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
