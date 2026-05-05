@@ -429,6 +429,123 @@ test_two_phase_env_override_respected_non_two_phase() {
 	return 0
 }
 
+# ---------- Unit tests: notice category classification (GH#22855) ----------
+
+install_notice_category_gh_stub() {
+	local scenario="$1"
+	local gh_stub="${TEST_ROOT}/bin/gh"
+
+	cat >"$gh_stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+count_file="${REVIEW_BOT_GATE_GH_COUNT_FILE:?}"
+scenario="${REVIEW_BOT_GATE_GH_SCENARIO:?}"
+count="0"
+if [[ -f "$count_file" ]]; then
+	IFS= read -r count <"$count_file" || count="0"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$count_file"
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 2
+fi
+
+endpoint="${2:-}"
+case "$scenario:$endpoint" in
+	precedence:repos/testorg/otherrepo/pulls/123/reviews)
+		printf '%s\n' 'UmV2aWV3IHNraXBwZWQgZHVlIHRvIHJhdGUgbGltaXQgZXhjZWVkZWQ='
+		;;
+	precedence:repos/testorg/otherrepo/issues/123/comments)
+		;;
+	precedence:repos/testorg/otherrepo/pulls/123/comments)
+		printf '%s\n' 'UmV2aWV3IGZhaWxlZCDigJQgUHVsbCByZXF1ZXN0IHdhcyBjbG9zZWQgb3IgbWVyZ2VkIGR1cmluZyByZXZpZXcu'
+		;;
+	none:*)
+		;;
+	failure:*)
+		exit 42
+		;;
+	*)
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	printf '0\n' >"${TEST_ROOT}/gh-count"
+	export REVIEW_BOT_GATE_GH_COUNT_FILE="${TEST_ROOT}/gh-count"
+	export REVIEW_BOT_GATE_GH_SCENARIO="$scenario"
+	return 0
+}
+
+read_notice_category_gh_count() {
+	local count="0"
+	if [[ -f "${TEST_ROOT}/gh-count" ]]; then
+		IFS= read -r count <"${TEST_ROOT}/gh-count" || count="0"
+	fi
+	printf '%s\n' "$count"
+	return 0
+}
+
+test_notice_category_single_pass_prefers_non_rate_limit() {
+	install_notice_category_gh_stub "precedence"
+
+	local output status calls
+	if output=$(bot_get_notice_category 123 'testorg/otherrepo' 'coderabbitai'); then
+		status=0
+	else
+		status=$?
+	fi
+	calls=$(read_notice_category_gh_count)
+
+	if [[ "$status" -eq 0 && "$output" == "non-rate-limit" && "$calls" == "3" ]]; then
+		print_result "notice category uses one pass and prefers non-rate-limit" 0
+	else
+		print_result "notice category uses one pass and prefers non-rate-limit" 1 \
+			"status=${status} output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
+test_notice_category_none_is_successful_default() {
+	install_notice_category_gh_stub "none"
+
+	local output status calls
+	if output=$(bot_get_notice_category 123 'testorg/otherrepo' 'coderabbitai'); then
+		status=0
+	else
+		status=$?
+	fi
+	calls=$(read_notice_category_gh_count)
+
+	if [[ "$status" -eq 0 && "$output" == "none" && "$calls" == "3" ]]; then
+		print_result "notice category returns successful none default" 0
+	else
+		print_result "notice category returns successful none default" 1 \
+			"status=${status} output=${output} calls=${calls}"
+	fi
+	return 0
+}
+
+test_notice_category_propagates_api_failure() {
+	install_notice_category_gh_stub "failure"
+
+	local output status
+	if output=$(bot_get_notice_category 123 'testorg/otherrepo' 'coderabbitai'); then
+		status=0
+	else
+		status=$?
+	fi
+
+	if [[ "$status" -eq 42 && -z "$output" ]]; then
+		print_result "notice category propagates API failure" 0
+	else
+		print_result "notice category propagates API failure" 1 \
+			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
 # ---------- Integration tests: do_check decision buckets (GH#22802) ----------
 
 test_do_check_passes_true_rate_limit_only() {
@@ -520,6 +637,12 @@ main() {
 	test_two_phase_coderabbitai_any_edit_settled
 	test_two_phase_unknown_bot_or_semantics_preserved
 	test_two_phase_env_override_respected_non_two_phase
+
+	echo ""
+	echo "=== Notice category classification (GH#22855) ==="
+	test_notice_category_single_pass_prefers_non_rate_limit
+	test_notice_category_none_is_successful_default
+	test_notice_category_propagates_api_failure
 
 	echo ""
 	echo "=== do_check decision buckets (GH#22802) ==="
