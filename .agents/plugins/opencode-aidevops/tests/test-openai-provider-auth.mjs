@@ -125,6 +125,30 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
 
     assert.equal(await streamRetry.response.text(), 'data: {"type":"response.output_text.delta","delta":"ok"}\n\n');
     assert.deepEqual(streamRetry.calls, ["Bearer active-token", "Bearer active-token"]);
+
+    const missingBodyRetry = await withInstalledGuard({
+      openai: [
+        { email: "active@example.com", access: "active-token", refresh: "active-refresh", expires: Date.now() + 3600_000, status: "active", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z" },
+      ],
+    }, async (input, init, calls) => {
+      calls.push(new Headers(init?.headers).get("authorization"));
+      if (calls.length === 1) {
+        return new Response('data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded"}}\n\n', {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        });
+      }
+      return new Response(null, {
+        status: 204,
+        headers: { "content-type": "text/event-stream" },
+      });
+    }, {
+      url: "https://api.openai.com/v1/responses",
+      init: { method: "POST", headers: { authorization: "Bearer active-token" }, body: "{}" },
+    });
+
+    await assert.rejects(() => missingBodyRetry.response.text(), /retry response missing body/);
+    assert.deepEqual(missingBodyRetry.calls, ["Bearer active-token", "Bearer active-token"]);
   `;
   execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
     cwd: join(import.meta.dirname, ".."),

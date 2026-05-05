@@ -129,7 +129,7 @@ async function handleOpenAIUsageLimit(ctx) {
   const rotated = await rotateOpenAIPoolToken(client, current?.email);
   if (!rotated?.access) return response;
   const retryInit = buildRetryInit(input, init, rotated.access);
-  return originalFetch(retryInput, retryInit);
+  return originalFetch(buildRetryRequest(retryInput), retryInit);
 }
 
 async function handleOpenAIOverload(ctx) {

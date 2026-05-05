@@ -90,7 +90,7 @@ async function retryOpenAIOverloadStream(ctx) {
     console.error(`[aidevops] OpenAI provider: overloaded stream error — retrying request (${attempt + 1}/${retryDelays.length})`);
     if (delayMs > 0) await sleep(delayMs);
     currentResponse = await originalFetch(buildRetryRequest(retryInput), init);
-    if (!currentResponse.body) return controller.close();
+    if (!currentResponse.body) return controller.error(new Error("OpenAI provider: retry response missing body"));
   }
 }
 

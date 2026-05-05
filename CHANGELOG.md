@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.56] - 2026-05-05
+
+### Fixed
+
+- preserve OpenAI retry failure signals (#22843)
+
 ## [3.14.55] - 2026-05-05
 
 ### Changed
