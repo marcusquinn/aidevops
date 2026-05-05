@@ -604,7 +604,7 @@ _is_stale_assignment() {
 	if [[ -n "$open_pr_activity" ]]; then
 		open_pr_number="${open_pr_activity%%|*}"
 		open_pr_updated_at="${open_pr_activity#*|}"
-		if [[ -n "$open_pr_number" && -n "$open_pr_updated_at" && "$open_pr_updated_at" != "$open_pr_activity" ]]; then
+		if [[ -n "$open_pr_number" && -n "$open_pr_updated_at" ]]; then
 			open_pr_epoch=$(_ts_to_epoch "$open_pr_updated_at")
 			if [[ "$open_pr_epoch" -gt 0 ]]; then
 				open_pr_age=$((now_epoch - open_pr_epoch))
