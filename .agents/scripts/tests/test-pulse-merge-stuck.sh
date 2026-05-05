@@ -16,11 +16,13 @@
 #        merged>0 → gauge reset to 0
 #        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
-#   7. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
+#      read-only merge gates (required checks, worker PR with no linked issue).
+#   8. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
-# (_classify_stuck_pr, _escalate_individual_stuck_pr, pulse_merge_stuck_run_pass,
-# _pms_count_eligible_unmerged_for_repo) are intentionally not exercised here —
+# (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
+# are intentionally not exercised here —
 # they're integration-level and would need a live fixture repo.
 
 set -u
@@ -265,9 +267,55 @@ assert_eq "5e: merge during stuck-streak resets cycles to 0" "0" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 6: shellcheck cleanliness.
+# Section 6: zero-progress eligible count gate parity.
 # ---------------------------------------------------------------------------
-echo "--- Section 6: shellcheck ---"
+echo "--- Section 6: zero-progress count gate parity ---"
+
+gh() {
+	local command_name="${1:-}"
+	local subcommand="${2:-}"
+	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
+		printf '%s\n' '[
+{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[]},
+{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
+{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
+{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}]},
+{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[]},
+{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[]}
+]'
+		return 0
+	fi
+	return 1
+}
+
+_check_required_checks_passing() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$pr_number" in
+	101) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
+_extract_linked_issue() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$pr_number" in
+	102) return 0 ;;
+	*) printf '77'; return 0 ;;
+	esac
+}
+
+got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
+assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "1" "$got"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 7: shellcheck cleanliness.
+# ---------------------------------------------------------------------------
+echo "--- Section 7: shellcheck ---"
 
 run_shellcheck() {
 	local label="$1" file="$2"
@@ -289,8 +337,8 @@ run_shellcheck() {
 	return 0
 }
 
-run_shellcheck "6a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
-run_shellcheck "6b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
+run_shellcheck "7a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
+run_shellcheck "7b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
 echo ""
 
 # ---------------------------------------------------------------------------
