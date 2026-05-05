@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.63] - 2026-05-05
+
+### Fixed
+
+- fallback after zero-output worker launches (#22936)
+
 ## [3.14.62] - 2026-05-05
 
 ### Changed
