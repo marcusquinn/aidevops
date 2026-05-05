@@ -54,6 +54,19 @@ assert_contains() {
 	return 0
 }
 
+assert_no_lint_temp_files() {
+	local label="$1" temp_dir="$2"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if ! compgen -G "$temp_dir/aidevops-lint-output.*" >/dev/null; then
+		printf '%sPASS%s: %s\n' "$TEST_GREEN" "$TEST_NC" "$label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: %s\n' "$TEST_RED" "$TEST_NC" "$label"
+		printf '  expected no aidevops-lint-output temp files in %s\n' "$temp_dir"
+	fi
+	return 0
+}
+
 write_fixture() {
 	local path="$1" content="$2"
 	printf '%s\n' "$content" >"$path"
@@ -98,6 +111,20 @@ MISSING_PROJECT_OUTPUT=$("$HELPER" run --project-dir 2>&1)
 MISSING_PROJECT_RC=$?
 assert_exit_code "missing --project-dir value fails cleanly" 1 "$MISSING_PROJECT_RC"
 assert_contains "missing --project-dir value prints usage" "Usage:" "$MISSING_PROJECT_OUTPUT"
+
+RUN_TMP_DIR="$TMP_ROOT/run-tmp"
+mkdir -p "$RUN_TMP_DIR" || exit 1
+RUN_CLEAN_OUTPUT=$(TMPDIR="$RUN_TMP_DIR" "$HELPER" run --project-dir "$PROJECT_DIR" -- printf 'Lint completed successfully.\n' 2>&1)
+RUN_CLEAN_RC=$?
+assert_exit_code "run mode clean command passes" 0 "$RUN_CLEAN_RC"
+assert_contains "run mode analyzes clean output" "LINT_WARNINGS_CLEAN" "$RUN_CLEAN_OUTPUT"
+assert_no_lint_temp_files "run mode removes temp output after analysis" "$RUN_TMP_DIR"
+
+RUN_FAIL_OUTPUT=$(TMPDIR="$RUN_TMP_DIR" "$HELPER" run --project-dir "$PROJECT_DIR" -- bash -c 'printf "lint failed\\n"; exit 7' 2>&1)
+RUN_FAIL_RC=$?
+assert_exit_code "run mode preserves lint failure exit" 7 "$RUN_FAIL_RC"
+assert_contains "run mode prints lint failure output" "lint failed" "$RUN_FAIL_OUTPUT"
+assert_no_lint_temp_files "run mode removes temp output on lint failure" "$RUN_TMP_DIR"
 
 if [[ $TESTS_FAILED -eq 0 ]]; then
 	printf '\n%sAll %s tests passed%s\n' "$TEST_GREEN" "$TESTS_RUN" "$TEST_NC"
