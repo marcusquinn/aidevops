@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.72] - 2026-05-05
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: remove duplicate 3.14.70 changelog entry (#22960)
+
+### Fixed
+
+- block dispatch of interactive PR targets (#22963)
+- reclaim stale worker worktree owners (#22958)
+- block dispatch against pull request targets (#22961)
+
 ## [3.14.71] - 2026-05-05
 
 ### Changed
