@@ -14,7 +14,7 @@
 #      against an isolated PULSE_STATS_FILE; non-numeric set is rejected.
 #   6. pulse_merge_zero_progress_record:
 #        merged>0 → gauge reset to 0
-#        merged=0 + eligible=0 → no-op (gauge unchanged)
+#        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -241,11 +241,11 @@ pulse_merge_zero_progress_record 5 1 >/dev/null 2>&1
 got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5a: merged>0 resets cycles to 0 (was 3)" "0" "$got"
 
-# 5b: merged=0 + eligible=0 → gauge unchanged (no-op)
+# 5b: merged=0 + eligible=0 → gauge reset to 0 (idle cycle breaks streak)
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "2" >/dev/null 2>&1
 pulse_merge_zero_progress_record 0 0 >/dev/null 2>&1
 got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
-assert_eq "5b: merged=0 + eligible=0 → no-op (still 2)" "2" "$got"
+assert_eq "5b: merged=0 + eligible=0 resets cycles to 0 (was 2)" "0" "$got"
 
 # 5c: merged=0 + eligible>0 → gauge increments by 1
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1

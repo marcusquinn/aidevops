@@ -62,7 +62,7 @@ runtime_audit_check() {
 	local entry name d_str dm sm
 	for entry in "${drifted[@]}"; do
 		IFS='|' read -r name d_str dm sm <<<"$entry"
-		evidence_table+=$'\n'"| \`${name}\` | ${d_str}s | $(date -r "$dm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$dm") | $(date -r "$sm" '+%Y-%m-%d %H:%M:%SZ' 2>/dev/null || echo "$sm") |"
+		evidence_table+=$'\n'"| \`${name}\` | ${d_str}s | $(date -r "$dm" '+%Y-%m-%d %H:%M:%SZ' || printf '%s\n' "$dm") | $(date -r "$sm" '+%Y-%m-%d %H:%M:%SZ' || printf '%s\n' "$sm") |"
 	done
 
 	local first_file
@@ -70,9 +70,9 @@ runtime_audit_check() {
 
 	local title="runtime-audit: deployed script lags source by >$((drift / 3600))h (\`${first_file}\`)"
 	local drift_hours=$((drift / 3600))
-	# Render evidence table with embedded \n escapes resolved
+	# Keep literal newlines intact without printf %b interpreting filename backslashes.
 	local evidence_rendered
-	evidence_rendered=$(printf '%b' "$evidence_table")
+	evidence_rendered="$evidence_table"
 	local body
 	body=$(cat <<MARKDOWN
 ## Task

@@ -77,12 +77,35 @@ readonly _PMP_BACKLOG_OTHER="other"
 #######################################
 _pmp_normalize_mergeable_state() {
 	local raw_state="$1"
+	local normalized_state=""
 	case "$raw_state" in
-	MERGEABLE|mergeable|true|TRUE) printf 'MERGEABLE' ;;
-	CONFLICTING|conflicting|false|FALSE) printf 'CONFLICTING' ;;
-	UNKNOWN|unknown|''|null|NULL) printf 'UNKNOWN' ;;
-	*) printf '%s' "$raw_state" ;;
+	MERGEABLE|mergeable|true|TRUE) normalized_state="MERGEABLE" ;;
+	CONFLICTING|conflicting|false|FALSE) normalized_state="CONFLICTING" ;;
+	UNKNOWN|unknown|''|null|NULL) normalized_state="UNKNOWN" ;;
+	*) normalized_state="$raw_state" ;;
 	esac
+	printf '%s' "$normalized_state"
+	return 0
+}
+
+#######################################
+# Normalize PR mergeable values into a caller variable without command substitution.
+#
+# Args: $1=destination variable name, $2=raw mergeable value
+#######################################
+_pmp_normalize_mergeable_state_into() {
+	local dest_var="$1"
+	local raw_state="$2"
+	local normalized_state=""
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	case "$raw_state" in
+	MERGEABLE|mergeable|true|TRUE) normalized_state="MERGEABLE" ;;
+	CONFLICTING|conflicting|false|FALSE) normalized_state="CONFLICTING" ;;
+	UNKNOWN|unknown|''|null|NULL) normalized_state="UNKNOWN" ;;
+	*) normalized_state="$raw_state" ;;
+	esac
+	printf -v "$dest_var" '%s' "$normalized_state"
 	return 0
 }
 
@@ -106,7 +129,7 @@ _pmp_classify_pr_backlog_state() {
 			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
 			"\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
 	)
-	mergeable=$(_pmp_normalize_mergeable_state "$mergeable")
+	_pmp_normalize_mergeable_state_into mergeable "$mergeable"
 
 	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
 	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
@@ -450,7 +473,7 @@ _resolve_pr_mergeable_status() {
 	local repo_slug="$2"
 	local pr_mergeable="$3"
 	local original_mergeable="$pr_mergeable"
-	pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
+	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 
 	if [[ "$pr_mergeable" == "UNKNOWN" || -z "$pr_mergeable" ]]; then
 		local _was_label="$original_mergeable"
@@ -461,7 +484,7 @@ _resolve_pr_mergeable_status() {
 			--json mergeable --jq '.mergeable // ""')
 		_retry_exit=$?
 		[[ $_retry_exit -eq 0 && -n "$_retry_output" ]] && pr_mergeable="$_retry_output" || pr_mergeable="UNKNOWN"
-		pr_mergeable=$(_pmp_normalize_mergeable_state "$pr_mergeable")
+		_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 		if [[ "$pr_mergeable" == "MERGEABLE" ]]; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — mergeable resolved to MERGEABLE after retry" >>"$LOGFILE"
 		else

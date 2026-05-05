@@ -271,8 +271,8 @@ LOG_FIRING="$TMPDIR_TEST/log-firing.log"
 	done
 	for i in $(seq 1 50); do
 		# Each line normalises to:
-		# "<TS> NOVEL_ERROR: dispatch_with_dedup unexpected return code <N> from worker_lifecycle iteration <N>"
-		printf '2026-04-30T00:00:00Z NOVEL_ERROR: dispatch_with_dedup unexpected return code 99 from worker_lifecycle iteration %d\n' "$i"
+		# "<TS> NOVEL_ERROR: dispatch_with_dedup payload\tfield unexpected return code <N> from worker_lifecycle iteration <N>"
+		printf '2026-04-30T00:00:00Z NOVEL_ERROR: dispatch_with_dedup payload\\tfield unexpected return code 99 from worker_lifecycle iteration %d\n' "$i"
 	done
 	# Pad recent block to >= RECENT_LINES
 	for i in $(seq 1 50); do
@@ -288,7 +288,8 @@ out=$(_run_detector "$RULES_DIR/log-pattern-novelty.sh" \
 assert_rc "4.1 firing fixture returns 1" "1" "$rc"
 assert_contains "4.2 firing body has correct id" '"id": "log-pattern-novelty"' "$out"
 assert_contains "4.3 firing body cites novel template" "NOVEL_ERROR" "$out"
-assert_contains "4.4 firing body has marker" 'detector=log-pattern-novelty' "$out"
+assert_contains "4.4 firing body preserves literal backslash evidence" 'payload\\tfield' "$out"
+assert_contains "4.5 firing body has marker" 'detector=log-pattern-novelty' "$out"
 
 # Clean fixture: log too short → no-op
 LOG_SHORT="$TMPDIR_TEST/log-short.log"
@@ -299,12 +300,12 @@ done > "$LOG_SHORT"
 out=$(_run_detector "$RULES_DIR/log-pattern-novelty.sh" \
 	"LOG_FILE=$LOG_SHORT" \
 	"RECENT_LINES=100") && rc=0 || rc=$?
-assert_rc "4.5 too-short log returns 0" "0" "$rc"
+assert_rc "4.6 too-short log returns 0" "0" "$rc"
 
 # Missing log → no-op
 out=$(_run_detector "$RULES_DIR/log-pattern-novelty.sh" \
 	"LOG_FILE=/nonexistent/log.log") && rc=0 || rc=$?
-assert_rc "4.6 missing log returns 0" "0" "$rc"
+assert_rc "4.7 missing log returns 0" "0" "$rc"
 
 # ---------------------------------------------------------------------------
 # Test 5: idle-state-stuck
