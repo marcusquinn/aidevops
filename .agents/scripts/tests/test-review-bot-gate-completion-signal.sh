@@ -435,8 +435,7 @@ test_do_check_passes_true_rate_limit_only() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
 	bot_has_real_review() { return 1; }
-	bot_has_non_rate_limit_non_review_notice() { return 1; }
-	bot_has_rate_limit_notice() { return 0; }
+	bot_get_notice_category() { echo "rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
 
 	local output status
@@ -459,8 +458,7 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
 	bot_has_real_review() { return 1; }
-	bot_has_non_rate_limit_non_review_notice() { return 0; }
-	bot_has_rate_limit_notice() { return 0; }
+	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
 
 	local output status
