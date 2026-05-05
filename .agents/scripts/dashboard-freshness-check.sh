@@ -275,6 +275,24 @@ _resolve_slug_from_dashed() {
 # Alert filing (idempotent)
 # =============================================================================
 
+# List open alert issue numbers for this dashboard. Args:
+#   $1 — target slug (owner/repo)
+#   $2 — dashboard issue number
+# Prints one issue number per line. Empty output means no live alert.
+_open_alert_numbers() {
+	local slug="$1"
+	local dash_issue="$2"
+	local marker="<!-- aidevops:dashboard-freshness:${slug}:${dash_issue} -->"
+	command -v gh >/dev/null 2>&1 || return 0
+	gh auth status &>/dev/null 2>&1 || return 0
+	# Search only open issues authored by us with the freshness label.
+	gh issue list --repo "$slug" --state open \
+		--label "review-followup" \
+		--search "in:body \"${marker}\"" \
+		--json number --jq '.[].number' 2>/dev/null || true
+	return 0
+}
+
 # Check whether an open alert issue already exists for this dashboard. Args:
 #   $1 — target slug (owner/repo)
 #   $2 — dashboard issue number
@@ -282,17 +300,86 @@ _resolve_slug_from_dashed() {
 _alert_already_open() {
 	local slug="$1"
 	local dash_issue="$2"
-	local marker="<!-- aidevops:dashboard-freshness:${slug}:${dash_issue} -->"
-	command -v gh >/dev/null 2>&1 || return 0
-	gh auth status &>/dev/null 2>&1 || return 0
-	# Search only open issues authored by us with the freshness label.
 	local hits
-	hits=$(gh issue list --repo "$slug" --state open \
-		--label "review-followup" \
-		--search "in:body \"${marker}\"" \
-		--json number --jq 'length' 2>/dev/null || echo 0)
-	[[ "$hits" =~ ^[0-9]+$ ]] || hits=0
-	(( hits > 0 ))
+	hits="$(_open_alert_numbers "$slug" "$dash_issue")"
+	if [[ -n "$hits" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_signature_footer() {
+	local issue_ref="$1"
+	local footer=""
+	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
+		footer="$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --issue "$issue_ref" 2>/dev/null || true)"
+	fi
+	printf '%s\n' "$footer"
+	return 0
+}
+
+_write_recovery_comment_body() {
+	local body_file="$1"
+	local dash_issue="$2"
+	local iso="$3"
+	local age_secs="$4"
+	local footer
+	footer="$(_signature_footer "#${dash_issue}")"
+
+	cat >"$body_file" <<EOF
+<!-- DASHBOARD_FRESHNESS_RECOVERED -->
+## Dashboard freshness recovered
+
+- **Dashboard**: #${dash_issue}
+- **Current marker**: \`last_refresh: ${iso}\`
+- **Current age**: ${age_secs}s
+- **Root cause**: this generated alert is no longer actionable; the dashboard body now contains a parseable freshness marker and is within the configured threshold. The earlier alert condition was transient between freshness scans and the next successful dashboard rebuild.
+- **Verification**: \`dashboard-freshness-check.sh scan --force\` re-read the dashboard issue body before posting this recovery comment.
+
+${footer}
+EOF
+	return 0
+}
+
+_close_recovered_alert() {
+	local slug="$1"
+	local alert_issue="$2"
+	local dash_issue="$3"
+	local iso="$4"
+	local age_secs="$5"
+	local body_file
+	body_file="$(mktemp -t dashboard-freshness-recovered.XXXXXX)" || {
+		_log_error "mktemp failed — cannot close recovered alert ${slug}#${alert_issue}"
+		return 0
+	}
+	_write_recovery_comment_body "$body_file" "$dash_issue" "$iso" "$age_secs"
+	if gh issue comment "$alert_issue" --repo "$slug" --body-file "$body_file" 2>>"$LOGFILE"; then
+		gh issue close "$alert_issue" --repo "$slug" 2>>"$LOGFILE" || \
+			_log_warn "Failed to close recovered alert ${slug}#${alert_issue}"
+	else
+		_log_warn "Failed to comment on recovered alert ${slug}#${alert_issue}"
+	fi
+	rm -f "$body_file" 2>/dev/null || true
+	return 0
+}
+
+_close_recovered_alerts() {
+	local slug="$1"
+	local dash_issue="$2"
+	local iso="$3"
+	local age_secs="$4"
+	local alerts alert_issue
+	alerts="$(_open_alert_numbers "$slug" "$dash_issue")"
+	[[ -n "$alerts" ]] || return 0
+	while IFS= read -r alert_issue; do
+		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
+		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
+			_log_info "DRY-RUN: would close recovered alert ${slug}#${alert_issue}"
+			continue
+		fi
+		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
+	done <<<"$alerts"
+	return 0
 }
 
 # Write the alert body to the given tempfile. Extracted from
@@ -481,6 +568,7 @@ scan_one_dashboard() {
 
 	if (( age_secs <= DASHBOARD_FRESHNESS_THRESHOLD_SECONDS )); then
 		_log_info "Dashboard ${slug}#${dash_issue} fresh (${age_secs}s ≤ ${DASHBOARD_FRESHNESS_THRESHOLD_SECONDS}s)"
+		_close_recovered_alerts "$slug" "$dash_issue" "$iso" "$age_secs"
 		return 0
 	fi
 

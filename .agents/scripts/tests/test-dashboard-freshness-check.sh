@@ -19,6 +19,8 @@
 #   6. scan with a fresh dashboard → files no alert.
 #   7. cadence gate: a second scan within the interval is short-circuited
 #      without calling `gh`.
+#   8. scan with a fresh dashboard AND a pre-existing generated alert → posts
+#      recovery evidence and closes the alert.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
 # and to fail-open on every error path; the test sets up a self-contained
@@ -200,7 +202,7 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --search ... → alert dedup check (count 0 or 1)
+			#   gh issue list --search ... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
@@ -217,10 +219,16 @@ run_scan_with_stubs() {
 						case "$2" in
 							list)
 								if [[ "$ALERT_EXISTS" == "1" ]]; then
-									printf "1\n"
+									printf "99\n"
 								else
-									printf "0\n"
+									printf "\n"
 								fi
+								return 0
+								;;
+							comment)
+								return 0
+								;;
+							close)
 								return 0
 								;;
 							create)
@@ -299,7 +307,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 7: cadence gate — second scan within interval short-circuits
+# Test 7: fresh body with generated alert → close recovered alert
+# ---------------------------------------------------------------------------
+echo "Testing: fresh dashboard closes recovered alert"
+run_scan_with_stubs "$FRESH_BODY" 1 "" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+comment_count=$(grep -c '^issue comment 99 ' "$calls_file" 2>/dev/null || true)
+close_count=$(grep -c '^issue close 99 ' "$calls_file" 2>/dev/null || true)
+[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+[[ "$close_count" =~ ^[0-9]+$ ]] || close_count=0
+
+if (( comment_count == 1 && close_count == 1 )); then
+	pass "fresh dashboard with open alert → comment + close"
+else
+	fail "recovered alert close" \
+		"comment=$comment_count close=$close_count; calls:\n$(cat "$calls_file")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8: cadence gate — second scan within interval short-circuits
 # ---------------------------------------------------------------------------
 echo "Testing: cadence gate suppresses rapid re-scan"
 # First run updates last-scan; second run (without --force) should exit
@@ -330,7 +356,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 8: missing-marker body → alerts with MISSING title
+# Test 9: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
