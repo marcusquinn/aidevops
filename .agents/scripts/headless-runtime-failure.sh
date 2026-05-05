@@ -48,6 +48,29 @@ unset _HRFF_SCRIPT_DIR
 readonly _HRFF_FALLBACK_EXIT="process_exit"
 
 #######################################
+# Unlock the issue once a worker releases its dispatch claim.
+#
+# Worker dispatch locks the issue before launch. Release paths already clear
+# active labels/assignees; they must also clear the conversation lock so the
+# public issue state matches the released claim and future workers/maintainers
+# do not see `status:available` on a locked issue.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#######################################
+_unlock_issue_after_dispatch_release() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
+	gh issue unlock "$issue_number" --repo "$repo_slug" >/dev/null 2>&1 || {
+		print_warning "Failed to unlock released issue #${issue_number} (non-fatal)"
+	}
+	return 0
+}
+
+#######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
 # instead of waiting for the 30-min TTL to expire.
@@ -121,6 +144,7 @@ ${machine_readable_part}
 		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
 	return 0
 }
 
