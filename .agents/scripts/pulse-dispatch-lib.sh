@@ -151,6 +151,11 @@ _dispatch_candidate_failure_reason() {
 		' "$LOGFILE" 2>/dev/null) || recent_lines=""
 	fi
 
+	if [[ "$recent_lines" == *"has active dispatch comment"* || "$recent_lines" == *"active claim"* ]]; then
+		printf 'dedup_active_claim\n'
+		return 0
+	fi
+
 	if [[ "$recent_lines" == *"DISPATCH_BLOCK_REASON reason="* ]]; then
 		reason=$(printf '%s\n' "$recent_lines" | awk '
 			match($0, /DISPATCH_BLOCK_REASON reason=[a-z_]+/) {
