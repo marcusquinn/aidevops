@@ -387,7 +387,7 @@ _fast_fail_record_locked() {
 		fi
 	fi
 
-	local key now state
+	local key="" now="" state=""
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	now=$(date +%s)
 	state=$(_ff_load)
@@ -521,7 +521,7 @@ _fast_fail_age_out_locked() {
 	now=$(date +%s)
 	state=$(_ff_load)
 
-	local existing_ts existing_count existing_reset_count existing_reason existing_crash_type
+	local existing_ts="" existing_count="" existing_reset_count="" existing_reason="" existing_crash_type=""
 	existing_ts=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].ts // 0' 2>/dev/null) || existing_ts=0
 	existing_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].count // 0' 2>/dev/null) || existing_count=0
 	existing_reset_count=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].reset_count // 0' 2>/dev/null) || existing_reset_count=0
