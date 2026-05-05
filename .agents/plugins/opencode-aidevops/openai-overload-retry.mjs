@@ -60,32 +60,43 @@ function appendRecoveryNoteToPayload(payload) {
   return true;
 }
 
+function annotateOpenAIOverloadDataLine(line) {
+  if (!line.startsWith("data: ")) return { line, changed: false };
+  let annotatedLine = line;
+  let changed = false;
+  try {
+    const payload = JSON.parse(line.slice(6));
+    if (appendRecoveryNoteToPayload(payload)) {
+      annotatedLine = `data: ${JSON.stringify(payload)}`;
+      changed = true;
+    }
+  } catch {
+    // Not a JSON SSE payload; leave unchanged.
+  }
+  return { line: annotatedLine, changed };
+}
+
 function annotateOpenAIOverloadText(text) {
   const raw = String(text || "");
   const lines = raw.split("\n");
   let changed = false;
   const annotated = lines.map((line) => {
-    if (!line.startsWith("data: ")) return line;
-    const data = line.slice(6);
-    try {
-      const payload = JSON.parse(data);
-      if (!appendRecoveryNoteToPayload(payload)) return line;
-      changed = true;
-      return `data: ${JSON.stringify(payload)}`;
-    } catch {
-      return line;
-    }
+    const result = annotateOpenAIOverloadDataLine(line);
+    if (result.changed) changed = true;
+    return result.line;
   }).join("\n");
 
-  if (changed) return annotated;
+  let result = changed ? annotated : raw;
 
-  try {
-    const payload = JSON.parse(raw);
-    if (appendRecoveryNoteToPayload(payload)) return JSON.stringify(payload);
-  } catch {
-    // Not a standalone JSON payload; leave unchanged.
+  if (!changed) {
+    try {
+      const payload = JSON.parse(raw);
+      if (appendRecoveryNoteToPayload(payload)) result = JSON.stringify(payload);
+    } catch {
+      // Not a standalone JSON payload; leave unchanged.
+    }
   }
-  return raw;
+  return result;
 }
 
 async function pipeRemainingStream(reader, controller) {
