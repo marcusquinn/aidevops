@@ -620,6 +620,81 @@ _hrw_current_worktree_branch() {
 	return 0
 }
 
+_hrw_epoch_seconds_from_iso() {
+	local iso_ts="$1"
+	[[ -n "$iso_ts" ]] || return 1
+	python3 - "$iso_ts" <<'PY' 2>/dev/null || return 1
+import datetime
+import sys
+
+value = sys.argv[1].strip()
+if value.endswith("Z"):
+    value = value[:-1] + "+00:00"
+print(int(datetime.datetime.fromisoformat(value).timestamp()))
+PY
+	return 0
+}
+
+_hrw_worktree_clean_for_owner_reclaim() {
+	local work_dir="$1"
+	local status_output=""
+	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null || true)
+	[[ -z "$status_output" ]] || return 1
+
+	local upstream_ref=""
+	upstream_ref=$(git -C "$work_dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
+	if [[ -n "$upstream_ref" ]]; then
+		local upstream_ahead="0"
+		upstream_ahead=$(git -C "$work_dir" rev-list --count "${upstream_ref}..HEAD" 2>/dev/null || true)
+		[[ "$upstream_ahead" =~ ^[0-9]+$ ]] || upstream_ahead=0
+		[[ "$upstream_ahead" -eq 0 ]] || return 1
+	fi
+
+	return 0
+}
+
+_hrw_reclaim_stale_worker_worktree_owner() {
+	local session_key="$1"
+	local work_dir="$2"
+	local branch="$3"
+	local owner_info=""
+
+	owner_info=$(check_worktree_owner "$work_dir" 2>/dev/null || true)
+	[[ -n "$owner_info" ]] || return 1
+
+	local owner_pid="" owner_session="" owner_batch="" owner_task="" created_at=""
+	IFS='|' read -r owner_pid owner_session owner_batch owner_task created_at <<<"$owner_info"
+
+	if [[ -n "$owner_pid" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+		unregister_worktree "$work_dir" 2>/dev/null || true
+		print_info "[lifecycle] worker_worktree_reclaimed_dead_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
+		return 0
+	fi
+
+	_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_live_owner"
+	[[ -n "${WORKER_ISSUE_NUMBER:-}" && "$owner_task" == "${WORKER_ISSUE_NUMBER:-}" ]] || return 1
+	[[ -n "$created_at" ]] || return 1
+
+	local now_epoch="" created_epoch=""
+	now_epoch=$(date +%s 2>/dev/null || true)
+	created_epoch=$(_hrw_epoch_seconds_from_iso "$created_at" 2>/dev/null || true)
+	[[ "$now_epoch" =~ ^[0-9]+$ && "$created_epoch" =~ ^[0-9]+$ ]] || return 1
+
+	local owner_age_s=$((now_epoch - created_epoch))
+	local reclaim_age_s="${AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS:-900}"
+	[[ "$reclaim_age_s" =~ ^[0-9]+$ ]] || reclaim_age_s=900
+	[[ "$owner_age_s" -ge "$reclaim_age_s" ]] || return 1
+
+	if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
+		return 1
+	fi
+
+	unregister_worktree "$work_dir" 2>/dev/null || true
+	print_warning "[lifecycle] worker_worktree_reclaimed_stale_live_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} age_s=${owner_age_s}"
+	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+	return 0
+}
+
 _hrw_claim_worker_worktree() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -638,10 +713,19 @@ _hrw_claim_worker_worktree() {
 	# can remove the worker's cwd while validators/merge-gate fixes still run.
 	# Transfer ownership to the long-lived headless-runtime-helper PID so
 	# worktree cleanup treats the active worker as the canonical owner.
+	unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 	if ! claim_worktree_ownership "$work_dir" "$branch" \
 		--session "$session_key" \
 		--task "${WORKER_ISSUE_NUMBER:-}" \
 		--owner-pid "$$"; then
+		if _hrw_reclaim_stale_worker_worktree_owner "$session_key" "$work_dir" "$branch" && \
+			claim_worktree_ownership "$work_dir" "$branch" \
+				--session "$session_key" \
+				--task "${WORKER_ISSUE_NUMBER:-}" \
+				--owner-pid "$$"; then
+			print_info "[lifecycle] worker_worktree_claimed session=${session_key} branch=${branch} path=${work_dir} pid=$$"
+			return 0
+		fi
 		print_error "[fatal] worker worktree already has a live owner: $work_dir"
 		return 1
 	fi
