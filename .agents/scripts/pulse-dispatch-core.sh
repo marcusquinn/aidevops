@@ -828,11 +828,11 @@ _apply_committed_to_main_cache_label() {
 #######################################
 # GH#18648 (Fix 3a): Detect bot-generated cleanup issues.
 #
-# Bot-generated cleanup issues carry either `review-followup` (from
-# post-merge-review-scanner.sh) or `source:review-scanner` (the
-# provenance marker the scanner applies alongside it). Both labels
-# indicate: "this issue was auto-created from already-merged PR
-# review comments, no new maintainer decision is required".
+# Bot-generated cleanup issues carry `review-followup` (from
+# post-merge-review-scanner.sh), `source:review-scanner`, or
+# `source:review-feedback` (from quality-feedback-helper.sh scan-merged).
+# These labels indicate: "this issue was auto-created from already-merged
+# PR review comments, no new maintainer decision is required".
 #
 # Callers use this to exempt the issue from the ever-NMR permanence
 # trap — historical NMR labels applied by automated escalation paths
@@ -855,7 +855,7 @@ _is_bot_generated_cleanup_issue() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | (index("review-followup") != null or index("source:review-scanner") != null)' >/dev/null 2>&1
+		jq -e '.labels | map(.name) | (index("review-followup") != null or index("source:review-scanner") != null or index("source:review-feedback") != null)' >/dev/null 2>&1
 }
 
 #######################################
