@@ -257,23 +257,6 @@ _dlw_zero_output_failure_count() {
 _dlw_zero_output_comment_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
-	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
-	command -v gh >/dev/null 2>&1 || { printf '0'; return 0; }
-
-	local count=""
-	# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
-	count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
-		--jq '[.[] | select((.body // "") | test("worker_noop_zero_output|zero[- ]output|classified as `no_work`"; "i"))] | length' \
-		2>/dev/null) || count="0"
-	[[ "$count" =~ ^[0-9]+$ ]] || count=0
-	printf '%s' "$count"
-	return 0
-}
-
-_dlw_zero_output_comment_count() {
-	local issue_number="$1"
-	local repo_slug="$2"
 
 	[[ "${ZERO_OUTPUT_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { printf '0'; return 0; }
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
@@ -285,6 +268,87 @@ _dlw_zero_output_comment_count() {
 		awk '{ total += $1 } END { print total + 0 }') || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
+	return 0
+}
+
+_dlw_comment_bloat_metrics() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" ]] || { printf '0\t0\t0\t0'; return 0; }
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0\t0\t0\t0'; return 0; }
+	[[ -n "$repo_slug" ]] || { printf '0\t0\t0\t0'; return 0; }
+
+	local metrics=""
+	metrics=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--jq '[.[] | {body: (.body // "")}] | {comments: length, ops: ([.[] | select(.body | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length), zero: ([.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output"; "i"))] | length), chars: ([.[].body | length] | add // 0)} | [.comments, .ops, .zero, .chars] | @tsv' \
+		2>/dev/null | awk -F '\t' '{c+=$1; o+=$2; z+=$3; ch+=$4} END {printf "%d\t%d\t%d\t%d", c+0, o+0, z+0, ch+0}') || metrics="0	0	0	0"
+	[[ -n "$metrics" ]] || metrics=$'0\t0\t0\t0'
+	printf '%s' "$metrics"
+	return 0
+}
+
+_dlw_comment_bloat_requires_clean_room() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local comments="" ops="" zero="" chars=""
+	IFS=$'\t' read -r comments ops zero chars \
+		<<<"$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")"
+	[[ "$comments" =~ ^[0-9]+$ ]] || comments=0
+	[[ "$ops" =~ ^[0-9]+$ ]] || ops=0
+	[[ "$zero" =~ ^[0-9]+$ ]] || zero=0
+	[[ "$chars" =~ ^[0-9]+$ ]] || chars=0
+
+	local comment_threshold="${CLEAN_ROOM_COMMENT_THRESHOLD:-100}"
+	local ops_threshold="${CLEAN_ROOM_OPS_COMMENT_THRESHOLD:-50}"
+	local zero_threshold="${CLEAN_ROOM_ZERO_OUTPUT_COMMENT_THRESHOLD:-10}"
+	local chars_threshold="${CLEAN_ROOM_COMMENT_CHARS_THRESHOLD:-50000}"
+	[[ "$comment_threshold" =~ ^[0-9]+$ ]] || comment_threshold=100
+	[[ "$ops_threshold" =~ ^[0-9]+$ ]] || ops_threshold=50
+	[[ "$zero_threshold" =~ ^[0-9]+$ ]] || zero_threshold=10
+	[[ "$chars_threshold" =~ ^[0-9]+$ ]] || chars_threshold=50000
+
+	if [[ "$comments" -ge "$comment_threshold" || "$ops" -ge "$ops_threshold" || "$zero" -ge "$zero_threshold" || "$chars" -ge "$chars_threshold" ]]; then
+		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: clean-room brief mode for comment-bloated issue comments=${comments} ops=${ops} zero=${zero} chars=${chars}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+_dlw_fetch_issue_body_for_clean_room() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local issue_body=""
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	printf '%s' "$issue_body"
+	return 0
+}
+
+_dlw_clean_room_prompt() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="$3"
+	local issue_body="$4"
+
+	cat <<EOF
+You are assigned to work on issue #${issue_number} in ${repo_slug}.
+
+This issue has a large audit/comment trail that is not implementation context. Use clean-room brief mode:
+
+1. Do not read issue comments or timeline unless explicitly required by a maintainer.
+2. Treat only the issue body below as the worker brief.
+3. Ignore ops/provenance/audit comments, dispatch claims, release comments, watchdog comments, and cooldown comments.
+4. Before editing, summarize the actionable task, files, and verification from the body below.
+5. If the body is still not worker-ready, create a concise replacement child issue or add a maintainer-review comment instead of speculating.
+
+Issue title: ${issue_title:-Issue #${issue_number}}
+
+Clean issue body:
+
+${issue_body:-No issue body was available. Read only the issue body with: gh issue view ${issue_number} --repo ${repo_slug} --json body --jq '.body'}
+EOF
 	return 0
 }
 
@@ -331,6 +395,13 @@ _dlw_prepare_prompt_for_launch() {
 	local repo_slug="$2"
 	local issue_title="$3"
 	local original_prompt="$4"
+
+	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug"; then
+		local issue_body=""
+		issue_body=$(_dlw_fetch_issue_body_for_clean_room "$issue_number" "$repo_slug")
+		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
+		return 0
+	fi
 
 	local zero_count=""
 	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
