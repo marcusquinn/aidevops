@@ -953,11 +953,11 @@ _is_task_committed_to_main() {
 #######################################
 # Detect labels that mean a human/review workflow owns the target.
 #
-# status:in-review is the interactive hold label applied by full-loop and
-# interactive-session-helper. origin:interactive is equivalent protection for
-# PRs/issues created by a human session. These labels must block dispatch even
-# when the assignee is the same runner login, otherwise a maintainer's local
-# pulse can race their own interactive PR/worktree (GH#22948).
+# status:in-review is the live interactive hold label applied by full-loop and
+# interactive-session-helper. origin:interactive is provenance: it blocks only
+# while the issue is not explicitly worker-dispatchable. auto-dispatch is the
+# handoff signal for issues left by an interactive session after the human has
+# moved on, so it must not strand work forever (GH#22964/GH#22965).
 #
 # Args:
 #   $1 - issue metadata JSON with .labels[].name
@@ -967,7 +967,7 @@ _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | (index("status:in-review") or index("origin:interactive"))' >/dev/null 2>&1
+		jq -e '.labels | map(.name) | (index("status:in-review") or (index("origin:interactive") and (index("auto-dispatch") | not)))' >/dev/null 2>&1
 	return $?
 }
 
@@ -1023,9 +1023,10 @@ _dispatch_dedup_check_layers() {
 	target_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]')
 	target_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // ""' 2>/dev/null)
 
-	# GH#22948: interactive/review hold guard independent of assignee identity.
-	# The Layer 6 assignment guard intentionally lets self-assignment through;
-	# status:in-review/origin:interactive must still prevent worker dispatch.
+	# GH#22948/GH#22964: interactive/review hold guard independent of assignee
+	# identity. The Layer 6 assignment guard intentionally lets self-assignment
+	# through. status:in-review remains a live human lock; origin:interactive is
+	# provenance only when auto-dispatch explicitly hands the issue to workers.
 	_dss_t0=$(_ds_now_ns)
 	if _dispatch_has_interactive_hold "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: interactive review hold label present (GH#22948)" >>"$LOGFILE"

@@ -157,14 +157,18 @@ _dsi_target_is_pull_request() {
 }
 
 #######################################
-# Block manual dispatch when interactive/review hold labels are present.
+# Block manual dispatch when live interactive/review hold labels are present.
 # Args: $1 - labels CSV
 # Returns: 0 when safe, 1 when held
 #######################################
 _dsi_guard_no_interactive_hold() {
 	local labels_csv="$1"
 	local labels_with_commas=",${labels_csv},"
-	if [[ "$labels_with_commas" == *",status:in-review,"* || "$labels_with_commas" == *",origin:interactive,"* ]]; then
+	if [[ "$labels_with_commas" == *",status:in-review,"* ]]; then
+		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
+		return 1
+	fi
+	if [[ "$labels_with_commas" == *",origin:interactive,"* && "$labels_with_commas" != *",auto-dispatch,"* ]]; then
 		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
 		return 1
 	fi

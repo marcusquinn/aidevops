@@ -125,6 +125,16 @@ test_interactive_hold_blocks_origin_interactive() {
 	return 0
 }
 
+test_interactive_hold_allows_auto_dispatch_handoff() {
+	local meta='{"labels":[{"name":"origin:interactive"},{"name":"auto-dispatch"},{"name":"bug"}]}'
+	if _dispatch_has_interactive_hold "$meta"; then
+		print_result "interactive hold allows auto-dispatch handoff" 1 "auto-dispatch should override provenance-only origin:interactive"
+		return 0
+	fi
+	print_result "interactive hold allows auto-dispatch handoff" 0
+	return 0
+}
+
 test_interactive_hold_allows_worker_issue() {
 	local meta='{"labels":[{"name":"auto-dispatch"},{"name":"origin:worker"}]}'
 	if _dispatch_has_interactive_hold "$meta"; then
@@ -144,6 +154,7 @@ main() {
 	test_pr_guard_allows_plain_issue
 	test_interactive_hold_blocks_in_review
 	test_interactive_hold_blocks_origin_interactive
+	test_interactive_hold_allows_auto_dispatch_handoff
 	test_interactive_hold_allows_worker_issue
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

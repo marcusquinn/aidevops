@@ -547,13 +547,23 @@ test_interactive_hold_guard_blocks_review_label() {
 	return 0
 }
 
-test_interactive_hold_guard_blocks_origin_interactive() {
+test_interactive_hold_guard_blocks_origin_interactive_without_handoff() {
+	local rc=0
+	_dsi_guard_no_interactive_hold "bug,origin:interactive" >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 ]] && check=0
+	print_result "interactive hold guard blocks origin:interactive without handoff" "$check" "rc=$rc"
+	return 0
+}
+
+test_interactive_hold_guard_allows_auto_dispatch_handoff() {
 	local rc=0
 	_dsi_guard_no_interactive_hold "bug,origin:interactive,auto-dispatch" >/dev/null 2>&1 || rc=$?
 
 	local check=1
-	[[ "$rc" -eq 1 ]] && check=0
-	print_result "interactive hold guard blocks origin:interactive" "$check" "rc=$rc"
+	[[ "$rc" -eq 0 ]] && check=0
+	print_result "interactive hold guard allows auto-dispatch handoff" "$check" "rc=$rc"
 	return 0
 }
 
@@ -670,7 +680,8 @@ _run_tests() {
 	test_pr_target_guard_allows_plain_issue
 	test_pr_target_guard_fails_closed_on_api_error
 	test_interactive_hold_guard_blocks_review_label
-	test_interactive_hold_guard_blocks_origin_interactive
+	test_interactive_hold_guard_blocks_origin_interactive_without_handoff
+	test_interactive_hold_guard_allows_auto_dispatch_handoff
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
