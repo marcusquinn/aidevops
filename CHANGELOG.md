@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.68] - 2026-05-05
+
+### Fixed
+
+- clean-room prompts for bloated issues (#22950)
+
 ## [3.14.67] - 2026-05-05
 
 ### Changed
