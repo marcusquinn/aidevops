@@ -900,7 +900,7 @@ cleanup_stashes() {
 #######################################
 reap_zombie_workers() {
 	local reaped=0
-	local worker_pids worker_key issue_number
+	local worker_key issue_number
 
 	local session_keys
 	session_keys=$(ps aux | grep '[h]eadless-runtime.*--role worker' | grep -v grep |
@@ -918,9 +918,9 @@ reap_zombie_workers() {
 		if [[ -x "$_ledger_helper" ]]; then
 			ledger_entry=$("$_ledger_helper" check --session-key "$worker_key" 2>/dev/null) || ledger_entry=""
 			if [[ -n "$ledger_entry" ]]; then
-				repo_slug=$(printf '%s' "$ledger_entry" | jq -r '.repo_slug // ""' 2>/dev/null) || repo_slug=""
-				ledger_issue=$(printf '%s' "$ledger_entry" | jq -r '.issue_number // ""' 2>/dev/null) || ledger_issue=""
-				ledger_pid=$(printf '%s' "$ledger_entry" | jq -r '.pid // ""' 2>/dev/null) || ledger_pid=""
+				local ledger_fields
+				ledger_fields=$(printf '%s' "$ledger_entry" | jq -r '[.repo_slug // "", (.issue_number // "" | tostring), (.pid // "" | tostring)] | @tsv' 2>/dev/null) || ledger_fields=$'\t\t'
+				IFS=$'\t' read -r repo_slug ledger_issue ledger_pid <<<"$ledger_fields"
 			fi
 		fi
 		if [[ -z "$repo_slug" ]]; then
@@ -941,12 +941,9 @@ reap_zombie_workers() {
 
 		if [[ -n "$merged_pr" ]]; then
 			# Kill the worker process tree
-			worker_pids="$ledger_pid"
-			if [[ -n "$worker_pids" ]]; then
-				echo "[pulse-wrapper] Reaping zombie worker ${worker_key}: PR #${merged_pr} already merged in ${repo_slug}" >>"$LOGFILE"
-				echo "$worker_pids" | xargs kill 2>/dev/null || true
-				reaped=$((reaped + 1))
-			fi
+			echo "[pulse-wrapper] Reaping zombie worker ${worker_key}: PR #${merged_pr} already merged in ${repo_slug}" >>"$LOGFILE"
+			printf '%s\n' "$ledger_pid" | xargs kill 2>/dev/null || true
+			reaped=$((reaped + 1))
 		fi
 	done <<<"$session_keys"
 
