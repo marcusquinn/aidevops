@@ -1205,12 +1205,12 @@ dispatch_foss_workers() {
 			"$repos_json" 2>/dev/null || echo "help wanted")
 		foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
 			--label "${labels_filter%%,*}" --limit 1 \
-			--json number,title --jq '.[0] | "\(.number)|\(.title)"' 2>/dev/null) || foss_issue=""
+			--json number,title --jq '(.[0] // {}) | "\(.number // "")|\(.title // "")"' 2>/dev/null) || foss_issue=""
 		[[ -n "$foss_issue" ]] || continue
 
 		foss_issue_num="${foss_issue%%|*}"
 		foss_issue_title="${foss_issue#*|}"
-		if [[ ! "$foss_issue_num" =~ ^[0-9]+$ || -z "$foss_issue_title" || "$foss_issue_title" == "null" ]]; then
+		if [[ ! "$foss_issue_num" =~ ^[0-9]+$ || -z "$foss_issue_title" ]]; then
 			echo "[pulse-wrapper] FOSS dispatch skipped invalid issue selection for ${foss_slug}: number='${foss_issue_num}' title='${foss_issue_title}'" >>"$LOGFILE"
 			continue
 		fi
