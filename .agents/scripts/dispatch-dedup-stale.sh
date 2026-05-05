@@ -196,7 +196,7 @@ _stale_recovery_find_open_pr_activity() {
 	local _open_pr
 	_open_pr=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number} in:body" --limit 1 \
-		--json number,updatedAt --jq '.[0] | if . then "\(.number)|\(.updatedAt // "")" else "" end' 2>/dev/null) || _open_pr=""
+		--json number,updatedAt --jq '.[0] | if . then "\(.number)|\(.updatedAt // "")" else "" end') || _open_pr=""
 	printf '%s' "$_open_pr"
 	return 0
 }
