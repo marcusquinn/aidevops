@@ -581,9 +581,10 @@ Key file paths (use these directly, do NOT search for them):
 - All agent scripts live under .agents/scripts/ (not scripts/ at root)
 
 Implementation approach:
-1. Read the issue body FIRST (gh issue view $WORKER_ISSUE_NUMBER). Look for a "Worker Guidance" or "How" section -- it contains the files to modify, reference patterns, and verification commands. Follow these directly instead of exploring the codebase broadly.
-2. Budget discipline: spend at most 25% of your effort on reading/exploring. After reading the issue body + 2-3 reference files mentioned in it, start writing code. Do not read entire helper scripts -- read only the sections you will modify.
-3. If the issue body lacks file paths and implementation steps, exit BLOCKED with reason "missing implementation context" so the dispatcher can enrich the body. Do NOT explore broadly to compensate for a vague issue.
+1. Read the issue body FIRST (gh issue view $WORKER_ISSUE_NUMBER). Look for a "Worker Guidance" or "How" section -- it contains the files to modify, reference patterns, and verification commands. Follow these directly when present.
+2. If Worker Guidance/How is missing or incomplete, do bounded discovery instead of stopping: use the issue title/body, exact error text, nearby helper names, tests, and git history to identify likely target files. Proceed when expected behavior, target area, and safe verification are clear.
+3. Budget discipline: spend at most 25% of your effort on reading/exploring. After reading the issue body + 2-3 likely reference files, start writing code. Do not read entire helper scripts -- read only the sections you will modify.
+4. Exit BLOCKED with reason "missing implementation context" only after bounded discovery still cannot identify expected behavior, target area, or safe verification. Include what you searched and why it remains unsafe.
 
 Progressive context loading:
 - Treat the issue body's Worker Guidance / How section as the authoritative plan.
@@ -595,6 +596,9 @@ Progressive context loading:
 
 Empty tool results:
 If a tool call returns empty output, it usually means the path or pattern was wrong, not that the resource is missing. Common causes: missing .agents/ prefix on paths, wrong glob pattern, file moved/renamed. Retry with corrected paths before giving up. If retries also fail, log what you tried and continue with the next step. Do NOT stop the session over one empty result.
+
+Worktree edit verification (GH#22816):
+After any file edit in the pre-created linked worktree, verify the worktree path still exists and the change is visible before claiming success or pushing. Minimum evidence: git status --short --branch from $WORKER_WORKTREE_PATH plus a diff/stat or commit containing the edited files. If the worktree or edits disappeared, reconstruct from available evidence before reporting completion.
 EOF
 	return 0
 }
