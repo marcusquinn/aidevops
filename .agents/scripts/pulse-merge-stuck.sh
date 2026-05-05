@@ -1189,8 +1189,13 @@ pulse_merge_zero_progress_record() {
 		return 0
 	fi
 
-	# No merges + nothing eligible = idle pulse, not a stuck pulse.
-	[[ "$eligible_unmerged" -gt 0 ]] || return 0
+	# No merges + nothing eligible = idle pulse, not a stuck pulse. Reset the
+	# streak so the "consecutive zero-progress cycles" signal cannot bridge
+	# idle cycles and file a stale throughput-collapse issue later.
+	if [[ "$eligible_unmerged" -le 0 ]]; then
+		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
+		return 0
+	fi
 
 	# Increment the gauge by 1.
 	local cur
