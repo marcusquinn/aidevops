@@ -285,7 +285,7 @@ _open_alert_numbers() {
 	local marker="<!-- aidevops:dashboard-freshness:${slug}:${dash_issue} -->"
 	command -v gh >/dev/null 2>&1 || return 0
 	gh auth status &>/dev/null 2>&1 || return 0
-	# Search only open issues authored by us with the freshness label.
+	# Search only open review-followup issues with the exact freshness marker.
 	gh issue list --repo "$slug" --state open \
 		--label "review-followup" \
 		--search "in:body \"${marker}\"" \
