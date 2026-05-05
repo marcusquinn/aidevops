@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.64] - 2026-05-05
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- recover OpenAI overload interruptions
+
 ## [3.14.63] - 2026-05-05
 
 ### Fixed
