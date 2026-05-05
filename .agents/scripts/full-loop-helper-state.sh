@@ -174,8 +174,10 @@ emit_deploy_phase() {
 
 # Pre-start maintainer gate check (GH#17810, t2890).
 # Extracts the first issue number from the prompt and verifies the linked
-# issue does not have needs-maintainer-review label or missing assignee
-# (GH#17810). Then inherits the pulse-side structural dispatch gates via
+# issue does not have needs-maintainer-review label or, for headless workers,
+# a missing assignee (GH#17810). Interactive maintainer sessions may self-claim
+# an unassigned issue supplied directly in the prompt (GH#22854). Then inherits
+# the pulse-side structural dispatch gates via
 # dispatch-dedup-helper.sh::is-assigned so /full-loop honors parent-task
 # and no-auto-dispatch blocks the same way the pulse does — closing the
 # entry-point asymmetry where /full-loop bypassed gates the pulse refused
@@ -235,9 +237,14 @@ _check_linked_issue_gate() {
 		reasons="${reasons}Issue #${issue_num} has \`needs-maintainer-review\` label — a maintainer must approve before work begins.\n"
 	fi
 
-	# Check 2: no assignee (exempt quality-debt issues per GH#6623)
+	# Check 2: no assignee (exempt quality-debt issues per GH#6623).
+	# GH#22854: OWNER/MEMBER interactive sessions can fix an unassigned issue by
+	# claiming it immediately after this gate. Keep the stricter block for
+	# headless workers so dispatched automation still requires an explicit claim.
 	if [[ -z "$assignees" ]]; then
-		if echo "$labels" | grep -q 'quality-debt'; then
+		if ! is_headless; then
+			: # interactive self-claim path handles this below
+		elif echo "$labels" | grep -q 'quality-debt'; then
 			: # exempt
 		else
 			blocked=true
@@ -446,10 +453,10 @@ cmd_start() {
 		return 1
 	}
 
-	# Pre-start maintainer gate check (GH#17810): block if linked issue has
-	# needs-maintainer-review label or no assignee. Mirrors the CI gate in
-	# .github/workflows/maintainer-gate.yml so workers fail fast locally
-	# instead of creating PRs that will always fail CI.
+	# Pre-start maintainer gate check (GH#17810/GH#22854): block if linked issue
+	# has needs-maintainer-review label; in headless mode also block missing
+	# assignee. Interactive sessions may claim an unassigned maintainer-supplied
+	# issue below instead of treating the missing assignment as fatal.
 	_check_linked_issue_gate "$prompt" || return 1
 
 	# Interactive claim (t2056 hardening): when not headless, automatically
