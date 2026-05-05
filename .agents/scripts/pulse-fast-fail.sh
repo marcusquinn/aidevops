@@ -479,7 +479,7 @@ _fast_fail_record_locked() {
 	fi
 
 	# Write updated state (include crash_type for diagnostics).
-	local updated_state aidevops_version
+	local updated_state="" aidevops_version=""
 	aidevops_version=$(_ff_current_aidevops_version)
 	updated_state=$(printf '%s' "$state" | jq \
 		--arg k "$key" \
