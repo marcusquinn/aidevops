@@ -900,7 +900,7 @@ cleanup_stashes() {
 #######################################
 reap_zombie_workers() {
 	local reaped=0
-	local worker_key issue_number
+	local worker_key="" issue_number=""
 
 	local session_keys
 	session_keys=$(ps aux | grep '[h]eadless-runtime.*--role worker' | grep -v grep |
