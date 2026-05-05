@@ -21,6 +21,7 @@
 # Usage (standalone CLI):
 #   pulse-stats-helper.sh increment <counter_name>
 #   pulse-stats-helper.sh get-24h <counter_name>
+#   pulse-stats-helper.sh get-gauge <gauge_name>
 #   pulse-stats-helper.sh status           — human-readable summary
 #   pulse-stats-helper.sh reset <counter_name>  — clear a counter
 
@@ -158,6 +159,36 @@ pulse_stats_status() {
 }
 
 #######################################
+# Print a human-readable summary of all gauges.
+#######################################
+pulse_stats_gauge_status() {
+	if [[ ! -f "$PULSE_STATS_FILE" ]]; then
+		echo "  No pulse gauges recorded yet."
+		return 0
+	fi
+
+	local names
+	names=$(jq -r '(.gauges // {}) | keys[]' "$PULSE_STATS_FILE" 2>/dev/null) || names=""
+
+	if [[ -z "$names" ]]; then
+		echo "  No pulse gauges recorded yet."
+		return 0
+	fi
+
+	local name value ts
+	while IFS= read -r name; do
+		[[ -z "$name" ]] && continue
+		value=$(jq -r --arg name "$name" '(.gauges[$name].value // 0) | tostring' \
+			"$PULSE_STATS_FILE" 2>/dev/null) || value="0"
+		ts=$(jq -r --arg name "$name" '(.gauges[$name].ts // 0) | tostring' \
+			"$PULSE_STATS_FILE" 2>/dev/null) || ts="0"
+		printf '  %-40s %s (ts=%s)\n' "${name}:" "${value:-0}" "${ts:-0}"
+	done <<<"$names"
+
+	return 0
+}
+
+#######################################
 # Set a named gauge to an absolute integer value (t3193).
 #
 # Gauges are distinct from counters: they store the LATEST observation,
@@ -278,9 +309,21 @@ _main() {
 			pulse_stats_get_24h "$get24h_counter"
 			return 0
 			;;
+		get-gauge)
+			if [[ $# -lt 1 ]]; then
+				echo "Usage: pulse-stats-helper.sh get-gauge <gauge_name>" >&2
+				return 1
+			fi
+			local get_gauge_name="$1"
+			pulse_stats_get_gauge "$get_gauge_name"
+			return 0
+			;;
 		status)
 			echo "Pulse Stats (last 24h):"
 			pulse_stats_status
+			echo ""
+			echo "Pulse Gauges:"
+			pulse_stats_gauge_status
 			return 0
 			;;
 		reset)
@@ -298,6 +341,7 @@ _main() {
 			echo "Usage:"
 			echo "  pulse-stats-helper.sh increment <counter>   Add event to counter"
 			echo "  pulse-stats-helper.sh get-24h <counter>     Count events last 24h"
+			echo "  pulse-stats-helper.sh get-gauge <gauge>     Read current gauge value"
 			echo "  pulse-stats-helper.sh status                Human-readable summary"
 			echo "  pulse-stats-helper.sh reset <counter>       Clear a counter"
 			echo ""
