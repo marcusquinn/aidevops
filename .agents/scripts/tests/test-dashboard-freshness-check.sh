@@ -15,7 +15,7 @@
 #      via the stubbed `gh` invocation (label & title format asserted).
 #   5. scan with a stale dashboard AND a pre-existing open alert → files
 #      NO second alert (dedup via <!-- aidevops:dashboard-freshness:*:* -->
-#      marker match).
+#      generated-title match scoped to the dashboard issue suffix).
 #   6. scan with a fresh dashboard → files no alert.
 #   7. cadence gate: a second scan within the interval is short-circuited
 #      without calling `gh`.
@@ -202,10 +202,11 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --search ... → alert dedup/recovery check
+			#   gh issue list --json number,title ... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
+				local gh_args="$*"
 				case "$1" in
 					auth)
 						return 0
@@ -218,7 +219,12 @@ run_scan_with_stubs() {
 					issue)
 						case "$2" in
 							list)
-								if [[ "$ALERT_EXISTS" == "1" ]]; then
+								if [[ "$gh_args" == *" --label "* ]] \
+									|| [[ "$gh_args" == *" --search "* ]] \
+									|| [[ "$gh_args" != *"--json number,title"* ]] \
+									|| [[ "$gh_args" != *"endswith(\"(#424242)\")"* ]]; then
+									printf "\n"
+								elif [[ "$ALERT_EXISTS" == "1" ]]; then
 									printf "99\n"
 								else
 									printf "\n"
@@ -288,6 +294,17 @@ if (( created_count == 0 )); then
 else
 	fail "dedup violated: created $created_count alerts" \
 		"calls:\n$(cat "$calls_file")"
+fi
+
+if grep -q '^issue list ' "$calls_file" \
+	&& ! grep -q -- '--label' "$calls_file" \
+	&& ! grep -q -- '--search' "$calls_file" \
+	&& grep -q -- '--json number,title' "$calls_file" \
+	&& grep -q 'endswith("(#424242)")' "$calls_file"; then
+	pass "dedup lookup filters open titles locally by dashboard suffix"
+else
+	fail "dedup lookup query shape" \
+		"expected title query without --label/--search; calls:\n$(cat "$calls_file")"
 fi
 
 # ---------------------------------------------------------------------------

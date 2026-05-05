@@ -19,8 +19,8 @@
 # Design principles:
 #   - Single-pass, cheap: one gh API call per tracked dashboard.
 #   - Cadence-gated: default one check per hour, throttled via state file.
-#   - Idempotent alerting: one open alert per stale dashboard, dedup'd by
-#     title prefix "Supervisor health dashboard stale:".
+#   - Idempotent alerting: one open alert per dashboard, dedup'd by generated
+#     alert title plus dashboard issue suffix.
 #   - Fail-open: any error (gh offline, cache missing, body missing marker)
 #     logs and exits 0 — never blocks the pulse.
 #
@@ -282,14 +282,16 @@ _resolve_slug_from_dashed() {
 _open_alert_numbers() {
 	local slug="$1"
 	local dash_issue="$2"
-	local marker="<!-- aidevops:dashboard-freshness:${slug}:${dash_issue} -->"
+	local stale_title_prefix="Supervisor health dashboard stale:"
+	local missing_marker_title="Supervisor health dashboard missing last_refresh marker (#${dash_issue})"
+	local issue_suffix="(#${dash_issue})"
 	command -v gh >/dev/null 2>&1 || return 0
 	gh auth status &>/dev/null 2>&1 || return 0
-	# Search only open review-followup issues with the exact freshness marker.
+	# Query open issue titles and filter locally. GitHub search is unreliable for
+	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
 	gh issue list --repo "$slug" --state open \
-		--label "review-followup" \
-		--search "in:body \"${marker}\"" \
-		--json number --jq '.[].number' 2>/dev/null || true
+		--json number,title \
+		--jq '.[] | select(((.title | startswith("'"${stale_title_prefix}"'")) and (.title | endswith("'"${issue_suffix}"'"))) or (.title == "'"${missing_marker_title}"'")) | .number' 2>/dev/null || true
 	return 0
 }
 
