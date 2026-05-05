@@ -218,12 +218,21 @@ _dlw_zero_output_failure_count() {
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
-	[[ -n "${FAST_FAIL_STATE_FILE:-}" && -f "$FAST_FAIL_STATE_FILE" ]] || { printf '0'; return 0; }
+	local state_count=0 comment_count=0
+	[[ -n "${FAST_FAIL_STATE_FILE:-}" && -f "$FAST_FAIL_STATE_FILE" ]] || {
+		comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+		printf '%s' "$comment_count"
+		return 0
+	}
 
 	local key="${repo_slug}/${issue_number}"
 	local entry=""
 	entry=$(jq -r --arg k "$key" '.[$k] // empty' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || entry=""
-	[[ -n "$entry" ]] || { printf '0'; return 0; }
+	if [[ -z "$entry" ]]; then
+		comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+		printf '%s' "$comment_count"
+		return 0
+	fi
 
 	local reason="" crash_type="" count=""
 	reason=$(printf '%s' "$entry" | jq -r '.reason // ""' 2>/dev/null) || reason=""
@@ -232,9 +241,33 @@ _dlw_zero_output_failure_count() {
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 
 	case "${reason}:${crash_type}" in
-	worker_noop_zero_output:* | *:no_work | no_work:*) printf '%s' "$count" ;;
-	*) printf '0' ;;
+	worker_noop_zero_output:* | *:no_work | no_work:*) state_count="$count" ;;
+	*) state_count=0 ;;
 	esac
+	comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+	[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+	if [[ "$comment_count" -gt "$state_count" ]]; then
+		printf '%s' "$comment_count"
+	else
+		printf '%s' "$state_count"
+	fi
+	return 0
+}
+
+_dlw_zero_output_comment_count() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
+	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
+	command -v gh >/dev/null 2>&1 || { printf '0'; return 0; }
+
+	local count=""
+	# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
+	count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" --paginate \
+		--jq '[.[] | select((.body // "") | test("worker_noop_zero_output|zero[- ]output|classified as `no_work`"; "i"))] | length' \
+		2>/dev/null) || count="0"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
 	return 0
 }
 

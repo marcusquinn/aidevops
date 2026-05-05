@@ -16,6 +16,9 @@
 # Functions in this module (in source order):
 #   - _ff_key
 #   - _ff_load
+#   - _ff_current_aidevops_version
+#   - _ff_version_gt
+#   - _ff_entry_is_from_older_release
 #   - _ff_query_pool_retry_seconds
 #   - _ff_with_lock
 #   - _ff_save
@@ -256,7 +259,6 @@ _ff_parse_entry() {
 		existing_count=0
 		existing_backoff=0
 	fi
-
 	printf '%s\t%s\n' "$existing_count" "$existing_backoff"
 	return 0
 }
