@@ -14,7 +14,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 readonly SCRIPT_DIR
 # shellcheck source=/dev/null
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/shared-constants.sh"
 
 usage() {
 	printf 'Usage:\n'
