@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.69] - 2026-05-05
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- let clean-room issues bypass zero-output hold (#22954)
+
 ## [3.14.68] - 2026-05-05
 
 ### Fixed
