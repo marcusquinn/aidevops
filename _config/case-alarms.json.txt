@@ -1,0 +1,12 @@
+{
+  "_comment": "Case deadline alarm configuration. Copy to <repo>/_config/case-alarms.json to customise.",
+  "stages_days": [30, 7],
+  "channels": ["gh-issue", "ntfy"],
+  "ntfy_topic": "aidevops-case-alarms",
+  "per_case_overrides": {
+    "_example-case-id": {
+      "stages_days": [60, 14, 3],
+      "_comment": "Remove this example block and add real case-IDs if per-case thresholds are needed."
+    }
+  }
+}
