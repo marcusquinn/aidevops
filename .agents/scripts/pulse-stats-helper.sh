@@ -167,23 +167,26 @@ pulse_stats_gauge_status() {
 		return 0
 	fi
 
-	local names
-	names=$(jq -r '(.gauges // {}) | keys[]' "$PULSE_STATS_FILE" 2>/dev/null) || names=""
+	local data
+	data=$(jq -r '
+		(.gauges // {}) as $gauges
+		| ($gauges | keys[]) as $name
+		| "\($name):\t\($gauges[$name].value // 0)\t\($gauges[$name].ts // 0)"
+	' "$PULSE_STATS_FILE") || {
+		printf 'Error: Failed to read pulse stats file: %s\n' "$PULSE_STATS_FILE" >&2
+		return 1
+	}
 
-	if [[ -z "$names" ]]; then
+	if [[ -z "$data" ]]; then
 		echo "  No pulse gauges recorded yet."
 		return 0
 	fi
 
-	local name value ts
-	while IFS= read -r name; do
-		[[ -z "$name" ]] && continue
-		value=$(jq -r --arg name "$name" '(.gauges[$name].value // 0) | tostring' \
-			"$PULSE_STATS_FILE" 2>/dev/null) || value="0"
-		ts=$(jq -r --arg name "$name" '(.gauges[$name].ts // 0) | tostring' \
-			"$PULSE_STATS_FILE" 2>/dev/null) || ts="0"
-		printf '  %-40s %s (ts=%s)\n' "${name}:" "${value:-0}" "${ts:-0}"
-	done <<<"$names"
+	local name_with_colon value ts
+	while IFS=$'\t' read -r name_with_colon value ts; do
+		[[ -z "$name_with_colon" ]] && continue
+		printf '  %-40s %s (ts=%s)\n' "$name_with_colon" "${value:-0}" "${ts:-0}"
+	done <<<"$data"
 
 	return 0
 }
