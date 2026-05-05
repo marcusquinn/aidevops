@@ -112,7 +112,7 @@ gh() {
 		local path="${1:-}"
 		shift || true
 		case "$path" in
-		repos/*/issues/*/comments)
+		repos/*/issues/*/comments | repos/*/issues/*/comments\?*)
 			local is_post=0 body="" prev=""
 			local arg
 			for arg in "$@"; do
@@ -130,6 +130,20 @@ gh() {
 				return 0
 			fi
 			_mock_gh_response "$GH_API_COMMENTS_RESPONSE" "$@"
+			;;
+		repos/*/issues/comments/*)
+			local is_delete=0 prev=""
+			local arg
+			for arg in "$@"; do
+				if [[ "$prev" == "--method" && "$arg" == "DELETE" ]]; then
+					is_delete=1
+				fi
+				prev="$arg"
+			done
+			if [[ "$is_delete" -eq 1 ]]; then
+				printf '%s\n' 'DELETE_COMMENT' >>"$GH_COMMENT_LOG"
+			fi
+			printf '{}\n'
 			;;
 		repos/*/branches)
 			_mock_gh_response "$GH_API_BRANCHES_RESPONSE" "$@"
@@ -204,6 +218,11 @@ count_gh_comments() {
 	n=$(grep -c '^---END_COMMENT---$' "$GH_COMMENT_LOG" 2>/dev/null || true)
 	[[ "$n" =~ ^[0-9]+$ ]] || n=0
 	printf '%s' "$n"
+	return 0
+}
+
+sleep() {
+	printf '%s\n' 'SLEEP_CALLED' >>"$GH_COMMENT_LOG"
 	return 0
 }
 
@@ -301,23 +320,36 @@ else
 	print_result "Fix B: no_work on empty repo slug" 1 "got '$crash_type_no_repo'"
 fi
 
-# --- Fix C: post-claim aborts release their dispatch claim ---
+# --- Fix C: pre-launch aborts delete noisy dispatch claims ---
 
 reset_gh_state
 _claim_comment_id="claim-123"
 _release_dispatch_claim_on_abort "12345" "owner/repo" "runner-a" "worker_launch_rc_2"
 count_abort_release=$(count_gh_comments)
-if [[ "$count_abort_release" -eq 1 ]] &&
-	grep -q 'CLAIM_RELEASED reason=dispatch_aborted:worker_launch_rc_2 runner=runner-a' "$GH_COMMENT_LOG"; then
-	print_result "Fix C: post-claim launch abort emits CLAIM_RELEASED" 0
+if [[ "$count_abort_release" -eq 0 ]] &&
+	grep -q '^DELETE_COMMENT$' "$GH_COMMENT_LOG"; then
+	print_result "Fix C: pre-launch abort deletes retained claim" 0
 else
-	print_result "Fix C: post-claim launch abort emits CLAIM_RELEASED" 1 "log: $(cat "$GH_COMMENT_LOG")"
+	print_result "Fix C: pre-launch abort deletes retained claim" 1 "log: $(cat "$GH_COMMENT_LOG")"
 fi
 
 if [[ -z "${_claim_comment_id:-}" ]]; then
 	print_result "Fix C: release helper clears retained claim id" 0
 else
 	print_result "Fix C: release helper clears retained claim id" 1 "claim id still set: ${_claim_comment_id}"
+fi
+
+# --- Fix D: dispatch comment is posted before the stagger window ---
+
+reset_gh_state
+PULSE_DISPATCH_STAGGER_SECONDS=8 \
+	_dlw_post_launch_hooks "12345" "owner/repo" "runner-a" "4242" "worker-owner-repo-12345" "standard" "test-model"
+dispatch_line=$(grep -n 'Dispatching worker (deterministic).' "$GH_COMMENT_LOG" | cut -d: -f1 | head -n 1 || true)
+sleep_line=$(grep -n '^SLEEP_CALLED$' "$GH_COMMENT_LOG" | cut -d: -f1 | head -n 1 || true)
+if [[ -n "$dispatch_line" && -n "$sleep_line" && "$dispatch_line" -lt "$sleep_line" ]]; then
+	print_result "Fix D: posts dispatch comment before stagger sleep" 0
+else
+	print_result "Fix D: posts dispatch comment before stagger sleep" 1 "log: $(cat "$GH_COMMENT_LOG")"
 fi
 
 # Cleanup

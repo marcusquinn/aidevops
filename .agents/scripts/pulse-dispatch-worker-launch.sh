@@ -888,15 +888,15 @@ _dlw_nohup_launch() {
 }
 
 #######################################
-# Post-launch bookkeeping: stagger delay, dispatch-ledger registration, the
-# deterministic "Dispatching worker" comment on the issue, and claim-comment
+# Post-launch bookkeeping: dispatch-ledger registration, the deterministic
+# "Dispatching worker" comment on the issue, stagger delay, and claim-comment
 # retention logging.
 #
 # Stagger (GH#17549): reduces SQLite write contention on opencode.db
 # (busy_timeout=0). Without it, batches of 8+ workers all hit the DB
 # simultaneously, causing SQLITE_BUSY → silent mid-turn death. The stagger
-# gives each worker time to complete its initial DB writes before the next
-# one starts.
+# happens after the dispatch comment is posted so a fast worker failure cannot
+# publish CLAIM_RELEASED before the public "Dispatching worker" audit event.
 #
 # Dispatch comment (GH#15317): posted from the dispatcher, NOT from the
 # worker LLM session. Previously, the worker was responsible for posting
@@ -926,9 +926,6 @@ _dlw_post_launch_hooks() {
 	local session_key="$5"
 	local dispatch_tier="$6"
 	local selected_model="$7"
-
-	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
-	sleep "$stagger_delay"
 
 	# Record in dispatch ledger (with tier telemetry)
 	local ledger_helper="${SCRIPT_DIR}/dispatch-ledger-helper.sh"
@@ -972,6 +969,9 @@ Dispatching worker (deterministic).
 		echo "[dispatch_with_dedup] Claim comment ${_claim_comment_id} retained for audit trail on #${issue_number} (GH#17503)" >>"$LOGFILE"
 		_claim_comment_id=""
 	fi
+
+	local stagger_delay="${PULSE_DISPATCH_STAGGER_SECONDS:-8}"
+	sleep "$stagger_delay"
 	return 0
 }
 
