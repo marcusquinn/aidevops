@@ -798,6 +798,39 @@ _has_committed_to_main_cache_label() {
 }
 
 #######################################
+# Determine whether a GitHub issue-number target is actually a pull request.
+#
+# `gh issue view` intentionally presents PRs through the issue facade, so the
+# dispatch preflight must use the REST issue object and inspect the
+# `pull_request` marker before any label/assignee writes. This is a hard
+# trust-boundary guard: dispatching a worker against a PR number would mutate an
+# interactive review object and can open a competing implementation PR.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+# Returns:
+#   0 - target is a PR
+#   1 - target is a plain Issue
+#   2 - unable to verify safely
+#######################################
+_dispatch_target_is_pull_request() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local target_json="" has_pull_request=""
+
+	target_json=$(gh api "repos/${repo_slug}/issues/${issue_number}" 2>/dev/null) || return 2
+	has_pull_request=$(printf '%s' "$target_json" | jq -r 'has("pull_request")' 2>/dev/null) || return 2
+	if [[ "$has_pull_request" == "true" ]]; then
+		return 0
+	fi
+	if [[ "$has_pull_request" == "false" ]]; then
+		return 1
+	fi
+	return 2
+}
+
+#######################################
 # t2955: Apply the `dispatch-blocked:committed-to-main` cache label.
 #
 # Called by `_check_commit_subject_dedup_gate` after the first scan
@@ -1336,6 +1369,21 @@ dispatch_with_dedup() {
 	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
+		return 1
+	fi
+
+	# GH#22948: hard PR-target guard before any lifecycle mutation. A pull
+	# request shares the Issues API number space, but it is already an
+	# implementation under review; dispatching a worker against it can relabel
+	# origin:interactive to origin:worker and open a competing PR.
+	local _target_pr_rc=0
+	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
+	if [[ "$_target_pr_rc" -eq 0 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$_target_pr_rc" -ne 1 ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"
 		return 1
 	fi
 

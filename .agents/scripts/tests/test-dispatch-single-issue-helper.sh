@@ -32,6 +32,7 @@ SET_ISSUE_STATUS_LOG=""
 SET_ORIGIN_LABEL_LOG=""
 MOCK_GH_ISSUE_STATE="OPEN"
 MOCK_GH_FAIL="0"
+MOCK_GH_TARGET_IS_PR="0"
 MOCK_PS_LINES=""
 MOCK_LEDGER_RECORD=""
 
@@ -109,13 +110,24 @@ _install_mock_set_origin_label() {
 
 # shellcheck disable=SC2317
 gh() {
+	local gh_subcommand="${1:-}"
+	local gh_resource="${2:-}"
 	if [[ "$MOCK_GH_FAIL" == "1" ]]; then
 		return 1
 	fi
 
-	if [[ "$1" == "issue" && "$2" == "view" ]]; then
+	if [[ "$gh_subcommand" == "issue" && "$gh_resource" == "view" ]]; then
 		printf '{"number":%s,"title":"Mock issue","state":"%s","labels":[],"assignees":[],"url":"https://example.invalid/issues/%s"}\n' \
 			"$3" "$MOCK_GH_ISSUE_STATE" "$3"
+		return 0
+	fi
+
+	if [[ "$gh_subcommand" == "api" && "$gh_resource" == repos/*/issues/* ]]; then
+		case "$MOCK_GH_TARGET_IS_PR" in
+		1) printf '{"number":123,"pull_request":{"url":"https://api.example.invalid/pulls/123"}}\n' ;;
+		api_fail) return 1 ;;
+		*) printf '{"number":123}\n' ;;
+		esac
 		return 0
 	fi
 
@@ -478,6 +490,48 @@ test_load_issue_meta_blocks_lowercase_closed() {
 	return 0
 }
 
+test_pr_target_guard_detects_pull_request() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_TARGET_IS_PR="1"
+
+	local rc=0
+	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 0 ]] && check=0
+	print_result "PR target guard detects pull_request marker" "$check" \
+		"expected rc=0 for PR-shaped issue, got rc=$rc"
+	return 0
+}
+
+test_pr_target_guard_allows_plain_issue() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_TARGET_IS_PR="0"
+
+	local rc=0
+	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 ]] && check=0
+	print_result "PR target guard allows plain issue" "$check" \
+		"expected rc=1 for plain issue, got rc=$rc"
+	return 0
+}
+
+test_pr_target_guard_fails_closed_on_api_error() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_TARGET_IS_PR="api_fail"
+
+	local rc=0
+	_dsi_target_is_pull_request 123 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 2 ]] && check=0
+	print_result "PR target guard reports verification errors" "$check" \
+		"expected rc=2 for API failure, got rc=$rc"
+	return 0
+}
+
 test_launch_worker_forwards_agent() {
 	local failed=1
 	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
@@ -587,6 +641,9 @@ _run_tests() {
 	test_no_ceremony_flag_parses_correctly
 	test_load_issue_meta_accepts_lowercase_open
 	test_load_issue_meta_blocks_lowercase_closed
+	test_pr_target_guard_detects_pull_request
+	test_pr_target_guard_allows_plain_issue
+	test_pr_target_guard_fails_closed_on_api_error
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
