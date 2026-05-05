@@ -37,7 +37,7 @@ function enqueueChunks(controller, chunks) {
   for (const chunk of chunks) controller.enqueue(chunk);
 }
 
-function formatRetryDelay(delayMs) {
+export function formatRetryDelay(delayMs) {
   if (delayMs < 1000) return `${delayMs}ms`;
   const seconds = Math.round(delayMs / 1000);
   if (seconds < 60) return `${seconds}s`;
@@ -156,10 +156,12 @@ export async function annotateOpenAIOverloadResponse(response) {
   try {
     const text = await response.text();
     const annotated = annotateOpenAIOverloadText(text);
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
     return new Response(annotated, {
       status: response.status,
       statusText: response.statusText,
-      headers: response.headers,
+      headers,
     });
   } catch {
     return response;

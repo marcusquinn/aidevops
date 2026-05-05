@@ -25,7 +25,7 @@ test("retry missing-body errors include retry response status", async () => {
   const wrapped = wrapOpenAIOverloadStream({
     response,
     originalFetch: async () => new Response(null, { status: 204 }),
-    retryInput: "https://api.openai.example/v1/responses",
+    retryInput: "https://api.openai.com/v1/responses",
     init: {},
     buildRetryRequest: (input) => input,
   });
@@ -47,7 +47,7 @@ test("stream retries notify before delay and annotate exhausted overload", async
   const wrapped = wrapOpenAIOverloadStream({
     response,
     originalFetch: async () => streamResponse('data: {"type":"error","error":{"type":"service_unavailable_error","code":"server_is_overloaded","message":"Our servers are currently overloaded. Please try again later."}}\n\n'),
-    retryInput: "https://api.openai.example/v1/responses",
+    retryInput: "https://api.openai.com/v1/responses",
     init: {},
     buildRetryRequest: (input) => input,
     onRetry: (retry) => retries.push(retry),
@@ -57,4 +57,20 @@ test("stream retries notify before delay and annotate exhausted overload", async
   assert.equal(retries.length, 1);
   assert.equal(retries[0].delayLabel, "0ms");
   assert.match(text, /aidevops attempted automatic recovery/);
+});
+
+test("annotated overload responses drop stale content length", async () => {
+  const { annotateOpenAIOverloadResponse } = await import(`../openai-overload-retry.mjs?test=${Date.now()}-${Math.random()}`);
+  const response = new Response('{"error":{"code":"server_is_overloaded","message":"overloaded"}}', {
+    status: 529,
+    headers: {
+      "content-length": "63",
+      "content-type": "application/json",
+    },
+  });
+
+  const annotated = await annotateOpenAIOverloadResponse(response);
+  assert.equal(annotated.headers.get("content-length"), null);
+  assert.equal(annotated.headers.get("content-type"), "application/json");
+  assert.match(await annotated.text(), /aidevops attempted automatic recovery/);
 });

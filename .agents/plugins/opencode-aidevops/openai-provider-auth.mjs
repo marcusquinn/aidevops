@@ -7,7 +7,7 @@
  */
 
 import { getAccounts, patchAccount, rotateOpenAIPoolToken } from "./oauth-pool.mjs";
-import { annotateOpenAIOverloadResponse, isOpenAIOverloadText, overloadRetryDelaysMs, sleep, wrapOpenAIOverloadStream } from "./openai-overload-retry.mjs";
+import { annotateOpenAIOverloadResponse, formatRetryDelay, isOpenAIOverloadText, overloadRetryDelaysMs, sleep, wrapOpenAIOverloadStream } from "./openai-overload-retry.mjs";
 
 export { isOpenAIOverloadText } from "./openai-overload-retry.mjs";
 
@@ -149,15 +149,6 @@ async function handleOpenAIOverload(ctx) {
     if (!(await isOpenAIOverloadResponse(lastResponse))) return lastResponse;
   }
   return annotateOpenAIOverloadResponse(lastResponse);
-}
-
-function formatRetryDelay(delayMs) {
-  if (delayMs < 1000) return `${delayMs}ms`;
-  const seconds = Math.round(delayMs / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const remainder = seconds % 60;
-  return remainder > 0 ? `${minutes}m ${remainder}s` : `${minutes}m`;
 }
 
 async function notifyOpenAIOverloadRetry(client, retry) {
