@@ -12,7 +12,7 @@
 #   cmd_help      — print usage
 #
 # Internal helpers for the check loop, status display, and scheduler install:
-#   _check_single_worker_thrash, _check_single_worker,
+#   _check_single_worker,
 #   _cleanup_stale_tracking_files, _status_print_*, _install_launchd,
 #   _install_cron, _install_systemd
 #
@@ -21,13 +21,11 @@
 # Dependencies:
 #   - shared-constants.sh (sourced by orchestrator)
 #   - worker-lifecycle-common.sh (_get_process_tree_cpu, _format_duration,
-#       _sanitize_log_field, _compute_struggle_ratio, _is_process_alive_and_matches,
-#       _extract_session_title)
+#       _sanitize_log_field, _compute_struggle_ratio, _is_process_alive_and_matches)
 #   - worker-watchdog-detect.sh (find_workers, extract_issue_number,
 #       extract_repo_slug, extract_provider_from_cmd)
 #   - worker-watchdog-checks.sh (check_provider_backoff, check_idle,
-#       check_progress_stall, check_zero_commit_thrashing,
-#       transcript_allows_intervention)
+#       check_progress_stall, check_zero_commit_thrashing)
 #   - worker-watchdog-kill.sh (kill_worker)
 #   - Globals: IDLE_STATE_DIR, PLIST_PATH, LAUNCHD_LABEL, CRON_MARKER,
 #       SYSTEMD_SERVICE_NAME, SYSTEMD_SERVICE_DIR, LOG_FILE, SCRIPT_NAME,
@@ -55,44 +53,6 @@ fi
 # =============================================================================
 # Check Loop Helpers
 # =============================================================================
-
-#######################################
-# Handle thrash detection signal for a single worker
-#
-# Called when check_zero_commit_thrashing returns 0.
-# Applies transcript gate and kills if confirmed.
-#
-# Arguments:
-#   $1 - PID
-#   $2 - command line
-#   $3 - elapsed seconds
-#   $4 - formatted duration
-# Returns: 0 if worker was killed, 1 if deferred
-#######################################
-_check_single_worker_thrash() {
-	local pid="$1"
-	local cmd="$2"
-	local elapsed_seconds="$3"
-	local duration="$4"
-
-	if ! transcript_allows_intervention "thrash" "$cmd" "$elapsed_seconds"; then
-		return 1
-	fi
-
-	local thrash_evidence="ratio=${THRASH_RATIO} messages=${THRASH_MESSAGES} commits=${THRASH_COMMITS} flag=${THRASH_FLAG:-none}"
-	local session_title
-	session_title=$(_extract_session_title "$cmd")
-	if [[ -n "$session_title" ]]; then
-		thrash_evidence="${thrash_evidence}; objective=${session_title}"
-	fi
-	if [[ -n "$INTERVENTION_EVIDENCE_SUMMARY" ]]; then
-		thrash_evidence="${thrash_evidence}; transcript=${INTERVENTION_EVIDENCE_SUMMARY}"
-	fi
-
-	log_msg "THRASH DETECTED: PID=${pid} elapsed=${duration} ${thrash_evidence}"
-	kill_worker "$pid" "thrash" "$cmd" "$elapsed_seconds" "$thrash_evidence"
-	return 0
-}
 
 #######################################
 # Apply all detection signals to a single worker
