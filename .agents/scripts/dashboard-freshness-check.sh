@@ -84,6 +84,9 @@ DASHBOARD_FRESHNESS_ALERT_TTL_SECONDS="${DASHBOARD_FRESHNESS_ALERT_TTL_SECONDS:-
 # parseable last_refresh marker. Extracted to defeat the repeated-literal
 # pre-commit ratchet and to give callers a single constant to match against.
 readonly MARKER_MISSING="MISSING"
+readonly ALERT_KIND_ANY="any"
+readonly ALERT_KIND_STALE="stale"
+readonly ALERT_KIND_MISSING="missing"
 
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 
@@ -279,9 +282,10 @@ _resolve_slug_from_dashed() {
 #   $1 — target slug (owner/repo)
 #   $2 — dashboard issue number
 # Prints one issue number per line. Empty output means no live alert.
-_open_alert_numbers() {
-	local slug="$1"
-	local dash_issue="$2"
+_open_alert_numbers_for_kind() {
+	local kind="$1"
+	local slug="$2"
+	local dash_issue="$3"
 	local stale_title_prefix="Supervisor health dashboard stale:"
 	local missing_marker_title="Supervisor health dashboard missing last_refresh marker (#${dash_issue})"
 	local issue_suffix="(#${dash_issue})"
@@ -290,8 +294,39 @@ _open_alert_numbers() {
 	# Query open issue titles and filter locally. GitHub search is unreliable for
 	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
 	gh issue list --repo "$slug" --state open --paginate --json number,title | \
-		jq -r --arg prefix "$stale_title_prefix" --arg suffix "$issue_suffix" --arg marker "$missing_marker_title" \
-			'.[] | select(((.title | startswith($prefix)) and (.title | endswith($suffix))) or (.title == $marker)) | .number' || true
+		jq -r --arg prefix "$stale_title_prefix" --arg suffix "$issue_suffix" --arg marker "$missing_marker_title" --arg kind "$kind" --arg kind_stale "$ALERT_KIND_STALE" --arg kind_missing "$ALERT_KIND_MISSING" '
+			.[]
+			| select(
+				if $kind == $kind_stale then
+					((.title | startswith($prefix)) and (.title | endswith($suffix)))
+				elif $kind == $kind_missing then
+					(.title == $marker)
+				else
+					(((.title | startswith($prefix)) and (.title | endswith($suffix))) or (.title == $marker))
+				end
+			)
+			| .number' || true
+	return 0
+}
+
+_open_alert_numbers() {
+	local slug="$1"
+	local dash_issue="$2"
+	_open_alert_numbers_for_kind "$ALERT_KIND_ANY" "$slug" "$dash_issue"
+	return 0
+}
+
+_open_stale_alert_numbers() {
+	local slug="$1"
+	local dash_issue="$2"
+	_open_alert_numbers_for_kind "$ALERT_KIND_STALE" "$slug" "$dash_issue"
+	return 0
+}
+
+_open_missing_marker_alert_numbers() {
+	local slug="$1"
+	local dash_issue="$2"
+	_open_alert_numbers_for_kind "$ALERT_KIND_MISSING" "$slug" "$dash_issue"
 	return 0
 }
 
@@ -304,6 +339,17 @@ _alert_already_open() {
 	local dash_issue="$2"
 	local hits
 	hits="$(_open_alert_numbers "$slug" "$dash_issue")"
+	if [[ -n "$hits" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_stale_alert_already_open() {
+	local slug="$1"
+	local dash_issue="$2"
+	local hits
+	hits="$(_open_stale_alert_numbers "$slug" "$dash_issue")"
 	if [[ -n "$hits" ]]; then
 		return 0
 	fi
@@ -325,8 +371,12 @@ _write_recovery_comment_body() {
 	local dash_issue="$2"
 	local iso="$3"
 	local age_secs="$4"
-	local footer
+	local footer root_cause
 	footer="$(_signature_footer "#${dash_issue}")"
+	root_cause="this generated alert is no longer actionable; the dashboard body now contains a parseable freshness marker and is within the configured threshold. The earlier alert condition was transient between freshness scans and the next successful dashboard rebuild."
+	if [[ "$age_secs" =~ ^[0-9]+$ ]] && (( age_secs > DASHBOARD_FRESHNESS_THRESHOLD_SECONDS )); then
+		root_cause="this generated missing-marker alert is no longer accurate; the dashboard body now contains a parseable freshness marker. The dashboard may still be stale, so the freshness checker can file or keep a stale-dashboard alert with the correct premise."
+	fi
 
 	cat >"$body_file" <<EOF
 <!-- DASHBOARD_FRESHNESS_RECOVERED -->
@@ -335,7 +385,7 @@ _write_recovery_comment_body() {
 - **Dashboard**: #${dash_issue}
 - **Current marker**: \`last_refresh: ${iso}\`
 - **Current age**: ${age_secs}s
-- **Root cause**: this generated alert is no longer actionable; the dashboard body now contains a parseable freshness marker and is within the configured threshold. The earlier alert condition was transient between freshness scans and the next successful dashboard rebuild.
+- **Root cause**: ${root_cause}
 - **Verification**: \`dashboard-freshness-check.sh scan --force\` re-read the dashboard issue body before posting this recovery comment.
 
 ${footer}
@@ -377,6 +427,25 @@ _close_recovered_alerts() {
 		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
 		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
 			_log_info "DRY-RUN: would close recovered alert ${slug}#${alert_issue}"
+			continue
+		fi
+		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
+	done <<<"$alerts"
+	return 0
+}
+
+_close_recovered_missing_marker_alerts() {
+	local slug="$1"
+	local dash_issue="$2"
+	local iso="$3"
+	local age_secs="$4"
+	local alerts alert_issue
+	alerts="$(_open_missing_marker_alert_numbers "$slug" "$dash_issue")"
+	[[ -n "$alerts" ]] || return 0
+	while IFS= read -r alert_issue; do
+		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
+		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
+			_log_info "DRY-RUN: would close recovered missing-marker alert ${slug}#${alert_issue}"
 			continue
 		fi
 		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
@@ -575,7 +644,8 @@ scan_one_dashboard() {
 	fi
 
 	_log_warn "Dashboard ${slug}#${dash_issue} STALE (${age_secs}s > ${DASHBOARD_FRESHNESS_THRESHOLD_SECONDS}s, last_refresh=${iso})"
-	if _alert_already_open "$slug" "$dash_issue"; then
+	_close_recovered_missing_marker_alerts "$slug" "$dash_issue" "$iso" "$age_secs"
+	if _stale_alert_already_open "$slug" "$dash_issue"; then
 		_log_info "Alert already open at ${slug}#${dash_issue} — skipping"
 		return 0
 	fi

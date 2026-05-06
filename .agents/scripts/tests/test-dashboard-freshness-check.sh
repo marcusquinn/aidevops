@@ -23,6 +23,8 @@
 #      without calling `gh`.
 #   9. scan with a fresh dashboard AND a pre-existing generated alert → posts
 #      recovery evidence and closes the alert.
+#  10. scan with a stale dashboard AND a pre-existing missing-marker alert →
+#      closes the recovered missing-marker alert and files a stale alert.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
 # and to fail-open on every error path; the test sets up a self-contained
@@ -181,6 +183,7 @@ run_scan_with_stubs() {
 	local body_file="$1"
 	local alert_exists="$2"
 	local extra_env="${3:-}"
+	local alert_kind="${4:-stale}"
 	local gh_calls="${TMP}/gh-calls.log"
 	: >"$gh_calls"
 
@@ -196,6 +199,7 @@ run_scan_with_stubs() {
 		GH_CALLS_LOG="$gh_calls" \
 		BODY_FIXTURE="$body_file" \
 		ALERT_EXISTS="$alert_exists" \
+		ALERT_KIND="$alert_kind" \
 		EXTRA_ENV="$extra_env" \
 		SCANNER_PATH="$SCANNER" \
 		bash -c '
@@ -227,7 +231,11 @@ run_scan_with_stubs() {
 									|| [[ "$gh_args" != *"--json number,title"* ]]; then
 									printf "[]\n"
 								elif [[ "$ALERT_EXISTS" == "1" ]]; then
-									printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}]"
+									if [[ "$ALERT_KIND" == "missing" ]]; then
+										printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard missing last_refresh marker (#424242)\"}]"
+									else
+										printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}]"
+									fi
 								else
 									printf "[]\n"
 								fi
@@ -388,7 +396,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 10: missing-marker body → alerts with MISSING title
+# Test 10: stale body with missing-marker alert → close mismatch, file stale
+# ---------------------------------------------------------------------------
+echo "Testing: stale dashboard closes missing-marker alert before stale alert"
+run_scan_with_stubs "$STALE_BODY" 1 "" "missing" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+comment_count=$(grep -c '^issue comment 99 ' "$calls_file" 2>/dev/null || true)
+close_count=$(grep -c '^issue close 99 ' "$calls_file" 2>/dev/null || true)
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+[[ "$close_count" =~ ^[0-9]+$ ]] || close_count=0
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( comment_count == 1 && close_count == 1 && created_count == 1 )); then
+	pass "stale dashboard with missing-marker alert → close mismatch + file stale"
+else
+	fail "stale dashboard missing-marker recovery" \
+		"comment=$comment_count close=$close_count created=$created_count; calls:\n$(cat "$calls_file")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 11: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
