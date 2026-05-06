@@ -638,17 +638,27 @@ PY
 _hrw_worktree_clean_for_owner_reclaim() {
 	local work_dir="$1"
 	local status_output=""
-	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null || true)
+	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
 	[[ -z "$status_output" ]] || return 1
 
 	local upstream_ref=""
 	upstream_ref=$(git -C "$work_dir" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || true)
-	if [[ -n "$upstream_ref" ]]; then
-		local upstream_ahead="0"
-		upstream_ahead=$(git -C "$work_dir" rev-list --count "${upstream_ref}..HEAD" 2>/dev/null || true)
-		[[ "$upstream_ahead" =~ ^[0-9]+$ ]] || upstream_ahead=0
-		[[ "$upstream_ahead" -eq 0 ]] || return 1
+	if [[ -z "$upstream_ref" ]]; then
+		if git -C "$work_dir" rev-parse --verify "origin/HEAD" >/dev/null 2>&1; then
+			upstream_ref="origin/HEAD"
+		elif git -C "$work_dir" rev-parse --verify "origin/main" >/dev/null 2>&1; then
+			upstream_ref="origin/main"
+		elif git -C "$work_dir" rev-parse --verify "origin/master" >/dev/null 2>&1; then
+			upstream_ref="origin/master"
+		else
+			upstream_ref="HEAD"
+		fi
 	fi
+
+	local upstream_ahead=""
+	upstream_ahead=$(git -C "$work_dir" rev-list --count "${upstream_ref}..HEAD" 2>/dev/null) || return 1
+	[[ "$upstream_ahead" =~ ^[0-9]+$ ]] || return 1
+	[[ "$upstream_ahead" -eq 0 ]] || return 1
 
 	return 0
 }

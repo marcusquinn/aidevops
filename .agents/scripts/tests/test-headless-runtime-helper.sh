@@ -55,6 +55,16 @@ teardown_test_env() {
 	return 0
 }
 
+init_git_worktree() {
+	local worktree_dir="$1"
+	git -C "$worktree_dir" init -q
+	git -C "$worktree_dir" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+		commit --allow-empty -q -m "initial"
+	git -C "$worktree_dir" update-ref refs/remotes/origin/main HEAD
+	git -C "$worktree_dir" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+	return 0
+}
+
 test_appends_escalation_contract() {
 	local prompt='/full-loop Implement issue #14964'
 	local output
@@ -294,6 +304,7 @@ test_worker_worktree_claim_transfers_to_runtime_pid() {
 test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
 	local worktree_dir="${TEST_ROOT}/claim-stale-live-owner"
 	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER="22438"
 	export AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS="1"
 	local claim_calls=0 unregister_called=0
@@ -334,6 +345,27 @@ test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
 
 	print_result "worker worktree claim reclaims stale live same-task owner" 1 \
 		"status=$status calls=$claim_calls unregister=$unregister_called"
+	return 0
+}
+
+test_worker_worktree_clean_without_upstream_blocks_local_commits() {
+	local worktree_dir="${TEST_ROOT}/claim-local-commits"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	git -C "$worktree_dir" config --unset branch.main.remote 2>/dev/null || true
+	git -C "$worktree_dir" config --unset branch.main.merge 2>/dev/null || true
+	git -C "$worktree_dir" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
+		commit --allow-empty -q -m "local-only"
+
+	local status=0
+	_hrw_worktree_clean_for_owner_reclaim "$worktree_dir" >/dev/null || status=$?
+
+	if [[ "$status" -ne 0 ]]; then
+		print_result "worker worktree clean check blocks no-upstream local commits" 0
+		return 0
+	fi
+
+	print_result "worker worktree clean check blocks no-upstream local commits" 1 "status=$status"
 	return 0
 }
 
@@ -1193,6 +1225,7 @@ main() {
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
 	test_worker_worktree_claim_transfers_to_runtime_pid
 	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
+	test_worker_worktree_clean_without_upstream_blocks_local_commits
 	test_worker_worktree_claim_classifies_unreclaimed_live_owner
 	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
