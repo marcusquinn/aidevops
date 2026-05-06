@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Principle**: Every change on a branch, never directly on main
+- **Principle**: Every change on a branch, never directly on main. Release/version-manager commands are allowed on `main` only after merged, verified changes and explicit user approval.
 - **CRITICAL**: With parallel sessions, ALWAYS verify branch state before ANY file operation
 
 **Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
@@ -30,7 +30,7 @@ tools:
 git branch --show-current  # If result is `main` → STOP
 ```
 
-If on `main`: STOP. Present branch options before proceeding.
+If on `main`: STOP. Present branch options before proceeding. Exception: proceed for an approved release/version-manager command after verifying the working tree is clean and up to date with `origin/main`.
 
 **First Actions** (before any code changes):
 
