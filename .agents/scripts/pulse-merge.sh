@@ -342,6 +342,36 @@ _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY co
 	return 0
 }
 
+#######################################
+# Resolve the original issue behind a superseded PR reference.
+#
+# When PR B resolves PR A, GitHub treats PR A as an issue number. The normal
+# linked-issue extractor therefore returns PR A's number, not the issue that PR A
+# originally resolved. If PR A is actually a pull request, inspect PR A and return
+# its own linked issue so deterministic merge can close the original task too.
+#
+# Args: $1=merged_pr_number, $2=repo_slug, $3=candidate_issue_number
+# Stdout: original issue number, or empty when candidate is not a PR chain
+# Returns: 0 always
+#######################################
+_pm_resolve_superseded_original_issue() {
+	local merged_pr_number="$1" repo_slug="$2" candidate_issue="$3"
+	local original_issue
+
+	[[ -z "$candidate_issue" ]] && return 0
+	if ! gh api "repos/${repo_slug}/pulls/${candidate_issue}" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	original_issue=$(_extract_linked_issue "$candidate_issue" "$repo_slug" 2>/dev/null) || original_issue=""
+	if [[ -z "$original_issue" || "$original_issue" == "$candidate_issue" || "$original_issue" == "$merged_pr_number" ]]; then
+		return 0
+	fi
+
+	printf '%s' "$original_issue"
+	return 0
+}
+
 _handle_post_merge_actions() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -413,6 +443,44 @@ _handle_post_merge_actions() {
 			fast_fail_reset "$linked_issue" "$repo_slug" || true
 			# t1934: Unlock the issue (locked at dispatch time)
 			unlock_issue_after_worker "$linked_issue" "$repo_slug"
+		fi
+
+		# GH#22964: if the merged PR resolved a superseded worker PR, also close
+		# the original issue that the superseded PR was created to resolve.
+		local _superseded_original_issue
+		_superseded_original_issue=$(_pm_resolve_superseded_original_issue \
+			"$pr_number" "$repo_slug" "$linked_issue") || _superseded_original_issue=""
+		if [[ -n "$_superseded_original_issue" ]]; then
+			local _sup_api _sup_labels _sup_parent_guard=0 _sup_dedup_count
+			_sup_api=$(_pm_issue_api "$repo_slug" "$_superseded_original_issue")
+			_sup_labels=$(gh api "${_sup_api}" \
+				--jq '[.labels[].name] | join(",")' 2>/dev/null) || _sup_labels=""
+			if [[ ",${_sup_labels}," == *",parent-task,"* ]]; then
+				_sup_parent_guard=1
+				echo "[pulse-wrapper] Deterministic merge: skipping close of parent-task original issue #${_superseded_original_issue} via superseded PR #${linked_issue} (merged PR #${pr_number}) — GH#22964" >>"$LOGFILE"
+			fi
+
+			_sup_dedup_count=$(gh api "${_sup_api}/comments" \
+				2>/dev/null | jq --arg prnum "PR #${pr_number}" \
+				'[.[] | select(.body | contains($prnum))] | length' 2>/dev/null) || _sup_dedup_count=0
+			[[ "$_sup_dedup_count" =~ ^[0-9]+$ ]] || _sup_dedup_count=0
+			if [[ "$_sup_dedup_count" -gt 0 ]]; then
+				echo "[pulse-wrapper] Deterministic merge: skipped duplicate closing comment on original issue #${_superseded_original_issue} via superseded PR #${linked_issue} — PR #${pr_number} already referenced (GH#22964)" >>"$LOGFILE"
+			else
+				gh_issue_comment "$_superseded_original_issue" --repo "$repo_slug" \
+					--body "$closing_comment" 2>/dev/null || true
+			fi
+
+			if [[ "$_sup_parent_guard" -eq 0 ]]; then
+				local _sup_solved_actor="interactive"
+				case ",${pr_labels}," in
+				*,origin:worker,* | *,origin:worker-takeover,*) _sup_solved_actor="worker" ;;
+				esac
+				set_solved_label "$_superseded_original_issue" "$repo_slug" "$_sup_solved_actor" || true
+				gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null || true
+				fast_fail_reset "$_superseded_original_issue" "$repo_slug" || true
+				unlock_issue_after_worker "$_superseded_original_issue" "$repo_slug"
+			fi
 		fi
 	fi
 
