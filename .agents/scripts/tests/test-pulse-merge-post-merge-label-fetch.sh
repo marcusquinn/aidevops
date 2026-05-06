@@ -71,7 +71,9 @@ define_function_under_test() {
 	fn_src=$(awk '
 		/^_pm_issue_api\(\) \{/,/^}$/ { print }
 		/^_pm_build_closing_comment\(\) \{/,/^}$/ { print }
+		/^_pm_resolve_superseded_original_issue\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
+		/^_extract_linked_issue\(\) \{/,/^}$/ { print }
 	' "$MERGE_FILE")
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract _handle_post_merge_actions from %s\n' "$MERGE_FILE" >&2
@@ -84,6 +86,13 @@ define_function_under_test() {
 install_helper_stubs() {
 	gh() {
 		printf '%s\n' "$*" >>"$GH_CALL_LOG"
+		if [[ "$1" == "api" && "$2" == "repos/marcusquinn/aidevops/pulls/33333" ]]; then
+			printf '{"number":33333}\n'
+			return 0
+		fi
+		if [[ "$1" == "api" && "$2" == "repos/marcusquinn/aidevops/pulls/"* ]]; then
+			return 1
+		fi
 		if [[ "$1" == "api" && "$*" == *"/comments"* ]]; then
 			printf '[]\n'
 		fi
@@ -100,6 +109,14 @@ install_helper_stubs() {
 	}
 	gh_pr_view() {
 		printf 'pr view %s\n' "$*" >>"$GH_CALL_LOG"
+		if [[ "$1" == "33333" && "$*" == *"--json body"* ]]; then
+			printf 'Resolves #22219\n'
+			return 0
+		fi
+		if [[ "$1" == "33333" && "$*" == *"--json title"* ]]; then
+			printf 'GH#22219: original worker PR\n'
+			return 0
+		fi
 		printf '%s\n' "${TEST_PR_LABELS:-}"
 		return 0
 	}
@@ -170,6 +187,22 @@ test_omitted_pr_labels_fetches_fallback() {
 	return 0
 }
 
+test_superseded_pr_closes_original_issue() {
+	: >"$GH_CALL_LOG"
+	: >"$SOLVED_LABEL_LOG"
+	export TEST_PR_LABELS="origin:worker"
+
+	_handle_post_merge_actions "44444" "marcusquinn/aidevops" "33333" "merged" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "repos/marcusquinn/aidevops/pulls/33333" \
+		"superseded chain checks whether linked issue is a PR"
+	assert_log_contains "$GH_CALL_LOG" "issue close 22219" \
+		"superseded chain closes original issue"
+	assert_log_contains "$SOLVED_LABEL_LOG" "22219 marcusquinn/aidevops worker" \
+		"superseded chain marks original issue solved by worker"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -178,6 +211,7 @@ main() {
 
 	test_provided_empty_pr_labels_skip_refetch
 	test_omitted_pr_labels_fetches_fallback
+	test_superseded_pr_closes_original_issue
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then

@@ -99,6 +99,11 @@ EOF
 	return 0
 }
 
+gh_pr_view() {
+	gh pr view "$@"
+	return 0
+}
+
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
