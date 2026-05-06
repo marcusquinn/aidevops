@@ -490,33 +490,30 @@ _nmr_applied_by_maintainer() {
 	nmr_actor=$(printf '%s' "$nmr_event_json" | jq -r '.actor // ""' 2>/dev/null) || nmr_actor=""
 	nmr_at=$(printf '%s' "$nmr_event_json" | jq -r '.at // ""' 2>/dev/null) || nmr_at=""
 
-	if [[ "$nmr_actor" != "$maintainer" ]]; then
-		return 1
-	fi
-
-	# Actor matches the maintainer. Three possibilities:
-	#   1. Creation-default signature (scanner applied NMR at creation
-	#      time) → auto-approve OK, return 1.
-	#   2. Circuit-breaker trip signature (t2007/t2008 fired) →
-	#      PRESERVE NMR, return 0 with distinct log line so operators
-	#      see it was a breaker trip, not a manual hold.
-	#   3. No signature → genuine manual hold, return 0.
+	# Breaker signatures are authoritative regardless of the token actor. Pulse can
+	# run under any trusted maintainer/member account, so actor-gating this check
+	# lets a peer runner's dispatch-infrastructure/no_work breaker be auto-cleared
+	# by maintainer auto-approval and re-enter the loop.
 	if [[ -n "$nmr_at" ]]; then
-		# GH#20758: Circuit-breaker check FIRST — a co-temporal breaker
-		# marker is a stronger signal than label persistence. Scanner-
-		# labelled issues that trip a breaker MUST preserve NMR regardless
-		# of creation provenance. The prior order (automation-signature
-		# first) let the label-based branch of _nmr_application_has_
-		# automation_signature short-circuit the breaker check because
-		# scanner labels persist for the issue's lifetime.
 		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
-			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/GH#20758)" >>"$LOGFILE"
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped by actor=${nmr_actor:-unknown} — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/t3566)" >>"$LOGFILE"
 			# t3049: check if a subsequent worker produced a clean approved PR
 			# that resolves the stale-recovery false positive. Posts a one-shot
 			# notification to the maintainer if so. Does NOT clear NMR.
 			_notify_stale_recovery_resolved_by_pr "$issue_num" "$slug" "$nmr_at" || true
 			return 0
 		fi
+	fi
+
+	if [[ "$nmr_actor" != "$maintainer" ]]; then
+		return 1
+	fi
+
+	# Actor matches the maintainer. Two remaining possibilities:
+	#   1. Creation-default signature (scanner applied NMR at creation
+	#      time) → auto-approve OK, return 1.
+	#   2. No signature → genuine manual hold, return 0.
+	if [[ -n "$nmr_at" ]]; then
 		if _nmr_application_has_automation_signature "$issue_num" "$slug" "$nmr_at"; then
 			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — actor=${maintainer} but creation-default signature detected — classifying as automation-applied (GH#18671)" >>"$LOGFILE"
 			return 1
