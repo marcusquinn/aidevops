@@ -167,7 +167,7 @@ has_completed_recovery_issue() {
 			.[]
 			| ((.title // "") + "\n" + (.body // "")) as $text
 			| ($text | ascii_downcase) as $lower
-			| select($text | contains($pr))
+			| select($text | test($pr + "\\b"))
 			| select($lower | test("recover|recovery|salvage|restore|cherry-pick|cherrypick"))
 		] | length
 	') || match_count="0"

@@ -38,6 +38,17 @@ gh() {
 			cat <<'JSON'
 [
   {
+    "number": 5,
+    "title": "Add compact salvage note",
+    "headRefName": "compact-salvage-note",
+    "closedAt": "2026-05-01T00:00:00Z",
+    "mergedAt": null,
+    "additions": 8,
+    "deletions": 0,
+    "author": {"login": "contributor"},
+    "labels": []
+  },
+  {
     "number": 53,
     "title": "Add buffalo logo favicon",
     "headRefName": "buffalo-logo-favicon",
@@ -107,7 +118,7 @@ source "${SCRIPTS_DIR}/pr-salvage-helper.sh" >/dev/null 2>&1 || {
 }
 
 results=$(scan_repo "owner/repo" 7)
-if printf '%s' "$results" | jq -e 'length == 1 and .[0].number == 54' >/dev/null; then
+if printf '%s' "$results" | jq -e 'length == 2 and ([.[].number] | sort) == [5, 54]' >/dev/null; then
 	pass "completed recovery issue suppresses matching closed PR"
 else
 	fail "completed recovery issue suppresses matching closed PR" "$results"
