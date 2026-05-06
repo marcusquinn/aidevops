@@ -18,7 +18,7 @@
 #   - _ff_load
 #   - _ff_current_aidevops_version
 #   - _ff_version_gt
-#   - _ff_entry_is_from_older_release
+#   - _ff_release_retry_reset_if_newer
 #   - _ff_query_pool_retry_seconds
 #   - _ff_with_lock
 #   - _ff_save

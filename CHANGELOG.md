@@ -40,7 +40,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Maintenance: update simplification state registry
-- Documentation: remove duplicate 3.14.70 changelog entry (#22960)
 
 ### Fixed
 
