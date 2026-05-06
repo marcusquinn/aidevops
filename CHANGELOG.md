@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.75] - 2026-05-06
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- close original issues for superseding PR merges (#22975)
+- preserve origin provenance on dispatch (#22973)
+- preserve dirty worker worktrees on exit (#22974)
+- let auto-dispatch clear interactive active claims (#22971)
+
 ## [3.14.73] - 2026-05-06
 
 ### Changed
