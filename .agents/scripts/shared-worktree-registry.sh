@@ -26,6 +26,7 @@ _SHARED_WORKTREE_REGISTRY_LOADED=1
 
 WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${HOME}/.aidevops/.agent-workspace}"
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
+WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES="${WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES:-60}"
 
 # Get the command name (basename) for a given PID.
 # Returns empty string if the PID does not exist or info is unavailable.
@@ -242,9 +243,22 @@ _init_registry_db() {
             owner_session TEXT DEFAULT '',
             owner_batch   TEXT DEFAULT '',
             task_id       TEXT DEFAULT '',
+            owner_dead_seen_at TEXT DEFAULT '',
             created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
     " 2>/dev/null || true
+
+	local has_dead_seen_column
+	has_dead_seen_column=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT 1 FROM pragma_table_info('worktree_owners')
+        WHERE name = 'owner_dead_seen_at';
+    " 2>/dev/null || echo "")
+	if [[ -z "$has_dead_seen_column" ]]; then
+		sqlite3 "$WORKTREE_REGISTRY_DB" "
+            ALTER TABLE worktree_owners
+            ADD COLUMN owner_dead_seen_at TEXT DEFAULT '';
+        " 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -293,14 +307,15 @@ register_worktree() {
 
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
         INSERT OR REPLACE INTO worktree_owners
-            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
         VALUES
 		 ('$(_wt_sql_escape "$wt_path")',
 		  '$(_wt_sql_escape "$branch")',
 		  ${owner_pid},
 		  '$(_wt_sql_escape "$session_id")',
 		  '$(_wt_sql_escape "$batch_id")',
-		  '$(_wt_sql_escape "$task_id")');
+		  '$(_wt_sql_escape "$task_id")',
+		  '');
     " 2>/dev/null || true
 	return 0
 }
@@ -365,14 +380,15 @@ claim_worktree_ownership() {
 
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
         INSERT OR IGNORE INTO worktree_owners
-            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id)
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
         VALUES
             ('$(_wt_sql_escape "$wt_path")',
              '$(_wt_sql_escape "$branch")',
              ${owner_pid},
              '$(_wt_sql_escape "$session_id")',
              '$(_wt_sql_escape "$batch_id")',
-             '$(_wt_sql_escape "$task_id")');
+             '$(_wt_sql_escape "$task_id")',
+             '');
     " 2>/dev/null || true
 
 	local final_owner_pid
@@ -387,7 +403,8 @@ claim_worktree_ownership() {
             SET branch = '$(_wt_sql_escape "$branch")',
                 owner_session = '$(_wt_sql_escape "$session_id")',
                 owner_batch = '$(_wt_sql_escape "$batch_id")',
-                task_id = '$(_wt_sql_escape "$task_id")'
+                task_id = '$(_wt_sql_escape "$task_id")',
+                owner_dead_seen_at = ''
             WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
         " 2>/dev/null || true
 		return 0
@@ -437,10 +454,72 @@ check_worktree_owner() {
 	return 1
 }
 
-# Check if a worktree is owned by a DIFFERENT process (still alive)
+# Return the timestamp when a dead owner PID was first observed.
 # Arguments:
 #   $1 - worktree path
-# Returns: 0 if owned by another live process, 1 if safe to remove
+# Output: ISO timestamp or empty
+worktree_owner_dead_seen_at() {
+	local wt_path="$1"
+
+	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+
+	local dead_seen_at
+	dead_seen_at=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT COALESCE(owner_dead_seen_at, '')
+        FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+	printf '%s' "$dead_seen_at"
+	return 0
+}
+
+_wt_owner_dead_cooldown_minutes() {
+	local cooldown_minutes="${WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES:-60}"
+	if [[ ! "$cooldown_minutes" =~ ^[0-9]+$ ]] || [[ "$cooldown_minutes" -lt 1 ]]; then
+		cooldown_minutes=60
+	fi
+	printf '%s' "$cooldown_minutes"
+	return 0
+}
+
+_wt_mark_owner_dead_seen() {
+	local wt_path="$1"
+
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+        UPDATE worktree_owners
+        SET owner_dead_seen_at = CASE
+            WHEN COALESCE(owner_dead_seen_at, '') = '' THEN strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+            ELSE owner_dead_seen_at
+        END
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || true
+	return 0
+}
+
+_wt_owner_dead_cooldown_expired() {
+	local wt_path="$1"
+	local cooldown_minutes
+	cooldown_minutes=$(_wt_owner_dead_cooldown_minutes)
+
+	local expired
+	expired=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT CASE
+            WHEN COALESCE(owner_dead_seen_at, '') != ''
+             AND datetime(replace(replace(owner_dead_seen_at, 'T', ' '), 'Z', ''), '+${cooldown_minutes} minutes') <= datetime('now')
+            THEN 1 ELSE 0 END
+        FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "0")
+	[[ "$expired" == "1" ]] && return 0
+	return 1
+}
+
+# Check if a worktree is owned by a DIFFERENT process or quarantined stale owner.
+# Arguments:
+#   $1 - worktree path
+# Returns: 0 if owned by another live process or within stale-owner cooldown,
+#          1 if safe to remove
 is_worktree_owned_by_others() {
 	local wt_path="$1"
 
@@ -465,12 +544,25 @@ is_worktree_owned_by_others() {
 	my_pid=$(_resolve_worktree_owner_pid "")
 	[[ "$owner_pid" == "$my_pid" ]] && return 1
 
-	# Owner process is dead — stale entry, safe to remove
+	# Owner process is dead. Keep the ownership row quarantined for a cooldown
+	# window so cleanup never treats one failed PID probe as immediate abandon.
 	if ! kill -0 "$owner_pid" 2>/dev/null; then
-		# Clean up stale entry
-		unregister_worktree "$wt_path"
-		return 1
+		_wt_mark_owner_dead_seen "$wt_path"
+		if _wt_owner_dead_cooldown_expired "$wt_path"; then
+			unregister_worktree "$wt_path"
+			return 1
+		fi
+		return 0
 	fi
+
+	# Owner recovered or PID was reused while still registered; clear any stale
+	# marker so a later dead observation gets a fresh cooldown window.
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+        UPDATE worktree_owners
+        SET owner_dead_seen_at = ''
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
+          AND COALESCE(owner_dead_seen_at, '') != '';
+    " 2>/dev/null || true
 
 	# Owner process is alive and it's not us — NOT safe to remove
 	return 0

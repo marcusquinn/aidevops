@@ -221,6 +221,18 @@ should_skip_cleanup() {
 		owner_info=$(check_worktree_owner "$wt_path")
 		local owner_pid
 		owner_pid="${owner_info%%|*}"
+		local owner_dead_seen_at=""
+		if declare -F worktree_owner_dead_seen_at >/dev/null 2>&1; then
+			owner_dead_seen_at=$(worktree_owner_dead_seen_at "$wt_path")
+		fi
+		if [[ -n "$owner_dead_seen_at" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+			echo -e "  ${RED}$wt_branch${NC} (dead owner PID $owner_pid in cooldown since $owner_dead_seen_at - skipping)"
+			echo "    $wt_path"
+			echo ""
+			# GH#23024: audit log — cleanup skipped, stale owner is quarantined
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owner-pid-dead" "skipped"
+			return 0
+		fi
 		echo -e "  ${RED}$wt_branch${NC} (owned by active session PID $owner_pid - skipping)"
 		echo "    $wt_path"
 		echo ""
