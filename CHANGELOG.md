@@ -92,7 +92,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- initialize release retry locals
+- initialize release retry locals (#22940)
 
 ## [3.14.66] - 2026-05-05
 
