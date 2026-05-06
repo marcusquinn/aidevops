@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.76] - 2026-05-06
+
+### Changed
+
+- Documentation: clarify approved release main workflow (#23013)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Tests: guard dashboard freshness jq filtering (#23003)
+- Documentation: add changelog traceability reference (#23002)
+- Maintenance: update simplification state registry
+- Documentation: remove duplicate changelog entry (#22984)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- initialize reconcile helper locals (#23011)
+- recover stuck pulse dispatch issues (#23010)
+- share dispatch zero-output comment metrics (#23009)
+- harden pulse retry reset and reuse evidence metrics (#23008)
+- preserve zero-output state count parsing (#23007)
+- fail closed when reclaiming worker worktrees (#23006)
+- count no-work zero-output comments (#23005)
+- tighten PR salvage recovery matching (#23004)
+- resolve worker worktree paths outside Git roots (#22989)
+- reuse dispatch comment metrics (#22991)
+- paginate dashboard freshness alert lookup (#22990)
+- align PR salvage recovery test mock (#22988)
+- reduce PR salvage recovery issue lookups (#22987)
+- align pulse fast-fail header (#22985)
+- close original issues for superseding PR merges (#22975)
+- preserve origin provenance on dispatch (#22973)
+- preserve dirty worker worktrees on exit (#22974)
+- let auto-dispatch clear interactive active claims (#22971)
+
 ## [3.14.75] - 2026-05-06
 
 ### Changed
