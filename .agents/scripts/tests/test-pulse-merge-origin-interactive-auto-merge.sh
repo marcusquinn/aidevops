@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Tests for origin:interactive auto-merge gates (t2411).
+# Tests for origin:interactive merge gates (t2411).
 #
 # Verifies the six criteria that govern whether an origin:interactive PR is
 # eligible for auto-merge in pulse-merge.sh:
 #   Case 1: OWNER (admin perm) passes _is_owner_or_member_author
 #   Case 2: COLLABORATOR (write perm) fails _is_owner_or_member_author
-#   Case 3: CI failure is a pre-gate boundary (not blocked by interactive gates)
+#   Case 3: plain interactive PR requires manual merge by default
 #   Case 4: hold-for-review label blocks _check_interactive_pr_gates
 #   Case 5: draft PR blocks _check_interactive_pr_gates
 #   Case 6: CHANGES_REQUESTED is blocked by existing gate (boundary verified)
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-author-checks.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -178,26 +178,27 @@ test_case2_collaborator_write_perm_blocked() {
 }
 
 # =============================================================================
-# Case 3: CI failure is a pre-gate concern — _check_interactive_pr_gates
-# does NOT handle CI failure. Boundary: passes when PR is not draft and
-# does not have hold-for-review (CI check is the caller's responsibility).
+# Case 3: plain interactive PR requires manual merge by default.
 # =============================================================================
-test_case3_ci_failure_is_pre_gate_boundary() {
+test_case3_plain_interactive_requires_manual_merge() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
 	: >"$GH_LOG"
-	# Simulate: interactive labels, not draft, no hold-for-review.
-	# CI failure is checked BEFORE _check_interactive_pr_gates is called.
 	local labels="origin:interactive"
 	local result=0
-	_check_interactive_pr_gates "101" "owner/repo" "$labels" "false" || result=$?
+	_check_interactive_pr_gates "101" "owner/repo" "$labels" "false" && result=0 || result=$?
 
-	if [[ "$result" -ne 0 ]]; then
-		print_result "Case 3: CI failure pre-gate boundary — _check_interactive_pr_gates passes" 1 \
-			"Expected exit 0 (CI is pre-gate), got ${result}"
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case 3: plain interactive PR requires manual merge" 1 \
+			"Expected non-zero exit, got 0 (interactive PR should not auto-merge by default)"
 	else
-		print_result "Case 3: CI failure pre-gate boundary — _check_interactive_pr_gates passes" 0
+		if ! grep -q "requires manual merge" "$LOGFILE" 2>/dev/null; then
+			print_result "Case 3: plain interactive PR requires manual merge" 1 \
+				"Exit was non-zero but manual-merge log message missing from ${LOGFILE}"
+		else
+			print_result "Case 3: plain interactive PR requires manual merge" 0
+		fi
 	fi
 	teardown_test_env
 	return 0
@@ -259,27 +260,44 @@ test_case5_draft_pr_blocked() {
 }
 
 # =============================================================================
-# Case 6: CHANGES_REQUESTED is an existing gate — _check_interactive_pr_gates
-# runs AFTER the existing CHANGES_REQUESTED check. Boundary: verifying the
-# helper itself is agnostic to review state (review state is handled upstream).
+# Case 6: explicit allow-auto-merge label opts interactive PRs into automation.
 # =============================================================================
-test_case6_changes_requested_is_upstream_gate() {
+test_case6_allow_auto_merge_opt_in_passes() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
 	: >"$GH_LOG"
-	# _check_interactive_pr_gates does not receive or check review state.
-	# It only blocks on draft and hold-for-review.
-	# A non-draft, non-h-f-r interactive PR passes this helper regardless.
-	local labels="origin:interactive"
+	local labels="origin:interactive,allow-auto-merge"
 	local result=0
 	_check_interactive_pr_gates "104" "owner/repo" "$labels" "false" || result=$?
 
 	if [[ "$result" -ne 0 ]]; then
-		print_result "Case 6: CHANGES_REQUESTED is upstream — _check_interactive_pr_gates passes" 1 \
-			"Expected exit 0 (CHANGES_REQUESTED is upstream gate), got ${result}"
+		print_result "Case 6: allow-auto-merge opt-in passes" 1 \
+			"Expected exit 0, got ${result}"
 	else
-		print_result "Case 6: CHANGES_REQUESTED is upstream — _check_interactive_pr_gates passes" 0
+		print_result "Case 6: allow-auto-merge opt-in passes" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case 7: environment override opts interactive PRs into automation.
+# =============================================================================
+test_case7_env_override_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	: >"$GH_LOG"
+	local labels="origin:interactive"
+	local result=0
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1 _check_interactive_pr_gates "105" "owner/repo" "$labels" "false" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case 7: env override passes" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		print_result "Case 7: env override passes" 0
 	fi
 	teardown_test_env
 	return 0
@@ -296,10 +314,11 @@ main() {
 
 	test_case1_owner_admin_perm_passes
 	test_case2_collaborator_write_perm_blocked
-	test_case3_ci_failure_is_pre_gate_boundary
+	test_case3_plain_interactive_requires_manual_merge
 	test_case4_hold_for_review_blocked
 	test_case5_draft_pr_blocked
-	test_case6_changes_requested_is_upstream_gate
+	test_case6_allow_auto_merge_opt_in_passes
+	test_case7_env_override_passes
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

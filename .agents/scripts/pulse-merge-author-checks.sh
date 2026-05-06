@@ -78,11 +78,12 @@ _is_owner_or_member_author() {
 }
 
 #######################################
-# Check origin:interactive-specific gates (t2411): draft status and the
-# hold-for-review opt-out label. Called from _check_pr_merge_gates when
-# the PR carries origin:interactive. These checks apply regardless of
-# author role — OWNER, MEMBER, and COLLABORATOR interactive PRs are all
-# subject to draft and hold-for-review blocking.
+# Check origin:interactive-specific gates (t2411): draft status, the
+# hold-for-review opt-out label, and the default manual-merge policy. Called
+# from _check_pr_merge_gates when the PR carries origin:interactive. These
+# checks apply regardless of author role — OWNER, MEMBER, and COLLABORATOR
+# interactive PRs are all held for human merge unless explicitly opted into
+# automation.
 #
 # Args: $1=pr_number, $2=repo_slug, $3=labels_str, $4=is_draft
 # Returns: 0=gates pass (continue to review bot gate), 1=blocked (skip PR)
@@ -99,6 +100,10 @@ _check_interactive_pr_gates() {
 	fi
 	if [[ ",${labels_str}," == *",hold-for-review,"* ]]; then
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR has hold-for-review opt-out label (t2411)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "${AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE:-0}" != "1" && ",${labels_str}," != *",allow-auto-merge,"* ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — origin:interactive PR requires manual merge (set AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1 or add allow-auto-merge to opt in)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
