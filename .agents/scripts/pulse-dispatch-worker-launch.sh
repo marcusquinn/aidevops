@@ -263,9 +263,10 @@ _dlw_zero_output_comment_count() {
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
 
 	local count=""
+	# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
 	count=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--jq '[.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output"; "i"))] | length' 2>/dev/null | \
-		awk '{ total += $1 } END { print total + 0 }') || count=0
+		--jq '[.[] | select((.body // "") | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output|classified as `no_work`"; "i"))] | length' 2>/dev/null | \
+		awk '{ if ($1 ~ /^[0-9]+$/) { total += $1 } } END { printf "%d", total + 0 }') || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
 	return 0
@@ -280,8 +281,9 @@ _dlw_comment_bloat_metrics() {
 	[[ -n "$repo_slug" ]] || { printf '0\t0\t0\t0'; return 0; }
 
 	local metrics=""
+	# shellcheck disable=SC2016  # jq program is intentionally single-quoted.
 	metrics=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--jq '[.[] | {body: (.body // "")}] | {comments: length, ops: ([.[] | select(.body | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length), zero: ([.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output"; "i"))] | length), chars: ([.[].body | length] | add // 0)} | [.comments, .ops, .zero, .chars] | @tsv' \
+		--jq '[.[] | {body: (.body // "")}] | {comments: length, ops: ([.[] | select(.body | test("ops:start|DISPATCH_CLAIM|CLAIM_RELEASED|dispatch-cooldown|Worker Watchdog Kill"; "i"))] | length), zero: ([.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output|classified as `no_work`"; "i"))] | length), chars: ([.[].body | length] | add // 0)} | [.comments, .ops, .zero, .chars] | @tsv' \
 		2>/dev/null | awk -F '\t' '{c+=$1; o+=$2; z+=$3; ch+=$4} END {printf "%d\t%d\t%d\t%d", c+0, o+0, z+0, ch+0}') || metrics="0	0	0	0"
 	[[ -n "$metrics" ]] || metrics=$'0\t0\t0\t0'
 	printf '%s' "$metrics"
