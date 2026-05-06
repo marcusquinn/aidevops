@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.73] - 2026-05-06
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- allow auto-dispatch interactive handoff (#22967)
+- ignore local case alarm config (#22966)
+
 ## [3.14.72] - 2026-05-05
 
 ### Changed
