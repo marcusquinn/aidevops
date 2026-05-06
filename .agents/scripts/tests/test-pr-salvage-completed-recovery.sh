@@ -73,7 +73,7 @@ JSON
 
 	if [[ "$area" == "issue" && "$command" == "list" ]]; then
 		local args=" $* "
-		if [[ "$args" == *'"PR #53" recover'* ]]; then
+		if [[ "$args" == *'"PR #53"'* ]]; then
 			cat <<'JSON'
 [
   {
