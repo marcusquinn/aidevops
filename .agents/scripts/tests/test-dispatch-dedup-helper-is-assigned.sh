@@ -474,6 +474,30 @@ test_maintainer_assigned_with_origin_interactive_blocks() {
 	return 0
 }
 
+test_owner_assigned_with_origin_interactive_auto_dispatch_allows() {
+	create_gh_stub "marcusquinn" "origin:interactive,auto-dispatch,bug"
+
+	if "$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 >/dev/null 2>&1; then
+		print_result "owner + origin:interactive + auto-dispatch allows handoff" 1 "Expected exit 1 (safe) but got exit 0 (blocked)"
+		return 0
+	fi
+
+	print_result "owner + origin:interactive + auto-dispatch allows handoff" 0
+	return 0
+}
+
+test_maintainer_assigned_with_origin_interactive_auto_dispatch_allows() {
+	create_gh_stub "marcusquinn-bot" "origin:interactive,auto-dispatch,bug"
+
+	if "$HELPER_SCRIPT" is-assigned 100 marcusquinn/aidevops runner1 >/dev/null 2>&1; then
+		print_result "maintainer + origin:interactive + auto-dispatch allows handoff" 1 "Expected exit 1 (safe) but got exit 0 (blocked)"
+		return 0
+	fi
+
+	print_result "maintainer + origin:interactive + auto-dispatch allows handoff" 0
+	return 0
+}
+
 # Regression: the original owner-passive exemption must still work when
 # neither an active status label nor origin:interactive is present.
 # A bare owner-assignment from auto-triage workflows must not block dispatch
@@ -623,6 +647,8 @@ main() {
 	test_owner_assigned_with_status_in_review_blocks
 	test_owner_assigned_with_origin_interactive_blocks
 	test_maintainer_assigned_with_origin_interactive_blocks
+	test_owner_assigned_with_origin_interactive_auto_dispatch_allows
+	test_maintainer_assigned_with_origin_interactive_auto_dispatch_allows
 	test_owner_assigned_no_status_no_origin_allows_dispatch
 	test_override_ignore_preserves_self_assignee
 	test_peer_quarantine_preserves_self_assignee
