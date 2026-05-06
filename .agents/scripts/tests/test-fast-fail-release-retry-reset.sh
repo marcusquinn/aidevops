@@ -72,17 +72,23 @@ write_entry() {
 
 future=$(( $(date +%s) + 3600 ))
 
+if _ff_version_gt "v3.14.64" "3.14.63" && ! _ff_version_gt "3.14.64" "3.14.64" && ! _ff_version_gt "3.14.63" "v3.14.64"; then
+	pass "pure bash version comparison handles prefixed aidevops versions"
+else
+	fail "pure bash version comparison handles prefixed aidevops versions"
+fi
+
 write_entry 123 1 "$future" "3.14.63"
 reset_rc=0
 fast_fail_is_skipped 123 owner/repo || reset_rc=$?
 reset_count=$(jq -r '."owner/repo/123".count' "$FAST_FAIL_STATE_FILE")
 reset_retry=$(jq -r '."owner/repo/123".retry_after' "$FAST_FAIL_STATE_FILE")
 reset_version=$(jq -r '."owner/repo/123".release_retry_reset_version' "$FAST_FAIL_STATE_FILE")
-if [[ "$reset_rc" -eq 1 && "$reset_count" == "0" && "$reset_retry" == "0" && "$reset_version" == "3.14.64" ]]; then
+if [[ "$reset_rc" -eq 1 && "$reset_count" == "0" && "$reset_retry" == "0" && "$reset_version" == "3.14.64" && ! -d "${FAST_FAIL_STATE_FILE}.lockdir" ]]; then
 	pass "new aidevops version clears old-version backoff once"
 else
 	fail "new aidevops version clears old-version backoff once" \
-		"rc=${reset_rc}; count=${reset_count}; retry=${reset_retry}; reset_version=${reset_version}"
+		"rc=${reset_rc}; count=${reset_count}; retry=${reset_retry}; reset_version=${reset_version}; lockdir=$([[ -d "${FAST_FAIL_STATE_FILE}.lockdir" ]] && printf present || printf absent)"
 fi
 
 skip_rc=0

@@ -364,31 +364,73 @@ _ff_current_aidevops_version() {
 _ff_version_gt() {
 	local left="$1"
 	local right="$2"
-	python3 - "$left" "$right" <<'PY'
-import re
-import sys
+	local left_rest="$left"
+	local right_rest="$right"
+	local left_parts=(0 0 0)
+	local right_parts=(0 0 0)
+	local i=0
 
-def parts(value):
-    nums = [int(x) for x in re.findall(r"\d+", value or "")[:3]]
-    return tuple((nums + [0, 0, 0])[:3])
+	while [[ "$i" -lt 3 && "$left_rest" =~ ([0-9]+) ]]; do
+		left_parts[$i]="${BASH_REMATCH[1]}"
+		left_rest="${left_rest#*"${BASH_REMATCH[1]}"}"
+		i=$((i + 1))
+	done
 
-sys.exit(0 if parts(sys.argv[1]) > parts(sys.argv[2]) else 1)
-PY
-	return $?
+	i=0
+	while [[ "$i" -lt 3 && "$right_rest" =~ ([0-9]+) ]]; do
+		right_parts[$i]="${BASH_REMATCH[1]}"
+		right_rest="${right_rest#*"${BASH_REMATCH[1]}"}"
+		i=$((i + 1))
+	done
+
+	for i in 0 1 2; do
+		if [[ $((10#${left_parts[$i]})) -gt $((10#${right_parts[$i]})) ]]; then
+			return 0
+		fi
+		if [[ $((10#${left_parts[$i]})) -lt $((10#${right_parts[$i]})) ]]; then
+			return 1
+		fi
+	done
+	return 1
 }
 
 _ff_release_retry_reset_if_newer() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local precomputed_state="${3:-}"
+	local precomputed_current_version="${4:-}"
 
 	[[ "${FAST_FAIL_RELEASE_RETRY_RESET_ENABLED:-1}" == "1" ]] || return 1
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
 
+	if [[ -n "$precomputed_state" ]]; then
+		local precheck_key="" precheck_current_version="" precheck_failure_version="" precheck_reset_version=""
+		precheck_key=$(_ff_key "$issue_number" "$repo_slug")
+		precheck_current_version="$precomputed_current_version"
+		[[ -n "$precheck_current_version" ]] || precheck_current_version=$(_ff_current_aidevops_version)
+		precheck_failure_version=$(printf '%s' "$precomputed_state" | jq -r --arg k "$precheck_key" '.[$k].aidevops_version // ""' 2>/dev/null) || precheck_failure_version=""
+		precheck_reset_version=$(printf '%s' "$precomputed_state" | jq -r --arg k "$precheck_key" '.[$k].release_retry_reset_version // ""' 2>/dev/null) || precheck_reset_version=""
+		[[ -n "$precheck_failure_version" ]] || precheck_failure_version="0.0.0"
+		[[ -n "$precheck_current_version" ]] || return 1
+		[[ "$precheck_reset_version" != "$precheck_current_version" ]] || return 1
+		_ff_version_gt "$precheck_current_version" "$precheck_failure_version" || return 1
+	fi
+
+	_ff_with_lock _ff_release_retry_reset_if_newer_locked "$issue_number" "$repo_slug" "$precomputed_current_version"
+	return $?
+}
+
+_ff_release_retry_reset_if_newer_locked() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local precomputed_current_version="${3:-}"
+
 	local key="" state="" current_version="" failure_version="" reset_version=""
 	key=$(_ff_key "$issue_number" "$repo_slug")
 	state=$(_ff_load)
-	current_version=$(_ff_current_aidevops_version)
+	current_version="$precomputed_current_version"
+	[[ -n "$current_version" ]] || current_version=$(_ff_current_aidevops_version)
 	failure_version=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].aidevops_version // ""' 2>/dev/null) || failure_version=""
 	reset_version=$(printf '%s' "$state" | jq -r --arg k "$key" '.[$k].release_retry_reset_version // ""' 2>/dev/null) || reset_version=""
 
@@ -682,7 +724,7 @@ fast_fail_is_skipped() {
 	now=$(date +%s)
 	state=$(_ff_load)
 	if printf '%s' "$state" | jq -e --arg k "$key" '.[$k] != null' >/dev/null 2>&1; then
-		if _ff_release_retry_reset_if_newer "$issue_number" "$repo_slug"; then
+		if _ff_release_retry_reset_if_newer "$issue_number" "$repo_slug" "$state"; then
 			return 1
 		fi
 		state=$(_ff_load)

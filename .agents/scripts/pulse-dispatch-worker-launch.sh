@@ -362,6 +362,12 @@ _dlw_zero_output_evidence_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local precomputed_comment_count="${3:-}"
+	local precomputed_evidence_count="${4:-}"
+
+	if [[ "$precomputed_evidence_count" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$precomputed_evidence_count"
+		return 0
+	fi
 
 	local state_count="" comment_count=""
 	if [[ "$precomputed_comment_count" =~ ^[0-9]+$ ]]; then
@@ -406,11 +412,13 @@ _dlw_prepare_prompt_for_launch() {
 	local repo_slug="$2"
 	local issue_title="$3"
 	local original_prompt="$4"
+	local precomputed_comment_metrics="${5:-}"
 	local comment_metrics=""
 	local comments ops metrics_zero_count chars
 	local precomputed_zero_count=""
 
-	comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	comment_metrics="$precomputed_comment_metrics"
+	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	IFS=$'\t' read -r comments ops metrics_zero_count chars <<<"$comment_metrics"
 	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
 		precomputed_zero_count="$metrics_zero_count"
@@ -442,11 +450,13 @@ _dlw_prepare_prompt_for_launch() {
 _dlw_hold_repeated_zero_output() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local precomputed_comment_metrics="${3:-}"
 	local comment_metrics=""
 	local comments ops metrics_zero_count chars
 	local precomputed_zero_count=""
 
-	comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	comment_metrics="$precomputed_comment_metrics"
+	[[ -n "$comment_metrics" ]] || comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	IFS=$'\t' read -r comments ops metrics_zero_count chars <<<"$comment_metrics"
 	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
 		precomputed_zero_count="$metrics_zero_count"
@@ -1475,7 +1485,9 @@ _dispatch_launch_worker() {
 	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"
 
-	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug"; then
+	local zero_output_comment_metrics=""
+	zero_output_comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	if _dlw_hold_repeated_zero_output "$issue_number" "$repo_slug" "$zero_output_comment_metrics"; then
 		return 2
 	fi
 
@@ -1513,7 +1525,7 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	local worker_pid
 	local launch_prompt=""
-	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt")
+	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
 	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
