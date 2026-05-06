@@ -175,9 +175,12 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
-# Thin orchestrator — runs the 7-layer dedup chain in order.
+# Thin orchestrator — runs read-only dedup layers in order.
 # Byte-for-byte behavioural equivalent of the pre-GH#18654 single-function
 # implementation. Each layer returns 0 to block dispatch or 1 to continue.
+# The optimistic GitHub claim lock runs after the worker canary preflight in
+# _dispatch_launch_worker so a broken local runtime does not publish noisy
+# DISPATCH_CLAIM comments when no worker can start.
 #######################################
 check_dispatch_dedup() {
 	local issue_number="$1"
@@ -192,7 +195,6 @@ check_dispatch_dedup() {
 	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
 	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
 	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
-	_dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login" && return 0
 
 	return 1
 }
@@ -1043,7 +1045,8 @@ _dispatch_has_interactive_hold() {
 #   7. Blocked-by dependency enforcement (t1927)
 #   8. Issue consolidation pre-check
 #   9. Large-file simplification gate
-#   10. 7-layer check_dispatch_dedup chain (Layers 1–7)
+#   10. Read-only check_dispatch_dedup chain (Layers 1–6)
+#       Layer 7 claim lock runs after canary preflight in worker launch.
 #
 # Arguments:
 #   $1 - issue_number
@@ -1240,7 +1243,7 @@ _dispatch_dedup_check_layers() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.footprint" "$_dss_t0"
 
-	# All 7 dedup layers — cannot be skipped.
+	# Read-only dedup layers — cannot be skipped.
 	# t2996: ISSUE_META_JSON forwards the canonical bundle to
 	# dispatch-dedup-helper.sh (Layer 6 `is-assigned`, Layer 4 `has-open-pr`,
 	# etc.). The helper's t-prefixed lookup paths already detect the env var
