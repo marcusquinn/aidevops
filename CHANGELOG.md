@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.77] - 2026-05-06
+
+### Fixed
+
+- requeue available brief-rewrite holds (#23017)
+- generate daemon-safe opencode shim (#23014)
+
 ## [3.14.76] - 2026-05-06
 
 ### Changed
