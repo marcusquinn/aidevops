@@ -476,7 +476,7 @@ _normalize_requeue_stale_brief_rewrite_rows() {
 _normalize_clear_stale_feedback_rows() {
 	local slug="$1"
 	local stale_feedback_rows="$2"
-	local stale_pair stale_issue stale_assignees stale_assignee
+	local stale_pair="" stale_issue="" stale_assignees="" stale_assignee=""
 	local origin_worker_label=origin:worker
 	local origin_interactive_label=origin:interactive
 	local origin_takeover_label=origin:worker-takeover
