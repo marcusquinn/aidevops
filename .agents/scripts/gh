@@ -805,6 +805,135 @@ _shim_privacy_scan() {
 _modified_args=("$@")
 
 # -----------------------------------------------------------------------------
+# t3565: Raw interactive tracking-issue label normalization.
+#
+# The prompt rule says to use gh_create_issue/claim-task-id wrappers, but raw
+# `gh issue create` still reaches this PATH shim from ad-hoc Bash calls. When an
+# interactive session creates an aidevops-shaped tracking issue, inject the live
+# ownership labels that the wrappers would have applied so the issue is never
+# born invisible to review/dispatch guards.
+# -----------------------------------------------------------------------------
+_shim_arg_labels_contain() {
+	local labels="$1"
+	local needle="$2"
+	local old_ifs="$IFS"
+	local label=""
+	IFS=,
+	for label in $labels; do
+		label="${label#"${label%%[![:space:]]*}"}"
+		label="${label%"${label##*[![:space:]]}"}"
+		if [[ "$label" == "$needle" ]]; then
+			IFS="$old_ifs"
+			return 0
+		fi
+	done
+	IFS="$old_ifs"
+	return 1
+}
+
+_shim_arg_labels_have_prefix() {
+	local labels="$1"
+	local prefix="$2"
+	local old_ifs="$IFS"
+	local label=""
+	IFS=,
+	for label in $labels; do
+		label="${label#"${label%%[![:space:]]*}"}"
+		label="${label%"${label##*[![:space:]]}"}"
+		if [[ "$label" == "${prefix}"* ]]; then
+			IFS="$old_ifs"
+			return 0
+		fi
+	done
+	IFS="$old_ifs"
+	return 1
+}
+
+_shim_issue_create_get_title() {
+	local idx=0
+	local arg=""
+	while [[ $idx -lt ${#_modified_args[@]} ]]; do
+		arg="${_modified_args[$idx]}"
+		case "$arg" in
+		--title)
+			printf '%s\n' "${_modified_args[idx + 1]:-}"
+			return 0
+			;;
+		--title=*)
+			printf '%s\n' "${arg#--title=}"
+			return 0
+			;;
+		esac
+		idx=$((idx + 1))
+	done
+	return 1
+}
+
+_shim_issue_create_has_label() {
+	local wanted="$1"
+	local idx=0
+	local arg=""
+	while [[ $idx -lt ${#_modified_args[@]} ]]; do
+		arg="${_modified_args[$idx]}"
+		case "$arg" in
+		--label | -l)
+			_shim_arg_labels_contain "${_modified_args[idx + 1]:-}" "$wanted" && return 0
+			idx=$((idx + 2))
+			continue
+			;;
+		--label=*) _shim_arg_labels_contain "${arg#--label=}" "$wanted" && return 0 ;;
+		-l*) _shim_arg_labels_contain "${arg#-l}" "$wanted" && return 0 ;;
+		esac
+		idx=$((idx + 1))
+	done
+	return 1
+}
+
+_shim_issue_create_has_label_prefix() {
+	local prefix="$1"
+	local idx=0
+	local arg=""
+	while [[ $idx -lt ${#_modified_args[@]} ]]; do
+		arg="${_modified_args[$idx]}"
+		case "$arg" in
+		--label | -l)
+			_shim_arg_labels_have_prefix "${_modified_args[idx + 1]:-}" "$prefix" && return 0
+			idx=$((idx + 2))
+			continue
+			;;
+		--label=*) _shim_arg_labels_have_prefix "${arg#--label=}" "$prefix" && return 0 ;;
+		-l*) _shim_arg_labels_have_prefix "${arg#-l}" "$prefix" && return 0 ;;
+		esac
+		idx=$((idx + 1))
+	done
+	return 1
+}
+
+_shim_issue_create_has_type_label() {
+	local type_label=""
+	for type_label in bug enhancement documentation docs test tests refactor chore feature maintenance security; do
+		_shim_issue_create_has_label "$type_label" && return 0
+	done
+	return 1
+}
+
+_shim_normalize_interactive_tracking_issue_create() {
+	[[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == "issue:create" ]] || return 0
+	[[ -z "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${GITHUB_ACTIONS:-}" ]] || return 0
+
+	local title=""
+	title="$(_shim_issue_create_get_title 2>/dev/null || true)"
+	[[ "$title" =~ ^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+):[[:space:]] ]] || return 0
+
+	_shim_issue_create_has_label_prefix "origin:" || _modified_args+=(--label "origin:interactive")
+	_shim_issue_create_has_label_prefix "status:" || _modified_args+=(--label "status:in-review")
+	_shim_issue_create_has_type_label || _modified_args+=(--label "bug")
+	return 0
+}
+
+_shim_normalize_interactive_tracking_issue_create
+
+# -----------------------------------------------------------------------------
 # Handle `gh api` subcommand: intercept write calls to content endpoints.
 # Non-targeted api calls pass straight through after this block.
 # t2876: write endpoints also run through the privacy-scan layer.

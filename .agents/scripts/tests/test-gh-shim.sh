@@ -422,6 +422,45 @@ else
 fi
 
 # =============================================================================
+# Test 16: raw interactive aidevops tracking issue creation is normalized
+# =============================================================================
+echo ""
+echo "Test 16: raw interactive tracking issue label normalization"
+_reset_log
+"$SHIM_RUN" issue create --repo owner/repo --title "t3565: Harden issue labels" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *$'--label\norigin:interactive'* ]] &&
+	[[ "$argv" == *$'--label\nstatus:in-review'* ]] &&
+	[[ "$argv" == *$'--label\nbug'* ]]; then
+	_pass "tracking issue gets origin/status/type labels"
+else
+	_fail "tracking issue label normalization" "argv: $argv"
+fi
+
+# =============================================================================
+# Test 17: raw issue normalization respects explicit labels and headless mode
+# =============================================================================
+echo ""
+echo "Test 17: label normalization respects explicit and headless contexts"
+_reset_log
+"$SHIM_RUN" issue create --repo owner/repo --title "t3565: Explicit labels" --label "origin:worker,status:available,enhancement" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" != *"origin:interactive"* ]] && [[ "$argv" != *"status:in-review"* ]] && [[ "$argv" != *$'--label\nbug'* ]]; then
+	_pass "explicit labels are not duplicated or overwritten"
+else
+	_fail "explicit label preservation" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 "$SHIM_RUN" issue create --repo owner/repo --title "t3565: Headless labels" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" != *"origin:interactive"* ]] && [[ "$argv" != *"status:in-review"* ]]; then
+	_pass "headless issue creation is not normalized as interactive"
+else
+	_fail "headless label normalization bypass" "argv: $argv"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
