@@ -17,6 +17,8 @@
 #   3. Verify setup_opencode_cli writes ~/.aidevops/.opencode-bin-resolved
 #      on the success path and returns 0 on the install-fail path
 #      (fail-open contract).
+#   4. Verify setup writes a daemon-safe ~/.local/bin/opencode shim and clears
+#      stale canary negative cache after a successful repair.
 
 set -euo pipefail
 
@@ -168,7 +170,34 @@ echo "Test 5: setup_opencode_cli skip-when-valid + persists resolved path"
 rc5=$(grep '^rc=' "$SANDBOX/out5" | tail -1)
 resolved5=$(tail -1 "$SANDBOX/out5")
 assert_eq "skip-when-valid rc" "rc=0" "$rc5"
-assert_eq "skip-when-valid resolved-path file" "$SANDBOX/bin/opencode-real" "$resolved5"
+assert_eq "skip-when-valid resolved-path file" "$HOME/.local/bin/opencode" "$resolved5"
+if HOME="$HOME" PATH="/usr/bin:/bin" "$resolved5" --version >/dev/null 2>&1; then
+	assert_eq "stable shim runs in sanitized PATH" "ok" "ok"
+else
+	assert_eq "stable shim runs in sanitized PATH" "ok" "failed"
+fi
+
+# --- Test 5b: setup_opencode_cli clears stale canary negative cache ----------
+echo "Test 5b: setup_opencode_cli clears canary negative cache after repair"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved" "$HOME/.local/bin/opencode"
+mkdir -p "$HOME/.aidevops/.agent-workspace/headless-runtime"
+printf '0\n' >"$HOME/.aidevops/.agent-workspace/headless-runtime/canary-last-fail"
+printf 'config_error\n' >"$HOME/.aidevops/.agent-workspace/headless-runtime/canary-last-fail.reason"
+(
+	source_lib
+	export OPENCODE_BIN="$SANDBOX/bin/opencode-real"
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+) >"$SANDBOX/out5b" 2>&1
+rc5b=$(grep '^rc=' "$SANDBOX/out5b" | tail -1)
+assert_eq "cache-clear setup rc" "rc=0" "$rc5b"
+if [[ ! -f "$HOME/.aidevops/.agent-workspace/headless-runtime/canary-last-fail" ]] && \
+	[[ ! -f "$HOME/.aidevops/.agent-workspace/headless-runtime/canary-last-fail.reason" ]]; then
+	assert_eq "stale canary negative cache cleared" "cleared" "cleared"
+else
+	assert_eq "stale canary negative cache cleared" "cleared" "present"
+fi
 
 # --- Test 6: setup_opencode_cli fail-open when no installer present ---------
 echo "Test 6: setup_opencode_cli fail-open when no bun/npm + invalid current"

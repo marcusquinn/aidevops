@@ -28,6 +28,9 @@
 #   5. Fnm-style paths (with the extra `installation/` segment) are
 #      detected alongside nvm/volta `bin/` paths.
 #
+#   6. Normalizes accepted Node-manager binaries to a daemon-visible
+#      ~/.local/bin/opencode shim so systemd workers do not depend on shell init.
+#
 # Failure history: alex-solovyev's Linux runner went 9 days (Apr 18-27,
 # 2026) with 0/3 workers dispatching after the t2176 setup re-run wrote
 # `~/.config/aidevops/scheduler-runtime-bin = ~/.local/bin/claude`,
@@ -64,7 +67,7 @@ print_result() {
 # $3 = Node manager: "nvm" | "volta" | "fnm".
 # $4 = Node version label (e.g. "v24.13.1" or "20.10.0").
 build_fixture_node_install() {
-	local _home="$1" _product="$2" _mgr="$3" _ver="$4"
+	local _home="$1" _product="$2" _mgr="$3" _ver="$4" _needs_node="${5:-0}"
 	local _bin_dir _bin_path _ver_str
 
 	case "$_product" in
@@ -91,13 +94,23 @@ build_fixture_node_install() {
 	# `command -v opencode` finds whatever owns the name). The product
 	# identity is what `--version` prints — that's what the validator reads.
 	_bin_path="$_bin_dir/opencode"
-	cat >"$_bin_path" <<EOF
+cat >"$_bin_path" <<EOF
 #!/bin/sh
+if [ "$_needs_node" = "1" ] && ! command -v node >/dev/null 2>&1; then
+	exit 127
+fi
 case "\$1" in
 	--version) echo '$_ver_str' ;;
 	*) echo "stub" ;;
 esac
 EOF
+	if [[ "$_needs_node" == "1" ]]; then
+		cat >"$_bin_dir/node" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+		chmod +x "$_bin_dir/node"
+	fi
 	chmod +x "$_bin_path"
 	printf '%s' "$_bin_path"
 	return 0
@@ -168,36 +181,39 @@ fi
 
 # Test 1: nvm path discovery. Plain $HOME with only ~/.nvm populated.
 fixture1=$(mktemp -d 2>/dev/null || mktemp -d -t t2954a)
-expected1=$(build_fixture_node_install "$fixture1" "opencode" "nvm" "v24.13.1")
+build_fixture_node_install "$fixture1" "opencode" "nvm" "v24.13.1" >/dev/null
+expected1="$fixture1/.local/bin/opencode"
 result1=$(run_resolver "$fixture1")
 if [[ "$result1" == "$expected1" ]]; then
-	print_result "nvm path discovery — finds opencode in ~/.nvm/versions/node" 0
+	print_result "nvm path discovery — normalizes to ~/.local/bin/opencode shim" 0
 else
-	print_result "nvm path discovery — finds opencode in ~/.nvm/versions/node" 1 \
+	print_result "nvm path discovery — normalizes to ~/.local/bin/opencode shim" 1 \
 		"expected=$expected1 got=$result1"
 fi
 rm -rf "$fixture1"
 
 # Test 2: volta path discovery.
 fixture2=$(mktemp -d 2>/dev/null || mktemp -d -t t2954b)
-expected2=$(build_fixture_node_install "$fixture2" "opencode" "volta" "20.10.0")
+build_fixture_node_install "$fixture2" "opencode" "volta" "20.10.0" >/dev/null
+expected2="$fixture2/.local/bin/opencode"
 result2=$(run_resolver "$fixture2")
 if [[ "$result2" == "$expected2" ]]; then
-	print_result "volta path discovery — finds opencode in ~/.volta/tools/image/node" 0
+	print_result "volta path discovery — normalizes to ~/.local/bin/opencode shim" 0
 else
-	print_result "volta path discovery — finds opencode in ~/.volta/tools/image/node" 1 \
+	print_result "volta path discovery — normalizes to ~/.local/bin/opencode shim" 1 \
 		"expected=$expected2 got=$result2"
 fi
 rm -rf "$fixture2"
 
 # Test 3: fnm path discovery (extra `installation/` segment).
 fixture3=$(mktemp -d 2>/dev/null || mktemp -d -t t2954c)
-expected3=$(build_fixture_node_install "$fixture3" "opencode" "fnm" "v22.5.0")
+build_fixture_node_install "$fixture3" "opencode" "fnm" "v22.5.0" >/dev/null
+expected3="$fixture3/.local/bin/opencode"
 result3=$(run_resolver "$fixture3")
 if [[ "$result3" == "$expected3" ]]; then
-	print_result "fnm path discovery — finds opencode in ~/.local/share/fnm/node-versions" 0
+	print_result "fnm path discovery — normalizes to ~/.local/bin/opencode shim" 0
 else
-	print_result "fnm path discovery — finds opencode in ~/.local/share/fnm/node-versions" 1 \
+	print_result "fnm path discovery — normalizes to ~/.local/bin/opencode shim" 1 \
 		"expected=$expected3 got=$result3"
 fi
 rm -rf "$fixture3"
@@ -206,9 +222,10 @@ rm -rf "$fixture3"
 fixture4=$(mktemp -d 2>/dev/null || mktemp -d -t t2954d)
 build_fixture_node_install "$fixture4" "opencode" "nvm" "v18.20.0" >/dev/null
 build_fixture_node_install "$fixture4" "opencode" "nvm" "v22.5.0" >/dev/null
-expected4=$(build_fixture_node_install "$fixture4" "opencode" "nvm" "v24.13.1")
+build_fixture_node_install "$fixture4" "opencode" "nvm" "v24.13.1" >/dev/null
+expected4="$fixture4/.local/bin/opencode"
 result4=$(run_resolver "$fixture4")
-if [[ "$result4" == "$expected4" ]]; then
+if [[ "$result4" == "$expected4" ]] && grep -q 'v24.13.1' "$result4" 2>/dev/null; then
 	print_result "most-recent Node version wins — v24 over v22 over v18" 0
 else
 	print_result "most-recent Node version wins — v24 over v22 over v18" 1 \
@@ -249,7 +266,8 @@ rm -rf "$fixture5"
 # resolver re-resolves to the real opencode binary present in nvm.
 # Mirrors alex-solovyev's runner state pre-heal: persisted = claude.
 fixture6=$(mktemp -d 2>/dev/null || mktemp -d -t t2954f)
-expected6=$(build_fixture_node_install "$fixture6" "opencode" "nvm" "v24.13.1")
+build_fixture_node_install "$fixture6" "opencode" "nvm" "v24.13.1" >/dev/null
+expected6="$fixture6/.local/bin/opencode"
 # Plant a claude stub at a separate fixed path and persist that path.
 claude_stub6=$(build_fixture_fixed_path "$fixture6" "claude" ".local/bin/claude")
 mkdir -p "$fixture6/.config/aidevops"
@@ -273,7 +291,8 @@ rm -rf "$fixture6"
 
 # Test 7: Persistence round-trip — valid opencode is persisted and re-read.
 fixture7=$(mktemp -d 2>/dev/null || mktemp -d -t t2954g)
-expected7=$(build_fixture_node_install "$fixture7" "opencode" "nvm" "v22.5.0")
+build_fixture_node_install "$fixture7" "opencode" "nvm" "v22.5.0" >/dev/null
+expected7="$fixture7/.local/bin/opencode"
 # First run: discovers via nvm sweep, persists.
 run_resolver "$fixture7" >/dev/null
 persisted7=$(cat "$fixture7/.config/aidevops/scheduler-runtime-bin" 2>/dev/null || true)
@@ -304,6 +323,19 @@ else
 		"expected=$expected8 got=$result8"
 fi
 rm -rf "$fixture8"
+
+# Test 9: Node-manager binary that requires node in PATH remains runnable via shim.
+fixture9=$(mktemp -d 2>/dev/null || mktemp -d -t t2954i)
+build_fixture_node_install "$fixture9" "opencode" "nvm" "v24.13.1" "1" >/dev/null
+expected9="$fixture9/.local/bin/opencode"
+result9=$(run_resolver "$fixture9")
+if [[ "$result9" == "$expected9" ]] && HOME="$fixture9" PATH="/usr/bin:/bin" "$result9" --version >/dev/null 2>&1; then
+	print_result "stable shim — nvm opencode remains runnable in sanitized systemd PATH" 0
+else
+	print_result "stable shim — nvm opencode remains runnable in sanitized systemd PATH" 1 \
+		"result=$result9 expected=$expected9"
+fi
+rm -rf "$fixture9"
 
 # --- Summary ---
 echo ""

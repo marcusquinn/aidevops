@@ -81,6 +81,7 @@ _systemd_escape() {
 _scheduler_systemd_env_lines() {
 	local env_vars="$1"
 	local _env_lines=""
+	local _has_path=0
 
 	if [[ -n "$env_vars" ]]; then
 		while IFS= read -r _kv; do
@@ -90,11 +91,14 @@ _scheduler_systemd_env_lines() {
 			local _escaped_val
 			_escaped_val=$(_systemd_escape "$_raw_val")
 			_env_lines+="Environment=${_key}=${_escaped_val}"$'\n'
+			[[ "$_key" == "PATH" ]] && _has_path=1
 		done <<<"$env_vars"
 	fi
 
 	_env_lines+="Environment=HOME=$(_systemd_escape "$HOME")"$'\n'
-	_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+	if [[ "$_has_path" -eq 0 ]]; then
+		_env_lines+="Environment=PATH=$(_systemd_escape "$PATH")"$'\n'
+	fi
 	printf '%s' "$_env_lines"
 	return 0
 }

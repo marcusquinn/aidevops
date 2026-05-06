@@ -279,6 +279,39 @@ _persist_pulse_runtime_path() {
 	return 0
 }
 
+_pulse_clear_canary_negative_cache() {
+	local _state_dir="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
+	rm -f "${_state_dir}/canary-last-fail" "${_state_dir}/canary-last-fail.reason" 2>/dev/null || true
+	return 0
+}
+
+_pulse_daemon_path_for_opencode() {
+	local _opencode_bin="${1:-}"
+	local _opencode_dir=""
+	local _path=""
+
+	if [[ -n "$_opencode_bin" ]]; then
+		_opencode_dir=$(dirname "$_opencode_bin" 2>/dev/null || printf '')
+	fi
+	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
+	printf '%s' "$_path"
+	return 0
+}
+
+_pulse_normalize_opencode_binary() {
+	local _opencode_bin="${1:-}"
+	local _normalized="$_opencode_bin"
+
+	[[ -n "$_opencode_bin" ]] || return 1
+	if declare -F _setup_ensure_opencode_stable_shim >/dev/null 2>&1; then
+		_normalized=$(_setup_ensure_opencode_stable_shim "$_opencode_bin" 2>/dev/null || printf '%s' "$_opencode_bin")
+	elif [[ "$_opencode_bin" == "${HOME}/.local/bin/opencode" ]]; then
+		_pulse_clear_canary_negative_cache
+	fi
+	printf '%s' "$_normalized"
+	return 0
+}
+
 _resolve_pulse_runtime_binary() {
 	# GH#18439 + t2954. Persist the resolved binary across setup.sh
 	# invocations so aidevops-auto-update.timer (systemd minimal PATH)
@@ -327,6 +360,13 @@ _resolve_pulse_runtime_binary() {
 	# 5. Last-resort legacy fallback (pre-GH#18439 behaviour).
 	[[ -z "$opencode_bin" ]] && opencode_bin="/opt/homebrew/bin/opencode"
 
+	# Prefer the daemon-visible stable shim when setup can create/validate it.
+	# This keeps systemd workers off nvm/fnm/volta internals while preserving
+	# those managers' node binary on the wrapper PATH.
+	if [[ -n "$opencode_bin" ]]; then
+		opencode_bin=$(_pulse_normalize_opencode_binary "$opencode_bin" || printf '%s' "$opencode_bin")
+	fi
+
 	# Persist (validated). Wrong-product results silently no-op the write.
 	_persist_pulse_runtime_path "$opencode_bin" "$_persisted_file" "$_have_validator"
 
@@ -348,6 +388,7 @@ PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
 	if [[ -n "$opencode_bin" ]]; then
 		_pulse_env+=$'\n'"OPENCODE_BIN=${opencode_bin}"
 	fi
+	_pulse_env+=$'\n'"PATH=$(_pulse_daemon_path_for_opencode "$opencode_bin")"
 
 	printf '%s' "$_pulse_env"
 	return 0
