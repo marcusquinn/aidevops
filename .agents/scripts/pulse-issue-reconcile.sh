@@ -391,7 +391,6 @@ _normalize_get_stale_brief_rewrite_rows() {
 		--arg ai_approved_label "ai-approved" \
 		--arg brief_label "$_PIR_NEEDS_BRIEF_REWRITE" \
 		--arg nmr_label "needs-maintainer-review" \
-		--arg available_label "$_PIR_STATUS_AVAILABLE" \
 		--arg queued_label "$_PIR_STATUS_QUEUED" \
 		--arg claimed_label "$_PIR_STATUS_CLAIMED" \
 		--arg progress_label "$_PIR_STATUS_IN_PROGRESS" \
@@ -405,7 +404,6 @@ _normalize_get_stale_brief_rewrite_rows() {
 		| select($labels | index($ai_approved_label))
 		| select($labels | index($brief_label))
 		| select(($labels | index($nmr_label)) | not)
-		| select(($labels | index($available_label)) | not)
 		| select(($labels | index($queued_label)) | not)
 		| select(($labels | index($claimed_label)) | not)
 		| select(($labels | index($progress_label)) | not)
