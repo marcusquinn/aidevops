@@ -20,7 +20,7 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 1. Define the task: `/define` (interactive interview) or `/new-task` (quick creation)
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
 3. Brief must include: session origin, what, why, how, acceptance criteria, context
-4. Ask user: implement now or queue for runner?
+4. Resolve the user's execution intent before stopping: implement now, queue/dispatch in the background, or save for later.
 5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
 6. Queue: add to TODO.md for supervisor dispatch
 7. Never skip testing. Never declare "done" without verification.
@@ -43,6 +43,43 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 **Brief composition**: All GitHub-written content (issue bodies, briefs, PR descriptions, comments, escalation reports, worker guidance) follows `workflows/brief.md` — the centralised formatting workflow. Load it before publishing; optional seeded draft PRs are governed there, not in this root guide.
 
 **Model tiers and dispatchability**: Use GitHub `tier:*` labels; default to `tier:standard` when uncertain. Before recommending a tier or queueing work, run `task-dispatchability-helper.sh check --task-id tNNN [--issue N]`. Full tier rules live in `reference/task-taxonomy.md`; `tier-simple-body-shape-helper.sh` still enforces high-confidence simple-tier downgrades pre-dispatch.
+
+## Conversation Intent Routing
+
+Natural-language task capture must be as explicit as slash commands. When a user gives work that could become a TODO or issue, first classify the intent:
+
+| User signal | Route | Confirmation |
+|-------------|-------|--------------|
+| `/full-loop ...`, issue/task number after `/full-loop`, "do/work/fix/implement this now", "in this session" | Start `/full-loop` with the instruction or resolved issue/task | Do not ask whether to start; proceed unless blocked by safety/secret/destructive gates |
+| "background", "worker", "auto-dispatch", "have an agent do this" | Compose with `workflows/brief.md`, create TODO/issue with `#auto-dispatch` when readiness passes, and queue/dispatch | Ask only for missing secrets, destructive approval, unknown repo, or unavailable verification |
+| "save", "log", "for later", `/save-todo`, `/aidevops-save-todo` | Compose with `workflows/brief.md`; save as TODO/plan/issue for later | After saving, ask numbered dispatch options |
+| Ambiguous "we need to...", "should add...", "can you note..." | Ask a numbered intent question before creating or executing | Use the shortest option set that disambiguates now/later/background |
+
+Default prompt for ambiguous implementation work:
+
+```text
+Do you want to:
+1. Work on this now with /full-loop
+2. Save as a TODO for later
+3. Save as a TODO and auto-dispatch a background worker
+4. Create a GitHub issue
+5. Create a GitHub issue and auto-dispatch a worker
+
+Reply 1-5.
+```
+
+Default prompt after explicit save/later intent:
+
+```text
+Saved as {task_or_issue} with a worker-ready brief.
+
+Auto-dispatch a worker?
+1. Yes, start now in the background
+2. Later
+3. No, keep it manual
+```
+
+Do not end a save flow with only "start anytime" when the task is worker-ready; offer the numbered dispatch choice. If a brief cannot meet auto-dispatch readiness, state the blocker and the missing information needed.
 
 ## Auto-Dispatch and Completion
 
