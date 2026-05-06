@@ -22,6 +22,7 @@
 #   - _build_oimp_lookup_for_slug       (t2985: per-repo merged-PR lookup)
 #   - _normalize_get_feedback_routed_rows (t2396: feedback-routed issue detection)
 #   - _normalize_get_stale_brief_rewrite_rows (stale zero-output hold recovery)
+#   - _normalize_requeue_stale_brief_rewrite_rows (stale zero-output requeue)
 #   - _normalize_reassign_self          (Phase 12: orphaned active issue → self-assign)
 #   - _normalize_unassign_stampless_interactive (t2148: stampless claim cleanup)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
@@ -68,6 +69,14 @@ fi
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
+[[ -n "${_PIR_STATUS_AVAILABLE+x}" ]] || _PIR_STATUS_AVAILABLE="status:available"
+[[ -n "${_PIR_STATUS_QUEUED+x}" ]] || _PIR_STATUS_QUEUED="status:queued"
+[[ -n "${_PIR_STATUS_CLAIMED+x}" ]] || _PIR_STATUS_CLAIMED="status:claimed"
+[[ -n "${_PIR_STATUS_IN_PROGRESS+x}" ]] || _PIR_STATUS_IN_PROGRESS="status:in-progress"
+[[ -n "${_PIR_STATUS_IN_REVIEW+x}" ]] || _PIR_STATUS_IN_REVIEW="status:in-review"
+[[ -n "${_PIR_STATUS_BLOCKED+x}" ]] || _PIR_STATUS_BLOCKED="status:blocked"
+[[ -n "${_PIR_STATUS_DONE+x}" ]] || _PIR_STATUS_DONE="status:done"
+[[ -n "${_PIR_NEEDS_BRIEF_REWRITE+x}" ]] || _PIR_NEEDS_BRIEF_REWRITE="needs-brief-rewrite"
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -389,6 +398,54 @@ _normalize_get_stale_brief_rewrite_rows() {
 	return 0
 }
 
+#######################################
+# Requeue stale auto-approved brief-rewrite infrastructure holds.
+#
+# Args:
+#   $1 - slug
+#   $2 - stale rows in issue|assignee1,assignee2 format
+#   $3 - add-label flag string
+#   $4 - remove-label flag string
+#   $5 - remove-assignee flag string
+# Returns: 0 always
+#######################################
+_normalize_requeue_stale_brief_rewrite_rows() {
+	local slug="$1"
+	local stale_brief_rows="$2"
+	local add_label_flag="$3"
+	local remove_label_flag="$4"
+	local remove_assignee_flag="$5"
+
+	local brief_pair="" brief_issue="" brief_assignees="" brief_assignee=""
+	while IFS= read -r brief_pair; do
+		[[ -n "$brief_pair" ]] || continue
+		brief_issue="${brief_pair%%|*}"
+		brief_assignees="${brief_pair#*|}"
+		[[ "$brief_issue" =~ ^[0-9]+$ ]] || continue
+
+		local -a brief_flags=(
+			"$add_label_flag" "$_PIR_STATUS_AVAILABLE"
+			"$remove_label_flag" "$_PIR_NEEDS_BRIEF_REWRITE"
+		)
+		local status_label=""
+		for status_label in "$_PIR_STATUS_QUEUED" "$_PIR_STATUS_CLAIMED" "$_PIR_STATUS_IN_PROGRESS" "$_PIR_STATUS_IN_REVIEW" "$_PIR_STATUS_BLOCKED" "$_PIR_STATUS_DONE"; do
+			brief_flags+=("$remove_label_flag" "$status_label")
+		done
+		IFS=',' read -r -a brief_assignee_array <<<"$brief_assignees"
+		for brief_assignee in "${brief_assignee_array[@]}"; do
+			[[ -n "$brief_assignee" ]] && brief_flags+=("$remove_assignee_flag" "$brief_assignee")
+		done
+
+		if gh issue edit "$brief_issue" --repo "$slug" "${brief_flags[@]}" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Assignment normalization: requeued stale brief-rewrite infra-hold #${brief_issue} in ${slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Assignment normalization: skipped stale brief-rewrite recovery for #${brief_issue} in ${slug}" >>"$LOGFILE"
+		fi
+	done <<<"$stale_brief_rows"
+
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -457,34 +514,7 @@ _normalize_reassign_self() {
 		# of leaving them assigned with no active status label.
 		local stale_brief_rows=""
 		stale_brief_rows=$(_normalize_get_stale_brief_rewrite_rows "$issue_rows_json")
-		local _brief_pair _brief_issue _brief_assignees _brief_assignee
-		while IFS= read -r _brief_pair; do
-			[[ -n "$_brief_pair" ]] || continue
-			_brief_issue="${_brief_pair%%|*}"
-			_brief_assignees="${_brief_pair#*|}"
-			[[ "$_brief_issue" =~ ^[0-9]+$ ]] || continue
-
-			local -a _brief_flags=(
-				"$_add_label_flag" "status:available"
-				"$_remove_label_flag" "needs-brief-rewrite"
-				"$_remove_label_flag" "status:queued"
-				"$_remove_label_flag" "status:claimed"
-				"$_remove_label_flag" "status:in-progress"
-				"$_remove_label_flag" "status:in-review"
-				"$_remove_label_flag" "status:blocked"
-				"$_remove_label_flag" "status:done"
-			)
-			IFS=',' read -r -a _brief_assignee_array <<<"$_brief_assignees"
-			for _brief_assignee in "${_brief_assignee_array[@]}"; do
-				[[ -n "$_brief_assignee" ]] && _brief_flags+=("$_remove_assignee_flag" "$_brief_assignee")
-			done
-
-			if gh issue edit "$_brief_issue" --repo "$slug" "${_brief_flags[@]}" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Assignment normalization: requeued stale brief-rewrite infra-hold #${_brief_issue} in ${slug}" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Assignment normalization: skipped stale brief-rewrite recovery for #${_brief_issue} in ${slug}" >>"$LOGFILE"
-			fi
-		done <<<"$stale_brief_rows"
+		_normalize_requeue_stale_brief_rewrite_rows "$slug" "$stale_brief_rows" "$_add_label_flag" "$_remove_label_flag" "$_remove_assignee_flag"
 
 		# Only active worker states receive assignment normalization. Available
 		# feedback-routed worker issues may stay unassigned until the atomic dispatch
