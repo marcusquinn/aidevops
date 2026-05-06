@@ -327,6 +327,45 @@ test_no_start_time_with_sessions() {
 	return 0
 }
 
+test_exit_push_preserves_dirty_worktree() {
+	local case_dir="${TMPDIR_TEST}/dirty-preserve"
+	local origin_dir="${case_dir}/origin.git"
+	local repo_dir="${case_dir}/repo"
+	mkdir -p "$case_dir"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" config commit.gpgsign false
+	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
+	git -C "$repo_dir" commit -m "test: seed repository" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
+	git -C "$repo_dir" checkout -b feature/dirty-preserve >/dev/null 2>&1
+	printf 'base\nchanged\n' >"${repo_dir}/tracked.txt"
+	printf 'new\n' >"${repo_dir}/new-file.txt"
+
+	_WORKER_WORKTREE_PATH="$repo_dir"
+	_WORKER_DIRTY_WORK_PRESERVED=0
+	_push_wip_commits_on_exit
+	local preserved="${_WORKER_DIRTY_WORK_PRESERVED:-0}"
+	unset _WORKER_WORKTREE_PATH _WORKER_DIRTY_WORK_PRESERVED
+
+	git -C "$repo_dir" fetch origin feature/dirty-preserve >/dev/null 2>&1
+	local status=""
+	status=$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)
+	local pushed_count=""
+	pushed_count=$(git -C "$repo_dir" rev-list --count origin/main..origin/feature/dirty-preserve 2>/dev/null || printf '0')
+	if [[ "$preserved" == "1" && -z "$status" && "$pushed_count" == "1" ]]; then
+		print_result "exit push preserves dirty tracked and untracked work" 0
+	else
+		print_result "exit push preserves dirty tracked and untracked work" 1 \
+			"preserved=${preserved} status='${status}' pushed_count=${pushed_count}"
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -350,6 +389,7 @@ main() {
 	test_classifier_failure_corrupt_db
 	test_no_start_time_empty_db
 	test_no_start_time_with_sessions
+	test_exit_push_preserves_dirty_worktree
 
 	printf '\n%d tests: %d passed, %d failed\n' \
 		"$TESTS_RUN" "$TESTS_PASSED" "$TESTS_FAILED"

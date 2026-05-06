@@ -342,12 +342,18 @@ classify_worker_kill_reason() {
 }
 
 #######################################
-# Push any local-only WIP commits to origin before worker exits.
+# Preserve and push any worker WIP before worker exits.
 # Best-effort, fail-open — never blocks claim release or shutdown.
 #
 # t2923: Prevents workers dying mid-implementation from abandoning
 # unreachable commits. Next dispatch can continue from the pushed branch
 # instead of rewriting the same code from scratch.
+#
+# GH#22965: Dirty worktrees with no local-only commits must also be
+# preserved. Create a normal WIP commit from tracked/untracked work and push it;
+# if commit/push cannot complete, archive a binary patch locally and mark the
+# failure as worker_dirty_work_preserved so zero-output retry holds do not
+# misclassify the issue as a malformed brief.
 #
 # Globals consumed:
 #   _WORKER_WORKTREE_PATH  — set by _cmd_run_prepare in headless-runtime-helper.sh
@@ -356,6 +362,7 @@ classify_worker_kill_reason() {
 _push_wip_commits_on_exit() {
 	# Escape hatch: WORKER_NO_EXIT_PUSH=1 disables the push (e.g. in tests)
 	[[ "${WORKER_NO_EXIT_PUSH:-0}" == "1" ]] && return 0
+	_WORKER_DIRTY_WORK_PRESERVED=0
 
 	local work_dir="${_WORKER_WORKTREE_PATH:-}"
 	if [[ -z "$work_dir" || ! -d "$work_dir" ]]; then
@@ -371,6 +378,23 @@ _push_wip_commits_on_exit() {
 		;;
 	esac
 
+	local dirty_status=""
+	dirty_status=$(git -C "$work_dir" status --porcelain 2>/dev/null || true)
+	if [[ -n "$dirty_status" ]]; then
+		print_info "[lifecycle] worker_exit_preserving_dirty_work branch=${branch_name}"
+		git -C "$work_dir" add -A >/dev/null 2>&1 || true
+		if ! git -C "$work_dir" diff --cached --quiet --exit-code >/dev/null 2>&1; then
+			if git -C "$work_dir" commit -m "wip: preserve worker changes on abnormal exit" >/dev/null 2>&1; then
+				_WORKER_DIRTY_WORK_PRESERVED=1
+				print_info "[lifecycle] worker_exit_committed_dirty_work branch=${branch_name}"
+			else
+				_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
+			fi
+		else
+			_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
+		fi
+	fi
+
 	# Count commits ahead of origin/main (or origin/master) — fail-open
 	local ahead_count=0
 	ahead_count=$(git -C "$work_dir" rev-list --count "origin/main..HEAD" 2>/dev/null || true)
@@ -385,8 +409,48 @@ _push_wip_commits_on_exit() {
 
 	# Push best-effort — never block exit on push failure
 	print_info "[lifecycle] worker_exit_pushing_wip branch=${branch_name} ahead=${ahead_count}"
-	git -C "$work_dir" push -u origin "${branch_name}" 2>/dev/null || true
-	print_info "[lifecycle] worker_exit_pushed_wip branch=${branch_name} ahead=${ahead_count}"
+	if git -C "$work_dir" push -u origin "${branch_name}" 2>/dev/null; then
+		print_info "[lifecycle] worker_exit_pushed_wip branch=${branch_name} ahead=${ahead_count}"
+	else
+		print_warning "[lifecycle] worker_exit_push_failed branch=${branch_name} ahead=${ahead_count}"
+		_worker_archive_dirty_worktree_patch "$work_dir" "$branch_name"
+	fi
+	return 0
+}
+
+#######################################
+# Archive dirty worktree changes as a local binary patch.
+# Best-effort fallback when exit-time commit/push cannot preserve the work.
+#
+# Args:
+#   $1 = worktree path
+#   $2 = branch name
+# Globals updated:
+#   _WORKER_DIRTY_WORK_PRESERVED — set to 1 when an archive is written
+#######################################
+_worker_archive_dirty_worktree_patch() {
+	local work_dir="$1"
+	local branch_name="$2"
+	local archive_root="${AIDEVOPS_WORKER_DIRTY_ARCHIVE_DIR:-${HOME}/.aidevops/.agent-workspace/work/dirty-worktrees}"
+	local safe_branch="${branch_name//[^A-Za-z0-9._-]/_}"
+	local stamp=""
+	stamp=$(date -u +%Y%m%dT%H%M%SZ 2>/dev/null || printf '%s' "unknown-time")
+	local archive_dir="${archive_root}/${safe_branch}-${stamp}"
+
+	mkdir -p "$archive_dir" 2>/dev/null || return 0
+	git -C "$work_dir" status --short --branch >"${archive_dir}/status.txt" 2>/dev/null || true
+	if git -C "$work_dir" diff --binary --cached >"${archive_dir}/changes.patch" 2>/dev/null \
+		&& [[ -s "${archive_dir}/changes.patch" ]]; then
+		_WORKER_DIRTY_WORK_PRESERVED=1
+		print_warning "[lifecycle] worker_dirty_work_preserved archive=${archive_dir}"
+		return 0
+	fi
+	if git -C "$work_dir" diff --binary >"${archive_dir}/changes.patch" 2>/dev/null \
+		&& [[ -s "${archive_dir}/changes.patch" ]]; then
+		_WORKER_DIRTY_WORK_PRESERVED=1
+		print_warning "[lifecycle] worker_dirty_work_preserved archive=${archive_dir}"
+		return 0
+	fi
 	return 0
 }
 
@@ -468,9 +532,13 @@ _exit_trap_handler() {
 	fi
 
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
-	# t2923: Push any WIP commits before releasing the claim so re-dispatch
-	# can continue from the pushed branch instead of starting over.
+	# t2923/GH#22965: Preserve WIP before releasing the claim so re-dispatch can
+	# continue from the pushed branch instead of starting over. Dirty preserved
+	# work is reported distinctly to avoid zero-output brief-rewrite holds.
 	_push_wip_commits_on_exit
+	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
+		reason="worker_dirty_work_preserved"
+	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
 	fi

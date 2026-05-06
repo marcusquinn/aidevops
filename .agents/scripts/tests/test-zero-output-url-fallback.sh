@@ -170,6 +170,17 @@ else
 		"count=${non_zero_count}"
 fi
 
+write_state 4 worker_dirty_work_preserved partial
+GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=""
+preserved_dirty_count=$(_dlw_zero_output_failure_count 123 owner/repo)
+if [[ "$preserved_dirty_count" == "0" ]]; then
+	pass "preserved dirty work does not trigger brief-rewrite zero-output count"
+else
+	fail "preserved dirty work does not trigger brief-rewrite zero-output count" \
+		"count=${preserved_dirty_count}"
+fi
+
 printf '\n'
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$TESTS_RUN"
