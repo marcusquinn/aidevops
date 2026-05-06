@@ -538,6 +538,23 @@ test_non_maintainer_actor_auto_approves() {
 	return 0
 }
 
+test_peer_runner_breaker_trip_preserves_nmr() {
+	# Private-project incident pattern: a peer maintainer/member runner applies NMR as part
+	# of a dispatch-infrastructure breaker. The actor is not the configured owner
+	# token, but the breaker marker is authoritative and must prevent maintainer
+	# auto-approval from clearing NMR and re-dispatching into the same loop.
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"peer-runner"},"created_at":"2026-05-06T16:54:57Z"}]'
+	set_comments '[{"created_at":"2026-05-06T16:54:59Z","body":"<!-- dispatch-infrastructure-failure -->\n## Dispatch infrastructure failure detected\nThis issue has accumulated 9 zero-output worker launches."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	if _nmr_applied_by_maintainer 4248 owner/repo owner-runner; then
+		print_result "peer runner breaker trip preserves NMR" 0
+		return 0
+	fi
+	print_result "peer runner breaker trip preserves NMR" 1 \
+		"Expected exit 0 — breaker marker must preserve NMR regardless of actor"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -578,6 +595,7 @@ main() {
 	test_scanner_default_still_auto_approves
 	test_manual_hold_still_preserves_nmr
 	test_non_maintainer_actor_auto_approves
+	test_peer_runner_breaker_trip_preserves_nmr
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
