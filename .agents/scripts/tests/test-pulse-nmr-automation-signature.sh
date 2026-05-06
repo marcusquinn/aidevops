@@ -20,8 +20,9 @@
 #     review-followup label). These can be auto-cleared.
 #   - _nmr_application_is_circuit_breaker_trip   →  matches ONLY
 #     breaker trips (stale-recovery-tick:escalated,
-#     cost-circuit-breaker:fired, circuit-breaker-escalated). These
-#     MUST preserve NMR.
+#     cost-circuit-breaker:fired, dispatch-backoff:rate_limit_nmr,
+#     dispatch-infrastructure-failure, circuit-breaker-escalated).
+#     These MUST preserve NMR.
 
 set -euo pipefail
 
@@ -119,6 +120,7 @@ EOF
 	printf '[]\n' >"$COMMENTS_FIXTURE"
 	printf '{"labels":[]}\n' >"$ISSUE_META_FIXTURE"
 	printf '[]\n' >"$TIMELINE_FIXTURE"
+	_notify_stale_recovery_resolved_by_pr() { return 0; }
 
 	return 0
 }
@@ -411,6 +413,32 @@ test_breaker_trip_detects_legacy_escalated_marker() {
 	return 0
 }
 
+test_breaker_trip_detects_rate_limit_nmr_marker() {
+	# awardsapp #4319/#4269: rate-limit NMR is a capacity breaker, not a
+	# creation default. Auto-approval must preserve it until capacity recovers.
+	set_comments '[{"created_at":"2026-05-06T11:42:06Z","body":"<!-- dispatch-backoff:rate_limit_nmr -->\n## Rate-Limit Backoff Circuit Breaker (t2781)"}]'
+	if _nmr_application_is_circuit_breaker_trip 4319 awardsapp/awardsapp "2026-05-06T11:42:04Z"; then
+		print_result "breaker_trip detects rate-limit NMR marker" 0
+		return 0
+	fi
+	print_result "breaker_trip detects rate-limit NMR marker" 1 \
+		"Expected exit 0 — rate-limit breaker must preserve NMR"
+	return 0
+}
+
+test_breaker_trip_detects_dispatch_infrastructure_marker() {
+	# awardsapp #4246/#4248 class: repeated zero-output worker launches are an
+	# infrastructure hold, not evidence that an actionable brief is bad.
+	set_comments '[{"created_at":"2026-05-06T10:09:29Z","body":"<!-- dispatch-infrastructure-failure -->\n## Dispatch infrastructure failure detected"}]'
+	if _nmr_application_is_circuit_breaker_trip 4246 awardsapp/awardsapp "2026-05-06T10:09:27Z"; then
+		print_result "breaker_trip detects dispatch infrastructure marker" 0
+		return 0
+	fi
+	print_result "breaker_trip detects dispatch infrastructure marker" 1 \
+		"Expected exit 0 — infrastructure breaker must preserve NMR"
+	return 0
+}
+
 test_breaker_trip_rejects_source_review_scanner_marker() {
 	# Creation-default marker is NOT a breaker trip.
 	set_comments '[{"created_at":"2026-04-13T05:00:00Z","body":"<!-- source:review-scanner -->"}]'
@@ -539,6 +567,8 @@ main() {
 	test_breaker_trip_detects_cost_circuit_breaker_marker
 	test_breaker_trip_detects_paginated_marker_on_later_page
 	test_breaker_trip_detects_legacy_escalated_marker
+	test_breaker_trip_detects_rate_limit_nmr_marker
+	test_breaker_trip_detects_dispatch_infrastructure_marker
 	test_breaker_trip_rejects_source_review_scanner_marker
 	test_breaker_trip_ignores_marker_outside_window
 	test_breaker_trip_empty_args_returns_nonzero

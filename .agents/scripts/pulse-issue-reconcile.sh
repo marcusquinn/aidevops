@@ -21,6 +21,8 @@
 #   - _gh_pr_list_merged                (t2773: merged PR list wrapper)
 #   - _build_oimp_lookup_for_slug       (t2985: per-repo merged-PR lookup)
 #   - _normalize_get_feedback_routed_rows (t2396: feedback-routed issue detection)
+#   - _normalize_get_stale_brief_rewrite_rows (stale zero-output hold recovery)
+#   - _normalize_requeue_stale_brief_rewrite_rows (stale zero-output requeue)
 #   - _normalize_reassign_self          (Phase 12: orphaned active issue → self-assign)
 #   - _normalize_unassign_stampless_interactive (t2148: stampless claim cleanup)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
@@ -67,6 +69,21 @@ fi
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
+[[ -n "${_PIR_STATUS_PREFIX+x}" ]] || _PIR_STATUS_PREFIX="status:"
+[[ -n "${_PIR_STATUS_AVAILABLE+x}" ]] || _PIR_STATUS_AVAILABLE="${_PIR_STATUS_PREFIX}available"
+[[ -n "${_PIR_STATUS_QUEUED+x}" ]] || _PIR_STATUS_QUEUED="${_PIR_STATUS_PREFIX}queued"
+[[ -n "${_PIR_STATUS_CLAIMED+x}" ]] || _PIR_STATUS_CLAIMED="${_PIR_STATUS_PREFIX}claimed"
+[[ -n "${_PIR_STATUS_IN_PROGRESS+x}" ]] || _PIR_STATUS_IN_PROGRESS="${_PIR_STATUS_PREFIX}in-progress"
+[[ -n "${_PIR_STATUS_IN_REVIEW+x}" ]] || _PIR_STATUS_IN_REVIEW="${_PIR_STATUS_PREFIX}in-review"
+[[ -n "${_PIR_STATUS_BLOCKED+x}" ]] || _PIR_STATUS_BLOCKED="${_PIR_STATUS_PREFIX}blocked"
+[[ -n "${_PIR_STATUS_DONE+x}" ]] || _PIR_STATUS_DONE="${_PIR_STATUS_PREFIX}done"
+[[ -n "${_PIR_BRIEF_LABEL_PREFIX+x}" ]] || _PIR_BRIEF_LABEL_PREFIX="needs-brief"
+[[ -n "${_PIR_NEEDS_BRIEF_REWRITE+x}" ]] || _PIR_NEEDS_BRIEF_REWRITE="${_PIR_BRIEF_LABEL_PREFIX}-rewrite"
+[[ -n "${_PIR_ADD_LABEL_FLAG+x}" ]] || _PIR_ADD_LABEL_FLAG=--add-label
+[[ -n "${_PIR_REMOVE_LABEL_FLAG+x}" ]] || _PIR_REMOVE_LABEL_FLAG=--remove-label
+[[ -n "${_PIR_REMOVE_ASSIGNEE_FLAG+x}" ]] || _PIR_REMOVE_ASSIGNEE_FLAG=--remove-assignee
+[[ -n "${_PIR_BOOL_TRUE+x}" ]] || _PIR_BOOL_TRUE=true
+[[ -n "${_PIR_BOOL_FALSE+x}" ]] || _PIR_BOOL_FALSE=false
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -352,6 +369,144 @@ _normalize_get_stale_feedback_interactive_rows() {
 	return 0
 }
 
+#######################################
+# Find auto-approved worker issues stranded by stale brief-rewrite labels.
+#
+# This recovers the awardsapp #4246/#4248 class: an actionable issue hit the
+# old zero-output infrastructure loop, received needs-brief-rewrite, then NMR
+# was auto-approved/removed while the stale brief label, stale assignee, and
+# missing status:available kept pulse from reconsidering it.
+#
+# Args:
+#   $1 - issue_rows_json from gh_issue_list
+# Output: issue|assignee1,assignee2 rows
+# Returns: 0 always
+#######################################
+_normalize_get_stale_brief_rewrite_rows() {
+	local issue_rows_json="$1"
+
+	printf '%s' "$issue_rows_json" | jq -r \
+		--arg auto_dispatch_label "auto-dispatch" \
+		--arg origin_worker_label "origin:worker" \
+		--arg ai_approved_label "ai-approved" \
+		--arg brief_label "$_PIR_NEEDS_BRIEF_REWRITE" \
+		--arg nmr_label "needs-maintainer-review" \
+		--arg available_label "$_PIR_STATUS_AVAILABLE" \
+		--arg queued_label "$_PIR_STATUS_QUEUED" \
+		--arg claimed_label "$_PIR_STATUS_CLAIMED" \
+		--arg progress_label "$_PIR_STATUS_IN_PROGRESS" \
+		--arg review_label "$_PIR_STATUS_IN_REVIEW" \
+		--arg blocked_label "$_PIR_STATUS_BLOCKED" \
+		--arg done_label "$_PIR_STATUS_DONE" '
+		.[]
+		| (.labels | map(.name)) as $labels
+		| select($labels | index($auto_dispatch_label))
+		| select($labels | index($origin_worker_label))
+		| select($labels | index($ai_approved_label))
+		| select($labels | index($brief_label))
+		| select(($labels | index($nmr_label)) | not)
+		| select(($labels | index($available_label)) | not)
+		| select(($labels | index($queued_label)) | not)
+		| select(($labels | index($claimed_label)) | not)
+		| select(($labels | index($progress_label)) | not)
+		| select(($labels | index($review_label)) | not)
+		| select(($labels | index($blocked_label)) | not)
+		| select(($labels | index($done_label)) | not)
+		| "\(.number)|\([.assignees[].login] | join(","))"
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Requeue stale auto-approved brief-rewrite infrastructure holds.
+#
+# Args:
+#   $1 - slug
+#   $2 - stale rows in issue|assignee1,assignee2 format
+#   $3 - add-label flag string
+#   $4 - remove-label flag string
+#   $5 - remove-assignee flag string
+# Returns: 0 always
+#######################################
+_normalize_requeue_stale_brief_rewrite_rows() {
+	local slug="$1"
+	local stale_brief_rows="$2"
+	local add_label_flag="$3"
+	local remove_label_flag="$4"
+	local remove_assignee_flag="$5"
+
+	local brief_pair="" brief_issue="" brief_assignees="" brief_assignee=""
+	while IFS= read -r brief_pair; do
+		[[ -n "$brief_pair" ]] || continue
+		brief_issue="${brief_pair%%|*}"
+		brief_assignees="${brief_pair#*|}"
+		[[ "$brief_issue" =~ ^[0-9]+$ ]] || continue
+
+		local -a brief_flags=(
+			"$add_label_flag" "$_PIR_STATUS_AVAILABLE"
+			"$remove_label_flag" "$_PIR_NEEDS_BRIEF_REWRITE"
+		)
+		local status_label=""
+		for status_label in "$_PIR_STATUS_QUEUED" "$_PIR_STATUS_CLAIMED" "$_PIR_STATUS_IN_PROGRESS" "$_PIR_STATUS_IN_REVIEW" "$_PIR_STATUS_BLOCKED" "$_PIR_STATUS_DONE"; do
+			brief_flags+=("$remove_label_flag" "$status_label")
+		done
+		IFS=',' read -r -a brief_assignee_array <<<"$brief_assignees"
+		for brief_assignee in "${brief_assignee_array[@]}"; do
+			[[ -n "$brief_assignee" ]] && brief_flags+=("$remove_assignee_flag" "$brief_assignee")
+		done
+
+		if gh issue edit "$brief_issue" --repo "$slug" "${brief_flags[@]}" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Assignment normalization: requeued stale brief-rewrite infra-hold #${brief_issue} in ${slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Assignment normalization: skipped stale brief-rewrite recovery for #${brief_issue} in ${slug}" >>"$LOGFILE"
+		fi
+	done <<<"$stale_brief_rows"
+
+	return 0
+}
+
+#######################################
+# Clear stale interactive ownership from feedback-routed worker issues.
+#
+# Args:
+#   $1 - slug
+#   $2 - stale rows in issue|assignee1,assignee2 format
+# Returns: 0 always
+#######################################
+_normalize_clear_stale_feedback_rows() {
+	local slug="$1"
+	local stale_feedback_rows="$2"
+	local stale_pair stale_issue stale_assignees stale_assignee
+	local origin_worker_label=origin:worker
+	local origin_interactive_label=origin:interactive
+	local origin_takeover_label=origin:worker-takeover
+
+	while IFS= read -r stale_pair; do
+		[[ -n "$stale_pair" ]] || continue
+		stale_issue="${stale_pair%%|*}"
+		stale_assignees="${stale_pair#*|}"
+		[[ "$stale_issue" =~ ^[0-9]+$ ]] || continue
+
+		local -a normalize_flags=(
+			"$_PIR_ADD_LABEL_FLAG" "$origin_worker_label"
+			"$_PIR_REMOVE_LABEL_FLAG" "$origin_interactive_label"
+			"$_PIR_REMOVE_LABEL_FLAG" "$origin_takeover_label"
+		)
+		IFS=',' read -r -a stale_assignee_array <<<"$stale_assignees"
+		for stale_assignee in "${stale_assignee_array[@]}"; do
+			[[ -n "$stale_assignee" ]] && normalize_flags+=("$_PIR_REMOVE_ASSIGNEE_FLAG" "$stale_assignee")
+		done
+
+		if gh issue edit "$stale_issue" --repo "$slug" "${normalize_flags[@]}" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${stale_issue} in ${slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
+		fi
+	done <<<"$stale_feedback_rows"
+
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -385,35 +540,14 @@ _normalize_reassign_self() {
 		# requeued for worker dispatch but retained stale interactive ownership.
 		local stale_feedback_rows=""
 		stale_feedback_rows=$(_normalize_get_stale_feedback_interactive_rows "$issue_rows_json" "$slug")
-		local _stale_pair _stale_issue _stale_assignees _stale_assignee
-		local _origin_worker_label=origin:worker
-		local _origin_interactive_label=origin:interactive
-		local _origin_takeover_label=origin:worker-takeover
-		local _add_label_flag=--add-label
-		local _remove_label_flag=--remove-label
-		local _remove_assignee_flag=--remove-assignee
-		while IFS= read -r _stale_pair; do
-			[[ -n "$_stale_pair" ]] || continue
-			_stale_issue="${_stale_pair%%|*}"
-			_stale_assignees="${_stale_pair#*|}"
-			[[ "$_stale_issue" =~ ^[0-9]+$ ]] || continue
+		_normalize_clear_stale_feedback_rows "$slug" "$stale_feedback_rows"
 
-			local -a _normalize_flags=(
-				"$_add_label_flag" "$_origin_worker_label"
-				"$_remove_label_flag" "$_origin_interactive_label"
-				"$_remove_label_flag" "$_origin_takeover_label"
-			)
-			IFS=',' read -r -a _stale_assignee_array <<<"$_stale_assignees"
-			for _stale_assignee in "${_stale_assignee_array[@]}"; do
-				[[ -n "$_stale_assignee" ]] && _normalize_flags+=("$_remove_assignee_flag" "$_stale_assignee")
-			done
-
-			if gh issue edit "$_stale_issue" --repo "$slug" "${_normalize_flags[@]}" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${_stale_issue} in ${slug}" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${_stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
-			fi
-		done <<<"$stale_feedback_rows"
+		# Stale zero-output brief-rewrite recovery: after old infra failures are
+		# auto-approved, requeue worker-origin issues for a fresh dispatch instead
+		# of leaving them assigned with no active status label.
+		local stale_brief_rows=""
+		stale_brief_rows=$(_normalize_get_stale_brief_rewrite_rows "$issue_rows_json")
+		_normalize_requeue_stale_brief_rewrite_rows "$slug" "$stale_brief_rows" "$_PIR_ADD_LABEL_FLAG" "$_PIR_REMOVE_LABEL_FLAG" "$_PIR_REMOVE_ASSIGNEE_FLAG"
 
 		# Only active worker states receive assignment normalization. Available
 		# feedback-routed worker issues may stay unassigned until the atomic dispatch
@@ -835,21 +969,21 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	local assoc
 	assoc=$(gh api "repos/${slug}/issues/${issue_num}" \
 		--jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
-	local is_external="true"
+	local is_external="$_PIR_BOOL_TRUE"
 	case "$assoc" in
-		OWNER | MEMBER | COLLABORATOR) is_external="false" ;;
+		OWNER | MEMBER | COLLABORATOR) is_external="$_PIR_BOOL_FALSE" ;;
 	esac
 
 	# Choose sentinel for idempotency check
 	local check_sentinel="$sentinel"
-	[[ "$is_external" == "true" ]] && check_sentinel="$external_sentinel"
+	[[ "$is_external" == "$_PIR_BOOL_TRUE" ]] && check_sentinel="$external_sentinel"
 
 	# Idempotency guard — only suppresses duplicate comment; labels are still healed
 	local existing_comments
 	existing_comments=$(gh issue view "$issue_num" --repo "$slug" \
 		--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
-	local comment_already_posted="false"
-	[[ "$existing_comments" == *"$check_sentinel"* ]] && comment_already_posted="true"
+	local comment_already_posted="$_PIR_BOOL_FALSE"
+	[[ "$existing_comments" == *"$check_sentinel"* ]] && comment_already_posted="$_PIR_BOOL_TRUE"
 
 	# Extract hashtag labels from body
 	local body_tags
@@ -863,15 +997,15 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	# Compose label-add args (internal vs external path, t2450)
 	local -a add_args
 	local labels_csv_lia comment_template_use
-	if [[ "$is_external" == "true" ]]; then
-		add_args=("--add-label" "needs-maintainer-review")
+	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
+		add_args=("$_PIR_ADD_LABEL_FLAG" "needs-maintainer-review")
 		labels_csv_lia="needs-maintainer-review"
 		comment_template_use="$external_comment_template"
 	else
-		add_args=("--add-label" "origin:worker"
-			"--remove-label" "origin:interactive"
-			"--remove-label" "origin:worker-takeover"
-			"--add-label" "tier:standard")
+		add_args=("$_PIR_ADD_LABEL_FLAG" "origin:worker"
+			"$_PIR_REMOVE_LABEL_FLAG" "origin:interactive"
+			"$_PIR_REMOVE_LABEL_FLAG" "origin:worker-takeover"
+			"$_PIR_ADD_LABEL_FLAG" "tier:standard")
 		labels_csv_lia="origin:worker,tier:standard"
 		comment_template_use="$comment_template"
 	fi
@@ -881,7 +1015,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		local _t
 		for _t in $body_tags; do
 			[[ -z "$_t" ]] && continue
-			add_args+=("--add-label" "$_t")
+			add_args+=("$_PIR_ADD_LABEL_FLAG" "$_t")
 		done
 		IFS="$_saved_ifs"
 		labels_csv_lia="${labels_csv_lia},${body_tags}"
@@ -913,7 +1047,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	fi
 
 	# Post mentorship comment (singleton per issue × association-class)
-	if [[ "$comment_already_posted" == "false" ]]; then
+	if [[ "$comment_already_posted" == "$_PIR_BOOL_FALSE" ]]; then
 		gh_issue_comment "$issue_num" --repo "$slug" --body "$comment_template_use" \
 			>/dev/null 2>&1 || true
 		echo "[pulse-wrapper] Labelless backfill: blessed #${issue_num} in ${slug} — assoc=${assoc}, labels=${labels_csv_lia}" >>"$LOGFILE"

@@ -377,6 +377,8 @@ _nmr_application_has_automation_signature() {
 #   - <!-- stale-recovery-tick:escalated   — t2008 stale recovery (retry limit)
 #   - <!-- cost-circuit-breaker:fired      — t2007 cost circuit breaker (budget)
 #   - <!-- cost-circuit-breaker:no_work_loop — t2769 per-issue no_work breaker
+#   - <!-- dispatch-backoff:rate_limit_nmr — t2781 per-issue rate-limit breaker
+#   - <!-- dispatch-infrastructure-failure — t3050 setup/zero-session breaker
 #   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
 #   - <!-- circuit-breaker-meta-filed      — t3076 root-cause meta-issue marker
 #
@@ -415,7 +417,7 @@ _nmr_application_is_circuit_breaker_trip() {
 		comments_json="[]"
 	fi
 
-	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|circuit-breaker-escalated|circuit-breaker-meta-filed'
+	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|dispatch-backoff:rate_limit_nmr|dispatch-infrastructure-failure|circuit-breaker-escalated|circuit-breaker-meta-filed'
 	local has_breaker_trip
 	has_breaker_trip=$(printf '%s' "$comments_json" | jq -r \
 		--arg label_at "$label_at" \

@@ -483,14 +483,17 @@ _dlw_hold_repeated_zero_output() {
 		return 1
 	fi
 
-	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${zero_count} zero-output launches; applying brief-rewrite triage labels" >>"$LOGFILE"
-	gh label create "needs-brief-rewrite" --repo "$repo_slug" \
-		--description "Issue brief should be rewritten or split before redispatch" \
-		--color "FBCA04" >/dev/null 2>&1 || true
+	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${zero_count} zero-output launches; applying dispatch infrastructure hold" >>"$LOGFILE"
 	gh issue edit "$issue_number" --repo "$repo_slug" \
-		--add-label "needs-brief-rewrite" \
 		--add-label "needs-maintainer-review" \
+		--remove-label "status:available" \
 		--remove-label "status:queued" >/dev/null 2>&1 || true
+	gh issue comment "$issue_number" --repo "$repo_slug" --body "<!-- dispatch-infrastructure-failure -->
+## Dispatch infrastructure failure detected
+
+This issue has accumulated ${zero_count} zero-output worker launches. The brief may still be valid; repeated setup/runtime failures must be diagnosed before another automatic dispatch.
+
+Next action: fix or wait out the worker/runtime failure family, then approve and requeue the issue so pulse can reconsider it afresh." >/dev/null 2>&1 || true
 	return 0
 }
 
