@@ -232,14 +232,14 @@ _dlw_zero_output_failure_count() {
 
 	local key="${repo_slug}/${issue_number}"
 	local result=""
-	result=$(jq -r --arg k "$key" 'def s: . // ""; .[$k] | if . then [(.reason | s), (.crash_type | s), (.count // 0 | tostring)] | @tsv else empty end' "$FAST_FAIL_STATE_FILE") || result=""
+	result=$(jq -r --arg k "$key" 'def s: . // ""; .[$k] | if . then [(.count // 0 | tostring), (.reason | s), (.crash_type | s)] | @tsv else empty end' "$FAST_FAIL_STATE_FILE") || result=""
 	if [[ -z "$result" ]]; then
 		printf '%s' "$comment_count"
 		return 0
 	fi
 
 	local reason="" crash_type="" count=""
-	IFS=$'\t' read -r reason crash_type count <<<"$result"
+	IFS=$'\t' read -r count reason crash_type <<<"$result"
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 
 	case "${reason}:${crash_type}" in

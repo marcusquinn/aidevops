@@ -34,6 +34,10 @@ export LOGFILE FAST_FAIL_STATE_FILE
 gh() {
 	local command_name="${1:-}"
 	shift || true
+	local subcommand_name="${1:-}"
+	if [[ "$command_name" == "api" ]]; then
+		printf '%s\n' "$command_name $*" >>"${TMP}/gh-api-calls.log"
+	fi
 	if [[ "$command_name" == "api" && -n "${GH_COMMENT_METRICS:-}" ]]; then
 		printf '%s\n' "$GH_COMMENT_METRICS"
 		return 0
@@ -42,7 +46,7 @@ gh() {
 		printf '%s\n' "$GH_COMMENT_ZERO_COUNT"
 		return 0
 	fi
-	if [[ "$command_name" == "issue" && "${1:-}" == "view" && -n "${GH_ISSUE_BODY:-}" ]]; then
+	if [[ "$command_name" == "issue" && "$subcommand_name" == "view" && -n "${GH_ISSUE_BODY:-}" ]]; then
 		printf '%s\n' "$GH_ISSUE_BODY"
 		return 0
 	fi
@@ -88,13 +92,27 @@ fi
 
 write_state 1
 GH_COMMENT_ZERO_COUNT=2
-GH_COMMENT_METRICS=""
+GH_COMMENT_METRICS=$'0\t0\t2\t0'
 comment_fallback_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
 if printf '%s' "$comment_fallback_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
 	&& ! printf '%s' "$comment_fallback_prompt" | grep -q 'FULL EMBEDDED BRIEF'; then
 	pass "comment evidence triggers URL-only fallback when state count is low"
 else
 	fail "comment evidence triggers URL-only fallback when state count is low" "$comment_fallback_prompt"
+fi
+
+: >"${TMP}/gh-api-calls.log"
+write_state 1
+GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=$'50\t0\t2\t1000'
+shared_metrics_prompt=$(_dlw_prepare_prompt_for_launch 123 owner/repo "Test issue" "FULL EMBEDDED BRIEF")
+prepare_api_calls=$(wc -l <"${TMP}/gh-api-calls.log" | tr -d '[:space:]')
+if printf '%s' "$shared_metrics_prompt" | grep -q 'gh issue view 123 --repo owner/repo' \
+	&& [[ "$prepare_api_calls" == "1" ]]; then
+	pass "prepare prompt reuses comment bloat metrics for zero-output evidence"
+else
+	fail "prepare prompt reuses comment bloat metrics for zero-output evidence" \
+		"prompt=${shared_metrics_prompt}; api_calls=${prepare_api_calls}"
 fi
 
 write_state 1
@@ -132,7 +150,7 @@ fi
 : >"${TMP}/gh-calls.log"
 write_state 1
 GH_COMMENT_ZERO_COUNT=4
-GH_COMMENT_METRICS=""
+GH_COMMENT_METRICS=$'0\t0\t4\t0'
 _dlw_hold_repeated_zero_output 123 owner/repo
 comment_hold_rc=$?
 comment_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
@@ -142,6 +160,24 @@ if [[ "$comment_hold_rc" -eq 0 ]] \
 else
 	fail "comment evidence triggers brief-rewrite hold when state count is low" \
 		"rc=${comment_hold_rc}; gh_calls=${comment_gh_calls}"
+fi
+
+: >"${TMP}/gh-api-calls.log"
+: >"${TMP}/gh-calls.log"
+write_state 1
+GH_COMMENT_ZERO_COUNT=0
+GH_COMMENT_METRICS=$'50\t0\t4\t1000'
+_dlw_hold_repeated_zero_output 123 owner/repo
+shared_metrics_hold_rc=$?
+shared_metrics_hold_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
+hold_api_calls=$(wc -l <"${TMP}/gh-api-calls.log" | tr -d '[:space:]')
+if [[ "$shared_metrics_hold_rc" -eq 0 ]] \
+	&& printf '%s' "$shared_metrics_hold_calls" | grep -q 'needs-brief-rewrite' \
+	&& [[ "$hold_api_calls" == "1" ]]; then
+	pass "zero-output hold reuses comment bloat metrics for evidence count"
+else
+	fail "zero-output hold reuses comment bloat metrics for evidence count" \
+		"rc=${shared_metrics_hold_rc}; gh_calls=${shared_metrics_hold_calls}; api_calls=${hold_api_calls}"
 fi
 
 : >"${TMP}/gh-calls.log"
