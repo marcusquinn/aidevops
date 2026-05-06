@@ -214,37 +214,38 @@ _dlw_resolve_tier_and_model() {
 _dlw_zero_output_failure_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local precomputed_comment_count="${3:-}"
 
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || { printf '0'; return 0; }
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
 	local state_count=0 comment_count=0
-	[[ -n "${FAST_FAIL_STATE_FILE:-}" && -f "$FAST_FAIL_STATE_FILE" ]] || {
+	if [[ "$precomputed_comment_count" =~ ^[0-9]+$ ]]; then
+		comment_count="$precomputed_comment_count"
+	else
 		comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+		[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+	fi
+	[[ -n "${FAST_FAIL_STATE_FILE:-}" && -f "$FAST_FAIL_STATE_FILE" ]] || {
 		printf '%s' "$comment_count"
 		return 0
 	}
 
 	local key="${repo_slug}/${issue_number}"
-	local entry=""
-	entry=$(jq -r --arg k "$key" '.[$k] // empty' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || entry=""
-	if [[ -z "$entry" ]]; then
-		comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+	local result=""
+	result=$(jq -r --arg k "$key" 'def s: . // ""; .[$k] | if . then [(.reason | s), (.crash_type | s), (.count // 0 | tostring)] | @tsv else empty end' "$FAST_FAIL_STATE_FILE") || result=""
+	if [[ -z "$result" ]]; then
 		printf '%s' "$comment_count"
 		return 0
 	fi
 
 	local reason="" crash_type="" count=""
-	reason=$(printf '%s' "$entry" | jq -r '.reason // ""' 2>/dev/null) || reason=""
-	crash_type=$(printf '%s' "$entry" | jq -r '.crash_type // ""' 2>/dev/null) || crash_type=""
-	count=$(printf '%s' "$entry" | jq -r '.count // 0' 2>/dev/null) || count=0
+	IFS=$'\t' read -r reason crash_type count <<<"$result"
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 
 	case "${reason}:${crash_type}" in
 	worker_noop_zero_output:* | *:no_work | no_work:*) state_count="$count" ;;
 	*) state_count=0 ;;
 	esac
-	comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
-	[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
 	if [[ "$comment_count" -gt "$state_count" ]]; then
 		printf '%s' "$comment_count"
 	else
@@ -263,7 +264,7 @@ _dlw_zero_output_comment_count() {
 
 	local count=""
 	count=$(gh api --paginate "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
-		--jq '[.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output"))] | length' 2>/dev/null | \
+		--jq '[.[] | select(.body | test("CLAIM_RELEASED reason=worker_noop_zero_output|worker_noop_zero_output|zero[- ]output"; "i"))] | length' 2>/dev/null | \
 		awk '{ total += $1 } END { print total + 0 }') || count=0
 	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 	printf '%s' "$count"
@@ -290,10 +291,14 @@ _dlw_comment_bloat_metrics() {
 _dlw_comment_bloat_requires_clean_room() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local precomputed_metrics="${3:-}"
 
-	local comments="" ops="" zero="" chars=""
+	local comments ops zero chars
+	if [[ -z "$precomputed_metrics" ]]; then
+		precomputed_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	fi
 	IFS=$'\t' read -r comments ops zero chars \
-		<<<"$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")"
+		<<<"$precomputed_metrics"
 	[[ "$comments" =~ ^[0-9]+$ ]] || comments=0
 	[[ "$ops" =~ ^[0-9]+$ ]] || ops=0
 	[[ "$zero" =~ ^[0-9]+$ ]] || zero=0
@@ -354,10 +359,15 @@ EOF
 _dlw_zero_output_evidence_count() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local precomputed_comment_count="${3:-}"
 
 	local state_count="" comment_count=""
-	state_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug")
-	comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+	if [[ "$precomputed_comment_count" =~ ^[0-9]+$ ]]; then
+		comment_count="$precomputed_comment_count"
+	else
+		comment_count=$(_dlw_zero_output_comment_count "$issue_number" "$repo_slug")
+	fi
+	state_count=$(_dlw_zero_output_failure_count "$issue_number" "$repo_slug" "$comment_count")
 	[[ "$state_count" =~ ^[0-9]+$ ]] || state_count=0
 	[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
 	if [[ "$comment_count" -gt "$state_count" ]]; then
@@ -394,8 +404,17 @@ _dlw_prepare_prompt_for_launch() {
 	local repo_slug="$2"
 	local issue_title="$3"
 	local original_prompt="$4"
+	local comment_metrics=""
+	local comments ops metrics_zero_count chars
+	local precomputed_zero_count=""
 
-	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug"; then
+	comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	IFS=$'\t' read -r comments ops metrics_zero_count chars <<<"$comment_metrics"
+	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
+		precomputed_zero_count="$metrics_zero_count"
+	fi
+
+	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug" "$comment_metrics"; then
 		local issue_body=""
 		issue_body=$(_dlw_fetch_issue_body_for_clean_room "$issue_number" "$repo_slug")
 		_dlw_clean_room_prompt "$issue_number" "$repo_slug" "$issue_title" "$issue_body"
@@ -403,7 +422,7 @@ _dlw_prepare_prompt_for_launch() {
 	fi
 
 	local zero_count=""
-	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
+	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug" "$precomputed_zero_count")
 	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
 	local fallback_threshold="${ZERO_OUTPUT_URL_FALLBACK_THRESHOLD:-2}"
 	[[ "$fallback_threshold" =~ ^[0-9]+$ ]] || fallback_threshold=2
@@ -421,14 +440,23 @@ _dlw_prepare_prompt_for_launch() {
 _dlw_hold_repeated_zero_output() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local comment_metrics=""
+	local comments ops metrics_zero_count chars
+	local precomputed_zero_count=""
 
-	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug"; then
+	comment_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
+	IFS=$'\t' read -r comments ops metrics_zero_count chars <<<"$comment_metrics"
+	if [[ "${CLEAN_ROOM_COMMENT_EVIDENCE_ENABLED:-1}" == "1" && "$metrics_zero_count" =~ ^[0-9]+$ ]]; then
+		precomputed_zero_count="$metrics_zero_count"
+	fi
+
+	if _dlw_comment_bloat_requires_clean_room "$issue_number" "$repo_slug" "$comment_metrics"; then
 		echo "[dispatch_with_dedup] #${issue_number} in ${repo_slug}: bypassing repeated zero-output brief-rewrite hold for clean-room brief mode" >>"$LOGFILE"
 		return 1
 	fi
 
 	local zero_count=""
-	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug")
+	zero_count=$(_dlw_zero_output_evidence_count "$issue_number" "$repo_slug" "$precomputed_zero_count")
 	[[ "$zero_count" =~ ^[0-9]+$ ]] || zero_count=0
 	local hold_threshold="${ZERO_OUTPUT_BRIEF_REWRITE_HOLD_THRESHOLD:-4}"
 	[[ "$hold_threshold" =~ ^[0-9]+$ ]] || hold_threshold=4
@@ -440,7 +468,7 @@ _dlw_hold_repeated_zero_output() {
 	echo "[dispatch_with_dedup] Holding #${issue_number} in ${repo_slug}: ${zero_count} zero-output launches; applying brief-rewrite triage labels" >>"$LOGFILE"
 	gh label create "needs-brief-rewrite" --repo "$repo_slug" \
 		--description "Issue brief should be rewritten or split before redispatch" \
-		--color "FBCA04" --force >/dev/null 2>&1 || true
+		--color "FBCA04" >/dev/null 2>&1 || true
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--add-label "needs-brief-rewrite" \
 		--add-label "needs-maintainer-review" \
