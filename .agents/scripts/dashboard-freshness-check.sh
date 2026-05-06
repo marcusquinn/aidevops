@@ -289,9 +289,9 @@ _open_alert_numbers() {
 	gh auth status &>/dev/null 2>&1 || return 0
 	# Query open issue titles and filter locally. GitHub search is unreliable for
 	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-	gh issue list --repo "$slug" --state open \
-		--json number,title \
-		--jq '.[] | select(((.title | startswith("'"${stale_title_prefix}"'")) and (.title | endswith("'"${issue_suffix}"'"))) or (.title == "'"${missing_marker_title}"'")) | .number' 2>/dev/null || true
+	gh issue list --repo "$slug" --state open --paginate --json number,title | \
+		jq -r --arg prefix "$stale_title_prefix" --arg suffix "$issue_suffix" --arg marker "$missing_marker_title" \
+			'.[] | select(((.title | startswith($prefix)) and (.title | endswith($suffix))) or (.title == $marker)) | .number' || true
 	return 0
 }
 

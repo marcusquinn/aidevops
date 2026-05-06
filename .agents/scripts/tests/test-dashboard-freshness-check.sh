@@ -202,7 +202,7 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --json number,title ... → alert dedup/recovery check
+			#   gh issue list --paginate --json number,title ... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
@@ -221,13 +221,13 @@ run_scan_with_stubs() {
 							list)
 								if [[ "$gh_args" == *" --label "* ]] \
 									|| [[ "$gh_args" == *" --search "* ]] \
-									|| [[ "$gh_args" != *"--json number,title"* ]] \
-									|| [[ "$gh_args" != *"endswith(\"(#424242)\")"* ]]; then
-									printf "\n"
+									|| [[ "$gh_args" != *"--paginate"* ]] \
+									|| [[ "$gh_args" != *"--json number,title"* ]]; then
+									printf "[]\n"
 								elif [[ "$ALERT_EXISTS" == "1" ]]; then
-									printf "99\n"
+									printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}]"
 								else
-									printf "\n"
+									printf "[]\n"
 								fi
 								return 0
 								;;
@@ -296,15 +296,17 @@ else
 		"calls:\n$(cat "$calls_file")"
 fi
 
-if grep -q '^issue list ' "$calls_file" \
-	&& ! grep -q -- '--label' "$calls_file" \
-	&& ! grep -q -- '--search' "$calls_file" \
-	&& grep -q -- '--json number,title' "$calls_file" \
-	&& grep -q 'endswith("(#424242)")' "$calls_file"; then
-	pass "dedup lookup filters open titles locally by dashboard suffix"
+issue_list_call="$(grep '^issue list ' "$calls_file" || true)"
+if [[ -n "$issue_list_call" ]] \
+	&& [[ "$issue_list_call" != *"--label"* ]] \
+	&& [[ "$issue_list_call" != *"--search"* ]] \
+	&& [[ "$issue_list_call" == *"--paginate"* ]] \
+	&& [[ "$issue_list_call" == *"--json number,title"* ]] \
+	&& [[ "$issue_list_call" != *"--jq"* ]]; then
+	pass "dedup lookup paginates open titles for local jq filtering"
 else
 	fail "dedup lookup query shape" \
-		"expected title query without --label/--search; calls:\n$(cat "$calls_file")"
+		"expected paginated title query without --label/--search/--jq; calls:\n$(cat "$calls_file")"
 fi
 
 # ---------------------------------------------------------------------------
