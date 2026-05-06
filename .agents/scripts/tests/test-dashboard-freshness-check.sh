@@ -16,10 +16,12 @@
 #   5. scan with a stale dashboard AND a pre-existing open alert → files
 #      NO second alert (dedup via <!-- aidevops:dashboard-freshness:*:* -->
 #      generated-title match scoped to the dashboard issue suffix).
-#   6. scan with a fresh dashboard → files no alert.
-#   7. cadence gate: a second scan within the interval is short-circuited
+#   6. source regression: dedup lookup keeps jq variables in --arg bindings
+#      and leaves jq stderr visible so syntax failures are not hidden.
+#   7. scan with a fresh dashboard → files no alert.
+#   8. cadence gate: a second scan within the interval is short-circuited
 #      without calling `gh`.
-#   8. scan with a fresh dashboard AND a pre-existing generated alert → posts
+#   9. scan with a fresh dashboard AND a pre-existing generated alert → posts
 #      recovery evidence and closes the alert.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
@@ -309,8 +311,19 @@ else
 		"expected paginated title query without --label/--search/--jq; calls:\n$(cat "$calls_file")"
 fi
 
+if grep -q -- 'jq -r --arg prefix' "$SCANNER" \
+	&& grep -q -- '--arg suffix' "$SCANNER" \
+	&& grep -q -- '--arg marker' "$SCANNER" \
+	&& ! grep -q -- '--jq.*starts' "$SCANNER" \
+	&& ! grep -q -- "jq -r --arg prefix.*2>/dev/null" "$SCANNER"; then
+	pass "dedup jq filter binds shell values with --arg and leaves stderr visible"
+else
+	fail "dedup jq safety shape" \
+		"expected jq --arg bindings without gh --jq interpolation or jq stderr suppression"
+fi
+
 # ---------------------------------------------------------------------------
-# Test 6: fresh body → no alert
+# Test 7: fresh body → no alert
 # ---------------------------------------------------------------------------
 echo "Testing: fresh dashboard → no alert"
 run_scan_with_stubs "$FRESH_BODY" 0 "" >/dev/null
@@ -326,7 +339,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 7: fresh body with generated alert → close recovered alert
+# Test 8: fresh body with generated alert → close recovered alert
 # ---------------------------------------------------------------------------
 echo "Testing: fresh dashboard closes recovered alert"
 run_scan_with_stubs "$FRESH_BODY" 1 "" >/dev/null
@@ -344,7 +357,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 8: cadence gate — second scan within interval short-circuits
+# Test 9: cadence gate — second scan within interval short-circuits
 # ---------------------------------------------------------------------------
 echo "Testing: cadence gate suppresses rapid re-scan"
 # First run updates last-scan; second run (without --force) should exit
@@ -375,7 +388,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 9: missing-marker body → alerts with MISSING title
+# Test 10: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
