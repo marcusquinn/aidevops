@@ -465,6 +465,48 @@ _normalize_requeue_stale_brief_rewrite_rows() {
 	return 0
 }
 
+#######################################
+# Clear stale interactive ownership from feedback-routed worker issues.
+#
+# Args:
+#   $1 - slug
+#   $2 - stale rows in issue|assignee1,assignee2 format
+# Returns: 0 always
+#######################################
+_normalize_clear_stale_feedback_rows() {
+	local slug="$1"
+	local stale_feedback_rows="$2"
+	local stale_pair stale_issue stale_assignees stale_assignee
+	local origin_worker_label=origin:worker
+	local origin_interactive_label=origin:interactive
+	local origin_takeover_label=origin:worker-takeover
+
+	while IFS= read -r stale_pair; do
+		[[ -n "$stale_pair" ]] || continue
+		stale_issue="${stale_pair%%|*}"
+		stale_assignees="${stale_pair#*|}"
+		[[ "$stale_issue" =~ ^[0-9]+$ ]] || continue
+
+		local -a normalize_flags=(
+			"$_PIR_ADD_LABEL_FLAG" "$origin_worker_label"
+			"$_PIR_REMOVE_LABEL_FLAG" "$origin_interactive_label"
+			"$_PIR_REMOVE_LABEL_FLAG" "$origin_takeover_label"
+		)
+		IFS=',' read -r -a stale_assignee_array <<<"$stale_assignees"
+		for stale_assignee in "${stale_assignee_array[@]}"; do
+			[[ -n "$stale_assignee" ]] && normalize_flags+=("$_PIR_REMOVE_ASSIGNEE_FLAG" "$stale_assignee")
+		done
+
+		if gh issue edit "$stale_issue" --repo "$slug" "${normalize_flags[@]}" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${stale_issue} in ${slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
+		fi
+	done <<<"$stale_feedback_rows"
+
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -498,42 +540,14 @@ _normalize_reassign_self() {
 		# requeued for worker dispatch but retained stale interactive ownership.
 		local stale_feedback_rows=""
 		stale_feedback_rows=$(_normalize_get_stale_feedback_interactive_rows "$issue_rows_json" "$slug")
-		local _stale_pair _stale_issue _stale_assignees _stale_assignee
-		local _origin_worker_label=origin:worker
-		local _origin_interactive_label=origin:interactive
-		local _origin_takeover_label=origin:worker-takeover
-		local _add_label_flag="$_PIR_ADD_LABEL_FLAG"
-		local _remove_label_flag="$_PIR_REMOVE_LABEL_FLAG"
-		local _remove_assignee_flag="$_PIR_REMOVE_ASSIGNEE_FLAG"
-		while IFS= read -r _stale_pair; do
-			[[ -n "$_stale_pair" ]] || continue
-			_stale_issue="${_stale_pair%%|*}"
-			_stale_assignees="${_stale_pair#*|}"
-			[[ "$_stale_issue" =~ ^[0-9]+$ ]] || continue
-
-			local -a _normalize_flags=(
-				"$_add_label_flag" "$_origin_worker_label"
-				"$_remove_label_flag" "$_origin_interactive_label"
-				"$_remove_label_flag" "$_origin_takeover_label"
-			)
-			IFS=',' read -r -a _stale_assignee_array <<<"$_stale_assignees"
-			for _stale_assignee in "${_stale_assignee_array[@]}"; do
-				[[ -n "$_stale_assignee" ]] && _normalize_flags+=("$_remove_assignee_flag" "$_stale_assignee")
-			done
-
-			if gh issue edit "$_stale_issue" --repo "$slug" "${_normalize_flags[@]}" >/dev/null 2>&1; then
-				echo "[pulse-wrapper] Assignment normalization: cleared stale interactive ownership on feedback-routed #${_stale_issue} in ${slug}" >>"$LOGFILE"
-			else
-				echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${_stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
-			fi
-		done <<<"$stale_feedback_rows"
+		_normalize_clear_stale_feedback_rows "$slug" "$stale_feedback_rows"
 
 		# Stale zero-output brief-rewrite recovery: after old infra failures are
 		# auto-approved, requeue worker-origin issues for a fresh dispatch instead
 		# of leaving them assigned with no active status label.
 		local stale_brief_rows=""
 		stale_brief_rows=$(_normalize_get_stale_brief_rewrite_rows "$issue_rows_json")
-		_normalize_requeue_stale_brief_rewrite_rows "$slug" "$stale_brief_rows" "$_add_label_flag" "$_remove_label_flag" "$_remove_assignee_flag"
+		_normalize_requeue_stale_brief_rewrite_rows "$slug" "$stale_brief_rows" "$_PIR_ADD_LABEL_FLAG" "$_PIR_REMOVE_LABEL_FLAG" "$_PIR_REMOVE_ASSIGNEE_FLAG"
 
 		# Only active worker states receive assignment normalization. Available
 		# feedback-routed worker issues may stay unassigned until the atomic dispatch
