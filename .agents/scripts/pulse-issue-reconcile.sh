@@ -79,6 +79,11 @@ fi
 [[ -n "${_PIR_STATUS_DONE+x}" ]] || _PIR_STATUS_DONE="${_PIR_STATUS_PREFIX}done"
 [[ -n "${_PIR_BRIEF_LABEL_PREFIX+x}" ]] || _PIR_BRIEF_LABEL_PREFIX="needs-brief"
 [[ -n "${_PIR_NEEDS_BRIEF_REWRITE+x}" ]] || _PIR_NEEDS_BRIEF_REWRITE="${_PIR_BRIEF_LABEL_PREFIX}-rewrite"
+[[ -n "${_PIR_ADD_LABEL_FLAG+x}" ]] || _PIR_ADD_LABEL_FLAG=--add-label
+[[ -n "${_PIR_REMOVE_LABEL_FLAG+x}" ]] || _PIR_REMOVE_LABEL_FLAG=--remove-label
+[[ -n "${_PIR_REMOVE_ASSIGNEE_FLAG+x}" ]] || _PIR_REMOVE_ASSIGNEE_FLAG=--remove-assignee
+[[ -n "${_PIR_BOOL_TRUE+x}" ]] || _PIR_BOOL_TRUE=true
+[[ -n "${_PIR_BOOL_FALSE+x}" ]] || _PIR_BOOL_FALSE=false
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -497,9 +502,9 @@ _normalize_reassign_self() {
 		local _origin_worker_label=origin:worker
 		local _origin_interactive_label=origin:interactive
 		local _origin_takeover_label=origin:worker-takeover
-		local _add_label_flag=--add-label
-		local _remove_label_flag=--remove-label
-		local _remove_assignee_flag=--remove-assignee
+		local _add_label_flag="$_PIR_ADD_LABEL_FLAG"
+		local _remove_label_flag="$_PIR_REMOVE_LABEL_FLAG"
+		local _remove_assignee_flag="$_PIR_REMOVE_ASSIGNEE_FLAG"
 		while IFS= read -r _stale_pair; do
 			[[ -n "$_stale_pair" ]] || continue
 			_stale_issue="${_stale_pair%%|*}"
@@ -950,21 +955,21 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	local assoc
 	assoc=$(gh api "repos/${slug}/issues/${issue_num}" \
 		--jq '.author_association // "NONE"' 2>/dev/null || echo "NONE")
-	local is_external="true"
+	local is_external="$_PIR_BOOL_TRUE"
 	case "$assoc" in
-		OWNER | MEMBER | COLLABORATOR) is_external="false" ;;
+		OWNER | MEMBER | COLLABORATOR) is_external="$_PIR_BOOL_FALSE" ;;
 	esac
 
 	# Choose sentinel for idempotency check
 	local check_sentinel="$sentinel"
-	[[ "$is_external" == "true" ]] && check_sentinel="$external_sentinel"
+	[[ "$is_external" == "$_PIR_BOOL_TRUE" ]] && check_sentinel="$external_sentinel"
 
 	# Idempotency guard — only suppresses duplicate comment; labels are still healed
 	local existing_comments
 	existing_comments=$(gh issue view "$issue_num" --repo "$slug" \
 		--json comments --jq '[.comments[].body] | join("\n")' 2>/dev/null || echo "")
-	local comment_already_posted="false"
-	[[ "$existing_comments" == *"$check_sentinel"* ]] && comment_already_posted="true"
+	local comment_already_posted="$_PIR_BOOL_FALSE"
+	[[ "$existing_comments" == *"$check_sentinel"* ]] && comment_already_posted="$_PIR_BOOL_TRUE"
 
 	# Extract hashtag labels from body
 	local body_tags
@@ -978,15 +983,15 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	# Compose label-add args (internal vs external path, t2450)
 	local -a add_args
 	local labels_csv_lia comment_template_use
-	if [[ "$is_external" == "true" ]]; then
-		add_args=("--add-label" "needs-maintainer-review")
+	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
+		add_args=("$_PIR_ADD_LABEL_FLAG" "needs-maintainer-review")
 		labels_csv_lia="needs-maintainer-review"
 		comment_template_use="$external_comment_template"
 	else
-		add_args=("--add-label" "origin:worker"
-			"--remove-label" "origin:interactive"
-			"--remove-label" "origin:worker-takeover"
-			"--add-label" "tier:standard")
+		add_args=("$_PIR_ADD_LABEL_FLAG" "origin:worker"
+			"$_PIR_REMOVE_LABEL_FLAG" "origin:interactive"
+			"$_PIR_REMOVE_LABEL_FLAG" "origin:worker-takeover"
+			"$_PIR_ADD_LABEL_FLAG" "tier:standard")
 		labels_csv_lia="origin:worker,tier:standard"
 		comment_template_use="$comment_template"
 	fi
@@ -996,7 +1001,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		local _t
 		for _t in $body_tags; do
 			[[ -z "$_t" ]] && continue
-			add_args+=("--add-label" "$_t")
+			add_args+=("$_PIR_ADD_LABEL_FLAG" "$_t")
 		done
 		IFS="$_saved_ifs"
 		labels_csv_lia="${labels_csv_lia},${body_tags}"
@@ -1028,7 +1033,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	fi
 
 	# Post mentorship comment (singleton per issue × association-class)
-	if [[ "$comment_already_posted" == "false" ]]; then
+	if [[ "$comment_already_posted" == "$_PIR_BOOL_FALSE" ]]; then
 		gh_issue_comment "$issue_num" --repo "$slug" --body "$comment_template_use" \
 			>/dev/null 2>&1 || true
 		echo "[pulse-wrapper] Labelless backfill: blessed #${issue_num} in ${slug} — assoc=${assoc}, labels=${labels_csv_lia}" >>"$LOGFILE"
