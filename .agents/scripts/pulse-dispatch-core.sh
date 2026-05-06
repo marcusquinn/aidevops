@@ -528,11 +528,16 @@ _task_id_in_changed_files() {
 #      — set known_ever_nmr="true" for the cache-path short-circuit.
 #   2. If the issue is bot-generated cleanup (review-followup or
 #      source:review-scanner) AND the label is not currently present,
-#      override known_ever_nmr="false" to skip the historical timeline
+#      override known_ever_nmr=false to skip the historical timeline
 #      check. This clears the ever-NMR permanence trap for routine
 #      cleanup issues whose NMR label was applied by the fast-fail
 #      escalation path and has since been removed.
-#   3. Call issue_has_required_approval with the determined state.
+#   3. If NMR is not currently present, skip historical ever-NMR for
+#      maintainer-only threads: issue author is OWNER/MEMBER and every
+#      issue comment is also OWNER/MEMBER. This preserves prompt-injection
+#      protection while avoiding permanent crypto approval for internal
+#      retry/hold labels that a maintainer has already removed.
+#   4. Call issue_has_required_approval with the determined state.
 #
 # The exemption does NOT fire when the label is currently present —
 # maintainer-applied or bot-applied NMR still blocks dispatch until
@@ -547,6 +552,48 @@ _task_id_in_changed_files() {
 #   0 - gate blocks dispatch (ever-NMR without approval)
 #   1 - gate allows dispatch
 #######################################
+_issue_thread_is_trusted_maintainer_only() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
+
+	local issue_api_path="repos/${repo_slug}/issues/"
+	issue_api_path="${issue_api_path}${issue_number}"
+	local issue_comments_path="${issue_api_path}/comments"
+	local issue_author_association
+	issue_author_association=$(gh api "$issue_api_path" \
+		--jq '.author_association // "NONE"' 2>/dev/null) || issue_author_association=""
+	case "$issue_author_association" in
+		OWNER | MEMBER)
+			;;
+		*)
+			return 1
+			;;
+	esac
+
+	local comments_json
+	comments_json=$(gh api "$issue_comments_path" \
+		--paginate --slurp 2>/dev/null) || return 1
+	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
+
+	local untrusted_comment_count
+	untrusted_comment_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" '
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
+		else [] end)
+		| [ .[] | select((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER")) ]
+		| length
+	' 2>/dev/null) || return 1
+	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
+
+	if [[ "$untrusted_comment_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
 _check_nmr_approval_gate() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -562,6 +609,16 @@ _check_nmr_approval_gate() {
 	if [[ "$known_ever_nmr" != "true" ]] && _is_bot_generated_cleanup_issue "$issue_meta_json"; then
 		known_ever_nmr="false"
 		echo "[pulse-wrapper] dispatch_with_dedup: review-followup exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check (GH#18648)" >>"$LOGFILE"
+	fi
+
+	# <!-- aidevops:trust-boundary -->
+	# Historical NMR is a prompt-injection trust boundary only when untrusted
+	# content may have entered the worker prompt. If the active NMR label has
+	# been removed and both issue author plus every comment author are OWNER or
+	# MEMBER, allow dispatch without requiring a cryptographic approval marker.
+	if [[ "$known_ever_nmr" != "true" ]] && _issue_thread_is_trusted_maintainer_only "$issue_number" "$repo_slug"; then
+		known_ever_nmr=false
+		echo "[pulse-wrapper] dispatch_with_dedup: trusted maintainer-only thread exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check" >>"$LOGFILE"
 	fi
 
 	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
