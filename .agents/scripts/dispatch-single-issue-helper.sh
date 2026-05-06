@@ -360,9 +360,7 @@ _dsi_repo_path_for_slug() {
 #
 #   1. Atomic transition to status:queued (clears sibling status:* labels
 #      via set_issue_status).
-#   2. Apply origin:worker via set_origin_label (t2200 / t3007 mutual
-#      exclusion — atomically strips ALL sibling origin:* labels and calls
-#      ensure_origin_labels_exist before adding origin:worker).
+#   2. Preserve origin:* labels as immutable creation provenance.
 #   3. Add runner as assignee; remove any prior assignees so dedup layer 6
 #      sees a clean single-owner state.
 #
@@ -406,23 +404,7 @@ _dsi_apply_dispatch_ceremony() {
 		return 1
 	fi
 
-	# t2200 / t3007: use set_origin_label to atomically strip ALL sibling
-	# origin:* labels (including any origin:interactive left from an interactive
-	# session) and ensure origin:worker exists before adding it. The former bare
-	# --add-label/--remove-label approach only removed known siblings and skipped
-	# ensure_origin_labels_exist, producing dual-label issues when re-dispatching
-	# an origin:interactive issue (observed: t3005 session, PRs #21451–#21455).
-	if ! set_origin_label "$issue_number" "$repo_slug" "worker" >/dev/null 2>&1; then
-		_dsi_warn "Origin label update failed after REST fallback — dispatch ceremony degraded"
-		if set_issue_status "$issue_number" "$repo_slug" "available" --remove-assignee "$self_login" >/dev/null 2>&1; then
-			_dsi_warn "Ceremony degraded — origin:worker not applied; status/assignment rollback attempted"
-		else
-			_dsi_warn "Ceremony degraded — origin:worker not applied; rollback also failed; manual recovery required"
-		fi
-		return 1
-	fi
-
-	_dsi_info "Ceremony applied — status:queued, origin:worker, assignee=${self_login}"
+	_dsi_info "Ceremony applied — status:queued, assignee=${self_login}"
 	return 0
 }
 
