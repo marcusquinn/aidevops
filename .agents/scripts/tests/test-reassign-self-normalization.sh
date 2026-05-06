@@ -438,7 +438,8 @@ test_fresh_scanner_issue_skips() {
 test_stale_auto_approved_brief_rewrite_requeues() {
 	setup_test_env
 	local json='[
-		{"number": 4246, "assignees": [{"login": "marcusquinn"}], "labels": [{"name": "auto-dispatch"}, {"name": "origin:worker"}, {"name": "tier:standard"}, {"name": "ai-approved"}, {"name": "needs-brief-rewrite"}]}
+		{"number": 4246, "assignees": [{"login": "marcusquinn"}], "labels": [{"name": "auto-dispatch"}, {"name": "origin:worker"}, {"name": "tier:standard"}, {"name": "ai-approved"}, {"name": "needs-brief-rewrite"}]},
+		{"number": 4248, "assignees": [{"login": "marcusquinn"}], "labels": [{"name": "auto-dispatch"}, {"name": "origin:worker"}, {"name": "tier:standard"}, {"name": "ai-approved"}, {"name": "status:available"}, {"name": "needs-brief-rewrite"}]}
 	]'
 	create_gh_stub "$json"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
@@ -452,6 +453,8 @@ test_stale_auto_approved_brief_rewrite_requeues() {
 	if [[ "$calls" == *"--add-label status:available"* \
 		&& "$calls" == *"--remove-label needs-brief-rewrite"* \
 		&& "$calls" == *"--remove-assignee marcusquinn"* \
+		&& "$calls" == *"issue edit 4246"* \
+		&& "$calls" == *"issue edit 4248"* \
 		&& -z "$assigned" ]]; then
 		print_result "stale auto-approved brief-rewrite infra hold → requeued" 0
 	else
