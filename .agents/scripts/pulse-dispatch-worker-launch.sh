@@ -677,8 +677,13 @@ _dlw_precreate_worktree() {
 	# to be inside the repo. The pulse-wrapper's cwd is typically / (launchd).
 	_wt_output=$(cd "$repo_path" && WORKTREE_NODE_MODULES_RESTORE_ENABLED=0 "$_wt_helper" add "$_branch" 2>&1) || true
 	_wt_output=$(printf '%s' "$_wt_output" | sed $'s/\x1b\\[[0-9;]*m//g')
-	local _path
-	_path=$(printf '%s' "$_wt_output" | grep -oE '/[^ ]*Git/[^ ]*' | head -1) || _path=""
+	local _path _path_source="porcelain"
+	_path=$(_dlw_worktree_path_for_branch "$repo_path" "$_branch") || _path=""
+	if [[ -z "$_path" ]]; then
+		_path_source="helper-output"
+		_path=$(_dlw_extract_worktree_path_from_output "$_wt_output") || _path=""
+	fi
+	echo "[dispatch_with_dedup] Worktree path resolution for #${issue_number}: source=${_path_source} branch=${_branch} path='${_path:-<empty>}' exists=$([[ -n "$_path" && -d "$_path" ]] && printf '1' || printf '0')" >>"$LOGFILE"
 	if [[ -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
@@ -695,6 +700,23 @@ _dlw_precreate_worktree() {
 		echo "[dispatch_with_dedup] Warning: worktree pre-creation failed for #${issue_number} — dispatch will be skipped this cycle (extracted: '${_path:-<empty>}', wt_helper stdout head: '${_wt_output:0:120}')" >>"$LOGFILE"
 		return 1
 	fi
+	return 0
+}
+
+_dlw_worktree_path_for_branch() {
+	local repo_path="$1"
+	local branch_name="$2"
+	local _path=""
+	_path=$(git -C "$repo_path" worktree list --porcelain 2>/dev/null | awk -v branch="refs/heads/${branch_name}" '/^worktree / { path = substr($0, 10) } /^branch / { line_branch = substr($0, 8); if (line_branch == branch) { print path; exit } }') || _path=""
+	printf '%s' "$_path"
+	return 0
+}
+
+_dlw_extract_worktree_path_from_output() {
+	local wt_output="$1"
+	local _path=""
+	_path=$(printf '%s' "$wt_output" | awk '/^Path:[[:space:]]*\// { sub(/^Path:[[:space:]]*/, ""); print; exit } /^[[:space:]]*cd[[:space:]]+\// { sub(/^[[:space:]]*cd[[:space:]]+/, ""); print; exit } /^Created worktree at[[:space:]]*\// { sub(/^Created worktree at[[:space:]]*/, ""); print; exit }') || _path=""
+	printf '%s' "$_path"
 	return 0
 }
 

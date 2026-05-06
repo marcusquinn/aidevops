@@ -68,7 +68,7 @@ FAKE_REPO="${TMP}/fake-repo"
 mkdir -p "$FAKE_REPO"
 
 # =============================================================================
-# Stub: worktree-helper.sh that emits unparseable output
+# Stub: worktree-helper.sh that emits configurable output
 # =============================================================================
 STUB_WT_HELPER="${TMP}/worktree-helper.sh"
 cat >"$STUB_WT_HELPER" <<'STUB_EOF'
@@ -80,7 +80,8 @@ case "${STUB_WT_MODE:-fail}" in
 		exit 1
 		;;
 	success)
-		# Emit output with a parseable Git path
+		# Emit output with a parseable path. Tests intentionally use both
+		# /Git/ and non-/Git/ paths to guard path-root assumptions.
 		echo "Created worktree at ${STUB_WT_SUCCESS_PATH}"
 		exit 0
 		;;
@@ -92,8 +93,14 @@ chmod +x "$STUB_WT_HELPER"
 # Stub: git (for worktree list — returns empty by default)
 # =============================================================================
 git() {
-	# For worktree list, return nothing (no existing worktrees)
+	# For worktree list, return configured worktrees or nothing.
 	if [[ "${1:-}" == "-C" && "${3:-}" == "worktree" && "${4:-}" == "list" ]]; then
+		if [[ "${5:-}" == "--porcelain" && -n "${STUB_PORCELAIN_WORKTREE_PATH:-}" && -n "${STUB_PORCELAIN_WORKTREE_BRANCH:-}" ]]; then
+			printf 'worktree %s\n' "$STUB_PORCELAIN_WORKTREE_PATH"
+			printf 'HEAD abcdef0123456789\n'
+			printf 'branch refs/heads/%s\n' "$STUB_PORCELAIN_WORKTREE_BRANCH"
+			return 0
+		fi
 		if [[ -n "${STUB_EXISTING_WORKTREE_LINE:-}" ]]; then
 			printf '%s\n' "$STUB_EXISTING_WORKTREE_LINE"
 		fi
@@ -214,7 +221,7 @@ fi
 # Test 2: _dlw_precreate_worktree returns 0 when creation succeeds
 # =============================================================================
 export STUB_WT_MODE="success"
-STUB_WT_SUCCESS_PATH="${TMP}/Git/fake-repo-feature"
+STUB_WT_SUCCESS_PATH="${TMP}/projects/fake-repo-feature"
 export STUB_WT_SUCCESS_PATH
 mkdir -p "$STUB_WT_SUCCESS_PATH"
 : >"$LOGFILE"
@@ -236,6 +243,26 @@ if [[ "${_DLW_WORKTREE_REUSED:-unset}" == "0" ]]; then
 	pass "freshly-created worktree is marked non-reused"
 else
 	fail "freshly-created worktree is marked non-reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '0'"
+fi
+
+# =============================================================================
+# Test 2b: _dlw_precreate_worktree prefers git porcelain path resolution
+# =============================================================================
+export STUB_WT_MODE="success"
+STUB_WT_SUCCESS_PATH="${TMP}/helper-output-should-not-win"
+STUB_PORCELAIN_WORKTREE_PATH="${TMP}/projects/fake-repo-porcelain"
+STUB_PORCELAIN_WORKTREE_BRANCH="feature/auto-$(date +%Y%m%d-%H%M%S)-gh77777"
+export STUB_WT_SUCCESS_PATH STUB_PORCELAIN_WORKTREE_PATH STUB_PORCELAIN_WORKTREE_BRANCH
+mkdir -p "$STUB_WT_SUCCESS_PATH" "$STUB_PORCELAIN_WORKTREE_PATH"
+: >"$LOGFILE"
+_dlw_precreate_worktree "77777" "$FAKE_REPO"
+rc=$?
+unset STUB_PORCELAIN_WORKTREE_PATH STUB_PORCELAIN_WORKTREE_BRANCH
+
+if [[ $rc -eq 0 && "$_DLW_WORKTREE_PATH" == "${TMP}/projects/fake-repo-porcelain" ]]; then
+	pass "precreate resolves non-/Git/ path from git porcelain"
+else
+	fail "precreate resolves non-/Git/ path from git porcelain" "rc=$rc path='$_DLW_WORKTREE_PATH'"
 fi
 
 # =============================================================================
