@@ -69,14 +69,16 @@ fi
 # t2776: module-level label constant shared by reconcile functions and the
 # single-pass to keep the string literal count below the ratchet threshold.
 [[ -n "${_PIR_PT_LABEL+x}" ]] || _PIR_PT_LABEL="parent-task"
-[[ -n "${_PIR_STATUS_AVAILABLE+x}" ]] || _PIR_STATUS_AVAILABLE="status:available"
-[[ -n "${_PIR_STATUS_QUEUED+x}" ]] || _PIR_STATUS_QUEUED="status:queued"
-[[ -n "${_PIR_STATUS_CLAIMED+x}" ]] || _PIR_STATUS_CLAIMED="status:claimed"
-[[ -n "${_PIR_STATUS_IN_PROGRESS+x}" ]] || _PIR_STATUS_IN_PROGRESS="status:in-progress"
-[[ -n "${_PIR_STATUS_IN_REVIEW+x}" ]] || _PIR_STATUS_IN_REVIEW="status:in-review"
-[[ -n "${_PIR_STATUS_BLOCKED+x}" ]] || _PIR_STATUS_BLOCKED="status:blocked"
-[[ -n "${_PIR_STATUS_DONE+x}" ]] || _PIR_STATUS_DONE="status:done"
-[[ -n "${_PIR_NEEDS_BRIEF_REWRITE+x}" ]] || _PIR_NEEDS_BRIEF_REWRITE="needs-brief-rewrite"
+[[ -n "${_PIR_STATUS_PREFIX+x}" ]] || _PIR_STATUS_PREFIX="status:"
+[[ -n "${_PIR_STATUS_AVAILABLE+x}" ]] || _PIR_STATUS_AVAILABLE="${_PIR_STATUS_PREFIX}available"
+[[ -n "${_PIR_STATUS_QUEUED+x}" ]] || _PIR_STATUS_QUEUED="${_PIR_STATUS_PREFIX}queued"
+[[ -n "${_PIR_STATUS_CLAIMED+x}" ]] || _PIR_STATUS_CLAIMED="${_PIR_STATUS_PREFIX}claimed"
+[[ -n "${_PIR_STATUS_IN_PROGRESS+x}" ]] || _PIR_STATUS_IN_PROGRESS="${_PIR_STATUS_PREFIX}in-progress"
+[[ -n "${_PIR_STATUS_IN_REVIEW+x}" ]] || _PIR_STATUS_IN_REVIEW="${_PIR_STATUS_PREFIX}in-review"
+[[ -n "${_PIR_STATUS_BLOCKED+x}" ]] || _PIR_STATUS_BLOCKED="${_PIR_STATUS_PREFIX}blocked"
+[[ -n "${_PIR_STATUS_DONE+x}" ]] || _PIR_STATUS_DONE="${_PIR_STATUS_PREFIX}done"
+[[ -n "${_PIR_BRIEF_LABEL_PREFIX+x}" ]] || _PIR_BRIEF_LABEL_PREFIX="needs-brief"
+[[ -n "${_PIR_NEEDS_BRIEF_REWRITE+x}" ]] || _PIR_NEEDS_BRIEF_REWRITE="${_PIR_BRIEF_LABEL_PREFIX}-rewrite"
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -378,21 +380,33 @@ _normalize_get_stale_feedback_interactive_rows() {
 _normalize_get_stale_brief_rewrite_rows() {
 	local issue_rows_json="$1"
 
-	printf '%s' "$issue_rows_json" | jq -r '
+	printf '%s' "$issue_rows_json" | jq -r \
+		--arg auto_dispatch_label "auto-dispatch" \
+		--arg origin_worker_label "origin:worker" \
+		--arg ai_approved_label "ai-approved" \
+		--arg brief_label "$_PIR_NEEDS_BRIEF_REWRITE" \
+		--arg nmr_label "needs-maintainer-review" \
+		--arg available_label "$_PIR_STATUS_AVAILABLE" \
+		--arg queued_label "$_PIR_STATUS_QUEUED" \
+		--arg claimed_label "$_PIR_STATUS_CLAIMED" \
+		--arg progress_label "$_PIR_STATUS_IN_PROGRESS" \
+		--arg review_label "$_PIR_STATUS_IN_REVIEW" \
+		--arg blocked_label "$_PIR_STATUS_BLOCKED" \
+		--arg done_label "$_PIR_STATUS_DONE" '
 		.[]
 		| (.labels | map(.name)) as $labels
-		| select($labels | index("auto-dispatch"))
-		| select($labels | index("origin:worker"))
-		| select($labels | index("ai-approved"))
-		| select($labels | index("needs-brief-rewrite"))
-		| select(($labels | index("needs-maintainer-review")) | not)
-		| select(($labels | index("status:available")) | not)
-		| select(($labels | index("status:queued")) | not)
-		| select(($labels | index("status:claimed")) | not)
-		| select(($labels | index("status:in-progress")) | not)
-		| select(($labels | index("status:in-review")) | not)
-		| select(($labels | index("status:blocked")) | not)
-		| select(($labels | index("status:done")) | not)
+		| select($labels | index($auto_dispatch_label))
+		| select($labels | index($origin_worker_label))
+		| select($labels | index($ai_approved_label))
+		| select($labels | index($brief_label))
+		| select(($labels | index($nmr_label)) | not)
+		| select(($labels | index($available_label)) | not)
+		| select(($labels | index($queued_label)) | not)
+		| select(($labels | index($claimed_label)) | not)
+		| select(($labels | index($progress_label)) | not)
+		| select(($labels | index($review_label)) | not)
+		| select(($labels | index($blocked_label)) | not)
+		| select(($labels | index($done_label)) | not)
 		| "\(.number)|\([.assignees[].login] | join(","))"
 	' 2>/dev/null || true
 	return 0
