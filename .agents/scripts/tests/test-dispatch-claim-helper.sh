@@ -294,6 +294,104 @@ EOF
 }
 
 #######################################
+# Build a mock gh executable for claim-only orphan recovery tests.
+# Uses env vars:
+#   MOCK_GH_STATE_DIR, MOCK_CLAIM_CREATED_AT, MOCK_ASSIGNEE_COUNT,
+#   MOCK_INCLUDE_DISPATCH
+# Returns: path to mock gh directory via stdout
+#######################################
+create_claim_orphan_mock_gh() {
+	local state_dir="$1"
+	local mock_bin_dir
+	mock_bin_dir="${state_dir}/bin"
+	mkdir -p "$mock_bin_dir"
+
+	cat >"${mock_bin_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+local_state_dir="${MOCK_GH_STATE_DIR:?}"
+release_body_file="${local_state_dir}/release_body.txt"
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 1
+fi
+shift
+
+endpoint="${1:-}"
+shift || true
+
+if [[ "$endpoint" == "user" ]]; then
+	printf 'mockrunner\n'
+	exit 0
+fi
+
+if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
+	jq -n --argjson count "${MOCK_ASSIGNEE_COUNT:-0}" '
+		{assignees: [range(0; $count) | {login: ("runner" + tostring)}]}
+	'
+	exit 0
+fi
+
+if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
+	method="GET"
+	body=""
+	while [[ "$#" -gt 0 ]]; do
+		case "$1" in
+		--method)
+			method="$2"
+			shift 2
+			;;
+		--field)
+			if [[ "$2" == body=* ]]; then
+				body="${2#body=}"
+			fi
+			shift 2
+			;;
+		--jq | --paginate | --slurp)
+			shift
+			[[ "${1:-}" != .* ]] || shift
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	if [[ "$method" == "POST" ]]; then
+		printf '%s' "$body" >"$release_body_file"
+		printf '1001\n'
+		exit 0
+	fi
+
+	if [[ "${MOCK_INCLUDE_DISPATCH:-false}" == "true" ]]; then
+		jq -n \
+			--arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" \
+			--arg dispatch_ts "${MOCK_DISPATCH_CREATED_AT:?}" '
+			[
+				{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts + " max_age_s=300"), created_at: $claim_ts},
+				{id: 1000, body: "Dispatching worker (deterministic).", created_at: $dispatch_ts}
+			]
+		'
+		exit 0
+	fi
+
+	jq -n --arg claim_ts "${MOCK_CLAIM_CREATED_AT:?}" '
+		[
+			{id: 999, body: ("DISPATCH_CLAIM nonce=claim-only runner=mockrunner ts=" + $claim_ts + " max_age_s=300"), created_at: $claim_ts}
+		]
+	'
+	exit 0
+fi
+
+exit 1
+EOF
+	chmod +x "${mock_bin_dir}/gh"
+	printf '%s' "$mock_bin_dir"
+	return 0
+}
+
+#######################################
 # Build a mock gh executable that returns gh --paginate --slurp shaped output:
 # an array of pages. The active claim is only present on the second page, which
 # catches regressions where claim readers inspect only the oldest REST page.
@@ -574,6 +672,120 @@ test_env_var_defaults() {
 	else
 		print_result "DISPATCH_CLAIM_SELF_RECLAIM_AGE env var respected" 1 "got: $output"
 	fi
+	return 0
+}
+
+#######################################
+# Test: claim-only orphan older than grace no longer blocks dispatch.
+#######################################
+test_check_releases_claim_only_orphan() {
+	local tmp_dir=""
+	tmp_dir="$(mktemp -d)"
+	local mock_path=""
+	mock_path="$(create_claim_orphan_mock_gh "$tmp_dir")"
+	local claim_created_at="" output="" exit_code=0 release_body=""
+	claim_created_at="$(iso_seconds_ago 300)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_ASSIGNEE_COUNT=0 \
+		DISPATCH_CLAIM_MAX_AGE=600 \
+		DISPATCH_CLAIM_ORPHAN_GRACE=120 \
+		"$CLAIM_HELPER" check 42 owner/repo 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 ]]; then
+		print_result "claim-only orphan check returns no active claim" 0
+	else
+		print_result "claim-only orphan check returns no active claim" 1 "exit=${exit_code} output=${output}"
+	fi
+	if [[ -f "${tmp_dir}/release_body.txt" ]]; then
+		release_body=$(<"${tmp_dir}/release_body.txt")
+	fi
+	if printf '%s' "$release_body" | grep -q 'CLAIM_RELEASED reason=claim_only_no_worker'; then
+		print_result "claim-only orphan posts release marker" 0
+	else
+		print_result "claim-only orphan posts release marker" 1 "body=${release_body:-none}"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: fresh claim-only marker stays active during the grace window.
+#######################################
+test_check_preserves_fresh_claim_only_marker() {
+	local tmp_dir=""
+	tmp_dir="$(mktemp -d)"
+	local mock_path=""
+	mock_path="$(create_claim_orphan_mock_gh "$tmp_dir")"
+	local claim_created_at="" output="" exit_code=0
+	claim_created_at="$(iso_seconds_ago 30)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_ASSIGNEE_COUNT=0 \
+		DISPATCH_CLAIM_MAX_AGE=600 \
+		DISPATCH_CLAIM_ORPHAN_GRACE=120 \
+		"$CLAIM_HELPER" check 42 owner/repo 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]] && printf '%s' "$output" | grep -q 'ACTIVE_CLAIM'; then
+		print_result "fresh claim-only marker remains active" 0
+	else
+		print_result "fresh claim-only marker remains active" 1 "exit=${exit_code} output=${output}"
+	fi
+	if [[ ! -f "${tmp_dir}/release_body.txt" ]]; then
+		print_result "fresh claim-only marker does not post release" 0
+	else
+		print_result "fresh claim-only marker does not post release" 1 "body=$(<"${tmp_dir}/release_body.txt")"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: launch evidence after a claim keeps the claim active.
+#######################################
+test_check_preserves_claim_with_launch_evidence() {
+	local tmp_dir=""
+	tmp_dir="$(mktemp -d)"
+	local mock_path=""
+	mock_path="$(create_claim_orphan_mock_gh "$tmp_dir")"
+	local claim_created_at="" dispatch_created_at="" output="" exit_code=0
+	claim_created_at="$(iso_seconds_ago 300)"
+	dispatch_created_at="$(iso_seconds_ago 250)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_DISPATCH_CREATED_AT="$dispatch_created_at" \
+		MOCK_INCLUDE_DISPATCH=true \
+		MOCK_ASSIGNEE_COUNT=0 \
+		DISPATCH_CLAIM_MAX_AGE=600 \
+		DISPATCH_CLAIM_ORPHAN_GRACE=120 \
+		"$CLAIM_HELPER" check 42 owner/repo 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]] && printf '%s' "$output" | grep -q 'ACTIVE_CLAIM'; then
+		print_result "claim with launch evidence remains active" 0
+	else
+		print_result "claim with launch evidence remains active" 1 "exit=${exit_code} output=${output}"
+	fi
+	if [[ ! -f "${tmp_dir}/release_body.txt" ]]; then
+		print_result "claim with launch evidence does not post release" 0
+	else
+		print_result "claim with launch evidence does not post release" 1 "body=$(<"${tmp_dir}/release_body.txt")"
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -1075,6 +1287,9 @@ main() {
 	test_unknown_command
 	test_dedup_claim_routing
 	test_env_var_defaults
+	test_check_releases_claim_only_orphan
+	test_check_preserves_fresh_claim_only_marker
+	test_check_preserves_claim_with_launch_evidence
 	test_claim_rejects_stale_same_runner_claim
 	test_claim_rejects_fresh_same_runner_claim
 	test_claim_reads_paginated_comment_tail

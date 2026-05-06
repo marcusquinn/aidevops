@@ -16,7 +16,7 @@
 #   1. Post claim: DISPATCH_CLAIM nonce=UUID runner=LOGIN ts=ISO max_age_s=SECONDS
 #   2. Sleep consensus window (DISPATCH_CLAIM_WINDOW, default 8s)
 #   3. Re-read paginated comments, find all DISPATCH_CLAIM within the window
-#   4. Oldest active claim wins — others back off and delete their claim
+#   4. Oldest active claim wins — others back off and retain audit comments
 #
 # Usage:
 #   dispatch-claim-helper.sh claim <issue-number> <repo-slug> [runner-login]
@@ -44,6 +44,11 @@ DISPATCH_CLAIM_WINDOW="${DISPATCH_CLAIM_WINDOW:-8}"
 # GH#17503: Increased from 120s to 1800s (30 min) — claim comments are never
 # deleted (audit trail), so the TTL must cover a full worker lifecycle.
 DISPATCH_CLAIM_MAX_AGE="${DISPATCH_CLAIM_MAX_AGE:-1800}"
+
+# Claim-only grace (seconds). If a DISPATCH_CLAIM is older than this but the
+# issue still has no assignee and no later "Dispatching worker" comment, treat
+# it as a pre-launch orphan instead of blocking retries for the full TTL.
+DISPATCH_CLAIM_ORPHAN_GRACE="${DISPATCH_CLAIM_ORPHAN_GRACE:-120}"
 
 # Number of issue comments to request per GitHub REST page when reading claim
 # markers. GitHub defaults to the oldest 30 comments, which misses fresh claims
@@ -406,7 +411,7 @@ _fetch_claim_marker_comments() {
 				.
 			end
 		)[]
-		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released")))
+		| select((.body // "" | ascii_downcase) | (contains(($marker | ascii_downcase) + " nonce=") or contains("claim_released") or contains("dispatching worker")))
 		| {id: .id, body: .body, created_at: .created_at} ]
 	' || {
 		echo "Error: failed to parse comments for #${issue_number} in ${repo_slug}" >&2
@@ -501,8 +506,96 @@ _fetch_claims() {
 	# t2400: Apply runtime override filter (extracted to keep _fetch_claims
 	# under the 100-line complexity threshold — same behaviour, separate fn).
 	parsed=$(_apply_ignore_filter "$parsed" "$issue_number" "$repo_slug" "$self_runner")
+	parsed=$(_filter_orphan_prelaunch_claims "$parsed" "$comments_json" "$issue_number" "$repo_slug" "$self_runner")
 
 	printf '%s' "$parsed"
+	return 0
+}
+
+#######################################
+# Remove claim-only pre-launch orphans from the active claim set.
+# Args: parsed claims JSON, marker comments JSON, issue number, repo slug,
+#       optional self runner
+# Returns: filtered claims JSON on stdout
+#######################################
+_filter_orphan_prelaunch_claims() {
+	local parsed_claims="$1"
+	local comments_json="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+	local self_runner="${5:-}"
+
+	if [[ -z "$parsed_claims" || "$parsed_claims" == "[]" ]]; then
+		printf '%s' "${parsed_claims:-[]}"
+		return 0
+	fi
+	[[ "$DISPATCH_CLAIM_ORPHAN_GRACE" =~ ^[0-9]+$ ]] || DISPATCH_CLAIM_ORPHAN_GRACE=120
+
+	local assignee_count
+	assignee_count=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.assignees | length' 2>/dev/null) || {
+		printf '%s' "$parsed_claims"
+		return 0
+	}
+	[[ "$assignee_count" =~ ^[0-9]+$ ]] || assignee_count=0
+	if [[ "$assignee_count" -gt 0 ]]; then
+		printf '%s' "$parsed_claims"
+		return 0
+	fi
+
+	local filtered_claims removed_count remaining_count
+	filtered_claims=$(_filter_claims_with_launch_evidence "$parsed_claims" "$comments_json")
+	removed_count=$(jq -n --argjson before "$parsed_claims" --argjson after "$filtered_claims" '$before|length - ($after|length)' 2>/dev/null) || removed_count=0
+	remaining_count=$(printf '%s' "$filtered_claims" | jq 'length' 2>/dev/null) || remaining_count=0
+	if [[ "$removed_count" -gt 0 && "$remaining_count" -eq 0 ]]; then
+		_post_orphan_claim_release "$issue_number" "$repo_slug" "$self_runner" "$removed_count" || true
+	fi
+	printf '%s' "$filtered_claims"
+	return 0
+}
+
+#######################################
+# Keep fresh claims and claims with later worker-launch evidence.
+# Args: parsed claims JSON, marker comments JSON
+# Returns: filtered claims JSON on stdout
+#######################################
+_filter_claims_with_launch_evidence() {
+	local parsed_claims="$1"
+	local comments_json="$2"
+
+	printf '%s' "$parsed_claims" | jq -c \
+		--argjson comments "$comments_json" \
+		--argjson orphan_grace "$DISPATCH_CLAIM_ORPHAN_GRACE" '
+		[.[]
+		| . as $claim
+		| ([ $comments[]
+			| select((.created_at // "") > ($claim.created_at // ""))
+			| select((.body // "" | ascii_downcase) | contains("dispatching worker"))
+		  ] | length) as $launch_count
+		| select((.age_seconds // 0) <= $orphan_grace or $launch_count > 0)
+		]
+		| sort_by([.created_at, .nonce])
+	' 2>/dev/null || printf '%s' "$parsed_claims"
+	return 0
+}
+
+#######################################
+# Post a terminal release marker for claim-only pre-launch orphans.
+# Args: issue number, repo slug, optional runner, removed count
+#######################################
+_post_orphan_claim_release() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner="${3:-}"
+	local removed_count="$4"
+	[[ -n "$runner" ]] || runner=$(_resolve_runner "")
+
+	local body
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=claim_only_no_worker runner=${runner} ts=$(_now_utc) removed_claims=${removed_count}
+<!-- ops:end -->"
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--method POST \
+		--field body="$body" >/dev/null 2>&1 || return 1
 	return 0
 }
 
@@ -1092,6 +1185,7 @@ Usage:
 Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 1800 = 30 min)
+  DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace in seconds (default: 120)
 
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce
