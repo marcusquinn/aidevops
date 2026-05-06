@@ -156,6 +156,15 @@ run_resolver() {
 	)
 }
 
+run_resolver_with_path() {
+	local _fixture_home="$1" _path_prefix="$2"
+	(
+		export HOME="$_fixture_home"
+		export PATH="$_path_prefix:/usr/bin:/bin"
+		_resolve_pulse_runtime_binary
+	)
+}
+
 # --- Source the resolver and validator ---
 # tool-install.sh defines _setup_validate_opencode_binary;
 # schedulers.sh defines _resolve_pulse_runtime_binary and the helpers.
@@ -234,24 +243,19 @@ fi
 rm -rf "$fixture4"
 
 # Test 5: Claude rejection at sweep-time. nvm contains a claude-stub
-# (wrong product) — resolver must skip it and fall through to step 5
-# (/opt/homebrew/bin/opencode), which doesn't exist in the fixture.
-# Result: step 5 default returned but NOT persisted (validator rejects
-# the stub, and step 5's hardcoded path also fails -x check in persistence).
+# (wrong product) — resolver must skip it and return empty when no real
+# OpenCode exists. Empty is safer than a fake legacy fallback because it
+# fails clear instead of persisting or launching the wrong runtime.
 fixture5=$(mktemp -d 2>/dev/null || mktemp -d -t t2954e)
 build_fixture_node_install "$fixture5" "claude" "nvm" "v24.13.1" >/dev/null
 result5=$(run_resolver "$fixture5")
-# Resolver returns the step-5 default ("/opt/homebrew/bin/opencode")
-# even though it doesn't exist — that's the documented last-resort.
-# The test we care about: the claude path was NOT returned and NOT
-# persisted.
 persisted_file5="$fixture5/.config/aidevops/scheduler-runtime-bin"
 claude_path5="$fixture5/.nvm/versions/node/v24.13.1/bin/opencode"
-if [[ "$result5" != "$claude_path5" ]]; then
-	print_result "claude binary in nvm path — rejected by validator, not returned" 0
+if [[ -z "$result5" ]]; then
+	print_result "claude binary in nvm path — rejected; resolver returns empty" 0
 else
-	print_result "claude binary in nvm path — rejected by validator, not returned" 1 \
-		"resolver returned the claude path: $result5"
+	print_result "claude binary in nvm path — rejected; resolver returns empty" 1 \
+		"expected empty result, got: $result5"
 fi
 if [[ ! -f "$persisted_file5" ]] || \
 	[[ "$(cat "$persisted_file5" 2>/dev/null)" != "$claude_path5" ]]; then
@@ -261,6 +265,18 @@ else
 		"persisted file contains claude path"
 fi
 rm -rf "$fixture5"
+
+# Test 5b: Claude fixed path must not be considered an OpenCode fallback.
+fixture5b=$(mktemp -d 2>/dev/null || mktemp -d -t t2954e2)
+claude_path5b=$(build_fixture_fixed_path "$fixture5b" "claude" ".local/bin/claude")
+result5b=$(run_resolver "$fixture5b")
+if [[ -z "$result5b" ]]; then
+	print_result "claude fixed path — not returned as OpenCode fallback" 0
+else
+	print_result "claude fixed path — not returned as OpenCode fallback" 1 \
+		"expected empty result, got=$result5b claude=$claude_path5b"
+fi
+rm -rf "$fixture5b"
 
 # Test 6: Stale wrong-product persisted file — validator drops it and
 # resolver re-resolves to the real opencode binary present in nvm.
@@ -336,6 +352,20 @@ else
 		"result=$result9 expected=$expected9"
 fi
 rm -rf "$fixture9"
+
+# Test 10: Wrong-product direct PATH hit is rejected so discovery continues.
+fixture10=$(mktemp -d 2>/dev/null || mktemp -d -t t2954j)
+build_fixture_fixed_path "$fixture10" "claude" ".path/bin/opencode" >/dev/null
+build_fixture_node_install "$fixture10" "opencode" "nvm" "v24.13.1" >/dev/null
+expected10="$fixture10/.local/bin/opencode"
+result10=$(run_resolver_with_path "$fixture10" "$fixture10/.path/bin")
+if [[ "$result10" == "$expected10" ]]; then
+	print_result "direct PATH claude hit — rejected, continues to nvm OpenCode" 0
+else
+	print_result "direct PATH claude hit — rejected, continues to nvm OpenCode" 1 \
+		"expected=$expected10 got=$result10"
+fi
+rm -rf "$fixture10"
 
 # --- Summary ---
 echo ""

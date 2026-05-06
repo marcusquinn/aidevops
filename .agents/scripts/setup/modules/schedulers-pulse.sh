@@ -230,10 +230,9 @@ _sweep_nvm_volta_fnm_for_opencode() {
 
 # t2954: Legacy fixed-install-paths sweep for an opencode binary. Used as
 # a last-resort discovery when persistence, runtime registry, live PATH,
-# and the Node-version-manager sweep all came up empty. Each candidate
-# is product-validated when the validator is in scope; the claude entries
-# remain in the list for documentation but always fail validation and
-# are skipped (they were the alex-solovyev silent-product-swap source).
+# and the Node-version-manager sweep all came up empty. Every candidate
+# is an OpenCode path only and is product-validated when the validator is
+# in scope; Claude paths must never be returned as OPENCODE_BIN.
 # $1 = "1" if _setup_validate_opencode_binary is callable, else "0".
 # Returns 0 + prints path on hit, 1 on miss.
 _sweep_legacy_install_paths_for_opencode() {
@@ -245,10 +244,7 @@ _sweep_legacy_install_paths_for_opencode() {
 		/home/linuxbrew/.linuxbrew/bin/opencode \
 		"$HOME/.npm-global/bin/opencode" \
 		"$HOME/.local/bin/opencode" \
-		"$HOME/.bun/bin/opencode" \
-		/opt/homebrew/bin/claude \
-		/usr/local/bin/claude \
-		"$HOME/.local/bin/claude"; do
+		"$HOME/.bun/bin/opencode"; do
 		[[ -x "$_candidate" ]] || continue
 		if [[ "$_have_validator" -eq 1 ]] && \
 			! _setup_validate_opencode_binary "$_candidate"; then
@@ -258,6 +254,17 @@ _sweep_legacy_install_paths_for_opencode() {
 		return 0
 	done
 	return 1
+}
+
+_pulse_validate_opencode_candidate() {
+	local _candidate="${1:-}" _have_validator="${2:-0}"
+	[[ -n "$_candidate" ]] && [[ -x "$_candidate" ]] || return 1
+	if [[ "$_have_validator" -eq 1 ]] && \
+		! _setup_validate_opencode_binary "$_candidate"; then
+		return 1
+	fi
+	printf '%s' "$_candidate"
+	return 0
 }
 
 # t2954: Persist a resolved runtime path with product validation. Persisting
@@ -342,23 +349,23 @@ _resolve_pulse_runtime_binary() {
 		while IFS= read -r _sched_rt_id; do
 			_sched_bin=$(rt_binary "$_sched_rt_id") || continue
 			if [[ -n "$_sched_bin" ]] && command -v "$_sched_bin" &>/dev/null; then
-				opencode_bin=$(command -v "$_sched_bin")
-				break
+				opencode_bin=$(_pulse_validate_opencode_candidate "$(command -v "$_sched_bin")" "$_have_validator" || true)
+				[[ -n "$opencode_bin" ]] && break
 			fi
 		done < <(rt_list_headless)
 	fi
 
-	# 3. Direct PATH lookup.
-	[[ -z "$opencode_bin" ]] && opencode_bin=$(command -v opencode 2>/dev/null || true)
+	# 3. Direct PATH lookup. Wrong-product binaries are rejected so discovery
+	# can continue to Node-version-manager and fixed OpenCode-only paths.
+	if [[ -z "$opencode_bin" ]] && command -v opencode &>/dev/null; then
+		opencode_bin=$(_pulse_validate_opencode_candidate "$(command -v opencode)" "$_have_validator" || true)
+	fi
 
 	# 4a. Node version manager sweep (nvm, volta, fnm). Linux-friendly.
 	[[ -z "$opencode_bin" ]] && opencode_bin=$(_sweep_nvm_volta_fnm_for_opencode "$_have_validator" || true)
 
 	# 4b. Legacy fixed-install-paths sweep (Homebrew, npm-global, bun, .local/bin).
 	[[ -z "$opencode_bin" ]] && opencode_bin=$(_sweep_legacy_install_paths_for_opencode "$_have_validator" || true)
-
-	# 5. Last-resort legacy fallback (pre-GH#18439 behaviour).
-	[[ -z "$opencode_bin" ]] && opencode_bin="/opt/homebrew/bin/opencode"
 
 	# Prefer the daemon-visible stable shim when setup can create/validate it.
 	# This keeps systemd workers off nvm/fnm/volta internals while preserving
