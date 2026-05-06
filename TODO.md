@@ -4173,3 +4173,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3561 Fix duplicate TODO entry after release auto-mark #auto-dispatch #bug ref:GH#22655
 
 - [ ] t3563 Fix recurring TODO sync stashes during cleanup #auto-dispatch #bug ref:GH#22664
+
+- [ ] t3565 Harden interactive issue creation labels #bug ref:GH#23018
