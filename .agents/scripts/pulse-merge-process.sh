@@ -950,15 +950,121 @@ _attempt_worker_briefed_auto_merge() {
 # Returns: 0=all required contexts passing, 1=some not passing or API error
 #######################################
 #######################################
+# Return whether a repository-ruleset ref pattern applies to the default branch.
+# Rulesets may use exact refs, GitHub tokens, or simple branch globs.
+#
+# Args: $1=pattern, $2=default_branch
+# Returns: 0=matches default branch, 1=does not match
+#######################################
+_ruleset_ref_matches_default_branch() {
+	local pattern="$1"
+	local default_branch="$2"
+	local default_ref="refs/heads/${default_branch}"
+
+	case "$pattern" in
+	"~ALL" | "~DEFAULT_BRANCH" | "$default_ref")
+		return 0
+		;;
+	esac
+
+	case "$pattern" in
+	refs/heads/*\**)
+		# shellcheck disable=SC2254 # Intentionally treat ruleset branch globs as patterns.
+		case "$default_ref" in
+		$pattern)
+			return 0
+			;;
+		esac
+		;;
+	esac
+
+	return 1
+}
+
+#######################################
+# Resolve newline-delimited required status check contexts from active
+# repository rulesets matching the default branch. This supplements classic
+# branch protection because rulesets can enforce required checks even when
+# the branch-protection required_status_checks endpoint returns HTTP 404.
+#
+# Args: $1=repo_slug, $2=default_branch
+# Stdout: required ruleset contexts (one per line). Empty when no active
+#         matching rulesets require status checks.
+# Returns: 0=resolved, 1=rulesets API/parse error (caller fails closed)
+#######################################
+_required_contexts_from_rulesets_for_default_branch() {
+	local repo_slug="$1"
+	local default_branch="$2"
+
+	local rulesets_json=""
+	rulesets_json=$(gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
+		echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+		return 1
+	}
+	[[ -n "$rulesets_json" && "$rulesets_json" != "[]" && "$rulesets_json" != "null" ]] || return 0
+
+	local active_ids=""
+	active_ids=$(printf '%s' "$rulesets_json" | jq -r '.[]? | select(.enforcement == "active") | .id // empty' 2>/dev/null) || {
+		echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: rulesets list parse failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+		return 1
+	}
+	[[ -n "$active_ids" ]] || return 0
+
+	local contexts_tmp=""
+	contexts_tmp=$(mktemp) || {
+		echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: mktemp failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+		return 1
+	}
+
+	local id="" detail="" include_patterns="" pattern="" matches_default=0 contexts=""
+	while IFS= read -r id; do
+		[[ -n "$id" ]] || continue
+		detail=$(gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
+			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: ruleset detail ${id} failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+			rm -f "$contexts_tmp"
+			return 1
+		}
+
+		include_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || {
+			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: ruleset detail ${id} parse failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+			rm -f "$contexts_tmp"
+			return 1
+		}
+
+		matches_default=0
+		while IFS= read -r pattern; do
+			[[ -n "$pattern" ]] || continue
+			if _ruleset_ref_matches_default_branch "$pattern" "$default_branch"; then
+				matches_default=1
+				break
+			fi
+		done <<<"$include_patterns"
+		[[ "$matches_default" -eq 1 ]] || continue
+
+		contexts=$(printf '%s' "$detail" | jq -r '.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[]? | .context // empty' 2>/dev/null) || {
+			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: required-check parse failed for ruleset ${id} in ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+			rm -f "$contexts_tmp"
+			return 1
+		}
+		[[ -n "$contexts" ]] && printf '%s\n' "$contexts" >>"$contexts_tmp"
+	done <<<"$active_ids"
+
+	if [[ -s "$contexts_tmp" ]]; then
+		sort -u "$contexts_tmp"
+	fi
+	rm -f "$contexts_tmp"
+	return 0
+}
+
+#######################################
 # Resolve the newline-delimited list of required status check contexts
 # for $repo_slug's default branch. Extracted from _check_required_checks_passing
 # (t3193) to keep that function under the 100-line complexity gate.
 #
 # Args: $1=repo_slug
-# Stdout: required contexts (one per line). Empty when the default branch
-#         has no protection (HTTP 404) or no required contexts configured —
-#         BOTH cases are "no enforcement required" and the caller treats them
-#         as PASS (t3193 supersedes t2922 fail-closed for the 404 case).
+# Stdout: required contexts from classic branch protection plus active matching
+#         repository rulesets (one per line). Empty when neither mechanism
+#         requires checks; the caller treats that as PASS.
 # Returns:
 #   0 — contexts resolved (may be empty per above)
 #   1 — real error (default branch resolve failed, or non-404 API error) —
@@ -987,12 +1093,17 @@ _required_contexts_for_default_branch() {
 		2>&1)
 	_rc_exit=$?
 	if [[ $_rc_exit -ne 0 ]]; then
-		# HTTP 404 = the default branch has no protection rules. Print empty
-		# and return success so the caller's rollup gate runs instead of
-		# fail-closed.
+		# HTTP 404 = the default branch has no classic protection rules. Rulesets
+		# can still enforce required checks, so inspect them before allowing.
 		if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
-			echo "[pulse-merge] _required_contexts_for_default_branch: no branch protection on ${repo_slug} default branch (HTTP 404) — empty contexts (t3193)" >>"$LOGFILE"
-			printf ''
+			local ruleset_contexts_404=""
+			ruleset_contexts_404=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || return 1
+			if [[ -n "$ruleset_contexts_404" ]]; then
+				echo "[pulse-merge] _required_contexts_for_default_branch: no classic branch protection on ${repo_slug} (HTTP 404), but active rulesets require contexts (GH#23019)" >>"$LOGFILE"
+				printf '%s\n' "$ruleset_contexts_404"
+				return 0
+			fi
+			echo "[pulse-merge] _required_contexts_for_default_branch: no classic branch protection or required ruleset contexts on ${repo_slug} default branch (HTTP 404) — empty contexts (t3193, GH#23019)" >>"$LOGFILE"
 			return 0
 		fi
 		# Any other failure (401, 403, 5xx, network) is a real error — keep
@@ -1002,9 +1113,23 @@ _required_contexts_for_default_branch() {
 		return 1
 	fi
 
-	# Extract required contexts from the JSON response.
-	printf '%s' "$protection_resp" \
-		| jq -r '.contexts // [] | .[]' 2>/dev/null || true
+	# Extract required contexts from the JSON response, then supplement with
+	# active matching repository rulesets so rulesets-only required checks do not
+	# pass the gate and fail later at mergePullRequest (GH#23019).
+	local classic_contexts="" ruleset_contexts=""
+	classic_contexts=$(printf '%s' "$protection_resp" \
+		| jq -r '.contexts // [] | .[]' 2>/dev/null) || classic_contexts=""
+	ruleset_contexts=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || return 1
+	if [[ -n "$ruleset_contexts" ]]; then
+		echo "[pulse-merge] _required_contexts_for_default_branch: active rulesets add required contexts for ${repo_slug} (GH#23019)" >>"$LOGFILE"
+	fi
+
+	if [[ -n "$classic_contexts" ]]; then
+		printf '%s\n' "$classic_contexts"
+	fi
+	if [[ -n "$ruleset_contexts" ]]; then
+		printf '%s\n' "$ruleset_contexts"
+	fi
 	return 0
 }
 

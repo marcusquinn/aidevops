@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Tests for t2104 / GH#19040: pulse-merge.sh _pr_required_checks_pass must
-# query `gh pr checks --required --json bucket` (branch-protection-required
-# checks only) rather than `gh pr view --json statusCheckRollup` (all checks
+# Tests for t2104 / GH#19040 and t3514: pulse-merge-process.sh
+# _pr_required_checks_pass must delegate to REST-backed required-context
+# verification rather than `gh pr view --json statusCheckRollup` (all checks
 # attached to the PR head), so that:
 #
 #   1. Post-merge advisory failures (e.g. "Sync Issue Hygiene on PR Merge"
@@ -12,8 +12,8 @@
 #      do NOT block the merge pass.
 #   2. Non-required advisory checks are ignored.
 #   3. Required failures still correctly block the merge.
-#   4. Pending / skipping required checks still allow the merge (preserves
-#      pre-t2104 semantics — --admin handles pending, skipping is not an error).
+#   4. Pending required checks block until provably passing; skipped required
+#      checks still allow the merge.
 #   5. API errors fail-closed (a bubbling gh failure must never auto-merge).
 #
 # Regression root cause: PR #19023 (GH#18787) had all required checks green
@@ -21,9 +21,9 @@
 # "Sync Issue Hygiene on PR Merge" workflow — the deterministic merge pass
 # skipped the PR and required manual maintainer intervention.
 #
-# Strategy: extract _pr_required_checks_pass from pulse-merge.sh, eval it,
-# and exercise it against a mock `gh` stub that records every invocation
-# and returns canned responses keyed on $MOCK_GH_MODE.
+# Strategy: extract _pr_required_checks_pass plus its required-context helpers
+# from pulse-merge-process.sh, eval them, and exercise against a mock `gh` stub
+# keyed on $MOCK_GH_MODE.
 
 set -euo pipefail
 
@@ -59,15 +59,15 @@ print_result() {
 	return 0
 }
 
-# Prepare a mock `gh` on PATH that records every invocation and returns
-# canned JSON keyed on $MOCK_GH_MODE:
-#   all_pass        — [{bucket:"pass"},{bucket:"pass"}]
-#   one_fail        — [{bucket:"pass"},{bucket:"fail"}]
-#   one_cancel      — [{bucket:"pass"},{bucket:"cancel"}]
-#   empty_required  — []
-#   pending_only    — [{bucket:"pending"}]
-#   skipping_only   — [{bucket:"skipping"}]
-#   error           — exit 1 with no output
+# Prepare a mock `gh` on PATH that records every invocation and returns canned
+# REST branch-protection/check-run responses keyed on $MOCK_GH_MODE:
+#   all_pass        — required check-runs conclude success
+#   one_fail        — one required check-run concludes failure
+#   one_cancel      — one required check-run concludes cancelled
+#   empty_required  — branch protection has no required contexts
+#   pending_only    — required check-run has no conclusion yet
+#   skipping_only   — required check-run concludes skipped
+#   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
@@ -81,32 +81,13 @@ setup_test_env() {
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 # Mock gh for test-pulse-merge-required-checks-filter.sh
-# Records every top-level invocation and returns canned responses for
-# `gh pr checks <N> --repo <slug> --required --json bucket [--jq EXPR]`.
-#
-# Applies --jq via the real jq binary so the function under test sees the
-# same filtered output it would see from the real gh CLI.
+# Records every top-level invocation and returns canned REST responses for
+# branch-protection required-context verification.
 printf '%s\n' "$*" >>"${GH_CALL_LOG}"
 
-# Only handle `gh pr checks ... --required --json bucket`
-if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* && "$*" == *"--json bucket"* ]]; then
-	# Resolve the canned JSON for the current mode
-	local_json=""
-	case "${MOCK_GH_MODE:-all_pass}" in
-	all_pass) local_json='[{"bucket":"pass"},{"bucket":"pass"}]' ;;
-	one_fail) local_json='[{"bucket":"pass"},{"bucket":"fail"}]' ;;
-	one_cancel) local_json='[{"bucket":"pass"},{"bucket":"cancel"}]' ;;
-	empty_required) local_json='[]' ;;
-	pending_only) local_json='[{"bucket":"pending"}]' ;;
-	skipping_only) local_json='[{"bucket":"skipping"}]' ;;
-	error)
-		printf 'gh: mock error\n' >&2
-		exit 1
-		;;
-	*) local_json='[]' ;;
-	esac
-
-	# If --jq EXPR is present, apply it via the real jq binary.
+apply_jq() {
+	local json="$1"
+	shift
 	jq_expr=""
 	prev=""
 	for arg in "$@"; do
@@ -117,10 +98,95 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* && "$*" == *"--
 		prev="$arg"
 	done
 	if [[ -n "$jq_expr" ]]; then
-		printf '%s' "$local_json" | jq -r "$jq_expr"
-		exit 0
+		printf '%s' "$json" | jq -r "$jq_expr"
+		return 0
 	fi
-	printf '%s\n' "$local_json"
+	printf '%s\n' "$json"
+	return 0
+}
+
+if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
+	apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
+	apply_jq '[]' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$2" == repos/* && "$*" != *"/branches/"* \
+	&& "$*" != *"/commits/"* && "$*" != *"/rulesets"* ]]; then
+	apply_jq '{"default_branch":"main"}' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	empty_required)
+		apply_jq '{"contexts":[]}' "$@"
+		exit 0
+		;;
+	error)
+		printf 'gh: mock branch-protection error\n' >&2
+		exit 1
+		;;
+	*)
+		apply_jq '{"contexts":["required-a","required-b"]}' "$@"
+		exit 0
+		;;
+	esac
+fi
+
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
+	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
+	local_json=""
+	case "${MOCK_GH_MODE:-all_pass}" in
+	all_pass | empty_required)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":"success","status":"completed"},
+			{"name":"required-b","conclusion":"success","status":"completed"},
+			{"name":"Sync Issue Hygiene on PR Merge","conclusion":"failure","status":"completed"}
+		]}'
+		;;
+	one_fail)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":"success","status":"completed"},
+			{"name":"required-b","conclusion":"failure","status":"completed"}
+		]}'
+		;;
+	one_cancel)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":"success","status":"completed"},
+			{"name":"required-b","conclusion":"cancelled","status":"completed"}
+		]}'
+		;;
+	pending_only)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":null,"status":"in_progress"},
+			{"name":"required-b","conclusion":"success","status":"completed"}
+		]}'
+		;;
+	skipping_only)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":"skipped","status":"completed"},
+			{"name":"required-b","conclusion":"success","status":"completed"}
+		]}'
+		;;
+	*)
+		local_json='{"check_runs":[]}'
+		;;
+	esac
+	apply_jq "$local_json" "$@"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$*" == *"/commits/"* && "$*" == *"/status"* ]]; then
+	apply_jq '{"statuses":[]}' "$@"
 	exit 0
 fi
 
@@ -138,9 +204,66 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _pr_required_checks_pass from pulse-merge.sh and eval it into
-# the current shell so we can invoke it directly.
+# Extract _pr_required_checks_pass plus its helper stack into the current shell.
 define_function_under_test() {
+	local checks_lib="${SCRIPT_DIR}/../shared-gh-wrappers-checks.sh"
+	if [[ ! -f "$checks_lib" ]]; then
+		printf 'ERROR: shared-gh-wrappers-checks.sh not found at %s\n' "$checks_lib" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from sibling lib
+	source "$checks_lib"
+	gh_pr_view() {
+		if gh pr view "$@"; then
+			return 0
+		fi
+		return 1
+	}
+
+	local ref_match_src
+	ref_match_src=$(awk '
+		/^_ruleset_ref_matches_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$ref_match_src" ]]; then
+		printf 'ERROR: could not extract _ruleset_ref_matches_default_branch from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$ref_match_src"
+
+	local rulesets_src
+	rulesets_src=$(awk '
+		/^_required_contexts_from_rulesets_for_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$rulesets_src" ]]; then
+		printf 'ERROR: could not extract _required_contexts_from_rulesets_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$rulesets_src"
+
+	local required_src
+	required_src=$(awk '
+		/^_required_contexts_for_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$required_src" ]]; then
+		printf 'ERROR: could not extract _required_contexts_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$required_src"
+
+	local checks_src
+	checks_src=$(awk '
+		/^_check_required_checks_passing\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$checks_src" ]]; then
+		printf 'ERROR: could not extract _check_required_checks_passing from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$checks_src"
+
 	local fn_src
 	fn_src=$(awk '
 		/^_pr_required_checks_pass\(\) \{/,/^}$/ { print }
@@ -190,12 +313,12 @@ assert_log_empty() {
 	return 0
 }
 
-assert_gh_call_uses_required_flag() {
+assert_gh_call_uses_rest_check_runs() {
 	local label="$1"
-	if grep -q -- "--required" "$GH_CALL_LOG" 2>/dev/null; then
+	if grep -q -- "/check-runs" "$GH_CALL_LOG" 2>/dev/null; then
 		print_result "$label" 0
 	else
-		print_result "$label" 1 "Expected 'gh pr checks ... --required' invocation"
+		print_result "$label" 1 "Expected REST check-runs invocation"
 	fi
 	return 0
 }
@@ -205,16 +328,17 @@ test_all_pass_allows_merge() {
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="all_pass"
 	assert_function_returns 0 "all required checks passing → merge allowed"
-	assert_gh_call_uses_required_flag "all_pass: gh pr checks called with --required"
-	assert_log_empty "all_pass: no skip log emitted"
+	assert_gh_call_uses_rest_check_runs "all_pass: REST check-runs called"
+	assert_log_contains "all required contexts passing" \
+		"all_pass: pass message logged"
 	return 0
 }
 
 test_post_merge_advisory_failure_ignored() {
 	# Simulates the GH#18787 regression: statusCheckRollup would have
 	# flagged "Sync Issue Hygiene on PR Merge" as FAILURE, but
-	# `gh pr checks --required` only returns branch-protection-required
-	# checks so the post-merge advisory workflow is invisible here.
+	# branch-protection required contexts exclude that advisory workflow, so it
+	# is invisible to the required-context gate.
 	# all_pass mock represents that state: two required checks, both pass.
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
@@ -227,10 +351,11 @@ test_required_failure_blocks_merge() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="one_fail"
-	assert_function_returns 1 "one required check in bucket=fail → merge blocked"
-	assert_log_contains "1 required status check(s) failing" \
-		"one_fail: skip reason logged"
-	assert_log_contains "t2104" "one_fail: log tagged with t2104"
+	assert_function_returns 1 "one required check-run failure → merge blocked"
+	assert_log_contains "required context(s) not passing" \
+		"one_fail: required-context failure logged"
+	assert_log_contains "REST required checks not provably passing" \
+		"one_fail: wrapper skip reason logged"
 	return 0
 }
 
@@ -238,9 +363,9 @@ test_required_cancel_blocks_merge() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="one_cancel"
-	assert_function_returns 1 "required check in bucket=cancel → merge blocked"
-	assert_log_contains "1 required status check(s) failing" \
-		"one_cancel: skip reason logged"
+	assert_function_returns 1 "required check-run cancelled → merge blocked"
+	assert_log_contains "required context(s) not passing" \
+		"one_cancel: required-context failure logged"
 	return 0
 }
 
@@ -251,17 +376,20 @@ test_empty_required_set_allows_merge() {
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="empty_required"
 	assert_function_returns 0 "empty required-checks set → merge allowed"
-	assert_log_empty "empty_required: no skip log emitted"
+	assert_log_contains "no required contexts" \
+		"empty_required: empty-context pass logged"
 	return 0
 }
 
-test_pending_required_allows_merge() {
-	# Pre-t2104 semantics: pending required checks are not counted as
-	# failures. --admin merges past them. The gate preserves this.
+test_pending_required_blocks_merge() {
+	# t3514 semantics: pending required checks are not provably passing, so the
+	# deterministic gate blocks until GitHub reports a successful conclusion.
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="pending_only"
-	assert_function_returns 0 "pending required check → merge allowed (pre-t2104 semantics)"
+	assert_function_returns 1 "pending required check → merge blocked"
+	assert_log_contains "required context(s) not passing" \
+		"pending_required: required-context failure logged"
 	return 0
 }
 
@@ -282,10 +410,11 @@ test_gh_api_error_fails_closed() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="error"
-	assert_function_returns 1 "gh pr checks error → merge blocked (fail-closed)"
-	assert_log_contains "required checks fetch failed" \
+	assert_function_returns 1 "required-context API error → merge blocked (fail-closed)"
+	assert_log_contains "branch protection API failed" \
 		"error: skip reason logged"
-	assert_log_contains "t2104" "error: log tagged with t2104"
+	assert_log_contains "REST required checks not provably passing" \
+		"error: wrapper skip reason logged"
 	return 0
 }
 
@@ -303,7 +432,7 @@ main() {
 	test_required_failure_blocks_merge
 	test_required_cancel_blocks_merge
 	test_empty_required_set_allows_merge
-	test_pending_required_allows_merge
+	test_pending_required_blocks_merge
 	test_skipping_required_allows_merge
 	test_gh_api_error_fails_closed
 
