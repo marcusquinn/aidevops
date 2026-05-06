@@ -1490,6 +1490,16 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
 
+	# t3549: acquire the cross-runner GitHub claim only after the canary proves
+	# this runtime can start. Otherwise canary timeout storms publish persistent
+	# DISPATCH_CLAIM audit noise even though no worker process will exist.
+	_ds_t0=$(_ds_now_ns)
+	if _dedup_layer7_claim_lock "$issue_number" "$repo_slug" "$self_login"; then
+		_ds_record "$issue_number" "$repo_slug" "claim_lock" "$_ds_t0"
+		return 2
+	fi
+	_ds_record "$issue_number" "$repo_slug" "claim_lock" "$_ds_t0"
+
 	_ds_t0=$(_ds_now_ns)
 	_dlw_assign_and_label "$issue_number" "$repo_slug" "$self_login" "$issue_meta_json"
 	_ds_record "$issue_number" "$repo_slug" "assign_and_label" "$_ds_t0"

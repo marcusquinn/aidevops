@@ -176,6 +176,11 @@ _dlw_resolve_tier_and_model() {
 	return 0
 }
 _dlw_canary_preflight() { return 0; }
+CLAIM_LOCK_CALLS_FILE="${TMP}/claim-lock-calls.txt"
+_dedup_layer7_claim_lock() {
+	printf '%s\n' "${1:-}" >>"$CLAIM_LOCK_CALLS_FILE"
+	return "${STUB_CLAIM_LOCK_RC:-1}"
+}
 
 printf '\n%s\n' "=== t2981: worktree pre-creation failure observability ==="
 
@@ -319,8 +324,42 @@ else
 fi
 
 # =============================================================================
-# Test 6: _dispatch_launch_worker skips dispatch when pre-creation fails
+# Test 6: _dispatch_launch_worker skips dispatch before claim when canary fails
 # =============================================================================
+
+_dlw_canary_preflight() { return 1; }
+
+: >"$LOGFILE"
+: >"${TMP}/setsid-calls.txt"
+: >"$CLAIM_LOCK_CALLS_FILE"
+
+launch_rc=0
+_dispatch_launch_worker "77777" "owner/repo" "test-dispatch" "Test Issue" \
+	"testuser" "$FAKE_REPO" "test prompt" "session-key-1" "" "{}" || launch_rc=$?
+
+if [[ "$launch_rc" -eq 2 ]]; then
+	pass "canary failure returns explicit no-op rc=2"
+else
+	fail "canary failure returns explicit no-op rc=2" "got rc=$launch_rc"
+fi
+
+if [[ ! -s "$CLAIM_LOCK_CALLS_FILE" ]]; then
+	pass "canary failure does not post dispatch claim"
+else
+	fail "canary failure does not post dispatch claim" "claim lock calls: $(cat "$CLAIM_LOCK_CALLS_FILE")"
+fi
+
+if [[ ! -s "${TMP}/setsid-calls.txt" ]]; then
+	pass "canary failure does not spawn worker"
+else
+	fail "canary failure does not spawn worker" "setsid was called"
+fi
+
+# =============================================================================
+# Test 7: _dispatch_launch_worker skips dispatch when pre-creation fails
+# =============================================================================
+_dlw_canary_preflight() { return 0; }
+
 # Override _dlw_precreate_worktree to simulate failure
 _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
@@ -331,6 +370,7 @@ _dlw_precreate_worktree() {
 
 : >"$LOGFILE"
 : >"${TMP}/setsid-calls.txt"
+: >"$CLAIM_LOCK_CALLS_FILE"
 # Reset stats file
 printf '{"counters":{}}\n' >"$PULSE_STATS_FILE"
 
@@ -350,8 +390,14 @@ else
 	fail "dispatch skip returns explicit no-op rc=2" "got rc=$launch_rc"
 fi
 
+if grep -q '^77777$' "$CLAIM_LOCK_CALLS_FILE" 2>/dev/null; then
+	pass "pre-creation failure happens after claim lock"
+else
+	fail "pre-creation failure happens after claim lock" "claim lock not called"
+fi
+
 # =============================================================================
-# Test 7: worktree_precreation_failed_count counter is incremented
+# Test 8: worktree_precreation_failed_count counter is incremented
 # =============================================================================
 local_count=""
 if command -v jq &>/dev/null; then
@@ -371,7 +417,7 @@ else
 fi
 
 # =============================================================================
-# Test 8: --dir argument no longer contains repo_path fallback
+# Test 9: --dir argument no longer contains repo_path fallback
 # =============================================================================
 # Grep the source file for the old pattern (single quotes intentional — literal search)
 # shellcheck disable=SC2016
