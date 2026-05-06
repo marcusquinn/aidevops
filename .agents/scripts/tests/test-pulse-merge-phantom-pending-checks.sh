@@ -9,11 +9,11 @@
 # `gh pr checks --required` to fail-closed via an API quirk, blocking auto-merge
 # of origin:worker PRs whose branch-protection-required checks all passed.
 #
-# Fix: _check_required_checks_passing fetches required contexts directly from
-# the branch protection API (authoritative), then cross-references the PR's
-# REST check-runs (GH#21799 migration). If all required-by-protection contexts
-# pass, the function returns 0, allowing the origin:worker bypass path to
-# proceed.
+# Fix: _check_required_checks_passing fetches required contexts from classic
+# branch protection plus active matching repository rulesets, then cross-
+# references the PR's REST check-runs (GH#21799 migration). If all required
+# contexts pass, the function returns 0, allowing the origin:worker bypass
+# path to proceed.
 #
 # Scenarios tested:
 #   1. all_required_pass — all required contexts SUCCESS, including the
@@ -21,28 +21,34 @@
 #   2. phantom_pending_only — required pass + non-required null/pending → return 0
 #   3. one_required_failing — one required FAILURE → return 1
 #   4. required_context_absent — required context not in rollup (NOT_FOUND) → return 1
-#   5. no_required_contexts — branch protection has empty contexts list → return 0
-#   6. default_branch_api_error — can't get default branch → return 1 (fail-closed)
-#   7. branch_protection_api_error — can't get branch protection → return 1 (fail-closed)
-#   8. checks_api_error — can't get REST check-runs → return 1 (fail-closed)
+#   5. no_required_contexts — no classic/ruleset contexts → return 0
+#   6. rulesets_required_on_404 — rulesets-only required check failing → return 1
+#   7. rulesets_required_on_404_pass — rulesets-only required check passing → return 0
+#   8. rulesets_non_matching_branch — non-default ruleset ignored → return 0
+#   9. default_branch_api_error — can't get default branch → return 1 (fail-closed)
+#   10. branch_protection_api_error — can't get branch protection → return 1 (fail-closed)
+#   11. checks_api_error — can't get REST check-runs → return 1 (fail-closed)
 #
 # Strategy: source shared-gh-wrappers-checks.sh for `gh_pr_check_runs_rest`,
 # extract _check_required_checks_passing from pulse-merge-process.sh, eval it,
 # and exercise against a mock `gh` stub keyed on MOCK_*_MODE env vars.
 #
-# The mock handles five gh invocations (post GH#21799 migration):
+# The mock handles seven gh invocations (post GH#21799 migration):
 #   1. gh api repos/SLUG                              → default branch
 #   2. gh api repos/SLUG/branches/.../protection/...  → required_status_checks
-#   3. gh pr view NUM --json headRefOid               → PR HEAD SHA
-#   4. gh api repos/SLUG/commits/SHA/check-runs       → check-run states
-#   5. gh api repos/SLUG/commits/SHA/status           → legacy status contexts
+#   3. gh api repos/SLUG/rulesets                    → repository ruleset list
+#   4. gh api repos/SLUG/rulesets/ID                 → repository ruleset detail
+#   5. gh pr view NUM --json headRefOid              → PR HEAD SHA
+#   6. gh api repos/SLUG/commits/SHA/check-runs      → check-run states
+#   7. gh api repos/SLUG/commits/SHA/status          → legacy status contexts
 #      (t3250: includes `Maintainer Review & Assignee Gate` alias for repos
 #      whose branch protection still requires the pre-reusable workflow name)
 #
 # Mode variables:
-#   MOCK_REPO_MODE   — controls gh api repos/<slug> response
-#   MOCK_BP_MODE     — controls branch protection required_status_checks response
-#   MOCK_ROLLUP_MODE — controls REST check-runs/status response (legacy name retained)
+#   MOCK_REPO_MODE     — controls gh api repos/<slug> response
+#   MOCK_BP_MODE       — controls branch protection required_status_checks response
+#   MOCK_RULESETS_MODE — controls repository ruleset list/detail responses
+#   MOCK_ROLLUP_MODE   — controls REST check-runs/status response (legacy name retained)
 
 set -euo pipefail
 
@@ -86,6 +92,7 @@ setup_test_env() {
 	export GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
 	export MOCK_REPO_MODE="ok"
 	export MOCK_BP_MODE="three_required"
+	export MOCK_RULESETS_MODE="none"
 	export MOCK_ROLLUP_MODE="all_required_pass"
 	: >"$LOGFILE"
 	: >"$GH_CALL_LOG"
@@ -93,16 +100,19 @@ setup_test_env() {
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 # Mock gh for test-pulse-merge-phantom-pending-checks.sh
-# Records every invocation and returns canned responses for three call types:
+# Records every invocation and returns canned responses for several call types:
 #   1. gh api repos/SLUG                → default branch
 #   2. gh api repos/SLUG/branches/...  → required_status_checks contexts
-#   3. gh pr view NUM --json statusCheckRollup → PR check states
+#   3. gh api repos/SLUG/rulesets       → repository ruleset list/detail
+#   4. gh pr view NUM --json statusCheckRollup → PR check states
 #
 # Mode env vars:
-#   MOCK_REPO_MODE   — ok | error
-#   MOCK_BP_MODE     — three_required | no_required | error
-#   MOCK_ROLLUP_MODE — all_required_pass | phantom_pending | one_required_failing |
-#                      required_absent | error
+#   MOCK_REPO_MODE     — ok | error
+#   MOCK_BP_MODE       — three_required | no_required | not_found | error
+#   MOCK_RULESETS_MODE — none | active_required | active_required_other_branch |
+#                        error | detail_error
+#   MOCK_ROLLUP_MODE   — all_required_pass | phantom_pending | one_required_failing |
+#                        required_absent | error
 printf '%s\n' "$*" >> "${GH_CALL_LOG}"
 
 # Helper: apply --jq expression from args if present
@@ -126,13 +136,53 @@ apply_jq() {
 	return 0
 }
 
+# Match: gh api repos/SLUG/rulesets/ID (repository ruleset detail)
+if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
+	case "${MOCK_RULESETS_MODE:-none}" in
+	active_required)
+		apply_jq '{"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
+		exit 0
+		;;
+	active_required_other_branch)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/release"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
+		exit 0
+		;;
+	detail_error)
+		printf 'gh: mock ruleset detail API error\n' >&2
+		exit 1
+		;;
+	*)
+		apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+		exit 0
+		;;
+	esac
+fi
+
+# Match: gh api repos/SLUG/rulesets (repository ruleset list)
+if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
+	case "${MOCK_RULESETS_MODE:-none}" in
+	none)
+		apply_jq '[]' "$@"
+		exit 0
+		;;
+	active_required | active_required_other_branch | detail_error)
+		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
+		exit 0
+		;;
+	error)
+		printf 'gh: mock rulesets API error\n' >&2
+		exit 1
+		;;
+	esac
+fi
+
 # Match: gh api repos/SLUG  (repo info — default branch)
 # Detected by: $1 == api, $2 starts with "repos/", no other path segments.
 # Must exclude /commits/ for the GH#21799 REST check-runs/status branches
 # below to be reachable.
 if [[ "$1" == "api" && "$2" == repos/* && "$*" != *"/branches/"* \
 	&& "$*" != *"/issues/"* && "$*" != *"/pulls/"* \
-	&& "$*" != *"/commits/"* ]]; then
+	&& "$*" != *"/commits/"* && "$*" != *"/rulesets"* ]]; then
 	case "${MOCK_REPO_MODE:-ok}" in
 	ok)
 		apply_jq '{"default_branch":"main"}' "$@"
@@ -154,6 +204,10 @@ if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 		;;
 	no_required)
 		local_json='{"contexts":[]}'
+		;;
+	not_found)
+		printf 'gh: HTTP 404: Not Found\n' >&2
+		exit 1
 		;;
 	error)
 		printf 'gh: mock branch-protection API error\n' >&2
@@ -251,8 +305,8 @@ teardown_test_env() {
 	return 0
 }
 
-# Extract _required_contexts_for_default_branch and _check_required_checks_passing
-# from pulse-merge-process.sh and eval them.
+# Extract the required-context helpers and _check_required_checks_passing from
+# pulse-merge-process.sh and eval them.
 define_function_under_test() {
 	# Source the REST check-runs helper so the extracted function can call
 	# `gh_pr_check_runs_rest` (GH#21799 migration). Sub-library only — avoids
@@ -265,6 +319,36 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$checks_lib"
+	gh_pr_view() {
+		if gh pr view "$@"; then
+			return 0
+		fi
+		return 1
+	}
+
+	local ref_match_src
+	ref_match_src=$(awk '
+		/^_ruleset_ref_matches_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$ref_match_src" ]]; then
+		printf 'ERROR: could not extract _ruleset_ref_matches_default_branch from %s\n' \
+			"$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$ref_match_src"
+
+	local rulesets_src
+	rulesets_src=$(awk '
+		/^_required_contexts_from_rulesets_for_default_branch\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$rulesets_src" ]]; then
+		printf 'ERROR: could not extract _required_contexts_from_rulesets_for_default_branch from %s\n' \
+			"$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$rulesets_src"
 
 	local helper_src
 	helper_src=$(awk '
@@ -319,6 +403,10 @@ assert_log_contains() {
 reset_logs() {
 	: >"$LOGFILE"
 	: >"$GH_CALL_LOG"
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="three_required"
+	export MOCK_RULESETS_MODE="none"
+	export MOCK_ROLLUP_MODE="all_required_pass"
 	return 0
 }
 
@@ -375,14 +463,56 @@ test_required_context_absent_from_rollup() {
 }
 
 test_no_required_contexts() {
-	# Repo has no required checks in branch protection — nothing can be failing.
+	# Repo has no required checks in classic branch protection or rulesets.
 	reset_logs
 	export MOCK_REPO_MODE="ok"
 	export MOCK_BP_MODE="no_required"
 	export MOCK_ROLLUP_MODE="all_required_pass"
-	assert_returns 0 "no required contexts in branch protection → allowed"
+	assert_returns 0 "no required contexts in branch protection or rulesets → allowed"
 	assert_log_contains "no required contexts" \
 		"no_required: pass message logged"
+	return 0
+}
+
+test_rulesets_required_on_branch_protection_404_block() {
+	# GH#23019: rulesets-only required checks must be enforced even when the
+	# classic branch-protection endpoint returns 404.
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required"
+	export MOCK_ROLLUP_MODE="one_required_failing"
+	assert_returns 1 "branch protection 404 + failing ruleset-required check → blocked"
+	assert_log_contains "active rulesets require contexts" \
+		"rulesets_404_block: ruleset context logged"
+	assert_log_contains "required context(s) not passing" \
+		"rulesets_404_block: block message logged"
+	return 0
+}
+
+test_rulesets_required_on_branch_protection_404_pass() {
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required"
+	export MOCK_ROLLUP_MODE="all_required_pass"
+	assert_returns 0 "branch protection 404 + passing ruleset-required check → allowed"
+	assert_log_contains "active rulesets require contexts" \
+		"rulesets_404_pass: ruleset context logged"
+	assert_log_contains "all required contexts passing" \
+		"rulesets_404_pass: pass message logged"
+	return 0
+}
+
+test_rulesets_non_matching_branch_ignored() {
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required_other_branch"
+	export MOCK_ROLLUP_MODE="one_required_failing"
+	assert_returns 0 "branch protection 404 + non-default ruleset → allowed"
+	assert_log_contains "no classic branch protection or required ruleset contexts" \
+		"rulesets_non_default: empty-context message logged"
 	return 0
 }
 
@@ -435,6 +565,9 @@ main() {
 	test_one_required_failing
 	test_required_context_absent_from_rollup
 	test_no_required_contexts
+	test_rulesets_required_on_branch_protection_404_block
+	test_rulesets_required_on_branch_protection_404_pass
+	test_rulesets_non_matching_branch_ignored
 	test_default_branch_api_error
 	test_branch_protection_api_error
 	test_rollup_api_error
