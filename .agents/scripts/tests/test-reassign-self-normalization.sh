@@ -14,6 +14,7 @@
 #   5. Skips status:available without origin:worker
 #   6. Skips status:available with existing assignees
 #   7. Skips fresh scanner issues (no feedback markers/labels)
+#   8. Requeues stale auto-approved needs-brief-rewrite infra holds
 #
 # Requires only: bash, a stub gh binary.
 
@@ -433,6 +434,34 @@ test_fresh_scanner_issue_skips() {
 	return 0
 }
 
+# ─── Test 10: stale auto-approved brief-rewrite infra hold → requeued ───
+test_stale_auto_approved_brief_rewrite_requeues() {
+	setup_test_env
+	local json='[
+		{"number": 4246, "assignees": [{"login": "marcusquinn"}], "labels": [{"name": "auto-dispatch"}, {"name": "origin:worker"}, {"name": "tier:standard"}, {"name": "ai-approved"}, {"name": "needs-brief-rewrite"}]}
+	]'
+	create_gh_stub "$json"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	source_function_under_test
+
+	_normalize_reassign_self "testrunner" "${TEST_ROOT}/repos.json" "${TEST_ROOT}/bin/dedup-stub.sh"
+
+	local assigned calls
+	assigned=$(get_assigned_issues)
+	calls=$(get_gh_calls)
+	if [[ "$calls" == *"--add-label status:available"* \
+		&& "$calls" == *"--remove-label needs-brief-rewrite"* \
+		&& "$calls" == *"--remove-assignee marcusquinn"* \
+		&& -z "$assigned" ]]; then
+		print_result "stale auto-approved brief-rewrite infra hold → requeued" 0
+	else
+		print_result "stale auto-approved brief-rewrite infra hold → requeued" 1 \
+			"Expected requeue edit without assignment. calls=${calls:-<empty>}; assigned=${assigned:-<empty>}"
+	fi
+	cleanup_test_env
+	return 0
+}
+
 # ─── Run all tests ───
 main() {
 	echo "=== _normalize_reassign_self tests (t2396) ==="
@@ -447,6 +476,7 @@ main() {
 	test_available_no_worker_label_skips
 	test_available_with_assignee_skips
 	test_fresh_scanner_issue_skips
+	test_stale_auto_approved_brief_rewrite_requeues
 
 	echo ""
 	echo "=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failures ==="

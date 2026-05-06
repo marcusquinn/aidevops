@@ -21,6 +21,7 @@
 #   - _gh_pr_list_merged                (t2773: merged PR list wrapper)
 #   - _build_oimp_lookup_for_slug       (t2985: per-repo merged-PR lookup)
 #   - _normalize_get_feedback_routed_rows (t2396: feedback-routed issue detection)
+#   - _normalize_get_stale_brief_rewrite_rows (stale zero-output hold recovery)
 #   - _normalize_reassign_self          (Phase 12: orphaned active issue → self-assign)
 #   - _normalize_unassign_stampless_interactive (t2148: stampless claim cleanup)
 #   - normalize_active_issue_assignments (coordinator — calls stale-recovery helpers)
@@ -352,6 +353,42 @@ _normalize_get_stale_feedback_interactive_rows() {
 	return 0
 }
 
+#######################################
+# Find auto-approved worker issues stranded by stale brief-rewrite labels.
+#
+# This recovers the awardsapp #4246/#4248 class: an actionable issue hit the
+# old zero-output infrastructure loop, received needs-brief-rewrite, then NMR
+# was auto-approved/removed while the stale brief label, stale assignee, and
+# missing status:available kept pulse from reconsidering it.
+#
+# Args:
+#   $1 - issue_rows_json from gh_issue_list
+# Output: issue|assignee1,assignee2 rows
+# Returns: 0 always
+#######################################
+_normalize_get_stale_brief_rewrite_rows() {
+	local issue_rows_json="$1"
+
+	printf '%s' "$issue_rows_json" | jq -r '
+		.[]
+		| (.labels | map(.name)) as $labels
+		| select($labels | index("auto-dispatch"))
+		| select($labels | index("origin:worker"))
+		| select($labels | index("ai-approved"))
+		| select($labels | index("needs-brief-rewrite"))
+		| select(($labels | index("needs-maintainer-review")) | not)
+		| select(($labels | index("status:available")) | not)
+		| select(($labels | index("status:queued")) | not)
+		| select(($labels | index("status:claimed")) | not)
+		| select(($labels | index("status:in-progress")) | not)
+		| select(($labels | index("status:in-review")) | not)
+		| select(($labels | index("status:blocked")) | not)
+		| select(($labels | index("status:done")) | not)
+		| "\(.number)|\([.assignees[].login] | join(","))"
+	' 2>/dev/null || true
+	return 0
+}
+
 _normalize_reassign_self() {
 	local runner_user="$1"
 	local repos_json="$2"
@@ -414,6 +451,40 @@ _normalize_reassign_self() {
 				echo "[pulse-wrapper] Assignment normalization: skipped feedback-routed #${_stale_issue} in ${slug} — failed to clear stale interactive ownership" >>"$LOGFILE"
 			fi
 		done <<<"$stale_feedback_rows"
+
+		# Stale zero-output brief-rewrite recovery: after old infra failures are
+		# auto-approved, requeue worker-origin issues for a fresh dispatch instead
+		# of leaving them assigned with no active status label.
+		local stale_brief_rows=""
+		stale_brief_rows=$(_normalize_get_stale_brief_rewrite_rows "$issue_rows_json")
+		local _brief_pair _brief_issue _brief_assignees _brief_assignee
+		while IFS= read -r _brief_pair; do
+			[[ -n "$_brief_pair" ]] || continue
+			_brief_issue="${_brief_pair%%|*}"
+			_brief_assignees="${_brief_pair#*|}"
+			[[ "$_brief_issue" =~ ^[0-9]+$ ]] || continue
+
+			local -a _brief_flags=(
+				"$_add_label_flag" "status:available"
+				"$_remove_label_flag" "needs-brief-rewrite"
+				"$_remove_label_flag" "status:queued"
+				"$_remove_label_flag" "status:claimed"
+				"$_remove_label_flag" "status:in-progress"
+				"$_remove_label_flag" "status:in-review"
+				"$_remove_label_flag" "status:blocked"
+				"$_remove_label_flag" "status:done"
+			)
+			IFS=',' read -r -a _brief_assignee_array <<<"$_brief_assignees"
+			for _brief_assignee in "${_brief_assignee_array[@]}"; do
+				[[ -n "$_brief_assignee" ]] && _brief_flags+=("$_remove_assignee_flag" "$_brief_assignee")
+			done
+
+			if gh issue edit "$_brief_issue" --repo "$slug" "${_brief_flags[@]}" >/dev/null 2>&1; then
+				echo "[pulse-wrapper] Assignment normalization: requeued stale brief-rewrite infra-hold #${_brief_issue} in ${slug}" >>"$LOGFILE"
+			else
+				echo "[pulse-wrapper] Assignment normalization: skipped stale brief-rewrite recovery for #${_brief_issue} in ${slug}" >>"$LOGFILE"
+			fi
+		done <<<"$stale_brief_rows"
 
 		# Only active worker states receive assignment normalization. Available
 		# feedback-routed worker issues may stay unassigned until the atomic dispatch

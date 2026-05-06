@@ -139,11 +139,12 @@ _dlw_hold_repeated_zero_output 123 owner/repo
 hold_rc=$?
 gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
 if [[ "$hold_rc" -eq 0 ]] \
-	&& printf '%s' "$gh_calls" | grep -q 'needs-brief-rewrite' \
-	&& printf '%s' "$gh_calls" | grep -q 'needs-maintainer-review'; then
-	pass "continued zero-output launches hold dispatch for brief rewrite"
+	&& printf '%s' "$gh_calls" | grep -q 'needs-maintainer-review' \
+	&& printf '%s' "$gh_calls" | grep -q 'dispatch-infrastructure-failure' \
+	&& ! printf '%s' "$gh_calls" | grep -q 'needs-brief-rewrite'; then
+	pass "continued zero-output launches hold dispatch for infrastructure review"
 else
-	fail "continued zero-output launches hold dispatch for brief rewrite" \
+	fail "continued zero-output launches hold dispatch for infrastructure review" \
 		"rc=${hold_rc}; gh_calls=${gh_calls}"
 fi
 
@@ -155,10 +156,11 @@ _dlw_hold_repeated_zero_output 123 owner/repo
 comment_hold_rc=$?
 comment_gh_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
 if [[ "$comment_hold_rc" -eq 0 ]] \
-	&& printf '%s' "$comment_gh_calls" | grep -q 'needs-brief-rewrite'; then
-	pass "comment evidence triggers brief-rewrite hold when state count is low"
+	&& printf '%s' "$comment_gh_calls" | grep -q 'dispatch-infrastructure-failure' \
+	&& ! printf '%s' "$comment_gh_calls" | grep -q 'needs-brief-rewrite'; then
+	pass "comment evidence triggers infrastructure hold when state count is low"
 else
-	fail "comment evidence triggers brief-rewrite hold when state count is low" \
+	fail "comment evidence triggers infrastructure hold when state count is low" \
 		"rc=${comment_hold_rc}; gh_calls=${comment_gh_calls}"
 fi
 
@@ -172,7 +174,8 @@ shared_metrics_hold_rc=$?
 shared_metrics_hold_calls=$(tr '\n' ' ' <"${TMP}/gh-calls.log" 2>/dev/null || true)
 hold_api_calls=$(wc -l <"${TMP}/gh-api-calls.log" | tr -d '[:space:]')
 if [[ "$shared_metrics_hold_rc" -eq 0 ]] \
-	&& printf '%s' "$shared_metrics_hold_calls" | grep -q 'needs-brief-rewrite' \
+	&& printf '%s' "$shared_metrics_hold_calls" | grep -q 'dispatch-infrastructure-failure' \
+	&& ! printf '%s' "$shared_metrics_hold_calls" | grep -q 'needs-brief-rewrite' \
 	&& [[ "$hold_api_calls" == "1" ]]; then
 	pass "zero-output hold reuses comment bloat metrics for evidence count"
 else
