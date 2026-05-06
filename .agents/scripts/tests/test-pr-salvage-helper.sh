@@ -52,7 +52,7 @@ gh() {
 		fi
 		;;
 	issue)
-		if [[ " ${*} " == *"PR #53"* ]]; then
+		if [[ " ${*} " == *" recover OR recovery "* ]]; then
 			printf '%s\n' '[{"number":60,"title":"Recover buffalo logo favicon from closed PR #53","body":"Worker completion audit: completed recovery.","state":"CLOSED","labels":[{"name":"status:done"}]}]'
 			return 0
 		fi

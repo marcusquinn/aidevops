@@ -125,19 +125,41 @@ has_replacement_pr() {
 }
 
 #######################################
+# Fetch closed issues that may document completed PR recovery.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Output: JSON array of matching closed issues
+#######################################
+fetch_completed_recovery_issues() {
+	local slug="$1"
+	local issues
+	issues=$(gh issue list --repo "$slug" --state closed \
+		--search "recover OR recovery OR salvage OR restore OR cherry-pick OR cherrypick" \
+		--json number,title,body,state,closedAt --limit 100 2>/dev/null) || issues="[]"
+
+	echo "$issues"
+	return 0
+}
+
+#######################################
 # Check if a closed issue already completed recovery for a closed PR.
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - PR number
+#   $3 - optional pre-fetched closed recovery issues JSON array
 # Output: "true" or "false" to stdout
 #######################################
 has_completed_recovery_issue() {
 	local slug="$1"
 	local pr_number="$2"
+	local prefetched_issues="${3:-}"
 	local issues
-	issues=$(gh issue list --repo "$slug" --state closed \
-		--search "\"PR #${pr_number}\" recover" \
-		--json number,title,body,state,closedAt --limit 50 2>/dev/null) || issues="[]"
+	if [[ -n "$prefetched_issues" ]]; then
+		issues="$prefetched_issues"
+	else
+		issues=$(fetch_completed_recovery_issues "$slug")
+	fi
 
 	local match_count
 	match_count=$(echo "$issues" | jq --arg pr "PR #${pr_number}" '
@@ -271,15 +293,15 @@ scan_repo() {
 
 	# For each unmerged PR, check recoverability and build salvage entries
 	local salvageable="[]"
+	local completed_recovery_issues
+	completed_recovery_issues=$(fetch_completed_recovery_issues "$slug")
 	local pr_json
 	while IFS= read -r pr_json; do
 		local pr_number branch additions branch_exists risk entry
-		pr_number=$(echo "$pr_json" | jq -r '.number')
-		branch=$(echo "$pr_json" | jq -r '.headRefName')
-		additions=$(echo "$pr_json" | jq -r '.additions')
+		read -r pr_number branch additions < <(echo "$pr_json" | jq -r '[.number, .headRefName, .additions] | @tsv')
 
 		# Skip PRs whose salvage has already been completed and documented in a closed issue.
-		if [[ "$(has_completed_recovery_issue "$slug" "$pr_number")" == "true" ]]; then
+		if [[ "$(has_completed_recovery_issue "$slug" "$pr_number" "$completed_recovery_issues")" == "true" ]]; then
 			continue
 		fi
 
