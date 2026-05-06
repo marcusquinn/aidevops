@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.79] - 2026-05-06
+
+### Changed
+
+- Maintenance: mark t3565 complete (pr:#23020 completed:2026-05-06) [skip ci]
+- Maintenance: sync ref:GH#23018 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- normalize interactive tracking issue labels (#23020)
+
 ## [3.14.78] - 2026-05-06
 
 ### Fixed
