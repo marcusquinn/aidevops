@@ -210,6 +210,20 @@ _setup_find_valid_opencode_binary() {
 	return 1
 }
 
+_setup_record_valid_opencode_binary() {
+	local valid_bin="$1"
+	local valid_version=""
+	local stable_bin=""
+
+	[[ -n "$valid_bin" ]] || return 1
+	valid_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$valid_bin" 2>/dev/null || printf 'unknown')")
+	stable_bin=$(_setup_ensure_opencode_stable_shim "$valid_bin" 2>/dev/null || printf '%s' "$valid_bin")
+	print_success "OpenCode CLI: $valid_bin ($valid_version)"
+	mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+	printf '%s\n' "$stable_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+	return 0
+}
+
 # Validate that an opencode binary is real anomalyco/opencode (t2888, mirrors t2887 validator).
 # Returns: 0=valid, 1=wrong package, 2=missing/unrunnable.
 # Inlined (not sourced from headless-runtime-lib.sh) so this module stays self-contained
@@ -294,13 +308,7 @@ setup_opencode_cli() {
 		local valid_bin=""
 		valid_bin=$(_setup_find_valid_opencode_binary "$current_bin" 2>/dev/null || echo "")
 		if [[ -n "$valid_bin" ]]; then
-			local valid_version=""
-			valid_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$valid_bin" 2>/dev/null || printf 'unknown')")
-			local stable_bin=""
-			stable_bin=$(_setup_ensure_opencode_stable_shim "$valid_bin" 2>/dev/null || printf '%s' "$valid_bin")
-			print_success "OpenCode CLI: $valid_bin ($valid_version)"
-			mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
-			printf '%s\n' "$stable_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+			_setup_record_valid_opencode_binary "$valid_bin"
 			return 0
 		fi
 	fi
