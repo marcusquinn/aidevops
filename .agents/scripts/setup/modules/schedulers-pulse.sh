@@ -387,7 +387,8 @@ _build_pulse_linux_env() {
 	# runtime. No model env vars embedded in cron/systemd.
 	local opencode_bin="${1:-}"
 	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
-PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
+PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}
+AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0"
 
 	# GH#18439 Bug 2: embed resolved runtime binary path so pulse-wrapper.sh
 	# and headless-runtime-helper.sh find the correct binary under systemd's

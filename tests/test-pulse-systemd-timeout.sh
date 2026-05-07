@@ -90,6 +90,11 @@ if ! grep -q '^Environment=PULSE_STALE_THRESHOLD="1800"$' "$SERVICE_FILE"; then
 	exit 1
 fi
 
+if ! grep -q '^Environment=AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING="0"$' "$SERVICE_FILE"; then
+	echo "expected async post-dispatch housekeeping disabled in ${SERVICE_FILE}" >&2
+	exit 1
+fi
+
 printf 'PASS %s\n' "pulse systemd service timeout exceeds watchdog threshold"
 
 # GH#18439 Bug 1 regression: _scheduler_systemd_env_lines() emits a trailing
