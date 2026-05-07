@@ -552,9 +552,78 @@ _pulse_merge_dismiss_coderabbit_nits() {
 }
 
 #######################################
-# Verify no branch-protection-required check on a PR is in a failed state.
-# Skips PRs with failing CI even when the merge would use --admin
-# (which bypasses branch protection).
+# Return whether any branch-protection-required check on a PR is in a terminal
+# failed state. Pending states are explicitly non-terminal: queued, pending,
+# in_progress, waiting, skipped-by-dependency, expected, absent-from-rollup,
+# and null conclusions must not trigger close/requeue/repair routing.
+#
+# Args: $1=repo_slug, $2=pr_number
+# Returns: 0=terminal failure found, 1=no terminal failures, 2=API/parse error
+#######################################
+_check_required_checks_has_terminal_failure() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	local required_contexts=""
+	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 2
+	if [[ -z "$required_contexts" ]]; then
+		echo "[pulse-merge] _check_required_checks_has_terminal_failure: no required contexts for ${repo_slug} — allowing (t3567)" >>"$LOGFILE"
+		return 1
+	fi
+
+	local pr_sha=""
+	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+	if [[ -z "$pr_sha" ]]; then
+		echo "[pulse-merge] _check_required_checks_has_terminal_failure: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t3567)" >>"$LOGFILE"
+		return 2
+	fi
+
+	local rollup_json=""
+	rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
+	if [[ -z "$rollup_json" || "$rollup_json" == "null" ]]; then
+		echo "[pulse-merge] _check_required_checks_has_terminal_failure: REST check-runs fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t3567)" >>"$LOGFILE"
+		return 2
+	fi
+
+	local req_json
+	req_json=$(printf '%s' "$required_contexts" \
+		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
+
+	local failing_count _fc_exit
+	failing_count=$(jq -n \
+		--argjson req "$req_json" \
+		--argjson checks "$rollup_json" \
+		'$req | map(
+			. as $ctx |
+			($checks | map(select((.name // "") == $ctx)) | last) as $c |
+			if $c == null then false
+			elif (($c.conclusion // "" | ascii_downcase)
+				| . == "failure" or . == "cancelled" or . == "timed_out" or . == "action_required") then true
+			else false
+			end
+		) | map(select(.)) | length' 2>/dev/null)
+	_fc_exit=$?
+
+	if [[ $_fc_exit -ne 0 || -z "$failing_count" ]]; then
+		echo "[pulse-merge] _check_required_checks_has_terminal_failure: jq evaluation failed for PR #${pr_number} in ${repo_slug} — failing closed (t3567)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ "$failing_count" -gt 0 ]]; then
+		echo "[pulse-merge] _check_required_checks_has_terminal_failure: ${failing_count} terminal failed required context(s) for PR #${pr_number} in ${repo_slug} (t3567)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] _check_required_checks_has_terminal_failure: no terminal failed required contexts for PR #${pr_number} in ${repo_slug} (t3567)" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Verify no branch-protection-required check on a PR is in a terminal failed
+# state. Skips PRs with terminal failed CI even when the merge would use
+# --admin (which bypasses branch protection), but leaves queued/pending/
+# in-progress/expected checks on the normal non-terminal path.
 #
 # t3514: delegate to REST-backed branch-protection context verification so
 # merge readiness does not spend GraphQL on `gh pr checks --required`.
@@ -564,13 +633,21 @@ _pulse_merge_dismiss_coderabbit_nits() {
 # errors — a bubbling gh failure should never auto-merge.
 #
 # Arguments: $1=pr_number, $2=repo_slug
-# Returns: 0 if all required checks pass/pending/skipping, 1 if any failed
+# Returns: 0 if no required check is terminal failed, 1 if any terminal failed
+#          or required-check state cannot be verified.
 #######################################
 _pr_required_checks_pass() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	if ! _check_required_checks_passing "$repo_slug" "$pr_number"; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks not provably passing (t3514)" >>"$LOGFILE"
+	local _terminal_rc=0
+	_check_required_checks_has_terminal_failure "$repo_slug" "$pr_number"
+	_terminal_rc=$?
+	if [[ $_terminal_rc -eq 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks have terminal failure (t3567)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ $_terminal_rc -ne 1 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks could not be classified (t3567)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -1360,8 +1437,8 @@ _auto_merge_stuck_seconds() {
 # Decision tree:
 #   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
 #                                                             t3192 stuck fallback)
-#   * PR already has auto_merge set + stale pending → return 2 (caller routes
-#                                                               CI repair)
+#   * PR already has auto_merge set + stale pending → return 0 (non-terminal;
+#                                                               keep deferring)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub
 #                                                         finishes the job)
 #   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
@@ -1380,7 +1457,7 @@ _auto_merge_stuck_seconds() {
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
 # Args: $1=pr_number, $2=repo_slug
-# Returns: 0=native-auto requested/deferred, 1=fall through, 2=stale pending repair
+# Returns: 0=native-auto requested/deferred, 1=fall through, 2=terminal repair
 #######################################
 _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
@@ -1407,10 +1484,9 @@ _set_native_auto_merge_or_skip() {
 			return 1
 		fi
 
-		# t3508: if native auto-merge has been waiting on required checks past
-		# the same stuck threshold, stop silently deferring every pulse cycle.
-		# Return 2 so the caller can route a bounded CI repair worker/comment keyed
-		# by the linked issue/PR marker instead of attempting an admin bypass.
+		# t3567: pending required checks are non-terminal. Even if native
+		# auto-merge has been waiting past the stuck threshold, do not route CI
+		# repair/close/requeue unless a terminal failure has been observed.
 		local _pending_count=0
 		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
 			_pending_count=1
@@ -1426,8 +1502,8 @@ _set_native_auto_merge_or_skip() {
 			_age_seconds=$((_now_epoch - _enabled_epoch))
 			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 			if [[ "$_enabled_epoch" -gt 0 && "$_age_seconds" -gt "$_threshold" ]]; then
-				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge has ${_pending_count} required check(s) pending for ${_age_seconds}s (>${_threshold}s) — routing CI repair (t3508)" >>"$LOGFILE"
-				return 2
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge has ${_pending_count} required check(s) pending for ${_age_seconds}s (>${_threshold}s) — deferring as non-terminal (t3567)" >>"$LOGFILE"
+				return 0
 			fi
 		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge already set, deferring to GitHub (t3070)" >>"$LOGFILE"
