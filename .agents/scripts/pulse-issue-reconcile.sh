@@ -444,10 +444,6 @@ _normalize_requeue_stale_brief_rewrite_rows() {
 			"$add_label_flag" "$_PIR_STATUS_AVAILABLE"
 			"$remove_label_flag" "$_PIR_NEEDS_BRIEF_REWRITE"
 		)
-		local status_label=""
-		for status_label in "$_PIR_STATUS_QUEUED" "$_PIR_STATUS_CLAIMED" "$_PIR_STATUS_IN_PROGRESS" "$_PIR_STATUS_IN_REVIEW" "$_PIR_STATUS_BLOCKED" "$_PIR_STATUS_DONE"; do
-			brief_flags+=("$remove_label_flag" "$status_label")
-		done
 		IFS=',' read -r -a brief_assignee_array <<<"$brief_assignees"
 		for brief_assignee in "${brief_assignee_array[@]}"; do
 			[[ -n "$brief_assignee" ]] && brief_flags+=("$remove_assignee_flag" "$brief_assignee")
