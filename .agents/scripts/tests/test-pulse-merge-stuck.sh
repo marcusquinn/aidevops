@@ -18,7 +18,8 @@
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
 #      read-only merge gates (required checks, worker PR with no linked issue,
-#      and non-collaborator author without maintainer crypto-approval).
+#      non-collaborator author without maintainer crypto-approval, and unknown
+#      authors that must not bypass the collaborator check).
 #   8. _detect_pattern_outage de-duplicates repeated PR observations.
 #   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -316,7 +317,9 @@ gh() {
 {"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
 {"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
 {"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"}},
-{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}}
+{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null},
+{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"}}
 ]'
 		return 0
 	fi

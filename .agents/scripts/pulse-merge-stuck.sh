@@ -1014,7 +1014,7 @@ _pms_pr_counts_for_zero_progress() {
 	# intentionally skipped unless a maintainer crypto-approval exists; counting
 	# it as eligible creates a false structural-stuck signal when every real merge
 	# candidate is already drained.
-	if [[ -n "$pr_author" ]] && declare -F _is_collaborator_author >/dev/null 2>&1; then
+	if declare -F _is_collaborator_author >/dev/null 2>&1; then
 		if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
 			if ! declare -F _has_maintainer_crypto_approval >/dev/null 2>&1 \
 				|| ! _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
@@ -1059,9 +1059,9 @@ _pms_count_eligible_unmerged_for_repo() {
 			(.mergeable // "") == "MERGEABLE"
 			and (.reviewDecision // "") == "APPROVED"
 			and (.isDraft // false) == false
-			and (([.labels[].name] | index("hold-for-review")) == null)
+			and (([.labels[]?.name] | index("hold-for-review")) == null)
 		  )
-		  | "\(.number // "")\u001e\([.labels[].name] | join(","))\u001e\(.author.login // "")"
+		  | "\(.number // "")\u001e\([.labels[]?.name] | join(","))\u001e\(.author.login? // "unknown")"
 		] | .[]' 2>/dev/null) || candidates=""
 
 	local count=0
