@@ -58,6 +58,22 @@ When detected on a `tier:thinking` issue lacking `model:opus-4-7`:
 
 **Tests:** `tests/test-self-hosting-detector.sh` — 7 cases covering positive/negative/mixed-scope/idempotency/bypass/dry-run/tier-guard.
 
+### Review-feedback supersession detector (t3569)
+
+**Type:** Advisory/blocking pre-step for `source:review-feedback` and `quality-debt` issues
+**Marker:** None required — uses labels/title plus cited file paths and finding keywords
+**Bypass:** `AIDEVOPS_SKIP_REVIEW_FEEDBACK_SUPERSESSION=1`
+
+Runs before generator-marker validators in `cmd_validate()`. It extracts cited file paths and compact finding keywords from the issue body, searches recently merged PRs after the issue creation timestamp, and inspects PR file lists plus title/body/diff text.
+
+Outcomes:
+
+1. Same-file PR merged after issue creation with strong finding signal (issue reference or 2+ keyword matches) → posts `<!-- review-feedback-superseded-by-merged-pr -->`, closes the issue as `not planned`, returns `10`, and skips worker dispatch.
+2. Same-file PR merged after issue creation but weak/unrelated finding signal → posts one `<!-- review-feedback-supersession-ambiguous -->` decision-ready comment and returns `0` so dispatch proceeds.
+3. No same-file candidate, missing metadata, or API error → fails open with return `0`.
+
+**Tests:** `tests/test-review-feedback-supersession-validator.sh` — clear same-file fix, ambiguous same-file unrelated change, no matching PR, and PR merged before issue creation.
+
 ## Adding a validator
 
 1. Define the generator function in `pulse-simplification.sh` or the issue-creation script.
@@ -82,6 +98,7 @@ When detected on a `tier:thinking` issue lacking `model:opus-4-7`:
 ```bash
 bash .agents/scripts/tests/test-pre-dispatch-validator.sh
 bash .agents/scripts/tests/test-self-hosting-detector.sh
+bash .agents/scripts/tests/test-review-feedback-supersession-validator.sh
 .agents/scripts/pre-dispatch-validator-helper.sh validate <issue-number> marcusquinn/aidevops
 ```
 

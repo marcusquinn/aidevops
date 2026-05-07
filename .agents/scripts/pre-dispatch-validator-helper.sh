@@ -566,6 +566,413 @@ _detect_self_hosting_task() {
 }
 
 # ---------------------------------------------------------------------------
+# Review-feedback / quality-debt supersession detector (t3569, GH#23101)
+# ---------------------------------------------------------------------------
+
+_rf_extract_file_paths_from_text() {
+	local text="$1"
+	local paths=""
+	local dir_paths=""
+	local backtick_files=""
+	local bare_files=""
+
+	dir_paths=$(printf '%s' "$text" | grep -oE '[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+\.[a-zA-Z]{1,10}' | sort -u || true)
+	if [[ -n "$dir_paths" ]]; then
+		paths="${paths}${dir_paths}"$'\n'
+	fi
+
+	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
+	backtick_files=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
+	if [[ -n "$backtick_files" ]]; then
+		paths="${paths}${backtick_files}"$'\n'
+	fi
+
+	bare_files=$(printf '%s' "$text" | grep -oE '\b[a-zA-Z0-9_-]+\.(sh|ts|js|py|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp)\b' | sort -u || true)
+	if [[ -n "$bare_files" ]]; then
+		paths="${paths}${bare_files}"$'\n'
+	fi
+
+	printf '%s' "$paths" | sort -u | grep -v '^$' | grep -vE '^v?[0-9]+\.[0-9]+\.[0-9]+' || true
+	return 0
+}
+
+_rf_is_stopword() {
+	local word="$1"
+
+	case "$word" in
+	aidevops | automated | auto | body | cited | code | debt | dispatch | file | files | fix | fixed | fixing | from | generated | guidance | issue | label | labels | line | lines | merged | modify | path | paths | please | quality | review | should | source | status | task | that | the | then | there | this | updates | what | when | where | with | worker | workers)
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+_rf_extract_keywords() {
+	local text="$1"
+	local keyword_text=""
+	local words=""
+	local word=""
+	local count=0
+
+	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
+	keyword_text=$(printf '%s' "$text" | sed -E 's/`[A-Za-z0-9._\/-]+\.[A-Za-z0-9]{1,10}(:[0-9]+(-[0-9]+)?)?`/ /g; s#[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+\.[A-Za-z]{1,10}# #g')
+	words=$(printf '%s' "$keyword_text" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]_' '\n' | grep -E '^[a-z][a-z0-9_]{3,}$' | sort -u || true)
+	while IFS= read -r word; do
+		[[ -z "$word" ]] && continue
+		if _rf_is_stopword "$word"; then
+			continue
+		fi
+		printf '%s\n' "$word"
+		count=$((count + 1))
+		if [[ "$count" -ge 40 ]]; then
+			break
+		fi
+	done <<<"$words"
+
+	return 0
+}
+
+_rf_issue_in_supersession_scope() {
+	local issue_body="$1"
+	local labels="$2"
+	local title="$3"
+	local labels_lc=""
+	local title_lc=""
+
+	labels_lc=$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')
+	case ",${labels_lc}," in
+	*",source:review-feedback,"* | *",quality-debt,"*)
+		return 0
+		;;
+	esac
+
+	if printf '%s' "$issue_body" | grep -qF '<!-- source:review-feedback -->'; then
+		return 0
+	fi
+
+	title_lc=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
+	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback)([^[:alnum:]-]|$)'; then
+		return 0
+	fi
+
+	return 1
+}
+
+_rf_search_merged_pr_numbers() {
+	local slug="$1"
+	local created_at="$2"
+	local created_date="${created_at%%T*}"
+	local limit="${AIDEVOPS_REVIEW_FEEDBACK_SUPERSESSION_LIMIT:-25}"
+
+	if [[ -z "$created_date" || "$created_date" == "$created_at" ]]; then
+		return 1
+	fi
+
+	gh api -X GET search/issues \
+		-f q="repo:${slug} is:pr is:merged merged:>=${created_date}" \
+		-f sort=updated \
+		-f order=desc \
+		-f per_page="$limit" \
+		--jq '.items[]?.number' 2>/dev/null || true
+	return 0
+}
+
+_rf_get_pr_files() {
+	local slug="$1"
+	local pr_number="$2"
+
+	gh api --paginate "repos/${slug}/pulls/${pr_number}/files" --jq '.[].filename' 2>/dev/null
+	return $?
+}
+
+_rf_get_pr_patch_text() {
+	local slug="$1"
+	local pr_number="$2"
+
+	gh api --paginate "repos/${slug}/pulls/${pr_number}/files" --jq '.[] | (.filename + "\n" + (.patch // ""))' 2>/dev/null
+	return $?
+}
+
+_rf_find_overlapping_paths() {
+	local issue_paths="$1"
+	local pr_files="$2"
+	local issue_path=""
+	local pr_path=""
+	local issue_basename=""
+	local pr_basename=""
+	local overlaps=""
+
+	while IFS= read -r issue_path; do
+		[[ -z "$issue_path" ]] && continue
+		issue_basename="${issue_path##*/}"
+		while IFS= read -r pr_path; do
+			[[ -z "$pr_path" ]] && continue
+			pr_basename="${pr_path##*/}"
+			if [[ "$issue_path" == */* ]]; then
+				if [[ "$pr_path" == "$issue_path" || "$pr_path" == *"/${issue_path}" ]]; then
+					overlaps="${overlaps}${pr_path}"$'\n'
+				fi
+			elif [[ "$pr_basename" == "$issue_basename" ]]; then
+				overlaps="${overlaps}${pr_path}"$'\n'
+			fi
+		done <<<"$pr_files"
+	done <<<"$issue_paths"
+
+	if [[ -n "$overlaps" ]]; then
+		printf '%s' "$overlaps" | sort -u
+		return 0
+	fi
+
+	return 1
+}
+
+_RF_KEYWORD_SCORE=0
+_RF_MATCHED_KEYWORDS=""
+
+_rf_score_keywords() {
+	local keywords="$1"
+	local evidence="$2"
+	local evidence_lc=""
+	local keyword=""
+	local score=0
+	local matched=""
+
+	evidence_lc=$(printf '%s' "$evidence" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r keyword; do
+		[[ -z "$keyword" ]] && continue
+		if printf '%s' "$evidence_lc" | grep -qF "$keyword"; then
+			score=$((score + 1))
+			matched="${matched}${keyword}"$'\n'
+		fi
+	done <<<"$keywords"
+
+	_RF_KEYWORD_SCORE="$score"
+	_RF_MATCHED_KEYWORDS=$(printf '%s' "$matched" | sort -u | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+	return 0
+}
+
+_rf_pr_references_issue() {
+	local issue_number="$1"
+	local evidence="$2"
+	local evidence_lc=""
+
+	evidence_lc=$(printf '%s' "$evidence" | tr '[:upper:]' '[:lower:]')
+	if printf '%s' "$evidence_lc" | grep -Eq "(^|[^0-9])#${issue_number}([^0-9]|$)|gh#${issue_number}([^0-9]|$)"; then
+		return 0
+	fi
+
+	return 1
+}
+
+_rf_comment_marker_exists() {
+	local issue_number="$1"
+	local slug="$2"
+	local marker="$3"
+	local existing=""
+
+	existing=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments" \
+		--jq "[.[] | select(.body | contains(\"${marker}\"))] | length" \
+		2>/dev/null | awk '{s+=$1} END{print s+0}') || existing="0"
+
+	if [[ "$existing" =~ ^[1-9][0-9]*$ ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+_rf_join_lines() {
+	local text="$1"
+	local joined=""
+
+	joined=$(printf '%s' "$text" | tr '\n' ',' | sed 's/,$//;s/,/, /g')
+	printf '%s' "$joined"
+	return 0
+}
+
+_rf_post_ambiguous_comment() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_paths="$3"
+	local keywords="$4"
+	local ambiguous_evidence="$5"
+	local marker='<!-- review-feedback-supersession-ambiguous -->'
+
+	if _rf_comment_marker_exists "$issue_number" "$slug" "$marker"; then
+		_log "INFO" "#${issue_number}: ambiguous supersession comment already exists — dispatch proceeds"
+		return 0
+	fi
+
+	local compact_paths=""
+	local compact_keywords=""
+	local comment_body=""
+	compact_paths=$(_rf_join_lines "$issue_paths")
+	compact_keywords=$(_rf_join_lines "$keywords")
+	[[ -n "$compact_keywords" ]] || compact_keywords="<none extracted>"
+
+	comment_body=$(cat <<EOF
+${marker}
+## Possible review-feedback supersession
+
+Pre-dispatch found merged PRs after this issue was created that touched cited file paths, but the diff/title/body keyword evidence was not strong enough to skip worker dispatch.
+
+- **Cited files:** ${compact_paths}
+- **Finding keywords:** ${compact_keywords}
+- **Ambiguous candidates:**
+${ambiguous_evidence}
+
+Dispatch proceeds because the supersession evidence is ambiguous; only clear same-file + finding-signal matches are skipped automatically.
+EOF
+	)
+
+	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to post ambiguous supersession comment"
+	return 0
+}
+
+_rf_close_with_supersession() {
+	local issue_number="$1"
+	local slug="$2"
+	local pr_number="$3"
+	local merged_at="$4"
+	local overlaps="$5"
+	local matched_keywords="$6"
+	local marker='<!-- review-feedback-superseded-by-merged-pr -->'
+	local sig_footer=""
+
+	if [[ -x "${SCRIPT_DIR}/gh-signature-helper.sh" ]]; then
+		sig_footer=$("${SCRIPT_DIR}/gh-signature-helper.sh" footer --issue "${slug}#${issue_number}" 2>/dev/null || true)
+	fi
+
+	local compact_overlaps=""
+	local comment_body=""
+	compact_overlaps=$(_rf_join_lines "$overlaps")
+	[[ -n "$matched_keywords" ]] || matched_keywords="issue reference"
+
+	comment_body=$(cat <<EOF
+${marker}
+> Superseded. Pre-dispatch review-feedback validator found merged PR #${pr_number} after this issue was created. The PR touches the cited file path(s) and matches the finding signal, so worker dispatch is skipped.
+
+- **Merged PR:** #${pr_number}
+- **Merged at:** ${merged_at}
+- **Overlapping files:** ${compact_overlaps}
+- **Matched signal:** ${matched_keywords}
+
+Closed automatically by the review-feedback supersession validator (t3569, GH#23101). If the finding recurs, a new review-feedback issue will be created by the next scan.
+
+${sig_footer}
+EOF
+	)
+
+	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to post review-feedback supersession rationale"
+	gh issue close "$issue_number" --repo "$slug" --reason "not planned" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to close superseded review-feedback issue"
+
+	_log "INFO" "#${issue_number}: closed as superseded by merged PR #${pr_number}"
+	return 0
+}
+
+_detect_review_feedback_supersession() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_body="$3"
+	local issue_api_path="$4"
+
+	if [[ "${AIDEVOPS_SKIP_REVIEW_FEEDBACK_SUPERSESSION:-}" == "1" ]]; then
+		_log "INFO" "AIDEVOPS_SKIP_REVIEW_FEEDBACK_SUPERSESSION=1 — skipping review-feedback supersession detector"
+		return 0
+	fi
+
+	local issue_meta=""
+	local created_at=""
+	local issue_title=""
+	local labels=""
+	issue_meta=$(gh api "$issue_api_path" --jq '[.created_at // "", .title // "", ([.labels[]?.name] | join(","))] | @tsv' 2>/dev/null) || {
+		_log "WARN" "#${issue_number}: failed to fetch issue metadata for review-feedback supersession check — dispatch proceeds"
+		return 0
+	}
+	IFS=$'\t' read -r created_at issue_title labels <<<"$issue_meta"
+
+	if ! _rf_issue_in_supersession_scope "$issue_body" "$labels" "$issue_title"; then
+		_log "INFO" "#${issue_number}: not review-feedback/quality-debt — supersession detector skips"
+		return 0
+	fi
+
+	if [[ -z "$created_at" || "$created_at" != *T* ]]; then
+		_log "WARN" "#${issue_number}: missing created_at metadata — review-feedback supersession check fails open"
+		return 0
+	fi
+
+	local issue_paths=""
+	issue_paths=$(_rf_extract_file_paths_from_text "$issue_body")
+	if [[ -z "$issue_paths" ]]; then
+		_log "INFO" "#${issue_number}: no cited file paths — review-feedback supersession detector skips"
+		return 0
+	fi
+
+	local keywords=""
+	keywords=$(_rf_extract_keywords "$issue_body")
+
+	local candidate_numbers=""
+	candidate_numbers=$(_rf_search_merged_pr_numbers "$slug" "$created_at") || candidate_numbers=""
+	if [[ -z "$candidate_numbers" ]]; then
+		_log "INFO" "#${issue_number}: no merged PR candidates after ${created_at} — dispatch proceeds"
+		return 0
+	fi
+
+	local pr_number=""
+	local ambiguous_evidence=""
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+
+		local pr_meta=""
+		local merged_at=""
+		local pr_title=""
+		local pr_body=""
+		pr_meta=$(gh api "repos/${slug}/pulls/${pr_number}" --jq '[.merged_at // "", .title // "", .body // ""] | @tsv' 2>/dev/null) || {
+			_log "WARN" "#${issue_number}: failed to fetch PR #${pr_number} metadata — skipping candidate"
+			continue
+		}
+		IFS=$'\t' read -r merged_at pr_title pr_body <<<"$pr_meta"
+
+		if [[ -z "$merged_at" || "$merged_at" < "$created_at" || "$merged_at" == "$created_at" ]]; then
+			continue
+		fi
+
+		local pr_files=""
+		pr_files=$(_rf_get_pr_files "$slug" "$pr_number") || {
+			_log "WARN" "#${issue_number}: failed to fetch PR #${pr_number} files — skipping candidate"
+			continue
+		}
+
+		local overlaps=""
+		if ! overlaps=$(_rf_find_overlapping_paths "$issue_paths" "$pr_files"); then
+			continue
+		fi
+
+		local pr_patch=""
+		pr_patch=$(_rf_get_pr_patch_text "$slug" "$pr_number") || pr_patch=""
+		local evidence="${pr_title}"$'\n'"${pr_body}"$'\n'"${pr_patch}"
+		_rf_score_keywords "$keywords" "$evidence"
+
+		if _rf_pr_references_issue "$issue_number" "$evidence" || [[ "$_RF_KEYWORD_SCORE" -ge 2 ]]; then
+			_rf_close_with_supersession "$issue_number" "$slug" "$pr_number" "$merged_at" "$overlaps" "$_RF_MATCHED_KEYWORDS"
+			return 10
+		fi
+
+		ambiguous_evidence="${ambiguous_evidence}- PR #${pr_number} merged at ${merged_at}; same-file overlap: $(_rf_join_lines "$overlaps"); keyword matches: ${_RF_KEYWORD_SCORE}"$'\n'
+	done <<<"$candidate_numbers"
+
+	if [[ -n "$ambiguous_evidence" ]]; then
+		_rf_post_ambiguous_comment "$issue_number" "$slug" "$issue_paths" "$keywords" "$ambiguous_evidence"
+	fi
+
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Compose and post the falsified-premise closure comment, then close the issue.
 # ---------------------------------------------------------------------------
 _close_with_rationale() {
@@ -633,7 +1040,8 @@ cmd_validate() {
 
 	# Fetch issue body
 	local issue_body
-	issue_body=$(gh api "repos/${slug}/issues/${issue_number}" --jq '.body // ""' 2>/dev/null) || {
+	local issue_api_path="repos/${slug}/issues/${issue_number}"
+	issue_body=$(gh api "$issue_api_path" --jq '.body // ""' 2>/dev/null) || {
 		_log "WARN" "Failed to fetch issue body for #${issue_number} — proceeding (validator error)"
 		return 20
 	}
@@ -641,6 +1049,18 @@ cmd_validate() {
 	# Run self-hosting detector BEFORE generator-marker validators (t2819).
 	# Always returns 0; label mutation is advisory, not a dispatch block.
 	_detect_self_hosting_task "$issue_number" "$slug" "$issue_body"
+
+	# Run review-feedback/quality-debt supersession detector before launching a
+	# worker. Exit 10 only on clear same-file + finding-signal matches; ambiguous
+	# matches are commented and fail open so dispatch can proceed.
+	local review_feedback_rc=0
+	_detect_review_feedback_supersession "$issue_number" "$slug" "$issue_body" "$issue_api_path" || review_feedback_rc=$?
+	if [[ "$review_feedback_rc" -eq 10 ]]; then
+		return 10
+	fi
+	if [[ "$review_feedback_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
+	fi
 
 	# Extract generator marker (supports both simple and attributed forms):
 	#   <!-- aidevops:generator=<name> -->
