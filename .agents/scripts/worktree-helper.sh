@@ -50,7 +50,8 @@ if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
 	source "${SCRIPT_DIR}/canonical-guard-helper.sh"
 fi
 
-# t2976: canonical audit logger for worktree-removal events (removed / skipped).
+# t2976/GH#23074: canonical audit logger for worktree-removal events
+# (removed / skipped), including optional guard context when callers provide it.
 # Fallback definitions guard against set -u failures when the helper is absent
 # (e.g. older deployments). The source block below overrides these when the file exists.
 # The stub uses command -v so it is only defined when the real function is not yet
