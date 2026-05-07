@@ -103,12 +103,12 @@ case "$_subcmd" in
 	exit 0
 	;;
 "pr checks")
-	if [[ "$*" == *"--json name,bucket,link"* ]]; then
-		printf '%s\n' '- **Lint**: fail — [https://example.invalid/check](https://example.invalid/check)'
+	if [[ "$*" == *"| .name]"* ]]; then
+		printf '%s\n' 'Lint'
 		exit 0
 	fi
-	if [[ "$*" == *"--json name,bucket"* ]]; then
-		printf '%s\n' 'Lint'
+	if [[ "$*" == *"--json name,bucket,conclusion,link"* ]]; then
+		printf '%s\n' '- **Lint**: failure — [check URL](https://example.invalid/check)'
 		exit 0
 	fi
 	exit 0

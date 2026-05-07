@@ -249,7 +249,7 @@ _close_and_label_feedback_pr() {
 #
 # Args:
 #   $1 - pr_number
-#   $2 - failing_checks       (markdown list of failing check names/URLs)
+#   $2 - failing_checks       (markdown list of terminal failed check names/conclusions/URLs)
 #   $3 - classification_output (optional, t3225 — multi-line "CLASS names";
 #        triggers a Pattern-Specific Resolution Guidance subsection BEFORE
 #        the generic worker guidance when any non-OTHER class is present)
@@ -267,14 +267,14 @@ _build_ci_feedback_section() {
 	local conf_file
 	conf_file="${BASH_SOURCE[0]%/*}/../configs/ci-failure-patterns.conf"
 
-	# Lead with header + non-passing checks list (always present).
+	# Lead with header + terminal failed checks list (always present).
 	cat <<-EOF
 		## CI Repair Feedback (from PR #${pr_number})
 
-		The previous worker's PR #${pr_number} had non-passing required CI checks. The PR has been
+		The previous worker's PR #${pr_number} had terminal failed CI checks. The PR has been
 		closed and this issue re-queued for dispatch. The next worker should address these failures.
 
-		### Non-passing required checks
+		### Terminal failed checks
 
 		${failing_checks}
 	EOF
@@ -290,7 +290,7 @@ _build_ci_feedback_section() {
 		### Worker guidance
 
 		1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
-		2. Read the check URLs above for specific error messages
+		2. Read the terminal check URLs above for specific error messages
 		3. Fix the issues in the code, not in the CI config
 		4. Ensure all checks pass locally before pushing
 
@@ -331,19 +331,31 @@ _dispatch_ci_fix_worker() {
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
 
-	# Collect non-green required checks: name, status, URL. Include pending
-	# required checks as actionable repair/backlog context; the caller only
-	# reaches this path after merge/security/review gates have passed.
+	# Collect terminal failed required checks only. Pending/queued/in-progress
+	# checks are not actionable repair evidence and must not be routed into the
+	# linked issue as stale worker guidance.
+	local terminal_failed_check_filter
+	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|cancelled|timed_out|action_required)$")) and ((.link // "") != "")'
+	local required_check_jq advisory_check_jq failing_name_jq
+	printf -v required_check_jq '[.[] | select(%s) | "- **\(.name)**: \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
+	printf -v advisory_check_jq '[.[] | select(%s) | "- **\(.name)** (advisory, not merge-blocking): \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
+	printf -v failing_name_jq '[.[] | select(%s) | .name] | join("\n")' "$terminal_failed_check_filter"
+
 	local failing_checks
 	failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket,link \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")
-			| "- **\(.name)**: \(.bucket) — [\(.link // "no link")](\(.link // ""))"]
-			| join("\n")' \
+		--json name,bucket,conclusion,link \
+		--jq "$required_check_jq" \
 		2>/dev/null) || failing_checks=""
 
 	if [[ -z "$failing_checks" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has non-passing checks but could not collect details — skipping routing" >>"$LOGFILE"
+		failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" \
+			--json name,bucket,conclusion,link \
+			--jq "$advisory_check_jq" \
+			2>/dev/null) || failing_checks=""
+	fi
+
+	if [[ -z "$failing_checks" ]]; then
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no terminal failed checks with URLs — skipping routing" >>"$LOGFILE"
 		return 0
 	fi
 
@@ -352,9 +364,8 @@ _dispatch_ci_fix_worker() {
 	# fall back to the pre-t3225 behaviour (no pattern guidance block).
 	local failing_names classification_output=""
 	failing_names=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending") | .name]
-			| join("\n")' \
+		--json name,bucket,conclusion,link \
+		--jq "$failing_name_jq" \
 		2>/dev/null) || failing_names=""
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
@@ -391,10 +402,10 @@ _dispatch_ci_fix_worker() {
 	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
 		"## CI repair feedback routed to issue #${linked_issue}
 
-This worker PR had non-passing required CI checks. The check details have been appended
+This worker PR had terminal failed CI checks. The check details have been appended
 to the linked issue body so the next worker can address them.
 
-Non-passing required checks:
+Terminal failed checks:
 ${failing_checks}
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \
