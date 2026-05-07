@@ -1,9 +1,35 @@
 import { execSync } from "child_process";
 import { existsSync } from "fs";
+import { createRequire } from "module";
 import { join } from "path";
-import { tool } from "@opencode-ai/plugin";
 
-const z = tool.schema;
+const require = createRequire(import.meta.url);
+let opencodeTool = null;
+try {
+  ({ tool: opencodeTool } = require("@opencode-ai/plugin"));
+} catch {
+  opencodeTool = null;
+}
+
+function fallbackSchema() {
+  return {
+    _zod: true,
+    optional() {
+      return this;
+    },
+    describe() {
+      return this;
+    },
+  };
+}
+
+const tool = opencodeTool || ((definition) => definition);
+const z = opencodeTool?.schema || {
+  enum: () => fallbackSchema(),
+  string: () => fallbackSchema(),
+  number: () => fallbackSchema(),
+  union: () => fallbackSchema(),
+};
 
 /**
  * Escape a string for safe interpolation into a shell command.
