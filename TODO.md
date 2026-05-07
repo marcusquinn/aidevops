@@ -4180,7 +4180,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3568 fix: require terminal CI failures for repair feedback #auto-dispatch #bug #framework #pulse ref:GH#23100
 
-- [ ] t3570 fix: pause repeated transient rate-limit releases #auto-dispatch #bug #framework #pulse ref:GH#23102
+- [x] t3570 fix: pause repeated transient rate-limit releases #auto-dispatch #bug #framework #pulse ref:GH#23102 pr:#23111 completed:2026-05-07
 
 - [ ] t3569 feat: dedupe review-feedback issues before worker launch #auto-dispatch #feature #framework #worker ref:GH#23101
 
