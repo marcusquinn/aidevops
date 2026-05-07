@@ -24,10 +24,13 @@
 #   5. no_required_contexts — no classic/ruleset contexts → return 0
 #   6. rulesets_required_on_404 — rulesets-only required check failing → return 1
 #   7. rulesets_required_on_404_pass — rulesets-only required check passing → return 0
-#   8. rulesets_non_matching_branch — non-default ruleset ignored → return 0
-#   9. default_branch_api_error — can't get default branch → return 1 (fail-closed)
-#   10. branch_protection_api_error — can't get branch protection → return 1 (fail-closed)
-#   11. checks_api_error — can't get REST check-runs → return 1 (fail-closed)
+#   8. rulesets_required_with_simple_glob — `*` ruleset applies → return 1
+#   9. rulesets_required_with_plain_branch — plain branch pattern applies → return 1
+#   10. rulesets_excludes_default_branch — exclusion wins → return 0
+#   11. rulesets_non_matching_branch — non-default ruleset ignored → return 0
+#   12. default_branch_api_error — can't get default branch → return 1 (fail-closed)
+#   13. branch_protection_api_error — can't get branch protection → return 1 (fail-closed)
+#   14. checks_api_error — can't get REST check-runs → return 1 (fail-closed)
 #
 # Strategy: source shared-gh-wrappers-checks.sh for `gh_pr_check_runs_rest`,
 # extract _check_required_checks_passing from pulse-merge-process.sh, eval it,
@@ -109,8 +112,10 @@ setup_test_env() {
 # Mode env vars:
 #   MOCK_REPO_MODE     — ok | error
 #   MOCK_BP_MODE       — three_required | no_required | not_found | error
-#   MOCK_RULESETS_MODE — none | active_required | active_required_other_branch |
-#                        error | detail_error
+#   MOCK_RULESETS_MODE — none | active_required | active_required_star |
+#                        active_required_plain_branch |
+#                        active_required_excluded_default |
+#                        active_required_other_branch | error | detail_error
 #   MOCK_ROLLUP_MODE   — all_required_pass | phantom_pending | one_required_failing |
 #                        required_absent | error
 printf '%s\n' "$*" >> "${GH_CALL_LOG}"
@@ -143,6 +148,18 @@ if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 		apply_jq '{"conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
 		exit 0
 		;;
+	active_required_star)
+		apply_jq '{"conditions":{"ref_name":{"include":["*"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
+		exit 0
+		;;
+	active_required_plain_branch)
+		apply_jq '{"conditions":{"ref_name":{"include":["main"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
+		exit 0
+		;;
+	active_required_excluded_default)
+		apply_jq '{"conditions":{"ref_name":{"include":["*"],"exclude":["main"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
+		exit 0
+		;;
 	active_required_other_branch)
 		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/release"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}]}' "$@"
 		exit 0
@@ -165,7 +182,8 @@ if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 		apply_jq '[]' "$@"
 		exit 0
 		;;
-	active_required | active_required_other_branch | detail_error)
+	active_required | active_required_star | active_required_plain_branch | \
+		active_required_excluded_default | active_required_other_branch | detail_error)
 		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
 		exit 0
 		;;
@@ -504,6 +522,46 @@ test_rulesets_required_on_branch_protection_404_pass() {
 	return 0
 }
 
+test_rulesets_required_with_simple_glob() {
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required_star"
+	export MOCK_ROLLUP_MODE="one_required_failing"
+	assert_returns 1 "branch protection 404 + simple '*' ruleset glob → blocked"
+	assert_log_contains "active rulesets require contexts" \
+		"rulesets_star_glob: ruleset context logged"
+	assert_log_contains "required context(s) not passing" \
+		"rulesets_star_glob: block message logged"
+	return 0
+}
+
+test_rulesets_required_with_plain_branch() {
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required_plain_branch"
+	export MOCK_ROLLUP_MODE="one_required_failing"
+	assert_returns 1 "branch protection 404 + plain default-branch ruleset → blocked"
+	assert_log_contains "active rulesets require contexts" \
+		"rulesets_plain_branch: ruleset context logged"
+	assert_log_contains "required context(s) not passing" \
+		"rulesets_plain_branch: block message logged"
+	return 0
+}
+
+test_rulesets_excludes_default_branch() {
+	reset_logs
+	export MOCK_REPO_MODE="ok"
+	export MOCK_BP_MODE="not_found"
+	export MOCK_RULESETS_MODE="active_required_excluded_default"
+	export MOCK_ROLLUP_MODE="one_required_failing"
+	assert_returns 0 "branch protection 404 + ruleset excluding default branch → allowed"
+	assert_log_contains "no classic branch protection or required ruleset contexts" \
+		"rulesets_excluded_default: empty-context message logged"
+	return 0
+}
+
 test_rulesets_non_matching_branch_ignored() {
 	reset_logs
 	export MOCK_REPO_MODE="ok"
@@ -567,6 +625,9 @@ main() {
 	test_no_required_contexts
 	test_rulesets_required_on_branch_protection_404_block
 	test_rulesets_required_on_branch_protection_404_pass
+	test_rulesets_required_with_simple_glob
+	test_rulesets_required_with_plain_branch
+	test_rulesets_excludes_default_branch
 	test_rulesets_non_matching_branch_ignored
 	test_default_branch_api_error
 	test_branch_protection_api_error

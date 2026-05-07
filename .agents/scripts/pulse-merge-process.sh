@@ -960,18 +960,30 @@ _ruleset_ref_matches_default_branch() {
 	local pattern="$1"
 	local default_branch="$2"
 	local default_ref="refs/heads/${default_branch}"
+	local branch_pattern="${pattern}"
 
 	case "$pattern" in
-	"~ALL" | "~DEFAULT_BRANCH" | "$default_ref")
+	"~ALL" | "~DEFAULT_BRANCH" | "$default_ref" | "$default_branch")
 		return 0
+		;;
+	esac
+	case "$pattern" in
+	refs/heads/*)
+		branch_pattern="${pattern#refs/heads/}"
 		;;
 	esac
 
 	case "$pattern" in
-	refs/heads/*\**)
+	*"*"*)
 		# shellcheck disable=SC2254 # Intentionally treat ruleset branch globs as patterns.
 		case "$default_ref" in
 		$pattern)
+			return 0
+			;;
+		esac
+		# shellcheck disable=SC2254 # Intentionally treat ruleset branch globs as patterns.
+		case "$default_branch" in
+		$branch_pattern)
 			return 0
 			;;
 		esac
@@ -1016,7 +1028,8 @@ _required_contexts_from_rulesets_for_default_branch() {
 		return 1
 	}
 
-	local id="" detail="" include_patterns="" pattern="" matches_default=0 contexts=""
+	local id="" detail="" include_patterns="" exclude_patterns="" pattern=""
+	local matches_default=0 excluded_default=0 contexts=""
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
 		detail=$(gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
@@ -1030,6 +1043,11 @@ _required_contexts_from_rulesets_for_default_branch() {
 			rm -f "$contexts_tmp"
 			return 1
 		}
+		exclude_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.exclude // [] | .[]' 2>/dev/null) || {
+			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: ruleset detail ${id} exclude parse failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+			rm -f "$contexts_tmp"
+			return 1
+		}
 
 		matches_default=0
 		while IFS= read -r pattern; do
@@ -1040,6 +1058,16 @@ _required_contexts_from_rulesets_for_default_branch() {
 			fi
 		done <<<"$include_patterns"
 		[[ "$matches_default" -eq 1 ]] || continue
+
+		excluded_default=0
+		while IFS= read -r pattern; do
+			[[ -n "$pattern" ]] || continue
+			if _ruleset_ref_matches_default_branch "$pattern" "$default_branch"; then
+				excluded_default=1
+				break
+			fi
+		done <<<"$exclude_patterns"
+		[[ "$excluded_default" -eq 0 ]] || continue
 
 		contexts=$(printf '%s' "$detail" | jq -r '.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[]? | .context // empty' 2>/dev/null) || {
 			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: required-check parse failed for ruleset ${id} in ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
