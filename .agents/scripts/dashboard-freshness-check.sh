@@ -286,14 +286,22 @@ _open_alert_numbers_for_kind() {
 	local kind="$1"
 	local slug="$2"
 	local dash_issue="$3"
+	local open_issues_json="${4:-}"
 	local stale_title_prefix="Supervisor health dashboard stale:"
 	local missing_marker_title="Supervisor health dashboard missing last_refresh marker (#${dash_issue})"
 	local issue_suffix="(#${dash_issue})"
-	command -v gh >/dev/null 2>&1 || return 0
-	gh auth status &>/dev/null 2>&1 || return 0
-	# Query open issue titles and filter locally. GitHub search is unreliable for
-	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-	gh issue list --repo "$slug" --state open --paginate --json number,title | \
+	local issue_list_json=""
+	if [[ -n "$open_issues_json" ]]; then
+		issue_list_json="$open_issues_json"
+	else
+		command -v gh >/dev/null 2>&1 || return 0
+		gh auth status &>/dev/null 2>&1 || return 0
+		# Query open issue titles and filter locally. GitHub search is unreliable for
+		# HTML-comment dedup markers, and label prefilters can hide generated alerts.
+		issue_list_json="$(gh issue list --repo "$slug" --state open --paginate --json number,title || true)"
+	fi
+	[[ -n "$issue_list_json" ]] || return 0
+	printf '%s\n' "$issue_list_json" | \
 		jq -r --arg prefix "$stale_title_prefix" --arg suffix "$issue_suffix" --arg marker "$missing_marker_title" --arg kind "$kind" --arg kind_stale "$ALERT_KIND_STALE" --arg kind_missing "$ALERT_KIND_MISSING" '
 			.[]
 			| select(
@@ -309,24 +317,37 @@ _open_alert_numbers_for_kind() {
 	return 0
 }
 
+_open_issue_titles_json() {
+	local slug="$1"
+	command -v gh >/dev/null 2>&1 || return 0
+	gh auth status &>/dev/null 2>&1 || return 0
+	# Query open issue titles and filter locally. GitHub search is unreliable for
+	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
+	gh issue list --repo "$slug" --state open --paginate --json number,title || true
+	return 0
+}
+
 _open_alert_numbers() {
 	local slug="$1"
 	local dash_issue="$2"
-	_open_alert_numbers_for_kind "$ALERT_KIND_ANY" "$slug" "$dash_issue"
+	local open_issues_json="${3:-}"
+	_open_alert_numbers_for_kind "$ALERT_KIND_ANY" "$slug" "$dash_issue" "$open_issues_json"
 	return 0
 }
 
 _open_stale_alert_numbers() {
 	local slug="$1"
 	local dash_issue="$2"
-	_open_alert_numbers_for_kind "$ALERT_KIND_STALE" "$slug" "$dash_issue"
+	local open_issues_json="${3:-}"
+	_open_alert_numbers_for_kind "$ALERT_KIND_STALE" "$slug" "$dash_issue" "$open_issues_json"
 	return 0
 }
 
 _open_missing_marker_alert_numbers() {
 	local slug="$1"
 	local dash_issue="$2"
-	_open_alert_numbers_for_kind "$ALERT_KIND_MISSING" "$slug" "$dash_issue"
+	local open_issues_json="${3:-}"
+	_open_alert_numbers_for_kind "$ALERT_KIND_MISSING" "$slug" "$dash_issue" "$open_issues_json"
 	return 0
 }
 
@@ -337,8 +358,9 @@ _open_missing_marker_alert_numbers() {
 _alert_already_open() {
 	local slug="$1"
 	local dash_issue="$2"
+	local open_issues_json="${3:-}"
 	local hits
-	hits="$(_open_alert_numbers "$slug" "$dash_issue")"
+	hits="$(_open_alert_numbers "$slug" "$dash_issue" "$open_issues_json")"
 	if [[ -n "$hits" ]]; then
 		return 0
 	fi
@@ -348,8 +370,9 @@ _alert_already_open() {
 _stale_alert_already_open() {
 	local slug="$1"
 	local dash_issue="$2"
+	local open_issues_json="${3:-}"
 	local hits
-	hits="$(_open_stale_alert_numbers "$slug" "$dash_issue")"
+	hits="$(_open_stale_alert_numbers "$slug" "$dash_issue" "$open_issues_json")"
 	if [[ -n "$hits" ]]; then
 		return 0
 	fi
@@ -415,22 +438,35 @@ _close_recovered_alert() {
 	return 0
 }
 
+_close_recovered_alerts_for_kind() {
+	local kind="$1"
+	local dry_run_description="$2"
+	local slug="$3"
+	local dash_issue="$4"
+	local iso="$5"
+	local age_secs="$6"
+	local open_issues_json="${7:-}"
+	local alerts alert_issue
+	alerts="$(_open_alert_numbers_for_kind "$kind" "$slug" "$dash_issue" "$open_issues_json")"
+	[[ -n "$alerts" ]] || return 0
+	while IFS= read -r alert_issue; do
+		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
+		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
+			_log_info "DRY-RUN: would close recovered ${dry_run_description} alert ${slug}#${alert_issue}"
+			continue
+		fi
+		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
+	done <<<"$alerts"
+	return 0
+}
+
 _close_recovered_alerts() {
 	local slug="$1"
 	local dash_issue="$2"
 	local iso="$3"
 	local age_secs="$4"
-	local alerts alert_issue
-	alerts="$(_open_alert_numbers "$slug" "$dash_issue")"
-	[[ -n "$alerts" ]] || return 0
-	while IFS= read -r alert_issue; do
-		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
-		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
-			_log_info "DRY-RUN: would close recovered alert ${slug}#${alert_issue}"
-			continue
-		fi
-		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
-	done <<<"$alerts"
+	local open_issues_json="${5:-}"
+	_close_recovered_alerts_for_kind "$ALERT_KIND_ANY" "dashboard-freshness" "$slug" "$dash_issue" "$iso" "$age_secs" "$open_issues_json"
 	return 0
 }
 
@@ -439,17 +475,8 @@ _close_recovered_missing_marker_alerts() {
 	local dash_issue="$2"
 	local iso="$3"
 	local age_secs="$4"
-	local alerts alert_issue
-	alerts="$(_open_missing_marker_alert_numbers "$slug" "$dash_issue")"
-	[[ -n "$alerts" ]] || return 0
-	while IFS= read -r alert_issue; do
-		[[ "$alert_issue" =~ ^[0-9]+$ ]] || continue
-		if [[ "${DASHBOARD_FRESHNESS_DRY_RUN:-0}" == "1" ]]; then
-			_log_info "DRY-RUN: would close recovered missing-marker alert ${slug}#${alert_issue}"
-			continue
-		fi
-		_close_recovered_alert "$slug" "$alert_issue" "$dash_issue" "$iso" "$age_secs"
-	done <<<"$alerts"
+	local open_issues_json="${5:-}"
+	_close_recovered_alerts_for_kind "$ALERT_KIND_MISSING" "missing-marker" "$slug" "$dash_issue" "$iso" "$age_secs" "$open_issues_json"
 	return 0
 }
 
@@ -601,7 +628,7 @@ _file_stale_alert() {
 scan_one_dashboard() {
 	local slug="$1"
 	local dash_issue="$2"
-	local body age_line age_secs iso
+	local body age_line age_secs iso open_issues_json
 
 	if ! command -v gh >/dev/null 2>&1; then
 		_log_warn "gh not available — skipping ${slug}#${dash_issue}"
@@ -617,11 +644,12 @@ scan_one_dashboard() {
 		_log_warn "Empty body from gh at ${slug}#${dash_issue}"
 		return 0
 	fi
+	open_issues_json="$(_open_issue_titles_json "$slug")"
 
 	age_line="$(printf '%s' "$body" | _compute_body_age)"
 	if [[ "$age_line" == "$MARKER_MISSING" ]]; then
 		_log_warn "Dashboard ${slug}#${dash_issue} is missing last_refresh marker"
-		if _alert_already_open "$slug" "$dash_issue"; then
+		if _alert_already_open "$slug" "$dash_issue" "$open_issues_json"; then
 			_log_info "Alert already open at ${slug}#${dash_issue} — skipping"
 			return 0
 		fi
@@ -639,13 +667,13 @@ scan_one_dashboard() {
 
 	if (( age_secs <= DASHBOARD_FRESHNESS_THRESHOLD_SECONDS )); then
 		_log_info "Dashboard ${slug}#${dash_issue} fresh (${age_secs}s ≤ ${DASHBOARD_FRESHNESS_THRESHOLD_SECONDS}s)"
-		_close_recovered_alerts "$slug" "$dash_issue" "$iso" "$age_secs"
+		_close_recovered_alerts "$slug" "$dash_issue" "$iso" "$age_secs" "$open_issues_json"
 		return 0
 	fi
 
 	_log_warn "Dashboard ${slug}#${dash_issue} STALE (${age_secs}s > ${DASHBOARD_FRESHNESS_THRESHOLD_SECONDS}s, last_refresh=${iso})"
-	_close_recovered_missing_marker_alerts "$slug" "$dash_issue" "$iso" "$age_secs"
-	if _stale_alert_already_open "$slug" "$dash_issue"; then
+	_close_recovered_missing_marker_alerts "$slug" "$dash_issue" "$iso" "$age_secs" "$open_issues_json"
+	if _stale_alert_already_open "$slug" "$dash_issue" "$open_issues_json"; then
 		_log_info "Alert already open at ${slug}#${dash_issue} — skipping"
 		return 0
 	fi

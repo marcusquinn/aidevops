@@ -404,15 +404,17 @@ calls_file="${TMP}/gh-calls.log"
 comment_count=$(grep -c '^issue comment 99 ' "$calls_file" 2>/dev/null || true)
 close_count=$(grep -c '^issue close 99 ' "$calls_file" 2>/dev/null || true)
 created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+list_count=$(grep -c '^issue list ' "$calls_file" 2>/dev/null || true)
 [[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
 [[ "$close_count" =~ ^[0-9]+$ ]] || close_count=0
 [[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+[[ "$list_count" =~ ^[0-9]+$ ]] || list_count=0
 
-if (( comment_count == 1 && close_count == 1 && created_count == 1 )); then
-	pass "stale dashboard with missing-marker alert → close mismatch + file stale"
+if (( comment_count == 1 && close_count == 1 && created_count == 1 && list_count == 1 )); then
+	pass "stale dashboard with missing-marker alert → close mismatch + file stale using one issue-list fetch"
 else
 	fail "stale dashboard missing-marker recovery" \
-		"comment=$comment_count close=$close_count created=$created_count; calls:\n$(cat "$calls_file")"
+		"comment=$comment_count close=$close_count created=$created_count list=$list_count; calls:\n$(cat "$calls_file")"
 fi
 
 # ---------------------------------------------------------------------------
