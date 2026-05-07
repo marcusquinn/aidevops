@@ -624,6 +624,38 @@ test_failure_classifier_records_provenance() {
 	return 0
 }
 
+test_service_interruption_candidate_uses_separate_path() {
+	local output_file="${TEST_ROOT}/service-interruption.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_23037","text":"editing files"}' 'OpenAI 503 service unavailable after tool activity' >"$output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_should_retry=0
+
+	local status=0
+	_handle_run_result 1 "$output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" ]]; then
+		print_result "service interruption uses dedicated continuation path" 0
+	else
+		print_result "service interruption uses dedicated continuation path" 1 \
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>}"
+	fi
+
+	if ! service_interruption_continue_candidate "rate_limit" "1" "1" "" "rate_limit"; then
+		print_result "rate limits do not consume service interruption budget" 0
+	else
+		print_result "rate limits do not consume service interruption budget" 1
+	fi
+
+	if service_interruption_continue_candidate "local_error" "137" "1" "" ""; then
+		print_result "SIGKILL with activity can resume as interruption" 0
+	else
+		print_result "SIGKILL with activity can resume as interruption" 1
+	fi
+
+	return 0
+}
+
 test_canary_uses_builtin_agent_without_default_agent() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
@@ -1263,6 +1295,7 @@ main() {
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
+	test_service_interruption_candidate_uses_separate_path
 	test_canary_uses_builtin_agent_without_default_agent
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only

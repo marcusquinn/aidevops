@@ -208,6 +208,30 @@ PY
 	return 0
 }
 
+service_interruption_continue_candidate() {
+	local failure_reason="$1"
+	local exit_code="$2"
+	local activity_detected="$3"
+	local session_id="$4"
+	: "${5:-}"
+
+	if [[ "$failure_reason" == "provider_error" ]]; then
+		if [[ "$activity_detected" == "1" || -n "$session_id" ]]; then
+			return 0
+		fi
+	fi
+
+	if [[ "$activity_detected" == "1" ]]; then
+		case "$exit_code" in
+		137 | 143)
+			return 0
+			;;
+		esac
+	fi
+
+	return 1
+}
+
 extract_session_id_from_output() {
 	local file_path="$1"
 	python3 - "$file_path" <<'PY'

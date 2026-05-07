@@ -45,6 +45,7 @@ WAH_PULSE_STATS_FILE="${WAH_PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats
 WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-prs.json}"
 WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
+WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
@@ -73,8 +74,8 @@ _wah_parse_since() {
 #
 # $1 — cutoff_epoch (entries with ts < cutoff are dropped).
 # $2 — optional now_epoch (entries with ts > now are dropped).
-# stdout — six space-separated integers:
-#   total succeeded watchdog_killed watchdog_continued rate_limited other_failure
+# stdout — seven space-separated integers:
+#   total succeeded watchdog_killed watchdog_continued service_interrupted rate_limited other_failure
 #######################################
 _wah_aggregate_metrics() {
 	local cutoff_epoch="$1"
@@ -82,7 +83,7 @@ _wah_aggregate_metrics() {
 	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
-		printf '0 0 0 0 0 0\n'
+		printf '0 0 0 0 0 0 0\n'
 		return 0
 	fi
 	now_epoch="${2:-$(date +%s)}"
@@ -91,30 +92,35 @@ _wah_aggregate_metrics() {
 	#   succ — result=="success" AND exit_code==0
 	#   wk   — result=="watchdog_stall_killed"   (terminal)
 	#   wc   — result=="watchdog_stall_continue" (heartbeat, NOT terminal)
+	#   sic  — result=="service_interruption_continue" (heartbeat, NOT terminal)
 	#   rl   — result=="rate_limit"
 	#   of   — everything else (catches "premature_exit" and any new
 	#          failure result-name not yet enumerated; explicitly excludes
-	#          watchdog_stall_continue heartbeats even when their exit_code
+	#          watchdog_stall_continue and service_interruption_continue
+	#          heartbeats even when their exit_code
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
-	local result
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+	local result service_result
+	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w | {
 			total:  ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
 			wk:     ([$w[] | select(.result == "watchdog_stall_killed")] | length),
 			wc:     ([$w[] | select(.result == "watchdog_stall_continue")] | length),
+			sic:    ([$w[] | select(.result == $service_result)] | length),
 			rl:     ([$w[] | select(.result == "rate_limit")] | length),
 			of:     ([$w[] | select(
 				(.result != "success" or .exit_code != 0)
 				and .result != "watchdog_stall_killed"
 				and .result != "watchdog_stall_continue"
+				and .result != $service_result
 				and .result != "rate_limit"
 			)] | length)
-		} | "\(.total) \(.succ) \(.wk) \(.wc) \(.rl) \(.of)"
-	' <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0"
+		} | "\(.total) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
+	' <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0"
 
-	[[ -n "$result" ]] || result="0 0 0 0 0 0"
+	[[ -n "$result" ]] || result="0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
 	return 0
 }
@@ -343,10 +349,10 @@ _wah_solved_worker_count() {
 #######################################
 _wah_emit_human() {
 	local since_label="$1" cutoff_iso="$2"
-	local total="$3" succ="$4" wk="$5" wc="$6" rl="$7" of="$8"
-	local cb="$9" gqlow="${10}" db_skip="${11}" nwbreaker="${12}"
-	local solved_count="${13}" pr_check_state="${14}" repo_label="${15}"
-	local details_json="${16}"
+	local total="$3" succ="$4" wk="$5" wc="$6" sic="$7" rl="$8" of="$9"
+	local cb="${10}" gqlow="${11}" db_skip="${12}" nwbreaker="${13}"
+	local solved_count="${14}" pr_check_state="${15}" repo_label="${16}"
+	local details_json="${17}"
 
 	local divider="==========================================================="
 
@@ -368,6 +374,7 @@ _wah_emit_human() {
 	printf '  Succeeded:                   %d  (%s of terminal)\n' "$succ" "$rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
 	printf '  Watchdog stall-continued:    %d  (heartbeat, not terminal)\n' "$wc"
+	printf '  Service interruption resumed:%d  (heartbeat, not terminal)\n' "$sic"
 	printf '  Rate-limited:                %d\n' "$rl"
 	printf '  Other failure:               %d\n' "$of"
 	printf '  Result classes:              %s\n' "$(printf '%s' "$details_json" | jq -c '.result_counts' 2>/dev/null || printf '{}')"
@@ -434,10 +441,10 @@ _wah_emit_providers_human() {
 #######################################
 _wah_emit_json() {
 	local since_label="$1" cutoff_iso="$2" cutoff_epoch="$3"
-	local total="$4" succ="$5" wk="$6" wc="$7" rl="$8" of="$9"
-	local cb="${10}" gqlow="${11}" db_skip="${12}" nwbreaker="${13}"
-	local solved_count="${14}" pr_check_state="${15}" repo_label="${16}"
-	local details_json="${17}"
+	local total="$4" succ="$5" wk="$6" wc="$7" sic="$8" rl="$9" of="${10}"
+	local cb="${11}" gqlow="${12}" db_skip="${13}" nwbreaker="${14}"
+	local solved_count="${15}" pr_check_state="${16}" repo_label="${17}"
+	local details_json="${18}"
 
 	# solved_count may be "?" on gh failure — coerce to null in JSON.
 	local solved_json="$solved_count"
@@ -451,6 +458,7 @@ _wah_emit_json() {
 		--argjson succ "$succ" \
 		--argjson wk "$wk" \
 		--argjson wc "$wc" \
+		--argjson sic "$sic" \
 		--argjson rl "$rl" \
 		--argjson of "$of" \
 		--argjson cb "$cb" \
@@ -469,6 +477,7 @@ _wah_emit_json() {
 				succeeded: $succ,
 				watchdog_killed: $wk,
 				watchdog_continued: $wc,
+				service_interrupted: $sic,
 				rate_limited: $rl,
 				other_failure: $of,
 				result_counts: $details.result_counts,
@@ -542,9 +551,9 @@ cmd_summary() {
 		cutoff_iso="(unknown)"
 
 	# Aggregate metrics (single jq+awk pass).
-	local agg total succ wk wc rl of details_json
+	local agg total succ wk wc sic rl of details_json
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch")
-	read -r total succ wk wc rl of <<<"$agg"
+	read -r total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch")
 
 	# Pulse-stats counters.
@@ -566,12 +575,12 @@ cmd_summary() {
 
 	if [[ $emit_json -eq 1 ]]; then
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
-			"$total" "$succ" "$wk" "$wc" "$rl" "$of" \
+			"$total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
 			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
-			"$total" "$succ" "$wk" "$wc" "$rl" "$of" \
+			"$total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
 			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	fi

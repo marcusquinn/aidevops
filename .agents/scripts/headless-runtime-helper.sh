@@ -837,6 +837,25 @@ _handle_run_result() {
 	_run_classification_source="${_failure_classification_source:-}"
 	_run_classification_pattern="${_failure_classification_pattern:-}"
 
+	# GH#23037: Transient provider/runtime interruptions after work has begun
+	# should resume the existing session from disk instead of consuming the
+	# premature-exit or watchdog-stall continuation budgets. Require activity or
+	# session evidence so startup failures still follow normal backoff paths.
+	if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
+		service_interruption_continue_candidate \
+			"$failure_reason" "$exit_code" "$activity_detected" "$discovered_session" \
+			"${_failure_provider_error_type:-}"; then
+		if [[ -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		local _sic_label="service_interruption_continue"
+		_run_result_label="$_sic_label"
+		_run_failure_reason="provider_error"
+		rm -f "$output_file"
+		print_warning "$selected_model service interruption after activity/session evidence — will attempt session continuation"
+		return 81
+	fi
+
 	if attempt_pool_recovery "$provider" "$failure_reason" "$output_file"; then
 		_run_should_retry=1
 		rm -f "$output_file"
@@ -1471,6 +1490,8 @@ cmd_run() {
 	# instead of starting fresh with a different provider.
 	local max_watchdog_continue_retries="${HEADLESS_WATCHDOG_CONTINUE_MAX_RETRIES:-2}"
 	local watchdog_continue_count=0
+	local max_service_interruption_continue_retries="${HEADLESS_SERVICE_INTERRUPTION_CONTINUE_MAX_RETRIES:-2}"
+	local service_interruption_continue_count=0
 
 	# GH#20681: Per-session stall caps — count and cumulative time.
 	# Prevents unbounded token burn from repeated stall-continue events.
@@ -1530,6 +1551,21 @@ cmd_run() {
 			# repeated-string-literal ratchet gate (threshold: >=3 distinct occurrences).
 			_cmd_run_finish "$session_key" "$_run_result_label"
 			return 0
+		fi
+
+		# GH#23037: Handle transient service interruptions separately from
+		# premature exits and watchdog stalls. The session/worktree evidence was
+		# validated by _handle_run_result; resume the same session without
+		# consuming provider-rotation attempts until this dedicated budget is spent.
+		if [[ "$attempt_exit" -eq 81 ]]; then
+			if [[ "$service_interruption_continue_count" -lt "$max_service_interruption_continue_retries" ]]; then
+				service_interruption_continue_count=$((service_interruption_continue_count + 1))
+				print_warning "service_interruption_continue attempt=${service_interruption_continue_count}/${max_service_interruption_continue_retries} — resuming existing session/worktree"
+				prompt="A transient provider/service interruption stopped the previous run after work had begun. Resume the existing session and worktree; do not restart exploration. Check git status, existing todos, and prior changes, then continue through implementation, verification, commit, PR, merge summary, review, merge, release, closing comments, deploy, and cleanup. Do not stop until FULL_LOOP_COMPLETE or BLOCKED with evidence."
+				continue
+			fi
+
+			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
 		fi
 
 		# GH#17436: Handle premature exit (exit 77) — worker had activity but
