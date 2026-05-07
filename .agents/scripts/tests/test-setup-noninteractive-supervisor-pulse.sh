@@ -6,7 +6,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit 1
-SETUP_SCRIPT="${REPO_ROOT}/setup.sh"
+RUNTIME_HELPERS_SCRIPT="${REPO_ROOT}/.agents/scripts/setup/_runtime_helpers.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -40,10 +40,10 @@ load_setup_functions() {
 		/^_should_setup_noninteractive_supervisor_pulse\(\) \{/ { in_fn=1 }
 		in_fn { print }
 		in_fn && /^}/ { exit }
-	' "$SETUP_SCRIPT")"
+	' "$RUNTIME_HELPERS_SCRIPT")"
 
 	if [[ -z "$helper_definition" ]]; then
-		printf 'failed to load helper from %s\n' "$SETUP_SCRIPT" >&2
+		printf 'failed to load helper from %s\n' "$RUNTIME_HELPERS_SCRIPT" >&2
 		return 1
 	fi
 
