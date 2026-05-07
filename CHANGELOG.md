@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.88] - 2026-05-07
+
+### Fixed
+
+- strip OpenCode session env for headless runs (#23068)
+
 ## [3.14.87] - 2026-05-07
 
 ### Changed
