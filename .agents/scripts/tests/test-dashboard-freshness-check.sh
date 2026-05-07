@@ -25,7 +25,9 @@
 #      recovery evidence and closes the alert.
 #  10. scan with a stale dashboard AND a pre-existing missing-marker alert →
 #      closes the recovered missing-marker alert and files a stale alert.
-#  11. source regression: recovered stale and missing-marker alert paths share
+#  11. gh issue list failures are logged instead of silently treated as an
+#      empty dedup result.
+#  12. source regression: recovered stale and missing-marker alert paths share
 #      the parameterized close helper and accept a pre-fetched open issue list.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
@@ -210,7 +212,7 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --paginate --json number,title ... → alert dedup/recovery check
+			#   gh issue list --limit 1000 --json number,title ... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
@@ -227,9 +229,14 @@ run_scan_with_stubs() {
 					issue)
 						case "$2" in
 							list)
+								if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
+									printf "simulated gh issue list failure\n" >&2
+									return 1
+								fi
 								if [[ "$gh_args" == *" --label "* ]] \
 									|| [[ "$gh_args" == *" --search "* ]] \
-									|| [[ "$gh_args" != *"--paginate"* ]] \
+									|| [[ "$gh_args" == *"--paginate"* ]] \
+									|| [[ "$gh_args" != *"--limit 1000"* ]] \
 									|| [[ "$gh_args" != *"--json number,title"* ]]; then
 									printf "[]\n"
 								elif [[ "$ALERT_EXISTS" == "1" ]]; then
@@ -312,13 +319,14 @@ issue_list_call="$(grep '^issue list ' "$calls_file" || true)"
 if [[ -n "$issue_list_call" ]] \
 	&& [[ "$issue_list_call" != *"--label"* ]] \
 	&& [[ "$issue_list_call" != *"--search"* ]] \
-	&& [[ "$issue_list_call" == *"--paginate"* ]] \
+	&& [[ "$issue_list_call" != *"--paginate"* ]] \
+	&& [[ "$issue_list_call" == *"--limit 1000"* ]] \
 	&& [[ "$issue_list_call" == *"--json number,title"* ]] \
 	&& [[ "$issue_list_call" != *"--jq"* ]]; then
-	pass "dedup lookup paginates open titles for local jq filtering"
+	pass "dedup lookup limits open titles for gh issue list compatibility"
 else
 	fail "dedup lookup query shape" \
-		"expected paginated title query without --label/--search/--jq; calls:\n$(cat "$calls_file")"
+		"expected --limit 1000 title query without --paginate/--label/--search/--jq; calls:\n$(cat "$calls_file")"
 fi
 
 if grep -q -- 'jq -r --arg prefix' "$SCANNER" \
@@ -420,7 +428,25 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 11: source shape for shared recovered-alert helper and cached issue list
+# Test 11: failed gh issue list logs an error instead of silent empty dedup
+# ---------------------------------------------------------------------------
+echo "Testing: gh issue list failure logs dedup error"
+run_scan_with_stubs "$STALE_BODY" 0 "export GH_ISSUE_LIST_FAIL=1" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( created_count == 1 )) \
+	&& grep -q 'Failed to list open issues for dashboard freshness dedup in test/repo' \
+		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log"; then
+	pass "gh issue list failure → logged dedup error before fail-open alert"
+else
+	fail "gh issue list failure logging" \
+		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 12: source shape for shared recovered-alert helper and cached issue list
 # ---------------------------------------------------------------------------
 echo "Testing: recovered-alert source shape"
 if grep -q '^_close_recovered_alerts_for_kind()' "$SCANNER" \
@@ -435,7 +461,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 12: missing-marker body → alerts with MISSING title
+# Test 13: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
