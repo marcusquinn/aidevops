@@ -100,7 +100,7 @@ body=$(_build_health_issue_body \
 	"0" "4" "0.00" "0.00" "low" "100" "supervisor" \
 	"—" "—" "0" "0" "_No diagnostics_" "$canonical" "$aliases")
 
-if [[ "$body" == *"Canonical operator"* && "$body" == *"canonical-operator"* && "$body" == *"local-user"* ]]; then
+if [[ "$body" == *"canonical:"* && "$body" == *"canonical-operator"* && "$body" == *"local-user"* ]]; then
 	pass "dashboard body exposes canonical identity context"
 else
 	fail "dashboard body exposes canonical identity context" "$body"

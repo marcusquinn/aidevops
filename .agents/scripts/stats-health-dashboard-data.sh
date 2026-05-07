@@ -530,27 +530,19 @@ _build_health_issue_body() {
 	local sys_memory="${25}" sys_procs="${26}" runner_role="${27}"
 	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}" worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
 	local worker_zero_diagnostics_md="${32}"
-	local canonical_identity="${33:-$runner_user}"
-	local identity_aliases="${34:-$runner_user}"
-	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
-		"$worker_success_rate_24h" "$worker_success_rate_7d" \
-		"$worker_total_runs_24h" "$worker_total_runs_7d")
-	local identity_aliases_display
-	identity_aliases_display=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
+	local canonical_identity="${33:-$runner_user}" identity_aliases="${34:-$runner_user}"
+	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section "$worker_success_rate_24h" "$worker_success_rate_7d" "$worker_total_runs_24h" "$worker_total_runs_7d")
+	local identity_aliases_display; identity_aliases_display=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
 
 	cat <<BODY
 ## Queue Health Dashboard
 
 **Last pulse**: \`${now_iso}\`
-**${role_display}**: \`${runner_user}\`
-**Canonical operator**: \`${canonical_identity}\`
-**Identity aliases**: \`${identity_aliases_display}\`
+**${role_display}**: \`${runner_user}\` (canonical: \`${canonical_identity}\`; aliases: \`${identity_aliases_display}\`)
 **Repo**: \`${repo_slug}\`
 
 <!-- aidevops:dashboard-freshness -->
 last_refresh: ${now_iso}
-canonical_operator: ${canonical_identity}
-identity_aliases: ${identity_aliases_display}
 
 ### Summary
 
