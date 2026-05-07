@@ -268,7 +268,7 @@ gather_diagnostics() {
 	# Minimal fallback diagnostics
 	local version="unknown"
 	if [[ -f "${HOME}/.aidevops/agents/VERSION" ]]; then
-		version=$(cat "${HOME}/.aidevops/agents/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+		version=$(tr -d '[:space:]' <"${HOME}/.aidevops/agents/VERSION" 2>/dev/null || echo "unknown")
 	fi
 
 	cat <<EOF
@@ -309,6 +309,21 @@ _validate_gh_prereqs() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# _is_valid_issue_number ISSUE_NUMBER
+#
+# Returns 0 when ISSUE_NUMBER is a positive numeric GitHub issue number.
+# ─────────────────────────────────────────────────────────────────────────────
+_is_valid_issue_number() {
+	local issue_number="$1"
+
+	if [[ "$issue_number" =~ ^[1-9][0-9]*$ ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # _find_duplicate_issue TITLE
 #
 # Searches for an existing issue with a similar title on the aidevops repo.
@@ -329,8 +344,26 @@ _find_duplicate_issue() {
 		--state all --search "\"$search_terms\" in:title is:issue" \
 		--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
 
-	if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+	if _is_valid_issue_number "$existing_issue"; then
 		echo "$existing_issue"
+		return 0
+	fi
+
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _extract_issue_number ISSUE_URL
+#
+# Extracts and validates a numeric issue number from an issue URL.
+# ─────────────────────────────────────────────────────────────────────────────
+_extract_issue_number() {
+	local issue_url="$1"
+	local issue_number
+	issue_number=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$' || true)
+
+	if _is_valid_issue_number "$issue_number"; then
+		printf '%s\n' "$issue_number"
 		return 0
 	fi
 
@@ -396,18 +429,17 @@ _append_signature_footer() {
 _emit_issue_result() {
 	local issue_url="$1"
 	local issue_num
-	issue_num=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$' || echo "")
+	issue_num=$(_extract_issue_number "$issue_url" || true)
 
-	if [[ -n "$issue_num" ]]; then
+	if _is_valid_issue_number "$issue_num"; then
 		log_success "Created framework issue: ${AIDEVOPS_SLUG}#${issue_num}"
 		log_success "URL: $issue_url"
 		echo "issue_url=${issue_url}"
 		echo "issue_num=${issue_num}"
 		echo "status=created"
 	else
-		log_warn "Issue created but could not extract number from: $issue_url"
-		echo "issue_url=${issue_url}"
-		echo "status=created"
+		log_error "Issue created but could not extract a valid numeric issue number from: $issue_url"
+		return 1
 	fi
 
 	return 0
@@ -429,7 +461,7 @@ log_framework_issue() {
 	# Deduplication: search for existing issues with similar title
 	local existing_issue
 	existing_issue=$(_find_duplicate_issue "$title" 2>/dev/null || echo "")
-	if [[ -n "$existing_issue" ]]; then
+	if _is_valid_issue_number "$existing_issue"; then
 		log_warn "Existing issue found: ${AIDEVOPS_SLUG}#${existing_issue} — skipping duplicate creation"
 		echo "issue_url=https://github.com/${AIDEVOPS_SLUG}/issues/${existing_issue}"
 		echo "issue_num=${existing_issue}"
