@@ -140,6 +140,32 @@ test_startup_no_activity_timeout_returns_watchdog_continue() {
 	return 0
 }
 
+test_sigkill_with_activity_attempts_continuation() {
+	local output_file="${TEST_ROOT}/sigkill-with-activity.jsonl"
+	cat >"$output_file" <<'EOF'
+{"type":"text","text":"I made a change after reading docs that mention rate limit."}
+[WORKER_EXIT_DIAGNOSTICS] exit_code=137 model=openai/gpt-5.5 role=worker session_key=issue-23036
+[WORKER_EXIT_DIAGNOSTICS] cause=SIGKILL (OOM or external kill)
+EOF
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_runtime_error_type=""
+	_run_classification_source=""
+	_run_classification_pattern=""
+
+	local status=0
+	_handle_run_result 137 "$output_file" "worker" "openai" "issue-23036" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 78 && "$_run_result_label" == "signal_killed_continue" && "$_run_runtime_error_type" == "sigkill" && ! -f "$output_file" ]]; then
+		print_result "SIGKILL with activity attempts continuation" 0
+		return 0
+	fi
+
+	print_result "SIGKILL with activity attempts continuation" 1 \
+		"status=$status label=${_run_result_label:-<empty>} runtime=${_run_runtime_error_type:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	return 0
+}
+
 test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 	local result status action next_model
 	result=$(
@@ -587,7 +613,7 @@ test_failure_classifier_records_provenance() {
 	if [[ "$reason" == "rate_limit" ]] &&
 		[[ "${_failure_provider_error_type:-}" == "rate_limit" ]] &&
 		[[ "${_failure_provider_status:-}" == "429" ]] &&
-		[[ "${_failure_classification_source:-}" == "output_pattern" ]] &&
+		[[ "${_failure_classification_source:-}" == "trusted_provider" ]] &&
 		[[ "${_failure_classification_pattern:-}" == *"too_many_requests"* ]]; then
 		print_result "failure classifier records provider provenance" 0
 		return 0
@@ -1218,6 +1244,7 @@ main() {
 	test_non_full_loop_prompt_unchanged
 	test_parse_initial_model_does_not_set_explicit_override
 	test_startup_no_activity_timeout_returns_watchdog_continue
+	test_sigkill_with_activity_attempts_continuation
 	test_dispatcher_initial_model_can_rotate_after_rate_limit
 	test_explicit_model_override_remains_pinned_on_rate_limit
 	test_issue_worker_env_contract_rejects_missing_env

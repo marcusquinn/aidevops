@@ -813,6 +813,21 @@ _handle_run_result() {
 			print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 		fi
 	else
+		if [[ "$exit_code" -eq 137 && "$activity_detected" == "1" ]]; then
+			local discovered_session_for_signal_continue
+			discovered_session_for_signal_continue=$(extract_session_id_from_output "$output_file")
+			if [[ "$role" != "pulse" && -n "$discovered_session_for_signal_continue" ]]; then
+				store_session_id "$provider" "$session_key" "$discovered_session_for_signal_continue" "$selected_model"
+			fi
+			_run_result_label="signal_killed_continue"
+			_run_failure_reason="signal_killed_continue"
+			_run_runtime_error_type="sigkill"
+			_run_classification_source="worker_exit_diagnostics"
+			_run_classification_pattern="exit_137_with_activity"
+			rm -f "$output_file"
+			print_warning "$selected_model worker exited with SIGKILL after activity — will attempt session continuation"
+			return 78
+		fi
 		failure_reason=$(classify_failure_reason "$output_file")
 	fi
 	_run_result_label="$failure_reason"
