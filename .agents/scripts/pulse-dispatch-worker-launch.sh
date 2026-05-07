@@ -672,6 +672,7 @@ _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	local _precreate_session="dispatch-precreate-${issue_number}"
 
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
 	if [[ ! -x "$_wt_helper" || ! -d "$repo_path" ]]; then
@@ -706,6 +707,11 @@ _dlw_precreate_worktree() {
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
+		if declare -F register_worktree >/dev/null 2>&1; then
+			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+				--task "$issue_number" \
+				--session "$_precreate_session" 2>/dev/null || true
+		fi
 		# Restore gitignored deps that git clean -fd just wiped
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
@@ -736,6 +742,11 @@ _dlw_precreate_worktree() {
 	if [[ -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
+		if declare -F register_worktree >/dev/null 2>&1; then
+			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+				--task "$issue_number" \
+				--session "$_precreate_session" 2>/dev/null || true
+		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"

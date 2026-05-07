@@ -663,6 +663,14 @@ _hrw_worktree_clean_for_owner_reclaim() {
 	return 0
 }
 
+_hrw_is_dispatch_precreate_owner() {
+	local owner_session="$1"
+	case "$owner_session" in
+		dispatch-precreate | dispatch-precreate-*) return 0 ;;
+	esac
+	return 1
+}
+
 _hrw_reclaim_stale_worker_worktree_owner() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -683,6 +691,21 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 
 	_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_live_owner"
 	[[ -n "${WORKER_ISSUE_NUMBER:-}" && "$owner_task" == "${WORKER_ISSUE_NUMBER:-}" ]] || return 1
+
+	# Dispatcher worktree pre-creation registers ownership to a live pulse
+	# process before the detached worker starts. That owner is intentionally
+	# short-lived and transferable; otherwise every worker sees a live owner,
+	# exits immediately, and pulse retries the same issue forever.
+	if _hrw_is_dispatch_precreate_owner "$owner_session"; then
+		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
+			return 1
+		fi
+		unregister_worktree "$work_dir" 2>/dev/null || true
+		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
+		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+		return 0
+	fi
+
 	[[ -n "$created_at" ]] || return 1
 
 	local now_epoch="" created_epoch=""
