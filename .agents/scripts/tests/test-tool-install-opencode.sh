@@ -54,7 +54,9 @@ extract_functions() {
 	awk '
 		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
 		/^_setup_validate_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_force_heal\(\)/, /^}$/ { print; next }
 		/^setup_opencode_cli\(\)/, /^}$/ { print; next }
@@ -94,6 +96,8 @@ source_extracted() {
 		cat >"$SANDBOX/bin/opencode" <<'INNER_EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 INNER_EOF
 		chmod +x "$SANDBOX/bin/opencode"
 		return 0
@@ -109,6 +113,8 @@ echo "Test 1: _setup_validate_opencode_binary on real opencode shim"
 cat >"$SANDBOX/bin/opencode-real" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 EOF
 chmod +x "$SANDBOX/bin/opencode-real"
 (
@@ -124,6 +130,7 @@ echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "2.1.119 (Claude Code)"
+[[ "${1:-}" == "--help" ]] && echo "Claude Code"
 EOF
 chmod +x "$SANDBOX/bin/opencode-claude"
 (
@@ -139,6 +146,7 @@ echo "Test 2b: _setup_validate_opencode_binary rejects major >=10"
 cat >"$SANDBOX/bin/opencode-major10" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "10.0.0"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-major10"
 (
@@ -148,6 +156,22 @@ chmod +x "$SANDBOX/bin/opencode-major10"
 	echo "$rc"
 ) >"$SANDBOX/out2b" 2>&1
 assert_eq "major 10 shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2b")"
+
+# --- Test 2c: validator rejects Qwen Code semver-compatible output ----------
+echo "Test 2c: _setup_validate_opencode_binary rejects qwen CLI shim"
+cat >"$SANDBOX/bin/opencode-qwen" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "0.2.1"
+[[ "${1:-}" == "--help" ]] && echo "Qwen Code - Launch an interactive CLI"
+EOF
+chmod +x "$SANDBOX/bin/opencode-qwen"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-qwen" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2c" 2>&1
+assert_eq "qwen shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2c")"
 
 # --- Test 3: validator on missing path -------------------------------------
 echo "Test 3: _setup_validate_opencode_binary on missing path"
@@ -167,6 +191,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	sleep 5
 	echo "1.14.25"
 fi
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-slow"
 (

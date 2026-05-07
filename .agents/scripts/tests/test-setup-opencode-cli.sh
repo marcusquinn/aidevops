@@ -71,6 +71,8 @@ echo "Test 1: _setup_validate_opencode_binary on real opencode shim"
 cat >"$SANDBOX/bin/opencode-real" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 EOF
 chmod +x "$SANDBOX/bin/opencode-real"
 
@@ -88,6 +90,7 @@ echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "2.1.119 (Claude Code)"
+[[ "${1:-}" == "--help" ]] && echo "Claude Code"
 EOF
 chmod +x "$SANDBOX/bin/opencode-claude"
 
@@ -99,6 +102,24 @@ chmod +x "$SANDBOX/bin/opencode-claude"
 ) >"$SANDBOX/out2" 2>&1
 rc2=$(tail -1 "$SANDBOX/out2")
 assert_eq "claude shim -> rc=1" "1" "$rc2"
+
+# --- Test 2b: validator rc for Qwen Code shim -------------------------------
+echo "Test 2b: _setup_validate_opencode_binary rejects qwen CLI shim"
+cat >"$SANDBOX/bin/opencode-qwen" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "0.2.1"
+[[ "${1:-}" == "--help" ]] && echo "Qwen Code - Launch an interactive CLI"
+EOF
+chmod +x "$SANDBOX/bin/opencode-qwen"
+
+(
+	source_lib
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-qwen" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2b" 2>&1
+rc2b=$(tail -1 "$SANDBOX/out2b")
+assert_eq "qwen shim -> rc=1" "1" "$rc2b"
 
 # --- Test 3: validator rc for missing binary --------------------------------
 echo "Test 3: _setup_validate_opencode_binary on missing path"
@@ -116,6 +137,7 @@ echo "Test 4: _setup_validate_opencode_binary on garbage shim"
 cat >"$SANDBOX/bin/opencode-garbage" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "not-a-version"
+[[ "${1:-}" == "--help" ]] && echo "not opencode"
 EOF
 chmod +x "$SANDBOX/bin/opencode-garbage"
 
@@ -136,6 +158,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	sleep 5
 	echo "1.14.25"
 fi
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-slow"
 
