@@ -783,7 +783,7 @@ _help_commands() {
 	echo "  inbox [cmd]        Capture transit zone (bare: status | provision/add/find/digest/help)"
 	echo "  email [cmd]        Email mailbox management (mailbox add/list/test/remove)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
-	echo "  review-gate <cmd>  Configure review_gate.rate_limit_behavior (list/set/unset)"
+	echo "  review-gate <cmd>  Configure review_gate merge policies (rate-limit/completion)"
 	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
