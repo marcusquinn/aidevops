@@ -96,6 +96,22 @@ run_hook() {
 	return $?
 }
 
+write_user_transcript() {
+	local message="$1"
+	local transcript_path="${TEST_ROOT}/current-turn.jsonl"
+	python3 - "$transcript_path" "$message" <<'PYEOF'
+import json
+import sys
+
+path = sys.argv[1]
+message = sys.argv[2]
+with open(path, "w", encoding="utf-8") as handle:
+    handle.write(json.dumps({"message": {"role": "user", "content": message}}) + "\n")
+PYEOF
+	printf '%s' "$transcript_path"
+	return 0
+}
+
 # Helper: assert output contains permissionDecision=deny and an optional keyword in reason.
 output_is_deny() {
 	local output="$1"
@@ -323,7 +339,77 @@ test_bash_destructive_commands_blocked() {
 }
 
 # =============================================================================
-# Test 7: Repo without origin/HEAD → fallback to init.defaultBranch then "main"
+# Test 7: Canonical branch switches require an exact current-turn user request
+# =============================================================================
+test_canonical_branch_switch_requires_current_turn_request() {
+	git -C "$TEST_ROOT" checkout main >/dev/null 2>&1 || true
+	git -C "$TEST_ROOT" branch feature/canonical-switch >/dev/null 2>&1 || true
+
+	local json
+	local output=""
+	local passed=0
+
+	json='{"tool_name":"Bash","tool_input":{"command":"git switch feature/canonical-switch"}}'
+	output=$(run_hook "$TEST_ROOT" "$json") || true
+	if ! hook_is_deny "$output" "Canonical workspace cannot switch"; then
+		print_result "canonical git switch feature/foo blocked without user request" 1 "output=${output}"
+		passed=1
+	fi
+
+	json='{"tool_name":"Bash","tool_input":{"command":"git switch main"}}'
+	output=$(run_hook "$TEST_ROOT" "$json") || true
+	if ! hook_is_deny "$output" "current turn"; then
+		print_result "canonical git switch main blocked without current-turn request" 1 "output=${output}"
+		passed=1
+	fi
+
+	local transcript_path
+	transcript_path=$(write_user_transcript "Please restore the canonical repo: git switch main")
+	json=$(printf '{"tool_name":"Bash","transcript_path":"%s","tool_input":{"command":"git switch main"}}' "$transcript_path")
+	output=$(run_hook "$TEST_ROOT" "$json") || true
+	if [[ -n "$output" ]]; then
+		print_result "canonical restoration allowed with exact current-turn request" 1 "output=${output}"
+		passed=1
+	fi
+
+	if [[ "$passed" -eq 0 ]]; then
+		print_result "canonical branch switches require exact current-turn user request" 0
+	fi
+
+	git -C "$TEST_ROOT" branch -D feature/canonical-switch >/dev/null 2>&1 || true
+	return 0
+}
+
+# =============================================================================
+# Test 8: Linked-worktree branch operations remain allowed
+# =============================================================================
+test_linked_worktree_branch_switch_allowed() {
+	git -C "$TEST_ROOT" checkout main >/dev/null 2>&1 || true
+	git -C "$TEST_ROOT" branch feature/linked-switch-target >/dev/null 2>&1 || true
+
+	local worktree_path="${TEST_ROOT}/linked-switch-wt"
+	git -C "$TEST_ROOT" worktree add "$worktree_path" -b feature/linked-switch-base >/dev/null 2>&1
+
+	local json
+	json='{"tool_name":"Bash","tool_input":{"command":"git switch feature/linked-switch-target"}}'
+
+	local output=""
+	output=$(run_hook "$worktree_path" "$json") || true
+
+	if [[ -z "$output" ]]; then
+		print_result "git switch allowed inside linked worktree" 0
+	else
+		print_result "git switch allowed inside linked worktree" 1 "output=${output}"
+	fi
+
+	git -C "$TEST_ROOT" worktree remove "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
+	git -C "$TEST_ROOT" branch -D feature/linked-switch-base 2>/dev/null || true
+	git -C "$TEST_ROOT" branch -D feature/linked-switch-target 2>/dev/null || true
+	return 0
+}
+
+# =============================================================================
+# Test 9: Repo without origin/HEAD → fallback to init.defaultBranch then "main"
 # =============================================================================
 test_no_origin_head_falls_back_to_main() {
 	# Fresh temp repo with no remotes — falls back to "main"
@@ -362,7 +448,7 @@ test_no_origin_head_falls_back_to_main() {
 }
 
 # =============================================================================
-# Test 8: AIDEVOPS_SKIP_CANONICAL_GUARD=1 bypasses off-default-branch deny;
+# Test 10: AIDEVOPS_SKIP_CANONICAL_GUARD=1 bypasses off-default-branch deny;
 #          FULL_LOOP_HEADLESS=1 alone does NOT bypass (workers use worktrees)
 # =============================================================================
 test_canonical_guard_skip_env_var() {
@@ -419,6 +505,8 @@ main() {
 	test_default_branch_allowlisted_paths_allowed
 	test_default_branch_non_allowlisted_denied
 	test_bash_destructive_commands_blocked
+	test_canonical_branch_switch_requires_current_turn_request
+	test_linked_worktree_branch_switch_allowed
 	test_no_origin_head_falls_back_to_main
 	test_canonical_guard_skip_env_var
 

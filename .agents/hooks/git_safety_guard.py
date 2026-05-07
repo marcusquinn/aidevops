@@ -373,6 +373,99 @@ TAKES_BRANCH_ARG = {
 OPTION_WITH_VALUE = {"-t", "--track", "--conflict", "--pathspec-from-file"}
 
 
+def _extract_text_from_content(content) -> str:
+    """Return plain text from common runtime transcript content shapes."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, str):
+                parts.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text") or item.get("content") or ""
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    if isinstance(content, dict):
+        text = content.get("text") or content.get("content") or ""
+        if isinstance(text, str):
+            return text
+    return ""
+
+
+def _extract_user_text_from_record(record: dict) -> str:
+    """Return user message text from a Claude/OpenCode-style transcript record."""
+    if not isinstance(record, dict):
+        return ""
+
+    if record.get("role") == "user":
+        return _extract_text_from_content(record.get("content"))
+
+    message = record.get("message")
+    if isinstance(message, dict) and message.get("role") == "user":
+        return _extract_text_from_content(message.get("content"))
+
+    if record.get("type") == "user":
+        return _extract_text_from_content(record.get("content"))
+
+    return ""
+
+
+def _latest_user_message_from_transcript(transcript_path: str) -> str:
+    """Return the latest user message from a JSONL transcript path."""
+    if not transcript_path:
+        return ""
+    latest = ""
+    try:
+        with open(transcript_path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                text = _extract_user_text_from_record(record)
+                if text:
+                    latest = text
+    except OSError:
+        return ""
+    return latest
+
+
+def _current_user_message(input_data: dict) -> str:
+    """Return the live current-turn user message when the runtime provides it."""
+    for key in (
+        "aidevops_current_user_message",
+        "current_user_message",
+        "current_user_turn",
+        "user_message",
+    ):
+        value = input_data.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    transcript_path = input_data.get("transcript_path") or input_data.get("transcriptPath")
+    if isinstance(transcript_path, str):
+        return _latest_user_message_from_transcript(transcript_path)
+    return ""
+
+
+def _branch_target_is_current_turn_authorized(target: str, user_message: str) -> bool:
+    """Return True when the live user explicitly requested this branch switch."""
+    if not target or not user_message:
+        return False
+    quoted = re.escape(target)
+    patterns = [
+        rf"\bgit\s+(?:switch|checkout)\s+{quoted}\b",
+        rf"\b(?:switch|checkout)\s+(?:to\s+)?(?:the\s+)?(?:branch\s+)?{quoted}\b",
+        rf"\bchange\s+(?:back\s+)?(?:to\s+)?(?:the\s+)?(?:branch\s+)?{quoted}\b",
+        rf"\brestore\s+(?:the\s+)?canonical(?:\s+repo(?:sitory)?)?\s+(?:back\s+)?to\s+{quoted}\b",
+    ]
+    return any(re.search(pattern, user_message, re.IGNORECASE) for pattern in patterns)
+
+
 def _split_git_switch_command(command: str) -> tuple[str, list[str]]:
     """Return the git switch/checkout subcommand and args, or empty values."""
     subcommand = ""
@@ -387,15 +480,17 @@ def _split_git_switch_command(command: str) -> tuple[str, list[str]]:
     return subcommand, args
 
 
-def _scan_git_switch_args(subcommand: str, args: list[str]) -> str:
-    """Return the first branch-like target in git switch/checkout args."""
+def _scan_git_switch_args(subcommand: str, args: list[str]) -> tuple[str, bool]:
+    """Return the first branch-like target and whether the command creates it."""
     target = ""
+    creates_branch = False
     index = 0
     while index < len(args) and not target:
         arg = args[index]
         if arg in TAKES_BRANCH_ARG:
             if index + 1 < len(args):
                 target = args[index + 1]
+                creates_branch = True
         elif arg in OPTION_WITH_VALUE:
             index += 2
             continue
@@ -408,16 +503,17 @@ def _scan_git_switch_args(subcommand: str, args: list[str]) -> str:
         else:
             target = arg
         index += 1
-    return target
+    return target, creates_branch
 
 
-def _extract_git_switch_target(command: str) -> str:
-    """Return the target branch for a git switch/checkout command, if obvious."""
+def _extract_git_switch_target(command: str) -> tuple[str, bool]:
+    """Return the target branch and creation flag for git switch/checkout."""
     subcommand, args = _split_git_switch_command(command)
     target = ""
+    creates_branch = False
     if subcommand and "--" not in args:
-        target = _scan_git_switch_args(subcommand, args)
-    return target
+        target, creates_branch = _scan_git_switch_args(subcommand, args)
+    return target, creates_branch
 
 
 def _canonical_branch_switch_deny(target: str, default_branch: str) -> dict:
@@ -438,16 +534,42 @@ def _canonical_branch_switch_deny(target: str, default_branch: str) -> dict:
     }
 
 
-def _check_canonical_branch_switch_command(command: str) -> "dict | None":
-    """Deny git switch/checkout to non-default refs in the canonical checkout."""
+def _canonical_branch_switch_user_request_deny(target: str, default_branch: str) -> dict:
+    """Return a deny payload when the live user did not request the branch switch."""
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "BLOCKED by git_safety_guard.py (aidevops t3573)\n\n"
+                f"Reason: Canonical workspace branch switch to '{target}' was not "
+                "explicitly requested by the live user in the current turn.\n\n"
+                "Use a linked worktree for feature work instead:\n"
+                f"  wt switch -c {target}\n\n"
+                "Canonical restoration is allowed only when the current user turn "
+                f"explicitly asks for this exact branch, for example: git switch {default_branch}"
+            ),
+        }
+    }
+
+
+def _check_canonical_branch_switch_command(
+    command: str, current_user_message: str
+) -> "dict | None":
+    """Deny unrequested git switch/checkout commands in the canonical checkout."""
     cwd = os.getcwd()
     repo_root = _get_repo_root(cwd)
     target = ""
+    creates_branch = False
     if repo_root and not _is_linked_worktree(repo_root):
-        target = _extract_git_switch_target(command)
+        target, creates_branch = _extract_git_switch_target(command)
     default_branch = _get_default_branch(repo_root) if target else ""
-    if target and target not in (default_branch, "main", "master", "-"):
+    if not target or target == "-":
+        return None
+    if creates_branch or target not in (default_branch, "main", "master"):
         return _canonical_branch_switch_deny(target, default_branch)
+    if not _branch_target_is_current_turn_authorized(target, current_user_message):
+        return _canonical_branch_switch_user_request_deny(target, default_branch)
     return None
 
 
@@ -566,7 +688,10 @@ def main():
     original_command = command
     command = _normalize_absolute_paths(command)
 
-    branch_switch_deny = _check_canonical_branch_switch_command(command)
+    current_user_message = _current_user_message(input_data)
+    branch_switch_deny = _check_canonical_branch_switch_command(
+        command, current_user_message
+    )
     if branch_switch_deny:
         print(json.dumps(branch_switch_deny))
         sys.exit(0)
