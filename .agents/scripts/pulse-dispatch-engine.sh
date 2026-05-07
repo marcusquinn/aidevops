@@ -308,14 +308,9 @@ dispatch_max() {
 	}
 	local max_workers active_workers available_slots
 	read -r max_workers active_workers available_slots <<<"$capacity_line"
-	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
-	local _min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
-	if ! [[ "$_min_worker_floor" =~ ^[0-9]+$ ]]; then
-		_min_worker_floor=6
-	fi
-	if ((_min_worker_floor > 0 && active_workers < _min_worker_floor)); then
-		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
-	fi
+	# _dispatch_compute_capacity owns the pressure-aware floor decision so the
+	# launch-throttle path cannot re-enable the floor after provider/load caps.
+	[[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" =~ ^[0-9]+$ ]] || _DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ "$available_slots" -le 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: no available worker slots (max=${max_workers}, active=${active_workers}, available=${available_slots})" >>"$LOGFILE"
 		echo 0
