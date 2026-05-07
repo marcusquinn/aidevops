@@ -145,20 +145,29 @@ set_timeline() {
 	printf '%s\n' "$body" >"$TIMELINE_FIXTURE"
 }
 
-# Extract all three helpers from the source file. Same awk-extract-and-eval
+# Extract helpers from the source file. Same awk-extract-and-eval
 # pattern used by the force-dispatch and bot-cleanup test suites.
 define_helpers_under_test() {
-	local sig_src breaker_src maint_src
+	local sig_src breaker_src sort_src current_src retry_src maint_src
 	sig_src=$(awk '
 		/^_nmr_application_has_automation_signature\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	breaker_src=$(awk '
 		/^_nmr_application_is_circuit_breaker_trip\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
+	sort_src=$(awk '
+		/^_nmr_version_sort_key\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	current_src=$(awk '
+		/^_nmr_current_aidevops_version\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	retry_src=$(awk '
+		/^_nmr_breaker_release_retry_reason\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
 	maint_src=$(awk '
 		/^_nmr_applied_by_maintainer\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
-	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$maint_src" ]]; then
+	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$sort_src" || -z "$current_src" || -z "$retry_src" || -z "$maint_src" ]]; then
 		printf 'ERROR: could not extract one of the NMR helpers from %s\n' "$NMR_SCRIPT" >&2
 		return 1
 	fi
@@ -166,6 +175,12 @@ define_helpers_under_test() {
 	eval "$sig_src"
 	# shellcheck disable=SC1090
 	eval "$breaker_src"
+	# shellcheck disable=SC1090
+	eval "$sort_src"
+	# shellcheck disable=SC1090
+	eval "$current_src"
+	# shellcheck disable=SC1090
+	eval "$retry_src"
 	# shellcheck disable=SC1090
 	eval "$maint_src"
 	return 0
@@ -571,6 +586,44 @@ test_paginated_timeline_latest_nmr_event_preserves_breaker_trip() {
 	return 0
 }
 
+test_release_upgrade_allows_rate_limit_breaker_retry() {
+	# Outlier recovery: a rate-limit/capacity breaker from an older aidevops
+	# release should be allowed one fresh retry after a newer release lands.
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-07T21:26:05Z"}]'
+	set_comments '[{"created_at":"2026-05-07T21:26:06Z","body":"<!-- dispatch-backoff:rate_limit_nmr -->\n## Rate-Limit Backoff Circuit Breaker (t2781)\n---\n[aidevops.sh](https://aidevops.sh) v3.14.91 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.14.94
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 4508 awardsapp/awardsapp marcusquinn; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "release upgrade allows automated rate-limit breaker retry" 1 \
+			"Expected exit 1 — newer aidevops release should permit auto-approval retry"
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "release upgrade allows automated rate-limit breaker retry" 0
+	return 0
+}
+
+test_same_release_preserves_rate_limit_breaker_nmr() {
+	# The release gate must not defeat #19756-style breaker preservation when
+	# no newer aidevops release is available.
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-07T21:26:05Z"}]'
+	set_comments '[{"created_at":"2026-05-07T21:26:06Z","body":"<!-- dispatch-backoff:rate_limit_nmr -->\n## Rate-Limit Backoff Circuit Breaker (t2781)\n---\n[aidevops.sh](https://aidevops.sh) v3.14.94 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.14.94
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 4508 awardsapp/awardsapp marcusquinn; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "same release preserves rate-limit breaker NMR" 0
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "same release preserves rate-limit breaker NMR" 1 \
+		"Expected exit 0 — same-version breaker still requires approval"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -613,6 +666,8 @@ main() {
 	test_non_maintainer_actor_auto_approves
 	test_peer_runner_breaker_trip_preserves_nmr
 	test_paginated_timeline_latest_nmr_event_preserves_breaker_trip
+	test_release_upgrade_allows_rate_limit_breaker_retry
+	test_same_release_preserves_rate_limit_breaker_nmr
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
