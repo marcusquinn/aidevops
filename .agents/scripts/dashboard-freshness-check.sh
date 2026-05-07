@@ -291,6 +291,7 @@ _open_alert_numbers_for_kind() {
 	local missing_marker_title="Supervisor health dashboard missing last_refresh marker (#${dash_issue})"
 	local issue_suffix="(#${dash_issue})"
 	local issue_list_json=""
+	local issue_list_status=0
 	if [[ -n "$open_issues_json" ]]; then
 		issue_list_json="$open_issues_json"
 	else
@@ -298,7 +299,12 @@ _open_alert_numbers_for_kind() {
 		gh auth status &>/dev/null 2>&1 || return 0
 		# Query open issue titles and filter locally. GitHub search is unreliable for
 		# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-		issue_list_json="$(gh issue list --repo "$slug" --state open --paginate --json number,title 2>>"$LOGFILE" || true)"
+		issue_list_json="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title 2>>"$LOGFILE")"
+		issue_list_status=$?
+		if (( issue_list_status != 0 )); then
+			_log_error "Failed to list open issues for dashboard freshness dedup in ${slug}: gh issue list exited ${issue_list_status}"
+			return 0
+		fi
 	fi
 	[[ -n "$issue_list_json" ]] || return 0
 	printf '%s\n' "$issue_list_json" | \
@@ -319,11 +325,19 @@ _open_alert_numbers_for_kind() {
 
 _open_issue_titles_json() {
 	local slug="$1"
+	local issue_list_json=""
+	local issue_list_status=0
 	command -v gh >/dev/null 2>&1 || return 0
 	gh auth status &>/dev/null 2>&1 || return 0
 	# Query open issue titles and filter locally. GitHub search is unreliable for
 	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-	gh issue list --repo "$slug" --state open --paginate --json number,title 2>>"$LOGFILE" || true
+	issue_list_json="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title 2>>"$LOGFILE")"
+	issue_list_status=$?
+	if (( issue_list_status != 0 )); then
+		_log_error "Failed to list open issues for dashboard freshness recovery in ${slug}: gh issue list exited ${issue_list_status}"
+		return 0
+	fi
+	printf '%s\n' "$issue_list_json"
 	return 0
 }
 
