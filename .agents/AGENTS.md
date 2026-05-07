@@ -51,6 +51,13 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: `memory-helper.sh recall --query "<task keywords>" --limit 5`. Store fresh lessons immediately after breakthroughs.
 - Before non-trivial code changes, run one duplicate/collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
 
+### Automation safety invariants
+
+- Pending or expected CI is not failure; repair feedback only follows terminal failed checks. See `reference/worker-diagnostics.md` and `reference/review-bot-gate.md`.
+- Before redispatch, dedupe against recently merged PRs and verified merged fixes. See `reference/worker-discipline.md` and `reference/task-lifecycle.md`.
+- If rate-limit releases repeat, pause instead of comment-storming. See `reference/gh-command-discipline.md` and `reference/worker-diagnostics.md`.
+- Superseded duplicate PRs close against the verified merged fix. See `reference/review-bot-gate.md` and `workflows/git-workflow.md`.
+
 ### Tool and file discipline
 
 - Prefer exact search first: `rg`/Grep, then `osgrep` for semantic search. File discovery with Bash available: `git ls-files '<pattern>'` for tracked files, `fd` for untracked, `rg --files -g '<pattern>'` for file lists. Glob is last resort.
