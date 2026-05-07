@@ -26,7 +26,7 @@ export { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs
 // ---------------------------------------------------------------------------
 
 const CREDENTIAL_PATTERN =
-  /(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
+  /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 
 const REDACTION_TOKEN = "[redacted-credential]";
 
@@ -35,11 +35,11 @@ const REDACTION_TOKEN = "[redacted-credential]";
  * @param {string} text
  * @returns {{ scrubbed: string, count: number }}
  */
-function scrubCredentials(text) {
+export function scrubCredentials(text) {
   let count = 0;
-  const scrubbed = text.replace(CREDENTIAL_PATTERN, () => {
+  const scrubbed = text.replace(CREDENTIAL_PATTERN, (_match, boundary) => {
     count++;
-    return REDACTION_TOKEN;
+    return `${boundary}${REDACTION_TOKEN}`;
   });
   return { scrubbed, count };
 }
