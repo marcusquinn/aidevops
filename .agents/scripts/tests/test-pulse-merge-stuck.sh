@@ -18,7 +18,8 @@
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
 #      read-only merge gates (required checks, worker PR with no linked issue).
-#   8. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#   8. _detect_pattern_outage de-duplicates repeated PR observations.
+#   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
 # (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
@@ -344,9 +345,61 @@ assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "1" "
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 7: shellcheck cleanliness.
+# Section 7: pattern outage deduplication.
 # ---------------------------------------------------------------------------
-echo "--- Section 7: shellcheck ---"
+echo "--- Section 7: pattern outage deduplication ---"
+
+_pms_failure_fingerprint() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$pr_number" in
+	11 | 12) printf 'E2E Shard 1/4,E2E Shard 2/4' ;;
+	*) printf '' ;;
+	esac
+	return 0
+}
+
+PMS_TEST_OUTAGE_ARGS=""
+_pms_file_outage_issue() {
+	local repo_slug="$1"
+	local count="$2"
+	local fingerprint="$3"
+	local prs="$4"
+	PMS_TEST_OUTAGE_ARGS="${repo_slug}|${count}|${fingerprint}|${prs}"
+	return 0
+}
+
+AIDEVOPS_MERGE_PATTERN_MIN_PRS=2
+_detect_pattern_outage "example/repo" $'11\n11\n12\n'
+assert_eq "7a: duplicate PR observations counted once" \
+	"example/repo|2|E2E Shard 1/4,E2E Shard 2/4|11,12" \
+	"$PMS_TEST_OUTAGE_ARGS"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 8: default branch guidance.
+# ---------------------------------------------------------------------------
+echo "--- Section 8: default branch guidance ---"
+
+gh() {
+	local command_name="${1:-}"
+	local path_arg="${2:-}"
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo" ]]; then
+		printf 'develop'
+		return 0
+	fi
+	return 1
+}
+
+got=$(_pms_default_branch "example/repo")
+assert_eq "8a: default branch resolves from repo API" "develop" "$got"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 9: shellcheck cleanliness.
+# ---------------------------------------------------------------------------
+echo "--- Section 9: shellcheck ---"
 
 run_shellcheck() {
 	local label="$1" file="$2"
@@ -368,8 +421,8 @@ run_shellcheck() {
 	return 0
 }
 
-run_shellcheck "7a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
-run_shellcheck "7b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
+run_shellcheck "9a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
+run_shellcheck "9b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
 echo ""
 
 # ---------------------------------------------------------------------------
