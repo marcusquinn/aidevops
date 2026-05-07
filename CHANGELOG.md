@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.86] - 2026-05-07
+
+### Added
+
+- add service interruption continuation budget (#23041)
+
 ## [3.14.85] - 2026-05-07
 
 ### Fixed
