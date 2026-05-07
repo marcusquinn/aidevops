@@ -674,6 +674,7 @@ test_canary_uses_builtin_agent_without_default_agent() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
 	local args_file="${canary_root}/args.txt"
+	local env_file="${canary_root}/env.txt"
 	mkdir -p "$fake_bin_dir"
 
 	cat >"${fake_bin_dir}/opencode" <<'EOF'
@@ -682,7 +683,13 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '1.14.31\n'
 	exit 0
 fi
+if [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+	printf 'leaked session env\n' >"$AIDEVOPS_CANARY_ENV_FILE"
+	exit 42
+fi
 printf '%s\n' "$*" >"$AIDEVOPS_CANARY_ARGS_FILE"
+printf 'OPENCODE_BIN=%s\nOPENCODE_DB=%s\n' \
+	"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}" >"$AIDEVOPS_CANARY_ENV_FILE"
 printf 'CANARY_OK\n'
 exit 0
 EOF
@@ -693,25 +700,79 @@ EOF
 		PATH="${fake_bin_dir}:$PATH" \
 		HOME="${canary_root}/home" \
 		OPENCODE_BIN="${fake_bin_dir}/opencode" \
+		OPENCODE_DB="${canary_root}/opencode.db" \
+		OPENCODE_SESSION_ID="ses_parent" \
+		OPENCODE_PID="12345" \
+		OPENCODE_RUN_ID="run_parent" \
+		OPENCODE_PROCESS_ROLE="tui" \
+		OPENCODE="1" \
+		OPENCODE_SERVER_PASSWORD="session-password" \
 		AIDEVOPS_CANARY_ARGS_FILE="$args_file" \
+		AIDEVOPS_CANARY_ENV_FILE="$env_file" \
 		AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
 		CANARY_CACHE_TTL_SECONDS=0 \
 		CANARY_TIMEOUT_SECONDS=5 \
 		bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
-	) && [[ -f "$args_file" ]]; then
+	) && [[ -f "$args_file" && -f "$env_file" ]]; then
 		local args
 		args=$(<"$args_file")
-		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]]; then
+		local env_output
+		env_output=$(<"$env_file")
+		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]] &&
+			[[ "$env_output" == *"OPENCODE_BIN=${fake_bin_dir}/opencode"* ]] &&
+			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]]; then
 			print_result "canary uses built-in agent without default_agent" 0
 			return 0
 		fi
 		print_result "canary uses built-in agent without default_agent" 1 \
-			"Expected --pure and --agent build in canary args, got: ${args}"
+			"Expected --pure/--agent build and preserved OpenCode config env, got args: ${args}; env: ${env_output}"
 		return 0
 	fi
 
 	print_result "canary uses built-in agent without default_agent" 1 \
 		"Canary stub did not run successfully: ${output:-<empty>}"
+	return 0
+}
+
+test_opencode_session_env_wrapper_strips_session_vars_only() {
+	local output
+	# shellcheck disable=SC2016 # Inner bash expands these after env stripping.
+	output=$(
+		OPENCODE_SESSION_ID="ses_parent" \
+		OPENCODE_PID="12345" \
+		OPENCODE_RUN_ID="run_parent" \
+		OPENCODE_PROCESS_ROLE="tui" \
+		OPENCODE="1" \
+		OPENCODE_SERVER_PASSWORD="session-password" \
+		OPENCODE_BIN="opencode" \
+		OPENCODE_DB="/tmp/opencode.db" \
+		run_without_opencode_session_env bash -c '
+			printf "%s|%s|%s|%s|%s|%s|%s|%s" \
+				"${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
+				"${OPENCODE_PROCESS_ROLE:-}" "${OPENCODE:-}" "${OPENCODE_SERVER_PASSWORD:-}" \
+				"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}"
+		'
+	)
+
+	if [[ "$output" == "||||||opencode|/tmp/opencode.db" ]]; then
+		print_result "OpenCode session env wrapper strips only session-bound vars" 0
+		return 0
+	fi
+
+	print_result "OpenCode session env wrapper strips only session-bound vars" 1 \
+		"Expected session vars stripped and config env preserved, got: ${output}"
+	return 0
+}
+
+test_worker_opencode_exec_paths_strip_session_env() {
+	if grep -Fq "run_without_opencode_session_env \"\$SANDBOX_EXEC_HELPER\" run" "$HELPER_SCRIPT" &&
+		grep -Fq "run_without_opencode_session_env timeout \"\$HEADLESS_SANDBOX_TIMEOUT_DEFAULT\"" "$HELPER_SCRIPT"; then
+		print_result "worker OpenCode exec paths strip session env" 0
+		return 0
+	fi
+
+	print_result "worker OpenCode exec paths strip session env" 1 \
+		"Expected sandbox and bare-timeout OpenCode exec paths to use run_without_opencode_session_env"
 	return 0
 }
 
@@ -722,13 +783,27 @@ test_sandbox_passthrough_scopes_provider_env() {
 		ANTHROPIC_API_KEY='anthropic-test' \
 		GOOGLE_API_KEY='google-test' \
 		OPENCODE_BIN='opencode' \
+		OPENCODE_DB='/tmp/opencode.db' \
+		OPENCODE_SESSION_ID='ses_parent' \
+		OPENCODE_PID='12345' \
+		OPENCODE_RUN_ID='run_parent' \
+		OPENCODE_PROCESS_ROLE='tui' \
+		OPENCODE='1' \
+		OPENCODE_SERVER_PASSWORD='session-password' \
 		build_sandbox_passthrough_csv "openai"
 	)
 
 	if [[ "$csv" == *"OPENAI_API_KEY"* ]] &&
 		[[ "$csv" != *"ANTHROPIC_API_KEY"* ]] &&
 		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
-		[[ "$csv" == *"OPENCODE_BIN"* ]]; then
+		[[ "$csv" == *"OPENCODE_BIN"* ]] &&
+		[[ "$csv" == *"OPENCODE_DB"* ]] &&
+		[[ "$csv" != *"OPENCODE_SESSION_ID"* ]] &&
+		[[ "$csv" != *"OPENCODE_PID"* ]] &&
+		[[ "$csv" != *"OPENCODE_RUN_ID"* ]] &&
+		[[ "$csv" != *"OPENCODE_PROCESS_ROLE"* ]] &&
+		[[ "$csv" != *"OPENCODE_SERVER_PASSWORD"* ]] &&
+		[[ ",$csv," != *",OPENCODE,"* ]]; then
 		print_result "sandbox passthrough scopes env to selected provider" 0
 		return 0
 	fi
@@ -1311,6 +1386,8 @@ main() {
 	test_failure_classifier_records_provenance
 	test_service_interruption_candidate_uses_separate_path
 	test_canary_uses_builtin_agent_without_default_agent
+	test_opencode_session_env_wrapper_strips_session_vars_only
+	test_worker_opencode_exec_paths_strip_session_env
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_large_opencode_prompt_uses_file_attachment
