@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.87] - 2026-05-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+- flatten paginated NMR timeline events (#23059)
+- Tests: guard dashboard freshness alert refactor (#23056)
+
+### Fixed
+
+- count fast rate limits in dispatch backoff (#23067)
+- cap worker dispatch by provider capacity and load (#23061)
+- log dashboard freshness issue-list errors (#23060)
+- harden worktree owner pid SQL binding (#23058)
+- harden opencode daemon path construction (#23057)
+- preserve service interruption diagnostics (#23055)
+- harden gh issue label parsing (#23054)
+- match ruleset branch globs in merge gate (#23053)
+- skip fresh claim orphan issue fetch (#23052)
+
 ## [3.14.86] - 2026-05-07
 
 ### Added
