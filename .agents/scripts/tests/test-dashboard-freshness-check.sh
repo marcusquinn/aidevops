@@ -25,6 +25,8 @@
 #      recovery evidence and closes the alert.
 #  10. scan with a stale dashboard AND a pre-existing missing-marker alert →
 #      closes the recovered missing-marker alert and files a stale alert.
+#  11. source regression: recovered stale and missing-marker alert paths share
+#      the parameterized close helper and accept a pre-fetched open issue list.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
 # and to fail-open on every error path; the test sets up a self-contained
@@ -418,7 +420,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 11: missing-marker body → alerts with MISSING title
+# Test 11: source shape for shared recovered-alert helper and cached issue list
+# ---------------------------------------------------------------------------
+echo "Testing: recovered-alert source shape"
+if grep -q '^_close_recovered_alerts_for_kind()' "$SCANNER" \
+	&& grep -q "_close_recovered_alerts_for_kind \"\$ALERT_KIND_ANY\"" "$SCANNER" \
+	&& grep -q "_close_recovered_alerts_for_kind \"\$ALERT_KIND_MISSING\"" "$SCANNER" \
+	&& grep -q "local open_issues_json=\"\${7:-}\"" "$SCANNER" \
+	&& grep -q "_open_alert_numbers_for_kind \"\$kind\" \"\$slug\" \"\$dash_issue\" \"\$open_issues_json\"" "$SCANNER"; then
+	pass "recovered alert close paths share helper and optional issue-list cache"
+else
+	fail "recovered-alert source shape" \
+		"expected shared helper with stale/missing wrappers and optional open_issues_json"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 12: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
