@@ -101,7 +101,7 @@ _pulse_capacity_provider_account_counts() {
 		return 0
 	fi
 
-	local now_ms counts
+	local now_ms="" counts=""
 	now_ms=$(($(date +%s) * 1000))
 	counts=$(jq -r --arg provider "$provider" --argjson now "$now_ms" --argjson zero 0 --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' '
 		def n: tonumber? // 0;
@@ -256,7 +256,7 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$min_worker_floor" =~ ^[0-9]+$ ]] || min_worker_floor=6
 
-	local provider account_total account_available account_limited account_auth_errors
+	local provider="" account_total="" account_available="" account_limited="" account_auth_errors=""
 	provider=$(_pulse_capacity_selected_provider)
 	read -r account_total account_available account_limited account_auth_errors <<<"$(_pulse_capacity_provider_account_counts "$provider")"
 	[[ "$account_total" =~ ^[0-9]+$ ]] || account_total=0
@@ -264,7 +264,7 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$account_limited" =~ ^[0-9]+$ ]] || account_limited=0
 	[[ "$account_auth_errors" =~ ^[0-9]+$ ]] || account_auth_errors=0
 
-	local load_points failures rate_limits service_interruptions provider_5xx progress_heartbeats
+	local load_points="" failures="" rate_limits="" service_interruptions="" provider_5xx="" progress_heartbeats=""
 	load_points=$(_pulse_capacity_load_pressure_points)
 	read -r failures rate_limits service_interruptions provider_5xx progress_heartbeats <<<"$(_pulse_capacity_recent_health_counts)"
 	[[ "$load_points" =~ ^[0-9]+$ ]] || load_points=0
