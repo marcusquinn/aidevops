@@ -19,6 +19,7 @@ set -u
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CLAIM_SCRIPT="${SCRIPT_DIR}/../claim-task-id.sh"
+COUNTER_LIB="${SCRIPT_DIR}/../claim-task-id-counter.sh"
 
 RED=$'\033[0;31m'
 GREEN=$'\033[0;32m'
@@ -102,7 +103,7 @@ _launch_concurrent_claims() {
 	for ((i = 1; i <= num_concurrent; i++)); do
 		(
 			local output
-			output=$("$CLAIM_SCRIPT" \
+			output=$(CAS_MAX_RETRIES=100 CAS_WALL_TIMEOUT_S=120 "$CLAIM_SCRIPT" \
 				--title "concurrent test $i" \
 				--no-issue \
 				--repo-path "$work_dir" \
@@ -213,7 +214,7 @@ test_pinned_sha_in_source() {
 	# After refactoring (GH#19689), the git plumbing lives in _cas_build_and_push.
 	# Verify it uses the pinned_sha parameter, not the ref name.
 	local build_body
-	build_body=$(sed -n '/^_cas_build_and_push()/,/^}/p' "$CLAIM_SCRIPT")
+	build_body=$(sed -n '/^_cas_build_and_push()/,/^}/p' "$COUNTER_LIB")
 
 	# Check that git ls-tree uses the first parameter (pinned_sha)
 	if echo "$build_body" | grep -q 'git ls-tree.*pinned_sha'; then
@@ -233,7 +234,7 @@ test_pinned_sha_in_source() {
 
 	# Verify _cas_fetch_and_pin exists and does the pinning
 	local fetch_body
-	fetch_body=$(sed -n '/^_cas_fetch_and_pin()/,/^}/p' "$CLAIM_SCRIPT")
+	fetch_body=$(sed -n '/^_cas_fetch_and_pin()/,/^}/p' "$COUNTER_LIB")
 	if [[ -z "$fetch_body" ]]; then
 		fail "$name" "_cas_fetch_and_pin function not found"
 		return 0
@@ -242,7 +243,7 @@ test_pinned_sha_in_source() {
 	# Verify allocate_counter_cas does NOT contain git ls-tree or rev-parse
 	# (all plumbing delegated to helpers)
 	local cas_body
-	cas_body=$(sed -n '/^allocate_counter_cas()/,/^}/p' "$CLAIM_SCRIPT")
+	cas_body=$(sed -n '/^allocate_counter_cas()/,/^}/p' "$COUNTER_LIB")
 	if echo "$cas_body" | grep -q 'git ls-tree'; then
 		fail "$name" "allocate_counter_cas still contains git ls-tree — should be in helper"
 		return 0

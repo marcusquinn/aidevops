@@ -277,7 +277,7 @@ test_case_d_noninteractive_warns() {
 	PATH="$saved_path"
 
 	local has_warn=false
-	if printf '%s' "$stderr_output" | grep -q '\[claim-task-id\] WARN: similar PR found:'; then
+	if printf '%s' "$stderr_output" | grep -q '\[claim-task-id\] WARN: similar issue or PR found:'; then
 		has_warn=true
 	fi
 

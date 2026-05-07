@@ -208,6 +208,35 @@ _run_git_with_ssh_fallback() {
 	return $rc
 }
 
+# Detect GitHub protected-branch rejections in git push stderr.
+# These are policy failures, not CAS contention, so retrying only burns the
+# wall-clock budget and hides the actionable remediation.
+_cas_push_rejection_is_protected_branch() {
+	local stderr_text="${1:-}"
+
+	[[ -z "$stderr_text" ]] && return 1
+	if [[ "$stderr_text" == *"Protected branch update failed"* ]]; then
+		return 0
+	fi
+	if [[ "$stderr_text" == *"GH006"* && "$stderr_text" == *"Changes must be made through a pull request"* ]]; then
+		return 0
+	fi
+	if [[ "$stderr_text" == *"Changes must be made through a pull request"* && "$stderr_text" == *"refs/heads/${COUNTER_BRANCH}"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Emit protected-branch guidance without exposing full remote URLs or stderr.
+_cas_log_protected_branch_rejection() {
+	log_error "PROTECTED_COUNTER_BRANCH: ${REMOTE_NAME}/${COUNTER_BRANCH} rejects direct counter pushes"
+	log_error "Task ID allocation cannot advance ${COUNTER_FILE} by direct CAS push on a protected branch."
+	log_error "Recovery: configure .aidevops.json counter_branch to an unprotected counter branch,"
+	log_error "or relax protection for the dedicated counter branch before retrying."
+	log_error "The CAS helper used git plumbing only; no working-tree changes or local commits were created."
+	return 0
+}
+
 # =============================================================================
 # Machine-local mutex for CAS serialisation (Phase 2 / t2568 / GH#20001)
 # =============================================================================
@@ -589,10 +618,25 @@ _cas_build_and_push() {
 	# returns the same exit codes as a direct push, so the conflict (rc=1)
 	# vs success (rc=0) handling below is unchanged.
 	local push_rc=0
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	local push_stderr=""
+	local push_err_file=""
+	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null 2>"$push_err_file" || push_rc=$?
+		push_stderr=$(<"$push_err_file")
+		rm -f "$push_err_file" 2>/dev/null || true
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	fi
 	if [[ $push_rc -ne 0 ]]; then
+		if _cas_push_rejection_is_protected_branch "$push_stderr"; then
+			_cas_log_protected_branch_rejection
+			return 1
+		fi
 		if [[ $push_rc -eq 124 ]]; then
 			log_warn "Push timed out (HTTPS + SSH fallback both unavailable) — treating as retriable conflict"
 		else
