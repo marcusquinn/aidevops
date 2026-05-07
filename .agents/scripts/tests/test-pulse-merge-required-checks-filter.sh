@@ -31,6 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # _pr_required_checks_pass was moved to pulse-merge-process.sh
 # (GH#21595, t3030).
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
 
 readonly TEST_RED=$'\033[0;31m'
 readonly TEST_GREEN=$'\033[0;32m'
@@ -287,9 +288,9 @@ define_function_under_test() {
 	local terminal_src
 	terminal_src=$(awk '
 		/^_check_required_checks_has_terminal_failure\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$REQUIRED_CHECKS_SCRIPT")
 	if [[ -z "$terminal_src" ]]; then
-		printf 'ERROR: could not extract _check_required_checks_has_terminal_failure from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _check_required_checks_has_terminal_failure from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper

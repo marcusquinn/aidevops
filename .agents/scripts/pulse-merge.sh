@@ -124,6 +124,10 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-gates.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/pulse-merge-process.sh"
 
+# shellcheck source=./pulse-merge-required-checks.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
