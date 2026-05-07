@@ -43,6 +43,12 @@
 #                              Override per-repo or per-tool in repos.json:
 #                              { "review_gate": { "rate_limit_behavior": "pass",
 #                                "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
+#   REVIEW_GATE_COMPLETION_BEHAVIOR — Global default for bot completion:
+#                              "fast" (default, accept settled comments) or
+#                              "strict" (require bot success status when needed).
+#                              Override per-repo or per-tool in repos.json:
+#                              { "review_gate": { "completion_behavior": "strict",
+#                                "tools": { "coderabbitai": { "completion_behavior": "fast" } } } }
 #
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
 # GH#3827: Rate-limit grace period — pass gate after timeout when bots are
@@ -120,6 +126,12 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 # Override per-repo or per-tool via repos.json review_gate config.
 REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
 
+# GH#23066: Global default for completion evidence behavior.
+# Values: "fast" keeps high-throughput settled-comment semantics; "strict"
+# requires bot-specific terminal success evidence for two-phase bots such as
+# CodeRabbit. Override per-repo or per-tool via repos.json review_gate config.
+REVIEW_GATE_COMPLETION_BEHAVIOR="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
+
 # t2139 (GH#19251): Minimum seconds a bot comment must have been "settled"
 # (either edited via updated_at > created_at, or simply old enough since
 # created_at) before it counts as a completed review. Defeats the two-phase
@@ -192,6 +204,49 @@ _get_rate_limit_behavior() {
 	# Fall through to global env (which defaults to "pass")
 	printf '%s' "$REVIEW_GATE_RATE_LIMIT_BEHAVIOR"
 	return 0
+}
+
+_get_completion_behavior() {
+	# GH#23066: Resolve completion behavior for a specific bot on a specific repo.
+	# Resolution order: per-tool > per-repo default > global env > hardcoded "fast".
+	#
+	# repos.json schema:
+	#   "review_gate": {
+	#     "completion_behavior": "strict",        // per-repo default
+	#     "tools": {
+	#       "coderabbitai": { "completion_behavior": "fast" }
+	#     }
+	#   }
+	local repo_slug="$1"
+	local bot_login="$2"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local behavior=""
+		behavior=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | (.review_gate.tools[$bot].completion_behavior // .review_gate.completion_behavior // empty)' \
+			"$repos_json" 2>/dev/null) || behavior=""
+		if [[ -n "$behavior" ]]; then
+			printf '%s' "$behavior"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$REVIEW_GATE_COMPLETION_BEHAVIOR"
+	return 0
+}
+
+_requires_success_status_completion() {
+	# GH#23066: Strict completion is opt-in so high-throughput repos keep the
+	# existing fast path by default. Limit the stricter requirement to two-phase
+	# bots because they are the observed comment-before-status race.
+	local repo_slug="$1"
+	local bot_login="$2"
+	local behavior
+	behavior=$(_get_completion_behavior "$repo_slug" "$bot_login")
+	[[ "$behavior" != "strict" ]] && return 1
+	_is_two_phase_bot "$bot_login" && return 0
+	return 1
 }
 
 _get_min_edit_lag() {
@@ -572,6 +627,15 @@ bot_has_real_review() {
 			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
 				continue
 			fi
+			# GH#23066: Strict completion is an opt-in local/repo preference.
+			# #aidevops:trust-boundary — a two-phase bot's edited comment is not
+			# trusted as terminal completion unless the bot's own status/check has
+			# reached success. Default fast mode intentionally preserves throughput.
+			if _requires_success_status_completion "$repo" "$bot_login" && \
+				! bot_has_success_status "$pr_number" "$repo" "$bot_login"; then
+				echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
+				continue
+			fi
 			return 0
 		done <<<"$records"
 	done
@@ -580,13 +644,10 @@ bot_has_real_review() {
 	return 1
 }
 
-any_bot_has_success_status() {
+_get_success_status_contexts() {
 	# GH#3005: When bots are rate-limited in comments but still post a formal
 	# GitHub status check, treat the PR as reviewed.
 	# GH#3007: The status context name may differ from the bot login.
-	# E.g., bot login "coderabbitai" but status context "CodeRabbit".
-	# Match bidirectionally: bot_base starts with context OR context
-	# starts with bot_base (case-insensitive).
 	local pr_number="$1"
 	local repo="$2"
 
@@ -620,22 +681,66 @@ any_bot_has_success_status() {
 		return 1
 	fi
 
+	printf '%s\n' "${head_sha}" "$statuses"
+	return 0
+}
+
+_status_contexts_match_bot() {
+	# GH#3007: Match bidirectionally — the status context may be a prefix
+	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
+	# Input shape: first line is head SHA, remaining lines are success contexts.
+	local bot_login="$1"
+	local status_contexts="$2"
+
+	if [[ -z "$status_contexts" ]]; then
+		return 1
+	fi
+
+	local head_sha statuses
+	head_sha=$(printf '%s\n' "$status_contexts" | sed -n '1p')
+	statuses=$(printf '%s\n' "$status_contexts" | sed '1d')
+	if [[ -z "$head_sha" || -z "$statuses" ]]; then
+		return 1
+	fi
+
 	local statuses_lower
 	statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
 
-	# GH#3007: Match bidirectionally — the status context may be a prefix
-	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
-	local bot bot_base ctx
+	local bot_base ctx
+	bot_base=$(echo "$bot_login" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r ctx; do
+		[[ -z "$ctx" ]] && continue
+		# Bidirectional prefix match: either string starts with the other
+		if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
+			echo "Bot '${bot_login}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
+			return 0
+		fi
+	done <<<"$statuses_lower"
+	return 1
+}
+
+bot_has_success_status() {
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+
+	local status_contexts
+	status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+	_status_contexts_match_bot "$bot_login" "$status_contexts" && return 0
+	return 1
+}
+
+any_bot_has_success_status() {
+	local pr_number="$1"
+	local repo="$2"
+	local status_contexts
+	status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+
+	local bot
 	for bot in "${KNOWN_BOTS[@]}"; do
-		bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
-		while IFS= read -r ctx; do
-			[[ -z "$ctx" ]] && continue
-			# Bidirectional prefix match: either string starts with the other
-			if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
-				echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
-				return 0
-			fi
-		done <<<"$statuses_lower"
+		if _status_contexts_match_bot "$bot" "$status_contexts"; then
+			return 0
+		fi
 	done
 	return 1
 }

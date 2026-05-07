@@ -85,6 +85,14 @@ setup_test_env() {
       "path": "/tmp/otherrepo",
       "slug": "testorg/otherrepo",
       "pulse": true
+    },
+    {
+      "path": "/tmp/strictrepo",
+      "slug": "testorg/strictrepo",
+      "pulse": true,
+      "review_gate": {
+        "completion_behavior": "strict"
+      }
     }
   ]
 }
@@ -429,6 +437,103 @@ test_two_phase_env_override_respected_non_two_phase() {
 	return 0
 }
 
+# ---------- Unit/integration tests: opt-in strict completion (GH#23066) ----------
+
+install_strict_completion_gh_stub() {
+	local scenario="$1"
+	local gh_stub="${TEST_ROOT}/bin/gh"
+
+	cat >"$gh_stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+scenario="${REVIEW_BOT_GATE_GH_SCENARIO:?}"
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	printf '%s\n' 'abc123def456'
+	exit 0
+fi
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 2
+fi
+
+endpoint="${2:-}"
+case "$endpoint" in
+	repos/testorg/strictrepo/pulls/123/reviews)
+		;;
+	repos/testorg/strictrepo/issues/123/comments)
+		printf '%s\t%s\t%s\n' \
+			'2026-05-07T00:00:00Z' \
+			'2026-05-07T00:00:05Z' \
+			'UmV2aWV3IGNvbXBsZXRlZC4gTG9va3MgZ29vZC4='
+		;;
+	repos/testorg/strictrepo/pulls/123/comments)
+		;;
+	repos/testorg/strictrepo/commits/abc123def456/status?per_page=100)
+		if [[ "$scenario" == "strict-success" ]]; then
+			printf '%s\n' 'CodeRabbit'
+		fi
+		;;
+	repos/testorg/strictrepo/commits/abc123def456/check-runs?per_page=100)
+		;;
+	*)
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	export REVIEW_BOT_GATE_GH_SCENARIO="$scenario"
+	return 0
+}
+
+test_get_completion_behavior_strict_repo() {
+	local behavior
+	behavior=$(_get_completion_behavior 'testorg/strictrepo' 'coderabbitai')
+	if [[ "$behavior" == "strict" ]]; then
+		print_result "completion_behavior resolves strict repo preference" 0
+	else
+		print_result "completion_behavior resolves strict repo preference" 1 \
+			"got '${behavior}', expected 'strict'"
+	fi
+	return 0
+}
+
+test_get_completion_behavior_defaults_fast() {
+	local behavior
+	behavior=$(_get_completion_behavior 'testorg/otherrepo' 'coderabbitai')
+	if [[ "$behavior" == "fast" ]]; then
+		print_result "completion_behavior defaults to fast throughput mode" 0
+	else
+		print_result "completion_behavior defaults to fast throughput mode" 1 \
+			"got '${behavior}', expected 'fast'"
+	fi
+	return 0
+}
+
+test_strict_coderabbit_pending_status_blocks_edited_comment() {
+	install_strict_completion_gh_stub "strict-pending"
+
+	if ! bot_has_real_review 123 'testorg/strictrepo' 'coderabbitai' 2>/dev/null; then
+		print_result "strict CodeRabbit edited comment waits for SUCCESS status" 0
+	else
+		print_result "strict CodeRabbit edited comment waits for SUCCESS status" 1 \
+			"expected strict mode to reject edited-comment evidence without CodeRabbit SUCCESS status"
+	fi
+	return 0
+}
+
+test_strict_coderabbit_success_status_passes_edited_comment() {
+	install_strict_completion_gh_stub "strict-success"
+
+	if bot_has_real_review 123 'testorg/strictrepo' 'coderabbitai' 2>/dev/null; then
+		print_result "strict CodeRabbit accepts edited comment with SUCCESS status" 0
+	else
+		print_result "strict CodeRabbit accepts edited comment with SUCCESS status" 1 \
+			"expected strict mode to accept CodeRabbit SUCCESS status evidence"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -660,6 +765,13 @@ main() {
 	test_two_phase_coderabbitai_any_edit_settled
 	test_two_phase_unknown_bot_or_semantics_preserved
 	test_two_phase_env_override_respected_non_two_phase
+
+	echo ""
+	echo "=== Opt-in strict completion (GH#23066) ==="
+	test_get_completion_behavior_strict_repo
+	test_get_completion_behavior_defaults_fast
+	test_strict_coderabbit_pending_status_blocks_edited_comment
+	test_strict_coderabbit_success_status_passes_edited_comment
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
