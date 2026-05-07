@@ -24,6 +24,10 @@ set -euo pipefail
 # routing globally, but tests opt into that per scenario below.
 unset AIDEVOPS_GH_REST_FIRST_READS
 unset AIDEVOPS_GH_FORCE_REST_READS
+unset FULL_LOOP_HEADLESS
+unset AIDEVOPS_HEADLESS
+unset OPENCODE_HEADLESS
+unset GITHUB_ACTIONS
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -458,6 +462,25 @@ if [[ "$argv" != *"origin:interactive"* ]] && [[ "$argv" != *"status:in-review"*
 	_pass "headless issue creation is not normalized as interactive"
 else
 	_fail "headless label normalization bypass" "argv: $argv"
+fi
+
+_reset_log
+touch "$TMP/literal-status-star"
+"$SHIM_RUN" issue create --repo owner/repo -t "t3565: Short title flag" --label "status:*, origin:worker" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" != *"literal-status-star"* ]] && [[ "$argv" != *"status:in-review"* ]] && [[ "$argv" == *$'--label\nbug'* ]]; then
+	_pass "label parsing avoids globbing and short title flag normalizes"
+else
+	_fail "label glob safety and short title handling" "argv: $argv"
+fi
+
+_reset_log
+"$SHIM_RUN" issue create --repo owner/repo --title "not-a-task" -t "GH#23049: Follow-up labels" --body "tracking body" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *$'--label\norigin:interactive'* ]] && [[ "$argv" == *$'--label\nstatus:in-review'* ]]; then
+	_pass "last title flag wins during normalization"
+else
+	_fail "multiple title flag handling" "argv: $argv"
 fi
 
 # =============================================================================
