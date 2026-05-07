@@ -45,7 +45,7 @@ _check_required_checks_has_terminal_failure() {
 	req_json=$(printf '%s' "$required_contexts" \
 		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
 
-	local failing_count _fc_exit
+	local failing_count="" _fc_exit=0
 	failing_count=$(jq -n \
 		--argjson req "$req_json" \
 		--argjson checks "$rollup_json" \
