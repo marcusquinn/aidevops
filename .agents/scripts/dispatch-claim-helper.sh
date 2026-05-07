@@ -531,6 +531,14 @@ _filter_orphan_prelaunch_claims() {
 	fi
 	[[ "$DISPATCH_CLAIM_ORPHAN_GRACE" =~ ^[0-9]+$ ]] || DISPATCH_CLAIM_ORPHAN_GRACE=120
 
+	# Most active claims are still inside the pre-launch grace window. Avoid an
+	# issue details request unless at least one claim is old enough to be a
+	# recoverable orphan candidate.
+	if ! printf '%s' "$parsed_claims" | jq -e --argjson grace "$DISPATCH_CLAIM_ORPHAN_GRACE" 'any(.age_seconds > $grace)' >/dev/null 2>&1; then
+		printf '%s' "$parsed_claims"
+		return 0
+	fi
+
 	local assignee_count
 	assignee_count=$(gh api "repos/${repo_slug}/issues/${issue_number}" --jq '.assignees | length' 2>/dev/null) || {
 		printf '%s' "$parsed_claims"
