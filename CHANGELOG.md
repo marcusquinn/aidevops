@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.96] - 2026-05-08
+
+### Changed
+
+- add opt-in strict review gate completion (#23125)
+
 ## [3.14.95] - 2026-05-08
 
 ### Fixed
