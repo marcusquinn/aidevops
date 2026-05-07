@@ -506,7 +506,7 @@ PY
 #######################################
 # Build the health issue body markdown.
 #
-# Arguments: 32 positional parameters (see inline locals below)
+# Arguments: 34 positional parameters (see inline locals below)
 # Output: body markdown to stdout
 #######################################
 _build_health_issue_body() {
@@ -530,19 +530,27 @@ _build_health_issue_body() {
 	local sys_memory="${25}" sys_procs="${26}" runner_role="${27}"
 	local worker_success_rate_24h="${28}" worker_success_rate_7d="${29}" worker_total_runs_24h="${30}" worker_total_runs_7d="${31}"
 	local worker_zero_diagnostics_md="${32}"
+	local canonical_identity="${33:-$runner_user}"
+	local identity_aliases="${34:-$runner_user}"
 	local _worker_rate_section; _worker_rate_section=$(_format_worker_rate_section \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
 		"$worker_total_runs_24h" "$worker_total_runs_7d")
+	local identity_aliases_display
+	identity_aliases_display=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
 
 	cat <<BODY
 ## Queue Health Dashboard
 
 **Last pulse**: \`${now_iso}\`
 **${role_display}**: \`${runner_user}\`
+**Canonical operator**: \`${canonical_identity}\`
+**Identity aliases**: \`${identity_aliases_display}\`
 **Repo**: \`${repo_slug}\`
 
 <!-- aidevops:dashboard-freshness -->
 last_refresh: ${now_iso}
+canonical_operator: ${canonical_identity}
+identity_aliases: ${identity_aliases_display}
 
 ### Summary
 
@@ -731,6 +739,8 @@ _read_person_stats_cache() {
 #   $8  - cross_repo_md
 #   $9  - cross_repo_session_time_md
 #   $10 - cross_repo_person_stats_md
+#   $11 - canonical identity
+#   $12 - identity aliases (newline-delimited)
 # Output: body markdown to stdout
 #######################################
 _assemble_health_issue_body() {
@@ -744,6 +754,8 @@ _assemble_health_issue_body() {
 	local cross_repo_md="$8"
 	local cross_repo_session_time_md="$9"
 	local cross_repo_person_stats_md="${10}"
+	local canonical_identity="${11:-$runner_user}"
+	local identity_aliases="${12:-$runner_user}"
 
 	# Gather live stats via temp file (avoids subshell variable loss)
 	local stats_tmp
@@ -807,7 +819,7 @@ _assemble_health_issue_body() {
 		"$sys_memory" "$sys_procs" "$runner_role" \
 		"$worker_success_rate_24h" "$worker_success_rate_7d" \
 		"$worker_total_runs_24h" "$worker_total_runs_7d" \
-		"$worker_zero_diagnostics_md"
+		"$worker_zero_diagnostics_md" "$canonical_identity" "$identity_aliases"
 	return 0
 }
 
