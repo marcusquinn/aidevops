@@ -481,9 +481,18 @@ _nmr_applied_by_maintainer() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
 	# Fetch both actor and creation timestamp of the latest NMR label event.
+	# Use --slurp for paginated timeline reads, then flatten page arrays before
+	# selecting the latest event. Without this, long timelines emit one result per
+	# page and can pass malformed multi-line timestamps into the breaker checks.
 	local nmr_event_json
-	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
-		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | last | {actor:(.actor.login // ""),at:(.created_at // "")}' \
+	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
+		2>/dev/null | jq -c '
+			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+			elif type == "array" then .
+			else [] end)
+			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
+			| last
+			| {actor:(.actor.login // ""),at:(.created_at // "")}' \
 		2>/dev/null) || nmr_event_json=""
 
 	local nmr_actor nmr_at

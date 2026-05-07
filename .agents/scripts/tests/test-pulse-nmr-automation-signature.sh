@@ -555,6 +555,22 @@ test_peer_runner_breaker_trip_preserves_nmr() {
 	return 0
 }
 
+test_paginated_timeline_latest_nmr_event_preserves_breaker_trip() {
+	# Long-lived issues can paginate timeline events. The latest NMR event can be on
+	# a later page; _nmr_applied_by_maintainer must flatten slurped pages before
+	# extracting nmr_at so breaker detection receives one valid ISO8601 timestamp.
+	set_timeline '[[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-06T10:00:00Z"}],[{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-06T10:05:00Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"peer-runner"},"created_at":"2026-05-06T16:54:57Z"}]]'
+	set_comments '[{"created_at":"2026-05-06T16:54:59Z","body":"<!-- dispatch-infrastructure-failure -->\n## Dispatch infrastructure failure detected"}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	if _nmr_applied_by_maintainer 4249 owner/repo owner-runner; then
+		print_result "paginated timeline latest NMR event preserves breaker trip" 0
+		return 0
+	fi
+	print_result "paginated timeline latest NMR event preserves breaker trip" 1 \
+		"Expected exit 0 — slurped timeline pages must flatten before extracting latest NMR"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -596,6 +612,7 @@ main() {
 	test_manual_hold_still_preserves_nmr
 	test_non_maintainer_actor_auto_approves
 	test_peer_runner_breaker_trip_preserves_nmr
+	test_paginated_timeline_latest_nmr_event_preserves_breaker_trip
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
