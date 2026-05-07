@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.85] - 2026-05-07
+
+### Fixed
+
+- separate worker interruptions from rate limits (#23040)
+
 ## [3.14.84] - 2026-05-07
 
 ### Changed
