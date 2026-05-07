@@ -554,6 +554,7 @@ setup_supervisor_pulse() {
 	# Must run before any cron entries are installed so they inherit the PATH.
 	if [[ "$_os" != "Darwin" ]]; then
 		_ensure_cron_path
+		_reconcile_linux_scheduler_duplicates
 	fi
 
 	# Consent model (GH#2926):
