@@ -566,6 +566,17 @@ copy_scoped_opencode_auth() {
 	return 0
 }
 
+run_without_opencode_session_env() {
+	env -u OPENCODE_SESSION_ID \
+		-u OPENCODE_PID \
+		-u OPENCODE_RUN_ID \
+		-u OPENCODE_PROCESS_ROLE \
+		-u OPENCODE \
+		-u OPENCODE_SERVER_PASSWORD \
+		"$@"
+	return $?
+}
+
 build_sandbox_passthrough_csv() {
 	local provider="${1:-}"
 	local names=()
@@ -574,10 +585,9 @@ build_sandbox_passthrough_csv() {
 
 	while IFS='=' read -r name _; do
 		case "$name" in
-		# OPENCODE_PID is the pulse's own opencode process PID. Passing it to
-		# workers causes them to attach to the pulse's session instead of
-		# creating independent sessions (GH#6668). Exclude it explicitly.
-		OPENCODE_PID) ;;
+		# Session-bound OpenCode env makes isolated canary/worker runs attach to
+		# the parent TUI session and fail with "Session not found" (GH#23065).
+		OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
@@ -1587,7 +1597,7 @@ _run_canary_test() {
 	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
 	# happy path; differs only when alternative-path fallback fired.
 	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
-		"${_canary_timeout_cmd[@]}" \
+		run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
 		"$_effective_opencode_bin" run --pure "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" --agent build \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
