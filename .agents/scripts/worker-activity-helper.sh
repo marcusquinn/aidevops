@@ -215,14 +215,25 @@ _wah_provider_usage_json() {
 	local cutoff_epoch="$1"
 	local metrics="$WAH_METRICS_FILE"
 	local pool="$WAH_OAUTH_POOL_FILE"
-	local now_epoch input_file
+	local now_epoch input_file account_multiplier
 
 	now_epoch=$(date +%s)
 	input_file="/dev/null"
 	[[ -f "$metrics" ]] && input_file="$metrics"
+	account_multiplier="${WAH_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-2}}"
+	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=2
+	((account_multiplier < 1)) && account_multiplier=1
 
 	if [[ -f "$pool" ]]; then
-		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+		jq -rn --slurpfile pool "$pool" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --argjson account_multiplier "$account_multiplier" --arg status_empty '' --arg status_auth_error 'auth-error' --arg status_rate_limited 'rate-limited' --arg status_active 'active' --arg status_idle 'idle' '
+			def account_status: .status // $status_empty;
+			def available_account:
+				(account_status) as $status
+				| $status != $status_auth_error
+				and (($status != $status_rate_limited) or ((.cooldownUntil // 0) <= ($now * 1000)));
+			def active_or_idle:
+				(.status // $status_idle) as $status
+				| $status == $status_active or $status == $status_idle;
 			($pool[0] // {}) as $pool_data
 			| [inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 			| {
@@ -251,10 +262,11 @@ _wah_provider_usage_json() {
 					| map({
 						provider: .key,
 						total: (.value | length),
-						available: (.value | map(select(((.cooldownUntil // 0) == 0) or ((.cooldownUntil // 0) <= ($now * 1000)))) | length),
-						active_idle: (.value | map(select((.status // "idle") == "active" or (.status // "idle") == "idle")) | length),
-						rate_limited: (.value | map(select((.status // "") == "rate-limited" and ((.cooldownUntil // 0) > ($now * 1000)))) | length),
-						auth_errors: (.value | map(select((.status // "") == "auth-error")) | length),
+						available: (.value | map(select(available_account)) | length),
+						capacity_slots: ((.value | map(select(available_account)) | length) * $account_multiplier),
+						active_idle: (.value | map(select(active_or_idle)) | length),
+						rate_limited: (.value | map(select(account_status == $status_rate_limited and ((.cooldownUntil // 0) > ($now * 1000)))) | length),
+						auth_errors: (.value | map(select(account_status == $status_auth_error)) | length),
 						latest_last_used: ([.value[]? | .lastUsed? // empty] | max // "")
 					})
 					| sort_by(.provider)
@@ -423,7 +435,7 @@ _wah_emit_providers_human() {
 	printf '%s' "$usage_json" | jq -r '
 		(.account_pool // []) as $rows
 		| if ($rows | length) == 0 then "  (no oauth-pool.json account summary available)"
-		else $rows[] | "  \(.provider): total=\(.total) available=\(.available) active_idle=\(.active_idle) rate_limited=\(.rate_limited) auth_errors=\(.auth_errors) latest_last_used=\(.latest_last_used // "")"
+		else $rows[] | "  \(.provider): total=\(.total) available=\(.available) capacity_slots=\(.capacity_slots // 0) active_idle=\(.active_idle) rate_limited=\(.rate_limited) auth_errors=\(.auth_errors) latest_last_used=\(.latest_last_used // "")"
 		end' 2>/dev/null || printf '  (account pool summary unavailable)\n'
 	printf '\n'
 	printf 'Recent worker samples (bounded to 10):\n'

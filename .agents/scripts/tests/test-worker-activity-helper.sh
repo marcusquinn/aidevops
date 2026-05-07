@@ -78,6 +78,7 @@ FIXTURE_DIR="$(mktemp -d -t wah-test-XXXXXX)"
 METRICS="$FIXTURE_DIR/headless-runtime-metrics.jsonl"
 STATS="$FIXTURE_DIR/pulse-stats.json"
 PR_CACHE="$FIXTURE_DIR/pr-cache.json"
+OAUTH_POOL="$FIXTURE_DIR/oauth-pool.json"
 
 cleanup() {
 	rm -rf "$FIXTURE_DIR"
@@ -90,6 +91,7 @@ T_5MIN_AGO=$((NOW - 300))
 T_2H_AGO=$((NOW - 7200))
 T_25H_AGO=$((NOW - 90000))
 T_FUTURE_SENTINEL=4102444800
+T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 
 # Build metrics fixture covering every bucket and the regression cases that
 # the original awk implementation handled correctly:
@@ -124,6 +126,20 @@ T_FUTURE_SENTINEL=4102444800
 	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","exit_code":81}\n' "$T_2H_AGO"
 } >"$METRICS"
 
+cat >"$OAUTH_POOL" <<EOF
+{
+  "openai": [
+    {"status": "idle"},
+    {"status": "active"},
+    {"status": "auth-error"},
+    {"status": "rate-limited", "cooldownUntil": $T_FUTURE_SENTINEL_MS}
+  ],
+  "anthropic": [
+    {"status": "idle"}
+  ]
+}
+EOF
+
 # Build pulse-stats fixture: counter arrays with timestamps inside and outside window.
 cat >"$STATS" <<EOF
 {
@@ -142,6 +158,8 @@ RUN_ENV=(
 	"WAH_METRICS_FILE=$METRICS"
 	"WAH_PULSE_STATS_FILE=$STATS"
 	"WAH_PR_CACHE_FILE=$PR_CACHE"
+	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL"
+	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=2"
 )
 
 echo "${TEST_BLUE}=== t3215: worker-activity-helper.sh tests ===${TEST_NC}"
@@ -297,10 +315,27 @@ assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
 assert_contains "5g: human output shows failure groups" "Failure groups" "$OUT"
 
 # ---------------------------------------------------------------------------
-# Section 6: solved:worker attribution query excludes origin-only PR counts.
+# Section 6: provider/account diagnostics expose redacted capacity slots.
 # ---------------------------------------------------------------------------
 echo
-echo "--- Section 6: solved-by attribution query ---"
+echo "--- Section 6: provider/account diagnostics ---"
+
+JSON=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h --json 2>&1)
+RC=$?
+assert_rc "6a: providers --json exits 0" 0 "$RC"
+assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
+assert_eq "6c: openai capacity_slots uses redacted multiplier" "4" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
+
+OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
+assert_contains "6d: human provider output shows capacity slots" "capacity_slots=4" "$OUT"
+
+# ---------------------------------------------------------------------------
+# Section 7: solved:worker attribution query excludes origin-only PR counts.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 7: solved-by attribution query ---"
 
 GH_STUB_DIR="$FIXTURE_DIR/bin"
 mkdir -p "$GH_STUB_DIR"
@@ -319,18 +354,18 @@ chmod +x "$GH_STUB_DIR/gh"
 JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
 	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
 RC=$?
-assert_rc "6a: solved attribution query exits 0" 0 "$RC"
-assert_eq "6b: solved worker issue count = 2" "2" \
+assert_rc "7a: solved attribution query exits 0" 0 "$RC"
+assert_eq "7b: solved worker issue count = 2" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
-assert_contains "6c: gh query uses solved:worker label" "label:solved:worker" \
+assert_contains "7c: gh query uses solved:worker label" "label:solved:worker" \
 	"$(<"$GH_CALL_LOG")"
 if grep -q "label:origin:worker" "$GH_CALL_LOG" 2>/dev/null; then
 	TESTS_RUN=$((TESTS_RUN + 1))
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 6d: query must not use origin:worker"
+	echo "${TEST_RED}FAIL${TEST_NC}: 7d: query must not use origin:worker"
 else
 	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 6d: query does not use origin:worker"
+	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: query does not use origin:worker"
 fi
 
 # ---------------------------------------------------------------------------
