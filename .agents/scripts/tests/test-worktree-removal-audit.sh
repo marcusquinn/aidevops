@@ -366,9 +366,12 @@ test_optional_guard_context_logged() {
 
 	local context="branch=feature/gh23074 issue=23074 owner_guard=clear process_guard=clear recent_session_guard=clear commits=1 pr_state=none recovery_path=none"
 	log_worktree_removal_event "$_WTAR_SKIPPED" "pulse-cleanup.sh" "/wt/context" "local-commits-no-pr" "skipped" "$context"
+	local branch_merged_context="target_branch=main merge_proof=merge-base-is-ancestor merge_proof_result=ancestor branch=feature/gh23076 owner_guard=clear protected_status=clear"
+	log_worktree_removal_event "$_WTAR_REMOVED" "worktree-helper.sh" "/wt/merged" "branch-merged" "permanent" "$branch_merged_context"
 
 	local rc=0
 	assert_file_contains "$log_file" "worktree-skipped.*local-commits-no-pr.*mode=skipped.*branch=feature/gh23074.*owner_guard=clear.*process_guard=clear.*recent_session_guard=clear.*commits=1.*pr_state=none.*recovery_path=none" || rc=1
+	assert_file_contains "$log_file" "worktree-removed.*branch-merged.*mode=permanent.*target_branch=main.*merge_proof=merge-base-is-ancestor.*merge_proof_result=ancestor.*protected_status=clear" || rc=1
 	print_result "optional_guard_context_logged" "$rc" \
 		"Expected guard context audit. Log: $(cat "$log_file" 2>/dev/null)"
 	return 0

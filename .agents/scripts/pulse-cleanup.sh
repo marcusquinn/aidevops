@@ -247,8 +247,13 @@ _cleanup_merged_prs_for_all_repos() {
 		fi
 	fi
 
-	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
-	if [[ ! -x "$helper" ]]; then
+	local helper=""
+	if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -x "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-helper.sh" ]]; then
+		helper="$_PULSE_CLEANUP_SCRIPT_DIR/worktree-helper.sh"
+	elif [[ -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
+	fi
+	if [[ -z "$helper" ]]; then
 		echo 0
 		return 0
 	fi

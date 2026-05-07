@@ -34,7 +34,8 @@
 #   worktree-helper-git.sh          git utilities + stale remote handling
 #   worktree-helper-add.sh          path utils + cmd_add and all its helpers
 #   worktree-helper-cmds.sh         cmd_list, remove, status, switch, registry, help
-#   worktree-clean-lib.sh           cmd_clean (existing split, GH#21409)
+#   worktree-clean-lib.sh           cmd_clean (existing split, GH#21409),
+#                                   including branch-merged safety proof gates
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
