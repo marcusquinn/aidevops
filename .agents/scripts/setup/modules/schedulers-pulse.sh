@@ -298,9 +298,10 @@ _pulse_daemon_path_for_opencode() {
 	local _path=""
 
 	if [[ -n "$_opencode_bin" ]]; then
-		_opencode_dir=$(dirname "$_opencode_bin" 2>/dev/null || printf '')
+		_opencode_dir=$(dirname "$_opencode_bin" || printf '')
+		[[ "$_opencode_dir" == /* ]] || _opencode_dir=""
 	fi
-	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
+	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts${_opencode_dir:+:$_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
 	printf '%s' "$_path"
 	return 0
 }

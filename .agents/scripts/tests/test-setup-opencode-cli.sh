@@ -176,6 +176,11 @@ if HOME="$HOME" PATH="/usr/bin:/bin" "$resolved5" --version >/dev/null 2>&1; the
 else
 	assert_eq "stable shim runs in sanitized PATH" "ok" "failed"
 fi
+if grep -q 'PATH:+:' "$resolved5" && ! grep -q 'PATH:-}' "$resolved5"; then
+	assert_eq "stable shim avoids trailing empty PATH component" "safe" "safe"
+else
+	assert_eq "stable shim avoids trailing empty PATH component" "safe" "unsafe"
+fi
 
 # --- Test 5b: setup_opencode_cli clears stale canary negative cache ----------
 echo "Test 5b: setup_opencode_cli clears canary negative cache after repair"
@@ -198,6 +203,22 @@ if [[ ! -f "$HOME/.aidevops/.agent-workspace/headless-runtime/canary-last-fail" 
 else
 	assert_eq "stale canary negative cache cleared" "cleared" "present"
 fi
+
+# --- Test 5c: daemon shim PATH never contains current-directory entries ------
+echo "Test 5c: _setup_opencode_node_path_for_binary omits unsafe relative entries"
+(
+	source_lib
+	_setup_opencode_node_path_for_binary "opencode"
+) >"$SANDBOX/out5c" 2>&1
+path5c=$(tail -1 "$SANDBOX/out5c")
+case "$path5c" in
+	""|:*|*::*|*:.:*|*:.|.*)
+		assert_eq "daemon shim path excludes empty/dot entries" "safe" "$path5c"
+		;;
+	*)
+		assert_eq "daemon shim path excludes empty/dot entries" "safe" "safe"
+		;;
+esac
 
 # --- Test 6: setup_opencode_cli fail-open when no installer present ---------
 echo "Test 6: setup_opencode_cli fail-open when no bun/npm + invalid current"
