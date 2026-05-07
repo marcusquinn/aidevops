@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.14.84] - 2026-05-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- close recovered merge-stuck meta issues (#23039)
+- reduce dashboard freshness issue list calls (#23034)
+- simplify stale brief rewrite requeue labels (#23033)
+- recover mismatched dashboard freshness alerts (#23030)
+
 ## [3.14.83] - 2026-05-06
 
 ### Changed
