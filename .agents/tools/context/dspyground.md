@@ -3,6 +3,8 @@ description: DSPyGround visual prompt optimization playground
 mode: subagent
 tools:
   read: true
+  write: false
+  edit: false
   bash: true
   glob: true
   grep: true
@@ -10,43 +12,62 @@ tools:
   task: true
 ---
 
-<!-- SPDX-License-Identifier: MIT -->
-<!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-
 # DSPyGround Integration Guide
 
-- Visual prompt optimization playground with GEPA optimizer
-- Requires: Node.js 18+, `AI_GATEWAY_API_KEY`; `OPENAI_API_KEY` optional (voice)
-- Helper: `dspyground-helper.sh install|init|dev [project]`
-- Config: `configs/dspyground-config.json`; project: `dspyground.config.ts`
-- Projects: `data/dspyground/[project-name]/` (`.env`, `.dspyground/`)
-- Web UI: `http://localhost:3000` | Metrics: accuracy, tone, efficiency, tool_accuracy, guardrails
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- DSPyGround: Visual prompt optimization playground with GEPA optimizer
+- Requires: Node.js 18+, AI Gateway API key
+- Helper: `./.agents/scripts/dspyground-helper.sh install|init|dev [project]`
+- Config: `configs/dspyground-config.json`, project: `dspyground.config.ts`
+- Projects: `data/dspyground/[project-name]/`
+- Web UI: `http://localhost:3000` (run with `dspyground dev`)
+- Features: Real-time optimization, voice feedback, structured output with Zod
+- Metrics: accuracy, tone, efficiency, tool_accuracy, guardrails (customizable)
+- Workflow: Chat + Sample → Organize → Optimize → Export prompt
+- API keys: `AI_GATEWAY_API_KEY` required, `OPENAI_API_KEY` optional for voice
+
+<!-- AI-CONTEXT-END -->
 
 ## Setup
 
+**Prerequisites:** Node.js 18+, npm, `AI_GATEWAY_API_KEY`, `OPENAI_API_KEY` (optional, voice feedback)
+
 ```bash
-dspyground-helper.sh install
+./.agents/scripts/dspyground-helper.sh install
+dspyground --version
 cp configs/dspyground-config.json.txt configs/dspyground-config.json
-dspyground-helper.sh init my-agent && dspyground-helper.sh dev my-agent
 ```
 
-`.env`: `AI_GATEWAY_API_KEY=your_key` | `OPENAI_API_KEY=...` (optional, voice) | `OPENAI_BASE_URL=https://api.openai.com/v1`
+**Project layout:** `.agents/scripts/dspyground-helper.sh` (management), `configs/dspyground-config.json` (config), `data/dspyground/[project]/` (project dir with `dspyground.config.ts`, `.env`, `.dspyground/`)
 
-## Optimization Workflow
+## Usage
 
-| Step | Action |
-|------|--------|
-| 1. Chat + Sample | Converse with agent; save good/bad responses as positive/negative. Voice: hold spacebar to record. |
-| 2. Organize | Group samples by use case (e.g., "Deployment Tasks") |
-| 3. Optimize | Click "Optimize" — GEPA runs, shows real-time metrics and candidates |
-| 4. Export | Copy best prompt from history; update `dspyground.config.ts`; deploy |
+```bash
+./.agents/scripts/dspyground-helper.sh init my-agent   # create project
+./.agents/scripts/dspyground-helper.sh dev my-agent    # start dev server (http://localhost:3000)
+# or from project dir: dspyground dev
+```
 
-## Project Config (`dspyground.config.ts`)
+**`.env`:**
+
+```bash
+AI_GATEWAY_API_KEY=your_key_here
+OPENAI_API_KEY=${OPENAI_API_KEY}   # optional, for voice feedback
+OPENAI_BASE_URL=https://api.openai.com/v1
+```
+
+### Project Config (`dspyground.config.ts`)
 
 ```typescript
-import { tool } from 'ai'; import { z } from 'zod'
+import { tool } from 'ai'
+import { z } from 'zod'
+
 export default {
   systemPrompt: `You are a helpful DevOps assistant...`,
+
   tools: {
     checkServerStatus: tool({
       description: 'Check the status of a server',
@@ -54,28 +75,99 @@ export default {
       execute: async ({ serverId }) => `Server ${serverId} is running normally`,
     }),
   },
+
+  // Optional: enforce structured output shape
+  schema: z.object({
+    response: z.string(),
+    confidence: z.number().min(0).max(1),
+    category: z.enum(['deployment', 'monitoring', 'security', 'general'])
+  }),
+
   preferences: {
-    selectedModel: 'openai/gpt-4o-mini', optimizationModel: 'openai/gpt-4o-mini',
-    reflectionModel: 'openai/gpt-4o', batchSize: 3, numRollouts: 10,
-    selectedMetrics: ['accuracy', 'tone'], useStructuredOutput: false,
+    selectedModel: 'openai/gpt-4o-mini',
+    optimizationModel: 'openai/gpt-4o-mini',
+    reflectionModel: 'openai/gpt-4o',
+    batchSize: 3,
+    numRollouts: 10,
+    selectedMetrics: ['accuracy', 'tone'],
+    useStructuredOutput: false,
   },
+
   metricsPrompt: {
     evaluation_instructions: 'You are an expert DevOps evaluator...',
     dimensions: {
-      accuracy: { name: 'Technical Accuracy', weight: 1.0 },
-      tone:     { name: 'Professional Tone',  weight: 0.8 },
-      // custom: { name: '...', weight: N }
-    },
-  },
+      accuracy:   { name: 'Technical Accuracy',  description: 'Is the advice technically correct?',         weight: 1.0 },
+      tone:       { name: 'Professional Tone',    description: 'Is the communication professional?',         weight: 0.8 },
+      efficiency: { name: 'Solution Efficiency',  description: 'Does the solution optimize for efficiency?', weight: 0.9 },
+    }
+  }
 }
 ```
+
+## Optimization Workflow
+
+| Step | Action |
+|------|--------|
+| 1. Chat + Sample | Converse with agent; save good responses as positive samples, bad as negative |
+| 2. Organize | Group samples by use case (e.g., "Deployment Tasks", "Security Questions") |
+| 3. Optimize | Click "Optimize" — GEPA runs, shows real-time metrics and candidate prompts |
+| 4. Export | Copy best prompt from history; update `dspyground.config.ts`; deploy |
+
+## Metrics
+
+**Built-in:** accuracy, tone, efficiency, tool_accuracy, guardrails
+
+**Custom metrics example:**
+
+```typescript
+dimensions: {
+  devops_expertise: { name: 'DevOps Expertise', description: 'Deep DevOps knowledge?',   weight: 1.0 },
+  actionability:    { name: 'Actionability',    description: 'Can user act immediately?', weight: 0.9 },
+}
+```
+
+## Advanced Features
+
+### Structured Output
+
+```typescript
+schema: z.object({
+  task_type: z.enum(['deployment', 'monitoring', 'troubleshooting']),
+  priority: z.enum(['low', 'medium', 'high', 'critical']),
+  steps: z.array(z.string()),
+  estimated_time: z.string(),
+  risks: z.array(z.string())
+})
+```
+
+### Tool Integration
+
+```typescript
+tools: {
+  deployApp: tool({
+    description: 'Deploy application to server',
+    parameters: z.object({
+      appName: z.string(),
+      environment: z.enum(['dev', 'staging', 'prod']),
+    }),
+    execute: async ({ appName, environment }) => `Deployed ${appName} to ${environment}`,
+  }),
+}
+```
+
+**Voice Feedback:** Press and hold spacebar in feedback dialogs to record voice feedback. Automatically transcribed and analysed.
 
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
-| Server won't start | `node --version` (need 18+); `lsof -i :3000` (port conflict) |
-| API key errors | Check `.env`; test: `curl -H "Authorization: Bearer $AI_GATEWAY_API_KEY" https://api.aigateway.com/v1/models` |
+| Server won't start | `node --version` (need 18+); `lsof -i :3000` (check port) |
+| API key errors | `cat .env`; test: `curl -H "Authorization: Bearer $AI_GATEWAY_API_KEY" https://api.aigateway.com/v1/models` |
 | Optimization failures | Reduce `batchSize: 1, numRollouts: 5` in preferences |
 
-**Resources:** [GitHub](https://github.com/Scale3-Labs/dspyground) · [AI Gateway](https://docs.aigateway.com/) · [AI SDK](https://sdk.vercel.ai/) · [GEPA Paper](https://arxiv.org/abs/2310.03714)
+## Resources
+
+- [DSPyGround GitHub](https://github.com/Scale3-Labs/dspyground)
+- [AI Gateway Docs](https://docs.aigateway.com/)
+- [AI SDK Docs](https://sdk.vercel.ai/)
+- [GEPA Algorithm Paper](https://arxiv.org/abs/2310.03714)
