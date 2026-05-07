@@ -131,13 +131,23 @@ _db_count_rate_limit_events() {
 		return 0
 	fi
 
-	# jq JSONL parser: select matching entries (session_key, result, ts >= since),
-	# emit ts values, collect count and max. Single pass over the file.
+	# jq JSONL parser: select matching entries (session_key, rate-limit-equivalent
+	# signal, ts >= since), emit ts values, collect count and max. Single pass over
+	# the file.
 	# --slurp reads all lines into an array for aggregate operations.
 	# Fallback: if jq fails, return "0 0" (fail-open).
 	local result
 	result=$(jq -r --arg sk "$session_key" --argjson since "$since_epoch" \
-		'select(.session_key == $sk and .result == "rate_limit" and (.ts // 0) >= $since) | .ts' \
+		'select(
+			.session_key == $sk
+			and (
+				(.result // "") == "rate_limit"
+				or (.result // "") == "rate_limit_fast"
+				or (.provider_error_type // "") == "rate_limit"
+				or ((.provider_status // "") | tostring) == "429"
+			)
+			and (.ts // 0) >= $since
+		) | .ts' \
 		"$metrics_file" 2>/dev/null \
 		| awk 'BEGIN{count=0;last=0} {count++; if($1+0>last+0)last=$1+0} END{printf "%d %d\n",count,last}' \
 		2>/dev/null) || result="0 0"
@@ -168,7 +178,7 @@ _db_count_provider_rate_limit_pressure() {
 
 	local result
 	result=$(jq -rs --argjson since "$since_epoch" '
-		map(select(((.result // "") == "rate_limit" or (.provider_error_type // "") == "rate_limit" or (.provider_status // "") == "429") and (.ts // 0) >= $since))
+		map(select((((.result // "") == "rate_limit" or (.result // "") == "rate_limit_fast" or (.provider_error_type // "") == "rate_limit" or ((.provider_status // "") | tostring) == "429") and (.ts // 0) >= $since)))
 		| group_by([.provider // "unknown", .model // "unknown"])
 		| map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, last: (map(.ts // 0) | max)})
 		| sort_by(.count, .last)
