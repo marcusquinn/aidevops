@@ -571,6 +571,104 @@ _parse_squash_merge_pr() {
 }
 
 #######################################
+# Verify that a merged PR is safe to treat as superseding a linked issue.
+#
+# Uses the existing GH#17372 pre-close helper so conflict/empty-branch duplicate
+# detection shares the same file-overlap guard as issue-close automation. A
+# missing linked issue or missing merged PR is not enough evidence to close the
+# issue; the caller may still close the duplicate PR but must not close the
+# issue as fixed.
+#
+# Args: $1 = linked_issue, $2 = superseding_pr, $3 = repo_slug
+# Returns: 0 = verified, 1 = not verified / cannot verify
+#######################################
+_verify_superseding_pr_for_issue() {
+	local linked_issue="$1"
+	local superseding_pr="$2"
+	local repo_slug="$3"
+
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
+	local verify_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/verify-issue-close-helper.sh"
+	if [[ ! -x "$verify_helper" ]]; then
+		verify_helper="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/verify-issue-close-helper.sh"
+	fi
+	if [[ ! -x "$verify_helper" ]]; then
+		echo "[pulse-wrapper] Superseded duplicate check: verify-issue-close-helper.sh unavailable — cannot verify issue #${linked_issue} against PR #${superseding_pr}" >>"$LOGFILE"
+		return 1
+	fi
+
+	local verify_output
+	if verify_output=$("$verify_helper" check "$linked_issue" "$superseding_pr" "$repo_slug" 2>&1); then
+		echo "[pulse-wrapper] Superseded duplicate check: verified issue #${linked_issue} against merged PR #${superseding_pr}: ${verify_output//$'\n'/ }" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Superseded duplicate check: could not verify issue #${linked_issue} against merged PR #${superseding_pr}: ${verify_output//$'\n'/ }" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Comment/close the linked issue when a duplicate PR is superseded by a verified
+# merged fix.
+#
+# Parent/research issues receive a status comment only; the comment deliberately
+# avoids GitHub closing keywords so roadmap/research tasks are not completed by a
+# duplicate-PR cleanup.
+#
+# Args: $1=duplicate_pr, $2=repo_slug, $3=linked_issue, $4=superseding_pr,
+#       $5=pr_labels_csv
+# Returns: 0 always
+#######################################
+_close_superseded_duplicate_issue_if_verified() {
+	local duplicate_pr="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local superseding_pr="$4"
+	local pr_labels_csv="$5"
+
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 0
+	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 0
+	if ! _verify_superseding_pr_for_issue "$linked_issue" "$superseding_pr" "$repo_slug"; then
+		return 0
+	fi
+
+	local issue_api issue_labels parent_or_research=0
+	issue_api="repos/${repo_slug}/issues/${linked_issue}"
+	issue_labels=$(gh api "$issue_api" --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	case ",${issue_labels}," in
+	*,parent-task,* | *,research,* | *,research-task,*) parent_or_research=1 ;;
+	esac
+
+	local comment_body
+	comment_body="Superseded by merged PR #${superseding_pr}.
+
+Pulse verified that PR #${superseding_pr} touches files cited by this issue, then closed duplicate PR #${duplicate_pr} as obsolete."
+	if [[ "$parent_or_research" -eq 1 ]]; then
+		comment_body="${comment_body}
+
+This issue is labelled as parent/research work, so pulse is leaving it open and avoiding closing keywords."
+		gh issue comment "$linked_issue" --repo "$repo_slug" --body "$comment_body" 2>/dev/null || true
+		echo "[pulse-wrapper] Superseded duplicate check: commented on parent/research issue #${linked_issue} for duplicate PR #${duplicate_pr}, left open" >>"$LOGFILE"
+		return 0
+	fi
+
+	gh issue comment "$linked_issue" --repo "$repo_slug" --body "$comment_body" 2>/dev/null || true
+	local solved_actor="interactive"
+	case ",${pr_labels_csv}," in
+	*,origin:worker,* | *,origin:worker-takeover,*) solved_actor="worker" ;;
+	esac
+	set_solved_label "$linked_issue" "$repo_slug" "$solved_actor" || true
+	gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
+	fast_fail_reset "$linked_issue" "$repo_slug" || true
+	unlock_issue_after_worker "$linked_issue" "$repo_slug"
+	echo "[pulse-wrapper] Superseded duplicate check: closed issue #${linked_issue} against merged PR #${superseding_pr} after closing duplicate PR #${duplicate_pr}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Find the most recent commit on the default branch whose subject
 # contains the given task ID as a word-boundary-delimited token.
 #
@@ -726,12 +824,14 @@ _close_conflicting_pr_check_ownership_guard() {
 # was mistaken for an implementation PR. File-overlap verification is
 # the guard against that class of error.
 #
-# Args: $1 = pr_number, $2 = repo_slug, $3 = task_id (may be empty)
+# Args: $1 = pr_number, $2 = repo_slug, $3 = task_id (may be empty),
+#       $4 = linked_issue (may be empty)
 #######################################
 _close_conflicting_pr_classify_landed() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local task_id="$3"
+	local linked_issue="${4:-}"
 
 	_CCPR_WORK_ON_MAIN="false"
 	_CCPR_MERGING_PR=""
@@ -748,12 +848,19 @@ _close_conflicting_pr_classify_landed() {
 	# regex matched the planning subject and the implementation PR
 	# was wrongly auto-closed (PR #18760 incident, 2026-04-14).
 	if _verify_pr_overlaps_commit "$pr_number" "$repo_slug" "$_CCPR_MATCHING_SHA"; then
-		_CCPR_WORK_ON_MAIN="true"
 		# Parse trailing "(#NNN)" from the matching commit's
 		# subject. Non-squash merges won't have this suffix — that's
-		# fine, we just omit the parenthetical from the close
-		# comment.
+		# fine for PR closure, but linked-issue closure requires a
+		# concrete superseding PR that verify-issue-close-helper can
+		# validate against the issue body.
 		_CCPR_MERGING_PR=$(_parse_squash_merge_pr "$_CCPR_MATCHING_SUBJECT") || _CCPR_MERGING_PR=""
+		if [[ -n "$linked_issue" && -n "$_CCPR_MERGING_PR" ]]; then
+			if ! _verify_superseding_pr_for_issue "$linked_issue" "$_CCPR_MERGING_PR" "$repo_slug"; then
+				echo "[pulse-wrapper] Deterministic merge: task ID/file overlap for PR #${pr_number} could not be verified against linked issue #${linked_issue} via merged PR #${_CCPR_MERGING_PR} — routing for conflict repair instead of closing as superseded (GH#23105)" >>"$LOGFILE"
+				return 2
+			fi
+		fi
+		_CCPR_WORK_ON_MAIN="true"
 		return 0
 	fi
 
@@ -781,7 +888,8 @@ _close_conflicting_pr_classify_landed() {
 # re-dispatch with a fresh branch.
 #
 # Args: $1 = pr_number, $2 = repo_slug, $3 = pr_title, $4 = task_id,
-#       $5 = merging_pr (may be empty)
+#       $5 = merging_pr (may be empty), $6 = linked_issue (may be empty),
+#       $7 = pr_labels_csv
 #######################################
 _close_conflicting_pr_comment_landed() {
 	local pr_number="$1"
@@ -789,6 +897,8 @@ _close_conflicting_pr_comment_landed() {
 	local pr_title="$3"
 	local task_id="$4"
 	local merging_pr="$5"
+	local linked_issue="${6:-}"
+	local pr_labels_csv="${7:-}"
 
 	local landed_via=""
 	if [[ -n "$merging_pr" ]]; then
@@ -802,10 +912,10 @@ _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null 
 	# GH#17642: Do NOT auto-close the linked issue. Closing a
 	# conflicting PR is safe (PRs are cheap), but closing the ISSUE
 	# based on a commit search has too many false positives. The
-	# issue stays open for re-dispatch with a fresh branch. Only the
-	# verified merge-pass (which checks for an actually-merged PR)
-	# should close issues.
-	echo "[pulse-wrapper] Deterministic merge: conflicting PR #${pr_number} closed, linked issue left open for re-dispatch (GH#17642)" >>"$LOGFILE"
+	# issue is now closed only when GH#23105 verification proves the
+	# merged PR overlaps files cited by the linked issue.
+	_close_superseded_duplicate_issue_if_verified \
+		"$pr_number" "$repo_slug" "$linked_issue" "$merging_pr" "$pr_labels_csv"
 
 	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
 	return 0
@@ -894,19 +1004,32 @@ _close_conflicting_pr() {
 	# with a word-boundary-safe regex.
 	local task_id_from_pr
 	task_id_from_pr=$(printf '%s' "$pr_title" | grep -oE '^(t[0-9]+|GH#[0-9]+)' | head -1) || task_id_from_pr=""
+	local linked_issue_for_supersession
+	linked_issue_for_supersession=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue_for_supersession=""
 
 	local classify_rc=0
-	_close_conflicting_pr_classify_landed "$pr_number" "$repo_slug" "$task_id_from_pr" || classify_rc=$?
+	_close_conflicting_pr_classify_landed "$pr_number" "$repo_slug" "$task_id_from_pr" "$linked_issue_for_supersession" || classify_rc=$?
 	# Return code 2 means a false-positive was detected and the
-	# rebase nudge was already posted. Leave the PR open.
-	[[ $classify_rc -eq 2 ]] && return 0
+	# rebase nudge was already posted or supersession could not be
+	# verified. Route to a conflict-fix worker when a linked issue is
+	# available; otherwise leave the PR open with the nudge.
+	if [[ $classify_rc -eq 2 ]]; then
+		if [[ -n "$linked_issue_for_supersession" ]]; then
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue_for_supersession" "conflict" "" "$pr_title" || true
+		fi
+		return 0
+	fi
 
 	# Gate 3: close the PR with the wording appropriate to the
 	# classified state.
 	if [[ "$_CCPR_WORK_ON_MAIN" == "true" ]]; then
+		local pr_labels_csv
+		pr_labels_csv=$(gh pr view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_csv=""
 		_close_conflicting_pr_comment_landed \
 			"$pr_number" "$repo_slug" "$pr_title" \
-			"$task_id_from_pr" "$_CCPR_MERGING_PR"
+			"$task_id_from_pr" "$_CCPR_MERGING_PR" \
+			"$linked_issue_for_supersession" "$pr_labels_csv"
 	else
 		_close_conflicting_pr_comment_not_landed \
 			"$pr_number" "$repo_slug" "$pr_title"
