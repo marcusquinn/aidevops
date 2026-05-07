@@ -11,6 +11,8 @@
 #   # shellcheck source=audit-worktree-removal-helper.sh
 #   source "${SCRIPT_DIR}/audit-worktree-removal-helper.sh"
 #   log_worktree_removal_event "$_WTAR_REMOVED" "worktree-helper.sh" "/path/to/wt" "branch-merged" "permanent"
+#   log_worktree_removal_event "$_WTAR_SKIPPED" "pulse-cleanup.sh" "/path/to/wt" "owned-skip" "skipped" \
+#     "branch=feature/gh123 issue=123 owner_guard=active pr_state=none recovery_path=none"
 #
 # Event types (use the constants below to avoid repeated literal violations):
 #   _WTAR_REMOVED          "removed"        — worktree was actually removed
@@ -59,9 +61,11 @@ _WTAR_FIXTURE_REMOVED="fixture-removed"
 #   $3  wt_path     — absolute path to the worktree
 #   $4  reason      — short reason string (see Reason values above)
 #   $5  mode        — optional removal mode: trash, permanent, fixture, skipped
+#   $6  context     — optional safe key=value context for guard predicates/recovery
 #
 # Output format (append to AIDEVOPS_CLEANUP_LOG):
 #   [2026-04-27T11:22:33Z] [worktree-helper.sh] worktree-removed: /path/to/wt — branch-merged — mode=permanent
+#   [2026-05-07T12:00:00Z] [pulse-cleanup.sh] worktree-skipped: /path/to/wt — owned-skip — mode=skipped — branch=feature/gh123 issue=123 owner_guard=active
 #
 # Returns 0 always (fail-open).
 # =============================================================================
@@ -71,20 +75,33 @@ log_worktree_removal_event() {
 	local wt_path="$3"
 	local reason="$4"
 	local mode="${5:-unknown}"
+	local context="${6:-}"
 	local log_file="${AIDEVOPS_CLEANUP_LOG:-${HOME}/.aidevops/logs/cleanup_worktrees.log}"
 
 	# Ensure log directory exists (silent; don't fail callers on permission errors)
 	mkdir -p "$(dirname "$log_file")" 2>/dev/null || true
 
 	# Write one structured line and swallow any write error (fail-open)
-	printf '[%s] [%s] worktree-%s: %s — %s — mode=%s\n' \
-		"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-		"$caller" \
-		"$event_type" \
-		"$wt_path" \
-		"$reason" \
-		"$mode" \
-		>>"$log_file" 2>/dev/null || true
+	if [[ -n "$context" ]]; then
+		printf '[%s] [%s] worktree-%s: %s — %s — mode=%s — %s\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"$caller" \
+			"$event_type" \
+			"$wt_path" \
+			"$reason" \
+			"$mode" \
+			"$context" \
+			>>"$log_file" 2>/dev/null || true
+	else
+		printf '[%s] [%s] worktree-%s: %s — %s — mode=%s\n' \
+			"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"$caller" \
+			"$event_type" \
+			"$wt_path" \
+			"$reason" \
+			"$mode" \
+			>>"$log_file" 2>/dev/null || true
+	fi
 
 	return 0
 }
@@ -186,6 +203,7 @@ worktree_removal_guard() {
 #   $1  wt_path  — absolute path candidate
 #   $2  caller   — audit caller constant
 #   $3  reason   — audit reason on removal
+#   $4  context  — optional safe key=value guard context
 #
 # Returns 0 when path is gone, 1 on guard/delete failure.
 # =============================================================================
@@ -193,12 +211,13 @@ remove_worktree_path_permanently() {
 	local wt_path="$1"
 	local caller="$2"
 	local reason="$3"
+	local context="${4:-}"
 
 	worktree_removal_guard "$wt_path" "$caller" "$reason" || return 1
 	[[ ! -e "$wt_path" ]] && return 0
 
 	if rm -rf "$wt_path" 2>/dev/null; then
-		log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$wt_path" "$reason" "permanent"
+		log_worktree_removal_event "$_WTAR_REMOVED" "$caller" "$wt_path" "$reason" "permanent" "$context"
 		return 0
 	fi
 
