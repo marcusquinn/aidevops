@@ -634,11 +634,25 @@ test_service_interruption_candidate_uses_separate_path() {
 	local status=0
 	_handle_run_result 1 "$output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
 
-	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" ]]; then
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && -f "$output_file" ]]; then
 		print_result "service interruption uses dedicated continuation path" 0
 	else
 		print_result "service interruption uses dedicated continuation path" 1 \
-			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>}"
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	fi
+
+	local local_output_file="${TEST_ROOT}/service-interruption-local.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_local","text":"editing files"}' 'worker received SIGTERM after tool activity' >"$local_output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	status=0
+	_handle_run_result 143 "$local_output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "local_error" && -f "$local_output_file" ]]; then
+		print_result "service interruption preserves specific failure reason and diagnostics" 0
+	else
+		print_result "service interruption preserves specific failure reason and diagnostics" 1 \
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$local_output_file" ]] && printf yes || printf no)"
 	fi
 
 	if ! service_interruption_continue_candidate "rate_limit" "1" "1" "" "rate_limit"; then

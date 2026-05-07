@@ -107,6 +107,8 @@ T_FUTURE_SENTINEL=4102444800
 #                      be excluded from bounded-window metrics and examples.
 #   issue-10         — missing timestamp; must not appear in bounded windows.
 #   issue-11         — service_interruption_continue heartbeat, not terminal.
+#   issue-12         — service_interruption_exhausted terminal failure after the
+#                      dedicated continuation budget is spent.
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
@@ -119,6 +121,7 @@ T_FUTURE_SENTINEL=4102444800
 	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
 	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
 	printf '{"ts":%d,"role":"worker","session_key":"issue-11","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_continue","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"503","exit_code":81}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","exit_code":81}\n' "$T_2H_AGO"
 } >"$METRICS"
 
 # Build pulse-stats fixture: counter arrays with timestamps inside and outside window.
@@ -187,10 +190,10 @@ else
 	echo "  output: $(printf '%q' "${JSON:0:300}")"
 fi
 
-# Assert exact counts. 24h window: events 1-6 + 8 + 11, excludes 7 (25h ago).
+# Assert exact counts. 24h window: events 1-6 + 8 + 11 + 12, excludes 7 (25h ago).
 # issue-8 (watchdog_stall_continue with exit_code=124) tests the t3215
 # regression case — must count as wc, not of, despite non-zero exit.
-assert_eq "2c: total = 8" "8" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "2c: total = 9" "9" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "2d: succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
@@ -198,11 +201,11 @@ assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 assert_eq "2f2: service_interrupted = 1 (heartbeat)" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.service_interrupted')"
 assert_eq "2g: rate_limited = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.rate_limited')"
-assert_eq "2h: other_failure = 1 (NOT 2 — heartbeat exclusion lock)" "1" \
+assert_eq "2h: other_failure = 2 (heartbeat excluded, exhausted counted)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
 assert_eq "2h2: rich result_counts includes success bucket" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.result_counts.success')"
-assert_eq "2h3: timing summary includes samples" "8" \
+assert_eq "2h3: timing summary includes samples" "9" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
 assert_eq "2h4: recent example carries load context" "2.0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"

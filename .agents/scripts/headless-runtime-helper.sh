@@ -850,8 +850,9 @@ _handle_run_result() {
 		fi
 		local _sic_label="service_interruption_continue"
 		_run_result_label="$_sic_label"
-		_run_failure_reason="provider_error"
-		rm -f "$output_file"
+		_run_failure_reason="$failure_reason"
+		# Preserve the attempt output for diagnostics if the dedicated
+		# continuation budget is later exhausted in cmd_run.
 		print_warning "$selected_model service interruption after activity/session evidence — will attempt session continuation"
 		return 81
 	fi
@@ -1565,6 +1566,11 @@ cmd_run() {
 				continue
 			fi
 
+			local _sic_exhausted_label="service_interruption_exhausted"
+			_run_result_label="$_sic_exhausted_label"
+			append_runtime_metric "$role" "$session_key" "$selected_model" \
+				"$(extract_provider "$selected_model")" \
+				"$_run_result_label" "81" "${_run_failure_reason:-provider_error}" "1" "0"
 			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
 		fi
 
