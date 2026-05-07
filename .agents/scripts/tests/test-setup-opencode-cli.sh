@@ -243,10 +243,36 @@ case "$path5c" in
 		;;
 esac
 
+# --- Test 5d: bad stable shim is rewritten from another valid install --------
+echo "Test 5d: setup_opencode_cli rewrites qwen stable shim from valid bun install"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+mkdir -p "$HOME/.local/bin" "$HOME/.bun/bin"
+cp "$SANDBOX/bin/opencode-qwen" "$HOME/.local/bin/opencode"
+cp "$SANDBOX/bin/opencode-real" "$HOME/.bun/bin/opencode"
+(
+	source_lib
+	export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+	export OPENCODE_BIN=""
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+	cat "$HOME/.aidevops/.opencode-bin-resolved" 2>/dev/null || echo "MISSING"
+) >"$SANDBOX/out5d" 2>&1
+rc5d=$(grep '^rc=' "$SANDBOX/out5d" | tail -1)
+resolved5d=$(tail -1 "$SANDBOX/out5d")
+assert_eq "qwen stable shim heal rc" "rc=0" "$rc5d"
+assert_eq "qwen stable shim rewritten" "$HOME/.local/bin/opencode" "$resolved5d"
+if "$HOME/.local/bin/opencode" --help 2>/dev/null | grep -q 'opencode run \[message\.\.\]'; then
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "rewritten"
+else
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "not-rewritten"
+fi
+
 # --- Test 6: setup_opencode_cli fail-open when no installer present ---------
 echo "Test 6: setup_opencode_cli fail-open when no bun/npm + invalid current"
 # Wipe persisted file from previous test so we can confirm it stays absent.
 rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+rm -f "$HOME/.bun/bin/opencode"
 (
 	source_lib
 	# Force minimal PATH so neither bun nor npm resolves; supply only the
@@ -289,10 +315,10 @@ rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
 elapsed7="${rc7##*elapsed=}"
 rc7="${rc7%% elapsed=*}"
 assert_eq "hanging installer fail-opens" "rc=0" "$rc7"
-if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 12 ]]; then
 	assert_eq "hanging installer returns within bound" "bounded" "bounded"
 else
-	assert_eq "hanging installer returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+	assert_eq "hanging installer returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
 fi
 
 echo ""

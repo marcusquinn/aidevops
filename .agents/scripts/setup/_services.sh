@@ -186,6 +186,30 @@ EOF
 	return 0
 }
 
+_setup_find_valid_opencode_binary() {
+	local preferred_bin="${1:-}"
+	local candidate=""
+	local shim_path="${HOME}/.local/bin/opencode"
+
+	for candidate in \
+		"$preferred_bin" \
+		/opt/homebrew/bin/opencode \
+		/usr/local/bin/opencode \
+		/home/linuxbrew/.linuxbrew/bin/opencode \
+		"${HOME}/.npm-global/bin/opencode" \
+		"${HOME}/.bun/bin/opencode" \
+		opencode; do
+		[[ -n "$candidate" ]] || continue
+		[[ "$candidate" == "$shim_path" ]] && continue
+		if _setup_validate_opencode_binary "$candidate"; then
+			command -v "$candidate" 2>/dev/null || printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
 # Validate that an opencode binary is real anomalyco/opencode (t2888, mirrors t2887 validator).
 # Returns: 0=valid, 1=wrong package, 2=missing/unrunnable.
 # Inlined (not sourced from headless-runtime-lib.sh) so this module stays self-contained
@@ -266,6 +290,21 @@ setup_opencode_cli() {
 		return 0
 	fi
 
+	if [[ $validate_rc -eq 1 ]]; then
+		local valid_bin=""
+		valid_bin=$(_setup_find_valid_opencode_binary "$current_bin" 2>/dev/null || echo "")
+		if [[ -n "$valid_bin" ]]; then
+			local valid_version=""
+			valid_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$valid_bin" 2>/dev/null || printf 'unknown')")
+			local stable_bin=""
+			stable_bin=$(_setup_ensure_opencode_stable_shim "$valid_bin" 2>/dev/null || printf '%s' "$valid_bin")
+			print_success "OpenCode CLI: $valid_bin ($valid_version)"
+			mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+			printf '%s\n' "$stable_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+			return 0
+		fi
+	fi
+
 	# Diagnose what we found.
 	if [[ $validate_rc -eq 1 ]]; then
 		local wrong_version
@@ -301,7 +340,7 @@ setup_opencode_cli() {
 	fi
 
 	# Re-resolve and re-validate.
-	current_bin=$(command -v opencode 2>/dev/null || echo "")
+	current_bin=$(_setup_find_valid_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
 	validate_rc=0
 	if [[ -n "$current_bin" ]]; then
 		_setup_validate_opencode_binary "$current_bin" || validate_rc=$?

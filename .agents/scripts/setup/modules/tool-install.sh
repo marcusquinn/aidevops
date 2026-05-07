@@ -1688,6 +1688,30 @@ EOF
 	return 0
 }
 
+_setup_find_valid_opencode_binary() {
+	local preferred_bin="${1:-}"
+	local candidate=""
+	local shim_path="${HOME}/.local/bin/opencode"
+
+	for candidate in \
+		"$preferred_bin" \
+		/opt/homebrew/bin/opencode \
+		/usr/local/bin/opencode \
+		/home/linuxbrew/.linuxbrew/bin/opencode \
+		"${HOME}/.npm-global/bin/opencode" \
+		"${HOME}/.bun/bin/opencode" \
+		opencode; do
+		[[ -n "$candidate" ]] || continue
+		[[ "$candidate" == "$shim_path" ]] && continue
+		if _setup_validate_opencode_binary "$candidate"; then
+			command -v "$candidate" 2>/dev/null || printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
 # t2891: Validate that an opencode binary is real anomalyco/opencode.
 # Mirrors the t2887 runtime canary validator (headless-runtime-lib.sh) and
 # the t2888 setup module validator (.agents/scripts/setup/_services.sh).
@@ -1760,7 +1784,7 @@ _setup_opencode_force_heal() {
 
 	# Re-validate post-heal.
 	local new_bin
-	new_bin=$(command -v opencode 2>/dev/null || echo "")
+	new_bin=$(_setup_find_valid_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
 	if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 		local new_v
 		new_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$new_bin" 2>/dev/null || printf 'unknown')")
@@ -1814,6 +1838,18 @@ setup_opencode_cli() {
 
 	# Wrong package → auto-heal (no prompt).
 	if [[ $validate_rc -eq 1 ]]; then
+		local valid_bin
+		valid_bin=$(_setup_find_valid_opencode_binary "$current_bin" 2>/dev/null || echo "")
+		if [[ -n "$valid_bin" ]]; then
+			local valid_version
+			valid_version=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$valid_bin" 2>/dev/null || printf 'unknown')")
+			local stable_bin
+			stable_bin=$(_setup_ensure_opencode_stable_shim "$valid_bin" 2>/dev/null || printf '%s' "$valid_bin")
+			print_success "OpenCode CLI: $valid_bin ($valid_version)"
+			mkdir -p "${HOME}/.aidevops" 2>/dev/null || true
+			printf '%s\n' "$stable_bin" >"${HOME}/.aidevops/.opencode-bin-resolved" 2>/dev/null || true
+			return 0
+		fi
 		local wrong_v
 		wrong_v=$(_setup_opencode_first_line "$(_setup_opencode_version_output "$current_bin" 2>/dev/null || printf '<unknown>')")
 		_setup_opencode_force_heal "$install_pkg" "$current_bin" "$wrong_v"
@@ -1845,7 +1881,7 @@ setup_opencode_cli() {
 
 			# Persist resolved path on first-time success too (t2891).
 			local new_bin
-			new_bin=$(command -v opencode 2>/dev/null || echo "")
+			new_bin=$(_setup_find_valid_opencode_binary "$(command -v opencode 2>/dev/null || echo "")" 2>/dev/null || echo "")
 			if [[ -n "$new_bin" ]] && _setup_validate_opencode_binary "$new_bin"; then
 				local stable_bin
 				stable_bin=$(_setup_ensure_opencode_stable_shim "$new_bin" 2>/dev/null || printf '%s' "$new_bin")

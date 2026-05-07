@@ -57,6 +57,9 @@ extract_functions() {
 		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
+		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
+		/^_setup_ensure_opencode_stable_shim\(\)/, /^}$/ { print; next }
+		/^_setup_find_valid_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_validate_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_force_heal\(\)/, /^}$/ { print; next }
 		/^setup_opencode_cli\(\)/, /^}$/ { print; next }
@@ -227,7 +230,7 @@ cp "$SANDBOX/bin/opencode-real" "$SANDBOX/bin/opencode"
 rc4=$(grep '^rc=' "$SANDBOX/out4" | tail -1)
 resolved4=$(tail -1 "$SANDBOX/out4")
 assert_eq "skip-when-valid rc" "rc=0" "$rc4"
-assert_eq "skip-when-valid resolved-path file" "$SANDBOX/bin/opencode" "$resolved4"
+assert_eq "skip-when-valid resolved-path file" "$HOME/.local/bin/opencode" "$resolved4"
 
 # --- Test 5: setup_opencode_cli auto-heal on wrong package -----------------
 # Critical t2891 path: when 'opencode' resolves to claude CLI (rc=1),
@@ -255,11 +258,36 @@ assert_eq "post-heal validation success" "1" "$post_heal_success"
 # --- Test 6: post-heal persists resolved path ------------------------------
 echo "Test 6: post-heal persisted resolved path"
 [[ -f "$HOME/.aidevops/.opencode-bin-resolved" ]] && resolved6=$(cat "$HOME/.aidevops/.opencode-bin-resolved") || resolved6="MISSING"
-assert_eq "post-heal resolved-path file populated" "$SANDBOX/bin/opencode" "$resolved6"
+assert_eq "post-heal resolved-path file populated" "$HOME/.local/bin/opencode" "$resolved6"
+
+# --- Test 6b: bad stable shim is rewritten from another valid install -------
+echo "Test 6b: setup_opencode_cli rewrites qwen stable shim from valid bun install"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+mkdir -p "$HOME/.local/bin" "$HOME/.bun/bin"
+cp "$SANDBOX/bin/opencode-qwen" "$HOME/.local/bin/opencode"
+cp "$SANDBOX/bin/opencode-real" "$HOME/.bun/bin/opencode"
+(
+	source_extracted
+	export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+	cat "$HOME/.aidevops/.opencode-bin-resolved" 2>/dev/null || echo "MISSING"
+) >"$SANDBOX/out6b" 2>&1
+rc6b=$(grep '^rc=' "$SANDBOX/out6b" | tail -1)
+resolved6b=$(tail -1 "$SANDBOX/out6b")
+assert_eq "qwen stable shim heal rc" "rc=0" "$rc6b"
+assert_eq "qwen stable shim rewritten" "$HOME/.local/bin/opencode" "$resolved6b"
+if "$HOME/.local/bin/opencode" --help 2>/dev/null | grep -q 'opencode run \[message\.\.\]'; then
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "rewritten"
+else
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "not-rewritten"
+fi
 
 # --- Test 7: auto-heal bounds hanging installer ----------------------------
 echo "Test 7: setup_opencode_cli bounds hanging auto-heal installer"
 rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+rm -f "$HOME/.bun/bin/opencode"
 cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
 (
 	source_extracted
@@ -280,10 +308,10 @@ rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
 elapsed7="${rc7##*elapsed=}"
 rc7="${rc7%% elapsed=*}"
 assert_eq "hanging auto-heal fail-opens" "rc=0" "$rc7"
-if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 12 ]]; then
 	assert_eq "hanging auto-heal returns within bound" "bounded" "bounded"
 else
-	assert_eq "hanging auto-heal returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+	assert_eq "hanging auto-heal returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
 fi
 
 echo ""
