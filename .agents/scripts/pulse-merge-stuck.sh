@@ -916,6 +916,38 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3193). The detector resets the
 	return 0
 }
 
+_pms_close_zero_progress_meta_issue_if_recovered() {
+	local reason="$1"
+	local meta_repo="marcusquinn/aidevops"
+	local marker_text="merge-stuck:zero-progress"
+
+	[[ -n "$reason" ]] || reason="merge progress recovered"
+
+	local existing
+	existing=$(gh issue list --repo "$meta_repo" --state open --search "$marker_text" \
+		--limit 1 --json number --jq '.[0].number' 2>/dev/null) || existing=""
+	if [[ -z "$existing" || "$existing" == "$_PMS_JQ_NULL_GUARD" ]]; then
+		return 0
+	fi
+	[[ "$existing" =~ ^[0-9]+$ ]] || return 0
+
+	local body
+	body="## Recovery detected
+
+The pulse merge zero-progress detector recovered automatically: ${reason}.
+
+Evidence:
+- pulse_merge_zero_progress_cycles was reset to 0.
+- The next detector cycle can file a fresh issue if throughput collapses again.
+
+Closing this stale zero-progress meta-issue so auto-dispatch does not spend worker capacity on an already-recovered incident."
+
+	gh issue comment "$existing" --repo "$meta_repo" --body "$body" >/dev/null 2>&1 || true
+	gh issue close "$existing" --repo "$meta_repo" --reason completed >/dev/null 2>&1 || true
+	echo "[pulse-merge-stuck] _pms_close_zero_progress_meta_issue_if_recovered: closed #${existing} — ${reason}" >>"$LOGFILE"
+	return 0
+}
+
 # ── Module entry point — called once per pulse cycle, per repo ─────────────
 
 #######################################
@@ -1236,9 +1268,16 @@ pulse_merge_zero_progress_record() {
 	[[ "$eligible_unmerged" =~ ^[0-9]+$ ]] || eligible_unmerged=0
 	[[ "$merged_count" =~ ^[0-9]+$ ]] || merged_count=0
 
+	local cur_before
+	cur_before=$(pulse_stats_get_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES")
+	[[ "$cur_before" =~ ^[0-9]+$ ]] || cur_before=0
+
 	# Successful merge resets the counter.
 	if [[ "$merged_count" -gt 0 ]]; then
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
+		if [[ "$cur_before" -gt 0 ]]; then
+			_pms_close_zero_progress_meta_issue_if_recovered "${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
+		fi
 		return 0
 	fi
 
@@ -1247,6 +1286,9 @@ pulse_merge_zero_progress_record() {
 	# idle cycles and file a stale throughput-collapse issue later.
 	if [[ "$eligible_unmerged" -le 0 ]]; then
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
+		if [[ "$cur_before" -gt 0 ]]; then
+			_pms_close_zero_progress_meta_issue_if_recovered "eligible-unmerged dropped to 0 after a ${cur_before}-cycle zero-progress streak"
+		fi
 		return 0
 	fi
 

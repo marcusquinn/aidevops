@@ -234,6 +234,27 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Section 5: zero_progress_record transitions ---"
 
+GH_CALLS="$TEST_TMPDIR/gh-calls.log"
+: >"$GH_CALLS"
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+export GH_CALLS PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE
+
+gh() {
+	local command_name="$1"
+	local subcommand="$2"
+	if [[ "$command_name" == "issue" && "$subcommand" == "list" ]]; then
+		if [[ -n "${PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE:-}" ]]; then
+			printf '%s\n' "$PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE"
+		fi
+		return 0
+	fi
+	if [[ "$command_name" == "issue" && ( "$subcommand" == "comment" || "$subcommand" == "close" ) ]]; then
+		printf '%s\n' "gh $*" >>"$GH_CALLS"
+		return 0
+	fi
+	return 1
+}
+
 # Reset gauge for a clean state.
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 
@@ -261,9 +282,19 @@ got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5d: second consecutive zero-progress → 1→2" "2" "$got"
 
 # 5e: a successful merge then resets the streak to 0.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23035"
 pulse_merge_zero_progress_record 4 1 >/dev/null 2>&1
 got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5e: merge during stuck-streak resets cycles to 0" "0" "$got"
+if grep -q 'gh issue close 23035 --repo marcusquinn/aidevops --reason completed' "$GH_CALLS"; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5f: recovered zero-progress meta-issue is auto-closed"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5f: recovered zero-progress meta-issue is auto-closed"
+	echo "  gh calls: $(cat "$GH_CALLS")"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
 echo ""
 
 # ---------------------------------------------------------------------------
