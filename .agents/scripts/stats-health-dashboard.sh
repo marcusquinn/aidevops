@@ -141,7 +141,10 @@ _update_health_issue_for_repo() {
 	[[ -n "$identity_aliases" ]] || identity_aliases="$runner_user"
 
 	local role_config runner_prefix role_label role_label_color role_label_desc role_display
-	role_config=$(_resolve_runner_role_config "$canonical_identity" "$runner_role")
+	# Keep the visible dashboard title tied to the authenticated runner so a
+	# maintainer can distinguish `marcusquinn` from alias/service accounts. The
+	# canonical identity remains in labels/cache/body for cross-alias dedup only.
+	role_config=$(_resolve_runner_role_config "$runner_user" "$runner_role")
 	IFS='|' read -r runner_prefix role_label role_label_color role_label_desc role_display \
 		<<<"$role_config"
 

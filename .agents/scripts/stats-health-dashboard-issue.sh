@@ -116,8 +116,13 @@ _try_cached_health_issue_lookup() {
 	[[ ! -f "$health_issue_file" ]] && return 0  # empty stdout
 
 	local cached_number
-	cached_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	cached_number=$(<"$health_issue_file") || cached_number=""
 	[[ -z "$cached_number" ]] && return 0
+	if ! _health_issue_number_is_valid "$cached_number"; then
+		echo "[stats] Health issue: ignoring corrupt cached issue number in ${health_issue_file}" >>"${LOGFILE:-/dev/null}"
+		rm -f "$health_issue_file" 2>/dev/null || true
+		return 0
+	fi
 
 	local issue_state rc=0
 	issue_state=$(gh_issue_view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
@@ -159,6 +164,31 @@ _try_cached_health_issue_lookup() {
 }
 
 #######################################
+# Validate a health-dashboard issue number before using it as the canonical
+# supersession target for persistent issue dedup closes.
+# Arguments:
+#   $1 - candidate issue number
+#######################################
+_health_issue_number_is_valid() {
+	local issue_number="$1"
+	[[ "$issue_number" =~ ^[0-9]+$ ]]
+	return $?
+}
+
+#######################################
+# Extract one issue number from wrapper/gh output. Some wrapper paths can emit
+# more than the created issue URL/number; callers must never persist or use a
+# multi-line value as a supersession target.
+# Arguments:
+#   $1 - raw command output
+#######################################
+_health_issue_number_from_text() {
+	local raw_output="$1"
+	printf '%s\n' "$raw_output" | awk 'match($0, /[0-9]+$/) { value=substr($0, RSTART, RLENGTH) } END { if (value != "") print value }'
+	return 0
+}
+
+#######################################
 # Strip the 'persistent' label from a health issue before closing it,
 # preventing issue-sync.yml 'Reopen Persistent Issues' from reopening
 # programmatic dedup closes (GH#20326). Idempotent: no-op if not present.
@@ -177,6 +207,10 @@ _strip_persistent_label_before_close() {
 # Arguments: label_results_json keep_number repo_slug runner_role
 _close_health_issue_duplicates() {
 	local label_results="$1" keep_number="$2" repo_slug="$3" runner_role="$4"
+	if ! _health_issue_number_is_valid "$keep_number"; then
+		echo "[stats] Health issue: refusing duplicate close without a single numeric supersession target: ${keep_number}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local dup_count
 	dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
@@ -186,6 +220,7 @@ _close_health_issue_duplicates() {
 	dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
 	while IFS= read -r dup_num; do
 		[[ -z "$dup_num" ]] && continue
+		_health_issue_number_is_valid "$dup_num" || continue
 		[[ "$runner_role" == "$_ROLE_SUPERVISOR" ]] && _unpin_health_issue "$dup_num" "$repo_slug"
 		_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 		gh issue close "$dup_num" --repo "$repo_slug" \
@@ -204,16 +239,21 @@ _close_health_issue_identity_duplicates() {
 	local repo_slug="$3"
 	local canonical_identity="$4"
 	local runner_user="$5"
+	if ! _health_issue_number_is_valid "$keep_number"; then
+		echo "[stats] Health issue: refusing identity duplicate close without a single numeric supersession target: ${keep_number}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local dup_count
 	dup_count=$(printf '%s' "$identity_results" | jq 'length' 2>/dev/null || echo "0")
-	[[ "${dup_count:-0}" -le 1 || -z "$keep_number" ]] && return 0
+	[[ "${dup_count:-0}" -le 1 ]] && return 0
 
 	local dup_numbers
 	dup_numbers=$(printf '%s' "$identity_results" | jq -r --arg keep "$keep_number" \
 		'.[] | select((.number | tostring) != $keep) | .number' 2>/dev/null || echo "")
 	while IFS= read -r dup_num; do
 		[[ -z "$dup_num" ]] && continue
+		_health_issue_number_is_valid "$dup_num" || continue
 		_unpin_health_issue "$dup_num" "$repo_slug"
 		_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 		gh issue close "$dup_num" --repo "$repo_slug" \
@@ -240,7 +280,8 @@ _try_title_health_issue_fallback() {
 		return 0
 	fi
 
-	local health_issue_number="${title_result:-}"
+	local health_issue_number
+	health_issue_number=$(_health_issue_number_from_text "${title_result:-}")
 	if [[ -n "$health_issue_number" ]]; then
 		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
 			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
@@ -376,7 +417,8 @@ _create_health_issue() {
 	health_issue_number=$(AIDEVOPS_SESSION_ORIGIN=worker gh_create_issue --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
 		--body "$health_body" \
-		--label "$role_label" --label "$runner_user" --label "$operator_label" --label "source:health-dashboard" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+		--label "$role_label" --label "$runner_user" --label "$operator_label" --label "source:health-dashboard" --label "persistent" 2>/dev/null || echo "")
+	health_issue_number=$(_health_issue_number_from_text "$health_issue_number")
 
 	if [[ -z "$health_issue_number" ]]; then
 		echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
@@ -503,6 +545,10 @@ _periodic_health_issue_dedup() {
 	local identity_aliases="${8:-$runner_user}"
 
 	[[ -z "$repo_slug" || -z "$runner_user" || -z "$role_label" || -z "$current_issue" ]] && return 0
+	if ! _health_issue_number_is_valid "$current_issue"; then
+		echo "[stats] Health issue: periodic dedup skipped for ${repo_slug}; invalid current issue '${current_issue}'" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
@@ -554,6 +600,7 @@ _periodic_health_issue_dedup() {
 			'.[] | select((.number | tostring) != $keep) | .number' 2>/dev/null || echo "")
 		while IFS= read -r dup_num; do
 			[[ -z "$dup_num" ]] && continue
+			_health_issue_number_is_valid "$dup_num" || continue
 			# _unpin_health_issue is already best-effort and a no-op for
 			# unpinned (contributor) issues, so call unconditionally.
 			# Duplicate supervisor issues CAN be pinned in pathological

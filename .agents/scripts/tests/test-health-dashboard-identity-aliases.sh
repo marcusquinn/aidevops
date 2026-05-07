@@ -92,6 +92,39 @@ else
 	fail "dedup close comment names canonical identity" "calls=$(tr '\n' ';' <"$GH_CALLS")"
 fi
 
+before_malformed_close_count=$(grep -c 'issue close' "$GH_CALLS" || true)
+_close_health_issue_identity_duplicates \
+	'[{"number":20408},{"number":20316},{"number":18669}]' \
+	$'https://example.invalid/issues/20316\nhttps://example.invalid/issues/18669\n20408' \
+	"owner/repo" "canonical-operator" "github-user"
+after_malformed_close_count=$(grep -c 'issue close' "$GH_CALLS" || true)
+
+if [[ "$after_malformed_close_count" == "$before_malformed_close_count" ]]; then
+	pass "does not close persistent dashboards without one numeric supersession target"
+else
+	fail "does not close persistent dashboards without one numeric supersession target" "calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+before_periodic_close_count=$(grep -c 'issue close' "$GH_CALLS" || true)
+HEALTH_DEDUP_INTERVAL=0 _periodic_health_issue_dedup \
+	"owner/repo" "github-user" "supervisor" "supervisor" "Supervisor" \
+	$'https://example.invalid/issues/20316\nhttps://example.invalid/issues/18669\n20408' \
+	"canonical-operator" "$aliases"
+after_periodic_close_count=$(grep -c 'issue close' "$GH_CALLS" || true)
+
+if [[ "$after_periodic_close_count" == "$before_periodic_close_count" ]]; then
+	pass "periodic dedup skips malformed cached current issue"
+else
+	fail "periodic dedup skips malformed cached current issue" "calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+extracted=$(_health_issue_number_from_text $'noise\nhttps://example.invalid/issues/20316\n20408')
+if [[ "$extracted" == "20408" ]]; then
+	pass "extracts one issue number from noisy wrapper output"
+else
+	fail "extracts one issue number from noisy wrapper output" "extracted=${extracted}"
+fi
+
 body=$(_build_health_issue_body \
 	"2026-05-08T00:00:00Z" "Supervisor" "github-user" "owner/repo" \
 	"0" "0" "0" "0" "4" "1" "0" "" \
