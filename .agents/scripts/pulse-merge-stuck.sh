@@ -306,6 +306,21 @@ _pms_hash_fingerprint() {
 	fi
 }
 
+# Resolve a repository's default branch for worker-facing instructions.
+# Falls back to main only when the API is unavailable so generated guidance
+# remains usable offline while preferring repo-specific branches like develop.
+_pms_default_branch() {
+	local repo_slug="$1"
+	local default_branch=""
+
+	if [[ -n "$repo_slug" ]]; then
+		default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch=""
+	fi
+	default_branch="${default_branch:-main}"
+	printf '%s' "$default_branch"
+	return 0
+}
+
 # ── Per-PR escalation (Outcome 3 in brief) ──────────────────────────────────
 
 #######################################
@@ -438,6 +453,8 @@ _handle_stuck_conflict_no_nudge_label() {
 	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
+	local default_branch
+	default_branch=$(_pms_default_branch "$repo_slug")
 
 	# Reuse the existing rebase-nudge marker — _gh_idempotent_comment is
 	# keyed on the marker string, so this nudge is mutually exclusive with
@@ -456,7 +473,7 @@ This PR has merge conflicts against the default branch and lacks both \`origin:i
 \`\`\`bash
 git fetch origin
 git checkout ${head_branch}
-git rebase origin/main
+git rebase origin/${default_branch}
 # resolve any conflicts, then:
 git push --force-with-lease
 \`\`\`
@@ -524,7 +541,7 @@ _detect_pattern_outage() {
 				_cur_count=1
 				_cur_prs="$_line_pr"
 			fi
-		done < <(sort "$tmp_lines")
+		done < <(sort -u "$tmp_lines")
 		# Flush the final group.
 		if [[ -n "$_prev_fp" ]]; then
 			printf '%d\t%s\t%s\n' "$_cur_count" "$_prev_fp" "$_cur_prs" >>"$tmp_groups"
@@ -552,6 +569,8 @@ _pms_file_outage_issue() {
 	fp_hash=$(_pms_hash_fingerprint "$fingerprint")
 	local marker_text="merge-stuck:pattern:${fp_hash}"
 	local marker="<!-- ${marker_text} -->"
+	local default_branch
+	default_branch=$(_pms_default_branch "$repo_slug")
 
 	# Dedup: search for an OPEN issue with this marker. If one exists, skip.
 	local existing
@@ -592,18 +611,18 @@ Investigation only — no \`Files Scope\` declared. The fix file set will be det
 
 ### Investigation steps
 
-1. Reproduce the failing check on a fresh worktree off \`origin/main\`:
+1. Reproduce the failing check on a fresh worktree off \`origin/${default_branch}\`:
    \`\`\`bash
    wt switch -c chore/diagnose-merge-stuck-${fp_hash:0:8}
    # Run the same command(s) the failing CI step runs
    \`\`\`
-2. If the failure reproduces on a clean main, the base is broken — locate the most recent commit on main that introduced the regression (\`git log --since=24h --first-parent main\`) and either revert or fix forward.
-3. If the failure does NOT reproduce on clean main, the cluster is a coincidence (rare) — close this issue with the rationale and let each PR be triaged individually.
+2. If the failure reproduces on a clean ${default_branch}, the base is broken — locate the most recent commit on ${default_branch} that introduced the regression (\`git log --since=24h --first-parent ${default_branch}\`) and either revert or fix forward.
+3. If the failure does NOT reproduce on clean ${default_branch}, the cluster is a coincidence (rare) — close this issue with the rationale and let each PR be triaged individually.
 4. Once the base is fixed and pushed, the affected PRs above should auto-merge on their next pulse cycle (or rebase via \`gh pr update-branch\`).
 
 ### Verification
 
-- The failing check listed in the fingerprint passes on a fresh worktree off \`origin/main\`.
+- The failing check listed in the fingerprint passes on a fresh worktree off \`origin/${default_branch}\`.
 - Each affected PR successfully merges or has its remaining failures triaged individually.
 - This issue is closed with the resolution PR linked.
 
