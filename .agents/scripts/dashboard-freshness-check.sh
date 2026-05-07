@@ -298,7 +298,7 @@ _open_alert_numbers_for_kind() {
 		gh auth status &>/dev/null 2>&1 || return 0
 		# Query open issue titles and filter locally. GitHub search is unreliable for
 		# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-		issue_list_json="$(gh issue list --repo "$slug" --state open --paginate --json number,title || true)"
+		issue_list_json="$(gh issue list --repo "$slug" --state open --paginate --json number,title 2>>"$LOGFILE" || true)"
 	fi
 	[[ -n "$issue_list_json" ]] || return 0
 	printf '%s\n' "$issue_list_json" | \
@@ -323,7 +323,7 @@ _open_issue_titles_json() {
 	gh auth status &>/dev/null 2>&1 || return 0
 	# Query open issue titles and filter locally. GitHub search is unreliable for
 	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-	gh issue list --repo "$slug" --state open --paginate --json number,title || true
+	gh issue list --repo "$slug" --state open --paginate --json number,title 2>>"$LOGFILE" || true
 	return 0
 }
 
