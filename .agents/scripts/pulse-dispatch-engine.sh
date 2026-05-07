@@ -130,6 +130,47 @@ source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispa
 _PULSE_LAST_LAUNCH_FAILURE=""
 
 #######################################
+# Extract a trusted prelaunch failure reason from a worker log.
+#
+# Args:
+#   $1 - worker log path
+# Stdout: allowlisted reason token, or blank when unavailable.
+# Returns: 0 always; diagnostics must never block dispatch cleanup.
+#######################################
+_pulse_worker_log_prelaunch_failure_reason() {
+	local log_path="$1"
+	local reason=""
+
+	[[ -f "$log_path" ]] || { printf '\n'; return 0; }
+
+	reason=$(awk '
+		/\[exit-trap\] using prelaunch failure reason:/ {
+			line = $0
+			sub(/^.*\[exit-trap\] using prelaunch failure reason:[[:space:]]*/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			reason = parts[1]
+		}
+		/\[exit-trap\] session=/ && / reason=/ {
+			line = $0
+			sub(/^.* reason=/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			reason = parts[1]
+		}
+		END { if (reason != "") { print reason } }
+	' "$log_path" 2>/dev/null) || reason=""
+
+	case "$reason" in
+	worker_worktree_live_owner)
+		printf '%s\n' "$reason"
+		;;
+	*)
+		printf '\n'
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Launch validation gate for pulse dispatches (t1453)
 #
 # Arguments:
@@ -164,9 +205,19 @@ check_worker_launch() {
 
 	local elapsed=0
 	local poll_seconds=2
+	local candidate=""
+	local prelaunch_failure_reason=""
 	while [[ "$elapsed" -lt "$grace_seconds" ]]; do
+		for candidate in "${log_candidates[@]}"; do
+			prelaunch_failure_reason=$(_pulse_worker_log_prelaunch_failure_reason "$candidate")
+			if [[ -n "$prelaunch_failure_reason" ]]; then
+				recover_failed_launch_state "$issue_number" "$repo_slug" "$prelaunch_failure_reason"
+				echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — prelaunch failure reason=${prelaunch_failure_reason} detected in ${candidate}" >>"$LOGFILE"
+				_PULSE_LAST_LAUNCH_FAILURE="$prelaunch_failure_reason"
+				return 1
+			fi
+		done
 		if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
-			local candidate
 			for candidate in "${log_candidates[@]}"; do
 				if [[ -f "$candidate" ]] && rg -q '^opencode run \[message\.\.\]|^run opencode with a message|^Options:' "$candidate"; then
 					recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output"
@@ -185,6 +236,15 @@ check_worker_launch() {
 		fi
 		sleep "$poll_seconds"
 		elapsed=$((elapsed + poll_seconds))
+	done
+	for candidate in "${log_candidates[@]}"; do
+		prelaunch_failure_reason=$(_pulse_worker_log_prelaunch_failure_reason "$candidate")
+		if [[ -n "$prelaunch_failure_reason" ]]; then
+			recover_failed_launch_state "$issue_number" "$repo_slug" "$prelaunch_failure_reason"
+			echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — prelaunch failure reason=${prelaunch_failure_reason} detected in ${candidate}" >>"$LOGFILE"
+			_PULSE_LAST_LAUNCH_FAILURE="$prelaunch_failure_reason"
+			return 1
+		fi
 	done
 
 	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process"
