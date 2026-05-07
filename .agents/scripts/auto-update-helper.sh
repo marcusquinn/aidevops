@@ -149,6 +149,35 @@ _get_scheduler_backend() {
 }
 
 #######################################
+# Remove stale auto-update cron entry after a Linux systemd timer is active.
+# Returns: 0 always
+#######################################
+_remove_auto_update_cron_duplicate() {
+	local current_cron=""
+	local filtered_cron=""
+	local temp_cron=""
+
+	command -v crontab >/dev/null 2>&1 || return 0
+	current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+	[[ -n "$current_cron" ]] || return 0
+	printf '%s\n' "$current_cron" | grep -qF "$CRON_MARKER" || return 0
+
+	filtered_cron=$(printf '%s\n' "$current_cron" | grep -vF "$CRON_MARKER" || true)
+	if [[ -n "$filtered_cron" ]]; then
+		temp_cron=$(mktemp)
+		printf '%s\n' "$filtered_cron" >"$temp_cron"
+		crontab "$temp_cron" 2>/dev/null || true
+		rm -f "$temp_cron"
+	else
+		crontab -r 2>/dev/null || true
+	fi
+
+	log_info "Removed duplicate auto-update cron entry; kept systemd user timer"
+	print_info "Removed duplicate auto-update cron entry; kept systemd user timer"
+	return 0
+}
+
+#######################################
 # Check if the auto-update LaunchAgent is loaded
 # Returns: 0 if loaded, 1 if not
 #######################################
@@ -900,6 +929,7 @@ WantedBy=timers.target
 		return $?
 	fi
 
+	_remove_auto_update_cron_duplicate
 	update_state "enable" "$(get_local_version)" "enabled"
 
 	print_success "Auto-update enabled (every ${interval} minutes)"
