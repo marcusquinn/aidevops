@@ -17,7 +17,8 @@
 #        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
-#      read-only merge gates (required checks, worker PR with no linked issue).
+#      read-only merge gates (required checks, worker PR with no linked issue,
+#      and non-collaborator author without maintainer crypto-approval).
 #   8. _detect_pattern_outage de-duplicates repeated PR observations.
 #   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -308,12 +309,14 @@ gh() {
 	local subcommand="${2:-}"
 	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
 		printf '%s\n' '[
-{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[]},
-{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
-{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
-{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}]},
-{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[]},
-{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[]}
+{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
+{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
+{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}],"author":{"login":"trusted"}},
+{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"}},
+{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}}
 ]'
 		return 0
 	fi
@@ -340,8 +343,25 @@ _extract_linked_issue() {
 	esac
 }
 
+_is_collaborator_author() {
+	local pr_author="$1"
+	local repo_slug="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	if [[ "$pr_author" == "trusted" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_has_maintainer_crypto_approval() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	[[ -n "$pr_number" && -n "$repo_slug" ]] || return 1
+	return 1
+}
+
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
-assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "1" "$got"
+assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "2" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------

@@ -991,13 +991,14 @@ Closing this stale zero-progress meta-issue so auto-dispatch does not spend work
 # denominator. This is intentionally read-only and narrower than the full
 # _check_pr_merge_gates stack because that stack can route workers/comments.
 #
-# Args: $1=repo_slug, $2=pr_number, $3=labels_str (comma-separated)
+# Args: $1=repo_slug, $2=pr_number, $3=labels_str (comma-separated), $4=pr_author
 # Returns: 0=count it, 1=exclude it from the zero-progress signal
 #######################################
 _pms_pr_counts_for_zero_progress() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local labels_str="$3"
+	local pr_author="${4:-}"
 
 	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
 
@@ -1005,6 +1006,21 @@ _pms_pr_counts_for_zero_progress() {
 		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
 			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — required checks are not provably passing" >>"$LOGFILE"
 			return 1
+		fi
+	fi
+
+	# Keep the zero-progress denominator aligned with the deterministic merge
+	# pass trust gate. A MERGEABLE+APPROVED PR authored by a non-collaborator is
+	# intentionally skipped unless a maintainer crypto-approval exists; counting
+	# it as eligible creates a false structural-stuck signal when every real merge
+	# candidate is already drained.
+	if [[ -n "$pr_author" ]] && declare -F _is_collaborator_author >/dev/null 2>&1; then
+		if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+			if ! declare -F _has_maintainer_crypto_approval >/dev/null 2>&1 \
+				|| ! _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+				echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
+				return 1
+			fi
 		fi
 	fi
 
@@ -1028,7 +1044,7 @@ _pms_count_eligible_unmerged_for_repo() {
 
 	local pr_json
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,isDraft,labels \
+		--json number,mergeable,reviewDecision,isDraft,labels,author \
 		--limit 50 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
 
@@ -1045,16 +1061,17 @@ _pms_count_eligible_unmerged_for_repo() {
 			and (.isDraft // false) == false
 			and (([.labels[].name] | index("hold-for-review")) == null)
 		  )
-		  | "\(.number // "")\u001e\([.labels[].name] | join(","))"
+		  | "\(.number // "")\u001e\([.labels[].name] | join(","))\u001e\(.author.login // "")"
 		] | .[]' 2>/dev/null) || candidates=""
 
 	local count=0
 	local _RS=$'\x1e'
 	local pr_number=""
 	local labels_str=""
-	while IFS="$_RS" read -r pr_number labels_str; do
+	local pr_author=""
+	while IFS="$_RS" read -r pr_number labels_str pr_author; do
 		[[ -n "$pr_number" ]] || continue
-		if _pms_pr_counts_for_zero_progress "$repo_slug" "$pr_number" "$labels_str"; then
+		if _pms_pr_counts_for_zero_progress "$repo_slug" "$pr_number" "$labels_str" "$pr_author"; then
 			count=$((count + 1))
 		fi
 	done <<<"$candidates"
