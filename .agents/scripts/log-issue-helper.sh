@@ -186,6 +186,13 @@ search_issues() {
 	return 0
 }
 
+is_valid_issue_number() {
+	local issue_number="$1"
+
+	[[ "$issue_number" =~ ^[1-9][0-9]*$ ]]
+	return $?
+}
+
 # =============================================================================
 # Issue Fingerprint Deduplication (GH#20322)
 # =============================================================================
@@ -241,7 +248,7 @@ check_recent_filing() {
 
 	if [[ -n "$match" ]]; then
 		read -r filed_epoch issue_num < <(sed -E 's/.*"issue":([0-9]+).*"filed_epoch":([0-9]+).*/\2 \1/' <<< "$match" || true)
-		if [[ "$filed_epoch" =~ ^[0-9]+$ ]] && [[ "$filed_epoch" -gt "$cutoff" ]]; then
+		if [[ "$filed_epoch" =~ ^[0-9]+$ ]] && is_valid_issue_number "$issue_num" && [[ "$filed_epoch" -gt "$cutoff" ]]; then
 			age=$(( now - filed_epoch ))
 			echo "DUPLICATE:${issue_num}:${age}"
 			return 1
@@ -273,7 +280,10 @@ record_filing() {
 	local iso_ts
 	iso_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown")
 
-	[[ "$issue_number" =~ ^[0-9]+$ ]] || issue_number=0
+	if ! is_valid_issue_number "$issue_number"; then
+		echo "ERROR: invalid issue number for fingerprint: ${issue_number}" >&2
+		return 1
+	fi
 
 	printf '{"hash":"%s","issue":%s,"filed_at":"%s","filed_epoch":%s}\n' \
 		"$fingerprint" "$issue_number" "$iso_ts" "$now" >> "$fp_file"
