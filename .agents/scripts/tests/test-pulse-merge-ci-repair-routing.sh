@@ -70,27 +70,31 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 	exit 0
 fi
 
-if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
-	_is_required=0
-	[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
-	if [[ "$*" == *"| .name]"* ]]; then
-		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-		terminal_failure:1)
-			printf 'Lint\n'
-			;;
-		esac
-		exit 0
-	fi
+	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
+		_is_required=0
+		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
+		if [[ "$*" == *"| .name]"* ]]; then
+			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
+			terminal_failure:1)
+				printf 'Lint\n'
+				;;
+			infra_timeout:1 | advisory_failure:*)
+				: ;;
+			esac
+			exit 0
+		fi
 	if [[ "$*" == *"name,bucket,conclusion,link"* ]]; then
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-		terminal_failure:1)
-			printf '%s\n' '- **Lint**: failure — [check URL](https://example.invalid/check)'
-			;;
-		pending_only:*|mixed_pending_pass:*)
-			: ;;
-		advisory_failure:0)
-			printf '%s\n' '- **Docs** (advisory, not merge-blocking): failure — [check URL](https://example.invalid/advisory)'
-			;;
+			terminal_failure:1)
+				printf '%s\n' '- **Lint**: failure — [check URL](https://example.invalid/check)'
+				;;
+			pending_only:*|mixed_pending_pass:*)
+				: ;;
+			infra_timeout:1)
+				: ;;
+			advisory_failure:0)
+				printf '%s\n' '- **Docs** (advisory, not merge-blocking): failure — [check URL](https://example.invalid/advisory)'
+				;;
 		esac
 		exit 0
 	fi
@@ -165,6 +169,7 @@ define_process_helper() {
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; return 0; }
 	_attempt_pr_update_branch() { return 1; }
 	_close_conflicting_pr() { return 0; }
+	_pmp_normalize_mergeable_state_into() { return 0; }
 	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
 
 	# shellcheck disable=SC1090
@@ -241,7 +246,7 @@ test_ci_feedback_skips_pending_only_checks() {
 
 	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
 		print_result "pending-only checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
-	elif ! grep -qF 'no terminal failed checks with URLs' "$LOGFILE"; then
+	elif ! grep -qF 'no actionable failed required checks with URLs' "$LOGFILE"; then
 		print_result "pending-only checks log terminal-failure skip" 1 "Log: $(cat "$LOGFILE")"
 	else
 		print_result "pending-only checks do not emit CI repair feedback" 0
@@ -282,17 +287,33 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 	return 0
 }
 
-test_ci_feedback_labels_advisory_failure_when_not_required() {
+test_ci_feedback_skips_infra_timeout_checks() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_timeout"
+	define_feedback_helpers || { print_result "defines feedback helpers for infra timeout" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "infra timeout checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "infra timeout checks do not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_advisory_failure_when_not_required() {
 	setup_test_env
 	TEST_CHECK_SCENARIO="advisory_failure"
 	define_feedback_helpers || { print_result "defines feedback helpers for advisory failure" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 
-	if ! grep -qF '**Docs** (advisory, not merge-blocking): failure — [check URL](https://example.invalid/advisory)' "${TEST_ROOT}/issue-body.txt"; then
-		print_result "advisory failure is labeled not merge-blocking" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "advisory-only failure does not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 	else
-		print_result "advisory failure is labeled not merge-blocking" 0
+		print_result "advisory-only failure does not emit CI repair feedback" 0
 	fi
 	teardown_test_env
 	return 0
@@ -304,7 +325,8 @@ main() {
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
-	test_ci_feedback_labels_advisory_failure_when_not_required
+	test_ci_feedback_skips_infra_timeout_checks
+	test_ci_feedback_skips_advisory_failure_when_not_required
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

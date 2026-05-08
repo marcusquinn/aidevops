@@ -331,14 +331,18 @@ _dispatch_ci_fix_worker() {
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
 
-	# Collect terminal failed required checks only. Pending/queued/in-progress
+	# Collect actionable failed required checks only. Pending/queued/in-progress
 	# checks are not actionable repair evidence and must not be routed into the
-	# linked issue as stale worker guidance.
+	# linked issue as stale worker guidance. Likewise, cancelled/timed_out checks
+	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
+	# those as code-fix feedback creates duplicate PR churn instead of retrying or
+	# escalating CI infrastructure. Advisory/non-required failures are also not
+	# redispatch evidence: branch protection is the source of truth for merge
+	# blockers.
 	local terminal_failed_check_filter
-	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|cancelled|timed_out|action_required)$")) and ((.link // "") != "")'
-	local required_check_jq advisory_check_jq failing_name_jq
+	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
+	local required_check_jq failing_name_jq
 	printf -v required_check_jq '[.[] | select(%s) | "- **\(.name)**: \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
-	printf -v advisory_check_jq '[.[] | select(%s) | "- **\(.name)** (advisory, not merge-blocking): \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
 	printf -v failing_name_jq '[.[] | select(%s) | .name] | join("\n")' "$terminal_failed_check_filter"
 
 	local failing_checks
@@ -348,14 +352,7 @@ _dispatch_ci_fix_worker() {
 		2>/dev/null) || failing_checks=""
 
 	if [[ -z "$failing_checks" ]]; then
-		failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" \
-			--json name,bucket,conclusion,link \
-			--jq "$advisory_check_jq" \
-			2>/dev/null) || failing_checks=""
-	fi
-
-	if [[ -z "$failing_checks" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no terminal failed checks with URLs — skipping routing" >>"$LOGFILE"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed required checks with URLs — skipping CI repair routing" >>"$LOGFILE"
 		return 0
 	fi
 

@@ -81,8 +81,8 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 1.1 | Capture current awardsapp PR/issue blocker inventory and baseline metrics | pending | pending | ~1h | interactive | |
-| 1.2 | Add or improve aidevops reporting for duplicate PR groups and CI blocker classes | pending | pending | ~3h | worker | |
+| 1.1 | Capture current awardsapp PR/issue blocker inventory and baseline metrics | pending | active | ~1h | interactive | |
+| 1.2 | Add or improve aidevops reporting for duplicate PR groups and CI blocker classes | pending | active | ~3h | interactive | |
 | 1.3 | Publish mission status summaries with evidence and next recommended action | pending | pending | ~2h | interactive | |
 
 ### Milestone 2: Aidevops orchestration fixes
@@ -93,8 +93,8 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 2.1 | Classify CI timeout/kill results such as 143/124/137 as infra-timeout, not implementation failure | pending | pending | ~4h | worker | |
-| 2.2 | Model E2E-only shard failures as advisory/quarantine when repo policy marks core gates green | pending | pending | ~4h | worker | |
+| 2.1 | Classify CI timeout/kill results such as 143/124/137 as infra-timeout, not implementation failure | pending | active | ~4h | interactive | |
+| 2.2 | Model E2E-only shard failures as advisory/quarantine when repo policy marks core gates green | pending | active | ~4h | interactive | |
 | 2.3 | Deduplicate dispatch against existing approved/mergeable sibling PRs for the same issue | pending | pending | ~5h | worker | |
 | 2.4 | Add safe superseded-PR consolidation against the newest/healthiest verified candidate | pending | pending | ~5h | worker | |
 
@@ -162,6 +162,7 @@ preferences:
 |---|------|----------|-----------|------------------------|
 | 1 | 2026-05-08 | Treat this as a mixed aidevops + awardsapp mission | Evidence shows both orchestration duplicate/red-PR churn and awardsapp CI timeout/advisory ambiguity | Only fix aidevops; only fix awardsapp |
 | 2 | 2026-05-08 | Prioritize required/advisory CI clarity before broad worker redispatch | Duplicate workers burn tokens when the existing PR is approved but blocked by CI semantics | Continue redispatching until one PR happens to pass |
+| 3 | 2026-05-08 | First aidevops change should stop CI repair redispatch for infra/advisory failures | `pulse-merge-feedback.sh` routed advisory/non-required and timed-out/cancelled checks as CI repair feedback, which closes PRs and requeues duplicate workers | Start with awardsapp CI changes only |
 
 ## Mission Agents
 
@@ -174,12 +175,14 @@ preferences:
 | Topic | Summary | Source | Date |
 |-------|---------|--------|------|
 | awardsapp PR blocker sample | Multiple issues have sibling PRs; many failures are E2E shard or timeout/kill rather than code errors. Examples include PRs #4594/#4595 timeout/kill and #4596 merging after core gates passed. | gh PR/check queries in current session | 2026-05-08 |
+| current open PR sample | Open approved/mergeable PRs include #4594, #4595, #4599, #4584 and others; several have Lint/Typecheck pending while prior logs showed timeout/kill symptoms. | `gh pr view/list` in current session | 2026-05-08 |
 
 ## Progress Log
 
 | Timestamp | Event | Details |
 |-----------|-------|---------|
 | 2026-05-08T00:00:00Z | Mission created | Goal: keep improving aidevops and awardsapp until open issues converge to green merged PRs. |
+| 2026-05-08T01:10:00Z | First systemic fix implemented locally | Updated `pulse-merge-feedback.sh` so CI repair feedback only re-dispatches actionable failed required checks; timed_out/cancelled/advisory-only failures now skip CI repair routing. Verified with `test-pulse-merge-ci-repair-routing.sh` and ShellCheck. |
 
 ## Retrospective
 
