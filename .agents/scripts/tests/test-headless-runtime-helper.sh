@@ -598,7 +598,7 @@ EOF
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
 	cat >"$output_file" <<'EOF'
-{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}
+{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}
 EOF
 
 	local rc=0
@@ -611,6 +611,25 @@ EOF
 
 	print_result "BLOCKED terminal signal records blocked label" 1 \
 		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} source=${_run_classification_source:-<unset>}"
+	return 0
+}
+
+test_missing_context_blocked_requests_brief_recovery() {
+	local output_file="${TEST_ROOT}/missing-context-blocked-output.jsonl"
+	cat >"$output_file" <<'EOF'
+{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}
+EOF
+
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
+
+	if [[ "$rc" -eq 82 && "${_run_result_label:-}" == "brief_recovery" && "${_run_failure_reason:-}" == "missing_implementation_context" && "${_run_classification_pattern:-}" == "missing_implementation_context" ]]; then
+		print_result "missing-context BLOCKED requests brief recovery" 0
+		return 0
+	fi
+
+	print_result "missing-context BLOCKED requests brief recovery" 1 \
+		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} pattern=${_run_classification_pattern:-<unset>}"
 	return 0
 }
 
@@ -1459,6 +1478,7 @@ main() {
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_blocked_completion_records_blocked_label
+	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance

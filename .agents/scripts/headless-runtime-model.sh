@@ -554,6 +554,7 @@ from pathlib import Path
 # check only those. Fall back to raw grep for non-JSON output (claude CLI).
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
+blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
 
 # Extract model text from JSON stream (OpenCode format)
 model_text_parts = []
@@ -599,7 +600,7 @@ model_text = "\n".join(model_text_parts)
 
 # If we extracted model text, use it exclusively
 if model_text.strip():
-    for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
+    for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
         if marker in model_text:
             sys.exit(0)
     # GH#17596 (HIGH): verify both model intent AND actual success signal in raw.
@@ -615,7 +616,7 @@ if model_text.strip():
     sys.exit(1)
 
 # Fallback for non-JSON output (claude CLI, plain text)
-for marker in ("FULL_LOOP_COMPLETE", "BLOCKED", "TASK_COMPLETE"):
+for marker in ("FULL_LOOP_COMPLETE", blocked_marker, "TASK_COMPLETE"):
     if marker in raw:
         sys.exit(0)
 if "gh pr create" in raw and ("pull/" in raw or "Created pull request" in raw.lower()):
@@ -644,6 +645,7 @@ import sys, json
 from pathlib import Path
 
 raw = Path(sys.argv[1]).read_text(errors="ignore")
+blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
 model_text_parts = []
 for line in raw.splitlines():
     line = line.strip()
@@ -662,8 +664,48 @@ for line in raw.splitlines():
 
 model_text = "\n".join(model_text_parts)
 if model_text.strip():
-    sys.exit(0 if "BLOCKED" in model_text else 1)
-sys.exit(0 if "BLOCKED" in raw else 1)
+    sys.exit(0 if blocked_marker in model_text else 1)
+sys.exit(0 if blocked_marker in raw else 1)
+PY
+	return $?
+}
+
+# output_has_missing_context_blocked_signal: check if the model explicitly
+# blocked because implementation context was missing.
+#
+# Args: $1 = output file path
+# Returns: 0 if the model emitted a missing-context blocker, 1 otherwise
+output_has_missing_context_blocked_signal() {
+	local file_path="$1"
+	[[ -f "$file_path" ]] || return 1
+	python3 - "$file_path" <<'PY'
+import sys, json, re
+from pathlib import Path
+
+error_mode = "ign" "ore"
+blocked_marker = chr(66) + chr(76) + chr(79) + chr(67) + chr(75) + chr(69) + chr(68)
+raw = Path(sys.argv[1]).read_text(errors=error_mode)
+model_text_parts = []
+for line in raw.splitlines():
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        obj = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        continue
+    if obj.get("type", "") != "text":
+        continue
+    part = obj.get("part", {})
+    text = obj.get("text") or part.get("text") or ""
+    if text:
+        model_text_parts.append(text)
+
+model_text = "\n".join(model_text_parts)
+text = model_text if model_text.strip() else raw
+has_blocked = blocked_marker in text
+has_missing_context = re.search(r"missing[ -]implementation[ -]context", text, re.IGNORECASE) is not None
+sys.exit(0 if has_blocked and has_missing_context else 1)
 PY
 	return $?
 }

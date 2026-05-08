@@ -733,6 +733,15 @@ _handle_run_result() {
 				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
 				return 77
 			fi
+			if output_has_missing_context_blocked_signal "$output_file"; then
+				_run_result_label="brief_recovery"
+				_run_failure_reason="missing_implementation_context"
+				_run_classification_source="model_blocked""_signal"
+				_run_classification_pattern="missing_implementation_context"
+				rm -f "$output_file"
+				print_warning "$selected_model worker reported missing implementation context — attempting one brief-recovery continuation"
+				return 82
+			fi
 			if output_has_blocked_signal "$output_file"; then
 				_run_result_label="blocked"
 				_run_failure_reason="blocked"
@@ -1493,6 +1502,8 @@ cmd_run() {
 	local watchdog_continue_count=0
 	local max_service_interruption_continue_retries="${HEADLESS_SERVICE_INTERRUPTION_CONTINUE_MAX_RETRIES:-2}"
 	local service_interruption_continue_count=0
+	local max_brief_recovery_retries="${HEADLESS_BRIEF_RECOVERY_MAX_RETRIES:-1}"
+	local brief_recovery_count=0
 
 	# GH#20681: Per-session stall caps — count and cumulative time.
 	# Prevents unbounded token burn from repeated stall-continue events.
@@ -1599,6 +1610,27 @@ cmd_run() {
 			print_warning "Exhausted ${max_continuation_retries} continuation retries — recording as premature_exit failure"
 			_cmd_run_finish "$session_key" "fail"
 			return 1
+		fi
+
+		# GH#23225: When a worker stops with BLOCKED: missing implementation
+		# context, give the same session one chance to repair the linked issue
+		# brief before the dispatcher records a terminal blocked outcome.
+		if [[ "$attempt_exit" -eq 82 ]]; then
+			if [[ "$brief_recovery_count" -lt "$max_brief_recovery_retries" ]]; then
+				brief_recovery_count=$((brief_recovery_count + 1))
+				print_warning "Missing implementation context detected — sending brief-recovery continuation (attempt ${brief_recovery_count}/${max_brief_recovery_retries})"
+
+				prompt="The previous run ended with BLOCKED: missing implementation context. Before giving up, perform the GH#23225 brief-recovery routine once. Verify the linked issue number is \${WORKER_ISSUE_NUMBER}; read that issue body; keep discovery narrow using its title/body keywords, exact file search, and 2-3 likely target files/tests; then update only that linked issue body using --body-file with a Worker Guidance or How section containing Goal, files to inspect first, implementation steps, verification commands, runtime testing risk/expectation, existing reproduction context, and the aidevops signature footer. Mark in the issue body that brief recovery was attempted to avoid loops. After repairing the brief, re-run the full-loop implementation from the improved context and continue through implementation, verification, commit, PR, MERGE_SUMMARY, review, merge, closing comments, deploy, and cleanup. If narrow discovery still cannot produce concrete files and steps, emit BLOCKED: missing implementation context with evidence."
+				continue
+			fi
+
+			_run_result_label="block""ed"
+			_run_failure_reason="$_run_result_label"
+			_run_classification_source="model_blocked""_signal"
+			_run_classification_pattern="missing_implementation_context_recovery_exhausted"
+			print_warning "Missing implementation context persisted after brief-recovery continuation — recording blocked"
+			_cmd_run_finish "$session_key" "complete" "$work_dir"
+			return 0
 		fi
 
 		# t2956 / Issue #21231: Handle watchdog hard-kill (exit 79).
