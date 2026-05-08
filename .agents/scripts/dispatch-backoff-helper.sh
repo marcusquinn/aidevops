@@ -274,25 +274,29 @@ _db_check_rate_limit_release_circuit_comment() {
 		--jq '[.[] | {created_at: .created_at, body: (.body // "")}]' 2>/dev/null) || return 2
 	[[ -n "$comments_json" ]] || return 0
 
+	local circuit_data=""
+	circuit_data=$(printf '%s' "$comments_json" | jq -c '
+		{
+			marker: ([.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker"))] | last // null),
+			override: ([.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker:override")) | .created_at] | max // "")
+		}
+	') || return 2
+
 	local marker_json=""
-	marker_json=$(printf '%s' "$comments_json" | jq -c '
-		[.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker"))] | last // empty
-	' 2>/dev/null) || marker_json=""
+	marker_json=$(printf '%s' "$circuit_data" | jq -c '.marker // empty') || return 2
 	[[ -n "$marker_json" ]] || return 0
 
 	local latest_override=""
-	latest_override=$(printf '%s' "$comments_json" | jq -r '
-		[.[] | select((.body // "") | test("rate-limit-release-circuit-breaker:override")) | .created_at] | max // ""
-	' 2>/dev/null) || latest_override=""
+	latest_override=$(printf '%s' "$circuit_data" | jq -r '.override // ""') || return 2
 
 	local marker_created=""
-	marker_created=$(printf '%s' "$marker_json" | jq -r '.created_at // ""' 2>/dev/null) || marker_created=""
+	marker_created=$(printf '%s' "$marker_json" | jq -r '.created_at // ""') || return 2
 	if [[ -n "$latest_override" && -n "$marker_created" && "$latest_override" > "$marker_created" ]]; then
 		return 0
 	fi
 
 	local marker_line=""
-	marker_line=$(printf '%s' "$marker_json" | jq -r '.body // ""' 2>/dev/null | grep -oE '<!-- rate-limit-release-circuit-breaker[^>]*-->' | tail -1) || marker_line=""
+	marker_line=$(printf '%s' "$marker_json" | jq -r '.body // ""' | grep -oE '<!-- rate-limit-release-circuit-breaker[^>]*-->' | tail -1) || marker_line=""
 	[[ -n "$marker_line" ]] || return 0
 
 	local next_epoch=""
