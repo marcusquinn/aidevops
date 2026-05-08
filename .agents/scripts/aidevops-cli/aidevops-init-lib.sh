@@ -679,9 +679,6 @@ _init_scaffold_scope_gated_files() {
 	return 0
 }
 
-# Offer CodeRabbit's post-merge review completion setting during code-quality init.
-# CodeRabbit reads this from the repository's .coderabbit.yaml, so this is repo
-# policy rather than a personal aidevops preference.
 _init_configure_coderabbit_abort_on_close() {
 	local project_root="$1"
 	local enable_code_quality="$2"
@@ -726,10 +723,7 @@ import sys
 path = Path(sys.argv[1])
 desired = sys.argv[2]
 
-if path.exists():
-    text = path.read_text()
-else:
-    text = ""
+text = path.read_text() if path.exists() else ""
 
 line = f"  abort_on_close: {desired}"
 
@@ -1299,9 +1293,6 @@ GITATTRSEOF
 	# nesting depth and function length (t2265).
 	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name"
 
-	# Offer CodeRabbit's repo-level post-merge review completion setting when
-	# code-quality support is enabled. This lets merged-PR findings become
-	# aidevops follow-up issues instead of being aborted by CodeRabbit.
 	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
 
 	# ─── Badge initialization (t2975) ────────────────────────────────────────
