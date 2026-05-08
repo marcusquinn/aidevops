@@ -70,6 +70,15 @@ else
 	fail "resolves GitHub username to canonical operator" "canonical=${canonical}"
 fi
 
+preloaded_identity_lines=$(_dashboard_identity_aliases "github-user" \
+	'canonical-operator=local-user,github-user')
+preloaded_canonical=$(printf '%s\n' "$preloaded_identity_lines" | sed -n '1p')
+if [[ "$preloaded_canonical" == "canonical-operator" ]]; then
+	pass "resolves aliases from preloaded config content"
+else
+	fail "resolves aliases from preloaded config content" "canonical=${preloaded_canonical}"
+fi
+
 result=$(_find_health_issue "owner/repo" "github-user" "supervisor" "[Supervisor:canonical-operator]" \
 	"supervisor" "Supervisor" "${HOME}/.aidevops/logs/health-issue-canonical-owner-repo" \
 	"$canonical" "$aliases")
