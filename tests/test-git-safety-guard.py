@@ -49,6 +49,28 @@ class TestCanonicalBranchSwitchDash(unittest.TestCase):
         self.assertIn("feature/work", reason)
         branch_authorized.assert_not_called()
 
+    def test_git_checkout_dash_denies_previous_feature_branch(self):
+        branch_authorized = self._patch_canonical_repo("feature/work")
+
+        deny = git_safety_guard._check_canonical_branch_switch_command(
+            "git checkout -", "restore the canonical repo"
+        )
+
+        self.assertIsNotNone(deny)
+        reason = deny["hookSpecificOutput"]["permissionDecisionReason"]
+        self.assertIn("feature/work", reason)
+        branch_authorized.assert_not_called()
+
+    def test_git_switch_dash_without_previous_branch_is_ignored(self):
+        branch_authorized = self._patch_canonical_repo("")
+
+        deny = git_safety_guard._check_canonical_branch_switch_command(
+            "git switch -", "restore the canonical repo"
+        )
+
+        self.assertIsNone(deny)
+        branch_authorized.assert_not_called()
+
     def test_git_switch_dash_resolves_default_branch_before_authorization(self):
         branch_authorized = self._patch_canonical_repo("main")
         branch_authorized.return_value = True
