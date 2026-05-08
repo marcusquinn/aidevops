@@ -951,7 +951,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3560 Add /goals mission command ref:GH#22649 pr:#22650 completed:2026-05-03
 
-- [ ] t3576 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #pulse #mission:m-20260508-0e27c3 ~2h ref:GH#23135
+- [x] t3576 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #pulse #mission:m-20260508-0e27c3 ~2h ref:GH#23135 pr:#23133 completed:2026-05-08
 
 ## In Progress
 
@@ -4195,7 +4195,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3574 design `/auto-browse` agent factory for browser operations and web data mining #enhancement #framework ref:GH#23132 pr:#23131 completed:2026-05-08
 
-- [ ] t3576 Avoid redispatch for CI infra-only blockers ref:GH#23135
+- [x] t3576 Avoid redispatch for CI infra-only blockers ref:GH#23135 pr:#23133 completed:2026-05-08
 
 - [ ] t3575 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #mission #pulse ref:GH#23134
 
