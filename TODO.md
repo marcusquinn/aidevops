@@ -4203,3 +4203,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3578 SQLite output sandbox for token-efficient noisy tool output #enhancement #framework ref:GH#23137
 
 - [x] t3577 Default RTK token optimization in setup #enhancement #framework ref:GH#23136 pr:#23138 completed:2026-05-08
+
+- [ ] t3579 Classify timed-out CI logs as infra blockers ref:GH#23140
+
+- [ ] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142
