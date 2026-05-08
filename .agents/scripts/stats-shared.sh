@@ -250,7 +250,7 @@ _dashboard_identity_aliases() {
 	fi
 
 	if [[ -n "$config_content" ]]; then
-		local line lhs rhs alias normalized_lhs normalized_alias
+		local line lhs rhs alias normalized_lhs normalized_alias candidate_aliases _identity_alias_parts
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			line="${line%%#*}"
 			[[ "$line" == *"="* ]] || continue
@@ -258,7 +258,7 @@ _dashboard_identity_aliases() {
 			rhs="${line#*=}"
 			normalized_lhs=$(_normalize_dashboard_identity_token "$lhs")
 			[[ -n "$normalized_lhs" ]] || continue
-			local candidate_aliases="$normalized_lhs"
+			candidate_aliases="$normalized_lhs"
 			IFS=',' read -r -a _identity_alias_parts <<<"$rhs"
 			for alias in "${_identity_alias_parts[@]}"; do
 				normalized_alias=$(_normalize_dashboard_identity_token "$alias")
