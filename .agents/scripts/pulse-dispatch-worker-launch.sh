@@ -1268,6 +1268,7 @@ _dlw_nohup_launch() {
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(
