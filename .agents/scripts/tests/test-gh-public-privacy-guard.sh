@@ -57,6 +57,21 @@ else
 	fail "aidevops script path reference" "rc=$rc out=$out err=$err"
 fi
 
+precomputed_input="Worker guidance: edit .agents/scripts/$ALLOWED_BASENAME"
+redacted=$(_privacy_redact_aidevops_script_references "$precomputed_input" "$ALLOWED_BASENAME")
+if [[ "$redacted" == *'[aidevops-script-reference]'* ]]; then
+	pass "precomputed aidevops script basename allowlist is used"
+else
+	fail "precomputed aidevops script basename allowlist" "redacted=$redacted"
+fi
+
+redacted=$(_privacy_redact_aidevops_script_references "$precomputed_input" "")
+if [[ "$redacted" == "$precomputed_input" ]]; then
+	pass "empty precomputed aidevops script basename allowlist skips fallback discovery"
+else
+	fail "empty precomputed aidevops script basename allowlist" "redacted=$redacted"
+fi
+
 out=$(privacy_scan_secret_material_text "Reference basename \`$ALLOWED_BASENAME\` in the issue body" 2>"$TMP/allow-basename.err")
 rc=$?
 err=$(<"$TMP/allow-basename.err")
