@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.7] - 2026-05-08
+
+### Changed
+
+- add CodeRabbit post-merge init option (#23221)
+
+### Fixed
+
+- harden opencode PATH construction (#23170)
+
 ## [3.15.6] - 2026-05-08
 
 ### Changed
