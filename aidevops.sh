@@ -749,11 +749,76 @@ cmd_detect() {
 	return 0
 }
 
+_cmd_setup_help() {
+	printf '%s\n' "Usage: aidevops setup --scope <scope>"
+	printf '%s\n' ""
+	printf '%s\n' "Scopes:"
+	printf '%s\n' "  opencode  Repair/install the OpenCode CLI only"
+	printf '%s\n' "  agents    Deploy aidevops agents/scripts only"
+	printf '%s\n' "  hooks     Install safety hooks only"
+	printf '%s\n' "  tabby     Sync Tabby terminal profiles only"
+	printf '%s\n' "  pulse     Install/refresh the pulse scheduler only"
+	printf '%s\n' "  full      Run ./setup.sh --non-interactive"
+	return 0
+}
+
+cmd_setup() {
+	local scope=""
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--scope)
+			if [[ -z "${2:-}" ]]; then
+				print_error "--scope requires a value"
+				_cmd_setup_help
+				return 1
+			fi
+			scope="$2"
+			shift 2
+			;;
+		--scope=*)
+			scope="${arg#--scope=}"
+			shift
+			;;
+		help | --help | -h)
+			_cmd_setup_help
+			return 0
+			;;
+		*)
+			print_error "Unknown setup option: $arg"
+			_cmd_setup_help
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "$scope" ]]; then
+		print_error "Missing required --scope value"
+		_cmd_setup_help
+		return 1
+	fi
+
+	local setup_script="${INSTALL_DIR}/setup.sh"
+	if [[ ! -f "$setup_script" ]]; then
+		print_error "setup.sh not found at $setup_script"
+		return 1
+	fi
+
+	if [[ "$scope" == "full" ]]; then
+		bash "$setup_script" --non-interactive
+		return $?
+	fi
+
+	bash "$setup_script" --stage "$scope"
+	return $?
+}
+
 
 # Help text helpers (extracted for complexity reduction)
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
+	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, hooks, tabby, pulse, full)"
 	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
 	echo "  features           List available features for init"
@@ -1408,6 +1473,7 @@ main() {
 	shift || true
 	case "$command" in
 	init | i) cmd_init "$@" ;;
+	setup) cmd_setup "$@" ;;
 	features | f) cmd_features ;;
 	status | s) cmd_status ;;
 	update | upgrade | u) cmd_update "$@" ;;
