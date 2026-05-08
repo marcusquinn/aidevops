@@ -75,15 +75,6 @@ if [[ "${1:-} ${2:-}" == "run view" ]]; then
 	log_exit_143)
 		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
 		;;
-	log_exit_124)
-		printf '%s\n' 'Typecheck Run ##[error]Process completed with exit code 124.'
-		;;
-	log_exit_137)
-		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 137.'
-		;;
-	log_killed_timeout)
-		printf '%s\n' 'Lint Run /tmp/check.sh: line 9: 2261 Killed timeout --kill-after=60s 20m pnpm exec turbo run lint'
-		;;
 	*)
 		printf '%s\n' 'Lint Run actual lint error in source file'
 		;;
@@ -96,7 +87,7 @@ fi
 		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
 		if [[ "$*" == *"| .name]"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-			terminal_failure:1 | log_exit_143:1 | log_exit_124:1 | log_exit_137:1 | log_killed_timeout:1)
+			terminal_failure:1 | log_exit_143:1)
 				printf 'Lint\n'
 				;;
 			infra_timeout:1 | advisory_failure:*)
@@ -106,7 +97,7 @@ fi
 		fi
 	if [[ "$*" == *"name,bucket,conclusion,link"* ]]; then
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-			terminal_failure:1 | log_exit_143:1 | log_exit_124:1 | log_exit_137:1 | log_killed_timeout:1)
+			terminal_failure:1 | log_exit_143:1)
 				if [[ "$*" == *"{name, conclusion, link}"* ]]; then
 					printf '%s\n' '[{"name":"Lint","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 				else
