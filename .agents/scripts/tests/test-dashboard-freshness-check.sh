@@ -25,7 +25,7 @@
 #      recovery evidence and closes the alert.
 #  10. scan with a stale dashboard AND a pre-existing missing-marker alert →
 #      closes the recovered missing-marker alert and files a stale alert.
-#  11. gh issue list failures are logged instead of silently treated as an
+#  11. open issue list failures are logged instead of silently treated as an
 #      empty dedup result.
 #  12. source regression: recovered stale and missing-marker alert paths share
 #      the parameterized close helper and accept a pre-fetched open issue list.
@@ -212,7 +212,7 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --limit 1000 --json number,title ... → alert dedup/recovery check
+			#   gh api --paginate repos/.../issues?state=open... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
@@ -222,34 +222,29 @@ run_scan_with_stubs() {
 						return 0
 						;;
 					api)
+						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&per_page=100"* ]]; then
+							if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
+								printf "simulated gh api issue list failure\n" >&2
+								return 1
+							fi
+							if [[ "$gh_args" != *"--paginate"* ]] \
+								|| [[ "$gh_args" != *"--jq"* ]]; then
+								return 0
+							elif [[ "$ALERT_EXISTS" == "1" ]]; then
+								if [[ "$ALERT_KIND" == "missing" ]]; then
+									printf "%s\n" "{\"number\":99,\"title\":\"Supervisor health dashboard missing last_refresh marker (#424242)\"}"
+								else
+									printf "%s\n" "{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}"
+								fi
+							fi
+							return 0
+						fi
 						# $2 = repos/test/repo/issues/424242
 						cat "$BODY_FIXTURE"
 						return 0
 						;;
 					issue)
 						case "$2" in
-							list)
-								if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
-									printf "simulated gh issue list failure\n" >&2
-									return 1
-								fi
-								if [[ "$gh_args" == *" --label "* ]] \
-									|| [[ "$gh_args" == *" --search "* ]] \
-									|| [[ "$gh_args" == *"--paginate"* ]] \
-									|| [[ "$gh_args" != *"--limit 1000"* ]] \
-									|| [[ "$gh_args" != *"--json number,title"* ]]; then
-									printf "[]\n"
-								elif [[ "$ALERT_EXISTS" == "1" ]]; then
-									if [[ "$ALERT_KIND" == "missing" ]]; then
-										printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard missing last_refresh marker (#424242)\"}]"
-									else
-										printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}]"
-									fi
-								else
-									printf "[]\n"
-								fi
-								return 0
-								;;
 							comment)
 								return 0
 								;;
@@ -315,18 +310,18 @@ else
 		"calls:\n$(cat "$calls_file")"
 fi
 
-issue_list_call="$(grep '^issue list ' "$calls_file" || true)"
+issue_list_call="$(grep '^api --paginate repos/test/repo/issues?state=open&per_page=100 ' "$calls_file" || true)"
 if [[ -n "$issue_list_call" ]] \
 	&& [[ "$issue_list_call" != *"--label"* ]] \
 	&& [[ "$issue_list_call" != *"--search"* ]] \
-	&& [[ "$issue_list_call" != *"--paginate"* ]] \
-	&& [[ "$issue_list_call" == *"--limit 1000"* ]] \
-	&& [[ "$issue_list_call" == *"--json number,title"* ]] \
-	&& [[ "$issue_list_call" != *"--jq"* ]]; then
-	pass "dedup lookup limits open titles for gh issue list compatibility"
+	&& [[ "$issue_list_call" == *"--paginate"* ]] \
+	&& [[ "$issue_list_call" == *"--jq"* ]] \
+	&& [[ "$issue_list_call" != *"--limit"* ]] \
+	&& [[ "$issue_list_call" != *"--json"* ]]; then
+	pass "dedup lookup paginates open titles via gh api"
 else
 	fail "dedup lookup query shape" \
-		"expected --limit 1000 title query without --paginate/--label/--search/--jq; calls:\n$(cat "$calls_file")"
+		"expected gh api --paginate title query without --limit/--label/--search; calls:\n$(cat "$calls_file")"
 fi
 
 if grep -q -- 'jq -r --arg prefix' "$SCANNER" \
@@ -414,34 +409,34 @@ calls_file="${TMP}/gh-calls.log"
 comment_count=$(grep -c '^issue comment 99 ' "$calls_file" 2>/dev/null || true)
 close_count=$(grep -c '^issue close 99 ' "$calls_file" 2>/dev/null || true)
 created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
-list_count=$(grep -c '^issue list ' "$calls_file" 2>/dev/null || true)
+list_count=$(grep -c '^api --paginate repos/test/repo/issues?state=open&per_page=100 ' "$calls_file" 2>/dev/null || true)
 [[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
 [[ "$close_count" =~ ^[0-9]+$ ]] || close_count=0
 [[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
 [[ "$list_count" =~ ^[0-9]+$ ]] || list_count=0
 
 if (( comment_count == 1 && close_count == 1 && created_count == 1 && list_count == 1 )); then
-	pass "stale dashboard with missing-marker alert → close mismatch + file stale using one issue-list fetch"
+	pass "stale dashboard with missing-marker alert → close mismatch + file stale using one paginated issue fetch"
 else
 	fail "stale dashboard missing-marker recovery" \
 		"comment=$comment_count close=$close_count created=$created_count list=$list_count; calls:\n$(cat "$calls_file")"
 fi
 
 # ---------------------------------------------------------------------------
-# Test 11: failed gh issue list logs an error instead of silent empty dedup
+# Test 11: failed open issue list logs an error instead of silent empty dedup
 # ---------------------------------------------------------------------------
-echo "Testing: gh issue list failure logs dedup error"
+echo "Testing: open issue list failure logs recovery error"
 run_scan_with_stubs "$STALE_BODY" 0 "export GH_ISSUE_LIST_FAIL=1" >/dev/null
 calls_file="${TMP}/gh-calls.log"
 created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
 [[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
 
 if (( created_count == 1 )) \
-	&& grep -q 'Failed to list open issues for dashboard freshness dedup in test/repo' \
+	&& grep -q 'Failed to list open issues for dashboard freshness recovery in test/repo' \
 		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log"; then
-	pass "gh issue list failure → logged dedup error before fail-open alert"
+	pass "open issue list failure → logged error before fail-open alert"
 else
-	fail "gh issue list failure logging" \
+	fail "open issue list failure logging" \
 		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
 fi
 
