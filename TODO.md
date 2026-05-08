@@ -4193,7 +4193,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3573 fix: block unrequested canonical branch switches #auto-dispatch #bug #framework #git-safety #interactive ref:GH#23109 pr:#23113 completed:2026-05-07
 
-- [ ] t3566 Allow breaker-held issues to retry after aidevops upgrades #bug ref:GH#23128
+- [x] t3566 Allow breaker-held issues to retry after aidevops upgrades #bug ref:GH#23128 pr:#23127 completed:2026-05-07
 
 - [x] t3574 design `/auto-browse` agent factory for browser operations and web data mining #enhancement #framework ref:GH#23132 pr:#23131 completed:2026-05-08
 
