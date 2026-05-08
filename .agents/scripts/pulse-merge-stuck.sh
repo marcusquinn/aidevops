@@ -670,10 +670,14 @@ _pms_issue_prs_all_resolved_or_changed() {
 	[[ -n "$prs" ]] || return 1
 	while IFS= read -r pr; do
 		[[ "$pr" =~ ^[0-9]+$ ]] || continue
-		local state="" current_fp=""
-		state=$(gh pr view "$pr" --repo "$repo_slug" --json state --jq '.state // ""' 2>/dev/null) || state=""
+		local state="" current_fp="" state_rc=0
+		state=$(gh pr view "$pr" --repo "$repo_slug" --json state --jq '.state // ""' 2>/dev/null) || state_rc=$?
+		if [[ "$state_rc" -ne 0 || -z "$state" ]]; then
+			return 1
+		fi
 		if [[ "$state" == "OPEN" ]]; then
-			current_fp=$(_pms_failure_fingerprint "$pr" "$repo_slug")
+			current_fp=$(_pms_failure_fingerprint "$pr" "$repo_slug") || current_fp=""
+			[[ -n "$current_fp" ]] || return 1
 			if [[ "$current_fp" == "$fingerprint" ]]; then
 				unresolved=$((unresolved + 1))
 			fi

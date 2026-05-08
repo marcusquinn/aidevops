@@ -1014,8 +1014,12 @@ _dsi_reset_after_prelaunch_failure() {
 		return 0
 	fi
 	_dsi_warn "Pre-launch failure (${reason}); restoring #${issue_number} to status:available"
+	local -a reset_flags=()
+	if [[ -n "$self_login" ]]; then
+		reset_flags=(--remove-assignee "$self_login")
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" \
-		--remove-assignee "$self_login" >/dev/null 2>&1 || true
+		"${reset_flags[@]}" >/dev/null 2>&1 || true
 	return 0
 }
 

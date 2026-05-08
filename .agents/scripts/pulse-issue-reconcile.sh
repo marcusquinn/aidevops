@@ -682,8 +682,12 @@ _normalize_unassign_stampless_interactive() {
 			local labels_csv=""
 			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
 			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
-				local open_pr_count=0
-				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null || true)
+				local open_pr_count=0 open_pr_rc=0
+				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
+				if [[ "$open_pr_rc" -ne 0 ]]; then
+					echo "[pulse-wrapper] Stampless interactive auto-release: skip #${issue_num} in ${slug} — cannot verify open PR count" >>"$LOGFILE"
+					continue
+				fi
 				[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
 				if [[ "$open_pr_count" -gt 0 ]]; then
 					continue
