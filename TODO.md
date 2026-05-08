@@ -4211,3 +4211,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3581 Document pragmatic CI gate policy ref:GH#23211 pr:#23214 completed:2026-05-08
 
+
+- [ ] t3583 Improve pulse recovery for orphaned worker output ref:GH#23217
