@@ -401,13 +401,13 @@ test_required_cancel_blocks_merge() {
 	return 0
 }
 
-test_required_action_required_blocks_merge() {
+test_required_action_required_is_non_terminal() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="action_required"
-	assert_function_returns 1 "required check-run action_required → merge blocked"
-	assert_log_contains "terminal failed required context" \
-		"action_required: required-context failure logged"
+	assert_function_returns 0 "required check-run action_required → no CI repair routing"
+	assert_log_contains "no terminal failed required contexts" \
+		"action_required: non-terminal classification logged"
 	return 0
 }
 
@@ -493,7 +493,7 @@ main() {
 	test_post_merge_advisory_failure_ignored
 	test_required_failure_blocks_merge
 	test_required_cancel_blocks_merge
-	test_required_action_required_blocks_merge
+	test_required_action_required_is_non_terminal
 	test_empty_required_set_allows_merge
 	test_pending_required_blocks_merge
 	test_queued_required_is_non_terminal

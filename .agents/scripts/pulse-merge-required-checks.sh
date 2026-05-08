@@ -28,7 +28,7 @@ _check_required_checks_has_terminal_failure() {
 
 	local pr_sha=""
 	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json headRefOid --jq '.headRefOid' 2>/dev/null) || pr_sha=""
+		--json headRefOid --jq '.headRefOid // ""') || true
 	if [[ -z "$pr_sha" ]]; then
 		echo "[pulse-merge] _check_required_checks_has_terminal_failure: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t3567)" >>"$LOGFILE"
 		return 2
@@ -54,7 +54,7 @@ _check_required_checks_has_terminal_failure() {
 			($checks | map(select((.name // "") == $ctx)) | last) as $c |
 			if $c == null then false
 			elif (($c.conclusion // "" | ascii_downcase)
-				| . == "failure" or . == "cancelled" or . == "timed_out" or . == "action_required") then true
+				| . == "failure" or . == "cancelled" or . == "timed_out") then true
 			else false
 			end
 		) | map(select(.)) | length' 2>/dev/null)
