@@ -4210,3 +4210,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142
 
 - [x] t3581 Document pragmatic CI gate policy ref:GH#23211 pr:#23214 completed:2026-05-08
+
+- [ ] t3582 Make pulse self-heal awardsapp blockers ref:GH#23215
