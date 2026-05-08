@@ -593,6 +593,7 @@ bot_has_real_review() {
 	local repo="$2"
 	local bot_login="$3"
 	local success_status_contexts="${4-}"
+	local success_status_contexts_prepared="${5:-false}"
 	local has_success_status_contexts="false"
 	[[ $# -ge 4 ]] && has_success_status_contexts="true"
 
@@ -637,7 +638,7 @@ bot_has_real_review() {
 			# reached success. Default fast mode intentionally preserves throughput.
 			if _requires_success_status_completion "$repo" "$bot_login"; then
 				if [[ "$has_success_status_contexts" == "true" ]]; then
-					bot_has_success_status "$pr_number" "$repo" "$bot_login" "$success_status_contexts" || {
+					bot_has_success_status "$pr_number" "$repo" "$bot_login" "$success_status_contexts" "$success_status_contexts_prepared" || {
 						echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
 						continue
 					}
@@ -758,12 +759,14 @@ bot_has_success_status() {
 	local repo="$2"
 	local bot_login="$3"
 	local status_contexts="${4-}"
+	local contexts_are_prepared="${5:-false}"
 
 	if [[ $# -lt 4 ]]; then
 		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+		contexts_are_prepared="false"
 	fi
 	[[ -z "$status_contexts" ]] && return 1
-	_status_contexts_match_bot "$bot_login" "$status_contexts" && return 0
+	_status_contexts_match_bot "$bot_login" "$status_contexts" "$contexts_are_prepared" && return 0
 	return 1
 }
 
@@ -771,14 +774,20 @@ any_bot_has_success_status() {
 	local pr_number="$1"
 	local repo="$2"
 	local status_contexts="${3-}"
+	local contexts_are_prepared="${4:-false}"
 
 	if [[ $# -lt 3 ]]; then
 		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+		contexts_are_prepared="false"
 	fi
 	[[ -z "$status_contexts" ]] && return 1
 
 	local prepared_contexts
-	prepared_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
+	if [[ "$contexts_are_prepared" == "true" ]]; then
+		prepared_contexts="$status_contexts"
+	else
+		prepared_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
+	fi
 
 	local bot
 	for bot in "${KNOWN_BOTS[@]}"; do
@@ -835,6 +844,10 @@ do_check() {
 
 	local status_contexts
 	status_contexts=$(_get_success_status_contexts "$pr_number" "$repo" || true)
+	local prepared_status_contexts=""
+	if [[ -n "$status_contexts" ]]; then
+		prepared_status_contexts=$(_prepare_success_status_contexts "$status_contexts" || true)
+	fi
 
 	local found_bots=""
 	local rate_limited_bots=""
@@ -844,7 +857,7 @@ do_check() {
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
 			# Bot commented — but is it a real review or a non-review notice?
-			if bot_has_real_review "$pr_number" "$repo" "$bot" "$status_contexts"; then
+			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
 				found_bots="${found_bots}${bot} "
 			else
 				if notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot"); then
@@ -871,7 +884,7 @@ do_check() {
 		echo "$pass_result" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
 		return 0
-	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$status_contexts"; then
+	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#22884: Some bots expose review completion only through a SUCCESS
 		# commit status after leaving a placeholder/non-review issue comment. Do
 		# not bridge to a raw skip; require the bot-authored success status before
@@ -888,7 +901,7 @@ do_check() {
 		echo "Bots posted non-review states that are not rate limits: ${non_review_bots}" >&2
 		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
 		return 1
-	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$status_contexts"; then
+	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#3005: All bots are rate-limited in comments, but at least one
 		# posted a SUCCESS commit status check. Treat as reviewed.
 		echo "$pass_result"

@@ -553,6 +553,25 @@ test_any_bot_success_status_reuses_provided_contexts() {
 	return 0
 }
 
+test_any_bot_success_status_reuses_prepared_contexts() {
+	local prepare_calls=0
+	_prepare_success_status_contexts() {
+		prepare_calls=$((prepare_calls + 1))
+		return 1
+	}
+
+	local contexts
+	contexts=$'abc123def456\ncoderabbit'
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" true 2>/dev/null && \
+		[[ "$prepare_calls" -eq 0 ]]; then
+		print_result "status fallback reuses prepared success contexts" 0
+	else
+		print_result "status fallback reuses prepared success contexts" 1 \
+			"prepare_calls=${prepare_calls}"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -831,6 +850,7 @@ main() {
 	test_strict_coderabbit_pending_status_blocks_edited_comment
 	test_strict_coderabbit_success_status_passes_edited_comment
 	test_any_bot_success_status_reuses_provided_contexts
+	test_any_bot_success_status_reuses_prepared_contexts
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
