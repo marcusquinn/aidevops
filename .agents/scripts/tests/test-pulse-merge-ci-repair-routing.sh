@@ -132,9 +132,6 @@ if [[ "${1:-} ${2:-}" == "issue view" ]]; then
 		cat "${TEST_ROOT}/issue-body.txt"
 		exit 0
 	fi
-	if [[ "$*" == *"--json assignees"* ]]; then
-		exit 0
-	fi
 	exit 0
 fi
 
