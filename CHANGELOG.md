@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.9] - 2026-05-08
+
+### Changed
+
+- Maintenance: mark t3584 complete (pr:#23223 completed:2026-05-08) [skip ci]
+- fix worker output recovery after runtime kills (#23223)
+
 ## [3.15.8] - 2026-05-08
 
 ### Added
