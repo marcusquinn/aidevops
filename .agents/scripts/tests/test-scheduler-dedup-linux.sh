@@ -202,6 +202,32 @@ test_multiple_duplicate_cron_entries_removed_with_single_crontab_write() {
 	return 0
 }
 
+test_remove_cron_tag_uses_provided_crontab_without_extra_io() {
+	setup_fixture
+	printf '%s\n' \
+		'*/10 * * * * /home/example/.aidevops/agents/scripts/auto-update-helper.sh check # aidevops-auto-update' \
+		'0 6 * * * /usr/bin/true # keep-me' >"$CRON_FILE"
+	load_scheduler_functions
+
+	local provided_cron=""
+	provided_cron="$(cat "$CRON_FILE")"
+	_scheduler_remove_cron_tag "# aidevops-auto-update" "auto-update" "$provided_cron" true
+	local list_count=""
+	list_count="$(cat "$CRON_LIST_COUNT_FILE")"
+	local write_count=""
+	write_count="$(cat "$CRON_WRITE_COUNT_FILE")"
+
+	if [[ "$_SCHEDULER_RECONCILED_CRON_RESULT" != *'aidevops-auto-update'* && "$_SCHEDULER_RECONCILED_CRON_RESULT" == *'keep-me'* && "$list_count" == "0" && "$write_count" == "0" ]]; then
+		print_result "remove cron tag uses provided crontab without extra I/O" 0
+		cleanup_fixture
+		return 0
+	fi
+
+	print_result "remove cron tag uses provided crontab without extra I/O" 1 "result=${_SCHEDULER_RECONCILED_CRON_RESULT} list_count=${list_count} write_count=${write_count}"
+	cleanup_fixture
+	return 0
+}
+
 test_systemd_only_stats_wrapper_preserved() {
 	setup_fixture
 	printf '%s\n' '30 2 * * * /usr/bin/true # keep-cron-only' >"$CRON_FILE"
@@ -249,6 +275,7 @@ main() {
 	test_duplicate_auto_update_cron_removed
 	test_duplicate_pulse_merge_cron_removed
 	test_multiple_duplicate_cron_entries_removed_with_single_crontab_write
+	test_remove_cron_tag_uses_provided_crontab_without_extra_io
 	test_systemd_only_stats_wrapper_preserved
 	test_cron_only_scheduler_preserved
 
