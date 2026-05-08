@@ -253,26 +253,31 @@ setup_file_discovery_tools() {
 
 setup_rtk() {
 	# rtk — CLI proxy that reduces LLM token consumption by 60-90% (t1430)
-	# Optional optimization: compresses git/gh/test outputs before they reach LLM context
+	# Opinionated default optimization: compresses git/gh/test outputs before they reach LLM context
 	# Single Rust binary, zero dependencies, <10ms overhead
 	# https://github.com/rtk-ai/rtk
 
 	# Pin to a tagged release for stability and auditability (Gemini review feedback).
 	# Update the tag when upstream-watch detects a new release.
-	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/v0.28.2/install.sh"
+	local rtk_supported_version="0.39.0"
+	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/v${rtk_supported_version}/install.sh"
 
 	if command -v rtk >/dev/null 2>&1; then
 		local rtk_version
 		rtk_version=$(rtk --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
 		print_success "rtk found: v$rtk_version (token optimization proxy)"
+		if [[ "$rtk_version" != "unknown" && "$rtk_version" != "$rtk_supported_version" ]]; then
+			print_info "rtk supported by this aidevops release: v$rtk_supported_version"
+			print_info "Run 'brew upgrade rtk' or re-run setup if you want the pinned aidevops-tested version."
+		fi
 		# Fall through to ensure config is applied (telemetry, tee)
 	else
 		print_info "rtk (Rust Token Killer) reduces LLM token usage by 60-90% on CLI commands"
 		echo "  Compresses git, gh, test runner, and linter outputs before they reach the AI context."
-		echo "  Single binary, zero dependencies, <10ms overhead."
+		echo "  Single binary, zero dependencies, <10ms overhead. Installed by default; answer 'n' to skip."
 		echo ""
 
-		setup_prompt install_rtk "Install rtk for token-optimized CLI output? [y/N]: " "n"
+		setup_prompt install_rtk "Install rtk for token-optimized CLI output? [Y/n]: " "y"
 
 		# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
 		if [[ "$install_rtk" =~ ^[Yy]$ ]]; then
@@ -298,7 +303,7 @@ setup_rtk() {
 				fi
 			fi
 		else
-			print_info "Skipped rtk installation (optional)"
+			print_info "Skipped rtk installation"
 			echo "  Manual install: brew install rtk  OR  curl -fsSL $rtk_installer_url | sh"
 		fi
 	fi
