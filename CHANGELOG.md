@@ -10,6 +10,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.2] - 2026-05-08
+
+### Added
+
+- add scoped setup deploy commands (#23145)
+
+### Changed
+
+- Tests: cover pulse merge conflict label safety (#23202)
+- Tests: cover dashboard freshness JSON fallback (#23204)
+- Tests: cover git checkout dash canonical guard (#23203)
+- Performance: reuse prepared review gate status contexts (#23201)
+- Tests: cover scheduler crontab I/O reuse (#23200)
+- Tests: cover pulse stuck null author parsing (#23188)
+- Documentation: update native auto-merge return docs (#23183)
+- Performance: cache privacy script reference allowlist (#23180)
+- Maintenance: update simplification state registry
+- Performance: consolidate review gate list jq lookups (#23173)
+- Documentation: clarify automation safety invariants (#23169)
+- Tests: simplify git safety guard mock setup (#23168)
+
+### Fixed
+
+- block consolidated issue redispatch (#23189)
+- preserve explicit prelaunch failure reasons (#23185)
+- consolidate dispatch circuit comment parsing (#23184)
+- handle protected counter reconciliation pushes (#23182)
+- localize dashboard alias parsing variables (#23181)
+- cache review gate success contexts (#23177)
+- streamline linux scheduler cron reconciliation (#23179)
+- cache dashboard identity aliases for migration
+- reduce CI check polling for merge feedback (#23176)
+- guard pulse duplicate issue label lookup (#23175)
+- paginate dashboard freshness issue listing (#23174)
+- harden opencode setup validation (#23171)
+- tighten review-feedback supersession matching (#23172)
+- guard git switch dash in canonical checkout (#23167)
+
 ## [3.15.1] - 2026-05-08
 
 ### Changed
