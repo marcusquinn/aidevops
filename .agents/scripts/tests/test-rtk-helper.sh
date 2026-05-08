@@ -58,9 +58,19 @@ if [[ "${1:-}" == "fail" ]]; then
   printf 'failure body\n'
   exit 7
 fi
+if [[ "${1:-}" == "samplecmd" ]]; then
+  printf 'short\n'
+  exit 0
+fi
 printf 'payload: %s\n' "$*"
 STUB
 chmod +x "${TMPDIR_TEST}/rtk"
+
+cat >"${TMPDIR_TEST}/samplecmd" <<'STUB'
+#!/usr/bin/env bash
+printf 'long raw payload with extra diagnostic detail\n'
+STUB
+chmod +x "${TMPDIR_TEST}/samplecmd"
 
 PATH="${TMPDIR_TEST}:$PATH" output=$("$HELPER" git status)
 assert_not_contains "strips no-hook advisory" "No hook installed" "$output"
@@ -77,6 +87,12 @@ else
 fi
 assert_contains "preserves failure output" "failure body" "$fail_output"
 assert_not_contains "strips advisory on failure" "No hook installed" "$fail_output"
+
+PATH="${TMPDIR_TEST}:$PATH" compare_output=$("$HELPER" --compare samplecmd)
+assert_contains "compare emits diagnostic heading" "RTK output comparison" "$compare_output"
+assert_contains "compare records same exit code" "Same exit code: yes" "$compare_output"
+assert_contains "compare emits decision guidance" "Decision guidance" "$compare_output"
+assert_not_contains "compare strips advisory" "No hook installed" "$compare_output"
 
 printf '%s passed, %s failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -ne 0 ]]; then
