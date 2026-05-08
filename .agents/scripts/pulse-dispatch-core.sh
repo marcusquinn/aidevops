@@ -861,11 +861,9 @@ _has_committed_to_main_cache_label() {
 #######################################
 # Detect terminal consolidated issues before worker dispatch.
 #
-# Consolidated issues are archival handoff/spec records produced by issue
-# consolidation workers. They intentionally carry `consolidated` and
-# `origin:worker` so provenance is preserved, but they are not implementation
-# tasks. Blocking them here prevents stale status labels such as
-# `status:queued` from re-opening a completed consolidation thread.
+# Consolidated issues are archival handoff/spec records when they only carry
+# the provenance label. Review-feedback consolidation issues are dispatchable
+# implementation specs and carry quality/source labels; do not block those.
 #
 # Args:
 #   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
@@ -877,8 +875,13 @@ _has_committed_to_main_cache_label() {
 _has_consolidated_label() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
-	if printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | index("consolidated")' >/dev/null 2>&1; then
+	if printf '%s' "$issue_meta_json" | jq -e '
+		(.labels | map(.name)) as $labels
+		| ($labels | index("consolidated"))
+		and (($labels | index("quality-debt")) | not)
+		and (($labels | index("source:review-feedback")) | not)
+		and (($labels | index("source:ci-feedback")) | not)
+	' >/dev/null 2>&1; then
 		return 0
 	fi
 	return 1

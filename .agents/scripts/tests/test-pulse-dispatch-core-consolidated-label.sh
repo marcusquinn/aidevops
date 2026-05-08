@@ -74,6 +74,17 @@ test_absent_label_returns_nonzero() {
 	return 0
 }
 
+test_review_feedback_consolidated_is_dispatchable() {
+	local meta='{"number":4648,"labels":[{"name":"status:available"},{"name":"origin:worker"},{"name":"consolidated"},{"name":"quality-debt"},{"name":"source:review-feedback"}]}'
+	if _has_consolidated_label "$meta"; then
+		print_result "review-feedback consolidated issues are dispatchable" 1 \
+			"Expected exit 1 for consolidated review-feedback implementation specs"
+		return 0
+	fi
+	print_result "review-feedback consolidated issues are dispatchable" 0
+	return 0
+}
+
 test_partial_label_name_does_not_match() {
 	local meta='{"number":23189,"labels":[{"name":"needs-consolidation"},{"name":"consolidation-task"}]}'
 	if _has_consolidated_label "$meta"; then
@@ -103,6 +114,7 @@ main() {
 
 	test_detects_consolidated_label
 	test_absent_label_returns_nonzero
+	test_review_feedback_consolidated_is_dispatchable
 	test_partial_label_name_does_not_match
 	test_empty_or_invalid_meta_returns_nonzero
 
