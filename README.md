@@ -193,6 +193,7 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 - Install the `aidevops` CLI command
 - Configure your AI assistants automatically
 - Offer to install Oh My Zsh (optional, opt-in) for enhanced shell experience
+- Install recommended token-efficiency tooling by default, including RTK for compact `git`/`gh`/test/lint command summaries before output reaches AI context
 - Guide you through recommended tools (Tabby, Zed, Git CLIs)
 - Ensure all PATH and alias changes work in both bash, zsh, and fish
 - When Claude Code is installed, add a `claude` alias that runs `claude --dangerously-skip-permissions` (skips per-tool permission prompts). Re-running setup updates the alias automatically. To grant permissions per-session instead, press **Shift-Tab** inside Claude Code to cycle through permission modes (default → skip permissions → auto-approve).
@@ -724,6 +725,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `/patterns` command, `memory-helper.sh` |
 | **Token-Efficient Serialisation** | Minimise context overhead for structured data | [TOON format](https://github.com/marcusquinn/aidevops/blob/main/.agents/toon-format.md) — 20-60% token reduction vs JSON/YAML for agent indexes, registries, and data exchange |
+| **Token-Efficient Tool Output** | Summarise noisy terminal output without hiding evidence | RTK is installed by default during setup for compact `git`/`gh`/test/lint summaries; aidevops bypasses compression for file reads, JSON assertions, exact diffs, security scans, and other verbatim evidence |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with provider-aware tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
