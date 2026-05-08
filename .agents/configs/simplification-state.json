@@ -1952,9 +1952,9 @@
       "pr": 16797
     },
     ".agents/scripts/commands/full-loop.md": {
-      "at": "2026-05-05T13:04:22Z",
-      "hash": "312c48f7c2a442eccd34bc34410c5ad2e3dae44a",
-      "passes": 18,
+      "at": "2026-05-08T21:55:35Z",
+      "hash": "fe437d1c6232258a8478f8262d2452f25ee7ac99",
+      "passes": 19,
       "pr": 14590
     },
     ".agents/scripts/commands/init-routines.md": {
@@ -2298,15 +2298,15 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-05-07T19:29:02Z",
-      "hash": "c4d1232030ca77466484a75d9a161b780c4af42e",
-      "passes": 41,
+      "at": "2026-05-08T21:55:47Z",
+      "hash": "feef493d557bf067c12dd6077d16846111528db0",
+      "passes": 42,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-05-07T19:29:03Z",
-      "hash": "f32ce35c649853a5408d93ac9aa835e0d76ae420",
-      "passes": 23,
+      "at": "2026-05-08T21:55:48Z",
+      "hash": "2644ba8510e510b201172233109f83b4bf8b134c",
+      "passes": 24,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7193,9 +7193,9 @@
       "pr": 13065
     },
     ".agents/workflows/full-loop.md": {
-      "at": "2026-05-05T13:06:23Z",
-      "hash": "312c48f7c2a442eccd34bc34410c5ad2e3dae44a",
-      "passes": 7,
+      "at": "2026-05-08T21:58:06Z",
+      "hash": "fe437d1c6232258a8478f8262d2452f25ee7ac99",
+      "passes": 8,
       "pr": 19047
     },
     ".agents/workflows/git-workflow.md": {
