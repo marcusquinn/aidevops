@@ -19,7 +19,8 @@
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
 #      read-only merge gates (required checks, worker PR with no linked issue,
 #      non-collaborator author without maintainer crypto-approval, and unknown
-#      authors that must not bypass the collaborator check).
+#      authors that must not bypass the collaborator check) and keeps processing
+#      when GitHub returns a null PR author for deleted users.
 #   8. _detect_pattern_outage de-duplicates repeated PR observations.
 #   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -365,6 +366,36 @@ _has_maintainer_crypto_approval() {
 
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
 assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "2" "$got"
+
+PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"
+: >"$PMS_TEST_COUNT_AUTHORS_FILE"
+_pms_pr_counts_for_zero_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local labels_str="$3"
+	local pr_author="$4"
+	: "$labels_str"
+	[[ -n "$repo_slug" && -n "$pr_number" ]] || return 1
+	printf '%s:%s\n' "$pr_number" "$pr_author" >>"$PMS_TEST_COUNT_AUTHORS_FILE"
+	return 0
+}
+
+gh() {
+	local command_name="${1:-}"
+	local subcommand="${2:-}"
+	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
+		printf '%s\n' '[
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null}
+]'
+		return 0
+	fi
+	return 1
+}
+
+got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
+count_authors=$(<"$PMS_TEST_COUNT_AUTHORS_FILE")
+assert_eq "6b: null author does not abort zero-progress candidate parsing" "1" "$got"
+assert_eq "6c: null author falls back to unknown" "109:unknown" "$count_authors"
 echo ""
 
 # ---------------------------------------------------------------------------
