@@ -158,7 +158,7 @@ Run `aidevops security` for posture/scan/check/dismiss. Advisories arrive via `a
 ## Maintenance
 
 - Self-improvement guidance: `reference/self-improvement.md`.
-- Token-optimized CLI: use `rtk` for `git status/log/diff` and `gh pr list/view` when installed; not for file reads, JSON, assertions, or verbatim diffs.
+- Token-optimized CLI: use `rtk-helper.sh` for `git status/log/diff` and `gh pr list/view` when installed; not for file reads, JSON, assertions, or verbatim diffs.
 - Agent lifecycle: `tools/build-agent/build-agent.md`; OpenCode glob allowlists require `subagent_validation.py` verification.
 - Slash commands resolve through `scripts/commands/<command>.md`, then `workflows/<command>.md`.
 - macOS bash upgrade, platform support, customization, and hot deploys: `reference/bash-compat.md`, `reference/platform-support.md`, `reference/customization.md`, `reference/hot-deploy.md`.
