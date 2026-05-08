@@ -859,6 +859,32 @@ _has_committed_to_main_cache_label() {
 }
 
 #######################################
+# Detect terminal consolidated issues before worker dispatch.
+#
+# Consolidated issues are archival handoff/spec records produced by issue
+# consolidation workers. They intentionally carry `consolidated` and
+# `origin:worker` so provenance is preserved, but they are not implementation
+# tasks. Blocking them here prevents stale status labels such as
+# `status:queued` from re-opening a completed consolidation thread.
+#
+# Args:
+#   $1 - issue_meta_json (pre-fetched JSON with a .labels array)
+#
+# Exit codes:
+#   0 - consolidated label is present
+#   1 - consolidated label is absent (or meta_json is empty/invalid)
+#######################################
+_has_consolidated_label() {
+	local issue_meta_json="$1"
+	[[ -n "$issue_meta_json" ]] || return 1
+	if printf '%s' "$issue_meta_json" |
+		jq -e '.labels | map(.name) | index("consolidated")' >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Determine whether a GitHub issue-number target is actually a pull request.
 #
 # `gh issue view` intentionally presents PRs through the issue facade, so the
@@ -1138,6 +1164,12 @@ _dispatch_dedup_check_layers() {
 	# code path that skips check_dispatch_dedup). This closes Factor 1 of
 	# the #20161 incident where a parent-task issue was dispatched despite
 	# the label being continuously present.
+	if _has_consolidated_label "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: consolidated issue label present (GH#23187)" >>"$LOGFILE"
+		_ds_record "$issue_number" "$repo_slug" "dedup.mgmt_label" "$_dss_t0"
+		return 1
+	fi
+
 	if printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review") or index("on hold") or index("blocked") or index("parent-task") or index("meta"))' >/dev/null 2>&1; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: non-dispatchable management label present" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.mgmt_label" "$_dss_t0"
