@@ -1389,7 +1389,7 @@ _auto_merge_stuck_seconds() {
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
 # Args: $1=pr_number, $2=repo_slug
-# Returns: 0=native-auto requested/deferred, 1=fall through, 2=terminal repair
+# Returns: 0=native-auto requested/deferred, 1=fall through
 #######################################
 _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
