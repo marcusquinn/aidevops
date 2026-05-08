@@ -637,7 +637,10 @@ _close_superseded_duplicate_issue_if_verified() {
 
 	local issue_api issue_labels parent_or_research=0
 	issue_api="repos/${repo_slug}/issues/${linked_issue}"
-	issue_labels=$(gh api "$issue_api" --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	if ! issue_labels=$(gh api "$issue_api" --jq '[.labels[]?.name] | join(",")'); then
+		echo "[pulse-wrapper] Superseded duplicate check: failed to fetch labels for issue #${linked_issue} — skipping issue closure to be safe" >>"$LOGFILE"
+		return 0
+	fi
 	case ",${issue_labels}," in
 	*,parent-task,* | *,research,* | *,research-task,*) parent_or_research=1 ;;
 	esac
@@ -1025,7 +1028,7 @@ _close_conflicting_pr() {
 	if [[ "$_CCPR_WORK_ON_MAIN" == "true" ]]; then
 		local pr_labels_csv
 		pr_labels_csv=$(gh pr view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || pr_labels_csv=""
+			--json labels --jq '[.labels[]?.name] | join(",")') || pr_labels_csv=""
 		_close_conflicting_pr_comment_landed \
 			"$pr_number" "$repo_slug" "$pr_title" \
 			"$task_id_from_pr" "$_CCPR_MERGING_PR" \
