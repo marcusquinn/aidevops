@@ -163,6 +163,7 @@ preferences:
 | 1 | 2026-05-08 | Treat this as a mixed aidevops + awardsapp mission | Evidence shows both orchestration duplicate/red-PR churn and awardsapp CI timeout/advisory ambiguity | Only fix aidevops; only fix awardsapp |
 | 2 | 2026-05-08 | Prioritize required/advisory CI clarity before broad worker redispatch | Duplicate workers burn tokens when the existing PR is approved but blocked by CI semantics | Continue redispatching until one PR happens to pass |
 | 3 | 2026-05-08 | First aidevops change should stop CI repair redispatch for infra/advisory failures | `pulse-merge-feedback.sh` routed advisory/non-required and timed-out/cancelled checks as CI repair feedback, which closes PRs and requeues duplicate workers | Start with awardsapp CI changes only |
+| 4 | 2026-05-08 | Add failed-log inspection for required-check failures | awardsapp PR #4595 reported Lint/Typecheck as `failure`, but failed logs show `Process completed with exit code 143` and `Killed timeout --kill-after`, so check conclusion alone is insufficient | Treat all `failure` conclusions as code-fix redispatch |
 
 ## Mission Agents
 
@@ -176,6 +177,7 @@ preferences:
 |-------|---------|--------|------|
 | awardsapp PR blocker sample | Multiple issues have sibling PRs; many failures are E2E shard or timeout/kill rather than code errors. Examples include PRs #4594/#4595 timeout/kill and #4596 merging after core gates passed. | gh PR/check queries in current session | 2026-05-08 |
 | current open PR sample | Open approved/mergeable PRs include #4594, #4595, #4599, #4584 and others; several have Lint/Typecheck pending while prior logs showed timeout/kill symptoms. | `gh pr view/list` in current session | 2026-05-08 |
+| required-check timeout sample | awardsapp PR #4595 Lint failed after 22m45s and log ended with `Killed timeout --kill-after` plus exit `143`; this is CI budget/infra timeout evidence, not an actionable source lint error. | `gh run view 25530590843 --job 74936343694 --log-failed` | 2026-05-08 |
 
 ## Progress Log
 
@@ -183,6 +185,7 @@ preferences:
 |-----------|-------|---------|
 | 2026-05-08T00:00:00Z | Mission created | Goal: keep improving aidevops and awardsapp until open issues converge to green merged PRs. |
 | 2026-05-08T01:10:00Z | First systemic fix implemented locally | Updated `pulse-merge-feedback.sh` so CI repair feedback only re-dispatches actionable failed required checks; timed_out/cancelled/advisory-only failures now skip CI repair routing. Verified with `test-pulse-merge-ci-repair-routing.sh` and ShellCheck. |
+| 2026-05-08T01:45:00Z | Second systemic fix implemented locally | Added GitHub Actions failed-log inspection so required checks with failure conclusions but timeout/kill signatures such as exit 143 are classified as infra-timeout and skipped for code redispatch. Verified with `test-pulse-merge-ci-repair-routing.sh` and ShellCheck. |
 
 ## Retrospective
 
