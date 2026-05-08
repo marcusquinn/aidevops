@@ -534,6 +534,25 @@ test_strict_coderabbit_success_status_passes_edited_comment() {
 	return 0
 }
 
+test_any_bot_success_status_reuses_provided_contexts() {
+	TEST_STATUS_FETCHES=0
+	_get_success_status_contexts() {
+		TEST_STATUS_FETCHES=$((TEST_STATUS_FETCHES + 1))
+		return 1
+	}
+
+	local contexts
+	contexts=$'abc123def456\nCodeRabbit'
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" 2>/dev/null && \
+		[[ "$TEST_STATUS_FETCHES" -eq 0 ]]; then
+		print_result "status fallback reuses provided success contexts" 0
+	else
+		print_result "status fallback reuses provided success contexts" 1 \
+			"fetches=${TEST_STATUS_FETCHES}"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -656,6 +675,7 @@ test_notice_category_propagates_api_failure() {
 test_do_check_passes_true_rate_limit_only() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
@@ -679,6 +699,7 @@ test_do_check_passes_true_rate_limit_only() {
 test_do_check_blocks_non_rate_limit_non_review_states() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
@@ -702,6 +723,7 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 test_do_check_accepts_non_review_with_success_status() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { printf '%s\n' 'abc123def456' 'CodeRabbit'; return 0; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
 	any_bot_has_success_status() { return 0; }
@@ -718,6 +740,42 @@ test_do_check_accepts_non_review_with_success_status() {
 	else
 		print_result "do_check accepts non-review state with success status" 1 \
 			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_fetches_success_status_contexts_once() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { printf '%s\n' 'coderabbitai gemini-code-assist'; return 0; }
+	bot_has_real_review() { return 1; }
+	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	_get_success_status_contexts() {
+		local pr_number="$1"
+		local repo="$2"
+		local count="0"
+		if [[ -f "${TEST_ROOT}/status-fetch-count" ]]; then
+			IFS= read -r count <"${TEST_ROOT}/status-fetch-count" || count="0"
+		fi
+		count=$((count + 1))
+		printf '%s\n' "$count" >"${TEST_ROOT}/status-fetch-count"
+		printf '%s\n%s\n' "abc123def456" "CodeRabbit"
+		return 0
+	}
+
+	printf '0\n' >"${TEST_ROOT}/status-fetch-count"
+	local output status calls
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+	IFS= read -r calls <"${TEST_ROOT}/status-fetch-count" || calls="0"
+
+	if [[ "$status" -eq 0 && "$output" == "PASS" && "$calls" == "1" ]]; then
+		print_result "do_check fetches success status contexts once" 0
+	else
+		print_result "do_check fetches success status contexts once" 1 \
+			"status=${status} output=${output} calls=${calls}"
 	fi
 	return 0
 }
@@ -772,6 +830,7 @@ main() {
 	test_get_completion_behavior_defaults_fast
 	test_strict_coderabbit_pending_status_blocks_edited_comment
 	test_strict_coderabbit_success_status_passes_edited_comment
+	test_any_bot_success_status_reuses_provided_contexts
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
@@ -784,6 +843,7 @@ main() {
 	test_do_check_passes_true_rate_limit_only
 	test_do_check_blocks_non_rate_limit_non_review_states
 	test_do_check_accepts_non_review_with_success_status
+	test_do_check_fetches_success_status_contexts_once
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"
