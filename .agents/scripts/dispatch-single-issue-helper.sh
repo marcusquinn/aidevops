@@ -953,14 +953,17 @@ cmd_dispatch() {
 		;;
 	esac
 
-	# Step 5.5: pre-launch dispatch ceremony (t3000) — pulse-parity ownership
-	# claim. Closes the race window between worker launch and the next pulse
-	# cycle by transitioning status:queued + origin:worker + assignee=self
-	# atomically before the worker spawns. Bypassed via --no-ceremony.
-	if [[ "$_DSI_ARG_NO_CEREMONY" -ne 1 ]]; then
-		_dsi_apply_dispatch_ceremony "$issue_number" "$repo_slug" \
-			"$self_login" "$_DSI_ISSUE_META_JSON" || true
-	fi
+	_dsi_dispatch_after_dedup_clear "$issue_number" "$repo_slug" "$self_login" "$session_key"
+	return $?
+}
+
+_dsi_dispatch_after_dedup_clear() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local session_key="$4"
+
+	_dsi_apply_prelaunch_ceremony_if_enabled "$issue_number" "$repo_slug" "$self_login"
 
 	# Step 7: pre-create worktree
 	if ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
@@ -981,6 +984,22 @@ cmd_dispatch() {
 	if ! _dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worker_launch_failed"
 		return 1
+	fi
+	return 0
+}
+
+_dsi_apply_prelaunch_ceremony_if_enabled() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+
+	# Step 5.5: pre-launch dispatch ceremony (t3000) — pulse-parity ownership
+	# claim. Closes the race window between worker launch and the next pulse
+	# cycle by transitioning status:queued + origin:worker + assignee=self
+	# atomically before the worker spawns. Bypassed via --no-ceremony.
+	if [[ "$_DSI_ARG_NO_CEREMONY" -ne 1 ]]; then
+		_dsi_apply_dispatch_ceremony "$issue_number" "$repo_slug" \
+			"$self_login" "$_DSI_ISSUE_META_JSON" || true
 	fi
 	return 0
 }
