@@ -316,17 +316,35 @@ _cas_reconcile_counter_branch() {
 		return 0
 	fi
 
-	local blob_sha tree_sha commit_sha
+	local blob_sha existing_tree tree_sha commit_sha
 	blob_sha=$(printf '%s\n' "$reconciled_counter" | git hash-object -w --stdin 2>/dev/null) || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciled counter blob"
 		_task_counter_status "unrecoverable_desync" "blob_failed"
 		return 1
 	}
-	tree_sha=$(git ls-tree "$pinned_sha" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
-		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to build reconciled counter tree"
-		_task_counter_status "unrecoverable_desync" "tree_failed"
+	existing_tree=$(git ls-tree "$pinned_sha") || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to inspect reconciled counter tree"
+		_task_counter_status "unrecoverable_desync" "tree_read_failed"
 		return 1
 	}
+	if printf '%s\n' "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to replace reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_replace_failed"
+			return 1
+		}
+	else
+		tree_sha=$(
+			{
+				[[ -n "$existing_tree" ]] && printf '%s\n' "$existing_tree"
+				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
+			} | git mktree
+		) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to add reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_add_failed"
+			return 1
+		}
+	fi
 	commit_sha=$(git commit-tree "$tree_sha" -p "$pinned_sha" -m "chore: reconcile task counter (${branch_counter}->${reconciled_counter})" 2>/dev/null) || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciliation commit"
 		_task_counter_status "unrecoverable_desync" "commit_failed"
