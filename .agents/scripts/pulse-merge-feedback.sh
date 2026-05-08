@@ -300,6 +300,82 @@ _build_ci_feedback_section() {
 }
 
 #######################################
+# Return whether a failed check URL points at a GitHub Actions job whose failed
+# log is an infrastructure timeout/kill rather than actionable code feedback.
+#
+# Args:
+#   $1 - repo_slug
+#   $2 - check URL
+#
+# Returns: 0=infra timeout/kill detected, 1=not detected or unavailable.
+#######################################
+_ci_check_url_has_infra_timeout_log() {
+	local repo_slug="$1"
+	local check_url="$2"
+
+	[[ -n "$repo_slug" ]] || return 1
+	[[ -n "$check_url" ]] || return 1
+
+	local run_id="" job_id=""
+	case "$check_url" in
+	*"/actions/runs/"*"/job/"*) ;;
+	*) return 1 ;;
+	esac
+
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%/*}"
+	job_id="${check_url#*/job/}"
+	job_id="${job_id%%[/?#]*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	[[ "$job_id" =~ ^[0-9]+$ ]] || return 1
+
+	local failed_log=""
+	failed_log=$(gh run view "$run_id" --repo "$repo_slug" --job "$job_id" --log-failed 2>/dev/null) || failed_log=""
+	[[ -n "$failed_log" ]] || return 1
+
+	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout)'; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Filter required failed checks down to actionable code failures by excluding
+# GitHub Actions jobs whose logs show timeout/kill infrastructure signatures.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug
+#   $3 - checks_json (array of {name, conclusion, link})
+#
+# Output: markdown list of actionable checks.
+#######################################
+_ci_actionable_failed_checks_markdown() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local checks_json="$3"
+
+	local count=""
+	count=$(printf '%s' "$checks_json" | jq 'length' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$count" -gt 0 ]] || return 0
+
+	local idx=0 name="" conclusion="" link=""
+	while [[ "$idx" -lt "$count" ]]; do
+		name=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].name // empty' 2>/dev/null) || name=""
+		conclusion=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].conclusion // empty' 2>/dev/null) || conclusion=""
+		link=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].link // empty' 2>/dev/null) || link=""
+		if _ci_check_url_has_infra_timeout_log "$repo_slug" "$link"; then
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infra-timeout from failed log — skipping code redispatch" >>"$LOGFILE"
+		else
+			printf -- '- **%s**: %s — [check URL](%s)\n' "$name" "$conclusion" "$link"
+		fi
+		idx=$((idx + 1))
+	done
+	return 0
+}
+
+#######################################
 # Route CI failure feedback from a worker/trusted PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
 #
@@ -342,14 +418,15 @@ _dispatch_ci_fix_worker() {
 	local terminal_failed_check_filter
 	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
 	local required_check_jq="" failing_name_jq=""
-	printf -v required_check_jq '[.[] | select(%s) | "- **\(.name)**: \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
+	printf -v required_check_jq '[.[] | select(%s) | {name, conclusion, link}]' "$terminal_failed_check_filter"
 	printf -v failing_name_jq '[.[] | select(%s) | .name] | join("\n")' "$terminal_failed_check_filter"
 
-	local failing_checks
-	failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
+	local failing_checks_json="" failing_checks=""
+	failing_checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
 		--json name,bucket,conclusion,link \
 		--jq "$required_check_jq" \
-		2>/dev/null) || failing_checks=""
+		2>/dev/null) || failing_checks_json="[]"
+	failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
 
 	if [[ -z "$failing_checks" ]]; then
 		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed required checks with URLs — skipping CI repair routing" >>"$LOGFILE"

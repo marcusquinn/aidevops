@@ -70,12 +70,24 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 	exit 0
 fi
 
+if [[ "${1:-} ${2:-}" == "run view" ]]; then
+	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+	log_exit_143)
+		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
+		;;
+	*)
+		printf '%s\n' 'Lint Run actual lint error in source file'
+		;;
+	esac
+	exit 0
+fi
+
 	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
 		_is_required=0
 		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
 		if [[ "$*" == *"| .name]"* ]]; then
 			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-			terminal_failure:1)
+			terminal_failure:1 | log_exit_143:1)
 				printf 'Lint\n'
 				;;
 			infra_timeout:1 | advisory_failure:*)
@@ -85,15 +97,29 @@ fi
 		fi
 	if [[ "$*" == *"name,bucket,conclusion,link"* ]]; then
 		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-			terminal_failure:1)
-				printf '%s\n' '- **Lint**: failure — [check URL](https://example.invalid/check)'
+			terminal_failure:1 | log_exit_143:1)
+				if [[ "$*" == *"{name, conclusion, link}"* ]]; then
+					printf '%s\n' '[{"name":"Lint","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+				else
+					printf '%s\n' 'Lint'
+				fi
 				;;
 			pending_only:*|mixed_pending_pass:*)
+				if [[ "$*" == *"{name, conclusion, link}"* ]]; then
+					printf '[]\n'
+				fi
 				: ;;
 			infra_timeout:1)
+				if [[ "$*" == *"{name, conclusion, link}"* ]]; then
+					printf '[]\n'
+				fi
 				: ;;
 			advisory_failure:0)
-				printf '%s\n' '- **Docs** (advisory, not merge-blocking): failure — [check URL](https://example.invalid/advisory)'
+				if [[ "$*" == *"{name, conclusion, link}"* ]]; then
+					printf '%s\n' '[{"name":"Docs","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/789"}]'
+				else
+					printf 'Docs\n'
+				fi
 				;;
 		esac
 		exit 0
@@ -104,9 +130,6 @@ fi
 if [[ "${1:-} ${2:-}" == "issue view" ]]; then
 	if [[ "$*" == *"--json body"* ]]; then
 		cat "${TEST_ROOT}/issue-body.txt"
-		exit 0
-	fi
-	if [[ "$*" == *"--json assignees"* ]]; then
 		exit 0
 	fi
 	exit 0
@@ -180,6 +203,8 @@ define_process_helper() {
 define_feedback_helpers() {
 	local fns=(
 		_build_ci_feedback_section
+		_ci_check_url_has_infra_timeout_log
+		_ci_actionable_failed_checks_markdown
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
@@ -278,7 +303,7 @@ test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
 
 	_dispatch_ci_fix_worker "100" "owner/repo" "42"
 
-	if ! grep -qF '**Lint**: failure — [check URL](https://example.invalid/check)' "${TEST_ROOT}/issue-body.txt"; then
+	if ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "${TEST_ROOT}/issue-body.txt"; then
 		print_result "terminal failure emits conclusion and check URL" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 	else
 		print_result "terminal failure emits conclusion and check URL" 0
@@ -298,6 +323,24 @@ test_ci_feedback_skips_infra_timeout_checks() {
 		print_result "infra timeout checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
 	else
 		print_result "infra timeout checks do not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_failed_check_with_exit_143_log() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="log_exit_143"
+	define_feedback_helpers || { print_result "defines feedback helpers for log exit 143" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "failed check with exit 143 log does not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif ! grep -qF 'classified as infra-timeout' "$LOGFILE"; then
+		print_result "failed check with exit 143 log records infra-timeout classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "failed check with exit 143 log does not emit CI repair feedback" 0
 	fi
 	teardown_test_env
 	return 0
@@ -326,6 +369,7 @@ main() {
 	test_ci_feedback_skips_mixed_pending_pass_checks
 	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
 	test_ci_feedback_skips_infra_timeout_checks
+	test_ci_feedback_skips_failed_check_with_exit_143_log
 	test_ci_feedback_skips_advisory_failure_when_not_required
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
