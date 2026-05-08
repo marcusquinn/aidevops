@@ -585,49 +585,29 @@ EOF
 
 	local session_id
 	session_id=$(extract_session_id_from_output "$output_file")
-
 	if [[ "$session_id" == "ses_latest" ]]; then
 		print_result "extract_session_id_from_output returns latest session id" 0
 		return 0
 	fi
-
 	print_result "extract_session_id_from_output returns latest session id" 1 "Expected ses_latest, got ${session_id:-<empty>}"
 	return 0
 }
-
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
-	cat >"$output_file" <<'EOF'
-{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}
-EOF
-
+	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"
 	local rc=0
 	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
-
-	if [[ "$rc" -eq 0 && "${_run_result_label:-}" == "blocked" && "${_run_failure_reason:-}" == "blocked" && "${_run_classification_source:-}" == "model_blocked_signal" ]]; then
-		print_result "BLOCKED terminal signal records blocked label" 0
-		return 0
-	fi
-
+	[[ "$rc" -eq 0 && "${_run_result_label:-}" == "blocked" && "${_run_failure_reason:-}" == "blocked" && "${_run_classification_source:-}" == "model_blocked_signal" ]] && { print_result "BLOCKED terminal signal records blocked label" 0; return 0; }
 	print_result "BLOCKED terminal signal records blocked label" 1 \
 		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} source=${_run_classification_source:-<unset>}"
 	return 0
 }
-
 test_missing_context_blocked_requests_brief_recovery() {
 	local output_file="${TEST_ROOT}/missing-context-blocked-output.jsonl"
-	cat >"$output_file" <<'EOF'
-{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}
-EOF
-
+	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}' >"$output_file"
 	local rc=0
 	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
-
-	if [[ "$rc" -eq 82 && "${_run_result_label:-}" == "brief_recovery" && "${_run_failure_reason:-}" == "missing_implementation_context" && "${_run_classification_pattern:-}" == "missing_implementation_context" ]]; then
-		print_result "missing-context BLOCKED requests brief recovery" 0
-		return 0
-	fi
-
+	[[ "$rc" -eq 82 && "${_run_result_label:-}" == "brief_recovery" && "${_run_failure_reason:-}" == "missing_implementation_context" && "${_run_classification_pattern:-}" == "missing_implementation_context" ]] && { print_result "missing-context BLOCKED requests brief recovery" 0; return 0; }
 	print_result "missing-context BLOCKED requests brief recovery" 1 \
 		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} pattern=${_run_classification_pattern:-<unset>}"
 	return 0
