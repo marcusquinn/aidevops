@@ -295,18 +295,16 @@ _open_alert_numbers_for_kind() {
 	if [[ -n "$open_issues_json" ]]; then
 		issue_list_json="$open_issues_json"
 	else
-		command -v gh >/dev/null 2>&1 || return 0
-		gh auth status &>/dev/null 2>&1 || return 0
 		# Query open issue titles and filter locally. GitHub search is unreliable for
 		# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-		issue_list_json="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title 2>>"$LOGFILE")"
+		issue_list_json="$(_open_issue_titles_json "$slug")"
 		issue_list_status=$?
 		if (( issue_list_status != 0 )); then
-			_log_error "Failed to list open issues for dashboard freshness dedup in ${slug}: gh issue list exited ${issue_list_status}"
-			return 0
+			_log_error "Failed to list open issues for dashboard freshness dedup in ${slug}: gh api exited ${issue_list_status}"
+			issue_list_json="[]"
 		fi
 	fi
-	[[ -n "$issue_list_json" ]] || return 0
+	[[ -n "$issue_list_json" ]] || issue_list_json="[]"
 	printf '%s\n' "$issue_list_json" | \
 		jq -r --arg prefix "$stale_title_prefix" --arg suffix "$issue_suffix" --arg marker "$missing_marker_title" --arg kind "$kind" --arg kind_stale "$ALERT_KIND_STALE" --arg kind_missing "$ALERT_KIND_MISSING" '
 			.[]
@@ -327,16 +325,24 @@ _open_issue_titles_json() {
 	local slug="$1"
 	local issue_list_json=""
 	local issue_list_status=0
-	command -v gh >/dev/null 2>&1 || return 0
-	gh auth status &>/dev/null 2>&1 || return 0
+	command -v gh >/dev/null 2>&1 || {
+		printf '[]\n'
+		return 0
+	}
+	gh auth status &>/dev/null 2>&1 || {
+		printf '[]\n'
+		return 0
+	}
 	# Query open issue titles and filter locally. GitHub search is unreliable for
 	# HTML-comment dedup markers, and label prefilters can hide generated alerts.
-	issue_list_json="$(gh issue list --repo "$slug" --state open --limit 1000 --json number,title 2>>"$LOGFILE")"
+	issue_list_json="$(gh api --paginate "repos/${slug}/issues?state=open&per_page=100" \
+		--jq '.[] | select(.pull_request == null) | {number,title}' 2>>"$LOGFILE" | jq -s '.')"
 	issue_list_status=$?
 	if (( issue_list_status != 0 )); then
-		_log_error "Failed to list open issues for dashboard freshness recovery in ${slug}: gh issue list exited ${issue_list_status}"
-		return 0
+		_log_error "Failed to list open issues for dashboard freshness recovery in ${slug}: gh api exited ${issue_list_status}"
+		issue_list_json="[]"
 	fi
+	[[ -n "$issue_list_json" ]] || issue_list_json="[]"
 	printf '%s\n' "$issue_list_json"
 	return 0
 }

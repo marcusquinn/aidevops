@@ -277,13 +277,15 @@ cmd_list() {
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 
-		local rate_limit_val completion_val
-		rate_limit_val=$(jq -r --arg slug "$slug" --arg field "$RATE_LIMIT_BEHAVIOR_FIELD" \
-			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate[$field] // empty' \
-			"$REPOS_JSON" 2>/dev/null) || rate_limit_val=""
-		completion_val=$(jq -r --arg slug "$slug" --arg field "$COMPLETION_BEHAVIOR_FIELD" \
-			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate[$field] // empty' \
-			"$REPOS_JSON" 2>/dev/null) || completion_val=""
+		local rate_limit_val completion_val repo_values
+		repo_values=$(jq -r --arg slug "$slug" --arg rate_field "$RATE_LIMIT_BEHAVIOR_FIELD" --arg completion_field "$COMPLETION_BEHAVIOR_FIELD" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) // {} | [(.review_gate[$rate_field] // ""), (.review_gate[$completion_field] // "")] | @tsv' \
+			"$REPOS_JSON" 2>/dev/null) || repo_values=$'\t'
+		rate_limit_val="${repo_values%%$'\t'*}"
+		completion_val="${repo_values#*$'\t'}"
+		if [[ "$completion_val" == "$repo_values" ]]; then
+			completion_val=""
+		fi
 
 		local rate_effective completion_effective
 		rate_effective=$(_resolve_effective_behavior "$slug" "" "$RATE_LIMIT_BEHAVIOR_FIELD")

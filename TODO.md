@@ -955,6 +955,10 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3579 Classify timed-out CI logs as infra blockers #auto-dispatch #bug #framework #pulse #mission:m-20260508-0e27c3 ~2h ref:GH#23140 pr:#23141 completed:2026-05-08
 
+- [x] t3582 Make pulse self-heal awardsapp blockers ref:GH#23215 pr:#23216 completed:2026-05-08
+
+- [x] t3583 Improve pulse recovery for orphaned worker output ref:GH#23217 pr:#23218 completed:2026-05-08
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4193,7 +4197,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3573 fix: block unrequested canonical branch switches #auto-dispatch #bug #framework #git-safety #interactive ref:GH#23109 pr:#23113 completed:2026-05-07
 
-- [ ] t3566 Allow breaker-held issues to retry after aidevops upgrades #bug ref:GH#23128
+- [x] t3566 Allow breaker-held issues to retry after aidevops upgrades #bug ref:GH#23128 pr:#23127 completed:2026-05-07
 
 - [x] t3574 design `/auto-browse` agent factory for browser operations and web data mining #enhancement #framework ref:GH#23132 pr:#23131 completed:2026-05-08
 
@@ -4206,3 +4210,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [ ] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142
+
+- [x] t3581 Document pragmatic CI gate policy ref:GH#23211 pr:#23214 completed:2026-05-08
+
+

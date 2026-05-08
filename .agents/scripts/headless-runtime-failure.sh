@@ -278,11 +278,17 @@ _release_dispatch_claim() {
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
 
-	# Extract issue number and repo slug from session key
-	# Format: pulse-{login}-{repo}-{issue} or similar
+	# Extract issue number and repo slug from the worker contract first, then
+	# fall back to legacy session-key parsing. Manual dispatch session keys include
+	# a timestamp suffix (`manual-cli-<issue>-<epoch>`), so parsing trailing digits
+	# targets a nonexistent issue unless WORKER_ISSUE_NUMBER wins.
 	local issue_number=""
 	local repo_slug=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		issue_number="$WORKER_ISSUE_NUMBER"
+	else
+		issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	fi
 	# Try to get repo slug from the dispatch ledger or env
 	repo_slug="${DISPATCH_REPO_SLUG:-}"
 
@@ -744,7 +750,11 @@ _exit_trap_handler() {
 	# work is reported distinctly to avoid zero-output brief-rewrite holds.
 	_push_wip_commits_on_exit
 	if [[ "${_WORKER_DIRTY_WORK_PRESERVED:-0}" == "1" ]]; then
-		reason="worker_dirty_work_preserved"
+		if _recover_dirty_worker_pr "$session_key"; then
+			reason="worker_complete"
+		else
+			reason="worker_dirty_work_preserved"
+		fi
 	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
 		_cleanup_headless_runtime_temp_paths
@@ -753,6 +763,24 @@ _exit_trap_handler() {
 	_release_session_lock "$session_key"
 	_update_dispatch_ledger "$session_key" "fail"
 	return 0
+}
+
+_recover_dirty_worker_pr() {
+	local session_key="$1"
+	local work_dir="${_WORKER_WORKTREE_PATH:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local branch_name=""
+
+	[[ -n "$work_dir" && -d "$work_dir" && -n "$repo_slug" ]] || return 1
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	case "$branch_name" in
+	HEAD | main | master | "") return 1 ;;
+	esac
+	if declare -F _attempt_orphan_recovery_pr >/dev/null 2>&1; then
+		_attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"
+		return $?
+	fi
+	return 1
 }
 
 #######################################

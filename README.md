@@ -726,7 +726,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `/patterns` command, `memory-helper.sh` |
 | **Token-Efficient Serialisation** | Minimise context overhead for structured data | [TOON format](https://github.com/marcusquinn/aidevops/blob/main/.agents/toon-format.md) — 20-60% token reduction vs JSON/YAML for agent indexes, registries, and data exchange |
-| **Token-Efficient Tool Output** | Summarise noisy terminal output without hiding evidence | RTK is installed by default during setup; use `rtk-helper.sh` for compact `git`/`gh`/test/lint summaries without RTK hook-advisory noise; aidevops bypasses compression for file reads, JSON assertions, exact diffs, security scans, and other verbatim evidence |
+| **Token-Efficient Tool Output** | Summarise noisy terminal output without hiding evidence | RTK is installed by default during setup; start with `rtk-helper.sh` for compact supported summaries, then rerun raw/direct commands when filtered output is insufficient; bypass compression for file reads, JSON assertions, exact diffs, security scans, and other verbatim evidence |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with provider-aware tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |

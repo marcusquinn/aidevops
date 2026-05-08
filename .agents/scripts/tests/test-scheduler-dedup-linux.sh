@@ -39,10 +39,14 @@ setup_fixture() {
 	TEST_ROOT="$(mktemp -d)"
 	export HOME="${TEST_ROOT}/home"
 	export CRON_FILE="${TEST_ROOT}/crontab"
+	export CRON_LIST_COUNT_FILE="${TEST_ROOT}/crontab-list-count"
+	export CRON_WRITE_COUNT_FILE="${TEST_ROOT}/crontab-write-count"
 	export SYSTEMD_ENABLED_FILE="${TEST_ROOT}/systemd-enabled"
 	local fake_bin="${TEST_ROOT}/bin"
 	mkdir -p "$HOME/.config/systemd/user" "$fake_bin"
 	: >"$CRON_FILE"
+	printf '0\n' >"$CRON_LIST_COUNT_FILE"
+	printf '0\n' >"$CRON_WRITE_COUNT_FILE"
 	: >"$SYSTEMD_ENABLED_FILE"
 
 	cat >"${fake_bin}/crontab" <<'CRONTAB_FAKE'
@@ -50,10 +54,16 @@ setup_fixture() {
 set -euo pipefail
 case "${1:-}" in
 -l)
+	list_count=0
+	[[ -f "$CRON_LIST_COUNT_FILE" ]] && read -r list_count <"$CRON_LIST_COUNT_FILE"
+	printf '%s\n' "$((list_count + 1))" >"$CRON_LIST_COUNT_FILE"
 	[[ -f "$CRON_FILE" ]] && cat "$CRON_FILE"
 	exit 0
 	;;
 -r)
+	write_count=0
+	[[ -f "$CRON_WRITE_COUNT_FILE" ]] && read -r write_count <"$CRON_WRITE_COUNT_FILE"
+	printf '%s\n' "$((write_count + 1))" >"$CRON_WRITE_COUNT_FILE"
 	: >"$CRON_FILE"
 	exit 0
 	;;
@@ -62,6 +72,9 @@ case "${1:-}" in
 	exit 0
 	;;
 *)
+	write_count=0
+	[[ -f "$CRON_WRITE_COUNT_FILE" ]] && read -r write_count <"$CRON_WRITE_COUNT_FILE"
+	printf '%s\n' "$((write_count + 1))" >"$CRON_WRITE_COUNT_FILE"
 	cp "$1" "$CRON_FILE"
 	exit 0
 	;;
@@ -119,17 +132,19 @@ test_duplicate_auto_update_cron_removed() {
 	output="$(_reconcile_linux_scheduler_duplicates)"
 	local after_first=""
 	after_first="$(cat "$CRON_FILE")"
+	local list_count_after_first=""
+	list_count_after_first="$(cat "$CRON_LIST_COUNT_FILE")"
 	_reconcile_linux_scheduler_duplicates >/dev/null
 	local after_second=""
 	after_second="$(cat "$CRON_FILE")"
 
-	if [[ "$after_first" != *'aidevops-auto-update'* && "$after_first" == *'keep-me'* && "$after_first" == "$after_second" && "$output" == *'Removed duplicate cron entry for auto-update'* ]]; then
+	if [[ "$after_first" != *'aidevops-auto-update'* && "$after_first" == *'keep-me'* && "$after_first" == "$after_second" && "$output" == *'Removed duplicate cron entry for auto-update'* && "$list_count_after_first" == "1" ]]; then
 		print_result "duplicate auto-update cron is removed and reconciliation is idempotent" 0
 		cleanup_fixture
 		return 0
 	fi
 
-	print_result "duplicate auto-update cron is removed and reconciliation is idempotent" 1 "output=${output} cron=${after_first} second=${after_second}"
+	print_result "duplicate auto-update cron is removed and reconciliation is idempotent" 1 "output=${output} cron=${after_first} second=${after_second} list_count=${list_count_after_first}"
 	cleanup_fixture
 	return 0
 }
@@ -158,6 +173,61 @@ test_duplicate_pulse_merge_cron_removed() {
 	return 0
 }
 
+test_multiple_duplicate_cron_entries_removed_with_single_crontab_write() {
+	setup_fixture
+	printf '%s\n' \
+		'*/10 * * * * /home/example/.aidevops/agents/scripts/auto-update-helper.sh check # aidevops-auto-update' \
+		'* * * * * /home/example/.aidevops/agents/scripts/pulse-merge-routine.sh run # aidevops: pulse-merge-routine' \
+		'0 6 * * * /usr/bin/true # keep-me' >"$CRON_FILE"
+	printf '%s\n' 'aidevops-auto-update.timer' 'aidevops-pulse-merge.timer' >"$SYSTEMD_ENABLED_FILE"
+	load_scheduler_functions
+
+	local output=""
+	output="$(_reconcile_linux_scheduler_duplicates)"
+	local cron_after=""
+	cron_after="$(cat "$CRON_FILE")"
+	local list_count=""
+	list_count="$(cat "$CRON_LIST_COUNT_FILE")"
+	local write_count=""
+	write_count="$(cat "$CRON_WRITE_COUNT_FILE")"
+
+	if [[ "$cron_after" != *'aidevops-auto-update'* && "$cron_after" != *'pulse-merge-routine'* && "$cron_after" == *'keep-me'* && "$output" == *'Removed duplicate cron entry for auto-update'* && "$output" == *'Removed duplicate cron entry for pulse merge'* && "$list_count" == "1" && "$write_count" == "1" ]]; then
+		print_result "multiple duplicate cron entries are removed with one read and one write" 0
+		cleanup_fixture
+		return 0
+	fi
+
+	print_result "multiple duplicate cron entries are removed with one read and one write" 1 "output=${output} cron=${cron_after} list_count=${list_count} write_count=${write_count}"
+	cleanup_fixture
+	return 0
+}
+
+test_remove_cron_tag_uses_provided_crontab_without_extra_io() {
+	setup_fixture
+	printf '%s\n' \
+		'*/10 * * * * /home/example/.aidevops/agents/scripts/auto-update-helper.sh check # aidevops-auto-update' \
+		'0 6 * * * /usr/bin/true # keep-me' >"$CRON_FILE"
+	load_scheduler_functions
+
+	local provided_cron=""
+	provided_cron="$(cat "$CRON_FILE")"
+	_scheduler_remove_cron_tag "# aidevops-auto-update" "auto-update" "$provided_cron" true
+	local list_count=""
+	list_count="$(cat "$CRON_LIST_COUNT_FILE")"
+	local write_count=""
+	write_count="$(cat "$CRON_WRITE_COUNT_FILE")"
+
+	if [[ "$_SCHEDULER_RECONCILED_CRON_RESULT" != *'aidevops-auto-update'* && "$_SCHEDULER_RECONCILED_CRON_RESULT" == *'keep-me'* && "$list_count" == "0" && "$write_count" == "0" ]]; then
+		print_result "remove cron tag uses provided crontab without extra I/O" 0
+		cleanup_fixture
+		return 0
+	fi
+
+	print_result "remove cron tag uses provided crontab without extra I/O" 1 "result=${_SCHEDULER_RECONCILED_CRON_RESULT} list_count=${list_count} write_count=${write_count}"
+	cleanup_fixture
+	return 0
+}
+
 test_systemd_only_stats_wrapper_preserved() {
 	setup_fixture
 	printf '%s\n' '30 2 * * * /usr/bin/true # keep-cron-only' >"$CRON_FILE"
@@ -169,13 +239,13 @@ test_systemd_only_stats_wrapper_preserved() {
 	local cron_after=""
 	cron_after="$(cat "$CRON_FILE")"
 
-	if [[ "$cron_after" == *'keep-cron-only'* && "$output" == *'Kept stats wrapper systemd user timer; no duplicate cron entry found'* ]]; then
-		print_result "systemd-only stats wrapper is preserved and logged" 0
+	if [[ "$cron_after" == *'keep-cron-only'* && -z "$output" ]]; then
+		print_result "systemd-only stats wrapper is preserved without no-op logging" 0
 		cleanup_fixture
 		return 0
 	fi
 
-	print_result "systemd-only stats wrapper is preserved and logged" 1 "output=${output} cron=${cron_after}"
+	print_result "systemd-only stats wrapper is preserved without no-op logging" 1 "output=${output} cron=${cron_after}"
 	cleanup_fixture
 	return 0
 }
@@ -190,7 +260,7 @@ test_cron_only_scheduler_preserved() {
 	local cron_after=""
 	cron_after="$(cat "$CRON_FILE")"
 
-	if [[ "$cron_after" == *'aidevops: supervisor-pulse'* && "$output" == *'Kept supervisor pulse cron entry; no systemd user timer found'* ]]; then
+	if [[ "$cron_after" == *'aidevops: supervisor-pulse'* && -z "$output" ]]; then
 		print_result "cron-only scheduler is preserved" 0
 		cleanup_fixture
 		return 0
@@ -204,6 +274,8 @@ test_cron_only_scheduler_preserved() {
 main() {
 	test_duplicate_auto_update_cron_removed
 	test_duplicate_pulse_merge_cron_removed
+	test_multiple_duplicate_cron_entries_removed_with_single_crontab_write
+	test_remove_cron_tag_uses_provided_crontab_without_extra_io
 	test_systemd_only_stats_wrapper_preserved
 	test_cron_only_scheduler_preserved
 

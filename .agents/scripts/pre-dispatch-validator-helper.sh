@@ -582,17 +582,17 @@ _rf_extract_file_paths_from_text() {
 	fi
 
 	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
-	backtick_files=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
+	backtick_files=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
 	if [[ -n "$backtick_files" ]]; then
 		paths="${paths}${backtick_files}"$'\n'
 	fi
 
-	bare_files=$(printf '%s' "$text" | grep -oE '\b[a-zA-Z0-9_-]+\.(sh|ts|js|py|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp)\b' | sort -u || true)
+	bare_files=$(printf '%s' "$text" | grep -oE '\b[a-zA-Z0-9_-]+\.(sh|ts|js|py|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)\b' | sort -u || true)
 	if [[ -n "$bare_files" ]]; then
 		paths="${paths}${bare_files}"$'\n'
 	fi
 
-	printf '%s' "$paths" | sort -u | grep -v '^$' | grep -vE '^v?[0-9]+\.[0-9]+\.[0-9]+' || true
+	printf '%s' "$paths" | sort -u | grep -v '^$' | grep -vE '^v?[0-9]+\.[0-9]+\.[0-9]+$' || true
 	return 0
 }
 
@@ -741,7 +741,7 @@ _rf_score_keywords() {
 	evidence_lc=$(printf '%s' "$evidence" | tr '[:upper:]' '[:lower:]')
 	while IFS= read -r keyword; do
 		[[ -z "$keyword" ]] && continue
-		if printf '%s' "$evidence_lc" | grep -qF "$keyword"; then
+		if printf '%s' "$evidence_lc" | grep -qwF "$keyword"; then
 			score=$((score + 1))
 			matched="${matched}${keyword}"$'\n'
 		fi

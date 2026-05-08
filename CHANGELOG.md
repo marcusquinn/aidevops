@@ -10,6 +10,119 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.6] - 2026-05-08
+
+### Changed
+
+- fix consolidated label predicate (#23219)
+- Maintenance: mark t3583 complete (pr:#23218 completed:2026-05-08) [skip ci]
+- fix worker recovery follow-through (#23218)
+
+## [3.15.5] - 2026-05-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#23217 to TODO.md [skip ci]
+
+### Fixed
+
+- initialize pulse capacity locals (#23062)
+
+## [3.15.4] - 2026-05-08
+
+### Changed
+
+- Maintenance: mark t3582 complete (pr:#23216 completed:2026-05-08) [skip ci]
+- fix pulse self-healing blockers (#23216)
+- Maintenance: sync ref:GH#23215 to TODO.md [skip ci]
+- Documentation: clarify RTK adaptive fallback (#23213)
+- Maintenance: mark t3581 complete (pr:#23214 completed:2026-05-08) [skip ci]
+
+## [3.15.3] - 2026-05-08
+
+### Added
+
+- add scoped setup deploy commands (#23145)
+
+### Changed
+
+- docs: document pragmatic CI gate policy (#23214)
+- Maintenance: sync ref:GH#23211 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t3566 complete (#23210)
+- Tests: cover review-feedback version path preservation (#23209)
+- Tests: cover cached dashboard identity aliases (#23207)
+- Tests: cover pulse merge conflict label safety (#23202)
+- Tests: cover dashboard freshness JSON fallback (#23204)
+- Tests: cover git checkout dash canonical guard (#23203)
+- Performance: reuse prepared review gate status contexts (#23201)
+- Tests: cover scheduler crontab I/O reuse (#23200)
+- Tests: cover pulse stuck null author parsing (#23188)
+- Documentation: update native auto-merge return docs (#23183)
+- Performance: cache privacy script reference allowlist (#23180)
+- Maintenance: update simplification state registry
+- Performance: consolidate review gate list jq lookups (#23173)
+- Documentation: clarify automation safety invariants (#23169)
+- Tests: simplify git safety guard mock setup (#23168)
+
+### Fixed
+
+- reconcile missing task counter files (#23208)
+- refine required-check terminal classification (#23205)
+- block consolidated issue redispatch (#23189)
+- preserve explicit prelaunch failure reasons (#23185)
+- consolidate dispatch circuit comment parsing (#23184)
+- handle protected counter reconciliation pushes (#23182)
+- localize dashboard alias parsing variables (#23181)
+- cache review gate success contexts (#23177)
+- streamline linux scheduler cron reconciliation (#23179)
+- cache dashboard identity aliases for migration
+- reduce CI check polling for merge feedback (#23176)
+- guard pulse duplicate issue label lookup (#23175)
+- paginate dashboard freshness issue listing (#23174)
+- harden opencode setup validation (#23171)
+- tighten review-feedback supersession matching (#23172)
+- guard git switch dash in canonical checkout (#23167)
+
+## [3.15.2] - 2026-05-08
+
+### Added
+
+- add scoped setup deploy commands (#23145)
+
+### Changed
+
+- Tests: cover pulse merge conflict label safety (#23202)
+- Tests: cover dashboard freshness JSON fallback (#23204)
+- Tests: cover git checkout dash canonical guard (#23203)
+- Performance: reuse prepared review gate status contexts (#23201)
+- Tests: cover scheduler crontab I/O reuse (#23200)
+- Tests: cover pulse stuck null author parsing (#23188)
+- Documentation: update native auto-merge return docs (#23183)
+- Performance: cache privacy script reference allowlist (#23180)
+- Maintenance: update simplification state registry
+- Performance: consolidate review gate list jq lookups (#23173)
+- Documentation: clarify automation safety invariants (#23169)
+- Tests: simplify git safety guard mock setup (#23168)
+
+### Fixed
+
+- block consolidated issue redispatch (#23189)
+- preserve explicit prelaunch failure reasons (#23185)
+- consolidate dispatch circuit comment parsing (#23184)
+- handle protected counter reconciliation pushes (#23182)
+- localize dashboard alias parsing variables (#23181)
+- cache review gate success contexts (#23177)
+- streamline linux scheduler cron reconciliation (#23179)
+- cache dashboard identity aliases for migration
+- reduce CI check polling for merge feedback (#23176)
+- guard pulse duplicate issue label lookup (#23175)
+- paginate dashboard freshness issue listing (#23174)
+- harden opencode setup validation (#23171)
+- tighten review-feedback supersession matching (#23172)
+- guard git switch dash in canonical checkout (#23167)
+
 ## [3.15.1] - 2026-05-08
 
 ### Changed

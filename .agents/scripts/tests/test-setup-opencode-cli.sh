@@ -85,6 +85,25 @@ chmod +x "$SANDBOX/bin/opencode-real"
 rc1=$(tail -1 "$SANDBOX/out1")
 assert_eq "real opencode -> rc=0" "0" "$rc1"
 
+# --- Test 1b: validator rc for equivalent help formatting -------------------
+echo "Test 1b: _setup_validate_opencode_binary accepts flexible help format"
+cat >"$SANDBOX/bin/opencode-flex-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && printf '%s\n' "Usage: opencode run <message>" "Commands:" "  run  Execute a prompt"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-flex-help"
+
+(
+	source_lib
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-flex-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1b" 2>&1
+rc1b=$(tail -1 "$SANDBOX/out1b")
+assert_eq "flex help opencode -> rc=0" "0" "$rc1b"
+
 # --- Test 2: validator rc for claude CLI shim -------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'

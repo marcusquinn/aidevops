@@ -112,6 +112,12 @@ Expected evidence after routing: the linked issue body contains a `CI Repair
 Feedback` section with check names/URLs, the issue has `source:ci-feedback`, and
 the stale PR has `ci-feedback-routed`.
 
+Advisory checks should not enter this repair loop. For develop branches, keep
+required checks limited to fast core gates where possible and run broad E2E at
+staging/release boundaries. If advisory E2E finds a real defect, file a focused
+follow-up task with the failing check/artifact evidence instead of closing the
+current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
+
 ## Architecture Decisions
 
 ### SQLite DB Isolation (v3.6.130)

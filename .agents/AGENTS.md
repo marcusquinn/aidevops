@@ -104,6 +104,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Shell helpers must source `shared-constants.sh` or guard shared colours with `[[ -z "${VAR+x}" ]]`; never `readonly` shared colours outside `shared-constants.sh`.
 - Counter safety, stat portability, ratchet design, self-modifying tooling tests, Bash 3.2, string-literal ratchets, and gate design live in `reference/shell-style-guide.md` and `reference/bash-compat.md`.
 - Diagnostics claims require evidence before attribution. Stale symptom, pulse activity, productivity, and current-state rules: `reference/diagnostics-discipline.md`.
+- Prefer fast required develop gates; run broad E2E at staging/release boundaries and turn advisory E2E findings into follow-up tasks. Policy: `reference/ci-gate-policy.md`.
 - Pattern-aware conflict/CI reroutes use `.agents/configs/conflict-patterns.conf` and `.agents/configs/ci-failure-patterns.conf`; details: `tools/git/conflict-resolution.md`, `reference/worker-diagnostics.md`.
 - Deterministic prompt rules should migrate to hooks/validators. Track candidates in `.agents/configs/prompt-hook-candidates.conf`; progressive-disclosure rubric: `reference/progressive-disclosure.md`.
 
@@ -158,7 +159,7 @@ Run `aidevops security` for posture/scan/check/dismiss. Advisories arrive via `a
 ## Maintenance
 
 - Self-improvement guidance: `reference/self-improvement.md`.
-- Token-optimized CLI: use `rtk-helper.sh` for `git status/log/diff` and `gh pr list/view` when installed; not for file reads, JSON, assertions, or verbatim diffs.
+- Token-optimized CLI: start with `rtk-helper.sh` for supported noisy summaries, then rerun raw/direct commands when filtered output is insufficient; bypass for exact evidence. Full rules: `reference/context-efficient-output.md`.
 - Agent lifecycle: `tools/build-agent/build-agent.md`; OpenCode glob allowlists require `subagent_validation.py` verification.
 - Slash commands resolve through `scripts/commands/<command>.md`, then `workflows/<command>.md`.
 - macOS bash upgrade, platform support, customization, and hot deploys: `reference/bash-compat.md`, `reference/platform-support.md`, `reference/customization.md`, `reference/hot-deploy.md`.

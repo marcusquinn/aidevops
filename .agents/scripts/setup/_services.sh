@@ -108,7 +108,7 @@ _setup_opencode_version_output() {
 	local version_path=""
 
 	version_path=$(_setup_opencode_node_path_for_binary "$bin")
-	PATH="${version_path}:${PATH:-}" _setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
+	PATH="${version_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$version_timeout" "$bin" --version
 	return $?
 }
 
@@ -118,8 +118,30 @@ _setup_opencode_help_output() {
 	local help_path=""
 
 	help_path=$(_setup_opencode_node_path_for_binary "$bin")
-	PATH="${help_path}:${PATH:-}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help
+	PATH="${help_path}${PATH:+:${PATH}}" _setup_opencode_timeout_cmd "$help_timeout" "$bin" --help
 	return $?
+}
+
+_setup_opencode_help_identifies_opencode() {
+	local help_output="$1"
+
+	[[ -n "$help_output" ]] || return 1
+
+	# Prefer OpenCode's canonical command synopsis, but accept equivalent
+	# spacing/placeholders so small help text formatting changes do not break
+	# setup healing.
+	if [[ "$help_output" =~ opencode[[:space:]]+run ]] &&
+		[[ "$help_output" =~ message ]]; then
+		return 0
+	fi
+
+	# Fallback for help formats that keep the command description but omit the
+	# full synopsis from compact output.
+	if [[ "$help_output" =~ run[[:space:]]+opencode[[:space:]]+with[[:space:]]+a[[:space:]]+message ]]; then
+		return 0
+	fi
+
+	return 1
 }
 
 _setup_opencode_first_line() {
@@ -253,8 +275,7 @@ _setup_validate_opencode_binary() {
 	# semver-compatible --version (for example 0.2.1), so version shape alone is
 	# not enough. Require OpenCode's command surface before writing/accepting the
 	# stable ~/.local/bin/opencode shim used by Tabby and workers.
-	[[ "$help_output" == *"opencode run [message..]"* ]] || return 1
-	[[ "$help_output" == *"run opencode with a message"* ]] || return 1
+	_setup_opencode_help_identifies_opencode "$help_output" || return 1
 
 	return 0
 }

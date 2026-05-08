@@ -542,6 +542,20 @@ _nmr_breaker_release_retry_reason() {
 	' 2>/dev/null) || breaker_body=""
 	[[ -n "$breaker_body" ]] || return 1
 
+	if printf '%s' "$breaker_body" | grep -q 'dispatch-backoff:rate_limit_nmr'; then
+		local now_epoch="" label_epoch="" age_s="" cooldown_s="${AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS:-1800}"
+		now_epoch=$(date +%s 2>/dev/null || true)
+		label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
+		[[ "$cooldown_s" =~ ^[0-9]+$ ]] || cooldown_s=1800
+		if [[ "$now_epoch" =~ ^[0-9]+$ && "$label_epoch" =~ ^[0-9]+$ ]]; then
+			age_s=$((now_epoch - label_epoch))
+			if [[ "$age_s" -ge "$cooldown_s" ]]; then
+				printf 'rate-limit breaker cooldown expired after %ss (threshold %ss)\n' "$age_s" "$cooldown_s"
+				return 0
+			fi
+		fi
+	fi
+
 	local breaker_version=""
 	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | head -1) || breaker_version=""
 	[[ -n "$breaker_version" ]] || return 1

@@ -55,6 +55,7 @@ extract_functions() {
 		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_help_identifies_opencode\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
@@ -128,19 +129,36 @@ chmod +x "$SANDBOX/bin/opencode-real"
 ) >"$SANDBOX/out1" 2>&1
 assert_eq "real opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1")"
 
-# --- Test 1b: PATH helpers reject relative bin dirs and empty PATH colons ----
-echo "Test 1b: _setup_opencode_node_path_for_binary avoids relative PATH entries"
+# --- Test 1b: validator accepts equivalent help formatting ------------------
+echo "Test 1b: _setup_validate_opencode_binary accepts flexible help format"
+cat >"$SANDBOX/bin/opencode-flex-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && printf '%s\n' "Usage: opencode run <message>" "Commands:" "  run  Execute a prompt"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-flex-help"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-flex-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1b" 2>&1
+assert_eq "flex help opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1b")"
+
+# --- Test 1c: PATH helpers reject relative bin dirs and empty PATH colons ----
+echo "Test 1c: _setup_opencode_node_path_for_binary avoids relative PATH entries"
 (
 	source_extracted
 	_setup_opencode_node_path_for_binary "opencode"
-) >"$SANDBOX/out1b" 2>&1
-relative_path_value=$(tail -1 "$SANDBOX/out1b")
+) >"$SANDBOX/out1c" 2>&1
+relative_path_value=$(tail -1 "$SANDBOX/out1c")
 case "$relative_path_value" in
 	.* | *:.:* | *:.) assert_eq "relative bin dir omitted from PATH" "no-relative" "relative" ;;
 	*) assert_eq "relative bin dir omitted from PATH" "no-relative" "no-relative" ;;
 esac
 
-echo "Test 1c: _setup_opencode_help_output avoids trailing colon with empty PATH"
+echo "Test 1d: _setup_opencode_help_output avoids trailing colon with empty PATH"
 cat >"$SANDBOX/bin/opencode-path-check" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "--help" ]]; then
@@ -154,8 +172,8 @@ chmod +x "$SANDBOX/bin/opencode-path-check"
 (
 	source_extracted
 	PATH="" _setup_opencode_help_output "$SANDBOX/bin/opencode-path-check"
-) >"$SANDBOX/out1c" 2>&1 || rc1c=$?
-assert_eq "empty PATH expansion has no trailing colon" "0" "${rc1c:-0}"
+) >"$SANDBOX/out1d" 2>&1 || rc1d=$?
+assert_eq "empty PATH expansion has no trailing colon" "0" "${rc1d:-0}"
 
 # --- Test 2: validator on claude CLI shim ----------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"

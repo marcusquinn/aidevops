@@ -376,6 +376,29 @@ _ci_actionable_failed_checks_markdown() {
 }
 
 #######################################
+# Return terminal failed check details and names from one jq pass.
+#
+# Args:
+#   $1 - checks_json (array from gh pr checks --json name,bucket,conclusion,link)
+#   $2 - terminal_failed_check_filter (jq select expression)
+#
+# Output: first line is filtered checks JSON, followed by a marker and one
+# check name per line. Callers split this without re-running jq over the same
+# payload.
+#######################################
+_ci_terminal_failed_check_results() {
+	local checks_json="$1"
+	local terminal_failed_check_filter="$2"
+
+	[[ -n "$checks_json" ]] || checks_json="[]"
+	printf '%s' "$checks_json" | jq -r "([.[] | select(${terminal_failed_check_filter}) | {name, conclusion, link}] | tojson), \"__AIDEVOPS_CHECK_NAMES__\", (.[] | select(${terminal_failed_check_filter}) | .name)" 2>/dev/null || {
+		printf '[]\n__AIDEVOPS_CHECK_NAMES__\n'
+		return 0
+	}
+	return 0
+}
+
+#######################################
 # Route CI failure feedback from a worker/trusted PR to its linked issue, close
 # the PR, and set the issue to status:available for re-dispatch.
 #
@@ -388,12 +411,13 @@ _ci_actionable_failed_checks_markdown() {
 # Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
 # instead of review CHANGES_REQUESTED.
 #
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=checks_json (optional)
 #######################################
 _dispatch_ci_fix_worker() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
+	local supplied_checks_json="${4:-}"
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -407,40 +431,51 @@ _dispatch_ci_fix_worker() {
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
 
-	# Collect actionable failed required checks only. Pending/queued/in-progress
+	# Collect actionable failed required checks first. Pending/queued/in-progress
 	# checks are not actionable repair evidence and must not be routed into the
 	# linked issue as stale worker guidance. Likewise, cancelled/timed_out checks
 	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
 	# those as code-fix feedback creates duplicate PR churn instead of retrying or
-	# escalating CI infrastructure. Advisory/non-required failures are also not
-	# redispatch evidence: branch protection is the source of truth for merge
-	# blockers.
+	# escalating CI infrastructure. If required checks contain no actionable
+	# failures and the caller did not provide precomputed checks, fall back to the
+	# full check set so advisory-only terminal failures can still carry
+	# pattern-specific repair guidance.
 	local terminal_failed_check_filter
 	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
-	local required_check_jq="" failing_name_jq=""
-	printf -v required_check_jq '[.[] | select(%s) | {name, conclusion, link}]' "$terminal_failed_check_filter"
-	printf -v failing_name_jq '[.[] | select(%s) | .name] | join("\n")' "$terminal_failed_check_filter"
-
-	local failing_checks_json="" failing_checks=""
-	failing_checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket,conclusion,link \
-		--jq "$required_check_jq" \
-		2>/dev/null) || failing_checks_json="[]"
+	local checks_json="$supplied_checks_json" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
+	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
+	if [[ -z "$checks_json" ]]; then
+		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
+			--json name,bucket,conclusion,link \
+			2>/dev/null) || checks_json="[]"
+	fi
+	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
+	failing_checks_json="${check_results%%"$result_marker"*}"
+	failing_names="${check_results#*"$result_marker"}"
+	[[ "$failing_names" != "$check_results" ]] || failing_names=""
+	failing_names="${failing_names#$'\n'}"
 	failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
 
+	if [[ -z "$failing_checks" && -z "$supplied_checks_json" ]]; then
+		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
+			--json name,bucket,conclusion,link \
+			2>/dev/null) || checks_json="[]"
+		check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
+		failing_checks_json="${check_results%%"$result_marker"*}"
+		failing_names="${check_results#*"$result_marker"}"
+		[[ "$failing_names" != "$check_results" ]] || failing_names=""
+		failing_names="${failing_names#$'\n'}"
+		failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
+	fi
+
 	if [[ -z "$failing_checks" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed required checks with URLs — skipping CI repair routing" >>"$LOGFILE"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed checks with URLs — skipping CI repair routing" >>"$LOGFILE"
 		return 0
 	fi
 
 	# t3225: Also collect raw failing check NAMES (one per line) for
 	# pattern classification. Failure to collect names is non-fatal — we
 	# fall back to the pre-t3225 behaviour (no pattern guidance block).
-	local failing_names classification_output=""
-	failing_names=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket,conclusion,link \
-		--jq "$failing_name_jq" \
-		2>/dev/null) || failing_names=""
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi

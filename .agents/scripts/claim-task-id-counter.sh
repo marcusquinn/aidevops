@@ -316,17 +316,35 @@ _cas_reconcile_counter_branch() {
 		return 0
 	fi
 
-	local blob_sha tree_sha commit_sha
+	local blob_sha existing_tree tree_sha commit_sha
 	blob_sha=$(printf '%s\n' "$reconciled_counter" | git hash-object -w --stdin 2>/dev/null) || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciled counter blob"
 		_task_counter_status "unrecoverable_desync" "blob_failed"
 		return 1
 	}
-	tree_sha=$(git ls-tree "$pinned_sha" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
-		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to build reconciled counter tree"
-		_task_counter_status "unrecoverable_desync" "tree_failed"
+	existing_tree=$(git ls-tree "$pinned_sha") || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to inspect reconciled counter tree"
+		_task_counter_status "unrecoverable_desync" "tree_read_failed"
 		return 1
 	}
+	if printf '%s\n' "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to replace reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_replace_failed"
+			return 1
+		}
+	else
+		tree_sha=$(
+			{
+				[[ -n "$existing_tree" ]] && printf '%s\n' "$existing_tree"
+				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
+			} | git mktree
+		) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to add reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_add_failed"
+			return 1
+		}
+	fi
 	commit_sha=$(git commit-tree "$tree_sha" -p "$pinned_sha" -m "chore: reconcile task counter (${branch_counter}->${reconciled_counter})" 2>/dev/null) || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciliation commit"
 		_task_counter_status "unrecoverable_desync" "commit_failed"
@@ -334,9 +352,26 @@ _cas_reconcile_counter_branch() {
 	}
 
 	local push_rc=0
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	local push_stderr=""
+	local push_err_file=""
+	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-reconcile-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null 2>"$push_err_file" || push_rc=$?
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	fi
+	if [[ -n "$push_err_file" ]]; then
+		push_stderr=$(<"$push_err_file")
+		rm -f "$push_err_file" 2>/dev/null || true
+	fi
 	if [[ $push_rc -ne 0 ]]; then
+		if _cas_push_rejection_is_protected_branch "$push_stderr"; then
+			_cas_log_protected_branch_rejection
+			_task_counter_status "unrecoverable_desync" "protected_counter_branch"
+			return 1
+		fi
 		log_warn "Counter reconciliation push raced with another allocator; retrying allocation from refreshed branch"
 		_task_counter_status "recovered_contention" "reconcile_raced"
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true

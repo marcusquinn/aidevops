@@ -14,6 +14,7 @@ TESTS_FAILED=0
 TEST_ROOT=""
 TEST_VERIFY_RC=0
 TEST_OVERLAP_RC=0
+TEST_ISSUE_LABELS_RC=0
 TEST_PARENT_LABELS=""
 TEST_COMMIT_SUBJECT="t3571: merged equivalent fix (#9001)"
 TEST_LINKED_ISSUE="23105"
@@ -103,6 +104,10 @@ install_stubs() {
 		fi
 		if [[ "$1" == "api" && "$2" == *"/issues/"* ]]; then
 			if [[ "$*" == *"--jq"* ]]; then
+				if [[ "${TEST_ISSUE_LABELS_RC:-0}" -ne 0 ]]; then
+					printf 'label lookup failed\n' >&2
+					return "$TEST_ISSUE_LABELS_RC"
+				fi
 				printf '%s\n' "$TEST_PARENT_LABELS"
 			else
 				printf '{"labels":[]}\n'
@@ -151,6 +156,7 @@ reset_case() {
 	: >"$SOLVED_LABEL_LOG"
 	export TEST_VERIFY_RC=0
 	export TEST_OVERLAP_RC=0
+	export TEST_ISSUE_LABELS_RC=0
 	export TEST_PARENT_LABELS=""
 	export TEST_COMMIT_SUBJECT="t3571: merged equivalent fix (#9001)"
 	export TEST_LINKED_ISSUE="23105"
@@ -227,6 +233,15 @@ test_parent_research_comment_avoids_closing_keywords() {
 	return 0
 }
 
+test_label_lookup_failure_skips_issue_closure() {
+	reset_case
+	TEST_ISSUE_LABELS_RC=1
+	_close_conflicting_pr "4560" "marcusquinn/aidevops" "t3571: label lookup failure"
+	assert_log_not_contains "$GH_CALL_LOG" "issue close 23105" "label lookup failure skips linked issue close"
+	assert_log_contains "$LOGFILE" "failed to fetch labels for issue #23105" "label lookup failure is logged"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -238,6 +253,7 @@ main() {
 	test_empty_branch_after_upstream_fix_closes_issue
 	test_ambiguous_same_file_change_routes_worker
 	test_parent_research_comment_avoids_closing_keywords
+	test_label_lookup_failure_skips_issue_closure
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then

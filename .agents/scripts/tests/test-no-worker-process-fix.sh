@@ -624,6 +624,30 @@ test_prelaunch_reason_parser_behavioural() {
 	return 0
 }
 
+test_prelaunch_reason_parser_preserves_explicit_reason() {
+	local sandbox helper_extract log_file reason
+	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-prelaunch-reason-priority-test.XXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm -rf '$sandbox' 2>/dev/null || true" RETURN
+	helper_extract="${sandbox}/helper.sh"
+	log_file="${sandbox}/worker.log"
+
+	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
+	{
+		printf '[exit-trap] using prelaunch failure reason: worker_worktree_live_owner\n'
+		printf '[exit-trap] session=abc reason=no_worker_process status=1\n'
+	} >"$log_file"
+	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+
+	if [[ "$reason" == "worker_worktree_live_owner" ]]; then
+		print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 0
+		return 0
+	fi
+	print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 1 \
+		"Expected worker_worktree_live_owner, got '${reason:-<empty>}'"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
@@ -670,6 +694,7 @@ main_test() {
 	test_failure_classification_distinct
 	test_worker_worktree_live_owner_skips_fast_fail_state
 	test_prelaunch_reason_parser_behavioural
+	test_prelaunch_reason_parser_preserves_explicit_reason
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
