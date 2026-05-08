@@ -109,6 +109,7 @@ The result: an AI operations platform that manages projects across every busines
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 - `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work
 - `/open-design` - Manage the optional Open Design companion studio
+- `/auto-browse` - Learn, optimize, and graduate repeatable browser operations and web data-mining workflows
 
 ### Agent Structure
 
@@ -1367,6 +1368,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 
 **Browser Automation** (8 tools + anti-detect stack, [benchmarked](#browser-automation)):
 
+- **Auto-browse workflow** - `/auto-browse` orchestrates the tools below to learn messy browser tasks, choose the cheapest reliable path, preserve private profile/session state under `~/.aidevops/`, and graduate reusable private agents or sanitized `todo/` plans
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
 - [playwright-cli](https://github.com/microsoft/playwright-cli) - Microsoft official CLI for AI agents, `--session` isolation, built-in tracing
 - [dev-browser](https://github.com/nicholasgriffintn/dev-browser) - Persistent profile, stays logged in, ARIA snapshots, pairs with DevTools
@@ -1476,6 +1478,8 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 8 browser tools + anti-detect stack + device emulation, benchmarked and integrated for AI-assisted web automation, dev testing, mobile/responsive testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
+For repeatable browser operations and web data mining, use `/auto-browse`. It runs an intake and learning loop that starts with cheap fetch/API/crawler options, escalates to deterministic or high-agency browser tools only when needed, and then graduates the workflow into a private custom agent, helper, schema, or sanitized `todo/` plan. Account-specific workflows, cookies, profile state, downloads, and traces stay in private aidevops user data; only generalized plans should be committed to the repo.
+
 ### Performance Benchmarks
 
 Tested on macOS ARM64, all headless, warm daemon:
@@ -1509,6 +1513,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 
 | Need | Tool | Why |
 |------|------|-----|
+| **Repeatable browser workflow** | `/auto-browse` | Learns, optimizes, preserves private profile state, and graduates reusable workflows |
 | **Fastest automation** | Playwright | 0.9s form fill, parallel contexts |
 | **AI agent (CLI)** | playwright-cli | Microsoft official, `--session` isolation, built-in tracing |
 | **Stay logged in** | dev-browser | Profile persists across restarts |
