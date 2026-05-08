@@ -104,6 +104,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Shell helpers must source `shared-constants.sh` or guard shared colours with `[[ -z "${VAR+x}" ]]`; never `readonly` shared colours outside `shared-constants.sh`.
 - Counter safety, stat portability, ratchet design, self-modifying tooling tests, Bash 3.2, string-literal ratchets, and gate design live in `reference/shell-style-guide.md` and `reference/bash-compat.md`.
 - Diagnostics claims require evidence before attribution. Stale symptom, pulse activity, productivity, and current-state rules: `reference/diagnostics-discipline.md`.
+- Prefer fast required develop gates; run broad E2E at staging/release boundaries and turn advisory E2E findings into follow-up tasks. Policy: `reference/ci-gate-policy.md`.
 - Pattern-aware conflict/CI reroutes use `.agents/configs/conflict-patterns.conf` and `.agents/configs/ci-failure-patterns.conf`; details: `tools/git/conflict-resolution.md`, `reference/worker-diagnostics.md`.
 - Deterministic prompt rules should migrate to hooks/validators. Track candidates in `.agents/configs/prompt-hook-candidates.conf`; progressive-disclosure rubric: `reference/progressive-disclosure.md`.
 
