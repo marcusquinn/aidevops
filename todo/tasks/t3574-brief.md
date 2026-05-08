@@ -4,7 +4,7 @@ mode: subagent
 
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
-# Design `/auto-browse` agent factory for browser operations and web data mining
+# t3574: Design `/auto-browse` agent factory for browser operations and web data mining
 
 ## Pre-flight
 
@@ -171,7 +171,7 @@ Likely targets; adjust after implementation discovery:
 - `.agents/templates/auto-browse-workflow-agent-template.md`
 - `.agents/reference/agent-routing.md` or equivalent routing index
 - Optional: `.agents/scripts/auto-browse-helper.sh`
-- This brief: `todo/tasks/auto-browse-agent-brief.md`
+- This brief: `todo/tasks/t3574-brief.md`
 
 ### Verification
 
