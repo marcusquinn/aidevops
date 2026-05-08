@@ -53,10 +53,10 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 ### Automation safety invariants
 
-- Pending or expected CI is not failure; repair feedback only follows terminal failed checks. See `reference/worker-diagnostics.md` and `reference/review-bot-gate.md`.
+- Treat pending or expected CI as non-failure; provide repair feedback only after terminal failed checks to prevent redundant processing and noise. See `reference/worker-diagnostics.md` and `reference/review-bot-gate.md`.
 - Before redispatch, dedupe against recently merged PRs and verified merged fixes. See `reference/worker-discipline.md` and `reference/task-lifecycle.md`.
-- If rate-limit releases repeat, pause instead of comment-storming. See `reference/gh-command-discipline.md` and `reference/worker-diagnostics.md`.
-- Superseded duplicate PRs close against the verified merged fix. See `reference/review-bot-gate.md` and `workflows/git-workflow.md`.
+- If rate-limit resets repeat, pause instead of comment-storming; violating this can result in API suspension or account flags. See `reference/gh-command-discipline.md` and `reference/worker-diagnostics.md`.
+- Close superseded duplicate PRs against the verified merged fix. See `reference/review-bot-gate.md` and `workflows/git-workflow.md`.
 
 ### Tool and file discipline
 
