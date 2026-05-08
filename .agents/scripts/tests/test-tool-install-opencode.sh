@@ -128,6 +128,35 @@ chmod +x "$SANDBOX/bin/opencode-real"
 ) >"$SANDBOX/out1" 2>&1
 assert_eq "real opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1")"
 
+# --- Test 1b: PATH helpers reject relative bin dirs and empty PATH colons ----
+echo "Test 1b: _setup_opencode_node_path_for_binary avoids relative PATH entries"
+(
+	source_extracted
+	_setup_opencode_node_path_for_binary "opencode"
+) >"$SANDBOX/out1b" 2>&1
+relative_path_value=$(tail -1 "$SANDBOX/out1b")
+case "$relative_path_value" in
+	.* | *:.:* | *:.) assert_eq "relative bin dir omitted from PATH" "no-relative" "relative" ;;
+	*) assert_eq "relative bin dir omitted from PATH" "no-relative" "no-relative" ;;
+esac
+
+echo "Test 1c: _setup_opencode_help_output avoids trailing colon with empty PATH"
+cat >"$SANDBOX/bin/opencode-path-check" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]]; then
+	[[ "$PATH" == *: ]] && exit 42
+	echo "opencode run [message..]     run opencode with a message"
+	exit 0
+fi
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-path-check"
+(
+	source_extracted
+	PATH="" _setup_opencode_help_output "$SANDBOX/bin/opencode-path-check"
+) >"$SANDBOX/out1c" 2>&1 || rc1c=$?
+assert_eq "empty PATH expansion has no trailing colon" "0" "${rc1c:-0}"
+
 # --- Test 2: validator on claude CLI shim ----------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'
