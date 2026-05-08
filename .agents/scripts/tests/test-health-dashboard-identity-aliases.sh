@@ -71,12 +71,12 @@ else
 fi
 
 preloaded_identity_lines=$(_dashboard_identity_aliases "github-user" \
-	'canonical-operator=local-user,github-user')
+	'preloaded-operator=github-user')
 preloaded_canonical=$(printf '%s\n' "$preloaded_identity_lines" | sed -n '1p')
-if [[ "$preloaded_canonical" == "canonical-operator" ]]; then
-	pass "resolves aliases from preloaded config content"
+if [[ "$preloaded_canonical" == "preloaded-operator" ]]; then
+	pass "resolves aliases from preloaded config content without rereading disk config"
 else
-	fail "resolves aliases from preloaded config content" "canonical=${preloaded_canonical}"
+	fail "resolves aliases from preloaded config content without rereading disk config" "canonical=${preloaded_canonical}"
 fi
 
 result=$(_find_health_issue "owner/repo" "github-user" "supervisor" "[Supervisor:canonical-operator]" \
