@@ -224,18 +224,32 @@ _dashboard_identity_alias_config_path() {
 # Config format: canonical=alias-one,alias-two
 # Arguments:
 #   $1 - runner user/login
+#   $2 - optional preloaded identity-aliases.conf content
 # Output: canonical on line 1, aliases one per following line
 #######################################
 _dashboard_identity_aliases() {
 	local runner_user="$1"
+	local preloaded_config="${2:-}"
+	local has_preloaded_config=0
+	if [[ $# -ge 2 ]]; then
+		has_preloaded_config=1
+	fi
 	local normalized_runner
 	normalized_runner=$(_normalize_dashboard_identity_token "$runner_user")
 	local canonical="$normalized_runner"
 	local aliases="$normalized_runner"
-	local config_path
-	config_path=$(_dashboard_identity_alias_config_path)
+	local config_content=""
+	if ((has_preloaded_config)); then
+		config_content="$preloaded_config"
+	else
+		local config_path
+		config_path=$(_dashboard_identity_alias_config_path)
+		if [[ -n "$config_path" ]]; then
+			config_content=$(<"$config_path")
+		fi
+	fi
 
-	if [[ -n "$config_path" ]]; then
+	if [[ -n "$config_content" ]]; then
 		local line lhs rhs alias normalized_lhs normalized_alias candidate_aliases _identity_alias_parts
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			line="${line%%#*}"
@@ -256,7 +270,7 @@ _dashboard_identity_aliases() {
 				aliases="$candidate_aliases"
 				break
 			fi
-		done <"$config_path"
+		done <<<"$config_content"
 	fi
 
 	printf '%s\n' "$canonical"

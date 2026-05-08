@@ -269,6 +269,13 @@ process_repo() {
 	fi
 	log_info "  found ${total} health-dashboard issue(s) in ${slug}"
 
+	local identity_aliases_config=""
+	local identity_aliases_config_path
+	identity_aliases_config_path=$(_dashboard_identity_alias_config_path)
+	if [[ -n "$identity_aliases_config_path" ]]; then
+		identity_aliases_config=$(<"$identity_aliases_config_path")
+	fi
+
 	# Enrich every issue with a canonical operator key. Issues missing a
 	# dashboard title prefix are skipped (but still included in total count).
 	local enriched=""
@@ -280,7 +287,7 @@ process_repo() {
 		user=$(printf '%s' "$title" | sed -En 's/^\[(Supervisor|Contributor):([^]]+)\].*/\2/p')
 		role=$(printf '%s' "$title" | sed -En 's/^\[(Supervisor|Contributor):([^]]+)\].*/\1/p' | tr '[:upper:]' '[:lower:]')
 		[[ -n "$user" ]] || continue
-		aliases=$(_dashboard_identity_aliases "$user")
+		aliases=$(_dashboard_identity_aliases "$user" "$identity_aliases_config")
 		canonical=$(printf '%s\n' "$aliases" | sed -n '1p')
 		labels_json=$(printf '%s' "$issue_line" | jq -c '.labels')
 		enriched="${enriched}$(printf '%s' "$issue_line" | jq -c \
