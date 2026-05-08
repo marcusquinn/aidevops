@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-05-06T21:53:27Z",
-      "hash": "e9853c28a81d9d6e145f17bcc1060446fc92ba17",
-      "passes": 78,
+      "at": "2026-05-08T01:40:27Z",
+      "hash": "32eef76095926e2c4e480e910b656189f0cfc136",
+      "passes": 79,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -1622,9 +1622,9 @@
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
-      "at": "2026-05-01T21:32:47Z",
-      "hash": "e379a825cd66c8d7353f57a6abf1d336bb5e75ef",
-      "passes": 2,
+      "at": "2026-05-08T01:41:06Z",
+      "hash": "3eb6ac2e225087f9bbbe6f269b4e3e7dacbab481",
+      "passes": 3,
       "pr": 14650
     },
     ".agents/reference/attribution-monitoring.md": {
@@ -1856,9 +1856,9 @@
       "pr": 16085
     },
     ".agents/scripts/claim-task-id.sh": {
-      "at": "2026-05-02T16:35:57Z",
-      "hash": "0d4f2b2a958126dfc7c51b2ae367539ead6fa532",
-      "passes": 29,
+      "at": "2026-05-08T01:41:18Z",
+      "hash": "c289b718f0d8632759c808f5a25c902e4939fbef",
+      "passes": 30,
       "pr": 17531
     },
     ".agents/scripts/commands/add-skill.md": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-05-07T21:39:30Z",
-      "hash": "187265780e7a8a45042198a9ff1db8746fab98b8",
-      "passes": 34,
+      "at": "2026-05-08T01:42:05Z",
+      "hash": "df760d7624013588e5f7ed7641e549b83c233955",
+      "passes": 35,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -4548,9 +4548,9 @@
       "pr": 11017
     },
     ".agents/tools/browser/browser-automation.md": {
-      "at": "2026-05-01T21:37:11Z",
-      "hash": "ade8f60f87696e7edace9525de6b0ba96a8e1449",
-      "passes": 3,
+      "at": "2026-05-08T01:43:38Z",
+      "hash": "2af88854ae8d1fb1be1693a4ca4641be6ba06893",
+      "passes": 4,
       "pr": 13719
     },
     ".agents/tools/browser/browser-benchmark-scripts-01-playwright.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-05-07T22:13:06Z",
-      "hash": "701447af172db23b6abad0ca2b0e35c901ec5044",
-      "passes": 132,
+      "at": "2026-05-08T01:47:16Z",
+      "hash": "ee227392f2a6d2fb8f8a87f8eaa3171b4705b749",
+      "passes": 133,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-07T22:13:08Z",
-      "hash": "c62eb68148004b8a9b7887b23a802f28925d3e60",
-      "passes": 153,
+      "at": "2026-05-08T01:47:16Z",
+      "hash": "5d9e72ad1135eaf060c1f00864d199f82d7c4eac",
+      "passes": 154,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-07T22:13:11Z",
-      "hash": "a41558af5c92a0a53289b71a4d50d71976a77b31",
-      "passes": 149,
+      "at": "2026-05-08T01:47:17Z",
+      "hash": "87369e94a3ca8689b9d034f2c8738351ca62686e",
+      "passes": 150,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7558,10 +7558,10 @@
       "pr": 15470
     },
     ".agents/reference/pre-dispatch-validators.md": {
-      "hash": "6ebb806c9afd7c7981b945548a71204f8c668082",
-      "at": "2026-04-25T14:54:14Z",
+      "hash": "bf0a41323c18d967d9ce940a5fd0de62c6800491",
+      "at": "2026-05-08T01:41:14Z",
       "pr": 19394,
-      "passes": 2
+      "passes": 3
     },
     ".agents/reference/shell-style-guide.md": {
       "hash": "404f1df70353d1d9b3a533cc0c92eca5cf4ead21",
@@ -7606,10 +7606,10 @@
       "passes": 2
     },
     ".agents/scripts/pulse-merge-feedback.sh": {
-      "hash": "67cb5272c369df89623a924eca7f53f76c0ab2f7",
-      "at": "2026-05-07T22:13:58Z",
+      "hash": "9bc0b6aa3ad00097d48eb5579d2789303265e236",
+      "at": "2026-05-08T01:42:04Z",
       "pr": 20057,
-      "passes": 10
+      "passes": 11
     },
     ".agents/reference/hot-deploy.md": {
       "hash": "3a66b934462bb8f144f83d2522d569068d4898d1",
@@ -7642,10 +7642,10 @@
       "passes": 4
     },
     ".agents/scripts/pulse-merge-conflict.sh": {
-      "hash": "8bf9ac9f64c4681ef59e4875ce0f3df75c18f554",
-      "at": "2026-04-30T07:50:19Z",
+      "hash": "835e3bc47b8936845ae2834b5b50826bef1ca762",
+      "at": "2026-05-08T01:42:04Z",
       "pr": 20060,
-      "passes": 5
+      "passes": 6
     },
     ".agents/reference/review-bot-gate.md": {
       "hash": "e89b742ff09029f13a0bf070ce490ecc39f80984",
@@ -7810,10 +7810,10 @@
       "passes": 4
     },
     ".agents/scripts/pre-dispatch-validator-helper.sh": {
-      "hash": "66c914b2da5311f9310eef23644adc1e9de89693",
-      "at": "2026-04-30T07:50:03Z",
+      "hash": "c950d97a84e0abc239054a3df3e6d41a8d68ef63",
+      "at": "2026-05-08T01:41:58Z",
       "pr": 20875,
-      "passes": 2
+      "passes": 3
     },
     ".agents/scripts/commands/dispatch-issue.md": {
       "hash": "a0553244073a4fcd6105fcba6616e4ec66015925",
