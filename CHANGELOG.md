@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.8] - 2026-05-08
+
+### Added
+
+- add RTK output comparison diagnostics (#23222)
+
+### Changed
+
+- Maintenance: sync ref:GH#23224 to TODO.md [skip ci]
+
 ## [3.15.7] - 2026-05-08
 
 ### Changed
