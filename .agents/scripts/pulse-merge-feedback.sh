@@ -341,7 +341,7 @@ _dispatch_ci_fix_worker() {
 	# blockers.
 	local terminal_failed_check_filter
 	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
-	local required_check_jq failing_name_jq
+	local required_check_jq="" failing_name_jq=""
 	printf -v required_check_jq '[.[] | select(%s) | "- **\(.name)**: \(.conclusion) — [check URL](\(.link))"] | join("\n")' "$terminal_failed_check_filter"
 	printf -v failing_name_jq '[.[] | select(%s) | .name] | join("\n")' "$terminal_failed_check_filter"
 
