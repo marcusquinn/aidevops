@@ -714,6 +714,7 @@ _dsi_launch_worker() {
 		WORKER_WORKTREE_PATH="$worktree_path"
 		WORKER_REPO_SLUG="$repo_slug"
 		GITHUB_REPOSITORY="$repo_slug"
+		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 		"$_DSI_HEADLESS" run
 		--role worker
 		--session-key "$session_key"
@@ -962,16 +963,41 @@ cmd_dispatch() {
 	fi
 
 	# Step 7: pre-create worktree
-	_dsi_create_worktree "$issue_number" "$repo_slug" || return 1
+	if ! _dsi_create_worktree "$issue_number" "$repo_slug"; then
+		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worktree_precreation_failed"
+		return 1
+	fi
 
 	# Step 7.5: re-check after worktree creation so an existing live process
 	# on the same worktree cannot be joined by a second manual launch.
-	_dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" "$_DSI_WORKTREE_PATH" || return 1
+	if ! _dsi_guard_no_existing_dispatch "$issue_number" "$repo_slug" "$_DSI_WORKTREE_PATH"; then
+		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "existing_dispatch_after_precreate"
+		return 1
+	fi
 
 	# Steps 8-10 + report: launch worker, resolve real PID, register ledger,
 	# print success summary. Extracted to keep cmd_dispatch under the 100-line
 	# function-complexity gate (t3000).
-	_dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"
+	if ! _dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"; then
+		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worker_launch_failed"
+		return 1
+	fi
+	return 0
+}
+
+_dsi_reset_after_prelaunch_failure() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local reason="$4"
+
+	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
+		return 0
+	fi
+	_dsi_warn "Pre-launch failure (${reason}); restoring #${issue_number} to status:available"
+	set_issue_status "$issue_number" "$repo_slug" "available" \
+		--remove-assignee "$self_login" >/dev/null 2>&1 || true
+	return 0
 }
 
 # Steps 7-9 of cmd_dispatch: launch the headless runtime, resolve the real

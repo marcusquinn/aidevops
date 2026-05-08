@@ -679,7 +679,20 @@ _normalize_unassign_stampless_interactive() {
 			# via dead-PID + missing-worktree detection.
 			[[ -f "$stamp" ]] && continue
 
-			if gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+			local labels_csv=""
+			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
+			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
+				local open_pr_count=0
+				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null || true)
+				[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
+				if [[ "$open_pr_count" -gt 0 ]]; then
+					continue
+				fi
+				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Stampless interactive auto-release: reset status:in-review #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp, no open PR)" >>"$LOGFILE"
+					total_released=$((total_released + 1))
+				fi
+			elif gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Stampless interactive auto-release: unassigned ${runner_user} from #${issue_num} in ${slug} (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 				total_released=$((total_released + 1))
 			fi

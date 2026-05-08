@@ -577,6 +577,7 @@ _pms_file_outage_issue() {
 	existing=$(gh issue list --repo "$repo_slug" --state open --search "${marker_text}" \
 		--limit 1 --json number --jq '.[0].number' 2>/dev/null)
 	if [[ -n "$existing" && "$existing" != "$_PMS_JQ_NULL_GUARD" ]]; then
+		_pms_maybe_close_resolved_outage_issue "$repo_slug" "$existing" "$fingerprint" || true
 		echo "[pulse-merge-stuck] _pms_file_outage_issue: outage marker ${fp_hash} already filed as #${existing} in ${repo_slug} — skipping" >>"$LOGFILE"
 		return 0
 	fi
@@ -655,6 +656,48 @@ Filed automatically by \`pulse-merge-stuck.sh\` (t3193) on detecting a pattern o
 		--label "$labels" >/dev/null 2>&1 || true
 	pulse_stats_increment "$_PMS_COUNTER_ESCALATIONS_FILED"
 	echo "[pulse-merge-stuck] _pms_file_outage_issue: filed outage issue for fingerprint ${fp_hash} (${count} PRs) in ${repo_slug}" >>"$LOGFILE"
+	return 0
+}
+
+_pms_issue_prs_all_resolved_or_changed() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local fingerprint="$3"
+	local body="" prs="" pr="" unresolved=0
+
+	body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || body=""
+	prs=$(printf '%s\n' "$body" | grep -E '^- #[0-9]+' | grep -oE '[0-9]+' || true)
+	[[ -n "$prs" ]] || return 1
+	while IFS= read -r pr; do
+		[[ "$pr" =~ ^[0-9]+$ ]] || continue
+		local state="" current_fp=""
+		state=$(gh pr view "$pr" --repo "$repo_slug" --json state --jq '.state // ""' 2>/dev/null) || state=""
+		if [[ "$state" == "OPEN" ]]; then
+			current_fp=$(_pms_failure_fingerprint "$pr" "$repo_slug")
+			if [[ "$current_fp" == "$fingerprint" ]]; then
+				unresolved=$((unresolved + 1))
+			fi
+		fi
+	done <<<"$prs"
+	[[ "$unresolved" -eq 0 ]] || return 1
+	return 0
+}
+
+_pms_maybe_close_resolved_outage_issue() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local fingerprint="$3"
+
+	if ! _pms_issue_prs_all_resolved_or_changed "$repo_slug" "$issue_number" "$fingerprint"; then
+		return 0
+	fi
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- merge-stuck:auto-close-resolved -->
+Closing stale merge-stuck outage: affected PRs are merged/closed or no longer share the original failure fingerprint.
+
+Original fingerprint: ${fingerprint}" >/dev/null 2>&1 || true
+	gh issue close "$issue_number" --repo "$repo_slug" --reason completed >/dev/null 2>&1 || true
+	echo "[pulse-merge-stuck] auto-closed resolved outage issue #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 	return 0
 }
 
