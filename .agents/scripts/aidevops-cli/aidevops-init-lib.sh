@@ -679,6 +679,78 @@ _init_scaffold_scope_gated_files() {
 	return 0
 }
 
+# Offer CodeRabbit's post-merge review completion setting during code-quality init.
+# CodeRabbit reads this from the repository's .coderabbit.yaml, so this is repo
+# policy rather than a personal aidevops preference.
+_init_configure_coderabbit_abort_on_close() {
+	local project_root="$1"
+	local enable_code_quality="$2"
+	local config_file="$project_root/.coderabbit.yaml"
+	local desired="${AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE:-}"
+
+	[[ "$enable_code_quality" == "true" ]] || return 0
+
+	if [[ -z "$desired" && -t 0 && "${AIDEVOPS_NON_INTERACTIVE:-false}" != "true" ]]; then
+		printf '%b' "${BLUE}[INFO]${NC} CodeRabbit option: keep reviews running after merge so aidevops can turn useful findings into follow-up issues? [y/N] "
+		local reply=""
+		read -r reply || reply=""
+		case "$reply" in
+		[yY] | [yY][eE][sS]) desired="false" ;;
+		*) desired="" ;;
+		esac
+	fi
+
+	if [[ -z "$desired" ]]; then
+		print_info "CodeRabbit post-merge review completion not changed (set AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE=false to enable during init)"
+		return 0
+	fi
+
+	case "$desired" in
+	true | false) ;;
+	*)
+		print_warning "Ignoring invalid AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE='$desired' (expected true or false)"
+		return 0
+		;;
+	esac
+
+	if ! command -v python3 >/dev/null 2>&1; then
+		print_warning "Python 3 unavailable; skipping CodeRabbit .coderabbit.yaml update"
+		return 0
+	fi
+
+	python3 - "$config_file" "$desired" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+path = Path(sys.argv[1])
+desired = sys.argv[2]
+
+if path.exists():
+    text = path.read_text()
+else:
+    text = ""
+
+line = f"  abort_on_close: {desired}"
+
+if not text.strip():
+    text = f"reviews:\n{line}\n"
+elif re.search(r"(?m)^\s*abort_on_close:\s*(true|false)\s*$", text):
+    text = re.sub(r"(?m)^(\s*abort_on_close:\s*)(true|false)(\s*)$", rf"\g<1>{desired}\g<3>", text, count=1)
+elif re.search(r"(?m)^reviews:\s*$", text):
+    text = re.sub(r"(?m)^reviews:\s*$", f"reviews:\n{line}", text, count=1)
+else:
+    if not text.endswith("\n"):
+        text += "\n"
+    text += f"\nreviews:\n{line}\n"
+
+path.write_text(text)
+PY
+
+	print_success "Set CodeRabbit reviews.abort_on_close: $desired in .coderabbit.yaml"
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1227,6 +1299,11 @@ GITATTRSEOF
 	# nesting depth and function length (t2265).
 	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name"
 
+	# Offer CodeRabbit's repo-level post-merge review completion setting when
+	# code-quality support is enabled. This lets merged-PR findings become
+	# aidevops follow-up issues instead of being aborted by CodeRabbit.
+	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
+
 	# ─── Badge initialization (t2975) ────────────────────────────────────────
 	# Install the loc-badge caller workflow and seed the canonical README badge
 	# block in fresh repos. Both operations are idempotent. Skip for local_only
@@ -1342,6 +1419,7 @@ GITATTRSEOF
 	[[ -f "$project_root/.cursorrules" ]] && init_files+=(".cursorrules")
 	[[ -f "$project_root/.windsurfrules" ]] && init_files+=(".windsurfrules")
 	[[ -f "$project_root/.clinerules" ]] && init_files+=(".clinerules")
+	[[ -f "$project_root/.coderabbit.yaml" ]] && init_files+=(".coderabbit.yaml")
 	[[ -d "$project_root/.github" ]] && init_files+=(".github/")
 	[[ -f "$project_root/.sops.yaml" ]] && init_files+=(".sops.yaml")
 	[[ -d "$project_root/schemas" ]] && init_files+=("schemas/")

@@ -399,6 +399,30 @@ test_label_sync_init_hook() {
 	return 0
 }
 
+test_coderabbit_abort_on_close_init_hook() {
+	echo ""
+	echo "=== Testing CodeRabbit abort_on_close init hook ==="
+
+	local init_body
+	init_body=$(sed -n '/_init_configure_coderabbit_abort_on_close() {/,/^}/p' "$AIDEVOPS_INIT_LIB")
+	local init_tail
+	init_tail=$(sed -n '/_init_scaffold_scope_gated_files/,/Badge initialization/p' "$AIDEVOPS_INIT_LIB")
+	local init_files
+	init_files=$(sed -n '/local init_files=()/,/local committed=false/p' "$AIDEVOPS_INIT_LIB")
+	local rc
+
+	if [[ "$init_body" == *"AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE"* && "$init_body" == *"abort_on_close"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init exposes CodeRabbit abort_on_close option" "$rc"
+
+	if [[ "$init_tail" == *"_init_configure_coderabbit_abort_on_close \"\$project_root\" \"\$enable_code_quality\""* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init calls CodeRabbit abort_on_close hook" "$rc"
+
+	if [[ "$init_files" == *".coderabbit.yaml"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init includes .coderabbit.yaml in init commit" "$rc"
+
+	return 0
+}
+
 # ---- Run all tests ----
 
 echo "test-init-scope.sh — init_scope scaffolding gate tests (t2265)"
@@ -412,6 +436,7 @@ test_scaffold_public_scope
 test_aidevops_json_roundtrip
 test_backward_compat
 test_label_sync_init_hook
+test_coderabbit_abort_on_close_init_hook
 
 echo ""
 echo "============================================================="
