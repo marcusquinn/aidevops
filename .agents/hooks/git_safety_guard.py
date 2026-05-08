@@ -331,6 +331,27 @@ def _get_default_branch(repo_root: str) -> str:
     return "main"
 
 
+def _resolve_previous_branch(repo_root: str) -> str:
+    """Return the branch that ``git switch -`` would restore, or empty on failure."""
+    if not repo_root:
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "@{-1}"],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            timeout=5,
+        )
+        if result.returncode == 0:
+            branch = result.stdout.strip()
+            if branch and branch != "HEAD":
+                return branch
+    except Exception:
+        pass
+    return ""
+
+
 def _build_canonical_off_default_deny(
     file_path: str, branch: str, default_branch: str
 ) -> dict:
@@ -494,6 +515,8 @@ def _scan_git_switch_args(subcommand: str, args: list[str]) -> tuple[str, bool]:
         elif arg in OPTION_WITH_VALUE:
             index += 2
             continue
+        elif arg == "-":
+            target = arg
         elif arg.startswith("-"):
             index += 1
             continue
@@ -563,8 +586,10 @@ def _check_canonical_branch_switch_command(
     creates_branch = False
     if repo_root and not _is_linked_worktree(repo_root):
         target, creates_branch = _extract_git_switch_target(command)
+        if target == "-":
+            target = _resolve_previous_branch(repo_root)
     default_branch = _get_default_branch(repo_root) if target else ""
-    if not target or target == "-":
+    if not target:
         return None
     if creates_branch or target not in (default_branch, "main", "master"):
         return _canonical_branch_switch_deny(target, default_branch)
