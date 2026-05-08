@@ -4201,4 +4201,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3578 SQLite output sandbox for token-efficient noisy tool output #enhancement #framework ref:GH#23137
 
-- [ ] t3577 Default RTK token optimization in setup #enhancement #framework ref:GH#23136
+- [x] t3577 Default RTK token optimization in setup #enhancement #framework ref:GH#23136 pr:#23138 completed:2026-05-08
