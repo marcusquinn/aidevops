@@ -55,6 +55,7 @@ extract_functions() {
 		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_help_identifies_opencode\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
 		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
@@ -127,6 +128,23 @@ chmod +x "$SANDBOX/bin/opencode-real"
 	echo "$rc"
 ) >"$SANDBOX/out1" 2>&1
 assert_eq "real opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1")"
+
+# --- Test 1b: validator accepts equivalent help formatting ------------------
+echo "Test 1b: _setup_validate_opencode_binary accepts flexible help format"
+cat >"$SANDBOX/bin/opencode-flex-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && printf '%s\n' "Usage: opencode run <message>" "Commands:" "  run  Execute a prompt"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-flex-help"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-flex-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1b" 2>&1
+assert_eq "flex help opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1b")"
 
 # --- Test 2: validator on claude CLI shim ----------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
