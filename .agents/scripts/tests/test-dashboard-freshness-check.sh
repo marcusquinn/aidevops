@@ -423,7 +423,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 11: failed open issue list logs an error instead of silent empty dedup
+# Test 11: failed open issue list logs an error and preserves JSON shape
 # ---------------------------------------------------------------------------
 echo "Testing: open issue list failure logs recovery error"
 run_scan_with_stubs "$STALE_BODY" 0 "export GH_ISSUE_LIST_FAIL=1" >/dev/null
@@ -433,8 +433,10 @@ created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
 
 if (( created_count == 1 )) \
 	&& grep -q 'Failed to list open issues for dashboard freshness recovery in test/repo' \
-		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log"; then
-	pass "open issue list failure → logged error before fail-open alert"
+		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log" \
+	&& ! grep -q 'parse error' "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log" \
+	&& grep -q 'issue_list_json="\[\]"' "$SCANNER"; then
+	pass "open issue list failure → logged error and keeps empty JSON fallback"
 else
 	fail "open issue list failure logging" \
 		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
