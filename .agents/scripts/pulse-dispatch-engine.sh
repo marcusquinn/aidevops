@@ -150,7 +150,7 @@ _pulse_worker_log_prelaunch_failure_reason() {
 			split(line, parts, /[[:space:]]+/)
 			reason = parts[1]
 		}
-		/\[exit-trap\] session=/ && / reason=/ {
+		/\[exit-trap\] session=/ && / reason=/ && reason == "" {
 			line = $0
 			sub(/^.* reason=/, "", line)
 			split(line, parts, /[[:space:]]+/)
