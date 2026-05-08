@@ -230,6 +230,9 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\
 			whole-word)
 				printf 'quality debt rate cache worker.sh\n'
 				;;
+			version-directory)
+				printf 'quality debt setup rollout v3.14.93/setup.sh\n'
+				;;
 			*)
 				printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
 				exit 1
@@ -262,6 +265,13 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qE 'pulls/99/files';
 				printf 'worker.sh\ngenerate cache output\n'
 			fi
 			;;
+		version-directory)
+			if printf '%s' "\$args" | grep -qF '.[].filename'; then
+				printf 'v3.14.93/setup.sh\n'
+			else
+				printf 'v3.14.93/setup.sh\nfix setup rollout quality debt\n'
+			fi
+			;;
 		*)
 			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
 			exit 1
@@ -277,6 +287,9 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/pulls/99\$'; t
 			;;
 		whole-word)
 			printf '2026-05-08T00:00:00Z\tgenerate cache output\tUpdates cache handling\n'
+			;;
+		version-directory)
+			printf '2026-05-08T00:00:00Z\tfix setup rollout quality debt\tUpdates setup handling\n'
 			;;
 		*)
 			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
@@ -438,6 +451,23 @@ test_review_feedback_keyword_scoring_whole_words() {
 	return 0
 }
 
+test_review_feedback_preserves_version_directory_paths() {
+	setup_test_env
+	create_gh_stub_review_feedback "version-directory"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "49" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "review_feedback preserves version-directory file paths" 0
+	else
+		print_result "review_feedback preserves version-directory file paths" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -457,6 +487,7 @@ main() {
 	test_bypass_env_var
 	test_review_feedback_extended_extensions
 	test_review_feedback_keyword_scoring_whole_words
+	test_review_feedback_preserves_version_directory_paths
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 
