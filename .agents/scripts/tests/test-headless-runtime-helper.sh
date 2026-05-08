@@ -1406,6 +1406,41 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	return 0
 }
 
+test_cmd_run_finish_fail_recovers_branch_orphan_output() {
+	local work_dir="${TEST_ROOT}/repo-fail-orphan-ok"
+	_setup_test_git_repo "$work_dir" 1
+	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	gh() {
+		if [[ "${*}" == *"pr list"* ]]; then printf '0'
+		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
+		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		fi
+		return 0
+	}
+
+	local released_reason="" fast_fail_called=0
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_cmd_run_finish "issue-99999" "fail" "$work_dir"
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
+		print_result "_cmd_run_finish fail recovers branch-orphan output" 0
+	else
+		print_result "_cmd_run_finish fail recovers branch-orphan output" 1 \
+			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -1458,6 +1493,7 @@ main() {
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	test_cmd_run_finish_fail_recovers_branch_orphan_output
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"

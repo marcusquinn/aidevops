@@ -465,6 +465,37 @@ test_stale_auto_approved_brief_rewrite_requeues() {
 	return 0
 }
 
+# ─── Test 11: consolidated feedback missing lifecycle labels → dispatch backfilled ───
+test_consolidated_feedback_missing_lifecycle_backfills_dispatch_labels() {
+	setup_test_env
+	local json='[
+		{"number": 4647, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "priority:medium"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "source:ci-feedback"}]},
+		{"number": 4648, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "needs-maintainer-review"}]}
+	]'
+	create_gh_stub "$json"
+	export PATH="${TEST_ROOT}/bin:${PATH}"
+	source_function_under_test
+
+	_normalize_reassign_self "testrunner" "${TEST_ROOT}/repos.json" "${TEST_ROOT}/bin/dedup-stub.sh"
+
+	local assigned calls
+	assigned=$(get_assigned_issues)
+	calls=$(get_gh_calls)
+	if [[ "$calls" == *"issue edit 4647"* \
+		&& "$calls" == *"--add-label status:available"* \
+		&& "$calls" == *"--add-label auto-dispatch"* \
+		&& "$calls" == *"--add-label tier:standard"* \
+		&& "$calls" != *"issue edit 4648"* \
+		&& -z "$assigned" ]]; then
+		print_result "consolidated feedback missing lifecycle labels → dispatch backfilled" 0
+	else
+		print_result "consolidated feedback missing lifecycle labels → dispatch backfilled" 1 \
+			"Expected #4647 dispatch-label backfill only. calls=${calls:-<empty>}; assigned=${assigned:-<empty>}"
+	fi
+	cleanup_test_env
+	return 0
+}
+
 # ─── Run all tests ───
 main() {
 	echo "=== _normalize_reassign_self tests (t2396) ==="
@@ -480,6 +511,7 @@ main() {
 	test_available_with_assignee_skips
 	test_fresh_scanner_issue_skips
 	test_stale_auto_approved_brief_rewrite_requeues
+	test_consolidated_feedback_missing_lifecycle_backfills_dispatch_labels
 
 	echo ""
 	echo "=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failures ==="
