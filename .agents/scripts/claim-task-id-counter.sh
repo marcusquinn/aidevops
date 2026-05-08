@@ -334,9 +334,26 @@ _cas_reconcile_counter_branch() {
 	}
 
 	local push_rc=0
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	local push_stderr=""
+	local push_err_file=""
+	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-reconcile-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null 2>"$push_err_file" || push_rc=$?
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	fi
+	if [[ -n "$push_err_file" ]]; then
+		push_stderr=$(<"$push_err_file")
+		rm -f "$push_err_file" 2>/dev/null || true
+	fi
 	if [[ $push_rc -ne 0 ]]; then
+		if _cas_push_rejection_is_protected_branch "$push_stderr"; then
+			_cas_log_protected_branch_rejection
+			_task_counter_status "unrecoverable_desync" "protected_counter_branch"
+			return 1
+		fi
 		log_warn "Counter reconciliation push raced with another allocator; retrying allocation from refreshed branch"
 		_task_counter_status "recovered_contention" "reconcile_raced"
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
