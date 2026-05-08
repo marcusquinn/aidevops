@@ -2412,9 +2412,9 @@
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
-      "at": "2026-05-08T08:24:47Z",
-      "hash": "d39ce0ec0f115e325bb0fc62d751b60e5f271c0e",
-      "passes": 32,
+      "at": "2026-05-08T20:05:25Z",
+      "hash": "200dc4fee30adc63651853c3e3c2740a595bb6ee",
+      "passes": 33,
       "pr": 18832
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
@@ -2436,9 +2436,9 @@
       "pr": 18691
     },
     ".agents/scripts/pulse-issue-reconcile.sh": {
-      "at": "2026-05-08T14:12:27Z",
-      "hash": "a4f9076bcc39d5de5781ce03867afa35437152e2",
-      "passes": 39,
+      "at": "2026-05-08T20:05:26Z",
+      "hash": "a424d8ab50d52d7fbed72b2d5e426f31fd64bf6e",
+      "passes": 40,
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
@@ -4870,9 +4870,9 @@
       "pr": 11944
     },
     ".agents/tools/code-review/coderabbit.md": {
-      "at": "2026-03-29T07:02:31Z",
-      "hash": "69d1f87e48275fa971a0f6dec502bebe0cc50db6",
-      "passes": 1,
+      "at": "2026-05-08T20:06:17Z",
+      "hash": "3099192db72df1678a63a62a6ad3cbced34e83ce",
+      "passes": 2,
       "pr": 12589
     },
     ".agents/tools/code-review/management.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-05-08T14:47:54Z",
-      "hash": "68166eb440dbee3f85750f4f5d22881a8fb83e37",
-      "passes": 137,
+      "at": "2026-05-08T20:07:19Z",
+      "hash": "59b6b5bcdda46a3c406131d9a3eca0d94b3b9e99",
+      "passes": 138,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-08T14:48:01Z",
-      "hash": "3c356f9dd1d4b4ef3fdd7a7eabfdf13766557434",
-      "passes": 159,
+      "at": "2026-05-08T20:07:19Z",
+      "hash": "c58c3f081fe7d83b645c06c446c265ea72b5cc37",
+      "passes": 160,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-08T14:48:08Z",
-      "hash": "8860d3dabd1797583629f1aa614c4c3196e213fd",
-      "passes": 155,
+      "at": "2026-05-08T20:07:19Z",
+      "hash": "8cf8a7373b48611b08d187eb01ae03fe99921cbf",
+      "passes": 156,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7768,10 +7768,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "07200d78079798baeb479fd3621a87cfed88fd07",
-      "at": "2026-05-07T19:29:13Z",
+      "hash": "468abf5c8e16f7aab077b41b578d0ae30d6a3c06",
+      "at": "2026-05-08T20:05:25Z",
       "pr": 20617,
-      "passes": 20
+      "passes": 21
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "a9d78357a5125b66aabc3092007c4648e5c73319",
