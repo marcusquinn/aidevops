@@ -607,20 +607,45 @@ test_release_upgrade_allows_rate_limit_breaker_retry() {
 
 test_same_release_preserves_rate_limit_breaker_nmr() {
 	# The release gate must not defeat #19756-style breaker preservation when
-	# no newer aidevops release is available.
+	# no newer aidevops release is available and cooldown has not expired.
 	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-07T21:26:05Z"}]'
 	set_comments '[{"created_at":"2026-05-07T21:26:06Z","body":"<!-- dispatch-backoff:rate_limit_nmr -->\n## Rate-Limit Backoff Circuit Breaker (t2781)\n---\n[aidevops.sh](https://aidevops.sh) v3.14.94 automated scan."}]'
 	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
 	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.14.94
+	AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS=999999999
 	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	export AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
 	if _nmr_applied_by_maintainer 4508 awardsapp/awardsapp marcusquinn; then
 		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		unset AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
 		print_result "same release preserves rate-limit breaker NMR" 0
 		return 0
 	fi
 	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	unset AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
 	print_result "same release preserves rate-limit breaker NMR" 1 \
 		"Expected exit 0 — same-version breaker still requires approval"
+	return 0
+}
+
+test_rate_limit_cooldown_allows_retry() {
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-05-07T21:26:05Z"}]'
+	set_comments '[{"created_at":"2026-05-07T21:26:06Z","body":"<!-- dispatch-backoff:rate_limit_nmr -->\n## Rate-Limit Backoff Circuit Breaker (t2781)\n---\n[aidevops.sh](https://aidevops.sh) v3.14.94 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.14.94
+	AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS=1
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	export AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
+	if _nmr_applied_by_maintainer 4508 awardsapp/awardsapp marcusquinn; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		unset AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
+		print_result "expired rate-limit cooldown allows retry" 1 \
+			"Expected exit 1 — expired rate-limit cooldown should permit auto-approval retry"
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	unset AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS
+	print_result "expired rate-limit cooldown allows retry" 0
 	return 0
 }
 
@@ -668,6 +693,7 @@ main() {
 	test_paginated_timeline_latest_nmr_event_preserves_breaker_trip
 	test_release_upgrade_allows_rate_limit_breaker_retry
 	test_same_release_preserves_rate_limit_breaker_nmr
+	test_rate_limit_cooldown_allows_retry
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -696,12 +696,12 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 	# process before the detached worker starts. That owner is intentionally
 	# short-lived and transferable; otherwise every worker sees a live owner,
 	# exits immediately, and pulse retries the same issue forever.
-	if _hrw_is_dispatch_precreate_owner "$owner_session"; then
+	if _hrw_is_dispatch_precreate_owner "$owner_session" || [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
 		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
 			return 1
 		fi
 		unregister_worktree "$work_dir" 2>/dev/null || true
-		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid}"
+		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
 		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
 		return 0
 	fi

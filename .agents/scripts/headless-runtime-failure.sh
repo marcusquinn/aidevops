@@ -278,11 +278,17 @@ _release_dispatch_claim() {
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
 
-	# Extract issue number and repo slug from session key
-	# Format: pulse-{login}-{repo}-{issue} or similar
+	# Extract issue number and repo slug from the worker contract first, then
+	# fall back to legacy session-key parsing. Manual dispatch session keys include
+	# a timestamp suffix (`manual-cli-<issue>-<epoch>`), so parsing trailing digits
+	# targets a nonexistent issue unless WORKER_ISSUE_NUMBER wins.
 	local issue_number=""
 	local repo_slug=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		issue_number="$WORKER_ISSUE_NUMBER"
+	else
+		issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	fi
 	# Try to get repo slug from the dispatch ledger or env
 	repo_slug="${DISPATCH_REPO_SLUG:-}"
 
