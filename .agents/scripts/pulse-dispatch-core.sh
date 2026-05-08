@@ -877,10 +877,10 @@ _has_consolidated_label() {
 	[[ -n "$issue_meta_json" ]] || return 1
 	if printf '%s' "$issue_meta_json" | jq -e '
 		(.labels | map(.name)) as $labels
-		| ($labels | index("consolidated"))
-		and (($labels | index("quality-debt")) | not)
-		and (($labels | index("source:review-feedback")) | not)
-		and (($labels | index("source:ci-feedback")) | not)
+		| (($labels | index("consolidated")) != null)
+		and (($labels | index("quality-debt")) == null)
+		and (($labels | index("source:review-feedback")) == null)
+		and (($labels | index("source:ci-feedback")) == null)
 	' >/dev/null 2>&1; then
 		return 0
 	fi
