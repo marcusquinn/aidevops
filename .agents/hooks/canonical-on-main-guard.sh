@@ -4,9 +4,10 @@
 #
 # canonical-on-main-guard.sh — git post-checkout hook.
 #
-# Warns when the canonical repo directory is switched off main/master in an
-# interactive session. Complements t1990's edit-time check in pre-edit-check.sh
-# by catching the branch switch itself, not just the first edit that follows.
+# Repairs the canonical repo directory back to the default branch when it is
+# switched off default in an interactive session. Complements t1990's edit-time
+# check in pre-edit-check.sh by catching the branch switch itself, not just the
+# first edit that follows.
 #
 # Install: see .agents/scripts/install-canonical-guard.sh
 #
@@ -16,15 +17,16 @@
 #   $3 = flag (1 = branch checkout, 0 = file checkout)
 #
 # Environment:
-#   AIDEVOPS_CANONICAL_GUARD=strict   — block the checkout (exit 1)
+#   AIDEVOPS_CANONICAL_GUARD=repair   — default: restore the default branch
+#   AIDEVOPS_CANONICAL_GUARD=strict   — restore the default branch and exit 1
 #   AIDEVOPS_CANONICAL_GUARD=bypass   — suppress the warning entirely
-#   AIDEVOPS_CANONICAL_GUARD=warn     — default: warn loudly but don't block
+#   AIDEVOPS_CANONICAL_GUARD=warn     — warn loudly but do not restore
 #
 # Fail-open cases (exit 0, no warning):
 #   - Headless session (FULL_LOOP_HEADLESS / AIDEVOPS_HEADLESS / OPENCODE_HEADLESS / GITHUB_ACTIONS set)
 #   - File-level checkout ($3 != 1)
 #   - Current working copy is a linked worktree (not canonical)
-#   - Current branch is main or master (not a violation)
+#   - Current branch is the detected default branch (not a violation)
 #   - Detached HEAD
 #   - repos.json missing or working copy not in initialized_repos[]
 
@@ -34,9 +36,39 @@ set -u
 [[ "${3:-0}" == "1" ]] || exit 0
 
 # Explicit bypass
-if [[ "${AIDEVOPS_CANONICAL_GUARD:-warn}" == "bypass" ]]; then
+if [[ "${AIDEVOPS_CANONICAL_GUARD:-repair}" == "bypass" ]]; then
 	exit 0
 fi
+
+detect_default_branch() {
+	local default_branch=""
+	default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null) || default_branch=""
+	default_branch="${default_branch#origin/}"
+	if [[ -z "$default_branch" ]] && git show-ref --verify --quiet refs/heads/main; then
+		default_branch="main"
+	fi
+	if [[ -z "$default_branch" ]] && git show-ref --verify --quiet refs/heads/master; then
+		default_branch="master"
+	fi
+	if [[ -z "$default_branch" ]]; then
+		default_branch="main"
+	fi
+	printf '%s' "$default_branch"
+	return 0
+}
+
+restore_default_branch() {
+	local default_branch="$1"
+	local status_output=""
+	status_output=$(git status --porcelain 2>/dev/null) || status_output=""
+	if [[ -n "$status_output" ]]; then
+		printf 'Refusing automatic restore because the working tree is not clean.\n' >&2
+		printf 'Run: git status --short, then manually restore the canonical repo to %s.\n' "$default_branch" >&2
+		return 1
+	fi
+	AIDEVOPS_CANONICAL_GUARD=bypass git checkout "$default_branch" --quiet 2>/dev/null
+	return $?
+}
 
 # Headless session: skip the check — workers know what they're doing
 if [[ "${FULL_LOOP_HEADLESS:-}" == "true" ]] ||
@@ -50,9 +82,10 @@ fi
 current_branch=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
 [[ -z "$current_branch" ]] && exit 0 # detached HEAD — not our concern
 
-# If new branch IS main/master, nothing to warn about
+# If new branch IS the default branch, nothing to warn about
+default_branch=$(detect_default_branch)
 case "$current_branch" in
-main | master)
+"$default_branch")
 	exit 0
 	;;
 esac
@@ -134,29 +167,44 @@ fi
 	printf '\n'
 	printf 'The canonical repo directory %s%s%s has been switched to\n' \
 		"$YELLOW" "$repo_root" "$NC"
-	printf 'branch %s%s%s, which is NOT main/master.\n' "$YELLOW" "$current_branch" "$NC"
+	printf 'branch %s%s%s, which is NOT the default branch (%s%s%s).\n' \
+		"$YELLOW" "$current_branch" "$NC" "$YELLOW" "$default_branch" "$NC"
 	printf '\n'
 	printf 'aidevops convention (t1990): canonical directories stay on main.\n'
 	printf 'Worktrees are used for all non-main work.\n'
 	printf '\n'
-	printf 'To recover:\n'
-	printf '  git checkout main\n'
+	printf 'To recover manually:\n'
+	printf '  git checkout %s\n' "$default_branch"
 	printf '  wt add <type>/%s        # if you want to keep the branch\n' "$current_branch"
 	printf '\n'
 	printf 'To bypass this warning entirely:\n'
 	printf '  AIDEVOPS_CANONICAL_GUARD=bypass git checkout <branch>\n'
 	printf '\n'
-	printf 'To enforce strict mode (fail the checkout):\n'
+	printf 'To warn without restoring:\n'
+	printf '  AIDEVOPS_CANONICAL_GUARD=warn git checkout <branch>\n'
+	printf '\n'
+	printf 'To enforce strict mode (restore, then fail the checkout):\n'
 	printf '  AIDEVOPS_CANONICAL_GUARD=strict git checkout <branch>\n'
 	printf '\n'
 	printf '%s============================================================%s\n' "$RED" "$NC"
 	printf '\n'
 } >&2
 
-# Strict mode: fail the checkout
-if [[ "${AIDEVOPS_CANONICAL_GUARD:-warn}" == "strict" ]]; then
+case "${AIDEVOPS_CANONICAL_GUARD:-repair}" in
+warn)
+	exit 0
+	;;
+strict)
+	restore_default_branch "$default_branch" || true
 	exit 1
-fi
+	;;
+repair | *)
+	if restore_default_branch "$default_branch"; then
+		printf '[canonical-on-main-guard] Restored canonical repo to %s. Use a linked worktree for branch work.\n' "$default_branch" >&2
+	else
+		exit 1
+	fi
+	;;
+esac
 
-# Default: warn-only, don't block
 exit 0

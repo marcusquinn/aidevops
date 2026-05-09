@@ -15,8 +15,8 @@
 #   4. Worktree (non-canonical) → exit 0, no stderr banner
 #   5. Canonical on main → exit 0, no stderr banner
 #   6. Canonical off main + repo NOT in repos.json → exit 0 (fail-open)
-#   7. Canonical off main + repo IN repos.json, interactive → exit 0 with warning
-#   8. Canonical off main + repo IN repos.json, strict → exit 1 with warning
+#   7. Canonical off main + repo IN repos.json, interactive → restore main
+#   8. Canonical off main + repo IN repos.json, strict → restore main + exit 1
 #
 # Exit 0 = all tests pass, 1 = at least one failure.
 
@@ -194,29 +194,52 @@ fi
 mv "$HOME/.config/aidevops/repos.json.bak" "$HOME/.config/aidevops/repos.json"
 
 # -----------------------------------------------------------------------------
-# Test 6: canonical off main + IN repos.json, interactive → warn, exit 0
+# Test 6: canonical off main + IN repos.json, interactive → restore main
 # -----------------------------------------------------------------------------
+pushd "$REPO" >/dev/null || exit 1
+git checkout feature-branch --quiet
+popd >/dev/null || exit 1
 _run_hook 1
 rc=$?
-if [[ "$rc" -eq 0 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]]; then
-	pass "canonical off main + known repo, interactive: exit 0 + warning"
+current_after_repair=$(git -C "$REPO" branch --show-current)
+if [[ "$rc" -eq 0 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]] && [[ "$current_after_repair" == "main" ]]; then
+	pass "canonical off main + known repo, interactive: restored main"
 else
-	fail "interactive violation: expected exit 0 + warning, got rc=$rc stderr_present=$([[ -n $HOOK_STDERR ]] && echo yes || echo no)"
+	fail "interactive violation: expected restore to main, got rc=$rc branch=$current_after_repair stderr_present=$([[ -n $HOOK_STDERR ]] && echo yes || echo no)"
 fi
 
 # -----------------------------------------------------------------------------
-# Test 7: canonical off main + IN repos.json, strict → warn, exit 1
+# Test 7: canonical off main + IN repos.json, strict → restore main + exit 1
 # -----------------------------------------------------------------------------
+pushd "$REPO" >/dev/null || exit 1
+git checkout feature-branch --quiet
+popd >/dev/null || exit 1
 _run_hook 1 "AIDEVOPS_CANONICAL_GUARD=strict"
 rc=$?
-if [[ "$rc" -eq 1 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]]; then
-	pass "canonical off main + strict: exit 1 + warning"
+current_after_strict=$(git -C "$REPO" branch --show-current)
+if [[ "$rc" -eq 1 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]] && [[ "$current_after_strict" == "main" ]]; then
+	pass "canonical off main + strict: restored main + exit 1"
 else
-	fail "strict violation: expected exit 1 + warning, got rc=$rc"
+	fail "strict violation: expected exit 1 and restore to main, got rc=$rc branch=$current_after_strict"
 fi
 
 # -----------------------------------------------------------------------------
-# Test 8: worktree (non-canonical) → no warning
+# Test 8: canonical off main + warn mode → no restore
+# -----------------------------------------------------------------------------
+pushd "$REPO" >/dev/null || exit 1
+git checkout feature-branch --quiet
+popd >/dev/null || exit 1
+_run_hook 1 "AIDEVOPS_CANONICAL_GUARD=warn"
+rc=$?
+current_after_warn=$(git -C "$REPO" branch --show-current)
+if [[ "$rc" -eq 0 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]] && [[ "$current_after_warn" == "feature-branch" ]]; then
+	pass "canonical off main + warn: exit 0 without restore"
+else
+	fail "warn mode: expected branch to remain feature-branch, got rc=$rc branch=$current_after_warn"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 9: worktree (non-canonical) → no warning
 # -----------------------------------------------------------------------------
 # Create a worktree of the fake repo
 WORKTREE="${TMP}/fake-worktree"
