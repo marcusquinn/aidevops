@@ -511,7 +511,7 @@ _convert_and_install_files() {
 
 	# Create target directory
 	local target_dir
-	target_dir=".agents/$(dirname "$target_path")"
+	target_dir="$(dirname "$target_file")"
 	mkdir -p "$target_dir"
 
 	case "$format" in
@@ -551,7 +551,7 @@ _convert_and_install_files() {
 	local resource_dir
 	for resource_dir in scripts references assets; do
 		if [[ -d "$skill_source_dir/$resource_dir" ]]; then
-			local target_resource_dir=".agents/${target_path}/$resource_dir"
+			local target_resource_dir="${AGENTS_DIR}/${target_path}/$resource_dir"
 			mkdir -p "$target_resource_dir"
 			cp -r "$skill_source_dir/$resource_dir/"* "$target_resource_dir/" 2>/dev/null || true
 			log_success "Copied: $resource_dir/"

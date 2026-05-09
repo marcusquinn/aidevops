@@ -72,6 +72,30 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 FAKE_BIN="$TMP_DIR/bin"
 mkdir -p "$FAKE_BIN"
+REAL_GIT="$(command -v git)"
+
+cat >"$FAKE_BIN/git" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "clone" ]]; then
+	target_dir=""
+	for arg in "$@"; do
+		target_dir="$arg"
+	done
+	mkdir -p "$target_dir"
+	cp -R "${FAKE_GIT_SOURCE}/." "$target_dir/"
+	exit 0
+fi
+
+if [[ "${1:-}" == "-C" && "${3:-}" == "rev-parse" ]]; then
+	printf '%s\n' "1111111111111111111111111111111111111111"
+	exit 0
+fi
+
+exec "$REAL_GIT" "$@"
+EOF
+chmod +x "$FAKE_BIN/git"
 
 cat >"$FAKE_BIN/curl" <<'EOF'
 #!/usr/bin/env bash
@@ -203,7 +227,60 @@ if [[ "$upstream_hash_1" == "$expected_hash_1" ]]; then
 else
 	fail "URL import stores SHA-256 upstream_hash" "Expected '$expected_hash_1', got '$upstream_hash_1'"
 fi
-assert_file_exists "$PROJECT_DIR_1/$local_path_1" "URL import creates local skill file"
+if [[ "$local_path_1" == /* ]]; then
+	assert_file_exists "$local_path_1" "URL import creates local skill file"
+else
+	assert_file_exists "$PROJECT_DIR_1/$local_path_1" "URL import creates local skill file"
+fi
+
+# Test 1b: nested GitHub imports place companion resources under AGENTS_DIR, not caller cwd
+FAKE_REPO_1B="$TMP_DIR/fake-repo-1b"
+PROJECT_DIR_1B="$TMP_DIR/project-1b"
+AGENTS_DIR_1B="$TMP_DIR/agents-1b"
+mkdir -p \
+	"$FAKE_REPO_1B/nested-skill/references" \
+	"$FAKE_REPO_1B/nested-skill/scripts" \
+	"$FAKE_REPO_1B/nested-skill/assets" \
+	"$PROJECT_DIR_1B/.agents" \
+	"$AGENTS_DIR_1B/configs"
+
+cat >"$FAKE_REPO_1B/nested-skill/SKILL.md" <<'EOF'
+---
+name: Nested GitHub
+description: GitHub automation nested skill
+---
+# Nested GitHub
+EOF
+cat >"$FAKE_REPO_1B/nested-skill/references/guide.md" <<'EOF'
+# Guide
+EOF
+cat >"$FAKE_REPO_1B/nested-skill/scripts/update-check.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+EOF
+cat >"$FAKE_REPO_1B/nested-skill/assets/example.txt" <<'EOF'
+asset
+EOF
+
+(
+	cd "$PROJECT_DIR_1B"
+	PATH="$FAKE_BIN:$PATH" \
+		REAL_GIT="$REAL_GIT" \
+		FAKE_GIT_SOURCE="$FAKE_REPO_1B" \
+		AIDEVOPS_AGENTS_DIR="$AGENTS_DIR_1B" \
+		bash "$ADD_SCRIPT" add "example/nested-repo" --skip-security >/dev/null
+)
+
+assert_file_exists "$AGENTS_DIR_1B/tools/git/nested-github-skill/references/guide.md" "Nested GitHub import copies references under AGENTS_DIR"
+assert_file_exists "$AGENTS_DIR_1B/tools/git/nested-github-skill/scripts/update-check.sh" "Nested GitHub import copies scripts under AGENTS_DIR"
+assert_file_exists "$AGENTS_DIR_1B/tools/git/nested-github-skill/assets/example.txt" "Nested GitHub import copies assets under AGENTS_DIR"
+
+if [[ ! -e "$PROJECT_DIR_1B/.agents/tools/git/nested-github-skill" ]]; then
+	pass "Nested GitHub import does not write resources under caller .agents"
+else
+	fail "Nested GitHub import does not write resources under caller .agents" "Unexpected path: $PROJECT_DIR_1B/.agents/tools/git/nested-github-skill"
+fi
 
 # Test 2: URL update check sends conditional headers and treats 304 as up to date
 PROJECT_DIR_2="$TMP_DIR/project-2"
