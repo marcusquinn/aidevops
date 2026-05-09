@@ -16,6 +16,7 @@ usage() {
 Usage:
   rtk-helper.sh COMMAND [ARGS...]
   rtk-helper.sh --compare COMMAND [ARGS...]
+  rtk-helper.sh --adoption-report [SINCE_ISO]
 
 Runs `rtk COMMAND [ARGS...]` for explicit token-optimized commands and strips
 RTK's repeated no-hook advisory from output. Exit status is preserved.
@@ -23,6 +24,9 @@ RTK's repeated no-hook advisory from output. Exit status is preserved.
 `--compare` runs both raw and RTK-filtered forms, then prints a diagnostic
 summary with exit codes, bytes, approximate token counts, and reduction. It does
 not print command output; rerun the raw command when exact evidence is needed.
+
+`--adoption-report` audits recent OpenCode sessions for RTK helper use versus raw
+eligible GitHub discovery list commands. SINCE_ISO defaults to 24 hours ago.
 
 Use only for supported noisy summaries such as:
   rtk-helper.sh git status
@@ -128,6 +132,114 @@ PY
 	return "$rtk_rc"
 }
 
+adoption_report() {
+	local since_iso="${1:-}"
+	local db_path="${OPENCODE_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+
+	if [[ -z "$since_iso" ]]; then
+		since_iso=$(python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+print((datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"))
+PY
+)
+	fi
+
+	if [[ ! -f "$db_path" ]]; then
+		log_error "OpenCode session DB not found: $db_path"
+		return 1
+	fi
+
+	python3 - "$db_path" "$since_iso" <<'PY'
+import json
+import shlex
+import sqlite3
+import sys
+
+db_path, since_iso = sys.argv[1:]
+
+def command_kind(command):
+    if not command:
+        return None
+    if "sqlite3" in command:
+        return None
+    if "rtk-helper.sh --adoption-report" in command or "rtk-helper.sh adoption-report" in command:
+        return None
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        parts = command.split()
+
+    has_gh_list = any(
+        parts[idx : idx + 3] in (["gh", "pr", "list"], ["gh", "issue", "list"])
+        for idx in range(max(len(parts) - 2, 0))
+    )
+    if "rtk-helper.sh" in command:
+        return "rtk_helper" if has_gh_list else None
+    if not has_gh_list:
+        return None
+    structured = any(part in ("--json", "--jq", "-q") or part.startswith("--jq=") for part in parts)
+    if structured:
+        return "structured_bypass"
+    return "raw_eligible"
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+since_ms = int(conn.execute("select strftime('%s', ?) * 1000", (since_iso,)).fetchone()[0])
+sessions = conn.execute("select count(*) from session where time_created >= ?", (since_ms,)).fetchone()[0]
+rows = conn.execute(
+    """
+    select s.title, p.data
+    from part p join session s on s.id = p.session_id
+    where p.time_created >= ?
+    order by p.time_created asc
+    """,
+    (since_ms,),
+).fetchall()
+
+counts = {"bash": 0, "rtk_helper": 0, "raw_eligible": 0, "structured_bypass": 0}
+samples = []
+for row in rows:
+    try:
+        data = json.loads(row["data"])
+    except Exception:
+        continue
+    if data.get("type") != "tool" or data.get("tool") != "bash":
+        continue
+    counts["bash"] += 1
+    command = (((data.get("state") or {}).get("input") or {}).get("command") or "")
+    kind = command_kind(command)
+    if not kind:
+        continue
+    counts[kind] += 1
+    if kind == "raw_eligible" and len(samples) < 5:
+        samples.append((row["title"], command))
+
+eligible_total = counts["rtk_helper"] + counts["raw_eligible"]
+adoption = (counts["rtk_helper"] / eligible_total * 100.0) if eligible_total else 0.0
+
+print("## RTK adoption report")
+print("")
+print(f"Since: `{since_iso}`")
+print("")
+print("| Metric | Count |")
+print("|---|---:|")
+print(f"| Sessions | {sessions} |")
+print(f"| Bash tool calls | {counts['bash']} |")
+print(f"| RTK helper calls | {counts['rtk_helper']} |")
+print(f"| Raw eligible `gh issue/pr list` calls | {counts['raw_eligible']} |")
+print(f"| Structured/exact list bypasses | {counts['structured_bypass']} |")
+print(f"| RTK adoption for eligible list commands | {adoption:.1f}% |")
+print("")
+if counts["raw_eligible"]:
+    print("Raw eligible samples to convert on future runs:")
+    for title, command in samples:
+        print(f"- {title}: `{command}`")
+else:
+    print("No raw eligible list commands found in this window.")
+PY
+	return 0
+}
+
 main() {
 	if [[ $# -eq 0 ]]; then
 		usage
@@ -139,6 +251,11 @@ main() {
 	--help | -h | help)
 		usage
 		return 0
+		;;
+	--adoption-report | adoption-report)
+		shift
+		adoption_report "${1:-}"
+		return $?
 		;;
 	esac
 

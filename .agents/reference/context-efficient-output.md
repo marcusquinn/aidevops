@@ -14,6 +14,8 @@ over token savings.
    - `rtk-helper.sh git log --oneline -20`
    - `rtk-helper.sh gh pr list --repo owner/repo --limit N`
    - `rtk-helper.sh gh issue list --repo owner/repo --limit N`
+   - In interactive discovery, use these RTK forms instead of raw `gh pr list`
+     or `gh issue list` unless the command needs structured/exact output.
 2. **Assess sufficiency**: proceed only if the filtered output contains every
    fact needed for the next decision.
 3. **Broaden immediately** when output is incomplete, ambiguous, expanded rather
@@ -36,6 +38,16 @@ The comparison reports raw vs RTK-filtered exit codes, bytes, approximate token
 counts, line counts, and a first-pass recommendation. It intentionally omits the
 command output to avoid copying noisy or sensitive data into diagnostics. Rerun
 the raw command directly when exact evidence is needed.
+
+To verify adoption in recent OpenCode sessions, run:
+
+```bash
+rtk-helper.sh --adoption-report
+```
+
+The report counts sessions, Bash tool calls, RTK helper calls, raw eligible list
+commands that should have started through RTK, and structured/exact list commands
+that correctly bypass RTK.
 
 Use comparison results to classify a command:
 

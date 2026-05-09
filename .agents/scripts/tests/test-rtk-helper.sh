@@ -72,6 +72,29 @@ printf 'long raw payload with extra diagnostic detail\n'
 STUB
 chmod +x "${TMPDIR_TEST}/samplecmd"
 
+session_db="${TMPDIR_TEST}/opencode.db"
+python3 - "$session_db" <<'PY'
+import json
+import sqlite3
+import sys
+
+db = sys.argv[1]
+conn = sqlite3.connect(db)
+conn.execute("create table session (id text primary key, title text, time_created integer)")
+conn.execute("create table part (id text primary key, session_id text, time_created integer, data text)")
+now = 1778340000000
+conn.execute("insert into session values ('s1', 'adoption test', ?)", (now,))
+commands = [
+    "rtk-helper.sh gh issue list --repo owner/repo --limit 5",
+    "gh issue list --repo owner/repo --limit 5",
+    "gh pr list --repo owner/repo --json number,title",
+]
+for idx, command in enumerate(commands):
+    data = {"type": "tool", "tool": "bash", "state": {"input": {"command": command}}}
+    conn.execute("insert into part values (?, 's1', ?, ?)", (f"p{idx}", now + idx, json.dumps(data)))
+conn.commit()
+PY
+
 PATH="${TMPDIR_TEST}:$PATH" output=$("$HELPER" git status)
 assert_not_contains "strips no-hook advisory" "No hook installed" "$output"
 assert_contains "preserves useful output" "payload: git status" "$output"
@@ -93,6 +116,15 @@ assert_contains "compare emits diagnostic heading" "RTK output comparison" "$com
 assert_contains "compare records same exit code" "Same exit code: yes" "$compare_output"
 assert_contains "compare emits decision guidance" "Decision guidance" "$compare_output"
 assert_not_contains "compare strips advisory" "No hook installed" "$compare_output"
+
+export OPENCODE_DB_PATH="$session_db"
+adoption_output=$("$HELPER" --adoption-report "2026-05-08 00:00:00")
+unset OPENCODE_DB_PATH
+assert_contains "adoption report heading" "RTK adoption report" "$adoption_output"
+assert_contains "adoption counts rtk helper" "| RTK helper calls | 1 |" "$adoption_output"
+raw_eligible_needle="Raw eligible \`gh issue/pr list\` calls | 1"
+assert_contains "adoption counts raw eligible" "$raw_eligible_needle" "$adoption_output"
+assert_contains "adoption counts structured bypass" "| Structured/exact list bypasses | 1 |" "$adoption_output"
 
 printf '%s passed, %s failed\n' "$pass_count" "$fail_count"
 if [[ "$fail_count" -ne 0 ]]; then
