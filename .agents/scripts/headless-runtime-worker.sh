@@ -396,12 +396,11 @@ _hrw_resolve_default_branch() {
 		default_branch=""
 	fi
 
-	if [[ -z "$default_branch" ]]; then
-		default_branch=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-		[[ "$default_branch" == "HEAD" ]] && default_branch=""
+	if [[ -n "$default_branch" ]]; then
+		printf '%s' "$default_branch"
+		return 0
 	fi
 
-	printf '%s' "$default_branch"
 	return 0
 }
 
@@ -480,7 +479,7 @@ _worker_produced_output() {
 	# (main/master), Signal 2 ALWAYS matches because the default branch exists
 	# on the remote — every worker that exits without checking out a feature
 	# branch was previously misclassified as branch_orphan. Resolve the default
-	# branch via origin/HEAD, common branch fallbacks, then HEAD, and skip
+	# branch via origin/HEAD and common branch fallbacks, and skip
 	# Signal 2 entirely when branch_name matches it. The signal is meaningless
 	# on default branches: there is no orphan branch to recover.
 	local has_pushed_branch=0

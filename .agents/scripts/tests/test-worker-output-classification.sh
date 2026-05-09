@@ -34,6 +34,14 @@
 #   4. branch=feature/tNNN-foo, ahead=N, PR exists → pr_exists
 #      (Normal worker completion. Signal 3 short-circuits to pr_exists.)
 #
+#   5. branch=main, ahead=N, PR exists → continued failure
+#      (Failure recovery must not treat a PR match on the default branch as
+#      recoverable worker output.)
+#
+#   6. branch=feature/tNNN-foo, no origin/HEAD/main/master, no PR → branch_orphan
+#      (The default-branch resolver must not fall back to the current checkout
+#      and mistake the feature branch for the default branch.)
+#
 # `gh` is stubbed via PATH to return a controllable PR-list count without
 # touching the network. `git` is real — each case spins up its own
 # disposable origin+clone pair so the classifier sees authentic refs.
@@ -296,6 +304,50 @@ test_failure_recovery_ignores_default_branch_pr_match() {
 	return 0
 }
 
+test_feature_branch_without_default_ref_returns_branch_orphan() {
+	ORIGIN_DIR="${TEST_ROOT}/origin-case6"
+	WORK_DIR="${TEST_ROOT}/work-case6"
+	rm -rf "$ORIGIN_DIR" "$WORK_DIR"
+	mkdir -p "$ORIGIN_DIR"
+	(
+		cd "$ORIGIN_DIR" || exit 1
+		git init -q -b develop
+		git config user.email "test@example.com"
+		git config user.name "Test"
+		git commit --allow-empty -q -m "init"
+	) || {
+		print_result "case 6: branch=feature, no default ref, no PR → branch_orphan" 1 "origin setup failed"
+		return 0
+	}
+	git clone -q "$ORIGIN_DIR" "$WORK_DIR" || {
+		print_result "case 6: branch=feature, no default ref, no PR → branch_orphan" 1 "clone failed"
+		return 0
+	}
+	git -C "$WORK_DIR" config user.email "test@example.com"
+	git -C "$WORK_DIR" config user.name "Test"
+	git -C "$WORK_DIR" remote set-head origin --delete >/dev/null 2>&1 || true
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t9999-no-default-ref
+		printf '%s\n' "feature change" > feature.txt
+		git add feature.txt
+		git commit -q -m "feature commit"
+		git push -q origin feature/t9999-no-default-ref
+	) || {
+		print_result "case 6: branch=feature, no default ref, no PR → branch_orphan" 1 "feature branch setup failed"
+		return 0
+	}
+	export STUB_PR_COUNT=0
+	local got
+	got=$(_worker_produced_output "issue-1006" "$WORK_DIR")
+	if [[ "$got" == "branch_orphan" ]]; then
+		print_result "case 6: branch=feature, no default ref, no PR → branch_orphan" 0
+	else
+		print_result "case 6: branch=feature, no default ref, no PR → branch_orphan" 1 "got: $got"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -305,6 +357,7 @@ test_main_with_local_commits_no_pr_returns_noop_t2899
 test_feature_branch_pushed_no_pr_returns_branch_orphan
 test_feature_branch_with_pr_returns_pr_exists
 test_failure_recovery_ignores_default_branch_pr_match
+test_feature_branch_without_default_ref_returns_branch_orphan
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
