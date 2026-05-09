@@ -410,7 +410,7 @@ _pmp_issue_blocks_pr_consolidation() {
 _pmp_pr_consolidation_health_score() {
 	local repo_slug="$1"
 	local pr_obj="$2"
-	local pr_number mergeable review is_draft score
+	local pr_number="" mergeable="" review="" is_draft="" score=0
 	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || pr_number=""
 	mergeable=$(printf '%s' "$pr_obj" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null) || mergeable="UNKNOWN"
 	review=$(printf '%s' "$pr_obj" | jq -r 'if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end' 2>/dev/null) || review="NONE"
@@ -466,7 +466,7 @@ _pmp_consolidate_duplicate_pr_group() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local group_file="$3"
-	local group_count candidate_line candidate_pr
+	local group_count=0 candidate_line="" candidate_pr=""
 	group_count=$(grep -c "^${issue_number}|" "$group_file" 2>/dev/null || true)
 	[[ "$group_count" =~ ^[0-9]+$ ]] || group_count=0
 	[[ "$group_count" -gt 1 ]] || return 0
@@ -515,7 +515,7 @@ _pmp_consolidate_duplicate_pr_groups() {
 
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj pr_number linked_issue score created_at
+		local pr_obj="" pr_number="" linked_issue="" score=0 created_at=""
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null) || pr_obj=""
 		i=$((i + 1))
 		[[ -n "$pr_obj" ]] || continue
