@@ -267,6 +267,35 @@ test_feature_branch_with_pr_returns_pr_exists() {
 	return 0
 }
 
+test_failure_recovery_ignores_default_branch_pr_match() {
+	make_repo_pair "case5" || {
+		print_result "case 5: failure recovery ignores default branch PR match" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		printf '%s\n' "local change" > local.txt
+		git add local.txt
+		git commit -q -m "local commit on main"
+	) || {
+		print_result "case 5: failure recovery ignores default branch PR match" 1 "commit setup failed"
+		return 0
+	}
+	export STUB_PR_COUNT=1
+	local got="recovered"
+	if _recover_worker_output_on_failure "issue-1005" "$WORK_DIR" >/dev/null 2>&1; then
+		got="recovered"
+	else
+		got="continued_failure"
+	fi
+	if [[ "$got" == "continued_failure" ]]; then
+		print_result "case 5: failure recovery ignores default branch PR match" 0
+	else
+		print_result "case 5: failure recovery ignores default branch PR match" 1 "got: $got (expected continued_failure)"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -275,6 +304,7 @@ test_main_no_commits_no_pr_returns_noop
 test_main_with_local_commits_no_pr_returns_noop_t2899
 test_feature_branch_pushed_no_pr_returns_branch_orphan
 test_feature_branch_with_pr_returns_pr_exists
+test_failure_recovery_ignores_default_branch_pr_match
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

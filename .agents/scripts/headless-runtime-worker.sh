@@ -371,6 +371,41 @@ _preserve_no_activity_output() {
 # =============================================================================
 
 #######################################
+# Resolve the repository default branch for worker-output guards.
+#
+# Args:
+#   $1 - work_dir (worktree root; must be a git repo)
+#######################################
+_hrw_resolve_default_branch() {
+	local work_dir="$1"
+	local default_branch=""
+
+	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null || true)
+	if [[ "$default_branch" == origin/* ]]; then
+		default_branch="${default_branch#origin/}"
+	fi
+
+	if [[ -z "$default_branch" ]]; then
+		for default_branch in main master; do
+			if git -C "$work_dir" show-ref --verify --quiet "refs/remotes/origin/${default_branch}" 2>/dev/null || \
+				git -C "$work_dir" show-ref --verify --quiet "refs/heads/${default_branch}" 2>/dev/null; then
+				printf '%s' "$default_branch"
+				return 0
+			fi
+		done
+		default_branch=""
+	fi
+
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		[[ "$default_branch" == "HEAD" ]] && default_branch=""
+	fi
+
+	printf '%s' "$default_branch"
+	return 0
+}
+
+#######################################
 # Detect whether a worker produced any tangible output.
 #
 # Checks three independent signals. Returns 0 (true — has output) if ANY
@@ -445,15 +480,14 @@ _worker_produced_output() {
 	# (main/master), Signal 2 ALWAYS matches because the default branch exists
 	# on the remote — every worker that exits without checking out a feature
 	# branch was previously misclassified as branch_orphan. Resolve the default
-	# branch via origin/HEAD symbolic-ref (with env + literal fallback) and skip
+	# branch via origin/HEAD, common branch fallbacks, then HEAD, and skip
 	# Signal 2 entirely when branch_name matches it. The signal is meaningless
 	# on default branches: there is no orphan branch to recover.
 	local has_pushed_branch=0
 	local branch_name=""
 	local default_branch=""
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
-	default_branch=$(git -C "$work_dir" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null \
-		| sed 's|^origin/||' || true)
+	default_branch=$(_hrw_resolve_default_branch "$work_dir")
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
 	if [[ -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]]; then
 		local remote_ref=""
@@ -630,7 +664,11 @@ _recover_worker_output_on_failure() {
 	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 
-	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "HEAD" ]] && \
+	local default_branch=""
+	default_branch=$(_hrw_resolve_default_branch "$work_dir")
+	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+
+	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "HEAD" && "$branch_name" != "$default_branch" ]] && \
 		declare -F _pr_exists_for_branch_or_issue >/dev/null 2>&1; then
 		local pr_existence=""
 		pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
