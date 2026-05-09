@@ -50,6 +50,36 @@ _pmp_pr_is_worker_owned_for_consolidation() {
 }
 
 #######################################
+# Normalize PR mergeable values for duplicate consolidation.
+#
+# pulse-merge-process.sh normally provides _pmp_normalize_mergeable_state_into;
+# this wrapper keeps the duplicate helper on the shared normalization path while
+# preserving standalone test extraction.
+#
+# Args: $1 = destination variable name, $2 = raw mergeable value
+# Returns: 0 on success, 1 on invalid destination variable
+#######################################
+_pmp_normalize_mergeable_for_consolidation_into() {
+	local dest_var="$1"
+	local raw_state="$2"
+	local normalized_state=""
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	if declare -F _pmp_normalize_mergeable_state_into >/dev/null 2>&1; then
+		_pmp_normalize_mergeable_state_into "$dest_var" "$raw_state"
+		return 0
+	fi
+	case "$raw_state" in
+	MERGEABLE|mergeable|true|TRUE) normalized_state="MERGEABLE" ;;
+	CONFLICTING|conflicting|false|FALSE) normalized_state="CONFLICTING" ;;
+	UNKNOWN|unknown|''|null|NULL) normalized_state="UNKNOWN" ;;
+	*) normalized_state="$raw_state" ;;
+	esac
+	printf -v "$dest_var" '%s' "$normalized_state"
+	return 0
+}
+
+#######################################
 # Check issue labels that block duplicate-PR consolidation.
 #
 # Args: $1 = repo slug, $2 = issue number
@@ -109,10 +139,8 @@ _pmp_pr_consolidation_health_score() {
 			score=$((score + 400))
 		fi
 	fi
-	if declare -F _pmp_normalize_mergeable_state_into >/dev/null 2>&1; then
-		_pmp_normalize_mergeable_state_into mergeable "$mergeable"
-	fi
-	[[ "$mergeable" == "MERGEABLE" || "$mergeable" == "mergeable" || "$mergeable" == "true" ]] && score=$((score + 200))
+	_pmp_normalize_mergeable_for_consolidation_into mergeable "$mergeable" || mergeable="UNKNOWN"
+	[[ "$mergeable" == "MERGEABLE" ]] && score=$((score + 200))
 	[[ "$review" == "APPROVED" ]] && score=$((score + 100))
 	[[ "$is_draft" != "true" ]] && score=$((score + 50))
 	printf '%s' "$score"
