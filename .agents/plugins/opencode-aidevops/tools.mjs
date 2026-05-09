@@ -1,7 +1,32 @@
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
-import { tool } from "@opencode-ai/plugin";
+
+let tool;
+try {
+  ({ tool } = await import("@opencode-ai/plugin"));
+} catch {
+  const schemaNode = {
+    optional() {
+      return this;
+    },
+    describe() {
+      return this;
+    },
+  };
+  tool = (definition) => definition;
+  tool.schema = {
+    enum() {
+      return schemaNode;
+    },
+    string() {
+      return schemaNode;
+    },
+    union() {
+      return schemaNode;
+    },
+  };
+}
 
 const z = tool.schema;
 
