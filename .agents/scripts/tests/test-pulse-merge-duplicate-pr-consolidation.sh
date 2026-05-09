@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-MERGE_PROCESS_FILE="${SCRIPT_DIR_TEST}/../pulse-merge-process.sh"
+MERGE_DUPLICATE_FILE="${SCRIPT_DIR_TEST}/../pulse-merge-duplicate-consolidation.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -62,9 +62,9 @@ define_functions_under_test() {
 		/^_pmp_close_superseded_sibling_pr\(\) \{/,/^}$/ { print }
 		/^_pmp_consolidate_duplicate_pr_group\(\) \{/,/^}$/ { print }
 		/^_pmp_consolidate_duplicate_pr_groups\(\) \{/,/^}$/ { print }
-	' "$MERGE_PROCESS_FILE")
+	' "$MERGE_DUPLICATE_FILE")
 	if [[ -z "$fn_src" ]]; then
-		printf 'ERROR: could not extract consolidation functions from %s\n' "$MERGE_PROCESS_FILE" >&2
+		printf 'ERROR: could not extract consolidation functions from %s\n' "$MERGE_DUPLICATE_FILE" >&2
 		return 1
 	fi
 	eval "$fn_src"
