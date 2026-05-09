@@ -742,6 +742,85 @@ test_available_feedback_worker_issue_not_assigned() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 17 (GH#23257): consolidated feedback backfill uses label constants.
+# ---------------------------------------------------------------------------
+test_feedback_backfill_uses_label_constants() {
+	local tmp_dir ops_log
+	tmp_dir=$(mktemp -d)
+	ops_log="${tmp_dir}/ops.log"
+
+	local fixture_json
+	fixture_json=$(jq -nc '[
+		{
+			number: 404,
+			assignees: [],
+			labels: [
+				{name:"origin:worker"},
+				{name:"consolidated"},
+				{name:"source:review-feedback"},
+				{name:"status:ready"},
+				{name:"tier:custom"}
+			]
+		},
+		{
+			number: 505,
+			assignees: [],
+			labels: [
+				{name:"origin:worker"},
+				{name:"consolidated"},
+				{name:"source:review-feedback"},
+				{name:"status:available"},
+				{name:"tier:standard"}
+			]
+		}
+	]')
+
+	local result
+	result=$(bash -c '
+		fixture_json=$1
+		ops_log=$2
+		RECONCILE_SH=$3
+		LOGFILE="${ops_log}.pulse"
+		_PIR_STATUS_AVAILABLE="status:ready"
+		_PIR_TIER_STANDARD="tier:custom"
+
+		gh() {
+			if [[ "${1:-}" == "issue" && "${2:-}" == "edit" ]]; then
+				printf "%s\n" "$*" >>"$ops_log"
+				return 0
+			fi
+			return 1
+		}
+
+		# shellcheck source=/dev/null
+		source "$RECONCILE_SH"
+		rows=$(_normalize_get_feedback_backfill_rows "$fixture_json")
+		printf "rows=%s\n" "$rows"
+		_normalize_backfill_feedback_rows "owner/repo" "$rows"
+		cat "$ops_log" 2>/dev/null || true
+	' _ "$fixture_json" "$ops_log" "$RECONCILE_SH" 2>/dev/null)
+
+	rm -rf "$tmp_dir"
+
+	local all_ok=1
+	if ! printf '%s\n' "$result" | grep -q '^rows=404$'; then
+		_fail "GH#23257: custom status/tier labels were not selected for backfill"
+		all_ok=0
+	fi
+	if printf '%s\n' "$result" | grep -q '^rows=505$'; then
+		_fail "GH#23257: hardcoded status/tier labels were selected despite overridden constants"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -q 'edit 404 .*--add-label status:ready .*--add-label auto-dispatch .*--add-label tier:custom'; then
+		_fail "GH#23257: backfill edit did not use status/auto-dispatch/tier constants"
+		all_ok=0
+	fi
+
+	[[ "$all_ok" == "1" ]] && _pass "GH#23257: consolidated feedback backfill uses label constants"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
 test_cache_miss_no_file
@@ -761,6 +840,7 @@ test_gh22802_oimp_lookup_requires_merged_at
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
 test_available_feedback_worker_issue_not_assigned
+test_feedback_backfill_uses_label_constants
 
 echo ""
 echo "Results: ${pass} passed, ${fail} failed"
