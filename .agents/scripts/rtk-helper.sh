@@ -132,23 +132,17 @@ PY
 	return "$rtk_rc"
 }
 
-adoption_report() {
-	local since_iso="${1:-}"
-	local db_path="${OPENCODE_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
-
-	if [[ -z "$since_iso" ]]; then
-		since_iso=$(python3 - <<'PY'
+default_since_iso() {
+	python3 - <<'PY'
 from datetime import datetime, timedelta, timezone
 print((datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%d %H:%M:%S"))
 PY
-)
-	fi
+	return 0
+}
 
-	if [[ ! -f "$db_path" ]]; then
-		log_error "OpenCode session DB not found: $db_path"
-		return 1
-	fi
-
+adoption_report_python() {
+	local db_path="$1"
+	local since_iso="$2"
 	python3 - "$db_path" "$since_iso" <<'PY'
 import json
 import shlex
@@ -237,6 +231,23 @@ if counts["raw_eligible"]:
 else:
     print("No raw eligible list commands found in this window.")
 PY
+	return 0
+}
+
+adoption_report() {
+	local since_iso="${1:-}"
+	local db_path="${OPENCODE_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+
+	if [[ -z "$since_iso" ]]; then
+		since_iso=$(default_since_iso)
+	fi
+
+	if [[ ! -f "$db_path" ]]; then
+		log_error "OpenCode session DB not found: $db_path"
+		return 1
+	fi
+
+	adoption_report_python "$db_path" "$since_iso"
 	return 0
 }
 
