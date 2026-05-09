@@ -725,18 +725,23 @@ desired = sys.argv[2]
 
 text = path.read_text() if path.exists() else ""
 
-line = f"  abort_on_close: {desired}"
+line = f"abort_on_close: {desired}"
 
 if not text.strip():
-    text = f"reviews:\n{line}\n"
-elif re.search(r"(?m)^\s*abort_on_close:", text):
-    text = re.sub(r"(?m)^(\s*abort_on_close:\s*)\S+(.*)$", rf"\g<1>{desired}\g<2>", text, count=1)
-elif re.search(r"(?m)^\s*reviews:", text):
-    text = re.sub(r"(?m)^(\s*reviews:.*)$", rf"\g<1>\n{line}", text, count=1)
+    text = f"reviews:\n  {line}\n"
+elif re.search(r"(?m)^[ \t]*abort_on_close:", text):
+    text = re.sub(
+        r"(?m)^([ \t]*abort_on_close:)[ \t]*[^\s#]*(?:[ \t]*(#.*))?[ \t]*$",
+        lambda match: f"{match.group(1)} {desired}{f' {match.group(2)}' if match.group(2) else ''}",
+        text,
+        count=1,
+    )
+elif re.search(r"(?m)^[ \t]*reviews:", text):
+    text = re.sub(r"(?m)^([ \t]*)(reviews:.*)$", rf"\g<1>\g<2>\n\g<1>  {line}", text, count=1)
 else:
     if not text.endswith("\n"):
         text += "\n"
-    text += f"\nreviews:\n{line}\n"
+    text += f"\nreviews:\n  {line}\n"
 
 path.write_text(text)
 PY
