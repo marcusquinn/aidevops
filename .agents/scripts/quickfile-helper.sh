@@ -39,7 +39,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Constants
 readonly QF_WORKSPACE="${HOME}/.aidevops/.agent-workspace/work/quickfile"
 readonly OCR_WORKSPACE="${HOME}/.aidevops/.agent-workspace/work/ocr-receipts"
-readonly QF_MCP_DIR="${HOME}/Git/quickfile-mcp"
+readonly QF_MCP_DIR="${HOME}/Git/mcp/quickfile-mcp"
 readonly QF_CREDENTIALS="${HOME}/.config/.quickfile-mcp/credentials.json"
 readonly DEFAULT_NOMINAL="5000"
 readonly DEFAULT_CURRENCY="GBP"
@@ -481,8 +481,8 @@ cmd_status() {
 		echo "  quickfile-mcp:  installed (${QF_MCP_DIR})"
 	else
 		echo "  quickfile-mcp:  not found"
-		echo "  Install: cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git"
-		echo "           cd quickfile-mcp && npm install && npm run build"
+		echo "  Install: mkdir -p ~/Git/mcp && git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp"
+		echo "           cd ~/Git/mcp/quickfile-mcp && npm install && npm run build"
 	fi
 
 	# Credentials

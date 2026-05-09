@@ -985,7 +985,7 @@ cmd_status() {
 	# QuickFile MCP
 	echo ""
 	echo "QuickFile Integration:"
-	if [[ -f "${HOME}/Git/quickfile-mcp/dist/index.js" ]]; then
+	if [[ -f "${HOME}/Git/mcp/quickfile-mcp/dist/index.js" ]]; then
 		echo "  quickfile-mcp:  installed"
 	else
 		echo "  quickfile-mcp:  not found (optional - for purchase invoice creation)"

@@ -22,7 +22,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Separate working directories per branch — no branch-switching conflicts
-- **Core principle**: Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. Create durable worktrees under `~/Git/`, not runtime temp dirs. **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
+- **Core principle**: Main repo (`~/Git/{repo}/` or grouped parent) ALWAYS stays on `main`. Create durable sibling worktrees under the same parent, not runtime temp dirs. Group WordPress repos under `~/Git/wordpress/`, EspoCRM under `~/Git/espocrm/`, and MCP under `~/Git/mcp/` (details: `reference/repo-organization.md`). **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`) — full docs: `tools/git/worktrunk.md`
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
 
@@ -44,7 +44,7 @@ opencode ~/Git/myrepo-feature-auth/    # Multiple AI sessions on separate worktr
 **worktree-helper.sh** (fallback — no cd support):
 
 ```bash
-worktree-helper.sh add feature/my-feature          # Auto-path: ~/Git/{repo}-feature-my-feature/
+worktree-helper.sh add feature/my-feature          # Auto-path: sibling of canonical repo
 worktree-helper.sh add feature/my-feature ~/custom  # Custom path
 worktree-helper.sh list                             # List worktrees
 worktree-helper.sh status                           # Status overview

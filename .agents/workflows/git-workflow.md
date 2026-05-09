@@ -95,7 +95,9 @@ Slugification: lowercase, hyphens for spaces, remove special chars, truncate ~50
 Parse issue URLs to extract platform, owner, repo, and issue number, then create a worktree:
 
 ```bash
-# Clone if not local: gh repo clone {owner}/{repo} ~/Git/{repo}
+# Clone if not local. Use grouped parents for ecosystem repos:
+# WordPress -> ~/Git/wordpress/{repo}; EspoCRM -> ~/Git/espocrm/{repo}; MCP -> ~/Git/mcp/{repo}
+# Other repos -> ~/Git/{repo}. Details: reference/repo-organization.md
 git checkout main && git pull origin main
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
 ```

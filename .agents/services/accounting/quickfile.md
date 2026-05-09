@@ -100,8 +100,9 @@ Requires Node.js 18+, QuickFile account (free at https://www.quickfile.co.uk/), 
 ./setup.sh  # Select "Setup QuickFile MCP"
 
 # Option B: manual
-cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git
-cd quickfile-mcp && npm install && npm run build
+mkdir -p ~/Git/mcp
+git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp
+cd ~/Git/mcp/quickfile-mcp && npm install && npm run build
 ```
 
 ### Credential Setup
@@ -123,7 +124,7 @@ chmod 600 ~/.config/.quickfile-mcp/credentials.json
 
 All configs: `command: node`, `args: ["/path/to/quickfile-mcp/dist/index.js"]`. See `configs/mcp-templates/quickfile.json` for ready-to-use snippets (Claude Code, Claude Desktop, Cursor, OpenCode, Gemini CLI, GitHub Copilot, Zed, Kilo Code, Kiro, Droid).
 
-Claude Code quick-add: `claude mcp add quickfile node ~/Git/quickfile-mcp/dist/index.js`
+Claude Code quick-add: `claude mcp add quickfile node ~/Git/mcp/quickfile-mcp/dist/index.js`
 
 ## Available Tools (37)
 
@@ -156,7 +157,7 @@ Claude Code quick-add: `claude mcp add quickfile node ~/Git/quickfile-mcp/dist/i
 | Authentication failed | Verify accountNumber, apiKey, applicationId are correct |
 | Rate limit exceeded | Wait until midnight or contact QuickFile support |
 | Build failed | Ensure Node.js 18+: `node --version` |
-| MCP not responding | `cd ~/Git/quickfile-mcp && npm run build`, then restart AI tool |
+| MCP not responding | `cd ~/Git/mcp/quickfile-mcp && npm run build`, then restart AI tool |
 
 Verify setup: prompt `"Show me my QuickFile account details"` — expect company name, VAT status, year end.
 

@@ -263,6 +263,7 @@ setup_localwp_mcp() {
 	fi
 
 	print_info "LocalWP MCP server enables AI assistants to query WordPress databases"
+	local install_mcp
 	setup_prompt install_mcp "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " "Y"
 
 	if [[ "$install_mcp" =~ ^[Yy]?$ ]]; then
@@ -835,11 +836,12 @@ _setup_quickfile_mcp_clone_and_build() {
 
 	if [[ ! "$install_qf" =~ ^[Yy]?$ ]]; then
 		print_info "Skipped QuickFile MCP installation"
-		print_info "Install later: git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/quickfile-mcp"
+		print_info "Install later: mkdir -p ~/Git/mcp && git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp"
 		return 1
 	fi
 
 	if [[ ! -d "$quickfile_dir" ]]; then
+		mkdir -p "$(dirname "$quickfile_dir")"
 		if ! run_with_spinner "Cloning quickfile-mcp" git clone https://github.com/marcusquinn/quickfile-mcp.git "$quickfile_dir"; then
 			print_warning "Failed to clone quickfile-mcp"
 			return 1
@@ -920,7 +922,7 @@ _setup_quickfile_mcp_update_opencode() {
 }
 
 setup_quickfile_mcp() {
-	local quickfile_dir="$HOME/Git/quickfile-mcp"
+	local quickfile_dir="$HOME/Git/mcp/quickfile-mcp"
 	local credentials_dir="$HOME/.config/.quickfile-mcp"
 	local credentials_file="$credentials_dir/credentials.json"
 

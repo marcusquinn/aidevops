@@ -244,7 +244,7 @@ function getMcpRegistry() {
       command: [
         "/bin/bash",
         "-c",
-        "node ~/Git/amazon-order-history-csv-download-mcp/dist/index.js",
+        "node ~/Git/mcp/amazon-order-history-csv-download-mcp/dist/index.js",
       ],
       eager: false,
       toolPattern: "amazon-order-history_*",

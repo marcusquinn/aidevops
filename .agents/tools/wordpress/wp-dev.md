@@ -45,7 +45,7 @@ Prefer [WP Composer](https://wp-composer.com/) over WPackagist (acquired by WP E
 
 ## WordPress MCP Adapter
 
-Requires WordPress Abilities API plugin. Repo: `~/git/wordpress/mcp-adapter`.
+Requires WordPress Abilities API plugin. Repo: `~/Git/wordpress/mcp-adapter`.
 
 **STDIO** (local): `composer require wordpress/mcp-adapter && wp plugin activate mcp-adapter` → `wp mcp-adapter serve --server=mcp-adapter-default-server --user=admin`
 
