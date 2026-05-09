@@ -4217,3 +4217,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
+
+- [ ] t3585 Capture session learning guidance in aidevops harness #documentation #self-improvement ref:GH#23285
