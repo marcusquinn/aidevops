@@ -112,5 +112,13 @@ jq -e '.api_call_pressure.read_rest_ratio == 0.4706' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_304 == 3' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_refreshes == 2' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
+python3 - "$HELPER" <<'PY'
+import pathlib
+import sys
+source = pathlib.Path(sys.argv[1]).read_text()
+assert 'from collections import Counter, defaultdict, deque' in source
+assert 'readlines()[-limit:]' not in source
+assert 'deque(handle, maxlen=limit)' in source
+PY
 
 printf 'PASS pulse-current-state-helper\n'

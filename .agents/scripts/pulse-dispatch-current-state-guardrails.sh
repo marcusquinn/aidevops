@@ -97,6 +97,7 @@ _dispatch_apply_current_state_guardrails() {
 	[[ "$available_slots" =~ ^-?[0-9]+$ ]] || available_slots=0
 
 	if [[ "${AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS:-0}" == "1" || "$available_slots" -le 0 ]]; then
+		_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$available_slots"
 		printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
 		return 0
 	fi
@@ -109,6 +110,11 @@ _dispatch_apply_current_state_guardrails() {
 	[[ "$rate_limits" =~ ^[0-9]+$ ]] || rate_limits=0
 	[[ "$healthy_prs" =~ ^[0-9]+$ ]] || healthy_prs=0
 	[[ "$no_dispatchable" =~ ^[0-9]+$ ]] || no_dispatchable=0
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_successes" "$successes"
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_failures" "$failures"
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_rate_limits" "$rate_limits"
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_healthy_prs" "$healthy_prs"
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_no_dispatchable" "$no_dispatchable"
 
 	local rl_threshold="${PULSE_DISPATCH_GUARDRAIL_RATE_LIMIT_THRESHOLD:-4}"
 	local failure_threshold="${PULSE_DISPATCH_GUARDRAIL_FAILURE_THRESHOLD:-6}"

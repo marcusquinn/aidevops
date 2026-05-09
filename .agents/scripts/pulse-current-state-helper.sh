@@ -54,7 +54,7 @@ import os
 import subprocess
 import sys
 import time
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 
 log_dir, repo_path, window_s, as_json, script_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5]
 now = time.time()
@@ -65,7 +65,7 @@ def recent_lines(path, limit=2000):
     if not os.path.exists(path):
         return []
     with open(path, 'r', encoding='utf-8', errors='replace') as handle:
-        lines = handle.readlines()[-limit:]
+        lines = deque(handle, maxlen=limit)
     return [line.rstrip('\n') for line in lines]
 
 

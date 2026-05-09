@@ -142,10 +142,23 @@ test_clean_state_preserves_available_slots() {
 	reset_guardrail_env
 	local slots
 	slots=$(guardrail_slots "3 1 0 0 0" 8)
-	if [[ "$slots" == "8" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=8$' "$STATS_GAUGE_FILE"; then
+	if [[ "$slots" == "8" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=8$' "$STATS_GAUGE_FILE" && grep -q '^pulse_dispatch_guardrail_successes=3$' "$STATS_GAUGE_FILE"; then
 		print_result "guardrail: clean current state preserves safe slots" 0
 	else
 		print_result "guardrail: clean current state preserves safe slots" 1 "slots=${slots}"
+	fi
+	return 0
+}
+
+test_disabled_guardrail_still_updates_available_slots_gauge() {
+	reset_guardrail_env
+	export AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+	local slots
+	slots=$(guardrail_slots "0 0 0 0 0" 5)
+	if [[ "$slots" == "5" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=5$' "$STATS_GAUGE_FILE"; then
+		print_result "guardrail: disabled current-state path still refreshes slot gauge" 0
+	else
+		print_result "guardrail: disabled current-state path still refreshes slot gauge" 1 "slots=${slots}"
 	fi
 	return 0
 }
@@ -156,6 +169,7 @@ test_repeated_failures_pause_without_success
 test_healthy_pr_backlog_rations_new_launches
 test_no_dispatchable_evidence_pauses_refill_loop
 test_clean_state_preserves_available_slots
+test_disabled_guardrail_still_updates_available_slots_gauge
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"
