@@ -29,6 +29,15 @@ jobs:
         with:
           node-version: '22'
 
+      - name: Install plugin dependencies
+        run: |
+          set -euo pipefail
+          for plugin_dir in .agents/plugins/*/; do
+            [ -f "${plugin_dir}package.json" ] || continue
+            echo "Installing dependencies for: $plugin_dir"
+            npm install --prefix "$plugin_dir" --include=dev
+          done
+
       - name: Check plugin import resolution
         run: |
           set -euo pipefail
