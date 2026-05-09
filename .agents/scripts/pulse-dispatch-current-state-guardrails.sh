@@ -30,13 +30,14 @@ _dispatch_recent_current_state_counts() {
 import json
 import sys
 import time
+from collections import deque
 
 metrics_path, log_path, window = sys.argv[1], sys.argv[2], int(sys.argv[3])
 since = time.time() - window
 successes = failures = rate_limits = 0
 try:
     with open(metrics_path, "r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle.readlines()[-2000:]:
+        for raw in deque(handle, 2000):
             try:
                 item = json.loads(raw)
             except json.JSONDecodeError:
@@ -63,7 +64,7 @@ try:
     # pulse.log lines usually do not carry machine timestamps, so use the recent tail
     # as a bounded local current-state proxy rather than issuing API reads.
     with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
-        lines = handle.readlines()[-2000:]
+        lines = deque(handle, 2000)
     for raw in lines:
         line = raw.lower()
         if "pr opened" in line or "opened pr" in line or "pr merged" in line or "merged pr" in line:
@@ -144,8 +145,8 @@ _dispatch_apply_current_state_guardrails() {
 		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} capped_available=${capped_slots}/${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable}" >>"$LOGFILE"
 		_dispatch_stats_increment "pulse_dispatch_current_state_guardrail_applied"
 		_dispatch_stats_increment_candidate_failed "$reason"
-		_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$capped_slots"
 	fi
+	_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$capped_slots"
 
 	printf '%s %s %s\n' "$max_workers" "$active_workers" "$capped_slots"
 	return 0

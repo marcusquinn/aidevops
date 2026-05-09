@@ -142,7 +142,7 @@ test_clean_state_preserves_available_slots() {
 	reset_guardrail_env
 	local slots
 	slots=$(guardrail_slots "3 1 0 0 0" 8)
-	if [[ "$slots" == "8" ]]; then
+	if [[ "$slots" == "8" ]] && grep -q '^pulse_dispatch_guardrail_available_slots=8$' "$STATS_GAUGE_FILE"; then
 		print_result "guardrail: clean current state preserves safe slots" 0
 	else
 		print_result "guardrail: clean current state preserves safe slots" 1 "slots=${slots}"

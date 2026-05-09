@@ -209,12 +209,13 @@ _dispatch_latest_metric_value() {
 	python3 - "$metrics_file" "$metric_key" <<'PY'
 import json
 import sys
+from collections import deque
 
 path, key = sys.argv[1], sys.argv[2]
 value = ""
 try:
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle.readlines()[-1000:]:
+        for raw in deque(handle, 1000):
             try:
                 item = json.loads(raw)
             except json.JSONDecodeError:
@@ -252,6 +253,7 @@ _dispatch_recent_worker_pressure_counts() {
 import json
 import sys
 import time
+from collections import deque
 
 path, ttl = sys.argv[1], int(sys.argv[2])
 since = time.time() - ttl
@@ -259,7 +261,7 @@ failures = 0
 rate_limits = 0
 try:
     with open(path, "r", encoding="utf-8", errors="replace") as handle:
-        for raw in handle.readlines()[-1000:]:
+        for raw in deque(handle, 1000):
             try:
                 item = json.loads(raw)
             except json.JSONDecodeError:
