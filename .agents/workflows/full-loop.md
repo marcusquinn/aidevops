@@ -116,7 +116,7 @@ PR_NUMBER=$(full-loop-helper.sh commit-and-pr \
   --decisions "any notable trade-offs")
 ```
 
-Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. On rebase conflict: aborts and returns 1 — resolve and retry.
+Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr create` with `Resolves #NNN` + signature footer, merge summary comment, and `status:in-review` label. Interactive PR creation defaults to draft; use `/pr-loop` or explicit user finalise/ready consent before converting with `gh pr ready`. On rebase conflict: aborts and returns 1 — resolve and retry.
 
 **Self-modifying helper fixes:** If this PR edits `full-loop-helper.sh` or its sourced helper libraries, run the committed worktree helper explicitly for merge verification instead of resolving `full-loop-helper.sh` from PATH. Commit first, then use `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"` so the merge path exercises the code that will ship, not the deployed helper copy.
 

@@ -98,6 +98,12 @@
     // Env override: AIDEVOPS_SUPERVISOR_PULSE
     "supervisor_pulse": false,
 
+    // Allow pulse to merge maintainer-authored origin:interactive PRs after
+    // normal gates pass. Default false keeps interactive PRs manual unless a
+    // PR has allow-auto-merge or repos.json sets interactive_pr_auto_merge.
+    // Env override: AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE
+    "interactive_pr_auto_merge": false,
+
     // Enable daily git pull --ff-only on clean repos.
     // Env override: AIDEVOPS_REPO_SYNC
     "repo_sync": true,

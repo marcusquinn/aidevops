@@ -311,6 +311,48 @@ else
 fi
 unset GH_ARGV_RECORD_FILE
 
+# B6: interactive gh_create_pr defaults to draft unless finalisation was explicit.
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_pr_draft_default.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" >/dev/null 2>&1
+if grep -qx '<--draft>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B6: gh_create_pr defaults interactive PRs to draft" 0
+else
+	print_result "B6: gh_create_pr defaults interactive PRs to draft" 1 \
+		"--draft missing from argv: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+fi
+unset GH_ARGV_RECORD_FILE
+
+# B7: worker-origin gh_create_pr remains ready for automated worker throughput.
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_pr_worker_ready.log"
+: >"$GH_ARGV_RECORD_FILE"
+SESSION_ORIGIN_OVERRIDE="origin:worker" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" >/dev/null 2>&1
+if grep -qx '<--draft>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B7: gh_create_pr leaves worker PRs non-draft" 1 \
+		"unexpected --draft in argv: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B7: gh_create_pr leaves worker PRs non-draft" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
+# B8: explicit finalisation preference leaves interactive PRs non-draft.
+reset_recorder
+export GH_ARGV_RECORD_FILE="${TEST_ROOT}/gh_argv_pr_ready_override.log"
+: >"$GH_ARGV_RECORD_FILE"
+AIDEVOPS_PR_CREATE_READY=1 SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_pr --repo o/r --title "t1: x" --body "Resolves #1" >/dev/null 2>&1
+if grep -qx '<--draft>' "$GH_ARGV_RECORD_FILE"; then
+	print_result "B8: AIDEVOPS_PR_CREATE_READY leaves interactive PR non-draft" 1 \
+		"unexpected --draft in argv: $(tr '\n' ' ' <"$GH_ARGV_RECORD_FILE")"
+else
+	print_result "B8: AIDEVOPS_PR_CREATE_READY leaves interactive PR non-draft" 0
+fi
+unset GH_ARGV_RECORD_FILE
+
 # ---------------------------------------------------------------------------
 # Layer B': gh_create_issue defence-in-depth (mirrors PR tests)
 # ---------------------------------------------------------------------------

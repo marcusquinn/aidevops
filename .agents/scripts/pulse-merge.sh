@@ -254,8 +254,8 @@ _check_pr_merge_gates() {
 		fi
 	fi
 
-	# ── origin:interactive gates (t2411) ──
-	# Draft and hold-for-review opt-out checks for interactive PRs. Applies
+	# ── origin:interactive gates (t2411/GH#23238) ──
+	# Draft, hold-for-review, and throughput-preference checks for interactive PRs. Applies
 	# to all interactive PRs regardless of author role (OWNER, MEMBER, or
 	# COLLABORATOR). COLLABORATORs that pass these checks still go through the
 	# review bot gate and normal merge path without an ownership fast-path.

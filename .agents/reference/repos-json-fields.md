@@ -51,6 +51,14 @@ Agent-source repos receive non-destructive template management:
 | `pulse_interval` | integer | `600` | Minimum seconds between dispatch polls for this repo. Default: omit (poll every cycle). Min: 60. Useful for contributor-role repos with low activity — e.g. 600 polls every 5 cycles instead of every cycle, reducing GraphQL budget consumption ~5×. State: `~/.aidevops/logs/pulse-last-per-repo.json`. |
 | `pulse_expires` | string | `"2026-05-01"` | Past this date, pulse auto-sets `pulse: false`. Useful for temporary windows. |
 
+## PR Throughput Preferences
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `interactive_pr_auto_merge` | bool | unset → global config/default | Per-repo preference for `origin:interactive` PR merge throughput. `true` allows pulse to merge maintainer-authored interactive PRs after normal gates pass and the PR is ready/non-draft. `false` keeps this repo manual even if global config is true. PR-specific `allow-auto-merge` still opts in one PR; `hold-for-review` or draft state still blocks. |
+
+Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidevops/config.jsonc`. Env override for the current pulse/session: `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE`.
+
 ## Workflow Runner Configuration
 
 | Field | Type | Example | Description |

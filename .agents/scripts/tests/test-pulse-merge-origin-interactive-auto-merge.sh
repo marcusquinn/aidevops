@@ -4,14 +4,19 @@
 #
 # Tests for origin:interactive merge gates (t2411).
 #
-# Verifies the six criteria that govern whether an origin:interactive PR is
+# Verifies the criteria that govern whether an origin:interactive PR is
 # eligible for auto-merge in pulse-merge.sh:
 #   Case 1: OWNER (admin perm) passes _is_owner_or_member_author
 #   Case 2: COLLABORATOR (write perm) fails _is_owner_or_member_author
 #   Case 3: plain interactive PR requires manual merge by default
 #   Case 4: hold-for-review label blocks _check_interactive_pr_gates
 #   Case 5: draft PR blocks _check_interactive_pr_gates
-#   Case 6: CHANGES_REQUESTED is blocked by existing gate (boundary verified)
+#   Case 6: explicit allow-auto-merge label opts in
+#   Case 7: environment override opts in
+#   Case 8: global config opts in
+#   Case 9: per-repo repos.json override opts in
+#   Case 10: environment false overrides repo/global preferences
+#   Case 11: allow-auto-merge label remains a PR-specific opt-in
 #
 # No real repository is touched. The gh binary is replaced with a mock stub
 # that serves canned responses from TEST_ROOT fixture files.
@@ -102,6 +107,10 @@ GHEOF
 
 	# Default PR info: not draft, no special labels
 	printf '{"labels":[],"isDraft":false}' >"${TEST_ROOT}/pr-info.json"
+	printf '{"initialized_repos":[]}' >"${TEST_ROOT}/repos.json"
+	export REPOS_JSON="${TEST_ROOT}/repos.json"
+	unset AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE
+	unset -f config_get 2>/dev/null || true
 	return 0
 }
 
@@ -109,25 +118,16 @@ teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
+	unset AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE REPOS_JSON
+	unset -f config_get 2>/dev/null || true
 	return 0
 }
 
 define_helpers_under_test() {
-	local src_owner src_interactive
-	src_owner=$(awk '
-		/^_is_owner_or_member_author\(\) \{/,/^\}$/ { print }
-	' "$MERGE_SCRIPT")
-	src_interactive=$(awk '
-		/^_check_interactive_pr_gates\(\) \{/,/^\}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$src_owner" || -z "$src_interactive" ]]; then
-		printf 'ERROR: could not extract helpers from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090
-	eval "$src_owner"
-	# shellcheck disable=SC1090
-	eval "$src_interactive"
+	# Source the sub-library directly so helper dependencies added alongside
+	# _check_interactive_pr_gates are exercised by the test.
+	# shellcheck source=/dev/null
+	source "$MERGE_SCRIPT"
 	return 0
 }
 
@@ -304,6 +304,114 @@ test_case7_env_override_passes() {
 }
 
 # =============================================================================
+# Case 8: global config opts interactive PRs into automation.
+# =============================================================================
+test_case8_global_config_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	config_get() {
+		local dotpath="$1"
+		local default="${2:-}"
+		if [[ "$dotpath" == "orchestration.interactive_pr_auto_merge" ]]; then
+			printf '%s\n' "true"
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+
+	local labels="origin:interactive"
+	local result=0
+	_check_interactive_pr_gates "106" "owner/repo" "$labels" "false" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case 8: global config opt-in passes" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		print_result "Case 8: global config opt-in passes" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case 9: per-repo repos.json override opts this repo into automation.
+# =============================================================================
+test_case9_repo_override_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"initialized_repos":[{"slug":"owner/repo","interactive_pr_auto_merge":true}]}' >"$REPOS_JSON"
+	local labels="origin:interactive"
+	local result=0
+	_check_interactive_pr_gates "107" "owner/repo" "$labels" "false" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case 9: repo override opt-in passes" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		print_result "Case 9: repo override opt-in passes" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case 10: environment false overrides repo/global preferences.
+# =============================================================================
+test_case10_env_false_blocks_preferences() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"initialized_repos":[{"slug":"owner/repo","interactive_pr_auto_merge":true}]}' >"$REPOS_JSON"
+	config_get() {
+		local dotpath="$1"
+		local default="${2:-}"
+		if [[ "$dotpath" == "orchestration.interactive_pr_auto_merge" ]]; then
+			printf '%s\n' "true"
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+
+	local labels="origin:interactive"
+	local result=0
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=0 _check_interactive_pr_gates "108" "owner/repo" "$labels" "false" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case 10: env false blocks preferences" 1 \
+			"Expected non-zero exit, got 0"
+	else
+		print_result "Case 10: env false blocks preferences" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case 11: allow-auto-merge label remains PR-specific opt-in.
+# =============================================================================
+test_case11_label_overrides_env_false() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	local labels="origin:interactive,allow-auto-merge"
+	local result=0
+	AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=0 _check_interactive_pr_gates "109" "owner/repo" "$labels" "false" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case 11: allow-auto-merge label opt-in passes even with env false" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		print_result "Case 11: allow-auto-merge label opt-in passes even with env false" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -319,6 +427,10 @@ main() {
 	test_case5_draft_pr_blocked
 	test_case6_allow_auto_merge_opt_in_passes
 	test_case7_env_override_passes
+	test_case8_global_config_passes
+	test_case9_repo_override_passes
+	test_case10_env_false_blocks_preferences
+	test_case11_label_overrides_env_false
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

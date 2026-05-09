@@ -26,6 +26,8 @@ Monitor and iterate on a PR until it is approved or merged.
 
 Each iteration checks: CI Status → Review Bot Gate (t1382) → Review Status → Merge Readiness.
 
+Invocation is explicit finalisation consent. If the target PR is draft and local/session evidence says it is ready for merge preparation, run `gh pr ready <PR>` before merge polling; otherwise report the blocker and leave it draft. For `origin:interactive` PRs, pulse merge throughput still requires `allow-auto-merge` or the configured `interactive_pr_auto_merge` preference.
+
 **On issues:** CI failures → report and wait. Changes requested → verify, address valid feedback. Stale review → auto-trigger re-review (unless `--no-auto-trigger`).
 
 **COMMENTED reviews:** Some bots (e.g., Gemini Code Assist) post as `COMMENTED` not `CHANGES_REQUESTED`, so `reviewDecision` stays `NONE`. The loop detects unresolved review threads and surfaces them.

@@ -1064,10 +1064,8 @@ Thanks for filing this issue. Because it was created by a contributor outside th
 
 This comment is idempotent; the HTML sentinel prevents duplicates on subsequent pulse cycles."
 
-	# Fetch authorAssociation and PR marker (fail-closed: unknown → treat as
-	# external, t2450). GitHub PRs share the Issues API namespace; the labelless
-	# backfill must never bless PRs as origin:worker/tier:standard, because that
-	# makes interactive review PRs eligible for worker takeover/auto-merge.
+	# Fetch authorAssociation and PR marker (fail-closed: unknown → external, t2450).
+	# GitHub PRs share the Issues API namespace; labelless backfill must never bless them as origin:worker/tier:standard.
 	local issue_json assoc is_pull_request
 	issue_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null || echo '{}')
 	is_pull_request=$(printf '%s' "$issue_json" | jq -r 'has("pull_request")' 2>/dev/null || echo "false")

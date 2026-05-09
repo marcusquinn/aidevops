@@ -22,24 +22,33 @@ Decision tree:
 
 `pulse-dirty-pr-sweep.sh` calls this helper before its normal conflict-resolution classifier. Superseded candidates are notified with a human-readable rationale; the helper itself is advisory and never closes a PR.
 
-## t2411 — `origin:interactive` Auto-Merge
+## t2411 / GH#23238 — `origin:interactive` Merge Throughput
 
-`pulse-merge.sh` automatically merges `origin:interactive` PRs from `OWNER`/`MEMBER` authors once ALL criteria hold:
+`origin:interactive` is provenance only: it records that a user-facing session created the PR. It is **not** a workflow instruction and does not, by itself, authorize pulse/workers to throughput the PR to merge.
+
+Interactive PRs default to human-controlled merge. `pulse-merge.sh` only merges an `origin:interactive` PR from an `OWNER`/`MEMBER` author once ALL criteria hold:
 
 1. PR carries the `origin:interactive` label.
 2. PR author has `admin` or `maintain` permission on the repo (OWNER or org MEMBER — write-only COLLABORATORs go through the normal review gate instead).
 3. All required status checks PASS or SKIPPED.
 4. No `CHANGES_REQUESTED` review from a human reviewer.
-5. PR is **not a draft** — convert to ready (`gh pr ready <PR>`) before the pulse picks it up.
+5. PR is **not a draft** — `/pr-loop` or an explicit finalise/ready request may convert it with `gh pr ready <PR>`.
 6. PR does **not** carry the `hold-for-review` label.
+7. Merge throughput is explicitly opted in by one of:
+   - PR label: `allow-auto-merge` (specific PR)
+   - Env: `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1` (current process)
+   - Global config: `orchestration.interactive_pr_auto_merge: true`
+   - Per-repo `~/.config/aidevops/repos.json`: `"interactive_pr_auto_merge": true`
 
-Merge typically happens within one pulse cycle (4-10 minutes) after all checks go green. Review bots (gemini-code-assist, coderabbitai) post within ~1-3 minutes. Audit log line: `[pulse-merge] auto-merged origin:interactive PR #N (author=<login>, role=<role>)`.
+Preference precedence: `hold-for-review` and draft state block first; `allow-auto-merge` is the PR-specific opt-in; an explicit env value overrides repo/global preferences; per-repo `repos.json` overrides global config; global default is `false`.
 
-**To opt out of auto-merge on a specific PR:** apply the `hold-for-review` label. Remove it when ready.
+Merge typically happens within one pulse cycle (4-10 minutes) after all checks go green and the PR is ready/non-draft. Review bots (gemini-code-assist, coderabbitai) post within ~1-3 minutes. Audit log line: `[pulse-merge] auto-merged origin:interactive PR #N (author=<login>, role=<role>)`.
+
+**To keep manual control:** leave the PR as draft, apply `hold-for-review`, or keep `interactive_pr_auto_merge` disabled.
 
 **Folding bot nits into the same PR — options:**
 - `review-bot-gate-helper.sh check <PR>` before pushing — streams current bot feedback.
-- `gh pr create --draft`, wait for reviews to settle, `gh pr ready <PR>` when content is final.
+- `gh pr create --draft`, wait for reviews to settle, then run `/pr-loop` or `gh pr ready <PR>` when content is final.
 - Accept the window and file a follow-up PR for nits.
 
 **Note:** "pulse never auto-closes `origin:interactive` PRs" applies to AUTO-CLOSE (abandoning stale incremental PRs on the same task ID), NOT to auto-merge of green PRs. These are separate pulse actions.

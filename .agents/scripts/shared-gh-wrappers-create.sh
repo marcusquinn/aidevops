@@ -456,6 +456,44 @@ _gh_auto_link_sub_issue() {
 	return 0
 }
 
+#######################################
+# Check if argv already contains a specific flag.
+# Args: $1=flag name, remaining args=argv
+# Returns: 0=present, 1=absent
+#######################################
+_gh_wrapper_args_have_flag() {
+	local needle="$1"
+	shift
+	while [[ $# -gt 0 ]]; do
+		local cur="$1"
+		case "$cur" in
+		"$needle" | "$needle"=*) return 0 ;;
+		esac
+		shift
+	done
+	return 1
+}
+
+#######################################
+# Decide whether gh_create_pr should default the PR to draft.
+# Args: PR create argv
+# Returns: 0=add --draft, 1=leave as caller requested
+#######################################
+_gh_create_pr_should_default_draft() {
+	local origin=""
+	origin=$(detect_session_origin 2>/dev/null) || origin=""
+	if [[ "$origin" != "interactive" ]]; then
+		return 1
+	fi
+	if [[ "${AIDEVOPS_PR_CREATE_READY:-0}" == "1" ]]; then
+		return 1
+	fi
+	if _gh_wrapper_args_have_flag "--draft" "$@"; then
+		return 1
+	fi
+	return 0
+}
+
 gh_create_pr() {
 	gh_record_call graphql gh_create_pr 2>/dev/null || true
 	# GH#19857: validate title/body before creating (same invariant as edit wrappers)
@@ -475,6 +513,10 @@ gh_create_pr() {
 		origin_label=$(session_origin_label)
 		_origin_label_args=(--label "$origin_label")
 	fi
+	local -a _draft_args=()
+	if _gh_create_pr_should_default_draft "$@"; then
+		_draft_args=(--draft)
+	fi
 	_ensure_origin_labels_for_args "$@"
 
 	# t2115: auto-append signature footer when body lacks one
@@ -482,6 +524,9 @@ gh_create_pr() {
 	set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 
 	local -a pr_cmd=(gh pr create "$@")
+	if [[ ${#_draft_args[@]} -gt 0 ]]; then
+		pr_cmd+=("${_draft_args[@]}")
+	fi
 	if [[ ${#_origin_label_args[@]} -gt 0 ]]; then
 		pr_cmd+=("${_origin_label_args[@]}")
 	fi
@@ -491,8 +536,8 @@ gh_create_pr() {
 	rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr create"
-		if [[ ${#_origin_label_args[@]} -gt 0 ]]; then
-			pr_output=$(_rest_pr_create "$@" "${_origin_label_args[@]}")
+		if [[ ${#_origin_label_args[@]} -gt 0 || ${#_draft_args[@]} -gt 0 ]]; then
+			pr_output=$(_rest_pr_create "$@" "${_draft_args[@]}" "${_origin_label_args[@]}")
 		else
 			pr_output=$(_rest_pr_create "$@")
 		fi

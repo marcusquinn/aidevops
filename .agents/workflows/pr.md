@@ -45,7 +45,7 @@ tools:
 /pr review                                          # Current branch's PR
 /pr review 123                                      # By number
 /pr review https://github.com/user/repo/pull/123    # By URL
-/pr create [--draft]                                # Create after checks
+/pr create                                          # Interactive default: draft PR after checks
 ```
 
 ## Creating Pull Requests
@@ -53,12 +53,13 @@ tools:
 ```bash
 # GitHub
 git push -u origin HEAD
-gh pr create --fill                                    # Auto-fill from commits
-gh pr create --title "feat: ..." --body "Resolves #123"  # Custom title/body
-gh pr create --fill --draft                            # Draft PR
+gh pr create --fill --draft                            # Draft PR (interactive default)
+gh pr create --title "feat: ..." --body "Resolves #123" --draft  # Custom draft
 gh pr create --fill --reviewer @username,@team         # With reviewers
 # GitLab: glab mr create --fill  |  Gitea: tea pulls create --title "feat: ..."
 ```
+
+Interactive aidevops PRs default to draft until the user explicitly asks to finalise/ready the PR or invokes `/pr-loop`. To permit pulse merge throughput after finalisation, also opt in with `allow-auto-merge`, `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1`, global `orchestration.interactive_pr_auto_merge=true`, or per-repo `repos.json` `interactive_pr_auto_merge=true`.
 
 ## Merging Pull Requests
 

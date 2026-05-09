@@ -311,6 +311,7 @@ _config_env_map() {
 	updates.upstream_watch) echo "AIDEVOPS_UPSTREAM_WATCH" ;;
 	updates.upstream_watch_hours) echo "AIDEVOPS_UPSTREAM_WATCH_HOURS" ;;
 	orchestration.supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
+	orchestration.interactive_pr_auto_merge) echo "AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE" ;;
 	orchestration.repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
 	orchestration.repo_aidevops_health) echo "AIDEVOPS_REPO_HEALTH" ;;
 	orchestration.max_workers_cap) echo "AIDEVOPS_MAX_WORKERS_CAP" ;;
@@ -383,6 +384,7 @@ _legacy_key_to_dotpath() {
 	manage_opencode_config) echo "integrations.manage_opencode_config" ;;
 	manage_claude_config) echo "integrations.manage_claude_config" ;;
 	supervisor_pulse) echo "orchestration.supervisor_pulse" ;;
+	interactive_pr_auto_merge) echo "orchestration.interactive_pr_auto_merge" ;;
 	repo_sync) echo "orchestration.repo_sync" ;;
 	repo_aidevops_health) echo "orchestration.repo_aidevops_health" ;;
 	session_greeting) echo "ui.session_greeting" ;;
