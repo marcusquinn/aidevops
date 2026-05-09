@@ -84,6 +84,8 @@ fi
 [[ -n "${_PIR_REMOVE_ASSIGNEE_FLAG+x}" ]] || _PIR_REMOVE_ASSIGNEE_FLAG=--remove-assignee
 [[ -n "${_PIR_BOOL_TRUE+x}" ]] || _PIR_BOOL_TRUE=true
 [[ -n "${_PIR_BOOL_FALSE+x}" ]] || _PIR_BOOL_FALSE=false
+[[ -n "${_PIR_AUTO_DISPATCH_LABEL+x}" ]] || _PIR_AUTO_DISPATCH_LABEL="auto-dispatch"
+[[ -n "${_PIR_NMR_LABEL+x}" ]] || _PIR_NMR_LABEL="needs-maintainer-review"
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -386,11 +388,11 @@ _normalize_get_stale_brief_rewrite_rows() {
 	local issue_rows_json="$1"
 
 	printf '%s' "$issue_rows_json" | jq -r \
-		--arg auto_dispatch_label "auto-dispatch" \
+		--arg auto_dispatch_label "$_PIR_AUTO_DISPATCH_LABEL" \
 		--arg origin_worker_label "origin:worker" \
 		--arg ai_approved_label "ai-approved" \
 		--arg brief_label "$_PIR_NEEDS_BRIEF_REWRITE" \
-		--arg nmr_label "needs-maintainer-review" \
+		--arg nmr_label "$_PIR_NMR_LABEL" \
 		--arg queued_label "$_PIR_STATUS_QUEUED" \
 		--arg claimed_label "$_PIR_STATUS_CLAIMED" \
 		--arg progress_label "$_PIR_STATUS_IN_PROGRESS" \
@@ -479,7 +481,7 @@ _normalize_get_feedback_backfill_rows() {
 	printf '%s' "$issue_rows_json" | jq -r \
 		--arg origin_worker_label "origin:worker" \
 		--arg consolidated_label "consolidated" \
-		--arg auto_dispatch_label "auto-dispatch" \
+		--arg auto_dispatch_label "$_PIR_AUTO_DISPATCH_LABEL" \
 		--arg no_auto_label "no-auto-dispatch" \
 		--arg parent_label "parent-task" \
 		--arg ci_label "source:ci-feedback" \
@@ -489,14 +491,18 @@ _normalize_get_feedback_backfill_rows() {
 		--arg done_label "$_PIR_STATUS_DONE" '
 		.[]
 		| (.labels | map(.name)) as $labels
+		| ([$labels[] | select(startswith("status:"))]) as $status_labels
+		| ([$labels[] | select(startswith("tier:"))]) as $tier_labels
 		| select($labels | index($origin_worker_label))
 		| select($labels | index($consolidated_label))
 		| select(($labels | index($ci_label)) or ($labels | index($conflict_label)) or ($labels | index($review_label)))
-		| select(($labels | index($auto_dispatch_label)) == null or ([$labels[] | select(startswith("status:"))] | length) == 0 or ([$labels[] | select(startswith("tier:"))] | length) == 0)
-		| select(($labels | index($no_auto_label)) == null)
-		| select(($labels | index($parent_label)) == null)
-		| select(($labels | index($blocked_label)) == null)
-		| select(($labels | index($done_label)) == null)
+		| select(($labels | index($auto_dispatch_label) | not) or ($status_labels | length) == 0 or ($tier_labels | length) == 0)
+		| select(([$status_labels[] | select(. != "status:available")] | length) == 0)
+		| select(([$tier_labels[] | select(. != "tier:standard")] | length) == 0)
+		| select($labels | index($no_auto_label) | not)
+		| select($labels | index($parent_label) | not)
+		| select($labels | index($blocked_label) | not)
+		| select($labels | index($done_label) | not)
 		| select(([$labels[] | select(startswith("needs-"))] | length) == 0)
 		| select((.assignees | length) == 0)
 		| .number
@@ -521,7 +527,7 @@ _normalize_backfill_feedback_rows() {
 		[[ "$feedback_issue" =~ ^[0-9]+$ ]] || continue
 		if gh issue edit "$feedback_issue" --repo "$slug" \
 			"$_PIR_ADD_LABEL_FLAG" "$_PIR_STATUS_AVAILABLE" \
-			"$_PIR_ADD_LABEL_FLAG" "auto-dispatch" \
+			"$_PIR_ADD_LABEL_FLAG" "$_PIR_AUTO_DISPATCH_LABEL" \
 			"$_PIR_ADD_LABEL_FLAG" "tier:standard" >/dev/null 2>&1; then
 			echo "[pulse-wrapper] Assignment normalization: backfilled dispatch labels on consolidated feedback #${feedback_issue} in ${slug}" >>"$LOGFILE"
 		else
@@ -1088,8 +1094,8 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	local -a add_args
 	local labels_csv_lia comment_template_use
 	if [[ "$is_external" == "$_PIR_BOOL_TRUE" ]]; then
-		add_args=("$_PIR_ADD_LABEL_FLAG" "needs-maintainer-review")
-		labels_csv_lia="needs-maintainer-review"
+		add_args=("$_PIR_ADD_LABEL_FLAG" "$_PIR_NMR_LABEL")
+		labels_csv_lia="$_PIR_NMR_LABEL"
 		comment_template_use="$external_comment_template"
 	else
 		add_args=("$_PIR_ADD_LABEL_FLAG" "origin:worker"
