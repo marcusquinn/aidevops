@@ -729,10 +729,10 @@ line = f"  abort_on_close: {desired}"
 
 if not text.strip():
     text = f"reviews:\n{line}\n"
-elif re.search(r"(?m)^\s*abort_on_close:\s*(true|false)\s*$", text):
-    text = re.sub(r"(?m)^(\s*abort_on_close:\s*)(true|false)(\s*)$", rf"\g<1>{desired}\g<3>", text, count=1)
-elif re.search(r"(?m)^reviews:\s*$", text):
-    text = re.sub(r"(?m)^reviews:\s*$", f"reviews:\n{line}", text, count=1)
+elif re.search(r"(?m)^\s*abort_on_close:", text):
+    text = re.sub(r"(?m)^(\s*abort_on_close:\s*)\S+(.*)$", rf"\g<1>{desired}\g<2>", text, count=1)
+elif re.search(r"(?m)^\s*reviews:", text):
+    text = re.sub(r"(?m)^(\s*reviews:.*)$", rf"\g<1>\n{line}", text, count=1)
 else:
     if not text.endswith("\n"):
         text += "\n"
