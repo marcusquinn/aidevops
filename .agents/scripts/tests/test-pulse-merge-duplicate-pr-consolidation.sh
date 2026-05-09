@@ -57,6 +57,7 @@ define_functions_under_test() {
 	fn_src=$(awk '
 		/^_pmp_pr_label_csv\(\) \{/,/^}$/ { print }
 		/^_pmp_pr_is_worker_owned_for_consolidation\(\) \{/,/^}$/ { print }
+		/^_pmp_normalize_mergeable_for_consolidation_into\(\) \{/,/^}$/ { print }
 		/^_pmp_issue_blocks_pr_consolidation\(\) \{/,/^}$/ { print }
 		/^_pmp_pr_consolidation_health_score\(\) \{/,/^}$/ { print }
 		/^_pmp_close_superseded_sibling_pr\(\) \{/,/^}$/ { print }
@@ -176,9 +177,10 @@ test_healthiest_candidate_beats_newer_unhealthy_pr() {
 
 test_health_score_handles_precomputed_legacy_mergeable_values() {
 	reset_case
-	local lowercase_score="" true_score=""
+	local lowercase_score="" true_score="" false_score=""
 	lowercase_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "501" "mergeable" "NONE" "false") || lowercase_score="0"
 	true_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "502" "true" "NONE" "false") || true_score="0"
+	false_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "503" "false" "NONE" "false") || false_score="0"
 	if [[ "$lowercase_score" -eq 250 ]]; then
 		pass "lowercase mergeable keeps healthy score"
 	else
@@ -188,6 +190,35 @@ test_health_score_handles_precomputed_legacy_mergeable_values() {
 		pass "boolean-string mergeable keeps healthy score"
 	else
 		fail "boolean-string mergeable keeps healthy score" "Expected 250, got ${true_score}"
+	fi
+	if [[ "$false_score" -eq 50 ]]; then
+		pass "boolean-string conflicting value does not get mergeable score"
+	else
+		fail "boolean-string conflicting value does not get mergeable score" "Expected 50, got ${false_score}"
+	fi
+	return 0
+}
+
+test_health_score_uses_shared_mergeable_normalizer_when_available() {
+	reset_case
+	_pmp_normalize_mergeable_state_into() {
+		local dest_var="$1"
+		local raw_state="$2"
+		[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+		if [[ "$raw_state" == "custom-ready" ]]; then
+			printf -v "$dest_var" '%s' "MERGEABLE"
+		else
+			printf -v "$dest_var" '%s' "UNKNOWN"
+		fi
+		return 0
+	}
+	local shared_score=""
+	shared_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "504" "custom-ready" "NONE" "false") || shared_score="0"
+	unset -f _pmp_normalize_mergeable_state_into
+	if [[ "$shared_score" -eq 250 ]]; then
+		pass "shared mergeable normalizer is authoritative when available"
+	else
+		fail "shared mergeable normalizer is authoritative when available" "Expected 250, got ${shared_score}"
 	fi
 	return 0
 }
@@ -230,6 +261,7 @@ main() {
 	test_duplicate_group_closes_older_sibling
 	test_healthiest_candidate_beats_newer_unhealthy_pr
 	test_health_score_handles_precomputed_legacy_mergeable_values
+	test_health_score_uses_shared_mergeable_normalizer_when_available
 	test_noop_for_untrusted_gated_or_unverified_groups
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
