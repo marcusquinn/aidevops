@@ -313,29 +313,32 @@ _generate_session_time_vars() {
 	day_human=$(_format_hours "$(echo "$day_json" | jq -r '(.interactive_human_hours // 0)')")
 	day_worker=$(_format_hours "$(echo "$day_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	day_total=$(_format_hours "$(echo "$day_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
-	day_interactive=$(_format_number "$(echo "$day_json" | jq -r '(.interactive_sessions // 0)')")
-	day_workers=$(_format_number "$(echo "$day_json" | jq -r '(.worker_sessions // 0)')")
+	# Keep counts raw here; _generate_work_with_ai_table formats them once.
+	# Pre-formatting creates comma strings that _format_number later rejects as
+	# non-numeric, turning 1,000+ session counts into 0.
+	day_interactive=$(echo "$day_json" | jq -r '(.interactive_sessions // 0)')
+	day_workers=$(echo "$day_json" | jq -r '(.worker_sessions // 0)')
 
 	local week_human week_worker week_total week_interactive week_workers
 	week_human=$(_format_hours "$(echo "$week_json" | jq -r '(.interactive_human_hours // 0)')")
 	week_worker=$(_format_hours "$(echo "$week_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	week_total=$(_format_hours "$(echo "$week_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
-	week_interactive=$(_format_number "$(echo "$week_json" | jq -r '(.interactive_sessions // 0)')")
-	week_workers=$(_format_number "$(echo "$week_json" | jq -r '(.worker_sessions // 0)')")
+	week_interactive=$(echo "$week_json" | jq -r '(.interactive_sessions // 0)')
+	week_workers=$(echo "$week_json" | jq -r '(.worker_sessions // 0)')
 
 	local month_human month_worker month_total month_interactive month_workers
 	month_human=$(_format_hours "$(echo "$month_json" | jq -r '(.interactive_human_hours // 0)')")
 	month_worker=$(_format_hours "$(echo "$month_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	month_total=$(_format_hours "$(echo "$month_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
-	month_interactive=$(_format_number "$(echo "$month_json" | jq -r '(.interactive_sessions // 0)')")
-	month_workers=$(_format_number "$(echo "$month_json" | jq -r '(.worker_sessions // 0)')")
+	month_interactive=$(echo "$month_json" | jq -r '(.interactive_sessions // 0)')
+	month_workers=$(echo "$month_json" | jq -r '(.worker_sessions // 0)')
 
 	local year_human year_worker year_total year_interactive year_workers
 	year_human=$(_format_hours "$(echo "$year_json" | jq -r '(.interactive_human_hours // 0)')")
 	year_worker=$(_format_hours "$(echo "$year_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	year_total=$(_format_hours "$(echo "$year_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
-	year_interactive=$(_format_number "$(echo "$year_json" | jq -r '(.interactive_sessions // 0)')")
-	year_workers=$(_format_number "$(echo "$year_json" | jq -r '(.worker_sessions // 0)')")
+	year_interactive=$(echo "$year_json" | jq -r '(.interactive_sessions // 0)')
+	year_workers=$(echo "$year_json" | jq -r '(.worker_sessions // 0)')
 
 	# Emit as shell variable assignments for eval
 	printf 'day_human=%q day_worker=%q day_total=%q day_interactive=%q day_workers=%q\n' \

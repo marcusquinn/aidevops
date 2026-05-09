@@ -636,6 +636,45 @@ test_session_time_vars_default_missing_null_values() {
 	return 0
 }
 
+test_work_with_ai_worker_counts_above_thousand() {
+	local test_name="work with AI worker counts above one thousand render"
+
+	TEST_DIR=$(mktemp -d)
+	mkdir -p "${TEST_DIR}/home"
+
+	# shellcheck source=../profile-readme-data-lib.sh
+	source "${SOURCE_DATA_LIB}"
+	# shellcheck source=../profile-readme-render-lib.sh
+	source "${SOURCE_RENDER_LIB}"
+
+	local screen_json day_json week_json month_json year_json output_file
+	screen_json='{"today_hours":1,"week_hours":2,"month_hours":3,"year_hours":4}'
+	day_json='{"interactive_human_hours":1,"worker_human_hours":2,"worker_machine_hours":3,"total_human_hours":4,"total_machine_hours":5,"interactive_sessions":22,"worker_sessions":55}'
+	week_json='{"interactive_human_hours":10,"worker_human_hours":20,"worker_machine_hours":30,"total_human_hours":40,"total_machine_hours":50,"interactive_sessions":183,"worker_sessions":1080}'
+	month_json='{"interactive_human_hours":100,"worker_human_hours":200,"worker_machine_hours":300,"total_human_hours":400,"total_machine_hours":500,"interactive_sessions":497,"worker_sessions":1518}'
+	year_json="${month_json}"
+	output_file="${TEST_DIR}/work-with-ai.md"
+
+	if ! HOME="${TEST_DIR}/home" _generate_work_with_ai_table \
+		"${screen_json}" "${day_json}" "${week_json}" "${month_json}" "${year_json}" >"${output_file}"; then
+		print_result "${test_name}" 1 "Work with AI table generation failed"
+		return 0
+	fi
+
+	if ! grep -qF '| Worker sessions | 55 | 1,080 | 1,518 | 1,518 |' "${output_file}"; then
+		print_result "${test_name}" 1 "four-digit worker session counts were not preserved and comma-formatted"
+		return 0
+	fi
+
+	if grep -qF '| Worker sessions | 55 | 0 | 0 | 0 |' "${output_file}"; then
+		print_result "${test_name}" 1 "worker session counts regressed to zero after double-formatting"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 main() {
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
@@ -653,6 +692,8 @@ main() {
 	test_default_template_with_existing_markers_replaced
 	teardown
 	test_session_time_vars_default_missing_null_values
+	teardown
+	test_work_with_ai_worker_counts_above_thousand
 	teardown
 
 	echo ""
