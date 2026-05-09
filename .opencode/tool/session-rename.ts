@@ -1,7 +1,7 @@
-import { tool } from "@opencode-ai/plugin"
 import { Database } from "bun:sqlite"
-import { homedir } from "os"
-import { join } from "path"
+import { homedir } from "node:os"
+import { join } from "node:path"
+import { tool } from "@opencode-ai/plugin"
 import { isDefaultBranchTitle, isTitleOverwritable } from "../lib/session-rename-guards"
 import { emitTerminalTitle } from "../lib/terminal-title"
 

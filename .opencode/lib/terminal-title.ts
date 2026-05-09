@@ -27,7 +27,24 @@ export function isTerminalTitleEnabled(env: TerminalTitleEnv = process.env): boo
  * extra terminal control sequences into the OSC payload.
  */
 export function sanitizeTerminalTitle(title: string): string {
-  return title.replace(/[\u0000-\u001F\u007F]/g, " ").trim()
+  let sanitizedTitle = ""
+  let previousWasControl = false
+
+  for (const character of title) {
+    const codePoint = character.charCodeAt(0)
+    if (codePoint <= 31 || codePoint === 127) {
+      if (!previousWasControl) {
+        sanitizedTitle += " "
+      }
+      previousWasControl = true
+      continue
+    }
+
+    sanitizedTitle += character
+    previousWasControl = false
+  }
+
+  return sanitizedTitle.trim()
 }
 
 /**
@@ -44,7 +61,8 @@ export function terminalTitleSequence(title: string): string {
 /**
  * Best-effort terminal title update. Prefer /dev/tty so the sequence reaches
  * the controlling terminal even if a tool framework captures stdout; fall back
- * to stdout for runtimes where /dev/tty is unavailable.
+ * to stderr for runtimes where /dev/tty is unavailable so tool return payloads
+ * are not polluted with terminal control sequences.
  */
 export function emitTerminalTitle(title: string): boolean {
   if (!isTerminalTitleEnabled()) {
@@ -66,7 +84,7 @@ export function emitTerminalTitle(title: string): boolean {
     }
   } catch {
     try {
-      return process.stdout.write(sequence)
+      return process.stderr.write(sequence)
     } catch {
       return false
     }

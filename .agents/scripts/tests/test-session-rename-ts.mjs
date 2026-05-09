@@ -129,7 +129,7 @@ assertEq(
 );
 assertEq(
   "control characters are stripped from titles",
-  "Issue #123  injected title",
+  "Issue #123 injected title",
   sanitizeTerminalTitle("Issue #123\u0007\u001Binjected\ntitle"),
 );
 assertEq("empty sanitized title emits no OSC", "", terminalTitleSequence("\n\t"));
