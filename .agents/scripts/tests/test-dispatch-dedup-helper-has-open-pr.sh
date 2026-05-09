@@ -410,6 +410,23 @@ test_has_open_pr_allows_when_no_healthy_sibling() {
 	return 0
 }
 
+test_has_open_pr_ignores_embedded_bare_sibling_reference() {
+	# Check 0 must require a leading boundary for every issue-reference
+	# alternative, including bare GH#N/#N forms. Without that boundary, an
+	# approved sibling whose title or body embeds "#23254" inside another token
+	# would incorrectly block redispatch.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23254|[{"number":23294,"title":"Release v1.0#23254 metadata","body":"Changelog token build#23254 only; no issue reference.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}]'
+
+	if "$HELPER_SCRIPT" has-open-pr 23254 marcusquinn/aidevops 't3504: embedded sibling ref guard'; then
+		print_result "has-open-pr ignores embedded bare sibling reference" 1 \
+			"Expected exit 1: embedded #23254 must not block redispatch without a leading boundary"
+		return 0
+	fi
+
+	print_result "has-open-pr ignores embedded bare sibling reference" 0
+	return 0
+}
+
 # Existing collision case (GH#18041 / t1957) must still allow dispatch:
 # different task used the same ID, merged PR closes some unrelated issue.
 test_has_open_pr_allows_dispatch_on_task_id_collision() {
@@ -444,6 +461,7 @@ main() {
 	test_has_open_pr_blocks_refs_colon_healthy_sibling
 	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling
+	test_has_open_pr_ignores_embedded_bare_sibling_reference
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

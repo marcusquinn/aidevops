@@ -35,7 +35,7 @@ _has_open_pr_check_healthy_sibling() {
 		--json number,title,body,isDraft,reviewDecision,mergeStateStatus 2>/dev/null) || pr_json="[]"
 
 	local issue_ref_pattern healthy_state_pattern
-	issue_ref_pattern="(([^[:alnum:]_]|^)(close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$))|(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$"
 
 	match_pr=$(printf '%s' "$pr_json" | jq -r \
