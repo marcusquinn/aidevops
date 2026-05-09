@@ -86,6 +86,7 @@ fi
 [[ -n "${_PIR_BOOL_FALSE+x}" ]] || _PIR_BOOL_FALSE=false
 [[ -n "${_PIR_AUTO_DISPATCH_LABEL+x}" ]] || _PIR_AUTO_DISPATCH_LABEL="auto-dispatch"
 [[ -n "${_PIR_NMR_LABEL+x}" ]] || _PIR_NMR_LABEL="needs-maintainer-review"
+[[ -n "${_PIR_TIER_STANDARD+x}" ]] || _PIR_TIER_STANDARD="tier:standard"
 
 #######################################
 # t2773: Read cached open issue list for a slug from PULSE_PREFETCH_CACHE_FILE.
@@ -482,6 +483,8 @@ _normalize_get_feedback_backfill_rows() {
 		--arg origin_worker_label "origin:worker" \
 		--arg consolidated_label "consolidated" \
 		--arg auto_dispatch_label "$_PIR_AUTO_DISPATCH_LABEL" \
+		--arg status_available_label "$_PIR_STATUS_AVAILABLE" \
+		--arg tier_standard_label "$_PIR_TIER_STANDARD" \
 		--arg no_auto_label "no-auto-dispatch" \
 		--arg parent_label "parent-task" \
 		--arg ci_label "source:ci-feedback" \
@@ -490,15 +493,15 @@ _normalize_get_feedback_backfill_rows() {
 		--arg blocked_label "$_PIR_STATUS_BLOCKED" \
 		--arg done_label "$_PIR_STATUS_DONE" '
 		.[]
-		| (.labels | map(.name)) as $labels
+		| ((.labels // []) | map(.name)) as $labels
 		| ([$labels[] | select(startswith("status:"))]) as $status_labels
 		| ([$labels[] | select(startswith("tier:"))]) as $tier_labels
 		| select($labels | index($origin_worker_label))
 		| select($labels | index($consolidated_label))
 		| select(($labels | index($ci_label)) or ($labels | index($conflict_label)) or ($labels | index($review_label)))
 		| select(($labels | index($auto_dispatch_label) | not) or ($status_labels | length) == 0 or ($tier_labels | length) == 0)
-		| select(([$status_labels[] | select(. != "status:available")] | length) == 0)
-		| select(([$tier_labels[] | select(. != "tier:standard")] | length) == 0)
+		| select(all($status_labels[]; . == $status_available_label))
+		| select(all($tier_labels[]; . == $tier_standard_label))
 		| select($labels | index($no_auto_label) | not)
 		| select($labels | index($parent_label) | not)
 		| select($labels | index($blocked_label) | not)
@@ -528,7 +531,7 @@ _normalize_backfill_feedback_rows() {
 		if gh issue edit "$feedback_issue" --repo "$slug" \
 			"$_PIR_ADD_LABEL_FLAG" "$_PIR_STATUS_AVAILABLE" \
 			"$_PIR_ADD_LABEL_FLAG" "$_PIR_AUTO_DISPATCH_LABEL" \
-			"$_PIR_ADD_LABEL_FLAG" "tier:standard" >/dev/null 2>&1; then
+			"$_PIR_ADD_LABEL_FLAG" "$_PIR_TIER_STANDARD" >/dev/null; then
 			echo "[pulse-wrapper] Assignment normalization: backfilled dispatch labels on consolidated feedback #${feedback_issue} in ${slug}" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Assignment normalization: skipped consolidated feedback #${feedback_issue} in ${slug} — failed to backfill dispatch labels" >>"$LOGFILE"
@@ -1101,8 +1104,8 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 		add_args=("$_PIR_ADD_LABEL_FLAG" "origin:worker"
 			"$_PIR_REMOVE_LABEL_FLAG" "origin:interactive"
 			"$_PIR_REMOVE_LABEL_FLAG" "origin:worker-takeover"
-			"$_PIR_ADD_LABEL_FLAG" "tier:standard")
-		labels_csv_lia="origin:worker,tier:standard"
+			"$_PIR_ADD_LABEL_FLAG" "$_PIR_TIER_STANDARD")
+		labels_csv_lia="origin:worker,$_PIR_TIER_STANDARD"
 		comment_template_use="$comment_template"
 	fi
 	if [[ -n "$body_tags" ]]; then
