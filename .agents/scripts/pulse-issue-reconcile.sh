@@ -1059,7 +1059,7 @@ This comment is idempotent; the HTML sentinel prevents duplicates on subsequent 
 	# external, t2450). GitHub PRs share the Issues API namespace; the labelless
 	# backfill must never bless PRs as origin:worker/tier:standard, because that
 	# makes interactive review PRs eligible for worker takeover/auto-merge.
-	local issue_json assoc is_pull_request
+	local issue_json="" assoc="" is_pull_request=""
 	issue_json=$(gh api "repos/${slug}/issues/${issue_num}" 2>/dev/null || echo '{}')
 	is_pull_request=$(printf '%s' "$issue_json" | jq -r 'has("pull_request")' 2>/dev/null || echo "false")
 	if [[ "$is_pull_request" == "true" ]]; then
