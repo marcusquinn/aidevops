@@ -113,6 +113,25 @@ Stuck-worker thresholds (informational):
 
 The helper exposes data for course-correction; it does not kill the session.
 
+### 4. Output sandbox (noisy command evidence)
+
+`output-sandbox-helper.sh` stores noisy raw command output in
+`~/.aidevops/.agent-workspace/output-sandbox/` with a SQLite index and WAL mode.
+The assistant receives a compact receipt instead of full logs: output ID, exit
+code, byte/line counts, raw path, and a bounded summary. Exact evidence remains
+retrievable with `output-sandbox-helper.sh show OUTPUT_ID --offset N --limit N`.
+
+Use it for repeatable noisy flows such as diagnostics, CI logs, worker output,
+and browser/tool logs. Do not use it for file reads, JSON assertions, security
+scans, exact diffs, or credential-sensitive commands where verbatim output must
+stay directly visible or be handled by a dedicated redaction path. The helper
+also bypasses common exact-output commands and redacts simple secret patterns
+before storage.
+
+Maintenance: `output-sandbox-helper.sh cleanup --max-age-days 14` removes old
+raw files, deletes matching SQLite rows, and runs `VACUUM` to keep the local
+store bounded.
+
 ## Known limitation: `run` mode does not emit per-tool OTEL spans (t2187)
 
 **Verified against:** opencode v1.4.11 (Bun-compiled), Jaeger all-in-one,

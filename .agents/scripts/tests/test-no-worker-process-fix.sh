@@ -38,6 +38,8 @@ AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 PULSE_CLEANUP="${AGENT_SCRIPT_DIR}/pulse-cleanup.sh"
 WORKER_LAUNCH="${AGENT_SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 HEADLESS_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-lib.sh"
+PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
+WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -459,9 +461,9 @@ test_negative_cache_behavioural() {
 }
 
 # ---------------------------------------------------------------------------
-# t3210: System overload pre-check — distinct failure class with longer TTL.
-# Without this, overloaded systems trigger the canary timeout cycle that
-# trips the supervisor circuit breaker (GH#21919, GH#21556, GH#4360, ...).
+# t3210/t3558: System overload compatibility — load/CPU remains advisory-only.
+# The env knobs remain for compatibility, but the canary must not gate dispatch
+# on synthetic CPU/load overload signals.
 # ---------------------------------------------------------------------------
 
 test_overload_constants_present() {
@@ -477,48 +479,48 @@ test_overload_constants_present() {
 
 test_overload_helper_present() {
 	if grep -q '^_check_system_overload()' "$HEADLESS_LIB" \
-		&& grep -q 'system overloaded' "$HEADLESS_LIB"; then
-		print_result "t3210: _check_system_overload helper defined" 0
+		&& grep -q 'CPU/load/saturation must never gate dispatch' "$HEADLESS_LIB"; then
+		print_result "t3558: _check_system_overload compatibility stub defined" 0
 		return 0
 	fi
-	print_result "t3210: _check_system_overload helper defined" 1 \
-		"Expected _check_system_overload function + 'system overloaded' message in $HEADLESS_LIB"
+	print_result "t3558: _check_system_overload compatibility stub defined" 1 \
+		"Expected _check_system_overload compatibility stub in $HEADLESS_LIB"
 	return 0
 }
 
 test_overload_check_wired_into_canary() {
-	# Pre-canary check must run before binary validation and stamp
-	# overload reason on rc=1.
+	# t3558: overload/load checks must not run before binary validation or stamp
+	# overload negative-cache reasons. Runtime/model health is still checked below.
 	local lib_text
 	lib_text=$(cat "$HEADLESS_LIB")
 	# shellcheck disable=SC2016  # matching literal source text
-	if [[ "$lib_text" == *'_check_system_overload'* ]] \
-		&& [[ "$lib_text" == *"printf 'overload"* ]]; then
-		print_result "t3210: overload check wired into _run_canary_test" 0
+	if [[ "$lib_text" == *'no CPU/load/saturation preflight'* ]] \
+		&& [[ "$lib_text" != *"printf 'overload"* ]]; then
+		print_result "t3558: overload check is not wired into _run_canary_test" 0
 		return 0
 	fi
-	print_result "t3210: overload check wired into _run_canary_test" 1 \
-		"Expected _check_system_overload call + overload reason write in $HEADLESS_LIB"
+	print_result "t3558: overload check is not wired into _run_canary_test" 1 \
+		"Expected no overload negative-cache write in $HEADLESS_LIB"
 	return 0
 }
 
 test_overload_ttl_in_case_selector() {
-	# The TTL selector must handle the new overload reason via a case
-	# branch, not the old if/else.
+	# t3558: overload is no longer a distinct TTL class; keep config_error only.
 	local lib_text
 	lib_text=$(cat "$HEADLESS_LIB")
 	# shellcheck disable=SC2016  # matching literal source text
-	if [[ "$lib_text" == *'overload) active_ttl="$CANARY_OVERLOAD_TTL_SECONDS"'* ]]; then
-		print_result "t3210: TTL case selector includes overload branch" 0
+	if [[ "$lib_text" == *'config_error) active_ttl="$CANARY_CONFIG_ERROR_TTL_SECONDS"'* ]] \
+		&& [[ "$lib_text" != *'overload) active_ttl="$CANARY_OVERLOAD_TTL_SECONDS"'* ]]; then
+		print_result "t3558: TTL case selector excludes overload branch" 0
 		return 0
 	fi
-	print_result "t3210: TTL case selector includes overload branch" 1 \
-		"Expected 'overload) active_ttl=\"\$CANARY_OVERLOAD_TTL_SECONDS\"' in $HEADLESS_LIB"
+	print_result "t3558: TTL case selector excludes overload branch" 1 \
+		"Expected config_error TTL branch and no overload TTL branch in $HEADLESS_LIB"
 	return 0
 }
 
-# Behavioural: extract the helper and verify it returns 1 on synthetic
-# overload (very low multiplier) and 0 when guarded against (very high).
+# Behavioural: extract the compatibility helper and verify it returns 0 even
+# when legacy overload multiplier env vars request synthetic blocking.
 test_overload_helper_behavioural() {
 	local sandbox helper_extract
 	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-t3210-test.XXXXXX")
@@ -557,11 +559,11 @@ test_overload_helper_behavioural() {
 			"Expected rc=0, got '$rc_high'"
 	fi
 
-	if [[ "$rc_low" == "1" ]]; then
-		print_result "t3210: low multiplier (0.0001) — helper returns 1 (skip canary)" 0
+	if [[ "$rc_low" == "0" ]]; then
+		print_result "t3558: low multiplier (0.0001) — helper returns 0 (proceed)" 0
 	else
-		print_result "t3210: low multiplier (0.0001) — helper returns 1 (skip canary)" 1 \
-			"Expected rc=1, got '$rc_low'"
+		print_result "t3558: low multiplier (0.0001) — helper returns 0 (proceed)" 1 \
+			"Expected rc=0, got '$rc_low'"
 	fi
 
 	return 0
@@ -578,15 +580,71 @@ test_failure_classification_distinct() {
 	# argument distinct from generic worker-failure paths. Specifically:
 	# - "no_worker_process" — never spawned (infra)
 	# - "cli_usage_output" — spawned but invoked wrong (config bug)
+	# - "worker_worktree_live_owner" — exited during prelaunch ownership guard
 	# These are wired in pulse-dispatch-engine.sh check_worker_launch.
-	local engine="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
-	if grep -q '"no_worker_process"' "$engine" \
-		&& grep -q '"cli_usage_output"' "$engine"; then
+	if grep -q '"no_worker_process"' "$PULSE_ENGINE" \
+		&& grep -q '"cli_usage_output"' "$PULSE_ENGINE" \
+		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE"; then
 		print_result "invariant: launch failures classified distinctly (no_worker_process vs cli_usage_output)" 0
 		return 0
 	fi
 	print_result "invariant: launch failures classified distinctly (no_worker_process vs cli_usage_output)" 1 \
-		"Expected both 'no_worker_process' and 'cli_usage_output' classifications in $engine"
+		"Expected 'no_worker_process', 'cli_usage_output', and 'worker_worktree_live_owner' classifications in $PULSE_ENGINE"
+	return 0
+}
+
+test_worker_worktree_live_owner_skips_fast_fail_state() {
+	if grep -q 'worker_worktree_live_owner' "$WORKER_LIFECYCLE"; then
+		print_result "invariant: worker_worktree_live_owner is treated as prelaunch control failure" 0
+		return 0
+	fi
+	print_result "invariant: worker_worktree_live_owner is treated as prelaunch control failure" 1 \
+		"Expected worker_worktree_live_owner in _worker_failure_reason_is_launch_preflight"
+	return 0
+}
+
+test_prelaunch_reason_parser_behavioural() {
+	local sandbox helper_extract log_file reason
+	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-prelaunch-reason-test.XXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm -rf '$sandbox' 2>/dev/null || true" RETURN
+	helper_extract="${sandbox}/helper.sh"
+	log_file="${sandbox}/worker.log"
+
+	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
+	printf '[exit-trap] using prelaunch failure reason: worker_worktree_live_owner\n' >"$log_file"
+	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+
+	if [[ "$reason" == "worker_worktree_live_owner" ]]; then
+		print_result "invariant: worker log prelaunch reason parser preserves live-owner reason" 0
+		return 0
+	fi
+	print_result "invariant: worker log prelaunch reason parser preserves live-owner reason" 1 \
+		"Expected worker_worktree_live_owner, got '${reason:-<empty>}'"
+	return 0
+}
+
+test_prelaunch_reason_parser_preserves_explicit_reason() {
+	local sandbox helper_extract log_file reason
+	sandbox=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-prelaunch-reason-priority-test.XXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm -rf '$sandbox' 2>/dev/null || true" RETURN
+	helper_extract="${sandbox}/helper.sh"
+	log_file="${sandbox}/worker.log"
+
+	awk '/^_pulse_worker_log_prelaunch_failure_reason\(\) \{/,/^\}/' "$PULSE_ENGINE" >"$helper_extract"
+	{
+		printf '[exit-trap] using prelaunch failure reason: worker_worktree_live_owner\n'
+		printf '[exit-trap] session=abc reason=no_worker_process status=1\n'
+	} >"$log_file"
+	reason=$(bash -c "source '$helper_extract'; _pulse_worker_log_prelaunch_failure_reason '$log_file'" 2>/dev/null)
+
+	if [[ "$reason" == "worker_worktree_live_owner" ]]; then
+		print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 0
+		return 0
+	fi
+	print_result "invariant: explicit prelaunch reason is not overwritten by generic session reason" 1 \
+		"Expected worker_worktree_live_owner, got '${reason:-<empty>}'"
 	return 0
 }
 
@@ -597,7 +655,7 @@ test_failure_classification_distinct() {
 main_test() {
 	# Verify the target files exist before running tests
 	local f
-	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB"; do
+	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB" "$PULSE_ENGINE" "$WORKER_LIFECYCLE"; do
 		if [[ ! -f "$f" ]]; then
 			printf 'FATAL: target file missing: %s\n' "$f" >&2
 			return 2
@@ -634,6 +692,9 @@ main_test() {
 
 	# Cross-cutting invariant
 	test_failure_classification_distinct
+	test_worker_worktree_live_owner_skips_fast_fail_state
+	test_prelaunch_reason_parser_behavioural
+	test_prelaunch_reason_parser_preserves_explicit_reason
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

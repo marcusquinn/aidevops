@@ -17,8 +17,12 @@
 #        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
-#      read-only merge gates (required checks, worker PR with no linked issue).
-#   8. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
+#      read-only merge gates (required checks, worker PR with no linked issue,
+#      non-collaborator author without maintainer crypto-approval, and unknown
+#      authors that must not bypass the collaborator check) and keeps processing
+#      when GitHub returns a null PR author for deleted users.
+#   8. _detect_pattern_outage de-duplicates repeated PR observations.
+#   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
 # The test never makes real network calls; functions that require gh API
 # (_classify_stuck_pr, _escalate_individual_stuck_pr, full pulse_merge_stuck_run_pass)
@@ -234,6 +238,27 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Section 5: zero_progress_record transitions ---"
 
+GH_CALLS="$TEST_TMPDIR/gh-calls.log"
+: >"$GH_CALLS"
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+export GH_CALLS PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE
+
+gh() {
+	local command_name="$1"
+	local subcommand="$2"
+	if [[ "$command_name" == "issue" && "$subcommand" == "list" ]]; then
+		if [[ -n "${PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE:-}" ]]; then
+			printf '%s\n' "$PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE"
+		fi
+		return 0
+	fi
+	if [[ "$command_name" == "issue" && ( "$subcommand" == "comment" || "$subcommand" == "close" ) ]]; then
+		printf '%s\n' "gh $*" >>"$GH_CALLS"
+		return 0
+	fi
+	return 1
+}
+
 # Reset gauge for a clean state.
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 
@@ -261,9 +286,19 @@ got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5d: second consecutive zero-progress → 1→2" "2" "$got"
 
 # 5e: a successful merge then resets the streak to 0.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23035"
 pulse_merge_zero_progress_record 4 1 >/dev/null 2>&1
 got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5e: merge during stuck-streak resets cycles to 0" "0" "$got"
+if grep -q 'gh issue close 23035 --repo marcusquinn/aidevops --reason completed' "$GH_CALLS"; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5f: recovered zero-progress meta-issue is auto-closed"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5f: recovered zero-progress meta-issue is auto-closed"
+	echo "  gh calls: $(cat "$GH_CALLS")"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -276,12 +311,16 @@ gh() {
 	local subcommand="${2:-}"
 	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
 		printf '%s\n' '[
-{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[]},
-{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
-{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}]},
-{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}]},
-{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[]},
-{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[]}
+{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
+{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
+{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}],"author":{"login":"trusted"}},
+{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"}},
+{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null},
+{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"}}
 ]'
 		return 0
 	fi
@@ -308,14 +347,113 @@ _extract_linked_issue() {
 	esac
 }
 
+_is_collaborator_author() {
+	local pr_author="$1"
+	local repo_slug="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	if [[ "$pr_author" == "trusted" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_has_maintainer_crypto_approval() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	[[ -n "$pr_number" && -n "$repo_slug" ]] || return 1
+	return 1
+}
+
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
-assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "1" "$got"
+assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "2" "$got"
+
+PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"
+: >"$PMS_TEST_COUNT_AUTHORS_FILE"
+_pms_pr_counts_for_zero_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local labels_str="$3"
+	local pr_author="$4"
+	: "$labels_str"
+	[[ -n "$repo_slug" && -n "$pr_number" ]] || return 1
+	printf '%s:%s\n' "$pr_number" "$pr_author" >>"$PMS_TEST_COUNT_AUTHORS_FILE"
+	return 0
+}
+
+gh() {
+	local command_name="${1:-}"
+	local subcommand="${2:-}"
+	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
+		printf '%s\n' '[
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null}
+]'
+		return 0
+	fi
+	return 1
+}
+
+got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
+count_authors=$(<"$PMS_TEST_COUNT_AUTHORS_FILE")
+assert_eq "6b: null author does not abort zero-progress candidate parsing" "1" "$got"
+assert_eq "6c: null author falls back to unknown" "109:unknown" "$count_authors"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 7: shellcheck cleanliness.
+# Section 7: pattern outage deduplication.
 # ---------------------------------------------------------------------------
-echo "--- Section 7: shellcheck ---"
+echo "--- Section 7: pattern outage deduplication ---"
+
+_pms_failure_fingerprint() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$pr_number" in
+	11 | 12) printf 'E2E Shard 1/4,E2E Shard 2/4' ;;
+	*) printf '' ;;
+	esac
+	return 0
+}
+
+PMS_TEST_OUTAGE_ARGS=""
+_pms_file_outage_issue() {
+	local repo_slug="$1"
+	local count="$2"
+	local fingerprint="$3"
+	local prs="$4"
+	PMS_TEST_OUTAGE_ARGS="${repo_slug}|${count}|${fingerprint}|${prs}"
+	return 0
+}
+
+AIDEVOPS_MERGE_PATTERN_MIN_PRS=2
+_detect_pattern_outage "example/repo" $'11\n11\n12\n'
+assert_eq "7a: duplicate PR observations counted once" \
+	"example/repo|2|E2E Shard 1/4,E2E Shard 2/4|11,12" \
+	"$PMS_TEST_OUTAGE_ARGS"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 8: default branch guidance.
+# ---------------------------------------------------------------------------
+echo "--- Section 8: default branch guidance ---"
+
+gh() {
+	local command_name="${1:-}"
+	local path_arg="${2:-}"
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo" ]]; then
+		printf 'develop'
+		return 0
+	fi
+	return 1
+}
+
+got=$(_pms_default_branch "example/repo")
+assert_eq "8a: default branch resolves from repo API" "develop" "$got"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 9: shellcheck cleanliness.
+# ---------------------------------------------------------------------------
+echo "--- Section 9: shellcheck ---"
 
 run_shellcheck() {
 	local label="$1" file="$2"
@@ -337,8 +475,8 @@ run_shellcheck() {
 	return 0
 }
 
-run_shellcheck "7a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
-run_shellcheck "7b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
+run_shellcheck "9a: pulse-merge-stuck.sh passes shellcheck" "$MODULE"
+run_shellcheck "9b: pulse-stats-helper.sh passes shellcheck" "$STATS_HELPER"
 echo ""
 
 # ---------------------------------------------------------------------------

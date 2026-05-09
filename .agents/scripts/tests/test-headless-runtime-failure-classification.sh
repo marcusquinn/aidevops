@@ -79,18 +79,28 @@ echo "${TEST_BLUE}=== headless runtime failure classification tests ===${TEST_NC
 check_classification \
 	"openai_rate_limit" \
 	'{"provider":"openai","error":{"type":"rate_limit","message":"Too many requests"},"status":429}' \
-	"rate_limit" "rate_limit" "429" "" "output_pattern"
+	"rate_limit" "rate_limit" "429" "" "trusted_provider"
+
+check_classification \
+	"untrusted_tool_output_mentions_rate_limit" \
+	'{"type":"tool-result","part":{"tool":"Read","output":"Documentation says rate limit text appears here"}}' \
+	"local_error" "" "" "" "default_local"
 
 check_classification \
 	"openai_server_error" \
 	'{"provider":"openai","error":{"type":"server_error","message":"The server had an error"},"status":500}
 session.processor error: undefined is not an object' \
-	"provider_error" "server_error" "500" "" "output_pattern"
+	"provider_error" "server_error" "500" "" "trusted_provider"
+
+check_classification \
+	"openai_service_unavailable" \
+	'{"provider":"openai","error":{"type":"server_error","message":"service unavailable"},"status":503}' \
+	"provider_error" "server_error" "503" "" "trusted_provider"
 
 check_classification \
 	"auth_failure" \
 	'OpenAI authentication failed: invalid API key; status 401 unauthorized' \
-	"auth_error" "auth_error" "401" "" "output_pattern"
+	"auth_error" "auth_error" "401" "" "trusted_provider"
 
 check_classification \
 	"opencode_sqlite_crash" \

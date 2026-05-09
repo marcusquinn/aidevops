@@ -172,10 +172,12 @@ CAS_SSH_FALLBACK_ENABLED=${CAS_SSH_FALLBACK_ENABLED:-1}
 # not for contention failures on a reachable remote.  Set to 0 to restore the
 # legacy silent-fallback behaviour.
 CAS_EXHAUSTION_FATAL=${CAS_EXHAUSTION_FATAL:-1}
+CAS_RECONCILE_RETRY_ON_FAILURE=${CAS_RECONCILE_RETRY_ON_FAILURE:-1}
 COUNTER_FILE=".task-counter"
 # Remote and branch — defaults; overridden by .aidevops.json and/or CLI flags
 REMOTE_NAME="origin"
 COUNTER_BRANCH="main"
+DEFAULT_BRANCH="main"
 # Track whether CLI flags explicitly set these (CLI overrides config file)
 _REMOTE_NAME_SET=false
 _COUNTER_BRANCH_SET=false
@@ -201,9 +203,10 @@ load_project_config() {
 
 	log_info "Loading project config from .aidevops.json"
 
-	local remote_val counter_branch_val
+	local remote_val counter_branch_val default_branch_val
 	remote_val=$(jq -r '.remote // empty' "$config_file" 2>/dev/null || true)
 	counter_branch_val=$(jq -r '.counter_branch // empty' "$config_file" 2>/dev/null || true)
+	default_branch_val=$(jq -r '.default_branch // empty' "$config_file" 2>/dev/null || true)
 
 	# CLI flags take precedence over config file
 	if [[ -n "$remote_val" ]] && [[ "$_REMOTE_NAME_SET" == "false" ]]; then
@@ -214,6 +217,11 @@ load_project_config() {
 	if [[ -n "$counter_branch_val" ]] && [[ "$_COUNTER_BRANCH_SET" == "false" ]]; then
 		COUNTER_BRANCH="$counter_branch_val"
 		log_info "counter_branch set from .aidevops.json: $COUNTER_BRANCH"
+	fi
+
+	if [[ -n "$default_branch_val" ]]; then
+		DEFAULT_BRANCH="$default_branch_val"
+		log_info "default_branch set from .aidevops.json: $DEFAULT_BRANCH"
 	fi
 
 	return 0
@@ -869,6 +877,7 @@ _validate_labels_exist() {
 _main_resolve_allocation() {
 	local first_id_out=""
 	local is_offline_out="false"
+	local allocation_status="normal_success"
 
 	if [[ "$OFFLINE_MODE" == "false" ]]; then
 		if [[ "$DRY_RUN" == "true" ]]; then
@@ -884,22 +893,50 @@ _main_resolve_allocation() {
 			return 0
 		fi
 
+		# Non-main counter branches can lag the default branch after release or
+		# merge activity.  Reconcile before claiming so we do not allocate IDs below
+		# the default branch's observed counter and then rely on manual fallback.
+		if [[ "$CAS_RECONCILE_RETRY_ON_FAILURE" == "1" && "${DEFAULT_BRANCH:-main}" != "$COUNTER_BRANCH" ]]; then
+			_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" >/dev/null || return 1
+		fi
+
 		if first_id_out=$(_allocate_online_with_collision_check "$REPO_PATH" "$ALLOC_COUNT"); then
 			log_success "Allocated task ID: $(printf 't%03d' "$first_id_out")"
 		else
+			if [[ "$CAS_RECONCILE_RETRY_ON_FAILURE" == "1" ]]; then
+				local _reconcile_rc=0
+				_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" || _reconcile_rc=$?
+				if [[ $_reconcile_rc -eq 0 || $_reconcile_rc -eq 2 ]]; then
+					if first_id_out=$(_allocate_online_with_collision_check "$REPO_PATH" "$ALLOC_COUNT"); then
+						allocation_status="recovered_contention"
+						log_success "Allocated task ID after counter reconciliation: $(printf 't%03d' "$first_id_out")"
+					else
+						log_error "UNRECOVERABLE_COUNTER_DESYNC: allocation still failed after refetch/reconcile"
+						_task_counter_status "unrecoverable_desync" "post_reconcile_allocation_failed"
+						return 1
+					fi
+				else
+					return 1
+				fi
+			fi
+		fi
+
+		if [[ -z "$first_id_out" ]]; then
 			if [[ "$CAS_EXHAUSTION_FATAL" == "1" ]]; then
 				log_error "CAS_EXHAUSTED: online allocation failed after ${CAS_MAX_RETRIES} attempts"
-				log_error "This is a contention failure, not an offline scenario."
-				log_error "The remote is reachable but concurrent pushes (issue-sync.yml, simplification-state,"
-				log_error "merge commits) outpaced the retry budget.  Recovery: wait a few seconds and retry,"
-				log_error "or set CAS_EXHAUSTION_FATAL=0 to restore the legacy +${OFFLINE_OFFSET} offset fallback."
+				log_error "UNRECOVERABLE_COUNTER_DESYNC: refetch/reconcile did not produce a safe allocation."
+				log_error "The remote is reachable but counter contention or branch desynchronization persisted."
+				_task_counter_status "unrecoverable_desync" "cas_exhausted"
 				return 1
 			fi
-			log_warn "Online allocation failed, falling back to offline mode (CAS_EXHAUSTION_FATAL=0)"
+			log_warn "Online allocation failed; using automatic auditable offline fallback (CAS_EXHAUSTION_FATAL=0)"
+			_task_counter_status "fallback" "offline_offset"
+			allocation_status="fallback"
 			is_offline_out="true"
 		fi
 	else
 		is_offline_out="true"
+		allocation_status="fallback"
 	fi
 
 	if [[ "$is_offline_out" == "true" ]]; then
@@ -914,6 +951,12 @@ _main_resolve_allocation() {
 			log_error "Offline allocation failed"
 			return 1
 		fi
+	fi
+
+	if [[ "$allocation_status" == "normal_success" ]]; then
+		_task_counter_status "normal_success" "task_id=$(printf 't%03d' "$first_id_out")"
+	elif [[ "$allocation_status" == "recovered_contention" ]]; then
+		_task_counter_status "recovered_contention" "task_id=$(printf 't%03d' "$first_id_out")"
 	fi
 
 	# Communicate results back to caller via stdout key=value pairs

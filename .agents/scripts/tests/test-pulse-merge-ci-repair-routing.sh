@@ -46,6 +46,7 @@ setup_test_env() {
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
+	export TEST_CHECK_SCENARIO="terminal_failure"
 	printf 'Original issue body.\n' >"${TEST_ROOT}/issue-body.txt"
 	write_gh_mock
 	return 0
@@ -69,13 +70,42 @@ if [[ "${1:-} ${2:-}" == "pr view" ]]; then
 	exit 0
 fi
 
-if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
-	if [[ "$*" == *"name,bucket,link"* ]]; then
-		printf '%s\n' '- **Lint**: fail — [https://example.invalid/check](https://example.invalid/check)'
-		exit 0
-	fi
-	if [[ "$*" == *"name,bucket"* ]]; then
-		printf 'Lint\n'
+if [[ "${1:-} ${2:-}" == "run view" ]]; then
+	case "${TEST_CHECK_SCENARIO:-terminal_failure}" in
+	infra_timeout)
+		printf '%s\n' 'Lint Run timed out after 10m'
+		;;
+	log_exit_143)
+		printf '%s\n' 'Lint Run ##[error]Process completed with exit code 143.'
+		;;
+	*)
+		printf '%s\n' 'Lint Run actual lint error in source file'
+		;;
+	esac
+	exit 0
+fi
+
+	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
+		_is_required=0
+		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
+	if [[ "$*" == *"name,bucket,conclusion,link"* ]]; then
+		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
+			terminal_failure:1 | log_exit_143:1)
+				printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+				;;
+			pending_only:*|mixed_pending_pass:*)
+				printf '[]\n'
+				;;
+			infra_timeout:1)
+				printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+				;;
+			advisory_failure:0)
+				printf '%s\n' '[{"name":"Docs","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/789"}]'
+				;;
+			advisory_failure:1)
+				printf '[]\n'
+				;;
+			esac
 		exit 0
 	fi
 	exit 0
@@ -84,9 +114,6 @@ fi
 if [[ "${1:-} ${2:-}" == "issue view" ]]; then
 	if [[ "$*" == *"--json body"* ]]; then
 		cat "${TEST_ROOT}/issue-body.txt"
-		exit 0
-	fi
-	if [[ "$*" == *"--json assignees"* ]]; then
 		exit 0
 	fi
 	exit 0
@@ -149,6 +176,7 @@ define_process_helper() {
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; return 0; }
 	_attempt_pr_update_branch() { return 1; }
 	_close_conflicting_pr() { return 0; }
+	_pmp_normalize_mergeable_state_into() { return 0; }
 	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
 
 	# shellcheck disable=SC1090
@@ -159,6 +187,9 @@ define_process_helper() {
 define_feedback_helpers() {
 	local fns=(
 		_build_ci_feedback_section
+		_ci_check_url_has_infra_timeout_log
+		_ci_actionable_failed_checks_markdown
+		_ci_terminal_failed_check_results
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
@@ -167,7 +198,7 @@ define_feedback_helpers() {
 	local fn fn_src
 	gh_issue_edit_safe() { gh issue edit "$@"; return $?; }
 	_emit_ci_failure_guidance_blocks() { return 0; }
-	_classify_ci_failures_by_pattern() { return 0; }
+	_classify_ci_failures_by_pattern() { local failing_names="$1"; printf '%s' "$failing_names" >"${TEST_ROOT}/classified-names.txt"; return 0; }
 	for fn in "${fns[@]}"; do
 		fn_src=$(extract_function "$fn" "$FEEDBACK_SCRIPT")
 		[[ -n "$fn_src" ]] || return 1
@@ -216,9 +247,117 @@ test_ci_feedback_dedupes_by_pr_head_sha() {
 	return 0
 }
 
+test_ci_feedback_skips_pending_only_checks() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="pending_only"
+	define_feedback_helpers || { print_result "defines feedback helpers for pending-only" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "pending-only checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif ! grep -qF 'no actionable failed checks with URLs' "$LOGFILE"; then
+		print_result "pending-only checks log terminal-failure skip" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "pending-only checks do not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_mixed_pending_pass_checks() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="mixed_pending_pass"
+	define_feedback_helpers || { print_result "defines feedback helpers for mixed pending/pass" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "mixed pending/pass checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "mixed pending/pass checks do not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_emits_terminal_failure_with_conclusion_and_url() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="terminal_failure"
+	define_feedback_helpers || { print_result "defines feedback helpers for terminal failure" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if ! grep -qF '**Lint**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/456)' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "terminal failure emits conclusion and check URL" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "terminal failure emits conclusion and check URL" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_infra_timeout_checks() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="infra_timeout"
+	define_feedback_helpers || { print_result "defines feedback helpers for infra timeout" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "infra timeout checks do not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	else
+		print_result "infra timeout checks do not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_skips_failed_check_with_exit_143_log() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="log_exit_143"
+	define_feedback_helpers || { print_result "defines feedback helpers for log exit 143" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if grep -qF 'CI Repair Feedback' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "failed check with exit 143 log does not emit CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif ! grep -qF 'classified as infra-timeout' "$LOGFILE"; then
+		print_result "failed check with exit 143 log records infra-timeout classification" 1 "Log: $(cat "$LOGFILE")"
+	else
+		print_result "failed check with exit 143 log does not emit CI repair feedback" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_ci_feedback_emits_advisory_failure_when_required_clean() {
+	setup_test_env
+	TEST_CHECK_SCENARIO="advisory_failure"
+	define_feedback_helpers || { print_result "defines feedback helpers for advisory failure" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
+
+	_dispatch_ci_fix_worker "100" "owner/repo" "42"
+
+	if ! grep -qF '**Docs**: failure — [check URL](https://github.com/owner/repo/actions/runs/123/job/789)' "${TEST_ROOT}/issue-body.txt"; then
+		print_result "advisory-only failure emits CI repair feedback" 1 "Body: $(cat "${TEST_ROOT}/issue-body.txt")"
+	elif ! grep -qF 'Docs' "${TEST_ROOT}/classified-names.txt"; then
+		print_result "advisory-only failure populates classification names" 1 "Names: $(cat "${TEST_ROOT}/classified-names.txt" 2>/dev/null || true)"
+	else
+		print_result "advisory-only failure emits CI repair feedback with classification names" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_ci_feedback_dedupes_by_pr_head_sha
+	test_ci_feedback_skips_pending_only_checks
+	test_ci_feedback_skips_mixed_pending_pass_checks
+	test_ci_feedback_emits_terminal_failure_with_conclusion_and_url
+	test_ci_feedback_skips_infra_timeout_checks
+	test_ci_feedback_skips_failed_check_with_exit_143_log
+	test_ci_feedback_emits_advisory_failure_when_required_clean
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

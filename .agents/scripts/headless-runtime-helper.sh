@@ -519,16 +519,16 @@ _invoke_opencode() {
 			# a temp file and replays it after exit — the watchdog sees nothing
 			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			else
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
 			if [[ "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" == "1" ]]; then
 				print_info "AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1 — using bare timeout (no privilege isolation) (GH#20146 audit)"
 			fi
-			timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+			run_without_opencode_session_env timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		fi
 	) &
@@ -733,6 +733,15 @@ _handle_run_result() {
 				print_warning "$selected_model worker exited with activity but no completion signal (premature exit — will attempt continuation)"
 				return 77
 			fi
+			if output_has_missing_context_blocked_signal "$output_file"; then
+				_run_result_label="brief_recovery"
+				_run_failure_reason="missing_implementation_context"
+				_run_classification_source="model_blocked""_signal"
+				_run_classification_pattern="missing_implementation_context"
+				rm -f "$output_file"
+				print_warning "$selected_model worker reported missing implementation context — attempting one brief-recovery continuation"
+				return 82
+			fi
 			if output_has_blocked_signal "$output_file"; then
 				_run_result_label="blocked"
 				_run_failure_reason="blocked"
@@ -813,6 +822,21 @@ _handle_run_result() {
 			print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 		fi
 	else
+		if [[ "$exit_code" -eq 137 && "$activity_detected" == "1" ]]; then
+			local discovered_session_for_signal_continue
+			discovered_session_for_signal_continue=$(extract_session_id_from_output "$output_file")
+			if [[ "$role" != "pulse" && -n "$discovered_session_for_signal_continue" ]]; then
+				store_session_id "$provider" "$session_key" "$discovered_session_for_signal_continue" "$selected_model"
+			fi
+			_run_result_label="signal_killed_continue"
+			_run_failure_reason="signal_killed_continue"
+			_run_runtime_error_type="sigkill"
+			_run_classification_source="worker_exit_diagnostics"
+			_run_classification_pattern="exit_137_with_activity"
+			rm -f "$output_file"
+			print_warning "$selected_model worker exited with SIGKILL after activity — will attempt session continuation"
+			return 78
+		fi
 		failure_reason=$(classify_failure_reason "$output_file")
 	fi
 	_run_result_label="$failure_reason"
@@ -821,6 +845,26 @@ _handle_run_result() {
 	_run_runtime_error_type="${_failure_runtime_error_type:-}"
 	_run_classification_source="${_failure_classification_source:-}"
 	_run_classification_pattern="${_failure_classification_pattern:-}"
+
+	# GH#23037: Transient provider/runtime interruptions after work has begun
+	# should resume the existing session from disk instead of consuming the
+	# premature-exit or watchdog-stall continuation budgets. Require activity or
+	# session evidence so startup failures still follow normal backoff paths.
+	if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
+		service_interruption_continue_candidate \
+			"$failure_reason" "$exit_code" "$activity_detected" "$discovered_session" \
+			"${_failure_provider_error_type:-}"; then
+		if [[ -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		local _sic_label="service_interruption_continue"
+		_run_result_label="$_sic_label"
+		_run_failure_reason="$failure_reason"
+		# Preserve the attempt output for diagnostics if the dedicated
+		# continuation budget is later exhausted in cmd_run.
+		print_warning "$selected_model service interruption after activity/session evidence — will attempt session continuation"
+		return 81
+	fi
 
 	if attempt_pool_recovery "$provider" "$failure_reason" "$output_file"; then
 		_run_should_retry=1
@@ -987,6 +1031,84 @@ PY
 	return 0
 }
 
+#######################################
+# Derive structured, secret-free worker failure evidence fields.
+#
+# Args:
+#   $1 - result label
+#   $2 - exit code
+#   $3 - activity flag (1/0)
+#   $4 - kill reason
+#   $5 - failure reason
+# stdout: tab-delimited launch_failure_cause and next_action
+# Returns: 0 always
+#######################################
+_derive_worker_failure_evidence() {
+	local result_label="$1"
+	local exit_code="$2"
+	local activity="$3"
+	local kill_reason="$4"
+	local failure_reason="$5"
+	local launch_failure_cause=""
+	local next_action="inspect_failure_excerpt"
+
+	case "$result_label" in
+	no_activity | watchdog_startup_continue)
+		launch_failure_cause="startup_no_model_activity"
+		next_action="retry_fresh_or_inspect_local_runtime"
+		;;
+	premature_exit)
+		launch_failure_cause="model_stopped_before_completion"
+		next_action="resume_session_with_completion_contract"
+		;;
+	watchdog_stall_continue | service_interruption_continue | signal_killed_continue)
+		launch_failure_cause="mid_session_interruption"
+		next_action="resume_existing_session"
+		;;
+	watchdog_stall_killed)
+		launch_failure_cause="stall_hard_killed"
+		next_action="redispatch_worker"
+		;;
+	rate_limit | rate_limit_fast)
+		launch_failure_cause="provider_rate_limited"
+		next_action="rotate_provider_or_wait_for_reset"
+		;;
+	blocked | brief_recovery)
+		launch_failure_cause="model_reported_blocker"
+		next_action="recover_brief_or_escalate_with_evidence"
+		;;
+	success)
+		launch_failure_cause=""
+		next_action="none"
+		;;
+	*)
+		if [[ "$exit_code" -eq 124 ]]; then
+			launch_failure_cause="watchdog_timeout"
+			next_action="inspect_watchdog_and_runtime_logs"
+		elif [[ "$exit_code" -eq 137 || "$exit_code" -eq 143 ]]; then
+			launch_failure_cause="signal_terminated"
+			next_action="inspect_host_or_watchdog_kill_source"
+		elif [[ "$exit_code" -ne 0 ]]; then
+			launch_failure_cause="local_runtime_error"
+			next_action="inspect_failure_excerpt_and_retry_if_transient"
+		fi
+		;;
+	esac
+
+	if [[ -n "$kill_reason" && "$kill_reason" != "natural" && "$kill_reason" != "unknown" ]]; then
+		launch_failure_cause="${launch_failure_cause:-$kill_reason}"
+	fi
+	if [[ -z "$launch_failure_cause" && -n "$failure_reason" ]]; then
+		launch_failure_cause="$failure_reason"
+	fi
+	if [[ "$activity" != "1" && -z "$launch_failure_cause" && "$result_label" != "success" ]]; then
+		launch_failure_cause="no_activity_before_exit"
+	fi
+
+	printf '%s\t%s' "$launch_failure_cause" "$next_action"
+	return 0
+}
+
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model variant_override agent_name
@@ -1072,6 +1194,7 @@ _execute_run_attempt() {
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
 	local resource_stop_file resource_result_file resource_sampler_pid
+	local _metric_kill_reason=""
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	output_file=$(mktemp)
 	exit_code_file=$(mktemp)
@@ -1168,9 +1291,13 @@ _execute_run_attempt() {
 	# kills a stalled worker. The dying subshell may overwrite exit_code_file
 	# with its own exit code (0 or 143), losing the watchdog's 124. The marker
 	# file is authoritative — if it exists, this was a watchdog kill.
+	_metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
 	if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
 		exit_code=124
 		rm -f "${exit_code_file}.watchdog_killed"
+	fi
+	if [[ "$exit_code" -eq 0 && "$_metric_kill_reason" != "natural" ]]; then
+		exit_code=124
 	fi
 	# t2956 / Issue #21231: Hard-kill sentinel — set when the watchdog
 	# escalated from passive (78 / continue) to proactive (79 / killed)
@@ -1213,9 +1340,13 @@ _execute_run_attempt() {
 				"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+			_metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
 			if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
 				exit_code=124
 				rm -f "${exit_code_file}.watchdog_killed"
+			fi
+			if [[ "$exit_code" -eq 0 && "$_metric_kill_reason" != "natural" ]]; then
+				exit_code=124
 			fi
 			# t2956: Hard-kill sentinel must also be re-checked on the retry path.
 			local _retry_stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
@@ -1263,7 +1394,8 @@ _execute_run_attempt() {
 		fi
 		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms" \
 			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id" \
-			"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}"
+			"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
+			"provider_rate_limited" "rate_limit_fast" "rotate_provider_or_wait_for_reset"
 		return 80
 	fi
 
@@ -1286,6 +1418,8 @@ _execute_run_attempt() {
 	{
 		printf '\n[WORKER_EXIT_DIAGNOSTICS] exit_code=%s model=%s role=%s session_key=%s\n' \
 			"$exit_code" "$selected_model" "$role" "$session_key"
+		printf '[WORKER_EXIT_DIAGNOSTICS] structured exit_code=%s kill_reason=%s session_key=%s\n' \
+			"$exit_code" "${_metric_kill_reason:-unknown}" "$session_key"
 		if [[ "$exit_code" -eq 124 ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=watchdog_kill (no LLM activity within timeout)\n'
 		elif [[ "$exit_code" -eq 137 ]]; then
@@ -1323,9 +1457,18 @@ _execute_run_attempt() {
 	if [[ "${_run_result_label:-failed}" == "success" ]]; then
 		_metric_output_file=""
 	fi
+	local _launch_failure_cause="" _next_action=""
+	local _evidence_fields
+	_evidence_fields=$(_derive_worker_failure_evidence \
+		"${_run_result_label:-failed}" "$exit_code" "${_run_activity_detected:-0}" \
+		"${_metric_kill_reason:-}" "${_run_failure_reason:-}")
+	_launch_failure_cause="${_evidence_fields%%$'\t'*}"
+	_next_action="${_evidence_fields#*$'\t'}"
+	print_info "[lifecycle] worker_failure_evidence session=$session_key result=${_run_result_label:-failed} exit_code=$exit_code kill_reason=${_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
 	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id" \
-		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}"
+		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
+		"$_launch_failure_cause" "${_metric_kill_reason:-}" "$_next_action"
 	return "$handle_exit"
 }
 
@@ -1456,6 +1599,10 @@ cmd_run() {
 	# instead of starting fresh with a different provider.
 	local max_watchdog_continue_retries="${HEADLESS_WATCHDOG_CONTINUE_MAX_RETRIES:-2}"
 	local watchdog_continue_count=0
+	local max_service_interruption_continue_retries="${HEADLESS_SERVICE_INTERRUPTION_CONTINUE_MAX_RETRIES:-2}"
+	local service_interruption_continue_count=0
+	local max_brief_recovery_retries="${HEADLESS_BRIEF_RECOVERY_MAX_RETRIES:-1}"
+	local brief_recovery_count=0
 
 	# GH#20681: Per-session stall caps — count and cumulative time.
 	# Prevents unbounded token burn from repeated stall-continue events.
@@ -1517,6 +1664,26 @@ cmd_run() {
 			return 0
 		fi
 
+		# GH#23037: Handle transient service interruptions separately from
+		# premature exits and watchdog stalls. The session/worktree evidence was
+		# validated by _handle_run_result; resume the same session without
+		# consuming provider-rotation attempts until this dedicated budget is spent.
+		if [[ "$attempt_exit" -eq 81 ]]; then
+			if [[ "$service_interruption_continue_count" -lt "$max_service_interruption_continue_retries" ]]; then
+				service_interruption_continue_count=$((service_interruption_continue_count + 1))
+				print_warning "service_interruption_continue attempt=${service_interruption_continue_count}/${max_service_interruption_continue_retries} — resuming existing session/worktree"
+				prompt="A transient provider/service interruption stopped the previous run after work had begun. Resume the existing session and worktree; do not restart exploration. Check git status, existing todos, and prior changes, then continue through implementation, verification, commit, PR, merge summary, review, merge, release, closing comments, deploy, and cleanup. Do not stop until FULL_LOOP_COMPLETE or BLOCKED with evidence."
+				continue
+			fi
+
+			local _sic_exhausted_label="service_interruption_exhausted"
+			_run_result_label="$_sic_exhausted_label"
+			append_runtime_metric "$role" "$session_key" "$selected_model" \
+				"$(extract_provider "$selected_model")" \
+				"$_run_result_label" "81" "${_run_failure_reason:-provider_error}" "1" "0"
+			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
+		fi
+
 		# GH#17436: Handle premature exit (exit 77) — worker had activity but
 		# no completion signal. Resume the session with a continuation prompt
 		# instead of recording a provider failure and rotating.
@@ -1542,6 +1709,27 @@ cmd_run() {
 			print_warning "Exhausted ${max_continuation_retries} continuation retries — recording as premature_exit failure"
 			_cmd_run_finish "$session_key" "fail"
 			return 1
+		fi
+
+		# GH#23225: When a worker stops with BLOCKED: missing implementation
+		# context, give the same session one chance to repair the linked issue
+		# brief before the dispatcher records a terminal blocked outcome.
+		if [[ "$attempt_exit" -eq 82 ]]; then
+			if [[ "$brief_recovery_count" -lt "$max_brief_recovery_retries" ]]; then
+				brief_recovery_count=$((brief_recovery_count + 1))
+				print_warning "Missing implementation context detected — sending brief-recovery continuation (attempt ${brief_recovery_count}/${max_brief_recovery_retries})"
+
+				prompt="The previous run ended with BLOCKED: missing implementation context. Before giving up, perform the GH#23225 brief-recovery routine once. Verify the linked issue number is \${WORKER_ISSUE_NUMBER}; read that issue body; keep discovery narrow using its title/body keywords, exact file search, and 2-3 likely target files/tests; then update only that linked issue body using --body-file with a Worker Guidance or How section containing Goal, files to inspect first, implementation steps, verification commands, runtime testing risk/expectation, existing reproduction context, and the aidevops signature footer. Mark in the issue body that brief recovery was attempted to avoid loops. After repairing the brief, re-run the full-loop implementation from the improved context and continue through implementation, verification, commit, PR, MERGE_SUMMARY, review, merge, closing comments, deploy, and cleanup. If narrow discovery still cannot produce concrete files and steps, emit BLOCKED: missing implementation context with evidence."
+				continue
+			fi
+
+			_run_result_label="block""ed"
+			_run_failure_reason="$_run_result_label"
+			_run_classification_source="model_blocked""_signal"
+			_run_classification_pattern="missing_implementation_context_recovery_exhausted"
+			print_warning "Missing implementation context persisted after brief-recovery continuation — recording blocked"
+			_cmd_run_finish "$session_key" "complete" "$work_dir"
+			return 0
 		fi
 
 		# t2956 / Issue #21231: Handle watchdog hard-kill (exit 79).

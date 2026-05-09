@@ -241,6 +241,188 @@ _install_scheduler_cron() {
 	return 0
 }
 
+# Detect whether a systemd user timer exists for a scheduler routine.
+# Args: $1=service_name (without .timer suffix)
+_scheduler_systemd_timer_present() {
+	local service_name="$1"
+	local timer_name="${service_name}.timer"
+	local timer_file="$HOME/.config/systemd/user/${timer_name}"
+
+	if command -v systemctl >/dev/null 2>&1; then
+		if systemctl --user is-enabled "$timer_name" >/dev/null 2>&1; then
+			return 0
+		fi
+		if systemctl --user is-active "$timer_name" >/dev/null 2>&1; then
+			return 0
+		fi
+	fi
+
+	[[ -f "$timer_file" ]] && return 0
+	return 1
+}
+
+# Remove cron entries matching a scheduler tag while preserving unrelated jobs.
+# Args: $1=cron_tag, $2=routine_label, $3=current_cron(optional), $4=defer_write(optional)
+_scheduler_remove_cron_tag() {
+	local cron_tag="$1"
+	local routine_label="$2"
+	local provided_cron="${3-}"
+	local defer_write="${4:-false}"
+	local current_cron=""
+	local filtered_cron=""
+	local temp_cron=""
+
+	command -v crontab >/dev/null 2>&1 || return 1
+	if [[ "$#" -ge 3 ]]; then
+		current_cron="$provided_cron"
+	else
+		current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+	fi
+	[[ -n "$current_cron" ]] || return 1
+	printf '%s\n' "$current_cron" | grep -qF "$cron_tag" || return 1
+
+	filtered_cron=$(printf '%s\n' "$current_cron" | grep -vF "$cron_tag" || true)
+	_SCHEDULER_RECONCILED_CRON_RESULT="$filtered_cron"
+	_SCHEDULER_RECONCILED_CRON_CHANGED=true
+	if [[ "$defer_write" == "true" ]]; then
+		_SCHEDULER_RECONCILED_LABELS="${_SCHEDULER_RECONCILED_LABELS}${routine_label}
+"
+		return 0
+	fi
+
+	if [[ -n "$filtered_cron" ]]; then
+		temp_cron=$(mktemp)
+		printf '%s\n' "$filtered_cron" >"$temp_cron"
+		crontab "$temp_cron" 2>/dev/null || true
+		rm -f "$temp_cron"
+	else
+		crontab -r 2>/dev/null || true
+	fi
+
+	print_info "Removed duplicate cron entry for ${routine_label}; kept systemd user timer"
+	return 0
+}
+
+# Reconcile one Linux scheduler routine so systemd and cron are not both active.
+# Systemd user timers are canonical when present; cron-only jobs are preserved.
+# Args: $1=service_name, $2=cron_tag, $3=routine_label, $4=current_cron(optional), $5=defer_write(optional)
+_reconcile_linux_scheduler_duplicate() {
+	local service_name="$1"
+	local cron_tag="$2"
+	local routine_label="$3"
+	local provided_cron="${4-}"
+	local defer_write="${5:-false}"
+	local current_cron=""
+	local has_cron=false
+
+	if command -v crontab >/dev/null 2>&1; then
+		if [[ "$#" -ge 4 ]]; then
+			current_cron="$provided_cron"
+		else
+			current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+		fi
+		if [[ -n "$current_cron" ]] && printf '%s\n' "$current_cron" | grep -qF "$cron_tag"; then
+			has_cron=true
+		fi
+	else
+		return 0
+	fi
+
+	if _scheduler_systemd_timer_present "$service_name"; then
+		if [[ "$has_cron" == "true" ]]; then
+			_scheduler_remove_cron_tag "$cron_tag" "$routine_label" "$current_cron" "$defer_write" || true
+		fi
+		return 0
+	fi
+
+	return 0
+}
+
+# Reconcile known Linux aidevops routines that may have migrated from cron to systemd.
+_reconcile_linux_scheduler_duplicates() {
+	local current_cron=""
+	local reconciled_cron=""
+	local routine_label=""
+	local temp_cron=""
+	local changed=false
+
+	command -v crontab >/dev/null 2>&1 || return 0
+	current_cron=$(crontab -l 2>/dev/null) || current_cron=""
+	_SCHEDULER_RECONCILED_LABELS=""
+
+	_SCHEDULER_RECONCILED_CRON_RESULT=""
+	_SCHEDULER_RECONCILED_CRON_CHANGED=false
+	_reconcile_linux_scheduler_duplicate \
+		"aidevops-auto-update" \
+		"# aidevops-auto-update" \
+		"auto-update" \
+		"$current_cron" \
+		true
+	if [[ "$_SCHEDULER_RECONCILED_CRON_CHANGED" == "true" ]]; then
+		current_cron="$_SCHEDULER_RECONCILED_CRON_RESULT"
+		changed=true
+	fi
+
+	_SCHEDULER_RECONCILED_CRON_RESULT=""
+	_SCHEDULER_RECONCILED_CRON_CHANGED=false
+	_reconcile_linux_scheduler_duplicate \
+		"aidevops-pulse-merge" \
+		"aidevops: pulse-merge-routine" \
+		"pulse merge" \
+		"$current_cron" \
+		true
+	if [[ "$_SCHEDULER_RECONCILED_CRON_CHANGED" == "true" ]]; then
+		current_cron="$_SCHEDULER_RECONCILED_CRON_RESULT"
+		changed=true
+	fi
+
+	_SCHEDULER_RECONCILED_CRON_RESULT=""
+	_SCHEDULER_RECONCILED_CRON_CHANGED=false
+	_reconcile_linux_scheduler_duplicate \
+		"aidevops-supervisor-pulse" \
+		"aidevops: supervisor-pulse" \
+		"supervisor pulse" \
+		"$current_cron" \
+		true
+	if [[ "$_SCHEDULER_RECONCILED_CRON_CHANGED" == "true" ]]; then
+		current_cron="$_SCHEDULER_RECONCILED_CRON_RESULT"
+		changed=true
+	fi
+
+	_SCHEDULER_RECONCILED_CRON_RESULT=""
+	_SCHEDULER_RECONCILED_CRON_CHANGED=false
+	_reconcile_linux_scheduler_duplicate \
+		"aidevops-stats-wrapper" \
+		"aidevops: stats-wrapper" \
+		"stats wrapper" \
+		"$current_cron" \
+		true
+	if [[ "$_SCHEDULER_RECONCILED_CRON_CHANGED" == "true" ]]; then
+		current_cron="$_SCHEDULER_RECONCILED_CRON_RESULT"
+		changed=true
+	fi
+
+	if [[ "$changed" != "true" ]]; then
+		return 0
+	fi
+
+	if [[ -n "$current_cron" ]]; then
+		temp_cron=$(mktemp)
+		printf '%s\n' "$current_cron" >"$temp_cron"
+		crontab "$temp_cron" 2>/dev/null || true
+		rm -f "$temp_cron"
+	else
+		crontab -r 2>/dev/null || true
+	fi
+
+	reconciled_cron="$_SCHEDULER_RECONCILED_LABELS"
+	while IFS= read -r routine_label; do
+		[[ -n "$routine_label" ]] || continue
+		print_info "Removed duplicate cron entry for ${routine_label}; kept systemd user timer"
+	done <<<"$reconciled_cron"
+	return 0
+}
+
 # Dispatcher: install a scheduler on Linux, preferring systemd over cron.
 # Args:
 #   $1 = service_name   (systemd service name, e.g. "aidevops-stats-wrapper")
@@ -286,14 +468,7 @@ _install_scheduler_linux() {
 			print_info "${success_msg} (systemd user timer)"
 			# After systemd install succeeds, remove any pre-existing cron entry
 			# to prevent dual-execution (GH#17695 Finding A)
-			if command -v crontab >/dev/null 2>&1; then
-				local current_cron
-				current_cron=$(crontab -l 2>/dev/null) || current_cron=""
-				if [[ -n "$current_cron" ]] && echo "$current_cron" | grep -qF "$cron_tag"; then
-					echo "$current_cron" | grep -vF "$cron_tag" | crontab -
-					echo "[schedulers] Removed pre-existing cron entry for $cron_tag (migrated to systemd)"
-				fi
-			fi
+			_reconcile_linux_scheduler_duplicate "$service_name" "$cron_tag" "$cron_tag"
 		else
 			print_warning "systemd enable failed for ${service_name} — falling back to cron"
 			_install_scheduler_cron "$cron_tag" "$cron_schedule" "$exec_command" "$log_file" "$env_vars"

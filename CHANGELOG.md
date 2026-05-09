@@ -10,6 +10,363 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.9] - 2026-05-08
+
+### Changed
+
+- Maintenance: mark t3584 complete (pr:#23223 completed:2026-05-08) [skip ci]
+- fix worker output recovery after runtime kills (#23223)
+
+## [3.15.8] - 2026-05-08
+
+### Added
+
+- add RTK output comparison diagnostics (#23222)
+
+### Changed
+
+- Maintenance: sync ref:GH#23224 to TODO.md [skip ci]
+
+## [3.15.7] - 2026-05-08
+
+### Changed
+
+- add CodeRabbit post-merge init option (#23221)
+
+### Fixed
+
+- harden opencode PATH construction (#23170)
+
+## [3.15.6] - 2026-05-08
+
+### Changed
+
+- fix consolidated label predicate (#23219)
+- Maintenance: mark t3583 complete (pr:#23218 completed:2026-05-08) [skip ci]
+- fix worker recovery follow-through (#23218)
+
+## [3.15.5] - 2026-05-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#23217 to TODO.md [skip ci]
+
+### Fixed
+
+- initialize pulse capacity locals (#23062)
+
+## [3.15.4] - 2026-05-08
+
+### Changed
+
+- Maintenance: mark t3582 complete (pr:#23216 completed:2026-05-08) [skip ci]
+- fix pulse self-healing blockers (#23216)
+- Maintenance: sync ref:GH#23215 to TODO.md [skip ci]
+- Documentation: clarify RTK adaptive fallback (#23213)
+- Maintenance: mark t3581 complete (pr:#23214 completed:2026-05-08) [skip ci]
+
+## [3.15.3] - 2026-05-08
+
+### Added
+
+- add scoped setup deploy commands (#23145)
+
+### Changed
+
+- docs: document pragmatic CI gate policy (#23214)
+- Maintenance: sync ref:GH#23211 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: mark t3566 complete (#23210)
+- Tests: cover review-feedback version path preservation (#23209)
+- Tests: cover cached dashboard identity aliases (#23207)
+- Tests: cover pulse merge conflict label safety (#23202)
+- Tests: cover dashboard freshness JSON fallback (#23204)
+- Tests: cover git checkout dash canonical guard (#23203)
+- Performance: reuse prepared review gate status contexts (#23201)
+- Tests: cover scheduler crontab I/O reuse (#23200)
+- Tests: cover pulse stuck null author parsing (#23188)
+- Documentation: update native auto-merge return docs (#23183)
+- Performance: cache privacy script reference allowlist (#23180)
+- Maintenance: update simplification state registry
+- Performance: consolidate review gate list jq lookups (#23173)
+- Documentation: clarify automation safety invariants (#23169)
+- Tests: simplify git safety guard mock setup (#23168)
+
+### Fixed
+
+- reconcile missing task counter files (#23208)
+- refine required-check terminal classification (#23205)
+- block consolidated issue redispatch (#23189)
+- preserve explicit prelaunch failure reasons (#23185)
+- consolidate dispatch circuit comment parsing (#23184)
+- handle protected counter reconciliation pushes (#23182)
+- localize dashboard alias parsing variables (#23181)
+- cache review gate success contexts (#23177)
+- streamline linux scheduler cron reconciliation (#23179)
+- cache dashboard identity aliases for migration
+- reduce CI check polling for merge feedback (#23176)
+- guard pulse duplicate issue label lookup (#23175)
+- paginate dashboard freshness issue listing (#23174)
+- harden opencode setup validation (#23171)
+- tighten review-feedback supersession matching (#23172)
+- guard git switch dash in canonical checkout (#23167)
+
+## [3.15.2] - 2026-05-08
+
+### Added
+
+- add scoped setup deploy commands (#23145)
+
+### Changed
+
+- Tests: cover pulse merge conflict label safety (#23202)
+- Tests: cover dashboard freshness JSON fallback (#23204)
+- Tests: cover git checkout dash canonical guard (#23203)
+- Performance: reuse prepared review gate status contexts (#23201)
+- Tests: cover scheduler crontab I/O reuse (#23200)
+- Tests: cover pulse stuck null author parsing (#23188)
+- Documentation: update native auto-merge return docs (#23183)
+- Performance: cache privacy script reference allowlist (#23180)
+- Maintenance: update simplification state registry
+- Performance: consolidate review gate list jq lookups (#23173)
+- Documentation: clarify automation safety invariants (#23169)
+- Tests: simplify git safety guard mock setup (#23168)
+
+### Fixed
+
+- block consolidated issue redispatch (#23189)
+- preserve explicit prelaunch failure reasons (#23185)
+- consolidate dispatch circuit comment parsing (#23184)
+- handle protected counter reconciliation pushes (#23182)
+- localize dashboard alias parsing variables (#23181)
+- cache review gate success contexts (#23177)
+- streamline linux scheduler cron reconciliation (#23179)
+- cache dashboard identity aliases for migration
+- reduce CI check polling for merge feedback (#23176)
+- guard pulse duplicate issue label lookup (#23175)
+- paginate dashboard freshness issue listing (#23174)
+- harden opencode setup validation (#23171)
+- tighten review-feedback supersession matching (#23172)
+- guard git switch dash in canonical checkout (#23167)
+
+## [3.15.1] - 2026-05-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- wrap explicit rtk commands (#23144)
+
+## [3.15.0] - 2026-05-08
+
+### Added
+
+- add SQLite output sandbox helper (#23143)
+
+### Changed
+
+- Maintenance: mark t3578 complete (pr:#23143 completed:2026-05-08) [skip ci]
+- Maintenance: update simplification state registry
+
+## [3.14.100] - 2026-05-08
+
+### Changed
+
+- Maintenance: mark t3579 complete (pr:#23141 completed:2026-05-08) [skip ci]
+- fix: classify timed-out CI logs as infra blockers (#23141)
+- Maintenance: sync ref:GH#23142 to TODO.md [skip ci]
+
+## [3.14.99] - 2026-05-08
+
+### Changed
+
+- Maintenance: sync ref:GH#23140 to TODO.md [skip ci]
+- Documentation: explain auto-browse in README (#23139)
+- Maintenance: update simplification state registry
+
+## [3.14.98] - 2026-05-08
+
+### Added
+
+- default RTK token optimization setup (#23138)
+
+### Changed
+
+- Maintenance: mark t3576 complete (pr:#23133 completed:2026-05-08) [skip ci]
+- Maintenance: mark t3577 complete (pr:#23138 completed:2026-05-08) [skip ci]
+- fix: avoid redispatch for CI infra-only blockers (#23133)
+- Maintenance: mark t3574 complete (pr:#23131 completed:2026-05-08) [skip ci]
+- add auto-browse workflow guidance (#23131)
+- Maintenance: sync ref:GH#23136 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23134 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23132 to TODO.md [skip ci]
+
+### Fixed
+
+- guard health dashboard dedup targets (#23129)
+
+## [3.14.97] - 2026-05-08
+
+### Changed
+
+- Maintenance: sync ref:GH#23128 to TODO.md [skip ci]
+
+### Fixed
+
+- retry breaker-held issues after aidevops upgrades (#23127)
+
+## [3.14.96] - 2026-05-08
+
+### Changed
+
+- add opt-in strict review gate completion (#23125)
+
+## [3.14.95] - 2026-05-08
+
+### Fixed
+
+- keep dashboard freshness dedup compatible (#23124)
+
+## [3.14.94] - 2026-05-07
+
+### Added
+
+- dedupe review-feedback dispatch against merged PRs (#23122)
+- close superseded pulse duplicate PRs (#23117)
+
+### Changed
+
+- treat pending required checks as non-terminal (#23119)
+- deduplicate health dashboards by identity aliases (#23121)
+- Maintenance: mark t3571 complete (pr:#23117 completed:2026-05-07) [skip ci]
+- Maintenance: mark t3572 complete (pr:#23115 completed:2026-05-07) [skip ci]
+- Documentation: add automation safety invariants (#23115)
+- Maintenance: update simplification state registry
+- Maintenance: mark t3573 complete (pr:#23113 completed:2026-05-07) [skip ci]
+- Maintenance: mark t3568 complete (pr:#23112 completed:2026-05-07) [skip ci]
+
+### Fixed
+
+- deduplicate linux scheduler backends (#23123)
+- anchor JS credential scrub pattern (#23120)
+- recover task counter desync (#23114)
+- block unrequested canonical branch switches (#23113)
+- require terminal CI failures for repair feedback (#23112)
+
+## [3.14.93] - 2026-05-07
+
+### Changed
+
+- Maintenance: mark t3570 complete (pr:#23111 completed:2026-05-07) [skip ci]
+- Maintenance: sync ref:GH#23109 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23106 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23105 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23101 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23100 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#23099 to TODO.md [skip ci]
+
+### Fixed
+
+- heal invalid OpenCode stable shim (#23108)
+- pause transient rate-limit release storms (#23111)
+
+## [3.14.92] - 2026-05-07
+
+### Changed
+
+- respect repository rulesets during pulse merge (#23090)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- reject qwen opencode shim candidates (#23096)
+- reject invalid duplicate issue numbers (#23094)
+- allow aidevops script references in privacy scanner (#23095)
+- harden pulse stuck author parsing (#23093)
+- preserve prelaunch worker failure reasons (#23088)
+- restore OpenCode memory tool args schema (#23084)
+- handle protected counter branch allocation (#23083)
+
+## [3.14.91] - 2026-05-07
+
+### Fixed
+
+- isolate systemd pulse workers from cgroup (#23082)
+- protect owned worktrees from branch-merged cleanup (#23081)
+- protect worker worktrees during cleanup (#23075)
+
+## [3.14.90] - 2026-05-07
+
+### Fixed
+
+- transfer precreated worker worktree ownership (#23072)
+
+## [3.14.89] - 2026-05-07
+
+### Fixed
+
+- use repo default branch in merge-stuck guidance (#23069)
+
+## [3.14.88] - 2026-05-07
+
+### Fixed
+
+- strip OpenCode session env for headless runs (#23068)
+
+## [3.14.87] - 2026-05-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+- flatten paginated NMR timeline events (#23059)
+- Tests: guard dashboard freshness alert refactor (#23056)
+
+### Fixed
+
+- count fast rate limits in dispatch backoff (#23067)
+- cap worker dispatch by provider capacity and load (#23061)
+- log dashboard freshness issue-list errors (#23060)
+- harden worktree owner pid SQL binding (#23058)
+- harden opencode daemon path construction (#23057)
+- preserve service interruption diagnostics (#23055)
+- harden gh issue label parsing (#23054)
+- match ruleset branch globs in merge gate (#23053)
+- skip fresh claim orphan issue fetch (#23052)
+
+## [3.14.86] - 2026-05-07
+
+### Added
+
+- add service interruption continuation budget (#23041)
+
+## [3.14.85] - 2026-05-07
+
+### Fixed
+
+- separate worker interruptions from rate limits (#23040)
+
+## [3.14.84] - 2026-05-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- close recovered merge-stuck meta issues (#23039)
+- reduce dashboard freshness issue list calls (#23034)
+- simplify stale brief rewrite requeue labels (#23033)
+- recover mismatched dashboard freshness alerts (#23030)
+
+## [3.14.83] - 2026-05-06
+
+### Changed
+
+- Documentation: clarify task intent routing (#23027)
+
 ## [3.14.82] - 2026-05-06
 
 ### Fixed

@@ -124,6 +124,10 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-gates.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
 source "${_PULSE_MERGE_DIR}/pulse-merge-process.sh"
 
+# shellcheck source=./pulse-merge-required-checks.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
+
 # _release_interactive_claim_on_merge is now provided by shared-claim-lifecycle.sh
 # (sourced at the top of this module, t2429/GH#20067). The backward-compatible
 # underscore-prefixed alias is defined there so all existing call sites
@@ -750,10 +754,20 @@ _process_single_ready_pr() {
 			;;
 	esac
 
-	# Merge
+	# Merge. Prefer the historical admin path for owned repos, but fall back to
+	# a protection-respecting merge when repository rulesets reject admin bypass.
+	# GitHub reports ruleset blocks as a generic GraphQL error; retrying the same
+	# --admin call every pulse cycle creates a zero-progress loop even when the PR
+	# is otherwise green. The non-admin retry lets rulesets/merge queue evaluate
+	# the PR normally instead of counting it as a deterministic merge failure.
 	local merge_output _merge_exit
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
 	_merge_exit=$?
+	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
+		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying without --admin (GH#23087): ${merge_output}" >>"$LOGFILE"
+		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
+		_merge_exit=$?
+	fi
 
 	# Rate-limit: 1 second between merges to avoid GitHub API abuse
 	sleep 1

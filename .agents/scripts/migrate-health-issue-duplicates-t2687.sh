@@ -13,11 +13,12 @@
 #   - Iterate ~/.config/aidevops/repos.json `initialized_repos[]` entries
 #     where `pulse: true` and not `local_only`.
 #   - For each repo, list open issues with label `source:health-dashboard`.
-#   - Group by (runner_user, role_label). Runner_user is extracted from
-#     the issue title via the `[Supervisor:user]` / `[Contributor:user]`
-#     prefix. Role is derived from the `supervisor` or `contributor` label.
-#   - Keep the newest issue per group (by createdAt).
-#   - Close the older ones with an explanatory comment linking to GH#20301.
+#   - Group by canonical operator. Runner_user is extracted from the issue
+#     title via the `[Supervisor:user]` / `[Contributor:user]` prefix, then
+#     folded through identity-aliases.conf. Role is preserved for audit output
+#     but is no longer a grouping dimension.
+#   - Keep the newest issue per canonical operator group (by createdAt).
+#   - Close the older ones with an explanatory comment linking to GH#23097.
 #   - Backfill `origin:worker` on every surviving health-dashboard issue
 #     that is missing it. Remove `origin:interactive` / `origin:worker-takeover`
 #     on the same call (origin labels are mutually exclusive).
@@ -32,6 +33,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=./stats-shared.sh
+source "${SCRIPT_DIR}/stats-shared.sh"
 # shellcheck disable=SC2034  # referenced via setup log prefix below
 MARKER_FILE="${HOME}/.aidevops/logs/.migrated-health-issue-duplicates-t2687"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
@@ -222,17 +225,18 @@ _close_duplicate_groups() {
 	local grp
 	while IFS= read -r grp; do
 		[[ -z "$grp" ]] && continue
-		local role user keep close_list
+		local role user canonical keep close_list
 		role=$(printf '%s' "$grp" | jq -r '.role')
 		user=$(printf '%s' "$grp" | jq -r '.user')
+		canonical=$(printf '%s' "$grp" | jq -r '.canonical')
 		keep=$(printf '%s' "$grp" | jq -r '.issues[0].number')
 		close_list=$(printf '%s' "$grp" | jq -r '.issues[1:] | .[].number')
-		log_info "  dedup group role=${role} user=${user}: keep #${keep}, close $(echo "$close_list" | wc -w | tr -d ' ')"
+		log_info "  dedup group canonical=${canonical} first_role=${role} first_user=${user}: keep #${keep}, close $(echo "$close_list" | wc -w | tr -d ' ')"
 
 		local close_num
 		while IFS= read -r close_num; do
 			[[ -z "$close_num" ]] && continue
-			local comment="Closing duplicate ${role} health issue — superseded by #${keep}. Root cause: GraphQL rate-limit window on 2026-04-21 (t2574 REST fallback covered CREATE but not READ paths). See GH#20301 for the systemic fix."
+			local comment="Closing duplicate health dashboard for canonical operator ${canonical} — superseded by #${keep}. Identity aliases map the stale dashboard to the same operator across local/GitHub usernames and Supervisor/Contributor role prefixes. See GH#23097."
 			_unpin_duplicate_issue "$close_num" "$repo"
 			# Strip 'persistent' before closing so issue-sync.yml 'Reopen Persistent Issues'
 			# job does not reopen the duplicate (GH#20326). That job blocks USER-initiated
@@ -265,36 +269,47 @@ process_repo() {
 	fi
 	log_info "  found ${total} health-dashboard issue(s) in ${slug}"
 
-	# Enrich every issue with a grouping key "<role>:<runner_user>" so we
-	# can group via jq. Issues missing role or runner_user get "UNGROUPED"
-	# and are skipped (but still reported).
-	local enriched
-	enriched=$(printf '%s' "$issues_json" | jq -c '.[] | {
-		number: .number,
-		title: .title,
-		labels: .labels,
-		createdAt: .createdAt,
-		role: (
-			if (.labels | map(.name) | index("supervisor")) then "supervisor"
-			elif (.labels | map(.name) | index("contributor")) then "contributor"
-			else "" end
-		),
-		user: (
-			(.title | capture("^\\[(?<role>Supervisor|Contributor):(?<user>[^]]+)\\]").user) // ""
-		)
-	}')
+	local identity_aliases_config=""
+	local identity_aliases_config_path
+	identity_aliases_config_path=$(_dashboard_identity_alias_config_path)
+	if [[ -n "$identity_aliases_config_path" ]]; then
+		identity_aliases_config=$(<"$identity_aliases_config_path")
+	fi
+
+	# Enrich every issue with a canonical operator key. Issues missing a
+	# dashboard title prefix are skipped (but still included in total count).
+	local enriched=""
+	local issue_line
+	while IFS= read -r issue_line; do
+		[[ -z "$issue_line" ]] && continue
+		local title user role canonical aliases labels_json
+		title=$(printf '%s' "$issue_line" | jq -r '.title // ""')
+		user=$(printf '%s' "$title" | sed -En 's/^\[(Supervisor|Contributor):([^]]+)\].*/\2/p')
+		role=$(printf '%s' "$title" | sed -En 's/^\[(Supervisor|Contributor):([^]]+)\].*/\1/p' | tr '[:upper:]' '[:lower:]')
+		[[ -n "$user" ]] || continue
+		aliases=$(_dashboard_identity_aliases "$user" "$identity_aliases_config")
+		canonical=$(printf '%s\n' "$aliases" | sed -n '1p')
+		labels_json=$(printf '%s' "$issue_line" | jq -c '.labels')
+		enriched="${enriched}$(printf '%s' "$issue_line" | jq -c \
+			--arg role "$role" \
+			--arg user "$user" \
+			--arg canonical "$canonical" \
+			--argjson labels "$labels_json" \
+			'{number: .number, title: .title, labels: $labels, createdAt: .createdAt, role: $role, user: $user, canonical: $canonical}')"$'\n'
+	done < <(printf '%s' "$issues_json" | jq -c '.[]')
 
 	_backfill_origin_worker_labels "$enriched" "$slug"
 
-	# Group by (role, user). For each group with >1 members, keep the
-	# newest by createdAt and close the rest.
+	# Group by canonical operator. For each group with >1 members, keep the
+	# newest by createdAt and close the rest, including cross-role aliases.
 	local groups_summary
 	groups_summary=$(printf '%s' "$enriched" |
-		jq -sc 'group_by(.role + "\u0001" + .user) | .[] | {
+		jq -sc 'group_by(.canonical) | .[] | {
 			role: .[0].role,
 			user: .[0].user,
+			canonical: .[0].canonical,
 			issues: (sort_by(.createdAt) | reverse)
-		} | select(.role != "" and .user != "") | select(.issues | length > 1)')
+		} | select(.canonical != "") | select(.issues | length > 1)')
 
 	if [[ -z "$groups_summary" ]]; then
 		log_info "  no duplicates in ${slug}"

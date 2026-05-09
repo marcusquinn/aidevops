@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.14.82
+# Version: 3.15.9
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -31,6 +31,13 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
+SETUP_STAGE=""
+SETUP_STAGE_OPENCODE="setup_opencode_cli"
+SETUP_STAGE_AGENTS="deploy_aidevops_agents"
+SETUP_STAGE_HOOKS="setup_safety_hooks"
+SETUP_STAGE_TABBY="setup_tabby"
+SETUP_STAGE_PULSE="setup_supervisor_pulse"
+SETUP_OS_DARWIN="Darwin"
 # Python compatibility floor used by setup checks and skill/tool gating.
 # Keep in sync with .agents/scripts/setup/modules/plugins.sh requirements.
 PYTHON_REQUIRED_MAJOR=3
@@ -38,7 +45,7 @@ PYTHON_REQUIRED_MINOR=10
 export PYTHON_REQUIRED_MAJOR PYTHON_REQUIRED_MINOR
 # Platform constants — exported for sourced .agents/scripts/setup/modules (shell-env.sh,
 # tool-install.sh) that reference them at runtime.
-PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
+PLATFORM_MACOS=$([[ "$(uname -s)" == "$SETUP_OS_DARWIN" ]] && echo true || echo false)
 PLATFORM_ARM64=$([[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && echo true || echo false)
 export PLATFORM_MACOS PLATFORM_ARM64
 readonly PLATFORM_MACOS PLATFORM_ARM64
@@ -236,7 +243,7 @@ if [[ ! -d "$_setup_script_dir/.agents/scripts/setup/modules" ]]; then
 
 	# Auto-install git if missing
 	if ! command -v git >/dev/null 2>&1; then
-		if [[ "$(uname)" == "Darwin" ]]; then
+		if [[ "$(uname)" == "$SETUP_OS_DARWIN" ]]; then
 			print_info "Installing Xcode Command Line Tools (includes git)..."
 			xcode-select --install 2>/dev/null || true
 			xcode_wait=0
@@ -346,6 +353,26 @@ parse_args() {
 			UPDATE_TOOLS_MODE=true
 			shift
 			;;
+		--stage)
+			if [[ -z "${2:-}" ]]; then
+				print_error "--stage requires a value"
+				_setup_print_stage_help
+				exit 1
+			fi
+			SETUP_STAGE="$2"
+			NON_INTERACTIVE=true
+			shift 2
+			;;
+		--stage=*)
+			SETUP_STAGE="${_opt#--stage=}"
+			if [[ -z "$SETUP_STAGE" ]]; then
+				print_error "--stage requires a value"
+				_setup_print_stage_help
+				exit 1
+			fi
+			NON_INTERACTIVE=true
+			shift
+			;;
 		--help | -h)
 			echo "Usage: ./setup.sh [OPTIONS]"
 			echo ""
@@ -353,6 +380,7 @@ parse_args() {
 			echo "  --clean            Remove stale files before deploying (cleans ~/.aidevops/agents/)"
 			echo "  --interactive, -i  Ask confirmation before each step"
 			echo "  --non-interactive, -n  Deploy agents only, skip all optional installs (no prompts)"
+			echo "  --stage <name>     Run one supported setup stage/scope without full setup"
 			echo "  --update, -u       Check for and offer to update outdated tools after setup"
 			echo "  --help             Show this help message"
 			echo ""
@@ -360,6 +388,8 @@ parse_args() {
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
+			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, full."
+			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}."
 			echo "Use --update to check for tool updates after setup completes."
 			exit 0
 			;;
@@ -370,7 +400,45 @@ parse_args() {
 			;;
 		esac
 	done
+	if [[ -n "$SETUP_STAGE" ]]; then
+		_setup_validate_stage "$SETUP_STAGE" || exit $?
+	fi
 	return 0
+}
+
+_setup_print_stage_help() {
+	printf '%s\n' "Supported setup stages/scopes:"
+	printf '  opencode | %s          Repair/install OpenCode CLI only\n' "$SETUP_STAGE_OPENCODE"
+	printf '  agents   | %s     Deploy .agents scripts/prompts only\n' "$SETUP_STAGE_AGENTS"
+	printf '  hooks    | %s          Install safety hooks only\n' "$SETUP_STAGE_HOOKS"
+	printf '  tabby    | %s                 Sync Tabby profiles only\n' "$SETUP_STAGE_TABBY"
+	printf '  pulse    | %s      Install/refresh pulse scheduler only\n' "$SETUP_STAGE_PULSE"
+	printf '%s\n' "  full                                  Run the default full setup path"
+	return 0
+}
+
+_setup_canonical_stage() {
+	local stage="$1"
+	case "$stage" in
+	opencode | "$SETUP_STAGE_OPENCODE") printf '%s' "$SETUP_STAGE_OPENCODE" ;;
+	agents | "$SETUP_STAGE_AGENTS") printf '%s' "$SETUP_STAGE_AGENTS" ;;
+	hooks | "$SETUP_STAGE_HOOKS") printf '%s' "$SETUP_STAGE_HOOKS" ;;
+	tabby | "$SETUP_STAGE_TABBY") printf '%s' "$SETUP_STAGE_TABBY" ;;
+	pulse | "$SETUP_STAGE_PULSE") printf '%s' "$SETUP_STAGE_PULSE" ;;
+	full) printf '%s' "full" ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+_setup_validate_stage() {
+	local stage="$1"
+	if _setup_canonical_stage "$stage" >/dev/null; then
+		return 0
+	fi
+	print_error "Unknown setup stage/scope: $stage"
+	_setup_print_stage_help
+	return 1
 }
 
 # Initialize ~/.config/aidevops/settings.json with documented defaults.
@@ -614,7 +682,7 @@ _setup_lock_pid_is_noninteractive_setup() {
 	[[ "$pid" =~ ^[0-9]+$ ]] || return 1
 	owner_args=$(ps -p "$pid" -o args= 2>/dev/null || true)
 	[[ -n "$owner_args" ]] || return 0
-	[[ "$owner_args" == *"setup.sh"* && "$owner_args" == *"--non-interactive"* ]]
+	[[ "$owner_args" == *"setup.sh"* && ( "$owner_args" == *"--non-interactive"* || "$owner_args" == *"--stage"* ) ]]
 	return $?
 }
 
@@ -628,7 +696,7 @@ _setup_lock_dir_age_seconds() {
 	fi
 	if type _file_mtime_epoch >/dev/null 2>&1; then
 		lock_mtime=$(_file_mtime_epoch "$lock_dir" 2>/dev/null || true)
-	elif [[ "$(uname -s 2>/dev/null || true)" == "Darwin" || "$(uname -s 2>/dev/null || true)" == "FreeBSD" ]]; then
+	elif [[ "$(uname -s 2>/dev/null || true)" == "$SETUP_OS_DARWIN" || "$(uname -s 2>/dev/null || true)" == "FreeBSD" ]]; then
 		lock_mtime=$(stat -f %m "$lock_dir" 2>/dev/null || true)
 	else
 		lock_mtime=$(stat -c %Y "$lock_dir" 2>/dev/null || true)
@@ -1002,9 +1070,7 @@ _setup_acquire_noninteractive_setup_lock() {
 # GH#21060 / t2911: Every direct function call is wrapped with _time_step so
 # that a one-line-per-stage TSV timing record is appended to
 # $HOME/.aidevops/logs/setup-stage-timings.log for post-run diagnostics.
-_setup_run_non_interactive() {
-	print_info "Non-interactive mode: deploying agents and running safe migrations only"
-
+_setup_init_stage_timing_log() {
 	# GH#21060: Initialise per-stage timing log; rotate if over 10K lines / 1MB.
 	local _stl
 	_stl="$HOME/.aidevops/logs/setup-stage-timings.log"
@@ -1021,6 +1087,51 @@ _setup_run_non_interactive() {
 			print_info "setup-stage-timings.log rotated (was ${_stl_lines} lines / ${_stl_bytes} bytes)"
 		fi
 	fi
+	return 0
+}
+
+_setup_run_scoped_stage() {
+	local os="$1"
+	local stage
+	stage="$(_setup_canonical_stage "$SETUP_STAGE")" || return 1
+
+	if [[ "$stage" == "full" ]]; then
+		_setup_run_non_interactive
+		_setup_post_setup_steps "$os"
+		return 0
+	fi
+
+	print_info "Scoped setup mode: running ${stage} only"
+	_setup_init_stage_timing_log
+	case "$stage" in
+	"$SETUP_STAGE_OPENCODE")
+		_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
+		;;
+	"$SETUP_STAGE_AGENTS")
+		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+		_time_step "_deploy_hotfix_config" _deploy_hotfix_config
+		;;
+	"$SETUP_STAGE_HOOKS")
+		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
+		;;
+	"$SETUP_STAGE_TABBY")
+		_time_step "$SETUP_STAGE_TABBY" setup_tabby
+		;;
+	"$SETUP_STAGE_PULSE")
+		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os"
+		;;
+	*)
+		print_error "Unsupported canonical setup stage: $stage"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+_setup_run_non_interactive() {
+	print_info "Non-interactive mode: deploying agents and running safe migrations only"
+
+	_setup_init_stage_timing_log
 
 	_time_step "protect_current_setup_worktree" protect_current_setup_worktree
 	_time_step "verify_location" verify_location
@@ -1051,16 +1162,16 @@ _setup_run_non_interactive() {
 	# collision with @anthropic-ai/claude-code or similar). Skipping this
 	# in non-interactive mode is the bug PR #20189 introduced and what
 	# alex-solovyev's runner spam stemmed from.
-	_time_step "setup_opencode_cli" setup_opencode_cli
+	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
 	_time_step "validate_opencode_config" validate_opencode_config
-	_time_step "deploy_aidevops_agents" deploy_aidevops_agents
+	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
 	_time_step "_deploy_hotfix_config" _deploy_hotfix_config
 	_time_step "sync_agent_sources" sync_agent_sources
 	_time_step "install_aidevops_cli" install_aidevops_cli
 	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
 	if is_feature_enabled safety_hooks 2>/dev/null; then
-		_time_step "setup_safety_hooks" setup_safety_hooks
+		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
 	fi
 	_time_step "init_settings_json" init_settings_json
 
@@ -1248,7 +1359,7 @@ _setup_noninteractive_schedulers() {
 	# Auto-update handles non-interactive internally (systemd detection fixed in GH#17861)
 	_time_step "setup_auto_update" setup_auto_update
 	if _should_setup_noninteractive_supervisor_pulse; then
-		_time_step "setup_supervisor_pulse" setup_supervisor_pulse "$os"
+		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os"
 	fi
 	# t2939: pulse-watchdog (independent revival mechanism). Always installed
 	# alongside the pulse — it is a no-op when pulse is disabled. Skipping the
@@ -1308,7 +1419,7 @@ _setup_noninteractive_schedulers() {
 	_time_step "setup_opencode_db_maintenance" setup_opencode_db_maintenance
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	_time_step "migrate_cron_to_systemd" migrate_cron_to_systemd
-	_time_step "setup_tabby" setup_tabby
+	_time_step "$SETUP_STAGE_TABBY" setup_tabby
 	return 0
 }
 
@@ -1469,13 +1580,17 @@ main() {
 	# never blocks setup even if bash install fails.
 	_setup_check_bash_upgrade
 
-	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+	if [[ -n "$SETUP_STAGE" ]]; then
+		_setup_run_scoped_stage "$_os"
+	elif [[ "$NON_INTERACTIVE" == "true" ]]; then
 		_setup_run_non_interactive
 	else
 		_setup_run_interactive
 	fi
 
-	_setup_post_setup_steps "$_os"
+	if [[ -z "$SETUP_STAGE" ]]; then
+		_setup_post_setup_steps "$_os"
+	fi
 
 	_setup_restart_pulse_if_running
 

@@ -19,6 +19,11 @@ tools:
 
 Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. Playwriter is always headed (attaches to your browser).
 
+For repeatable browser operations or web data mining that should learn, optimize,
+persist profile state, or graduate into reusable private workflows, start with
+`/auto-browse` and `auto-browse.md`; it orchestrates the tools below rather than
+replacing them.
+
 ```text
 EXTRACT?
   Web search + crawl → WaterCrawl | Bulk CSS/XPath → Crawl4AI | One-off authenticated → curl-copy

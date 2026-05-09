@@ -444,10 +444,6 @@ _normalize_requeue_stale_brief_rewrite_rows() {
 			"$add_label_flag" "$_PIR_STATUS_AVAILABLE"
 			"$remove_label_flag" "$_PIR_NEEDS_BRIEF_REWRITE"
 		)
-		local status_label=""
-		for status_label in "$_PIR_STATUS_QUEUED" "$_PIR_STATUS_CLAIMED" "$_PIR_STATUS_IN_PROGRESS" "$_PIR_STATUS_IN_REVIEW" "$_PIR_STATUS_BLOCKED" "$_PIR_STATUS_DONE"; do
-			brief_flags+=("$remove_label_flag" "$status_label")
-		done
 		IFS=',' read -r -a brief_assignee_array <<<"$brief_assignees"
 		for brief_assignee in "${brief_assignee_array[@]}"; do
 			[[ -n "$brief_assignee" ]] && brief_flags+=("$remove_assignee_flag" "$brief_assignee")
@@ -459,6 +455,79 @@ _normalize_requeue_stale_brief_rewrite_rows() {
 			echo "[pulse-wrapper] Assignment normalization: skipped stale brief-rewrite recovery for #${brief_issue} in ${slug}" >>"$LOGFILE"
 		fi
 	done <<<"$stale_brief_rows"
+
+	return 0
+}
+
+#######################################
+# Find consolidated feedback specs missing dispatch lifecycle labels.
+#
+# Review/CI feedback consolidation creates worker-ready implementation specs.
+# If issue creation or label copying drops status/tier/auto-dispatch, the issue
+# remains open but never reaches the dispatch queue. Only backfill internal
+# worker-origin consolidated feedback issues, and never touch NMR/blocked/done
+# or explicit opt-out issues.
+#
+# Args:
+#   $1 - issue_rows_json from gh_issue_list
+# Output: issue numbers, one per line
+# Returns: 0 always
+#######################################
+_normalize_get_feedback_backfill_rows() {
+	local issue_rows_json="$1"
+
+	printf '%s' "$issue_rows_json" | jq -r \
+		--arg origin_worker_label "origin:worker" \
+		--arg consolidated_label "consolidated" \
+		--arg auto_dispatch_label "auto-dispatch" \
+		--arg no_auto_label "no-auto-dispatch" \
+		--arg parent_label "parent-task" \
+		--arg ci_label "source:ci-feedback" \
+		--arg conflict_label "source:conflict-feedback" \
+		--arg review_label "source:review-feedback" \
+		--arg blocked_label "$_PIR_STATUS_BLOCKED" \
+		--arg done_label "$_PIR_STATUS_DONE" '
+		.[]
+		| (.labels | map(.name)) as $labels
+		| select($labels | index($origin_worker_label))
+		| select($labels | index($consolidated_label))
+		| select(($labels | index($ci_label)) or ($labels | index($conflict_label)) or ($labels | index($review_label)))
+		| select(($labels | index($auto_dispatch_label)) == null or ([$labels[] | select(startswith("status:"))] | length) == 0 or ([$labels[] | select(startswith("tier:"))] | length) == 0)
+		| select(($labels | index($no_auto_label)) == null)
+		| select(($labels | index($parent_label)) == null)
+		| select(($labels | index($blocked_label)) == null)
+		| select(($labels | index($done_label)) == null)
+		| select(([$labels[] | select(startswith("needs-"))] | length) == 0)
+		| select((.assignees | length) == 0)
+		| .number
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Backfill dispatch lifecycle labels for consolidated feedback specs.
+#
+# Args:
+#   $1 - slug
+#   $2 - issue numbers, one per line
+# Returns: 0 always
+#######################################
+_normalize_backfill_feedback_rows() {
+	local slug="$1"
+	local feedback_rows="$2"
+	local feedback_issue=""
+
+	while IFS= read -r feedback_issue; do
+		[[ "$feedback_issue" =~ ^[0-9]+$ ]] || continue
+		if gh issue edit "$feedback_issue" --repo "$slug" \
+			"$_PIR_ADD_LABEL_FLAG" "$_PIR_STATUS_AVAILABLE" \
+			"$_PIR_ADD_LABEL_FLAG" "auto-dispatch" \
+			"$_PIR_ADD_LABEL_FLAG" "tier:standard" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Assignment normalization: backfilled dispatch labels on consolidated feedback #${feedback_issue} in ${slug}" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Assignment normalization: skipped consolidated feedback #${feedback_issue} in ${slug} — failed to backfill dispatch labels" >>"$LOGFILE"
+		fi
+	done <<<"$feedback_rows"
 
 	return 0
 }
@@ -546,6 +615,12 @@ _normalize_reassign_self() {
 		local stale_brief_rows=""
 		stale_brief_rows=$(_normalize_get_stale_brief_rewrite_rows "$issue_rows_json")
 		_normalize_requeue_stale_brief_rewrite_rows "$slug" "$stale_brief_rows" "$_PIR_ADD_LABEL_FLAG" "$_PIR_REMOVE_LABEL_FLAG" "$_PIR_REMOVE_ASSIGNEE_FLAG"
+
+		# Consolidated review/CI feedback specs are worker-ready. If creation or
+		# label-copying missed lifecycle labels, make them dispatchable here.
+		local feedback_backfill_rows=""
+		feedback_backfill_rows=$(_normalize_get_feedback_backfill_rows "$issue_rows_json")
+		_normalize_backfill_feedback_rows "$slug" "$feedback_backfill_rows"
 
 		# Only active worker states receive assignment normalization. Available
 		# feedback-routed worker issues may stay unassigned until the atomic dispatch
@@ -683,7 +758,24 @@ _normalize_unassign_stampless_interactive() {
 			# via dead-PID + missing-worktree detection.
 			[[ -f "$stamp" ]] && continue
 
-			if gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+			local labels_csv=""
+			labels_csv=$(printf '%s' "$json" | jq -r --argjson n "$issue_num" '[.[] | select(.number == $n) | .labels[].name] | join(",")' 2>/dev/null) || labels_csv=""
+			if [[ ",${labels_csv}," == *",status:in-review,"* ]]; then
+				local open_pr_count=0 open_pr_rc=0
+				open_pr_count=$(gh_pr_list --repo "$slug" --state open --search "$issue_num" --json number --jq 'length' 2>/dev/null) || open_pr_rc=$?
+				if [[ "$open_pr_rc" -ne 0 ]]; then
+					echo "[pulse-wrapper] Stampless interactive auto-release: skip #${issue_num} in ${slug} — cannot verify open PR count" >>"$LOGFILE"
+					continue
+				fi
+				[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
+				if [[ "$open_pr_count" -gt 0 ]]; then
+					continue
+				fi
+				if set_issue_status "$issue_num" "$slug" "available" --remove-assignee "$runner_user" >/dev/null 2>&1; then
+					echo "[pulse-wrapper] Stampless interactive auto-release: reset status:in-review #${issue_num} in ${slug} to available (>${age_threshold_seconds}s old, no stamp, no open PR)" >>"$LOGFILE"
+					total_released=$((total_released + 1))
+				fi
+			elif gh issue edit "$issue_num" --repo "$slug" --remove-assignee "$runner_user" >/dev/null 2>&1; then
 				echo "[pulse-wrapper] Stampless interactive auto-release: unassigned ${runner_user} from #${issue_num} in ${slug} (>${age_threshold_seconds}s old, no stamp)" >>"$LOGFILE"
 				total_released=$((total_released + 1))
 			fi

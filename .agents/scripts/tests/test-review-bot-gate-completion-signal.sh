@@ -85,6 +85,14 @@ setup_test_env() {
       "path": "/tmp/otherrepo",
       "slug": "testorg/otherrepo",
       "pulse": true
+    },
+    {
+      "path": "/tmp/strictrepo",
+      "slug": "testorg/strictrepo",
+      "pulse": true,
+      "review_gate": {
+        "completion_behavior": "strict"
+      }
     }
   ]
 }
@@ -429,6 +437,141 @@ test_two_phase_env_override_respected_non_two_phase() {
 	return 0
 }
 
+# ---------- Unit/integration tests: opt-in strict completion (GH#23066) ----------
+
+install_strict_completion_gh_stub() {
+	local scenario="$1"
+	local gh_stub="${TEST_ROOT}/bin/gh"
+
+	cat >"$gh_stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+scenario="${REVIEW_BOT_GATE_GH_SCENARIO:?}"
+
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" ]]; then
+	printf '%s\n' 'abc123def456'
+	exit 0
+fi
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 2
+fi
+
+endpoint="${2:-}"
+case "$endpoint" in
+	repos/testorg/strictrepo/pulls/123/reviews)
+		;;
+	repos/testorg/strictrepo/issues/123/comments)
+		printf '%s\t%s\t%s\n' \
+			'2026-05-07T00:00:00Z' \
+			'2026-05-07T00:00:05Z' \
+			'UmV2aWV3IGNvbXBsZXRlZC4gTG9va3MgZ29vZC4='
+		;;
+	repos/testorg/strictrepo/pulls/123/comments)
+		;;
+	repos/testorg/strictrepo/commits/abc123def456/status?per_page=100)
+		if [[ "$scenario" == "strict-success" ]]; then
+			printf '%s\n' 'CodeRabbit'
+		fi
+		;;
+	repos/testorg/strictrepo/commits/abc123def456/check-runs?per_page=100)
+		;;
+	*)
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	export REVIEW_BOT_GATE_GH_SCENARIO="$scenario"
+	return 0
+}
+
+test_get_completion_behavior_strict_repo() {
+	local behavior
+	behavior=$(_get_completion_behavior 'testorg/strictrepo' 'coderabbitai')
+	if [[ "$behavior" == "strict" ]]; then
+		print_result "completion_behavior resolves strict repo preference" 0
+	else
+		print_result "completion_behavior resolves strict repo preference" 1 \
+			"got '${behavior}', expected 'strict'"
+	fi
+	return 0
+}
+
+test_get_completion_behavior_defaults_fast() {
+	local behavior
+	behavior=$(_get_completion_behavior 'testorg/otherrepo' 'coderabbitai')
+	if [[ "$behavior" == "fast" ]]; then
+		print_result "completion_behavior defaults to fast throughput mode" 0
+	else
+		print_result "completion_behavior defaults to fast throughput mode" 1 \
+			"got '${behavior}', expected 'fast'"
+	fi
+	return 0
+}
+
+test_strict_coderabbit_pending_status_blocks_edited_comment() {
+	install_strict_completion_gh_stub "strict-pending"
+
+	if ! bot_has_real_review 123 'testorg/strictrepo' 'coderabbitai' 2>/dev/null; then
+		print_result "strict CodeRabbit edited comment waits for SUCCESS status" 0
+	else
+		print_result "strict CodeRabbit edited comment waits for SUCCESS status" 1 \
+			"expected strict mode to reject edited-comment evidence without CodeRabbit SUCCESS status"
+	fi
+	return 0
+}
+
+test_strict_coderabbit_success_status_passes_edited_comment() {
+	install_strict_completion_gh_stub "strict-success"
+
+	if bot_has_real_review 123 'testorg/strictrepo' 'coderabbitai' 2>/dev/null; then
+		print_result "strict CodeRabbit accepts edited comment with SUCCESS status" 0
+	else
+		print_result "strict CodeRabbit accepts edited comment with SUCCESS status" 1 \
+			"expected strict mode to accept CodeRabbit SUCCESS status evidence"
+	fi
+	return 0
+}
+
+test_any_bot_success_status_reuses_provided_contexts() {
+	TEST_STATUS_FETCHES=0
+	_get_success_status_contexts() {
+		TEST_STATUS_FETCHES=$((TEST_STATUS_FETCHES + 1))
+		return 1
+	}
+
+	local contexts
+	contexts=$'abc123def456\nCodeRabbit'
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" 2>/dev/null && \
+		[[ "$TEST_STATUS_FETCHES" -eq 0 ]]; then
+		print_result "status fallback reuses provided success contexts" 0
+	else
+		print_result "status fallback reuses provided success contexts" 1 \
+			"fetches=${TEST_STATUS_FETCHES}"
+	fi
+	return 0
+}
+
+test_any_bot_success_status_reuses_prepared_contexts() {
+	local prepare_calls=0
+	_prepare_success_status_contexts() {
+		prepare_calls=$((prepare_calls + 1))
+		return 1
+	}
+
+	local contexts
+	contexts=$'abc123def456\ncoderabbit'
+	if any_bot_has_success_status 123 'testorg/strictrepo' "$contexts" true 2>/dev/null && \
+		[[ "$prepare_calls" -eq 0 ]]; then
+		print_result "status fallback reuses prepared success contexts" 0
+	else
+		print_result "status fallback reuses prepared success contexts" 1 \
+			"prepare_calls=${prepare_calls}"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -551,6 +694,7 @@ test_notice_category_propagates_api_failure() {
 test_do_check_passes_true_rate_limit_only() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
@@ -574,6 +718,7 @@ test_do_check_passes_true_rate_limit_only() {
 test_do_check_blocks_non_rate_limit_non_review_states() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { return 1; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
 	any_bot_has_success_status() { return 1; }
@@ -597,6 +742,7 @@ test_do_check_blocks_non_rate_limit_non_review_states() {
 test_do_check_accepts_non_review_with_success_status() {
 	check_for_skip_label() { return 1; }
 	get_all_bot_commenters() { printf '%s\n' 'coderabbitai'; return 0; }
+	_get_success_status_contexts() { printf '%s\n' 'abc123def456' 'CodeRabbit'; return 0; }
 	bot_has_real_review() { return 1; }
 	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
 	any_bot_has_success_status() { return 0; }
@@ -613,6 +759,42 @@ test_do_check_accepts_non_review_with_success_status() {
 	else
 		print_result "do_check accepts non-review state with success status" 1 \
 			"status=${status} output=${output}"
+	fi
+	return 0
+}
+
+test_do_check_fetches_success_status_contexts_once() {
+	check_for_skip_label() { return 1; }
+	get_all_bot_commenters() { printf '%s\n' 'coderabbitai gemini-code-assist'; return 0; }
+	bot_has_real_review() { return 1; }
+	bot_get_notice_category() { echo "non-rate-limit"; return 0; }
+	_get_success_status_contexts() {
+		local pr_number="$1"
+		local repo="$2"
+		local count="0"
+		if [[ -f "${TEST_ROOT}/status-fetch-count" ]]; then
+			IFS= read -r count <"${TEST_ROOT}/status-fetch-count" || count="0"
+		fi
+		count=$((count + 1))
+		printf '%s\n' "$count" >"${TEST_ROOT}/status-fetch-count"
+		printf '%s\n%s\n' "abc123def456" "CodeRabbit"
+		return 0
+	}
+
+	printf '0\n' >"${TEST_ROOT}/status-fetch-count"
+	local output status calls
+	if output=$(do_check 123 'testorg/otherrepo' 2>/dev/null); then
+		status=0
+	else
+		status=$?
+	fi
+	IFS= read -r calls <"${TEST_ROOT}/status-fetch-count" || calls="0"
+
+	if [[ "$status" -eq 0 && "$output" == "PASS" && "$calls" == "1" ]]; then
+		print_result "do_check fetches success status contexts once" 0
+	else
+		print_result "do_check fetches success status contexts once" 1 \
+			"status=${status} output=${output} calls=${calls}"
 	fi
 	return 0
 }
@@ -662,6 +844,15 @@ main() {
 	test_two_phase_env_override_respected_non_two_phase
 
 	echo ""
+	echo "=== Opt-in strict completion (GH#23066) ==="
+	test_get_completion_behavior_strict_repo
+	test_get_completion_behavior_defaults_fast
+	test_strict_coderabbit_pending_status_blocks_edited_comment
+	test_strict_coderabbit_success_status_passes_edited_comment
+	test_any_bot_success_status_reuses_provided_contexts
+	test_any_bot_success_status_reuses_prepared_contexts
+
+	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
 	test_notice_category_single_pass_prefers_non_rate_limit
 	test_notice_category_none_is_successful_default
@@ -672,6 +863,7 @@ main() {
 	test_do_check_passes_true_rate_limit_only
 	test_do_check_blocks_non_rate_limit_non_review_states
 	test_do_check_accepts_non_review_with_success_status
+	test_do_check_fetches_success_status_contexts_once
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}, failed: ${TESTS_FAILED}"

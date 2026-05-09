@@ -312,6 +312,7 @@ set -euo pipefail
 
 local_state_dir="${MOCK_GH_STATE_DIR:?}"
 release_body_file="${local_state_dir}/release_body.txt"
+issue_call_file="${local_state_dir}/issue_calls.txt"
 
 if [[ "${1:-}" != "api" ]]; then
 	exit 1
@@ -327,6 +328,7 @@ if [[ "$endpoint" == "user" ]]; then
 fi
 
 if [[ "$endpoint" == repos/*/issues/[0-9]* && "$endpoint" != */comments* ]]; then
+	printf '1\n' >>"$issue_call_file"
 	jq -n --argjson count "${MOCK_ASSIGNEE_COUNT:-0}" '
 		{assignees: [range(0; $count) | {login: ("runner" + tostring)}]}
 	'
@@ -745,6 +747,11 @@ test_check_preserves_fresh_claim_only_marker() {
 		print_result "fresh claim-only marker does not post release" 0
 	else
 		print_result "fresh claim-only marker does not post release" 1 "body=$(<"${tmp_dir}/release_body.txt")"
+	fi
+	if [[ ! -f "${tmp_dir}/issue_calls.txt" ]]; then
+		print_result "fresh claim-only marker skips issue details fetch" 0
+	else
+		print_result "fresh claim-only marker skips issue details fetch" 1 "calls=$(<"${tmp_dir}/issue_calls.txt")"
 	fi
 	rm -rf "$tmp_dir"
 	return 0

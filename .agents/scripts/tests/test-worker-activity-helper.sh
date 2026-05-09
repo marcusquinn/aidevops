@@ -78,6 +78,7 @@ FIXTURE_DIR="$(mktemp -d -t wah-test-XXXXXX)"
 METRICS="$FIXTURE_DIR/headless-runtime-metrics.jsonl"
 STATS="$FIXTURE_DIR/pulse-stats.json"
 PR_CACHE="$FIXTURE_DIR/pr-cache.json"
+OAUTH_POOL="$FIXTURE_DIR/oauth-pool.json"
 
 cleanup() {
 	rm -rf "$FIXTURE_DIR"
@@ -90,6 +91,7 @@ T_5MIN_AGO=$((NOW - 300))
 T_2H_AGO=$((NOW - 7200))
 T_25H_AGO=$((NOW - 90000))
 T_FUTURE_SENTINEL=4102444800
+T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 
 # Build metrics fixture covering every bucket and the regression cases that
 # the original awk implementation handled correctly:
@@ -106,6 +108,9 @@ T_FUTURE_SENTINEL=4102444800
 #   issue-9          — synthetic future sentinel timestamp (year 2100); must
 #                      be excluded from bounded-window metrics and examples.
 #   issue-10         — missing timestamp; must not appear in bounded windows.
+#   issue-11         — service_interruption_continue heartbeat, not terminal.
+#   issue-12         — service_interruption_exhausted terminal failure after the
+#                      dedicated continuation budget is spent.
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
@@ -117,7 +122,23 @@ T_FUTURE_SENTINEL=4102444800
 	printf '{"ts":%d,"role":"worker","session_key":"issue-8","result":"watchdog_stall_continue","exit_code":124}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
 	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
+	printf '{"ts":%d,"role":"worker","session_key":"issue-11","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_continue","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"503","exit_code":81}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","exit_code":81}\n' "$T_2H_AGO"
 } >"$METRICS"
+
+cat >"$OAUTH_POOL" <<EOF
+{
+  "openai": [
+    {"status": "idle"},
+    {"status": "active"},
+    {"status": "auth-error"},
+    {"status": "rate-limited", "cooldownUntil": $T_FUTURE_SENTINEL_MS}
+  ],
+  "anthropic": [
+    {"status": "idle"}
+  ]
+}
+EOF
 
 # Build pulse-stats fixture: counter arrays with timestamps inside and outside window.
 cat >"$STATS" <<EOF
@@ -137,6 +158,8 @@ RUN_ENV=(
 	"WAH_METRICS_FILE=$METRICS"
 	"WAH_PULSE_STATS_FILE=$STATS"
 	"WAH_PR_CACHE_FILE=$PR_CACHE"
+	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL"
+	"PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=2"
 )
 
 echo "${TEST_BLUE}=== t3215: worker-activity-helper.sh tests ===${TEST_NC}"
@@ -185,20 +208,22 @@ else
 	echo "  output: $(printf '%q' "${JSON:0:300}")"
 fi
 
-# Assert exact counts. 24h window: events 1-6 + 8, excludes 7 (25h ago).
+# Assert exact counts. 24h window: events 1-6 + 8 + 11 + 12, excludes 7 (25h ago).
 # issue-8 (watchdog_stall_continue with exit_code=124) tests the t3215
 # regression case — must count as wc, not of, despite non-zero exit.
-assert_eq "2c: total = 7" "7" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "2c: total = 9" "9" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "2d: succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
+assert_eq "2f2: service_interrupted = 1 (heartbeat)" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.service_interrupted')"
 assert_eq "2g: rate_limited = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.rate_limited')"
-assert_eq "2h: other_failure = 1 (NOT 2 — heartbeat exclusion lock)" "1" \
+assert_eq "2h: other_failure = 2 (heartbeat excluded, exhausted counted)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
 assert_eq "2h2: rich result_counts includes success bucket" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.result_counts.success')"
-assert_eq "2h3: timing summary includes samples" "7" \
+assert_eq "2h3: timing summary includes samples" "9" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
 assert_eq "2h4: recent example carries load context" "2.0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"
@@ -217,7 +242,7 @@ assert_eq "2h10: failure groups expose provider status" "500" \
 assert_eq "2h10b: failure groups expose classification pattern" "server_error|5xx|connection_failure|overloaded" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .classification_pattern')"
 assert_eq "2h11: recent examples carry provider evidence" "openai/gpt-5.5" \
-	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-5") | .model')"
+	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-11") | .model')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -283,15 +308,34 @@ assert_contains "5b: human output names pulse-stats" "pulse-stats.json" "$OUT"
 assert_contains "5c: human output shows succeeded count" "Succeeded:                   2" "$OUT"
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
+assert_contains "5d2: human output shows service interruption resumes" \
+	"Service interruption resumed" "$OUT"
 assert_contains "5e: human output shows pr-check opt-in note" "use --pr-check" "$OUT"
 assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
 assert_contains "5g: human output shows failure groups" "Failure groups" "$OUT"
 
 # ---------------------------------------------------------------------------
-# Section 6: solved:worker attribution query excludes origin-only PR counts.
+# Section 6: provider/account diagnostics expose redacted capacity slots.
 # ---------------------------------------------------------------------------
 echo
-echo "--- Section 6: solved-by attribution query ---"
+echo "--- Section 6: provider/account diagnostics ---"
+
+JSON=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h --json 2>&1)
+RC=$?
+assert_rc "6a: providers --json exits 0" 0 "$RC"
+assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
+assert_eq "6c: openai capacity_slots uses redacted multiplier" "4" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
+
+OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
+assert_contains "6d: human provider output shows capacity slots" "capacity_slots=4" "$OUT"
+
+# ---------------------------------------------------------------------------
+# Section 7: solved:worker attribution query excludes origin-only PR counts.
+# ---------------------------------------------------------------------------
+echo
+echo "--- Section 7: solved-by attribution query ---"
 
 GH_STUB_DIR="$FIXTURE_DIR/bin"
 mkdir -p "$GH_STUB_DIR"
@@ -310,18 +354,18 @@ chmod +x "$GH_STUB_DIR/gh"
 JSON=$(env "${RUN_ENV[@]}" "GH_CALL_LOG=$GH_CALL_LOG" "PATH=$GH_STUB_DIR:$PATH" \
 	"$HELPER" summary --since 24h --repo marcusquinn/aidevops --pr-check --json 2>&1)
 RC=$?
-assert_rc "6a: solved attribution query exits 0" 0 "$RC"
-assert_eq "6b: solved worker issue count = 2" "2" \
+assert_rc "7a: solved attribution query exits 0" 0 "$RC"
+assert_eq "7b: solved worker issue count = 2" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.worker_solved_issues.count')"
-assert_contains "6c: gh query uses solved:worker label" "label:solved:worker" \
+assert_contains "7c: gh query uses solved:worker label" "label:solved:worker" \
 	"$(<"$GH_CALL_LOG")"
 if grep -q "label:origin:worker" "$GH_CALL_LOG" 2>/dev/null; then
 	TESTS_RUN=$((TESTS_RUN + 1))
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 6d: query must not use origin:worker"
+	echo "${TEST_RED}FAIL${TEST_NC}: 7d: query must not use origin:worker"
 else
 	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 6d: query does not use origin:worker"
+	echo "${TEST_GREEN}PASS${TEST_NC}: 7d: query does not use origin:worker"
 fi
 
 # ---------------------------------------------------------------------------

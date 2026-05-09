@@ -75,6 +75,101 @@ unset _PULSE_CLEANUP_SCRIPT_DIR
 # Caller ID constant for audit log calls (avoids repeated literals).
 _WTAR_PC_CALLER="pulse-cleanup.sh"
 
+#######################################
+# Extract a GitHub issue number from worker-style branch names.
+#
+# Args:
+#   $1 - branch name
+# Outputs: issue number when present
+# Returns: 0 when an issue was found, 1 otherwise
+#######################################
+_pc_issue_from_branch() {
+	local branch_name="$1"
+	if [[ "$branch_name" =~ gh[-]?([0-9]+) ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Build safe audit context for orphan cleanup decisions.
+#
+# Args:
+#   $1 - branch name
+#   $2 - issue number or empty
+#   $3 - commits ahead
+#   $4 - dirty count
+#   $5 - age seconds
+#   $6 - PR state summary
+#   $7 - owner guard summary
+#   $8 - process guard summary
+#   $9 - recent session guard summary
+#   ${10} - removal/recovery path summary
+# Outputs: space-separated key=value context with no private repo slug
+# Returns 0 always
+#######################################
+_pc_worktree_audit_context() {
+	local branch_name="$1"
+	local issue_number="$2"
+	local commits_ahead="$3"
+	local dirty_count="$4"
+	local wt_age_secs="$5"
+	local pr_state="$6"
+	local owner_guard="$7"
+	local process_guard="$8"
+	local recent_guard="$9"
+	local recovery_path="${10}"
+	local session_key="none"
+	if [[ -n "$issue_number" ]]; then
+		session_key="issue-${issue_number}"
+	fi
+
+	printf 'branch=%s issue=%s session_key=%s owner_guard=%s process_guard=%s recent_session_guard=%s commits=%s dirty=%s pr_state=%s age_secs=%s recovery_path=%s\n' \
+		"${branch_name:-detached}" \
+		"${issue_number:-none}" \
+		"$session_key" \
+		"$owner_guard" \
+		"$process_guard" \
+		"$recent_guard" \
+		"$commits_ahead" \
+		"$dirty_count" \
+		"$pr_state" \
+		"$wt_age_secs" \
+		"$recovery_path"
+	return 0
+}
+
+#######################################
+# Check recent worker runtime metrics for the issue/session key.
+#
+# Args:
+#   $1 - issue number
+#   $2 - now epoch
+#   $3 - grace window seconds
+# Returns: 0 when a recent matching metric exists, 1 otherwise
+#######################################
+_pc_recent_worker_metric_exists() {
+	local issue_number="$1"
+	local now_epoch="$2"
+	local grace_secs="$3"
+	local metrics_file="${AIDEVOPS_HEADLESS_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
+
+	[[ -n "$issue_number" ]] || return 1
+	[[ -f "$metrics_file" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	local cutoff_epoch=$((now_epoch - grace_secs))
+	jq -e --arg issue "$issue_number" --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+		select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)
+		| select(
+			((.issue_number // "") | tostring) == $issue
+			or ((.session_key // "") | tostring | test("(^|[^0-9])" + $issue + "([^0-9]|$)"))
+		)
+	' "$metrics_file" >/dev/null 2>&1
+	return $?
+}
+
 # t2859: Config defaults (ORPHAN_WORKTREE_GRACE_SECS, ORPHAN_MAX_AGE,
 # PULSE_IDLE_CPU_THRESHOLD) are owned by pulse-wrapper-config.sh. When
 # this module is sourced standalone (cleanup-worktrees-async-helper.sh,
@@ -152,8 +247,13 @@ _cleanup_merged_prs_for_all_repos() {
 		fi
 	fi
 
-	local helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
-	if [[ ! -x "$helper" ]]; then
+	local helper=""
+	if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -x "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-helper.sh" ]]; then
+		helper="$_PULSE_CLEANUP_SCRIPT_DIR/worktree-helper.sh"
+	elif [[ -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
+	fi
+	if [[ -z "$helper" ]]; then
 		echo 0
 		return 0
 	fi
@@ -702,6 +802,23 @@ _cleanup_single_worktree() {
 
 	local repo_name_age
 	repo_name_age=$(basename "$rp_age")
+	local orphan_issue_num=""
+	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
+	local age_grace="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"
+	local audit_context
+	audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "none")
+	if _pc_recent_worker_metric_exists "$orphan_issue_num" "$now_epoch" "$age_grace"; then
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "active" "none")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — recent worker runtime metric/session record" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "active-worker-metric" "skipped" "$audit_context"
+		return 1
+	fi
+	if [[ "$commits_ahead" -gt 0 && "$reason" == *"no PR"* ]]; then
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "none")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — local commits with no PR are not permanently removable" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "local-commits-no-pr" "skipped" "$audit_context"
+		return 1
+	fi
 	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 
 	# Step 5a: crash classification for the fast-path "crashed worker" case
@@ -712,9 +829,9 @@ _cleanup_single_worktree() {
 	# Step 5b: perform removal (guarded permanent delete + deregister + branch cleanup)
 	# Age/PR/dirty gates above prove this orphaned worktree is disposable; remove
 	# permanently to avoid growing system Trash.
-	if ! remove_worktree_path_permanently "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible"; then
+	if ! remove_worktree_path_permanently "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible" "$audit_context"; then
 		if git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null; then
-			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible" "permanent"
+			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible" "permanent" "$audit_context"
 		else
 			return 1
 		fi

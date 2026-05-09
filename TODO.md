@@ -107,7 +107,6 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-
 - [ ] t2988 [P0] t2984 REGRESSION: reconcile_issues_single_pass hangs after first run, blocks deterministic_merge_pass — stage runs once successfully (4s, lia_fixed=3) then hangs every subsequent invocation, parent preflight_ownership_reconcile times out at 600s. Stats since 13:53Z deploy: 63 starts, 4 completions, 26 parent timeouts (94% failure rate). Root-cause likely budget/lock state leaking across invocations in `pulse-issue-reconcile.sh` `_t2984_budget` markers. Fix: ensure budget state initialised at function entry, not module-source; release locks on early-exit. Add `tests/test-reconcile-budget-isolation.sh` for double-call regression coverage. Postmortem comment on PR #21374. #bug #framework #auto-dispatch #worker #priority:high ~3h tier:standard ref:GH#21380 logged:2026-04-27
 
 - [x] t3417 support glob-compressed subagent allowlists for OpenCode `permission.task` generation — OpenCode 1.14.31 evaluates Task-tool subagent visibility through `Permission.evaluate("task", item.name, agent.permission)`, which uses `Wildcard.match()` on allow/deny patterns. Verified locally that `{ "*": "deny", "git*": "allow" }` allows both `github-cli` and `gitlab-cli` while denying unrelated agents. Fix aidevops validator first so glob entries in primary-agent `subagents:` frontmatter only pass when they match reviewed flattened task names (not path-style globs), then compress Automate's `github-cli` + `gitlab-cli` pair to `git*`, document the pattern in `.agents/AGENTS.md`, and add regression coverage. #enhancement #framework #interactive ~45m tier:standard ref:GH#22251 logged:2026-05-01 pr:#22252 completed:2026-05-01
@@ -951,6 +950,16 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t3557 Reset pulse blockers when eligible work exists #auto-dispatch #bug ref:GH#22631 pr:#22641 completed:2026-05-03
 
 - [x] t3560 Add /goals mission command ref:GH#22649 pr:#22650 completed:2026-05-03
+
+- [x] t3576 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #pulse #mission:m-20260508-0e27c3 ~2h ref:GH#23135 pr:#23133 completed:2026-05-08
+
+- [x] t3579 Classify timed-out CI logs as infra blockers #auto-dispatch #bug #framework #pulse #mission:m-20260508-0e27c3 ~2h ref:GH#23140 pr:#23141 completed:2026-05-08
+
+- [x] t3582 Make pulse self-heal awardsapp blockers ref:GH#23215 pr:#23216 completed:2026-05-08
+
+- [x] t3583 Improve pulse recovery for orphaned worker output ref:GH#23217 pr:#23218 completed:2026-05-08
+
+- [x] t3584 fix: recover worker output after runtime kills #auto-dispatch #bug ref:GH#23224 pr:#23223 completed:2026-05-08
 
 ## In Progress
 
@@ -4175,3 +4184,36 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3563 Fix recurring TODO sync stashes during cleanup #auto-dispatch #bug ref:GH#22664
 
 - [x] t3565 Harden interactive issue creation labels #bug ref:GH#23018 pr:#23020 completed:2026-05-06
+
+- [ ] t3567 fix: treat pending required checks as non-terminal #auto-dispatch #bug #framework #pulse ref:GH#23099
+
+- [x] t3568 fix: require terminal CI failures for repair feedback #auto-dispatch #bug #framework #pulse ref:GH#23100 pr:#23112 completed:2026-05-07
+
+- [x] t3570 fix: pause repeated transient rate-limit releases #auto-dispatch #bug #framework #pulse ref:GH#23102 pr:#23111 completed:2026-05-07
+
+- [ ] t3569 feat: dedupe review-feedback issues before worker launch #auto-dispatch #feature #framework #worker ref:GH#23101
+
+- [x] t3571 feat: close superseded duplicate PRs against merged fixes #auto-dispatch #feature #framework #pulse ref:GH#23105 pr:#23117 completed:2026-05-07
+
+- [x] t3572 docs: add automation safety invariants to AGENTS.md #auto-dispatch #documentation #framework ref:GH#23106 pr:#23115 completed:2026-05-07
+
+- [x] t3573 fix: block unrequested canonical branch switches #auto-dispatch #bug #framework #git-safety #interactive ref:GH#23109 pr:#23113 completed:2026-05-07
+
+- [x] t3566 Allow breaker-held issues to retry after aidevops upgrades #bug ref:GH#23128 pr:#23127 completed:2026-05-07
+
+- [x] t3574 design `/auto-browse` agent factory for browser operations and web data mining #enhancement #framework ref:GH#23132 pr:#23131 completed:2026-05-08
+
+
+- [ ] t3575 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #mission #pulse ref:GH#23134
+
+- [x] t3578 SQLite output sandbox for token-efficient noisy tool output #enhancement #framework ref:GH#23137 pr:#23143 completed:2026-05-08
+
+- [x] t3577 Default RTK token optimization in setup #enhancement #framework ref:GH#23136 pr:#23138 completed:2026-05-08
+
+
+- [ ] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142
+
+- [x] t3581 Document pragmatic CI gate policy ref:GH#23211 pr:#23214 completed:2026-05-08
+
+
+

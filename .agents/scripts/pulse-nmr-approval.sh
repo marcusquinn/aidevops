@@ -411,8 +411,10 @@ _nmr_application_is_circuit_breaker_trip() {
 	# t3076: the meta-filer posts its `circuit-breaker-meta-filed` marker
 	# as a sibling comment on the same trip-cycle, so it falls inside the
 	# same ±60s window — no separate query needed.
+	local comments_api
+	printf -v comments_api 'repos/%s/issues/%s/comments' "$slug" "$issue_num"
 	local comments_json
-	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	comments_json=$(gh api "$comments_api" --paginate --slurp 2>/dev/null) || comments_json="[]"
 	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
 		comments_json="[]"
 	fi
@@ -437,6 +439,139 @@ _nmr_application_is_circuit_breaker_trip() {
 	[[ "$has_breaker_trip" =~ ^[0-9]+$ ]] || has_breaker_trip=0
 
 	if [[ "$has_breaker_trip" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Convert a dotted version string into a sortable zero-padded key.
+#
+# Args:
+#   $1 - version string (for example 3.14.94)
+# Stdout: sortable key, or empty when invalid.
+#######################################
+_nmr_version_sort_key() {
+	local version_raw="$1"
+	local version=""
+	version=$(printf '%s' "$version_raw" | grep -oE '[0-9]+(\.[0-9]+){0,3}' | head -1) || version=""
+	[[ -n "$version" ]] || { printf '\n'; return 0; }
+
+	local major=0 minor=0 patch=0 build=0
+	IFS=. read -r major minor patch build <<<"$version"
+	major="${major:-0}"
+	minor="${minor:-0}"
+	patch="${patch:-0}"
+	build="${build:-0}"
+	printf '%06d%06d%06d%06d\n' "$major" "$minor" "$patch" "$build" 2>/dev/null || printf '\n'
+	return 0
+}
+
+#######################################
+# Detect the currently deployed aidevops version.
+#
+# Stdout: version string, or empty when unknown.
+#######################################
+_nmr_current_aidevops_version() {
+	if [[ -n "${AIDEVOPS_CURRENT_VERSION_OVERRIDE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_CURRENT_VERSION_OVERRIDE"
+		return 0
+	fi
+
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		aidevops_find_version 2>/dev/null || true
+		return 0
+	fi
+
+	local version_file="${AGENTS_DIR:-$HOME/.aidevops/agents}/VERSION"
+	if [[ -f "$version_file" ]]; then
+		tr -d '[:space:]' <"$version_file" 2>/dev/null || true
+		return 0
+	fi
+
+	printf '\n'
+	return 0
+}
+
+#######################################
+# Decide if an automated breaker NMR should be allowed to retry because the
+# deployed aidevops release is newer than the release that tripped the breaker.
+#
+# This is deliberately narrower than generic circuit-breaker preservation:
+# only infra/capacity breaker markers qualify, manual holds and cost/stale
+# retry-limit breakers stay pinned until cryptographic approval.
+#
+# Args:
+#   $1 - issue_num
+#   $2 - slug
+#   $3 - label_at
+# Stdout: short approval reason when retry is allowed.
+# Returns: 0 allowed, 1 preserve NMR.
+#######################################
+_nmr_breaker_release_retry_reason() {
+	local issue_num="$1"
+	local slug="$2"
+	local label_at="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
+
+	local comments_json
+	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
+
+	local retry_pattern='dispatch-backoff:rate_limit_nmr|cost-circuit-breaker:no_work_loop|dispatch-infrastructure-failure'
+	local array_type='array'
+	local breaker_body=""
+	breaker_body=$(printf '%s' "$comments_json" | jq -r \
+		--arg label_at "$label_at" \
+		--arg array_type "$array_type" \
+		--arg retry_pattern "$retry_pattern" '
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) >= (($label_at | fromdateiso8601) - 5)
+				and (.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+			| select((.body // "") | test($retry_pattern))
+			| (.body // "")
+		]
+		| last // ""
+	' 2>/dev/null) || breaker_body=""
+	[[ -n "$breaker_body" ]] || return 1
+
+	if printf '%s' "$breaker_body" | grep -q 'dispatch-backoff:rate_limit_nmr'; then
+		local now_epoch="" label_epoch="" age_s="" cooldown_s="${AIDEVOPS_RATE_LIMIT_NMR_AUTO_RETRY_SECONDS:-1800}"
+		now_epoch=$(date +%s 2>/dev/null || true)
+		label_epoch=$(date -u -d "$label_at" '+%s' 2>/dev/null || TZ=UTC date -j -f '%Y-%m-%dT%H:%M:%SZ' "$label_at" '+%s' 2>/dev/null || true)
+		[[ "$cooldown_s" =~ ^[0-9]+$ ]] || cooldown_s=1800
+		if [[ "$now_epoch" =~ ^[0-9]+$ && "$label_epoch" =~ ^[0-9]+$ ]]; then
+			age_s=$((now_epoch - label_epoch))
+			if [[ "$age_s" -ge "$cooldown_s" ]]; then
+				printf 'rate-limit breaker cooldown expired after %ss (threshold %ss)\n' "$age_s" "$cooldown_s"
+				return 0
+			fi
+		fi
+	fi
+
+	local breaker_version=""
+	breaker_version=$(printf '%s' "$breaker_body" | grep -oE 'aidevops(_version)?[ =]v?[0-9]+(\.[0-9]+){1,3}|aidevops\.sh[^0-9]*v[0-9]+(\.[0-9]+){1,3}|version=[0-9]+(\.[0-9]+){1,3}' | tail -1 | grep -oE '[0-9]+(\.[0-9]+){1,3}' | head -1) || breaker_version=""
+	[[ -n "$breaker_version" ]] || return 1
+
+	local current_version=""
+	current_version=$(_nmr_current_aidevops_version)
+	[[ -n "$current_version" ]] || return 1
+
+	local breaker_key="" current_key=""
+	breaker_key=$(_nmr_version_sort_key "$breaker_version")
+	current_key=$(_nmr_version_sort_key "$current_version")
+	[[ -n "$breaker_key" && -n "$current_key" ]] || return 1
+
+	if [[ "$current_key" > "$breaker_key" ]]; then
+		printf 'automated breaker retry allowed after aidevops upgrade %s -> %s\n' \
+			"$breaker_version" "$current_version"
 		return 0
 	fi
 
@@ -481,9 +616,18 @@ _nmr_applied_by_maintainer() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
 	# Fetch both actor and creation timestamp of the latest NMR label event.
+	# Use --slurp for paginated timeline reads, then flatten page arrays before
+	# selecting the latest event. Without this, long timelines emit one result per
+	# page and can pass malformed multi-line timestamps into the breaker checks.
 	local nmr_event_json
-	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate \
-		--jq '[.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")] | last | {actor:(.actor.login // ""),at:(.created_at // "")}' \
+	nmr_event_json=$(gh api "repos/${slug}/issues/${issue_num}/timeline" --paginate --slurp \
+		2>/dev/null | jq -c '
+			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+			elif type == "array" then .
+			else [] end)
+			| [.[] | select(.event == "labeled" and .label.name == "needs-maintainer-review")]
+			| last
+			| {actor:(.actor.login // ""),at:(.created_at // "")}' \
 		2>/dev/null) || nmr_event_json=""
 
 	local nmr_actor nmr_at
@@ -496,6 +640,12 @@ _nmr_applied_by_maintainer() {
 	# by maintainer auto-approval and re-enter the loop.
 	if [[ -n "$nmr_at" ]]; then
 		if _nmr_application_is_circuit_breaker_trip "$issue_num" "$slug" "$nmr_at"; then
+			local release_retry_reason=""
+			release_retry_reason=$(_nmr_breaker_release_retry_reason "$issue_num" "$slug" "$nmr_at") || release_retry_reason=""
+			if [[ -n "$release_retry_reason" ]]; then
+				echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — ${release_retry_reason}; allowing one auto-approval retry" >>"$LOGFILE"
+				return 1
+			fi
 			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — circuit breaker tripped by actor=${nmr_actor:-unknown} — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/t3566)" >>"$LOGFILE"
 			# t3049: check if a subsequent worker produced a clean approved PR
 			# that resolves the stale-recovery false positive. Posts a one-shot

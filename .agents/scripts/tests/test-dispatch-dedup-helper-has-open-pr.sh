@@ -330,6 +330,44 @@ test_has_open_pr_requires_open_close_keyword_for_our_issue() {
 	return 0
 }
 
+test_has_open_pr_blocks_approved_mergeable_sibling() {
+	# Check 0: a ready sibling PR may reference the issue with `For #N`
+	# instead of a closing keyword (common for parent/phase work). When it is
+	# approved and mergeable, redispatch would only create a duplicate worker.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23250|[{"number":23288,"title":"Implement dispatch dedup sibling guard","body":"For #23250. Adds the worker redispatch guard.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23250 marcusquinn/aidevops 't3500: dispatch sibling dedup'); then
+		case "$output" in
+		*'open PR #23288 is approved and mergeable for issue #23250'*)
+			print_result "has-open-pr blocks approved mergeable sibling PR" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks approved mergeable sibling PR" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr blocks approved mergeable sibling PR" 1 "Expected approved/mergeable sibling PR to block redispatch"
+	return 0
+}
+
+test_has_open_pr_allows_when_no_healthy_sibling() {
+	# Unhealthy siblings (draft, unapproved, or conflicting) must not hold the
+	# issue forever. They are not candidates the merge path can finish safely, so
+	# redispatch remains allowed when no other PR evidence exists.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23251|[{"number":23289,"title":"Draft sibling","body":"For #23251.","isDraft":true,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"},{"number":23290,"title":"Needs review","body":"For #23251.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"CLEAN"},{"number":23291,"title":"Conflicting sibling","body":"For #23251.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"DIRTY"}]'
+
+	if "$HELPER_SCRIPT" has-open-pr 23251 marcusquinn/aidevops 't3501: allow unhealthy sibling recovery'; then
+		print_result "has-open-pr allows dispatch when no healthy sibling exists" 1 \
+			"Expected exit 1: draft/unapproved/conflicting siblings must not block redispatch"
+		return 0
+	fi
+
+	print_result "has-open-pr allows dispatch when no healthy sibling exists" 0
+	return 0
+}
+
 # Existing collision case (GH#18041 / t1957) must still allow dispatch:
 # different task used the same ID, merged PR closes some unrelated issue.
 test_has_open_pr_allows_dispatch_on_task_id_collision() {
@@ -360,6 +398,8 @@ main() {
 	test_has_open_pr_detects_open_body_closing_keyword
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
+	test_has_open_pr_blocks_approved_mergeable_sibling
+	test_has_open_pr_allows_when_no_healthy_sibling
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

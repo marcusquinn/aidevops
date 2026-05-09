@@ -367,6 +367,38 @@ else
 fi
 rm -rf "$fixture10"
 
+# Test 11: Daemon PATH construction never injects current-directory entries
+# when the OpenCode path is empty or relative.
+fixture11=$(mktemp -d 2>/dev/null || mktemp -d -t t2954k)
+(
+	export HOME="$fixture11"
+	path_empty=$(_pulse_daemon_path_for_opencode "")
+	path_relative=$(_pulse_daemon_path_for_opencode "opencode")
+	printf '%s\n%s\n' "$path_empty" "$path_relative"
+) >"$fixture11/out"
+{
+	IFS= read -r path11_empty
+	IFS= read -r path11_relative
+} <"$fixture11/out"
+case "$path11_empty" in
+	""|:*|*::*|*:.:*|*:.|.*)
+		print_result "daemon PATH — empty/relative opencode excludes current directory" 1 \
+			"empty=$path11_empty relative=$path11_relative"
+		;;
+	*)
+		case "$path11_relative" in
+			""|:*|*::*|*:.:*|*:.|.*)
+				print_result "daemon PATH — empty/relative opencode excludes current directory" 1 \
+					"empty=$path11_empty relative=$path11_relative"
+				;;
+			*)
+				print_result "daemon PATH — empty/relative opencode excludes current directory" 0
+				;;
+		esac
+		;;
+esac
+rm -rf "$fixture11"
+
 # --- Summary ---
 echo ""
 echo "Tests run: $TESTS_RUN"

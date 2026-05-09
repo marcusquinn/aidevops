@@ -121,6 +121,7 @@ EOF
 	printf '[]\n' >"$COMMENTS_FIXTURE"
 	printf '{"labels":[]}\n' >"$ISSUE_META_FIXTURE"
 	printf '[]\n' >"$TIMELINE_FIXTURE"
+	_notify_stale_recovery_resolved_by_pr() { return 0; }
 
 	return 0
 }

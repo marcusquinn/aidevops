@@ -14,6 +14,50 @@
 #     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
 
 #######################################
+# has_open_pr Check 0: healthy open sibling PRs for this issue.
+#
+# Redispatch should not create another worker when an existing sibling PR for
+# the same issue is already approved and mergeable. This catches PRs that are
+# ready for the merge path but do not use a closing keyword in the body (for
+# example parent/phase work using `For #NNN`), while still allowing dispatch
+# when only draft, unapproved, or conflicting candidates exist.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
+#######################################
+_has_open_pr_check_healthy_sibling() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	local pr_json match_pr
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number}" --limit 20 \
+		--json number,title,body,isDraft,reviewDecision,mergeStateStatus 2>/dev/null) || pr_json="[]"
+
+	local issue_ref_pattern healthy_state_pattern
+	issue_ref_pattern="((close[sd]?|fix(e[sd])?|resolve[sd]?|for|ref)[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}([^[:alnum:]_]|$))|(GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
+	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BLOCKED)$"
+
+	match_pr=$(printf '%s' "$pr_json" | jq -r \
+		--arg issue_pattern "$issue_ref_pattern" \
+		--arg healthy_pattern "$healthy_state_pattern" \
+		'[
+			.[] | select(
+				(.isDraft // false | not) and
+				((.reviewDecision // "") == "APPROVED") and
+				((.mergeStateStatus // "") | test($healthy_pattern)) and
+				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
+			)
+		] | .[0].number // empty' 2>/dev/null) || match_pr=""
+
+	if [[ -n "$match_pr" ]]; then
+		printf 'open PR #%s is approved and mergeable for issue #%s\n' "$match_pr" "$issue_number"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # has_open_pr Check 1: Open PRs with commits referencing this issue.
 #
 # The source of truth for "this PR solves this issue" is the commit messages,
@@ -249,7 +293,7 @@ has_open_pr() {
 		return 1
 	fi
 
-	# t3043: parallelise the 4 sub-checks. Previously serial (4x 3-10s =
+	# t3043: parallelise the sub-checks. Previously serial (4x 3-10s =
 	# 12-40s); now concurrent via temp files and background jobs. The common
 	# case is "no PR evidence" where all 4 checks run — parallelising turns
 	# 12-40s into max(3-10s) ≈ 3-10s (4x faster). When evidence IS found
@@ -259,7 +303,13 @@ has_open_pr() {
 	_pr_tmpdir=$(mktemp -d 2>/dev/null) || _pr_tmpdir="/tmp/pr-dedup-$$"
 	mkdir -p "$_pr_tmpdir" 2>/dev/null || true
 
-	# Launch all 4 checks in parallel, each writing exit code + output to a file
+	# Launch all checks in parallel, each writing exit code + output to a file
+	(
+		_result=$(_has_open_pr_check_healthy_sibling "$issue_number" "$repo_slug" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check0.out" || true
+	) &
+	local _pr_pid0=$!
+
 	(
 		_result=$(_has_open_pr_check_open_commits "$issue_number" "$repo_slug" 2>/dev/null) && \
 			printf '%s' "$_result" >"${_pr_tmpdir}/check1.out" || true
@@ -285,6 +335,7 @@ has_open_pr() {
 	local _pr_pid4=$!
 
 	# Wait for all to complete
+	wait "$_pr_pid0" 2>/dev/null || true
 	wait "$_pr_pid1" 2>/dev/null || true
 	wait "$_pr_pid2" 2>/dev/null || true
 	wait "$_pr_pid3" 2>/dev/null || true
@@ -292,7 +343,7 @@ has_open_pr() {
 
 	# Check results — any hit means PR evidence exists
 	local _check_file _check_output
-	for _check_file in "${_pr_tmpdir}/check1.out" "${_pr_tmpdir}/check1b.out" \
+	for _check_file in "${_pr_tmpdir}/check0.out" "${_pr_tmpdir}/check1.out" "${_pr_tmpdir}/check1b.out" \
 		"${_pr_tmpdir}/check2.out" "${_pr_tmpdir}/check3.out"; do
 		if [[ -f "$_check_file" ]]; then
 			_check_output=$(cat "$_check_file" 2>/dev/null) || _check_output=""

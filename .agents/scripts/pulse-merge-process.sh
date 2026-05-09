@@ -552,9 +552,10 @@ _pulse_merge_dismiss_coderabbit_nits() {
 }
 
 #######################################
-# Verify no branch-protection-required check on a PR is in a failed state.
-# Skips PRs with failing CI even when the merge would use --admin
-# (which bypasses branch protection).
+# Verify no branch-protection-required check on a PR is in a terminal failed
+# state. Skips PRs with terminal failed CI even when the merge would use
+# --admin (which bypasses branch protection), but leaves queued/pending/
+# in-progress/expected checks on the normal non-terminal path.
 #
 # t3514: delegate to REST-backed branch-protection context verification so
 # merge readiness does not spend GraphQL on `gh pr checks --required`.
@@ -564,13 +565,21 @@ _pulse_merge_dismiss_coderabbit_nits() {
 # errors — a bubbling gh failure should never auto-merge.
 #
 # Arguments: $1=pr_number, $2=repo_slug
-# Returns: 0 if all required checks pass/pending/skipping, 1 if any failed
+# Returns: 0 if no required check is terminal failed, 1 if any terminal failed
+#          or required-check state cannot be verified.
 #######################################
 _pr_required_checks_pass() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	if ! _check_required_checks_passing "$repo_slug" "$pr_number"; then
-		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks not provably passing (t3514)" >>"$LOGFILE"
+	local _terminal_rc=0
+	_check_required_checks_has_terminal_failure "$repo_slug" "$pr_number"
+	_terminal_rc=$?
+	if [[ $_terminal_rc -eq 0 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks have terminal failure (t3567)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ $_terminal_rc -ne 1 ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — REST required checks could not be classified (t3567)" >>"$LOGFILE"
 		return 1
 	fi
 	return 0
@@ -960,18 +969,30 @@ _ruleset_ref_matches_default_branch() {
 	local pattern="$1"
 	local default_branch="$2"
 	local default_ref="refs/heads/${default_branch}"
+	local branch_pattern="${pattern}"
 
 	case "$pattern" in
-	"~ALL" | "~DEFAULT_BRANCH" | "$default_ref")
+	"~ALL" | "~DEFAULT_BRANCH" | "$default_ref" | "$default_branch")
 		return 0
+		;;
+	esac
+	case "$pattern" in
+	refs/heads/*)
+		branch_pattern="${pattern#refs/heads/}"
 		;;
 	esac
 
 	case "$pattern" in
-	refs/heads/*\**)
+	*"*"*)
 		# shellcheck disable=SC2254 # Intentionally treat ruleset branch globs as patterns.
 		case "$default_ref" in
 		$pattern)
+			return 0
+			;;
+		esac
+		# shellcheck disable=SC2254 # Intentionally treat ruleset branch globs as patterns.
+		case "$default_branch" in
+		$branch_pattern)
 			return 0
 			;;
 		esac
@@ -1016,7 +1037,8 @@ _required_contexts_from_rulesets_for_default_branch() {
 		return 1
 	}
 
-	local id="" detail="" include_patterns="" pattern="" matches_default=0 contexts=""
+	local id="" detail="" include_patterns="" exclude_patterns="" pattern=""
+	local matches_default=0 excluded_default=0 contexts=""
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
 		detail=$(gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
@@ -1030,6 +1052,11 @@ _required_contexts_from_rulesets_for_default_branch() {
 			rm -f "$contexts_tmp"
 			return 1
 		}
+		exclude_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.exclude // [] | .[]' 2>/dev/null) || {
+			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: ruleset detail ${id} exclude parse failed for ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
+			rm -f "$contexts_tmp"
+			return 1
+		}
 
 		matches_default=0
 		while IFS= read -r pattern; do
@@ -1040,6 +1067,16 @@ _required_contexts_from_rulesets_for_default_branch() {
 			fi
 		done <<<"$include_patterns"
 		[[ "$matches_default" -eq 1 ]] || continue
+
+		excluded_default=0
+		while IFS= read -r pattern; do
+			[[ -n "$pattern" ]] || continue
+			if _ruleset_ref_matches_default_branch "$pattern" "$default_branch"; then
+				excluded_default=1
+				break
+			fi
+		done <<<"$exclude_patterns"
+		[[ "$excluded_default" -eq 0 ]] || continue
 
 		contexts=$(printf '%s' "$detail" | jq -r '.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[]? | .context // empty' 2>/dev/null) || {
 			echo "[pulse-merge] _required_contexts_from_rulesets_for_default_branch: required-check parse failed for ruleset ${id} in ${repo_slug} — caller will fail closed (GH#23019)" >>"$LOGFILE"
@@ -1332,8 +1369,8 @@ _auto_merge_stuck_seconds() {
 # Decision tree:
 #   * PR already has auto_merge set + STUCK green → return 1 (caller --admin path,
 #                                                             t3192 stuck fallback)
-#   * PR already has auto_merge set + stale pending → return 2 (caller routes
-#                                                               CI repair)
+#   * PR already has auto_merge set + stale pending → return 0 (non-terminal;
+#                                                               keep deferring)
 #   * PR already has auto_merge set + healthy → return 0 (no-op, GitHub
 #                                                         finishes the job)
 #   * Repo allow_auto_merge=false      → return 1 (caller --admin path)
@@ -1352,7 +1389,7 @@ _auto_merge_stuck_seconds() {
 # repos where allow_auto_merge=true is bulk-enabled and CI is fast.
 #
 # Args: $1=pr_number, $2=repo_slug
-# Returns: 0=native-auto requested/deferred, 1=fall through, 2=stale pending repair
+# Returns: 0=native-auto requested/deferred, 1=fall through
 #######################################
 _set_native_auto_merge_or_skip() {
 	local pr_number="$1"
@@ -1379,10 +1416,9 @@ _set_native_auto_merge_or_skip() {
 			return 1
 		fi
 
-		# t3508: if native auto-merge has been waiting on required checks past
-		# the same stuck threshold, stop silently deferring every pulse cycle.
-		# Return 2 so the caller can route a bounded CI repair worker/comment keyed
-		# by the linked issue/PR marker instead of attempting an admin bypass.
+		# t3567: pending required checks are non-terminal. Even if native
+		# auto-merge has been waiting past the stuck threshold, do not route CI
+		# repair/close/requeue unless a terminal failure has been observed.
 		local _pending_count=0
 		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
 			_pending_count=1
@@ -1398,8 +1434,8 @@ _set_native_auto_merge_or_skip() {
 			_age_seconds=$((_now_epoch - _enabled_epoch))
 			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 			if [[ "$_enabled_epoch" -gt 0 && "$_age_seconds" -gt "$_threshold" ]]; then
-				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge has ${_pending_count} required check(s) pending for ${_age_seconds}s (>${_threshold}s) — routing CI repair (t3508)" >>"$LOGFILE"
-				return 2
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge has ${_pending_count} required check(s) pending for ${_age_seconds}s (>${_threshold}s) — deferring as non-terminal (t3567)" >>"$LOGFILE"
+				return 0
 			fi
 		fi
 		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge already set, deferring to GitHub (t3070)" >>"$LOGFILE"

@@ -28,6 +28,17 @@ tools:
 - **Rate limits**: Free 2/hr, Pro 8/hr (learnings-powered)
 - **Docs**: https://docs.coderabbit.ai/cli/overview
 
+## Repository Config Interest
+
+If the user wants CodeRabbit findings to keep arriving after an aidevops-managed PR is merged, suggest the repo-level `.coderabbit.yaml` setting:
+
+```yaml
+reviews:
+  abort_on_close: false
+```
+
+Trade-off: this can surface useful post-merge findings for aidevops to file as follow-up issues, but may add comments on already-merged PRs. Keep aidevops review-bot gate protections unless verified noise/latency data shows they should be relaxed.
+
 ## CLI Usage
 
 | Mode | Command | Use Case |

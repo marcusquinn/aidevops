@@ -61,6 +61,11 @@ PR #19712 (t2209) Gemini review suggested extending the duplicate-ID regex to co
 
 See also: AGENTS.md "Review Bot Gate (t1382)" for the authoritative rule and rationale.
 
+The same follow-up pattern applies to advisory CI: slow E2E, visual, performance,
+or integration checks that are not required for the target branch should file
+worker-ready follow-up tasks unless they prove a defect introduced by the PR.
+See `ci-gate-policy.md`.
+
 ## Composition with auto-merge paths
 
 The review bot gate runs as the FINAL gate in `_check_pr_merge_gates` — after both the `origin:interactive` (t2411) and `origin:worker` worker-briefed (t2449) gates. This means:

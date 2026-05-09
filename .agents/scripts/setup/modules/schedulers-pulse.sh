@@ -298,9 +298,10 @@ _pulse_daemon_path_for_opencode() {
 	local _path=""
 
 	if [[ -n "$_opencode_bin" ]]; then
-		_opencode_dir=$(dirname "$_opencode_bin" 2>/dev/null || printf '')
+		_opencode_dir=$(dirname "$_opencode_bin" || printf '')
+		[[ "$_opencode_dir" == /* ]] || _opencode_dir=""
 	fi
-	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts:${_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
+	_path="${HOME}/.local/bin:${HOME}/.aidevops/agents/scripts${_opencode_dir:+:$_opencode_dir}:/usr/local/bin:/usr/bin:/bin"
 	printf '%s' "$_path"
 	return 0
 }
@@ -386,7 +387,8 @@ _build_pulse_linux_env() {
 	# runtime. No model env vars embedded in cron/systemd.
 	local opencode_bin="${1:-}"
 	local _pulse_env="PULSE_DIR=${HOME}/.aidevops/.agent-workspace
-PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}"
+PULSE_STALE_THRESHOLD=${PULSE_STALE_THRESHOLD_SECONDS}
+AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0"
 
 	# GH#18439 Bug 2: embed resolved runtime binary path so pulse-wrapper.sh
 	# and headless-runtime-helper.sh find the correct binary under systemd's
@@ -552,6 +554,7 @@ setup_supervisor_pulse() {
 	# Must run before any cron entries are installed so they inherit the PATH.
 	if [[ "$_os" != "Darwin" ]]; then
 		_ensure_cron_path
+		_reconcile_linux_scheduler_duplicates
 	fi
 
 	# Consent model (GH#2926):

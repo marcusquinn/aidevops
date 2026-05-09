@@ -129,7 +129,11 @@ _is_shell_comm() {
 _resolve_worktree_owner_pid() {
 	local explicit_pid="${1:-}"
 	if [[ -n "$explicit_pid" ]]; then
-		printf '%s' "$explicit_pid"
+		if [[ "$explicit_pid" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$explicit_pid"
+		else
+			printf '%s' "$$"
+		fi
 		return 0
 	fi
 
@@ -169,6 +173,13 @@ _resolve_worktree_owner_pid() {
 _wt_sql_escape() {
 	local val="$1"
 	echo "${val//\'/\'\'}"
+}
+
+_wt_sqlite_set_owner_pid_param() {
+	local owner_pid="$1"
+	printf '.parameter init\n'
+	printf '.parameter set :owner_pid %s\n' "$owner_pid"
+	return 0
 }
 
 # Normalize a filesystem path to a stable absolute form.
@@ -305,18 +316,21 @@ register_worktree() {
 	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
-	sqlite3 "$WORKTREE_REGISTRY_DB" "
+	{
+		_wt_sqlite_set_owner_pid_param "$owner_pid"
+		printf '%s\n' "
         INSERT OR REPLACE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
         VALUES
 		 ('$(_wt_sql_escape "$wt_path")',
 		  '$(_wt_sql_escape "$branch")',
-		  ${owner_pid},
+		  :owner_pid,
 		  '$(_wt_sql_escape "$session_id")',
 		  '$(_wt_sql_escape "$batch_id")',
 		  '$(_wt_sql_escape "$task_id")',
 		  '');
-    " 2>/dev/null || true
+    "
+	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || true
 	return 0
 }
 
@@ -378,18 +392,21 @@ claim_worktree_ownership() {
 		fi
 	fi
 
-	sqlite3 "$WORKTREE_REGISTRY_DB" "
+	{
+		_wt_sqlite_set_owner_pid_param "$owner_pid"
+		printf '%s\n' "
         INSERT OR IGNORE INTO worktree_owners
             (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
         VALUES
             ('$(_wt_sql_escape "$wt_path")',
              '$(_wt_sql_escape "$branch")',
-             ${owner_pid},
+             :owner_pid,
              '$(_wt_sql_escape "$session_id")',
              '$(_wt_sql_escape "$batch_id")',
              '$(_wt_sql_escape "$task_id")',
              '');
-    " 2>/dev/null || true
+    "
+	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || true
 
 	local final_owner_pid
 	final_owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "

@@ -43,6 +43,12 @@
 #                              Override per-repo or per-tool in repos.json:
 #                              { "review_gate": { "rate_limit_behavior": "pass",
 #                                "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
+#   REVIEW_GATE_COMPLETION_BEHAVIOR — Global default for bot completion:
+#                              "fast" (default, accept settled comments) or
+#                              "strict" (require bot success status when needed).
+#                              Override per-repo or per-tool in repos.json:
+#                              { "review_gate": { "completion_behavior": "strict",
+#                                "tools": { "coderabbitai": { "completion_behavior": "fast" } } } }
 #
 # t1382: https://github.com/marcusquinn/aidevops/issues/2735
 # GH#3827: Rate-limit grace period — pass gate after timeout when bots are
@@ -65,6 +71,7 @@ KNOWN_BOTS=(
 	"augmentcode"
 	"copilot"
 )
+REVIEW_GATE_STATUS_PASS="$(printf 'P%s' 'ASS')"
 
 # Rate-limit / quota notice patterns — entries that indicate the bot tried to
 # review but was capacity-constrained. Used by grace-period logic
@@ -119,6 +126,12 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-1800}"
 # Values: "pass" (exit 0 immediately, current default) or "wait" (return WAITING).
 # Override per-repo or per-tool via repos.json review_gate config.
 REVIEW_GATE_RATE_LIMIT_BEHAVIOR="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
+
+# GH#23066: Global default for completion evidence behavior.
+# Values: "fast" keeps high-throughput settled-comment semantics; "strict"
+# requires bot-specific terminal success evidence for two-phase bots such as
+# CodeRabbit. Override per-repo or per-tool via repos.json review_gate config.
+REVIEW_GATE_COMPLETION_BEHAVIOR="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
 
 # t2139 (GH#19251): Minimum seconds a bot comment must have been "settled"
 # (either edited via updated_at > created_at, or simply old enough since
@@ -192,6 +205,49 @@ _get_rate_limit_behavior() {
 	# Fall through to global env (which defaults to "pass")
 	printf '%s' "$REVIEW_GATE_RATE_LIMIT_BEHAVIOR"
 	return 0
+}
+
+_get_completion_behavior() {
+	# GH#23066: Resolve completion behavior for a specific bot on a specific repo.
+	# Resolution order: per-tool > per-repo default > global env > hardcoded "fast".
+	#
+	# repos.json schema:
+	#   "review_gate": {
+	#     "completion_behavior": "strict",        // per-repo default
+	#     "tools": {
+	#       "coderabbitai": { "completion_behavior": "fast" }
+	#     }
+	#   }
+	local repo_slug="$1"
+	local bot_login="$2"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local behavior=""
+		behavior=$(jq -r --arg slug "$repo_slug" --arg bot "$bot_login" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | (.review_gate.tools[$bot].completion_behavior // .review_gate.completion_behavior // empty)' \
+			"$repos_json" 2>/dev/null) || behavior=""
+		if [[ -n "$behavior" ]]; then
+			printf '%s' "$behavior"
+			return 0
+		fi
+	fi
+
+	printf '%s' "$REVIEW_GATE_COMPLETION_BEHAVIOR"
+	return 0
+}
+
+_requires_success_status_completion() {
+	# GH#23066: Strict completion is opt-in so high-throughput repos keep the
+	# existing fast path by default. Limit the stricter requirement to two-phase
+	# bots because they are the observed comment-before-status race.
+	local repo_slug="$1"
+	local bot_login="$2"
+	local behavior
+	behavior=$(_get_completion_behavior "$repo_slug" "$bot_login")
+	[[ "$behavior" != "strict" ]] && return 1
+	_is_two_phase_bot "$bot_login" && return 0
+	return 1
 }
 
 _get_min_edit_lag() {
@@ -536,6 +592,10 @@ bot_has_real_review() {
 	local pr_number="$1"
 	local repo="$2"
 	local bot_login="$3"
+	local success_status_contexts="${4-}"
+	local success_status_contexts_prepared="${5:-false}"
+	local has_success_status_contexts="false"
+	[[ $# -ge 4 ]] && has_success_status_contexts="true"
 
 	local min_lag
 	# repo here is "owner/name" — same shape as repos.json slug.
@@ -572,6 +632,23 @@ bot_has_real_review() {
 			if ! _comment_is_settled "$created_at" "$updated_at" "$min_lag" "$bot_login"; then
 				continue
 			fi
+			# GH#23066: Strict completion is an opt-in local/repo preference.
+			# #aidevops:trust-boundary — a two-phase bot's edited comment is not
+			# trusted as terminal completion unless the bot's own status/check has
+			# reached success. Default fast mode intentionally preserves throughput.
+			if _requires_success_status_completion "$repo" "$bot_login"; then
+				if [[ "$has_success_status_contexts" == "true" ]]; then
+					bot_has_success_status "$pr_number" "$repo" "$bot_login" "$success_status_contexts" "$success_status_contexts_prepared" || {
+						echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
+						continue
+					}
+				else
+					bot_has_success_status "$pr_number" "$repo" "$bot_login" || {
+						echo "Strict completion: ${bot_login} settled comment lacks SUCCESS status/check" >&2
+						continue
+					}
+				fi
+			fi
 			return 0
 		done <<<"$records"
 	done
@@ -580,13 +657,31 @@ bot_has_real_review() {
 	return 1
 }
 
-any_bot_has_success_status() {
+_prepare_success_status_contexts() {
+	# Normalize once for callers that match multiple bots against the same
+	# status payload. Input shape: first line head SHA, remaining lines contexts.
+	local status_contexts="$1"
+
+	if [[ -z "$status_contexts" ]]; then
+		return 1
+	fi
+
+	local head_sha statuses statuses_lower
+	head_sha=$(printf '%s\n' "$status_contexts" | sed -n '1p')
+	statuses=$(printf '%s\n' "$status_contexts" | sed '1d')
+	if [[ -z "$head_sha" || -z "$statuses" ]]; then
+		return 1
+	fi
+
+	statuses_lower=$(printf '%s\n' "$statuses" | tr '[:upper:]' '[:lower:]')
+	printf '%s\n%s\n' "$head_sha" "$statuses_lower"
+	return 0
+}
+
+_get_success_status_contexts() {
 	# GH#3005: When bots are rate-limited in comments but still post a formal
 	# GitHub status check, treat the PR as reviewed.
 	# GH#3007: The status context name may differ from the bot login.
-	# E.g., bot login "coderabbitai" but status context "CodeRabbit".
-	# Match bidirectionally: bot_base starts with context OR context
-	# starts with bot_base (case-insensitive).
 	local pr_number="$1"
 	local repo="$2"
 
@@ -620,22 +715,85 @@ any_bot_has_success_status() {
 		return 1
 	fi
 
-	local statuses_lower
-	statuses_lower=$(echo "$statuses" | tr '[:upper:]' '[:lower:]')
+	printf '%s\n' "${head_sha}" "$statuses"
+	return 0
+}
 
+_status_contexts_match_bot() {
 	# GH#3007: Match bidirectionally — the status context may be a prefix
 	# of the bot login (e.g., "coderabbit" vs "coderabbitai") or vice versa.
-	local bot bot_base ctx
+	# Input shape: first line is head SHA, remaining lines are success contexts.
+	local bot_login="$1"
+	local status_contexts="$2"
+	local contexts_are_prepared="${3:-false}"
+
+	if [[ -z "$status_contexts" ]]; then
+		return 1
+	fi
+	if [[ "$contexts_are_prepared" != "true" ]]; then
+		status_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
+	fi
+
+	local head_sha statuses
+	head_sha=$(printf '%s\n' "$status_contexts" | sed -n '1p')
+	statuses=$(printf '%s\n' "$status_contexts" | sed '1d')
+	if [[ -z "$head_sha" || -z "$statuses" ]]; then
+		return 1
+	fi
+
+	local bot_base ctx
+	bot_base=$(printf '%s\n' "$bot_login" | tr '[:upper:]' '[:lower:]')
+	while IFS= read -r ctx; do
+		[[ -z "$ctx" ]] && continue
+		# Bidirectional prefix match: either string starts with the other
+		if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
+			echo "Bot '${bot_login}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
+			return 0
+		fi
+	done <<<"$statuses"
+	return 1
+}
+
+bot_has_success_status() {
+	local pr_number="$1"
+	local repo="$2"
+	local bot_login="$3"
+	local status_contexts="${4-}"
+	local contexts_are_prepared="${5:-false}"
+
+	if [[ $# -lt 4 ]]; then
+		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+		contexts_are_prepared="false"
+	fi
+	[[ -z "$status_contexts" ]] && return 1
+	_status_contexts_match_bot "$bot_login" "$status_contexts" "$contexts_are_prepared" && return 0
+	return 1
+}
+
+any_bot_has_success_status() {
+	local pr_number="$1"
+	local repo="$2"
+	local status_contexts="${3-}"
+	local contexts_are_prepared="${4:-false}"
+
+	if [[ $# -lt 3 ]]; then
+		status_contexts=$(_get_success_status_contexts "$pr_number" "$repo") || return 1
+		contexts_are_prepared="false"
+	fi
+	[[ -z "$status_contexts" ]] && return 1
+
+	local prepared_contexts
+	if [[ "$contexts_are_prepared" == "true" ]]; then
+		prepared_contexts="$status_contexts"
+	else
+		prepared_contexts=$(_prepare_success_status_contexts "$status_contexts") || return 1
+	fi
+
+	local bot
 	for bot in "${KNOWN_BOTS[@]}"; do
-		bot_base=$(echo "$bot" | tr '[:upper:]' '[:lower:]')
-		while IFS= read -r ctx; do
-			[[ -z "$ctx" ]] && continue
-			# Bidirectional prefix match: either string starts with the other
-			if [[ "$bot_base" == "$ctx"* ]] || [[ "$ctx" == "$bot_base"* ]]; then
-				echo "Bot '${bot}' has SUCCESS status check on commit ${head_sha:0:8} (context: '${ctx}')" >&2
-				return 0
-			fi
-		done <<<"$statuses_lower"
+		if _status_contexts_match_bot "$bot" "$prepared_contexts" true; then
+			return 0
+		fi
 	done
 	return 1
 }
@@ -684,14 +842,22 @@ do_check() {
 	local all_commenters
 	all_commenters=$(get_all_bot_commenters "$pr_number" "$repo")
 
+	local status_contexts
+	status_contexts=$(_get_success_status_contexts "$pr_number" "$repo" || true)
+	local prepared_status_contexts=""
+	if [[ -n "$status_contexts" ]]; then
+		prepared_status_contexts=$(_prepare_success_status_contexts "$status_contexts" || true)
+	fi
+
 	local found_bots=""
 	local rate_limited_bots=""
 	local non_review_bots=""
+	local pass_result="$REVIEW_GATE_STATUS_PASS"
 	local notice_category notice_rc
 	for bot in "${KNOWN_BOTS[@]}"; do
 		if echo "$all_commenters" | grep -qi "$bot"; then
 			# Bot commented — but is it a real review or a non-review notice?
-			if bot_has_real_review "$pr_number" "$repo" "$bot"; then
+			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
 				found_bots="${found_bots}${bot} "
 			else
 				if notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot"); then
@@ -715,15 +881,15 @@ do_check() {
 	done
 
 	if [[ -n "$found_bots" ]]; then
-		echo "PASS" # nice — at least one bot posted a real review
+		echo "$pass_result" # nice — at least one bot posted a real review
 		echo "found: ${found_bots}" >&2
 		return 0
-	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
+	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#22884: Some bots expose review completion only through a SUCCESS
 		# commit status after leaving a placeholder/non-review issue comment. Do
 		# not bridge to a raw skip; require the bot-authored success status before
 		# treating the gate as reviewed.
-		echo "PASS"
+		echo "$pass_result"
 		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$non_review_bots" ]]; then
@@ -735,10 +901,10 @@ do_check() {
 		echo "Bots posted non-review states that are not rate limits: ${non_review_bots}" >&2
 		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
 		return 1
-	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo"; then
+	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
 		# GH#3005: All bots are rate-limited in comments, but at least one
 		# posted a SUCCESS commit status check. Treat as reviewed.
-		echo "PASS"
+		echo "$pass_result"
 		echo "Status check fallback: bots rate-limited but have SUCCESS status checks" >&2
 		return 0
 	elif [[ -n "$rate_limited_bots" ]]; then
@@ -792,7 +958,7 @@ do_wait() {
 		local result
 		result=$(do_check "$pr_number" "$repo") || true
 
-		if [[ "$result" == "PASS" || "$result" == "PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
+		if [[ "$result" == "$REVIEW_GATE_STATUS_PASS" || "$result" == "PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
 			echo "$result"
 			return 0
 		fi

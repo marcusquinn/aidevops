@@ -1,6 +1,9 @@
 import { execSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
+import { tool } from "@opencode-ai/plugin";
+
+const z = tool.schema;
 
 /**
  * Escape a string for safe interpolation into a shell command.
@@ -57,12 +60,19 @@ function createAidevopsTool(run) {
  * @returns {object} Tool definition
  */
 function createMemoryTool(scriptsDir, run) {
-  return {
+  return tool({
     description:
       'Recall or store memories in the aidevops cross-session memory system. ' +
       'Args: action ("recall"|"store"), query (string, for recall), ' +
       'limit (string, default "5", for recall), ' +
       'content (string, for store), confidence ("low"|"medium"|"high", default "medium", for store)',
+    args: {
+      action: z.enum(["recall", "store"]).optional().describe('Memory operation to perform; defaults to "recall"'),
+      query: z.string().optional().describe("Search query for memory recall"),
+      limit: z.union([z.string(), z.number()]).optional().describe('Maximum recall results; defaults to "5"'),
+      content: z.string().optional().describe("Memory content to store"),
+      confidence: z.enum(["low", "medium", "high"]).optional().describe('Stored memory confidence; defaults to "medium"'),
+    },
     async execute(args) {
       const memoryHelper = join(scriptsDir, "memory-helper.sh");
       if (!existsSync(memoryHelper)) {
@@ -73,7 +83,7 @@ function createMemoryTool(scriptsDir, run) {
 
       if (action === "recall") {
         const query = args.query || "";
-        const limit = args.limit || "5";
+        const limit = args.limit === undefined ? "5" : String(args.limit);
         const cmd = `bash "${memoryHelper}" recall ${shellEscape(query)} --limit ${shellEscape(limit)}`;
         const result = run(cmd, 10000);
         return result || "No memories found for this query.";
@@ -92,7 +102,7 @@ function createMemoryTool(scriptsDir, run) {
 
       return `Unknown action: ${action}. Use "recall" or "store".`;
     },
-  };
+  });
 }
 
 /**
@@ -153,10 +163,8 @@ function createPreEditCheckTool(scriptsDir) {
  * code for a task the LLM can perform directly via the Bash tool.
  *
  * NOTE: opencode 1.1.56+ uses Zod v4 to validate tool args schemas.
- * Plain `{ type: "string" }` objects are NOT valid Zod schemas and cause:
- *   TypeError: undefined is not an object (evaluating 'schema._zod.def')
- * Fix: omit `args` entirely and document parameters in `description`.
- * The LLM passes args as a plain object; we extract fields defensively.
+ * Use `tool.schema` from `@opencode-ai/plugin` for args definitions; plain
+ * JSON schema objects are not valid here because OpenCode expects Zod objects.
  *
  * @param {string} scriptsDir - Path to scripts directory
  * @param {function} run - Shell command runner

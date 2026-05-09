@@ -177,3 +177,115 @@ _persist_role_cache() {
 	printf '%s|%s\n' "$role" "$(date +%s)" >"$disk_cache_file" 2>/dev/null || true
 	return 0
 }
+
+#######################################
+# Normalize a dashboard identity token for alias comparisons.
+# Arguments:
+#   $1 - identity token
+# Output: lower-case trimmed token
+#######################################
+_normalize_dashboard_identity_token() {
+	local token="$1"
+	token="${token#"${token%%[![:space:]]*}"}"
+	token="${token%"${token##*[![:space:]]}"}"
+	printf '%s' "$token" | tr '[:upper:]' '[:lower:]'
+	return 0
+}
+
+#######################################
+# Resolve the identity-alias config path.
+# Output: config path, or empty when no config exists
+#######################################
+_dashboard_identity_alias_config_path() {
+	local configured_path="${AIDEVOPS_IDENTITY_ALIASES_CONF:-}"
+	if [[ -n "$configured_path" && -f "$configured_path" ]]; then
+		printf '%s' "$configured_path"
+		return 0
+	fi
+
+	local repo_config=""
+	if [[ -n "${SCRIPT_DIR:-}" ]]; then
+		repo_config="${SCRIPT_DIR%/scripts}/configs/identity-aliases.conf"
+		if [[ -f "$repo_config" ]]; then
+			printf '%s' "$repo_config"
+			return 0
+		fi
+	fi
+
+	local deployed_config="${HOME}/.aidevops/agents/configs/identity-aliases.conf"
+	if [[ -f "$deployed_config" ]]; then
+		printf '%s' "$deployed_config"
+	fi
+	return 0
+}
+
+#######################################
+# Print canonical identity and aliases for a dashboard runner.
+# Config format: canonical=alias-one,alias-two
+# Arguments:
+#   $1 - runner user/login
+#   $2 - optional preloaded identity-aliases.conf content
+# Output: canonical on line 1, aliases one per following line
+#######################################
+_dashboard_identity_aliases() {
+	local runner_user="$1"
+	local preloaded_config="${2:-}"
+	local has_preloaded_config=0
+	if [[ $# -ge 2 ]]; then
+		has_preloaded_config=1
+	fi
+	local normalized_runner
+	normalized_runner=$(_normalize_dashboard_identity_token "$runner_user")
+	local canonical="$normalized_runner"
+	local aliases="$normalized_runner"
+	local config_content=""
+	if ((has_preloaded_config)); then
+		config_content="$preloaded_config"
+	else
+		local config_path
+		config_path=$(_dashboard_identity_alias_config_path)
+		if [[ -n "$config_path" ]]; then
+			config_content=$(<"$config_path")
+		fi
+	fi
+
+	if [[ -n "$config_content" ]]; then
+		local line lhs rhs alias normalized_lhs normalized_alias candidate_aliases _identity_alias_parts
+		while IFS= read -r line || [[ -n "$line" ]]; do
+			line="${line%%#*}"
+			[[ "$line" == *"="* ]] || continue
+			lhs="${line%%=*}"
+			rhs="${line#*=}"
+			normalized_lhs=$(_normalize_dashboard_identity_token "$lhs")
+			[[ -n "$normalized_lhs" ]] || continue
+			candidate_aliases="$normalized_lhs"
+			IFS=',' read -r -a _identity_alias_parts <<<"$rhs"
+			for alias in "${_identity_alias_parts[@]}"; do
+				normalized_alias=$(_normalize_dashboard_identity_token "$alias")
+				[[ -n "$normalized_alias" ]] || continue
+				candidate_aliases="${candidate_aliases}"$'\n'"${normalized_alias}"
+			done
+			if printf '%s\n' "$candidate_aliases" | grep -Fx -- "$normalized_runner" >/dev/null 2>&1; then
+				canonical="$normalized_lhs"
+				aliases="$candidate_aliases"
+				break
+			fi
+		done <<<"$config_content"
+	fi
+
+	printf '%s\n' "$canonical"
+	printf '%s\n' "$aliases" | awk 'NF && !seen[$0]++'
+	return 0
+}
+
+#######################################
+# Resolve a runner to the canonical dashboard identity only.
+# Arguments:
+#   $1 - runner user/login
+# Output: canonical identity
+#######################################
+_resolve_dashboard_canonical_identity() {
+	local runner_user="$1"
+	_dashboard_identity_aliases "$runner_user" | sed -n '1p'
+	return 0
+}

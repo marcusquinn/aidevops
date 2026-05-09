@@ -45,6 +45,7 @@ PRIVACY_SCAN_GLOBS=(
 	"."
 )
 PRIVACY_SCAN_GLOBS_TEXT="${PRIVACY_SCAN_GLOBS_TEXT:-}"
+PRIVACY_CREDENTIAL_PREFIX_ERE='(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'
 
 # =============================================================================
 # Logging
@@ -430,6 +431,76 @@ privacy_scan_local_paths() {
 # =============================================================================
 
 #######################################
+# List aidevops script basenames that look credential-like and may be redacted.
+# Output:
+#   newline-delimited basenames
+#######################################
+_privacy_aidevops_script_reference_basenames() {
+	local source_path="${BASH_SOURCE[0]:-$0}"
+	local script_dir=""
+	local script_path basename
+
+	script_dir=$(cd "$(dirname "$source_path")" 2>/dev/null && pwd -P) || script_dir=""
+	if [[ -z "$script_dir" ]]; then
+		return 0
+	fi
+
+	for script_path in "$script_dir"/*.sh "$script_dir"/*/*.sh; do
+		[[ -f "$script_path" ]] || continue
+		basename="${script_path##*/}"
+		if [[ ! "$basename" =~ $PRIVACY_CREDENTIAL_PREFIX_ERE ]]; then
+			continue
+		fi
+		printf '%s\n' "$basename"
+	done
+
+	return 0
+}
+
+#######################################
+# Redact aidevops script file references before credential-prefix scanning.
+#
+# Some aidevops helper basenames legitimately contain substrings such as
+# "sk-" when they are written as `.agents/scripts/...` file references. Those
+# are filenames, not credential values. Keep the allowlist narrow by only
+# redacting references to shell helper basenames that actually exist beside this
+# helper (or one directory below it, matching `.agents/scripts/tests/...`).
+# Arguments:
+#   $1 - text content to redact
+#   $2 - optional newline-delimited precomputed basename allowlist
+# Output:
+#   text with allowed script references replaced by a neutral marker
+#######################################
+_privacy_redact_aidevops_script_references() {
+	local text="$1"
+	local basenames_provided="${2+x}"
+	local basenames_text="${2:-}"
+	local redacted="$text"
+	local basename
+
+	if [[ -z "$basenames_provided" ]]; then
+		basenames_text=$(_privacy_aidevops_script_reference_basenames)
+	fi
+	if [[ -z "$basenames_text" ]]; then
+		printf '%s' "$redacted"
+		return 0
+	fi
+
+	while IFS= read -r basename || [[ -n "$basename" ]]; do
+		[[ -z "$basename" ]] && continue
+		redacted="${redacted//.agents\/scripts\/$basename/[aidevops-script-reference]}"
+		redacted="${redacted//.\/\.agents\/scripts\/$basename/[aidevops-script-reference]}"
+		redacted="${redacted//\`$basename\`/[aidevops-script-reference]}"
+		redacted="${redacted//\"$basename\"/[aidevops-script-reference]}"
+		redacted="${redacted// $basename/ [aidevops-script-reference]}"
+		redacted="${redacted//$'\n'$basename/$'\n'[aidevops-script-reference]}"
+	done <<<"$basenames_text"
+
+	printf '%s' "$redacted"
+	return 0
+}
+
+#######################################
 # Scan free-form text for private-key material or obvious credential values.
 # Arguments:
 #   $1 - text content to scan
@@ -439,16 +510,21 @@ privacy_scan_local_paths() {
 privacy_scan_secret_material_text() {
 	local text="$1"
 	local hits=0
+	local scan_text
 
 	if [[ -z "$text" ]]; then
 		return 0
 	fi
+	scan_text=$(_privacy_redact_aidevops_script_references "$text")
+	if [[ "$scan_text" != "$text" ]]; then
+		printf '%s\n' '[privacy-scan][ALLOW] aidevops script file reference' >&2
+	fi
 
-	if printf '%s' "$text" | grep -qE -- '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'; then
+	if printf '%s' "$scan_text" | grep -qE -- '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----'; then
 		printf '%s\n' 'private-key PEM block'
 		hits=$((hits + 1))
 	fi
-	if printf '%s' "$text" | grep -qE '(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'; then
+	if printf '%s' "$scan_text" | grep -qE -- "$PRIVACY_CREDENTIAL_PREFIX_ERE"; then
 		printf '%s\n' 'credential token prefix'
 		hits=$((hits + 1))
 	fi
@@ -485,6 +561,8 @@ privacy_scan_secret_material_diff() {
 	[[ -z "$diff_output" ]] && return 0
 
 	local hits=0 current_file="" line_num=0 in_pem=0
+	local aidevops_script_basenames
+	aidevops_script_basenames=$(_privacy_aidevops_script_reference_basenames)
 	while IFS= read -r line; do
 		case "$line" in
 		"+++ b/"*) current_file="${line#+++ b/}"; line_num=0 ;;
@@ -497,7 +575,12 @@ privacy_scan_secret_material_diff() {
 		"+"*)
 			[[ "$line" == "+++ "* ]] && continue
 			local added="${line:1}"
-			if [[ "$added" =~ -----BEGIN[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
+			local scan_added
+			scan_added=$(_privacy_redact_aidevops_script_references "$added" "$aidevops_script_basenames")
+			if [[ "$scan_added" != "$added" ]]; then
+				printf '%s:%s: [privacy-scan][ALLOW] aidevops script file reference\n' "$current_file" "$line_num" >&2
+			fi
+			if [[ "$scan_added" =~ -----BEGIN[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
 				printf '%s:%s: private-key PEM block\n' "$current_file" "$line_num"
 				hits=$((hits + 1))
 				in_pem=1
@@ -505,10 +588,10 @@ privacy_scan_secret_material_diff() {
 				printf '%s:%s: private-key PEM block content\n' "$current_file" "$line_num"
 				hits=$((hits + 1))
 			fi
-			if [[ "$added" =~ -----END[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
+			if [[ "$scan_added" =~ -----END[[:space:]][A-Z0-9[:space:]]*PRIVATE[[:space:]]KEY----- ]]; then
 				in_pem=0
 			fi
-			if printf '%s' "$added" | grep -qE '(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}'; then
+			if printf '%s' "$scan_added" | grep -qE -- "$PRIVACY_CREDENTIAL_PREFIX_ERE"; then
 				printf '%s:%s: credential token prefix\n' "$current_file" "$line_num"
 				hits=$((hits + 1))
 			fi

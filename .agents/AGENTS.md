@@ -43,12 +43,20 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 ### Task and completion discipline
 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
+- Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
 - Drive to verified completion. Run relevant tests/lint/build before claiming done; if not verified, say so.
 - Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
 - Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
 - Before declaring completion, scan conversation for unfulfilled commitments, unnotified external parties, and displaced requests.
 - Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: `memory-helper.sh recall --query "<task keywords>" --limit 5`. Store fresh lessons immediately after breakthroughs.
 - Before non-trivial code changes, run one duplicate/collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
+
+### Automation safety invariants
+
+- Treat pending or expected CI as non-failure; provide repair feedback only after terminal failed checks to prevent redundant processing and noise. See `reference/worker-diagnostics.md` and `reference/review-bot-gate.md`.
+- Before redispatch, dedupe against recently merged PRs and verified merged fixes. See `reference/worker-discipline.md` and `reference/task-lifecycle.md`.
+- If rate-limit resets repeat, pause instead of comment-storming; violating this can result in API suspension or account flags. See `reference/gh-command-discipline.md` and `reference/worker-diagnostics.md`.
+- Close superseded duplicate PRs against the verified merged fix. See `reference/review-bot-gate.md` and `workflows/git-workflow.md`.
 
 ### Tool and file discipline
 
@@ -96,6 +104,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Shell helpers must source `shared-constants.sh` or guard shared colours with `[[ -z "${VAR+x}" ]]`; never `readonly` shared colours outside `shared-constants.sh`.
 - Counter safety, stat portability, ratchet design, self-modifying tooling tests, Bash 3.2, string-literal ratchets, and gate design live in `reference/shell-style-guide.md` and `reference/bash-compat.md`.
 - Diagnostics claims require evidence before attribution. Stale symptom, pulse activity, productivity, and current-state rules: `reference/diagnostics-discipline.md`.
+- Prefer fast required develop gates; run broad E2E at staging/release boundaries and turn advisory E2E findings into follow-up tasks. Policy: `reference/ci-gate-policy.md`.
 - Pattern-aware conflict/CI reroutes use `.agents/configs/conflict-patterns.conf` and `.agents/configs/ci-failure-patterns.conf`; details: `tools/git/conflict-resolution.md`, `reference/worker-diagnostics.md`.
 - Deterministic prompt rules should migrate to hooks/validators. Track candidates in `.agents/configs/prompt-hook-candidates.conf`; progressive-disclosure rubric: `reference/progressive-disclosure.md`.
 
@@ -150,7 +159,7 @@ Run `aidevops security` for posture/scan/check/dismiss. Advisories arrive via `a
 ## Maintenance
 
 - Self-improvement guidance: `reference/self-improvement.md`.
-- Token-optimized CLI: use `rtk` for `git status/log/diff` and `gh pr list/view` when installed; not for file reads, JSON, assertions, or verbatim diffs.
+- Token-optimized CLI: start with `rtk-helper.sh` for supported noisy summaries, then rerun raw/direct commands when filtered output is insufficient; bypass for exact evidence. Full rules: `reference/context-efficient-output.md`.
 - Agent lifecycle: `tools/build-agent/build-agent.md`; OpenCode glob allowlists require `subagent_validation.py` verification.
 - Slash commands resolve through `scripts/commands/<command>.md`, then `workflows/<command>.md`.
 - macOS bash upgrade, platform support, customization, and hot deploys: `reference/bash-compat.md`, `reference/platform-support.md`, `reference/customization.md`, `reference/hot-deploy.md`.

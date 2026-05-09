@@ -249,7 +249,7 @@ _close_and_label_feedback_pr() {
 #
 # Args:
 #   $1 - pr_number
-#   $2 - failing_checks       (markdown list of failing check names/URLs)
+#   $2 - failing_checks       (markdown list of terminal failed check names/conclusions/URLs)
 #   $3 - classification_output (optional, t3225 — multi-line "CLASS names";
 #        triggers a Pattern-Specific Resolution Guidance subsection BEFORE
 #        the generic worker guidance when any non-OTHER class is present)
@@ -267,14 +267,14 @@ _build_ci_feedback_section() {
 	local conf_file
 	conf_file="${BASH_SOURCE[0]%/*}/../configs/ci-failure-patterns.conf"
 
-	# Lead with header + non-passing checks list (always present).
+	# Lead with header + terminal failed checks list (always present).
 	cat <<-EOF
 		## CI Repair Feedback (from PR #${pr_number})
 
-		The previous worker's PR #${pr_number} had non-passing required CI checks. The PR has been
+		The previous worker's PR #${pr_number} had terminal failed CI checks. The PR has been
 		closed and this issue re-queued for dispatch. The next worker should address these failures.
 
-		### Non-passing required checks
+		### Terminal failed checks
 
 		${failing_checks}
 	EOF
@@ -290,12 +290,111 @@ _build_ci_feedback_section() {
 		### Worker guidance
 
 		1. Check out a fresh branch from \`origin/main\` (do NOT reuse the old branch)
-		2. Read the check URLs above for specific error messages
+		2. Read the terminal check URLs above for specific error messages
 		3. Fix the issues in the code, not in the CI config
 		4. Ensure all checks pass locally before pushing
 
 		_Routed by deterministic merge pass (pulse-merge.sh)._
 	EOF
+	return 0
+}
+
+#######################################
+# Return whether a failed check URL points at a GitHub Actions job whose failed
+# log is an infrastructure timeout/kill rather than actionable code feedback.
+#
+# Args:
+#   $1 - repo_slug
+#   $2 - check URL
+#
+# Returns: 0=infra timeout/kill detected, 1=not detected or unavailable.
+#######################################
+_ci_check_url_has_infra_timeout_log() {
+	local repo_slug="$1"
+	local check_url="$2"
+
+	[[ -n "$repo_slug" ]] || return 1
+	[[ -n "$check_url" ]] || return 1
+
+	local run_id="" job_id=""
+	case "$check_url" in
+	*"/actions/runs/"*"/job/"*) ;;
+	*) return 1 ;;
+	esac
+
+	run_id="${check_url#*/actions/runs/}"
+	run_id="${run_id%%/*}"
+	job_id="${check_url#*/job/}"
+	job_id="${job_id%%[/?#]*}"
+	[[ "$run_id" =~ ^[0-9]+$ ]] || return 1
+	[[ "$job_id" =~ ^[0-9]+$ ]] || return 1
+
+	local failed_log=""
+	failed_log=$(gh run view "$run_id" --repo "$repo_slug" --job "$job_id" --log-failed 2>/dev/null) || failed_log=""
+	[[ -n "$failed_log" ]] || return 1
+
+	if printf '%s\n' "$failed_log" | grep -Eiq '(Process completed with exit code (124|137|143)|timed out after|[[:space:]]Killed[[:space:]]+timeout|timeout --kill-after|The operation was canceled|cancelled due to timeout)'; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Filter required failed checks down to actionable code failures by excluding
+# GitHub Actions jobs whose logs show timeout/kill infrastructure signatures.
+#
+# Args:
+#   $1 - pr_number
+#   $2 - repo_slug
+#   $3 - checks_json (array of {name, conclusion, link})
+#
+# Output: markdown list of actionable checks.
+#######################################
+_ci_actionable_failed_checks_markdown() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local checks_json="$3"
+
+	local count=""
+	count=$(printf '%s' "$checks_json" | jq 'length' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$count" -gt 0 ]] || return 0
+
+	local idx=0 name="" conclusion="" link=""
+	while [[ "$idx" -lt "$count" ]]; do
+		name=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].name // empty' 2>/dev/null) || name=""
+		conclusion=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].conclusion // empty' 2>/dev/null) || conclusion=""
+		link=$(printf '%s' "$checks_json" | jq -r --argjson i "$idx" '.[$i].link // empty' 2>/dev/null) || link=""
+		if _ci_check_url_has_infra_timeout_log "$repo_slug" "$link"; then
+			echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} check '${name}' classified as infra-timeout from failed log — skipping code redispatch" >>"$LOGFILE"
+		else
+			printf -- '- **%s**: %s — [check URL](%s)\n' "$name" "$conclusion" "$link"
+		fi
+		idx=$((idx + 1))
+	done
+	return 0
+}
+
+#######################################
+# Return terminal failed check details and names from one jq pass.
+#
+# Args:
+#   $1 - checks_json (array from gh pr checks --json name,bucket,conclusion,link)
+#   $2 - terminal_failed_check_filter (jq select expression)
+#
+# Output: first line is filtered checks JSON, followed by a marker and one
+# check name per line. Callers split this without re-running jq over the same
+# payload.
+#######################################
+_ci_terminal_failed_check_results() {
+	local checks_json="$1"
+	local terminal_failed_check_filter="$2"
+
+	[[ -n "$checks_json" ]] || checks_json="[]"
+	printf '%s' "$checks_json" | jq -r "([.[] | select(${terminal_failed_check_filter}) | {name, conclusion, link}] | tojson), \"__AIDEVOPS_CHECK_NAMES__\", (.[] | select(${terminal_failed_check_filter}) | .name)" 2>/dev/null || {
+		printf '[]\n__AIDEVOPS_CHECK_NAMES__\n'
+		return 0
+	}
 	return 0
 }
 
@@ -312,12 +411,13 @@ _build_ci_feedback_section() {
 # Same pattern as _dispatch_pr_fix_worker (t2093) but for CI failures
 # instead of review CHANGES_REQUESTED.
 #
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=checks_json (optional)
 #######################################
 _dispatch_ci_fix_worker() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local linked_issue="$3"
+	local supplied_checks_json="${4:-}"
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
 	[[ -n "$repo_slug" ]] || return 0
@@ -331,31 +431,51 @@ _dispatch_ci_fix_worker() {
 		--description "Issue carries CI failure feedback routed from a closed worker PR" \
 		--force >/dev/null 2>&1 || true
 
-	# Collect non-green required checks: name, status, URL. Include pending
-	# required checks as actionable repair/backlog context; the caller only
-	# reaches this path after merge/security/review gates have passed.
-	local failing_checks
-	failing_checks=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket,link \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending")
-			| "- **\(.name)**: \(.bucket) — [\(.link // "no link")](\(.link // ""))"]
-			| join("\n")' \
-		2>/dev/null) || failing_checks=""
+	# Collect actionable failed required checks first. Pending/queued/in-progress
+	# checks are not actionable repair evidence and must not be routed into the
+	# linked issue as stale worker guidance. Likewise, cancelled/timed_out checks
+	# usually reflect CI capacity, superseded runs, or job-budget kills; routing
+	# those as code-fix feedback creates duplicate PR churn instead of retrying or
+	# escalating CI infrastructure. If required checks contain no actionable
+	# failures and the caller did not provide precomputed checks, fall back to the
+	# full check set so advisory-only terminal failures can still carry
+	# pattern-specific repair guidance.
+	local terminal_failed_check_filter
+	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
+	local checks_json="$supplied_checks_json" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
+	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
+	if [[ -z "$checks_json" ]]; then
+		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
+			--json name,bucket,conclusion,link \
+			2>/dev/null) || checks_json="[]"
+	fi
+	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
+	failing_checks_json="${check_results%%"$result_marker"*}"
+	failing_names="${check_results#*"$result_marker"}"
+	[[ "$failing_names" != "$check_results" ]] || failing_names=""
+	failing_names="${failing_names#$'\n'}"
+	failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
+
+	if [[ -z "$failing_checks" && -z "$supplied_checks_json" ]]; then
+		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
+			--json name,bucket,conclusion,link \
+			2>/dev/null) || checks_json="[]"
+		check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
+		failing_checks_json="${check_results%%"$result_marker"*}"
+		failing_names="${check_results#*"$result_marker"}"
+		[[ "$failing_names" != "$check_results" ]] || failing_names=""
+		failing_names="${failing_names#$'\n'}"
+		failing_checks=$(_ci_actionable_failed_checks_markdown "$pr_number" "$repo_slug" "$failing_checks_json")
+	fi
 
 	if [[ -z "$failing_checks" ]]; then
-		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has non-passing checks but could not collect details — skipping routing" >>"$LOGFILE"
+		echo "[pulse-wrapper] _dispatch_ci_fix_worker: PR #${pr_number} in ${repo_slug} has no actionable failed checks with URLs — skipping CI repair routing" >>"$LOGFILE"
 		return 0
 	fi
 
 	# t3225: Also collect raw failing check NAMES (one per line) for
 	# pattern classification. Failure to collect names is non-fatal — we
 	# fall back to the pre-t3225 behaviour (no pattern guidance block).
-	local failing_names classification_output=""
-	failing_names=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-		--json name,bucket \
-		--jq '[.[] | select(.bucket == "fail" or .bucket == "cancel" or .bucket == "pending") | .name]
-			| join("\n")' \
-		2>/dev/null) || failing_names=""
 	if [[ -n "$failing_names" ]]; then
 		classification_output=$(_classify_ci_failures_by_pattern "$failing_names" 2>/dev/null) || classification_output=""
 	fi
@@ -391,10 +511,10 @@ _dispatch_ci_fix_worker() {
 	_close_and_label_feedback_pr "$pr_number" "$repo_slug" \
 		"## CI repair feedback routed to issue #${linked_issue}
 
-This worker PR had non-passing required CI checks. The check details have been appended
+This worker PR had terminal failed CI checks. The check details have been appended
 to the linked issue body so the next worker can address them.
 
-Non-passing required checks:
+Terminal failed checks:
 ${failing_checks}
 
 _Closed by deterministic merge pass (pulse-merge.sh)._" \

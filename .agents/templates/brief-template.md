@@ -329,6 +329,12 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 
 ### Verification
 
+<!-- CI gate policy: prefer fast required develop gates (format, lint,
+     typecheck, unit tests). Mark E2E/visual/performance checks as advisory
+     unless this task targets staging/release promotion or directly changes a
+     critical tested path. Advisory failures should become follow-up issues with
+     evidence, not hidden blockers. See `.agents/reference/ci-gate-policy.md`. -->
+
 ```bash
 {Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
 ```

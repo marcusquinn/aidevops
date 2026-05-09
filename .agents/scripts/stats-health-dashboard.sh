@@ -21,7 +21,7 @@
 #   - stats-health-dashboard-data.sh   (data gathering, body formatting, person stats)
 #
 # Dependencies on other stats modules:
-#   - stats-shared.sh (calls _get_runner_role)
+#   - stats-shared.sh (calls _get_runner_role, _dashboard_identity_aliases)
 #
 # Globals read:
 #   - LOGFILE, REPOS_JSON, PERSON_STATS_INTERVAL, PERSON_STATS_LAST_RUN,
@@ -102,8 +102,9 @@ _check_health_issue_activity_guard() {
 #   - System resources (CPU, RAM)
 #   - Last pulse timestamp
 #
-# One issue per runner (GitHub user) per repo. Uses labels
-# "supervisor" or "contributor" + "$runner_user" for dedup.
+# One issue per canonical dashboard operator per repo. Uses labels
+# "supervisor" or "contributor" plus "operator:<canonical>" for dedup,
+# with configured local/GitHub aliases folded into that canonical identity.
 # Issue number cached in ~/.aidevops/logs/ to avoid repeated lookups.
 #
 # Maintainers get [Supervisor:user] issues; non-maintainers get
@@ -132,14 +133,22 @@ _update_health_issue_for_repo() {
 	local runner_role
 	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")
 
+	local identity_lines canonical_identity identity_aliases
+	identity_lines=$(_dashboard_identity_aliases "$runner_user")
+	canonical_identity=$(printf '%s\n' "$identity_lines" | sed -n '1p')
+	identity_aliases=$(printf '%s\n' "$identity_lines" | sed '1d')
+	[[ -n "$canonical_identity" ]] || canonical_identity="$runner_user"
+	[[ -n "$identity_aliases" ]] || identity_aliases="$runner_user"
+
 	local role_config runner_prefix role_label role_label_color role_label_desc role_display
+	# Visible title uses runner_user; canonical identity stays in labels/cache/body.
 	role_config=$(_resolve_runner_role_config "$runner_user" "$runner_role")
 	IFS='|' read -r runner_prefix role_label role_label_color role_label_desc role_display \
 		<<<"$role_config"
 
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
-	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
+	local health_issue_file="${cache_dir}/health-issue-${canonical_identity}-${slug_safe}"
 	mkdir -p "$cache_dir"
 
 	_check_health_issue_activity_guard \
@@ -149,7 +158,8 @@ _update_health_issue_for_repo() {
 	health_issue_number=$(_resolve_health_issue_number \
 		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
 		"$role_label" "$role_label_color" "$role_label_desc" \
-		"$role_display" "$health_issue_file")
+		"$role_display" "$health_issue_file" \
+		"$canonical_identity" "$identity_aliases")
 	[[ -z "$health_issue_number" ]] && return 0
 
 	# t2687: periodic dedup scan (at most once per HEALTH_DEDUP_INTERVAL
@@ -158,7 +168,8 @@ _update_health_issue_for_repo() {
 	# was valid so the label-scan inside _find_health_issue never ran.
 	_periodic_health_issue_dedup \
 		"$repo_slug" "$runner_user" "$runner_role" \
-		"$role_label" "$role_display" "$health_issue_number"
+		"$role_label" "$role_display" "$health_issue_number" \
+		"$canonical_identity" "$identity_aliases"
 
 	if [[ "$runner_role" == "supervisor" ]]; then
 		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
@@ -173,7 +184,8 @@ _update_health_issue_for_repo() {
 	body=$(_assemble_health_issue_body \
 		"$repo_slug" "$repo_path" "$runner_user" "$slug_safe" \
 		"$now_iso" "$role_display" "$runner_role" \
-		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md")
+		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" \
+		"$canonical_identity" "$identity_aliases")
 
 	local body_edit_stderr
 	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback

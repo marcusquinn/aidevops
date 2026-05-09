@@ -212,6 +212,104 @@ setup_scan_stub_at_helper_path() {
 	return 0
 }
 
+create_gh_stub_review_feedback() {
+	local mode="$1"
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+args="\$*"
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
+	if printf '%s' "\$args" | grep -qF '.body // ""'; then
+		case "${mode}" in
+			extended-extension)
+				printf 'quality debt kotlin coroutine MainActivity.kt\n'
+				;;
+			whole-word)
+				printf 'quality debt rate cache worker.sh\n'
+				;;
+			version-directory)
+				printf 'quality debt setup rollout v3.14.93/setup.sh\n'
+				;;
+			*)
+				printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
+				exit 1
+				;;
+		esac
+		exit 0
+	fi
+	printf '2026-05-07T00:00:00Z\tquality-debt supersession test\tquality-debt,source:review-feedback\n'
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qF 'search/issues'; then
+	printf '99\n'
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qE 'pulls/99/files'; then
+	case "${mode}" in
+		extended-extension)
+			if printf '%s' "\$args" | grep -qF '.[].filename'; then
+				printf 'app/src/MainActivity.kt\n'
+			else
+				printf 'app/src/MainActivity.kt\nfix kotlin coroutine reliability\n'
+			fi
+			;;
+		whole-word)
+			if printf '%s' "\$args" | grep -qF '.[].filename'; then
+				printf 'worker.sh\n'
+			else
+				printf 'worker.sh\ngenerate cache output\n'
+			fi
+			;;
+		version-directory)
+			if printf '%s' "\$args" | grep -qF '.[].filename'; then
+				printf 'v3.14.93/setup.sh\n'
+			else
+				printf 'v3.14.93/setup.sh\nfix setup rollout quality debt\n'
+			fi
+			;;
+		*)
+			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
+			exit 1
+			;;
+	esac
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/pulls/99\$'; then
+	case "${mode}" in
+		extended-extension)
+			printf '2026-05-08T00:00:00Z\tfix kotlin coroutine reliability\tUpdates mobile handling\n'
+			;;
+		whole-word)
+			printf '2026-05-08T00:00:00Z\tgenerate cache output\tUpdates cache handling\n'
+			;;
+		version-directory)
+			printf '2026-05-08T00:00:00Z\tfix setup rollout quality debt\tUpdates setup handling\n'
+			;;
+		*)
+			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
+			exit 1
+			;;
+	esac
+	exit 0
+fi
+
+if [[ "\${1:-}" == "issue" ]]; then
+	exit 0
+fi
+
+printf 'unsupported gh invocation: %s\n' "\$*" >&2
+exit 1
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -319,6 +417,57 @@ test_bypass_env_var() {
 	return 0
 }
 
+test_review_feedback_extended_extensions() {
+	setup_test_env
+	create_gh_stub_review_feedback "extended-extension"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "47" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "review_feedback detects extended file extensions" 0
+	else
+		print_result "review_feedback detects extended file extensions" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+test_review_feedback_keyword_scoring_whole_words() {
+	setup_test_env
+	create_gh_stub_review_feedback "whole-word"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "48" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "review_feedback keyword scoring uses whole words" 0
+	else
+		print_result "review_feedback keyword scoring uses whole words" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+test_review_feedback_preserves_version_directory_paths() {
+	setup_test_env
+	create_gh_stub_review_feedback "version-directory"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "49" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "review_feedback preserves version-directory file paths" 0
+	else
+		print_result "review_feedback preserves version-directory file paths" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -336,6 +485,9 @@ main() {
 	test_unregistered_generator
 	test_validator_error
 	test_bypass_env_var
+	test_review_feedback_extended_extensions
+	test_review_feedback_keyword_scoring_whole_words
+	test_review_feedback_preserves_version_directory_paths
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 

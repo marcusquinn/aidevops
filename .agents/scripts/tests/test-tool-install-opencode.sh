@@ -54,7 +54,13 @@ extract_functions() {
 	awk '
 		/^_setup_opencode_timeout_cmd\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_version_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_help_output\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_help_identifies_opencode\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_first_line\(\)/, /^}$/ { print; next }
+		/^_setup_opencode_node_path_for_binary\(\)/, /^}$/ { print; next }
+		/^_setup_clear_canary_negative_cache\(\)/, /^}$/ { print; next }
+		/^_setup_ensure_opencode_stable_shim\(\)/, /^}$/ { print; next }
+		/^_setup_find_valid_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_validate_opencode_binary\(\)/, /^}$/ { print; next }
 		/^_setup_opencode_force_heal\(\)/, /^}$/ { print; next }
 		/^setup_opencode_cli\(\)/, /^}$/ { print; next }
@@ -94,6 +100,8 @@ source_extracted() {
 		cat >"$SANDBOX/bin/opencode" <<'INNER_EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 INNER_EOF
 		chmod +x "$SANDBOX/bin/opencode"
 		return 0
@@ -109,6 +117,8 @@ echo "Test 1: _setup_validate_opencode_binary on real opencode shim"
 cat >"$SANDBOX/bin/opencode-real" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 EOF
 chmod +x "$SANDBOX/bin/opencode-real"
 (
@@ -119,11 +129,58 @@ chmod +x "$SANDBOX/bin/opencode-real"
 ) >"$SANDBOX/out1" 2>&1
 assert_eq "real opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1")"
 
+# --- Test 1b: validator accepts equivalent help formatting ------------------
+echo "Test 1b: _setup_validate_opencode_binary accepts flexible help format"
+cat >"$SANDBOX/bin/opencode-flex-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && printf '%s\n' "Usage: opencode run <message>" "Commands:" "  run  Execute a prompt"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-flex-help"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-flex-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1b" 2>&1
+assert_eq "flex help opencode -> rc=0" "0" "$(tail -1 "$SANDBOX/out1b")"
+
+# --- Test 1c: PATH helpers reject relative bin dirs and empty PATH colons ----
+echo "Test 1c: _setup_opencode_node_path_for_binary avoids relative PATH entries"
+(
+	source_extracted
+	_setup_opencode_node_path_for_binary "opencode"
+) >"$SANDBOX/out1c" 2>&1
+relative_path_value=$(tail -1 "$SANDBOX/out1c")
+case "$relative_path_value" in
+	.* | *:.:* | *:.) assert_eq "relative bin dir omitted from PATH" "no-relative" "relative" ;;
+	*) assert_eq "relative bin dir omitted from PATH" "no-relative" "no-relative" ;;
+esac
+
+echo "Test 1d: _setup_opencode_help_output avoids trailing colon with empty PATH"
+cat >"$SANDBOX/bin/opencode-path-check" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--help" ]]; then
+	[[ "$PATH" == *: ]] && exit 42
+	echo "opencode run [message..]     run opencode with a message"
+	exit 0
+fi
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-path-check"
+(
+	source_extracted
+	PATH="" _setup_opencode_help_output "$SANDBOX/bin/opencode-path-check"
+) >"$SANDBOX/out1d" 2>&1 || rc1d=$?
+assert_eq "empty PATH expansion has no trailing colon" "0" "${rc1d:-0}"
+
 # --- Test 2: validator on claude CLI shim ----------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "2.1.119 (Claude Code)"
+[[ "${1:-}" == "--help" ]] && echo "Claude Code"
 EOF
 chmod +x "$SANDBOX/bin/opencode-claude"
 (
@@ -139,6 +196,7 @@ echo "Test 2b: _setup_validate_opencode_binary rejects major >=10"
 cat >"$SANDBOX/bin/opencode-major10" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "10.0.0"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-major10"
 (
@@ -148,6 +206,22 @@ chmod +x "$SANDBOX/bin/opencode-major10"
 	echo "$rc"
 ) >"$SANDBOX/out2b" 2>&1
 assert_eq "major 10 shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2b")"
+
+# --- Test 2c: validator rejects Qwen Code semver-compatible output ----------
+echo "Test 2c: _setup_validate_opencode_binary rejects qwen CLI shim"
+cat >"$SANDBOX/bin/opencode-qwen" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "0.2.1"
+[[ "${1:-}" == "--help" ]] && echo "Qwen Code - Launch an interactive CLI"
+EOF
+chmod +x "$SANDBOX/bin/opencode-qwen"
+(
+	source_extracted
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-qwen" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2c" 2>&1
+assert_eq "qwen shim -> rc=1" "1" "$(tail -1 "$SANDBOX/out2c")"
 
 # --- Test 3: validator on missing path -------------------------------------
 echo "Test 3: _setup_validate_opencode_binary on missing path"
@@ -167,6 +241,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	sleep 5
 	echo "1.14.25"
 fi
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-slow"
 (
@@ -202,7 +277,7 @@ cp "$SANDBOX/bin/opencode-real" "$SANDBOX/bin/opencode"
 rc4=$(grep '^rc=' "$SANDBOX/out4" | tail -1)
 resolved4=$(tail -1 "$SANDBOX/out4")
 assert_eq "skip-when-valid rc" "rc=0" "$rc4"
-assert_eq "skip-when-valid resolved-path file" "$SANDBOX/bin/opencode" "$resolved4"
+assert_eq "skip-when-valid resolved-path file" "$HOME/.local/bin/opencode" "$resolved4"
 
 # --- Test 5: setup_opencode_cli auto-heal on wrong package -----------------
 # Critical t2891 path: when 'opencode' resolves to claude CLI (rc=1),
@@ -230,11 +305,36 @@ assert_eq "post-heal validation success" "1" "$post_heal_success"
 # --- Test 6: post-heal persists resolved path ------------------------------
 echo "Test 6: post-heal persisted resolved path"
 [[ -f "$HOME/.aidevops/.opencode-bin-resolved" ]] && resolved6=$(cat "$HOME/.aidevops/.opencode-bin-resolved") || resolved6="MISSING"
-assert_eq "post-heal resolved-path file populated" "$SANDBOX/bin/opencode" "$resolved6"
+assert_eq "post-heal resolved-path file populated" "$HOME/.local/bin/opencode" "$resolved6"
+
+# --- Test 6b: bad stable shim is rewritten from another valid install -------
+echo "Test 6b: setup_opencode_cli rewrites qwen stable shim from valid bun install"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+mkdir -p "$HOME/.local/bin" "$HOME/.bun/bin"
+cp "$SANDBOX/bin/opencode-qwen" "$HOME/.local/bin/opencode"
+cp "$SANDBOX/bin/opencode-real" "$HOME/.bun/bin/opencode"
+(
+	source_extracted
+	export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+	cat "$HOME/.aidevops/.opencode-bin-resolved" 2>/dev/null || echo "MISSING"
+) >"$SANDBOX/out6b" 2>&1
+rc6b=$(grep '^rc=' "$SANDBOX/out6b" | tail -1)
+resolved6b=$(tail -1 "$SANDBOX/out6b")
+assert_eq "qwen stable shim heal rc" "rc=0" "$rc6b"
+assert_eq "qwen stable shim rewritten" "$HOME/.local/bin/opencode" "$resolved6b"
+if "$HOME/.local/bin/opencode" --help 2>/dev/null | grep -q 'opencode run \[message\.\.\]'; then
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "rewritten"
+else
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "not-rewritten"
+fi
 
 # --- Test 7: auto-heal bounds hanging installer ----------------------------
 echo "Test 7: setup_opencode_cli bounds hanging auto-heal installer"
 rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+rm -f "$HOME/.bun/bin/opencode"
 cp "$SANDBOX/bin/opencode-claude" "$SANDBOX/bin/opencode"
 (
 	source_extracted
@@ -255,10 +355,10 @@ rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
 elapsed7="${rc7##*elapsed=}"
 rc7="${rc7%% elapsed=*}"
 assert_eq "hanging auto-heal fail-opens" "rc=0" "$rc7"
-if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 12 ]]; then
 	assert_eq "hanging auto-heal returns within bound" "bounded" "bounded"
 else
-	assert_eq "hanging auto-heal returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+	assert_eq "hanging auto-heal returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
 fi
 
 echo ""

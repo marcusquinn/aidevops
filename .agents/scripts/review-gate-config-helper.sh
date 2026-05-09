@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # -----------------------------------------------------------------------------
-# review-gate-config-helper.sh — CLI for configuring review_gate.rate_limit_behavior
+# review-gate-config-helper.sh — CLI for configuring review_gate merge policies
 # in ~/.config/aidevops/repos.json without hand-editing JSON.
 #
 # Usage:
@@ -11,15 +11,19 @@
 #   aidevops review-gate <slug>                       Show config for one repo
 #   aidevops review-gate <slug> pass|wait|unset       Set per-repo default
 #   aidevops review-gate <slug> --tool <bot> pass|wait|unset  Per-tool override
+#   aidevops review-gate <slug> --completion fast|strict|unset  Completion policy
+#   aidevops review-gate <slug> --tool <bot> --completion fast|strict|unset
 #   aidevops review-gate --help                       Show this help
 #
 # Schema written to ~/.config/aidevops/repos.json under the matching
 # initialized_repos entry:
 #   { "review_gate": { "rate_limit_behavior": "pass",
-#                      "tools": { "coderabbitai": { "rate_limit_behavior": "wait" } } } }
+#                      "completion_behavior": "fast",
+#                      "tools": { "coderabbitai": { "rate_limit_behavior": "wait",
+#                                                     "completion_behavior": "strict" } } } }
 #
-# Resolution order (unchanged): per-tool > per-repo > env var > "pass".
-# This helper only edits repos.json. Env var and default are untouched.
+# Resolution order: per-tool > per-repo > env var > hardcoded default.
+# This helper only edits repos.json. Env vars and defaults are untouched.
 # -----------------------------------------------------------------------------
 
 set -euo pipefail
@@ -36,6 +40,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -z "${NC+x}" ]]     && NC='\033[0m'
 
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+readonly RATE_LIMIT_BEHAVIOR_FIELD="rate_limit_behavior"
+readonly COMPLETION_BEHAVIOR_FIELD="completion_behavior"
 
 # Known bot logins for --tool validation. New bots warn but are not rejected
 # (forward-compat: new bots should work without a helper update).
@@ -85,12 +91,24 @@ _require_repos_json() {
 }
 
 # Validate a rate_limit_behavior value.
-_validate_behavior() {
+_validate_rate_limit_behavior() {
 	local value="$1"
 	case "$value" in
 	pass | wait | unset) return 0 ;;
 	*)
 		_print_error "Invalid value '${value}'. Must be: pass, wait, or unset"
+		return 1
+		;;
+	esac
+}
+
+# Validate a completion_behavior value.
+_validate_completion_behavior() {
+	local value="$1"
+	case "$value" in
+	fast | strict | unset) return 0 ;;
+	*)
+		_print_error "Invalid completion value '${value}'. Must be: fast, strict, or unset"
 		return 1
 		;;
 	esac
@@ -147,23 +165,27 @@ _resolve_slug() {
 _resolve_effective_behavior() {
 	local slug="$1"
 	local bot="${2:-}"
+	local field="${3:-$RATE_LIMIT_BEHAVIOR_FIELD}"
 
 	local per_tool_val=""
 	local per_repo_val=""
 
 	if [[ -f "$REPOS_JSON" ]] && command -v jq &>/dev/null; then
-		per_repo_val=$(jq -r --arg slug "$slug" \
-			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.rate_limit_behavior // empty' \
+		per_repo_val=$(jq -r --arg slug "$slug" --arg field "$field" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate[$field] // empty' \
 			"$REPOS_JSON" 2>/dev/null) || per_repo_val=""
 
 		if [[ -n "$bot" ]]; then
-			per_tool_val=$(jq -r --arg slug "$slug" --arg bot "$bot" \
-				'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.tools[$bot].rate_limit_behavior // empty' \
+			per_tool_val=$(jq -r --arg slug "$slug" --arg bot "$bot" --arg field "$field" \
+				'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.tools[$bot][$field] // empty' \
 				"$REPOS_JSON" 2>/dev/null) || per_tool_val=""
 		fi
 	fi
 
 	local global_env="${REVIEW_GATE_RATE_LIMIT_BEHAVIOR:-pass}"
+	if [[ "$field" == "$COMPLETION_BEHAVIOR_FIELD" ]]; then
+		global_env="${REVIEW_GATE_COMPLETION_BEHAVIOR:-fast}"
+	fi
 
 	# Resolution order: per-tool > per-repo > env > "pass"
 	if [[ -n "$bot" && -n "$per_tool_val" ]]; then
@@ -255,37 +277,51 @@ cmd_list() {
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
 
-		local per_repo_val
-		per_repo_val=$(jq -r --arg slug "$slug" \
-			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.rate_limit_behavior // empty' \
-			"$REPOS_JSON" 2>/dev/null) || per_repo_val=""
+		local rate_limit_val completion_val repo_values
+		repo_values=$(jq -r --arg slug "$slug" --arg rate_field "$RATE_LIMIT_BEHAVIOR_FIELD" --arg completion_field "$COMPLETION_BEHAVIOR_FIELD" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) // {} | [(.review_gate[$rate_field] // ""), (.review_gate[$completion_field] // "")] | @tsv' \
+			"$REPOS_JSON" 2>/dev/null) || repo_values=$'\t'
+		rate_limit_val="${repo_values%%$'\t'*}"
+		completion_val="${repo_values#*$'\t'}"
+		if [[ "$completion_val" == "$repo_values" ]]; then
+			completion_val=""
+		fi
 
-		local effective
-		effective=$(_resolve_effective_behavior "$slug")
+		local rate_effective completion_effective
+		rate_effective=$(_resolve_effective_behavior "$slug" "" "$RATE_LIMIT_BEHAVIOR_FIELD")
+		completion_effective=$(_resolve_effective_behavior "$slug" "" "$COMPLETION_BEHAVIOR_FIELD")
 
 		printf "  %s\n" "$slug"
-		if [[ -n "$per_repo_val" ]]; then
-			printf "    per-repo: %-6s  effective: %s\n" "$per_repo_val" "$effective"
+		if [[ -n "$rate_limit_val" ]]; then
+			printf "    rate-limit per-repo: %-6s  effective: %s\n" "$rate_limit_val" "$rate_effective"
 		else
-			printf "    per-repo: %-6s  effective: %s\n" "(unset)" "$effective"
+			printf "    rate-limit per-repo: %-6s  effective: %s\n" "(unset)" "$rate_effective"
+		fi
+		if [[ -n "$completion_val" ]]; then
+			printf "    completion per-repo: %-6s  effective: %s\n" "$completion_val" "$completion_effective"
+		else
+			printf "    completion per-repo: %-6s  effective: %s\n" "(unset)" "$completion_effective"
 		fi
 
 		# List per-tool overrides if present
 		local tools_json
-		tools_json=$(jq -r --arg slug "$slug" \
-			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.tools // empty | to_entries[]? | "\(.key)=\(.value.rate_limit_behavior // "(unset)")"' \
+		tools_json=$(jq -r --arg slug "$slug" --arg rate_field "$RATE_LIMIT_BEHAVIOR_FIELD" --arg completion_field "$COMPLETION_BEHAVIOR_FIELD" \
+			'first(.initialized_repos[]? | select(.slug == $slug)) | .review_gate.tools // empty | to_entries[]? | "\(.key)=\(.value[$rate_field] // "(unset)")|\(.value[$completion_field] // "(unset)")"' \
 			"$REPOS_JSON" 2>/dev/null) || tools_json=""
 
 		if [[ -n "$tools_json" ]]; then
 			local tool_entry
 			while IFS= read -r tool_entry; do
 				[[ -z "$tool_entry" ]] && continue
-				local tool_name tool_val tool_effective
+				local tool_name rest tool_rate_val tool_completion_val tool_rate_effective tool_completion_effective
 				tool_name="${tool_entry%%=*}"
-				tool_val="${tool_entry#*=}"
-				tool_effective=$(_resolve_effective_behavior "$slug" "$tool_name")
-				printf "    tool %-24s per-tool: %-6s  effective: %s\n" \
-					"${tool_name}:" "$tool_val" "$tool_effective"
+				rest="${tool_entry#*=}"
+				tool_rate_val="${rest%%|*}"
+				tool_completion_val="${rest#*|}"
+				tool_rate_effective=$(_resolve_effective_behavior "$slug" "$tool_name" "$RATE_LIMIT_BEHAVIOR_FIELD")
+				tool_completion_effective=$(_resolve_effective_behavior "$slug" "$tool_name" "$COMPLETION_BEHAVIOR_FIELD")
+				printf "    tool %-24s rate-limit: %-6s effective: %-6s completion: %-6s effective: %s\n" \
+					"${tool_name}:" "$tool_rate_val" "$tool_rate_effective" "$tool_completion_val" "$tool_completion_effective"
 			done <<<"$tools_json"
 		fi
 
@@ -301,12 +337,17 @@ cmd_set() {
 	local slug="$1"
 	local tool_login="${2:-}"
 	local value="$3"
+	local field="${4:-$RATE_LIMIT_BEHAVIOR_FIELD}"
 
 	_require_jq || return 1
 	_require_repos_json || return 1
 
 	# Validate the value
-	_validate_behavior "$value" || return 1
+	if [[ "$field" == "$COMPLETION_BEHAVIOR_FIELD" ]]; then
+		_validate_completion_behavior "$value" || return 1
+	else
+		_validate_rate_limit_behavior "$value" || return 1
+	fi
 
 	# Resolve and validate the slug
 	local resolved_slug
@@ -332,7 +373,8 @@ cmd_set() {
 			new_json=$(printf '%s' "$current_json" | jq \
 				--arg slug "$resolved_slug" \
 				--arg bot "$tool_login" \
-				'(.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot]) |= del(.rate_limit_behavior)' \
+				--arg field "$field" \
+				'(.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot]) |= del(.[$field])' \
 				2>/dev/null) || { _jq_mutation_failed; return 1; }
 			# Clean up empty tools entries
 			new_json=$(printf '%s' "$new_json" | jq \
@@ -342,7 +384,8 @@ cmd_set() {
 		else
 			new_json=$(printf '%s' "$current_json" | jq \
 				--arg slug "$resolved_slug" \
-				'(.initialized_repos[] | select(.slug == $slug) | .review_gate) |= del(.rate_limit_behavior)' \
+				--arg field "$field" \
+				'(.initialized_repos[] | select(.slug == $slug) | .review_gate) |= del(.[$field])' \
 				2>/dev/null) || { _jq_mutation_failed; return 1; }
 		fi
 	else
@@ -351,14 +394,16 @@ cmd_set() {
 			new_json=$(printf '%s' "$current_json" | jq \
 				--arg slug "$resolved_slug" \
 				--arg bot "$tool_login" \
+				--arg field "$field" \
 				--arg val "$value" \
-				'(.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot].rate_limit_behavior) |= $val' \
+				'(.initialized_repos[] | select(.slug == $slug) | .review_gate.tools[$bot][$field]) |= $val' \
 				2>/dev/null) || { _jq_mutation_failed; return 1; }
 		else
 			new_json=$(printf '%s' "$current_json" | jq \
 				--arg slug "$resolved_slug" \
+				--arg field "$field" \
 				--arg val "$value" \
-				'(.initialized_repos[] | select(.slug == $slug) | .review_gate.rate_limit_behavior) |= $val' \
+				'(.initialized_repos[] | select(.slug == $slug) | .review_gate[$field]) |= $val' \
 				2>/dev/null) || { _jq_mutation_failed; return 1; }
 		fi
 	fi
@@ -368,19 +413,19 @@ cmd_set() {
 	# Report what changed
 	if [[ "$value" == "unset" ]]; then
 		if [[ -n "$tool_login" ]]; then
-			_print_ok "Removed per-tool override for '${tool_login}' on ${resolved_slug}"
-			_print_info "Effective value now: $(_resolve_effective_behavior "$resolved_slug" "$tool_login")"
+			_print_ok "Removed per-tool ${field} override for '${tool_login}' on ${resolved_slug}"
+			_print_info "Effective value now: $(_resolve_effective_behavior "$resolved_slug" "$tool_login" "$field")"
 		else
-			_print_ok "Removed per-repo override for ${resolved_slug}"
-			_print_info "Effective value now: $(_resolve_effective_behavior "$resolved_slug")"
+			_print_ok "Removed per-repo ${field} override for ${resolved_slug}"
+			_print_info "Effective value now: $(_resolve_effective_behavior "$resolved_slug" "" "$field")"
 		fi
 	else
 		if [[ -n "$tool_login" ]]; then
-			_print_ok "Set review_gate.tools.${tool_login}.rate_limit_behavior = ${value} for ${resolved_slug}"
+			_print_ok "Set review_gate.tools.${tool_login}.${field} = ${value} for ${resolved_slug}"
 		else
-			_print_ok "Set review_gate.rate_limit_behavior = ${value} for ${resolved_slug}"
+			_print_ok "Set review_gate.${field} = ${value} for ${resolved_slug}"
 		fi
-		_print_info "Effective value: $(_resolve_effective_behavior "$resolved_slug" "$tool_login")"
+		_print_info "Effective value: $(_resolve_effective_behavior "$resolved_slug" "$tool_login" "$field")"
 	fi
 
 	return 0
@@ -389,16 +434,22 @@ cmd_set() {
 # ── Help ─────────────────────────────────────────────────────────────────────
 
 cmd_help() {
-	echo "review-gate-config-helper.sh — Configure review_gate.rate_limit_behavior"
+	echo "review-gate-config-helper.sh — Configure review_gate merge policies"
 	echo ""
 	echo "Controls what happens when a review bot is rate-limited during a merge check:"
 	echo "  pass  (default) — treat rate-limit as a pass, preserve merge velocity"
 	echo "  wait            — keep polling until the bot responds (strict review-before-merge)"
 	echo ""
+	echo "Controls whether settled bot comments need terminal bot status/check evidence:"
+	echo "  fast   (default) — accept settled comments, preserve merge velocity"
+	echo "  strict           — require bot SUCCESS status/check for two-phase bots"
+	echo ""
 	echo "Commands:"
 	echo "  list [<slug>]                          Show config for all repos (or one)"
 	echo "  <slug> pass|wait|unset                 Set per-repo default"
 	echo "  <slug> --tool <bot> pass|wait|unset    Set per-tool override"
+	echo "  <slug> --completion fast|strict|unset  Set completion default"
+	echo "  <slug> --tool <bot> --completion fast|strict|unset"
 	echo "  help                                   Show this help"
 	echo ""
 	echo "Arguments:"
@@ -414,9 +465,12 @@ cmd_help() {
 	echo "  aidevops review-gate marcusquinn/myrepo unset    # remove per-repo override"
 	echo "  aidevops review-gate marcusquinn/myrepo --tool coderabbitai wait"
 	echo "  aidevops review-gate marcusquinn/myrepo --tool coderabbitai unset"
+	echo "  aidevops review-gate marcusquinn/myrepo --completion strict"
+	echo "  aidevops review-gate marcusquinn/myrepo --tool coderabbitai --completion strict"
 	echo ""
 	echo "Resolution order (per-tool wins):"
-	echo "  per-tool config > per-repo config > REVIEW_GATE_RATE_LIMIT_BEHAVIOR env > pass"
+	echo "  rate-limit: per-tool > per-repo > REVIEW_GATE_RATE_LIMIT_BEHAVIOR env > pass"
+	echo "  completion: per-tool > per-repo > REVIEW_GATE_COMPLETION_BEHAVIOR env > fast"
 	echo ""
 	echo "Reference: .agents/reference/repos-json-fields.md"
 	return 0
@@ -438,6 +492,8 @@ main() {
 	# Handle: <slug>                → show one repo
 	# Handle: <slug> pass|wait|unset
 	# Handle: <slug> --tool <bot> pass|wait|unset
+	# Handle: <slug> --completion fast|strict|unset
+	# Handle: <slug> --tool <bot> --completion fast|strict|unset
 
 	case "$command" in
 	list)
@@ -454,21 +510,39 @@ main() {
 			return $?
 		fi
 
+		# slug --completion fast|strict|unset
+		if [[ "$subcommand" == "--completion" ]]; then
+			local value="${2:-}"
+			if [[ -z "$value" ]]; then
+				_print_error "Missing value after --completion. Expected: fast, strict, or unset"
+				cmd_help
+				return 1
+			fi
+			cmd_set "$slug" "" "$value" "$COMPLETION_BEHAVIOR_FIELD"
+			return $?
+		fi
+
 		# slug --tool <bot> pass|wait|unset
+		# slug --tool <bot> --completion fast|strict|unset
 		if [[ "$subcommand" == "--tool" ]]; then
 			local tool_login="${2:-}"
 			local value="${3:-}"
+			local field="$RATE_LIMIT_BEHAVIOR_FIELD"
 			if [[ -z "$tool_login" ]]; then
 				_print_error "Missing bot login after --tool"
 				cmd_help
 				return 1
 			fi
+			if [[ "$value" == "--completion" ]]; then
+				field="$COMPLETION_BEHAVIOR_FIELD"
+				value="${4:-}"
+			fi
 			if [[ -z "$value" ]]; then
-				_print_error "Missing value after --tool ${tool_login}. Expected: pass, wait, or unset"
+				_print_error "Missing value after --tool ${tool_login}. Expected: pass, wait, unset, or --completion fast|strict|unset"
 				cmd_help
 				return 1
 			fi
-			cmd_set "$slug" "$tool_login" "$value"
+			cmd_set "$slug" "$tool_login" "$value" "$field"
 			return $?
 		fi
 

@@ -140,6 +140,32 @@ test_startup_no_activity_timeout_returns_watchdog_continue() {
 	return 0
 }
 
+test_sigkill_with_activity_attempts_continuation() {
+	local output_file="${TEST_ROOT}/sigkill-with-activity.jsonl"
+	cat >"$output_file" <<'EOF'
+{"type":"text","text":"I made a change after reading docs that mention rate limit."}
+[WORKER_EXIT_DIAGNOSTICS] exit_code=137 model=openai/gpt-5.5 role=worker session_key=issue-23036
+[WORKER_EXIT_DIAGNOSTICS] cause=SIGKILL (OOM or external kill)
+EOF
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_runtime_error_type=""
+	_run_classification_source=""
+	_run_classification_pattern=""
+
+	local status=0
+	_handle_run_result 137 "$output_file" "worker" "openai" "issue-23036" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 78 && "$_run_result_label" == "signal_killed_continue" && "$_run_runtime_error_type" == "sigkill" && ! -f "$output_file" ]]; then
+		print_result "SIGKILL with activity attempts continuation" 0
+		return 0
+	fi
+
+	print_result "SIGKILL with activity attempts continuation" 1 \
+		"status=$status label=${_run_result_label:-<empty>} runtime=${_run_runtime_error_type:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	return 0
+}
+
 test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 	local result status action next_model
 	result=$(
@@ -348,6 +374,53 @@ test_worker_worktree_claim_reclaims_stale_live_same_task_owner() {
 	return 0
 }
 
+test_worker_worktree_claim_reclaims_dispatch_precreate_owner() {
+	local worktree_dir="${TEST_ROOT}/claim-dispatch-precreate-owner"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	export WORKER_ISSUE_NUMBER="22438"
+	export AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS="900"
+	local claim_calls=0 unregister_called=0
+	local live_pid="$$"
+
+	claim_worktree_ownership() {
+		local claim_path="$1"
+		local claim_branch="$2"
+		shift 2
+		claim_calls=$((claim_calls + 1))
+		[[ -n "$claim_path" && -n "$claim_branch" ]] || return 1
+		[[ "$claim_calls" -gt 1 ]] && return 0
+		return 1
+	}
+	check_worktree_owner() {
+		local check_path="$1"
+		[[ -n "$check_path" ]] || return 1
+		printf '%s|%s|%s|%s|%s\n' "$live_pid" "dispatch-precreate-22438" "" "22438" "2099-01-01T00:00:00Z"
+		return 0
+	}
+	unregister_worktree() {
+		local unregister_path="$1"
+		[[ -n "$unregister_path" ]] || return 1
+		unregister_called=$((unregister_called + 1))
+		return 0
+	}
+
+	local status=0
+	_hrw_claim_worker_worktree "issue-22438" "$worktree_dir" >/dev/null || status=$?
+
+	unset -f claim_worktree_ownership check_worktree_owner unregister_worktree 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER AIDEVOPS_WORKER_WORKTREE_OWNER_RECLAIM_AGE_SECONDS _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+
+	if [[ "$status" -eq 0 && "$claim_calls" -eq 2 && "$unregister_called" -eq 1 ]]; then
+		print_result "worker worktree claim reclaims dispatch precreate owner" 0
+		return 0
+	fi
+
+	print_result "worker worktree claim reclaims dispatch precreate owner" 1 \
+		"status=$status calls=$claim_calls unregister=$unregister_called"
+	return 0
+}
+
 test_worker_worktree_clean_without_upstream_blocks_local_commits() {
 	local worktree_dir="${TEST_ROOT}/claim-local-commits"
 	mkdir -p "$worktree_dir"
@@ -512,32 +585,31 @@ EOF
 
 	local session_id
 	session_id=$(extract_session_id_from_output "$output_file")
-
 	if [[ "$session_id" == "ses_latest" ]]; then
 		print_result "extract_session_id_from_output returns latest session id" 0
 		return 0
 	fi
-
 	print_result "extract_session_id_from_output returns latest session id" 1 "Expected ses_latest, got ${session_id:-<empty>}"
 	return 0
 }
-
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
-	cat >"$output_file" <<'EOF'
-{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}
-EOF
-
+	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"
 	local rc=0
 	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
-
-	if [[ "$rc" -eq 0 && "${_run_result_label:-}" == "blocked" && "${_run_failure_reason:-}" == "blocked" && "${_run_classification_source:-}" == "model_blocked_signal" ]]; then
-		print_result "BLOCKED terminal signal records blocked label" 0
-		return 0
-	fi
-
+	[[ "$rc" -eq 0 && "${_run_result_label:-}" == "blocked" && "${_run_failure_reason:-}" == "blocked" && "${_run_classification_source:-}" == "model_blocked_signal" ]] && { print_result "BLOCKED terminal signal records blocked label" 0; return 0; }
 	print_result "BLOCKED terminal signal records blocked label" 1 \
 		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} source=${_run_classification_source:-<unset>}"
+	return 0
+}
+test_missing_context_blocked_requests_brief_recovery() {
+	local output_file="${TEST_ROOT}/missing-context-blocked-output.jsonl"
+	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing implementation context"}' >"$output_file"
+	local rc=0
+	_handle_run_result 0 "$output_file" "worker" "openai" "issue-456" "openai/gpt-5.5" || rc=$?
+	[[ "$rc" -eq 82 && "${_run_result_label:-}" == "brief_recovery" && "${_run_failure_reason:-}" == "missing_implementation_context" && "${_run_classification_pattern:-}" == "missing_implementation_context" ]] && { print_result "missing-context BLOCKED requests brief recovery" 0; return 0; }
+	print_result "missing-context BLOCKED requests brief recovery" 1 \
+		"rc=$rc label=${_run_result_label:-<unset>} reason=${_run_failure_reason:-<unset>} pattern=${_run_classification_pattern:-<unset>}"
 	return 0
 }
 
@@ -587,7 +659,7 @@ test_failure_classifier_records_provenance() {
 	if [[ "$reason" == "rate_limit" ]] &&
 		[[ "${_failure_provider_error_type:-}" == "rate_limit" ]] &&
 		[[ "${_failure_provider_status:-}" == "429" ]] &&
-		[[ "${_failure_classification_source:-}" == "output_pattern" ]] &&
+		[[ "${_failure_classification_source:-}" == "trusted_provider" ]] &&
 		[[ "${_failure_classification_pattern:-}" == *"too_many_requests"* ]]; then
 		print_result "failure classifier records provider provenance" 0
 		return 0
@@ -598,10 +670,57 @@ test_failure_classifier_records_provenance() {
 	return 0
 }
 
+test_service_interruption_candidate_uses_separate_path() {
+	local output_file="${TEST_ROOT}/service-interruption.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_23037","text":"editing files"}' 'OpenAI 503 service unavailable after tool activity' >"$output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_should_retry=0
+
+	local status=0
+	_handle_run_result 1 "$output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && -f "$output_file" ]]; then
+		print_result "service interruption uses dedicated continuation path" 0
+	else
+		print_result "service interruption uses dedicated continuation path" 1 \
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	fi
+
+	local local_output_file="${TEST_ROOT}/service-interruption-local.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_local","text":"editing files"}' 'worker received SIGTERM after tool activity' >"$local_output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	status=0
+	_handle_run_result 143 "$local_output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
+
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "local_error" && -f "$local_output_file" ]]; then
+		print_result "service interruption preserves specific failure reason and diagnostics" 0
+	else
+		print_result "service interruption preserves specific failure reason and diagnostics" 1 \
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$local_output_file" ]] && printf yes || printf no)"
+	fi
+
+	if ! service_interruption_continue_candidate "rate_limit" "1" "1" "" "rate_limit"; then
+		print_result "rate limits do not consume service interruption budget" 0
+	else
+		print_result "rate limits do not consume service interruption budget" 1
+	fi
+
+	if service_interruption_continue_candidate "local_error" "137" "1" "" ""; then
+		print_result "SIGKILL with activity can resume as interruption" 0
+	else
+		print_result "SIGKILL with activity can resume as interruption" 1
+	fi
+
+	return 0
+}
+
 test_canary_uses_builtin_agent_without_default_agent() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
 	local args_file="${canary_root}/args.txt"
+	local env_file="${canary_root}/env.txt"
 	mkdir -p "$fake_bin_dir"
 
 	cat >"${fake_bin_dir}/opencode" <<'EOF'
@@ -610,7 +729,13 @@ if [[ "${1:-}" == "--version" ]]; then
 	printf '1.14.31\n'
 	exit 0
 fi
+if [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCODE_PROCESS_ROLE:-}${OPENCODE:-}${OPENCODE_SERVER_PASSWORD:-}" ]]; then
+	printf 'leaked session env\n' >"$AIDEVOPS_CANARY_ENV_FILE"
+	exit 42
+fi
 printf '%s\n' "$*" >"$AIDEVOPS_CANARY_ARGS_FILE"
+printf 'OPENCODE_BIN=%s\nOPENCODE_DB=%s\n' \
+	"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}" >"$AIDEVOPS_CANARY_ENV_FILE"
 printf 'CANARY_OK\n'
 exit 0
 EOF
@@ -621,25 +746,79 @@ EOF
 		PATH="${fake_bin_dir}:$PATH" \
 		HOME="${canary_root}/home" \
 		OPENCODE_BIN="${fake_bin_dir}/opencode" \
+		OPENCODE_DB="${canary_root}/opencode.db" \
+		OPENCODE_SESSION_ID="ses_parent" \
+		OPENCODE_PID="12345" \
+		OPENCODE_RUN_ID="run_parent" \
+		OPENCODE_PROCESS_ROLE="tui" \
+		OPENCODE="1" \
+		OPENCODE_SERVER_PASSWORD="session-password" \
 		AIDEVOPS_CANARY_ARGS_FILE="$args_file" \
+		AIDEVOPS_CANARY_ENV_FILE="$env_file" \
 		AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
 		CANARY_CACHE_TTL_SECONDS=0 \
 		CANARY_TIMEOUT_SECONDS=5 \
 		bash -c 'source "$1" help >/dev/null 2>&1; _run_canary_test "anthropic/claude-sonnet-4-6"' _ "$HELPER_SCRIPT"
-	) && [[ -f "$args_file" ]]; then
+	) && [[ -f "$args_file" && -f "$env_file" ]]; then
 		local args
 		args=$(<"$args_file")
-		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]]; then
+		local env_output
+		env_output=$(<"$env_file")
+		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]] &&
+			[[ "$env_output" == *"OPENCODE_BIN=${fake_bin_dir}/opencode"* ]] &&
+			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]]; then
 			print_result "canary uses built-in agent without default_agent" 0
 			return 0
 		fi
 		print_result "canary uses built-in agent without default_agent" 1 \
-			"Expected --pure and --agent build in canary args, got: ${args}"
+			"Expected --pure/--agent build and preserved OpenCode config env, got args: ${args}; env: ${env_output}"
 		return 0
 	fi
 
 	print_result "canary uses built-in agent without default_agent" 1 \
 		"Canary stub did not run successfully: ${output:-<empty>}"
+	return 0
+}
+
+test_opencode_session_env_wrapper_strips_session_vars_only() {
+	local output
+	# shellcheck disable=SC2016 # Inner bash expands these after env stripping.
+	output=$(
+		OPENCODE_SESSION_ID="ses_parent" \
+		OPENCODE_PID="12345" \
+		OPENCODE_RUN_ID="run_parent" \
+		OPENCODE_PROCESS_ROLE="tui" \
+		OPENCODE="1" \
+		OPENCODE_SERVER_PASSWORD="session-password" \
+		OPENCODE_BIN="opencode" \
+		OPENCODE_DB="/tmp/opencode.db" \
+		run_without_opencode_session_env bash -c '
+			printf "%s|%s|%s|%s|%s|%s|%s|%s" \
+				"${OPENCODE_SESSION_ID:-}" "${OPENCODE_PID:-}" "${OPENCODE_RUN_ID:-}" \
+				"${OPENCODE_PROCESS_ROLE:-}" "${OPENCODE:-}" "${OPENCODE_SERVER_PASSWORD:-}" \
+				"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}"
+		'
+	)
+
+	if [[ "$output" == "||||||opencode|/tmp/opencode.db" ]]; then
+		print_result "OpenCode session env wrapper strips only session-bound vars" 0
+		return 0
+	fi
+
+	print_result "OpenCode session env wrapper strips only session-bound vars" 1 \
+		"Expected session vars stripped and config env preserved, got: ${output}"
+	return 0
+}
+
+test_worker_opencode_exec_paths_strip_session_env() {
+	if grep -Fq "run_without_opencode_session_env \"\$SANDBOX_EXEC_HELPER\" run" "$HELPER_SCRIPT" &&
+		grep -Fq "run_without_opencode_session_env timeout \"\$HEADLESS_SANDBOX_TIMEOUT_DEFAULT\"" "$HELPER_SCRIPT"; then
+		print_result "worker OpenCode exec paths strip session env" 0
+		return 0
+	fi
+
+	print_result "worker OpenCode exec paths strip session env" 1 \
+		"Expected sandbox and bare-timeout OpenCode exec paths to use run_without_opencode_session_env"
 	return 0
 }
 
@@ -650,13 +829,27 @@ test_sandbox_passthrough_scopes_provider_env() {
 		ANTHROPIC_API_KEY='anthropic-test' \
 		GOOGLE_API_KEY='google-test' \
 		OPENCODE_BIN='opencode' \
+		OPENCODE_DB='/tmp/opencode.db' \
+		OPENCODE_SESSION_ID='ses_parent' \
+		OPENCODE_PID='12345' \
+		OPENCODE_RUN_ID='run_parent' \
+		OPENCODE_PROCESS_ROLE='tui' \
+		OPENCODE='1' \
+		OPENCODE_SERVER_PASSWORD='session-password' \
 		build_sandbox_passthrough_csv "openai"
 	)
 
 	if [[ "$csv" == *"OPENAI_API_KEY"* ]] &&
 		[[ "$csv" != *"ANTHROPIC_API_KEY"* ]] &&
 		[[ "$csv" != *"GOOGLE_API_KEY"* ]] &&
-		[[ "$csv" == *"OPENCODE_BIN"* ]]; then
+		[[ "$csv" == *"OPENCODE_BIN"* ]] &&
+		[[ "$csv" == *"OPENCODE_DB"* ]] &&
+		[[ "$csv" != *"OPENCODE_SESSION_ID"* ]] &&
+		[[ "$csv" != *"OPENCODE_PID"* ]] &&
+		[[ "$csv" != *"OPENCODE_RUN_ID"* ]] &&
+		[[ "$csv" != *"OPENCODE_PROCESS_ROLE"* ]] &&
+		[[ "$csv" != *"OPENCODE_SERVER_PASSWORD"* ]] &&
+		[[ ",$csv," != *",OPENCODE,"* ]]; then
 		print_result "sandbox passthrough scopes env to selected provider" 0
 		return 0
 	fi
@@ -1212,12 +1405,43 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	return 0
 }
 
+test_cmd_run_finish_fail_recovers_branch_orphan_output() {
+	local work_dir="${TEST_ROOT}/repo-fail-orphan-ok"
+	local released_reason="" fast_fail_called=0
+	_setup_test_git_repo "$work_dir" 1
+	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	gh() {
+		if [[ "${*}" == *"pr list"* ]]; then printf '0'
+		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
+		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		fi
+		return 0
+	}
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+	_cmd_run_finish "issue-99999" "fail" "$work_dir"
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
+		print_result "_cmd_run_finish fail recovers branch-orphan output" 0
+	else
+		print_result "_cmd_run_finish fail recovers branch-orphan output" 1 \
+			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
 	test_non_full_loop_prompt_unchanged
 	test_parse_initial_model_does_not_set_explicit_override
 	test_startup_no_activity_timeout_returns_watchdog_continue
+	test_sigkill_with_activity_attempts_continuation
 	test_dispatcher_initial_model_can_rotate_after_rate_limit
 	test_explicit_model_override_remains_pinned_on_rate_limit
 	test_issue_worker_env_contract_rejects_missing_env
@@ -1225,6 +1449,7 @@ main() {
 	test_issue_worker_env_contract_accepts_valid_precreated_worktree
 	test_worker_worktree_claim_transfers_to_runtime_pid
 	test_worker_worktree_claim_reclaims_stale_live_same_task_owner
+	test_worker_worktree_claim_reclaims_dispatch_precreate_owner
 	test_worker_worktree_clean_without_upstream_blocks_local_commits
 	test_worker_worktree_claim_classifies_unreclaimed_live_owner
 	test_deleted_cwd_recovery_uses_worker_worktree
@@ -1233,16 +1458,19 @@ main() {
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_blocked_completion_records_blocked_label
+	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
+	test_service_interruption_candidate_uses_separate_path
 	test_canary_uses_builtin_agent_without_default_agent
+	test_opencode_session_env_wrapper_strips_session_vars_only
+	test_worker_opencode_exec_paths_strip_session_env
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
-	# Classification tests (GH#20819 refactor of _worker_produced_output)
 	test_worker_produced_output_no_commits_returns_noop
 	test_worker_produced_output_with_commits_returns_pr_exists_failopen
 	test_worker_produced_output_non_worker_session_returns_pr_exists
@@ -1250,17 +1478,15 @@ main() {
 	test_worker_produced_output_pushed_branch_no_slug_returns_pr_exists
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
-	# _cmd_run_finish integration tests
 	test_cmd_run_finish_emits_noop_for_zero_output
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_emits_complete_when_no_workdir
-	# Orphan recovery tests (GH#20819)
 	test_attempt_orphan_recovery_pr_calls_gh_create
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	test_cmd_run_finish_fail_recovers_branch_orphan_output
 	teardown_test_env
-
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"
 

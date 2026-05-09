@@ -16,6 +16,7 @@
 #   - _dlw_precreate_worktree
 #   - _dlw_prewarm_opencode_db
 #   - _dlw_exec_detached
+#   - _dlw_exec_systemd_user_service
 #   - _dlw_spawn_early_exit_monitor
 #   - _dlw_spawn_lifecycle_observer (t3055/GH#21870)
 #   - _dlw_nohup_launch
@@ -672,6 +673,7 @@ _dlw_precreate_worktree() {
 	_DLW_WORKTREE_PATH=""
 	_DLW_WORKTREE_BRANCH=""
 	_DLW_WORKTREE_REUSED=0
+	local _precreate_session="dispatch-precreate-${issue_number}"
 
 	local _wt_helper="${SCRIPT_DIR}/worktree-helper.sh"
 	if [[ ! -x "$_wt_helper" || ! -d "$repo_path" ]]; then
@@ -706,6 +708,11 @@ _dlw_precreate_worktree() {
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1
+		if declare -F register_worktree >/dev/null 2>&1; then
+			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+				--task "$issue_number" \
+				--session "$_precreate_session" 2>/dev/null || true
+		fi
 		# Restore gitignored deps that git clean -fd just wiped
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Reusing existing worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
@@ -736,6 +743,11 @@ _dlw_precreate_worktree() {
 	if [[ -n "$_path" && -d "$_path" ]]; then
 		_DLW_WORKTREE_PATH="$_path"
 		_DLW_WORKTREE_BRANCH="$_branch"
+		if declare -F register_worktree >/dev/null 2>&1; then
+			register_worktree "$_DLW_WORKTREE_PATH" "$_DLW_WORKTREE_BRANCH" \
+				--task "$issue_number" \
+				--session "$_precreate_session" 2>/dev/null || true
+		fi
 		# Restore gitignored deps (node_modules) that git doesn't track
 		_dlw_restore_worktree_deps "$_DLW_WORKTREE_PATH" "$repo_path"
 		echo "[dispatch_with_dedup] Pre-created worktree for #${issue_number}: ${_DLW_WORKTREE_PATH} (branch: ${_DLW_WORKTREE_BRANCH})" >>"$LOGFILE"
@@ -809,11 +821,85 @@ _dlw_prewarm_opencode_db() {
 }
 
 #######################################
-# Execute a worker command via setsid + nohup, detaching it from the
-# pulse's process group (t2757). Without setsid, workers inherit pulse's
-# PGID. Any PG-scoped signal (launchd unload, pkill -PGRP, restart chain)
-# kills in-flight workers. setsid creates a new session, so pulse signals
-# cannot propagate.
+# Return 0 when a Linux systemd user manager is available for transient
+# services. `setsid` detaches workers from the pulse process group, but it
+# does NOT move them out of the systemd service cgroup. On systemd pulse
+# timers, long-lived children therefore remain visible as leftovers after the
+# oneshot exits (GH#23073). A transient user service gives each worker an
+# intentional lifecycle owner outside aidevops-supervisor-pulse.service.
+_dlw_systemd_user_service_available() {
+	[[ "${AIDEVOPS_SKIP_SYSTEMD_WORKER_SERVICE:-0}" == "1" ]] && return 1
+	[[ "$(uname -s 2>/dev/null || printf '%s' unknown)" == "Linux" ]] || return 1
+	command -v systemd-run >/dev/null 2>&1 || return 1
+	command -v systemctl >/dev/null 2>&1 || return 1
+	systemctl --user status >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_dlw_systemd_unit_name() {
+	local unit_prefix="$1"
+	local issue_number="$2"
+	local suffix="${RANDOM:-0}"
+	printf '%s-%s-%s-%s' "$unit_prefix" "${issue_number:-unknown}" "$$" "$suffix"
+	return 0
+}
+
+_dlw_exec_systemd_user_service() {
+	local unit_prefix="$1"
+	local worker_log="$2"
+	local issue_number="$3"
+	shift 3
+
+	local pid_file=""
+	pid_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-systemd-worker.XXXXXX") || return 1
+	rm -f "$pid_file" 2>/dev/null || true
+
+	local unit_name=""
+	unit_name=$(_dlw_systemd_unit_name "$unit_prefix" "$issue_number")
+	local runner_script
+	# shellcheck disable=SC2016  # Expanded by the child bash launched by systemd-run.
+	runner_script='
+		_dlw_systemd_child() {
+			local pid_file="$1" out_log="$2"
+			shift 2
+			printf "%s\n" "$$" >"$pid_file" 2>/dev/null || true
+			exec "$@" </dev/null >>"$out_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-
+		}
+		_dlw_systemd_child "$@"
+	'
+
+	if ! systemd-run --user --unit="$unit_name" --collect --quiet \
+		--description="aidevops worker ${issue_number:-unknown}" \
+		/bin/bash -lc "$runner_script" _ "$pid_file" "$worker_log" "$@" \
+		>/dev/null 2>>"$LOGFILE"; then
+		rm -f "$pid_file" 2>/dev/null || true
+		return 1
+	fi
+
+	local wait_i=0 service_pid=""
+	while [[ "$wait_i" -lt 25 ]]; do
+		if [[ -s "$pid_file" ]]; then
+			read -r service_pid <"$pid_file" || service_pid=""
+			break
+		fi
+		sleep 0.2
+		wait_i=$((wait_i + 1))
+	done
+	rm -f "$pid_file" 2>/dev/null || true
+
+	if [[ "$service_pid" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$service_pid"
+		return 0
+	fi
+
+	echo "[dispatch_worker_launch] ERROR: systemd-run launched ${unit_name} for #${issue_number} but no child PID was reported" >>"$LOGFILE"
+	return 1
+}
+
+# Execute a worker command via systemd-run (Linux user services) or setsid +
+# nohup fallback, detaching it from the pulse's process group (t2757) and, on
+# systemd, from the pulse oneshot cgroup (GH#23073). Without this, workers
+# either die with the pulse cgroup or survive as ambiguous leftover children.
 #
 # macOS ships /usr/bin/setsid on recent versions (12+). Older macOS or
 # systems without setsid fall back to nohup-only with a log warning.
@@ -844,7 +930,15 @@ _dlw_exec_detached() {
 	# codebase and can be added if measurement justifies it.
 
 	local worker_pid
-	if command -v setsid >/dev/null 2>&1; then
+	if _dlw_systemd_user_service_available; then
+		if worker_pid=$(_dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "$@"); then
+			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
+		else
+			echo "[dispatch_worker_launch] WARNING: systemd-run worker launch failed for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
+		fi
+	fi
+
+	if [[ -z "${worker_pid:-}" ]] && command -v setsid >/dev/null 2>&1; then
 		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 		# Log the detached PGID for diagnostics (should differ from pulse PGID)
@@ -854,7 +948,7 @@ _dlw_exec_detached() {
 		pulse_pgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
 		[[ -n "$pulse_pgid" ]] || pulse_pgid="unknown"
 		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
-	else
+	elif [[ -z "${worker_pid:-}" ]]; then
 		echo "[dispatch_worker_launch] ERROR: setsid missing — worker isolation broken; worker shares pulse PGID and will be killed on next pulse restart. Run: aidevops update (GH#21102)" >>"$LOGFILE"
 		nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
@@ -950,6 +1044,14 @@ _dlw_spawn_early_exit_monitor() {
 		}
 		_dlw_monitor_body "$@"
 	'
+
+	if _dlw_systemd_user_service_available; then
+		_dlw_exec_systemd_user_service "aidevops-worker-monitor" "/dev/null" "$issue_number" \
+			bash -c "$monitor_script" _dlw_monitor \
+			"$worker_pid" "$worker_log" "$issue_number" \
+			"$window" "$poll_interval" \
+			>/dev/null 2>&1 && return 0
+	fi
 
 	if command -v setsid >/dev/null 2>&1; then
 		setsid nohup bash -c "$monitor_script" _dlw_monitor \
@@ -1053,6 +1155,14 @@ _dlw_spawn_lifecycle_observer() {
 		}
 		_dlw_observer_body "$@"
 	'
+
+	if _dlw_systemd_user_service_available; then
+		_dlw_exec_systemd_user_service "aidevops-worker-observer" "/dev/null" "$issue_number" \
+			bash -c "$observer_script" _dlw_observer \
+			"$worker_pid" "$issue_number" "$logfile" \
+			"$max_seconds" "$poll_interval" \
+			>/dev/null 2>&1 && return 0
+	fi
 
 	if command -v setsid >/dev/null 2>&1; then
 		setsid nohup bash -c "$observer_script" _dlw_observer \
@@ -1158,6 +1268,7 @@ _dlw_nohup_launch() {
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
 		worker_cmd+=(

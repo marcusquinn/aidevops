@@ -61,6 +61,46 @@ _list_health_issues_by_role_label() {
 }
 
 #######################################
+# List open health issues that belong to one canonical dashboard identity.
+# Matches the new canonical operator label, historical alias labels, and
+# historical [Supervisor:alias]/[Contributor:alias] title prefixes.
+# Arguments:
+#   $1 - repo slug
+#   $2 - canonical identity
+#   $3 - newline-delimited aliases
+# Output: JSON array sorted newest-first (by number desc).
+#######################################
+_list_health_issues_by_canonical_identity() {
+	local repo_slug="$1"
+	local canonical_identity="$2"
+	local identity_aliases="$3"
+
+	local issues_json rc=0
+	issues_json=$(gh_issue_list --repo "$repo_slug" \
+		--label "source:health-dashboard" \
+		--state open --json number,title,labels --limit 100 2>/dev/null) || rc=$?
+	if [[ $rc -ne 0 ]]; then
+		return "$rc"
+	fi
+
+	local aliases_json
+	aliases_json=$(printf '%s\n%s\n' "$canonical_identity" "$identity_aliases" | jq -R 'select(length > 0)' | jq -s 'unique')
+	local canonical_label="operator:${canonical_identity}"
+	printf '%s' "${issues_json:-[]}" | jq \
+		--argjson aliases "$aliases_json" \
+		--arg canonical_label "$canonical_label" \
+		'[
+			.[]
+			| . as $issue
+			| ((.labels // []) | map(.name) | any(. == $canonical_label or ($aliases | index(.)))) as $label_match
+			| ((.title | capture("^\\[(Supervisor|Contributor):(?<user>[^]]+)\\]")? | .user // "") as $title_user
+				| ($title_user != "" and ($aliases | index($title_user)))) as $title_match
+			| select($label_match or $title_match)
+		] | sort_by(.number) | reverse'
+	return 0
+}
+
+#######################################
 # Validate a cached health-issue number: check it still exists and is OPEN.
 # Returns (via stdout):
 #   - the cached number if still valid
@@ -76,8 +116,13 @@ _try_cached_health_issue_lookup() {
 	[[ ! -f "$health_issue_file" ]] && return 0  # empty stdout
 
 	local cached_number
-	cached_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	cached_number=$(<"$health_issue_file") || cached_number=""
 	[[ -z "$cached_number" ]] && return 0
+	if ! _health_issue_number_is_valid "$cached_number"; then
+		echo "[stats] Health issue: ignoring corrupt cached issue number in ${health_issue_file}" >>"${LOGFILE:-/dev/null}"
+		rm -f "$health_issue_file" 2>/dev/null || true
+		return 0
+	fi
 
 	local issue_state rc=0
 	issue_state=$(gh_issue_view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
@@ -94,18 +139,20 @@ _try_cached_health_issue_lookup() {
 	# and REST-style lowercase values (open/closed) depending on fallback path.
 	# Normalize before branching so REST fallback cache validation does not log
 	# healthy open dashboards as "unexpected state" every stats-wrapper cycle.
+	local closed_state="CLOSED"
+	local open_state="OPEN"
 	case "$issue_state" in
-		[Oo][Pp][Ee][Nn]) issue_state="OPEN" ;;
-		[Cc][Ll][Oo][Ss][Ee][Dd]) issue_state="CLOSED" ;;
+		[Oo][Pp][Ee][Nn]) issue_state="$open_state" ;;
+		[Cc][Ll][Oo][Ss][Ee][Dd]) issue_state="$closed_state" ;;
 	esac
 
-	if [[ "$issue_state" == "CLOSED" ]]; then
+	if [[ "$issue_state" == "$closed_state" ]]; then
 		[[ "$runner_role" == "$_ROLE_SUPERVISOR" ]] && _unpin_health_issue "$cached_number" "$repo_slug"
 		rm -f "$health_issue_file" 2>/dev/null || true
 		return 0  # empty → caller re-resolves
 	fi
 
-	if [[ "$issue_state" != "OPEN" ]]; then
+	if [[ "$issue_state" != "$open_state" ]]; then
 		# Unexpected state (empty, unknown enum). Preserve cache defensively.
 		echo "[stats] Health issue: unexpected state '${issue_state}' for #${cached_number} in ${repo_slug} — preserving cache" >>"${LOGFILE:-/dev/null}"
 		echo "$cached_number"
@@ -113,6 +160,31 @@ _try_cached_health_issue_lookup() {
 	fi
 
 	echo "$cached_number"
+	return 0
+}
+
+#######################################
+# Validate a health-dashboard issue number before using it as the canonical
+# supersession target for persistent issue dedup closes.
+# Arguments:
+#   $1 - candidate issue number
+#######################################
+_health_issue_number_is_valid() {
+	local issue_number="$1"
+	[[ "$issue_number" =~ ^[0-9]+$ ]]
+	return $?
+}
+
+#######################################
+# Extract one issue number from wrapper/gh output. Some wrapper paths can emit
+# more than the created issue URL/number; callers must never persist or use a
+# multi-line value as a supersession target.
+# Arguments:
+#   $1 - raw command output
+#######################################
+_health_issue_number_from_text() {
+	local raw_output="$1"
+	printf '%s\n' "$raw_output" | awk 'match($0, /[0-9]+$/) { value=substr($0, RSTART, RLENGTH) } END { if (value != "") print value }'
 	return 0
 }
 
@@ -135,6 +207,10 @@ _strip_persistent_label_before_close() {
 # Arguments: label_results_json keep_number repo_slug runner_role
 _close_health_issue_duplicates() {
 	local label_results="$1" keep_number="$2" repo_slug="$3" runner_role="$4"
+	if ! _health_issue_number_is_valid "$keep_number"; then
+		echo "[stats] Health issue: refusing duplicate close without a single numeric supersession target: ${keep_number}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local dup_count
 	dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
@@ -144,10 +220,44 @@ _close_health_issue_duplicates() {
 	dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
 	while IFS= read -r dup_num; do
 		[[ -z "$dup_num" ]] && continue
+		_health_issue_number_is_valid "$dup_num" || continue
 		[[ "$runner_role" == "$_ROLE_SUPERVISOR" ]] && _unpin_health_issue "$dup_num" "$repo_slug"
 		_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 		gh issue close "$dup_num" --repo "$repo_slug" \
 			--comment "Closing duplicate ${runner_role} health issue — superseded by #${keep_number}." 2>/dev/null || true
+	done <<<"$dup_numbers"
+	return 0
+}
+
+#######################################
+# Close duplicate health issues across aliases and role prefixes.
+# Arguments: results_json keep_number repo_slug canonical_identity runner_user
+#######################################
+_close_health_issue_identity_duplicates() {
+	local identity_results="$1"
+	local keep_number="$2"
+	local repo_slug="$3"
+	local canonical_identity="$4"
+	local runner_user="$5"
+	if ! _health_issue_number_is_valid "$keep_number"; then
+		echo "[stats] Health issue: refusing identity duplicate close without a single numeric supersession target: ${keep_number}" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
+
+	local dup_count
+	dup_count=$(printf '%s' "$identity_results" | jq 'length' 2>/dev/null || echo "0")
+	[[ "${dup_count:-0}" -le 1 ]] && return 0
+
+	local dup_numbers
+	dup_numbers=$(printf '%s' "$identity_results" | jq -r --arg keep "$keep_number" \
+		'.[] | select((.number | tostring) != $keep) | .number' 2>/dev/null || echo "")
+	while IFS= read -r dup_num; do
+		[[ -z "$dup_num" ]] && continue
+		_health_issue_number_is_valid "$dup_num" || continue
+		_unpin_health_issue "$dup_num" "$repo_slug"
+		_strip_persistent_label_before_close "$dup_num" "$repo_slug"
+		gh issue close "$dup_num" --repo "$repo_slug" \
+			--comment "Closing duplicate health dashboard for canonical operator ${canonical_identity} (current runner ${runner_user}) — superseded by #${keep_number}. Identity aliases map this dashboard to the same operator across local/GitHub usernames and role prefixes." 2>/dev/null || true
 	done <<<"$dup_numbers"
 	return 0
 }
@@ -170,7 +280,8 @@ _try_title_health_issue_fallback() {
 		return 0
 	fi
 
-	local health_issue_number="${title_result:-}"
+	local health_issue_number
+	health_issue_number=$(_health_issue_number_from_text "${title_result:-}")
 	if [[ -n "$health_issue_number" ]]; then
 		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
 			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
@@ -189,6 +300,8 @@ _find_health_issue() {
 	local role_label="$5"
 	local role_display="$6"
 	local health_issue_file="$7"
+	local canonical_identity="${8:-$runner_user}"
+	local identity_aliases="${9:-$runner_user}"
 
 	local health_issue_number
 	health_issue_number=$(_try_cached_health_issue_lookup "$health_issue_file" "$repo_slug" "$runner_role")
@@ -201,7 +314,22 @@ _find_health_issue() {
 		return 0
 	fi
 
-	# Search by labels (more reliable than title search) if cache gave nothing.
+	# Search by canonical identity across aliases/roles if cache gave nothing.
+	if [[ -z "$health_issue_number" ]]; then
+		local identity_results identity_rc=0
+		identity_results=$(_list_health_issues_by_canonical_identity \
+			"$repo_slug" "$canonical_identity" "$identity_aliases" 2>/dev/null) || identity_rc=$?
+		if [[ $identity_rc -ne 0 ]]; then
+			echo "[stats] Health issue: identity lookup failed for ${canonical_identity} in ${repo_slug} (rc=${identity_rc}) — abstaining this cycle" >>"${LOGFILE:-/dev/null}"
+			echo "$_HEALTH_QUERY_FAILED_SENTINEL"
+			return 0
+		fi
+		identity_results="${identity_results:-[]}"
+		health_issue_number=$(printf '%s' "$identity_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+		_close_health_issue_identity_duplicates "$identity_results" "$health_issue_number" "$repo_slug" "$canonical_identity" "$runner_user"
+	fi
+
+	# Legacy role+runner label search if canonical identity found nothing.
 	if [[ -z "$health_issue_number" ]]; then
 		local label_results rc=0
 		label_results=$(_list_health_issues_by_role_label \
@@ -253,11 +381,17 @@ _create_health_issue() {
 	local role_label_color="$6"
 	local role_label_desc="$7"
 	local role_display="$8"
+	local canonical_identity="${9:-$runner_user}"
+	local identity_aliases="${10:-$runner_user}"
+	local runner_label_color="0E8A16"
+	local operator_label="operator:${canonical_identity}"
 
 	gh label create "$role_label" --repo "$repo_slug" --color "$role_label_color" \
 		--description "$role_label_desc" --force 2>/dev/null || true
-	gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+	gh label create "$runner_user" --repo "$repo_slug" --color "$runner_label_color" \
 		--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
+	gh label create "$operator_label" --repo "$repo_slug" --color "$runner_label_color" \
+		--description "Canonical dashboard operator: ${canonical_identity}" --force 2>/dev/null || true
 	gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
 		--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
 	# t1890: health dashboard issues are management issues that should never be
@@ -266,7 +400,9 @@ _create_health_issue() {
 	gh label create "persistent" --repo "$repo_slug" --color "FBCA04" \
 		--description "Persistent issue — do not close" --force 2>/dev/null || true
 
-	local health_body="Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring."
+	local aliases_csv
+	aliases_csv=$(printf '%s\n' "$identity_aliases" | paste -sd ', ' -)
+	local health_body="Live ${runner_role} status for **${runner_user}**. Canonical operator: **${canonical_identity}**. Identity aliases: ${aliases_csv}. Updated each pulse. Pin this issue for at-a-glance monitoring."
 	local sig_footer=""
 	sig_footer=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$health_body" 2>/dev/null || true)
 	health_body="${health_body}${sig_footer}"
@@ -281,7 +417,8 @@ _create_health_issue() {
 	health_issue_number=$(AIDEVOPS_SESSION_ORIGIN=worker gh_create_issue --repo "$repo_slug" \
 		--title "${runner_prefix} starting..." \
 		--body "$health_body" \
-		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+		--label "$role_label" --label "$runner_user" --label "$operator_label" --label "source:health-dashboard" --label "persistent" 2>/dev/null || echo "")
+	health_issue_number=$(_health_issue_number_from_text "$health_issue_number")
 
 	if [[ -z "$health_issue_number" ]]; then
 		echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
@@ -337,11 +474,14 @@ _resolve_health_issue_number() {
 	local role_label_desc="$7"
 	local role_display="$8"
 	local health_issue_file="$9"
+	local canonical_identity="${10:-$runner_user}"
+	local identity_aliases="${11:-$runner_user}"
 
 	local health_issue_number
 	health_issue_number=$(_find_health_issue \
 		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
-		"$role_label" "$role_display" "$health_issue_file")
+		"$role_label" "$role_display" "$health_issue_file" \
+		"$canonical_identity" "$identity_aliases")
 
 	# t2687: honour the query-failed sentinel from _find_health_issue.
 	# When the API was unreachable for the dedup lookups, abstain from
@@ -356,7 +496,8 @@ _resolve_health_issue_number() {
 	if [[ -z "$health_issue_number" ]]; then
 		health_issue_number=$(_create_health_issue \
 			"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
-			"$role_label" "$role_label_color" "$role_label_desc" "$role_display")
+			"$role_label" "$role_label_color" "$role_label_desc" "$role_display" \
+			"$canonical_identity" "$identity_aliases")
 	fi
 
 	echo "$health_issue_number"
@@ -398,12 +539,23 @@ _periodic_health_issue_dedup() {
 	local role_label="$4"
 	local role_display="$5"
 	local current_issue="$6"
+	local use_identity_dedup=0
+	[[ $# -ge 7 ]] && use_identity_dedup=1
+	local canonical_identity="${7:-$runner_user}"
+	local identity_aliases="${8:-$runner_user}"
 
 	[[ -z "$repo_slug" || -z "$runner_user" || -z "$role_label" || -z "$current_issue" ]] && return 0
+	if ! _health_issue_number_is_valid "$current_issue"; then
+		echo "[stats] Health issue: periodic dedup skipped for ${repo_slug}; invalid current issue '${current_issue}'" >>"${LOGFILE:-/dev/null}"
+		return 0
+	fi
 
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
-	local state_file="${cache_dir}/health-dedup-last-scan-${runner_user}-${role_label}-${slug_safe}"
+	local state_file="${cache_dir}/health-dedup-last-scan-${canonical_identity}-${slug_safe}"
+	if [[ $use_identity_dedup -eq 0 ]]; then
+		state_file="${cache_dir}/health-dedup-last-scan-${runner_user}-${role_label}-${slug_safe}"
+	fi
 	local interval="${HEALTH_DEDUP_INTERVAL:-3600}"
 
 	# Throttle: skip if last scan was recent
@@ -420,8 +572,13 @@ _periodic_health_issue_dedup() {
 	mkdir -p "$cache_dir" 2>/dev/null || true
 
 	local label_results rc=0
-	label_results=$(_list_health_issues_by_role_label \
-		"$repo_slug" "$role_label" "$runner_user" "$role_display" 2>/dev/null) || rc=$?
+	if [[ $use_identity_dedup -eq 1 ]]; then
+		label_results=$(_list_health_issues_by_canonical_identity \
+			"$repo_slug" "$canonical_identity" "$identity_aliases" 2>/dev/null) || rc=$?
+	else
+		label_results=$(_list_health_issues_by_role_label \
+			"$repo_slug" "$role_label" "$runner_user" "$role_display" 2>/dev/null) || rc=$?
+	fi
 
 	if [[ $rc -ne 0 ]]; then
 		# Leave state_file alone — retry next pulse cycle.
@@ -436,13 +593,14 @@ _periodic_health_issue_dedup() {
 
 	if [[ "${total_count:-0}" -gt 1 ]]; then
 		local dup_numbers
-		# Close every issue in the label-match set except the one we're
+		# Close every issue in the identity-match set except the one we're
 		# currently using. The cached/resolved issue is the canonical one
 		# because its body+title are up-to-date with this pulse.
 		dup_numbers=$(printf '%s' "$label_results" | jq -r --arg keep "$current_issue" \
 			'.[] | select((.number | tostring) != $keep) | .number' 2>/dev/null || echo "")
 		while IFS= read -r dup_num; do
 			[[ -z "$dup_num" ]] && continue
+			_health_issue_number_is_valid "$dup_num" || continue
 			# _unpin_health_issue is already best-effort and a no-op for
 			# unpinned (contributor) issues, so call unconditionally.
 			# Duplicate supervisor issues CAN be pinned in pathological
@@ -450,7 +608,7 @@ _periodic_health_issue_dedup() {
 			_unpin_health_issue "$dup_num" "$repo_slug"
 			_strip_persistent_label_before_close "$dup_num" "$repo_slug"
 			gh issue close "$dup_num" --repo "$repo_slug" \
-				--comment "Closing duplicate ${runner_role} health issue — superseded by #${current_issue} (t2687 periodic dedup). Root cause likely a past GraphQL rate-limit window; see GH#20301." 2>/dev/null || true
+				--comment "Closing duplicate health dashboard for canonical operator ${canonical_identity} — superseded by #${current_issue} (alias/role periodic dedup for current runner ${runner_user})." 2>/dev/null || true
 			echo "[stats] Health issue: periodic dedup closed #${dup_num} in ${repo_slug} (kept #${current_issue})" >>"${LOGFILE:-/dev/null}"
 		done <<<"$dup_numbers"
 	fi

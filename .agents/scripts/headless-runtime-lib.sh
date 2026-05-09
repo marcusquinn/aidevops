@@ -112,6 +112,70 @@ classify_failure_reason() {
 	_failure_runtime_error_type=""
 	_failure_classification_source="output_pattern"
 	_failure_classification_pattern=""
+	local classification=""
+	local classified_reason="" classified_provider_type="" classified_status="" classified_source="" classified_pattern=""
+	classification=$(
+		python3 - "$file_path" <<'PY'
+import json
+import re
+import sys
+from pathlib import Path
+
+trusted_chunks = []
+provider_line = re.compile(r"\b(openai|anthropic|claude|provider|api)\b", re.I)
+runtime_line = re.compile(r"\[(worker_exit_diagnostics|provider_error|runtime_error)\]", re.I)
+
+for raw_line in Path(sys.argv[1]).read_text(errors='ignore').splitlines():
+    line = raw_line.strip()
+    if not line:
+        continue
+    trusted = False
+    if line.startswith("{"):
+        try:
+            obj = json.loads(line)
+        except Exception:
+            obj = None
+        if isinstance(obj, dict):
+            has_provider = bool(obj.get('provider') or obj.get('provider_error_type') or obj.get('provider_status'))
+            has_error_record = any(key in obj for key in ('error', 'status', 'provider_error_type', 'provider_status'))
+            if has_provider and has_error_record:
+                trusted = True
+    elif provider_line.search(line) or runtime_line.search(line):
+        trusted = True
+    if trusted:
+        trusted_chunks.append(line)
+
+text = '\n'.join(trusted_chunks).lower()
+if not text:
+    sys.exit(0)
+
+def emit(reason, provider_type, status, pattern):
+    print('\t'.join([reason, provider_type, status, 'trusted_provider', pattern]))
+
+if any(token in text for token in ('rate limit', 'rate_limit', 'too many requests', 'quota exceeded')) or re.search(r'\b429\b', text):
+    emit('rate_limit', 'rate_limit', '429', 'trusted_rate_limit|429|too_many_requests|quota_exceeded')
+elif re.search(r'\b(500|502|503|504)\b', text) or any(token in text for token in ('server_error', 'internal server error', 'service unavailable', 'bad gateway', 'gateway timeout', 'connection refused', 'connection reset', 'overloaded')):
+    status = '500'
+    if '504' in text or 'gateway timeout' in text:
+        status = '504'
+    elif '503' in text or 'service unavailable' in text:
+        status = '503'
+    elif '502' in text or 'bad gateway' in text:
+        status = '502'
+    emit('provider_error', 'server_error', status, 'trusted_server_error|5xx|connection_failure|overloaded')
+elif re.search(r'\b(401)\b', text) or any(token in text for token in ('unauthorized', 'invalid api key', 'authentication failed', 'token refresh failed', 'invalid_grant', 'invalid refresh token')) or ('auth' in text and 'failed' in text):
+    emit('auth_error', 'auth_error', '401', 'trusted_auth_error|401|token_refresh|invalid_grant')
+PY
+	)
+	if [[ -n "$classification" ]]; then
+		IFS=$'\t' read -r classified_reason classified_provider_type classified_status classified_source classified_pattern <<<"$classification"
+		_failure_provider_error_type="$classified_provider_type"
+		_failure_provider_status="$classified_status"
+		_failure_classification_source="$classified_source"
+		_failure_classification_pattern="$classified_pattern"
+		printf '%s' "$classified_reason"
+		return 0
+	fi
 	local lowered
 	lowered=$(
 		python3 - "$file_path" <<'PY'
@@ -120,13 +184,6 @@ import sys
 print(Path(sys.argv[1]).read_text(errors="ignore").lower())
 PY
 	)
-	if [[ "$lowered" == *"rate limit"* ]] || [[ "$lowered" == *"rate_limit"* ]] || [[ "$lowered" == *"429"* ]] || [[ "$lowered" == *"too many requests"* ]] || [[ "$lowered" == *"quota exceeded"* ]]; then
-		_failure_provider_error_type="rate_limit"
-		_failure_provider_status="429"
-		_failure_classification_pattern="rate_limit|rate_limit|429|too_many_requests|quota_exceeded"
-		printf '%s' "rate_limit"
-		return 0
-	fi
 	if [[ "$lowered" == *"sqliteerror: disk i/o error"* ]] || [[ "$lowered" == *"sqlite_error"* && "$lowered" == *"disk i/o"* ]]; then
 		_failure_runtime_error_type="opencode_sqlite_io"
 		_failure_classification_source="opencode_runtime"
@@ -141,34 +198,38 @@ PY
 		printf '%s' "local_error"
 		return 0
 	fi
-	# Distinguish actual provider errors (5xx, connection refused, timeout)
-	# from local/worker failures (sandbox crash, bad prompt, opencode bug).
-	# Only provider errors should trigger backoff -- local failures don't
-	# mean the provider is unhealthy.
-	if [[ "$lowered" =~ (server_error|500|502|503|504|internal\ server\ error|service\ unavailable|bad\ gateway|gateway\ timeout|connection\ refused|connection.*reset|overloaded) ]]; then
-		_failure_provider_error_type="server_error"
-		case "$lowered" in
-		*"504"* | *"gateway timeout"*) _failure_provider_status="504" ;;
-		*"503"* | *"service unavailable"*) _failure_provider_status="503" ;;
-		*"502"* | *"bad gateway"*) _failure_provider_status="502" ;;
-		*) _failure_provider_status="500" ;;
-		esac
-		_failure_classification_pattern="server_error|5xx|connection_failure|overloaded"
-		printf '%s' "provider_error"
-		return 0
-	fi
-	if [[ "$lowered" =~ (unauthorized|401|invalid\ api\ key|authentication\ failed|token\ refresh\ failed|invalid_grant|invalid\ refresh\ token) ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]]; then
-		_failure_provider_error_type="auth_error"
-		_failure_provider_status="401"
-		_failure_classification_pattern="auth_error|401|token_refresh|invalid_grant"
-		printf '%s' "auth_error"
-		return 0
-	fi
+	# Provider/rate-limit/auth/server classification intentionally uses only
+	# trusted chunks above. Generic tool output, file reads, docs, and skill
+	# content can mention provider failures and must not trigger backoff.
 	# Default: local_error -- do NOT record provider backoff for this
 	_failure_classification_source="default_local"
 	_failure_classification_pattern="default_local"
 	printf '%s' "local_error"
 	return 0
+}
+
+service_interruption_continue_candidate() {
+	local failure_reason="$1"
+	local exit_code="$2"
+	local activity_detected="$3"
+	local session_id="$4"
+	: "${5:-}"
+
+	if [[ "$failure_reason" == "provider_error" ]]; then
+		if [[ "$activity_detected" == "1" || -n "$session_id" ]]; then
+			return 0
+		fi
+	fi
+
+	if [[ "$activity_detected" == "1" ]]; then
+		case "$exit_code" in
+		137 | 143)
+			return 0
+			;;
+		esac
+	fi
+
+	return 1
 }
 
 extract_session_id_from_output() {
@@ -316,6 +377,9 @@ append_runtime_metric() {
 	local runtime_error_type="${17:-}"
 	local classification_source="${18:-}"
 	local classification_pattern="${19:-}"
+	local launch_failure_cause="${20:-}"
+	local kill_reason="${21:-}"
+	local next_action="${22:-}"
 	mkdir -p "$METRICS_DIR" 2>/dev/null || true
 	ROLE="$role" SESSION_KEY="$session_key" MODEL="$model" PROVIDER="$provider" \
 		RESULT="$result" EXIT_CODE="$exit_code" FAILURE_REASON="$failure_reason" \
@@ -324,6 +388,7 @@ append_runtime_metric() {
 		SESSION_ID="$session_id" PROVIDER_ERROR_TYPE="$provider_error_type" \
 		PROVIDER_STATUS="$provider_status" RUNTIME_ERROR_TYPE="$runtime_error_type" \
 		CLASSIFICATION_SOURCE="$classification_source" CLASSIFICATION_PATTERN="$classification_pattern" \
+		LAUNCH_FAILURE_CAUSE="$launch_failure_cause" KILL_REASON="$kill_reason" NEXT_ACTION="$next_action" \
 		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
@@ -352,6 +417,9 @@ optional_fields = {
     "runtime_error_type": os.environ.get("RUNTIME_ERROR_TYPE", ""),
     "classification_source": os.environ.get("CLASSIFICATION_SOURCE", ""),
     "classification_pattern": os.environ.get("CLASSIFICATION_PATTERN", ""),
+    "launch_failure_cause": os.environ.get("LAUNCH_FAILURE_CAUSE", ""),
+    "kill_reason": os.environ.get("KILL_REASON", ""),
+    "next_action": os.environ.get("NEXT_ACTION", ""),
 }
 for key, value in optional_fields.items():
     if value:
@@ -505,6 +573,17 @@ copy_scoped_opencode_auth() {
 	return 0
 }
 
+run_without_opencode_session_env() {
+	env -u OPENCODE_SESSION_ID \
+		-u OPENCODE_PID \
+		-u OPENCODE_RUN_ID \
+		-u OPENCODE_PROCESS_ROLE \
+		-u OPENCODE \
+		-u OPENCODE_SERVER_PASSWORD \
+		"$@"
+	return $?
+}
+
 build_sandbox_passthrough_csv() {
 	local provider="${1:-}"
 	local names=()
@@ -513,10 +592,9 @@ build_sandbox_passthrough_csv() {
 
 	while IFS='=' read -r name _; do
 		case "$name" in
-		# OPENCODE_PID is the pulse's own opencode process PID. Passing it to
-		# workers causes them to attach to the pulse's session instead of
-		# creating independent sessions (GH#6668). Exclude it explicitly.
-		OPENCODE_PID) ;;
+		# Session-bound OpenCode env makes isolated canary/worker runs attach to
+		# the parent TUI session and fail with "Session not found" (GH#23065).
+		OPENCODE_SESSION_ID | OPENCODE_PID | OPENCODE_RUN_ID | OPENCODE_PROCESS_ROLE | OPENCODE | OPENCODE_SERVER_PASSWORD) ;;
 		OPENAI_* | ANTHROPIC_* | GOOGLE_* | CLAUDE_*)
 			if [[ -n "$provider" ]] && ! _headless_provider_env_allowed "$provider" "$name"; then
 				continue
@@ -584,7 +662,7 @@ Implementation approach:
 1. Read the issue body FIRST (gh issue view $WORKER_ISSUE_NUMBER). Look for a "Worker Guidance" or "How" section -- it contains the files to modify, reference patterns, and verification commands. Follow these directly when present.
 2. If Worker Guidance/How is missing or incomplete, do bounded discovery instead of stopping: use the issue title/body, exact error text, nearby helper names, tests, and git history to identify likely target files. Proceed when expected behavior, target area, and safe verification are clear.
 3. Budget discipline: spend at most 25% of your effort on reading/exploring. After reading the issue body + 2-3 likely reference files, start writing code. Do not read entire helper scripts -- read only the sections you will modify.
-4. Exit BLOCKED with reason "missing implementation context" only after bounded discovery still cannot identify expected behavior, target area, or safe verification. Include what you searched and why it remains unsafe.
+4. Exit BLOCKED with reason "missing implementation context" only after bounded discovery still cannot identify expected behavior, target area, or safe verification. Include what you searched and why it remains unsafe. The runtime will attempt one linked-issue brief-recovery continuation before recording this blocker.
 
 Progressive context loading:
 - Treat the issue body's Worker Guidance / How section as the authoritative plan.
@@ -1526,7 +1604,7 @@ _run_canary_test() {
 	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
 	# happy path; differs only when alternative-path fallback fired.
 	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
-		"${_canary_timeout_cmd[@]}" \
+		run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
 		"$_effective_opencode_bin" run --pure "Reply with exactly: CANARY_OK" \
 		-m "$canary_model" --dir "${HOME}" --agent build \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \

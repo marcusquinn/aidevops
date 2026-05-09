@@ -12,8 +12,8 @@
 #      do NOT block the merge pass.
 #   2. Non-required advisory checks are ignored.
 #   3. Required failures still correctly block the merge.
-#   4. Pending required checks block until provably passing; skipped required
-#      checks still allow the merge.
+#   4. Pending/queued/expected required checks are non-terminal for CI repair
+#      routing; skipped required checks still allow the merge.
 #   5. API errors fail-closed (a bubbling gh failure must never auto-merge).
 #
 # Regression root cause: PR #19023 (GH#18787) had all required checks green
@@ -31,6 +31,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # _pr_required_checks_pass was moved to pulse-merge-process.sh
 # (GH#21595, t3030).
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
 
 readonly TEST_RED=$'\033[0;31m'
 readonly TEST_GREEN=$'\033[0;32m'
@@ -64,8 +65,11 @@ print_result() {
 #   all_pass        — required check-runs conclude success
 #   one_fail        — one required check-run concludes failure
 #   one_cancel      — one required check-run concludes cancelled
+#   action_required — one required check-run requires action
 #   empty_required  — branch protection has no required contexts
 #   pending_only    — required check-run has no conclusion yet
+#   queued_only     — required check-run is queued with no conclusion yet
+#   expected_only   — required status context is expected/not reported yet
 #   skipping_only   — required check-run concludes skipped
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
@@ -165,9 +169,26 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 			{"name":"required-b","conclusion":"cancelled","status":"completed"}
 		]}'
 		;;
+	action_required)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":"success","status":"completed"},
+			{"name":"required-b","conclusion":"action_required","status":"completed"}
+		]}'
+		;;
 	pending_only)
 		local_json='{"check_runs":[
 			{"name":"required-a","conclusion":null,"status":"in_progress"},
+			{"name":"required-b","conclusion":"success","status":"completed"}
+		]}'
+		;;
+	queued_only)
+		local_json='{"check_runs":[
+			{"name":"required-a","conclusion":null,"status":"queued"},
+			{"name":"required-b","conclusion":"success","status":"completed"}
+		]}'
+		;;
+	expected_only)
+		local_json='{"check_runs":[
 			{"name":"required-b","conclusion":"success","status":"completed"}
 		]}'
 		;;
@@ -264,6 +285,17 @@ define_function_under_test() {
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
 	eval "$checks_src"
 
+	local terminal_src
+	terminal_src=$(awk '
+		/^_check_required_checks_has_terminal_failure\(\) \{/,/^}$/ { print }
+	' "$REQUIRED_CHECKS_SCRIPT")
+	if [[ -z "$terminal_src" ]]; then
+		printf 'ERROR: could not extract _check_required_checks_has_terminal_failure from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$terminal_src"
+
 	local fn_src
 	fn_src=$(awk '
 		/^_pr_required_checks_pass\(\) \{/,/^}$/ { print }
@@ -329,7 +361,7 @@ test_all_pass_allows_merge() {
 	export MOCK_GH_MODE="all_pass"
 	assert_function_returns 0 "all required checks passing → merge allowed"
 	assert_gh_call_uses_rest_check_runs "all_pass: REST check-runs called"
-	assert_log_contains "all required contexts passing" \
+	assert_log_contains "no terminal failed required contexts" \
 		"all_pass: pass message logged"
 	return 0
 }
@@ -352,9 +384,9 @@ test_required_failure_blocks_merge() {
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="one_fail"
 	assert_function_returns 1 "one required check-run failure → merge blocked"
-	assert_log_contains "required context(s) not passing" \
+	assert_log_contains "terminal failed required context" \
 		"one_fail: required-context failure logged"
-	assert_log_contains "REST required checks not provably passing" \
+	assert_log_contains "REST required checks have terminal failure" \
 		"one_fail: wrapper skip reason logged"
 	return 0
 }
@@ -364,8 +396,18 @@ test_required_cancel_blocks_merge() {
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="one_cancel"
 	assert_function_returns 1 "required check-run cancelled → merge blocked"
-	assert_log_contains "required context(s) not passing" \
+	assert_log_contains "terminal failed required context" \
 		"one_cancel: required-context failure logged"
+	return 0
+}
+
+test_required_action_required_is_non_terminal() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="action_required"
+	assert_function_returns 0 "required check-run action_required → no CI repair routing"
+	assert_log_contains "no terminal failed required contexts" \
+		"action_required: non-terminal classification logged"
 	return 0
 }
 
@@ -382,14 +424,34 @@ test_empty_required_set_allows_merge() {
 }
 
 test_pending_required_blocks_merge() {
-	# t3514 semantics: pending required checks are not provably passing, so the
-	# deterministic gate blocks until GitHub reports a successful conclusion.
+	# t3567 semantics: pending required checks are not terminal failures, so the
+	# CI repair/close/requeue gate must not fire while GitHub is still running CI.
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
 	export MOCK_GH_MODE="pending_only"
-	assert_function_returns 1 "pending required check → merge blocked"
-	assert_log_contains "required context(s) not passing" \
-		"pending_required: required-context failure logged"
+	assert_function_returns 0 "pending required check → no CI repair routing"
+	assert_log_contains "no terminal failed required contexts" \
+		"pending_required: non-terminal classification logged"
+	return 0
+}
+
+test_queued_required_is_non_terminal() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="queued_only"
+	assert_function_returns 0 "queued required check → no CI repair routing"
+	assert_log_contains "no terminal failed required contexts" \
+		"queued_required: non-terminal classification logged"
+	return 0
+}
+
+test_expected_required_is_non_terminal() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="expected_only"
+	assert_function_returns 0 "expected required check → no CI repair routing"
+	assert_log_contains "no terminal failed required contexts" \
+		"expected_required: non-terminal classification logged"
 	return 0
 }
 
@@ -413,7 +475,7 @@ test_gh_api_error_fails_closed() {
 	assert_function_returns 1 "required-context API error → merge blocked (fail-closed)"
 	assert_log_contains "branch protection API failed" \
 		"error: skip reason logged"
-	assert_log_contains "REST required checks not provably passing" \
+	assert_log_contains "REST required checks could not be classified" \
 		"error: wrapper skip reason logged"
 	return 0
 }
@@ -431,8 +493,11 @@ main() {
 	test_post_merge_advisory_failure_ignored
 	test_required_failure_blocks_merge
 	test_required_cancel_blocks_merge
+	test_required_action_required_is_non_terminal
 	test_empty_required_set_allows_merge
 	test_pending_required_blocks_merge
+	test_queued_required_is_non_terminal
+	test_expected_required_is_non_terminal
 	test_skipping_required_allows_merge
 	test_gh_api_error_fails_closed
 

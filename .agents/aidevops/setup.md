@@ -21,11 +21,35 @@ tools:
 - **Script**: `~/Git/aidevops/setup.sh`
 - **Run**: `cd ~/Git/aidevops && ./setup.sh`
 - **Update**: `git pull && ./setup.sh` (backs up existing configs automatically)
+- **Scoped deploy**: `./setup.sh --stage agents` or `aidevops setup --scope agents`
 - **Agents**: `~/.aidevops/agents/` | **Backups**: `~/.aidevops/config-backups/` | **Credentials**: `~/.config/aidevops/credentials.sh`
 
 **What setup.sh does**: checks required deps (`jq`, `curl`, `ssh`, `sqlite3`) and optional deps (`sshpass`, `gh`, `glab`, `tea`); copies `.agents/` → `~/.aidevops/agents/` with timestamped config backups; injects AGENTS.md pointer into `~/.opencode/AGENTS.md`, `~/.cursor/AGENTS.md`, `~/.claude/AGENTS.md`, `~/.config/cursor/AGENTS.md`; updates OpenCode agent paths in `~/.config/opencode/opencode.json`.
 
 **Deployed structure**: `~/.aidevops/agents/` (AGENTS.md, aidevops/, tools/, services/, workflows/, scripts/) + `~/.aidevops/config-backups/[YYYYMMDD_HHMMSS]/`
+
+## Scoped Setup / Deploy
+
+Use full setup for first installs, migrations, config schema changes, or broad release validation:
+
+```bash
+./setup.sh --non-interactive
+aidevops setup --scope full
+```
+
+Use scoped setup when the change is isolated and a full deploy would add avoidable time or lock-wait surface:
+
+| Change type | Minimal command |
+|---|---|
+| Agent/script-only change | `./setup.sh --stage agents` or `aidevops setup --scope agents` |
+| OpenCode CLI/shim/setup logic | `./setup.sh --stage opencode` or `aidevops setup --scope opencode` |
+| Hook change | `./setup.sh --stage hooks` or `aidevops setup --scope hooks` |
+| Tabby profile change | `./setup.sh --stage tabby` or `aidevops setup --scope tabby` |
+| launchd/routine/pulse plist change | `./setup.sh --stage pulse` or `aidevops setup --scope pulse` |
+
+`./setup.sh --stage` also accepts the canonical stage names: `setup_opencode_cli`,
+`deploy_aidevops_agents`, `setup_safety_hooks`, `setup_tabby`, and
+`setup_supervisor_pulse`. Unknown stages fail non-zero and print the valid list.
 
 ## Manual Configuration
 

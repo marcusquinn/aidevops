@@ -126,6 +126,26 @@ test_dead_owner_after_cooldown_unregisters() {
 	return 0
 }
 
+test_owner_pid_override_rejects_sql_payload() {
+	local wt_path
+	wt_path=$(make_worktree_dir "owner-pid-sql-payload")
+	register_worktree "$wt_path" "feature/owner-pid-sql-payload" --owner-pid "1); DROP TABLE worktree_owners; --"
+
+	local owner_info=""
+	owner_info=$(check_worktree_owner "$wt_path" 2>/dev/null || true)
+	local owner_pid="${owner_info%%|*}"
+
+	local table_exists=""
+	table_exists=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'worktree_owners';" 2>/dev/null || true)
+
+	local rc=0
+	[[ "$table_exists" == "worktree_owners" ]] || rc=1
+	[[ -n "$owner_info" ]] || rc=1
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || rc=1
+	print_result "owner pid override rejects SQL payload" "$rc" "(owner_info='${owner_info}')"
+	return 0
+}
+
 test_should_skip_cleanup_branch_merged_within_grace() {
 	local wt_path
 	wt_path=$(make_worktree_dir "branch-merged-grace")
@@ -164,6 +184,7 @@ main() {
 	test_dead_owner_first_pass_quarantines
 	test_dead_owner_within_cooldown_keeps_skip
 	test_dead_owner_after_cooldown_unregisters
+	test_owner_pid_override_rejects_sql_payload
 	test_should_skip_cleanup_branch_merged_within_grace
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0

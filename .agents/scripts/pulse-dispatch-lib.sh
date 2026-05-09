@@ -104,7 +104,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | unclassified_signal)
+		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -484,14 +484,22 @@ _dispatch_compute_capacity() {
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 
-	# t3418: Keep a minimum implementation worker floor eligible under CPU/load
-	# throttling. This relaxes soft load posture only; STOP_FLAG and the
-	# GraphQL circuit breaker above remain hard stops.
+	# t3418/GH#23038: Keep a minimum implementation worker floor eligible only
+	# while provider/account health and host load are good enough. The pressure
+	# helper caps the final target by OAuth account availability, recent
+	# provider failures, load, and long-session runway before dispatch slots are
+	# exposed to the candidate loop.
 	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi
-	if ((min_worker_floor > 0 && active_workers < min_worker_floor)); then
+	if declare -F pulse_apply_provider_load_capacity_cap >/dev/null 2>&1; then
+		local capacity_cap_line=""
+		capacity_cap_line=$(pulse_apply_provider_load_capacity_cap "$max_workers" "$active_workers" "$min_worker_floor") || capacity_cap_line="${max_workers} 0"
+		read -r max_workers _DISPATCH_MIN_WORKER_FLOOR_ACTIVE <<<"$capacity_cap_line"
+		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+		[[ "$_DISPATCH_MIN_WORKER_FLOOR_ACTIVE" =~ ^[0-9]+$ ]] || _DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
+	elif ((min_worker_floor > 0 && active_workers < min_worker_floor)); then
 		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
 		if ((max_workers < min_worker_floor)); then
 			echo "[pulse-wrapper] Dispatch_min_floor active: max_workers=${max_workers} raised to ${min_worker_floor} while active=${active_workers}" >>"$LOGFILE"
@@ -499,6 +507,13 @@ _dispatch_compute_capacity() {
 		fi
 	fi
 	available_slots=$((max_workers - active_workers))
+
+	local guardrail_line=""
+	guardrail_line=$(_dispatch_apply_current_state_guardrails "$max_workers" "$active_workers" "$available_slots") || guardrail_line="${max_workers} ${active_workers} ${available_slots}"
+	read -r max_workers active_workers available_slots <<<"$guardrail_line"
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	[[ "$available_slots" =~ ^-?[0-9]+$ ]] || available_slots=0
 
 	printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
 	return 0

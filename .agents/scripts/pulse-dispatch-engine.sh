@@ -119,6 +119,9 @@ fi
 # shellcheck source=./pulse-dispatch-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-lib.sh"
+# shellcheck source=./pulse-dispatch-current-state-guardrails.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-current-state-guardrails.sh"
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-preflight-lib.sh"
@@ -128,6 +131,47 @@ source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispa
 # Set by check_worker_launch before each return 1; read by dispatch loop for
 # per-round no_worker_process tracking and canary cache invalidation.
 _PULSE_LAST_LAUNCH_FAILURE=""
+
+#######################################
+# Extract a trusted prelaunch failure reason from a worker log.
+#
+# Args:
+#   $1 - worker log path
+# Stdout: allowlisted reason token, or blank when unavailable.
+# Returns: 0 always; diagnostics must never block dispatch cleanup.
+#######################################
+_pulse_worker_log_prelaunch_failure_reason() {
+	local log_path="$1"
+	local reason=""
+
+	[[ -f "$log_path" ]] || { printf '\n'; return 0; }
+
+	reason=$(awk '
+		/\[exit-trap\] using prelaunch failure reason:/ {
+			line = $0
+			sub(/^.*\[exit-trap\] using prelaunch failure reason:[[:space:]]*/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			reason = parts[1]
+		}
+		/\[exit-trap\] session=/ && / reason=/ && reason == "" {
+			line = $0
+			sub(/^.* reason=/, "", line)
+			split(line, parts, /[[:space:]]+/)
+			reason = parts[1]
+		}
+		END { if (reason != "") { print reason } }
+	' "$log_path" 2>/dev/null) || reason=""
+
+	case "$reason" in
+	worker_worktree_live_owner)
+		printf '%s\n' "$reason"
+		;;
+	*)
+		printf '\n'
+		;;
+	esac
+	return 0
+}
 
 #######################################
 # Launch validation gate for pulse dispatches (t1453)
@@ -164,9 +208,19 @@ check_worker_launch() {
 
 	local elapsed=0
 	local poll_seconds=2
+	local candidate=""
+	local prelaunch_failure_reason=""
 	while [[ "$elapsed" -lt "$grace_seconds" ]]; do
+		for candidate in "${log_candidates[@]}"; do
+			prelaunch_failure_reason=$(_pulse_worker_log_prelaunch_failure_reason "$candidate")
+			if [[ -n "$prelaunch_failure_reason" ]]; then
+				recover_failed_launch_state "$issue_number" "$repo_slug" "$prelaunch_failure_reason"
+				echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — prelaunch failure reason=${prelaunch_failure_reason} detected in ${candidate}" >>"$LOGFILE"
+				_PULSE_LAST_LAUNCH_FAILURE="$prelaunch_failure_reason"
+				return 1
+			fi
+		done
 		if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
-			local candidate
 			for candidate in "${log_candidates[@]}"; do
 				if [[ -f "$candidate" ]] && rg -q '^opencode run \[message\.\.\]|^run opencode with a message|^Options:' "$candidate"; then
 					recover_failed_launch_state "$issue_number" "$repo_slug" "cli_usage_output"
@@ -185,6 +239,15 @@ check_worker_launch() {
 		fi
 		sleep "$poll_seconds"
 		elapsed=$((elapsed + poll_seconds))
+	done
+	for candidate in "${log_candidates[@]}"; do
+		prelaunch_failure_reason=$(_pulse_worker_log_prelaunch_failure_reason "$candidate")
+		if [[ -n "$prelaunch_failure_reason" ]]; then
+			recover_failed_launch_state "$issue_number" "$repo_slug" "$prelaunch_failure_reason"
+			echo "[pulse-wrapper] Launch validation failed for issue #${issue_number} (${repo_slug}) — prelaunch failure reason=${prelaunch_failure_reason} detected in ${candidate}" >>"$LOGFILE"
+			_PULSE_LAST_LAUNCH_FAILURE="$prelaunch_failure_reason"
+			return 1
+		fi
 	done
 
 	recover_failed_launch_state "$issue_number" "$repo_slug" "no_worker_process"
@@ -308,14 +371,9 @@ dispatch_max() {
 	}
 	local max_workers active_workers available_slots
 	read -r max_workers active_workers available_slots <<<"$capacity_line"
-	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
-	local _min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
-	if ! [[ "$_min_worker_floor" =~ ^[0-9]+$ ]]; then
-		_min_worker_floor=6
-	fi
-	if ((_min_worker_floor > 0 && active_workers < _min_worker_floor)); then
-		_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
-	fi
+	# _dispatch_compute_capacity owns the pressure-aware floor decision so the
+	# launch-throttle path cannot re-enable the floor after provider/load caps.
+	[[ "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" =~ ^[0-9]+$ ]] || _DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
 	if [[ "$available_slots" -le 0 ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: no available worker slots (max=${max_workers}, active=${active_workers}, available=${available_slots})" >>"$LOGFILE"
 		echo 0

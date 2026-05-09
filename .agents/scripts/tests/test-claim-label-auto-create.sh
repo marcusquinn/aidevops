@@ -11,8 +11,8 @@
 # Cases covered:
 #   1. blocked-by:t999 missing, gh label create succeeds   → label created in cache,
 #                                                             _validate_labels_exist returns 0
-#   2. blocked-by:t999 missing, gh label create fails       → warning only, returns 0
-#                                                             (best-effort / fail-open)
+#   2. blocked-by:t999 missing, gh label create fails       → returns 1 before counter allocation
+#                                                             (prevents stranded task IDs)
 #   3. tier:standrad (typo) missing                         → still aborts with return 1
 #                                                             (t2800 typo-protection preserved)
 #   4. blocked-by:#999 (issue-number variant) missing,
@@ -184,7 +184,7 @@ STUB
 }
 
 # ---------------------------------------------------------------------------
-# Test 2: blocked-by:t999 missing, gh create fails → still returns 0 (best-effort)
+# Test 2: blocked-by:t999 missing, gh create fails → returns 1 before allocation
 # ---------------------------------------------------------------------------
 _run_test2() {
 	local stub_dir
@@ -217,7 +217,7 @@ STUB
 	PATH="$saved_path"
 	[[ -n "$saved_cache" ]] && export AIDEVOPS_LABEL_CACHE_FILE="$saved_cache" || true
 
-	assert_return "test2_blocked_by_create_fails_still_returns_0" "$rc" "0"
+	assert_return "test2_blocked_by_create_fails_aborts_before_counter" "$rc" "1"
 
 	return 0
 }

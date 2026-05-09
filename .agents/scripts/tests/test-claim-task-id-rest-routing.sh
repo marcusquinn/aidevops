@@ -97,6 +97,7 @@ export AIDEVOPS_SESSION_USER=testuser
 # Lock REST threshold to 10 so the tests exercise the logic without
 # requiring a real rate_limit call (matching test-gh-wrapper-rest-fallback.sh).
 export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=10
+export AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE=1
 
 # shellcheck source=../shared-constants.sh
 source "${SCRIPTS_DIR}/shared-constants.sh" >/dev/null 2>&1 || true

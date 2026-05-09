@@ -79,6 +79,7 @@ DISPATCH_BACKOFF_NMR_THRESHOLD="${DISPATCH_BACKOFF_NMR_THRESHOLD:-4}"       # 4+
 DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS="${DISPATCH_PROVIDER_BACKOFF_WINDOW_SECS:-900}"
 DISPATCH_PROVIDER_BACKOFF_THRESHOLD="${DISPATCH_PROVIDER_BACKOFF_THRESHOLD:-6}"
 DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS="${DISPATCH_PROVIDER_BACKOFF_COOLDOWN_SECS:-300}"
+: "${AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_OVERRIDE:=0}"
 
 # Backoff intervals in seconds (indexed by failure count; index 0 unused).
 # Index >= NMR_THRESHOLD uses the last entry (86400 = 24h).
@@ -131,13 +132,23 @@ _db_count_rate_limit_events() {
 		return 0
 	fi
 
-	# jq JSONL parser: select matching entries (session_key, result, ts >= since),
-	# emit ts values, collect count and max. Single pass over the file.
+	# jq JSONL parser: select matching entries (session_key, rate-limit-equivalent
+	# signal, ts >= since), emit ts values, collect count and max. Single pass over
+	# the file.
 	# --slurp reads all lines into an array for aggregate operations.
 	# Fallback: if jq fails, return "0 0" (fail-open).
 	local result
 	result=$(jq -r --arg sk "$session_key" --argjson since "$since_epoch" \
-		'select(.session_key == $sk and .result == "rate_limit" and (.ts // 0) >= $since) | .ts' \
+		'select(
+			.session_key == $sk
+			and (
+				(.result // "") == "rate_limit"
+				or (.result // "") == "rate_limit_fast"
+				or (.provider_error_type // "") == "rate_limit"
+				or ((.provider_status // "") | tostring) == "429"
+			)
+			and (.ts // 0) >= $since
+		) | .ts' \
 		"$metrics_file" 2>/dev/null \
 		| awk 'BEGIN{count=0;last=0} {count++; if($1+0>last+0)last=$1+0} END{printf "%d %d\n",count,last}' \
 		2>/dev/null) || result="0 0"
@@ -168,7 +179,7 @@ _db_count_provider_rate_limit_pressure() {
 
 	local result
 	result=$(jq -rs --argjson since "$since_epoch" '
-		map(select(((.result // "") == "rate_limit" or (.provider_error_type // "") == "rate_limit" or (.provider_status // "") == "429") and (.ts // 0) >= $since))
+		map(select((((.result // "") == "rate_limit" or (.result // "") == "rate_limit_fast" or (.provider_error_type // "") == "rate_limit" or ((.provider_status // "") | tostring) == "429") and (.ts // 0) >= $since)))
 		| group_by([.provider // "unknown", .model // "unknown"])
 		| map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, last: (map(.ts // 0) | max)})
 		| sort_by(.count, .last)
@@ -236,6 +247,82 @@ _db_check_provider_pressure_backoff() {
 }
 
 #######################################
+# Check comment-based transient rate-limit release circuit state.
+#
+# The release path posts a consolidated marker after repeated
+# `CLAIM_RELEASED reason=rate_limit_transient` comments. This dispatch-side
+# gate honours that marker so the issue is paused until cooldown expiry or an
+# explicit maintainer override comment.
+#
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - now epoch
+# Returns: 0 clear, 1 cooldown active, 2 error/fail-open.
+#######################################
+_db_check_rate_limit_release_circuit_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local now="$3"
+
+	if [[ "$AIDEVOPS_RATE_LIMIT_RELEASE_CIRCUIT_OVERRIDE" == "1" ]]; then
+		return 0
+	fi
+
+	local comments_json=""
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" \
+		--jq '[.[] | {created_at: .created_at, body: (.body // "")}]' 2>/dev/null) || return 2
+	[[ -n "$comments_json" ]] || return 0
+
+	local circuit_data=""
+	circuit_data=$(printf '%s' "$comments_json" | jq -c '
+		{
+			marker: ([.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker"))] | last // null),
+			override: ([.[] | select((.body // "") | contains("rate-limit-release-circuit-breaker:override")) | .created_at] | max // "")
+		}
+	') || return 2
+
+	local marker_json=""
+	marker_json=$(printf '%s' "$circuit_data" | jq -c '.marker // empty') || return 2
+	[[ -n "$marker_json" ]] || return 0
+
+	local latest_override=""
+	latest_override=$(printf '%s' "$circuit_data" | jq -r '.override // ""') || return 2
+
+	local marker_created=""
+	marker_created=$(printf '%s' "$marker_json" | jq -r '.created_at // ""') || return 2
+	if [[ -n "$latest_override" && -n "$marker_created" && "$latest_override" > "$marker_created" ]]; then
+		return 0
+	fi
+
+	local marker_line=""
+	marker_line=$(printf '%s' "$marker_json" | jq -r '.body // ""' | grep -oE '<!-- rate-limit-release-circuit-breaker[^>]*-->' | tail -1) || marker_line=""
+	[[ -n "$marker_line" ]] || return 0
+
+	local next_epoch=""
+	next_epoch=$(printf '%s' "$marker_line" | grep -oE 'next_epoch=[0-9]+' | cut -d= -f2 || true)
+	[[ "$next_epoch" =~ ^[0-9]+$ ]] || return 0
+
+	if [[ "$now" -ge "$next_epoch" ]]; then
+		return 0
+	fi
+
+	local wait_remaining=$(( next_epoch - now ))
+	local next_human
+	next_human=$(date -r "$next_epoch" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		date -d "@${next_epoch}" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+		printf 'epoch:%s' "$next_epoch")
+
+	printf 'BACKOFF_ACTIVE reason=rate_limit_release_circuit wait=%ss next=%s\n' \
+		"$wait_remaining" "$next_human" >&2
+	echo "${_DB_LOG_PREFIX} BACKOFF_ACTIVE #${issue_number} (${repo_slug}) rate_limit_release_circuit wait=${wait_remaining}s next=${next_human}" >>"$LOGFILE"
+	if declare -F pulse_stats_increment >/dev/null 2>&1; then
+		pulse_stats_increment "dispatch_backoff_skipped" 2>/dev/null || true
+	fi
+	return 1
+}
+
+#######################################
 # Check whether dispatch backoff is active for an issue.
 #
 # Reads headless-runtime-metrics.jsonl for recent rate_limit events,
@@ -284,6 +371,15 @@ check_dispatch_backoff() {
 	_db_check_provider_pressure_backoff "$now" || provider_pressure_rc=$?
 	if [[ "$provider_pressure_rc" -eq 1 ]]; then
 		return 1
+	fi
+
+	local release_circuit_rc=0
+	_db_check_rate_limit_release_circuit_comment "$issue_number" "$repo_slug" "$now" || release_circuit_rc=$?
+	if [[ "$release_circuit_rc" -eq 1 ]]; then
+		return 1
+	fi
+	if [[ "$release_circuit_rc" -eq 2 ]]; then
+		echo "${_DB_LOG_PREFIX} WARNING: rate-limit release circuit comment check failed for #${issue_number} (${repo_slug}) — proceeding (fail-open)" >>"$LOGFILE"
 	fi
 
 	# Count recent rate_limit events.

@@ -23,6 +23,12 @@
 #      without calling `gh`.
 #   9. scan with a fresh dashboard AND a pre-existing generated alert → posts
 #      recovery evidence and closes the alert.
+#  10. scan with a stale dashboard AND a pre-existing missing-marker alert →
+#      closes the recovered missing-marker alert and files a stale alert.
+#  11. open issue list failures are logged instead of silently treated as an
+#      empty dedup result.
+#  12. source regression: recovered stale and missing-marker alert paths share
+#      the parameterized close helper and accept a pre-fetched open issue list.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
 # and to fail-open on every error path; the test sets up a self-contained
@@ -181,6 +187,7 @@ run_scan_with_stubs() {
 	local body_file="$1"
 	local alert_exists="$2"
 	local extra_env="${3:-}"
+	local alert_kind="${4:-stale}"
 	local gh_calls="${TMP}/gh-calls.log"
 	: >"$gh_calls"
 
@@ -196,6 +203,7 @@ run_scan_with_stubs() {
 		GH_CALLS_LOG="$gh_calls" \
 		BODY_FIXTURE="$body_file" \
 		ALERT_EXISTS="$alert_exists" \
+		ALERT_KIND="$alert_kind" \
 		EXTRA_ENV="$extra_env" \
 		SCANNER_PATH="$SCANNER" \
 		bash -c '
@@ -204,7 +212,7 @@ run_scan_with_stubs() {
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
-			#   gh issue list --paginate --json number,title ... → alert dedup/recovery check
+			#   gh api --paginate repos/.../issues?state=open... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
 				printf "%s\n" "$*" >> "$GH_CALLS_LOG"
@@ -214,25 +222,29 @@ run_scan_with_stubs() {
 						return 0
 						;;
 					api)
+						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&per_page=100"* ]]; then
+							if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
+								printf "simulated gh api issue list failure\n" >&2
+								return 1
+							fi
+							if [[ "$gh_args" != *"--paginate"* ]] \
+								|| [[ "$gh_args" != *"--jq"* ]]; then
+								return 0
+							elif [[ "$ALERT_EXISTS" == "1" ]]; then
+								if [[ "$ALERT_KIND" == "missing" ]]; then
+									printf "%s\n" "{\"number\":99,\"title\":\"Supervisor health dashboard missing last_refresh marker (#424242)\"}"
+								else
+									printf "%s\n" "{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}"
+								fi
+							fi
+							return 0
+						fi
 						# $2 = repos/test/repo/issues/424242
 						cat "$BODY_FIXTURE"
 						return 0
 						;;
 					issue)
 						case "$2" in
-							list)
-								if [[ "$gh_args" == *" --label "* ]] \
-									|| [[ "$gh_args" == *" --search "* ]] \
-									|| [[ "$gh_args" != *"--paginate"* ]] \
-									|| [[ "$gh_args" != *"--json number,title"* ]]; then
-									printf "[]\n"
-								elif [[ "$ALERT_EXISTS" == "1" ]]; then
-									printf "%s\n" "[{\"number\":99,\"title\":\"Supervisor health dashboard stale: test/repo (#424242)\"}]"
-								else
-									printf "[]\n"
-								fi
-								return 0
-								;;
 							comment)
 								return 0
 								;;
@@ -298,17 +310,18 @@ else
 		"calls:\n$(cat "$calls_file")"
 fi
 
-issue_list_call="$(grep '^issue list ' "$calls_file" || true)"
+issue_list_call="$(grep '^api --paginate repos/test/repo/issues?state=open&per_page=100 ' "$calls_file" || true)"
 if [[ -n "$issue_list_call" ]] \
 	&& [[ "$issue_list_call" != *"--label"* ]] \
 	&& [[ "$issue_list_call" != *"--search"* ]] \
 	&& [[ "$issue_list_call" == *"--paginate"* ]] \
-	&& [[ "$issue_list_call" == *"--json number,title"* ]] \
-	&& [[ "$issue_list_call" != *"--jq"* ]]; then
-	pass "dedup lookup paginates open titles for local jq filtering"
+	&& [[ "$issue_list_call" == *"--jq"* ]] \
+	&& [[ "$issue_list_call" != *"--limit"* ]] \
+	&& [[ "$issue_list_call" != *"--json"* ]]; then
+	pass "dedup lookup paginates open titles via gh api"
 else
 	fail "dedup lookup query shape" \
-		"expected paginated title query without --label/--search/--jq; calls:\n$(cat "$calls_file")"
+		"expected gh api --paginate title query without --limit/--label/--search; calls:\n$(cat "$calls_file")"
 fi
 
 if grep -q -- 'jq -r --arg prefix' "$SCANNER" \
@@ -388,7 +401,64 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 10: missing-marker body → alerts with MISSING title
+# Test 10: stale body with missing-marker alert → close mismatch, file stale
+# ---------------------------------------------------------------------------
+echo "Testing: stale dashboard closes missing-marker alert before stale alert"
+run_scan_with_stubs "$STALE_BODY" 1 "" "missing" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+comment_count=$(grep -c '^issue comment 99 ' "$calls_file" 2>/dev/null || true)
+close_count=$(grep -c '^issue close 99 ' "$calls_file" 2>/dev/null || true)
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+list_count=$(grep -c '^api --paginate repos/test/repo/issues?state=open&per_page=100 ' "$calls_file" 2>/dev/null || true)
+[[ "$comment_count" =~ ^[0-9]+$ ]] || comment_count=0
+[[ "$close_count" =~ ^[0-9]+$ ]] || close_count=0
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+[[ "$list_count" =~ ^[0-9]+$ ]] || list_count=0
+
+if (( comment_count == 1 && close_count == 1 && created_count == 1 && list_count == 1 )); then
+	pass "stale dashboard with missing-marker alert → close mismatch + file stale using one paginated issue fetch"
+else
+	fail "stale dashboard missing-marker recovery" \
+		"comment=$comment_count close=$close_count created=$created_count list=$list_count; calls:\n$(cat "$calls_file")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 11: failed open issue list logs an error and preserves JSON shape
+# ---------------------------------------------------------------------------
+echo "Testing: open issue list failure logs recovery error"
+run_scan_with_stubs "$STALE_BODY" 0 "export GH_ISSUE_LIST_FAIL=1" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( created_count == 1 )) \
+	&& grep -q 'Failed to list open issues for dashboard freshness recovery in test/repo' \
+		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log" \
+	&& ! grep -q 'parse error' "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log" \
+	&& grep -q 'issue_list_json="\[\]"' "$SCANNER"; then
+	pass "open issue list failure → logged error and keeps empty JSON fallback"
+else
+	fail "open issue list failure logging" \
+		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 12: source shape for shared recovered-alert helper and cached issue list
+# ---------------------------------------------------------------------------
+echo "Testing: recovered-alert source shape"
+if grep -q '^_close_recovered_alerts_for_kind()' "$SCANNER" \
+	&& grep -q "_close_recovered_alerts_for_kind \"\$ALERT_KIND_ANY\"" "$SCANNER" \
+	&& grep -q "_close_recovered_alerts_for_kind \"\$ALERT_KIND_MISSING\"" "$SCANNER" \
+	&& grep -q "local open_issues_json=\"\${7:-}\"" "$SCANNER" \
+	&& grep -q "_open_alert_numbers_for_kind \"\$kind\" \"\$slug\" \"\$dash_issue\" \"\$open_issues_json\"" "$SCANNER"; then
+	pass "recovered alert close paths share helper and optional issue-list cache"
+else
+	fail "recovered-alert source shape" \
+		"expected shared helper with stale/missing wrappers and optional open_issues_json"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 13: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null

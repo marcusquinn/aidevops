@@ -34,7 +34,8 @@
 #   worktree-helper-git.sh          git utilities + stale remote handling
 #   worktree-helper-add.sh          path utils + cmd_add and all its helpers
 #   worktree-helper-cmds.sh         cmd_list, remove, status, switch, registry, help
-#   worktree-clean-lib.sh           cmd_clean (existing split, GH#21409)
+#   worktree-clean-lib.sh           cmd_clean (existing split, GH#21409),
+#                                   including branch-merged safety proof gates
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -50,7 +51,8 @@ if [[ -f "${SCRIPT_DIR}/canonical-guard-helper.sh" ]]; then
 	source "${SCRIPT_DIR}/canonical-guard-helper.sh"
 fi
 
-# t2976: canonical audit logger for worktree-removal events (removed / skipped).
+# t2976/GH#23074: canonical audit logger for worktree-removal events
+# (removed / skipped), including optional guard context when callers provide it.
 # Fallback definitions guard against set -u failures when the helper is absent
 # (e.g. older deployments). The source block below overrides these when the file exists.
 # The stub uses command -v so it is only defined when the real function is not yet

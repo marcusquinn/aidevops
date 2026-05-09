@@ -35,6 +35,8 @@ export STOP_FLAG="${HOME}/.aidevops/logs/stop"
 : >"$LOGFILE"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../pulse-capacity.sh
+source "${SCRIPT_DIR}/pulse-capacity.sh"
 # shellcheck source=../pulse-dispatch-engine.sh
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
 # shellcheck source=../pulse-dispatch-worker-launch.sh
@@ -70,7 +72,21 @@ count_active_workers() {
 	return 0
 }
 
+reset_capacity_pressure_env() {
+	unset PULSE_DISPATCH_CAPACITY_PROVIDER PULSE_DISPATCH_CAPACITY_MODEL PULSE_MODEL || true
+	unset PULSE_DISPATCH_STAGGER_LOAD_PER_CPU PULSE_DISPATCH_STAGGER_RECENT_FAILURES || true
+	unset PULSE_DISPATCH_STAGGER_RECENT_RATE_LIMITS PULSE_DISPATCH_PROVIDER_BACKOFF_ACTIVE || true
+	unset PULSE_DISPATCH_CAPACITY_RECENT_FAILURES PULSE_DISPATCH_CAPACITY_RECENT_RATE_LIMITS || true
+	unset PULSE_DISPATCH_CAPACITY_RECENT_SERVICE_INTERRUPTS || true
+	unset PULSE_DISPATCH_CAPACITY_RECENT_PROVIDER_5XX || true
+	unset PULSE_DISPATCH_CAPACITY_RECENT_PROGRESS_HEARTBEATS || true
+	unset PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER PULSE_DISPATCH_OAUTH_POOL_FILE || true
+	rm -f "${HOME}/.aidevops/oauth-pool.json"
+	return 0
+}
+
 test_capacity_raises_soft_cap_to_floor() {
+	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=1
 	TEST_ACTIVE_WORKERS=2
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
@@ -89,6 +105,7 @@ test_capacity_raises_soft_cap_to_floor() {
 }
 
 test_capacity_respects_existing_higher_cap() {
+	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=10
 	TEST_ACTIVE_WORKERS=2
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
@@ -106,7 +123,74 @@ test_capacity_respects_existing_higher_cap() {
 	return 0
 }
 
+test_capacity_caps_by_provider_accounts_and_high_load() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=12
+	TEST_ACTIVE_WORKERS=1
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	PULSE_MODEL="openai/gpt-5.5"
+	PULSE_DISPATCH_STAGGER_LOAD_PER_CPU=9
+	PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=2
+	cat >"${HOME}/.aidevops/oauth-pool.json" <<'JSON'
+{"openai":[{"status":"idle"},{"status":"active"}]}
+JSON
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "2 1 1" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "0" ]]; then
+		print_result "capacity: provider accounts and high load cap below floor" 0
+	else
+		print_result "capacity: provider accounts and high load cap below floor" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
+test_capacity_recent_service_interruptions_reduce_slots() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=12
+	TEST_ACTIVE_WORKERS=1
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	PULSE_DISPATCH_CAPACITY_RECENT_SERVICE_INTERRUPTS=1
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "6 1 5" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "0" ]]; then
+		print_result "capacity: service interruption pressure halves launch target" 0
+	else
+		print_result "capacity: service interruption pressure halves launch target" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
+test_capacity_recent_progress_gets_runway_under_pressure() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=12
+	TEST_ACTIVE_WORKERS=4
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	PULSE_DISPATCH_CAPACITY_RECENT_SERVICE_INTERRUPTS=1
+	PULSE_DISPATCH_CAPACITY_RECENT_PROGRESS_HEARTBEATS=2
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "4 4 0" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "0" ]]; then
+		print_result "capacity: progressing active workers get runway under pressure" 0
+	else
+		print_result "capacity: progressing active workers get runway under pressure" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
 test_throttle_does_not_force_serial_under_floor() {
+	reset_capacity_pressure_env
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
 	: >"$_DISPATCH_THROTTLE_FILE"
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=1
@@ -123,6 +207,7 @@ test_throttle_does_not_force_serial_under_floor() {
 }
 
 test_throttle_forces_serial_above_floor() {
+	reset_capacity_pressure_env
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
 	: >"$_DISPATCH_THROTTLE_FILE"
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
@@ -281,6 +366,9 @@ EOF
 
 test_capacity_raises_soft_cap_to_floor
 test_capacity_respects_existing_higher_cap
+test_capacity_caps_by_provider_accounts_and_high_load
+test_capacity_recent_service_interruptions_reduce_slots
+test_capacity_recent_progress_gets_runway_under_pressure
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_marks_floor_without_cpu_bypass

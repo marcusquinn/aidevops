@@ -604,6 +604,54 @@ _handle_worker_branch_orphan() {
 	return 0
 }
 
+#######################################
+# Recover tangible worker output on failure paths.
+#
+# Watchdog/SIGKILL exits can happen after a worker has already pushed a branch
+# or opened a PR. The historical failure path released those as worker_failed,
+# causing duplicate redispatch even though recoverable output existed. This
+# helper mirrors the success-path output classifier, but only treats confirmed
+# signals as recovered so fail-open/unknown checks still fall through to normal
+# failure handling.
+#
+# Args: $1=session_key, $2=work_dir
+# Returns: 0 if recovery released the claim, 1 if caller should continue failure.
+#######################################
+_recover_worker_output_on_failure() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	[[ -n "$work_dir" && -d "$work_dir" ]] || return 1
+	[[ "$session_key" == issue-* ]] || return 1
+
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local branch_name=""
+	local issue_number=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	if [[ -n "$repo_slug" && -n "$issue_number" && -n "$branch_name" && "$branch_name" != "HEAD" ]] && \
+		declare -F _pr_exists_for_branch_or_issue >/dev/null 2>&1; then
+		local pr_existence=""
+		pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+		if [[ "$pr_existence" == "found" ]]; then
+			print_info "[lifecycle] worker_failure_recovered_existing_pr session=${session_key} branch=${branch_name}"
+			_release_dispatch_claim "$session_key" "worker_complete"
+			return 0
+		fi
+	fi
+
+	local output_class=""
+	output_class=$(_worker_produced_output "$session_key" "$work_dir")
+	if [[ "$output_class" == "branch_orphan" ]]; then
+		print_info "[lifecycle] worker_failure_recovering_branch_orphan session=${session_key} branch=${branch_name:-<none>}"
+		_handle_worker_branch_orphan "$session_key" "$work_dir"
+		return 0
+	fi
+
+	return 1
+}
+
 # =============================================================================
 # Run lifecycle — prepare, finish, retry, detach
 # =============================================================================
@@ -663,6 +711,14 @@ _hrw_worktree_clean_for_owner_reclaim() {
 	return 0
 }
 
+_hrw_is_dispatch_precreate_owner() {
+	local owner_session="$1"
+	case "$owner_session" in
+		dispatch-precreate | dispatch-precreate-*) return 0 ;;
+	esac
+	return 1
+}
+
 _hrw_reclaim_stale_worker_worktree_owner() {
 	local session_key="$1"
 	local work_dir="$2"
@@ -683,6 +739,21 @@ _hrw_reclaim_stale_worker_worktree_owner() {
 
 	_WORKER_PRELAUNCH_FAILURE_REASON="worker_worktree_live_owner"
 	[[ -n "${WORKER_ISSUE_NUMBER:-}" && "$owner_task" == "${WORKER_ISSUE_NUMBER:-}" ]] || return 1
+
+	# Dispatcher worktree pre-creation registers ownership to a live pulse
+	# process before the detached worker starts. That owner is intentionally
+	# short-lived and transferable; otherwise every worker sees a live owner,
+	# exits immediately, and pulse retries the same issue forever.
+	if _hrw_is_dispatch_precreate_owner "$owner_session" || [[ "${AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER:-0}" == "1" ]]; then
+		if ! _hrw_worktree_clean_for_owner_reclaim "$work_dir"; then
+			return 1
+		fi
+		unregister_worktree "$work_dir" 2>/dev/null || true
+		print_info "[lifecycle] worker_worktree_reclaimed_dispatch_precreate_owner session=${session_key} branch=${branch} path=${work_dir} previous_pid=${owner_pid} previous_session=${owner_session}"
+		unset _WORKER_PRELAUNCH_FAILURE_REASON 2>/dev/null || true
+		return 0
+	fi
+
 	[[ -n "$created_at" ]] || return 1
 
 	local now_epoch="" created_epoch=""
@@ -777,7 +848,12 @@ _cmd_run_finish() {
 	# create a PR with Closes, the PR-based dedup signal still wins and the
 	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
-		_release_dispatch_claim "$session_key" "worker_failed"
+		local _failure_recovered=0
+		if _recover_worker_output_on_failure "$session_key" "$work_dir"; then
+			_failure_recovered=1
+		else
+			_release_dispatch_claim "$session_key" "worker_failed"
+		fi
 
 		# Classify crash type from worker session state.
 		# _run_result_label is set by _handle_run_result:
@@ -809,7 +885,9 @@ _cmd_run_finish() {
 		# immediately instead of waiting 30+ min for the pulse to discover
 		# the orphaned assignment. Uses the failure reason from the retry
 		# loop if available, otherwise defaults to "worker_failed".
-		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
+		if [[ "$_failure_recovered" -eq 0 ]]; then
+			_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
+		fi
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		# GH#21578 / t3021: Transient API rate limit detected within first 30s.
 		# Release the dispatch claim so the issue re-queues on the next pulse cycle.

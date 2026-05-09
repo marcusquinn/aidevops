@@ -121,6 +121,7 @@ export -f git
 # Stub dependent functions that _dlw_precreate_worktree calls
 # =============================================================================
 _dlw_restore_worktree_deps() { return 0; }
+REGISTERED_WORKTREE_ARGS=""
 
 # =============================================================================
 # Source pulse-stats-helper.sh for pulse_stats_increment
@@ -164,6 +165,31 @@ source "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"
 # overwrite it). _dlw_precreate_worktree uses SCRIPT_DIR to find
 # worktree-helper.sh.
 SCRIPT_DIR="$TMP"
+
+# Re-stub register_worktree after sourcing; shared helper libraries may define
+# the real registry function, but this test only needs to assert transferable
+# ownership metadata passed by _dlw_precreate_worktree.
+register_worktree() {
+	local wt_path="$1"
+	local branch="$2"
+	shift 2
+	local task="" session=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			task="${2:-}"
+			shift 2
+			;;
+		--session)
+			session="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	REGISTERED_WORKTREE_ARGS="${wt_path}|${branch}|${task}|${session}"
+	return 0
+}
 
 # Re-stub launch-orchestrator dependencies after sourcing; the module defines
 # real implementations when loaded, but this test isolates precreation failure.
@@ -230,6 +256,7 @@ STUB_WT_SUCCESS_PATH="${TMP}/projects/fake-repo-feature"
 export STUB_WT_SUCCESS_PATH
 mkdir -p "$STUB_WT_SUCCESS_PATH"
 : >"$LOGFILE"
+REGISTERED_WORKTREE_ARGS=""
 _dlw_precreate_worktree "88888" "$FAKE_REPO"
 rc=$?
 if [[ $rc -eq 0 ]]; then
@@ -248,6 +275,12 @@ if [[ "${_DLW_WORKTREE_REUSED:-unset}" == "0" ]]; then
 	pass "freshly-created worktree is marked non-reused"
 else
 	fail "freshly-created worktree is marked non-reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '0'"
+fi
+
+if [[ "$REGISTERED_WORKTREE_ARGS" == "${STUB_WT_SUCCESS_PATH}|${_DLW_WORKTREE_BRANCH}|88888|dispatch-precreate-88888" ]]; then
+	pass "fresh precreated worktree is registered as transferable"
+else
+	fail "fresh precreated worktree is registered as transferable" "got: '$REGISTERED_WORKTREE_ARGS'"
 fi
 
 # =============================================================================
@@ -279,6 +312,7 @@ STUB_EXISTING_BRANCH="feature/auto-20260502-000000-gh66666"
 mkdir -p "$STUB_EXISTING_PATH"
 export STUB_EXISTING_WORKTREE_LINE="${STUB_EXISTING_PATH} abcdef [${STUB_EXISTING_BRANCH}]"
 : >"$LOGFILE"
+REGISTERED_WORKTREE_ARGS=""
 _dlw_precreate_worktree "66666" "$FAKE_REPO"
 rc=$?
 unset STUB_EXISTING_WORKTREE_LINE
@@ -293,6 +327,12 @@ if [[ "${_DLW_WORKTREE_REUSED:-unset}" == "1" ]]; then
 	pass "reused worktree is marked reused"
 else
 	fail "reused worktree is marked reused" "got: '${_DLW_WORKTREE_REUSED:-unset}', expected: '1'"
+fi
+
+if [[ "$REGISTERED_WORKTREE_ARGS" == "${STUB_EXISTING_PATH}|${STUB_EXISTING_BRANCH}|66666|dispatch-precreate-66666" ]]; then
+	pass "reused precreated worktree is registered as transferable"
+else
+	fail "reused precreated worktree is registered as transferable" "got: '$REGISTERED_WORKTREE_ARGS'"
 fi
 
 # =============================================================================

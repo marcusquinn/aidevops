@@ -208,6 +208,181 @@ _run_git_with_ssh_fallback() {
 	return $rc
 }
 
+# Detect GitHub protected-branch rejections in git push stderr.
+# These are policy failures, not CAS contention, so retrying only burns the
+# wall-clock budget and hides the actionable remediation.
+_cas_push_rejection_is_protected_branch() {
+	local stderr_text="${1:-}"
+
+	[[ -z "$stderr_text" ]] && return 1
+	if [[ "$stderr_text" == *"Protected branch update failed"* ]]; then
+		return 0
+	fi
+	if [[ "$stderr_text" == *"GH006"* && "$stderr_text" == *"Changes must be made through a pull request"* ]]; then
+		return 0
+	fi
+	if [[ "$stderr_text" == *"Changes must be made through a pull request"* && "$stderr_text" == *"refs/heads/${COUNTER_BRANCH}"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# Emit protected-branch guidance without exposing full remote URLs or stderr.
+_cas_log_protected_branch_rejection() {
+	log_error "PROTECTED_COUNTER_BRANCH: ${REMOTE_NAME}/${COUNTER_BRANCH} rejects direct counter pushes"
+	log_error "Task ID allocation cannot advance ${COUNTER_FILE} by direct CAS push on a protected branch."
+	log_error "Recovery: configure .aidevops.json counter_branch to an unprotected counter branch,"
+	log_error "or relax protection for the dedicated counter branch before retrying."
+	log_error "The CAS helper used git plumbing only; no working-tree changes or local commits were created."
+	return 0
+}
+
+# Emit a stable machine-readable allocation status without contaminating stdout.
+# Stdout is reserved for claim-task-id.sh key=value results; status belongs on
+# stderr via log_info so wrappers can parse it without breaking callers.
+_task_counter_status() {
+	local status="$1"
+	local detail="${2:-}"
+	if [[ -n "$detail" ]]; then
+		log_info "AIDEVOPS_TASK_COUNTER_STATUS=${status} detail=${detail}"
+	else
+		log_info "AIDEVOPS_TASK_COUNTER_STATUS=${status}"
+	fi
+	return 0
+}
+
+# Re-fetch and reconcile a counter branch after CAS contention/desync.
+#
+# Normal CAS failures are retryable, but a non-main counter branch can become
+# desynchronised with the repository's default branch (for example, develop has
+# an older .task-counter than main after release/merge activity).  Before any
+# fallback or fatal outcome, reconcile by pushing a counter-only commit on the
+# configured counter branch with the maximum safe next-ID observed across:
+#   - current counter branch
+#   - default branch (when different and available)
+#   - TODO.md seed (highest tNNN + 1)
+#
+# Returns:
+#   0 — reconciliation pushed or branch already safe
+#   1 — hard/unrecoverable desync (diagnostic emitted)
+#   2 — race/contention while reconciling; caller may retry allocation
+_cas_reconcile_counter_branch() {
+	local repo_path="$1"
+	local default_branch="${2:-main}"
+
+	cd "$repo_path" || return 1
+	_task_counter_status "reconciling" "branch=${REMOTE_NAME}/${COUNTER_BRANCH}"
+
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: cannot fetch ${REMOTE_NAME}/${COUNTER_BRANCH} for reconciliation"
+		_task_counter_status "unrecoverable_desync" "fetch_failed"
+		return 1
+	}
+
+	local counter_ref="${REMOTE_NAME}/${COUNTER_BRANCH}"
+	local pinned_sha=""
+	pinned_sha=$(git rev-parse "$counter_ref" 2>/dev/null) || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: cannot resolve ${counter_ref} after fetch"
+		_task_counter_status "unrecoverable_desync" "resolve_failed"
+		return 1
+	}
+
+	local branch_counter=""
+	branch_counter=$(git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ -z "$branch_counter" ]] || ! [[ "$branch_counter" =~ ^[0-9]+$ ]]; then
+		branch_counter=$(_compute_counter_seed "$repo_path")
+	fi
+
+	local default_counter="0"
+	if [[ -n "$default_branch" && "$default_branch" != "$COUNTER_BRANCH" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			fetch -q "$REMOTE_NAME" "$default_branch" >/dev/null || true
+		local default_ref="${REMOTE_NAME}/${default_branch}"
+		default_counter=$(git show "${default_ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+		if [[ -z "$default_counter" ]] || ! [[ "$default_counter" =~ ^[0-9]+$ ]]; then
+			default_counter="0"
+		fi
+	fi
+
+	local todo_seed
+	todo_seed=$(_compute_counter_seed "$repo_path")
+	local reconciled_counter="$branch_counter"
+	((10#$default_counter > 10#$reconciled_counter)) && reconciled_counter="$default_counter"
+	((10#$todo_seed > 10#$reconciled_counter)) && reconciled_counter="$todo_seed"
+
+	if [[ "$reconciled_counter" == "$branch_counter" ]]; then
+		_task_counter_status "recovered_contention" "refetched"
+		return 0
+	fi
+
+	local blob_sha existing_tree tree_sha commit_sha
+	blob_sha=$(printf '%s\n' "$reconciled_counter" | git hash-object -w --stdin 2>/dev/null) || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciled counter blob"
+		_task_counter_status "unrecoverable_desync" "blob_failed"
+		return 1
+	}
+	existing_tree=$(git ls-tree "$pinned_sha") || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to inspect reconciled counter tree"
+		_task_counter_status "unrecoverable_desync" "tree_read_failed"
+		return 1
+	}
+	if printf '%s\n' "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+		tree_sha=$(printf '%s\n' "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to replace reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_replace_failed"
+			return 1
+		}
+	else
+		tree_sha=$(
+			{
+				[[ -n "$existing_tree" ]] && printf '%s\n' "$existing_tree"
+				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
+			} | git mktree
+		) || {
+			log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to add reconciled counter tree entry"
+			_task_counter_status "unrecoverable_desync" "tree_add_failed"
+			return 1
+		}
+	fi
+	commit_sha=$(git commit-tree "$tree_sha" -p "$pinned_sha" -m "chore: reconcile task counter (${branch_counter}->${reconciled_counter})" 2>/dev/null) || {
+		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciliation commit"
+		_task_counter_status "unrecoverable_desync" "commit_failed"
+		return 1
+	}
+
+	local push_rc=0
+	local push_stderr=""
+	local push_err_file=""
+	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-reconcile-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null 2>"$push_err_file" || push_rc=$?
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	fi
+	if [[ -n "$push_err_file" ]]; then
+		push_stderr=$(<"$push_err_file")
+		rm -f "$push_err_file" 2>/dev/null || true
+	fi
+	if [[ $push_rc -ne 0 ]]; then
+		if _cas_push_rejection_is_protected_branch "$push_stderr"; then
+			_cas_log_protected_branch_rejection
+			_task_counter_status "unrecoverable_desync" "protected_counter_branch"
+			return 1
+		fi
+		log_warn "Counter reconciliation push raced with another allocator; retrying allocation from refreshed branch"
+		_task_counter_status "recovered_contention" "reconcile_raced"
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+		return 2
+	fi
+
+	_task_counter_status "recovered_contention" "counter=${reconciled_counter}"
+	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
+	return 0
+}
+
 # =============================================================================
 # Machine-local mutex for CAS serialisation (Phase 2 / t2568 / GH#20001)
 # =============================================================================
@@ -589,10 +764,25 @@ _cas_build_and_push() {
 	# returns the same exit codes as a direct push, so the conflict (rc=1)
 	# vs success (rc=0) handling below is unchanged.
 	local push_rc=0
-	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
-		-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
-		push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	local push_stderr=""
+	local push_err_file=""
+	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-push.XXXXXX" 2>/dev/null) || push_err_file=""
+	if [[ -n "$push_err_file" ]]; then
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null 2>"$push_err_file" || push_rc=$?
+		push_stderr=$(<"$push_err_file")
+		rm -f "$push_err_file" 2>/dev/null || true
+	else
+		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
+			-c http.lowSpeedLimit=1000 -c http.lowSpeedTime="$CAS_GIT_CMD_TIMEOUT_S" \
+			push -q "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" >/dev/null || push_rc=$?
+	fi
 	if [[ $push_rc -ne 0 ]]; then
+		if _cas_push_rejection_is_protected_branch "$push_stderr"; then
+			_cas_log_protected_branch_rejection
+			return 1
+		fi
 		if [[ $push_rc -eq 124 ]]; then
 			log_warn "Push timed out (HTTPS + SSH fallback both unavailable) — treating as retriable conflict"
 		else

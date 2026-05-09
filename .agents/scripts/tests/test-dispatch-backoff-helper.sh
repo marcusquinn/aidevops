@@ -15,6 +15,7 @@
 #   8. Emergency bypass via AIDEVOPS_SKIP_DISPATCH_BACKOFF=1
 #   9. Stats counter increments on backoff block
 #  10. AC3 from GH#20680: simulate 2 rate_limit exits, confirm 3rd dispatch blocked at 30min
+#  11. rate_limit_fast and provider metadata-only rate-limit signals count toward per-issue backoff
 #
 # Stub strategy: write a fixture JSONL file with controlled timestamps.
 # No gh stubs needed for the check subcommand (NMR application tests use gh stubs).
@@ -107,6 +108,36 @@ write_rate_limit_entries() {
 	for i in $(seq 1 "$count"); do
 		local ts=$(( base_epoch + (i - 1) * 60 ))
 		printf '{"ts":%s,"role":"worker","session_key":"issue-%s","model":"anthropic/claude-sonnet-4-6","provider":"anthropic","result":"rate_limit","exit_code":143,"failure_reason":"rate_limit","activity":false,"duration_ms":90000}\n' \
+			"$ts" "$issue_num" >>"$FIXTURE_METRICS"
+	done
+	return 0
+}
+
+# Write N rate_limit_fast entries for a given issue into the fixture file.
+# $1 = issue_number, $2 = N entries, $3 = base_epoch (ts will be base+idx*60)
+write_rate_limit_fast_entries() {
+	local issue_num="$1"
+	local count="$2"
+	local base_epoch="$3"
+	local i
+	for i in $(seq 1 "$count"); do
+		local ts=$(( base_epoch + (i - 1) * 60 ))
+		printf '{"ts":%s,"role":"worker","session_key":"issue-%s","model":"openai/gpt-5.5","provider":"openai","result":"rate_limit_fast","exit_code":143,"failure_reason":"rate_limit_fast","provider_error_type":"rate_limit","provider_status":429,"activity":false,"duration_ms":1000}\n' \
+			"$ts" "$issue_num" >>"$FIXTURE_METRICS"
+	done
+	return 0
+}
+
+# Write N non-rate_limit result entries that carry provider rate-limit metadata.
+# $1 = issue_number, $2 = N entries, $3 = base_epoch (ts will be base+idx*60)
+write_provider_metadata_rate_limit_entries() {
+	local issue_num="$1"
+	local count="$2"
+	local base_epoch="$3"
+	local i
+	for i in $(seq 1 "$count"); do
+		local ts=$(( base_epoch + (i - 1) * 60 ))
+		printf '{"ts":%s,"role":"worker","session_key":"issue-%s","model":"openai/gpt-5.5","provider":"openai","result":"error","exit_code":1,"failure_reason":"provider_error","provider_error_type":"rate_limit","provider_status":429,"activity":false,"duration_ms":1000}\n' \
 			"$ts" "$issue_num" >>"$FIXTURE_METRICS"
 	done
 	return 0
@@ -405,6 +436,79 @@ test_provider_pressure_blocks_pool() {
 	return 0
 }
 
+# --- Test 14: rate_limit_fast entries trigger per-issue 24h cooldown + NMR_REQUIRED ---
+test_rate_limit_fast_entries_trigger_nmr() {
+	reset_test_state
+	local now
+	now=$(date +%s)
+	local past=$(( now - 60 ))
+	write_rate_limit_fast_entries "23063" 4 "$past"
+
+	local rc=0
+	local output=""
+	output=$(check_dispatch_backoff "23063" "owner/repo" 2>&1 >/dev/null) || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "rate_limit_fast entries trigger per-issue backoff"
+	else
+		fail "rate_limit_fast entries trigger per-issue backoff" "got exit ${rc} output=${output}"
+	fi
+	if printf '%s' "$output" | grep -q 'NMR_REQUIRED'; then
+		pass "rate_limit_fast 4+ entries emit NMR_REQUIRED"
+	else
+		fail "rate_limit_fast 4+ entries emit NMR_REQUIRED" "output: ${output}"
+	fi
+	return 0
+}
+
+# --- Test 15: Mixed rate_limit + rate_limit_fast entries aggregate for thresholding ---
+test_mixed_rate_limit_entries_aggregate() {
+	reset_test_state
+	local now
+	now=$(date +%s)
+	local past=$(( now - 60 ))
+	write_rate_limit_entries "23064" 2 "$past"
+	write_rate_limit_fast_entries "23064" 2 "$(( past + 120 ))"
+
+	local rc=0
+	local output=""
+	output=$(check_dispatch_backoff "23064" "owner/repo" 2>&1 >/dev/null) || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "mixed rate_limit labels aggregate for per-issue backoff"
+	else
+		fail "mixed rate_limit labels aggregate for per-issue backoff" "got exit ${rc} output=${output}"
+	fi
+	if printf '%s' "$output" | grep -q 'count=4'; then
+		pass "mixed rate_limit output reports aggregate count=4"
+	else
+		fail "mixed rate_limit output reports aggregate count=4" "output: ${output}"
+	fi
+	return 0
+}
+
+# --- Test 16: Provider metadata-only rate limits count for per-issue thresholding ---
+test_provider_metadata_rate_limit_entries_count() {
+	reset_test_state
+	local now
+	now=$(date +%s)
+	local past=$(( now - 60 ))
+	write_provider_metadata_rate_limit_entries "23065" 4 "$past"
+
+	local rc=0
+	local output=""
+	output=$(check_dispatch_backoff "23065" "owner/repo" 2>&1 >/dev/null) || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		pass "provider metadata-only rate limits trigger per-issue backoff"
+	else
+		fail "provider metadata-only rate limits trigger per-issue backoff" "got exit ${rc} output=${output}"
+	fi
+	if printf '%s' "$output" | grep -q 'NMR_REQUIRED'; then
+		pass "provider metadata-only 4+ entries emit NMR_REQUIRED"
+	else
+		fail "provider metadata-only 4+ entries emit NMR_REQUIRED" "output: ${output}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -421,6 +525,9 @@ test_ac3_two_failures_blocks_third
 test_old_events_ignored
 test_different_issue_not_affected
 test_provider_pressure_blocks_pool
+test_rate_limit_fast_entries_trigger_nmr
+test_mixed_rate_limit_entries_aggregate
+test_provider_metadata_rate_limit_entries_count
 
 printf '\n'
 printf '%s/%s tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

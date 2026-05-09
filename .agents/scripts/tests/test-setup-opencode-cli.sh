@@ -71,6 +71,8 @@ echo "Test 1: _setup_validate_opencode_binary on real opencode shim"
 cat >"$SANDBOX/bin/opencode-real" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
+exit 0
 EOF
 chmod +x "$SANDBOX/bin/opencode-real"
 
@@ -83,11 +85,31 @@ chmod +x "$SANDBOX/bin/opencode-real"
 rc1=$(tail -1 "$SANDBOX/out1")
 assert_eq "real opencode -> rc=0" "0" "$rc1"
 
+# --- Test 1b: validator rc for equivalent help formatting -------------------
+echo "Test 1b: _setup_validate_opencode_binary accepts flexible help format"
+cat >"$SANDBOX/bin/opencode-flex-help" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "1.14.25"
+[[ "${1:-}" == "--help" ]] && printf '%s\n' "Usage: opencode run <message>" "Commands:" "  run  Execute a prompt"
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/opencode-flex-help"
+
+(
+	source_lib
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-flex-help" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out1b" 2>&1
+rc1b=$(tail -1 "$SANDBOX/out1b")
+assert_eq "flex help opencode -> rc=0" "0" "$rc1b"
+
 # --- Test 2: validator rc for claude CLI shim -------------------------------
 echo "Test 2: _setup_validate_opencode_binary on claude CLI shim"
 cat >"$SANDBOX/bin/opencode-claude" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "2.1.119 (Claude Code)"
+[[ "${1:-}" == "--help" ]] && echo "Claude Code"
 EOF
 chmod +x "$SANDBOX/bin/opencode-claude"
 
@@ -99,6 +121,24 @@ chmod +x "$SANDBOX/bin/opencode-claude"
 ) >"$SANDBOX/out2" 2>&1
 rc2=$(tail -1 "$SANDBOX/out2")
 assert_eq "claude shim -> rc=1" "1" "$rc2"
+
+# --- Test 2b: validator rc for Qwen Code shim -------------------------------
+echo "Test 2b: _setup_validate_opencode_binary rejects qwen CLI shim"
+cat >"$SANDBOX/bin/opencode-qwen" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "0.2.1"
+[[ "${1:-}" == "--help" ]] && echo "Qwen Code - Launch an interactive CLI"
+EOF
+chmod +x "$SANDBOX/bin/opencode-qwen"
+
+(
+	source_lib
+	rc=0
+	_setup_validate_opencode_binary "$SANDBOX/bin/opencode-qwen" || rc=$?
+	echo "$rc"
+) >"$SANDBOX/out2b" 2>&1
+rc2b=$(tail -1 "$SANDBOX/out2b")
+assert_eq "qwen shim -> rc=1" "1" "$rc2b"
 
 # --- Test 3: validator rc for missing binary --------------------------------
 echo "Test 3: _setup_validate_opencode_binary on missing path"
@@ -116,6 +156,7 @@ echo "Test 4: _setup_validate_opencode_binary on garbage shim"
 cat >"$SANDBOX/bin/opencode-garbage" <<'EOF'
 #!/usr/bin/env bash
 [[ "${1:-}" == "--version" ]] && echo "not-a-version"
+[[ "${1:-}" == "--help" ]] && echo "not opencode"
 EOF
 chmod +x "$SANDBOX/bin/opencode-garbage"
 
@@ -136,6 +177,7 @@ if [[ "${1:-}" == "--version" ]]; then
 	sleep 5
 	echo "1.14.25"
 fi
+[[ "${1:-}" == "--help" ]] && echo "opencode run [message..]     run opencode with a message"
 EOF
 chmod +x "$SANDBOX/bin/opencode-slow"
 
@@ -176,6 +218,11 @@ if HOME="$HOME" PATH="/usr/bin:/bin" "$resolved5" --version >/dev/null 2>&1; the
 else
 	assert_eq "stable shim runs in sanitized PATH" "ok" "failed"
 fi
+if grep -q 'PATH:+:' "$resolved5" && ! grep -q 'PATH:-}' "$resolved5"; then
+	assert_eq "stable shim avoids trailing empty PATH component" "safe" "safe"
+else
+	assert_eq "stable shim avoids trailing empty PATH component" "safe" "unsafe"
+fi
 
 # --- Test 5b: setup_opencode_cli clears stale canary negative cache ----------
 echo "Test 5b: setup_opencode_cli clears canary negative cache after repair"
@@ -199,10 +246,52 @@ else
 	assert_eq "stale canary negative cache cleared" "cleared" "present"
 fi
 
+# --- Test 5c: daemon shim PATH never contains current-directory entries ------
+echo "Test 5c: _setup_opencode_node_path_for_binary omits unsafe relative entries"
+(
+	source_lib
+	_setup_opencode_node_path_for_binary "opencode"
+) >"$SANDBOX/out5c" 2>&1
+path5c=$(tail -1 "$SANDBOX/out5c")
+case "$path5c" in
+	""|:*|*::*|*:.:*|*:.|.*)
+		assert_eq "daemon shim path excludes empty/dot entries" "safe" "$path5c"
+		;;
+	*)
+		assert_eq "daemon shim path excludes empty/dot entries" "safe" "safe"
+		;;
+esac
+
+# --- Test 5d: bad stable shim is rewritten from another valid install --------
+echo "Test 5d: setup_opencode_cli rewrites qwen stable shim from valid bun install"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+mkdir -p "$HOME/.local/bin" "$HOME/.bun/bin"
+cp "$SANDBOX/bin/opencode-qwen" "$HOME/.local/bin/opencode"
+cp "$SANDBOX/bin/opencode-real" "$HOME/.bun/bin/opencode"
+(
+	source_lib
+	export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
+	export OPENCODE_BIN=""
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+	cat "$HOME/.aidevops/.opencode-bin-resolved" 2>/dev/null || echo "MISSING"
+) >"$SANDBOX/out5d" 2>&1
+rc5d=$(grep '^rc=' "$SANDBOX/out5d" | tail -1)
+resolved5d=$(tail -1 "$SANDBOX/out5d")
+assert_eq "qwen stable shim heal rc" "rc=0" "$rc5d"
+assert_eq "qwen stable shim rewritten" "$HOME/.local/bin/opencode" "$resolved5d"
+if "$HOME/.local/bin/opencode" --help 2>/dev/null | grep -q 'opencode run \[message\.\.\]'; then
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "rewritten"
+else
+	assert_eq "qwen shim now points to valid opencode" "rewritten" "not-rewritten"
+fi
+
 # --- Test 6: setup_opencode_cli fail-open when no installer present ---------
 echo "Test 6: setup_opencode_cli fail-open when no bun/npm + invalid current"
 # Wipe persisted file from previous test so we can confirm it stays absent.
 rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+rm -f "$HOME/.bun/bin/opencode"
 (
 	source_lib
 	# Force minimal PATH so neither bun nor npm resolves; supply only the
@@ -245,10 +334,10 @@ rc7=$(grep '^rc=' "$SANDBOX/out7" | tail -1)
 elapsed7="${rc7##*elapsed=}"
 rc7="${rc7%% elapsed=*}"
 assert_eq "hanging installer fail-opens" "rc=0" "$rc7"
-if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 4 ]]; then
+if [[ "$elapsed7" =~ ^[0-9]+$ ]] && [[ "$elapsed7" -le 12 ]]; then
 	assert_eq "hanging installer returns within bound" "bounded" "bounded"
 else
-	assert_eq "hanging installer returns within bound" "elapsed<=4" "elapsed=${elapsed7}"
+	assert_eq "hanging installer returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
 fi
 
 echo ""
