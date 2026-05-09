@@ -125,7 +125,7 @@ print("- For exact evidence, JSON assertions, diffs, security scans, or terminal
 PY
 
 	rm -f "$tmp_raw" "$tmp_filtered"
-	return 0
+	return "$rtk_rc"
 }
 
 main() {
@@ -155,9 +155,12 @@ main() {
 		;;
 	esac
 
-	local tmp_output
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
+	local tmp_output=""
 	tmp_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-rtk.XXXXXX")
-	trap 'rm -f "${tmp_output:-}"' EXIT
+	push_cleanup "rm -f '${tmp_output}'"
 
 	local rc=0
 	set +e
