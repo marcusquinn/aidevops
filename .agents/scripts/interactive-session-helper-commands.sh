@@ -33,6 +33,37 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+_isc_resolve_manageable_user() {
+	local action="$1"
+	local issue="$2"
+	local slug="$3"
+	local offline_warning="$4"
+	local offline_detail="${5:-}"
+	local external_detail="${6:-}"
+
+	if ! _isc_gh_reachable; then
+		_isc_warn "$offline_warning"
+		[[ -n "$offline_detail" ]] && _isc_warn "$offline_detail"
+		return 1
+	fi
+
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — skipping $action on #$issue"
+		return 1
+	fi
+
+	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+		_isc_warn "$action: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		[[ -n "$external_detail" ]] && _isc_warn "$external_detail"
+		return 1
+	fi
+
+	printf '%s' "$user"
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
@@ -126,23 +157,11 @@ _isc_cmd_claim() {
 		return 2
 	fi
 
-	# Offline gate — warn and exit 0 so the caller continues
-	if ! _isc_gh_reachable; then
-		_isc_warn "gh offline or not authenticated — skipping claim on #$issue ($slug)"
-		_isc_warn "a collision with a worker is harmless; the interactive work will become its own issue/PR"
-		return 0
-	fi
-
 	local user
-	user=$(_isc_current_user)
-	if [[ -z "$user" ]]; then
-		_isc_warn "could not resolve gh user login — skipping claim on #$issue"
-		return 0
-	fi
-
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "claim: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
-		_isc_warn "external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"
+	if ! user=$(_isc_resolve_manageable_user "claim" "$issue" "$slug" \
+		"gh offline or not authenticated — skipping claim on #$issue ($slug)" \
+		"a collision with a worker is harmless; the interactive work will become its own issue/PR" \
+		"external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"); then
 		return 0
 	fi
 
@@ -469,20 +488,9 @@ _isc_cmd_release() {
 	# Always delete the stamp so local state reflects caller intent
 	_isc_delete_stamp "$issue" "$slug"
 
-	if ! _isc_gh_reachable; then
-		_isc_warn "gh offline — stamp deleted locally, label unchanged on #$issue"
-		return 0
-	fi
-
 	local user
-	user=$(_isc_current_user)
-	if [[ -z "$user" ]]; then
-		_isc_warn "could not resolve gh user login — stamp deleted locally, skipping release on #$issue"
-		return 0
-	fi
-
-	if ! _isc_can_manage_issue_state "$slug" "$user"; then
-		_isc_warn "release: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+	if ! user=$(_isc_resolve_manageable_user "release" "$issue" "$slug" \
+		"gh offline — stamp deleted locally, label unchanged on #$issue"); then
 		return 0
 	fi
 
