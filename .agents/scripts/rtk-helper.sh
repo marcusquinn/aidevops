@@ -56,12 +56,18 @@ compare_rtk_output() {
 		return 2
 	fi
 
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	local tmp_raw=""
 	local tmp_rtk=""
 	local tmp_filtered=""
 	tmp_raw=$(mktemp "${TMPDIR:-/tmp}/aidevops-rtk-raw.XXXXXX")
+	push_cleanup "rm -f '${tmp_raw}'"
 	tmp_rtk=$(mktemp "${TMPDIR:-/tmp}/aidevops-rtk-proxied.XXXXXX")
+	push_cleanup "rm -f '${tmp_rtk}'"
 	tmp_filtered=$(mktemp "${TMPDIR:-/tmp}/aidevops-rtk-filtered.XXXXXX")
+	push_cleanup "rm -f '${tmp_filtered}'"
 
 	local raw_rc=0
 	local rtk_rc=0
@@ -73,6 +79,7 @@ compare_rtk_output() {
 	set -e
 
 	filter_rtk_advisory "$tmp_rtk" >"$tmp_filtered"
+	rm -f "$tmp_rtk"
 
 	python3 - "$tmp_raw" "$tmp_filtered" "$raw_rc" "$rtk_rc" "$*" <<'PY'
 import math
@@ -117,7 +124,7 @@ else:
 print("- For exact evidence, JSON assertions, diffs, security scans, or terminal failures, rerun raw/direct commands.")
 PY
 
-	rm -f "$tmp_raw" "$tmp_rtk" "$tmp_filtered"
+	rm -f "$tmp_raw" "$tmp_filtered"
 	return 0
 }
 
@@ -133,21 +140,20 @@ main() {
 		usage
 		return 0
 		;;
-	--compare | compare)
-		shift
-		if ! command -v rtk >/dev/null 2>&1; then
-			log_error "rtk not found; run setup.sh or install RTK first"
-			return 127
-		fi
-		compare_rtk_output "$@"
-		return $?
-		;;
 	esac
 
 	if ! command -v rtk >/dev/null 2>&1; then
 		log_error "rtk not found; run setup.sh or install RTK first"
 		return 127
 	fi
+
+	case "$mode" in
+	--compare | compare)
+		shift
+		compare_rtk_output "$@"
+		return $?
+		;;
+	esac
 
 	local tmp_output
 	tmp_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-rtk.XXXXXX")
@@ -160,6 +166,7 @@ main() {
 	set -e
 
 	filter_rtk_advisory "$tmp_output"
+	rm -f "$tmp_output"
 	return "$rc"
 }
 
