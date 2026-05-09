@@ -74,6 +74,36 @@ test_existing_abort_preserves_trailing_comment() {
 	return 0
 }
 
+test_empty_abort_value_is_updated() {
+	TEST_ROOT=$(mktemp -d)
+	local project_root="$TEST_ROOT/project"
+	mkdir -p "$project_root"
+	printf 'reviews:\n  abort_on_close:  # keep empty note\n' > "$project_root/.coderabbit.yaml"
+
+	AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE=false _init_configure_coderabbit_abort_on_close "$project_root" "true"
+
+	assert_contains_once "$project_root/.coderabbit.yaml" '^  abort_on_close: false # keep empty note$' "updates empty abort_on_close value"
+	cleanup
+	TEST_ROOT=""
+	return 0
+}
+
+test_indented_reviews_preserves_child_indentation() {
+	TEST_ROOT=$(mktemp -d)
+	local project_root="$TEST_ROOT/project"
+	mkdir -p "$project_root"
+	printf 'root:\n  reviews: # nested settings\n    auto_review: true\n' > "$project_root/.coderabbit.yaml"
+
+	AIDEVOPS_CODERABBIT_ABORT_ON_CLOSE=false _init_configure_coderabbit_abort_on_close "$project_root" "true"
+
+	assert_contains_once "$project_root/.coderabbit.yaml" '^    abort_on_close: false$' "adds abort_on_close using reviews indentation"
+	cleanup
+	TEST_ROOT=""
+	return 0
+}
+
 load_coderabbit_function
 test_reviews_with_inline_comment_is_reused
 test_existing_abort_preserves_trailing_comment
+test_empty_abort_value_is_updated
+test_indented_reviews_preserves_child_indentation
