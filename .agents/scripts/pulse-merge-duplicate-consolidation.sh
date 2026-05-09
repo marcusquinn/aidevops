@@ -71,18 +71,25 @@ _pmp_issue_blocks_pr_consolidation() {
 _pmp_pr_consolidation_health_score() {
 	local repo_slug="$1"
 	local pr_obj="$2"
-	local pr_number="" mergeable="" review="" is_draft="" score=0
-	pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || pr_number=""
-	mergeable=$(printf '%s' "$pr_obj" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null) || mergeable="UNKNOWN"
-	review=$(printf '%s' "$pr_obj" | jq -r 'if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end' 2>/dev/null) || review="NONE"
-	is_draft=$(printf '%s' "$pr_obj" | jq -r '.isDraft // false' 2>/dev/null) || is_draft="false"
+	local pr_number="" mergeable="UNKNOWN" review="NONE" is_draft="false" score=0
+	{ IFS=$'\t' read -r pr_number mergeable review is_draft; } < <(
+		printf '%s' "$pr_obj" | jq -r '[
+			.number // "",
+			.mergeable // "UNKNOWN",
+			(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end),
+			(.isDraft // false | tostring)
+		] | @tsv' 2>/dev/null
+	)
 	score=0
 	if [[ "$pr_number" =~ ^[0-9]+$ ]] && declare -F _pr_required_checks_pass >/dev/null 2>&1; then
 		if _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 			score=$((score + 400))
 		fi
 	fi
-	[[ "$mergeable" == "MERGEABLE" || "$mergeable" == "mergeable" || "$mergeable" == "true" ]] && score=$((score + 200))
+	if declare -F _pmp_normalize_mergeable_state_into >/dev/null 2>&1; then
+		_pmp_normalize_mergeable_state_into mergeable "$mergeable"
+	fi
+	[[ "$mergeable" == "MERGEABLE" ]] && score=$((score + 200))
 	[[ "$review" == "APPROVED" ]] && score=$((score + 100))
 	[[ "$is_draft" != "true" ]] && score=$((score + 50))
 	printf '%s' "$score"
@@ -174,21 +181,18 @@ _pmp_consolidate_duplicate_pr_groups() {
 	group_file=$(mktemp 2>/dev/null) || group_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-groups-$$.tmp"
 	: >"$group_file"
 
-	local i=0
-	while [[ "$i" -lt "$pr_count" ]]; do
-		local pr_obj="" pr_number="" linked_issue="" score=0 created_at=""
-		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null) || pr_obj=""
-		i=$((i + 1))
+	local pr_number="" created_at="" pr_obj="" linked_issue="" score=0
+	while IFS=$'\t' read -r pr_number created_at pr_obj; do
+		linked_issue=""
+		score=0
 		[[ -n "$pr_obj" ]] || continue
 		_pmp_pr_is_worker_owned_for_consolidation "$pr_obj" || continue
-		pr_number=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || pr_number=""
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
 		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
 		[[ "$linked_issue" =~ ^[0-9]+$ ]] || continue
 		score=$(_pmp_pr_consolidation_health_score "$repo_slug" "$pr_obj") || score=0
-		created_at=$(printf '%s' "$pr_obj" | jq -r '.createdAt // ""' 2>/dev/null) || created_at=""
 		printf '%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$score" "$created_at" >>"$group_file"
-	done
+	done < <(printf '%s' "$pr_json" | jq -r '.[] | [(.number // "" | tostring), (.createdAt // ""), (. | tojson)] | @tsv' 2>/dev/null)
 
 	local issue_number
 	while IFS= read -r issue_number; do
@@ -199,4 +203,3 @@ _pmp_consolidate_duplicate_pr_groups() {
 	rm -f "$group_file" 2>/dev/null || true
 	return 0
 }
-
