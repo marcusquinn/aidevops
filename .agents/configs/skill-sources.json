@@ -150,6 +150,17 @@
       "last_checked": "2026-04-01T12:00:00Z",
       "merge_strategy": "added",
       "notes": "Nothing-inspired monochrome UI/UX design system. Includes tokens.md, components.md, platform-mapping.md in nothing-design-skill/"
+    },
+    {
+      "name": "video-use",
+      "upstream_url": "https://github.com/browser-use/video-use",
+      "upstream_commit": "fbcf29fd6dad2da880fac9b4450dcbfb5668ded4",
+      "local_path": ".agents/tools/video/video-use-skill.md",
+      "format_detected": "skill-md",
+      "imported_at": "2026-05-09T23:12:28Z",
+      "last_checked": "2026-05-09T23:12:28Z",
+      "merge_strategy": "added",
+      "notes": "Upstream-tracked video editing skill used by tools/video/video-editor.md for raw footage editing workflows"
     }
   ]
 }
