@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.14] - 2026-05-09
+
+### Fixed
+
+- use Tabby command field for OpenCode launch (#23283)
+
 ## [3.15.13] - 2026-05-09
 
 ### Fixed
