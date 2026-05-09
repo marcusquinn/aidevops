@@ -1109,6 +1109,33 @@ _derive_worker_failure_evidence() {
 	return 0
 }
 
+#######################################
+# Normalize a worker exit code and its metric kill reason.
+#
+# Args:
+#   $1 - exit code file path
+#   $2 - exit code read from the runtime process
+# stdout: tab-delimited normalized exit code and kill reason
+# Returns: 0 always (diagnostics must fail open)
+#######################################
+_normalize_worker_exit_code_and_kill_reason() {
+	local exit_code_file="$1"
+	local exit_code="$2"
+	local metric_kill_reason=""
+
+	metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
+	if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
+		exit_code=124
+		rm -f "${exit_code_file}.watchdog_killed"
+	fi
+	if [[ "$exit_code" -eq 0 && "$metric_kill_reason" != "natural" ]]; then
+		exit_code=124
+	fi
+
+	printf '%s\t%s' "$exit_code" "$metric_kill_reason"
+	return 0
+}
+
 # _execute_run_attempt: run one headless invocation and handle the result.
 # Dispatches to OpenCode (default) or Claude CLI (when --runtime claude specified).
 # Args: role session_key work_dir title prompt selected_model variant_override agent_name
@@ -1291,14 +1318,9 @@ _execute_run_attempt() {
 	# kills a stalled worker. The dying subshell may overwrite exit_code_file
 	# with its own exit code (0 or 143), losing the watchdog's 124. The marker
 	# file is authoritative — if it exists, this was a watchdog kill.
-	_metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
-	if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
-		exit_code=124
-		rm -f "${exit_code_file}.watchdog_killed"
-	fi
-	if [[ "$exit_code" -eq 0 && "$_metric_kill_reason" != "natural" ]]; then
-		exit_code=124
-	fi
+	local _normalized_exit_info=""
+	_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
+	IFS=$'\t' read -r exit_code _metric_kill_reason <<<"$_normalized_exit_info"
 	# t2956 / Issue #21231: Hard-kill sentinel — set when the watchdog
 	# escalated from passive (78 / continue) to proactive (79 / killed)
 	# because the worker had been stalling for ≥ WORKER_STALL_HARD_KILL_SECONDS
@@ -1340,14 +1362,8 @@ _execute_run_attempt() {
 				"$variant_override" "$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
-			_metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
-			if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
-				exit_code=124
-				rm -f "${exit_code_file}.watchdog_killed"
-			fi
-			if [[ "$exit_code" -eq 0 && "$_metric_kill_reason" != "natural" ]]; then
-				exit_code=124
-			fi
+			_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
+			IFS=$'\t' read -r exit_code _metric_kill_reason <<<"$_normalized_exit_info"
 			# t2956: Hard-kill sentinel must also be re-checked on the retry path.
 			local _retry_stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
 			if [[ -f "$_retry_stall_killed_marker" ]]; then
@@ -1395,7 +1411,7 @@ _execute_run_attempt() {
 		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms" \
 			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id" \
 			"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
-			"provider_rate_limited" "rate_limit_fast" "rotate_provider_or_wait_for_reset"
+			"provider_rate_limited" "${_metric_kill_reason}" "rotate_provider_or_wait_for_reset"
 		return 80
 	fi
 
