@@ -470,7 +470,9 @@ test_consolidated_feedback_missing_lifecycle_backfills_dispatch_labels() {
 	setup_test_env
 	local json='[
 		{"number": 4647, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "priority:medium"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "source:ci-feedback"}]},
-		{"number": 4648, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "needs-maintainer-review"}]}
+		{"number": 4648, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "needs-maintainer-review"}]},
+		{"number": 4649, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "auto-dispatch"}, {"name": "status:in-review"}]},
+		{"number": 4650, "assignees": [], "labels": [{"name": "quality-debt"}, {"name": "source:review-feedback"}, {"name": "origin:worker"}, {"name": "consolidated"}, {"name": "auto-dispatch"}, {"name": "tier:reasoning"}]}
 	]'
 	create_gh_stub "$json"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
@@ -486,6 +488,8 @@ test_consolidated_feedback_missing_lifecycle_backfills_dispatch_labels() {
 		&& "$calls" == *"--add-label auto-dispatch"* \
 		&& "$calls" == *"--add-label tier:standard"* \
 		&& "$calls" != *"issue edit 4648"* \
+		&& "$calls" != *"issue edit 4649"* \
+		&& "$calls" != *"issue edit 4650"* \
 		&& -z "$assigned" ]]; then
 		print_result "consolidated feedback missing lifecycle labels → dispatch backfilled" 0
 	else
