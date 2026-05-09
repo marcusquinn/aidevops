@@ -352,6 +352,48 @@ test_has_open_pr_blocks_approved_mergeable_sibling() {
 	return 0
 }
 
+test_has_open_pr_blocks_refs_colon_healthy_sibling() {
+	# Check 0 supports common reference variants used by PR bodies, including
+	# plural `Refs` and colon punctuation after the keyword.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23252|[{"number":23292,"title":"Implement dispatch dedup refs guard","body":"Refs: #23252. Adds the worker redispatch guard.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23252 marcusquinn/aidevops 't3502: dispatch sibling refs dedup'); then
+		case "$output" in
+		*'open PR #23292 is approved and mergeable for issue #23252'*)
+			print_result "has-open-pr blocks approved sibling using Refs: #N" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks approved sibling using Refs: #N" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr blocks approved sibling using Refs: #N" 1 "Expected approved sibling with Refs: #23252 to block redispatch"
+	return 0
+}
+
+test_has_open_pr_blocks_behind_healthy_sibling() {
+	# BEHIND PRs are still valid siblings that the merge path can rebase; they
+	# should block duplicate redispatch when already approved and non-draft.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23253|[{"number":23293,"title":"Implement dispatch dedup behind guard","body":"Ref #23253. Adds the worker redispatch guard.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"BEHIND"}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23253 marcusquinn/aidevops 't3503: dispatch sibling behind dedup'); then
+		case "$output" in
+		*'open PR #23293 is approved and mergeable for issue #23253'*)
+			print_result "has-open-pr blocks approved BEHIND sibling PR" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks approved BEHIND sibling PR" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr blocks approved BEHIND sibling PR" 1 "Expected approved BEHIND sibling PR to block redispatch"
+	return 0
+}
+
 test_has_open_pr_allows_when_no_healthy_sibling() {
 	# Unhealthy siblings (draft, unapproved, or conflicting) must not hold the
 	# issue forever. They are not candidates the merge path can finish safely, so
@@ -399,6 +441,8 @@ main() {
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling
+	test_has_open_pr_blocks_refs_colon_healthy_sibling
+	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
