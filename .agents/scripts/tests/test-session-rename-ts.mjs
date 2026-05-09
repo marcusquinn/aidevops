@@ -23,6 +23,9 @@ import { join } from "node:path";
 const { isDefaultBranchTitle, isTitleOverwritable } = await import(
   "../../../.opencode/lib/session-rename-guards.ts"
 );
+const { isTerminalTitleEnabled, sanitizeTerminalTitle, terminalTitleSequence } = await import(
+  "../../../.opencode/lib/terminal-title.ts"
+);
 
 let pass = 0;
 let fail = 0;
@@ -116,6 +119,31 @@ try {
 } finally {
   rmSync(tmp, { recursive: true, force: true });
 }
+
+// --- terminal title OSC helpers ---------------------------------------------
+console.log("\nGroup 3: terminal title OSC helpers");
+assertEq(
+  "OSC 0 sequence wraps the title",
+  "\u001B]0;Issue #123: fix Tabby title\u0007",
+  terminalTitleSequence("Issue #123: fix Tabby title"),
+);
+assertEq(
+  "control characters are stripped from titles",
+  "Issue #123  injected title",
+  sanitizeTerminalTitle("Issue #123\u0007\u001Binjected\ntitle"),
+);
+assertEq("empty sanitized title emits no OSC", "", terminalTitleSequence("\n\t"));
+assertEq(
+  "TERMINAL_TITLE_ENABLED=false disables title emit",
+  false,
+  isTerminalTitleEnabled({ TERMINAL_TITLE_ENABLED: "false" }),
+);
+assertEq(
+  "AIDEVOPS_TABBY_ENABLED=false disables title emit",
+  false,
+  isTerminalTitleEnabled({ AIDEVOPS_TABBY_ENABLED: "false" }),
+);
+assertEq("terminal title emit defaults to enabled", true, isTerminalTitleEnabled({}));
 
 console.log("\n=== Results ===");
 console.log(`PASS: ${pass}`);

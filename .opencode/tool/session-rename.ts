@@ -3,6 +3,7 @@ import { Database } from "bun:sqlite"
 import { homedir } from "os"
 import { join } from "path"
 import { isDefaultBranchTitle, isTitleOverwritable } from "../lib/session-rename-guards"
+import { emitTerminalTitle } from "../lib/terminal-title"
 
 /**
  * Resolve the OpenCode SQLite database path.
@@ -121,6 +122,7 @@ export default tool({
     const result = renameSession(sessionID, title)
 
     if (result.success) {
+      emitTerminalTitle(result.message)
       return `Session renamed to: ${result.message}`
     }
     return `Failed to rename session: ${result.message}`
@@ -154,6 +156,7 @@ export const sync_branch = tool({
 
     switch (result.outcome) {
       case "renamed":
+        emitTerminalTitle(result.message)
         return `Session synced with branch: ${result.message}`
       case "skipped":
         return result.message
