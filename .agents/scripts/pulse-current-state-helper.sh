@@ -231,6 +231,13 @@ if counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0):
         pre_launch_blockers.get('runner_health_circuit_breaker', 0),
         counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0),
     )
+for guardrail_reason in ('provider_rate_limit_pressure', 'repeated_failure_pressure', 'healthy_pr_backlog', 'no_dispatchable_evidence'):
+    counter_name = f'dispatch_candidate_failed_reason_{guardrail_reason}'
+    if counter_hits.get(counter_name, 0):
+        pre_launch_blockers[guardrail_reason] = max(
+            pre_launch_blockers.get(guardrail_reason, 0),
+            counter_hits.get(counter_name, 0),
+        )
 top_pre_launch_blockers = [
     {'reason': reason, 'count': count}
     for reason, count in sorted(pre_launch_blockers.items(), key=lambda item: (-item[1], item[0]))
@@ -262,6 +269,15 @@ dispatch_api_blocked = (
         )
     )
 )
+current_state_guardrails = {
+    'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
+    'available_slots_last': gauge_values.get('pulse_dispatch_guardrail_available_slots'),
+    'reasons': {
+        reason: pre_launch_blockers.get(reason, 0)
+        for reason in ('provider_rate_limit_pressure', 'repeated_failure_pressure', 'healthy_pr_backlog', 'no_dispatchable_evidence')
+        if pre_launch_blockers.get(reason, 0)
+    },
+}
 
 api_consumers = []
 api_pressure = {
@@ -371,6 +387,7 @@ result = {
     },
     'graphql_budget': graphql_budget,
     'dispatch_pacing': dispatch_pacing,
+    'current_state_guardrails': current_state_guardrails,
     'pre_launch_blockers': pre_launch_blockers,
     'top_pre_launch_blockers': top_pre_launch_blockers[:5],
     'pulse_counter_hits': counter_hits,
@@ -398,6 +415,7 @@ else:
     print(f'- Resource context: {json.dumps(result["resource_context"], sort_keys=True)}')
     print(f'- GraphQL budget: {json.dumps(result["graphql_budget"], sort_keys=True)}')
     print(f'- Dispatch pacing: {json.dumps(result["dispatch_pacing"], sort_keys=True)}')
+    print(f'- Current-state guardrails: {json.dumps(result["current_state_guardrails"], sort_keys=True)}')
     print(f'- Top pre-launch blockers: {json.dumps(result["top_pre_launch_blockers"], sort_keys=True)}')
     print(f'- Pulse counter hits: {json.dumps(counter_hits, sort_keys=True)}')
     print(f'- GraphQL budget: {graphql_budget_status}')
