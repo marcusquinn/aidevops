@@ -119,6 +119,9 @@ fi
 # shellcheck source=./pulse-dispatch-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-lib.sh"
+# shellcheck source=./pulse-dispatch-current-state-guardrails.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-current-state-guardrails.sh"
 # shellcheck source=./pulse-dispatch-preflight-lib.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}/pulse-dispatch-preflight-lib.sh"
