@@ -330,11 +330,12 @@ _auto_claim_interactive() {
 	fi
 
 	# Call the interactive claim helper — it handles offline, idempotency,
-	# self-assign, status label, stamp, and claim comment internally.
+	# maintainer-permission checks, self-assign, status label, stamp, and
+	# claim comment internally. External upstream repos skip the claim path.
 	local helper="${SCRIPT_DIR}/interactive-session-helper.sh"
 	if [[ -x "$helper" ]]; then
 		"$helper" claim "$issue_num" "$repo" --worktree "$(pwd)" || true
-		print_info "Interactive claim: #${issue_num} in ${repo} — pulse dispatch blocked"
+		print_info "Interactive claim checked: #${issue_num} in ${repo}"
 	else
 		print_warning "interactive-session-helper.sh not found — skipping interactive claim"
 	fi

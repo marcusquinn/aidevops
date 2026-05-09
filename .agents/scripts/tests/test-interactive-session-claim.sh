@@ -70,6 +70,7 @@ export STUB_LOG
 #   online   — gh returns successful responses
 #   offline  — gh auth status returns 1 (simulates offline / unauth)
 export STUB_GH_MODE=online
+export STUB_PERMISSION=admin
 
 cat >"${STUB_BIN}/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -82,14 +83,21 @@ auth)
 	fi
 	exit 0
 	;;
-api)
-	# gh api user --jq '.login'
-	if [[ "$2" == "user" ]]; then
-		printf 'testuser\n'
+	api)
+		# gh api user --jq '.login'
+		if [[ "$2" == "user" ]]; then
+			printf 'testuser\n'
+			exit 0
+		fi
+		if [[ "$2" == repos/*/collaborators/*/permission ]]; then
+			if [[ "${STUB_PERMISSION_FAIL:-0}" == "1" ]]; then
+				exit 1
+			fi
+			printf '%s\n' "${STUB_PERMISSION:-admin}"
+			exit 0
+		fi
 		exit 0
-	fi
-	exit 0
-	;;
+		;;
 issue)
 	case "$2" in
 	view)
@@ -292,7 +300,7 @@ jq -n '{
 	user: "testuser"
 }' >"${claim_dir}/stale-test-77702.json"
 
-scan_out=$(_isc_cmd_scan_stale 2>&1)
+scan_out=$(_isc_cmd_scan_stale --no-auto-release 2>&1)
 scan_rc=$?
 
 if [[ $scan_rc -eq 0 ]] && printf '%s' "$scan_out" | grep -q '#77701' && ! printf '%s' "$scan_out" | grep -q '#77702'; then
@@ -773,7 +781,55 @@ fi
 export STUB_ISSUE_HAS_AUTO_DISPATCH=0
 
 # =============================================================================
-# Test 21 — GH#21805: release on an OPEN issue applies status:available
+# Test 21 — external non-maintainer repos skip interactive claim lifecycle
+#
+# The claim routine exists to coordinate with our pulse on repos we manage. On
+# external upstream repos, applying labels/assignees or posting claim comments
+# looks like public spam. Read-only permission must therefore no-op: no stamp,
+# no issue edit, no issue comment.
+# =============================================================================
+external_stamp=$(_isc_stamp_path 61001 external/repo)
+rm -f "$external_stamp" >/dev/null 2>&1 || true
+: >"$STUB_LOG"
+external_out=$(STUB_PERMISSION=read STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61001 external/repo --worktree /tmp/external-wt 2>&1)
+external_rc=$?
+
+if [[ $external_rc -eq 0 ]] &&
+	[[ ! -f "$external_stamp" ]] &&
+	! grep -q 'issue edit 61001' "$STUB_LOG" &&
+	! grep -q 'issue comment 61001' "$STUB_LOG" &&
+	printf '%s' "$external_out" | grep -q 'external repos'; then
+	print_result "external non-maintainer claim skips labels and comments" 0
+else
+	external_log=$(tr '\n' '|' <"$STUB_LOG")
+	print_result "external non-maintainer claim skips labels and comments" 1 \
+		"(rc=$external_rc, stamp=$([[ -f "$external_stamp" ]] && echo yes || echo no), log=${external_log}, out=${external_out:0:200})"
+fi
+
+# =============================================================================
+# Test 22 — permission lookup failure fails closed for public claim lifecycle
+# =============================================================================
+lookup_fail_stamp=$(_isc_stamp_path 61002 external/fail)
+rm -f "$lookup_fail_stamp" >/dev/null 2>&1 || true
+: >"$STUB_LOG"
+lookup_fail_out=$(STUB_PERMISSION_FAIL=1 STUB_ISSUE_HAS_IN_REVIEW=0 STUB_GH_MODE=online \
+	_isc_cmd_claim 61002 external/fail --worktree /tmp/external-wt 2>&1)
+lookup_fail_rc=$?
+
+if [[ $lookup_fail_rc -eq 0 ]] &&
+	[[ ! -f "$lookup_fail_stamp" ]] &&
+	! grep -q 'issue edit 61002' "$STUB_LOG" &&
+	printf '%s' "$lookup_fail_out" | grep -q 'not a maintainer-equivalent collaborator'; then
+	print_result "permission lookup failure skips public claim lifecycle" 0
+else
+	lookup_fail_log=$(tr '\n' '|' <"$STUB_LOG")
+	print_result "permission lookup failure skips public claim lifecycle" 1 \
+		"(rc=$lookup_fail_rc, stamp=$([[ -f "$lookup_fail_stamp" ]] && echo yes || echo no), log=${lookup_fail_log}, out=${lookup_fail_out:0:200})"
+fi
+
+# =============================================================================
+# Test 23 — GH#21805: release on an OPEN issue applies status:available
 # (existing behaviour preserved).
 # =============================================================================
 _isc_cmd_claim 70001 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1
@@ -793,7 +849,7 @@ else
 fi
 
 # =============================================================================
-# Test 22 — GH#21805: release on a CLOSED issue applies status:done instead of
+# Test 24 — GH#21805: release on a CLOSED issue applies status:done instead of
 # status:available, preventing label pollution on closed issues.
 # =============================================================================
 _isc_cmd_claim 70002 testowner/testrepo --worktree /tmp/wt-fake >/dev/null 2>&1

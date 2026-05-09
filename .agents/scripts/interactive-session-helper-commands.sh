@@ -13,8 +13,8 @@
 #   - shared-constants.sh (set_issue_status, gh_issue_comment)
 #   - interactive-session-helper-stamp.sh (_isc_write_stamp, _isc_delete_stamp, _isc_post_claim_comment)
 #   - Logging/utility functions from orchestrator (_isc_info, _isc_warn, _isc_err,
-#     _isc_gh_reachable, _isc_current_user, _isc_has_in_review, _isc_has_label,
-#     _isc_carve_out_required, _isc_cmd_help)
+#     _isc_gh_reachable, _isc_current_user, _isc_can_manage_issue_state,
+#     _isc_has_in_review, _isc_has_label, _isc_carve_out_required, _isc_cmd_help)
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -36,7 +36,8 @@ fi
 # -----------------------------------------------------------------------------
 # Subcommand: claim
 # -----------------------------------------------------------------------------
-# Apply status:in-review, self-assign, and write a stamp.
+# Apply status:in-review, self-assign, and write a stamp in repos where the
+# authenticated account has maintainer-equivalent issue-management access.
 #
 # SCOPE: blocks pulse DISPATCH only. Does NOT block enrich, completion-sweep,
 # or other non-dispatch pulse operations that modify issue state. For full
@@ -136,6 +137,12 @@ _isc_cmd_claim() {
 	user=$(_isc_current_user)
 	if [[ -z "$user" ]]; then
 		_isc_warn "could not resolve gh user login — skipping claim on #$issue"
+		return 0
+	fi
+
+	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+		_isc_warn "claim: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		_isc_warn "external repos should receive a PR when possible plus at most one concise explanatory issue comment, not aidevops dispatch claims"
 		return 0
 	fi
 
@@ -255,6 +262,12 @@ _isc_cmd_lockdown() {
 		return 0
 	fi
 
+	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+		_isc_warn "lockdown: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		_isc_warn "external repos must not receive aidevops lockdown labels, locks, or audit comments"
+		return 0
+	fi
+
 	# Step 1: Apply status:in-review + self-assign (same as claim)
 	if set_issue_status "$issue" "$slug" "in-review" --add-assignee "$user" >/dev/null 2>&1; then
 		_isc_info "lockdown: #$issue → status:in-review + assigned $user"
@@ -348,6 +361,18 @@ _isc_cmd_unlock() {
 		return 0
 	fi
 
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — stamp deleted locally, skipping unlock on #$issue"
+		return 0
+	fi
+
+	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+		_isc_warn "unlock: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		return 0
+	fi
+
 	# Step 1: Unlock conversation
 	if gh issue unlock "$issue" --repo "$slug" >/dev/null 2>&1; then
 		_isc_info "unlock: #$issue → conversation unlocked"
@@ -365,8 +390,6 @@ _isc_cmd_unlock() {
 	# Step 3: Transition status:in-review -> status:available
 	local -a extra_flags=()
 	if [[ $unassign -eq 1 ]]; then
-		local user
-		user=$(_isc_current_user)
 		if [[ -n "$user" ]]; then
 			extra_flags+=(--remove-assignee "$user")
 		fi
@@ -379,8 +402,6 @@ _isc_cmd_unlock() {
 	fi
 
 	# Step 4: Post audit comment
-	local user
-	user=$(_isc_current_user) || true
 	local body
 	# shellcheck disable=SC2016 # backticks are intentional markdown formatting
 	body="$(printf '<!-- unlock-marker -->\n**Lockdown released** by `%s`. Issue returned to normal pulse operation.' "${user:-unknown}")"
@@ -453,6 +474,18 @@ _isc_cmd_release() {
 		return 0
 	fi
 
+	local user
+	user=$(_isc_current_user)
+	if [[ -z "$user" ]]; then
+		_isc_warn "could not resolve gh user login — stamp deleted locally, skipping release on #$issue"
+		return 0
+	fi
+
+	if ! _isc_can_manage_issue_state "$slug" "$user"; then
+		_isc_warn "release: #$issue in $slug skipped — @${user} is not a maintainer-equivalent collaborator"
+		return 0
+	fi
+
 	# Idempotency: skip label work if not in-review. `_isc_has_in_review`
 	# has three return states (0 = present, 1 = absent, 2 = lookup failed),
 	# so we need the actual rc — but a bare call under `set -e` propagates
@@ -474,8 +507,6 @@ _isc_cmd_release() {
 	# reference/bash-compat.md. Fourth latent bug found alongside GH#18786.
 	local -a extra_flags=()
 	if [[ $unassign -eq 1 ]]; then
-		local user
-		user=$(_isc_current_user)
 		if [[ -n "$user" ]]; then
 			extra_flags+=(--remove-assignee "$user")
 		fi

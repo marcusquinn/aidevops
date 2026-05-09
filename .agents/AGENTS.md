@@ -81,10 +81,10 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 ### Git workflow
 
-- Git is the audit trail. Use wrapper-created GitHub writes with origin labels, claim interactive issues before work, include task IDs in PR titles, `Resolves #NNN` for leaf PRs, and `For #NNN`/`Ref #NNN` for parent references. Never invent task IDs.
+- Git is the audit trail. Use wrapper-created GitHub writes with origin labels on managed repos, claim maintainer-owned interactive issues before work, include task IDs in PR titles, `Resolves #NNN` for leaf PRs, and `For #NNN`/`Ref #NNN` for parent references. Never invent task IDs.
 - Never create tracking issues with raw `gh issue create`; use aidevops wrappers, or immediately normalize with `origin:interactive`, `status:in-review`, and the appropriate type label.
-- Interactive issue pickup: when the user identifies an existing issue or you open a worktree for one, immediately run `interactive-session-helper.sh claim <N> <owner/repo>` to self-assign, apply `status:in-review`, and write the crash-recovery stamp; release with `interactive-session-helper.sh release <N> <owner/repo>` on handoff, abandonment, or task switch. Use `lockdown` when dispatch-only insulation is insufficient.
-- Worker/maintainer gate interpretation: an unassigned issue is not a maintainer blocker for an OWNER/MEMBER interactive session; claim it and continue. For headless workers, work only on the dispatched issue/PR and treat mismatched linked-issue writes as out of scope unless the dispatcher explicitly assigned that target.
+- Interactive issue pickup: for repos where you have maintainer-equivalent access, immediately run `interactive-session-helper.sh claim <N> <owner/repo>`; for external non-maintainer repos, never run claim/dispatch/label routines — submit a PR when possible and leave at most one concise issue comment explaining the proposed solution. Details: `workflows/git-workflow.md`.
+- Worker/maintainer gate interpretation: an unassigned managed-repo issue is not a maintainer blocker for an OWNER/MEMBER interactive session; claim it and continue. For headless workers, work only on the dispatched issue/PR and treat mismatched linked-issue writes as out of scope unless the dispatcher explicitly assigned that target.
 - Interactive sessions: no direct edits on canonical `main`/`master`; all work uses a linked worktree under `~/Git/`, never runtime temp dirs. Exception: release/version-manager commands may run on `main` after merged, verified changes and explicit user approval. Headless implementation workers use worktree+PR unless explicitly planning-only.
 - Pre-edit exit codes: 0 proceed, 1 stop on main, 2 create worktree, 3 warn off-main. Do not revert others' changes without explicit request.
 - After each logical change, commit WIP (`git add -A && git commit -m "wip: ..."`) unless generated/temp gitignored. Squash/amend later as needed.
@@ -93,8 +93,8 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 ### GitHub and worker context
 
-- Every issue, PR, and comment that describes work MUST include worker-ready context: files to modify, reference pattern, verification, and explicit note when paths cannot be known. Brief template source: `templates/brief-template.md`.
-- Use GitHub wrappers for issue/PR creation so origin labels and signatures are applied; never hand-compose signature footers. PR/issue/comment bodies must satisfy same-command `--body-file` discipline. Thread-clean reading and non-collaborator body immunity: `reference/gh-command-discipline.md`.
+- Managed-repo issues, PRs, and comments that describe work MUST include worker-ready context: files to modify, reference pattern, verification, and explicit note when paths cannot be known. Brief template source: `templates/brief-template.md`.
+- Use GitHub wrappers for managed-repo issue/PR creation so origin labels and signatures are applied; never hand-compose signature footers. PR/issue/comment bodies must satisfy same-command `--body-file` discipline. Thread-clean reading and non-collaborator body immunity: `reference/gh-command-discipline.md`.
 - Auto-generated issue triage outcomes: verify premise first; falsified → close with rationale; correct+obvious → implement+PR; correct+ambiguous only → decision-ready comment + `needs-maintainer-review`. Scope/style uncertainty is not NMR. Full templates: `reference/worker-discipline.md`.
 - Parent/research tasks: `parent-task` is a permanent dispatch block; PRs against parent issues use `For #NNN`/`Ref #NNN` until the final child/phase. New worker-ready tasks default to auto-dispatch; if implementing an auto-dispatch issue interactively, use `interactive-start-helper.sh --issue <N> --repo <owner/repo> --task "..." --auto-dispatch`.
 

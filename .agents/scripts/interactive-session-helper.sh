@@ -5,9 +5,10 @@
 #
 # Purpose: provide a mandatory, AI-driven acquire/release primitive for
 # interactive GitHub issue ownership. When an interactive session engages
-# with an issue, this helper applies `status:in-review` + self-assignment
-# so the pulse's dispatch-dedup guard (`dispatch-dedup-helper.sh is-assigned`)
-# will not dispatch a parallel worker.
+# with an issue in a maintainer-managed repo, this helper applies
+# `status:in-review` + self-assignment so the pulse's dispatch-dedup guard
+# (`dispatch-dedup-helper.sh is-assigned`) will not dispatch a parallel worker.
+# External non-maintainer repos skip these state/comment routines entirely.
 #
 # SCOPE LIMITATION (GH#19861):
 #   `claim` blocks the pulse's DISPATCH path only. It does NOT block:
@@ -122,6 +123,38 @@ _isc_current_user() {
 	fi
 	printf '%s' "$login"
 	return 0
+}
+
+# Check whether the authenticated user should run aidevops maintainer-only
+# issue-state routines in this repo. External upstream repos do not run our
+# pulse, so posting claim/status/lockdown lifecycle markers there is noise.
+#
+# Returns 0 for maintainer-equivalent access, 1 otherwise. Lookup failures are
+# treated as NOT authorized: skipping a claim is safer than publicly applying
+# internal aidevops workflow state to an upstream project we cannot verify.
+_isc_can_manage_issue_state() {
+	local slug="${1:-}"
+	local user="${2:-}"
+
+	if [[ -z "$slug" || -z "$user" ]]; then
+		return 1
+	fi
+
+	local repo_owner="${slug%%/*}"
+	if [[ "$user" == "$repo_owner" ]]; then
+		return 0
+	fi
+
+	local permission=""
+	permission=$(gh api "repos/${slug}/collaborators/${user}/permission" \
+		--jq '.permission // ""' 2>/dev/null) || permission=""
+	case "$permission" in
+		admin | maintain | write)
+			return 0
+			;;
+	esac
+
+	return 1
 }
 
 # Check whether the `gh` CLI is reachable and authenticated. Returns 0 when

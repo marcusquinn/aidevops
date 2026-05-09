@@ -191,10 +191,10 @@ _remove_show_owner_error() {
 
 # t2057 — interactive issue auto-claim from branch name.
 # When cmd_add creates a worktree whose branch encodes an issue number AND
-# the session is interactive, call interactive-session-helper.sh claim to
-# apply status:in-review + self-assign. The label blocks the pulse's
-# dispatch-dedup guard so no parallel worker can be dispatched on the same
-# issue while the interactive session owns it.
+# the session is interactive, call interactive-session-helper.sh claim. The
+# helper first verifies maintainer-equivalent repo access; only managed repos
+# receive status:in-review + self-assign so the pulse's dispatch-dedup guard
+# blocks parallel workers while the interactive session owns the issue.
 #
 # Branch name patterns accepted:
 #   <prefix>/gh<NNN>-<rest>       e.g., bugfix/gh18700-foo
@@ -300,7 +300,7 @@ _interactive_session_auto_claim() {
 		return 0
 	fi
 
-	echo -e "${BLUE}Auto-claiming issue #${issue_num} for interactive session...${NC}"
+	echo -e "${BLUE}Checking issue #${issue_num} ownership for interactive session...${NC}"
 	"$helper" claim "$issue_num" "$slug" --worktree "$worktree_path" >/dev/null 2>&1 || true
 	return 0
 }
