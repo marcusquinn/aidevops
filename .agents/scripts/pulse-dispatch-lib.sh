@@ -371,7 +371,7 @@ _dispatch_apply_current_state_guardrails() {
 		return 0
 	fi
 
-	local counts_line successes failures rate_limits healthy_prs no_dispatchable
+	local counts_line="" successes="" failures="" rate_limits="" healthy_prs="" no_dispatchable=""
 	counts_line=$(_dispatch_recent_current_state_counts) || counts_line="0 0 0 0 0"
 	read -r successes failures rate_limits healthy_prs no_dispatchable <<<"$counts_line"
 	[[ "$successes" =~ ^[0-9]+$ ]] || successes=0
