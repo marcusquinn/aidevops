@@ -377,6 +377,9 @@ append_runtime_metric() {
 	local runtime_error_type="${17:-}"
 	local classification_source="${18:-}"
 	local classification_pattern="${19:-}"
+	local launch_failure_cause="${20:-}"
+	local kill_reason="${21:-}"
+	local next_action="${22:-}"
 	mkdir -p "$METRICS_DIR" 2>/dev/null || true
 	ROLE="$role" SESSION_KEY="$session_key" MODEL="$model" PROVIDER="$provider" \
 		RESULT="$result" EXIT_CODE="$exit_code" FAILURE_REASON="$failure_reason" \
@@ -385,6 +388,7 @@ append_runtime_metric() {
 		SESSION_ID="$session_id" PROVIDER_ERROR_TYPE="$provider_error_type" \
 		PROVIDER_STATUS="$provider_status" RUNTIME_ERROR_TYPE="$runtime_error_type" \
 		CLASSIFICATION_SOURCE="$classification_source" CLASSIFICATION_PATTERN="$classification_pattern" \
+		LAUNCH_FAILURE_CAUSE="$launch_failure_cause" KILL_REASON="$kill_reason" NEXT_ACTION="$next_action" \
 		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
@@ -413,6 +417,9 @@ optional_fields = {
     "runtime_error_type": os.environ.get("RUNTIME_ERROR_TYPE", ""),
     "classification_source": os.environ.get("CLASSIFICATION_SOURCE", ""),
     "classification_pattern": os.environ.get("CLASSIFICATION_PATTERN", ""),
+    "launch_failure_cause": os.environ.get("LAUNCH_FAILURE_CAUSE", ""),
+    "kill_reason": os.environ.get("KILL_REASON", ""),
+    "next_action": os.environ.get("NEXT_ACTION", ""),
 }
 for key, value in optional_fields.items():
     if value:
