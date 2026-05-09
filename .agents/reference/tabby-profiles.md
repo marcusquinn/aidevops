@@ -15,24 +15,19 @@ initialize` before the TUI starts.
 Do not use `TABBY_AUTORUN=opencode` for generated profiles. It depends on a
 `.zshrc` startup hook and can fail silently, leaving users in a plain shell.
 
-The safe generated shape is:
+The safe generated shape stores the full launch command in Tabby's command
+field:
 
 ```yaml
-command: /bin/zsh
-args:
-  - '-l'
-  - '-c'
-  - 'opencode; exec zsh'
+command: /bin/zsh -l -c 'opencode; exec zsh'
+args: []
 env: {}
 ```
 
 For manual one-off profiles that should run OpenCode and then leave a shell open,
-use the same non-interactive login command instead of mixing `-i` and `-c`:
+use the same command-field value instead of mixing `-i` and `-c`:
 
 ```yaml
-command: /bin/zsh
-args:
-  - '-l'
-  - '-c'
-  - 'opencode; exec zsh'
+command: /bin/zsh -l -c 'opencode; exec zsh'
+args: []
 ```
