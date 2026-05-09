@@ -174,6 +174,24 @@ test_healthiest_candidate_beats_newer_unhealthy_pr() {
 	return 0
 }
 
+test_health_score_handles_precomputed_legacy_mergeable_values() {
+	reset_case
+	local lowercase_score="" true_score=""
+	lowercase_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "501" "mergeable" "NONE" "false") || lowercase_score="0"
+	true_score=$(_pmp_pr_consolidation_health_score "owner/repo" '{}' "502" "true" "NONE" "false") || true_score="0"
+	if [[ "$lowercase_score" -eq 250 ]]; then
+		pass "lowercase mergeable keeps healthy score"
+	else
+		fail "lowercase mergeable keeps healthy score" "Expected 250, got ${lowercase_score}"
+	fi
+	if [[ "$true_score" -eq 250 ]]; then
+		pass "boolean-string mergeable keeps healthy score"
+	else
+		fail "boolean-string mergeable keeps healthy score" "Expected 250, got ${true_score}"
+	fi
+	return 0
+}
+
 test_noop_for_untrusted_gated_or_unverified_groups() {
 	reset_case
 	TEST_LINKED_ISSUES=$'301=902\n302=902\n303=902'
@@ -211,6 +229,7 @@ main() {
 
 	test_duplicate_group_closes_older_sibling
 	test_healthiest_candidate_beats_newer_unhealthy_pr
+	test_health_score_handles_precomputed_legacy_mergeable_values
 	test_noop_for_untrusted_gated_or_unverified_groups
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

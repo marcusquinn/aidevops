@@ -13,13 +13,18 @@ _PULSE_MERGE_DUPLICATE_CONSOLIDATION_LOADED=1
 #######################################
 # Return comma-padded label CSV for a PR JSON object.
 #
-# Args: $1 = PR JSON object
+# Args: $1 = PR JSON object, $2 = optional precomputed label CSV
 # Output: ,label-a,label-b,
 #######################################
 _pmp_pr_label_csv() {
 	local pr_obj="$1"
+	local precomputed_labels="${2:-}"
 	local labels_csv
-	labels_csv=$(printf '%s' "$pr_obj" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || labels_csv=""
+	if [[ -n "$precomputed_labels" ]]; then
+		labels_csv="$precomputed_labels"
+	else
+		labels_csv=$(printf '%s' "$pr_obj" | jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || labels_csv=""
+	fi
 	printf ',%s,' "$labels_csv"
 	return 0
 }
@@ -29,13 +34,14 @@ _pmp_pr_label_csv() {
 # superseded duplicate. This intentionally excludes origin:interactive and
 # external/untrusted PRs even if they are bot-authored.
 #
-# Args: $1 = PR JSON object
+# Args: $1 = PR JSON object, $2 = optional precomputed label CSV
 # Returns: 0 owned worker PR, 1 protected/unknown
 #######################################
 _pmp_pr_is_worker_owned_for_consolidation() {
 	local pr_obj="$1"
+	local precomputed_labels="${2:-}"
 	local labels_csv
-	labels_csv=$(_pmp_pr_label_csv "$pr_obj")
+	labels_csv=$(_pmp_pr_label_csv "$pr_obj" "$precomputed_labels")
 	case "$labels_csv" in
 	*,origin:interactive,* | *,needs-maintainer-review,*) return 1 ;;
 	*,origin:worker,* | *,origin:worker-takeover,*) return 0 ;;
@@ -65,22 +71,39 @@ _pmp_issue_blocks_pr_consolidation() {
 # Compute a deterministic health score for candidate selection.
 # Higher is better; createdAt is used by the caller as the newest tie-breaker.
 #
-# Args: $1 = repo slug, $2 = PR JSON object
+# Args: $1 = repo slug, $2 = PR JSON object,
+#       $3-$6 = optional precomputed number, mergeable, reviewDecision, isDraft
 # Output: numeric score
 #######################################
 _pmp_pr_consolidation_health_score() {
 	local repo_slug="$1"
 	local pr_obj="$2"
+	local arg_count="$#"
+	local precomputed_pr_number="${3:-}"
+	local precomputed_mergeable="${4:-UNKNOWN}"
+	local precomputed_review="${5:-NONE}"
+	local precomputed_is_draft="${6:-false}"
 	local pr_number="" mergeable="UNKNOWN" review="NONE" is_draft="false" score=0
-	{ IFS=$'\t' read -r pr_number mergeable review is_draft; } < <(
-		printf '%s' "$pr_obj" | jq -r '[
+	local parsed_fields=""
+	if [[ "$arg_count" -ge 6 ]]; then
+		pr_number="$precomputed_pr_number"
+		mergeable="$precomputed_mergeable"
+		review="$precomputed_review"
+		is_draft="$precomputed_is_draft"
+	else
+		parsed_fields=$(printf '%s' "$pr_obj" | jq -r '[
 			.number // "",
 			.mergeable // "UNKNOWN",
 			(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end),
 			(.isDraft // false | tostring)
-		] | @tsv' 2>/dev/null
-	)
-	score=0
+		] | @tsv' 2>/dev/null) || parsed_fields=""
+		if [[ -n "$parsed_fields" ]]; then
+			IFS=$'\t' read -r pr_number mergeable review is_draft <<<"$parsed_fields"
+			[[ -n "$mergeable" ]] || mergeable="UNKNOWN"
+			[[ -n "$review" ]] || review="NONE"
+			[[ -n "$is_draft" ]] || is_draft="false"
+		fi
+	fi
 	if [[ "$pr_number" =~ ^[0-9]+$ ]] && declare -F _pr_required_checks_pass >/dev/null 2>&1; then
 		if _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 			score=$((score + 400))
@@ -89,7 +112,7 @@ _pmp_pr_consolidation_health_score() {
 	if declare -F _pmp_normalize_mergeable_state_into >/dev/null 2>&1; then
 		_pmp_normalize_mergeable_state_into mergeable "$mergeable"
 	fi
-	[[ "$mergeable" == "MERGEABLE" ]] && score=$((score + 200))
+	[[ "$mergeable" == "MERGEABLE" || "$mergeable" == "mergeable" || "$mergeable" == "true" ]] && score=$((score + 200))
 	[[ "$review" == "APPROVED" ]] && score=$((score + 100))
 	[[ "$is_draft" != "true" ]] && score=$((score + 50))
 	printf '%s' "$score"
@@ -181,18 +204,26 @@ _pmp_consolidate_duplicate_pr_groups() {
 	group_file=$(mktemp 2>/dev/null) || group_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-groups-$$.tmp"
 	: >"$group_file"
 
-	local pr_number="" created_at="" pr_obj="" linked_issue="" score=0
-	while IFS=$'\t' read -r pr_number created_at pr_obj; do
+	local pr_number="" created_at="" labels_csv="" mergeable="UNKNOWN" review="NONE" is_draft="false" pr_obj="" linked_issue="" score=0
+	while IFS=$'\t' read -r pr_number created_at labels_csv mergeable review is_draft pr_obj; do
 		linked_issue=""
 		score=0
 		[[ -n "$pr_obj" ]] || continue
-		_pmp_pr_is_worker_owned_for_consolidation "$pr_obj" || continue
+		_pmp_pr_is_worker_owned_for_consolidation "$pr_obj" "$labels_csv" || continue
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
 		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
 		[[ "$linked_issue" =~ ^[0-9]+$ ]] || continue
-		score=$(_pmp_pr_consolidation_health_score "$repo_slug" "$pr_obj") || score=0
+		score=$(_pmp_pr_consolidation_health_score "$repo_slug" "$pr_obj" "$pr_number" "$mergeable" "$review" "$is_draft") || score=0
 		printf '%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$score" "$created_at" >>"$group_file"
-	done < <(printf '%s' "$pr_json" | jq -r '.[] | [(.number // "" | tostring), (.createdAt // ""), (. | tojson)] | @tsv' 2>/dev/null)
+	done < <(printf '%s' "$pr_json" | jq -r '.[] | [
+		(.number // "" | tostring),
+		(.createdAt // ""),
+		([.labels[]?.name] | join(",")),
+		(.mergeable // "UNKNOWN"),
+		(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end),
+		(.isDraft // false | tostring),
+		(. | tojson)
+	] | @tsv' 2>/dev/null)
 
 	local issue_number
 	while IFS= read -r issue_number; do
