@@ -6,7 +6,7 @@
 # Creates a Tabby profile for each repo in repos.json with:
 # - Unique bright tab colour (dark-mode friendly)
 # - Matching built-in colour scheme (closest hue match)
-# - TABBY_AUTORUN=opencode env var for TUI compatibility
+# - Direct OpenCode launch that leaves a shell open after exit
 # - Grouped under "Projects"
 #
 # Usage:
@@ -364,7 +364,7 @@ cmd_help() {
 	echo "Profiles are created with:"
 	echo "  - Random bright tab colour (dark-mode friendly, HSL L:50-70%, S:60-90%)"
 	echo "  - Matching Tabby colour scheme (closest hue from built-in presets)"
-	echo "  - TABBY_AUTORUN=opencode for OpenCode TUI compatibility"
+	echo "  - Direct OpenCode launch that leaves a shell open after exit"
 	echo "  - Grouped under 'Projects'"
 	echo ""
 	echo "Existing profiles (matched by cwd path) are never overwritten."

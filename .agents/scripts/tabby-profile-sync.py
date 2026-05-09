@@ -7,7 +7,7 @@ Sync Tabby terminal profiles from aidevops repos.json.
 Creates a profile for each registered repo with:
 - Unique bright tab colour (dark-mode friendly)
 - Matching built-in Tabby colour scheme (closest hue)
-- TABBY_AUTORUN=opencode env var for TUI compatibility
+- Direct OpenCode launch that leaves a shell open after exit
 - Grouped under "Projects"
 
 Existing profiles (matched by cwd path) are never overwritten.
@@ -122,9 +122,9 @@ def build_profile_yaml(
       command: /bin/zsh
       args:
         - '-l'
-        - '-i'
-      env:
-        TABBY_AUTORUN: opencode
+        - '-c'
+        - opencode; exec zsh
+      env: {{}}
       cwd: {cwd}
     terminalColorScheme:
       name: {scheme['name']}
@@ -178,31 +178,59 @@ def _is_broken_opencode_args(args: list[str]) -> bool:
     return args == ["-l", "-i", "-c", "opencode"]
 
 
-def _safe_opencode_args_block(args_indent: str, include_env: bool) -> list[str]:
-    """Build the safe Tabby args/env block using ``TABBY_AUTORUN``."""
+def _direct_opencode_args_block(args_indent: str, include_env: bool) -> list[str]:
+    """Build the direct Tabby args/env block for OpenCode profiles."""
     child_indent = f"{args_indent}  "
     block = [
         f"{args_indent}args:",
         f"{child_indent}- '-l'",
-        f"{child_indent}- '-i'",
+        f"{child_indent}- '-c'",
+        f"{child_indent}- opencode; exec zsh",
     ]
     if include_env:
-        block.extend(
-            [
-                f"{args_indent}env:",
-                f"{child_indent}TABBY_AUTORUN: opencode",
-            ]
-        )
+        block.append(f"{args_indent}env: {{}}")
     return block
 
 
+def _tabby_autorun_env_end(lines: list[str], start: int, base_indent_len: int) -> int | None:
+    """Return env block end if it only carries ``TABBY_AUTORUN=opencode``."""
+    if start >= len(lines):
+        return None
+    env_line = lines[start]
+    env_indent_len = len(env_line) - len(env_line.lstrip(" "))
+    if env_indent_len != base_indent_len or env_line.strip() != "env:":
+        return None
+
+    block_end = start + 1
+    has_autorun = False
+    has_other_env = False
+    while block_end < len(lines):
+        next_line = lines[block_end]
+        if next_line.strip():
+            next_indent_len = len(next_line) - len(next_line.lstrip(" "))
+            if next_indent_len <= env_indent_len:
+                break
+            stripped = next_line.strip().strip("'").strip('"')
+            if stripped == "TABBY_AUTORUN: opencode":
+                has_autorun = True
+            else:
+                has_other_env = True
+        block_end += 1
+
+    if has_autorun and not has_other_env:
+        return block_end
+    return None
+
+
 def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
-    """Repair Tabby profiles using ``zsh -l -i -c opencode``.
+    """Repair fragile Tabby OpenCode launch profiles.
 
     ``zsh -i -c`` enables interactive startup while executing a command string,
     which can trigger Powerlevel10k/gitstatus job-control errors before the TUI
-    starts. The generated profile shape keeps a login interactive shell and lets
-    shell startup launch OpenCode via ``TABBY_AUTORUN`` instead.
+    starts. The former ``TABBY_AUTORUN`` workaround can also fail silently when
+    shell startup does not run the hook, leaving users in a plain terminal. The
+    stable shape uses a non-interactive login command and leaves zsh open after
+    OpenCode exits.
     """
     lines = config_text.split("\n")
     repaired: list[str] = []
@@ -222,8 +250,16 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
         inline_args = _parse_inline_args(match.group("value"))
         if inline_args is not None:
             if _is_broken_opencode_args(inline_args):
-                repaired.extend(_safe_opencode_args_block(args_indent, include_env=True))
+                repaired.extend(_direct_opencode_args_block(args_indent, include_env=True))
                 repairs += 1
+            elif inline_args == ["-l", "-i"]:
+                env_end = _tabby_autorun_env_end(lines, i + 1, args_indent_len)
+                if env_end is not None:
+                    repaired.extend(_direct_opencode_args_block(args_indent, include_env=True))
+                    repairs += 1
+                    i = env_end
+                    continue
+                repaired.append(line)
             else:
                 repaired.append(line)
             i += 1
@@ -242,8 +278,16 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
         if _is_broken_opencode_args(block_args):
             next_line = lines[block_end] if block_end < len(lines) else ""
             has_env = bool(re.match(rf"^{re.escape(args_indent)}env:\s*$", next_line))
-            repaired.extend(_safe_opencode_args_block(args_indent, include_env=not has_env))
+            repaired.extend(_direct_opencode_args_block(args_indent, include_env=not has_env))
             repairs += 1
+        elif block_args == ["-l", "-i"]:
+            env_end = _tabby_autorun_env_end(lines, block_end, args_indent_len)
+            if env_end is not None:
+                repaired.extend(_direct_opencode_args_block(args_indent, include_env=True))
+                repairs += 1
+                i = env_end
+                continue
+            repaired.extend(lines[i:block_end])
         else:
             repaired.extend(lines[i:block_end])
         i = block_end

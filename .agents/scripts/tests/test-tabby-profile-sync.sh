@@ -76,9 +76,11 @@ config = '''profiles:
 '''
 repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
-assert \"- '-c'\" not in repaired, repaired
-assert 'TABBY_AUTORUN: opencode' in repaired, repaired
-assert \"- '-l'\" in repaired and \"- '-i'\" in repaired, repaired
+assert \"- '-i'\" not in repaired, repaired
+assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
+assert \"- '-l'\" in repaired and \"- '-c'\" in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
+assert 'env: {}' in repaired, repaired
 "
 
 _info "Test 2: inline broken args are repaired"
@@ -87,19 +89,43 @@ config = \"\"\"profiles:\n  - name: aidevops\n    options:\n      command: /bin/
 repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"args: ['-l', '-i', '-c', opencode]\" not in repaired, repaired
-assert 'TABBY_AUTORUN: opencode' in repaired, repaired
+assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
 "
 
-_info "Test 3: generated profiles keep safe TABBY_AUTORUN shape"
-run_python_test "generated profile uses safe launch shape" "${load_module_code}
+_info "Test 3: generated profiles keep direct OpenCode launch shape"
+run_python_test "generated profile uses direct launch shape" "${load_module_code}
 scheme = {'name': 'Test', 'foreground': '#fff', 'background': '#000', 'cursor': '#fff', 'colors': ['#000', '#fff']}
 profile = mod.build_profile_yaml('aidevops', '/tmp/aidevops', '#123456', scheme, 'group-1')
-assert \"- '-c'\" not in profile, profile
-assert 'TABBY_AUTORUN: opencode' in profile, profile
-assert \"- '-l'\" in profile and \"- '-i'\" in profile, profile
+assert \"- '-i'\" not in profile, profile
+assert 'TABBY_AUTORUN: opencode' not in profile, profile
+assert \"- '-l'\" in profile and \"- '-c'\" in profile, profile
+assert 'opencode; exec zsh' in profile, profile
+assert 'env: {}' in profile, profile
 "
 
-_info "Test 4: sync repairs existing profiles even when no new profile is needed"
+_info "Test 4: TABBY_AUTORUN profiles are repaired"
+run_python_test "autorun profile repaired" "${load_module_code}
+config = '''profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-i'
+      env:
+        TABBY_AUTORUN: opencode
+      cwd: /tmp/aidevops
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 1, count
+assert \"- '-i'\" not in repaired, repaired
+assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
+assert 'env: {}' in repaired, repaired
+"
+
+_info "Test 5: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 repo_path="${tmp_root}/aidevops"
@@ -132,7 +158,7 @@ with open(tabby_config, "w") as handle:
 """)
 PY
 sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
-if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}" && ! grep -q -- "- '-c'" "${tabby_config}"; then
+if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "opencode; exec zsh" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
 	_pass "sync repairs existing broken profile"
 else
 	_fail "sync did not repair existing profile: ${sync_output}"
