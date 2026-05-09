@@ -1,7 +1,7 @@
 {
   "_comment": "QuickFile MCP server configuration snippets for various AI tools",
   "_documentation": "https://github.com/marcusquinn/quickfile-mcp",
-  "_install": "cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git && cd quickfile-mcp && npm install && npm run build",
+  "_install": "mkdir -p ~/Git/mcp && git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp && cd ~/Git/mcp/quickfile-mcp && npm install && npm run build",
   "_credentials": "~/.config/.quickfile-mcp/credentials.json",
 
   "opencode": {
@@ -9,7 +9,7 @@
     "_section": "mcp",
     "quickfile": {
       "type": "local",
-      "command": ["node", "/Users/YOU/Git/quickfile-mcp/dist/index.js"],
+      "command": ["node", "/Users/YOU/Git/mcp/quickfile-mcp/dist/index.js"],
       "enabled": true
     }
   },

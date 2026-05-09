@@ -6,8 +6,8 @@
   "prerequisites": {
     "node_version": "18+",
     "install_commands": [
-      "cd ~/Git && git clone https://github.com/marcusquinn/quickfile-mcp.git",
-      "cd quickfile-mcp && npm install && npm run build"
+      "mkdir -p ~/Git/mcp && git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/mcp/quickfile-mcp",
+      "cd ~/Git/mcp/quickfile-mcp && npm install && npm run build"
     ],
     "credentials_setup": "mkdir -p ~/.config/.quickfile-mcp && chmod 700 ~/.config/.quickfile-mcp",
     "credentials_location": "~/.config/.quickfile-mcp/credentials.json",
@@ -78,7 +78,7 @@
       "agent_tools": {
         "quickfile_*": true
       },
-      "notes": "Replace /path/to with actual path (e.g., ~/Git/quickfile-mcp)"
+      "notes": "Replace /path/to with actual path (e.g., ~/Git/mcp/quickfile-mcp)"
     },
     "claude_code": {
       "method": "cli",
@@ -204,7 +204,7 @@
     },
     "mcp_not_responding": {
       "issue": "MCP server not responding",
-      "solution": "Rebuild: cd quickfile-mcp && npm run build. Restart AI tool."
+      "solution": "Rebuild: cd ~/Git/mcp/quickfile-mcp && npm run build. Restart AI tool."
     }
   },
   "debug": {

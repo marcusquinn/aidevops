@@ -21,7 +21,7 @@ tools:
 - Resume existing work first: `git worktree list` or `wt list`
 - Start from canonical repo on `main`: `wt switch -c {type}/{name}`
 - Fallback: `worktree-helper.sh add {type}/{name}`
-- Keep `~/Git/{repo}/` on `main`; do task work in the linked worktree path
+- Keep `~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/` on `main`; do task work in a sibling linked worktree path
 
 | Task Type | Branch Prefix | Subagent |
 |-----------|---------------|----------|
@@ -61,7 +61,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 ## Worktree Rules
 
 - Prefer worktrees over `git checkout -b`; the next session must inherit `main`, not a task branch.
-- Reference the worktree path (`~/Git/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
+- Reference the sibling worktree path (`~/Git/{repo}-{type}-{slug}/` or `~/Git/{ecosystem}/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
 - After switching to a worktree, re-read files at the worktree path before editing.
 - Never remove a worktree you did not create unless the user explicitly asked.
 

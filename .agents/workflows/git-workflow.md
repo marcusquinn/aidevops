@@ -43,11 +43,11 @@ Remote has new commits → pull/rebase first. Uncommitted local changes → stas
 
 **Worktrees** (DEFAULT for all feature work):
 
-Main repo (`~/Git/{repo}/`) ALWAYS stays on `main`. All work in worktree directories under `~/Git/`; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
+Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays on `main`. Create linked worktrees as siblings of the canonical clone in the same parent; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
-# Creates: ~/Git/{repo}-feature-my-feature/
+# Creates a sibling, e.g. ~/Git/{repo}-feature-my-feature/ or ~/Git/mcp/{repo}-feature-my-feature/
 ```
 
 Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`.

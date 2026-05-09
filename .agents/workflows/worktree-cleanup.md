@@ -15,7 +15,7 @@ Workers dispatched via `/full-loop` MUST self-cleanup after successful merge (St
 # After gh pr merge --squash succeeds:
 WORKTREE_PATH="$(pwd)"
 BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD)"
-CANONICAL_DIR="${WORKTREE_PATH%%.*}"
+CANONICAL_DIR="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
 
 cd "$CANONICAL_DIR" || cd "$HOME"
 git pull origin main 2>/dev/null || true
@@ -41,7 +41,8 @@ Cleanup failures are non-fatal — the PR is already merged.
 gh pr merge --squash
 
 # Return to canonical repo and pull
-cd ~/Git/$(basename "$PWD" | cut -d. -f1)
+CANONICAL_DIR="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"
+cd "$CANONICAL_DIR"
 git pull origin main
 
 # Remove merged worktrees
