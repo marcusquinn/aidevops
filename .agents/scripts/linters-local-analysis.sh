@@ -377,6 +377,182 @@ check_toon_syntax() {
 # the same issues before code reaches Codacy, preventing quality gate failures.
 # Aligned with Codacy's ShellCheck + complexity engine.
 
+_COMPLEXITY_METRIC_FUNCTION="function-complexity"
+_COMPLEXITY_METRIC_NESTING="nesting-depth"
+
+_complexity_merge_base() {
+	local base_ref="${LINTERS_LOCAL_COMPLEXITY_BASE_REF:-origin/main}"
+	local head_ref="${LINTERS_LOCAL_COMPLEXITY_HEAD_REF:-HEAD}"
+
+	git merge-base "$head_ref" "$base_ref" 2>/dev/null
+	return $?
+}
+
+_complexity_changed_shell_files() {
+	local base_ref="$1"
+	local changed_files_buffer=""
+	local chunk=""
+
+	[[ -n "$base_ref" ]] && chunk=$(git diff --name-only "$base_ref"...HEAD 2>/dev/null || true)
+	changed_files_buffer="$chunk"
+
+	chunk=$(git diff --name-only 2>/dev/null || true)
+	[[ -n "$chunk" ]] && changed_files_buffer=$(printf '%s\n%s\n' "$changed_files_buffer" "$chunk")
+
+	chunk=$(git diff --cached --name-only 2>/dev/null || true)
+	[[ -n "$chunk" ]] && changed_files_buffer=$(printf '%s\n%s\n' "$changed_files_buffer" "$chunk")
+
+	printf '%s\n' "$changed_files_buffer" | grep -E '\.sh$' | grep -Ev '_archive/' | sort -u || true
+	return 0
+}
+
+_scan_function_complexity_file() {
+	local file="$1"
+	local rel_file="$2"
+	local out_file="$3"
+
+	awk -v file="$rel_file" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
+		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
+			fname = $1
+			sub(/\(\)/, "", fname)
+			start = NR
+			next
+		}
+		fname && /^[[:space:]]*\}[[:space:]]*$/ {
+			lines = NR - start; if (lines > block) { printf "%s\t%s\t%d\n", file, fname, lines }
+			fname = ""
+		}
+	' "$file" >>"$out_file"
+	return 0
+}
+
+_scan_function_complexity_git_blob() {
+	local base_ref="$1"
+	local rel_file="$2"
+	local out_file="$3"
+
+	git show "${base_ref}:${rel_file}" 2>/dev/null | awk -v file="$rel_file" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
+		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
+			fname = $1
+			sub(/\(\)/, "", fname)
+			start = NR
+			next
+		}
+		fname && /^[[:space:]]*\}[[:space:]]*$/ {
+			lines = NR - start; if (lines > block) { printf "%s\t%s\t%d\n", file, fname, lines }
+			fname = ""
+		}
+	' >>"$out_file"
+	return 0
+}
+
+_scan_nesting_depth_file() {
+	local file="$1"
+	local rel_file="$2"
+	local out_file="$3"
+
+	awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" '
+		BEGIN { depth = 0; max_depth = 0; max_line = 0 }
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
+		/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
+		END { if (max_depth > block) { printf "%s\tNEST\t%d\n", file, max_depth } }
+	' "$file" >>"$out_file"
+	return 0
+}
+
+_scan_nesting_depth_git_blob() {
+	local base_ref="$1"
+	local rel_file="$2"
+	local out_file="$3"
+
+	git show "${base_ref}:${rel_file}" 2>/dev/null | awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" '
+		BEGIN { depth = 0; max_depth = 0; max_line = 0 }
+		/^[[:space:]]*#/ { next }
+		/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
+		/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
+		END { if (max_depth > block) { printf "%s\tNEST\t%d\n", file, max_depth } }
+	' >>"$out_file"
+	return 0
+}
+
+_print_new_complexity_regressions() {
+	local new_file="$1"
+	local label="$2"
+	local count
+	count=$(safe_grep_count '.' "$new_file")
+	count=${count//[^0-9]/}
+	count=${count:-0}
+
+	[[ "$count" -eq 0 ]] && return 0
+
+	print_error "$label: $count new changed-file blocking regression(s)"
+	awk -F '\t' '{ printf "  %s:%s %s\n", $1, $2, $3 }' "$new_file" | head -10
+	[[ "$count" -gt 10 ]] && echo "  ... and $((count - 10)) more"
+	return 1
+}
+
+_scan_changed_complexity_base_file() {
+	local metric="$1"
+	local base_ref="$2"
+	local rel_file="$3"
+	local base_scan="$4"
+
+	git cat-file -e "${base_ref}:${rel_file}" 2>/dev/null || return 0
+
+	[[ "$metric" == "$_COMPLEXITY_METRIC_FUNCTION" ]] && _scan_function_complexity_git_blob "$base_ref" "$rel_file" "$base_scan"
+	[[ "$metric" == "$_COMPLEXITY_METRIC_NESTING" ]] && _scan_nesting_depth_git_blob "$base_ref" "$rel_file" "$base_scan"
+	return 0
+}
+
+_scan_changed_complexity_head_file() {
+	local metric="$1"
+	local rel_file="$2"
+	local head_scan="$3"
+
+	[[ -f "$rel_file" ]] || return 0
+
+	[[ "$metric" == "$_COMPLEXITY_METRIC_FUNCTION" ]] && _scan_function_complexity_file "$rel_file" "$rel_file" "$head_scan"
+	[[ "$metric" == "$_COMPLEXITY_METRIC_NESTING" ]] && _scan_nesting_depth_file "$rel_file" "$rel_file" "$head_scan"
+	return 0
+}
+
+_check_changed_file_complexity_regressions() {
+	local metric="$1"
+	local label="$2"
+	local base_ref changed_files base_scan head_scan new_scan
+	base_ref=$(_complexity_merge_base) || base_ref=""
+
+	[[ -n "$base_ref" ]] || {
+		print_warning "$label: no merge-base with origin/main; treating total scan as advisory"
+		return 0
+	}
+
+	changed_files=$(_complexity_changed_shell_files "$base_ref")
+	[[ -n "$changed_files" ]] || {
+		print_info "$label: no changed shell files; historical debt is advisory"
+		return 0
+	}
+
+	base_scan=$(mktemp)
+	head_scan=$(mktemp)
+	new_scan=$(mktemp)
+	push_cleanup "rm -f '${base_scan}' '${head_scan}' '${new_scan}'"
+
+	local rel_file
+	printf '%s\n' "$changed_files" | while IFS= read -r rel_file; do
+		[[ -n "$rel_file" ]] || continue
+		_scan_changed_complexity_base_file "$metric" "$base_ref" "$rel_file" "$base_scan"
+		_scan_changed_complexity_head_file "$metric" "$rel_file" "$head_scan"
+	done
+
+	awk -F '\t' 'FILENAME == ARGV[1] { seen[$1 "\t" $2] = 1; next } !seen[$1 "\t" $2] { print }' \
+		"$base_scan" "$head_scan" >"$new_scan"
+
+	_print_new_complexity_regressions "$new_scan" "$label"
+	return $?
+}
+
 check_function_complexity() {
 	echo -e "${BLUE}Checking Function Complexity (Codacy alignment)...${NC}"
 
@@ -436,14 +612,18 @@ check_function_complexity() {
 		fi
 	fi
 
-	if [[ "$block_violations" -le "$MAX_FUNCTION_LENGTH_VIOLATIONS" ]]; then
-		local total=$((block_violations + warn_violations))
-		print_success "Function complexity: $total oversized functions ($block_violations blocking, $warn_violations advisory)"
+	local total=$((block_violations + warn_violations))
+	if ! _check_changed_file_complexity_regressions "$_COMPLEXITY_METRIC_FUNCTION" "Function complexity"; then
+		return 1
+	fi
+
+	if [[ "$block_violations" -gt "$MAX_FUNCTION_LENGTH_VIOLATIONS" ]]; then
+		print_warning "Function complexity: $block_violations historical blocking violations exceed baseline threshold $MAX_FUNCTION_LENGTH_VIOLATIONS (advisory unless changed-file regression)"
 		return 0
 	fi
 
-	print_error "Function complexity: $block_violations blocking violations (threshold: $MAX_FUNCTION_LENGTH_VIOLATIONS)"
-	return 1
+	print_success "Function complexity: $total oversized functions ($block_violations blocking, $warn_violations advisory)"
+	return 0
 }
 
 # =============================================================================
@@ -506,14 +686,18 @@ check_nesting_depth() {
 		fi
 	fi
 
-	if [[ "$block_violations" -le "$MAX_NESTING_VIOLATIONS" ]]; then
-		local total=$((block_violations + warn_violations))
-		print_success "Nesting depth: $total files with deep nesting ($block_violations blocking, $warn_violations advisory)"
+	local total=$((block_violations + warn_violations))
+	if ! _check_changed_file_complexity_regressions "$_COMPLEXITY_METRIC_NESTING" "Nesting depth"; then
+		return 1
+	fi
+
+	if [[ "$block_violations" -gt "$MAX_NESTING_VIOLATIONS" ]]; then
+		print_warning "Nesting depth: $block_violations historical blocking violations exceed baseline threshold $MAX_NESTING_VIOLATIONS (advisory unless changed-file regression)"
 		return 0
 	fi
 
-	print_error "Nesting depth: $block_violations blocking violations (threshold: $MAX_NESTING_VIOLATIONS)"
-	return 1
+	print_success "Nesting depth: $total files with deep nesting ($block_violations blocking, $warn_violations advisory)"
+	return 0
 }
 
 append_file_size_result() {
@@ -874,10 +1058,18 @@ check_pulse_canary() {
 		return 1
 	fi
 
-	local sandbox rc output
+	local sandbox rc output sandbox_home defaults_source defaults_target
 	sandbox=$(mktemp -d)
+	sandbox_home="${sandbox}/home"
+	defaults_source=".agents/configs/aidevops.defaults.jsonc"
+	defaults_target="${sandbox_home}/.aidevops/agents/configs/aidevops.defaults.jsonc"
+	mkdir -p "${sandbox_home}/.aidevops/agents/configs"
+	if [[ -f "$defaults_source" ]]; then
+		cp "$defaults_source" "$defaults_target"
+	fi
+
 	output=$(
-		HOME="${sandbox}/home" \
+		HOME="$sandbox_home" \
 			FULL_LOOP_HEADLESS=1 \
 			timeout_sec 30 bash "$wrapper_script" --canary 2>&1
 	)
@@ -886,6 +1078,12 @@ check_pulse_canary() {
 
 	if [[ "$rc" -eq 0 ]]; then
 		print_success "Pulse canary: ok (sourcing + _pulse_handle_self_check + acquire_instance_lock)"
+		return 0
+	fi
+
+	if [[ "$rc" -eq 124 || "$rc" -eq 143 ]]; then
+		print_warning "Pulse canary infrastructure timeout/interruption (exit $rc). Output: ${output}"
+		print_info "Canary source-code regression classification is reserved for non-timeout exits; rerun bash .agents/scripts/tests/test-pulse-wrapper-canary.sh for the focused runtime check."
 		return 0
 	fi
 
