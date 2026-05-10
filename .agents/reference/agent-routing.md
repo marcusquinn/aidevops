@@ -23,11 +23,13 @@ Full index: `subagent-index.toon`.
 
 | Agent | Trigger words | Use for |
 |-------|---------------|---------|
+| Aidevops | aidevops, framework, setup, config, troubleshooting, MCP, agent, skill | Framework setup, configuration, troubleshooting, extension, releases |
 | Build+ | implement, fix, refactor, bug, CI, tests, PR | Code: features, bug fixes, refactors, CI, PRs (default) |
 | Automate | schedule, cron, dispatch, pulse, monitoring, routine | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
 | SEO | SEO, ranking, keyword, schema, GSC, sitemap, backlinks | SEO audits, keyword research, GSC, schema markup |
 | Content | blog, video, script, social, newsletter, audio, image | Media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
 | Marketing-Sales | ads, CRO, email campaign, CRM, copy, outreach, funnel | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
+| Product | product, PRD, roadmap, validation, onboarding, monetisation, growth, analytics, UX | Product management, requirements, validation, onboarding, monetisation, growth, UI/UX, analytics |
 | Business | company ops, finance, invoice, receipts, strategy, runners | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
 | Legal | legal, compliance, privacy policy, terms, contract, GDPR | Compliance, terms of service, privacy policy |
 | Research | research, compare, market, competitor, technical analysis | Tech research, competitive analysis, market research |

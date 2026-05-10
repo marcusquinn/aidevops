@@ -34,6 +34,17 @@ Hand-fix: `"tools": {}` (not `[]`), `"type": "local"|"remote"`, `"tool_name": tr
 5. **Guide service-by-service setup**: purpose → credential source → setup command → verification
 6. **Per-repo platform setup**: after `gh auth login` succeeds, mention `/setup-git` for per-repo secrets (SYNC_PAT for issue-sync, etc.) — see "Scope" note below.
 
+## Outcome Examples
+
+- **Build and maintain software**: features, bugs, refactors, tests, PRs, releases, CI repair.
+- **Operate infrastructure**: hosting, DNS, Cloudflare, Proxmox, deployment, monitoring, security scans.
+- **Grow products**: PRDs, validation, onboarding, monetisation, analytics, UI direction, growth loops.
+- **Run business workflows**: invoices, receipts, finance reviews, legal/privacy docs, campaigns, outreach, SEO.
+- **Create and distribute content**: blogs, social, newsletters, video, voice, screenshots, product demos.
+- **Manage personal productivity**: calendar, reminders, notes, contacts, recurring routines.
+
+Discovery prompts: `/skills recommend "TASK"`, `/skills browse CATEGORY`, or ask "what aidevops capability should handle this?".
+
 ## Scope: Per-Account vs Per-Repo
 
 `/onboarding` (this wizard) handles **per-account** setup — credentials and tooling that apply globally to a user or workstation:
@@ -121,8 +132,8 @@ chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 ## Agents & Commands
 
 - **Layers**: Main agents (Tab) → subagents (`@name`) → commands (`/name`)
-- **Main**: `Build+`, `SEO`, `WordPress` | **Init**: `cd ~/your-project && aidevops init`
-- **Subagents**: `@hetzner`, `@cloudflare`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@code-standards`, `@wp-dev`
+- **Main**: `Build+`, `Automate`, `Aidevops`, `Business`, `Content`, `Health`, `Legal`, `Marketing-Sales`, `Product`, `Research`, `SEO` | **Init**: `cd ~/your-project && aidevops init`
+- **Subagents**: `@hetzner`, `@cloudflare`, `@cloudron`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@code-standards`, `@wp-dev`, `@calendar`
 - **Commands**: `/create-prd`, `/generate-tasks`, `/feature`, `/bugfix`, `/hotfix`, `/pr`, `/preflight`, `/release`, `/linters-local`, `/keyword-research`
 
 ## Repo Sync & Orchestration

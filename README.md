@@ -3,7 +3,7 @@
 
 # AI DevOps Framework
 
-**[aidevops.sh](https://aidevops.sh)** — An [OpenCode](https://opencode.ai/) plugin and AI operations platform for launching and managing development, business, marketing, and creative projects. 13 specialist AI agents handle the automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
+**[aidevops.sh](https://aidevops.sh)** — An [OpenCode](https://opencode.ai/) plugin and AI operations platform for launching and managing development, business, marketing, and creative projects. 11 primary agents handle automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
 
 > **Recommended setup:** [OpenCode](https://opencode.ai/) + OpenAI models. GPT-5.5 is the preferred high-capability model for complex agent work; GPT-5.4 mini is the preferred fast, lower-cost model for triage and routine implementation. Claude models (Anthropic) remain fully supported, and other model providers are evaluated from time to time as their quality, latency, and cost profiles change.
 
@@ -18,7 +18,7 @@ Founded by [Marcus Quinn](https://github.com/marcusquinn) on 9th November 2025 t
 **Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built on these principles:
 
 - **Autonomous orchestration** - An AI supervisor runs every 2 minutes, dispatching parallel workers, merging PRs, detecting stuck processes, and advancing multi-day missions — no human babysitting required
-- **Multi-domain agents** - 13 specialist agents (code, automation, SEO, marketing, content, legal, sales, research, video, business, accounts, social media, health) with 900+ subagents loaded on demand
+- **Multi-domain agents** - 11 primary agents covering code, automation, product, SEO, marketing/sales, content/video/social, legal, research, business/accounts, health, and framework operations with 900+ subagents loaded on demand
 - **Multi-model safety** - High-stakes operations (force push, production deploy, data migration) are verified by a second cross-provider model before execution — different providers have different failure modes, so correlated hallucinations are rare
 - **Resource efficiency** - Cost-aware model routing across OpenAI, Anthropic, Gemini, Cursor, and local models; project-type bundles auto-configure quality gates and model tiers, with budget tracking and burn-rate analysis
 - **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
@@ -40,7 +40,7 @@ The result: an AI operations platform that manages projects across every busines
 **What makes it different:**
 
 - **Autonomous supervisor** - AI pulse runs every 2 minutes: merges ready PRs, dispatches workers, kills stuck processes, advances missions, triages quality findings — no human in the loop
-- **Cross-domain intelligence** - 13 agents spanning code, automation, business, marketing, legal, sales, content, video, research, SEO, social media, health, and accounts — each with domain expertise and specialist subagents
+- **Cross-domain intelligence** - 11 primary agents spanning code, automation, product, business, marketing/sales, legal, content/video/social, research, SEO, health, and framework operations — each with domain expertise and specialist subagents
 - **Multi-model safety** - Destructive operations verified by a second AI model from a different provider before execution
 - **30+ service integrations** - Hosting, Git platforms, DNS, security, monitoring, deployment, payments, communications
 - **Mission orchestration** - Multi-day autonomous projects broken into milestones with validation, budget tracking, and automatic advancement
@@ -113,10 +113,18 @@ The result: an AI operations platform that manages projects across every busines
 
 ### Agent Structure
 
-- 13 primary agents (Build+, Automate, SEO, Marketing, etc.) with specialist @subagents on demand
+- 11 primary agents (Build+, Automate, Product, SEO, Marketing-Sales, etc.) with specialist @subagents on demand
 - 900+ subagent markdown files organized by domain
 - 1,200+ helper scripts in `.agents/scripts/`
 - 90+ slash commands and workflow guides for common operations
+
+### What You Can Ask aidevops To Do
+
+- Build, fix, review, release, and maintain software with worktrees, PRs, tests, and quality gates.
+- Run infrastructure, hosting, DNS, monitoring, security, and deployment workflows.
+- Plan products, PRDs, onboarding, monetisation, growth, analytics, and UI direction.
+- Operate business, finance, receipts, invoices, marketing, outreach, SEO, content, video, and personal-productivity routines.
+- Discover the right capability with `/skills recommend "TASK"`, `/onboarding`, or the OpenCode agent picker.
 
 <!-- AI-CONTEXT-END -->
 
@@ -1817,7 +1825,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 13 primary agents, 900+ subagents, and 1,200+ helper scripts.
+This installs the complete framework: 11 primary agents, 900+ subagents, and 1,200+ helper scripts.
 
 ### Importing External Skills
 
@@ -2641,7 +2649,7 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 13 primary agents
+│   ├── *.md                       # 11 primary agents
 │   ├── scripts/                   # 1,200+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
