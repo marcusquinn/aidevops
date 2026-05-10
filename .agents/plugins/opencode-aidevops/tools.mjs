@@ -57,6 +57,30 @@ function isSafeCommand(command) {
 }
 
 /**
+ * Validate memory tool arguments before invoking the shell helper.
+ * @param {object} args
+ * @returns {string}
+ */
+function getMemoryArgsError(args) {
+  const action = String(args.action || "recall");
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+  const content = typeof args.content === "string" ? args.content.trim() : "";
+  let error = "";
+
+  if (!args.action && !query && !content) {
+    error = 'Error: aidevops_memory requires a complete payload. Use {action:"recall", query:"<keywords>", limit:"5"} or {action:"store", content:"<lesson>", confidence:"medium"}; do not use empty calls as placeholders.';
+  } else if (action === "recall" && !query) {
+    error = 'Error: query is required for memory recall. Use {action:"recall", query:"<keywords>", limit:"5"}.';
+  } else if (action === "store" && !content) {
+    error = 'Error: content is required to store a memory. Use {action:"store", content:"<lesson>", confidence:"medium"}; do not store placeholders.';
+  } else if (action !== "recall" && action !== "store") {
+    error = `Unknown action: ${action}. Use "recall" or "store".`;
+  }
+
+  return error;
+}
+
+/**
  * Create the aidevops CLI tool.
  * @param {function} run - Shell command runner
  * @returns {object} Tool definition
@@ -110,17 +134,15 @@ function createMemoryTool(scriptsDir, run) {
         return "Memory system not available (memory-helper.sh not found)";
       }
 
-      if (!args.action && !args.query && !args.content) {
-        return 'Error: aidevops_memory requires a complete payload. Use {action:"recall", query:"<keywords>", limit:"5"} or {action:"store", content:"<lesson>", confidence:"medium"}; do not use empty calls as placeholders.';
+      const validationError = getMemoryArgsError(args);
+      if (validationError) {
+        return validationError;
       }
 
       const action = String(args.action || "recall");
 
       if (action === "recall") {
-        const query = typeof args.query === "string" ? args.query.trim() : "";
-        if (!query) {
-          return 'Error: query is required for memory recall. Use {action:"recall", query:"<keywords>", limit:"5"}.';
-        }
+        const query = args.query.trim();
         const limit = args.limit === undefined ? "5" : String(args.limit);
         const cmd = `bash "${memoryHelper}" recall ${shellEscape(query)} --limit ${shellEscape(limit)}`;
         const result = run(cmd, 10000);
@@ -128,17 +150,14 @@ function createMemoryTool(scriptsDir, run) {
       }
 
       if (action === "store") {
-        const content = typeof args.content === "string" ? args.content.trim() : "";
-        if (!content) {
-          return 'Error: content is required to store a memory. Use {action:"store", content:"<lesson>", confidence:"medium"}; do not store placeholders.';
-        }
+        const content = args.content.trim();
         const confidence = args.confidence || "medium";
         const cmd = `bash "${memoryHelper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`;
         const result = run(cmd, 10000);
         return result || "Memory stored successfully.";
       }
 
-      return `Unknown action: ${action}. Use "recall" or "store".`;
+      return validationError;
     },
   });
 }
