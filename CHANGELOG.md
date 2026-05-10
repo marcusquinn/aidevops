@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.26] - 2026-05-10
+
+### Changed
+
+- Tests: cover function complexity name normalization (#23362)
+- Documentation: refine Swift Xcode workflow examples (#23360)
+- Documentation: address self-improvement review feedback (#23355)
+- validate screenshot output paths (#23354)
+- Tests: cover Tabby OpenCode repair edge cases (#23353)
+- Tests: cover terminal title control range (#23350)
+- Performance: cache dashboard slug candidates (#23351)
+- cover sanitized Tabby title sequences (#23349)
+- collapse terminal title control runs (#23347)
+- Refactor: simplify terminal title sanitization (#23346)
+- Documentation: harden onboarding video asset path guidance (#23345)
+- Documentation: align QuickFile MCP placeholder paths (#23342)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- tighten skills helper temp cleanup (#23359)
+- clarify gh body-file cleanup ownership (#23358)
+- harden video-use skill guidance (#23357)
+- harden body-file signature test assertion (#23356)
+- satisfy biome for terminal title sanitizer (#23348)
+- harden Tabby OpenCode profile repair (#23344)
+- harden canonical guard default branch detection (#23343)
+- align quickfile MCP template paths (#23341)
+- improve skills search matching (#23340)
+- harden body-file auto-signature test (#23337)
+- normalize function complexity names (#23334)
+- clean up signed gh body-file temp copies (#23326)
+
 ## [3.15.25] - 2026-05-10
 
 ### Fixed
