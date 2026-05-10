@@ -47,7 +47,7 @@ Ask when browser access, target state, dimensions, or privacy expectations are u
 3. Set deterministic viewport, theme, timezone, locale, feature flags, and seeded data where possible.
 4. Capture the smallest useful region: selector screenshot, component screenshot, modal, card, chart, or window. Capture full viewport only when the composition requires it.
 5. Avoid `fullPage: true` for AI review or draft inspection; use bounded captures and resize large images before analysis.
-6. Save raw captures under `screenshots/raw/` or the user's requested asset path, then compose final images under `screenshots/final/` or the requested output path.
+6. Save raw captures under `screenshots/raw/` or the user's requested asset path, then compose final images under `screenshots/final/` or the requested output path. For any user-provided destination, resolve the real path after creating or checking the parent directory and confirm it remains within the project or another explicitly allowed asset directory; this prevents path traversal through `..` segments or symlinks.
 
 ## Composition Rules
 
