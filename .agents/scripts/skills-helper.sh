@@ -83,6 +83,39 @@ _print_skill_entry() {
 	return 0
 }
 
+_is_search_stopword() {
+	local word="$1"
+
+	case "$word" in
+	a | an | and | are | as | at | be | by | can | do | does | for | from | have | how | i | in | into | is | it | my | of | on | or | our | the | their | this | to | use | using | what | with | you | your)
+		return 0
+		;;
+	agent | agents | aidevops | capability | capabilities | external | framework | model | models | review | reviews | tool | tools)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_query_terms() {
+	local query_lower="$1"
+	local raw_word
+
+	while IFS= read -r raw_word; do
+		if [[ -z "$raw_word" ]]; then
+			continue
+		fi
+		if [[ ${#raw_word} -lt 3 ]]; then
+			continue
+		fi
+		if _is_search_stopword "$raw_word"; then
+			continue
+		fi
+		printf '%s\n' "$raw_word"
+	done < <(printf '%s\n' "$query_lower" | tr -cs '[:alnum:]_-' '\n')
+	return 0
+}
+
 # Find a skill file by name.  Sets the caller's skill_file variable via stdout.
 # Prints the matched path, or empty string if not found.
 # Pass allow_partial=1 to fall back to partial-name matches.
@@ -121,14 +154,37 @@ _find_skill_file() {
 }
 
 # Scan AGENTS_DIR for skills matching query_lower; emit JSON entries or display lines.
-# Arguments: query_lower json_output
-# Outputs: increments found count via stdout lines; caller counts them.
+# Arguments: query_lower json_output [count_file] [max_results]
 _search_local_skills() {
 	local query_lower="$1"
 	local json_output="$2"
+	local count_file="${3:-}"
+	local max_results="${4:-0}"
 
 	local found=0
+	local printed=0
 	local results=()
+	local query_terms=()
+	local term
+	while IFS= read -r term; do
+		query_terms+=("$term")
+	done < <(_query_terms "$query_lower")
+
+	if [[ ${#query_terms[@]} -eq 0 ]]; then
+		if [[ "$json_output" == true ]]; then
+			printf '0\t'
+		elif [[ -n "$count_file" ]]; then
+			printf '0\n' >"$count_file"
+		else
+			printf '0\n'
+		fi
+		return 0
+	fi
+
+	local required_matches=1
+	if [[ ${#query_terms[@]} -ge 2 ]]; then
+		required_matches=2
+	fi
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -151,16 +207,15 @@ _search_local_skills() {
 		local match_lower
 		match_lower=$(echo "$match_text" | tr '[:upper:]' '[:lower:]')
 
-		local matched=false
+		local match_score=0
 		local word
-		for word in $query_lower; do
+		for word in "${query_terms[@]+"${query_terms[@]}"}"; do
 			if [[ "$match_lower" == *"$word"* ]]; then
-				matched=true
-				break
+				match_score=$((match_score + 1))
 			fi
 		done
 
-		if [[ "$matched" == true ]]; then
+		if [[ "$match_score" -ge "$required_matches" ]]; then
 			((++found))
 			local is_imported="false"
 			if [[ "$filename" == *-skill ]]; then
@@ -170,7 +225,10 @@ _search_local_skills() {
 			if [[ "$json_output" == true ]]; then
 				results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"${desc//\"/\\\"}\",\"imported\":$is_imported,\"path\":\"$rel_path\"}")
 			else
-				_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+				if [[ "$max_results" -eq 0 || "$printed" -lt "$max_results" ]]; then
+					_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+					printed=$((printed + 1))
+				fi
 			fi
 		fi
 	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
@@ -180,6 +238,11 @@ _search_local_skills() {
 		results_json=$(printf '%s,' "${results[@]}" || true)
 		results_json="${results_json%,}"
 		printf '%s\t%s' "$found" "$results_json"
+	elif [[ -n "$count_file" ]]; then
+		printf '%s\n' "$found" >"$count_file"
+		if [[ "$max_results" -gt 0 && "$found" -gt "$printed" ]]; then
+			printf '  ... %s more; narrow the query or browse a category.\n' "$((found - printed))"
+		fi
 	else
 		echo "$found"
 	fi
@@ -333,10 +396,30 @@ ranking=seo
 deploy=tools/deployment
 vercel=tools/deployment
 coolify=tools/deployment
+cloudron=tools/deployment
 docker=tools/containers
 container=tools/containers
 wordpress=tools/wordpress
 wp=tools/wordpress
+agent=tools/build-agent
+subagent=tools/build-agent
+catalog=reference
+catalogue=reference
+routing=reference
+route=reference
+memory=reference
+architecture=tools/architecture
+litellm=tools/ai-assistants
+gateway=services/hosting
+model=tools/ai-assistants
+product=product
+onboarding=product
+monetisation=product
+growth=product
+business=business
+finance=business
+calendar=tools/productivity
+reminder=tools/productivity
 git=tools/git
 github=tools/git
 pr=tools/git
@@ -401,11 +484,14 @@ receipt=accounts"
 }
 
 # List skills in a specific category (used by cmd_browse and cmd_recommend).
-# Arguments: category
+# Arguments: category [count_file] [max_results]
 _list_skills_in_category() {
 	local category="$1"
+	local count_file="${2:-}"
+	local max_results="${3:-0}"
 
 	local found=0
+	local printed=0
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
 
@@ -426,12 +512,22 @@ _list_skills_in_category() {
 			if [[ "$filename" == *-skill ]]; then
 				is_imported="true"
 			fi
-			_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+			if [[ "$max_results" -eq 0 || "$printed" -lt "$max_results" ]]; then
+				_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+				printed=$((printed + 1))
+			fi
 			((++found))
 		fi
 	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
-	echo "$found"
+	if [[ -n "$count_file" ]]; then
+		printf '%s\n' "$found" >"$count_file"
+		if [[ "$max_results" -gt 0 && "$found" -gt "$printed" ]]; then
+			printf '    ... %s more; run skills-helper.sh browse %s\n' "$((found - printed))" "$category"
+		fi
+	else
+		echo "$found"
+	fi
 	return 0
 }
 
@@ -673,17 +769,21 @@ cmd_search() {
 	local query_lower
 	query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
 
-	local scan_result
-	scan_result=$(_search_local_skills "$query_lower" "$json_output")
-
 	if [[ "$json_output" == true ]]; then
+		local scan_result
+		scan_result=$(_search_local_skills "$query_lower" "$json_output")
 		local found results_json
 		found="${scan_result%%	*}"
 		results_json="${scan_result#*	}"
 		echo "{\"query\":\"${query//\"/\\\"}\",\"count\":$found,\"results\":[$results_json]}"
 	else
-		local found="$scan_result"
+		local count_file found
+		count_file=$(mktemp)
 		echo ""
+		_search_local_skills "$query_lower" "$json_output" "$count_file" "50"
+		found=$(<"$count_file")
+		rm -f "$count_file"
+		[[ "$found" =~ ^[0-9]+$ ]] || found=0
 		if [[ "$found" -eq 0 ]]; then
 			log_warning "No local skills found matching '$query'"
 			echo ""
@@ -720,8 +820,12 @@ cmd_browse() {
 	echo
 	echo ""
 
-	local found
-	found=$(_list_skills_in_category "$category")
+	local count_file found
+	count_file=$(mktemp)
+	_list_skills_in_category "$category" "$count_file"
+	found=$(<"$count_file")
+	rm -f "$count_file"
+	[[ "$found" =~ ^[0-9]+$ ]] || found=0
 
 	echo ""
 	if [[ "$found" -eq 0 ]]; then
@@ -1052,8 +1156,12 @@ cmd_recommend() {
 	for cat in "${matched_categories[@]}"; do
 		echo -e "  ${BOLD}$cat:${NC}"
 
-		local found_in_cat
-		found_in_cat=$(_list_skills_in_category "$cat")
+		local count_file found_in_cat
+		count_file=$(mktemp)
+		_list_skills_in_category "$cat" "$count_file" "12"
+		found_in_cat=$(<"$count_file")
+		rm -f "$count_file"
+		[[ "$found_in_cat" =~ ^[0-9]+$ ]] || found_in_cat=0
 		total_found=$((total_found + found_in_cat))
 
 		if [[ "$found_in_cat" -eq 0 ]]; then

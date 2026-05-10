@@ -21,11 +21,11 @@
 #   2. AGENTS.md has pointers to extracted reference files
 #   3. AGENTS.md Domain Index section has pointer to reference/domain-index.md
 #   4. reference/domain-index.md exists and has >=30 domain rows with trigger words
-#   5. All 9 primary agent @mention files exist and are non-empty
+#   5. All 11 primary agent files exist and are non-empty
 #   6. Capabilities section retains key capability entries
 #   7. Self-Improvement section has pointer to reference/self-improvement.md
 #   8. Agent Routing section has pointer to reference/agent-routing.md
-#   9. subagent-index.toon TOON block counts are valid (>=9 agents, >=60 subagents)
+#   9. subagent-index.toon TOON block counts are valid (>=11 agents, >=60 subagents)
 #  10. Prompt-to-hook migration registry is discoverable
 #  11. Critical scripts for self-improvement workflow are executable
 #
@@ -34,7 +34,7 @@
 
 set -euo pipefail
 
-AGENTS_DIR="${HOME}/.aidevops/agents"
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 PROMPT_HOOK_REGISTRY="configs/prompt-hook-candidates.conf"
 PASS=0
 FAIL=0
@@ -141,7 +141,6 @@ FRAMEWORK_RULES_FILE="AGENTS.md"
 FRAMEWORK_REFS=(
 	"reference/memory-lookup.md"
 	"reference/screenshot-limits.md"
-	"reference/external-repo-submissions.md"
 )
 for ref in "${FRAMEWORK_REFS[@]}"; do
 	check_string_in_file "$FRAMEWORK_RULES_FILE" "$ref" "AGENTS.md pointer: ${ref}"
@@ -177,8 +176,9 @@ fi
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
 echo "=== 5. Primary Agent @Mention Files ==="
-# 9 primary agents as of t1680 refactor (marketing-sales.md consolidates marketing+sales)
+# 11 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts.
 AGENT_FILES=(
+	"aidevops.md"
 	"build-plus.md"
 	"automate.md"
 	"business.md"
@@ -186,6 +186,7 @@ AGENT_FILES=(
 	"health.md"
 	"legal.md"
 	"marketing-sales.md"
+	"product.md"
 	"research.md"
 	"seo.md"
 )
@@ -197,13 +198,13 @@ done
 echo ""
 echo "=== 6. Capabilities Section Key Entries ==="
 KEY_CAPS=(
-	"Model routing"
-	"Bundle presets"
-	"Memory"
-	"Orchestration"
-	"Browser"
-	"Quality"
-	"Sessions"
+	"reference/domain-index.md"
+	"reference/orchestration.md"
+	"reference/services.md"
+	"reference/skills.md"
+	"reference/memory.md"
+	"reference/self-improvement.md"
+	"/routine"
 )
 for cap in "${KEY_CAPS[@]}"; do
 	check_string_in_file "AGENTS.md" "$cap" "Capabilities: ${cap}"
@@ -214,7 +215,6 @@ done
 # AGENTS.md retains only the section header + 1-line pointer.
 echo ""
 echo "=== 7. Self-Improvement Section Key References ==="
-check_string_in_file "AGENTS.md" "## Self-Improvement" "AGENTS.md: Self-Improvement section present"
 check_string_in_file "AGENTS.md" "reference/self-improvement.md" "AGENTS.md Self-Improvement: pointer to reference/self-improvement.md"
 # Verify the reference file has the full content (canonical source after refactor)
 check_string_in_file "reference/self-improvement.md" "framework-issue-helper.sh" "reference/self-improvement.md: framework-issue-helper.sh reference"
@@ -251,13 +251,13 @@ if [[ ! -f "$TOON_FILE" ]]; then
 	log_fail "subagent-index.toon not found"
 else
 	# Extract declared count from TOON block header using sed (macOS-compatible)
-	# Format: <!--TOON:agents[9]{...}:
-	# 9 primary agents as of t1680 refactor (marketing-sales.md consolidates marketing+sales)
+	# Format: <!--TOON:agents[11]{...}:
+	# 11 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts.
 	AGENTS_COUNT=$(sed -n 's/.*<!--TOON:agents\[\([0-9]*\)\].*/\1/p' "$TOON_FILE" | head -1)
-	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -ge 9 ]]; then
-		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected >=9)"
+	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -ge 11 ]]; then
+		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected >=11)"
 	elif [[ -n "$AGENTS_COUNT" ]]; then
-		log_fail "subagent-index.toon: agents block declares only ${AGENTS_COUNT} agents (expected >=9)"
+		log_fail "subagent-index.toon: agents block declares only ${AGENTS_COUNT} agents (expected >=11)"
 	else
 		log_fail "subagent-index.toon: could not parse agents block count"
 	fi

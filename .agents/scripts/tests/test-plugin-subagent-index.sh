@@ -71,7 +71,7 @@ teardown() {
 test_plugin_namespace_indexed() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
+	output=$(HOME="$TEST_HOME" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
 	status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "generate includes plugin namespace" 1 "$output"
@@ -96,7 +96,7 @@ test_plugin_namespace_indexed() {
 test_check_validates_plugin_cardinality() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" check 2>&1)
+	output=$(HOME="$TEST_HOME" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" check 2>&1)
 	status=$?
 	if [[ "$status" -eq 0 && "$output" == *"Declared plugin rows: 1"* && "$output" == *"Actual plugin rows: 1"* ]]; then
 		print_result "check validates plugin cardinality" 0
