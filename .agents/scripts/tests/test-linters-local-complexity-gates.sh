@@ -58,9 +58,14 @@ make_sh_function() {
 	local file="$1"
 	local function_name="$2"
 	local lines="$3"
+	local brace_style="${4:-spaced}"
 	local i=0
 
-	printf '%s() {\n' "$function_name" >>"$file"
+	if [[ "$brace_style" == "compact" ]]; then
+		printf '%s(){\n' "$function_name" >>"$file"
+	else
+		printf '%s() {\n' "$function_name" >>"$file"
+	fi
 	while [[ "$i" -lt "$lines" ]]; do
 		printf '  : # line %d\n' "$i" >>"$file"
 		i=$((i + 1))
@@ -135,6 +140,29 @@ test_historical_function_debt_is_advisory() {
 	return 0
 }
 
+test_changed_function_spacing_stays_advisory() {
+	setup_repo
+	printf '#!/usr/bin/env bash\n' >"${TEST_ROOT}/a.sh"
+	make_sh_function "${TEST_ROOT}/a.sh" "big_same" 105
+	mark_origin_main
+	printf '#!/usr/bin/env bash\n' >"${TEST_ROOT}/a.sh"
+	make_sh_function "${TEST_ROOT}/a.sh" "big_same" 105 "compact"
+	source_linter_analysis
+	local rc=0
+	(
+		cd "$TEST_ROOT" || exit 1
+		ALL_SH_FILES=(a.sh)
+		check_function_complexity >/tmp/linters-local-function-spacing.out 2>&1
+	) || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "changed function spacing remains advisory" 0
+	else
+		print_result "changed function spacing remains advisory" 1 "got exit $rc"
+	fi
+	teardown
+	return 0
+}
+
 test_changed_function_regression_blocks() {
 	setup_repo
 	printf '#!/usr/bin/env bash\n' >"${TEST_ROOT}/a.sh"
@@ -201,6 +229,7 @@ test_changed_nesting_regression_blocks() {
 
 main() {
 	test_historical_function_debt_is_advisory
+	test_changed_function_spacing_stays_advisory
 	test_changed_function_regression_blocks
 	test_historical_nesting_debt_is_advisory
 	test_changed_nesting_regression_blocks
