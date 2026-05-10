@@ -29,7 +29,7 @@ set -euo pipefail
 _sih_dir="${BASH_SOURCE[0]%/*}"
 [[ -f "${_sih_dir}/shared-constants.sh" ]] && source "${_sih_dir}/shared-constants.sh"
 
-AGENTS_DIR="${HOME}/.aidevops/agents"
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 INDEX_FILE="${AGENTS_DIR}/subagent-index.toon"
 CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
 
@@ -220,6 +220,26 @@ cmd_check() {
 		echo "Index not found: ${INDEX_FILE}"
 		echo "$regenerate_hint"
 		return 1
+	fi
+
+	local declared_agent_rows
+	declared_agent_rows=$(sed -n 's/^<!--TOON:agents\[\([0-9][0-9]*\)\]{name,file,purpose,model_tier,triggers}:$/\1/p' "$INDEX_FILE")
+	if [[ -n "$declared_agent_rows" ]]; then
+		local actual_agent_rows
+		actual_agent_rows=$(sed -n '/^<!--TOON:agents\[/,/^-->/p' "$INDEX_FILE" |
+			awk 'BEGIN { in_block = 0; count = 0 }
+				/^<!--TOON:agents\[/ { in_block = 1; next }
+				/^-->/ { if (in_block) { in_block = 0 }; next }
+				{ if (in_block && NF > 0) { count++ } }
+				END { print count }')
+		echo "Declared primary agent rows: ${declared_agent_rows}"
+		echo "Actual primary agent rows: ${actual_agent_rows}"
+		if [[ "$declared_agent_rows" != "$actual_agent_rows" ]]; then
+			echo ""
+			echo "Error: agents TOON header cardinality mismatch (declared ${declared_agent_rows}, actual ${actual_agent_rows})."
+			echo "$regenerate_hint"
+			return 1
+		fi
 	fi
 
 	local declared_rows
