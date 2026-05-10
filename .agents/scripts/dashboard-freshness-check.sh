@@ -284,11 +284,15 @@ _repo_slug_suffixes() {
 _resolve_slug_from_cache_name() {
 	local cache_name="$1"
 	local slug_suffixes="${2:-}"
+	local has_precomputed_suffixes=0
 	local stem
 	local length dashed slug
+	if (( $# >= 2 )); then
+		has_precomputed_suffixes=1
+	fi
 	stem="${cache_name#health-issue-}"
 	[[ -n "$stem" && "$stem" != "$cache_name" ]] || return 0
-	if [[ -z "$slug_suffixes" ]]; then
+	if [[ "$has_precomputed_suffixes" != "1" && -z "$slug_suffixes" ]]; then
 		slug_suffixes="$(_repo_slug_suffixes)"
 	fi
 	while IFS=$'\t' read -r length dashed slug; do

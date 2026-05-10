@@ -489,6 +489,7 @@ if grep -q '^_repo_slug_suffixes()' "$SCANNER" \
 	&& grep -Fq "slug_suffixes=\"\$(_repo_slug_suffixes)\"" "$SCANNER" \
 	&& grep -Fq "_resolve_slug_from_cache_name \"\$slug_raw\" \"\$slug_suffixes\"" "$SCANNER" \
 	&& grep -Fq "local slug_suffixes=\"\${2:-}\"" "$SCANNER" \
+	&& grep -Fq 'if (( $# >= 2 )); then' "$SCANNER" \
 	&& grep -q 'while IFS=.* read -r length dashed slug' "$SCANNER"; then
 	pass "enumeration reuses a precomputed slug suffix list"
 else
