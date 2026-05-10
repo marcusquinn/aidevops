@@ -162,16 +162,27 @@ assert_contains "equals-form body has signature" "<!-- aidevops:sig -->" "$body_
 assert_contains "equals-form body has original content" "No signature here" "$body_val"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 4: --body-file gets footer appended to file
+# Test 4: --body-file gets footer appended to temp copy
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 4: --body-file gets footer appended"
+echo "Test 4: --body-file gets footer appended to temp copy"
 body_file="${TMPDIR_TEST}/test-body.md"
 printf 'Issue body from file' >"$body_file"
 _gh_wrapper_auto_sig --repo "owner/repo" --title "test" --body-file "$body_file"
 file_content=$(<"$body_file")
-assert_contains "file body has signature marker" "<!-- aidevops:sig -->" "$file_content"
-assert_contains "file body has original content" "Issue body from file" "$file_content"
+assert_not_contains "original file is not mutated" "<!-- aidevops:sig -->" "$file_content"
+assert_contains "original file keeps original content" "Issue body from file" "$file_content"
+signed_body_file=""
+for ((i = 0; i < ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}; i++)); do
+	if [[ "${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]}" == "--body-file" ]]; then
+		signed_body_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]}"
+		break
+	fi
+done
+assert_not_contains "wrapper points gh at a temp body file" "$body_file" "$signed_body_file"
+signed_file_content=$(<"$signed_body_file")
+assert_contains "temp body has signature marker" "<!-- aidevops:sig -->" "$signed_file_content"
+assert_contains "temp body has original content" "Issue body from file" "$signed_file_content"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: --body-file with existing signature is NOT modified
@@ -274,20 +285,33 @@ marker_count=$(grep -c 'aidevops:sig' <<<"$captured" || true)
 assert_eq "marker appears exactly once (no double-sign)" "1" "$marker_count"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test 11 (t2393): gh_issue_comment with --body-file appends sig to file
+# Test 11 (t2393): gh_issue_comment with --body-file signs temp copy
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
-echo "Test 11 (t2393): gh_issue_comment --body-file appends sig to file"
+echo "Test 11 (t2393): gh_issue_comment --body-file signs temp copy"
 bf="${TMPDIR_TEST}/issue-body.md"
 printf 'Body from file content' >"$bf"
 : >"$GH_STUB_ARGS_FILE"
 gh_issue_comment 19951 --repo "owner/repo" --body-file "$bf"
 file_content=$(<"$bf")
-assert_contains "file got signature footer" "<!-- aidevops:sig -->" "$file_content"
-assert_contains "file still has original content" "Body from file content" "$file_content"
+assert_not_contains "original file did not get signature footer" "<!-- aidevops:sig -->" "$file_content"
+assert_contains "original file still has original content" "Body from file content" "$file_content"
 captured=$(<"$GH_STUB_ARGS_FILE")
 assert_contains "gh received --body-file flag" "--body-file" "$captured"
-assert_contains "gh received body-file path" "$bf" "$captured"
+assert_not_contains "gh did not receive original body-file path" "$bf" "$captured"
+captured_body_file=""
+while IFS= read -r arg; do
+	if [[ -n "$captured_body_file" ]]; then
+		captured_body_file="$arg"
+		break
+	fi
+	if [[ "$arg" == "--body-file" ]]; then
+		captured_body_file="pending"
+	fi
+done <<<"$captured"
+captured_file_content=$(<"$captured_body_file")
+assert_contains "gh received temp body-file with signature" "<!-- aidevops:sig -->" "$captured_file_content"
+assert_contains "gh received temp body-file with original content" "Body from file content" "$captured_file_content"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 12 (t2393): exit code from gh is propagated through the wrapper
