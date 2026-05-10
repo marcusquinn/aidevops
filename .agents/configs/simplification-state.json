@@ -2562,9 +2562,9 @@
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
-      "at": "2026-05-09T23:10:16Z",
-      "hash": "e2c8b8ca414b0981b2e3f1a9f1dedddb0ee20a82",
-      "passes": 4,
+      "at": "2026-05-10T05:50:05Z",
+      "hash": "5a3d1fe7bf70931d3fc6ccd79fd5c52444d08815",
+      "passes": 5,
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-10T00:39:41Z",
-      "hash": "c23baf724f2ff5b4e2a01e654d605b1ef35c3afa",
-      "passes": 162,
+      "at": "2026-05-10T05:53:33Z",
+      "hash": "cb78564be4818a70290d306ebbdb5ac6a0619ec3",
+      "passes": 163,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-10T00:39:42Z",
-      "hash": "a79103aef46bbd67b2e27bd5192e8783eaec420e",
-      "passes": 158,
+      "at": "2026-05-10T05:53:33Z",
+      "hash": "4b324bd89295c9bbce4846569a2020793e20bf49",
+      "passes": 159,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
