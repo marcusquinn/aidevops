@@ -142,6 +142,11 @@ assertEq(
   "\u001B]0;Issue #123 injected title\u0007",
   terminalTitleSequence("Issue #123\u0007\u001B\n\tinjected\u0000\u007Ftitle"),
 );
+assertEq(
+  "C0 and DEL control runs collapse without touching printable punctuation",
+  "Issue #123 — injected: title",
+  sanitizeTerminalTitle("Issue #123 —\u0000\u0001\u001F\u007Finjected: title"),
+);
 assertEq("empty sanitized title emits no OSC", "", terminalTitleSequence("\n\t"));
 assertEq(
   "TERMINAL_TITLE_ENABLED=false disables title emit",
