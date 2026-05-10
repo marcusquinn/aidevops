@@ -100,7 +100,7 @@ profile = mod.build_profile_yaml('aidevops', '/tmp/aidevops', '#123456', scheme,
 assert \"- '-i'\" not in profile, profile
 assert 'TABBY_AUTORUN: opencode' not in profile, profile
 assert \"- '-l'\" in profile and \"- '-c'\" in profile, profile
-assert 'opencode; exec zsh' in profile, profile
+assert \"- 'opencode; exec zsh'\" in profile, profile
 assert 'env: {}' in profile, profile
 "
 
@@ -170,7 +170,7 @@ config = '''profiles:
       args:
         - '-l'
         - '-c'
-        - opencode; exec zsh
+        - 'opencode; exec zsh'
       env: {}
       cwd: /tmp/aidevops
 '''
@@ -181,7 +181,25 @@ assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
 assert 'opencode; exec zsh' in repaired, repaired
 "
 
-_info "Test 8: sync repairs existing profiles even when no new profile is needed"
+_info "Test 8: comments do not hide broken command-field profiles or env blocks"
+run_python_test "comments around command-field repair handled" "${load_module_code}
+config = '''profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh -l -c 'opencode; exec zsh' # legacy direct command
+      args: []
+      # existing env must be preserved without duplicate
+      env: {}
+      cwd: /tmp/aidevops
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 1, count
+assert 'command: /bin/zsh -l -c' not in repaired, repaired
+assert repaired.count('      env: {}') == 1, repaired
+assert \"- 'opencode; exec zsh'\" in repaired, repaired
+"
+
+_info "Test 9: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 repo_path="${tmp_root}/aidevops"

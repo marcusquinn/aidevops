@@ -126,7 +126,7 @@ def build_profile_yaml(
       args:
         - '-l'
         - '-c'
-        - opencode; exec zsh
+        - 'opencode; exec zsh'
       env: {{}}
       cwd: {cwd}
     terminalColorScheme:
@@ -152,7 +152,31 @@ def build_group_yaml(group_id: str) -> str:
 
 def _normalise_yaml_scalar(value: str) -> str:
     """Return a plain scalar value from a simple YAML string/list item."""
-    return value.strip().strip("'").strip('"')
+    in_single_quote = False
+    in_double_quote = False
+    comment_start = len(value)
+    for index, char in enumerate(value):
+        if char == "'" and not in_double_quote:
+            in_single_quote = not in_single_quote
+        elif char == '"' and not in_single_quote:
+            in_double_quote = not in_double_quote
+        elif char == "#" and not in_single_quote and not in_double_quote:
+            comment_start = index
+            break
+    value = value[:comment_start].strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+        return value[1:-1]
+    return value
+
+
+def _next_option_line(lines: list[str], start: int) -> str:
+    """Return the next non-comment line from ``start`` or an empty string."""
+    while start < len(lines):
+        line = lines[start]
+        if line.strip() and not line.lstrip().startswith("#"):
+            return line
+        start += 1
+    return ""
 
 
 def _parse_inline_args(value: str) -> list[str] | None:
@@ -197,7 +221,7 @@ def _direct_opencode_args_block(args_indent: str, include_env: bool) -> list[str
         f"{args_indent}args:",
         f"{child_indent}- '-l'",
         f"{child_indent}- '-c'",
-        f"{child_indent}- opencode; exec zsh",
+        f"{child_indent}- 'opencode; exec zsh'",
     ]
     if include_env:
         block.append(f"{args_indent}env: {{}}")
@@ -348,7 +372,7 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
         inline_args = _parse_inline_args(match.group("value"))
         if inline_args is not None:
             if pending_command_field_indent == args_indent:
-                next_line = lines[i + 1] if i + 1 < len(lines) else ""
+                next_line = _next_option_line(lines, i + 1)
                 include_env = not _line_is_option_key(
                     next_line, args_indent, "env"
                 ) and not _has_prior_option_key(repaired, args_indent, "env")
@@ -357,7 +381,7 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
                 )
                 pending_command_field_indent = None
             elif _is_broken_opencode_args(inline_args):
-                next_line = lines[i + 1] if i + 1 < len(lines) else ""
+                next_line = _next_option_line(lines, i + 1)
                 include_env = not _line_is_option_key(
                     next_line, args_indent, "env"
                 ) and not _has_prior_option_key(repaired, args_indent, "env")
@@ -385,14 +409,14 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
 
         block_args = _parse_block_args(lines[i + 1 : block_end])
         if pending_command_field_indent == args_indent:
-            next_line = lines[block_end] if block_end < len(lines) else ""
+            next_line = _next_option_line(lines, block_end)
             include_env = not _line_is_option_key(
                 next_line, args_indent, "env"
             ) and not _has_prior_option_key(repaired, args_indent, "env")
             repaired.extend(_direct_opencode_args_block(args_indent, include_env=include_env))
             pending_command_field_indent = None
         elif _is_broken_opencode_args(block_args):
-            next_line = lines[block_end] if block_end < len(lines) else ""
+            next_line = _next_option_line(lines, block_end)
             include_env = not _line_is_option_key(
                 next_line, args_indent, "env"
             ) and not _has_prior_option_key(repaired, args_indent, "env")
