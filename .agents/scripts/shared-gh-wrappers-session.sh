@@ -359,7 +359,9 @@ _gh_wrapper_auto_sig() {
 		return 0
 	fi
 
-	# Handle --body-file case
+	# Handle --body-file case. Do not mutate the caller-owned file: create a
+	# signed temp copy and point argv at it so callers using --body-file get the
+	# same footer behaviour as --body without surprising filesystem side effects.
 	if [[ $body_file_idx -ge 0 && -n "$body_file_val" && -f "$body_file_val" ]]; then
 		local file_content
 		file_content=$(<"$body_file_val") || return 0
@@ -367,7 +369,14 @@ _gh_wrapper_auto_sig() {
 		local sig_footer
 		sig_footer=$("$sig_helper" footer --body "$file_content" 2>/dev/null || echo "")
 		[[ -z "$sig_footer" ]] && return 0
-		printf '%s' "$sig_footer" >>"$body_file_val"
+		local signed_body_file
+		signed_body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-body.XXXXXX") || return 0
+		printf '%s%s' "$file_content" "$sig_footer" >"$signed_body_file" || return 0
+		if [[ "$bf_is_eq" -eq 1 ]]; then
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_file_idx]="--body-file=${signed_body_file}"
+		else
+			_GH_WRAPPER_SIG_MODIFIED_ARGS[body_file_idx + 1]="$signed_body_file"
+		fi
 		return 0
 	fi
 
