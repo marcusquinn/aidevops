@@ -57,7 +57,7 @@ EOF_SKILL
 
 setup_fixture() {
 	TEST_TMP_DIR="$(mktemp -d)"
-	write_skill "services/hosting/ai-gateway.md" "Cloudflare AI Gateway for AI provider routing" "AI Gateway"
+	write_skill "services/hosting/ai-gateway.md" "Cloudflare AI Gateway for AI model provider routing" "AI Gateway"
 	write_skill "content/model-selection.md" "Model Selection and Comparison" "Model Selection"
 	write_skill "tools/ai-assistants/model-routing.md" "Cost-aware model routing" "Model Routing"
 	write_skill "tools/build-agent/build-agent.md" "Composing efficient agents" "Build Agent"
@@ -90,6 +90,32 @@ test_search_counts_without_mixing_display_output() {
 	fi
 
 	print_result "search counts and display output stay separate" 0
+	return 0
+}
+
+test_search_supports_two_character_terms() {
+	local output=""
+	output=$(run_helper search "ai" 2>&1)
+
+	if [[ "$output" != *"ai-gateway"* || "$output" != *"model-routing"* ]]; then
+		print_result "search supports two-character technical terms" 1 "$output"
+		return 0
+	fi
+
+	print_result "search supports two-character technical terms" 0
+	return 0
+}
+
+test_search_requires_all_query_terms() {
+	local output=""
+	output=$(run_helper search "model gateway banana" 2>&1)
+
+	if [[ "$output" == *"ai-gateway"* || "$output" == *"model-routing"* ]]; then
+		print_result "search does not broaden when adding unmatched terms" 1 "$output"
+		return 0
+	fi
+
+	print_result "search does not broaden when adding unmatched terms" 0
 	return 0
 }
 
@@ -132,6 +158,8 @@ main() {
 	setup_fixture
 
 	test_search_counts_without_mixing_display_output
+	test_search_supports_two_character_terms
+	test_search_requires_all_query_terms
 	test_browse_counts_without_mixing_display_output
 	test_recommend_counts_without_mixing_display_output
 

@@ -83,6 +83,13 @@ _print_skill_entry() {
 	return 0
 }
 
+_push_temp_file_cleanup() {
+	local temp_path="$1"
+
+	push_cleanup "rm -f '${temp_path}'"
+	return 0
+}
+
 _is_search_stopword() {
 	local word="$1"
 
@@ -105,7 +112,7 @@ _query_terms() {
 		if [[ -z "$raw_word" ]]; then
 			continue
 		fi
-		if [[ ${#raw_word} -lt 3 ]]; then
+		if [[ ${#raw_word} -lt 2 ]]; then
 			continue
 		fi
 		if _is_search_stopword "$raw_word"; then
@@ -181,10 +188,7 @@ _search_local_skills() {
 		return 0
 	fi
 
-	local required_matches=1
-	if [[ ${#query_terms[@]} -ge 2 ]]; then
-		required_matches=2
-	fi
+	local required_matches=${#query_terms[@]}
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -251,6 +255,9 @@ _search_local_skills() {
 
 # Display top-level category listing (no-arg branch of cmd_browse).
 _browse_categories() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	echo ""
 	echo -e "${BOLD}Skill Categories${NC}"
 	echo "================"
@@ -258,9 +265,7 @@ _browse_categories() {
 
 	local cat_counts_file
 	cat_counts_file=$(mktemp)
-	# Intentional: expand now to capture temp path
-	# shellcheck disable=SC2064
-	trap "rm -f '$cat_counts_file'" RETURN
+	_push_temp_file_cleanup "$cat_counts_file"
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -746,6 +751,8 @@ cmd_search() {
 	local query="$1"
 	local json_output="${2:-false}"
 	local registry_search="${3:-false}"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 
 	# Handle --registry / --online flag embedded in query
 	if [[ "$query" == "--registry" || "$query" == "--online" ]]; then
@@ -779,6 +786,7 @@ cmd_search() {
 	else
 		local count_file found
 		count_file=$(mktemp)
+		_push_temp_file_cleanup "$count_file"
 		echo ""
 		_search_local_skills "$query_lower" "$json_output" "$count_file" "50"
 		found=$(<"$count_file")
@@ -807,6 +815,8 @@ cmd_search() {
 cmd_browse() {
 	local category="${1:-}"
 	local json_output="${2:-false}"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 
 	if [[ -z "$category" ]]; then
 		_browse_categories
@@ -822,6 +832,7 @@ cmd_browse() {
 
 	local count_file found
 	count_file=$(mktemp)
+	_push_temp_file_cleanup "$count_file"
 	_list_skills_in_category "$category" "$count_file"
 	found=$(<"$count_file")
 	rm -f "$count_file"
@@ -1053,12 +1064,12 @@ cmd_list() {
 
 cmd_categories() {
 	local json_output="${1:-false}"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 
 	local cat_counts_file
 	cat_counts_file=$(mktemp)
-	# Intentional: expand now to capture temp path
-	# shellcheck disable=SC2064
-	trap "rm -f '$cat_counts_file'" RETURN
+	_push_temp_file_cleanup "$cat_counts_file"
 
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
@@ -1119,6 +1130,8 @@ cmd_categories() {
 
 cmd_recommend() {
 	local task_desc="$1"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 
 	if [[ -z "$task_desc" ]]; then
 		log_error "Task description required"
@@ -1158,6 +1171,7 @@ cmd_recommend() {
 
 		local count_file found_in_cat
 		count_file=$(mktemp)
+		_push_temp_file_cleanup "$count_file"
 		_list_skills_in_category "$cat" "$count_file" "12"
 		found_in_cat=$(<"$count_file")
 		rm -f "$count_file"
