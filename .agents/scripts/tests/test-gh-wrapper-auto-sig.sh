@@ -175,14 +175,25 @@ assert_contains "original file keeps original content" "Issue body from file" "$
 signed_body_file=""
 for ((i = 0; i < ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}; i++)); do
 	if [[ "${_GH_WRAPPER_SIG_MODIFIED_ARGS[i]}" == "--body-file" ]]; then
-		signed_body_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]}"
+		if ((i + 1 < ${#_GH_WRAPPER_SIG_MODIFIED_ARGS[@]})); then
+			signed_body_file="${_GH_WRAPPER_SIG_MODIFIED_ARGS[i + 1]}"
+		fi
 		break
 	fi
 done
-assert_not_contains "wrapper points gh at a temp body file" "$body_file" "$signed_body_file"
-signed_file_content=$(<"$signed_body_file")
-assert_contains "temp body has signature marker" "<!-- aidevops:sig -->" "$signed_file_content"
-assert_contains "temp body has original content" "Issue body from file" "$signed_file_content"
+if [[ -z "$signed_body_file" ]]; then
+	echo "  FAIL: --body-file flag not found in modified args"
+	FAIL=$((FAIL + 1))
+elif [[ "$signed_body_file" == "$body_file" ]]; then
+	echo "  FAIL: wrapper used original file instead of temp copy"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: wrapper points gh at a temp body file"
+	PASS=$((PASS + 1))
+	signed_file_content=$(<"$signed_body_file")
+	assert_contains "temp body has signature marker" "<!-- aidevops:sig -->" "$signed_file_content"
+	assert_contains "temp body has original content" "Issue body from file" "$signed_file_content"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 5: --body-file with existing signature is NOT modified
