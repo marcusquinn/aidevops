@@ -68,7 +68,7 @@
       "mcp_config": {
         "quickfile": {
           "type": "local",
-          "command": ["node", "/path/to/quickfile-mcp/dist/index.js"],
+          "command": ["node", "/path/to/mcp/quickfile-mcp/dist/index.js"],
           "enabled": true
         }
       },
@@ -82,7 +82,7 @@
     },
     "claude_code": {
       "method": "cli",
-      "command": "claude mcp add quickfile node /path/to/quickfile-mcp/dist/index.js"
+      "command": "claude mcp add quickfile node /path/to/mcp/quickfile-mcp/dist/index.js"
     },
     "claude_desktop": {
       "config_location": "~/Library/Application Support/Claude/claude_desktop_config.json",
@@ -90,7 +90,7 @@
         "mcpServers": {
           "quickfile": {
             "command": "node",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"]
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"]
           }
         }
       }
@@ -101,7 +101,7 @@
         "mcpServers": {
           "quickfile": {
             "command": "node",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"]
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"]
           }
         }
       }
@@ -111,7 +111,7 @@
       "config": {
         "quickfile": {
           "command": "node",
-          "args": ["/path/to/quickfile-mcp/dist/index.js"],
+          "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"],
           "env": {}
         }
       }
@@ -124,7 +124,7 @@
           "quickfile": {
             "type": "stdio",
             "command": "node",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"]
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"]
           }
         },
         "inputs": []
@@ -137,7 +137,7 @@
           "quickfile": {
             "command": "node",
             "type": "stdio",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"],
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"],
             "disabled": false,
             "alwaysAllow": ["quickfile_system_get_account", "quickfile_client_search", "quickfile_invoice_search"]
           }
@@ -154,7 +154,7 @@
         "mcpServers": {
           "quickfile": {
             "command": "node",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"],
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"],
             "disabled": false,
             "autoApprove": ["quickfile_system_get_account"]
           }
@@ -170,14 +170,14 @@
         "mcpServers": {
           "quickfile": {
             "command": "node",
-            "args": ["/path/to/quickfile-mcp/dist/index.js"]
+            "args": ["/path/to/mcp/quickfile-mcp/dist/index.js"]
           }
         }
       }
     },
     "droid": {
       "method": "cli",
-      "command": "droid mcp add quickfile node /path/to/quickfile-mcp/dist/index.js"
+      "command": "droid mcp add quickfile node /path/to/mcp/quickfile-mcp/dist/index.js"
     }
   },
   "rate_limits": {
