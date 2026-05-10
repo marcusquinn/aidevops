@@ -69,6 +69,21 @@ make_sh_function() {
 	return 0
 }
 
+make_sh_function_compact() {
+	local file="$1"
+	local function_name="$2"
+	local lines="$3"
+	local i=0
+
+	printf '%s(){\n' "$function_name" >>"$file"
+	while [[ "$i" -lt "$lines" ]]; do
+		printf '  : # line %d\n' "$i" >>"$file"
+		i=$((i + 1))
+	done
+	printf '}\n' >>"$file"
+	return 0
+}
+
 make_deep_nesting() {
 	local file="$1"
 	local depth="$2"
@@ -157,6 +172,29 @@ test_changed_function_regression_blocks() {
 	return 0
 }
 
+test_function_brace_spacing_change_is_not_regression() {
+	setup_repo
+	printf '#!/usr/bin/env bash\n' >"${TEST_ROOT}/a.sh"
+	make_sh_function "${TEST_ROOT}/a.sh" "format_sensitive" 105
+	mark_origin_main
+	printf '#!/usr/bin/env bash\n' >"${TEST_ROOT}/a.sh"
+	make_sh_function_compact "${TEST_ROOT}/a.sh" "format_sensitive" 105
+	source_linter_analysis
+	local rc=0
+	(
+		cd "$TEST_ROOT" || exit 1
+		ALL_SH_FILES=(a.sh)
+		check_function_complexity >/tmp/linters-local-function-spacing.out 2>&1
+	) || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "function brace spacing change is not regression" 0
+	else
+		print_result "function brace spacing change is not regression" 1 "got exit $rc"
+	fi
+	teardown
+	return 0
+}
+
 test_historical_nesting_debt_is_advisory() {
 	setup_repo
 	make_deep_nesting "${TEST_ROOT}/a.sh" 9
@@ -202,6 +240,7 @@ test_changed_nesting_regression_blocks() {
 main() {
 	test_historical_function_debt_is_advisory
 	test_changed_function_regression_blocks
+	test_function_brace_spacing_change_is_not_regression
 	test_historical_nesting_debt_is_advisory
 	test_changed_nesting_regression_blocks
 
