@@ -371,6 +371,9 @@ _gh_wrapper_auto_sig() {
 		[[ -z "$sig_footer" ]] && return 0
 		local signed_body_file
 		signed_body_file=$(mktemp "${TMPDIR:-/tmp}/aidevops-gh-body.XXXXXX") || return 0
+		# Cleanup scope is established by the public gh_* wrappers that call this
+		# helper. Do not set a RETURN trap here: the temp file must remain readable
+		# until the wrapper delegates to gh, then the wrapper-level trap removes it.
 		push_cleanup "rm -f \"$signed_body_file\""
 		{
 			cat "$body_file_val"
