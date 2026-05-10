@@ -79,6 +79,7 @@ For bugs requiring immediate release, create a safe linked worktree from the lat
 ```bash
 git tag -l "v*" --sort=-v:refname
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION} --base v{LATEST_TAG}
+# Then cd into the sibling worktree path printed by the helper before editing.
 # Apply minimal fix, bump PATCH, commit, tag, push
 # Merge back to main after release
 ```

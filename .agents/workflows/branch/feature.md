@@ -26,6 +26,7 @@ tools:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 # e.g. feature/user-dashboard, feat: add user authentication
 ```
 

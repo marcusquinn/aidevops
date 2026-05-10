@@ -40,7 +40,7 @@ Update after completing each sub-task, not just parent tasks.
 
 - [ ] 0.0 Create safe linked worktree for {Feature Name} ~5m (ai:5m)
   - [ ] 0.1 Fetch latest main for worktree base: `git fetch origin main`
-  - [ ] 0.2 Create safe linked worktree: `worktree-helper.sh add feature/{slug}`
+  - [ ] 0.2 Create safe linked worktree and `cd` into the printed sibling path: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{slug}`
 
 - [ ] 1.0 {First Parent Task} ~{Xh} (ai:{Xh} test:{Xh})
   - [ ] 1.1 {Sub-task description} ~{Xm}

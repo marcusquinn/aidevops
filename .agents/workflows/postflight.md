@@ -100,6 +100,7 @@ git revert <release-commit-hash> && git push origin main
 gh release delete v{VERSION} --yes && git tag -d v{VERSION} && git push origin --delete v{VERSION}
 # Option C: Hotfix release from a safe linked worktree
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION}.1
+# Then cd into the sibling worktree path printed by the helper before editing.
 git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
 ```
 

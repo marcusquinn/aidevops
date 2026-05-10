@@ -25,6 +25,7 @@ tools:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add chore/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 ```
 
 ## When to Use

@@ -44,12 +44,12 @@ opencode ~/Git/myrepo-feature-auth/    # Multiple AI sessions on separate worktr
 **worktree-helper.sh** (fallback — no cd support):
 
 ```bash
-worktree-helper.sh add feature/my-feature          # Auto-path: sibling of canonical repo
-worktree-helper.sh add feature/my-feature ~/custom  # Custom path
-worktree-helper.sh list                             # List worktrees
-worktree-helper.sh status                           # Status overview
-worktree-helper.sh remove feature/auth              # Removes directory, NOT the branch
-worktree-helper.sh clean                            # Batch cleanup merged branches (interactive, runs git fetch --prune)
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature          # Auto-path: sibling of canonical repo; cd into printed path
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature ~/custom  # Custom path; cd into that path
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh list                            # List worktrees
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh status                          # Status overview
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh remove feature/auth             # Removes directory, NOT the branch
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh clean                           # Batch cleanup merged branches (interactive, runs git fetch --prune)
 ```
 
 ## Integration
@@ -61,8 +61,8 @@ worktree-helper.sh clean                            # Batch cleanup merged branc
 **Session recovery:** After creating branches, title issue/PR sessions as `Issue #123: succinct description` or `PR #456: succinct description`; otherwise run `session-rename_sync_branch`. Check `worktree-sessions.sh list` before closing PRs or deleting branches.
 
 ```bash
-worktree-sessions.sh list   # List worktrees with matching sessions
-worktree-sessions.sh open   # Interactive: select + open
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh list   # List worktrees with matching sessions
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh open   # Interactive: select + open
 ```
 
 **Worker self-cleanup (GH#6740):** Workers must remove their worktree after PR merge — batch dispatches (50+ workers) accumulate worktrees faster than pulse cleanup. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
@@ -72,9 +72,9 @@ worktree-sessions.sh open   # Interactive: select + open
 Worktrees registered to creating session's PID in SQLite (`~/.aidevops/.agent-workspace/worktree-registry.db`) — prevents cross-session removal.
 
 ```bash
-worktree-helper.sh registry list    # View ownership
-worktree-helper.sh registry prune   # Prune stale entries (dead PIDs, missing dirs)
-worktree-helper.sh remove feature/branch --force  # Override ownership (use with caution)
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh registry list    # View ownership
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh registry prune   # Prune stale entries (dead PIDs, missing dirs)
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh remove feature/branch --force  # Override ownership (use with caution)
 ```
 
 ## Troubleshooting

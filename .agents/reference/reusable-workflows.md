@@ -207,6 +207,7 @@ aidevops sync-workflows --apply
 # Option B: Manual
 cd ~/Git/downstream-repo
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add chore/migrate-to-reusable-workflow
+# Then cd into the sibling worktree path printed by the helper before editing.
 cd ../downstream-repo-chore-migrate-to-reusable-workflow
 cp ~/Git/aidevops/.agents/templates/workflows/issue-sync-caller.yml \
    .github/workflows/issue-sync.yml

@@ -27,6 +27,7 @@ tools:
 git fetch --tags
 latest_tag=$(git describe --tags --abbrev=0)
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/{description} --base "$latest_tag"
+# Then cd into the sibling worktree path printed by the helper before editing.
 ```
 
 <!-- AI-CONTEXT-END -->

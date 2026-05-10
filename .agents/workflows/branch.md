@@ -20,7 +20,7 @@ tools:
 
 - Resume existing work first: `git worktree list` or `wt list`
 - Start from canonical repo on `main`: `wt switch -c {type}/{name}`
-- Fallback: `worktree-helper.sh add {type}/{name}`
+- Fallback: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{name}`, then `cd` into the printed sibling path
 - Keep `~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/` on `main`; do task work in a sibling linked worktree path
 
 | Task Type | Branch Prefix | Subagent |
@@ -46,7 +46,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 
 | Stage | Command / Agent | Notes |
 |-------|-----------------|-------|
-| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Safe linked worktree from `main` |
+| Create | `wt switch -c {type}/{desc}` or `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{desc}` then `cd` into the printed path | Safe linked worktree from `main` |
 | Develop | `branch/{type}.md`, domain agents | Use conventional commits |
 | Preflight | `.agents/scripts/linters-local.sh --fast` → `workflows/preflight.md` | Required before push |
 | Version | `.agents/scripts/version-manager.sh bump [major\|minor\|patch]` → `workflows/version-bump.md` | Releases only |

@@ -48,6 +48,7 @@ Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
 # Creates a sibling, e.g. ~/Git/{repo}-feature-my-feature/ or ~/Git/mcp/{repo}-feature-my-feature/
+# Then cd into that sibling worktree path before editing.
 ```
 
 User-facing instructions must say "create a safe linked worktree for ...". Treat the Git ref/branch created inside that worktree as an internal implementation detail; never instruct agents to create a standalone local feature branch in the canonical repo.
@@ -101,6 +102,7 @@ Parse issue URLs to extract platform, owner, repo, and issue number, then create
 # WordPress -> ~/Git/wordpress/{repo}; EspoCRM -> ~/Git/espocrm/{repo}; MCP -> ~/Git/mcp/{repo}
 # Other repos -> ~/Git/{repo}. Details: reference/repo-organization.md
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
+# Then cd into the printed sibling worktree path before editing.
 ```
 
 Supported: `github.com`, `gitlab.com`, and Gitea (`{domain}/{owner}/{repo}/issues/{num}`).

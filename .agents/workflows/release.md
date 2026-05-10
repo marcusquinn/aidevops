@@ -64,6 +64,7 @@ git push origin main && git push origin --tags
 git log --oneline -10
 git diff v{PREVIOUS} v{CURRENT}
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{NEW_PATCH}
+# Then cd into the sibling worktree path printed by the helper before editing.
 # Fix, then:
 git commit -m "fix: resolve critical issue"
 # or: git revert --no-commit <commit-hash> && git commit -m "revert: rollback v{CURRENT}"
