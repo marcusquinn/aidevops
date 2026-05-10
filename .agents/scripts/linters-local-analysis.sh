@@ -414,7 +414,7 @@ _scan_function_complexity_file() {
 	awk -v file="$rel_file" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
 		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
 			fname = $1
-			sub(/\(\)/, "", fname)
+			sub(/\(\).*/, "", fname)
 			start = NR
 			next
 		}
@@ -434,7 +434,7 @@ _scan_function_complexity_git_blob() {
 	git show "${base_ref}:${rel_file}" 2>/dev/null | awk -v file="$rel_file" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
 		/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
 			fname = $1
-			sub(/\(\)/, "", fname)
+			sub(/\(\).*/, "", fname)
 			start = NR
 			next
 		}
