@@ -49,7 +49,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
 - Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
 - Before declaring completion, scan conversation for unfulfilled commitments, unnotified external parties, and displaced requests.
-- Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: `memory-helper.sh recall --query "<task keywords>" --limit 5`. Store fresh lessons immediately after breakthroughs.
+- Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: CLI `memory-helper.sh recall --query "<task keywords>" --limit 5`; OpenCode tool `aidevops_memory` with `{action:"recall", query:"<task keywords>", limit:"5"}`. Store only concrete reusable lessons: `{action:"store", content:"<lesson with evidence>", confidence:"medium"}`. Empty `aidevops_memory` calls are invalid; never use them as placeholders.
 - Before non-trivial code changes, run one duplicate/collision check: `prework-discovery-helper.sh --keywords "<task>" --files "<targets>" [--repo owner/repo]`.
 
 ### Automation safety invariants

@@ -16,6 +16,12 @@ every vague reference — match the source to the question.
 ## Tier 1 — Local cached (instant, zero cost)
 
 1. **Cross-session memory**: `memory-helper.sh recall "keywords"` (CLI) or `aidevops_memory` MCP tool with `action: "recall"` — curated signal, most likely to have the answer. Solutions, decisions, preferences, patterns.
+
+   OpenCode tool payload examples:
+   - Recall: `{ "action": "recall", "query": "deployment rollback pattern", "limit": "5" }`
+   - Store: `{ "action": "store", "content": "Deployment rollback X was fixed by Y; verify with Z.", "confidence": "medium" }`
+
+   Do not call `aidevops_memory` with `{}` or missing required fields. Empty calls are invalid placeholders; if there is no concrete memory to recall/store, continue the task or create a worker-ready follow-up instead.
 2. **TODO.md + completed tasks**: `rg "keyword" TODO.md` — task IDs, PR numbers, completion dates, brief descriptions of all past work.
 
 ## Tier 2 — Local indexed (fast, local I/O)

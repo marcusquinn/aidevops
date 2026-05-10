@@ -40,6 +40,22 @@ describe("aidevops_memory tool schema", () => {
 });
 
 describe("aidevops_memory execution", () => {
+  test("empty payload returns actionable validation without invoking helper", async () => {
+    const calls = [];
+    const result = await withMemoryHelper(async (scriptsDir) => {
+      const tools = createTools(scriptsDir, (cmd) => {
+        calls.push(cmd);
+        return "unexpected";
+      });
+
+      return tools.aidevops_memory.execute({});
+    });
+
+    assert.equal(calls.length, 0);
+    assert.match(result, /requires a complete payload/);
+    assert.match(result, /do not use empty calls as placeholders/);
+  });
+
   test("store action invokes memory-helper.sh store", async () => {
     const calls = [];
     const result = await withMemoryHelper(async (scriptsDir) => {
@@ -80,12 +96,28 @@ describe("aidevops_memory execution", () => {
     assert.match(calls[0], /memory-helper\.sh" recall 'schema' --limit '5'$/);
   });
 
+  test("recall action without a query returns a validation error", async () => {
+    const calls = [];
+    const result = await withMemoryHelper(async (scriptsDir) => {
+      const tools = createTools(scriptsDir, (cmd) => {
+        calls.push(cmd);
+        return "unexpected";
+      });
+
+      return tools.aidevops_memory.execute({ action: "recall", limit: 5 });
+    });
+
+    assert.equal(calls.length, 0);
+    assert.match(result, /query is required for memory recall/);
+  });
+
   test("empty store content returns a validation error", async () => {
     const result = await withMemoryHelper(async (scriptsDir) => {
       const tools = createTools(scriptsDir, () => "stored");
       return tools.aidevops_memory.execute({ action: "store", content: "   " });
     });
 
-    assert.equal(result, "Error: content is required to store a memory");
+    assert.match(result, /content is required to store a memory/);
+    assert.match(result, /do not store placeholders/);
   });
 });
