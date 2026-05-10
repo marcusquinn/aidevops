@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.27] - 2026-05-10
+
+### Changed
+
+- Documentation: address Swift workflow review refinements (#23361)
+
 ## [3.15.26] - 2026-05-10
 
 ### Changed
