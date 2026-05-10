@@ -124,8 +124,8 @@ Check code audit tool feedback on the latest push.
 Target: $ARGUMENTS
 
 **Auto-detection:**
-1. If on a feature branch with open PR -> check that PR's feedback
-2. If on a feature branch without PR -> check branch CI status
+1. If in a linked worktree with open PR -> check that PR's feedback
+2. If in a linked worktree without PR -> check ref CI status
 3. If on main -> check latest commit's CI/audit status
 4. If no git context or ambiguous -> ask user which branch/PR to check
 

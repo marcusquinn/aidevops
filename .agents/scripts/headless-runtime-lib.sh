@@ -644,7 +644,7 @@ You must drive autonomously to completion or an evidence-backed BLOCKED outcome.
 
 Setup shortcuts -- the dispatcher has already done these for you:
 - Your worktree is pre-created. $WORKER_WORKTREE_PATH contains the path. You are
-  already in the worktree on a feature branch. Do NOT call pre-edit-check.sh,
+  already in a safe linked worktree. Do NOT call pre-edit-check.sh,
   worktree-helper.sh, or session-rename tools under any circumstances.
   Pre-creation is guaranteed by the dispatcher (GH#21353 / t2983 Fix C). If
   WORKER_WORKTREE_PATH is unset, the headless runtime has already aborted — you

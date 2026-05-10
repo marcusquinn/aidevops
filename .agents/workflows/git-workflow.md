@@ -21,16 +21,16 @@ tools:
 
 ## Quick Reference
 
-- **Principle**: Every change on a branch, never directly on main. Release/version-manager commands are allowed on `main` only after merged, verified changes and explicit user approval.
-- **CRITICAL**: With parallel sessions, ALWAYS verify branch state before ANY file operation
+- **Principle**: Every development change happens in a linked worktree, never directly in the canonical `main` checkout. Release/version-manager commands are allowed on `main` only after merged, verified changes and explicit user approval.
+- **CRITICAL**: With parallel sessions, ALWAYS verify worktree/ref state before ANY file operation
 
 **Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
 
 ```bash
-git branch --show-current  # If result is `main` → STOP
+git status --short --branch  # If this is the canonical `main` checkout → STOP
 ```
 
-If on `main`: STOP. Present branch options before proceeding. Exception: proceed for an approved release/version-manager command after verifying the working tree is clean and up to date with `origin/main`.
+If in the canonical `main` checkout: STOP and create a safe linked worktree for the task before editing. Exception: proceed for an approved release/version-manager command after verifying the working tree is clean and up to date with `origin/main`.
 
 **First Actions** (before any code changes):
 
@@ -48,13 +48,16 @@ Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
 # Creates a sibling, e.g. ~/Git/{repo}-feature-my-feature/ or ~/Git/mcp/{repo}-feature-my-feature/
+# Then cd into that sibling worktree path before editing.
 ```
+
+User-facing instructions must say "create a safe linked worktree for ...". Treat the Git ref/branch created inside that worktree as an internal implementation detail; never instruct agents to create a standalone local feature branch in the canonical repo.
 
 Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer between worktrees — recreate in each. See `workflows/worktree.md`.
 
-**Session-Branch Tracking**: After creating a branch for issue/PR work, title the session with the work item first (`Issue #123: succinct description` or `PR #456: succinct description`) so Tabby tabs and OpenCode search group by number. Use `session-rename_sync_branch` only when there is no issue/PR context or no meaningful title yet.
+**Session-Worktree Tracking**: After creating a worktree for issue/PR work, title the session with the work item first (`Issue #123: succinct description` or `PR #456: succinct description`) so Tabby tabs and OpenCode search group by number. Use `session-rename_sync_branch` only when there is no issue/PR context or no meaningful title yet.
 
-**Scope Monitoring**: When work evolves significantly from branch name/purpose, offer to create a new branch, continue on current, or stash and switch.
+**Scope Monitoring**: When work evolves significantly from the worktree ref/purpose, offer to create a safe linked worktree for the new scope, continue on current, or pause and preserve changes.
 
 <!-- AI-CONTEXT-END -->
 
@@ -62,9 +65,9 @@ Non-git artifacts (`.venv/`, `node_modules/`, `dist/`, `.env`) don't transfer be
 
 | Situation | Action |
 |-----------|--------|
-| On `main` branch | Create worktree — see `branch.md` for type selection |
-| On feature/bugfix branch | Continue, follow `branch.md` lifecycle |
-| Issue URL pasted | Parse and create appropriate branch (see Issue URL Handling) |
+| On canonical `main` branch | Create a safe linked worktree — see `branch.md` for type selection |
+| In feature/bugfix/refactor linked worktree | Continue only if owned by this session; otherwise create a fresh safe linked worktree |
+| Issue URL pasted | Parse and create an appropriate safe linked worktree (see Issue URL Handling) |
 | Non-owner repo | Fork workflow — see `pr.md` |
 | New empty repo | `git init && git checkout -b main`; suggest `release/0.1.0` (new), `release/1.0.0` (MVP), or `release/X.Y.Z` (existing) |
 
@@ -74,12 +77,12 @@ Record timestamps in TODO.md or PLANS.md. **Worker restriction**: Headless worke
 
 | Event | Field |
 |-------|-------|
-| Branch created | `started:` |
+| Worktree created | `started:` |
 | Work session ends | `logged:` (cumulative) |
 | PR merged | `completed:` |
 | Release published | `actual:` |
 
-## Branch Naming from Planning Files
+## Worktree Ref Naming from Planning Files
 
 Lookup: `grep -i "{keyword}" TODO.md todo/PLANS.md 2>/dev/null` and `ls todo/tasks/*{keyword}* 2>/dev/null`.
 
@@ -88,18 +91,18 @@ Lookup: `grep -i "{keyword}" TODO.md todo/PLANS.md 2>/dev/null` and `ls todo/tas
 | TODO.md task | `{type}/{slugified-description}` | `feature/add-ahrefs-mcp-server` |
 | PLANS.md / PRD | `{type}/{plan-or-feature-slug}` | `feature/user-authentication-overhaul` |
 
-Slugification: lowercase, hyphens for spaces, remove special chars, truncate ~50 chars. Branch type selection: see `branch.md`.
+Slugification: lowercase, hyphens for spaces, remove special chars, truncate ~50 chars. Worktree ref type selection: see `branch.md`.
 
 ## Issue URL Handling
 
-Parse issue URLs to extract platform, owner, repo, and issue number, then create a worktree:
+Parse issue URLs to extract platform, owner, repo, and issue number, then create a safe linked worktree:
 
 ```bash
 # Clone if not local. Use grouped parents for ecosystem repos:
 # WordPress -> ~/Git/wordpress/{repo}; EspoCRM -> ~/Git/espocrm/{repo}; MCP -> ~/Git/mcp/{repo}
 # Other repos -> ~/Git/{repo}. Details: reference/repo-organization.md
-git checkout main && git pull origin main
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
+# Then cd into the printed sibling worktree path before editing.
 ```
 
 Supported: `github.com`, `gitlab.com`, and Gitea (`{domain}/{owner}/{repo}/issues/{num}`).
@@ -112,7 +115,7 @@ Claude Code PreToolUse hooks block destructive git/filesystem commands before ex
 
 **Blocked**: `git checkout -- <files>`, `git restore <files>`, `git reset --hard`, `git clean -f`, `git push --force`/`-f`, `git branch -D`, `rm -rf` (non-temp), `git stash drop/clear`.
 
-**Safe (allowlisted)**: `git checkout -b`, `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`.
+**Safe (allowlisted)**: `git restore --staged`, `git clean -n`/`--dry-run`, `rm -rf /tmp/...`, `git push --force-with-lease`. `git checkout -b` / `git switch -c` are safe only inside a linked worktree or a brand-new repo; never use them in the canonical repo checkout for development work.
 
 Management: `install-hooks-helper.sh [status|install|test|uninstall]`. Files: `~/.aidevops/hooks/git_safety_guard.py`, `~/.claude/settings.json`. Installed by `setup.sh`. Requires Python 3 + Claude Code restart.
 
@@ -144,13 +147,13 @@ When user wants to work directly on main, acknowledge and proceed — never bloc
 
 ## Database Schema Changes
 
-See `workflows/sql-migrations.md`. **Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing. Branch naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
+See `workflows/sql-migrations.md`. **Critical rules**: Never modify pushed/deployed migrations — create new ones. Always commit schema + migration together. Always review generated migrations before committing. Worktree ref naming: `feature/add-{table}-table`, `bugfix/fix-{description}`, `chore/backfill-{description}`.
 
 ## Related Workflows
 
 | Workflow | When to Read |
 |----------|--------------|
-| `branch.md` | Branch naming, type selection, creation, lifecycle |
+| `branch.md` | Worktree ref naming, type selection, creation, lifecycle |
 | `worktree.md` | Worktree creation, management, cleanup |
 | `pr.md` | PR creation, review, merge, fork workflow |
 | `preflight.md` | Quality checks before push |

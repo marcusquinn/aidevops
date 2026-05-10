@@ -450,7 +450,7 @@ cmd_start() {
 		return 1
 	}
 	is_on_feature_branch || {
-		print_error "Must be on a feature branch"
+		print_error "Must be in a safe linked worktree"
 		return 1
 	}
 

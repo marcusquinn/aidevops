@@ -268,8 +268,8 @@ This includes:
 Target: $ARGUMENTS
 
 **Auto-detection:**
-1. If on a feature branch with open PR -> check that PR'\''s feedback
-2. If on a feature branch without PR -> check branch CI status
+1. If in a linked worktree with open PR -> check that PR'\''s feedback
+2. If in a linked worktree without PR -> check ref CI status
 3. If on main -> check latest commit'\''s CI/audit status
 4. If no git context or ambiguous -> ask user which branch/PR to check
 
@@ -416,24 +416,24 @@ Target: $ARGUMENTS
 # -----------------------------------------------------------------------------
 _generate_branch_commands() {
 	maybe_write_command "feature" \
-		"Create and develop a feature branch" \
+		"Create and develop a feature in a linked worktree" \
 		'Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
 
 This will:
-1. Create feature branch from main
+1. Create safe linked worktree for the feature from main
 2. Set up development environment
 3. Guide feature implementation' || return 1
 
 	maybe_write_command "bugfix" \
-		"Create and resolve a bugfix branch" \
+		"Create and resolve a bugfix in a linked worktree" \
 		'Read ~/.aidevops/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
 
 This will:
-1. Create bugfix branch
+1. Create safe linked worktree for the bugfix
 2. Guide bug investigation
 3. Implement and test fix' || return 1
 
@@ -444,7 +444,7 @@ This will:
 Issue: $ARGUMENTS
 
 This will:
-1. Create hotfix branch from main/production
+1. Create safe linked worktree for the hotfix from production
 2. Implement minimal fix
 3. Fast-track to release' || return 1
 
@@ -499,10 +499,10 @@ This generates optimized context for AI assistants including:
 Additional context: $ARGUMENTS
 
 **Steps:**
-1. Check current branch (must not be main/master)
+1. Check current worktree ref (must not be main/master)
 2. Check for uncommitted changes (warn if present)
-3. Push branch to remote if not already pushed
-4. Generate PR title from branch name
+3. Push current worktree ref to remote if not already pushed
+4. Generate PR title from ref name
 5. Generate PR description from commit messages and changed files
 6. Create PR using `gh pr create`
 7. Return PR URL' || return 1

@@ -1,5 +1,5 @@
 ---
-description: Chore branch - maintenance, docs, deps, config
+description: Chore worktree ref - maintenance, docs, deps, config
 mode: subagent
 tools:
   read: true
@@ -13,19 +13,19 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Chore Branch
+# Chore Worktree Ref
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `chore/` |
+| **Worktree ref prefix** | `chore/` |
 | **Commit** | `chore:`, `docs:`, `ci:`, or `build:` |
 | **Version** | None |
-| **Create from** | `main` |
+| **Create linked worktree from** | `main` |
 | **Examples** | `chore/update-dependencies`, `chore/fix-github-actions`, `chore/configure-eslint` |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b chore/{description}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add chore/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 ```
 
 ## When to Use

@@ -1,5 +1,5 @@
 ---
-description: Refactor branch - code restructure, same behavior
+description: Refactor worktree ref - code restructure, same behavior
 mode: subagent
 tools:
   read: true
@@ -9,18 +9,18 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Refactor Branch
+# Refactor Worktree Ref
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `refactor/` |
+| **Worktree ref prefix** | `refactor/` |
 | **Commit** | `refactor: description` |
 | **Version** | Usually none (no behavior change) |
-| **Create from** | `main` |
+| **Create linked worktree from** | `main` |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b refactor/{description}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add refactor/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 ```
 
 ## When to Use

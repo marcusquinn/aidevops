@@ -1,5 +1,5 @@
 ---
-description: Feature branch - new functionality
+description: Feature worktree ref - new functionality
 mode: subagent
 tools:
   read: true
@@ -13,20 +13,20 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Feature Branch
+# Feature Worktree Ref
 
 <!-- AI-CONTEXT-START -->
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `feature/` |
+| **Worktree ref prefix** | `feature/` |
 | **Commit** | `feat: description` |
 | **Version** | Minor bump (1.0.0 → 1.1.0) |
-| **Create from** | `main` |
+| **Create linked worktree from** | `main` |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b feature/{description}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 # e.g. feature/user-dashboard, feat: add user authentication
 ```
 

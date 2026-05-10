@@ -1,5 +1,5 @@
 ---
-description: Experiment branch - spike, POC, may not merge
+description: Experiment worktree ref - spike, POC, may not merge
 mode: subagent
 tools:
   read: true
@@ -13,21 +13,21 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Experiment Branch
+# Experiment Worktree Ref
 
 <!-- AI-CONTEXT-START -->
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `experiment/` |
+| **Worktree ref prefix** | `experiment/` |
 | **Commit** | `experiment:` or `spike:` |
 | **Version** | None (experiments don't get released) |
-| **Create from** | `main` |
+| **Create linked worktree from** | `main` |
 | **Key rule** | May never merge - that's okay |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b experiment/{description}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add experiment/{description}
+# Then cd into the sibling worktree path printed by the helper before editing.
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -42,7 +42,7 @@ POC, technical spikes, exploring new approaches, testing third-party integration
 
 Before starting, record what you're testing and the expected outcome in the first commit message:
 
-```
+```text
 experiment: test GraphQL for API layer
 
 Hypothesis: GraphQL could reduce API calls by 60%
@@ -67,7 +67,7 @@ When the experiment concludes, document in the PR regardless of outcome:
 If the experiment succeeds:
 
 1. **Don't merge experiment directly**
-2. Create new `feature/` branch from `main`
+2. Create a new safe linked worktree with a `feature/` ref from `main`
 3. Cherry-pick or reimplement cleanly
 4. Follow normal feature workflow
 5. Reference experiment branch in PR for context

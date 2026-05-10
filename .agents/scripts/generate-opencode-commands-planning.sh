@@ -70,12 +70,12 @@ PRD or feature: $ARGUMENTS
 5. Generate sub-tasks (Phase 2)
 6. Save to todo/tasks/tasks-{feature-slug}.md
 
-**Task 0.0 is always:** Create feature branch
+**Task 0.0 is always:** Create safe linked worktree for the feature
 
 **Output format:**
 ```markdown
-- [ ] 0.0 Create feature branch
-  - [ ] 0.1 Create and checkout: `git checkout -b feature/{slug}`
+- [ ] 0.0 Create safe linked worktree for the feature
+  - [ ] 0.1 Create safe linked worktree and `cd` into the printed sibling path: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{slug}`
 
 - [ ] 1.0 First major task
   - [ ] 1.1 Sub-task

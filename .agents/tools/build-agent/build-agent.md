@@ -191,7 +191,7 @@ Self-checks: "Faster CLI alternative?" and "Could this return >50K tokens?" See 
 | **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
-Ask user which tier. Draft: `status: draft` + `created` date, promote via PR or discard. Custom: never shared/overwritten. Shared: feature branch + PR, no proprietary info. Orchestration agents: draft reusable patterns, log TODO, reference in Task calls.
+Ask user which tier. Draft: `status: draft` + `created` date, promote via PR or discard. Custom: never shared/overwritten. Shared: safe linked worktree + PR, no proprietary info. Orchestration agents: draft reusable patterns, log TODO, reference in Task calls.
 
 ## Cache-Aware Prompt Patterns
 

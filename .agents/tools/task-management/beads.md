@@ -117,7 +117,7 @@ All workflow commands run `beads-sync-helper.sh push` after updating TODO.md.
 |---------|--------|
 | `/ready` | Show tasks with no blockers |
 | `/sync-beads` | Sync TODO.md ↔ Beads |
-| `/branch` | Create branch, move task to In Progress |
+| `/branch` | Create safe linked worktree, move task to In Progress |
 | `/pr` | Create PR, move task to In Review |
 | `/release` | Release version, move tasks to Done |
 

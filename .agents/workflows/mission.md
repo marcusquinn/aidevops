@@ -53,7 +53,7 @@ Run decomposition with opus. Output: `MISSION_ID={id} MISSION_DIR={path} MISSION
 | **greenfield** | build, create, launch, new, start | New repo, full stack, needs infrastructure |
 | **migration** | migrate, port, convert, upgrade, move | Existing codebase, incremental, needs rollback plan |
 | **research** | research, evaluate, compare, spike, prototype | Time-boxed, deliverable is recommendation + POC |
-| **enhancement** | add, extend, improve, integrate, scale | Existing repo, feature branches, existing CI |
+| **enhancement** | add, extend, improve, integrate, scale | Existing repo, linked worktrees, existing CI |
 | **infrastructure** | deploy, configure, setup, provision, automate | DevOps focus, needs credentials, cloud accounts |
 
 If ambiguous, present numbered options and ask.

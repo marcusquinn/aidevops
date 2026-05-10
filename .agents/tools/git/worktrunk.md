@@ -33,9 +33,9 @@ tools:
 **Core Commands**:
 
 ```bash
-wt switch feat              # Switch to existing worktree (or create if branch exists)
-wt switch -c feat           # Create new branch + worktree
-wt switch -c -x claude feat # Create + start Claude Code
+wt switch feat              # Switch to existing worktree (or create if ref exists)
+wt switch -c feat           # Create safe linked worktree + ref
+wt switch -c -x claude feat # Create safe linked worktree + start Claude Code
 wt switch -c -x "npm install" feat  # Create + run command
 wt list                     # List worktrees with CI status + PR links
 wt remove                   # Remove current worktree + branch (prompts confirmation)

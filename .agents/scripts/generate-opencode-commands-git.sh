@@ -81,27 +81,27 @@ BODY
 
 define_branch_commands() {
 	create_command "feature" \
-		"Create and develop a feature branch" \
+		"Create and develop a feature in a linked worktree" \
 		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
 
 This will:
-1. Create feature branch from main
+1. Create safe linked worktree for the feature from main
 2. Set up development environment
 3. Guide feature implementation
 BODY
 
 	create_command "bugfix" \
-		"Create and resolve a bugfix branch" \
+		"Create and resolve a bugfix in a linked worktree" \
 		"$AGENT_BUILD" "" <<'BODY'
 Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
 
 This will:
-1. Create bugfix branch
+1. Create safe linked worktree for the bugfix
 2. Guide bug investigation
 3. Implement and test fix
 BODY
@@ -114,7 +114,7 @@ Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/hotfix.md and foll
 Issue: $ARGUMENTS
 
 This will:
-1. Create hotfix branch from main/production
+1. Create safe linked worktree for the hotfix from production
 2. Implement minimal fix
 3. Fast-track to release
 BODY
@@ -131,12 +131,12 @@ Create a pull request from the current branch.
 Additional context: $ARGUMENTS
 
 **Steps:**
-1. Check current branch (must not be main/master)
+1. Check current worktree ref (must not be main/master)
 2. Check for uncommitted changes (warn if present)
-3. Push branch to remote if not already pushed
-4. Generate PR title from branch name (e.g., `feature/add-login` -> "Add login")
+3. Push current worktree ref to remote if not already pushed
+4. Generate PR title from ref name (e.g., `feature/add-login` -> "Add login")
 5. Generate PR description from:
-   - Commit messages on this branch
+   - Commit messages on this ref
    - Changed files summary
    - Any TODO.md/PLANS.md task references
    - User-provided context (if any)

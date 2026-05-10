@@ -38,9 +38,9 @@ Update after completing each sub-task, not just parent tasks.
 
 ## Tasks
 
-- [ ] 0.0 Create feature branch ~5m (ai:5m)
-  - [ ] 0.1 Ensure on latest main: `git checkout main && git pull origin main`
-  - [ ] 0.2 Create feature branch: `git checkout -b feature/{slug}`
+- [ ] 0.0 Create safe linked worktree for {Feature Name} ~5m (ai:5m)
+  - [ ] 0.1 Fetch latest main for worktree base: `git fetch origin main`
+  - [ ] 0.2 Create safe linked worktree and `cd` into the printed sibling path: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{slug}`
 
 - [ ] 1.0 {First Parent Task} ~{Xh} (ai:{Xh} test:{Xh})
   - [ ] 1.1 {Sub-task description} ~{Xm}
@@ -69,10 +69,10 @@ Update after completing each sub-task, not just parent tasks.
   - [ ] 6.1 Run linters: `.agents/scripts/linters-local.sh` ~{Xm}
   - [ ] 6.2 Self-review code changes ~{Xm}
   - [ ] 6.3 Commit with descriptive message ~{Xm}
-  - [ ] 6.4 Push branch and create PR ~{Xm}
+  - [ ] 6.4 Push worktree ref and create PR ~{Xm}
 
 <!--TOON:tasks[7]{id,parent,desc,est,est_ai,est_test,status,actual,completed}:
-0.0,,Create feature branch,5m,5m,,pending,,
+0.0,,Create safe linked worktree,5m,5m,,pending,,
 1.0,,{First Parent Task},{Xh},{Xh},{Xh},pending,,
 2.0,,{Second Parent Task},{Xh},{Xh},{Xh},pending,,
 3.0,,{Third Parent Task},{Xh},{Xh},{Xh},pending,,
@@ -85,7 +85,7 @@ Update after completing each sub-task, not just parent tasks.
 
 | Task | Estimated | Actual | Variance |
 |------|-----------|--------|----------|
-| 0.0 Create branch | 5m | - | - |
+| 0.0 Create safe linked worktree | 5m | - | - |
 | 1.0 {Task 1} | {Xh} | - | - |
 | 2.0 {Task 2} | {Xh} | - | - |
 | 3.0 {Task 3} | {Xh} | - | - |
