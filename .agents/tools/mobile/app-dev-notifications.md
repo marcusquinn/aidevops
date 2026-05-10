@@ -132,5 +132,5 @@ Open-source, deployable on Coolify. HTTP PUT/POST to send; Android/iOS/web/CLI c
 
 - `product/onboarding.md` - Permission request timing
 - `product/analytics.md` - Notification engagement tracking
-- `tools/mobile/app-dev/backend.md` - Server-side notification sending
+- `tools/mobile/app-dev-backend.md` - Server-side notification sending
 - `tools/deployment/coolify.md` - Self-hosting ntfy

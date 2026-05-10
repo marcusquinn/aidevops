@@ -23,6 +23,7 @@ tools:
 ## Quick Reference
 
 - **IDE**: Xcode — use `xcodebuild-mcp` for AI-driven build/test
+- **Agent workflow**: read `tools/mobile/swift-xcode-agent-workflow.md` before non-trivial Xcode/Swift edits
 - **Docs**: Context7 MCP for latest Swift/SwiftUI docs
 - **Min target**: iOS 17+ | **Architecture**: MVVM + Swift Concurrency (async/await)
 - **Scaffold**: `xcodebuild-mcp scaffold_ios_project`
@@ -137,6 +138,8 @@ page.navigationDeciding = .handler { action in
 
 ## Build, Test & Distribution
 
+Before editing Swift or Xcode project files, establish the project-owned build/test command. Prefer `make build` / `make test` or a wrapper script; otherwise list schemes/destinations first and run explicit `xcodebuild`. See `tools/mobile/swift-xcode-agent-workflow.md` for the full discovery and verification contract.
+
 ```text
 # XcodeBuildMCP
 discover_projs | build_sim --scheme MyApp | test_sim --scheme MyApp
@@ -154,7 +157,8 @@ xcodebuild archive -scheme MyApp -archivePath MyApp.xcarchive
 
 ## Related
 
-- `tools/mobile/app-dev/expo.md` - Expo alternative for cross-platform
-- `tools/mobile/app-dev/testing.md` - Full testing guide
-- `tools/mobile/app-dev/publishing.md` - App Store submission
+- `tools/mobile/swift-xcode-agent-workflow.md` - Agent-friendly Xcode build/test workflow
+- `tools/mobile/app-dev-expo.md` - Expo alternative for cross-platform
+- `tools/mobile/app-dev-testing.md` - Full testing guide
+- `tools/mobile/app-dev-publishing.md` - App Store submission
 - `tools/mobile/xcodebuild-mcp.md` - Xcode build integration

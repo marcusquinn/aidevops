@@ -20,6 +20,7 @@ tools:
 - **Install**: `npx -y xcodebuildmcp@beta mcp` (MCP server mode)
 - **Requirements**: macOS 14.5+, Xcode 16+, Node.js 18+
 - **GitHub**: https://github.com/cameroncooke/XcodeBuildMCP (MIT) · **Docs**: https://www.xcodebuildmcp.com
+- **Workflow**: pair with `tools/mobile/swift-xcode-agent-workflow.md` for scheme/destination discovery and CLI fallbacks
 
 <!-- AI-CONTEXT-END -->
 
@@ -31,6 +32,8 @@ tools:
 4. `build_run_sim --scheme MyApp` — deploy and launch with logs
 5. `screenshot` / `snapshot_ui` — verify UI state (returns view hierarchy with coordinates)
 6. `maestro test flows/login.yaml` — E2E tests on running simulator
+
+If XcodeBuildMCP is unavailable, fall back to project-owned `make`/script commands or explicit `xcodebuild` after running `xcodebuild -list`; do not guess scheme, workspace, or destination.
 
 ## Tool Groups (76 tools, 15 groups)
 
@@ -63,6 +66,7 @@ Simulator tools enabled by default. Use `manage-workflows` to enable others.
 
 ## Related
 
+- `tools/mobile/swift-xcode-agent-workflow.md` — Agent-friendly Swift/Xcode workflow
 - `tools/mobile/minisim.md` — Simulator/emulator GUI launcher (MiniSim)
 - `tools/browser/playwright.md` — Cross-platform testing (web)
 - `services/hosting/localhost.md` — Local dev environment

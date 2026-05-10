@@ -105,7 +105,7 @@ Show app in use (not empty states); highlight key features with captions. First 
 ## Related
 
 - `tools/mobile/app-store-connect.md` — App Store Connect CLI (asc), programmatic ASC management
-- `tools/mobile/app-dev/testing.md` — Pre-submission testing
+- `tools/mobile/app-dev-testing.md` — Pre-submission testing
 - `product/monetisation.md` — Payment setup
-- `tools/mobile/app-dev/assets.md` — Screenshot and icon generation
+- `tools/mobile/app-dev-assets.md` — Screenshot and icon generation
 - `tools/browser/remotion-best-practices-skill.md` — Preview video creation

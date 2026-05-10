@@ -131,6 +131,6 @@ Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per
 
 ## Related
 
-- `tools/mobile/app-dev.md` — Mobile dev lifecycle | `tools/mobile/app-dev/publishing.md` — Submission checklists
+- `tools/mobile/app-dev.md` — Mobile dev lifecycle | `tools/mobile/app-dev-publishing.md` — Submission checklists
 - `tools/mobile/xcodebuild-mcp.md` — Xcode MCP | `tools/mobile/ios-simulator-mcp.md` — Simulator MCP
 - `services/payments/revenuecat.md` — Subscriptions | `services/hosting/local-hosting.md` — asc-web hosting

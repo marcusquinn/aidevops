@@ -31,17 +31,18 @@
 | `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
 | `product/analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
 
-**Subagents** — mobile-specific (`tools/mobile/app-dev/`):
+**Subagents** — mobile-specific (`tools/mobile/`):
 
 | Subagent | When to Read |
 |----------|--------------|
-| `expo.md` | Expo/React Native project setup, development, navigation, state management |
-| `swift.md` | Swift/SwiftUI project setup, native iOS development, Xcode workflows |
-| `testing.md` | Simulator/emulator/device testing, E2E flows, accessibility, QA |
-| `publishing.md` | App Store/Play Store submission, compliance, screenshots, metadata |
-| `backend.md` | Backend services, Supabase/Firebase, Coolify self-hosted, APIs |
-| `notifications.md` | Push notifications, Expo notifications, local notifications |
-| `assets.md` | App icons, splash screens, screenshots, preview videos (Remotion) |
+| `app-dev-expo.md` | Expo/React Native project setup, development, navigation, state management |
+| `app-dev-swift.md` | Swift/SwiftUI project setup, native iOS development, Xcode workflows |
+| `swift-xcode-agent-workflow.md` | Agent-friendly Swift/Xcode discovery, build/test wrappers, and verification |
+| `app-dev-testing.md` | Simulator/emulator/device testing, E2E flows, accessibility, QA |
+| `app-dev-publishing.md` | App Store/Play Store submission, compliance, screenshots, metadata |
+| `app-dev-backend.md` | Backend services, Supabase/Firebase, Coolify self-hosted, APIs |
+| `app-dev-notifications.md` | Push notifications, Expo notifications, local notifications |
+| `app-dev-assets.md` | App icons, splash screens, screenshots, preview videos (Remotion) |
 
 **Related agents**:
 
@@ -90,16 +91,16 @@ Search for UI patterns, competitor screenshots, design systems using browser too
 
 ### Stage 4: Development
 
-- Expo: `tools/mobile/app-dev/expo.md`
-- Swift: `tools/mobile/app-dev/swift.md`
+- Expo: `tools/mobile/app-dev-expo.md`
+- Swift: `tools/mobile/app-dev-swift.md`; for Xcode project edits also read `tools/mobile/swift-xcode-agent-workflow.md`
 
 **MVP discipline**: One core function, one clean onboarding, one monetisation path. Resist feature creep.
 
-### Stage 5: Testing (`tools/mobile/app-dev/testing.md`)
+### Stage 5: Testing (`tools/mobile/app-dev-testing.md`)
 
 Full testing stack: `agent-device` (AI-driven interaction) + `maestro` (repeatable E2E) + `xcodebuild-mcp` (build verification) + `ios-simulator-mcp` (simulator QA) + `playwright-emulation` (web-based mobile preview) + physical device via TestFlight (iOS) or internal testing (Android).
 
-### Stage 6: Publishing (`tools/mobile/app-dev/publishing.md`)
+### Stage 6: Publishing (`tools/mobile/app-dev-publishing.md`)
 
 App Store and Play Store submission, compliance, screenshot generation, metadata optimisation, common rejection reasons.
 

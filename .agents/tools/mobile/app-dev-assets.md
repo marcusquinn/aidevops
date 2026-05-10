@@ -81,7 +81,7 @@ agent-device screenshot ./screenshots/home-6.9.png
 - Add short benefit-focused captions; consistent style; localise for target markets
 - Show light and dark mode if supported
 
-See `tools/mobile/app-dev/publishing.md` for required sizes.
+See `tools/mobile/app-dev-publishing.md` for required sizes.
 
 ## App Store Preview Videos
 
@@ -102,7 +102,7 @@ See `tools/browser/remotion-best-practices-skill.md` for Remotion patterns.
 ## Related
 
 - `product/ui-design.md` - Design standards
-- `tools/mobile/app-dev/publishing.md` - Screenshot size requirements
+- `tools/mobile/app-dev-publishing.md` - Screenshot size requirements
 - `tools/vision/overview.md` - Image generation tools
 - `tools/browser/remotion-best-practices-skill.md` - Remotion best practices
 - `tools/video/remotion.md` - Programmatic video creation

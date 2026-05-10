@@ -98,7 +98,7 @@ Google's app development platform. Prefer over Supabase when: team has Firebase 
 
 ## Notifications Backend
 
-Options (see `tools/mobile/app-dev/notifications.md` for setup):
+Options (see `tools/mobile/app-dev-notifications.md` for setup):
 
 - **Expo Push Notifications**: Free, works with Expo apps
 - **Firebase Cloud Messaging (FCM)**: Free, works with any app
@@ -113,4 +113,4 @@ Options (see `tools/mobile/app-dev/notifications.md` for setup):
 - `services/database/postgres-drizzle-skill.md` - Postgres + Drizzle deep reference
 - `services/database/multi-org-isolation.md` - Multi-tenant patterns
 - `tools/deployment/coolify.md` - Self-hosted deployment
-- `tools/mobile/app-dev/notifications.md` - Push notification setup
+- `tools/mobile/app-dev-notifications.md` - Push notification setup
