@@ -59,13 +59,13 @@ make_sh_function() {
 	local function_name="$2"
 	local lines="$3"
 	local brace_style="${4:-spaced}"
+	local header_space=" "
 	local i=0
 
 	if [[ "$brace_style" == "compact" ]]; then
-		printf '%s(){\n' "$function_name" >>"$file"
-	else
-		printf '%s() {\n' "$function_name" >>"$file"
+		header_space=""
 	fi
+	printf '%s()%s{\n' "$function_name" "$header_space" >>"$file"
 	while [[ "$i" -lt "$lines" ]]; do
 		printf '  : # line %d\n' "$i" >>"$file"
 		i=$((i + 1))
@@ -128,7 +128,7 @@ test_historical_function_debt_is_advisory() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh)
-		check_function_complexity >/tmp/linters-local-function-advisory.out 2>&1
+		check_function_complexity >"${TEST_ROOT}/linters-local-function-advisory.out" 2>&1
 	)
 	local rc=$?
 	if [[ "$rc" -eq 0 ]]; then
@@ -152,7 +152,7 @@ test_changed_function_spacing_stays_advisory() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh)
-		check_function_complexity >/tmp/linters-local-function-spacing.out 2>&1
+		check_function_complexity >"${TEST_ROOT}/linters-local-function-spacing.out" 2>&1
 	) || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		print_result "changed function spacing remains advisory" 0
@@ -174,7 +174,7 @@ test_changed_function_regression_blocks() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh)
-		check_function_complexity >/tmp/linters-local-function-regression.out 2>&1
+		check_function_complexity >"${TEST_ROOT}/linters-local-function-regression.out" 2>&1
 	) || rc=$?
 	if [[ "$rc" -eq 1 ]]; then
 		print_result "changed function complexity regression blocks" 0
@@ -194,7 +194,7 @@ test_historical_nesting_debt_is_advisory() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh b.sh)
-		check_nesting_depth >/tmp/linters-local-nesting-advisory.out 2>&1
+		check_nesting_depth >"${TEST_ROOT}/linters-local-nesting-advisory.out" 2>&1
 	)
 	local rc=$?
 	if [[ "$rc" -eq 0 ]]; then
@@ -216,7 +216,7 @@ test_changed_nesting_regression_blocks() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh)
-		check_nesting_depth >/tmp/linters-local-nesting-regression.out 2>&1
+		check_nesting_depth >"${TEST_ROOT}/linters-local-nesting-regression.out" 2>&1
 	) || rc=$?
 	if [[ "$rc" -eq 1 ]]; then
 		print_result "changed nesting-depth regression blocks" 0
