@@ -275,7 +275,7 @@ _repo_slug_suffixes() {
 		| ($slug | gsub("/"; "-")) as $dashed
 		| [($dashed | length), $dashed, $slug]
 		| @tsv
-	' "$REPOS_JSON" 2>/dev/null | sort -rn -k1,1
+	' "$REPOS_JSON" | sort -rn -k1,1 || true
 	return 0
 }
 
