@@ -240,12 +240,14 @@ _cadence_gate_ok() {
 # segment position.
 _enumerate_dashboards() {
 	local cache issue slug_raw slug key seen="|"
+	local slug_suffixes=""
+	slug_suffixes="$(_repo_slug_suffixes)"
 	shopt -s nullglob
 	for cache in "${HEALTH_ISSUE_CACHE_DIR}"/health-issue-*; do
 		issue="$(tr -d '[:space:]' <"$cache" 2>/dev/null || true)"
 		[[ "$issue" =~ ^[0-9]+$ ]] || continue
 		slug_raw="$(basename "$cache")"
-		slug="$(_resolve_slug_from_cache_name "$slug_raw")"
+		slug="$(_resolve_slug_from_cache_name "$slug_raw" "$slug_suffixes")"
 		[[ -z "$slug" ]] && continue
 		key="${slug} ${issue}"
 		case "$seen" in
@@ -258,26 +260,44 @@ _enumerate_dashboards() {
 	return 0
 }
 
-# Resolve a health-issue cache basename to a canonical repo slug.
-# Accepts both historical role-bearing and current canonical cache names.
-_resolve_slug_from_cache_name() {
-	local cache_name="$1"
-	local stem
-	stem="${cache_name#health-issue-}"
-	[[ -n "$stem" && "$stem" != "$cache_name" ]] || return 0
+# Emit tab-separated "length dashed-slug canonical-slug" rows sorted by
+# descending dashed-slug length. _enumerate_dashboards computes this once so
+# each cache filename can be matched without repeatedly reading repos.json.
+_repo_slug_suffixes() {
 	[[ -f "$REPOS_JSON" ]] || return 0
 	if ! command -v jq >/dev/null 2>&1; then
 		return 0
 	fi
-	jq -r --arg stem "$stem" '
+	jq -r '
 		.initialized_repos[]
 		| select(.slug != null and .slug != "")
 		| .slug as $slug
 		| ($slug | gsub("/"; "-")) as $dashed
-		| select($stem == $dashed or ($stem | endswith("-" + $dashed)))
-		| {slug: $slug, len: ($dashed | length)}
-	' "$REPOS_JSON" 2>/dev/null \
-		| jq -sr 'sort_by(.len) | reverse | .[0].slug // empty' 2>/dev/null
+		| [($dashed | length), $dashed, $slug]
+		| @tsv
+	' "$REPOS_JSON" 2>/dev/null | sort -rn -k1,1
+	return 0
+}
+
+# Resolve a health-issue cache basename to a canonical repo slug.
+# Accepts both historical role-bearing and current canonical cache names.
+_resolve_slug_from_cache_name() {
+	local cache_name="$1"
+	local slug_suffixes="${2:-}"
+	local stem
+	local length dashed slug
+	stem="${cache_name#health-issue-}"
+	[[ -n "$stem" && "$stem" != "$cache_name" ]] || return 0
+	if [[ -z "$slug_suffixes" ]]; then
+		slug_suffixes="$(_repo_slug_suffixes)"
+	fi
+	while IFS=$'\t' read -r length dashed slug; do
+		[[ -n "$length" && -n "$dashed" && -n "$slug" ]] || continue
+		if [[ "$stem" == "$dashed" || "$stem" == *"-${dashed}" ]]; then
+			printf '%s\n' "$slug"
+			return 0
+		fi
+	done <<<"$slug_suffixes"
 	return 0
 }
 
