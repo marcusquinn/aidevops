@@ -15,6 +15,9 @@ const OSC_TITLE_SUFFIX = "\u0007"
 
 type TerminalTitleEnv = Record<string, string | undefined>
 
+// biome-ignore lint/complexity/useRegexLiterals: regex literals trigger noControlCharactersInRegex for this C0/DEL sanitizer range.
+const CONTROL_CHARACTERS_PATTERN = new RegExp("[\\x00-\\x1F\\x7F]+", "g")
+
 /**
  * Honour the same opt-out environment variables as terminal-title-helper.sh.
  */
@@ -27,7 +30,7 @@ export function isTerminalTitleEnabled(env: TerminalTitleEnv = process.env): boo
  * extra terminal control sequences into the OSC payload.
  */
 export function sanitizeTerminalTitle(title: string): string {
-  return title.replace(/[\x00-\x1F\x7F]+/g, " ").trim()
+  return title.replace(CONTROL_CHARACTERS_PATTERN, " ").trim()
 }
 
 /**
