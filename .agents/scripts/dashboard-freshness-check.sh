@@ -239,13 +239,14 @@ _cadence_gate_ok() {
 # both by matching the longest repos.json slug suffix instead of parsing a fixed
 # segment position.
 _enumerate_dashboards() {
-	local cache issue slug_raw slug key seen="|"
+	local cache issue slug_raw slug key seen="|" slug_candidates
+	slug_candidates="$(_repo_slug_candidates)"
 	shopt -s nullglob
 	for cache in "${HEALTH_ISSUE_CACHE_DIR}"/health-issue-*; do
 		issue="$(tr -d '[:space:]' <"$cache" 2>/dev/null || true)"
 		[[ "$issue" =~ ^[0-9]+$ ]] || continue
 		slug_raw="$(basename "$cache")"
-		slug="$(_resolve_slug_from_cache_name "$slug_raw")"
+		slug="$(_resolve_slug_from_cache_name "$slug_raw" "$slug_candidates")"
 		[[ -z "$slug" ]] && continue
 		key="${slug} ${issue}"
 		case "$seen" in
@@ -258,26 +259,58 @@ _enumerate_dashboards() {
 	return 0
 }
 
+# Emit known repos as "dashed<TAB>slug" lines sorted by longest dashed slug
+# first. This lets dashboard enumeration resolve every cache filename with one
+# repos.json read instead of re-parsing the repository registry per cache file.
+_repo_slug_candidates() {
+	[[ -f "$REPOS_JSON" ]] || return 0
+	if ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	jq -r '
+		[
+			.initialized_repos[]
+			| select(.slug != null and .slug != "")
+			| .slug as $slug
+			| ($slug | gsub("/"; "-")) as $dashed
+			| {slug: $slug, dashed: $dashed, len: ($dashed | length)}
+		] | sort_by(.len) | reverse | .[] | [.dashed, .slug] | @tsv
+	' "$REPOS_JSON" 2>/dev/null
+	return 0
+}
+
 # Resolve a health-issue cache basename to a canonical repo slug.
 # Accepts both historical role-bearing and current canonical cache names.
 _resolve_slug_from_cache_name() {
 	local cache_name="$1"
-	local stem
+	local slug_candidates="${2:-}"
+	local stem dashed slug
 	stem="${cache_name#health-issue-}"
 	[[ -n "$stem" && "$stem" != "$cache_name" ]] || return 0
+	if [[ -n "$slug_candidates" ]]; then
+		while IFS=$'\t' read -r dashed slug; do
+			[[ -n "$dashed" && -n "$slug" ]] || continue
+			if [[ "$stem" == "$dashed" || "$stem" == *-"${dashed}" ]]; then
+				printf '%s\n' "$slug"
+				return 0
+			fi
+		done <<<"$slug_candidates"
+		return 0
+	fi
 	[[ -f "$REPOS_JSON" ]] || return 0
 	if ! command -v jq >/dev/null 2>&1; then
 		return 0
 	fi
 	jq -r --arg stem "$stem" '
-		.initialized_repos[]
-		| select(.slug != null and .slug != "")
-		| .slug as $slug
-		| ($slug | gsub("/"; "-")) as $dashed
-		| select($stem == $dashed or ($stem | endswith("-" + $dashed)))
-		| {slug: $slug, len: ($dashed | length)}
-	' "$REPOS_JSON" 2>/dev/null \
-		| jq -sr 'sort_by(.len) | reverse | .[0].slug // empty' 2>/dev/null
+		[
+			.initialized_repos[]
+			| select(.slug != null and .slug != "")
+			| .slug as $slug
+			| ($slug | gsub("/"; "-")) as $dashed
+			| select($stem == $dashed or ($stem | endswith("-" + $dashed)))
+			| {slug: $slug, len: ($dashed | length)}
+		] | sort_by(.len) | reverse | .[0].slug // empty
+	' "$REPOS_JSON" 2>/dev/null
 	return 0
 }
 
