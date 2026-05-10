@@ -137,6 +137,11 @@ assertEq(
   "Issue #123 injected title",
   sanitizeTerminalTitle("Issue #123\u0007\u001B\n\tinjected\u0000\u007Ftitle"),
 );
+assertEq(
+  "OSC 0 sequence uses collapsed sanitized title",
+  "\u001B]0;Issue #123 injected title\u0007",
+  terminalTitleSequence("Issue #123\u0007\u001B\n\tinjected\u0000\u007Ftitle"),
+);
 assertEq("empty sanitized title emits no OSC", "", terminalTitleSequence("\n\t"));
 assertEq(
   "TERMINAL_TITLE_ENABLED=false disables title emit",
