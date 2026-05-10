@@ -5,9 +5,6 @@ mode: subagent
 imported_from: external
 upstream_url: https://github.com/browser-use/video-use
 ---
-# video-use
-
-
 # Video Use
 
 ## Principle
@@ -16,11 +13,11 @@ upstream_url: https://github.com/browser-use/video-use
 2. **Audio is primary, visuals follow.** Cut candidates come from speech boundaries and silence gaps. Drill into visuals only at decision points.
 3. **Ask → confirm → execute → iterate → persist.** Never touch the cut until the user has confirmed the strategy in plain English.
 4. **Generalize.** Do not assume what kind of video this is. Look at the material, ask the user, then edit.
-5. **Artistic freedom is the default.** Every specific value, preset, font, color, duration, pitch structure, and technique in this document is a *worked example* from one proven video — not a mandate. Read them to understand what's possible and why each worked. Then make your own taste calls based on what the material actually is and what the user actually wants. **The only things you MUST do are in the Hard Rules section below.** Everything else is yours.
+5. **Artistic freedom is the default.** Every specific value, preset, font, color, duration, pitch structure, and technique in this document is a *worked example* from one proven video — not a mandate. Read them to understand what's possible and why each worked. Then make your own taste calls based on what the material actually is and what the user actually wants. **The only things you MUST do are in the Critical Rules section below.** Everything else is yours.
 6. **Invent freely.** If the material calls for a technique not described here — split-screen, picture-in-picture, lower-third identity cards, reaction cuts, speed ramps, freeze frames, crossfades, match cuts, L-cuts, J-cuts, speed ramps over breath, whatever — build it. The helpers are ffmpeg and PIL. They can do anything the format supports. Do not wait for permission.
 7. **Verify your own output before showing it to the user.** If you wouldn't ship it, don't present it.
 
-## Hard Rules (production correctness — non-negotiable)
+## Critical Rules (production correctness — non-negotiable)
 
 These are the things where deviation produces silent failures or broken output. They are not taste, they are correctness. Memorize them.
 
@@ -36,6 +33,7 @@ These are the things where deviation produces silent failures or broken output. 
 10. **Parallel sub-agents for multiple animations.** Never sequential. Spawn N at once via the `Agent` tool; total wall time ≈ slowest one.
 11. **Strategy confirmation before execution.** Never touch the cut until the user has approved the plain-English plan.
 12. **All session outputs in `<videos_dir>/edit/`.** Never write inside the `video-use/` project directory.
+13. **Markdown fenced code blocks follow MD031.** Keep a blank line before and after every fenced code block so examples render consistently.
 
 Everything else in this document is a worked example. Deviate whenever the material calls for it.
 
@@ -43,7 +41,7 @@ Everything else in this document is a worked example. Deviate whenever the mater
 
 The skill lives in `video-use/`. User footage lives wherever they put it. All session outputs go into `<videos_dir>/edit/`.
 
-```
+```text
 <videos_dir>/
 ├── <source files, untouched>
 └── edit/
@@ -64,12 +62,12 @@ The skill lives in `video-use/`. User footage lives wherever they put it. All se
 
 First-time install lives in `install.md` (clone, deps, ffmpeg, skill registration, API key). Don't re-run it every session; on cold start just verify:
 
-- `ELEVENLABS_API_KEY` resolves — either in the environment or in `.env` at the video-use repo root. If missing, ask the user to paste one and write it to `.env` (never to the user's `<videos_dir>`).
+- `ELEVENLABS_API_KEY` resolves — preferably via `gopass` or `aidevops secret set ELEVENLABS_API_KEY`, with environment or `.env` at the video-use repo root as fallbacks. Never ask the user to paste secrets directly into the chat.
 - `ffmpeg` + `ffprobe` on PATH.
 - Python deps installed (`uv sync` or `pip install -e .` inside the repo).
 - Node.js + npm available if the session needs HyperFrames or Remotion slots. HyperFrames currently requires Node.js 22+.
 - `yt-dlp`, HyperFrames, Remotion, Manim installed only on first use.
-- First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with `npx create-video@latest` or installed as a project-local dependency before using its `remotion render` command.
+- First-use animation setup happens inside the slot directory, never at the video-use repo root. HyperFrames can be invoked with `npx --yes hyperframes ...`; Remotion can be scaffolded with a pinned `create-video` version or installed as a project-local dependency before using its `remotion render` command.
 - This skill vendors `skills/manim-video/`. Read its SKILL.md when building a Manim slot.
 
 Helpers (`helpers/transcribe.py`, `helpers/render.py`, etc.) live alongside this SKILL.md. Resolve their paths relative to the directory containing this file — the skill is typically symlinked at `~/.claude/skills/video-use/` or `~/.codex/skills/video-use/`.
@@ -111,7 +109,7 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 - **Speaker handoffs** benefit from air between utterances. Common values: 400–600ms. Less for fast-paced, more for cinematic. Taste call.
 - **Audio events as signals.** `(laughs)`, `(sighs)`, `(applause)` mark beats. Extend past them.
 - **Silence gaps are cut candidates.** Silences ≥400ms are usually the cleanest. 150–400ms phrase boundaries are usable with a visual check. <150ms is unsafe (mid-phrase).
-- **Example cut padding** (the launch video shipped with this): 50ms before the first kept word, 80ms after the last. Tighter for montage energy, looser for documentary. Stay in the 30–200ms working window (Hard Rule 7).
+- **Example cut padding** (the launch video shipped with this): 50ms before the first kept word, 80ms after the last. Tighter for montage energy, looser for documentary. Stay in the 30–200ms working window (Critical Rule 7).
 - **Never reason audio and video independently.** Every cut must work on both tracks.
 
 ## The packed transcript (primary reading view)
@@ -119,7 +117,8 @@ For animations, create `<edit>/animations/slot_<id>/` with `Bash` and spawn a su
 `pack_transcripts.py` reads all `transcripts/*.json` and produces one markdown file where each take is a list of phrase-level lines, each prefixed with its `[start-end]` time range. Phrases break on any silence ≥ 0.5s OR speaker change. This is the artifact the editor sub-agent reads to pick cuts — it gives word-boundary precision from text alone at 1/10 the tokens of raw JSON.
 
 Example line:
-```
+
+```markdown
 ## C0103  (duration: 43.0s, 8 phrases)
   [002.52-005.36] S0 Ninety percent of what a web agent does is completely wasted.
   [006.08-006.74] S0 We fixed this.
@@ -129,7 +128,7 @@ Example line:
 
 When the task is "pick the best take of each beat across many clips," spawn a dedicated sub-agent with a brief shaped like this. The structure is load-bearing; the pitch-shape example is not.
 
-```
+```text
 You are editing a <type> video. Pick the best take of each beat and 
 assemble them chronologically by beat, not by source clip order.
 
@@ -188,7 +187,7 @@ Subtitles have three dimensions worth reasoning about: **chunking** (1/2/3/sente
 
 **`bold-overlay`** — short-form tech launch, fast-paced social. 2-word chunks, UPPERCASE, break on punctuation, Helvetica 18 Bold, white-on-outline, `MarginV=35`. `render.py` ships with this as `SUB_FORCE_STYLE`.
 
-```
+```text
 FontName=Helvetica,FontSize=18,Bold=1,
 PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BackColour=&H00000000,
 BorderStyle=1,Outline=2,Shadow=0,
@@ -214,7 +213,7 @@ Pick the engine per animation slot. Do not default to Remotion just because the 
 
 For HyperFrames slots, scaffold the slot inside `edit/animations/slot_<id>/` with `npx --yes hyperframes init . --example blank --non-interactive --skip-skills`, build the HTML composition there, run the HyperFrames checks that fit the slot (`lint`, `validate`, and a draft render when practical), then produce the final overlay video with `npx --yes hyperframes render . -o render.mp4` or `--format webm -o render.webm` when alpha is required. Point the EDL overlay `file` at the actual rendered path.
 
-For Remotion slots, keep the Remotion project isolated inside the same slot directory, scaffold with `npx create-video@latest` or install Remotion locally there, render the composition to `render.mp4` with the project-local `remotion render` command, and verify duration and dimensions with `ffprobe`.
+For Remotion slots, keep the Remotion project isolated inside the same slot directory, scaffold with a pinned version (for example, `npx create-video@4.0.0`) or install Remotion locally there, render the composition to `render.mp4` with the project-local `remotion render` command, and verify duration and dimensions with `ffprobe`.
 
 None is mandatory. Invent hybrids if useful (e.g., PIL background with a HyperFrames or Remotion layer on top).
 
@@ -245,7 +244,7 @@ def ease_in_out_cubic(t):
 - Background `(10, 10, 10)` near-black
 - Accent `#FF5A00` / `(255, 90, 0)` orange
 - Labels `(110, 110, 110)` dim gray
-- Font: Menlo Bold at `/System/Library/Fonts/Menlo.ttc` (index 1)
+- Font: A monospace bold font (for example, Menlo Bold or DejaVu Sans Mono), using a configured path when the renderer requires one
 - ≤ 2 accent colors, ~40% empty space, minimal chrome
 - Result: terminal / retro tech feel
 
@@ -257,7 +256,7 @@ This is one style. If the brand is warm and serif, use that. If it's colorful an
 2. Absolute output path (`<edit>/animations/slot_<id>/render.mp4`)
 3. Exact technical spec: resolution, fps, codec, pix_fmt, CRF, duration
 4. Style palette as concrete values (RGB tuples, hex, or reference to a design system)
-5. Font path with index
+5. Font family or configured font path with index when required by the renderer
 6. Frame-by-frame timeline (what happens when, with easing)
 7. Anti-list ("no chrome, no extras, no titles unless specified")
 8. Code pattern reference (copy helpers inline, don't import across slots)
@@ -316,10 +315,10 @@ Things that consistently fail regardless of style:
 - **Hand-tuned moment-scoring functions.** The LLM picks better than any heuristic you'll write.
 - **Whisper SRT / phrase-level output.** Loses sub-second gap data. Always word-level verbatim.
 - **Running Whisper locally on CPU.** Slow and it normalizes fillers. Use hosted Scribe.
-- **Burning subtitles into base before compositing overlays.** Overlays hide them. (Hard Rule 1.)
+- **Burning subtitles into base before compositing overlays.** Overlays hide them. (Critical Rule 1.)
 - **Single-pass filtergraph when you have overlays.** Double re-encodes. Use per-segment extract → concat.
 - **Linear animation easing.** Looks robotic. Always cubic.
-- **Hard audio cuts at segment boundaries.** Audible pops. (Hard Rule 3.)
+- **Hard audio cuts at segment boundaries.** Audible pops. (Critical Rule 3.)
 - **Typing text centered on the partial string.** Text slides left as it grows.
 - **Sequential sub-agents for multiple animations.** Always parallel.
 - **Editing before confirming the strategy.** Never.
