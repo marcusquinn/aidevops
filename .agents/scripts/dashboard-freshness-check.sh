@@ -232,27 +232,52 @@ _cadence_gate_ok() {
 # =============================================================================
 
 # Emit "slug issue_number" lines for every known dashboard via the
-# ~/.aidevops/logs/health-issue-*-supervisor-* cache files written by
-# stats-health-dashboard.sh. We use cache-only enumeration so the scanner
-# stays cheap; missing caches just mean we don't have a dashboard to check.
+# ~/.aidevops/logs/health-issue-* cache files written by
+# stats-health-dashboard.sh. Historical cache names included the role segment
+# (`health-issue-<runner>-supervisor-<slug-dashed>`); current canonical
+# identity caches omit it (`health-issue-<canonical>-<slug-dashed>`). Resolve
+# both by matching the longest repos.json slug suffix instead of parsing a fixed
+# segment position.
 _enumerate_dashboards() {
-	local cache issue slug_raw slug
+	local cache issue slug_raw slug key seen="|"
 	shopt -s nullglob
-	for cache in "${HEALTH_ISSUE_CACHE_DIR}"/health-issue-*-supervisor-*; do
+	for cache in "${HEALTH_ISSUE_CACHE_DIR}"/health-issue-*; do
 		issue="$(tr -d '[:space:]' <"$cache" 2>/dev/null || true)"
 		[[ "$issue" =~ ^[0-9]+$ ]] || continue
-		# Cache filename format:
-		#   health-issue-<runner>-supervisor-<slug-dashed>
-		# where slug-dashed replaces "/" with "-". Recover the slug via the
-		# repos.json lookup rather than guessing separators.
 		slug_raw="$(basename "$cache")"
-		slug_raw="${slug_raw#health-issue-}"
-		slug_raw="${slug_raw#*-supervisor-}"
-		slug="$(_resolve_slug_from_dashed "$slug_raw")"
+		slug="$(_resolve_slug_from_cache_name "$slug_raw")"
 		[[ -z "$slug" ]] && continue
+		key="${slug} ${issue}"
+		case "$seen" in
+			*"|${key}|"*) continue ;;
+		esac
+		seen="${seen}${key}|"
 		printf '%s %s\n' "$slug" "$issue"
 	done
 	shopt -u nullglob
+	return 0
+}
+
+# Resolve a health-issue cache basename to a canonical repo slug.
+# Accepts both historical role-bearing and current canonical cache names.
+_resolve_slug_from_cache_name() {
+	local cache_name="$1"
+	local stem
+	stem="${cache_name#health-issue-}"
+	[[ -n "$stem" && "$stem" != "$cache_name" ]] || return 0
+	[[ -f "$REPOS_JSON" ]] || return 0
+	if ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	jq -r --arg stem "$stem" '
+		.initialized_repos[]
+		| select(.slug != null and .slug != "")
+		| .slug as $slug
+		| ($slug | gsub("/"; "-")) as $dashed
+		| select($stem == $dashed or ($stem | endswith("-" + $dashed)))
+		| {slug: $slug, len: ($dashed | length)}
+	' "$REPOS_JSON" 2>/dev/null \
+		| jq -sr 'sort_by(.len) | reverse | .[0].slug // empty' 2>/dev/null
 	return 0
 }
 
@@ -648,7 +673,7 @@ _file_stale_alert() {
 scan_one_dashboard() {
 	local slug="$1"
 	local dash_issue="$2"
-	local body age_line age_secs iso open_issues_json
+	local issue_json issue_state body age_line age_secs iso open_issues_json
 
 	if ! command -v gh >/dev/null 2>&1; then
 		_log_warn "gh not available — skipping ${slug}#${dash_issue}"
@@ -659,7 +684,24 @@ scan_one_dashboard() {
 		return 0
 	fi
 
-	body=$(gh api "repos/${slug}/issues/${dash_issue}" --jq '.body' 2>>"$LOGFILE" || echo "")
+	issue_json=$(gh api "repos/${slug}/issues/${dash_issue}" --jq '{state,body}' 2>>"$LOGFILE" || echo "")
+	if [[ -z "$issue_json" ]]; then
+		_log_warn "Empty issue payload from gh at ${slug}#${dash_issue}"
+		return 0
+	fi
+	issue_state=$(printf '%s\n' "$issue_json" | jq -r '.state // ""' 2>/dev/null || true)
+	case "$issue_state" in
+		[Oo][Pp][Ee][Nn]) ;;
+		[Cc][Ll][Oo][Ss][Ee][Dd])
+			_log_info "Dashboard ${slug}#${dash_issue} is closed — skipping stale scan"
+			return 0
+			;;
+		*)
+			_log_warn "Dashboard ${slug}#${dash_issue} has unexpected state '${issue_state}' — skipping stale scan"
+			return 0
+			;;
+	esac
+	body=$(printf '%s\n' "$issue_json" | jq -r '.body // ""' 2>/dev/null || true)
 	if [[ -z "$body" ]]; then
 		_log_warn "Empty body from gh at ${slug}#${dash_issue}"
 		return 0

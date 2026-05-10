@@ -103,8 +103,9 @@ cat >"${HOME_ISO}/.config/aidevops/repos.json" <<'EOF'
 EOF
 
 # Health-issue cache pointing at dashboard issue 424242 on slug test/repo.
-# Filename format: health-issue-<runner>-supervisor-<slug-dashed>.
-HEALTH_CACHE="${HOME_ISO}/.aidevops/logs/health-issue-testrunner-supervisor-test-repo"
+# Filename format mirrors current canonical caches:
+# health-issue-<canonical-operator>-<slug-dashed>.
+HEALTH_CACHE="${HOME_ISO}/.aidevops/logs/health-issue-testrunner-test-repo"
 printf '%s\n' 424242 >"$HEALTH_CACHE"
 
 # ---------------------------------------------------------------------------
@@ -211,7 +212,7 @@ run_scan_with_stubs() {
 			# Stub gh: records every call and returns canned responses
 			# for the three paths the scanner exercises:
 			#   gh auth status       → success
-			#   gh api repos/.../issues/N  → dashboard body (read from fixture)
+			#   gh api repos/.../issues/N  → dashboard issue JSON (body from fixture)
 			#   gh api --paginate repos/.../issues?state=open... → alert dedup/recovery check
 			#   gh issue create ...  → URL + 0
 			gh() {
@@ -240,7 +241,10 @@ run_scan_with_stubs() {
 							return 0
 						fi
 						# $2 = repos/test/repo/issues/424242
-						cat "$BODY_FIXTURE"
+						jq -n \
+							--arg state "${DASHBOARD_STATE:-OPEN}" \
+							--rawfile body "$BODY_FIXTURE" \
+							"{state: \$state, body: \$body}"
 						return 0
 						;;
 					issue)
@@ -367,6 +371,24 @@ if (( comment_count == 1 && close_count == 1 )); then
 else
 	fail "recovered alert close" \
 		"comment=$comment_count close=$close_count; calls:\n$(cat "$calls_file")"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8b: closed dashboard → no alert even if body is stale
+# ---------------------------------------------------------------------------
+echo "Testing: closed stale dashboard is ignored"
+run_scan_with_stubs "$STALE_BODY" 0 "export DASHBOARD_STATE=CLOSED" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( created_count == 0 )) \
+	&& grep -q 'Dashboard test/repo#424242 is closed — skipping stale scan' \
+		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log"; then
+	pass "closed stale dashboard → no alert filed"
+else
+	fail "closed stale dashboard skip" \
+		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
 fi
 
 # ---------------------------------------------------------------------------
