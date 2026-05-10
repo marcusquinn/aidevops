@@ -78,8 +78,8 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"- '-i'\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in repaired, repaired
-assert 'args: []' in repaired, repaired
+assert \"- '-l'\" in repaired and \"- '-c'\" in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
 assert 'env: {}' in repaired, repaired
 "
 
@@ -90,18 +90,17 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"args: ['-l', '-i', '-c', opencode]\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in repaired, repaired
-assert 'args: []' in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
 "
 
-_info "Test 3: generated profiles keep command-field OpenCode launch shape"
-run_python_test "generated profile uses command-field launch shape" "${load_module_code}
+_info "Test 3: generated profiles keep direct OpenCode launch shape"
+run_python_test "generated profile uses direct launch shape" "${load_module_code}
 scheme = {'name': 'Test', 'foreground': '#fff', 'background': '#000', 'cursor': '#fff', 'colors': ['#000', '#fff']}
 profile = mod.build_profile_yaml('aidevops', '/tmp/aidevops', '#123456', scheme, 'group-1')
 assert \"- '-i'\" not in profile, profile
 assert 'TABBY_AUTORUN: opencode' not in profile, profile
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in profile, profile
-assert 'args: []' in profile, profile
+assert \"- '-l'\" in profile and \"- '-c'\" in profile, profile
+assert 'opencode; exec zsh' in profile, profile
 assert 'env: {}' in profile, profile
 "
 
@@ -122,51 +121,67 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"- '-i'\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in repaired, repaired
-assert 'args: []' in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
 assert 'env: {}' in repaired, repaired
 "
 
-_info "Test 5: split direct profiles are repaired to command field"
-run_python_test "split direct profile repaired" "${load_module_code}
+_info "Test 5: command-field profiles are repaired"
+run_python_test "command-field profile repaired" "${load_module_code}
 config = '''profiles:
   - name: aidevops
     options:
-      command: /bin/zsh
-      args:
-        - '-l'
-        - '-c'
-        - opencode; exec zsh
+      command: /bin/zsh -l -c 'opencode; exec zsh'
+      args: []
       env: {}
       cwd: /tmp/aidevops
 '''
 repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in repaired, repaired
-assert 'args: []' in repaired, repaired
-assert \"- '-c'\" not in repaired, repaired
-"
-
-_info "Test 6: split direct profiles with existing env do not duplicate env"
-run_python_test "split direct profile preserves existing env" "${load_module_code}
-config = '''profiles:
-  - name: aidevops
-    options:
-      env: {}
-      cwd: /tmp/aidevops
-      command: /bin/zsh
-      args:
-        - '-l'
-        - '-c'
-        - opencode; exec zsh
-'''
-repaired, count = mod.repair_broken_opencode_launch_profiles(config)
-assert count == 1, count
-assert \"command: /bin/zsh -l -c 'opencode; exec zsh'\" in repaired, repaired
+assert 'command: /bin/zsh -l -c \'opencode; exec zsh\'' not in repaired, repaired
+assert 'args: []' not in repaired, repaired
+assert \"- '-l'\" in repaired and \"- '-c'\" in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
 assert repaired.count('      env: {}') == 1, repaired
 "
 
-_info "Test 7: sync repairs existing profiles even when no new profile is needed"
+_info "Test 6: command-field duplicate env profiles are repaired"
+run_python_test "command-field duplicate env repaired" "${load_module_code}
+config = '''profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh -l -c 'opencode; exec zsh'
+      args: []
+      env: {}
+      env: {}
+      cwd: /tmp/aidevops
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count >= 1, count
+assert 'command: /bin/zsh -l -c \'opencode; exec zsh\'' not in repaired, repaired
+assert repaired.count('      env: {}') == 1, repaired
+"
+
+_info "Test 7: split direct profiles are already valid"
+run_python_test "split direct profile remains unchanged" "${load_module_code}
+config = '''profiles:
+  - name: aidevops
+    options:
+      command: /bin/zsh
+      args:
+        - '-l'
+        - '-c'
+        - opencode; exec zsh
+      env: {}
+      cwd: /tmp/aidevops
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 0, count
+assert repaired.count('      env: {}') == 1, repaired
+assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
+assert 'opencode; exec zsh' in repaired, repaired
+"
+
+_info "Test 8: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 repo_path="${tmp_root}/aidevops"
@@ -199,7 +214,7 @@ with open(tabby_config, "w") as handle:
 """)
 PY
 sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
-if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "command: /bin/zsh -l -c 'opencode; exec zsh'" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
+if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "opencode; exec zsh" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
 	_pass "sync repairs existing broken profile"
 else
 	_fail "sync did not repair existing profile: ${sync_output}"

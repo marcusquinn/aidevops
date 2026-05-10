@@ -12,7 +12,7 @@
 # Usage:
 #   tabby-helper.sh sync          # Sync profiles from repos.json (default)
 #   tabby-helper.sh status        # Show current profile status
-#   tabby-helper.sh zshrc         # Install TABBY_AUTORUN hook in .zshrc
+#   tabby-helper.sh zshrc         # Deprecated no-op (TABBY_AUTORUN is unused)
 #   tabby-helper.sh fix-shell     # Ensure default local profile uses /bin/zsh (macOS)
 #   tabby-helper.sh help          # Show usage
 #
@@ -105,34 +105,7 @@ cmd_status() {
 }
 
 cmd_zshrc() {
-	local zshrc="${HOME}/.zshrc"
-	local marker="# Tabby profile autorun"
-
-	if [[ ! -f "$zshrc" ]]; then
-		_warn "No .zshrc found — creating one"
-		touch "$zshrc"
-	fi
-
-	if grep -qF "$marker" "$zshrc" 2>/dev/null; then
-		_success "TABBY_AUTORUN hook already in .zshrc"
-		return 0
-	fi
-
-	cat >>"$zshrc" <<'ZSHRC_BLOCK'
-
-# Tabby profile autorun - launches command after shell is fully interactive
-# This allows TUI apps (opencode) to work with Tabby's custom colour schemes
-_tabby_autorun() {
-  if [[ -n "${TABBY_AUTORUN:-}" ]]; then
-    local cmd="$TABBY_AUTORUN"
-    unset TABBY_AUTORUN
-    eval "$cmd"
-  fi
-}
-_tabby_autorun
-ZSHRC_BLOCK
-
-	_success "Added TABBY_AUTORUN hook to .zshrc"
+	_info "TABBY_AUTORUN is deprecated; Tabby profiles use direct split args"
 	return 0
 }
 
@@ -357,7 +330,7 @@ cmd_help() {
 	echo "Usage:"
 	echo "  tabby-helper.sh sync       Sync profiles from repos.json (create new, skip existing)"
 	echo "  tabby-helper.sh status     Show profile status (which repos have profiles)"
-	echo "  tabby-helper.sh zshrc      Install TABBY_AUTORUN hook in .zshrc"
+	echo "  tabby-helper.sh zshrc      Deprecated no-op (TABBY_AUTORUN is unused)"
 	echo "  tabby-helper.sh fix-shell  Ensure default local profile uses /bin/zsh (macOS)"
 	echo "  tabby-helper.sh help       Show this help"
 	echo ""

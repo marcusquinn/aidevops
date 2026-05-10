@@ -74,6 +74,7 @@ setup_auto_update() {
 			echo "Auto-update keeps aidevops current by checking every 10 minutes."
 			echo "Safe to run while AI sessions are active."
 			echo ""
+			local enable_auto=""
 			setup_prompt enable_auto "Enable auto-update? [Y/n]: " "Y"
 			if [[ "$enable_auto" =~ ^[Yy]?$ ]]; then
 				bash "$auto_update_script" enable
@@ -194,7 +195,7 @@ print_final_instructions() {
 
 # Setup Tabby terminal profiles from repos.json.
 # Creates a profile per registered repo with colour-matched themes and
-# the TABBY_AUTORUN hook for OpenCode TUI compatibility.
+# direct split-arg OpenCode launch settings.
 # Skipped if Tabby is not installed.
 setup_tabby() {
 	local tabby_helper="$HOME/.aidevops/agents/scripts/tabby-helper.sh"
@@ -223,11 +224,6 @@ setup_tabby() {
 	# After macOS updates, Tabby can fall back to bash when this is unset.
 	bash "$tabby_helper" fix-shell || true
 
-	# Install zshrc hook (idempotent)
-	if ! bash "$tabby_helper" zshrc; then
-		print_warning "Failed to install Tabby zshrc hook — run manually: aidevops tabby zshrc"
-	fi
-
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
 		# Non-interactive: sync silently, warn on failure
 		if ! bash "$tabby_helper" sync; then
@@ -240,6 +236,7 @@ setup_tabby() {
 	echo ""
 	bash "$tabby_helper" status || true
 	echo ""
+	local sync_tabby=""
 	setup_prompt sync_tabby "Sync Tabby profiles from repos.json? [Y/n]: " "Y"
 	if [[ "$sync_tabby" =~ ^[Yy]?$ ]]; then
 		bash "$tabby_helper" sync
@@ -288,6 +285,7 @@ setup_onboarding_prompt() {
 	echo "  - Get personalized recommendations based on your work"
 	echo "  - Set up API keys and credentials interactively"
 	echo ""
+	local launch_onboarding=""
 	setup_prompt launch_onboarding "Launch ${_onb_name} with /onboarding now? [Y/n]: " "Y"
 	if [[ "$launch_onboarding" =~ ^[Yy]?$ ]]; then
 		echo ""
