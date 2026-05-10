@@ -1,5 +1,5 @@
 ---
-description: Hotfix branch - urgent production fixes
+description: Hotfix worktree ref - urgent production fixes
 mode: subagent
 tools:
   read: true
@@ -11,22 +11,22 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Hotfix Branch
+# Hotfix Worktree Ref
 
 <!-- AI-CONTEXT-START -->
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `hotfix/` |
+| **Worktree ref prefix** | `hotfix/` |
 | **Commit** | `fix: [HOTFIX] description` |
 | **Version** | Patch bump (1.0.0 → 1.0.1) |
-| **Create from** | **Latest tag** (not `main`) — fix matches production, not unreleased changes |
+| **Create linked worktree from** | **Latest tag** (not `main`) — fix matches production, not unreleased changes |
 | **Urgency** | Immediate; can bypass normal review if authorized |
 
 ```bash
 git fetch --tags
-git checkout $(git describe --tags --abbrev=0)
-git checkout -b hotfix/{description}
+latest_tag=$(git describe --tags --abbrev=0)
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/{description} --base "$latest_tag"
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -42,12 +42,7 @@ If it can wait for the normal release cycle, use `bugfix/` instead.
 1. Apply the minimal fix only.
 2. Test immediately.
 3. Fast-track review, or deploy directly if authorized.
-4. Merge back to `main` and push.
-
-```bash
-git checkout main && git pull origin main
-git merge hotfix/critical-issue && git push origin main
-```
+4. Merge back to `main` via PR unless the user explicitly authorizes an emergency direct release.
 
 ### After Deployment
 

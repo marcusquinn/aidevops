@@ -1,5 +1,5 @@
 ---
-description: Bugfix branch - non-urgent bug fixes
+description: Bugfix worktree ref - non-urgent bug fixes
 mode: subagent
 tools:
   read: true
@@ -13,19 +13,18 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Bugfix Branch
+# Bugfix Worktree Ref
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `bugfix/` |
+| **Worktree ref prefix** | `bugfix/` |
 | **Commit** | `fix: description` |
 | **Version** | Patch bump (1.0.0 → 1.0.1) |
-| **Create from** | `main` |
+| **Create linked worktree from** | `main` |
 | **Examples** | `bugfix/login-timeout`, `bugfix/123-null-pointer` |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b bugfix/{description}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add bugfix/{description}
 ```
 
 ## When to Use
@@ -41,7 +40,7 @@ git checkout -b bugfix/{description}
 
 ## Commit Format
 
-```
+```text
 fix: resolve login timeout on slow connections
 
 - Increase timeout from 5s to 30s

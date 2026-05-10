@@ -31,11 +31,11 @@ See `workflows/plans.md` for the full planning workflow.
 
 ## Workflow
 
-### 1. Branch
+### 1. Safe Linked Worktree
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b feature/123-descriptive-name
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/123-descriptive-name
+# Continue from the sibling worktree path printed by the helper; keep the canonical repo on main.
 ```
 
 ### 2. Understand Requirements

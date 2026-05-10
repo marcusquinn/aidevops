@@ -20,7 +20,7 @@ If you cannot use the CLI command, use the issue templates on GitHub. Blank issu
 
 1. Fork the repository
 2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/aidevops.git`
-3. Create a branch: `git checkout -b feature/your-feature`
+3. Create a safe linked worktree for your change: `git worktree add ../aidevops-feature-your-feature -b feature/your-feature main`
 4. Make your changes
 5. Run tests: `./setup.sh` (installs locally for testing)
 6. Commit with conventional commits: `git commit -m "feat: add new feature"`

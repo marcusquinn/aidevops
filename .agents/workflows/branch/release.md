@@ -1,5 +1,5 @@
 ---
-description: Release branch - version preparation
+description: Release worktree ref - version preparation
 mode: subagent
 tools:
   read: true
@@ -11,19 +11,18 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Release Branch
+# Release Worktree Ref
 
 | Aspect | Value |
 |--------|-------|
-| **Prefix** | `release/` |
+| **Worktree ref prefix** | `release/` |
 | **Naming** | `release/{MAJOR}.{MINOR}.{PATCH}` |
 | **Commit** | `chore(release): v{version}` |
-| **Create from** | `main` (or latest stable) |
+| **Create linked worktree from** | `main` (or latest stable) |
 | **Merge to** | `main` via PR, then tag |
 
 ```bash
-git checkout main && git pull origin main
-git checkout -b release/1.2.0
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add release/1.2.0
 ```
 
 ## When to Create

@@ -59,7 +59,7 @@ Require `SAFETY_LEVEL=elevated`. Under `standard`, skip hypotheses targeting the
 
 These workflows must remain functional after any modification (verified by regression gate):
 
-1. **Git workflow**: `pre-edit-check.sh` must exit 0 on a clean feature branch
+1. **Git workflow**: `pre-edit-check.sh` must exit 0 in a clean safe linked worktree
 2. **PR flow**: `gh pr create` must succeed with standard arguments
 3. **Task management**: `claim-task-id.sh` must allocate IDs without collision
 4. **Pulse dispatch**: `pulse-wrapper.sh` must complete without error on a test repo

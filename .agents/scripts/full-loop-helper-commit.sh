@@ -181,7 +181,7 @@ _validate_commit_and_pr_inputs() {
 
 	branch=$(git branch --show-current 2>/dev/null || echo "")
 	if [[ -z "$branch" || "$branch" == "main" || "$branch" == "master" ]]; then
-		print_error "Cannot commit-and-pr from branch '${branch:-detached}'. Must be on a feature branch."
+		print_error "Cannot commit-and-pr from ref '${branch:-detached}'. Must be in a safe linked worktree."
 		return 1
 	fi
 	return 0

@@ -53,7 +53,7 @@ Output: score, completed `[x]` / outstanding `[ ]` items with blockers, scope ch
 
 | Practice | Check | Required? |
 |----------|-------|-----------|
-| Pre-edit git check | On feature branch, not main | Required |
+| Pre-edit git check | In a safe linked worktree, not canonical main | Required |
 | TODO tracking | Tasks logged in TODO.md | Recommended |
 | Commit hygiene | Atomic commits, clear messages | Required |
 | Quality checks | Linters run before commit | Recommended |

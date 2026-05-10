@@ -12,7 +12,7 @@ tools:
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Branch Workflow
+# Worktree Ref Workflow
 
 <!-- AI-CONTEXT-START -->
 
@@ -33,12 +33,12 @@ tools:
 | Spike, POC | `experiment/` | `branch/experiment.md` |
 | Version release | `release/` | `branch/release.md` |
 
-- Branch names: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Examples: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
+- Worktree refs: `{type}/{short-description}` — lowercase, hyphenated, ~50 chars max. Examples: `feature/user-dashboard`, `bugfix/123-login-timeout`; releases use semver (`release/1.2.0`).
 - Planning tasks: move to `## In Progress`, add `started:<ISO>`, then `beads-sync-helper.sh push`.
 
 <!-- AI-CONTEXT-END -->
 
-Before creating a branch, read `workflows/git-workflow.md` (issue URLs, fork detection, commit/PR rules) and `workflows/worktree.md` (creation, cleanup). Pre-slugify branch names: lowercase, spaces→hyphens, special chars removed. Worktree paths auto-slugified by `generate_worktree_path()` (`/` → `-`, lowercased).
+Before creating a safe linked worktree, read `workflows/git-workflow.md` (issue URLs, fork detection, commit/PR rules) and `workflows/worktree.md` (creation, cleanup). Pre-slugify worktree refs: lowercase, spaces→hyphens, special chars removed. Worktree paths auto-slugified by `generate_worktree_path()` (`/` → `-`, lowercased).
 
 ## Branch Lifecycle
 
@@ -46,7 +46,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 
 | Stage | Command / Agent | Notes |
 |-------|-----------------|-------|
-| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Linked worktree from `main` |
+| Create | `wt switch -c {type}/{desc}` or `worktree-helper.sh add {type}/{desc}` | Safe linked worktree from `main` |
 | Develop | `branch/{type}.md`, domain agents | Use conventional commits |
 | Preflight | `.agents/scripts/linters-local.sh --fast` → `workflows/preflight.md` | Required before push |
 | Version | `.agents/scripts/version-manager.sh bump [major\|minor\|patch]` → `workflows/version-bump.md` | Releases only |
@@ -60,7 +60,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 
 ## Worktree Rules
 
-- Prefer worktrees over `git checkout -b`; the next session must inherit `main`, not a task branch.
+- Create a safe linked worktree for every development task; the next session must inherit `main`, not a task ref.
 - Reference the sibling worktree path (`~/Git/{repo}-{type}-{slug}/` or `~/Git/{ecosystem}/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
 - After switching to a worktree, re-read files at the worktree path before editing.
 - Never remove a worktree you did not create unless the user explicitly asked.

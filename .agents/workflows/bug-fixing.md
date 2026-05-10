@@ -74,11 +74,11 @@ Only bump version after fix is confirmed working. Use `version-manager.sh releas
 
 ## 6. Hotfix (Critical Production Bugs)
 
-For bugs requiring immediate release, branch from the latest tag:
+For bugs requiring immediate release, create a safe linked worktree from the latest tag:
 
 ```bash
-git tag -l "v*" --sort=-v:refname | head -5
-git checkout -b hotfix/v{VERSION} v{LATEST_TAG}
+git tag -l "v*" --sort=-v:refname
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION} --base v{LATEST_TAG}
 # Apply minimal fix, bump PATCH, commit, tag, push
 # Merge back to main after release
 ```

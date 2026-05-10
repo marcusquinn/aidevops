@@ -863,7 +863,7 @@ High-stakes operations are verified by a second AI model from a different provid
 | Risk Level | Examples | Action |
 |------------|----------|--------|
 | **Critical** | `git push --force` to main, `DROP DATABASE`, production deploy | Blocked unless second model agrees |
-| **High** | Force push to feature branch, data migration, secret exposure | Warned, verification recommended |
+| **High** | Force push to task ref, data migration, secret exposure | Warned, verification recommended |
 | **Medium** | Bulk file deletion, config changes | Logged |
 | **Low** | Normal edits, test runs | No verification |
 
@@ -2029,7 +2029,7 @@ Session → @agent-review → Improvements → Better Agents → Better Sessions
 @agent-review create a PR for improvement #2
 ```
 
-The agent will create a branch, apply changes, and submit a PR to `marcusquinn/aidevops` with a structured description. Your real-world usage helps improve the framework for everyone.
+The agent will create a safe linked worktree, apply changes, and submit a PR to `marcusquinn/aidevops` with a structured description. Your real-world usage helps improve the framework for everyone.
 
 **Code quality learning loop:**
 
@@ -2092,8 +2092,8 @@ Configure time tracking per-repo via `.aidevops.json`.
 | Command | Purpose |
 |---------|---------|
 | `/context` | Build AI context with Repomix for complex tasks |
-| `/feature` | Start a new feature branch workflow |
-| `/bugfix` | Start a bugfix branch workflow |
+| `/feature` | Start a new feature linked-worktree workflow |
+| `/bugfix` | Start a bugfix linked-worktree workflow |
 | `/hotfix` | Start an urgent hotfix workflow |
 | `/linters-local` | Run local linting (shfmt, ShellCheck, secretlint) |
 | `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
@@ -2749,7 +2749,7 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 **Contributing:**
 
 1. Fork the repository
-2. Create feature branch
+2. Create safe linked worktree for your contribution
 3. Add provider support or improvements
 4. Test with your infrastructure
 5. Submit pull request

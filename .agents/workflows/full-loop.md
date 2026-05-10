@@ -11,7 +11,7 @@ Task/Prompt: $ARGUMENTS
 
 ## Lifecycle Gate (t5096 + GH#5317 — MANDATORY)
 
-`Claim → Branch → Develop → Preflight → PR → Review → Merge → Release → Close → Cleanup`
+`Claim → Worktree → Develop → Preflight → PR → Review → Merge → Release → Close → Cleanup`
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
@@ -44,13 +44,13 @@ Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d
 
 ---
 
-## Step 1: Auto-Branch Setup
+## Step 1: Auto-Worktree Setup
 
 ```bash
 ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "$ARGUMENTS"
 ```
 
-Exit 0: already on feature branch. Exit 2: on main → auto-create worktree.
+Exit 0: already in a safe linked worktree or approved pre-created worker worktree. Exit 2: canonical `main` checkout → create a safe linked worktree for the task before editing.
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 

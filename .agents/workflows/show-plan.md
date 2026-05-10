@@ -60,7 +60,7 @@ Script outputs formatted Markdown with:
 
 1. **"1"** - Begin working on the plan:
    1. Run `~/.aidevops/agents/scripts/pre-edit-check.sh`
-   2. Create branch if needed: `wt switch -c feature/<plan-slug>`
+   2. Create safe linked worktree if needed: `wt switch -c feature/<plan-slug>`
    3. Update plan status: `**Status:** Planning` → `**Status:** In Progress (Phase 1/N)`, add `started:` timestamp
    4. Display first phase description and any blockers
 2. **"2"** - View another plan → prompt for name, run `/show-plan <name>`

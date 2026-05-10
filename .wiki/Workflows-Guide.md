@@ -89,7 +89,7 @@ The `.agents/workflows/` directory contains process guides for common developmen
 When you say "Add a new feature for user authentication":
 
 1. AI reads `feature-development.md`
-2. Creates feature branch following naming convention
+2. Creates safe linked worktree following naming convention
 3. Implements feature with proper structure
 4. Follows code review checklist
 5. Prepares PR with appropriate description

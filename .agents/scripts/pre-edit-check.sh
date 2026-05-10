@@ -56,7 +56,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # Fast-path for headless workers with pre-created worktrees
 # =============================================================================
 # When the dispatcher pre-creates a worktree and passes WORKER_WORKTREE_PATH,
-# the worker is already in a safe feature branch. Skip all detection logic.
+# the worker is already in a safe linked worktree. Skip all detection logic.
 if [[ -n "${WORKER_WORKTREE_PATH:-}" && -d "${WORKER_WORKTREE_PATH:-}" ]]; then
 	# Verify we're actually in the worktree (or the worker's --dir points here)
 	_current_dir="$(pwd -P 2>/dev/null || pwd)"

@@ -1036,7 +1036,7 @@ gather_context() {
 	echo -e "${CYAN}## Quick Recommendations${NC}"
 
 	if is_protected_branch; then
-		echo -e "${RED}! Create feature branch before making changes${NC}"
+		echo -e "${RED}! Create a safe linked worktree before making changes${NC}"
 	fi
 
 	local todo_status

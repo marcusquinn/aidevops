@@ -125,7 +125,7 @@ _scaffold_contributing() {
 	local c="# Contributing to $repo_name"
 	c="$c"$'\n\n'"Thanks for your interest in contributing!"
 	c="$c"$'\n\n'"## Quick Start"$'\n\n'"1. Fork the repository"
-	c="$c"$'\n'"2. Create a branch: \`git checkout -b feature/your-feature\`"
+	c="$c"$'\n'"2. Create a safe linked worktree for your change: \`git worktree add ../${repo_name}-feature-your-feature -b feature/your-feature main\`"
 	c="$c"$'\n'"3. Make your changes"
 	c="$c"$'\n'"4. Commit with conventional commits: \`git commit -m \"feat: add new feature\"\`"
 	c="$c"$'\n'"5. Push and open a PR"
