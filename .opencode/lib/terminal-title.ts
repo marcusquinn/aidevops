@@ -27,24 +27,7 @@ export function isTerminalTitleEnabled(env: TerminalTitleEnv = process.env): boo
  * extra terminal control sequences into the OSC payload.
  */
 export function sanitizeTerminalTitle(title: string): string {
-  let sanitizedTitle = ""
-  let previousWasControl = false
-
-  for (const character of title) {
-    const codePoint = character.charCodeAt(0)
-    if (codePoint <= 31 || codePoint === 127) {
-      if (!previousWasControl) {
-        sanitizedTitle += " "
-      }
-      previousWasControl = true
-      continue
-    }
-
-    sanitizedTitle += character
-    previousWasControl = false
-  }
-
-  return sanitizedTitle.trim()
+  return title.replace(/[\x00-\x1F\x7F]+/g, " ").trim()
 }
 
 /**
