@@ -46,6 +46,22 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local test_name="$1"
+	local needle="$2"
+	local haystack="$3"
+	if [[ "$haystack" != *"$needle"* ]]; then
+		echo "  PASS: $test_name"
+		PASS=$((PASS + 1))
+	else
+		echo "  FAIL: $test_name"
+		echo "    expected NOT to contain: $needle"
+		echo "    actual: $haystack"
+		FAIL=$((FAIL + 1))
+	fi
+	return 0
+}
+
 assert_grep_finds() {
 	local test_name="$1"
 	local marker="$2"
@@ -145,8 +161,8 @@ assert_contains "original body preserved" "## Issue Consolidation Needed" "$capt
 assert_grep_finds "marker still found by grep -qF" "$marker" "$captured_body"
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Scenario 2: marker at the top of --body-file, wrapper appends sig to file,
-# grep on file contents still finds marker
+# Scenario 2: marker at the top of --body-file, wrapper signs a temp copy;
+# grep on both original and submitted contents still finds marker
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Scenario 2: top-marker + --body-file survives wrapper sig-append"
@@ -162,9 +178,10 @@ EOF
 gh_pr_comment 19999 --repo "owner/repo" --body-file "$bf"
 file_content=$(<"$bf")
 captured_body=$(<"$GH_STUB_BODY_FILE")
-assert_contains "sig footer appended to file" "<!-- aidevops:sig -->" "$file_content"
+assert_not_contains "original file was not mutated" "<!-- aidevops:sig -->" "$file_content"
 assert_contains "original file content preserved" "## Large File Gate" "$file_content"
 assert_grep_finds "marker still found in file via grep -qF" "$marker2" "$file_content"
+assert_contains "sig footer appended to gh body" "<!-- aidevops:sig -->" "$captured_body"
 assert_grep_finds "marker still found in body gh received" "$marker2" "$captured_body"
 
 # ─────────────────────────────────────────────────────────────────────────────
