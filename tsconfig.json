@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
+    "target": "ES2022",
+    "types": ["bun"]
+  },
+  "include": [".opencode/lib/session-rename-guards.ts", ".opencode/lib/terminal-title.ts"]
+}
