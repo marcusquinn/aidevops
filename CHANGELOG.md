@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.23] - 2026-05-10
+
+### Changed
+
+- Documentation: add Swift Xcode agent workflow (#23299)
+
+### Fixed
+
+- improve capability discovery catalogue (#23301)
+- ignore closed stale dashboards (#23298)
+
 ## [3.15.22] - 2026-05-10
 
 ### Fixed
