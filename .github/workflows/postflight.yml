@@ -210,16 +210,19 @@ jobs:
         echo "## Secret Detection (Secretlint)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        # Install secretlint (Bun for faster install)
-        bun install -g secretlint @secretlint/secretlint-rule-preset-recommend
+        # Install the repo-pinned secretlint stack. Using the latest global
+        # secretlint can add release-only rules that trip intentional fixture
+        # strings before the repository has opted in to the new major version.
+        bun install --frozen-lockfile
         
         # Run scan. Keep intentional credential-scrubber fixtures out of the
         # release gate while scanning every other production/source path.
         SECRET_LINT_TARGETS=(
           "**/*"
+          "!.agents/scripts/tests/test-credential-sanitizer.sh"
           "!.agents/scripts/tests/test-credential-transcript-scrub.sh"
         )
-        if secretlint "${SECRET_LINT_TARGETS[@]}" --secretlintrc .secretlintrc.json --secretlintignore .secretlintignore --format compact 2>/dev/null; then
+        if bunx --no-install secretlint "${SECRET_LINT_TARGETS[@]}" --secretlintrc .secretlintrc.json --secretlintignore .secretlintignore --format compact 2>/dev/null; then
           echo "**Status**: No secrets detected" >> $GITHUB_STEP_SUMMARY
           echo "secrets_status=passed" >> $GITHUB_OUTPUT
         else
