@@ -298,10 +298,9 @@ assert_not_contains "original file did not get signature footer" "<!-- aidevops:
 assert_contains "original file still has original content" "Body from file content" "$file_content"
 captured=$(<"$GH_STUB_ARGS_FILE")
 assert_contains "gh received --body-file flag" "--body-file" "$captured"
-assert_not_contains "gh did not receive original body-file path" "$bf" "$captured"
 captured_body_file=""
 while IFS= read -r arg; do
-	if [[ -n "$captured_body_file" ]]; then
+	if [[ "$captured_body_file" == "pending" ]]; then
 		captured_body_file="$arg"
 		break
 	fi
@@ -309,9 +308,20 @@ while IFS= read -r arg; do
 		captured_body_file="pending"
 	fi
 done <<<"$captured"
-captured_file_content=$(<"$captured_body_file")
-assert_contains "gh received temp body-file with signature" "<!-- aidevops:sig -->" "$captured_file_content"
-assert_contains "gh received temp body-file with original content" "Body from file content" "$captured_file_content"
+
+if [[ -z "$captured_body_file" || "$captured_body_file" == "pending" ]]; then
+	echo "  FAIL: gh did not receive --body-file flag or value"
+	FAIL=$((FAIL + 1))
+elif [[ "$captured_body_file" == "$bf" ]]; then
+	echo "  FAIL: gh received original body-file path instead of temp copy"
+	FAIL=$((FAIL + 1))
+else
+	echo "  PASS: gh received a different body-file path"
+	PASS=$((PASS + 1))
+	captured_file_content=$(<"$captured_body_file")
+	assert_contains "gh received temp body-file with signature" "<!-- aidevops:sig -->" "$captured_file_content"
+	assert_contains "gh received temp body-file with original content" "Body from file content" "$captured_file_content"
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test 12 (t2393): exit code from gh is propagated through the wrapper
