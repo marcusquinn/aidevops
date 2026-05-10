@@ -79,6 +79,7 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
 FIXTURE_LOGFILE="${TMPDIR_TEST}/pulse.log"
 FIXTURE_LOGDIR="${TMPDIR_TEST}"
+FIXTURE_METRICS="${TMPDIR_TEST}/headless-runtime-metrics.jsonl"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -328,7 +329,7 @@ assert_contains "author shows unknown when offline" "unknown" "$output"
 
 # --- Test 12: no arguments ---
 printf '\nTest 12: missing PR number shows error\n'
-output=$("$HELPER" pr 2>&1) || true
+output=$(AIDEVOPS_BASH_REEXECED=1 "$HELPER" pr 2>&1) || true
 rc=$?
 assert_contains "shows usage on missing arg" "usage:" "$output"
 
@@ -340,12 +341,24 @@ assert_contains "shows usage on missing arg" "usage:" "$output"
 cat >> "$FIXTURE_LOGFILE" <<'ISSUE_FIXTURE'
 2026-04-27T09:30:00Z [pulse-merge-conflict] Deterministic merge: closed conflicting PR #21876, linked issue left open for re-dispatch in marcusquinn/aidevops
 2026-04-27T09:30:01Z [pulse-wrapper] Deterministic merge pass complete: merged=0, closed_conflicting=1, failed=0
+2026-04-27T10:06:00Z [dispatch-backoff] BACKOFF_ACTIVE #21860 (marcusquinn/aidevops) count=2 cooldown=1800s wait=1500s next=2026-04-27T10:31:00
 ISSUE_FIXTURE
+
+now_epoch=$(date +%s)
+recent_rate_limit_1=$(( now_epoch - 360 ))
+recent_rate_limit_2=$(( now_epoch - 120 ))
+recent_success=$(( now_epoch - 60 ))
+cat > "$FIXTURE_METRICS" <<METRICS
+{"ts":${recent_rate_limit_1},"role":"worker","session_key":"issue-21860","issue_number":21860,"provider":"openai","model":"openai/gpt-5.5","result":"rate_limit","failure_reason":"rate_limit","exit_code":143}
+{"ts":${recent_rate_limit_2},"role":"worker","session_key":"issue-21860","issue_number":21860,"provider":"openai","model":"openai/gpt-5.5","result":"rate_limit_fast","failure_reason":"rate_limit_fast","provider_error_type":"rate_limit","provider_status":429,"exit_code":143}
+{"ts":${recent_success},"role":"worker","session_key":"issue-21860","issue_number":21860,"provider":"openai","model":"openai/gpt-5.5","result":"success","failure_reason":"","exit_code":0}
+METRICS
 
 # --- Test 13: issue subcommand — basic output ---
 printf '\nTest 13: issue #21860 — WORKER_BRANCH_ORPHAN cascade\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PULSE_DIAGNOSE_METRICS_FILE="$FIXTURE_METRICS" \
 	PATH="${TMPDIR_TEST}:${PATH}" \
 	"$HELPER" issue 21860 --repo marcusquinn/aidevops 2>&1) || true
 
@@ -354,6 +367,10 @@ assert_contains "shows issue title" "worker re-dispatch" "$output"
 assert_contains "shows issue labels" "auto-dispatch" "$output"
 assert_contains "shows lifecycle comments section" "Lifecycle comments:" "$output"
 assert_contains "shows WORKER_BRANCH_ORPHAN comment" "WORKER_BRANCH_ORPHAN" "$output"
+assert_contains "shows repeated attempts section" "Repeated attempts / dispatch backoff:" "$output"
+assert_contains "shows metric attempt count" "Attempts in metrics: 3" "$output"
+assert_contains "shows active backoff state" "Retry/backoff state: active=true" "$output"
+assert_contains "shows dispatch backoff log event" "BACKOFF_ACTIVE #21860" "$output"
 assert_contains "shows linked PRs section" "Linked/worker PRs:" "$output"
 assert_contains "shows linked PR number" "PR #21876" "$output"
 assert_contains "shows linked PR branch" "feature/auto-20260427-gh21860" "$output"
@@ -362,6 +379,7 @@ assert_contains "shows linked PR branch" "feature/auto-20260427-gh21860" "$outpu
 printf '\nTest 14: issue #21860 — linked PR pulse events\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PULSE_DIAGNOSE_METRICS_FILE="$FIXTURE_METRICS" \
 	PATH="${TMPDIR_TEST}:${PATH}" \
 	"$HELPER" issue 21860 --repo marcusquinn/aidevops 2>&1) || true
 
@@ -383,6 +401,7 @@ assert_contains "no linked PRs" "no linked or worker PRs found" "$output"
 printf '\nTest 16: issue --json output\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PULSE_DIAGNOSE_METRICS_FILE="$FIXTURE_METRICS" \
 	PATH="${TMPDIR_TEST}:${PATH}" \
 	"$HELPER" issue 21860 --repo marcusquinn/aidevops --json 2>&1) || true
 
@@ -409,12 +428,26 @@ if command -v jq >/dev/null 2>&1; then
 		FAIL=$((FAIL + 1))
 		printf '  ✗ JSON linked_prs has ≥1 entry (got %s)\n' "$json_pr_count"
 	fi
+	json_attempt_count=$(echo "$output" | jq '.repeated_attempts.attempt_count' 2>/dev/null || echo 0)
+	assert_eq "JSON repeated_attempts attempt_count for #21860" "3" "$json_attempt_count"
+	json_backoff_active=$(echo "$output" | jq '.repeated_attempts.backoff_active' 2>/dev/null || echo "false")
+	assert_eq "JSON repeated_attempts backoff_active=true" "true" "$json_backoff_active"
+	json_dispatch_events=$(echo "$output" | jq '.repeated_attempts.dispatch_log_events | length' 2>/dev/null || echo 0)
+	TOTAL=$((TOTAL + 1))
+	if [[ "$json_dispatch_events" -ge 1 ]]; then
+		PASS=$((PASS + 1))
+		printf '  ✓ JSON repeated_attempts dispatch_log_events has ≥1 entry (got %s)\n' "$json_dispatch_events"
+	else
+		FAIL=$((FAIL + 1))
+		printf '  ✗ JSON repeated_attempts dispatch_log_events has ≥1 entry (got %s)\n' "$json_dispatch_events"
+	fi
 fi
 
 # --- Test 17: issue --verbose shows raw log lines ---
 printf '\nTest 17: issue --verbose shows raw pulse log lines\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+	PULSE_DIAGNOSE_METRICS_FILE="$FIXTURE_METRICS" \
 	PATH="${TMPDIR_TEST}:${PATH}" \
 	"$HELPER" issue 21860 --repo marcusquinn/aidevops --verbose 2>&1) || true
 
@@ -434,7 +467,7 @@ assert_contains "offline shows no linked PRs" "no linked or worker PRs found" "$
 
 # --- Test 19: issue missing number shows error ---
 printf '\nTest 19: issue missing number shows error\n'
-output=$("$HELPER" issue 2>&1) || true
+output=$(AIDEVOPS_BASH_REEXECED=1 "$HELPER" issue 2>&1) || true
 assert_contains "issue shows usage on missing arg" "usage:" "$output"
 
 # --- Test 20: help shows issue subcommand ---

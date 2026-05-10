@@ -17,6 +17,7 @@
 #   PULSE_DIAGNOSE_LOGFILE      — override pulse.log path
 #   PULSE_DIAGNOSE_GH_OFFLINE   — set to 1 to skip gh API calls (test mode)
 #   PULSE_DIAGNOSE_LOGDIR       — override log directory for rotated logs
+#   PULSE_DIAGNOSE_METRICS_FILE — override headless-runtime-metrics.jsonl path
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
@@ -41,6 +42,7 @@ set -euo pipefail
 
 readonly DEFAULT_LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 readonly DEFAULT_LOGDIR="${HOME}/.aidevops/logs"
+readonly DEFAULT_METRICS_FILE="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
 readonly _UNKNOWN="unknown"
 
 # =============================================================================
@@ -164,6 +166,15 @@ _resolve_logdir() {
 	return 0
 }
 
+_resolve_metrics_file() {
+	if [[ -n "${PULSE_DIAGNOSE_METRICS_FILE:-}" ]]; then
+		echo "${PULSE_DIAGNOSE_METRICS_FILE}"
+		return 0
+	fi
+	echo "$DEFAULT_METRICS_FILE"
+	return 0
+}
+
 # Collect all log lines mentioning a PR number from pulse.log and rotated files.
 # Args: $1 = PR number, $2 = logfile, $3 = logdir
 # Outputs lines to stdout sorted chronologically.
@@ -196,6 +207,115 @@ _collect_pr_log_lines() {
 			done
 		fi
 	} | sort -t'T' -k1,1 2>/dev/null || sort
+	return 0
+}
+
+# Collect dispatch/backoff log lines mentioning an issue number.
+# Args: $1 = issue number, $2 = logfile, $3 = logdir
+# Outputs matching lines sorted chronologically.
+_collect_issue_log_lines() {
+	local issue_number="$1"
+	local logfile="$2"
+	local logdir="$3"
+
+	local pattern="#${issue_number}[^0-9]|#${issue_number}$|issue #${issue_number}[^0-9]|issue #${issue_number}$|Issue #${issue_number}[^0-9]|Issue #${issue_number}$|issue-${issue_number}[^0-9]|issue-${issue_number}$"
+
+	{
+		if [[ -f "$logfile" ]]; then
+			grep -E "$pattern" "$logfile" 2>/dev/null || true
+		fi
+
+		local rotated
+		for rotated in "${logdir}"/pulse.log.[0-9]* ; do
+			[[ -f "$rotated" ]] || continue
+			[[ "$rotated" == *.gz ]] && continue
+			grep -E "$pattern" "$rotated" 2>/dev/null || true
+		done
+
+		if command -v zcat >/dev/null 2>&1; then
+			for rotated in "${logdir}"/pulse.log.*.gz ; do
+				[[ -f "$rotated" ]] || continue
+				zcat "$rotated" 2>/dev/null | grep -E "$pattern" 2>/dev/null || true
+			done
+		fi
+	} | sort -t'T' -k1,1 2>/dev/null || sort
+	return 0
+}
+
+_diagnose_cooldown_for_rate_limit_count() {
+	local count="$1"
+	if [[ "$count" -le 1 ]]; then
+		printf '300\n'
+	elif [[ "$count" -eq 2 ]]; then
+		printf '1800\n'
+	elif [[ "$count" -eq 3 ]]; then
+		printf '7200\n'
+	else
+		printf '86400\n'
+	fi
+	return 0
+}
+
+# Summarise headless runtime attempts for an issue and project retry/backoff state.
+# Args: $1=issue_number $2=metrics_file
+# Outputs compact JSON object.
+_issue_attempt_summary_json() {
+	local issue_number="$1"
+	local metrics_file="$2"
+	local session_key="issue-${issue_number}"
+
+	if [[ ! -f "$metrics_file" ]] || ! command -v jq >/dev/null 2>&1; then
+		printf '{"attempt_count":0,"rate_limit_count":0,"last_attempt_ts":0,"last_rate_limit_ts":0,"cooldown_secs":0,"next_eligible_epoch":0,"backoff_active":false,"results":[],"recent_attempts":[]}\n'
+		return 0
+	fi
+
+	local summary=""
+	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" '
+		def is_issue:
+			((.session_key // "") == $sk) or (((.issue_number // "") | tostring) == $issue);
+		def is_rate_limit:
+			(.result // "") == "rate_limit"
+			or (.result // "") == "rate_limit_fast"
+			or (.provider_error_type // "") == "rate_limit"
+			or ((.provider_status // "") | tostring) == "429";
+		[.[] | select(is_issue)] as $attempts
+		| ($attempts | map(select(is_rate_limit))) as $rl
+		| {
+			attempt_count: ($attempts | length),
+			rate_limit_count: ($rl | length),
+			last_attempt_ts: (($attempts | map(.ts // 0) | max) // 0),
+			last_rate_limit_ts: (($rl | map(.ts // 0) | max) // 0),
+			results: ($attempts | group_by(.result // "unknown") | map({result: (.[0].result // "unknown"), count: length}) | sort_by(.result)),
+			recent_attempts: ($attempts | sort_by(.ts // 0) | reverse | .[0:5] | map({ts: (.ts // 0), result: (.result // "unknown"), failure_reason: (.failure_reason // ""), provider: (.provider // ""), model: (.model // ""), exit_code: (.exit_code // null)}))
+		}
+	' "$metrics_file" 2>/dev/null) || summary=""
+
+	if [[ -z "$summary" ]]; then
+		printf '{"attempt_count":0,"rate_limit_count":0,"last_attempt_ts":0,"last_rate_limit_ts":0,"cooldown_secs":0,"next_eligible_epoch":0,"backoff_active":false,"results":[],"recent_attempts":[]}\n'
+		return 0
+	fi
+
+	local rate_limit_count="0" last_rate_limit_ts="0" cooldown_secs="0" next_eligible="0" now_epoch="0" active="false"
+	rate_limit_count=$(printf '%s' "$summary" | jq -r '.rate_limit_count // 0' 2>/dev/null || printf '0')
+	last_rate_limit_ts=$(printf '%s' "$summary" | jq -r '.last_rate_limit_ts // 0' 2>/dev/null || printf '0')
+	[[ "$rate_limit_count" =~ ^[0-9]+$ ]] || rate_limit_count=0
+	[[ "$last_rate_limit_ts" =~ ^[0-9]+$ ]] || last_rate_limit_ts=0
+	if [[ "$rate_limit_count" -gt 0 && "$last_rate_limit_ts" -gt 0 ]]; then
+		cooldown_secs=$(_diagnose_cooldown_for_rate_limit_count "$rate_limit_count")
+		next_eligible=$(( last_rate_limit_ts + cooldown_secs ))
+		now_epoch=$(date +%s 2>/dev/null || printf '0')
+		[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+		if [[ "$now_epoch" -lt "$next_eligible" ]]; then
+			active="true"
+		fi
+	fi
+
+	printf '%s' "$summary" | jq -c \
+		--argjson cooldown "$cooldown_secs" \
+		--argjson next "$next_eligible" \
+		--argjson active "$active" \
+		'. + {cooldown_secs: $cooldown, next_eligible_epoch: $next, backoff_active: $active}' \
+		2>/dev/null || printf '%s\n' "$summary"
 	return 0
 }
 
@@ -360,7 +480,7 @@ _cmd_pr_parse_args() {
 	done
 
 	if [[ -z "$_CMD_PR_NUMBER" ]]; then
-		print_error "usage: pulse-diagnose-helper.sh pr <N> [--repo <slug>] [--verbose] [--json]"
+		printf '%b[ERROR]%b usage: pulse-diagnose-helper.sh pr <N> [--repo <slug>] [--verbose] [--json]\n' "$RED" "$NC" >&2
 		return 1
 	fi
 
@@ -1060,7 +1180,7 @@ _cmd_issue_parse_args() {
 	done
 
 	if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
-		print_error "usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]"
+		printf '%b[ERROR]%b usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]\n' "$RED" "$NC" >&2
 		return 1
 	fi
 
@@ -1262,11 +1382,77 @@ _render_issue_linked_prs() {
 	return 0
 }
 
+# Render repeated worker attempts, pulse dispatch decisions, and retry state.
+# Args: $1=attempt_summary_json $2=issue_log_lines $3=verbose
+_render_issue_attempts_text() {
+	local attempt_summary_json="$1" issue_log_lines="$2" verbose="$3"
+	printf 'Repeated attempts / dispatch backoff:\n'
+	if ! command -v jq >/dev/null 2>&1; then
+		printf '  (jq not available — cannot parse attempt metrics)\n\n'
+		return 0
+	fi
+
+	local attempt_count="0" rate_limit_count="0" active="false" cooldown_secs="0" next_epoch="0"
+	attempt_count=$(printf '%s' "$attempt_summary_json" | jq -r '.attempt_count // 0' 2>/dev/null || printf '0')
+	rate_limit_count=$(printf '%s' "$attempt_summary_json" | jq -r '.rate_limit_count // 0' 2>/dev/null || printf '0')
+	active=$(printf '%s' "$attempt_summary_json" | jq -r '.backoff_active // false' 2>/dev/null || printf 'false')
+	cooldown_secs=$(printf '%s' "$attempt_summary_json" | jq -r '.cooldown_secs // 0' 2>/dev/null || printf '0')
+	next_epoch=$(printf '%s' "$attempt_summary_json" | jq -r '.next_eligible_epoch // 0' 2>/dev/null || printf '0')
+
+	printf '  Attempts in metrics: %s (rate-limit-equivalent: %s)\n' "$attempt_count" "$rate_limit_count"
+	if [[ "$rate_limit_count" =~ ^[0-9]+$ && "$rate_limit_count" -gt 0 ]]; then
+		local next_human=""
+		next_human=$(date -r "$next_epoch" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+			date -d "@${next_epoch}" '+%Y-%m-%dT%H:%M:%S' 2>/dev/null || \
+			printf 'epoch:%s' "$next_epoch")
+		printf '  Retry/backoff state: active=%s cooldown=%ss next=%s\n' "$active" "$cooldown_secs" "$next_human"
+	else
+		printf '  Retry/backoff state: clear (no rate-limit-equivalent attempts in metrics)\n'
+	fi
+
+	local result_lines=""
+	result_lines=$(printf '%s' "$attempt_summary_json" | jq -r '.results[]? | "  - " + (.result // "unknown") + ": " + ((.count // 0) | tostring)' 2>/dev/null || true)
+	if [[ -n "$result_lines" ]]; then
+		printf '  Result counts:\n%s\n' "$result_lines"
+	fi
+
+	local recent_lines=""
+	recent_lines=$(printf '%s' "$attempt_summary_json" | jq -r '.recent_attempts[]? | "  " + ((.ts // 0) | tostring) + "  " + (.result // "unknown") + "  provider=" + (.provider // "") + " model=" + (.model // "") + " reason=" + (.failure_reason // "")' 2>/dev/null || true)
+	if [[ -n "$recent_lines" ]]; then
+		printf '  Recent attempts:\n%s\n' "$recent_lines"
+	fi
+
+	local dispatch_count=0
+	if [[ -n "$issue_log_lines" ]]; then
+		dispatch_count=$(printf '%s\n' "$issue_log_lines" | grep -c '.' 2>/dev/null || true)
+	fi
+	[[ "$dispatch_count" =~ ^[0-9]+$ ]] || dispatch_count=0
+	printf '  Pulse dispatch/backoff log events: %s\n' "$dispatch_count"
+	if [[ "$dispatch_count" -gt 0 ]]; then
+		local shown=0
+		while IFS= read -r log_line; do
+			[[ -z "$log_line" ]] && continue
+			shown=$((shown + 1))
+			[[ "$shown" -gt 5 ]] && break
+			local ts="" summary=""
+			ts=$(_extract_timestamp "$log_line")
+			summary=$(printf '%s' "$log_line" | sed -E 's/^[0-9TZ: -]+//; s/[[:space:]]+/ /g')
+			printf '    %s  %s\n' "$ts" "$summary"
+			if [[ "$verbose" -eq 1 ]]; then
+				printf '      RAW: %s\n' "$log_line"
+			fi
+		done <<< "$issue_log_lines"
+	fi
+	printf '\n'
+	return 0
+}
+
 # Render the human-readable issue correlation report.
-# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir verbose
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir verbose attempt_summary_json issue_log_lines
 _render_issue_text() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
 	local pr_numbers="$5" logfile="$6" logdir="$7" verbose="$8"
+	local attempt_summary_json="$9" issue_log_lines="${10:-}"
 
 	local title="" state="" created_at="" closed_at="" labels="" assignees=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
@@ -1285,15 +1471,16 @@ _render_issue_text() {
 	printf '  Created: %s\n\n' "${created_at:-(unknown)}"
 
 	_render_issue_lifecycle_comments "$comments_json"
+	_render_issue_attempts_text "$attempt_summary_json" "$issue_log_lines" "$verbose"
 	_render_issue_linked_prs "$repo_slug" "$pr_numbers" "$logfile" "$logdir" "$verbose"
 	return 0
 }
 
 # Render JSON issue correlation report.
-# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir
+# Args: issue_number repo_slug issue_json comments_json pr_numbers logfile logdir attempt_summary_json issue_log_lines
 _render_issue_json() {
 	local issue_number="$1" repo_slug="$2" issue_json="$3" comments_json="$4"
-	local pr_numbers="$5" logfile="$6" logdir="$7"
+	local pr_numbers="$5" logfile="$6" logdir="$7" attempt_summary_json="$8" issue_log_lines="${9:-}"
 
 	local title="" state="" created_at=""
 	title=$(_jq_field "$issue_json" "$_IQ_TITLE" "")
@@ -1333,6 +1520,18 @@ _render_issue_json() {
 	fi
 	printf '\n  ],\n'
 
+	printf '  "repeated_attempts": '
+	if command -v jq >/dev/null 2>&1; then
+		local dispatch_events_json="[]"
+		if [[ -n "$issue_log_lines" ]]; then
+			dispatch_events_json=$(printf '%s\n' "$issue_log_lines" | jq -R -s 'split("\n") | map(select(length > 0)) | map({ts: ((capture("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?)") | .ts) // "unknown"), line: .})' 2>/dev/null || printf '[]')
+		fi
+		printf '%s' "$attempt_summary_json" | jq -c --argjson events "$dispatch_events_json" '. + {dispatch_log_events: $events}' 2>/dev/null || printf '{}'
+	else
+		printf '{}'
+	fi
+	printf ',\n'
+
 	printf '  "linked_prs": [\n'
 	local pr_first=1
 	while IFS= read -r pr_num; do
@@ -1367,21 +1566,26 @@ cmd_issue() {
 	local logfile="" logdir=""
 	logfile=$(_resolve_logfile "")
 	logdir=$(_resolve_logdir)
+	local metrics_file=""
+	metrics_file=$(_resolve_metrics_file)
 
-	local issue_json="" comments_json="" pr_numbers=""
+	local issue_json="" comments_json="" pr_numbers="" attempt_summary_json="" issue_log_lines=""
 	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
+	attempt_summary_json=$(_issue_attempt_summary_json "$_CMD_ISSUE_NUMBER" "$metrics_file")
+	issue_log_lines=$(_collect_issue_log_lines "$_CMD_ISSUE_NUMBER" "$logfile" "$logdir")
 
 	if [[ "$_CMD_ISSUE_JSON_OUTPUT" -eq 1 ]]; then
 		_render_issue_json "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
-			"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir"
+			"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir" \
+			"$attempt_summary_json" "$issue_log_lines"
 		return 0
 	fi
 
 	_render_issue_text "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG" \
 		"$issue_json" "$comments_json" "$pr_numbers" "$logfile" "$logdir" \
-		"$_CMD_ISSUE_VERBOSE"
+		"$_CMD_ISSUE_VERBOSE" "$attempt_summary_json" "$issue_log_lines"
 	return 0
 }
 
@@ -1414,6 +1618,7 @@ ENVIRONMENT:
   PULSE_DIAGNOSE_LOGFILE        Override pulse.log path
   PULSE_DIAGNOSE_GH_OFFLINE     Set to 1 to skip gh API calls (test mode)
   PULSE_DIAGNOSE_LOGDIR         Override log directory for rotated logs
+  PULSE_DIAGNOSE_METRICS_FILE   Override headless-runtime-metrics.jsonl path
   PULSE_DIAGNOSE_TIMINGS_FILE   Override pulse-stage-timings.log path
   PULSE_DIAGNOSE_WRAPPER_LOG    Override pulse-wrapper.log path
 
