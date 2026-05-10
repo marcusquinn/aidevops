@@ -250,12 +250,26 @@ cat >"${STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
 # Record "argv" to a captured-args file for assertions.
 printf '%s\n' "$@" >"${GH_STUB_ARGS_FILE:-/dev/null}"
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--body-file)
+		if [[ -n "${2:-}" && -f "$2" && -n "${GH_STUB_BODY_FILE_CONTENT:-}" ]]; then
+			cat "$2" >"$GH_STUB_BODY_FILE_CONTENT"
+		fi
+		shift 2
+		;;
+	*)
+		shift
+		;;
+	esac
+done
 # Simulate success.
 exit 0
 STUB
 chmod +x "${STUB_DIR}/gh"
 export PATH="${STUB_DIR}:$PATH"
 export GH_STUB_ARGS_FILE="${TMPDIR_TEST}/gh-args.txt"
+export GH_STUB_BODY_FILE_CONTENT="${TMPDIR_TEST}/gh-body-file-content.txt"
 
 : >"$GH_STUB_ARGS_FILE"
 gh_issue_comment 19951 --repo "owner/repo" --body "Issue comment body"
@@ -292,6 +306,7 @@ echo "Test 11 (t2393): gh_issue_comment --body-file signs temp copy"
 bf="${TMPDIR_TEST}/issue-body.md"
 printf 'Body from file content' >"$bf"
 : >"$GH_STUB_ARGS_FILE"
+: >"$GH_STUB_BODY_FILE_CONTENT"
 gh_issue_comment 19951 --repo "owner/repo" --body-file "$bf"
 file_content=$(<"$bf")
 assert_not_contains "original file did not get signature footer" "<!-- aidevops:sig -->" "$file_content"
@@ -309,7 +324,14 @@ while IFS= read -r arg; do
 		captured_body_file="pending"
 	fi
 done <<<"$captured"
-captured_file_content=$(<"$captured_body_file")
+	if [[ -e "$captured_body_file" ]]; then
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: temp body-file cleaned up after gh returned"
+	else
+		PASS=$((PASS + 1))
+		echo "  PASS: temp body-file cleaned up after gh returned"
+	fi
+captured_file_content=$(<"$GH_STUB_BODY_FILE_CONTENT")
 assert_contains "gh received temp body-file with signature" "<!-- aidevops:sig -->" "$captured_file_content"
 assert_contains "gh received temp body-file with original content" "Body from file content" "$captured_file_content"
 
