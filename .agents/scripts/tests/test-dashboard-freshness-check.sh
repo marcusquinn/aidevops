@@ -29,6 +29,8 @@
 #      empty dedup result.
 #  12. source regression: recovered stale and missing-marker alert paths share
 #      the parameterized close helper and accept a pre-fetched open issue list.
+#  13. source regression: dashboard enumeration precomputes repos.json slug
+#      suffixes once and passes the cache to each filename resolver call.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
 # and to fail-open on every error path; the test sets up a self-contained
@@ -480,7 +482,22 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 13: missing-marker body → alerts with MISSING title
+# Test 13: source shape for cached slug suffix resolution
+# ---------------------------------------------------------------------------
+echo "Testing: dashboard enumeration caches repos.json slug suffixes"
+if grep -q '^_repo_slug_suffixes()' "$SCANNER" \
+	&& grep -Fq "slug_suffixes=\"\$(_repo_slug_suffixes)\"" "$SCANNER" \
+	&& grep -Fq "_resolve_slug_from_cache_name \"\$slug_raw\" \"\$slug_suffixes\"" "$SCANNER" \
+	&& grep -Fq "local slug_suffixes=\"\${2:-}\"" "$SCANNER" \
+	&& grep -q 'while IFS=.* read -r length dashed slug' "$SCANNER"; then
+	pass "enumeration reuses a precomputed slug suffix list"
+else
+	fail "cached slug suffix source shape" \
+		"expected _enumerate_dashboards to compute slug suffixes once and pass them to _resolve_slug_from_cache_name"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 14: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null
