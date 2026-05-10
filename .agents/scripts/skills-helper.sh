@@ -90,6 +90,16 @@ _push_temp_file_cleanup() {
 	return 0
 }
 
+_read_count_file_and_remove() {
+	local count_path="$1"
+	local found
+
+	found=$(<"$count_path")
+	rm -f "$count_path"
+	printf '%s\n' "$found"
+	return 0
+}
+
 _is_search_stopword() {
 	local word="$1"
 
@@ -789,8 +799,7 @@ cmd_search() {
 		_push_temp_file_cleanup "$count_file"
 		echo ""
 		_search_local_skills "$query_lower" "$json_output" "$count_file" "50"
-		found=$(<"$count_file")
-		rm -f "$count_file"
+		found=$(_read_count_file_and_remove "$count_file")
 		[[ "$found" =~ ^[0-9]+$ ]] || found=0
 		if [[ "$found" -eq 0 ]]; then
 			log_warning "No local skills found matching '$query'"
@@ -834,8 +843,7 @@ cmd_browse() {
 	count_file=$(mktemp)
 	_push_temp_file_cleanup "$count_file"
 	_list_skills_in_category "$category" "$count_file"
-	found=$(<"$count_file")
-	rm -f "$count_file"
+	found=$(_read_count_file_and_remove "$count_file")
 	[[ "$found" =~ ^[0-9]+$ ]] || found=0
 
 	echo ""
@@ -1173,8 +1181,7 @@ cmd_recommend() {
 		count_file=$(mktemp)
 		_push_temp_file_cleanup "$count_file"
 		_list_skills_in_category "$cat" "$count_file" "12"
-		found_in_cat=$(<"$count_file")
-		rm -f "$count_file"
+		found_in_cat=$(_read_count_file_and_remove "$count_file")
 		[[ "$found_in_cat" =~ ^[0-9]+$ ]] || found_in_cat=0
 		total_found=$((total_found + found_in_cat))
 
