@@ -49,17 +49,19 @@ Use `framework-issue-helper.sh`, not `claim-task-id.sh`:
 Treat valuable session learning as system input, not disposable transcript context. Outliers are expensive to find intentionally; when one appears during normal work, convert it into reusable system knowledge before it evaporates.
 
 - **Apply now** when the lesson directly improves the user's requested aim without widening risk.
-- **Brief for workers** when the lesson exposes a fixable bug, missing validator, missing doc, recurring failure mode, or automation gap. Use worker-ready context: files, pattern, evidence, and verification.
+- **Brief for workers** when the lesson exposes a fixable bug, missing validator, missing doc, recurring failure mode, or automation gap. Use worker-ready context: files, pattern, evidence, verification, and an explicit note when paths are unknown.
 - **Store memory/reference** when the lesson is reusable but not immediately dispatchable, especially diagnostics, edge cases, duplicate patterns, and "similar but different" hazards.
 - **Avoid speculative bloat:** capture observed examples and evidence; do not add global guidance for hypothetical failures.
 
 ### Similar-but-different hazards
 
-When two patterns look related but differ in contract, scope, or trust boundary, do not merge them mentally or create a third near-duplicate pattern. Standardize when evidence supports one canonical path; otherwise record the distinction and route cleanup as a task. Good captures name the files/functions, the conflicting conventions, why one path is safer or current, and how to verify the chosen convention.
+- When two patterns look related but differ in contract, scope, or trust boundary, do not merge them mentally or create a third near-duplicate pattern.
+- Standardize when evidence supports one canonical path; otherwise record the distinction and route cleanup as a task.
+- Good captures name the files/functions, the conflicting conventions, why one path is safer or preferred, and how to verify the chosen convention.
 
 ### Auditable failures
 
-Failure information is valuable when it helps future sessions diagnose and avoid waste. Capture failures with: symptom, command/check evidence, affected file/PR/issue, suspected versus verified cause, next action, and whether the lesson belongs in a hook, validator, worker task, memory, or reference doc. Do not publish blame until diagnostics evidence supports it; see `reference/diagnostics-discipline.md`.
+Failure information is valuable when it helps future sessions diagnose and avoid wasted work. Capture failures with: symptom, command/check evidence, affected file/PR/issue, suspected versus verified cause, next action, and whether the lesson belongs in a hook, validator, worker task, memory, or reference doc. Do not publish blame until diagnostics evidence supports it; see `reference/diagnostics-discipline.md`.
 
 ## Autonomous Operation
 
