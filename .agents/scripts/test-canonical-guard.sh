@@ -16,7 +16,9 @@
 #   5. Canonical on main → exit 0, no stderr banner
 #   6. Canonical off main + repo NOT in repos.json → exit 0 (fail-open)
 #   7. Canonical off main + repo IN repos.json, interactive → restore main
-#   8. Canonical off main + repo IN repos.json, strict → restore main + exit 1
+#   8. Canonical off main + repo IN repos.json + untracked file → restore main
+#   9. Canonical off main + repo IN repos.json, strict → restore main + exit 1
+#   10. Worktree (non-canonical) → exit 0, no stderr banner
 #
 # Exit 0 = all tests pass, 1 = at least one failure.
 
@@ -209,7 +211,24 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Test 7: canonical off main + IN repos.json, strict → restore main + exit 1
+# Test 7: canonical off main + IN repos.json + untracked file → restore main
+# -----------------------------------------------------------------------------
+pushd "$REPO" >/dev/null || exit 1
+git checkout feature-branch --quiet
+printf 'scratch\n' >untracked-scratch.txt
+popd >/dev/null || exit 1
+_run_hook 1
+rc=$?
+current_after_untracked=$(git -C "$REPO" branch --show-current)
+rm -f "$REPO/untracked-scratch.txt"
+if [[ "$rc" -eq 0 ]] && [[ "$HOOK_STDERR" == *"canonical-on-main-guard"* ]] && [[ "$current_after_untracked" == "main" ]]; then
+	pass "canonical off main + untracked file: restored main"
+else
+	fail "untracked file: expected restore to main, got rc=$rc branch=$current_after_untracked"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 8: canonical off main + IN repos.json, strict → restore main + exit 1
 # -----------------------------------------------------------------------------
 pushd "$REPO" >/dev/null || exit 1
 git checkout feature-branch --quiet
@@ -224,7 +243,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Test 8: canonical off main + warn mode → no restore
+# Test 9: canonical off main + warn mode → no restore
 # -----------------------------------------------------------------------------
 pushd "$REPO" >/dev/null || exit 1
 git checkout feature-branch --quiet
@@ -239,7 +258,7 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Test 9: worktree (non-canonical) → no warning
+# Test 10: worktree (non-canonical) → no warning
 # -----------------------------------------------------------------------------
 # Create a worktree of the fake repo
 WORKTREE="${TMP}/fake-worktree"

@@ -51,7 +51,7 @@ detect_default_branch() {
 		default_branch="master"
 	fi
 	if [[ -z "$default_branch" ]]; then
-		default_branch="main"
+		default_branch="HEAD"
 	fi
 	printf '%s' "$default_branch"
 	return 0
@@ -60,7 +60,7 @@ detect_default_branch() {
 restore_default_branch() {
 	local default_branch="$1"
 	local status_output=""
-	status_output=$(git status --porcelain 2>/dev/null) || status_output=""
+	status_output=$(git status --porcelain -uno 2>/dev/null) || status_output=""
 	if [[ -n "$status_output" ]]; then
 		printf 'Refusing automatic restore because the working tree is not clean.\n' >&2
 		printf 'Run: git status --short, then manually restore the canonical repo to %s.\n' "$default_branch" >&2
