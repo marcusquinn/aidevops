@@ -126,14 +126,14 @@ test_healthy_pr_backlog_rations_new_launches() {
 	return 0
 }
 
-test_no_dispatchable_evidence_pauses_refill_loop() {
+test_no_dispatchable_evidence_keeps_probe_slot() {
 	reset_guardrail_env
 	local slots
 	slots=$(guardrail_slots "0 0 0 0 2" 8)
-	if [[ "$slots" == "0" ]] && grep -q 'no_dispatchable_evidence' "$LOGFILE"; then
-		print_result "guardrail: no-dispatchable evidence prevents empty refill loops" 0
+	if [[ "$slots" == "1" ]] && grep -q 'no_dispatchable_evidence' "$LOGFILE"; then
+		print_result "guardrail: no-dispatchable evidence keeps one probe slot" 0
 	else
-		print_result "guardrail: no-dispatchable evidence prevents empty refill loops" 1 "slots=${slots}"
+		print_result "guardrail: no-dispatchable evidence keeps one probe slot" 1 "slots=${slots}"
 	fi
 	return 0
 }
@@ -193,7 +193,7 @@ test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
 test_healthy_pr_backlog_rations_new_launches
-test_no_dispatchable_evidence_pauses_refill_loop
+test_no_dispatchable_evidence_keeps_probe_slot
 test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified

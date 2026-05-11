@@ -59,6 +59,7 @@ print_result() {
 # produce canned responses; tests mutate them to drive scenarios.
 #   labels.txt            — pr labels (comma-separated, newline-terminated)
 #   updated.txt           — PR updatedAt ISO timestamp
+#   head-commit.txt       — head commit ISO timestamp used for idle age
 #   issue-state.txt       — "open" or "closed"
 #   issue-labels-json.txt — JSON array of label names on linked issue
 #   title.txt             — PR title (used by _extract_linked_issue fallback)
@@ -72,8 +73,10 @@ reset_mock_state() {
 	# Portable ISO-8601 UTC emit
 	if date -u -r "$epoch_48h" "+%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
 		date -u -r "$epoch_48h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+		date -u -r "$epoch_48h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/head-commit.txt"
 	else
 		date -u -d "@$epoch_48h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+		date -u -d "@$epoch_48h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/head-commit.txt"
 	fi
 	printf 'open' >"${TEST_ROOT}/issue-state.txt"
 	printf '[]' >"${TEST_ROOT}/issue-labels-json.txt"
@@ -115,6 +118,11 @@ teardown_test_env() {
 
 # Extract helpers under test and eval them in this shell.
 define_helpers_under_test() {
+	gh_pr_view() {
+		gh pr view "$@"
+		return $?
+	}
+
 	local is_stale_src
 	is_stale_src=$(awk '/^_interactive_pr_is_stale\(\) \{/,/^\}$/ { print }' "$CONFLICT_SCRIPT")
 	if [[ -z "$is_stale_src" ]]; then
@@ -161,8 +169,10 @@ test_A_fresh_pr_returns_not_stale() {
 	epoch_2h=$(( $(date +%s) - 2 * 3600 ))
 	if date -u -r "$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
 		date -u -r "$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+		date -u -r "$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/head-commit.txt"
 	else
 		date -u -d "@$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+		date -u -d "@$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/head-commit.txt"
 	fi
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -170,6 +180,27 @@ test_A_fresh_pr_returns_not_stale() {
 		print_result "A: fresh PR (2h old) returns not-stale" 0
 	else
 		print_result "A: fresh PR (2h old) returns not-stale" 1 "Expected 1, got $rc"
+	fi
+	return 0
+}
+
+test_A2_automation_updated_pr_uses_idle_head_commit() {
+	reset_mock_state
+	# Simulate an automated comment/label touching PR updatedAt while the branch
+	# itself has not changed. Handover must key off the head commit age.
+	local epoch_2h
+	epoch_2h=$(( $(date +%s) - 2 * 3600 ))
+	if date -u -r "$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >/dev/null 2>&1; then
+		date -u -r "$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+	else
+		date -u -d "@$epoch_2h" "+%Y-%m-%dT%H:%M:%SZ" >"${TEST_ROOT}/updated.txt"
+	fi
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "A2: fresh automation updatedAt does not mask idle head commit" 0
+	else
+		print_result "A2: fresh automation updatedAt does not mask idle head commit" 1 "Expected 0, got $rc"
 	fi
 	return 0
 }
@@ -376,7 +407,7 @@ test_K_no_takeover_label_blocks_handover() {
 test_L_invalid_hours_returns_not_stale() {
 	reset_mock_state
 	# "24h" is non-numeric — should not crash bash arithmetic
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="24h" \
+	IDLE_INTERACTIVE_HANDOVER_SECONDS="24h" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -384,7 +415,7 @@ test_L_invalid_hours_returns_not_stale() {
 		print_result "L: invalid HOURS ('24h') returns not-stale" 1 "Expected 1, got $rc"
 		return 0
 	fi
-	if ! grep -q "invalid AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS" "$LOGFILE"; then
+	if ! grep -q "invalid IDLE_INTERACTIVE_HANDOVER_SECONDS" "$LOGFILE"; then
 		print_result "L: invalid HOURS logs validation error" 1 \
 			"Expected validation error in LOGFILE. Got: $(cat "$LOGFILE")"
 		return 0
@@ -395,7 +426,7 @@ test_L_invalid_hours_returns_not_stale() {
 
 test_L2_zero_hours_returns_not_stale() {
 	reset_mock_state
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="0" \
+	IDLE_INTERACTIVE_HANDOVER_SECONDS="0" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -411,7 +442,7 @@ test_L3_empty_hours_uses_default_24() {
 	reset_mock_state
 	# Empty HOURS triggers bash's :- default substitution to "24", which is valid.
 	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="" \
+	IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -425,7 +456,7 @@ test_L3_empty_hours_uses_default_24() {
 
 test_L4_negative_hours_returns_not_stale() {
 	reset_mock_state
-	AIDEVOPS_INTERACTIVE_PR_HANDOVER_HOURS="-5" \
+	IDLE_INTERACTIVE_HANDOVER_SECONDS="-5" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -460,6 +491,7 @@ main() {
 	}
 
 	test_A_fresh_pr_returns_not_stale
+	test_A2_automation_updated_pr_uses_idle_head_commit
 	test_B_stamp_present_returns_not_stale
 	test_C_active_status_label_returns_not_stale
 	test_D_idle_no_stamp_no_status_returns_stale

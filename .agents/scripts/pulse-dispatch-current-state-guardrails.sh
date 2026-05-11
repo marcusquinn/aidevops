@@ -127,7 +127,9 @@ _dispatch_apply_current_state_guardrails() {
 
 	local capped_slots="$available_slots" reason=""
 	if ((empty_threshold > 0 && no_dispatchable >= empty_threshold && successes == 0)); then
-		capped_slots=0
+		# Keep one probe slot alive. Otherwise stale "no dispatchable" evidence can
+		# self-lock the refill loop just as new review/conflict work becomes eligible.
+		capped_slots=1
 		reason="no_dispatchable_evidence"
 	elif ((rl_threshold > 0 && rate_limits >= rl_threshold && successes == 0)); then
 		capped_slots=0
