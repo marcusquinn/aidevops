@@ -32,10 +32,12 @@ tools:
 
 ## Prework Discovery
 
-Before edits, discover the actual project shape rather than guessing:
+Before edits, discover the actual project shape rather than guessing. Use recursive
+Xcode project/workspace patterns so nested iOS/macOS modules are visible in
+monorepos and sample app directories:
 
 ```bash
-git ls-files 'Package.swift' '*.xcodeproj/project.pbxproj' '*.xcworkspace/contents.xcworkspacedata' '**/*.xcworkspace/contents.xcworkspacedata' 'Makefile' 'Package.resolved' 'Podfile' 'Project.swift' 'project.yml'
+git ls-files 'Package.swift' '**/*.xcodeproj/project.pbxproj' '**/*.xcworkspace/contents.xcworkspacedata' 'Makefile' 'Package.resolved' 'Podfile' 'Project.swift' 'project.yml'
 xcodebuild -version
 xcode-select -p
 swift --version
