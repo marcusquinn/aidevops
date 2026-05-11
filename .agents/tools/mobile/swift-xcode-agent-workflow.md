@@ -32,17 +32,17 @@ tools:
 
 ## Prework Discovery
 
-Before edits, discover the actual project shape rather than guessing:
+Before edits, discover the actual project shape rather than guessing. Use recursive pathspecs so monorepos and cross-platform apps with nested Apple targets are detected:
 
 ```bash
-git ls-files 'Package.swift' '*.xcodeproj/project.pbxproj' '*.xcworkspace/contents.xcworkspacedata' '**/*.xcworkspace/contents.xcworkspacedata' 'Makefile' 'Package.resolved' 'Podfile' 'Project.swift' 'project.yml'
+git ls-files '**/Package.swift' '**/*.xcodeproj/project.pbxproj' '**/*.xcworkspace/contents.xcworkspacedata' '**/Makefile' '**/Package.resolved' '**/Podfile' '**/Project.swift' '**/project.yml'
 xcodebuild -version
 xcode-select -p
 swift --version
 xcrun simctl list devices available
 ```
 
-Then list schemes with the right container:
+Then list schemes with the right container, quoting placeholders because Xcode project and workspace names commonly contain spaces:
 
 ```bash
 xcodebuild -list -json -workspace "<workspace_name>.xcworkspace"
