@@ -75,7 +75,7 @@ PRD or feature: $ARGUMENTS
 **Output format:**
 ```markdown
 - [ ] 0.0 Create safe linked worktree for the feature
-  - [ ] 0.1 Create safe linked worktree and `cd` into the printed sibling path: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{slug}`
+  - [ ] 0.1 Create safe linked worktree: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/{slug}`
 
 - [ ] 1.0 First major task
   - [ ] 1.1 Sub-task
