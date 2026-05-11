@@ -1720,6 +1720,10 @@ classify_dispatch_blocker_reason() {
 			printf 'interactive_review_hold\n'
 			return 0
 			;;
+		*pr_target_not_dispatchable* | *pull*request*not*a*dispatchable*issue* | *target*is*a*pull*request*)
+			printf 'pr_target_not_dispatchable\n'
+			return 0
+			;;
 		*cost_budget_exceeded*)
 			printf 'cost_budget_exceeded\n'
 			return 0
