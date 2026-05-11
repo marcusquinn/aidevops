@@ -10,6 +10,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.31] - 2026-05-11
+
+### Fixed
+
+- preserve custom Tabby profiles (#23424)
+
+## [3.15.30] - 2026-05-11
+
+### Added
+
+- expose worktree helper in CLI (#23417)
+- correlate issue retry attempts (#23369)
+
+### Changed
+
+- Documentation: clarify hotfix worktree safety (#23418)
+- Tests: cover pulse dispatch rc adapter (#23415)
+- Documentation: refine Swift workflow discovery patterns (#23413)
+- Documentation: refine Swift Xcode workflow discovery (#23411)
+- address worker sampling review feedback (#23410)
+- Maintenance: update simplification state registry
+- Documentation: clarify hotfix rollback worktree base (#23407)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Documentation: clarify task worktree helper path (#23389)
+- Refactor: keep dispatch candidate under complexity gate (#23378)
+- Maintenance: update simplification state registry
+- Validate OpenCode memory tool payloads (#23367)
+- Documentation: sample mission worker failures (#23368)
+
+### Fixed
+
+- unblock stale interactive PR takeover
+- classify PR dispatch targets as benign (#23420)
+- normalize OpenCode memory recall limit (#23416)
+- address pulse diagnose review followup (#23414)
+- isolate function spacing test output (#23412)
+- preserve pulse dispatch block exit codes (#23408)
+- harden skills helper count cleanup (#23405)
+- isolate pulse dashboards by operator label (#23403)
+- skip protected conflicting PR close metadata fetch (#23402)
+- clarify generated worktree helper path (#23388)
+- classify interactive review holds as benign (#23377)
+- prevent non-git worktree cleanup noise (#23376)
+- suppress empty claim release warnings (#23375)
+
 ## [3.15.29] - 2026-05-10
 
 ### Changed

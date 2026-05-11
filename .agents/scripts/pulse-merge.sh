@@ -624,14 +624,25 @@ _process_single_ready_pr() {
 		fi
 
 		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
-			# Conflict resolution feedback: route worker PRs to fix worker
-			# (t2203: consolidated in helper). If routed, return 2 to skip
-			# the close path; otherwise fall through to _close_conflicting_pr.
+			# Conflict resolution feedback: route worker PRs and stale interactive
+			# PRs to fix workers before the protected-close precheck. Active
+			# interactive PRs remain protected because _route_pr_to_fix_worker only
+			# accepts origin:interactive after _interactive_pr_is_stale passes.
 			local _conf_linked_issue
 			_conf_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
 			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "conflict" "" "$pr_title"; then
 				return 2
 			fi
+
+			# GH#23371: some PRs are already known to be protected from
+			# automated close handling from the PR list metadata (draft,
+			# origin:interactive, no-auto-dispatch, external-contributor).
+			# Skip them before the close-conflict ownership guard so pulse
+			# does not repeatedly hit the noisy metadata-fetch path.
+			if _close_conflicting_pr_skip_protected_precheck "$pr_number" "$repo_slug" "$pr_obj"; then
+				return 1
+			fi
+
 			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
 			return 2
 		fi

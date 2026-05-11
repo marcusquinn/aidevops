@@ -63,8 +63,9 @@ git push origin main && git push origin --tags
 ```bash
 git log --oneline -10
 git diff v{PREVIOUS} v{CURRENT}
-${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{NEW_PATCH}
-# Then cd into the sibling worktree path printed by the helper before editing.
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{NEW_PATCH} --base v{CURRENT}
+# Critical: cd into the sibling worktree path printed by the helper before editing;
+# otherwise commits land in the canonical checkout and can disrupt active agents.
 # Fix, then:
 git commit -m "fix: resolve critical issue"
 # or: git revert --no-commit <commit-hash> && git commit -m "revert: rollback v{CURRENT}"

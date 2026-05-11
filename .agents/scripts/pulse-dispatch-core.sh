@@ -1512,7 +1512,8 @@ dispatch_with_dedup() {
 	_dispatch_target_is_pull_request "$issue_number" "$repo_slug" || _target_pr_rc=$?
 	if [[ "$_target_pr_rc" -eq 0 ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: target is a pull request, not a dispatchable issue (GH#22948)" >>"$LOGFILE"
-		return 1
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
 	fi
 	if [[ "$_target_pr_rc" -ne 1 ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to verify target is not a pull request (GH#22948, rc=${_target_pr_rc})" >>"$LOGFILE"

@@ -126,14 +126,14 @@ test_healthy_pr_backlog_rations_new_launches() {
 	return 0
 }
 
-test_no_dispatchable_evidence_pauses_refill_loop() {
+test_no_dispatchable_evidence_keeps_probe_slot() {
 	reset_guardrail_env
 	local slots
 	slots=$(guardrail_slots "0 0 0 0 2" 8)
-	if [[ "$slots" == "0" ]] && grep -q 'no_dispatchable_evidence' "$LOGFILE"; then
-		print_result "guardrail: no-dispatchable evidence prevents empty refill loops" 0
+	if [[ "$slots" == "1" ]] && grep -q 'no_dispatchable_evidence' "$LOGFILE"; then
+		print_result "guardrail: no-dispatchable evidence keeps one probe slot" 0
 	else
-		print_result "guardrail: no-dispatchable evidence prevents empty refill loops" 1 "slots=${slots}"
+		print_result "guardrail: no-dispatchable evidence keeps one probe slot" 1 "slots=${slots}"
 	fi
 	return 0
 }
@@ -176,14 +176,28 @@ test_interactive_hold_reason_is_classified() {
 	return 0
 }
 
+test_pr_target_reason_is_classified_as_benign_block() {
+	reset_guardrail_env
+	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#4849 repo=awardsapp/awardsapp' >>"$LOGFILE"
+	local reason
+	reason=$(_dispatch_candidate_failure_reason 4849 awardsapp/awardsapp 3)
+	if [[ "$reason" == "pr_target_not_dispatchable" ]] && _dispatch_candidate_benign_block_reason "$reason"; then
+		print_result "guardrail: PR target classifies as benign block" 0
+	else
+		print_result "guardrail: PR target classifies as benign block" 1 "reason=${reason}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
 test_healthy_pr_backlog_rations_new_launches
-test_no_dispatchable_evidence_pauses_refill_loop
+test_no_dispatchable_evidence_keeps_probe_slot
 test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
+test_pr_target_reason_is_classified_as_benign_block
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"

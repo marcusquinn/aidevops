@@ -96,6 +96,28 @@ describe("aidevops_memory execution", () => {
     assert.match(calls[0], /memory-helper\.sh" recall 'schema' --limit '5'$/);
   });
 
+  test("recall action defaults blank limit values", async () => {
+    for (const limitValue of [null, "", "   "]) {
+      const calls = [];
+      const result = await withMemoryHelper(async (scriptsDir) => {
+        const tools = createTools(scriptsDir, (cmd) => {
+          calls.push(cmd);
+          return "recalled";
+        });
+
+        return tools.aidevops_memory.execute({
+          action: "recall",
+          query: "schema",
+          limit: limitValue,
+        });
+      });
+
+      assert.equal(result, "recalled");
+      assert.equal(calls.length, 1);
+      assert.match(calls[0], /memory-helper\.sh" recall 'schema' --limit '5'$/);
+    }
+  });
+
   test("recall action without a query returns a validation error", async () => {
     const calls = [];
     const result = await withMemoryHelper(async (scriptsDir) => {

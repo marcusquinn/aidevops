@@ -154,6 +154,15 @@ test_interactive_hold_emits_structured_block_reason() {
 	return 0
 }
 
+test_pr_guard_emits_structured_block_reason() {
+	if grep -q 'DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable' "$CORE_SCRIPT" && grep -q 'target is a pull request, not a dispatchable issue' "$CORE_SCRIPT"; then
+		print_result "PR target guard emits structured benign block reason" 0
+		return 0
+	fi
+	print_result "PR target guard emits structured benign block reason" 1 "expected PR target structured reason in dispatch core"
+	return 0
+}
+
 main() {
 	if ! define_helpers_under_test; then
 		return 1
@@ -166,6 +175,7 @@ main() {
 	test_interactive_hold_allows_auto_dispatch_handoff
 	test_interactive_hold_allows_worker_issue
 	test_interactive_hold_emits_structured_block_reason
+	test_pr_guard_emits_structured_block_reason
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

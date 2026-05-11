@@ -218,7 +218,7 @@ _collect_issue_log_lines() {
 	local logfile="$2"
 	local logdir="$3"
 
-	local pattern="#${issue_number}[^0-9]|#${issue_number}$|issue #${issue_number}[^0-9]|issue #${issue_number}$|Issue #${issue_number}[^0-9]|Issue #${issue_number}$|issue-${issue_number}[^0-9]|issue-${issue_number}$"
+	local pattern="(#|issue #|Issue #|issue-)${issue_number}([^0-9]|$)"
 
 	{
 		if [[ -f "$logfile" ]]; then
@@ -480,7 +480,7 @@ _cmd_pr_parse_args() {
 	done
 
 	if [[ -z "$_CMD_PR_NUMBER" ]]; then
-		printf '%b[ERROR]%b usage: pulse-diagnose-helper.sh pr <N> [--repo <slug>] [--verbose] [--json]\n' "$RED" "$NC" >&2
+		print_error "usage: pulse-diagnose-helper.sh pr <N> [--repo <slug>] [--verbose] [--json]"
 		return 1
 	fi
 
@@ -1180,7 +1180,7 @@ _cmd_issue_parse_args() {
 	done
 
 	if [[ -z "$_CMD_ISSUE_NUMBER" ]]; then
-		printf '%b[ERROR]%b usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]\n' "$RED" "$NC" >&2
+		print_error "usage: pulse-diagnose-helper.sh issue <N> [--repo <slug>] [--verbose] [--json]"
 		return 1
 	fi
 
@@ -1393,11 +1393,9 @@ _render_issue_attempts_text() {
 	fi
 
 	local attempt_count="0" rate_limit_count="0" active="false" cooldown_secs="0" next_epoch="0"
-	attempt_count=$(printf '%s' "$attempt_summary_json" | jq -r '.attempt_count // 0' 2>/dev/null || printf '0')
-	rate_limit_count=$(printf '%s' "$attempt_summary_json" | jq -r '.rate_limit_count // 0' 2>/dev/null || printf '0')
-	active=$(printf '%s' "$attempt_summary_json" | jq -r '.backoff_active // false' 2>/dev/null || printf 'false')
-	cooldown_secs=$(printf '%s' "$attempt_summary_json" | jq -r '.cooldown_secs // 0' 2>/dev/null || printf '0')
-	next_epoch=$(printf '%s' "$attempt_summary_json" | jq -r '.next_eligible_epoch // 0' 2>/dev/null || printf '0')
+	read -r attempt_count rate_limit_count active cooldown_secs next_epoch < <(
+		printf '%s' "$attempt_summary_json" | jq -r '[.attempt_count // 0, .rate_limit_count // 0, .backoff_active // false, .cooldown_secs // 0, .next_eligible_epoch // 0] | @tsv' || printf '0\t0\tfalse\t0\t0\n'
+	)
 
 	printf '  Attempts in metrics: %s (rate-limit-equivalent: %s)\n' "$attempt_count" "$rate_limit_count"
 	if [[ "$rate_limit_count" =~ ^[0-9]+$ && "$rate_limit_count" -gt 0 ]]; then
@@ -1524,7 +1522,7 @@ _render_issue_json() {
 	if command -v jq >/dev/null 2>&1; then
 		local dispatch_events_json="[]"
 		if [[ -n "$issue_log_lines" ]]; then
-			dispatch_events_json=$(printf '%s\n' "$issue_log_lines" | jq -R -s 'split("\n") | map(select(length > 0)) | map({ts: ((capture("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?)") | .ts) // "unknown"), line: .})' 2>/dev/null || printf '[]')
+			dispatch_events_json=$(printf '%s\n' "$issue_log_lines" | jq -R 'select(length > 0) | {ts: ((capture("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?)")? // {ts: "unknown"}) | .ts), line: .}' | jq -s '.' || printf '[]')
 		fi
 		printf '%s' "$attempt_summary_json" | jq -c --argjson events "$dispatch_events_json" '. + {dispatch_log_events: $events}' 2>/dev/null || printf '{}'
 	else

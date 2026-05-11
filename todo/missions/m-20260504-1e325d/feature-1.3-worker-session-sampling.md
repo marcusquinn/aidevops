@@ -5,7 +5,7 @@
 
 ## Scope
 
-Sample failed worker sessions for missing context, wrong model/account routing, premature exits, and tool-use mistakes. Evidence is extracted from `worker-activity-helper.sh summary --since 24h --json --no-pr-check` plus representative failure excerpts. Local/private repository names and local paths are intentionally redacted.
+Sample failed worker sessions for missing context, wrong model/account routing, premature exits, and tool-use mistakes. Evidence is extracted from `.agents/scripts/worker-activity-helper.sh summary --since 24h --json --no-pr-check` plus representative failure excerpts. Local/private repository names and local paths are intentionally redacted.
 
 ## Window and aggregate evidence
 
@@ -53,4 +53,5 @@ Structured evidence fields added by PR #23229 are present for recent failures: `
 - `bash .agents/scripts/tests/test-worker-diagnostic-evidence.sh` passed.
 - `bash .agents/scripts/tests/test-worker-activity-helper.sh` passed.
 - `shellcheck .agents/scripts/headless-runtime-helper.sh .agents/scripts/headless-runtime-lib.sh .agents/scripts/worker-activity-helper.sh .agents/scripts/tests/test-worker-diagnostic-evidence.sh` passed.
-- `git status --short --branch` and `git diff --stat origin/main...HEAD` were used from the linked worktree to verify branch state.
+- `git status --short --branch` was used from the linked worktree to verify branch state.
+- `git diff --stat origin/main...HEAD` was used from the linked worktree to verify changed-file scope.

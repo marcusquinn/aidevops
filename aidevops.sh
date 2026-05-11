@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.15.29
+# Version: 3.15.31
 
 set -euo pipefail
 
@@ -831,6 +831,7 @@ _help_commands() {
 	echo "  upgrade            Alias for update"
 	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
 	echo "  launch-worker      Manually launch headless workers for GitHub issues"
+	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean)"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
@@ -1603,6 +1604,7 @@ main() {
 		[[ $# -eq 0 ]] && set -- status
 		_dispatch_helper "circuit-breaker-helper.sh" "circuit-breaker-helper.sh" "$@"
 		;;
+	worktree | wt) _dispatch_helper "worktree-helper.sh" "worktree-helper.sh" "$@" ;;
 	issue) _dispatch_helper "interactive-session-helper.sh" "interactive-session-helper.sh" "$@" ;;
 	signing) _dispatch_helper "signing-setup.sh" "signing-setup.sh" "$@" ;;
 	contributions | contrib)

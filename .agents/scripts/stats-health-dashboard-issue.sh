@@ -63,7 +63,9 @@ _list_health_issues_by_role_label() {
 #######################################
 # List open health issues that belong to one canonical dashboard identity.
 # Matches the new canonical operator label, historical alias labels, and
-# historical [Supervisor:alias]/[Contributor:alias] title prefixes.
+# historical [Supervisor:alias]/[Contributor:alias] title prefixes. Existing
+# operator:* labels are authoritative, so dashboards labelled for another
+# canonical operator are excluded even when an old title prefix matches.
 # Arguments:
 #   $1 - repo slug
 #   $2 - canonical identity
@@ -92,16 +94,38 @@ _list_health_issues_by_canonical_identity() {
 		'[
 			.[]
 			| . as $issue
-			| ((.labels // []) | map(.name) | any(. == $canonical_label or ($aliases | index(.)))) as $label_match
+			| ((.labels // []) | map(.name)) as $label_names
+			| ($label_names | map(select(startswith("operator:")))) as $operator_labels
+			| ($operator_labels | length == 0 or any(. == $canonical_label)) as $operator_label_allowed
+			| ($label_names | any(. == $canonical_label or ($aliases | index(.)))) as $label_match
 			| ((.title | capture("^\\[(Supervisor|Contributor):(?<user>[^]]+)\\]")? | .user // "") as $title_user
 				| ($title_user != "" and ($aliases | index($title_user)))) as $title_match
-			| select($label_match or $title_match)
+			| select($operator_label_allowed and ($label_match or $title_match))
 		] | sort_by(.number) | reverse'
 	return 0
 }
 
 #######################################
-# Validate a cached health-issue number: check it still exists and is OPEN.
+# Return success when issue metadata has no operator label for another identity.
+# Arguments:
+#   $1 - issue JSON with labels
+#   $2 - canonical identity
+#######################################
+_health_issue_operator_label_allows_identity() {
+	local issue_json="$1"
+	local canonical_identity="$2"
+	local canonical_label="operator:${canonical_identity}"
+
+	printf '%s' "${issue_json:-{}}" | jq -e --arg canonical_label "$canonical_label" '
+		((.labels // []) | map(.name) | map(select(startswith("operator:")))) as $operator_labels
+		| ($operator_labels | length == 0 or any(. == $canonical_label))
+	' >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# Validate a cached health-issue number: check it still exists, is OPEN, and
+# is not labelled for a different canonical operator.
 # Returns (via stdout):
 #   - the cached number if still valid
 #   - empty if the cache entry points to a CLOSED issue (caller should re-resolve)
@@ -112,6 +136,7 @@ _try_cached_health_issue_lookup() {
 	local health_issue_file="$1"
 	local repo_slug="$2"
 	local runner_role="$3"
+	local canonical_identity="${4:-}"
 
 	[[ ! -f "$health_issue_file" ]] && return 0  # empty stdout
 
@@ -124,8 +149,8 @@ _try_cached_health_issue_lookup() {
 		return 0
 	fi
 
-	local issue_state rc=0
-	issue_state=$(gh_issue_view "$cached_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null) || rc=$?
+	local issue_json issue_state rc=0
+	issue_json=$(gh_issue_view "$cached_number" --repo "$repo_slug" --json state,labels 2>/dev/null) || rc=$?
 
 	if [[ $rc -ne 0 ]]; then
 		# Query failed (rate limit, network, API 5xx). Preserve cache and return
@@ -134,6 +159,8 @@ _try_cached_health_issue_lookup() {
 		echo "$cached_number"
 		return 0
 	fi
+
+	issue_state=$(printf '%s' "${issue_json:-{}}" | jq -r '.state // empty' 2>/dev/null || echo "")
 
 	# gh issue view has returned both GraphQL-style uppercase enums (OPEN/CLOSED)
 	# and REST-style lowercase values (open/closed) depending on fallback path.
@@ -156,6 +183,12 @@ _try_cached_health_issue_lookup() {
 		# Unexpected state (empty, unknown enum). Preserve cache defensively.
 		echo "[stats] Health issue: unexpected state '${issue_state}' for #${cached_number} in ${repo_slug} — preserving cache" >>"${LOGFILE:-/dev/null}"
 		echo "$cached_number"
+		return 0
+	fi
+
+	if [[ -n "$canonical_identity" ]] && ! _health_issue_operator_label_allows_identity "$issue_json" "$canonical_identity"; then
+		echo "[stats] Health issue: ignoring cached issue #${cached_number} for ${canonical_identity} in ${repo_slug} because it has a conflicting operator label" >>"${LOGFILE:-/dev/null}"
+		rm -f "$health_issue_file" 2>/dev/null || true
 		return 0
 	fi
 
@@ -263,16 +296,20 @@ _close_health_issue_identity_duplicates() {
 }
 
 #######################################
-# Title-based fallback lookup with label backfill.
+# Title-based fallback lookup with label backfill. Preserves migration for
+# legacy dashboards without operator:* labels, but refuses dashboards already
+# labelled for another canonical operator.
 # Returns issue number if found, empty if not, $_HEALTH_QUERY_FAILED_SENTINEL on failure.
 _try_title_health_issue_fallback() {
 	local runner_prefix="$1" repo_slug="$2" runner_user="$3" role_label="$4" role_display="$5"
+	local canonical_identity="${6:-$runner_user}"
+	local canonical_label="operator:${canonical_identity}"
 
 	local title_result rc=0
 	title_result=$(gh_issue_list --repo "$repo_slug" \
 		--search "in:title ${runner_prefix}" \
-		--state open --json number,title \
-		--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null) || rc=$?
+		--state open --json number,title,labels \
+		--jq "[.[] | select(.title | startswith(\"${runner_prefix}\")) | select(((.labels // []) | map(.name) | map(select(startswith(\"operator:\")))) as \$operator_labels | (\$operator_labels | length == 0 or any(. == \"${canonical_label}\")))][0].number" 2>/dev/null) || rc=$?
 
 	if [[ $rc -ne 0 ]]; then
 		echo "[stats] Health issue: title lookup failed for ${runner_prefix} in ${repo_slug} (rc=${rc}) — abstaining this cycle" >>"${LOGFILE:-/dev/null}"
@@ -304,7 +341,8 @@ _find_health_issue() {
 	local identity_aliases="${9:-$runner_user}"
 
 	local health_issue_number
-	health_issue_number=$(_try_cached_health_issue_lookup "$health_issue_file" "$repo_slug" "$runner_role")
+	health_issue_number=$(_try_cached_health_issue_lookup \
+		"$health_issue_file" "$repo_slug" "$runner_role" "$canonical_identity")
 
 	# Sentinel from cache lookup is defensive only; current behaviour preserves
 	# the cached number on error, but downstream checks still need it to pass
@@ -351,7 +389,8 @@ _find_health_issue() {
 	# Fallback: title-based search with label backfill.
 	if [[ -z "$health_issue_number" ]]; then
 		health_issue_number=$(_try_title_health_issue_fallback \
-			"$runner_prefix" "$repo_slug" "$runner_user" "$role_label" "$role_display")
+			"$runner_prefix" "$repo_slug" "$runner_user" "$role_label" "$role_display" \
+			"$canonical_identity")
 	fi
 
 	echo "$health_issue_number"
