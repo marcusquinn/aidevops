@@ -292,6 +292,14 @@ _release_dispatch_claim() {
 	# Try to get repo slug from the dispatch ledger or env
 	repo_slug="${DISPATCH_REPO_SLUG:-}"
 
+	# Supervisor/pulse cleanup paths can source this module and run the generic
+	# EXIT cleanup without ever having claimed a worker issue. With no issue and
+	# no repo there is no real claim to release; treat that exact empty-context
+	# case as a benign caller-boundary no-op. Keep warning on partial context
+	# because issue-without-repo or repo-without-issue can strand a real claim.
+	if [[ -z "$issue_number" && -z "$repo_slug" ]]; then
+		return 0
+	fi
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		print_warning "Cannot release claim: missing issue=$issue_number repo=$repo_slug"
 		return 0

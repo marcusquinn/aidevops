@@ -84,6 +84,16 @@ gh() {
 # shellcheck source=../headless-runtime-failure.sh
 source "${SCRIPT_DIR}/headless-runtime-failure.sh"
 
+unset DISPATCH_REPO_SLUG WORKER_ISSUE_NUMBER
+_release_dispatch_claim "supervisor-pulse" "process_exit" "1" "0"
+if grep -q 'Cannot release claim: missing issue= repo=' "$CALL_LOG"; then
+	printf 'FAIL empty non-worker claim release emitted warning\n'
+	sed 's/^/  /' "$CALL_LOG"
+	exit 1
+fi
+printf 'PASS empty non-worker claim release is a silent no-op\n'
+: >"$CALL_LOG"
+
 export DISPATCH_REPO_SLUG="owner/repo"
 _release_dispatch_claim "issue-12345" "worker_noop" "0" "0"
 
