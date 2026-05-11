@@ -1523,7 +1523,7 @@ _render_issue_json() {
 	if command -v jq >/dev/null 2>&1; then
 		local dispatch_events_json="[]"
 		if [[ -n "$issue_log_lines" ]]; then
-			dispatch_events_json=$(printf '%s\n' "$issue_log_lines" | jq -R 'select(length > 0) | {ts: (((try capture("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?)") catch {ts: "unknown"}) | .ts) // "unknown"), line: .}' | jq -s '.' || printf '[]')
+			dispatch_events_json=$(printf '%s\n' "$issue_log_lines" | jq -n -R '[inputs | select(length > 0) | {ts: (try (capture("(?<ts>[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z?)") | .ts) catch "unknown"), line: .}]' || printf '[]')
 		fi
 		printf '%s' "$attempt_summary_json" | jq -c --argjson events "$dispatch_events_json" '. + {dispatch_log_events: $events}' 2>/dev/null || printf '{}'
 	else
