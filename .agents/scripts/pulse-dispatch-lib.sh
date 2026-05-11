@@ -179,6 +179,25 @@ _dispatch_candidate_failure_reason() {
 }
 
 #######################################
+# Return success when a dispatch candidate reason is an expected benign block.
+#
+# Arguments:
+#   $1 - low-cardinality reason token
+# Returns:
+#   0 - benign block reason
+#   1 - not a benign block reason
+#######################################
+_dispatch_candidate_benign_block_reason() {
+	local reason="$1"
+	case "$reason" in
+		interactive_review_hold | pr_target_not_dispatchable)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+#######################################
 # Run a dispatch candidate under the stage watchdog while preserving benign
 # block return codes without emitting generic Stage failed noise.
 #
@@ -1029,9 +1048,9 @@ _dispatch_record_nonzero_dispatch_result() {
 
 	local failure_reason
 	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
-	if [[ "$failure_reason" == "interactive_review_hold" ]]; then
-		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=interactive_review_hold" >>"$LOGFILE"
-		_dispatch_stats_increment "dispatch_candidate_blocked_interactive_review_hold"
+	if _dispatch_candidate_benign_block_reason "$failure_reason"; then
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=${failure_reason}" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
 		return 0
 	fi
 
