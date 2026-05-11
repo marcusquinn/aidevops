@@ -303,6 +303,7 @@ test_resolve_mergeable_retries_empty_and_logs_empty() {
 #   2. `_attempt_pr_update_branch` is called from the CONFLICTING branch
 #      before close.
 #   3. After update-branch, mergeable state is re-fetched.
+#   4. Protected PRs are skipped before _close_conflicting_pr.
 # ---------------------------------------------------------------
 
 test_nmr_guard_exists_before_close() {
@@ -357,6 +358,36 @@ test_nmr_guard_exists_before_close() {
 	return 0
 }
 
+test_protected_precheck_exists_before_close() {
+	local block
+	block=$(awk '
+		/^_process_single_ready_pr\(\) \{/ { in_fn=1 }
+		in_fn && /_attempt_pr_update_branch/ { capturing=1 }
+		capturing { print }
+		capturing && /^[[:space:]]*_close_conflicting_pr "/ { exit }
+	' "$MERGE_SCRIPT")
+
+	local precheck_pos close_pos route_pos
+	precheck_pos=$(printf '%s\n' "$block" | awk '/_close_conflicting_pr_skip_protected_precheck/ { print NR; exit }')
+	close_pos=$(printf '%s\n' "$block" | awk '/^[[:space:]]*_close_conflicting_pr "/ { print NR; exit }')
+	route_pos=$(printf '%s\n' "$block" | awk '/_route_pr_to_fix_worker/ { print NR; exit }')
+
+	if [[ -z "$precheck_pos" || -z "$close_pos" || -z "$route_pos" ]]; then
+		print_result "protected PR precheck runs before close-conflict metadata" 1 \
+			"Expected precheck, route, and close calls in CONFLICTING block (precheck=${precheck_pos}, route=${route_pos}, close=${close_pos})"
+		return 0
+	fi
+
+	if [[ "$precheck_pos" -ge "$route_pos" || "$precheck_pos" -ge "$close_pos" ]]; then
+		print_result "protected PR precheck runs before close-conflict metadata" 1 \
+			"Precheck must appear before route and close (precheck=${precheck_pos}, route=${route_pos}, close=${close_pos})"
+		return 0
+	fi
+
+	print_result "protected PR precheck runs before close-conflict metadata" 0
+	return 0
+}
+
 test_mergeable_refetch_after_update_branch() {
 	# After update-branch succeeds the code must re-read pr_mergeable
 	# via another `gh pr view --json mergeable` call, otherwise the
@@ -393,6 +424,7 @@ main() {
 	test_resolve_mergeable_retries_boolean_true
 	test_resolve_mergeable_retries_empty_and_logs_empty
 	test_nmr_guard_exists_before_close
+	test_protected_precheck_exists_before_close
 	test_mergeable_refetch_after_update_branch
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

@@ -74,6 +74,7 @@ define_functions_under_test() {
 		/^_close_superseded_duplicate_issue_if_verified\(\) \{/,/^}$/ { print }
 		/^_find_task_id_match_on_main\(\) \{/,/^}$/ { print }
 		/^_close_conflicting_pr_check_ownership_guard\(\) \{/,/^}$/ { print }
+		/^_close_conflicting_pr_skip_protected_precheck\(\) \{/,/^}$/ { print }
 		/^_close_conflicting_pr_classify_landed\(\) \{/,/^}$/ { print }
 		/^_close_conflicting_pr_comment_landed\(\) \{/,/^}$/ { print }
 		/^_close_conflicting_pr_comment_not_landed\(\) \{/,/^}$/ { print }
@@ -242,6 +243,20 @@ test_label_lookup_failure_skips_issue_closure() {
 	return 0
 }
 
+test_protected_precheck_skips_draft_interactive_without_metadata_fetch() {
+	reset_case
+	local pr_obj
+	pr_obj='{"number":4265,"isDraft":true,"labels":[{"name":"origin:interactive"},{"name":"no-auto-dispatch"}]}'
+	if _close_conflicting_pr_skip_protected_precheck "4265" "awardsapp/awardsapp" "$pr_obj"; then
+		pass "protected draft interactive PR precheck skips close"
+	else
+		fail "protected draft interactive PR precheck skips close" "Expected precheck to return 0 for draft origin:interactive no-auto-dispatch PR"
+	fi
+	assert_log_not_contains "$GH_CALL_LOG" "pr view 4265" "protected precheck uses existing PR object without gh metadata fetch"
+	assert_log_not_contains "$LOGFILE" "failed to fetch metadata" "protected precheck avoids noisy metadata-fetch failure log"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -254,6 +269,7 @@ main() {
 	test_ambiguous_same_file_change_routes_worker
 	test_parent_research_comment_avoids_closing_keywords
 	test_label_lookup_failure_skips_issue_closure
+	test_protected_precheck_skips_draft_interactive_without_metadata_fetch
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
