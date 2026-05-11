@@ -145,6 +145,15 @@ test_interactive_hold_allows_worker_issue() {
 	return 0
 }
 
+test_interactive_hold_emits_structured_block_reason() {
+	if grep -q 'DISPATCH_BLOCK_REASON reason=interactive_review_hold' "$CORE_SCRIPT" && grep -q 'return 3' "$CORE_SCRIPT"; then
+		print_result "interactive hold emits structured benign block reason" 0
+		return 0
+	fi
+	print_result "interactive hold emits structured benign block reason" 1 "expected structured reason and benign rc=3 in dispatch core"
+	return 0
+}
+
 main() {
 	if ! define_helpers_under_test; then
 		return 1
@@ -156,6 +165,7 @@ main() {
 	test_interactive_hold_blocks_origin_interactive
 	test_interactive_hold_allows_auto_dispatch_handoff
 	test_interactive_hold_allows_worker_issue
+	test_interactive_hold_emits_structured_block_reason
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

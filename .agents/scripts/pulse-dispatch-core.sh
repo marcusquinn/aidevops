@@ -1089,6 +1089,7 @@ _dispatch_has_interactive_hold() {
 # Exit codes:
 #   0 - all gates passed; safe to dispatch
 #   1 - blocked (reason logged to LOGFILE by the failing gate)
+#   3 - expected benign dispatch block with structured DISPATCH_BLOCK_REASON
 #######################################
 _dispatch_dedup_check_layers() {
 	local issue_number="$1"
@@ -1119,8 +1120,9 @@ _dispatch_dedup_check_layers() {
 	_dss_t0=$(_ds_now_ns)
 	if _dispatch_has_interactive_hold "$issue_meta_json"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: interactive review hold label present (GH#22948)" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=interactive_review_hold signal=interactive_review_hold issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
-		return 1
+		return 3
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.interactive_hold" "$_dss_t0"
 

@@ -104,7 +104,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		dedup_active_claim | interactive_review_hold | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -176,6 +176,29 @@ _dispatch_candidate_failure_reason() {
 
 	printf '%s\n' "$reason"
 	return 0
+}
+
+#######################################
+# Run a dispatch candidate under the stage watchdog while preserving benign
+# block return codes without emitting generic Stage failed noise.
+#
+# Arguments:
+#   $1 - file path where the raw dispatch rc should be written
+#   $2.. - command and arguments to execute
+# Returns:
+#   0 for success or benign expected block rc=3; otherwise the command rc.
+#######################################
+_dispatch_stage_rc_adapter() {
+	local rc_file="$1"
+	shift
+
+	local raw_rc=0
+	"$@" || raw_rc=$?
+	printf '%s\n' "$raw_rc" >"$rc_file" 2>/dev/null || true
+	if [[ "$raw_rc" -eq 3 ]]; then
+		return 0
+	fi
+	return "$raw_rc"
 }
 
 #######################################
@@ -809,9 +832,17 @@ _dispatch_with_timeout() {
 	fi
 
 	local start_ms dispatch_rc=0 outcome elapsed_ms
+	local stage_rc=0 raw_rc_file=""
+	raw_rc_file=$(mktemp 2>/dev/null || printf '/tmp/aidevops-dispatch-raw-rc.%s.%s' "$$" "$issue_number")
 	start_ms=$(_dispatch_now_ms)
 	run_stage_with_timeout "dispatch_candidate_${issue_number}" "$timeout_seconds" \
-		dispatch_with_dedup "$@" || dispatch_rc=$?
+		_dispatch_stage_rc_adapter "$raw_rc_file" dispatch_with_dedup "$@" || stage_rc=$?
+	if [[ -s "$raw_rc_file" ]]; then
+		read -r dispatch_rc <"$raw_rc_file" || dispatch_rc="$stage_rc"
+	else
+		dispatch_rc="$stage_rc"
+	fi
+	rm -f "$raw_rc_file" 2>/dev/null || true
 	elapsed_ms=$(($(_dispatch_now_ms) - start_ms))
 	echo "[pulse-wrapper] Dispatch_max: dispatch_with_dedup returned rc=${dispatch_rc} for #${issue_number} elapsed_ms=${elapsed_ms} timeout_used_ms=${timeout_ms}" >>"$LOGFILE"
 
@@ -1063,6 +1094,11 @@ _dispatch_process_candidate() {
 		else
 			local failure_reason
 			failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
+			if [[ "$failure_reason" == "interactive_review_hold" ]]; then
+				echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=interactive_review_hold" >>"$LOGFILE"
+				_dispatch_stats_increment "dispatch_candidate_blocked_interactive_review_hold"
+				return 1
+			fi
 			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=${failure_reason}" >>"$LOGFILE"
 			_dispatch_stats_increment_candidate_failed "$failure_reason"
 		fi

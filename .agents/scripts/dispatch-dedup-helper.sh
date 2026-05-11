@@ -1716,6 +1716,10 @@ classify_dispatch_blocker_reason() {
 	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
 
 	case "$lower_signal" in
+		*interactive_review_hold* | *interactive*review*hold*)
+			printf 'interactive_review_hold\n'
+			return 0
+			;;
 		*cost_budget_exceeded*)
 			printf 'cost_budget_exceeded\n'
 			return 0

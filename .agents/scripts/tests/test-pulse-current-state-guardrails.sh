@@ -163,6 +163,19 @@ test_disabled_guardrail_still_updates_available_slots_gauge() {
 	return 0
 }
 
+test_interactive_hold_reason_is_classified() {
+	reset_guardrail_env
+	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=interactive_review_hold signal=interactive_review_hold issue=#4772 repo=awardsapp/awardsapp' >>"$LOGFILE"
+	local reason
+	reason=$(_dispatch_candidate_failure_reason 4772 awardsapp/awardsapp 3)
+	if [[ "$reason" == "interactive_review_hold" ]]; then
+		print_result "guardrail: interactive review hold classifies as benign block" 0
+	else
+		print_result "guardrail: interactive review hold classifies as benign block" 1 "reason=${reason}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -170,6 +183,7 @@ test_healthy_pr_backlog_rations_new_launches
 test_no_dispatchable_evidence_pauses_refill_loop
 test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
+test_interactive_hold_reason_is_classified
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"

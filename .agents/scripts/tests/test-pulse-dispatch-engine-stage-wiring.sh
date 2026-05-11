@@ -61,6 +61,7 @@ assert_not_grep() {
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 
 echo "=== t2443 + t2903: pulse-dispatch-engine stage wiring regression tests ==="
 echo "Engine: $ENGINE"
@@ -149,6 +150,17 @@ assert_grep \
 	"9: async post-dispatch housekeeping uses _pflt_timeout" \
 	'_pulse_start_post_dispatch_housekeeping "\$_pflt_timeout"' \
 	"$ENGINE"
+
+# --- Benign expected dispatch blocks must not be surfaced as generic stage failures ---
+
+assert_grep \
+	"10a: dispatch stage adapter preserves benign block rc" \
+	'_dispatch_stage_rc_adapter' \
+	"$DISPATCH_LIB"
+assert_grep \
+	"10b: interactive review hold is logged as benign block, not pre-launch failure" \
+	'benign dispatch block reason=interactive_review_hold' \
+	"$DISPATCH_LIB"
 
 # --- Summary ---
 
