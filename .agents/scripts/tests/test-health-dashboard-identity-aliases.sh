@@ -31,8 +31,24 @@ GH_CALLS="${TMP}/gh-calls.log"
 gh() {
 	local call="$*"
 	printf '%s\n' "$call" >>"$GH_CALLS"
-	case "$call" in
-		*"issue list --repo owner/repo --label source:health-dashboard"*)
+	case "${HEALTH_FIXTURE:-}:$call" in
+		conflicting_operator:*"issue list --repo owner/repo --label source:health-dashboard"*)
+			printf '%s' '[{"number":4643,"title":"[Supervisor:marcusquinn] stale dashboard","labels":[{"name":"source:health-dashboard"},{"name":"operator:alex-solovyev"},{"name":"alex-solovyev"},{"name":"supervisor"}]}]'
+			return 0
+			;;
+		conflicting_operator:*"issue list --repo owner/repo --search in:title [Supervisor:marcusquinn]"*)
+			printf '%s' '[{"number":4643,"title":"[Supervisor:marcusquinn] stale dashboard","labels":[{"name":"source:health-dashboard"},{"name":"operator:alex-solovyev"},{"name":"alex-solovyev"},{"name":"supervisor"}]}]'
+			return 0
+			;;
+		legacy_title:*"issue list --repo owner/repo --label source:health-dashboard"*)
+			printf '%s' '[{"number":555,"title":"[Supervisor:github-user] legacy dashboard","labels":[{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"}]}]'
+			return 0
+			;;
+		cache_conflict:*"issue view 4643 --repo owner/repo --json state,labels"*)
+			printf '%s' '{"state":"OPEN","labels":[{"name":"source:health-dashboard"},{"name":"operator:alex-solovyev"}]}'
+			return 0
+			;;
+		:*"issue list --repo owner/repo --label source:health-dashboard"*)
 			printf '%s' '[{"number":20408,"title":"[Supervisor:github-user] 1 PR at 10:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"}],"createdAt":"2026-05-01T10:00:00Z"},{"number":18669,"title":"[Contributor:local-user] 0 PRs at 09:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"contributor"},{"name":"local-user"}],"createdAt":"2026-04-01T09:00:00Z"}]'
 			return 0
 			;;
@@ -132,6 +148,50 @@ if [[ "$extracted" == "20408" ]]; then
 	pass "extracts one issue number from noisy wrapper output"
 else
 	fail "extracts one issue number from noisy wrapper output" "extracted=${extracted}"
+fi
+
+: >"$GH_CALLS"
+export HEALTH_FIXTURE=conflicting_operator
+result=$(_find_health_issue \
+	"owner/repo" "marcusquinn" "supervisor" "[Supervisor:marcusquinn]" \
+	"supervisor" "Supervisor" "${HOME}/.aidevops/logs/health-issue-marcusquinn-owner-repo" \
+	"marcusquinn" "marcusquinn")
+unset HEALTH_FIXTURE
+
+if [[ -z "$result" ]]; then
+	pass "does not reuse dashboard with conflicting operator label despite matching title"
+else
+	fail "does not reuse dashboard with conflicting operator label despite matching title" "result=${result}; calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+export HEALTH_FIXTURE=legacy_title
+result=$(_find_health_issue \
+	"owner/repo" "github-user" "supervisor" "[Supervisor:canonical-operator]" \
+	"supervisor" "Supervisor" "${HOME}/.aidevops/logs/health-issue-legacy-owner-repo" \
+	"canonical-operator" "$aliases")
+unset HEALTH_FIXTURE
+
+if [[ "$result" == "555" ]]; then
+	pass "keeps legacy title migration when no operator label exists"
+else
+	fail "keeps legacy title migration when no operator label exists" "result=${result}; calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+cache_file="${HOME}/.aidevops/logs/health-issue-cache-conflict-owner-repo"
+printf '%s\n' '4643' >"$cache_file"
+: >"$GH_CALLS"
+export HEALTH_FIXTURE=cache_conflict
+result=$(_find_health_issue \
+	"owner/repo" "marcusquinn" "supervisor" "[Supervisor:marcusquinn]" \
+	"supervisor" "Supervisor" "$cache_file" \
+	"marcusquinn" "marcusquinn")
+unset HEALTH_FIXTURE
+
+if [[ -z "$result" && ! -f "$cache_file" ]]; then
+	pass "drops cached dashboard with conflicting operator label"
+else
+	fail "drops cached dashboard with conflicting operator label" "result=${result}; cache_exists=$([[ -f "$cache_file" ]] && printf yes || printf no); calls=$(tr '\n' ';' <"$GH_CALLS")"
 fi
 
 body=$(_build_health_issue_body \
