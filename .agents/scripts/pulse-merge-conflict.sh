@@ -227,10 +227,12 @@ _interactive_pr_is_stale() {
 	[[ "$mode" == "off" ]] && return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
-	# Fetch PR metadata once
+	# Fetch PR metadata once. For staleness, prefer the head commit timestamp
+	# over PR updatedAt: automated comments/labels refresh updatedAt and can keep
+	# idle conflicted PRs out of worker handover indefinitely.
 	local pr_meta
 	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels,updatedAt 2>/dev/null) || return 1
+		--json labels,updatedAt,headRefOid 2>/dev/null) || return 1
 
 	# Gate 1: must have origin:interactive
 	printf '%s' "$pr_meta" | jq -e \
@@ -248,7 +250,7 @@ _interactive_pr_is_stale() {
 
 	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
 	local threshold_secs="${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}"  # default 4h (t2948; was 24h)
-	local updated_at="" now_epoch=0 updated_epoch=0 pr_age_secs=0
+	local activity_at="" activity_source="updatedAt" now_epoch=0 updated_epoch=0 pr_age_secs=0
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
 	# A non-numeric value (e.g. "4h", empty, negative) triggers bash
 	# "value too great for base" and silently breaks stale detection.
@@ -256,12 +258,22 @@ _interactive_pr_is_stale() {
 		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
-	updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
-	[[ -z "$updated_at" ]] && return 1
+	local head_ref_oid=""
+	head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
+	if [[ -n "$head_ref_oid" ]]; then
+		activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
+			--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
+		[[ -n "$activity_at" ]] && activity_source="head_commit"
+	fi
+	if [[ -z "$activity_at" ]]; then
+		activity_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
+		activity_source="updatedAt"
+	fi
+	[[ -z "$activity_at" ]] && return 1
 	now_epoch=$(date +%s)
 	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
-	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
-		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
+	updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
+		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
 		return 1
 	pr_age_secs=$(( now_epoch - updated_epoch ))
 	[[ "$pr_age_secs" -lt "$threshold_secs" ]] && return 1
@@ -288,7 +300,7 @@ _interactive_pr_is_stale() {
 
 	# All gates passed — PR is stale. Log in detect mode.
 	if [[ "$mode" == "detect" ]]; then
-		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h >= $((threshold_secs / 3600))h, linked issue #${linked_issue})" >>"$LOGFILE"
+		echo "[pulse-wrapper] would-handover: PR #${pr_number} in ${repo_slug} (idle $((pr_age_secs / 3600))h via ${activity_source} >= $((threshold_secs / 3600))h, linked issue #${linked_issue})" >>"$LOGFILE"
 	fi
 	return 0
 }
