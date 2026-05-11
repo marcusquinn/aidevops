@@ -162,6 +162,19 @@ assert_grep \
 	'benign dispatch block reason=interactive_review_hold' \
 	"$DISPATCH_LIB"
 
+assert_grep \
+	"10c: dispatch stage adapter reports rc-file write failures" \
+	'Failed to write dispatch rc to' \
+	"$DISPATCH_LIB"
+assert_grep \
+	"10d: dispatch stage adapter propagates raw rc after rc-file write failure" \
+	'return "\$raw_rc"' \
+	"$DISPATCH_LIB"
+assert_not_grep \
+	"10e: interactive review hold is not counted as a candidate failure reason" \
+	'dedup_active_claim \| interactive_review_hold \|' \
+	"$DISPATCH_LIB"
+
 # --- Summary ---
 
 echo ""

@@ -104,7 +104,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | interactive_review_hold | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -194,7 +194,10 @@ _dispatch_stage_rc_adapter() {
 
 	local raw_rc=0
 	"$@" || raw_rc=$?
-	printf '%s\n' "$raw_rc" >"$rc_file" 2>/dev/null || true
+	if ! printf '%s\n' "$raw_rc" >"$rc_file"; then
+		printf 'Failed to write dispatch rc to %s\n' "$rc_file" >&2
+		return "$raw_rc"
+	fi
 	if [[ "$raw_rc" -eq 3 ]]; then
 		return 0
 	fi
