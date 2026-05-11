@@ -266,13 +266,17 @@ _cleanup_merged_prs_for_all_repos() {
 		# a git directory, not just pulse-enabled ones. Workers can create
 		# worktrees in any managed repo. Skip local_only repos since
 		# worktree-helper.sh uses gh pr list for squash-merge detection.
-		local repo_paths
-		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
+		local repo_records
+		repo_records=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | [.path // "", .slug // "unknown"] | @tsv' "$repos_json" || echo "")
 
 		local repo_path
-		while IFS= read -r repo_path; do
+		local repo_slug
+		while IFS=$'\t' read -r repo_path repo_slug; do
 			[[ -z "$repo_path" ]] && continue
-			[[ ! -d "$repo_path/.git" ]] && continue
+			if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+				echo "[pulse-cleanup] stage=merged-pr repo=${repo_slug:-unknown} skipping cleanup — invalid repo path configured" >>"${LOGFILE:-/dev/null}"
+				continue
+			fi
 
 			local wt_count
 			wt_count=$(git -C "$repo_path" worktree list | wc -l | tr -d ' ')
@@ -293,9 +297,15 @@ _cleanup_merged_prs_for_all_repos() {
 				echo "[pulse-wrapper] Worktree cleanup ($repo_name): $count worktree(s) removed" >>"$LOGFILE"
 				total_removed=$((total_removed + count))
 			fi
-		done <<<"$repo_paths"
+		done <<<"$repo_records"
 	else
 		# Fallback: just clean the current repo (legacy behaviour)
+		if ! git rev-parse --git-dir >/dev/null 2>&1; then
+			echo "[pulse-cleanup] stage=merged-pr repo=unknown skipping cleanup — current directory is not a git repository" >>"${LOGFILE:-/dev/null}"
+			echo 0
+			return 0
+		fi
+
 		local clean_result
 		clean_result=$(bash "$helper" clean --auto --force-merged 2>&1) || true
 		local fallback_count

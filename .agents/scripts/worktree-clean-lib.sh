@@ -719,8 +719,13 @@ _clean_preflight_main_worktree() {
 	# worktree. Avoid piping through head — with set -o pipefail and many
 	# worktrees, head closes the pipe early → git SIGPIPE (exit 141) →
 	# pipefail → set -e abort.
+	if ! git rev-parse --git-dir >/dev/null 2>&1; then
+		echo -e "${YELLOW}Warning: skipping worktree cleanup — current directory is not a git repository${NC}" >&2
+		return 1
+	fi
+
 	local _porcelain main_worktree_path
-	_porcelain=$(git worktree list --porcelain)
+	_porcelain=$(git worktree list --porcelain 2>/dev/null)
 	if [[ -z "$_porcelain" ]]; then
 		echo -e "${RED}FATAL: 'git worktree list --porcelain' returned empty — refusing cleanup${NC}" >&2
 		return 1
