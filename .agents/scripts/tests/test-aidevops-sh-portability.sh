@@ -70,7 +70,7 @@ test_getent_structural_guard() {
 	# `if` statement preceding it. The canonical fixed pattern has the guard
 	# on the same logical line: ` && command -v getent &>/dev/null; then`.
 	local getent_line_num
-	getent_line_num=$(grep -n '^[[:space:]]*_AIDEVOPS_REAL_HOME=.*getent passwd' "${AIDEVOPS_SH}" | head -1 | cut -d: -f1)
+	getent_line_num=$(grep -n 'getent passwd .*SUDO_USER' "${AIDEVOPS_SH}" | sed -n '1{s/:.*//;p;}' || true)
 
 	if [[ -z "${getent_line_num}" ]]; then
 		_fail "Could not find _AIDEVOPS_REAL_HOME=... getent passwd line in aidevops.sh"
@@ -160,6 +160,21 @@ test_approval_helper_still_guarded() {
 }
 
 # -----------------------------------------------------------------------------
+# Test 4: worktree CLI dispatch — templates can use stable public API
+# -----------------------------------------------------------------------------
+test_worktree_command_dispatch() {
+	_info "Test 4: aidevops.sh exposes worktree helper through stable CLI"
+
+	if grep -q 'worktree | wt).*worktree-helper.sh' "${AIDEVOPS_SH}"; then
+		_pass "aidevops worktree dispatches to worktree-helper.sh"
+	else
+		_fail "aidevops.sh does not expose the worktree helper via aidevops worktree"
+		return 1
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # Main
 # -----------------------------------------------------------------------------
 main() {
@@ -169,6 +184,7 @@ main() {
 	test_getent_structural_guard
 	test_runtime_fallback_no_getent
 	test_approval_helper_still_guarded
+	test_worktree_command_dispatch
 
 	printf '\n'
 	printf 'Results: %d passed, %d failed\n' "${pass_count}" "${fail_count}"

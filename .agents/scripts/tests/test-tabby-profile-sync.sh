@@ -199,7 +199,31 @@ assert repaired.count('      env: {}') == 1, repaired
 assert \"- 'opencode; exec zsh'\" in repaired, repaired
 "
 
-_info "Test 9: sync repairs existing profiles even when no new profile is needed"
+_info "Test 9: custom non-OpenCode webserver profiles remain byte-for-byte unchanged"
+run_python_test "custom webserver profile preserved" "${load_module_code}
+config = '''profiles:
+  - name: site.local
+    options:
+      args:
+        - '-l'
+        - '-c'
+        - >-
+		  open -a OrbStack && until docker info >/dev/null 2>&1; do echo
+		  \"waiting for OrbStack engine...\"; sleep 1; done && cd
+		  /tmp/example-dev-proxy && docker compose up -d && cd /tmp/example-site &&
+		  (lsof -ti:3100 | xargs kill -9 2>/dev/null; rm -f
+          apps/web/.next/dev/lock; true) && pnpm dev:web; exec zsh
+      env: {}
+      env:
+        PATH: /opt/homebrew/bin
+      cwd: /tmp/site
+'''
+repaired, count = mod.repair_broken_opencode_launch_profiles(config)
+assert count == 0, count
+assert repaired == config, repaired
+"
+
+_info "Test 10: sync repairs existing profiles even when no new profile is needed"
 tmp_root="$(mktemp -d)"
 trap 'rm -rf "${tmp_root}"' EXIT
 repo_path="${tmp_root}/aidevops"

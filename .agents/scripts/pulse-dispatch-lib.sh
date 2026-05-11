@@ -104,7 +104,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | interactive_review_hold | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -179,6 +179,25 @@ _dispatch_candidate_failure_reason() {
 }
 
 #######################################
+# Return success when a dispatch candidate reason is an expected benign block.
+#
+# Arguments:
+#   $1 - low-cardinality reason token
+# Returns:
+#   0 - benign block reason
+#   1 - not a benign block reason
+#######################################
+_dispatch_candidate_benign_block_reason() {
+	local reason="$1"
+	case "$reason" in
+		interactive_review_hold | pr_target_not_dispatchable)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+#######################################
 # Run a dispatch candidate under the stage watchdog while preserving benign
 # block return codes without emitting generic Stage failed noise.
 #
@@ -194,7 +213,10 @@ _dispatch_stage_rc_adapter() {
 
 	local raw_rc=0
 	"$@" || raw_rc=$?
-	printf '%s\n' "$raw_rc" >"$rc_file" 2>/dev/null || true
+	if ! printf '%s\n' "$raw_rc" >"$rc_file"; then
+		printf 'Failed to write dispatch rc to %s\n' "$rc_file" >&2
+		return "$raw_rc"
+	fi
 	if [[ "$raw_rc" -eq 3 ]]; then
 		return 0
 	fi
@@ -1026,9 +1048,9 @@ _dispatch_record_nonzero_dispatch_result() {
 
 	local failure_reason
 	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
-	if [[ "$failure_reason" == "interactive_review_hold" ]]; then
-		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=interactive_review_hold" >>"$LOGFILE"
-		_dispatch_stats_increment "dispatch_candidate_blocked_interactive_review_hold"
+	if _dispatch_candidate_benign_block_reason "$failure_reason"; then
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=${failure_reason}" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
 		return 0
 	fi
 
