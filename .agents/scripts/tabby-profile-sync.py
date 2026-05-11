@@ -300,8 +300,29 @@ def _tabby_autorun_env_end(lines: list[str], start: int, base_indent_len: int) -
     return None
 
 
-def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
-    """Repair fragile Tabby OpenCode launch profiles.
+def _line_mentions_opencode_launch(line: str) -> bool:
+    """Return True when a non-comment YAML line mentions an OpenCode launch."""
+    stripped = line.strip()
+    return bool(stripped and not stripped.startswith("#") and "opencode" in stripped)
+
+
+def _profile_mentions_opencode_launch(profile_lines: list[str]) -> bool:
+    """Return True when a profile block clearly targets OpenCode."""
+    return any(_line_mentions_opencode_launch(line) for line in profile_lines)
+
+
+def _profile_block_end(lines: list[str], start: int) -> int:
+    """Return the first line after the Tabby profile block at ``start``."""
+    block_end = start + 1
+    while block_end < len(lines):
+        if lines[block_end].startswith("  - name:"):
+            break
+        block_end += 1
+    return block_end
+
+
+def _repair_broken_opencode_launch_profile_block(config_text: str) -> tuple[str, int]:
+    """Repair fragile Tabby OpenCode launch profiles inside one profile block.
 
     ``zsh -i -c`` enables interactive startup while executing a command string,
     which can trigger Powerlevel10k/gitstatus job-control errors before the TUI
@@ -443,6 +464,43 @@ def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
                 include_env=include_env,
             )
         )
+
+    return "\n".join(repaired), repairs
+
+
+def repair_broken_opencode_launch_profiles(config_text: str) -> tuple[str, int]:
+    """Repair fragile OpenCode profiles without touching custom profiles.
+
+    Tabby configs can contain hand-authored profiles for local web servers,
+    shells, and other commands. The OpenCode repair logic manages ``command``,
+    ``args``, and ``env`` keys, so scope it to profile blocks that explicitly
+    mention OpenCode and preserve all other profile blocks byte-for-byte.
+    """
+    lines = config_text.split("\n")
+    repaired: list[str] = []
+    repairs = 0
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        if not line.startswith("  - name:"):
+            repaired.append(line)
+            i += 1
+            continue
+
+        block_end = _profile_block_end(lines, i)
+        profile_lines = lines[i:block_end]
+        if not _profile_mentions_opencode_launch(profile_lines):
+            repaired.extend(profile_lines)
+            i = block_end
+            continue
+
+        repaired_block, repaired_count = _repair_broken_opencode_launch_profile_block(
+            "\n".join(profile_lines)
+        )
+        repaired.extend(repaired_block.split("\n"))
+        repairs += repaired_count
+        i = block_end
 
     return "\n".join(repaired), repairs
 
