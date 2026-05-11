@@ -45,6 +45,12 @@ _maybe_jq() {
 
 case "$_subcmd" in
 "pr view")
+	if [[ "$*" == *"--json labels,updatedAt,headRefOid"* ]]; then
+		_arr_json=$(_labels_to_json_array)
+		_updated=$(cat "${TEST_ROOT}/updated.txt")
+		printf '{"labels":%s,"updatedAt":"%s","headRefOid":"abc123"}' "$_arr_json" "$_updated" | _maybe_jq
+		exit 0
+	fi
 	if [[ "$*" == *"--json labels,updatedAt"* ]]; then
 		_arr_json=$(_labels_to_json_array)
 		_updated=$(cat "${TEST_ROOT}/updated.txt")
@@ -86,6 +92,12 @@ esac
 
 # `gh api` paths
 if [[ "${1:-}" == "api" ]]; then
+	# repos/OWNER/REPO/commits/SHA — head commit lookup
+	if [[ "$*" == *"/commits/"* ]]; then
+		_head_date=$(cat "${TEST_ROOT}/head-commit.txt")
+		printf '{"commit":{"committer":{"date":"%s"},"author":{"date":"%s"}}}' "$_head_date" "$_head_date" | _maybe_jq
+		exit 0
+	fi
 	# repos/OWNER/REPO/issues/NNN — linked issue lookup
 	if [[ "$*" == *"/issues/"* && "$*" != *"/comments"* ]]; then
 		_state=$(cat "${TEST_ROOT}/issue-state.txt")

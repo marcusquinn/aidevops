@@ -99,8 +99,9 @@ git revert <release-commit-hash> && git push origin main
 # Option B: Delete tag+release (if not widely distributed)
 gh release delete v{VERSION} --yes && git tag -d v{VERSION} && git push origin --delete v{VERSION}
 # Option C: Hotfix release from a safe linked worktree
-${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION}.1
-# Then cd into the sibling worktree path printed by the helper before editing.
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION}.1 --base v{VERSION}
+# Critical: cd into the sibling worktree path printed by the helper before editing;
+# otherwise commits land in the canonical checkout and can disrupt active agents.
 git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
 ```
 

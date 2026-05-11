@@ -184,7 +184,7 @@ test_function_brace_spacing_change_is_not_regression() {
 	(
 		cd "$TEST_ROOT" || exit 1
 		ALL_SH_FILES=(a.sh)
-		check_function_complexity >/tmp/linters-local-function-spacing.out 2>&1
+		check_function_complexity >"${TEST_ROOT}/linters-local-function-spacing.out" 2>&1
 	) || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		print_result "function brace spacing change is not regression" 0

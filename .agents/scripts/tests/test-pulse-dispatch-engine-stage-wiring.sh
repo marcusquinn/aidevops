@@ -158,8 +158,25 @@ assert_grep \
 	'_dispatch_stage_rc_adapter' \
 	"$DISPATCH_LIB"
 assert_grep \
-	"10b: interactive review hold is logged as benign block, not pre-launch failure" \
-	'benign dispatch block reason=interactive_review_hold' \
+	"10b: interactive review hold is recognized as a benign block" \
+	'interactive_review_hold \| pr_target_not_dispatchable' \
+	"$DISPATCH_LIB"
+assert_grep \
+	"10b2: PR target is logged as benign block, not pre-launch failure" \
+	'benign dispatch block reason=\$\{failure_reason\}' \
+	"$DISPATCH_LIB"
+
+assert_grep \
+	"10c: dispatch stage adapter reports rc-file write failures" \
+	'Failed to write dispatch rc to' \
+	"$DISPATCH_LIB"
+assert_grep \
+	"10d: dispatch stage adapter propagates raw rc after rc-file write failure" \
+	'return "\$raw_rc"' \
+	"$DISPATCH_LIB"
+assert_not_grep \
+	"10e: benign block reasons are not counted as candidate failure reasons" \
+	'dedup_active_claim \| interactive_review_hold \| pr_target_not_dispatchable \|' \
 	"$DISPATCH_LIB"
 
 # --- Summary ---

@@ -17,6 +17,7 @@
 #   Case 9: per-repo repos.json override opts in
 #   Case 10: environment false overrides repo/global preferences
 #   Case 11: allow-auto-merge label remains a PR-specific opt-in
+#   Case 12: stale interactive PR without active claim passes automation
 #
 # No real repository is touched. The gh binary is replaced with a mock stub
 # that serves canned responses from TEST_ROOT fixture files.
@@ -412,6 +413,38 @@ test_case11_label_overrides_env_false() {
 }
 
 # =============================================================================
+# Case 12: stale interactive PR without active claim passes automation.
+# =============================================================================
+test_case12_stale_interactive_without_claim_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	_interactive_pr_is_stale() {
+		local pr_number="$1"
+		local repo_slug="$2"
+		[[ "$pr_number" == "110" && "$repo_slug" == "owner/repo" ]]
+		return $?
+	}
+
+	local labels="origin:interactive"
+	local result=0
+	_check_interactive_pr_gates "110" "owner/repo" "$labels" "false" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case 12: stale interactive PR without active claim passes" 1 \
+			"Expected exit 0, got ${result}"
+	elif ! grep -q "stale origin:interactive PR has no active claim" "$LOGFILE" 2>/dev/null; then
+		print_result "Case 12: stale interactive PR without active claim passes" 1 \
+			"Expected stale handover merge log in ${LOGFILE}"
+	else
+		print_result "Case 12: stale interactive PR without active claim passes" 0
+	fi
+	unset -f _interactive_pr_is_stale
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Run all cases
 # =============================================================================
 main() {
@@ -431,6 +464,7 @@ main() {
 	test_case9_repo_override_passes
 	test_case10_env_false_blocks_preferences
 	test_case11_label_overrides_env_false
+	test_case12_stale_interactive_without_claim_passes
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
