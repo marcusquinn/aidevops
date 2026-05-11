@@ -624,6 +624,15 @@ _process_single_ready_pr() {
 		fi
 
 		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
+			# GH#23371: some PRs are already known to be protected from
+			# automated close handling from the PR list metadata (draft,
+			# origin:interactive, no-auto-dispatch, external-contributor).
+			# Skip them before the close-conflict ownership guard so pulse
+			# does not repeatedly hit the noisy metadata-fetch path.
+			if _close_conflicting_pr_skip_protected_precheck "$pr_number" "$repo_slug" "$pr_obj"; then
+				return 1
+			fi
+
 			# Conflict resolution feedback: route worker PRs to fix worker
 			# (t2203: consolidated in helper). If routed, return 2 to skip
 			# the close path; otherwise fall through to _close_conflicting_pr.

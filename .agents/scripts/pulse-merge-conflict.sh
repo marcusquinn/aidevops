@@ -805,6 +805,56 @@ _close_conflicting_pr_check_ownership_guard() {
 }
 
 #######################################
+# Fast pre-close guard for CONFLICTING PRs that are clearly protected.
+#
+# Uses the PR object already fetched by the merge pass, before the heavier
+# _close_conflicting_pr ownership metadata path. This avoids repeated noisy
+# metadata fetches for draft / interactive / contributor PRs that are never
+# eligible for auto-close.
+#
+# Args: $1=pr_number, $2=repo_slug, $3=pr_obj JSON from gh pr list
+# Returns:
+#   0 — caller must skip close-conflict handling
+#   1 — no protected signal found; caller may continue normal conflict flow
+#######################################
+_close_conflicting_pr_skip_protected_precheck() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_obj="${3:-}"
+
+	local labels_csv=""
+	local is_draft="false"
+	if [[ -n "$pr_obj" ]]; then
+		labels_csv=$(printf '%s' "$pr_obj" \
+			| jq -r '[.labels[]?.name] | join(",")' 2>/dev/null) || labels_csv=""
+		is_draft=$(printf '%s' "$pr_obj" \
+			| jq -r '(.isDraft // false | tostring)' 2>/dev/null) || is_draft="false"
+	fi
+
+	if [[ "$is_draft" == "true" ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — draft PR is protected before close-conflict metadata fetch (GH#23371)" >>"$LOGFILE"
+		return 0
+	fi
+
+	case ",${labels_csv}," in
+	*,origin:interactive,*)
+		echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — origin:interactive PR is protected before close-conflict metadata fetch (GH#23371)" >>"$LOGFILE"
+		return 0
+		;;
+	*,no-auto-dispatch,*)
+		echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — no-auto-dispatch PR is protected before close-conflict metadata fetch (GH#23371)" >>"$LOGFILE"
+		return 0
+		;;
+	*,external-contributor,*)
+		echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — external-contributor PR is protected before close-conflict metadata fetch (GH#23371)" >>"$LOGFILE"
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+#######################################
 # Gate 2 of _close_conflicting_pr: classify whether the work has
 # already landed on main.
 #
