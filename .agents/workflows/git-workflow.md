@@ -27,7 +27,7 @@ tools:
 **Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
 
 ```bash
-git status --short --branch  # If this is the canonical `main` checkout → STOP
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/pre-edit-check.sh  # MANDATORY gate; detects canonical `main` checkout vs linked worktree
 ```
 
 If in the canonical `main` checkout: STOP and create a safe linked worktree for the task before editing. Exception: proceed for an approved release/version-manager command after verifying the working tree is clean and up to date with `origin/main`.
