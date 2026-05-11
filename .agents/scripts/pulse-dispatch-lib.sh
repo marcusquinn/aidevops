@@ -1005,6 +1005,39 @@ _dispatch_check_model_concurrency_cap() {
 }
 
 #######################################
+# Record a non-zero dispatch_with_dedup outcome for one candidate.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - dispatch_with_dedup return code
+# Returns: 0 always (caller handles the skip/continue decision).
+#######################################
+_dispatch_record_nonzero_dispatch_result() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dispatch_rc="$3"
+
+	echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
+	if [[ "$dispatch_rc" -eq 2 ]]; then
+		_dispatch_stats_increment "dispatch_candidate_noop"
+		return 0
+	fi
+
+	local failure_reason
+	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
+	if [[ "$failure_reason" == "interactive_review_hold" ]]; then
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=interactive_review_hold" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_blocked_interactive_review_hold"
+		return 0
+	fi
+
+	echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=${failure_reason}" >>"$LOGFILE"
+	_dispatch_stats_increment_candidate_failed "$failure_reason"
+	return 0
+}
+
+#######################################
 # Process a single dispatch candidate: extract fields, skip if ineligible,
 # dispatch via dispatch_with_dedup, verify worker launch, and track the
 # outcome for adaptive batch throttling.
@@ -1088,20 +1121,7 @@ _dispatch_process_candidate() {
 	_dispatch_with_timeout "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$self_login" "$repo_path" "$prompt" "issue-${issue_number}" "$model_override" || dispatch_rc=$?
 	if [[ "$dispatch_rc" -ne 0 ]]; then
-		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
-		if [[ "$dispatch_rc" -eq 2 ]]; then
-			_dispatch_stats_increment "dispatch_candidate_noop"
-		else
-			local failure_reason
-			failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
-			if [[ "$failure_reason" == "interactive_review_hold" ]]; then
-				echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=interactive_review_hold" >>"$LOGFILE"
-				_dispatch_stats_increment "dispatch_candidate_blocked_interactive_review_hold"
-				return 1
-			fi
-			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=${failure_reason}" >>"$LOGFILE"
-			_dispatch_stats_increment_candidate_failed "$failure_reason"
-		fi
+		_dispatch_record_nonzero_dispatch_result "$issue_number" "$repo_slug" "$dispatch_rc"
 		return 1
 	fi
 
