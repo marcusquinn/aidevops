@@ -42,6 +42,8 @@ swift --version
 xcrun simctl list devices available
 ```
 
+The recursive `**/` pathspecs intentionally cover root-level and nested files with one pattern per project artifact, avoiding duplicate workspace matches while keeping project and workspace discovery consistent.
+
 Then list schemes with the right container, quoting placeholders because Xcode project and workspace names commonly contain spaces:
 
 ```bash
