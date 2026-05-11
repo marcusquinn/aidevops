@@ -358,7 +358,7 @@ test_nmr_guard_exists_before_close() {
 	return 0
 }
 
-test_protected_precheck_exists_before_close() {
+test_stale_route_runs_before_protected_precheck() {
 	local block
 	block=$(awk '
 		/^_process_single_ready_pr\(\) \{/ { in_fn=1 }
@@ -373,18 +373,18 @@ test_protected_precheck_exists_before_close() {
 	route_pos=$(printf '%s\n' "$block" | awk '/_route_pr_to_fix_worker/ { print NR; exit }')
 
 	if [[ -z "$precheck_pos" || -z "$close_pos" || -z "$route_pos" ]]; then
-		print_result "protected PR precheck runs before close-conflict metadata" 1 \
+		print_result "stale route runs before protected PR precheck" 1 \
 			"Expected precheck, route, and close calls in CONFLICTING block (precheck=${precheck_pos}, route=${route_pos}, close=${close_pos})"
 		return 0
 	fi
 
-	if [[ "$precheck_pos" -ge "$route_pos" || "$precheck_pos" -ge "$close_pos" ]]; then
-		print_result "protected PR precheck runs before close-conflict metadata" 1 \
-			"Precheck must appear before route and close (precheck=${precheck_pos}, route=${route_pos}, close=${close_pos})"
+	if [[ "$route_pos" -ge "$precheck_pos" || "$precheck_pos" -ge "$close_pos" ]]; then
+		print_result "stale route runs before protected PR precheck" 1 \
+			"Route must appear before protected precheck, and precheck before close (route=${route_pos}, precheck=${precheck_pos}, close=${close_pos})"
 		return 0
 	fi
 
-	print_result "protected PR precheck runs before close-conflict metadata" 0
+	print_result "stale route runs before protected PR precheck" 0
 	return 0
 }
 
@@ -424,7 +424,7 @@ main() {
 	test_resolve_mergeable_retries_boolean_true
 	test_resolve_mergeable_retries_empty_and_logs_empty
 	test_nmr_guard_exists_before_close
-	test_protected_precheck_exists_before_close
+	test_stale_route_runs_before_protected_precheck
 	test_mergeable_refetch_after_update_branch
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
