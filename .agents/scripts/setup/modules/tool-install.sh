@@ -1724,6 +1724,54 @@ _setup_opencode_first_line() {
 	return 0
 }
 
+_setup_opencode_homebrew_owner_action() {
+	local bin="${1:-}"
+	local brew_bin=""
+	local brew_prefix=""
+	local bin_real=""
+	local prefix_real=""
+
+	[[ -n "$bin" ]] || return 1
+	command -v brew >/dev/null 2>&1 || return 1
+	brew_bin=$(command -v brew 2>/dev/null || printf '')
+	[[ -n "$brew_bin" ]] || return 1
+	brew_prefix=$(brew --prefix opencode 2>/dev/null || printf '')
+	[[ -n "$brew_prefix" ]] || brew_prefix=$(brew --prefix 2>/dev/null || printf '')
+	[[ -n "$brew_prefix" ]] || return 1
+
+	bin_real=$(cd "$(dirname "$bin")" 2>/dev/null && printf '%s/%s\n' "$(pwd -P)" "$(basename "$bin")") || return 1
+	prefix_real=$(cd "$brew_prefix" 2>/dev/null && pwd -P) || return 1
+
+	case "$bin_real" in
+		"$prefix_real"/*)
+			printf '%s\n' "brew reinstall opencode"
+			return 0
+			;;
+	esac
+
+	return 1
+}
+
+_setup_opencode_print_manual_install_hint() {
+	local installer="${1:-}"
+	local install_pkg="${2:-opencode-ai@latest}"
+	local current_bin="${3:-}"
+	local brew_action=""
+	local manual_cmd=""
+
+	if brew_action=$(_setup_opencode_homebrew_owner_action "$current_bin" 2>/dev/null); then
+		print_info "OpenCode appears to be managed by Homebrew; try manually: $brew_action"
+		return 0
+	fi
+
+	case "$installer" in
+		bun) manual_cmd="bun install -g $install_pkg" ;;
+		npm | *) manual_cmd="npm install -g $install_pkg" ;;
+	esac
+	print_info "Try manually: $manual_cmd"
+	return 0
+}
+
 _setup_opencode_node_path_for_binary() {
 	local bin="$1"
 	local bin_dir=""
@@ -1870,7 +1918,7 @@ _setup_opencode_force_heal() {
 		print_success "OpenCode reinstalled via $installer"
 	else
 		print_warning "Heal install failed via $installer"
-		print_info "Try manually: $installer install -g $install_pkg"
+		_setup_opencode_print_manual_install_hint "$installer" "$install_pkg" "$wrong_bin"
 	fi
 
 	# Re-validate post-heal.
@@ -1987,7 +2035,7 @@ setup_opencode_cli() {
 			echo ""
 		else
 			print_warning "OpenCode installation failed"
-			print_info "Try manually: sudo npm install -g $install_pkg"
+			_setup_opencode_print_manual_install_hint "$installer" "$install_pkg" "$current_bin"
 		fi
 	else
 		print_info "Skipped OpenCode installation"
