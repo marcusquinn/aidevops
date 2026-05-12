@@ -874,6 +874,7 @@ _help_detailed_sections() {
 	echo "  aidevops security scan-pth   # Python .pth file audit (supply chain IoC)"
 	echo "  aidevops security scan-secrets # Plaintext credential locations"
 	echo "  aidevops security scan-deps  # Unpinned dependency check"
+	echo "  aidevops security supply-chain scan [path] # npm supply-chain IOC scan"
 	echo "  aidevops security check      # Per-repo security posture assessment"
 	echo "  aidevops security dismiss <id> # Dismiss a security advisory"
 	echo ""
@@ -1326,6 +1327,8 @@ _cmd_security() {
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
 		echo ""
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" scan || true
+		echo ""
+		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" scan || true
 		;;
 	scan | scan-secrets | scan-pth | scan-deps | dismiss)
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
@@ -1343,6 +1346,10 @@ _cmd_security() {
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
 		echo ""
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" startup-check || true
+		;;
+	supply-chain)
+		shift || true
+		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" "${@:-scan}"
 		;;
 	*)
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"

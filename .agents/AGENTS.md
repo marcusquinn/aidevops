@@ -79,6 +79,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Auto-approval/merge helpers must self-validate collaborator/author trust and preserve GH#17671 defence-in-depth; add `#aidevops:trust-boundary` above new checks.
 - Confirm destructive operations. For critical/high-risk destructive ops, use `verify-operation-helper.sh check/verify` and respect the result. Log security operations with `audit-log-helper.sh` without credential values.
 - Never include private repo names, private basenames, or local/private paths in public issues/PRs/comments/reviews/TODO. Use placeholders. Privacy/pre-push details: `reference/pre-push-guards.md`.
+- npm supply-chain incidents: isolate before token revocation when destructive persistence is plausible; scan with `aidevops security supply-chain scan`. Playbook: `reference/npm-supply-chain-response.md`.
 
 ### Git workflow
 

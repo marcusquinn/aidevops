@@ -1,0 +1,19 @@
+[SECURITY ADVISORY] TanStack / Mini Shai-Hulud npm supply-chain compromise — run `aidevops security supply-chain scan`
+
+  Attack window: 2026-05-11 around 19:20-19:30 UTC.
+  Impact: malicious npm lifecycle payloads can exfiltrate developer, cloud, GitHub,
+  npm, Kubernetes, Vault, SSH, AI-tool, and wallet credentials; some reports also
+  describe persistence and destructive token-monitor behaviour.
+
+  Immediate check:
+
+    aidevops security supply-chain scan          # scan repos.json + ~/Git repos
+    aidevops security supply-chain scan <path>   # scan one repo or directory
+
+  If affected: isolate the host before revoking tokens, remove persistence from a
+  trusted environment, then rotate credentials. Do not run package-manager install
+  commands in suspect repos until lockfiles and installed packages are inspected.
+
+  Dismiss only after scanning and mitigating:
+
+    aidevops security dismiss tanstack-minishaihulud-2026-05
