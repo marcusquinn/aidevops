@@ -63,6 +63,9 @@ readonly FIX_THE_FIXER_LABEL="fix-the-fixer"
 readonly FIX_THE_FIXER_MARKER="<!-- aidevops:fix-the-fixer-detector -->"
 readonly AI_RESEARCH_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+readonly AUTH_COOLDOWN_FILE="${HOME}/.aidevops/cache/fix-the-fixer-detector-auth.cooldown"
+readonly AUTH_COOLDOWN_SECONDS_DEFAULT=21600
+readonly AUTH_ERROR_REASON="AI research credentials invalid"
 # Sentinels used by the GitHub issue API. Extracted as constants so the
 # literal strings appear once (codebase ratchet flags repeated literals).
 readonly ISSUE_STATE_OPEN="OPEN"
@@ -85,6 +88,99 @@ _log_info() {
 _log_warn() {
 	_log "$_LL_WARN" "$@"
 	return 0
+}
+
+_auth_cooldown_seconds() {
+	local configured="${AIDEVOPS_FIX_THE_FIXER_DETECTOR_AUTH_COOLDOWN_SECONDS:-$AUTH_COOLDOWN_SECONDS_DEFAULT}"
+	[[ "$configured" =~ ^[0-9]+$ && "$configured" -gt 0 ]] || configured="$AUTH_COOLDOWN_SECONDS_DEFAULT"
+	printf '%s\n' "$configured"
+	return 0
+}
+
+_hash_text() {
+	local value="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		printf '%s' "$value" | sha256sum | awk '{ print $1 }'
+		return 0
+	fi
+	printf '%s' "$value" | shasum -a 256 | awk '{ print $1 }'
+	return 0
+}
+
+_file_mtime() {
+	local path="$1"
+	[[ -e "$path" ]] || {
+		printf 'missing\n'
+		return 0
+	}
+	_file_mtime_epoch "$path" 2>/dev/null || printf 'unknown'
+	return 0
+}
+
+_auth_config_stamp() {
+	local creds_file="${HOME}/.config/aidevops/credentials.sh"
+	local env_state="unset"
+	[[ -n "${ANTHROPIC_API_KEY:-}" ]] && env_state="set:$(_hash_text "$ANTHROPIC_API_KEY")"
+	printf 'env=%s;creds=%s;helper=%s\n' \
+		"$env_state" \
+		"$(_file_mtime "$creds_file")" \
+		"$(_file_mtime "$AI_RESEARCH_HELPER")"
+	return 0
+}
+
+_is_auth_error() {
+	local message="$1"
+	local normalized
+	normalized=$(printf '%s' "$message" | tr '[:upper:]' '[:lower:]')
+	case "$normalized" in
+		*"invalid x-api-key"*|*"invalid api key"*|*"authentication_error"*|*"unauthorized"*) return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
+_record_auth_cooldown() {
+	local reason="$1"
+	local now
+	now=$(date +%s 2>/dev/null || printf '0')
+	mkdir -p "$(dirname "$AUTH_COOLDOWN_FILE")" 2>/dev/null || return 0
+	{
+		printf 'created_at=%s\n' "$now"
+		printf 'cooldown_seconds=%s\n' "$(_auth_cooldown_seconds)"
+		printf 'config_stamp=%s\n' "$(_auth_config_stamp)"
+		printf 'reason=%s\n' "$reason"
+	} >"$AUTH_COOLDOWN_FILE" 2>/dev/null || true
+	return 0
+}
+
+_auth_cooldown_active() {
+	[[ -f "$AUTH_COOLDOWN_FILE" ]] || return 1
+	local created_at=""
+	local cooldown_seconds=""
+	local config_stamp=""
+	local line=""
+	while IFS= read -r line; do
+		case "$line" in
+			created_at=*) created_at="${line#created_at=}" ;;
+			cooldown_seconds=*) cooldown_seconds="${line#cooldown_seconds=}" ;;
+			config_stamp=*) config_stamp="${line#config_stamp=}" ;;
+		esac
+	done <"$AUTH_COOLDOWN_FILE"
+
+	[[ "$created_at" =~ ^[0-9]+$ ]] || return 1
+	[[ "$cooldown_seconds" =~ ^[0-9]+$ ]] || cooldown_seconds="$(_auth_cooldown_seconds)"
+	if [[ "$config_stamp" != "$(_auth_config_stamp)" ]]; then
+		rm -f "$AUTH_COOLDOWN_FILE" 2>/dev/null || true
+		return 1
+	fi
+
+	local now
+	now=$(date +%s 2>/dev/null || printf '0')
+	[[ "$now" =~ ^[0-9]+$ ]] || return 1
+	if [[ $((now - created_at)) -lt "$cooldown_seconds" ]]; then
+		return 0
+	fi
+	rm -f "$AUTH_COOLDOWN_FILE" 2>/dev/null || true
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -152,6 +248,13 @@ _classify_via_llm() {
 	local prompt
 	prompt=$(_compose_classification_prompt "$issue_title" "$issue_body")
 
+	if _auth_cooldown_active; then
+		RATIONALE="auth_error: ${AUTH_ERROR_REASON}; cooldown active"
+		_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+		printf 'SKIP_AUTH\n'
+		return 0
+	fi
+
 	if [[ ! -x "$AI_RESEARCH_HELPER" ]]; then
 		_log_warn "ai-research-helper.sh not executable — cannot classify"
 		return 1
@@ -175,6 +278,13 @@ _classify_via_llm() {
 			local err_snippet=""
 			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
 			rm -f "$err_log"
+			if _is_auth_error "$err_snippet"; then
+				_record_auth_cooldown "$err_snippet"
+				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
+				_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+				printf 'SKIP_AUTH\n'
+				return 0
+			fi
 			RATIONALE="LLM call failed (model=${model}, rc=${helper_rc}): ${err_snippet:-no stderr}"
 			_log_warn "${RATIONALE}"
 			printf 'SKIP\n'
@@ -350,6 +460,11 @@ cmd_check() {
 	RATIONALE=""
 	local verdict
 	verdict=$(_classify_via_llm "$title" "$body")
+	if [[ "$verdict" == "SKIP_AUTH" ]]; then
+		[[ -n "$RATIONALE" ]] || RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
+		_log_warn "${slug}#${issue_num} classification skipped — ${RATIONALE}"
+		return 3
+	fi
 	if [[ "$verdict" == "SKIP" ]]; then
 		_log_warn "${slug}#${issue_num} classification skipped — ${RATIONALE}"
 		return 2
@@ -417,6 +532,7 @@ cmd_run() {
 	local processed=0
 	local classified=0
 	local skipped_llm=0
+	local skipped_auth=0
 	local slug
 	for slug in "${target_repos[@]}"; do
 		[[ "$processed" -ge "$limit" ]] && break
@@ -442,6 +558,7 @@ cmd_run() {
 			local rc=0
 			cmd_check "$issue_num" "$slug" || rc=$?
 			case "$rc" in
+				3) skipped_auth=$((skipped_auth + 1)) ;;
 				2) skipped_llm=$((skipped_llm + 1)) ;;
 				*) classified=$((classified + 1)) ;;
 			esac
@@ -449,12 +566,14 @@ cmd_run() {
 		done <<<"$nums"
 	done
 
-	if [[ "$skipped_llm" -gt 0 ]]; then
+	if [[ "$skipped_auth" -gt 0 ]]; then
+		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=${skipped_auth}, skipped:LLM-failure=${skipped_llm} (detector observability degraded; ${AUTH_ERROR_REASON})"
+	elif [[ "$skipped_llm" -gt 0 ]]; then
 		# Loud signal — the original t3223 incident was a 6h silent LLM
 		# outage. WARN level so it surfaces in the dashboards/log filters.
-		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:LLM-failure=${skipped_llm} (detector observability degraded; check ai-research-helper.sh / API credentials)"
+		_log_warn "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=0, skipped:LLM-failure=${skipped_llm} (detector observability degraded; check ai-research-helper.sh / API credentials)"
 	else
-		_log_info "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:LLM-failure=0"
+		_log_info "processed ${processed} issue(s) across ${#target_repos[@]} repo(s) — classified=${classified}, skipped:auth-error=0, skipped:LLM-failure=0"
 	fi
 	return 0
 }
