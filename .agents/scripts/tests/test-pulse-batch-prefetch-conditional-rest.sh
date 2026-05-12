@@ -31,6 +31,8 @@ setup_env() {
 	export PULSE_BATCH_PREFETCH_CACHE_DIR="$TEST_ROOT/cache"
 	export LOGFILE="$TEST_ROOT/pulse.log"
 	export PULSE_EVENTS_TICKLE_ENABLED=0
+	unset AIDEVOPS_GH_FORCE_REST_READS
+	unset AIDEVOPS_GH_REST_FIRST_READS
 	mkdir -p "$HOME" "$PULSE_BATCH_PREFETCH_CACHE_DIR" "$TEST_ROOT/bin"
 	cat >"$REPOS_JSON" <<'JSON'
 {"initialized_repos":[{"slug":"owner/repo","pulse":true,"local_only":false}],"git_parent_dirs":[]}

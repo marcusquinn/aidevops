@@ -1799,6 +1799,19 @@ main() {
 		echo "[pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22525)" >>"$LOGFILE"
 	fi
 
+	# GH#23433: reuse REST PR view metadata within this pulse cycle. The wrapper
+	# cache is opt-in so standalone tests/debugging keep exact read semantics, but
+	# pulse can avoid re-fetching the same /pulls/{N} object across merge gates.
+	unset AIDEVOPS_GH_PR_VIEW_CACHE
+	unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
+	if [[ "${AIDEVOPS_PULSE_PR_VIEW_CACHE:-1}" == "1" ]]; then
+		export AIDEVOPS_GH_PR_VIEW_CACHE=1
+		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-view-cache-${$}"
+		rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" 2>/dev/null || true
+		mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" 2>/dev/null || true
+		echo "[pulse-wrapper] Per-cycle REST PR view cache enabled for duplicate repo#PR reads (GH#23433)" >>"$LOGFILE"
+	fi
+
 	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
 	# and acquire_instance_lock have all passed cleanly. The EXIT trap releases
 	# the lock. Return 0 without entering the pulse loop, session gate, dedup,

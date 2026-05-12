@@ -59,6 +59,7 @@
 #      preserve search semantics
 #  31. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
 #      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
+#  32. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -936,6 +937,31 @@ else
 		"output=${pr_view_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_VIEW_FIXTURE
+
+# =============================================================================
+# Test 25e: PR view cache coalesces duplicate REST reads for the same repo#PR
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"cached title","mergeable":true}'
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMP}/pr_view_cache"
+rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
+
+pr_view_cached_title=$(gh_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
+pr_view_cached_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+pr_view_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null || true)
+
+if [[ "$pr_view_cached_title" == "cached title" && "$pr_view_cached_mergeable" == "MERGEABLE" && "$pr_view_rest_calls" == "1" ]]; then
+	pass "gh_pr_view cache coalesces duplicate REST reads for same repo#PR"
+else
+	fail "gh_pr_view cache coalesces duplicate REST reads for same repo#PR" \
+		"title=${pr_view_cached_title} mergeable=${pr_view_cached_mergeable} rest_calls=${pr_view_rest_calls} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
+unset AIDEVOPS_GH_PR_VIEW_CACHE
+unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 
 # =============================================================================
 # Test 25c: REST PR list normalizes REST boolean mergeable to gh GraphQL enum
