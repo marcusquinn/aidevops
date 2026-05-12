@@ -628,9 +628,7 @@ _process_single_ready_pr() {
 			# PRs to fix workers before the protected-close precheck. Active
 			# interactive PRs remain protected because _route_pr_to_fix_worker only
 			# accepts origin:interactive after _interactive_pr_is_stale passes.
-			local _conf_linked_issue
-			_conf_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug")
-			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_conf_linked_issue" "conflict" "" "$pr_title"; then
+			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_t2116_linked_issue" "conflict" "" "$pr_title"; then
 				return 2
 			fi
 
