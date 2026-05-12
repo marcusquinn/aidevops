@@ -179,7 +179,7 @@ function cacheGreeting(output) {
  * @param {string} output
  * @returns {{ info: string[], success: string[], warning: string[], error: string[] }}
  */
-function classifyLines(output) {
+export function classifyLines(output) {
   const info = [];
   const success = [];
   const warning = [];
@@ -234,7 +234,7 @@ function classifyLines(output) {
  * @param {{ info: string[], success: string[], warning: string[], error: string[] }} buckets
  * @returns {{ title: string, message: string, variant: "info"|"success"|"warning"|"error", duration: number } | null}
  */
-function buildToast(buckets) {
+export function buildToast(buckets) {
   const lines = [
     ...buckets.error,
     ...buckets.warning,

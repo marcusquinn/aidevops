@@ -180,19 +180,35 @@ aidevops_gh_slurp_supported() {
 aidevops_gh_slurp_status_message() {
 	local installed=""
 	if ! command -v gh >/dev/null 2>&1; then
-		printf 'GitHub CLI (gh) is not installed; gh api --paginate --slurp requires gh >= %s' "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		printf 'GitHub CLI (gh) is not installed; gh api --paginate --slurp requires gh >= %s. %s' \
+			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance)"
 		return 0
 	fi
 	installed=$(aidevops_gh_installed_version) || installed="unknown"
 	if [[ "$installed" == "unknown" ]]; then
-		printf 'GitHub CLI (gh) version could not be parsed; gh api --paginate --slurp requires gh >= %s; gh --version output is malformed or empty' "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		printf 'GitHub CLI (gh) version could not be parsed; gh api --paginate --slurp requires gh >= %s; gh --version output is malformed or empty. %s' \
+			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance)"
 		return 0
 	fi
 	if aidevops_version_at_least "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"; then
-		printf 'GitHub CLI (gh) %s supports gh api --paginate --slurp' "$installed"
+		printf 'GitHub CLI (gh) detected version %s supports gh api --paginate --slurp (minimum required %s)' \
+			"$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"
 		return 0
 	fi
-	printf 'GitHub CLI (gh) %s is too old; gh api --paginate --slurp requires gh >= %s. Upgrade gh from the GitHub CLI package source rather than an old distro package.' "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+	printf 'GitHub CLI (gh) detected version %s is too old; gh api --paginate --slurp requires gh >= %s. %s' \
+		"$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance "$installed")"
+	return 0
+}
+
+aidevops_gh_slurp_remediation_guidance() {
+	local installed="${1:-}"
+	if [[ -n "$installed" ]]; then
+		printf 'Upgrade gh to >= %s. On Ubuntu/Debian, avoid apt-pinned Ubuntu universe gh packages such as %s; install or upgrade from the official GitHub CLI package repository, then rerun aidevops status.' \
+			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$installed"
+	else
+		printf 'Install gh >= %s. On Ubuntu/Debian, use the official GitHub CLI package repository rather than the Ubuntu universe package, then rerun aidevops status.' \
+			"$AIDEVOPS_GH_MIN_SLURP_VERSION"
+	fi
 	return 0
 }
 

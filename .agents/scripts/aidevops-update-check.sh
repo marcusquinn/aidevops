@@ -643,6 +643,7 @@ _write_cache() {
 	local secret_hygiene="$7"
 	local advisories_output="$8"
 	local contribution_watch="$9"
+	local gh_prereq="${10:-}"
 
 	mkdir -p "$cache_dir"
 	{
@@ -654,7 +655,23 @@ _write_cache() {
 		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
 		[[ -n "$advisories_output" ]] && echo "$advisories_output"
 		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+		[[ -n "$gh_prereq" ]] && echo "$gh_prereq"
 	} >"$cache_dir/session-greeting.txt"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_gh_slurp_prerequisite: session-start prerequisite warning for gh api
+# --paginate --slurp support. OpenCode greeting.mjs classifies [WARN] lines as a
+# warning toast, keeping the chat greeting unchanged while surfacing the cause.
+# -----------------------------------------------------------------------------
+_check_gh_slurp_prerequisite() {
+	if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && aidevops_gh_slurp_supported; then
+		return 0
+	fi
+	if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
+		printf '[WARN] GitHub CLI prerequisite: %s\n' "$(aidevops_gh_slurp_status_message)"
+	fi
 	return 0
 }
 
@@ -894,7 +911,7 @@ _run_session_advisories() {
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge script_drift stuck_index hotfix_notice
+	local signing_nudge script_drift stuck_index hotfix_notice gh_prereq
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
@@ -902,6 +919,7 @@ _run_session_advisories() {
 	secret_hygiene=$(_check_secret_hygiene "$script_dir")
 	advisories_output=$(_check_advisories)
 	contribution_watch=$(_check_contribution_watch)
+	gh_prereq=$(_check_gh_slurp_prerequisite)
 	origin_notice=$(_check_origin)
 	signing_nudge=$(_check_signing)
 	local pulse_health
@@ -924,6 +942,7 @@ _run_session_advisories() {
 	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
 	[[ -n "$advisories_output" ]] && echo "$advisories_output"
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+	[[ -n "$gh_prereq" ]] && echo "$gh_prereq"
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
 	[[ -n "$signing_nudge" ]] && echo "$signing_nudge"
 	[[ -n "$pulse_health" ]] && echo "$pulse_health"
@@ -933,7 +952,7 @@ _run_session_advisories() {
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
-		"$advisories_output" "$contribution_watch"
+		"$advisories_output" "$contribution_watch" "$gh_prereq"
 
 	_refresh_oauth_tokens
 

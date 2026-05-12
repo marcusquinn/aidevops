@@ -17,6 +17,7 @@ setup_git_clis() {
 	local cli_tools=()
 	local missing_packages=()
 	local missing_names=()
+	local gh_slurp_unsupported="false"
 
 	# Check for GitHub CLI
 	if ! command -v gh >/dev/null 2>&1; then
@@ -26,8 +27,7 @@ setup_git_clis() {
 		local gh_slurp_message
 		gh_slurp_message=$(aidevops_gh_slurp_status_message)
 		print_warning "$gh_slurp_message"
-		missing_packages+=("gh")
-		missing_names+=("GitHub CLI >= ${AIDEVOPS_GH_MIN_SLURP_VERSION}")
+		gh_slurp_unsupported="true"
 	else
 		cli_tools+=("GitHub CLI")
 	fi
@@ -46,6 +46,10 @@ setup_git_clis() {
 	fi
 
 	# Offer to install missing tools
+	if [[ "$gh_slurp_unsupported" == "true" ]]; then
+		_setup_git_clis_offer_gh_upgrade_guidance
+	fi
+
 	if [[ ${#missing_packages[@]} -gt 0 ]]; then
 		print_warning "Missing Git CLI tools: ${missing_names[*]}"
 		echo "  These provide enhanced Git platform integration (repos, PRs, issues)"
@@ -88,7 +92,7 @@ setup_git_clis() {
 			echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
 			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 		fi
-	else
+	elif [[ "$gh_slurp_unsupported" != "true" ]]; then
 		print_success "All Git CLI tools installed and ready!"
 	fi
 
@@ -99,6 +103,30 @@ setup_git_clis() {
 		echo "  Or download from: https://dl.gitea.io/tea/"
 	else
 		print_success "Gitea CLI (tea) found"
+	fi
+
+	return 0
+}
+
+_setup_git_clis_offer_gh_upgrade_guidance() {
+	local pkg_manager=""
+	pkg_manager=$(detect_package_manager)
+	local show_gh_upgrade="Y"
+
+	if [[ "${NON_INTERACTIVE:-false}" != "true" && -t 0 ]]; then
+		setup_prompt show_gh_upgrade "Show GitHub CLI upgrade guidance for gh >= ${AIDEVOPS_GH_MIN_SLURP_VERSION}? [Y/n]: " "Y"
+	fi
+
+	if [[ "$show_gh_upgrade" =~ ^[Yy]?$ ]]; then
+		echo ""
+		echo "📋 GitHub CLI upgrade guidance:"
+		echo "  Required: gh >= ${AIDEVOPS_GH_MIN_SLURP_VERSION} for gh api --paginate --slurp"
+		if [[ "$pkg_manager" == "apt" ]]; then
+			echo "  Ubuntu/Debian: use the official GitHub CLI package repository; avoid the older Ubuntu universe gh package."
+		else
+			echo "  Install or upgrade gh from the official GitHub CLI package source for your platform."
+		fi
+		echo "  After upgrading: run 'aidevops status' to verify the prerequisite."
 	fi
 
 	return 0
