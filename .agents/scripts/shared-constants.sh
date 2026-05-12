@@ -187,7 +187,7 @@ aidevops_gh_slurp_status_message() {
 	installed=$(aidevops_gh_installed_version) || installed="unknown"
 	if [[ "$installed" == "unknown" ]]; then
 		printf 'GitHub CLI (gh) version could not be parsed; gh api --paginate --slurp requires gh >= %s; gh --version output is malformed or empty. %s' \
-			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance)"
+			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$(aidevops_gh_slurp_remediation_guidance "$installed")"
 		return 0
 	fi
 	if aidevops_version_at_least "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"; then
@@ -202,12 +202,13 @@ aidevops_gh_slurp_status_message() {
 
 aidevops_gh_slurp_remediation_guidance() {
 	local installed="${1:-}"
-	if [[ -n "$installed" ]]; then
-		printf 'Upgrade gh to >= %s. On Ubuntu/Debian, avoid apt-pinned Ubuntu universe gh packages such as %s; install or upgrade from the official GitHub CLI package repository, then rerun aidevops status.' \
-			"$AIDEVOPS_GH_MIN_SLURP_VERSION" "$installed"
+	if [[ "$installed" == "unknown" ]]; then
+		printf 'On Ubuntu/Debian, fix or upgrade the existing gh installation from the official GitHub CLI package repository rather than the Ubuntu universe package, then rerun aidevops status.'
+	elif [[ -n "$installed" ]]; then
+		printf 'On Ubuntu/Debian, avoid apt-pinned Ubuntu universe gh packages such as %s; install or upgrade from the official GitHub CLI package repository, then rerun aidevops status.' \
+			"$installed"
 	else
-		printf 'Install gh >= %s. On Ubuntu/Debian, use the official GitHub CLI package repository rather than the Ubuntu universe package, then rerun aidevops status.' \
-			"$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		printf 'On Ubuntu/Debian, use the official GitHub CLI package repository rather than the Ubuntu universe package, then rerun aidevops status.'
 	fi
 	return 0
 }
@@ -232,7 +233,7 @@ aidevops_gh_slurp_remediation_hint() {
 aidevops_gh_slurp_warning_line() {
 	local status_message=""
 	status_message=$(aidevops_gh_slurp_status_message)
-	printf '[WARN] GitHub CLI prerequisite: %s %s' "$status_message" "$(aidevops_gh_slurp_remediation_hint)"
+	printf '[WARN] GitHub CLI prerequisite: %s' "$status_message"
 	return 0
 }
 
