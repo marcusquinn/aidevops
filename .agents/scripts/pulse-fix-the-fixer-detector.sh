@@ -113,7 +113,13 @@ _file_mtime() {
 		printf 'missing\n'
 		return 0
 	}
-	_file_mtime_epoch "$path" 2>/dev/null || printf 'unknown'
+	local mtime
+	mtime=$(_file_mtime_epoch "$path" 2>/dev/null) || {
+		local rc=$?
+		printf 'unknown\n'
+		return "$rc"
+	}
+	printf '%s\n' "$mtime"
 	return 0
 }
 
