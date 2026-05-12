@@ -10,6 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.35] - 2026-05-12
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Performance: reduce stale interactive PR lookup overhead (#23473)
+- Tests: update handover staleness seconds labels (#23471)
+
+### Fixed
+
+- correct routine systemd daily timers (#23476)
+- bound Tabby profile repair blocks (#23474)
+- propagate fix-the-fixer mtime failures (#23461)
+- optimize stale handover activity checks (#23472)
+- document stats fallback identity validation (#23470)
+- address gh setup review followups (#23458)
+- harden pulse PR view cache lifecycle (#23463)
+- propagate gh slurp upgrade status (#23462)
+- reuse linked issue during conflict routing (#23460)
+- harden stats runner identity fallback (#23459)
+- deduplicate gh slurp prerequisite guidance (#23457)
+- preserve empty FOSS issue selections (#23456)
+- filter pulse dispatch candidates to issues (#23443)
+
 ## [3.15.34] - 2026-05-12
 
 ### Fixed
