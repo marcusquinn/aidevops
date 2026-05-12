@@ -90,9 +90,45 @@ run_detector() {
 	return 0
 }
 
+assert_file_mtime_helpers() {
+	# shellcheck source=/dev/null
+	source "${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh"
+
+	if declare -f _file_mtime_epoch >/dev/null 2>&1; then
+		print_result "detector imports portable mtime helper" 0
+	else
+		print_result "detector imports portable mtime helper" 1 "_file_mtime_epoch unavailable"
+	fi
+
+	local missing_stamp
+	missing_stamp=$(_file_mtime "${TEST_ROOT}/missing-config")
+	if [[ "$missing_stamp" == "missing" ]]; then
+		print_result "missing config stamp is explicit" 0
+	else
+		print_result "missing config stamp is explicit" 1 "stamp=${missing_stamp}"
+	fi
+
+	_file_mtime_epoch() {
+		return 42
+	}
+
+	local existing_file="${TEST_ROOT}/existing-config"
+	: >"$existing_file"
+	local failed_stamp=""
+	local rc=0
+	failed_stamp=$(_file_mtime "$existing_file") || rc=$?
+	if [[ "$rc" -eq 42 && "$failed_stamp" == "unknown" ]]; then
+		print_result "mtime helper failures propagate" 0
+	else
+		print_result "mtime helper failures propagate" 1 "rc=${rc} stamp=${failed_stamp}"
+	fi
+	return 0
+}
+
 main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
+	assert_file_mtime_helpers
 
 	local first_log="${TEST_ROOT}/first.log"
 	local second_log="${TEST_ROOT}/second.log"
