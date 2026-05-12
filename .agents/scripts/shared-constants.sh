@@ -113,6 +113,89 @@ fi
 # Upstream context: https://github.com/anomalyco/opencode/issues/21215
 readonly OPENCODE_PINNED_VERSION="latest"
 
+# Minimum GitHub CLI version required for `gh api --paginate --slurp`.
+# Older distro packages can parse `gh` as installed while dispatch paths fail
+# closed with `unknown flag: --slurp`.
+readonly AIDEVOPS_GH_MIN_SLURP_VERSION="2.51.0"
+
+aidevops_parse_semver() {
+	local input="$1"
+	local parsed=""
+	parsed=$(printf '%s\n' "$input" | grep -Eo '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1 || true)
+	if [[ -z "$parsed" ]]; then
+		return 1
+	fi
+	if [[ "$parsed" =~ ^[0-9]+\.[0-9]+$ ]]; then
+		parsed="${parsed}.0"
+	fi
+	printf '%s\n' "$parsed"
+	return 0
+}
+
+aidevops_version_at_least() {
+	local current="$1"
+	local minimum="$2"
+	local current_major current_minor current_patch
+	local minimum_major minimum_minor minimum_patch
+	IFS='.' read -r current_major current_minor current_patch <<<"$current"
+	IFS='.' read -r minimum_major minimum_minor minimum_patch <<<"$minimum"
+	current_patch="${current_patch:-0}"
+	minimum_patch="${minimum_patch:-0}"
+	[[ "$current_major$current_minor$current_patch$minimum_major$minimum_minor$minimum_patch" =~ ^[0-9]+$ ]] || return 1
+	if ((current_major > minimum_major)); then
+		return 0
+	fi
+	if ((current_major < minimum_major)); then
+		return 1
+	fi
+	if ((current_minor > minimum_minor)); then
+		return 0
+	fi
+	if ((current_minor < minimum_minor)); then
+		return 1
+	fi
+	if ((current_patch >= minimum_patch)); then
+		return 0
+	fi
+	return 1
+}
+
+aidevops_gh_installed_version() {
+	local output=""
+	if ! command -v gh >/dev/null 2>&1; then
+		return 1
+	fi
+	output=$(gh --version 2>/dev/null || true)
+	aidevops_parse_semver "$output"
+	return $?
+}
+
+aidevops_gh_slurp_supported() {
+	local installed=""
+	installed=$(aidevops_gh_installed_version) || return 1
+	aidevops_version_at_least "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+	return $?
+}
+
+aidevops_gh_slurp_status_message() {
+	local installed=""
+	if ! command -v gh >/dev/null 2>&1; then
+		printf 'GitHub CLI (gh) is not installed; gh api --paginate --slurp requires gh >= %s' "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		return 0
+	fi
+	installed=$(aidevops_gh_installed_version) || installed="unknown"
+	if [[ "$installed" == "unknown" ]]; then
+		printf 'GitHub CLI (gh) version could not be parsed; gh api --paginate --slurp requires gh >= %s; gh --version output is malformed or empty' "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		return 0
+	fi
+	if aidevops_version_at_least "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"; then
+		printf 'GitHub CLI (gh) %s supports gh api --paginate --slurp' "$installed"
+		return 0
+	fi
+	printf 'GitHub CLI (gh) %s is too old; gh api --paginate --slurp requires gh >= %s. Upgrade gh from the GitHub CLI package source rather than an old distro package.' "$installed" "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+	return 0
+}
+
 # =============================================================================
 # HTTP and API Constants
 # =============================================================================

@@ -22,6 +22,12 @@ setup_git_clis() {
 	if ! command -v gh >/dev/null 2>&1; then
 		missing_packages+=("gh")
 		missing_names+=("GitHub CLI")
+	elif declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then
+		local gh_slurp_message
+		gh_slurp_message=$(aidevops_gh_slurp_status_message)
+		print_warning "$gh_slurp_message"
+		missing_packages+=("gh")
+		missing_names+=("GitHub CLI >= ${AIDEVOPS_GH_MIN_SLURP_VERSION}")
 	else
 		cli_tools+=("GitHub CLI")
 	fi
@@ -72,14 +78,14 @@ setup_git_clis() {
 				echo ""
 				echo "📋 Manual installation:"
 				echo "  macOS: brew install ${missing_packages[*]}"
-				echo "  Ubuntu: sudo apt install ${missing_packages[*]}"
+				echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
 				echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 			fi
 		else
 			echo ""
 			echo "📋 Manual installation:"
 			echo "  macOS: brew install ${missing_packages[*]}"
-			echo "  Ubuntu: sudo apt install ${missing_packages[*]}"
+			echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
 			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 		fi
 	else

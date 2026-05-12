@@ -105,7 +105,15 @@ cmd_status() {
 	echo ""
 	_status_recommended_tools
 	print_header "Git CLI Tools"
-	check_cmd gh && print_success "GitHub CLI (gh)" || print_warning "GitHub CLI (gh) - not installed"
+	if ! check_cmd gh; then
+		print_warning "GitHub CLI (gh) - not installed"
+	elif declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && aidevops_gh_slurp_supported; then
+		print_success "$(aidevops_gh_slurp_status_message)"
+	elif declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
+		print_warning "$(aidevops_gh_slurp_status_message)"
+	else
+		print_success "GitHub CLI (gh)"
+	fi
 	check_cmd glab && print_success "GitLab CLI (glab)" || print_warning "GitLab CLI (glab) - not installed"
 	check_cmd tea && print_success "Gitea CLI (tea)" || print_warning "Gitea CLI (tea) - not installed"
 	echo ""

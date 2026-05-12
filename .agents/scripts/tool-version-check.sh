@@ -422,7 +422,14 @@ check_tool() {
 	local icon="✓"
 	local color="$GREEN"
 
-	if [[ "$installed" == "not installed" ]]; then
+	if [[ "$cmd" == "gh" && "$installed" != "not installed" ]] && ! aidevops_gh_slurp_supported; then
+		status="minimum_required"
+		icon="!"
+		color="$RED"
+		latest=">=${AIDEVOPS_GH_MIN_SLURP_VERSION}"
+		((++OUTDATED_COUNT))
+		OUTDATED_PACKAGES+=("$update_cmd")
+	elif [[ "$installed" == "not installed" ]]; then
 		status="not_installed"
 		icon="○"
 		color="$YELLOW"
@@ -476,6 +483,9 @@ check_tool() {
 			;;
 		unknown)
 			echo -e "${color}${icon}  $name: $installed (could not check latest)${NC}"
+			;;
+		minimum_required)
+			echo -e "${color}${icon}  $name: $installed (requires >= ${AIDEVOPS_GH_MIN_SLURP_VERSION} for gh api --paginate --slurp)${NC}"
 			;;
 		up_to_date)
 			echo -e "${color}${icon}  $name: $installed${NC}"

@@ -262,6 +262,24 @@ test_missing_scope_variant() {
 }
 
 #######################################
+# Test: old gh prerequisite blocker detected with slurp guidance
+#######################################
+test_gh_slurp_prerequisite_blocker() {
+	reset_mock_state
+	GH_API_OUTPUT='[{"body":"gh: unknown flag: --slurp\nUsage: gh api <endpoint> [flags]","created_at":"2026-03-16T00:03:00Z"}]'
+	GH_ISSUE_VIEW_OUTPUT='none'
+	local exit_code=0
+	check_terminal_blockers "57" "owner/repo" 2>/dev/null || exit_code=$?
+	print_result "gh --slurp prerequisite blocker detected (exit 0)" $((exit_code == 0 ? 0 : 1)) "got exit $exit_code"
+	local guidance_check=1
+	if [[ "$GH_ISSUE_COMMENT_BODY" == *"GitHub CLI prerequisite failed"* && "$GH_ISSUE_COMMENT_BODY" == *"gh api --paginate --slurp"* && "$GH_ISSUE_COMMENT_BODY" == *"2.51.0"* ]]; then
+		guidance_check=0
+	fi
+	print_result "gh --slurp blocker includes prerequisite guidance" "$guidance_check" "body: $GH_ISSUE_COMMENT_BODY"
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -279,6 +297,7 @@ main() {
 	test_action_required
 	test_idempotent_no_double_post
 	test_missing_scope_variant
+	test_gh_slurp_prerequisite_blocker
 
 	teardown_test_env
 

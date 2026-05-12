@@ -1845,19 +1845,29 @@ _match_terminal_blocker_pattern() {
 	local blocker_reason=""
 	local user_action=""
 
-	# Pattern 1: workflow scope missing
-	if echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
+	# Pattern 1: GitHub CLI too old for gh api --paginate --slurp
+	if echo "$all_bodies" | grep -qiE 'unknown flag: --slurp'; then
+		local gh_slurp_message=""
+		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
+			gh_slurp_message=$(aidevops_gh_slurp_status_message)
+		else
+			gh_slurp_message="GitHub CLI (gh) is too old for gh api --paginate --slurp; upgrade gh to >= 2.51.0."
+		fi
+		blocker_reason="GitHub CLI prerequisite failed — ${gh_slurp_message}"
+		user_action="Upgrade GitHub CLI to a version that supports \`gh api --paginate --slurp\` (minimum gh ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0}), then remove the \`status:blocked\` label."
+	# Pattern 2: workflow scope missing
+	elif echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
 		blocker_reason="GitHub token lacks \`workflow\` scope — workers cannot push workflow file changes"
 		user_action="Run \`gh auth refresh -s workflow\` to add the workflow scope to your token, then remove the \`status:blocked\` label."
-	# Pattern 2: generic token/auth scope issues
+	# Pattern 3: generic token/auth scope issues
 	elif echo "$all_bodies" | grep -qiE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope'; then
 		blocker_reason="GitHub token is missing a required scope — workers cannot complete this task"
 		user_action="Check the error details in the comments above, run \`gh auth refresh -s <missing-scope>\` to add the required scope, then remove the \`status:blocked\` label."
-	# Pattern 3: ACTION REQUIRED (supervisor-posted)
+	# Pattern 4: ACTION REQUIRED (supervisor-posted)
 	elif echo "$all_bodies" | grep -qF 'ACTION REQUIRED'; then
 		blocker_reason="A previous supervisor comment flagged this issue as requiring user action"
 		user_action="Read the ACTION REQUIRED comment above, complete the requested action, then remove the \`status:blocked\` label."
-	# Pattern 4: persistent authentication/permission failures
+	# Pattern 5: persistent authentication/permission failures
 	elif echo "$all_bodies" | grep -qiE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow'; then
 		blocker_reason="Persistent authentication or permission failure for workflow files"
 		user_action="Check your GitHub token scopes with \`gh auth status\`, refresh if needed with \`gh auth refresh -s workflow\`, then remove the \`status:blocked\` label."
