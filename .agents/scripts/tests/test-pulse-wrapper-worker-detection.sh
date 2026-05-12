@@ -928,6 +928,50 @@ JSON
 	return 0
 }
 
+test_build_ranked_dispatch_candidates_json_excludes_pull_requests() {
+	local original_repos_json="$REPOS_JSON"
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops",
+      "pulse": true,
+      "priority": "tooling",
+      "maintainer": "marcusquinn"
+    }
+  ]
+}
+JSON
+
+	gh_issue_list() {
+		if [[ "${1:-}" == "--repo" && "${2:-}" == "marcusquinn/aidevops" ]]; then
+			printf '%s\n' '[
+			  {"number":9301,"title":"pull request target","url":"https://github.com/marcusquinn/aidevops/pull/9301","updatedAt":"2026-03-31T00:01:00Z","assignees":[],"labels":[{"name":"bug"}],"pull_request":{"url":"https://api.github.com/repos/marcusquinn/aidevops/pulls/9301"}},
+			  {"number":9302,"title":"issue target","url":"https://github.com/marcusquinn/aidevops/issues/9302","updatedAt":"2026-03-31T00:02:00Z","assignees":[],"labels":[{"name":"bug"}]}
+			]'
+			return 0
+		fi
+		return 1
+	}
+	export -f gh_issue_list
+
+	local ordered_numbers
+	ordered_numbers=$(build_ranked_dispatch_candidates_json 20 | jq -r '.[].number' 2>/dev/null || true)
+
+	unset -f gh_issue_list
+	REPOS_JSON="$original_repos_json"
+
+	if [[ "$ordered_numbers" == "9302" ]]; then
+		print_result "build_ranked_dispatch_candidates_json excludes pull requests from implementation dispatch" 0
+		return 0
+	fi
+
+	print_result "build_ranked_dispatch_candidates_json excludes pull requests from implementation dispatch" 1 \
+		"Unexpected candidate numbers: ${ordered_numbers}"
+	return 0
+}
+
 test_dispatch_max_dispatches_up_to_capacity() {
 	local dispatch_log="${TEST_ROOT}/deterministic-dispatch.log"
 	: >"$dispatch_log"
@@ -1329,6 +1373,7 @@ main() {
 	test_build_ranked_dispatch_candidates_json_scores_candidates
 	test_build_ranked_dispatch_candidates_json_respects_priority_labels
 	test_build_ranked_dispatch_candidates_json_prioritizes_security_quality_debt
+	test_build_ranked_dispatch_candidates_json_excludes_pull_requests
 	test_build_ranked_dispatch_candidates_json_respects_schedule_gate
 	test_build_ranked_dispatch_candidates_json_accepts_array_pulse_hours
 	test_dispatch_max_dispatches_up_to_capacity

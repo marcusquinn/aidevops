@@ -1260,7 +1260,10 @@ _rest_issue_list_json_jq() {
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
-	local jq_expr="[.[] | {${projection}}]"
+	# GH#23442: /repos/{owner}/{repo}/issues returns issues and pull requests;
+	# gh issue list returns issues only. Preserve gh-compatible semantics in the
+	# REST fallback so dispatch candidate enumeration cannot surface PR targets.
+	local jq_expr="[.[] | select(.pull_request == null) | {${projection}}]"
 	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
 	printf '%s' "$jq_expr"
 	return 0

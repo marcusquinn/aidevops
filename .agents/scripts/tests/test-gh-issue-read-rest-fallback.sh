@@ -26,15 +26,16 @@
 #   6. _rest_issue_list → includes label filter in query string
 #   7. _rest_issue_list → handles multiple --label flags (comma-joined)
 #   8. _rest_issue_list → applies --jq expression
-#   9. _rest_issue_list → includes --assignee in query string
-#  10. _rest_issue_list → returns error when --repo is missing
-#  11. gh_issue_view falls back to REST when primary fails AND GraphQL exhausted
-#  12. gh_issue_view does NOT fall back when primary succeeds
-#  13. gh_issue_view does NOT fall back when primary fails but GraphQL healthy
-#  14. gh_issue_list falls back to REST when primary fails AND GraphQL exhausted
-#  15. gh_issue_list does NOT fall back when primary succeeds
-#  16. gh_issue_list does NOT fall back when primary fails but GraphQL healthy
-#  17. _rest_issue_list handles --search flag without error (silently skipped)
+#   9. _rest_issue_list → filters pull requests returned by REST /issues
+#  10. _rest_issue_list → includes --assignee in query string
+#  11. _rest_issue_list → returns error when --repo is missing
+#  12. gh_issue_view falls back to REST when primary fails AND GraphQL exhausted
+#  13. gh_issue_view does NOT fall back when primary succeeds
+#  14. gh_issue_view does NOT fall back when primary fails but GraphQL healthy
+#  15. gh_issue_list falls back to REST when primary fails AND GraphQL exhausted
+#  16. gh_issue_list does NOT fall back when primary succeeds
+#  17. gh_issue_list does NOT fall back when primary fails but GraphQL healthy
+#  18. _rest_issue_list handles --search flag without error (silently skipped)
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -336,7 +337,23 @@ fi
 unset STUB_REST_LIST_RESULT
 
 # =============================================================================
-# Test 9: _rest_issue_list includes --assignee in query string
+# Test 9: _rest_issue_list filters pull requests returned by REST /issues
+# =============================================================================
+: >"$GH_CALLS"
+export STUB_REST_LIST_RESULT='[{"number":7,"title":"Issue","html_url":"https://github.com/owner/repo/issues/7"},{"number":8,"title":"PR","html_url":"https://github.com/owner/repo/pull/8","pull_request":{"url":"https://api.github.com/repos/owner/repo/pulls/8"}}]'
+
+result=$(_rest_issue_list --repo "owner/repo" --state open --json number,title,url --jq 'map(.number) | join(",")' 2>/dev/null)
+
+if [[ "$result" == "7" ]]; then
+	pass "_rest_issue_list filters pull requests returned by REST /issues"
+else
+	fail "_rest_issue_list filters pull requests returned by REST /issues" \
+		"expected '7', got '${result}'"
+fi
+unset STUB_REST_LIST_RESULT
+
+# =============================================================================
+# Test 10: _rest_issue_list includes --assignee in query string
 # =============================================================================
 : >"$GH_CALLS"
 
@@ -350,7 +367,7 @@ else
 fi
 
 # =============================================================================
-# Test 10: _rest_issue_list returns error when --repo is missing
+# Test 11: _rest_issue_list returns error when --repo is missing
 # =============================================================================
 _err_output=$(_rest_issue_list --state open 2>&1)
 _rc=$?
