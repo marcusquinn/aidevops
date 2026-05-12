@@ -245,6 +245,25 @@ test_D_idle_no_stamp_no_status_returns_stale() {
 	return 0
 }
 
+test_D2_updated_at_stale_skips_head_commit_lookup() {
+	reset_mock_state
+	# Defaults: updatedAt is already 48h old, so the PR is stale without the
+	# additional commit API lookup. This keeps handover scans cheap when the
+	# cheaper PR metadata signal is sufficient.
+	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce _interactive_pr_is_stale "100" "owner/repo"
+	local rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "D2: stale updatedAt returns stale without head commit lookup" 1 "Expected 0, got $rc"
+		return 0
+	fi
+	if grep -q "/commits/" "$GH_LOG"; then
+		print_result "D2: stale updatedAt skips head commit lookup" 1 "Unexpected commit API call: $(cat "$GH_LOG")"
+		return 0
+	fi
+	print_result "D2: stale updatedAt skips head commit lookup" 0
+	return 0
+}
+
 test_E_missing_origin_interactive_returns_not_stale() {
 	reset_mock_state
 	printf 'origin:worker,enhancement' >"${TEST_ROOT}/labels.txt"
@@ -440,7 +459,7 @@ test_L2_zero_seconds_returns_not_stale() {
 
 test_L3_empty_seconds_uses_default_14400() {
 	reset_mock_state
-	# Empty seconds triggers bash's :- default substitution to "14400", which is valid.
+	# Empty seconds triggers bash's :- default substitution to "14400" (4h), which is valid.
 	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
 	IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
@@ -495,6 +514,7 @@ main() {
 	test_B_stamp_present_returns_not_stale
 	test_C_active_status_label_returns_not_stale
 	test_D_idle_no_stamp_no_status_returns_stale
+	test_D2_updated_at_stale_skips_head_commit_lookup
 	test_E_missing_origin_interactive_returns_not_stale
 	test_F_mode_off_returns_not_stale_unconditionally
 	test_G_mode_detect_logs_and_returns_stale

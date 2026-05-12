@@ -223,6 +223,8 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 _interactive_pr_is_stale() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local precomputed_updated_at="${3:-}"
+	local precomputed_head_ref_oid="${4:-}"
 	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
 	[[ "$mode" == "off" ]] && return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
@@ -258,19 +260,29 @@ _interactive_pr_is_stale() {
 		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
-	local head_ref_oid=""
-	head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
-	if [[ -n "$head_ref_oid" ]]; then
+	now_epoch=$(date +%s)
+	activity_at="${precomputed_updated_at:-}"
+	if [[ -z "$activity_at" ]]; then
+		activity_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
+	fi
+	if [[ -n "$activity_at" ]]; then
+		updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
+			updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
+			return 1
+		pr_age_secs=$(( now_epoch - updated_epoch ))
+		[[ "$pr_age_secs" -ge "$threshold_secs" ]] && activity_source="updatedAt"
+	fi
+
+	local head_ref_oid="${precomputed_head_ref_oid:-}"
+	if [[ "$pr_age_secs" -lt "$threshold_secs" && -z "$head_ref_oid" ]]; then
+		head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
+	fi
+	if [[ "$pr_age_secs" -lt "$threshold_secs" && -n "$head_ref_oid" ]]; then
 		activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
 			--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
 		[[ -n "$activity_at" ]] && activity_source="head_commit"
 	fi
-	if [[ -z "$activity_at" ]]; then
-		activity_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
-		activity_source="updatedAt"
-	fi
 	[[ -z "$activity_at" ]] && return 1
-	now_epoch=$(date +%s)
 	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
 	updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
 		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
