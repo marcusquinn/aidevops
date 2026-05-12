@@ -139,7 +139,11 @@ aidevops_version_at_least() {
 	local minimum_major minimum_minor minimum_patch
 	IFS='.' read -r current_major current_minor current_patch <<<"$current"
 	IFS='.' read -r minimum_major minimum_minor minimum_patch <<<"$minimum"
+	current_major="${current_major:-0}"
+	current_minor="${current_minor:-0}"
 	current_patch="${current_patch:-0}"
+	minimum_major="${minimum_major:-0}"
+	minimum_minor="${minimum_minor:-0}"
 	minimum_patch="${minimum_patch:-0}"
 	[[ "$current_major$current_minor$current_patch$minimum_major$minimum_minor$minimum_patch" =~ ^[0-9]+$ ]] || return 1
 	if ((current_major > minimum_major)); then

@@ -131,14 +131,14 @@ setup_git_clis() {
 				echo ""
 				echo "📋 Manual installation:"
 				echo "  macOS: brew install ${missing_packages[*]}"
-				echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
+				echo "  Ubuntu: sudo apt install ${missing_packages[*]} (Note: for gh >= 2.51.0, use the GitHub CLI apt repository)"
 				echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 			fi
 		else
 			echo ""
 			echo "📋 Manual installation:"
 			echo "  macOS: brew install ${missing_packages[*]}"
-			echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
+			echo "  Ubuntu: sudo apt install ${missing_packages[*]} (Note: for gh >= 2.51.0, use the GitHub CLI apt repository)"
 			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 		fi
 	elif [[ "$gh_needs_slurp_upgrade" != "true" ]]; then
