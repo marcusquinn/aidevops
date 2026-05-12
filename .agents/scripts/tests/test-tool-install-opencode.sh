@@ -317,7 +317,7 @@ EOF
 chmod +x "$SANDBOX/bin/npm"
 (
 	source_extracted
-	export PATH="$SANDBOX/bin"
+	export PATH="$SANDBOX/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 	npm_global_install() {
 		return 1
 	}
