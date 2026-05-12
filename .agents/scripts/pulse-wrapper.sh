@@ -1807,8 +1807,16 @@ main() {
 	if [[ "${AIDEVOPS_PULSE_PR_VIEW_CACHE:-1}" == "1" ]]; then
 		export AIDEVOPS_GH_PR_VIEW_CACHE=1
 		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-view-cache-${$}"
-		rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" 2>/dev/null || true
-		mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" 2>/dev/null || true
+		_save_cleanup_scope
+		trap '_run_cleanups' RETURN
+		push_cleanup 'release_instance_lock'
+		push_cleanup "rm -rf \"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}\""
+		if ! rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
+			printf '[pulse-wrapper] Failed to reset REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
+		fi
+		if ! mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
+			printf '[pulse-wrapper] Failed to create REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
+		fi
 		echo "[pulse-wrapper] Per-cycle REST PR view cache enabled for duplicate repo#PR reads (GH#23433)" >>"$LOGFILE"
 	fi
 
