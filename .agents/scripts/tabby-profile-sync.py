@@ -313,12 +313,7 @@ def _profile_mentions_opencode_launch(profile_lines: list[str]) -> bool:
 
 def _profile_block_end(lines: list[str], start: int) -> int:
     """Return the first line after the Tabby profile block at ``start``."""
-    block_end = start + 1
-    while block_end < len(lines):
-        if lines[block_end].startswith("  - name:"):
-            break
-        block_end += 1
-    return block_end
+    return _block_end(lines, start, 2)
 
 
 def _repair_broken_opencode_launch_profile_block(config_text: str) -> tuple[str, int]:

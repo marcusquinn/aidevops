@@ -330,6 +330,27 @@ class TestRepairBrokenOpenCodeLaunchProfiles(unittest.TestCase):
         self.assertEqual(repaired.count("      env:"), 1)
         self.assertIn("      # keep existing env block", repaired)
 
+    def test_last_opencode_profile_does_not_swallow_top_level_sections(self):
+        original = """profiles:
+  - name: repo
+    options:
+      command: /bin/zsh -l -c 'opencode; exec zsh'
+      args: []
+terminal:
+  searchOptions:
+    # opencode in a top-level section must not make it profile repair input
+    regex: opencode
+"""
+
+        repaired, repairs = tabby_profile_sync.repair_broken_opencode_launch_profiles(
+            original
+        )
+
+        self.assertEqual(repairs, 1)
+        self.assertIn("terminal:\n", repaired)
+        self.assertIn("    regex: opencode", repaired)
+        self.assertTrue(repaired.endswith("    regex: opencode\n"))
+
 
 if __name__ == "__main__":
     unittest.main()
