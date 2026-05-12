@@ -238,14 +238,25 @@ else
 fi
 
 export HEALTH_FIXTURE=empty_login
-export HEALTH_WHOAMI_FIXTURE="local.user_name"
+export HEALTH_WHOAMI_FIXTURE="local.user-name"
 resolved_login=$(_resolve_current_gh_login_or_fallback)
 unset HEALTH_FIXTURE HEALTH_WHOAMI_FIXTURE
 
-if [[ "$resolved_login" == "local.user_name" ]]; then
-	pass "allows dotted and underscored local fallback identities"
+if [[ "$resolved_login" == "local.user-name" ]]; then
+	pass "allows dotted underscored and hyphenated local fallback identities"
 else
-	fail "allows dotted and underscored local fallback identities" "resolved=${resolved_login}"
+	fail "allows dotted underscored and hyphenated local fallback identities" "resolved=${resolved_login}"
+fi
+
+export HEALTH_FIXTURE=empty_login
+export HEALTH_WHOAMI_FIXTURE="local/user"
+resolved_login=$(_resolve_current_gh_login_or_fallback)
+unset HEALTH_FIXTURE HEALTH_WHOAMI_FIXTURE
+
+if [[ "$resolved_login" == "unknown-runner" ]]; then
+	pass "rejects unsafe local fallback identities before label and cache use"
+else
+	fail "rejects unsafe local fallback identities before label and cache use" "resolved=${resolved_login}"
 fi
 
 unsafe_cache=$(_sanitize_runner_identity_for_cache '{"message":"API rate limit exceeded", "status":"403"}local-user')

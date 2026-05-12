@@ -75,7 +75,10 @@ _resolve_current_gh_login_or_fallback() {
 	fi
 
 	fallback_login=$(whoami 2>/dev/null) || fallback_login=""
-	if [[ "$fallback_login" =~ ^[[:alnum:]._-]+$ ]]; then
+	# Local system usernames are not GitHub logins; accept common POSIX-safe
+	# account characters while rejecting whitespace/control characters because
+	# this value is reused in labels, cache keys, and gh CLI arguments.
+	if [[ "$fallback_login" =~ ^[[:alnum:]_.-]+$ ]]; then
 		echo "[stats] GitHub login unavailable or invalid; using local fallback identity: ${fallback_login}" \
 			>>"${LOGFILE:-/dev/null}"
 		printf '%s' "$fallback_login"
