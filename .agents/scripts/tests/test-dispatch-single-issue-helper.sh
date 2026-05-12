@@ -580,6 +580,24 @@ test_readiness_rejects_live_child_without_ready_signal() {
 	return 0
 }
 
+test_readiness_rejects_ledger_without_worker_started() {
+	MOCK_LEDGER_RECORD=$'ledger\t888\t/tmp/manual.log\t/tmp/aidevops-existing\tmanual-cli-12345-ledger'
+	local session_key="manual-cli-ledger-only-$$"
+	local runtime_log=""
+	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	rm -f "$runtime_log"
+
+	local out="" rc=0
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-ledger-only.log 2>&1) || rc=$?
+	rm -f "$runtime_log"
+	MOCK_LEDGER_RECORD=""
+
+	local passed=1
+	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* ]] && passed=0
+	print_result "readiness gate rejects ledger without worker_started" "$passed" "rc=$rc output=$out"
+	return 0
+}
+
 test_launch_report_waits_before_success_message() {
 	local wait_line="" ok_line=""
 	wait_line=$(grep -n '_dsi_wait_for_worker_readiness' "$HELPER_PATH" | tail -1 | cut -d: -f1)
@@ -683,6 +701,7 @@ _run_tests() {
 	test_create_worktree_uses_target_repo_path
 	test_readiness_accepts_worker_started_marker
 	test_readiness_rejects_live_child_without_ready_signal
+	test_readiness_rejects_ledger_without_worker_started
 	test_launch_report_waits_before_success_message
 	test_live_dispatch_detects_issue_repo
 	test_guard_blocks_ledger_duplicate

@@ -676,9 +676,10 @@ _dsi_detached_runtime_log() {
 #
 # The outer nohup wrapper can exit successfully before model selection,
 # canary, and worker preparation complete. Treat launch as ready only when the
-# real child is alive and has emitted the canonical worker-start marker, has
-# registered in the dispatch ledger, or has exited/failed with inspectable log
-# evidence. This prevents silent success when pre-worker setup blocks.
+# real child is alive and has emitted the canonical worker-start marker, or has
+# exited/failed with inspectable log evidence. Ledger registration happens
+# before the worker-start marker, so it is progress evidence but not readiness.
+# This prevents silent success when pre-worker setup blocks.
 # Args:
 #   $1 - issue_number
 #   $2 - repo_slug
@@ -707,10 +708,6 @@ _dsi_wait_for_worker_readiness() {
 	while [[ "$attempts" -le "$max_attempts" ]]; do
 		if [[ -s "$runtime_log" ]] &&
 			(grep -Fq "worker_started" "$runtime_log" 2>/dev/null || grep -Fq "worker_start session=${session_key}" "$runtime_log" 2>/dev/null); then
-			return 0
-		fi
-
-		if _dsi_find_ledger_dispatch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
 			return 0
 		fi
 
