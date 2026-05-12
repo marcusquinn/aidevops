@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+# Test routine-helper systemd OnCalendar generation.
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+REPO_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit
+ROUTINE_HELPER="${REPO_SCRIPTS_DIR}/routine-helper.sh"
+
+TESTS_RUN=0
+TESTS_FAILED=0
+
+print_result() {
+	local test_name="$1"
+	local passed="$2"
+	local message="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+
+	if [[ "$passed" -eq 0 ]]; then
+		printf 'PASS %s\n' "$test_name"
+		return 0
+	fi
+
+	printf 'FAIL %s\n' "$test_name"
+	if [[ -n "$message" ]]; then
+		printf '     %s\n' "$message"
+	fi
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	return 0
+}
+
+run_install_systemd() {
+	local schedule="$1"
+	local tmp_home=""
+	tmp_home=$(mktemp -d)
+
+	local output=""
+	output=$(HOME="$tmp_home" "$ROUTINE_HELPER" install-systemd \
+		--name test \
+		--schedule "$schedule" \
+		--dir "$tmp_home" \
+		--prompt 'test prompt' 2>&1)
+
+	rm -rf "$tmp_home"
+	printf '%s' "$output"
+	return 0
+}
+
+test_wildcard_weekday_omits_prefix() {
+	local output=""
+	output=$(run_install_systemd '0 9 * * *')
+
+	if [[ "$output" == *'OnCalendar=*-*-* 09:00:00'* ]]; then
+		print_result "wildcard weekday omits systemd weekday prefix" 0
+	else
+		print_result "wildcard weekday omits systemd weekday prefix" 1 \
+			"Expected OnCalendar=*-*-* 09:00:00, got: $output"
+	fi
+	return 0
+}
+
+test_numeric_weekday_keeps_prefix() {
+	local output=""
+	output=$(run_install_systemd '0 9 * * 1')
+
+	if [[ "$output" == *'OnCalendar=Mon *-*-* 09:00:00'* ]]; then
+		print_result "numeric weekday keeps systemd weekday prefix" 0
+	else
+		print_result "numeric weekday keeps systemd weekday prefix" 1 \
+			"Expected OnCalendar=Mon *-*-* 09:00:00, got: $output"
+	fi
+	return 0
+}
+
+main() {
+	printf 'Running routine systemd calendar tests...\n\n'
+
+	test_wildcard_weekday_omits_prefix
+	test_numeric_weekday_keeps_prefix
+
+	printf '\n%s/%s tests passed.\n' \
+		"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
+
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+main "$@"
