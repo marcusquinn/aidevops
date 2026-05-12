@@ -961,7 +961,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3584 fix: recover worker output after runtime kills #auto-dispatch #bug ref:GH#23224 pr:#23223 completed:2026-05-08
 
-- [ ] t3588 offer gh upgrade and OpenCode prerequisite toast — follow-up to GH#23427/#23428: setup offers an explicit Linux gh upgrade/remediation path when `gh <2.51.0`, `aidevops update` and session-start update checks warn, and OpenCode greeting toast escalates the prerequisite warning. #bug #framework #no-auto-dispatch ~1h tier:standard ref:GH#23435 source:GH#23427 started:2026-05-12
+- [x] t3588 offer gh upgrade and OpenCode prerequisite toast — follow-up to GH#23427/#23428: setup offers an explicit Linux gh upgrade/remediation path when `gh <2.51.0`, `aidevops update` and session-start update checks warn, and OpenCode greeting toast escalates the prerequisite warning. #bug #framework #no-auto-dispatch ~1h tier:standard ref:GH#23435 source:GH#23427 started:2026-05-12 pr:#23440 completed:2026-05-12
 
 ## In Progress
 
@@ -4224,4 +4224,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3587 fix gh CLI slurp prerequisite diagnostics #auto-dispatch #bug #framework ref:GH#23428
 
-- [ ] t3588 offer gh upgrade and OpenCode prerequisite toast #bug #framework ref:GH#23435
+- [x] t3588 offer gh upgrade and OpenCode prerequisite toast #bug #framework ref:GH#23435 pr:#23440 completed:2026-05-12
