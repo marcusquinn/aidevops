@@ -25,6 +25,7 @@ tools:
 - **Stack**: Tailwind CSS, `motion/react`, `tw-animate-css`, `cn` (`clsx` + `tailwind-merge`)
 - **Apply when**: Building React/Next.js UIs, Tailwind components, animation, accessibility, or UI performance
 - **Defaults**: Tailwind defaults first; accessible primitives; no animation unless requested; respect `prefers-reduced-motion`; never block paste
+- **React quality**: For React/Next.js/React Native review checks, see `tools/ui/react-doctor.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -86,3 +87,4 @@ These rules are **implementation constraints** that apply regardless of which DE
 
 - [UI Skills](https://www.ui-skills.com/) · [Base UI](https://base-ui.com/react/components) · [React Aria](https://react-spectrum.adobe.com/react-aria/) · [Radix Primitives](https://www.radix-ui.com/primitives)
 - [motion/react](https://motion.dev/) · [tw-animate-css](https://github.com/Wombosvideo/tw-animate-css) · [shadcn/ui](https://ui.shadcn.com/) — see `tools/ui/shadcn.md`
+- `tools/ui/react-doctor.md` -- advisory React quality scans for local diffs and CI annotations.
