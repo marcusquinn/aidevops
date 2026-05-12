@@ -1065,7 +1065,23 @@ _rest_pr_view() {
 		if [[ $_rc -ne 0 ]]; then
 			return $_rc
 		fi
-		printf '%s\n' "$raw_json" >"$cache_path" 2>/dev/null || true
+		local _tmp_cache="${cache_path}.tmp.$$"
+		if printf '%s\n' "$raw_json" >"$_tmp_cache"; then
+			:
+		else
+			_rc=$?
+			printf '_rest_pr_view: failed to write temporary cache file: %s\n' "$_tmp_cache" >&2
+			rm -f "$_tmp_cache"
+			return $_rc
+		fi
+		if mv "$_tmp_cache" "$cache_path"; then
+			:
+		else
+			_rc=$?
+			printf '_rest_pr_view: failed to move temporary cache file %s to cache path: %s\n' "$_tmp_cache" "$cache_path" >&2
+			rm -f "$_tmp_cache"
+			return $_rc
+		fi
 		_rest_pr_view_emit_json "$raw_json" "$json_fields" "$jq_expr"
 		return $?
 	fi
