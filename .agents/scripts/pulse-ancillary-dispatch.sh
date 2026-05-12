@@ -1205,7 +1205,7 @@ dispatch_foss_workers() {
 			"$repos_json" 2>/dev/null || echo "help wanted")
 		foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
 			--label "${labels_filter%%,*}" --limit 1 \
-			--json number,title --jq '(.[0] // {}) | "\(.number // "")|\(.title // "")"' 2>/dev/null) || foss_issue=""
+			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"') || foss_issue=""
 		if [[ -z "$foss_issue" ]]; then
 			echo "[pulse-wrapper] FOSS dispatch skipped no issue selection for ${foss_slug}: gh_issue_list returned empty output" >>"$LOGFILE"
 			continue
