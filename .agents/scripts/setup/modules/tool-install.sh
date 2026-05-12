@@ -1987,7 +1987,7 @@ setup_opencode_cli() {
 			echo ""
 		else
 			print_warning "OpenCode installation failed"
-			print_info "Try manually: sudo npm install -g $install_pkg"
+			print_info "Try manually: $installer install -g $install_pkg"
 		fi
 	else
 		print_info "Skipped OpenCode installation"
