@@ -175,6 +175,20 @@ _update_check_tools() {
 	local stale_count=0 stale_tools=""
 	local key_tool_cmds="opencode gh"
 	local key_tool_pkgs="opencode-ai brew:gh"
+	if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && ! aidevops_gh_slurp_supported; then
+		local gh_slurp_message=""
+		if declare -F aidevops_gh_slurp_status_message >/dev/null 2>&1; then
+			gh_slurp_message=$(aidevops_gh_slurp_status_message)
+		else
+			gh_slurp_message="GitHub CLI (gh) is below the aidevops minimum for gh api --paginate --slurp"
+		fi
+		print_warning "$gh_slurp_message"
+		if declare -F aidevops_gh_slurp_remediation_hint >/dev/null 2>&1; then
+			print_info "$(aidevops_gh_slurp_remediation_hint)"
+		else
+			print_info "Run aidevops setup or upgrade gh manually, then rerun aidevops status."
+		fi
+	fi
 	local idx=0
 	for cmd_name in $key_tool_cmds; do
 		local pkg_ref

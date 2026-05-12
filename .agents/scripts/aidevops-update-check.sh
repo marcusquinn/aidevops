@@ -323,6 +323,26 @@ _check_secret_hygiene() {
 }
 
 # -----------------------------------------------------------------------------
+# _check_gh_slurp_prerequisite: warn when gh is too old for pulse pagination.
+# -----------------------------------------------------------------------------
+_check_gh_slurp_prerequisite() {
+	if ! declare -F aidevops_gh_slurp_supported >/dev/null 2>&1; then
+		echo ""
+		return 0
+	fi
+	if aidevops_gh_slurp_supported; then
+		echo ""
+		return 0
+	fi
+	if declare -F aidevops_gh_slurp_warning_line >/dev/null 2>&1; then
+		aidevops_gh_slurp_warning_line
+	else
+		printf '[WARN] GitHub CLI (gh) does not satisfy the aidevops gh api --paginate --slurp prerequisite. Run aidevops status.'
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
 # _check_advisories: surface active security advisories (not yet dismissed).
 # -----------------------------------------------------------------------------
 _check_advisories() {
@@ -894,12 +914,13 @@ _run_session_advisories() {
 
 	local runtime_hint nudge_output session_warning security_posture
 	local secret_hygiene advisories_output contribution_watch origin_notice
-	local signing_nudge script_drift stuck_index hotfix_notice
+	local signing_nudge script_drift stuck_index hotfix_notice gh_slurp_notice
 	runtime_hint=$(_get_runtime_hint "$app_name")
 	nudge_output=$(_check_local_models "$script_dir")
 	session_warning=$(_check_session_count "$script_dir")
 	security_posture=$(_check_security_posture "$script_dir")
 	secret_hygiene=$(_check_secret_hygiene "$script_dir")
+	gh_slurp_notice=$(_check_gh_slurp_prerequisite)
 	advisories_output=$(_check_advisories)
 	contribution_watch=$(_check_contribution_watch)
 	origin_notice=$(_check_origin)
@@ -922,6 +943,7 @@ _run_session_advisories() {
 	[[ -n "$session_warning" ]] && echo "$session_warning"
 	[[ -n "$security_posture" ]] && echo "$security_posture"
 	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
+	[[ -n "$gh_slurp_notice" ]] && echo "$gh_slurp_notice"
 	[[ -n "$advisories_output" ]] && echo "$advisories_output"
 	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	[[ -n "$origin_notice" ]] && echo "$origin_notice"
@@ -933,7 +955,7 @@ _run_session_advisories() {
 
 	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
-		"$advisories_output" "$contribution_watch"
+		"${gh_slurp_notice:+$gh_slurp_notice$'\n'}$advisories_output" "$contribution_watch"
 
 	_refresh_oauth_tokens
 
@@ -983,6 +1005,9 @@ main() {
 		if _is_auto_update_active; then
 			echo "AUTO_UPDATE_ENABLED"
 		fi
+		local gh_slurp_notice
+		gh_slurp_notice=$(_check_gh_slurp_prerequisite)
+		[[ -n "$gh_slurp_notice" ]] && echo "$gh_slurp_notice"
 		return 0
 	fi
 

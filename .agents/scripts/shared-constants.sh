@@ -196,6 +196,30 @@ aidevops_gh_slurp_status_message() {
 	return 0
 }
 
+aidevops_gh_slurp_remediation_hint() {
+	local os_name=""
+	os_name=$(uname -s 2>/dev/null || printf 'unknown')
+	case "$os_name" in
+	Linux)
+		printf 'Run aidevops setup to upgrade gh, or install GitHub CLI from the official package source for your distribution.'
+		;;
+	Darwin)
+		printf 'Run brew update && brew upgrade gh, then rerun aidevops status.'
+		;;
+	*)
+		printf 'Upgrade gh to >= %s, then rerun aidevops status.' "$AIDEVOPS_GH_MIN_SLURP_VERSION"
+		;;
+	esac
+	return 0
+}
+
+aidevops_gh_slurp_warning_line() {
+	local status_message=""
+	status_message=$(aidevops_gh_slurp_status_message)
+	printf '[WARN] %s %s' "$status_message" "$(aidevops_gh_slurp_remediation_hint)"
+	return 0
+}
+
 # =============================================================================
 # HTTP and API Constants
 # =============================================================================

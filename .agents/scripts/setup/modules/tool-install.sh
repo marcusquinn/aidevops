@@ -11,12 +11,62 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+_print_gh_slurp_manual_upgrade() {
+	echo ""
+	echo "📋 GitHub CLI upgrade guidance:"
+	echo "  Required: gh >= ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0} for gh api --paginate --slurp"
+	echo "  Linux: install or upgrade gh from the official GitHub CLI package source for your distribution"
+	echo "  macOS: brew update && brew upgrade gh"
+	echo "  Verify: gh --version && aidevops status"
+	return 0
+}
+
+_offer_gh_slurp_upgrade() {
+	local pkg_manager="$1"
+	local os_name=""
+	os_name=$(uname -s 2>/dev/null || printf 'unknown')
+
+	if [[ "$os_name" != "Linux" ]]; then
+		_print_gh_slurp_manual_upgrade
+		return 0
+	fi
+
+	echo ""
+	print_warning "Linux GitHub CLI is below the aidevops minimum. Old distro packages can break pulse dispatch."
+	if [[ "$pkg_manager" == "unknown" ]]; then
+		print_warning "No supported package manager detected for an automatic gh upgrade attempt"
+		_print_gh_slurp_manual_upgrade
+		return 0
+	fi
+	setup_prompt upgrade_gh_cli "Try to upgrade GitHub CLI (gh) using ${pkg_manager}? [y/N]: " "N"
+	# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
+	if [[ "$upgrade_gh_cli" =~ ^[Yy]$ ]]; then
+		print_info "Attempting to upgrade gh using ${pkg_manager}..."
+		if install_packages "$pkg_manager" gh; then
+			if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && aidevops_gh_slurp_supported; then
+				print_success "GitHub CLI now satisfies the aidevops prerequisite"
+			else
+				print_warning "gh still does not satisfy the aidevops prerequisite after package-manager upgrade"
+				_print_gh_slurp_manual_upgrade
+			fi
+		else
+			print_warning "Package-manager gh upgrade failed or was unavailable"
+			_print_gh_slurp_manual_upgrade
+		fi
+	else
+		print_info "Skipped GitHub CLI upgrade"
+		_print_gh_slurp_manual_upgrade
+	fi
+	return 0
+}
+
 setup_git_clis() {
 	print_info "Setting up Git CLI tools..."
 
 	local cli_tools=()
 	local missing_packages=()
 	local missing_names=()
+	local gh_needs_slurp_upgrade="false"
 
 	# Check for GitHub CLI
 	if ! command -v gh >/dev/null 2>&1; then
@@ -26,8 +76,7 @@ setup_git_clis() {
 		local gh_slurp_message
 		gh_slurp_message=$(aidevops_gh_slurp_status_message)
 		print_warning "$gh_slurp_message"
-		missing_packages+=("gh")
-		missing_names+=("GitHub CLI >= ${AIDEVOPS_GH_MIN_SLURP_VERSION}")
+		gh_needs_slurp_upgrade="true"
 	else
 		cli_tools+=("GitHub CLI")
 	fi
@@ -45,13 +94,17 @@ setup_git_clis() {
 		print_success "Found Git CLI tools: ${cli_tools[*]}"
 	fi
 
+	local pkg_manager
+	pkg_manager=$(detect_package_manager)
+
+	if [[ "$gh_needs_slurp_upgrade" == "true" ]]; then
+		_offer_gh_slurp_upgrade "$pkg_manager"
+	fi
+
 	# Offer to install missing tools
 	if [[ ${#missing_packages[@]} -gt 0 ]]; then
 		print_warning "Missing Git CLI tools: ${missing_names[*]}"
 		echo "  These provide enhanced Git platform integration (repos, PRs, issues)"
-
-		local pkg_manager
-		pkg_manager=$(detect_package_manager)
 
 		if [[ "$pkg_manager" != "unknown" ]]; then
 			echo ""
@@ -88,7 +141,7 @@ setup_git_clis() {
 			echo "  Ubuntu: install or upgrade gh from the GitHub CLI apt repository"
 			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
 		fi
-	else
+	elif [[ "$gh_needs_slurp_upgrade" != "true" ]]; then
 		print_success "All Git CLI tools installed and ready!"
 	fi
 
