@@ -15,7 +15,7 @@ _print_gh_slurp_manual_upgrade() {
 	echo ""
 	echo "📋 GitHub CLI upgrade guidance:"
 	echo "  Required: gh >= ${AIDEVOPS_GH_MIN_SLURP_VERSION:-2.51.0} for gh api --paginate --slurp"
-	echo "  Linux: install or upgrade gh from the official GitHub CLI package source for your distribution"
+	echo "  Linux: install or upgrade gh from the official GitHub CLI package source for your distribution; on Ubuntu/Debian avoid the older Ubuntu universe gh package"
 	echo "  macOS: brew update && brew upgrade gh"
 	echo "  Verify: gh --version && aidevops status"
 	return 0
