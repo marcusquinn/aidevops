@@ -68,14 +68,14 @@ _resolve_current_gh_login_or_fallback() {
 	local gh_login=""
 	local fallback_login=""
 
-	gh_login=$(gh api user --jq '.login' 2>/dev/null) || gh_login=""
+	gh_login=$(gh api user --jq '.login // ""') || gh_login=""
 	if [[ "$gh_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
 		printf '%s' "$gh_login"
 		return 0
 	fi
 
 	fallback_login=$(whoami 2>/dev/null) || fallback_login=""
-	if [[ "$fallback_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+	if [[ "$fallback_login" =~ ^[[:alnum:]._-]+$ ]]; then
 		echo "[stats] GitHub login unavailable or invalid; using local fallback identity: ${fallback_login}" \
 			>>"${LOGFILE:-/dev/null}"
 		printf '%s' "$fallback_login"

@@ -32,6 +32,10 @@ gh() {
 	local call="$*"
 	printf '%s\n' "$call" >>"$GH_CALLS"
 	case "${HEALTH_FIXTURE:-}:$call" in
+		empty_login:*"api user --jq .login"*)
+			printf '%s' ''
+			return 0
+			;;
 		rate_limit_login:*"api user --jq .login"*)
 			printf '%s' '{"message":"API rate limit exceeded", "status":"403"}' >&2
 			return 1
@@ -59,6 +63,16 @@ gh() {
 		*) return 0 ;;
 	esac
 	return 0
+}
+
+# shellcheck disable=SC2317
+whoami() {
+	if [[ -n "${HEALTH_WHOAMI_FIXTURE:-}" ]]; then
+		printf '%s' "$HEALTH_WHOAMI_FIXTURE"
+		return 0
+	fi
+	command whoami "$@"
+	return $?
 }
 
 # shellcheck disable=SC2317
@@ -221,6 +235,17 @@ if [[ "$resolved_login" != *"message"* && "$resolved_login" =~ ^[A-Za-z0-9]([A-Z
 	pass "falls back to validated local identity when gh login is rate limited"
 else
 	fail "falls back to validated local identity when gh login is rate limited" "resolved=${resolved_login}"
+fi
+
+export HEALTH_FIXTURE=empty_login
+export HEALTH_WHOAMI_FIXTURE="local.user_name"
+resolved_login=$(_resolve_current_gh_login_or_fallback)
+unset HEALTH_FIXTURE HEALTH_WHOAMI_FIXTURE
+
+if [[ "$resolved_login" == "local.user_name" ]]; then
+	pass "allows dotted and underscored local fallback identities"
+else
+	fail "allows dotted and underscored local fallback identities" "resolved=${resolved_login}"
 fi
 
 unsafe_cache=$(_sanitize_runner_identity_for_cache '{"message":"API rate limit exceeded", "status":"403"}local-user')
