@@ -32,6 +32,10 @@ gh() {
 	local call="$*"
 	printf '%s\n' "$call" >>"$GH_CALLS"
 	case "${HEALTH_FIXTURE:-}:$call" in
+		rate_limit_login:*"api user --jq .login"*)
+			printf '%s' '{"message":"API rate limit exceeded", "status":"403"}' >&2
+			return 1
+			;;
 		conflicting_operator:*"issue list --repo owner/repo --label source:health-dashboard"*)
 			printf '%s' '[{"number":4643,"title":"[Supervisor:marcusquinn] stale dashboard","labels":[{"name":"source:health-dashboard"},{"name":"operator:alex-solovyev"},{"name":"alex-solovyev"},{"name":"supervisor"}]}]'
 			return 0
@@ -206,6 +210,24 @@ if [[ "$body" == *"canonical:"* && "$body" == *"canonical-operator"* && "$body" 
 	pass "dashboard body exposes canonical identity context"
 else
 	fail "dashboard body exposes canonical identity context" "$body"
+fi
+
+: >"$LOGFILE"
+export HEALTH_FIXTURE=rate_limit_login
+resolved_login=$(_resolve_current_gh_login_or_fallback)
+unset HEALTH_FIXTURE
+
+if [[ "$resolved_login" != *"message"* && "$resolved_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+	pass "falls back to validated local identity when gh login is rate limited"
+else
+	fail "falls back to validated local identity when gh login is rate limited" "resolved=${resolved_login}"
+fi
+
+unsafe_cache=$(_sanitize_runner_identity_for_cache '{"message":"API rate limit exceeded", "status":"403"}local-user')
+if [[ "$unsafe_cache" != *"{"* && "$unsafe_cache" != *"message\":"* && ${#unsafe_cache} -le 80 ]]; then
+	pass "sanitizes API error payloads before cache filename use"
+else
+	fail "sanitizes API error payloads before cache filename use" "safe=${unsafe_cache}"
 fi
 
 printf '\n== Summary ==\n'

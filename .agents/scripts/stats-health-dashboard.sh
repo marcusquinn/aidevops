@@ -61,6 +61,34 @@ source "${SCRIPT_DIR}/stats-health-dashboard-data.sh"
 # --- Orchestration functions ---
 
 #######################################
+# Resolve current GitHub login, validating gh output before use.
+# Output: validated GitHub login, or a validated local fallback
+#######################################
+_resolve_current_gh_login_or_fallback() {
+	local gh_login=""
+	local fallback_login=""
+
+	gh_login=$(gh api user --jq '.login' 2>/dev/null) || gh_login=""
+	if [[ "$gh_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		printf '%s' "$gh_login"
+		return 0
+	fi
+
+	fallback_login=$(whoami 2>/dev/null) || fallback_login=""
+	if [[ "$fallback_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+		echo "[stats] GitHub login unavailable or invalid; using local fallback identity: ${fallback_login}" \
+			>>"${LOGFILE:-/dev/null}"
+		printf '%s' "$fallback_login"
+		return 0
+	fi
+
+	echo "[stats] GitHub login unavailable or invalid; using anonymous fallback identity" \
+		>>"${LOGFILE:-/dev/null}"
+	printf '%s' "unknown-runner"
+	return 0
+}
+
+#######################################
 # Activity guard — returns 0 to proceed, 1 to skip.
 # Only runs when the cached health-issue file is absent (would create a new one).
 #######################################
@@ -128,7 +156,7 @@ _update_health_issue_for_repo() {
 	[[ -z "$repo_slug" ]] && return 0
 
 	local runner_user
-	runner_user=$(gh api user --jq '.login' || whoami)
+	runner_user=$(_resolve_current_gh_login_or_fallback)
 
 	local runner_role
 	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")
@@ -148,7 +176,9 @@ _update_health_issue_for_repo() {
 
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
-	local health_issue_file="${cache_dir}/health-issue-${canonical_identity}-${slug_safe}"
+	local canonical_identity_cache_safe
+	canonical_identity_cache_safe=$(_sanitize_runner_identity_for_cache "$canonical_identity")
+	local health_issue_file="${cache_dir}/health-issue-${canonical_identity_cache_safe}-${slug_safe}"
 	mkdir -p "$cache_dir"
 
 	_check_health_issue_activity_guard \

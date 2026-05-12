@@ -40,6 +40,21 @@ _validate_repo_slug() {
 	return 1
 }
 
+#######################################
+# Sanitize a runner/identity token before using it in cache filenames.
+# Arguments:
+#   $1 - identity token
+# Output: filesystem-safe token, bounded to avoid long-path failures
+#######################################
+_sanitize_runner_identity_for_cache() {
+	local identity="$1"
+	identity="${identity//[^a-zA-Z0-9._-]/-}"
+	identity="${identity:0:80}"
+	[[ -n "$identity" ]] || identity="unknown-runner"
+	printf '%s' "$identity"
+	return 0
+}
+
 # check_session_count: now provided by worker-lifecycle-common.sh (sourced by caller).
 # Previously duplicated here (17 lines) — see t1431. Consolidated to eliminate
 # divergence risk and ensure single source of truth.
@@ -103,7 +118,9 @@ _get_runner_role() {
 	# Survives across pulse cycles; prevents API failure from flipping role.
 	local disk_cache_dir="${HOME}/.aidevops/logs"
 	local slug_safe="${repo_slug//\//-}"
-	local disk_cache_file="${disk_cache_dir}/runner-role-${runner_user}-${slug_safe}"
+	local runner_user_cache_safe
+	runner_user_cache_safe=$(_sanitize_runner_identity_for_cache "$runner_user")
+	local disk_cache_file="${disk_cache_dir}/runner-role-${runner_user_cache_safe}-${slug_safe}"
 	if [[ -f "$disk_cache_file" ]]; then
 		local disk_role disk_ts now_ts
 		IFS='|' read -r disk_role disk_ts <"$disk_cache_file" 2>/dev/null || disk_role=""
@@ -172,7 +189,9 @@ _persist_role_cache() {
 	local role="$3"
 	local disk_cache_dir="${HOME}/.aidevops/logs"
 	local slug_safe="${repo_slug//\//-}"
-	local disk_cache_file="${disk_cache_dir}/runner-role-${runner_user}-${slug_safe}"
+	local runner_user_cache_safe
+	runner_user_cache_safe=$(_sanitize_runner_identity_for_cache "$runner_user")
+	local disk_cache_file="${disk_cache_dir}/runner-role-${runner_user_cache_safe}-${slug_safe}"
 	mkdir -p "$disk_cache_dir" 2>/dev/null || true
 	printf '%s|%s\n' "$role" "$(date +%s)" >"$disk_cache_file" 2>/dev/null || true
 	return 0

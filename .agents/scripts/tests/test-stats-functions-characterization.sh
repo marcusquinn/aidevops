@@ -100,13 +100,15 @@ teardown_sandbox() {
 # updated in the same PR. Reviewers: verify the removal is intentional.
 #######################################
 readonly -a EXPECTED_FUNCTIONS=(
-	# Cluster A: stats-shared.sh (3 fns)
+	# Cluster A: stats-shared.sh (4 fns)
 	"_validate_repo_slug"
+	"_sanitize_runner_identity_for_cache"
 	"_get_runner_role"
 	"_persist_role_cache"
-	# Cluster B: stats-health-dashboard.sh (22 fns)
+	# Cluster B: stats-health-dashboard.sh (23 fns)
 	"update_health_issues"
 	"_refresh_person_stats_cache"
+	"_resolve_current_gh_login_or_fallback"
 	"_update_health_issue_for_repo"
 	"_resolve_health_issue_number"
 	"_find_health_issue"
