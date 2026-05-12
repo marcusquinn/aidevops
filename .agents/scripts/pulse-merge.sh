@@ -557,7 +557,7 @@ _process_single_ready_pr() {
 	local repo_slug="$1"
 	local pr_obj="$2"
 
-	local pr_number pr_mergeable pr_review pr_author pr_title
+	local pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
 	# instead of \t. Bash read collapses consecutive IFS whitespace chars
@@ -567,9 +567,9 @@ _process_single_ready_pr() {
 	# caused pr_author to receive the PR title, breaking the collaborator
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
-	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title < <(
+	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid < <(
 		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")"'
+			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 
@@ -628,7 +628,7 @@ _process_single_ready_pr() {
 			# PRs to fix workers before the protected-close precheck. Active
 			# interactive PRs remain protected because _route_pr_to_fix_worker only
 			# accepts origin:interactive after _interactive_pr_is_stale passes.
-			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_t2116_linked_issue" "conflict" "" "$pr_title"; then
+			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_t2116_linked_issue" "conflict" "" "$pr_title" "$pr_updated_at" "$pr_head_ref_oid"; then
 				return 2
 			fi
 
@@ -701,7 +701,7 @@ _process_single_ready_pr() {
 				return 1
 			fi
 			# CI failure: route to fix worker if applicable (t2203: consolidated).
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" || true
+			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "" "" "$pr_updated_at" "$pr_head_ref_oid" || true
 			return 1
 		fi
 	fi

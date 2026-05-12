@@ -216,7 +216,8 @@ Every pulse cycle the deterministic merge pass evaluates open PRs with merge con
 #     enforce: evaluates signal and returns it; caller acts
 #   IDLE_INTERACTIVE_HANDOVER_SECONDS — age threshold seconds, default 14400 (4h; t2948)
 #
-# Args: $1 = pr_number, $2 = repo_slug
+# Args: $1 = pr_number, $2 = repo_slug, $3 = updated_at (optional),
+#       $4 = head_ref_oid (optional), $5 = head_commit_at (optional)
 # Returns: 0 if stale (handover-eligible), 1 otherwise
 # Side effect: logs "would-handover" line to $LOGFILE when mode=detect and stale
 #######################################
@@ -225,14 +226,15 @@ _interactive_pr_is_stale() {
 	local repo_slug="$2"
 	local precomputed_updated_at="${3:-}"
 	local precomputed_head_ref_oid="${4:-}"
+	local precomputed_head_commit_at="${5:-}"
 	local mode="${AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE:-detect}"
 	[[ "$mode" == "off" ]] && return 1
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
 
-	# Fetch PR metadata once. For staleness, prefer the head commit timestamp
-	# over PR updatedAt: automated comments/labels refresh updatedAt and can keep
-	# idle conflicted PRs out of worker handover indefinitely.
-	local pr_meta
+	# Fetch PR metadata once. updatedAt can prove staleness without an extra
+	# commit lookup; fresh updatedAt still falls through to the head commit
+	# timestamp because automated comments/labels can mask an idle branch.
+	local pr_meta=""
 	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
 		--json labels,updatedAt,headRefOid 2>/dev/null) || return 1
 
@@ -250,7 +252,7 @@ _interactive_pr_is_stale() {
 		return 1
 	fi
 
-	# Gate 4: age threshold (check before any other gh calls — cheapest filter)
+	# Gate 4: age threshold (check updatedAt before commit lookup — cheapest filter)
 	local threshold_secs="${IDLE_INTERACTIVE_HANDOVER_SECONDS:-14400}"  # default 4h (t2948; was 24h)
 	local activity_at="" activity_source="updatedAt" now_epoch=0 updated_epoch=0 pr_age_secs=0
 	# t2383 Fix 2: validate threshold is a positive integer before arithmetic.
@@ -260,30 +262,42 @@ _interactive_pr_is_stale() {
 		echo "[pulse-wrapper] _interactive_pr_is_stale: invalid IDLE_INTERACTIVE_HANDOVER_SECONDS='${threshold_secs}' — must be a positive integer, returning not-stale (t2383)" >>"$LOGFILE"
 		return 1
 	fi
-	now_epoch=$(date +%s)
-	activity_at="${precomputed_updated_at:-}"
-	if [[ -z "$activity_at" ]]; then
-		activity_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
+	local updated_at=""
+	updated_at="$precomputed_updated_at"
+	if [[ -z "$updated_at" ]]; then
+		updated_at=$(printf '%s' "$pr_meta" | jq -r '.updatedAt // empty')
 	fi
-	if [[ -n "$activity_at" ]]; then
-		updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
-			updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
-			return 1
-		pr_age_secs=$(( now_epoch - updated_epoch ))
-		[[ "$pr_age_secs" -ge "$threshold_secs" ]] && activity_source="updatedAt"
+	[[ -z "$updated_at" ]] && return 1
+	now_epoch=$(date +%s)
+	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
+	updated_epoch=$(date -d "$updated_at" +%s 2>/dev/null) || \
+		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$updated_at" +%s 2>/dev/null) || \
+		return 1
+	pr_age_secs=$(( now_epoch - updated_epoch ))
+	if [[ "$pr_age_secs" -ge "$threshold_secs" ]]; then
+		activity_at="$updated_at"
+		activity_source="updatedAt"
+	else
+		pr_age_secs=0
 	fi
 
-	local head_ref_oid="${precomputed_head_ref_oid:-}"
-	if [[ "$pr_age_secs" -lt "$threshold_secs" && -z "$head_ref_oid" ]]; then
+	local head_ref_oid=""
+	head_ref_oid="$precomputed_head_ref_oid"
+	if [[ -z "$head_ref_oid" ]]; then
 		head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
 	fi
-	if [[ "$pr_age_secs" -lt "$threshold_secs" && -n "$head_ref_oid" ]]; then
-		activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
-			--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
-		[[ -n "$activity_at" ]] && activity_source="head_commit"
+	if [[ -n "$head_ref_oid" ]]; then
+		if [[ -z "$activity_at" && -n "$precomputed_head_commit_at" ]]; then
+			activity_at="$precomputed_head_commit_at"
+			activity_source="head_commit"
+		fi
+		if [[ -z "$activity_at" ]]; then
+			activity_at=$(gh api "repos/${repo_slug}/commits/${head_ref_oid}" \
+				--jq '.commit.committer.date // .commit.author.date // empty' 2>/dev/null) || activity_at=""
+			[[ -n "$activity_at" ]] && activity_source="head_commit"
+		fi
 	fi
 	[[ -z "$activity_at" ]] && return 1
-	# Portable epoch parse — GNU date first (Linux CI), BSD date fallback (macOS)
 	updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
 		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
 		return 1

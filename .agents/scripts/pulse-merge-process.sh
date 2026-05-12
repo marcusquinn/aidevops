@@ -385,7 +385,7 @@ _merge_ready_prs_for_repo() {
 	local pr_json pr_merge_err
 	pr_merge_err=$(mktemp)
 	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,author,title,isDraft,labels,headRefOid,createdAt \
+		--json number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,createdAt \
 		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
@@ -658,6 +658,8 @@ _attempt_pr_ci_rebase_retry() {
 #   $4 = kind          (review | conflict | ci)
 #   $5 = pr_labels     (optional — comma-separated; fetched if empty)
 #   $6 = pr_title      (optional — passed to conflict dispatch)
+#   $7 = updated_at    (optional — passed to staleness check)
+#   $8 = head_ref_oid  (optional — passed to staleness check)
 #
 # Returns: 0 if dispatched, 1 if not routable (no match or excluded)
 #
@@ -673,6 +675,8 @@ _route_pr_to_fix_worker() {
 	local kind="$4"
 	local pr_labels="${5:-}"
 	local pr_title="${6:-}"
+	local updated_at="${7:-}"
+	local head_ref_oid="${8:-}"
 
 	# No linked issue → nothing to route to
 	[[ -z "$linked_issue" ]] && return 1
@@ -719,7 +723,7 @@ _route_pr_to_fix_worker() {
 
 	# Stale interactive PRs: handover first, then dispatch
 	if [[ ",${pr_labels}," == *",origin:interactive,"* ]] \
-		&& _interactive_pr_is_stale "$pr_number" "$repo_slug"; then
+		&& _interactive_pr_is_stale "$pr_number" "$repo_slug" "$updated_at" "$head_ref_oid"; then
 		_interactive_pr_trigger_handover "$pr_number" "$repo_slug" || true
 		case "$kind" in
 			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;
