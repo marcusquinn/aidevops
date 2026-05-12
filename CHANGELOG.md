@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.37] - 2026-05-12
+
+### Fixed
+
+- avoid misleading OpenCode npm install hint (#23479)
+
 ## [3.15.36] - 2026-05-12
 
 ### Changed
