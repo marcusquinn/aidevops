@@ -25,6 +25,7 @@ tools:
 - **Hydration errors**: Server/client mismatch or invalid component types
 - **Monorepo gotchas**: Webpack loaders (SVGR, etc.) don't cross package boundaries
 - **Browser tool**: `dev-browser` agent for visual verification
+- **React quality review**: `tools/ui/react-doctor.md` covers advisory staged/diff scans and CI annotations
 
 **When to use**: React/Next.js errors, blank pages, hydration mismatches, monorepo `packages/` work, curl returns 200 but user reports errors.
 
@@ -160,5 +161,6 @@ See `tools/ui/tailwind-css.md` for the Tailwind fix pattern.
 ## Related
 
 - **Browser automation**: `tools/browser/dev-browser.md`
+- **React quality checks**: `tools/ui/react-doctor.md`
 - **React patterns**: `tools/ui/shadcn.md`
 - **Build debugging**: `workflows/bug-fixing.md`
