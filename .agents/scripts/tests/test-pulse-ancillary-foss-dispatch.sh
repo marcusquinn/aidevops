@@ -99,6 +99,14 @@ available_after_null="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$
 [[ "$available_after_null" == "2" ]] || fail "null selection changed available worker count"
 [[ ! -f "$HEADLESS_INVOCATION_LOG" ]] || fail "null selection launched a worker"
 
+GH_ISSUE_LIST_OUTPUT=''
+available_after_empty="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json")" || fail "empty selection dispatch failed"
+[[ "$available_after_empty" == "2" ]] || fail "empty selection changed available worker count"
+[[ ! -f "$HEADLESS_INVOCATION_LOG" ]] || fail "empty selection launched a worker"
+if ! grep -q 'FOSS dispatch skipped no issue selection for owner/project' "$LOGFILE"; then
+	fail "empty selection did not log an auditable no-work reason"
+fi
+
 GH_ISSUE_LIST_OUTPUT='42|Fix duplicate dispatch'
 available_output="${TEST_TMP}/available.out"
 FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json" >"$available_output" || fail "duplicate selection dispatch failed"
@@ -114,5 +122,6 @@ if ! grep -q -- '--session-key foss-owner/project-42' "$HEADLESS_INVOCATION_LOG"
 fi
 
 printf 'PASS: FOSS null issue selections are skipped\n'
+printf 'PASS: FOSS empty issue selections are logged as no work\n'
 printf 'PASS: FOSS duplicate session keys are deduplicated per cycle\n'
 exit 0
