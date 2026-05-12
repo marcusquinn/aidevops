@@ -1559,12 +1559,14 @@ cmd_run() {
 		return 0
 	fi
 
+	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"
 	local selected_model
 	selected_model=$(choose_model "$role" "${model_override:-$initial_model}" "$tier_override") || {
 		local choose_exit=$?
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
 	}
+	print_info "[lifecycle] post_model_select session=$session_key model=$selected_model pid=$$"
 
 	# GH#17549: Version guard — runs on EVERY dispatch (not cached).
 	# Something keeps upgrading opencode to 1.3.17 between canary checks.
@@ -1574,10 +1576,12 @@ cmd_run() {
 	# _cmd_run_prepare so a canary failure never posts a dispatch claim or
 	# increments the fast-fail counter. Cached for CANARY_CACHE_TTL_SECONDS
 	# (default 30 min) so it runs at most once per pulse cycle.
+	print_info "[lifecycle] pre_canary session=$session_key model=$selected_model pid=$$"
 	if ! _run_canary_test "$selected_model"; then
 		print_warning "Canary failed — aborting dispatch for session $session_key (no claim posted)"
 		return 1
 	fi
+	print_info "[lifecycle] post_canary session=$session_key model=$selected_model pid=$$"
 
 	if [[ "$role" == "worker" ]]; then
 		prompt=$(append_worker_headless_contract "$prompt")
@@ -1588,6 +1592,7 @@ cmd_run() {
 	# _cmd_run_prepare is called immediately below; the export no longer needs to
 	# live in _execute_run_attempt (which runs after the trap is already set).
 	local prepare_exit=0
+	print_info "[lifecycle] pre_worker_prepare session=$session_key work_dir=$work_dir pid=$$"
 	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
 	if [[ "$prepare_exit" -eq 2 ]]; then
 		return 0
@@ -1595,6 +1600,7 @@ cmd_run() {
 	if [[ "$prepare_exit" -ne 0 ]]; then
 		return "$prepare_exit"
 	fi
+	print_info "[lifecycle] post_worker_prepare session=$session_key work_dir=$work_dir pid=$$"
 
 	if [[ -z "$variant_override" ]]; then
 		variant_override=$(resolve_headless_variant "$role" "$tier_override" "$selected_model")

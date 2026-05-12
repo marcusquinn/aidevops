@@ -546,6 +546,54 @@ test_create_worktree_uses_target_repo_path() {
 }
 
 
+test_readiness_accepts_worker_started_marker() {
+	MOCK_LEDGER_RECORD=""
+	local session_key="manual-cli-ready-$$"
+	local runtime_log=""
+	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	printf '%s\n' "[lifecycle] worker_started session=${session_key}" >"$runtime_log"
+
+	local out="" rc=0
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-ready.log 2>&1) || rc=$?
+	rm -f "$runtime_log"
+
+	local passed=1
+	[[ "$rc" -eq 0 && -z "$out" ]] && passed=0
+	print_result "readiness gate accepts worker_started marker" "$passed" "rc=$rc output=$out"
+	return 0
+}
+
+test_readiness_rejects_live_child_without_ready_signal() {
+	MOCK_LEDGER_RECORD=""
+	local session_key="manual-cli-not-ready-$$"
+	local runtime_log=""
+	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	rm -f "$runtime_log"
+
+	local out="" rc=0
+	out=$(AIDEVOPS_DSI_READY_TIMEOUT_SECONDS=0 _dsi_wait_for_worker_readiness 12345 owner/repo "$session_key" "$$" /tmp/manual-not-ready.log 2>&1) || rc=$?
+	rm -f "$runtime_log"
+
+	local passed=1
+	[[ "$rc" -eq 1 && "$out" == *"did not reach readiness"* && "$out" == *"Runtime log:"* ]] && passed=0
+	print_result "readiness gate rejects live child without ready signal" "$passed" "rc=$rc output=$out"
+	return 0
+}
+
+test_launch_report_waits_before_success_message() {
+	local wait_line="" ok_line=""
+	wait_line=$(grep -n '_dsi_wait_for_worker_readiness' "$HELPER_PATH" | tail -1 | cut -d: -f1)
+	ok_line=$(grep -n '_dsi_ok "Worker launched"' "$HELPER_PATH" | tail -1 | cut -d: -f1)
+
+	local passed=1
+	if [[ -n "$wait_line" && -n "$ok_line" && "$wait_line" -lt "$ok_line" ]]; then
+		passed=0
+	fi
+	print_result "launch report waits for readiness before Worker launched" "$passed" "wait_line=$wait_line ok_line=$ok_line"
+	return 0
+}
+
+
 
 test_live_dispatch_detects_issue_repo() {
 	MOCK_LEDGER_RECORD=""
@@ -633,6 +681,9 @@ _run_tests() {
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
 	test_create_worktree_uses_target_repo_path
+	test_readiness_accepts_worker_started_marker
+	test_readiness_rejects_live_child_without_ready_signal
+	test_launch_report_waits_before_success_message
 	test_live_dispatch_detects_issue_repo
 	test_guard_blocks_ledger_duplicate
 	test_guard_blocks_live_worktree_duplicate

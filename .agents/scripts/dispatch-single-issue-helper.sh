@@ -661,6 +661,81 @@ _dsi_resolve_worker_pid() {
 }
 
 #######################################
+# Return the detached runtime log path used by headless-runtime-helper.sh.
+# Args: $1 - session_key
+# Stdout: absolute log path
+#######################################
+_dsi_detached_runtime_log() {
+	local session_key="$1"
+	printf '/tmp/worker-%s.log' "$session_key"
+	return 0
+}
+
+#######################################
+# Wait until a detached worker reaches an observable readiness signal.
+#
+# The outer nohup wrapper can exit successfully before model selection,
+# canary, and worker preparation complete. Treat launch as ready only when the
+# real child is alive and has emitted the canonical worker-start marker, has
+# registered in the dispatch ledger, or has exited/failed with inspectable log
+# evidence. This prevents silent success when pre-worker setup blocks.
+# Args:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - session_key
+#   $4 - worker_pid
+#   $5 - launcher_log path
+# Returns: 0 ready, 1 failed/not-ready before timeout
+#######################################
+_dsi_wait_for_worker_readiness() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local session_key="$3"
+	local worker_pid="$4"
+	local launcher_log="$5"
+	local runtime_log
+	runtime_log=$(_dsi_detached_runtime_log "$session_key")
+	local timeout_s="${AIDEVOPS_DSI_READY_TIMEOUT_SECONDS:-20}"
+	local attempts=0
+	local max_attempts=200
+
+	if ! [[ "$timeout_s" =~ ^[0-9]+$ ]]; then
+		timeout_s=20
+	fi
+	max_attempts=$((timeout_s * 10))
+
+	while [[ "$attempts" -le "$max_attempts" ]]; do
+		if [[ -s "$runtime_log" ]] &&
+			(grep -Fq "worker_started" "$runtime_log" 2>/dev/null || grep -Fq "worker_start session=${session_key}" "$runtime_log" 2>/dev/null); then
+			return 0
+		fi
+
+		if _dsi_find_ledger_dispatch "$issue_number" "$repo_slug" >/dev/null 2>&1; then
+			return 0
+		fi
+
+		if [[ -n "$worker_pid" ]] && ! kill -0 "$worker_pid" 2>/dev/null; then
+			_dsi_err "Worker launch failed — detached child exited before readiness"
+			_dsi_info "  Launcher log: ${launcher_log}"
+			_dsi_info "  Runtime log:  ${runtime_log}"
+			return 1
+		fi
+
+		if [[ "$attempts" -eq "$max_attempts" ]]; then
+			break
+		fi
+		sleep 0.1
+		attempts=$((attempts + 1))
+	done
+
+	_dsi_err "Worker launch did not reach readiness within ${timeout_s}s"
+	_dsi_info "  Worker PID:   ${worker_pid}"
+	_dsi_info "  Launcher log: ${launcher_log}"
+	_dsi_info "  Runtime log:  ${runtime_log}"
+	return 1
+}
+
+#######################################
 # Build the worker prompt.  Headless-runtime-lib auto-appends
 # HEADLESS_CONTINUATION_CONTRACT_V6 when it sees "/full-loop" — see
 # headless-runtime-lib.sh:437-509.
@@ -1049,6 +1124,7 @@ _dsi_launch_and_report() {
 
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")
+	_dsi_wait_for_worker_readiness "$issue_number" "$repo_slug" "$session_key" "$worker_pid" "$worker_log" || return 1
 
 	_dsi_register_ledger "$issue_number" "$repo_slug" "$session_key" "$worker_pid"
 
