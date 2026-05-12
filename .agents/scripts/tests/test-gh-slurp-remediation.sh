@@ -80,8 +80,8 @@ assert_contains() {
 
 make_fake_gh "gh version 2.50.0"
 old_notice=$(call_update_prereq_check)
-assert_contains "update-check emits warning for old gh" "$old_notice" "[WARN] GitHub CLI (gh) 2.50.0 is too old"
-assert_contains "update-check points Linux users at setup" "$old_notice" "Run aidevops setup to upgrade gh"
+assert_contains "update-check emits warning for old gh" "$old_notice" "GitHub CLI (gh) detected version 2.50.0 is too old"
+assert_contains "update-check points Linux users at setup" "$old_notice" "install or upgrade from the official GitHub CLI package repository"
 
 make_fake_gh "gh version 2.51.0"
 new_notice=$(call_update_prereq_check)
@@ -102,10 +102,14 @@ setup_offer_output=$(bash -c "
 	aidevops_gh_slurp_supported() { return 1; }
 	AIDEVOPS_GH_MIN_SLURP_VERSION=2.51.0
 	source '$TOOL_INSTALL_SCRIPT'
+	set +eE
+	trap - ERR
 	_offer_gh_slurp_upgrade apt
+	printf 'STATUS:%s\n' "\$?"
 ")
 assert_contains "setup offers Linux gh upgrade" "$setup_offer_output" "Try to upgrade GitHub CLI (gh) using apt?"
 assert_contains "setup skipped path prints manual guidance" "$setup_offer_output" "official GitHub CLI package source"
+assert_contains "setup skipped path returns failure" "$setup_offer_output" "STATUS:1"
 
 setup_yes_output=$(bash -c "
 	set +e
@@ -118,10 +122,40 @@ setup_yes_output=$(bash -c "
 	aidevops_gh_slurp_supported() { return 0; }
 	AIDEVOPS_GH_MIN_SLURP_VERSION=2.51.0
 	source '$TOOL_INSTALL_SCRIPT'
+	set +eE
+	trap - ERR
 	_offer_gh_slurp_upgrade apt
+	printf 'STATUS:%s\n' "\$?"
 ")
 assert_contains "setup accepted path invokes package upgrade" "$setup_yes_output" "INSTALL:apt"
 assert_contains "setup accepted path rechecks prerequisite" "$setup_yes_output" "GitHub CLI now satisfies"
+assert_contains "setup accepted path returns success" "$setup_yes_output" "STATUS:0"
+
+setup_git_clis_output=$(bash -c "
+	set +e
+	test_bin=\$(mktemp -d)
+	trap 'rm -rf \"\$test_bin\"' EXIT
+	printf '#!/usr/bin/env bash\nexit 0\n' >\"\$test_bin/gh\"
+	printf '#!/usr/bin/env bash\nexit 0\n' >\"\$test_bin/glab\"
+	chmod +x \"\$test_bin/gh\" \"\$test_bin/glab\"
+	PATH=\"\$test_bin:\$PATH\"
+	print_info() { local msg=\"\$*\"; printf 'INFO:%s\n' \"\$msg\"; return 0; }
+	print_warning() { local msg=\"\$*\"; printf 'WARN:%s\n' \"\$msg\"; return 0; }
+	print_success() { local msg=\"\$*\"; printf 'OK:%s\n' \"\$msg\"; return 0; }
+	setup_prompt() { local var_name=\"\$1\" prompt_text=\"\$2\"; printf '%s' \"\$prompt_text\"; printf -v \"\$var_name\" '%s' 'Y'; return 0; }
+	detect_package_manager() { printf 'apt\n'; return 0; }
+	install_packages() { slurp_supported=true; printf 'INSTALL:%s\n' \"\$*\"; return 0; }
+	uname() { printf 'Linux\n'; return 0; }
+	slurp_supported=false
+	aidevops_gh_slurp_status_message() { printf 'GitHub CLI (gh) is too old\n'; return 0; }
+	aidevops_gh_slurp_supported() { [[ \"\$slurp_supported\" == 'true' ]]; return \$?; }
+	AIDEVOPS_GH_MIN_SLURP_VERSION=2.51.0
+	source '$TOOL_INSTALL_SCRIPT'
+	set +eE
+	trap - ERR
+	setup_git_clis
+")
+assert_contains "setup_git_clis clears gh remediation flag after successful upgrade" "$setup_git_clis_output" "All Git CLI tools installed and ready"
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then

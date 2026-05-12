@@ -28,7 +28,7 @@ _offer_gh_slurp_upgrade() {
 
 	if [[ "$os_name" != "Linux" ]]; then
 		_print_gh_slurp_manual_upgrade
-		return 0
+		return 1
 	fi
 
 	echo ""
@@ -36,7 +36,7 @@ _offer_gh_slurp_upgrade() {
 	if [[ "$pkg_manager" == "unknown" ]]; then
 		print_warning "No supported package manager detected for an automatic gh upgrade attempt"
 		_print_gh_slurp_manual_upgrade
-		return 0
+		return 1
 	fi
 	setup_prompt upgrade_gh_cli "Try to upgrade GitHub CLI (gh) using ${pkg_manager}? [y/N]: " "N"
 	# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
@@ -45,6 +45,7 @@ _offer_gh_slurp_upgrade() {
 		if install_packages "$pkg_manager" gh; then
 			if declare -F aidevops_gh_slurp_supported >/dev/null 2>&1 && aidevops_gh_slurp_supported; then
 				print_success "GitHub CLI now satisfies the aidevops prerequisite"
+				return 0
 			else
 				print_warning "gh still does not satisfy the aidevops prerequisite after package-manager upgrade"
 				_print_gh_slurp_manual_upgrade
@@ -57,7 +58,7 @@ _offer_gh_slurp_upgrade() {
 		print_info "Skipped GitHub CLI upgrade"
 		_print_gh_slurp_manual_upgrade
 	fi
-	return 0
+	return 1
 }
 
 setup_git_clis() {
@@ -98,7 +99,9 @@ setup_git_clis() {
 	pkg_manager=$(detect_package_manager)
 
 	if [[ "$gh_needs_slurp_upgrade" == "true" ]]; then
-		_offer_gh_slurp_upgrade "$pkg_manager"
+		if _offer_gh_slurp_upgrade "$pkg_manager"; then
+			gh_needs_slurp_upgrade="false"
+		fi
 	fi
 
 	# Offer to install missing tools
