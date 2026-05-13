@@ -98,6 +98,14 @@ should_skip_prooflog() {
 	return 1  # proceed
 }
 
+should_skip_closing_hygiene_for_task() {
+	local task_line="$1"
+	if echo "$task_line" | grep -qE '^[[:space:]]*- \[ \] .*blocked-by:[^[:space:]]+'; then
+		return 0
+	fi
+	return 1
+}
+
 header "Path 2: TODO.md proof-log guard (t2252)"
 
 # Test 1: Planning-only PR — For/Ref only, no Closes
@@ -133,6 +141,19 @@ if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocke
 	pass "4b. Explicit close + blocked-by TODO marker → proof-log skipped"
 else
 	fail "4b. Explicit close + blocked-by TODO marker → should skip but proceeded"
+fi
+
+if should_skip_closing_hygiene_for_task "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
+	pass "4c. Current TODO task-line blocked-by marker → closing hygiene skipped"
+else
+	fail "4c. Current TODO task-line blocked-by marker → should skip closing hygiene"
+fi
+
+issue_body_example='Issue reproducer mentions blocked-by:t899 in prose, not on the current TODO task line.'
+if should_skip_closing_hygiene_for_task "$issue_body_example"; then
+	fail "4d. Issue-body prose blocked-by mention → should not skip closing hygiene"
+else
+	pass "4d. Issue-body prose blocked-by mention → closing hygiene proceeds"
 fi
 
 # -------------------------------------------------------------------
