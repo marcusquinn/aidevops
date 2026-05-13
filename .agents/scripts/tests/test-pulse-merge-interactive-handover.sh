@@ -5,7 +5,7 @@
 # Tests for _interactive_pr_is_stale() and _interactive_pr_trigger_handover()
 # (t2189).
 #
-# An origin:interactive PR that has sat idle past IDLE_INTERACTIVE_HANDOVER_SECONDS
+# An origin:interactive PR that has sat idle past AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS
 # without any active-session signal (no claim stamp, no status:* label on linked
 # issue) must be handover-eligible so the worker pipeline (CI fix, conflict fix,
 # review fix) can drive it to merge. The helpers isolate the staleness signal
@@ -66,6 +66,7 @@ print_result() {
 #   body.txt              — PR body (used by _extract_linked_issue primary)
 reset_mock_state() {
 	: >"$GH_LOG"
+	: >"$LOGFILE"
 	printf 'origin:interactive' >"${TEST_ROOT}/labels.txt"
 	# Default: 48h ago → idle
 	local epoch_48h
@@ -426,7 +427,7 @@ test_K_no_takeover_label_blocks_handover() {
 test_L_invalid_seconds_returns_not_stale() {
 	reset_mock_state
 	# "24h" is non-numeric — should not crash bash arithmetic
-	IDLE_INTERACTIVE_HANDOVER_SECONDS="24h" \
+	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="24h" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -434,7 +435,7 @@ test_L_invalid_seconds_returns_not_stale() {
 		print_result "L: invalid seconds ('24h') returns not-stale" 1 "Expected 1, got $rc"
 		return 0
 	fi
-	if ! grep -q "invalid IDLE_INTERACTIVE_HANDOVER_SECONDS" "$LOGFILE"; then
+	if ! grep -q "invalid AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS" "$LOGFILE"; then
 		print_result "L: invalid seconds logs validation error" 1 \
 			"Expected validation error in LOGFILE. Got: $(cat "$LOGFILE")"
 		return 0
@@ -445,7 +446,7 @@ test_L_invalid_seconds_returns_not_stale() {
 
 test_L2_zero_seconds_returns_not_stale() {
 	reset_mock_state
-	IDLE_INTERACTIVE_HANDOVER_SECONDS="0" \
+	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="0" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -461,7 +462,7 @@ test_L3_empty_seconds_uses_default_14400() {
 	reset_mock_state
 	# Empty seconds triggers bash's :- default substitution to "14400" (4h), which is valid.
 	# The PR is 48h old (reset_mock_state default), so it should return stale (0).
-	IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
+	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
@@ -475,7 +476,7 @@ test_L3_empty_seconds_uses_default_14400() {
 
 test_L4_negative_seconds_returns_not_stale() {
 	reset_mock_state
-	IDLE_INTERACTIVE_HANDOVER_SECONDS="-5" \
+	AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS="-5" \
 	AIDEVOPS_INTERACTIVE_PR_HANDOVER_MODE=enforce \
 		_interactive_pr_is_stale "100" "owner/repo"
 	local rc=$?
