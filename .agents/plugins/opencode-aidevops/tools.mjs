@@ -143,7 +143,7 @@ function createMemoryTool(scriptsDir, run) {
 
       if (action === "recall") {
         const query = args.query.trim();
-        const limit = String(args.limit ?? "5").trim() || "5";
+        const limit = String(args.limit ?? "").trim() || "5";
         const cmd = `bash "${memoryHelper}" recall ${shellEscape(query)} --limit ${shellEscape(limit)}`;
         const result = run(cmd, 10000);
         return result || "No memories found for this query.";
