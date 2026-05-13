@@ -557,7 +557,7 @@ _process_single_ready_pr() {
 	local repo_slug="$1"
 	local pr_obj="$2"
 
-	local pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_labels
+	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_labels=""
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
 	# instead of \t. Bash read collapses consecutive IFS whitespace chars
