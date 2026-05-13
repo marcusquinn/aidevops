@@ -232,6 +232,44 @@ _gh_wrapper_args_have_label() {
 	return 1
 }
 
+# t3099: Internal — check if argv contains any label with the given prefix in
+# any --label arg. Supports comma-separated label lists (e.g.
+# --label "bug,status:available"). Used by gh_create_issue to avoid creating
+# origin-labelled issues with no lifecycle status while preserving caller-owned
+# status labels.
+# Returns 0 if a matching label is found, 1 otherwise.
+_gh_wrapper_args_have_label_prefix() {
+	local prefix="$1"
+	shift
+	while [[ $# -gt 0 ]]; do
+		local cur="$1"
+		local label_val=""
+		case "$cur" in
+		--label)
+			label_val="${2:-}"
+			[[ $# -gt 1 ]] && shift
+			;;
+		--label=*)
+			label_val="${cur#--label=}"
+			;;
+		esac
+		if [[ -n "$label_val" ]]; then
+			local _saved_ifs="$IFS"
+			IFS=','
+			local _label_part
+			for _label_part in $label_val; do
+				if [[ "$_label_part" == "${prefix}"* ]]; then
+					IFS="$_saved_ifs"
+					return 0
+				fi
+			done
+			IFS="$_saved_ifs"
+		fi
+		shift
+	done
+	return 1
+}
+
 # t3088: Internal — check if argv already contains any origin:* label.
 # Defence-in-depth for gh_create_issue / gh_create_pr session-origin self-injection:
 # when a caller has explicitly passed an origin label (e.g. parent-task-helper.sh

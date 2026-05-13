@@ -30,6 +30,12 @@
 
 set -uo pipefail
 
+# Keep the gh_issue_list-backed reconciler fixture on the mocked GraphQL path.
+# Developer shells may export REST-first read mode; that bypasses this test's
+# minimal `gh issue list` stub and makes the invariant rows appear empty.
+unset AIDEVOPS_GH_REST_FIRST_READS
+unset AIDEVOPS_GH_FORCE_REST_READS
+
 TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_RED=$'\033[0;31m'
 TEST_GREEN=$'\033[0;32m'
