@@ -86,9 +86,12 @@ function getMemoryArgsError(args) {
  * @returns {object} Tool definition
  */
 function createAidevopsTool(run) {
-  return {
+  return tool({
     description:
       'Run aidevops CLI commands (status, repos, features, secret, etc.). Pass command as string e.g. "status", "repos", "features"',
+    args: {
+      command: z.string().describe('aidevops command and arguments, e.g. "status" or "repos"'),
+    },
     async execute(args) {
       const rawCmd = String(args.command || args);
       if (!isSafeCommand(rawCmd)) {
@@ -98,7 +101,7 @@ function createAidevopsTool(run) {
       const result = run(cmd, 15000);
       return result || `Command completed: ${cmd}`;
     },
-  };
+  });
 }
 
 /**
@@ -174,10 +177,14 @@ function createPreEditCheckTool(scriptsDir) {
     3: "WARNING — proceed with caution.",
   };
 
-  return {
+  return tool({
     description:
       'Run the pre-edit git safety check before modifying files. Returns exit code and guidance. Args: task (optional string for loop mode)',
+    args: {
+      task: z.string().optional().describe('Optional task description for loop-mode worktree guidance'),
+    },
     async execute(args) {
+      args = args && typeof args === "object" ? args : {};
       const script = join(scriptsDir, "pre-edit-check.sh");
       if (!existsSync(script)) {
         return "pre-edit-check.sh not found — cannot verify git safety";
@@ -198,7 +205,7 @@ function createPreEditCheckTool(scriptsDir) {
         return `Pre-edit check exit ${code}: ${PRE_EDIT_GUIDANCE[code] || "Unknown"}\n${cmdOutput.trim()}`;
       }
     },
-  };
+  });
 }
 
 /**
