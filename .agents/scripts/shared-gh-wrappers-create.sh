@@ -173,6 +173,19 @@ _gh_ci_prepare_todo_labels() {
 	return 0
 }
 
+# t3099: Prepare the default issue lifecycle label. gh_create_issue already
+# injects an origin label when absent; this companion default prevents newly
+# created origin-labelled issues from entering the reconciler's triage-missing
+# bucket when callers also omit tier/auto-dispatch metadata.
+_GH_CI_STATUS_LABEL_ARGS=()
+_gh_ci_prepare_status_label() {
+	_GH_CI_STATUS_LABEL_ARGS=()
+	if ! _gh_wrapper_args_have_label_prefix "status:" "$@"; then
+		_GH_CI_STATUS_LABEL_ARGS=(--label "status:available")
+	fi
+	return 0
+}
+
 gh_create_issue() {
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
@@ -214,15 +227,7 @@ gh_create_issue() {
 		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
 	fi
 
-	# t3099: Always give newly-created issues a lifecycle status unless the
-	# caller already supplied one. gh_create_issue already injects origin labels;
-	# without this companion status label an interactive-origin issue can sit in
-	# the label-invariant reconciler's triage-missing bucket forever when the
-	# caller also omits tier:auto-dispatch metadata.
-	local -a _status_label_args=()
-	if ! _gh_wrapper_args_have_label_prefix "status:" "$@"; then
-		_status_label_args=(--label "status:available")
-	fi
+	_gh_ci_prepare_status_label "$@"
 
 	# Build command arrays safely — avoids empty-arg injection from
 	# "${arr[@]+...}" on empty arrays when no TODO task ID is present and/or
@@ -230,9 +235,9 @@ gh_create_issue() {
 	# _issue_cmd: full gh invocation; _rest_args: same flags for REST fallback.
 	local -a _issue_cmd=(gh issue create "$@")
 	local -a _rest_args=("$@")
-	if [[ ${#_status_label_args[@]} -gt 0 ]]; then
-		_issue_cmd+=("${_status_label_args[@]}")
-		_rest_args+=("${_status_label_args[@]}")
+	if [[ ${#_GH_CI_STATUS_LABEL_ARGS[@]} -gt 0 ]]; then
+		_issue_cmd+=("${_GH_CI_STATUS_LABEL_ARGS[@]}")
+		_rest_args+=("${_GH_CI_STATUS_LABEL_ARGS[@]}")
 	fi
 	if [[ ${#_todo_label_args[@]} -gt 0 ]]; then
 		_issue_cmd+=("${_todo_label_args[@]}")
