@@ -1330,8 +1330,15 @@ _cmd_security() {
 		echo ""
 		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" scan || true
 		;;
-	scan | scan-secrets | scan-pth | scan-deps | dismiss)
+	scan | scan-secrets | scan-pth | scan-deps)
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
+		;;
+	dismiss)
+		if [[ "${2:-}" == "tanstack-minishaihulud-2026-05" ]]; then
+			_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" dismiss
+		else
+			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
+		fi
 		;;
 	hygiene)
 		shift
@@ -1346,6 +1353,8 @@ _cmd_security() {
 		_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
 		echo ""
 		_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" startup-check || true
+		echo ""
+		_dispatch_helper "supply-chain-advisory-helper.sh" "supply-chain-advisory-helper.sh" startup-check || true
 		;;
 	supply-chain)
 		shift || true
