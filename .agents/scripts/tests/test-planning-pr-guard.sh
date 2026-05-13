@@ -28,9 +28,9 @@
 #   1. Planning-only PR (For/Ref only, no Closes) → proof-log skipped
 #   2. Implementation PR (Closes #NNN) → proof-log proceeds
 #   3. Mixed PR (Closes + For/Ref) → proof-log proceeds (closing signal wins)
-#   4. No references at all → proof-log proceeds (fallback behavior)
+#   4. No references at all → proof-log skipped (metadata-only title)
 #   5. Title-fallback: For/Ref issue in list → title-fallback skipped
-#   6. Title-fallback: issue NOT in For/Ref list → title-fallback proceeds
+#   6. Title-fallback: issue NOT in For/Ref list → title-fallback skipped
 #
 # Strategy: test the decision logic extracted from issue-sync.yml inline
 # bash. The workflow is CI-only; these tests validate the branching
@@ -85,6 +85,13 @@ header() {
 should_skip_prooflog() {
 	local linked_issues="$1"
 	local for_ref_issues="$2"
+	local task_line="${3:-}"
+	if [[ -z "${linked_issues:-}" ]]; then
+		return 0  # skip (no explicit closing intent)
+	fi
+	if echo "$task_line" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+		return 0  # skip (blocked task)
+	fi
 	if [[ -z "${linked_issues:-}" ]] && [[ -n "${for_ref_issues:-}" ]]; then
 		return 0  # skip (planning-only)
 	fi
@@ -116,9 +123,16 @@ fi
 
 # Test 4: No references at all — fallback behavior
 if should_skip_prooflog "" ""; then
-	fail "4. No references → should proceed (fallback) but skipped"
+	pass "4. No references → proof-log skipped (metadata-only title)"
 else
-	pass "4. No references → proof-log proceeds (fallback)"
+	fail "4. No references → should skip metadata-only title but proceeded"
+fi
+
+# Test 4b: Explicit Closes but TODO task remains blocked
+if should_skip_prooflog "19778" "" "- [ ] t900 blocked task tier:standard blocked-by:t899"; then
+	pass "4b. Explicit close + blocked-by TODO marker → proof-log skipped"
+else
+	fail "4b. Explicit close + blocked-by TODO marker → should skip but proceeded"
 fi
 
 # -------------------------------------------------------------------
@@ -134,6 +148,9 @@ fi
 should_skip_title_fallback() {
 	local found="$1"
 	local for_ref_issues="$2"
+	if [[ -n "$found" ]]; then
+		return 0  # skip: title-only fallback is metadata, not completion intent
+	fi
 	if [[ " $for_ref_issues " == *" $found "* ]]; then
 		return 0  # skip
 	fi
@@ -151,16 +168,16 @@ fi
 
 # Test 6: Found issue NOT in For/Ref list → proceed
 if should_skip_title_fallback "19999" "19778 19779 19780"; then
-	fail "6. Found issue not in For/Ref list → should proceed but skipped"
+	pass "6. Found issue not in For/Ref list → title-fallback skipped (metadata-only)"
 else
-	pass "6. Found issue not in For/Ref list → title-fallback proceeds"
+	fail "6. Found issue not in For/Ref list → should skip metadata-only fallback"
 fi
 
 # Test 7: Empty For/Ref list → proceed (no planning references)
 if should_skip_title_fallback "19778" ""; then
-	fail "7. Empty For/Ref list → should proceed but skipped"
+	pass "7. Empty For/Ref list → title-fallback skipped (metadata-only)"
 else
-	pass "7. Empty For/Ref list → title-fallback proceeds"
+	fail "7. Empty For/Ref list → should skip metadata-only fallback"
 fi
 
 # -------------------------------------------------------------------
