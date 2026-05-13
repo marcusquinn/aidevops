@@ -196,11 +196,7 @@ gh_create_issue() {
 		return 1
 	fi
 
-	# t3088: defence-in-depth — only auto-inject the session origin label when
-	# the caller has NOT already specified one. Prevents the dual-origin-label
-	# bug (t2200 violation) where a caller's --label "origin:X" plus the
-	# wrapper's --label "$session_origin_label" produces two distinct origin
-	# labels on the resulting issue. Mirrors gh_create_pr (canonical failure: PR #21825).
+	# t3088: inject session origin only when the caller has not supplied one.
 	local -a _origin_label_args=()
 	if ! _gh_wrapper_args_have_origin_label "$@"; then
 		local origin_label
@@ -229,10 +225,7 @@ gh_create_issue() {
 
 	_gh_ci_prepare_status_label "$@"
 
-	# Build command arrays safely — avoids empty-arg injection from
-	# "${arr[@]+...}" on empty arrays when no TODO task ID is present and/or
-	# the caller already provided an origin label (GH#22056, mirrors PR #22043).
-	# _issue_cmd: full gh invocation; _rest_args: same flags for REST fallback.
+	# Build command arrays safely; avoid empty-arg injection (GH#22056).
 	local -a _issue_cmd=(gh issue create "$@")
 	local -a _rest_args=("$@")
 	if [[ ${#_GH_CI_STATUS_LABEL_ARGS[@]} -gt 0 ]]; then
@@ -248,20 +241,11 @@ gh_create_issue() {
 		_rest_args+=("${_origin_label_args[@]}")
 	fi
 
-	# t2028: auto-assign to the current user when the session is interactive
-	# and the caller did not pass an explicit --assignee. Reaches parity with
-	# the t1970 auto-assign already applied on the claim-task-id.sh path so
-	# the maintainer gate's assignee check passes on first PR open for
-	# interactively-created issues.
-	# t2406: skip self-assignment when auto-dispatch label is present (t2157).
-	# The origin:interactive label is still applied (t2200 — origin and
-	# assignment are independent axes).
+	# t2028/t2406: auto-assign interactive issues unless auto-dispatch is present.
 	local issue_output rc
 	if ! _gh_wrapper_args_have_assignee "$@"; then
 		if _gh_wrapper_args_have_label "auto-dispatch" "$@"; then
-			# t2157/t2406: auto-dispatch means "let a worker handle this" —
-			# skip self-assignment. Mirrors issue-sync-helper.sh
-			# _push_auto_assign_interactive() skip logic.
+			# t2157/t2406: auto-dispatch means worker-owned; skip self-assignment.
 			print_info "[INFO] auto-dispatch label present — skipping self-assignment per t2157"
 		else
 			local auto_assignee
