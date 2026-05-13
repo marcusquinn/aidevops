@@ -9,6 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 REPO_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit
 ROUTINE_HELPER="${REPO_SCRIPTS_DIR}/routine-helper.sh"
 
+# shellcheck source=../shared-constants.sh
+source "${REPO_SCRIPTS_DIR}/shared-constants.sh"
+
 TESTS_RUN=0
 TESTS_FAILED=0
 
@@ -32,20 +35,29 @@ print_result() {
 }
 
 run_install_systemd() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
 	local schedule="$1"
 	local tmp_home=""
 	tmp_home=$(mktemp -d)
+	push_cleanup "rm -rf \"${tmp_home}\""
 
 	local output=""
-	output=$(HOME="$tmp_home" "$ROUTINE_HELPER" install-systemd \
+	local rc=0
+	if output=$(HOME="$tmp_home" "$ROUTINE_HELPER" install-systemd \
 		--name test \
 		--schedule "$schedule" \
 		--dir "$tmp_home" \
-		--prompt 'test prompt' 2>&1)
+		--prompt 'test prompt' 2>&1); then
+		rc=0
+	else
+		rc=$?
+	fi
 
 	rm -rf "$tmp_home"
+	tmp_home=""
 	printf '%s' "$output"
-	return 0
+	return "$rc"
 }
 
 test_wildcard_weekday_omits_prefix() {
