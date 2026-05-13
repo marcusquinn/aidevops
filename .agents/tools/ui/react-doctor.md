@@ -25,7 +25,7 @@ tools:
 - **Default posture**: advisory-first. Treat findings as review signals until the project baseline, false positives, and suppressions are triaged.
 - **Local scans**: prefer staged or diff-limited scans during implementation so feedback matches the change under review.
 - **CI scans**: pin React Doctor versions and action refs; use annotations/comments before enforcing failures.
-- **Tool scope**: read-only advisory agent; implementation edits stay with the primary worker after manual triage.
+- **Tool scope**: read-only advisory agent; `write`/`edit` stay disabled because React Doctor should inspect findings without changing project files. Implementation edits stay with the primary worker after manual triage.
 
 <!-- AI-CONTEXT-END -->
 
