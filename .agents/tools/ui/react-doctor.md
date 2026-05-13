@@ -25,6 +25,7 @@ tools:
 - **Default posture**: advisory-first. Treat findings as review signals until the project baseline, false positives, and suppressions are triaged.
 - **Local scans**: prefer staged or diff-limited scans during implementation so feedback matches the change under review.
 - **CI scans**: pin React Doctor versions and action refs; use annotations/comments before enforcing failures.
+- **Tool scope**: read-only advisory agent; implementation edits stay with the primary worker after manual triage.
 
 <!-- AI-CONTEXT-END -->
 
@@ -37,13 +38,14 @@ Do not run it for non-React projects, docs-only changes, or framework code where
 ## Local Workflow
 
 - Use staged or diff mode when available so the scan focuses on the current change instead of historical project debt.
+- There is no repo-global aidevops wrapper for React Doctor. Use the project-pinned command when available, for example `npm run react-doctor -- --staged`, or the equivalent package-manager script documented by the target project.
 - Keep the normal project gates first: typecheck, lint, tests, and browser verification still own correctness for the implemented fix.
 - Review findings manually before editing. Do not apply automated suggestions verbatim.
 - Capture unrelated baseline findings as follow-up tasks instead of expanding the PR scope.
 
 ## CI Workflow
 
-- Pin the React Doctor CLI or GitHub Action version in CI. Avoid floating tags and malformed action refs such as missing owner/repo, missing `@version`, or shell commands embedded where an action ref is expected.
+- Pin the React Doctor CLI or GitHub Action version in CI, preferring full commit SHAs for actions over floating tags. Keep action references as static `owner/repo@sha` strings, and avoid `eval` or dynamically interpolated shell commands; build arguments with bash arrays instead.
 - Start CI usage as advisory annotations or PR comments so teams can evaluate signal quality without blocking unrelated work.
 - Do not make React Doctor a hard required gate until baseline findings are triaged, intentional suppressions are documented, and the team has verified the check is stable on representative PRs.
 - If enabling a blocking gate later, scope it to changed files or new findings where possible.
