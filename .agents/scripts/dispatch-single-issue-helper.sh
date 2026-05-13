@@ -707,7 +707,7 @@ _dsi_wait_for_worker_readiness() {
 
 	while [[ "$attempts" -le "$max_attempts" ]]; do
 		if [[ -s "$runtime_log" ]] &&
-			(grep -Fq "worker_started" "$runtime_log" 2>/dev/null || grep -Fq "worker_start session=${session_key}" "$runtime_log" 2>/dev/null); then
+			grep -Fq -e "worker_started" -e "worker_start session=${session_key}" "$runtime_log" 2>/dev/null; then
 			return 0
 		fi
 
