@@ -168,6 +168,14 @@ has_tier_label() {
 	return $?
 }
 
+# Normalize gh issue list output to a single compact JSON array.
+# Args: $1 = raw gh issue list JSON output
+normalize_issues_json() {
+	local raw_json="$1"
+	printf '%s' "$raw_json" | jq -c -s 'map(select(type == "array")) | add // []'
+	return $?
+}
+
 # Apply labels to a single issue. Purely additive — never removes labels.
 # Args: $1=repo $2=issue_number $3=add_tier (1=add tier:standard, 0=skip)
 apply_labels() {
@@ -199,9 +207,10 @@ process_repo() {
 		--limit 200 \
 		--search "$search_query" \
 		--json number,title,labels 2>/dev/null) || issues_json="[]"
+	issues_json=$(normalize_issues_json "$issues_json") || issues_json="[]"
 
 	local count
-	count=$(printf '%s' "$issues_json" | jq 'length')
+	count=$(printf '%s' "$issues_json" | jq -r 'length')
 
 	if [[ "$count" -eq 0 ]]; then
 		[[ "$JSON_MODE" -eq 0 ]] && printf '  No candidates found.\n'
