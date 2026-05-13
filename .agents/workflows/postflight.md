@@ -101,8 +101,11 @@ gh release delete v{VERSION} --yes && git tag -d v{VERSION} && git push origin -
 # Option C: Hotfix release from a safe linked worktree
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION}.1 --base v{VERSION}
 # Critical: cd into the sibling worktree path printed by the helper before editing;
-# otherwise commits land in the canonical checkout and can disrupt active agents.
-git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
+# otherwise commits land in the canonical checkout, which can corrupt main state
+# or disrupt active agents that depend on their own linked worktrees.
+# Example after changing into that linked worktree: stage the intended files first,
+# because `git commit -m` without staging can create an empty or incomplete commit.
+# git add <changed-files> && git commit -m "fix: resolve critical issue" && ./.agents/scripts/version-manager.sh release patch
 ```
 
 Post-rollback: `gh run list --limit=5 && .agents/scripts/linters-local.sh`
