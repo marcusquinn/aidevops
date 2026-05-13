@@ -165,7 +165,7 @@ test_approval_helper_still_guarded() {
 test_worktree_command_dispatch() {
 	_info "Test 4: aidevops.sh exposes worktree helper through stable CLI"
 
-	if grep -q 'worktree | wt).*worktree-helper.sh' "${AIDEVOPS_SH}"; then
+	if grep -qE 'worktree[[:space:]]*\|[[:space:]]*wt\).*worktree-helper\.sh' "${AIDEVOPS_SH}"; then
 		_pass "aidevops worktree dispatches to worktree-helper.sh"
 	else
 		_fail "aidevops.sh does not expose the worktree helper via aidevops worktree"

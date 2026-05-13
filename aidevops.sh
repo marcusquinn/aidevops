@@ -831,7 +831,7 @@ _help_commands() {
 	echo "  upgrade            Alias for update"
 	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
 	echo "  launch-worker      Manually launch headless workers for GitHub issues"
-	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean)"
+	echo "  worktree <cmd>     Manage safe linked worktrees (add/list/remove/status/switch/clean) — alias: wt"
 	echo "  auto-update <cmd>  Manage automatic update polling (enable/disable/status)"
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
