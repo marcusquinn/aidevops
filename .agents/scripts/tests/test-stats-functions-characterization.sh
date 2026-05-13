@@ -268,6 +268,28 @@ test_validate_repo_slug() {
 }
 
 #######################################
+# Test 2b: _resolve_current_gh_login_or_fallback rejects fallback identities
+# that could be parsed as flags when reused in CLI arguments.
+#######################################
+test_resolve_current_gh_login_rejects_leading_hyphen_fallback() {
+	gh() {
+		return 1
+	}
+
+	whoami() {
+		printf '%s' "-runner"
+		return 0
+	}
+
+	local output
+	output=$(_resolve_current_gh_login_or_fallback 2>/dev/null)
+	assert_equals "_resolve_current_gh_login_or_fallback rejects leading hyphen fallback" "unknown-runner" "$output"
+
+	unset -f gh whoami
+	return 0
+}
+
+#######################################
 # Test 3: _persist_role_cache -- writes role to a deterministic file path.
 # Signature: _persist_role_cache runner_user repo_slug role
 # Verify the file is created with expected content in the sandbox.
@@ -357,6 +379,7 @@ main() {
 
 	test_source_and_function_existence
 	test_validate_repo_slug
+	test_resolve_current_gh_login_rejects_leading_hyphen_fallback
 	test_persist_role_cache
 	test_sourcing_idempotency
 	test_sweep_state_round_trip
