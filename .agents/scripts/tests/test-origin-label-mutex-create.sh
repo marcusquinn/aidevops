@@ -166,6 +166,25 @@ count_origin_labels_in_log() {
 	printf '%d' "$count"
 }
 
+count_status_labels_in_log() {
+	local last
+	last=$(tail -1 "${GH_RECORD_FILE}" 2>/dev/null || true)
+	[[ -z "$last" ]] && {
+		printf '0'
+		return 0
+	}
+	local normalised="${last//,/ }"
+	local count=0
+	# shellcheck disable=SC2206
+	local tokens=($normalised)
+	local tok
+	for tok in "${tokens[@]}"; do
+		[[ "$tok" == status:* ]] && count=$((count + 1))
+	done
+	printf '%d' "$count"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Layer A: _gh_wrapper_args_have_origin_label
 # ---------------------------------------------------------------------------
@@ -460,6 +479,35 @@ else
 	print_result "B'6: gh_create_issue todo-only filter passes no empty argv element" 0
 fi
 unset GH_ARGV_RECORD_FILE
+
+# B'7: no caller status → wrapper injects status:available with origin.
+# Regression guard for pulse hygiene anomalies where gh_create_issue could
+# create origin:interactive issues missing tier/auto-dispatch/status metadata.
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" >/dev/null 2>&1
+status_n=$(count_status_labels_in_log)
+last=$(tail -1 "$GH_RECORD_FILE")
+if [[ "$status_n" == "1" && "$last" == *"status:available"* && "$last" == *"origin:interactive"* ]]; then
+	print_result "B'7: gh_create_issue adds status:available with injected origin" 0
+else
+	print_result "B'7: gh_create_issue adds status:available with injected origin" 1 \
+		"status_count=$status_n line: $last"
+fi
+
+# B'8: caller status wins — wrapper must not concatenate an extra status label.
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "advisory" --body "body" \
+	--label "status:blocked,origin:interactive" >/dev/null 2>&1
+status_n=$(count_status_labels_in_log)
+last=$(tail -1 "$GH_RECORD_FILE")
+if [[ "$status_n" == "1" && "$last" == *"status:blocked"* && "$last" != *"status:available"* ]]; then
+	print_result "B'8: gh_create_issue preserves caller status without concatenation" 0
+else
+	print_result "B'8: gh_create_issue preserves caller status without concatenation" 1 \
+		"status_count=$status_n line: $last"
+fi
 
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh
