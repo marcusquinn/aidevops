@@ -282,9 +282,11 @@ _interactive_pr_is_stale() {
 	fi
 
 	local head_ref_oid=""
-	head_ref_oid="$precomputed_head_ref_oid"
-	if [[ -z "$head_ref_oid" ]]; then
-		head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
+	if [[ -z "$activity_at" ]]; then
+		head_ref_oid="$precomputed_head_ref_oid"
+		if [[ -z "$head_ref_oid" ]]; then
+			head_ref_oid=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // empty')
+		fi
 	fi
 	if [[ -n "$head_ref_oid" ]]; then
 		if [[ -z "$activity_at" && -n "$precomputed_head_commit_at" ]]; then
@@ -298,9 +300,11 @@ _interactive_pr_is_stale() {
 		fi
 	fi
 	[[ -z "$activity_at" ]] && return 1
-	updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
-		updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
-		return 1
+	if [[ "$activity_at" != "$updated_at" ]]; then
+		updated_epoch=$(date -d "$activity_at" +%s 2>/dev/null) || \
+			updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$activity_at" +%s 2>/dev/null) || \
+			return 1
+	fi
 	pr_age_secs=$(( now_epoch - updated_epoch ))
 	[[ "$pr_age_secs" -lt "$threshold_secs" ]] && return 1
 
