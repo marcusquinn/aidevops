@@ -71,6 +71,14 @@ else
 	pass "blocked-by marker vetoes otherwise explicit PR evidence"
 fi
 
+historical_note_task='- [ ] t9004 fixed implementation pr:#79 tier:standard
+  - Historical note: earlier attempt was blocked-by:t9003 before the dependency landed.'
+if _has_evidence "$historical_note_task" "t9004" "owner/repo"; then
+	pass "blocked-by mention in task notes does not veto current task line"
+else
+	fail "blocked-by mention in task notes should not veto current task line"
+fi
+
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"
 	exit 0

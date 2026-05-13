@@ -60,7 +60,10 @@ _has_evidence() {
 
 _has_unresolved_blocker() {
 	local text="$1"
-	echo "$text" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
+	local candidate
+	candidate=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[[ x-]\] ' | head -1 || true)
+	[[ -z "$candidate" ]] && candidate="$text"
+	echo "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
 	return 1
 }
 
