@@ -632,41 +632,19 @@ jobs:
           REPO: ${{ github.repository }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # If no explicit Closes #NNN in PR body, search for the issue by task ID in title.
-          # t2137: skip title-fallback matches on parent-task issues. Explicit
-          # Closes/Fixes/Resolves is respected (either a legitimate terminal-phase
-          # close or a maintainer override); title-matching alone is too weak a
-          # signal to flip a parent's status:done — it fires on every planning PR
-          # whose title shares the parent's task ID prefix (t2046 For/Ref
-          # convention makes this the common case).
+          # GH#23516: title-only task IDs are metadata, not completion intent.
+          # Only explicit Closes/Fixes/Resolves links may drive status:done.
+          # If no explicit closing issue exists, leave found_issues empty so a
+          # metadata-only title like `tNNN: sync blocker metadata` cannot close
+          # the matching task issue or add status:done.
           if [[ -z "$LINKED_ISSUES" ]]; then
-            FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
-              | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty')
-            if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
-              # t2137: probe parent-task label before accepting the fallback match.
-              FOUND_LABELS=$(gh api "repos/${REPO}/issues/${FOUND}" --jq '[.labels[].name] | join(" ")' 2>/dev/null || echo "")
-              if echo "$FOUND_LABELS" | grep -qw "parent-task"; then
-                echo "found_issues=" >> "$GITHUB_OUTPUT"
-                echo "Found issue #$FOUND for task $TASK_ID is a parent-task — skipping title-fallback hygiene (use explicit Closes #NNN on the terminal-phase PR to close a parent)"
-              # t2219: skip title-fallback when the issue was explicitly referenced
-              # via 'For #NNN' or 'Ref #NNN' in the PR body. The t2046 planning
-              # convention says these references mean "this PR does NOT close that
-              # issue" — extend the same semantics to status:done auto-application.
-              elif [[ " $FOR_REF_ISSUES " == *" $FOUND "* ]]; then
-                echo "found_issues=" >> "$GITHUB_OUTPUT"
-                echo "Found issue #$FOUND for task $TASK_ID is referenced via For/Ref in PR body — skipping title-fallback hygiene (t2219)"
-              else
-                echo "found_issues=$FOUND" >> "$GITHUB_OUTPUT"
-                echo "Found issue #$FOUND for task $TASK_ID"
-              fi
-            else
-              echo "found_issues=" >> "$GITHUB_OUTPUT"
-              echo "No issue found for task $TASK_ID"
-            fi
-          else
             echo "found_issues=" >> "$GITHUB_OUTPUT"
-            echo "Using linked issues from PR body: $LINKED_ISSUES"
+            echo "No explicit closing issue for task $TASK_ID — skipping title-fallback hygiene (GH#23516)"
+            exit 0
           fi
+
+          echo "found_issues=" >> "$GITHUB_OUTPUT"
+          echo "Using explicit linked issues from PR body: $LINKED_ISSUES"
 
       - name: Apply closing hygiene to linked issues
         if: steps.extract.outputs.has_work == 'true'
@@ -726,6 +704,12 @@ jobs:
 
             if [[ "$IS_REJECTED" == "true" ]]; then
               echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
+            fi
+
+            ISSUE_BODY=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.body // ""' 2>/dev/null || echo "")
+            if echo "$ISSUE_BODY" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+              echo "Issue #$ISSUE_NUM has unresolved blocked-by marker — skipping closing hygiene (GH#23516)"
+              continue
             fi
 
             # Post closing comment if none exists from this PR
@@ -1067,6 +1051,17 @@ jobs:
           if ! grep -qE "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md; then
             echo "Task $TASK_ID not found as unchecked in TODO.md — skipping proof-log"
             # May already be [x], or may not exist in this repo's TODO.md
+            exit 0
+          fi
+
+          if [[ -z "${LINKED_ISSUES:-}" ]]; then
+            echo "::notice::PR title task ID without explicit closing issue is metadata only — skipping TODO.md proof-log (GH#23516)"
+            exit 0
+          fi
+
+          TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md | head -1 || true)
+          if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+            echo "::notice::Task $TASK_ID has unresolved blocked-by marker — skipping TODO.md proof-log (GH#23516)"
             exit 0
           fi
 
