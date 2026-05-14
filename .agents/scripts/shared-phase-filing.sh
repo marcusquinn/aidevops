@@ -722,8 +722,8 @@ _Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
 }
 
 #######################################
-# Read parent issue metadata in one jq pass and ensure it is still open before
-# it can drive next-phase auto-filing.
+# Read parent issue metadata and ensure it is still open before it can drive
+# next-phase auto-filing.
 #
 # Args: $1=parent_issue, $2=repo_slug
 # Globals: _PHASE_PARENT_BODY, _PHASE_PARENT_TITLE
@@ -732,17 +732,20 @@ _Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
 _read_open_phase_parent_fields() {
 	local parent_issue="$1"
 	local repo_slug="$2"
-	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
-	local parent_state parent_labels _parent_assignments
+	local parent_api
+	local parent_state parent_labels _parent_json
+	printf -v parent_api 'repos/%s/issues/%s' "$repo_slug" "$parent_issue"
 
 	_PHASE_PARENT_BODY=""
 	_PHASE_PARENT_TITLE=""
-	_parent_assignments=$(gh api "$parent_api" \
-		--jq '@sh "parent_state=\(.state // \"\") parent_labels=\([(.labels // [])[].name] | join(\",\")) _PHASE_PARENT_TITLE=\(.title // \"\") _PHASE_PARENT_BODY=\(.body // \"\")"' 2>/dev/null) || _parent_assignments=""
-	[[ -n "$_parent_assignments" ]] || return 0
+	_parent_json=$(gh api "$parent_api" \
+		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // ""), labels: [(.labels // [])[].name]}' 2>/dev/null) || _parent_json=""
+	[[ -n "$_parent_json" ]] || return 0
 
-	# jq @sh emits safely quoted shell assignments for GitHub-controlled text.
-	eval "$_parent_assignments"
+	parent_state=$(printf '%s' "$_parent_json" | jq -r '.state // ""')
+	parent_labels=$(printf '%s' "$_parent_json" | jq -r '(.labels // [])[]' | paste -sd, -)
+	_PHASE_PARENT_TITLE=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
+	_PHASE_PARENT_BODY=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
 	if [[ "$parent_state" != "open" ]]; then
 		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"
 		_PHASE_PARENT_BODY=""
