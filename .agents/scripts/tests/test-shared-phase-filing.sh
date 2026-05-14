@@ -639,12 +639,105 @@ fi
 _phase_release_filing_lock "$lock_three"
 
 # =============================================================================
-# Test 18: deterministic-title search reuses an already-open phase child
+# Test 18: closed parent issue cannot drive phase auto-filing (GH#23526)
 # =============================================================================
-printf '%s--- Test 18: deterministic-title open issue dedup ---%s\n' "$TEST_BLUE" "$TEST_NC"
+printf '%s--- Test 18: closed parent blocks auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+export AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=1
+phase_parent_state="closed"
+phase_child_create_log="${TMP}/phase-child-created.log"
+: > "$phase_child_create_log"
+
+_find_parent_task_for_child() {
+	local child_issue="$1"
+	local repo_slug="$2"
+	: "$child_issue" "$repo_slug"
+	printf '500'
+	return 0
+}
+
+_identify_merged_phase() {
+	local child_issue="$1"
+	local repo_slug="$2"
+	local phases="$3"
+	: "$child_issue" "$repo_slug" "$phases"
+	printf '1'
+	return 0
+}
+
+_create_or_reuse_phase_child_issue() {
+	local parent_issue="$1"
+	local parent_title="$2"
+	local phase_num="$3"
+	local phase_desc="$4"
+	local repo_slug="$5"
+	: "$parent_issue" "$parent_title" "$phase_num" "$phase_desc" "$repo_slug"
+	printf 'created\n' >>"$phase_child_create_log"
+	printf ''
+	return 0
+}
 
 gh() {
-	if [[ " $* " == *" issue list "* ]]; then
+	local args="$*"
+	if [[ " $args " == *" api repos/owner/repo/issues/500 "* ]]; then
+		local parent_body=$'## Phases\n\n- Phase 1 - Complete first phase [auto-fire:on-prior-merge] #123\n- Phase 2 - Second phase [auto-fire:on-prior-merge]'
+		jq -n --arg body "$parent_body" --arg state "$phase_parent_state" \
+			'{body: $body, title: "Parent", state: $state}'
+		return 0
+	fi
+	return 1
+}
+
+: > "$LOGFILE"
+auto_file_next_phase "123" "owner/repo"
+closed_parent_log=""
+[[ -f "$LOGFILE" ]] && closed_parent_log=$(cat "$LOGFILE")
+
+if [[ ! -s "$phase_child_create_log" ]]; then
+	pass "Closed parent does not create a phase child"
+else
+	fail "Closed parent should not create a phase child"
+fi
+
+if printf '%s' "$closed_parent_log" | grep -q "Parent #500: state is 'closed', not open — skip auto-file"; then
+	pass "Closed parent skip reason is logged"
+else
+	fail "Closed parent skip log missing" "Log: ${closed_parent_log}"
+fi
+
+# =============================================================================
+# Test 19: open parent issue still drives phase auto-filing (GH#23526)
+# =============================================================================
+printf '%s--- Test 19: open parent preserves auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+phase_parent_state="open"
+: > "$phase_child_create_log"
+: > "$LOGFILE"
+auto_file_next_phase "123" "owner/repo"
+open_parent_log=""
+[[ -f "$LOGFILE" ]] && open_parent_log=$(cat "$LOGFILE")
+open_parent_created_count=$(grep -c '^created$' "$phase_child_create_log" || true)
+
+if [[ "$open_parent_created_count" -eq 1 ]]; then
+	pass "Open parent creates a phase child"
+else
+	fail "Open parent should create a phase child" "created=${open_parent_created_count}"
+fi
+
+if printf '%s' "$open_parent_log" | grep -q "Filing Phase 2 ('Second phase') for parent #500"; then
+	pass "Open parent follows existing filing path"
+else
+	fail "Open parent filing log missing" "Log: ${open_parent_log}"
+fi
+
+# =============================================================================
+# Test 20: deterministic-title search reuses an already-open phase child
+# =============================================================================
+printf '%s--- Test 20: deterministic-title open issue dedup ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+gh() {
+	local args="$*"
+	if [[ " $args " == *" issue list "* ]]; then
 		printf '22636\tPhase 4 of #22616: Extract Shell Quality block\n'
 		printf '22637\tPhase 4 of #22616: Extract Shell Quality block\n'
 		printf '22638\tPhase 5 of #22616: Extract gh Command Discipline block\n'

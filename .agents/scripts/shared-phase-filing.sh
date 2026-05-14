@@ -732,8 +732,9 @@ _Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
 # Guards:
 #   1. Feature flag AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE must be 1
 #   2. Child issue must reference a parent-task issue
-#   3. Parent must have a ## Phases section
-#   4. Next phase must exist, be marked [auto-fire:on-prior-merge],
+#   3. Parent issue must still be open
+#   4. Parent must have a ## Phases section
+#   5. Next phase must exist, be marked [auto-fire:on-prior-merge],
 #      and not already have a child issue filed
 #
 # Args: $1=child_issue (just closed), $2=repo_slug
@@ -763,16 +764,21 @@ auto_file_next_phase() {
 	fi
 	_phase_log "Child #${child_issue}: found parent-task #${parent_issue}"
 
-	# Read parent issue body and title in a single API call
+	# Read parent issue state, body, and title in a single API call
 	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
-	local parent_body parent_title _parent_json
+	local parent_body parent_title parent_state _parent_json
 	_parent_json=$(gh api "$parent_api" \
-		--jq '{body: (.body // ""), title: (.title // "")}' 2>/dev/null) || _parent_json=""
+		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // "")}' 2>/dev/null) || _parent_json=""
 	[[ -n "$_parent_json" ]] || return 0
 	parent_body=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
 	parent_title=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
+	parent_state=$(printf '%s' "$_parent_json" | jq -r '.state // ""')
+	if [[ "$parent_state" != "open" ]]; then
+		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"
+		return 0
+	fi
 
-	# Guard 3: parse phases
+	# Guard 4: parse phases
 	local phases
 	phases=$(_parse_phases_section "$parent_body")
 	if [[ -z "$phases" ]]; then
