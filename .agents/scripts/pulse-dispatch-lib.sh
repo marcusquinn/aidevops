@@ -199,17 +199,52 @@ _dispatch_candidate_benign_block_reason() {
 }
 
 #######################################
-# Return the cycle-local benign block ledger path, creating a default when the
-# orchestrator has not provided one. The file is intentionally process-scoped so
-# repeated dispatch_max refill attempts in the same pulse skip candidates that
-# were already blocked by an active claim (GH#23541).
+# Start a cycle-local benign block ledger. Reinitializing the ledger for every
+# dispatch_max cycle prevents stale active-claim blocks from a long-running
+# pulse-wrapper process from suppressing later cycles after the claim clears.
+#
+# Stdout: file path
+# Returns: 0 always
+#######################################
+_dispatch_begin_benign_blocks_cycle() {
+	local ledger_file=""
+	if [[ -n "${AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE:-}" ]]; then
+		ledger_file="$AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE"
+	else
+		mkdir -p "${HOME}/.aidevops/logs" 2>/dev/null || true
+		ledger_file=$(mktemp "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.XXXXXX" 2>/dev/null || printf '%s\n' "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.$$.$RANDOM")
+	fi
+	mkdir -p "${ledger_file%/*}" 2>/dev/null || true
+	: >"$ledger_file" 2>/dev/null || true
+	_DISPATCH_BENIGN_BLOCKS_FILE="$ledger_file"
+	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
+	return 0
+}
+
+#######################################
+# Remove the cycle-local benign block ledger once the dispatch loop has read it.
+#
+# Returns: 0 always
+#######################################
+_dispatch_cleanup_benign_blocks_cycle() {
+	local ledger_file="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
+	if [[ -n "$ledger_file" ]]; then
+		rm -f "$ledger_file" 2>/dev/null || true
+	fi
+	_DISPATCH_BENIGN_BLOCKS_FILE=""
+	return 0
+}
+
+#######################################
+# Return the current cycle-local benign block ledger path, creating a default
+# when the orchestrator has not explicitly started a ledger.
 #
 # Stdout: file path
 # Returns: 0 always
 #######################################
 _dispatch_benign_blocks_file() {
 	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
-		_DISPATCH_BENIGN_BLOCKS_FILE="${AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE:-${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.$$}"
+		_dispatch_begin_benign_blocks_cycle >/dev/null
 	fi
 	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
 	return 0
