@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.41] - 2026-05-14
+
+### Fixed
+
+- avoid issue body blocker false positives (#23530)
+
 ## [3.15.40] - 2026-05-14
 
 ### Changed
