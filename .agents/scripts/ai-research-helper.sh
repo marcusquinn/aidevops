@@ -14,6 +14,11 @@
 #
 # Environment:
 #   ANTHROPIC_API_KEY — set directly, or resolved from gopass/credentials.sh
+#   OAuth pool — falls back to ~/.aidevops/oauth-pool.json when the three
+#                static sources above miss. Uses the first active/idle
+#                Anthropic account's access token as x-api-key (Anthropic
+#                accepts the OAuth access token in both `x-api-key` and
+#                `Authorization: Bearer` schemes on /v1/messages).
 #
 # Exit codes: 0=success (response on stdout), 1=error, 2=no API key
 
@@ -42,8 +47,57 @@ resolve_model_id() {
 }
 
 #######################################
+# Resolve a fresh, non-expired access token from the OAuth pool.
+# Reads ~/.aidevops/oauth-pool.json directly (no shelling to oauth-pool-helper)
+# so this stays callable from detached pulse contexts where the helper might
+# be missing or not on PATH.
+#
+# Honoured fields per pool account:
+#   .access          — access token string (used as x-api-key)
+#   .status          — must be "active" or "idle"
+#   .expires         — millisecond epoch; entries already past expiry are
+#                      skipped (Anthropic returns 401 anyway and refresh
+#                      requires the dedicated helper).
+#   .cooldownUntil   — millisecond epoch; entries still cooling down are skipped.
+#
+# Output: access token on stdout when a usable entry exists.
+# Returns: 0 if a token was emitted, 1 otherwise.
+#######################################
+resolve_oauth_pool_token() {
+	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+	[[ -f "$pool_file" ]] || return 1
+	command -v jq &>/dev/null || return 1
+
+	local now_ms
+	now_ms=$(date +%s%3N 2>/dev/null) || now_ms="0"
+	# date +%s%3N is GNU-only; fall back to seconds-only when unavailable.
+	[[ "$now_ms" =~ ^[0-9]+$ ]] || now_ms=0
+	if [[ "${#now_ms}" -lt 10 ]]; then
+		now_ms=$(($(date +%s) * 1000))
+	fi
+
+	local token
+	token=$(jq -r --argjson now "$now_ms" '
+		(.anthropic // [])
+		| map(select(
+			(.access // "") != ""
+			and ((.status // "") == "active" or (.status // "") == "idle")
+			and ((.expires // 0) > $now)
+			and ((.cooldownUntil // 0) <= $now)
+		))
+		| .[0].access // ""
+	' "$pool_file" 2>/dev/null) || return 1
+
+	if [[ -z "$token" || "$token" == "null" ]]; then
+		return 1
+	fi
+	printf '%s\n' "$token"
+	return 0
+}
+
+#######################################
 # Resolve Anthropic API key from available sources
-# Priority: env var > gopass > credentials.sh
+# Priority: env var > gopass > credentials.sh > OAuth pool
 # Output: API key on stdout
 # Returns: 0 if found, 1 if not
 #######################################
@@ -75,6 +129,16 @@ resolve_api_key() {
 		fi
 	fi
 
+	# 4. OAuth pool (managed aidevops Anthropic accounts).
+	# GH#23594: detached pulse contexts often have no static key but a
+	# healthy OAuth pool — fall back to it so fix-the-fixer-detector and
+	# other AI-judgement callers keep working.
+	local oauth_token
+	if oauth_token=$(resolve_oauth_pool_token); then
+		printf '%s\n' "$oauth_token"
+		return 0
+	fi
+
 	return 1
 }
 
@@ -94,7 +158,7 @@ call_anthropic() {
 
 	local api_key
 	api_key=$(resolve_api_key) || {
-		log_error "No Anthropic API key found (env, gopass, or credentials.sh)"
+		log_error "No Anthropic API key found (env, gopass, credentials.sh, or OAuth pool)"
 		return 2
 	}
 
@@ -209,4 +273,10 @@ main() {
 	return $?
 }
 
-main "$@"
+# Run main only when invoked as a script — allows tests and other helpers
+# to source this file and call resolve_api_key / resolve_oauth_pool_token
+# directly. Matches the pattern used by pulse-fix-the-fixer-detector.sh and
+# other helpers in this repo.
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
+	main "$@"
+fi
