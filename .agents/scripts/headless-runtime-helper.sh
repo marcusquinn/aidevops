@@ -1565,8 +1565,10 @@ cmd_run() {
 		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic
 		# HEADLESS/FULL_LOOP_HEADLESS markers are intentionally not required
 		# past the clean-env boundary.
-		export AIDEVOPS_SESSION_ORIGIN="worker"
-		export AIDEVOPS_HEADLESS="true"
+		AIDEVOPS_SESSION_ORIGIN="${AIDEVOPS_SESSION_ORIGIN:-worker}"
+		export AIDEVOPS_SESSION_ORIGIN
+		AIDEVOPS_HEADLESS="${AIDEVOPS_HEADLESS:-true}"
+		export AIDEVOPS_HEADLESS
 	fi
 
 	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"

@@ -484,7 +484,8 @@ _detect_explicit_session_type() {
 
 	if _gh_sig_env_truthy "${FULL_LOOP_HEADLESS:-}" ||
 		_gh_sig_env_truthy "${AIDEVOPS_HEADLESS:-}" ||
-		_gh_sig_env_truthy "${OPENCODE_HEADLESS:-}"; then
+		_gh_sig_env_truthy "${OPENCODE_HEADLESS:-}" ||
+		_gh_sig_env_truthy "${GITHUB_ACTIONS:-}"; then
 		echo "worker"
 		return 0
 	fi
