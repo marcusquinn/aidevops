@@ -1511,25 +1511,10 @@ _run_canary_test() {
 	local canary_output
 	canary_output=$(mktemp "${TMPDIR:-/tmp}/aidevops-canary.XXXXXX")
 
-	# t3559: the canary used to run with `--pure` and a bare config to validate
-	# provider/model health in isolation. On hosts where Anthropic auth is
-	# OAuth-only (no static ANTHROPIC_API_KEY), this silently broke every
-	# canary: `--pure` skips the opencode-aidevops plugin, but the plugin is
-	# the layer that rewrites OAuth requests to api.anthropic.com with the
-	# required Bearer header, anthropic-beta:oauth-2025-04-20, Claude Code
-	# system prompt, and billing header (provider-auth-request.mjs). Without
-	# the plugin the raw OAuth call gets HTTP 429 "rate_limit_error" (the
-	# server-side catch-all for unauthorized OAuth usage), opencode silently
-	# retries inside its provider client until CANARY_TIMEOUT_SECONDS, the
-	# canary returns failed, and dispatch_with_dedup blocks every issue.
-	# Resolution: keep the isolated XDG_CONFIG/DATA dirs (still gives us
-	# GH#22250 default_agent safety and clean state), but ADD the plugin
-	# reference into the isolated opencode.json so the plugin loads, AND set
-	# AIDEVOPS_HEADLESS=1 so the plugin's session-greeting hook and
-	# interactive TTSR paths short-circuit. The probe prompt is also changed
-	# from "Reply with exactly: CANARY_OK" (which modern Claude flags as
-	# prompt-injection-shaped and refuses) to a benign arithmetic question
-	# whose canonical one-word answer we can grep for.
+	# GH#23598: OAuth-only Anthropic canaries must exercise the same plugin
+	# auth path as workers. Keep isolated XDG state for GH#22250, but do not
+	# use `--pure`; load the aidevops plugin and suppress interactive hooks via
+	# AIDEVOPS_HEADLESS=1 below.
 	local canary_model="$requested_model"
 	if [[ -z "$canary_model" ]]; then
 		while IFS= read -r canary_model; do
@@ -1566,19 +1551,16 @@ _run_canary_test() {
 	# default_agent before the smoke prompt runs. A stale or subagent-only
 	# default agent should not block provider/model health checks (GH#22250).
 	#
-	# t3559: include the opencode-aidevops plugin reference in the isolated
-	# config so OAuth-based Anthropic auth works (see comment above). On
-	# hosts without the plugin (e.g. fresh OpenCode install on a workstation
-	# using only the static-key path), the file:// URL simply resolves to a
-	# missing-file warning at plugin-load time and the canary proceeds
-	# without it -- identical to the pre-t3559 behaviour for static-key auth.
+	# GH#23598: include the opencode-aidevops plugin when present so OAuth
+	# auth is transformed correctly. Static-key hosts without the plugin keep
+	# the previous bare-config behaviour.
 	local _canary_config_dir=""
 	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
 	mkdir -p "${_canary_config_dir}/opencode"
 	local _canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
 	if [[ -f "$_canary_plugin_path" ]]; then
-		# shellcheck disable=SC2016  # $schema is a JSON Schema convention key, not a shell var
-		printf '{"$schema":"https://opencode.ai/config.json","plugin":["file://%s"]}\n' "$_canary_plugin_path" \
+		jq -n --arg plugin_url "file://${_canary_plugin_path}" \
+			'{"$schema":"https://opencode.ai/config.json", plugin: [$plugin_url]}' \
 			>"${_canary_config_dir}/opencode/opencode.json"
 	else
 		printf '%s\n' "{\"\$schema\":\"https://opencode.ai/config.json\"}" \
@@ -1633,18 +1615,9 @@ _run_canary_test() {
 	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
 	# happy path; differs only when alternative-path fallback fired.
 	#
-	# t3559: AIDEVOPS_HEADLESS=1 tells the opencode-aidevops plugin to skip
-	# the session-greeting hook (proxy-lifecycle.mjs::isHeadless), TTSR
-	# interactive path, and other developer-facing prompt injections that
-	# would prevent the canary probe from getting a clean expected answer.
-	# `--pure` is no longer passed (see provider/plugin/auth rationale at
-	# the top of this function): with `--pure`, the plugin never loads and
-	# OAuth requests fail silently. The probe prompt is a benign one-word
-	# arithmetic question whose deterministic answer ("Four") cannot be
-	# mistaken for prompt injection by Anthropic's safety classifier.
-	# `--agent` is omitted so the resolved built-in default ("build" in
-	# OpenCode 1.14.x) is used without the GH#22250 stale-default-agent
-	# trap (the isolated XDG_CONFIG_HOME already mitigates that).
+	# GH#23598: AIDEVOPS_HEADLESS=1 prevents greeting/TTSR prompt injection,
+	# while the benign arithmetic probe avoids prompt-injection-shaped canary
+	# tokens. Omit --agent; isolated config already avoids stale defaults.
 	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
 		AIDEVOPS_HEADLESS=1 \
 		run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
@@ -1667,13 +1640,9 @@ _run_canary_test() {
 	# because the expected token can only appear if the model actually
 	# processed the prompt and generated a response.
 	#
-	# t3559: probe answer changed from "CANARY_OK" to "Four" — the older
-	# probe ("Reply with exactly: CANARY_OK") triggered Anthropic's prompt-
-	# injection refusal in modern Claude models, which then either declined
-	# to comply or echoed CANARY_OK in the refusal text, producing flaky
-	# results. The new probe is a benign arithmetic question. Grep is case-
-	# insensitive to tolerate "four" / "Four" / "FOUR" variants.
-	if grep -qi "\\bfour\\b" "$canary_output" 2>/dev/null; then
+	# GH#23598: match the benign probe answer case-insensitively with a
+	# portable word boundary rather than relying on GNU grep `\b` semantics.
+	if grep -Eiq '(^|[^[:alnum:]_])four([^[:alnum:]_]|$)' "$canary_output" 2>/dev/null; then
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
 		date +%s >"$cache_file"
