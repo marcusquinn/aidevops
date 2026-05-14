@@ -1002,6 +1002,17 @@ cmd_scan() {
 		return 1
 	fi
 
+	_scan_init_globals
+
+	local last_scan
+	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
+
+	if [[ -z "$last_scan" ]]; then
+		echo -e "${YELLOW}[contribution-watch] skipped — no previous scan found; run aidevops contribution-watch seed to enable${NC}"
+		_log_info "Scan skipped — no prior seed"
+		return 0
+	fi
+
 	_check_prerequisites || return 1
 
 	local username
@@ -1012,17 +1023,6 @@ cmd_scan() {
 
 	# Remove PID file on exit (normal, Ctrl+C, or SIGTERM)
 	trap 'rm -f "$PID_FILE"; trap - EXIT INT TERM' EXIT INT TERM
-
-	_scan_init_globals
-
-	local last_scan
-	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
-
-	if [[ -z "$last_scan" ]]; then
-		echo -e "${YELLOW}No previous scan found. Run 'seed' first.${NC}"
-		_log_warn "Scan attempted with no prior seed"
-		return 1
-	fi
 
 	_scan_maybe_auto_backfill
 	_log_info "Scan started (last_scan: ${last_scan})"

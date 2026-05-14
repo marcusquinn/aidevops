@@ -113,10 +113,8 @@ _release_lock() {
 cmd_tick() {
 	local config_path
 	if ! config_path=$(_find_config 2>&1); then
-		log_error "$_ERR_NO_CONFIG"
-		log_error "Create $_REPO_CONFIG or $_GLOBAL_CONFIG"
-		log_error "Template: aidevops email mailbox add"
-		return 1
+		log_info "skipped — no mailboxes configured; run aidevops email mailbox add to enable"
+		return 0
 	fi
 
 	_require_python3 || return 1

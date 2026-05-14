@@ -665,10 +665,13 @@ cmd_tick() {
 		esac
 	done
 
-	_require_jq || return 1
-
 	local knowledge_root
-	knowledge_root=$(_resolve_knowledge_root "$knowledge_root_override") || return 1
+	if ! knowledge_root=$(_resolve_knowledge_root "$knowledge_root_override" 2>/dev/null); then
+		print_info "tick: skipped — knowledge plane not initialized; run aidevops knowledge init repo to enable"
+		return 0
+	fi
+
+	_require_jq || return 1
 
 	local sources_dir="${knowledge_root}/sources"
 	if [[ ! -d "$sources_dir" ]]; then
