@@ -213,12 +213,15 @@ test_skip_on_session_active() {
 	cat >"${stamp_dir}/test-repo-123.json" <<EOF
 {"worktree": "${clone_dir}", "pid": $$, "issue": 123}
 EOF
+	local previous_worker_process_pattern="${WORKER_PROCESS_PATTERN:-}"
+	export WORKER_PROCESS_PATTERN=""
 
 	# Reset cadence
 	rm -f "$CANONICAL_MAINTENANCE_LAST_RUN"
 
 	true > "$LOGFILE"
 	_canonical_fast_forward "0"
+	export WORKER_PROCESS_PATTERN="$previous_worker_process_pattern"
 
 	if grep -q "active session" "$LOGFILE"; then
 		print_result "skip-on-session-active" 0
@@ -332,6 +335,63 @@ test_skip_not_on_main() {
 }
 
 # =============================================================================
+# Test 10: Worktree sweep runs helper from the target repo cwd
+# =============================================================================
+test_worktree_sweep_uses_repo_cwd() {
+	local clone_dir
+	clone_dir=$(_setup_test_repos)
+
+	local helper_path="${TEST_ROOT}/assert-repo-cwd-helper.sh"
+	cat >"$helper_path" <<'EOS'
+#!/usr/bin/env bash
+set -euo pipefail
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
+	printf 'Warning: skipping worktree cleanup — current directory is not a git repository\n' >&2
+	exit 1
+fi
+exit 0
+EOS
+	chmod +x "$helper_path"
+
+	local scheduler_cwd="${TEST_ROOT}/scheduler-cwd"
+	mkdir -p "$scheduler_cwd"
+	true > "$LOGFILE"
+
+	local removed
+	removed=$(cd "$scheduler_cwd" && _stale_worktree_sweep_single_repo "$clone_dir" "0" "$helper_path")
+
+	if [[ "$removed" == "0" ]] && ! grep -q "current directory is not a git repository" "$LOGFILE" && ! grep -q "timed out" "$LOGFILE"; then
+		print_result "worktree-sweep-uses-repo-cwd" 0
+	else
+		print_result "worktree-sweep-uses-repo-cwd" 1 "(helper did not run from repo cwd; removed=${removed}; log=$(cat "$LOGFILE"))"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Test 11: Worktree sweep logs non-git paths as skips, not timeouts
+# =============================================================================
+test_worktree_sweep_non_git_path_skips() {
+	local non_git_dir="${TEST_ROOT}/non-git-repo-path"
+	mkdir -p "$non_git_dir"
+
+	cat >"${HOME}/.config/aidevops/repos.json" <<EOF
+{"initialized_repos": [{"slug": "test/non-git", "path": "${non_git_dir}", "pulse": true}]}
+EOF
+	export REPOS_JSON="${HOME}/.config/aidevops/repos.json"
+
+	true > "$LOGFILE"
+	_stale_worktree_sweep "0"
+
+	if grep -q "Skipping ${non_git_dir} — not a git repository" "$LOGFILE" && ! grep -q "timed out" "$LOGFILE"; then
+		print_result "worktree-sweep-non-git-path-skips" 0
+	else
+		print_result "worktree-sweep-non-git-path-skips" 1 "(expected non-git skip without timeout; log=$(cat "$LOGFILE"))"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Run all tests
 # =============================================================================
 test_cadence_skip_recent
@@ -343,6 +403,8 @@ test_fast_forward_success
 test_already_up_to_date
 test_dry_run
 test_skip_not_on_main
+test_worktree_sweep_uses_repo_cwd
+test_worktree_sweep_non_git_path_skips
 
 # =============================================================================
 # Summary

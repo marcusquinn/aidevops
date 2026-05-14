@@ -340,8 +340,17 @@ _stale_worktree_sweep_single_repo() {
 	# (see _stale_worktree_sweep). That was the ANSI-bleed half of the 2026-04-20
 	# canonical-trash incident. Route output to the logfile instead of /dev/null
 	# so operators can still diagnose sweep failures.
-	if ! _canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged >>"${LOGFILE:-/dev/null}" 2>&1; then
-		echo "[pulse-canonical-maintenance] Worktree sweep timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+	local sweep_rc=0
+	(
+		cd "$repo_path" || exit 125
+		_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged
+	) >>"${LOGFILE:-/dev/null}" 2>&1 || sweep_rc=$?
+	if [[ "$sweep_rc" -ne 0 ]]; then
+		if [[ "$sweep_rc" -eq 124 ]]; then
+			echo "[pulse-canonical-maintenance] Worktree sweep timed out for ${repo_path}" >>"${LOGFILE:-/dev/null}"
+		else
+			echo "[pulse-canonical-maintenance] Worktree sweep skipped for ${repo_path} (helper exited ${sweep_rc})" >>"${LOGFILE:-/dev/null}"
+		fi
 		printf '0'
 		return 0
 	fi
@@ -402,7 +411,10 @@ _stale_worktree_sweep() {
 	local repo_path sweep_count=0
 	for repo_path in "${_repo_list[@]}"; do
 		[[ -z "$repo_path" ]] && continue
-		[[ ! -d "$repo_path/.git" ]] && continue
+		if ! git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+			echo "[pulse-canonical-maintenance] Skipping ${repo_path} — not a git repository" >>"${LOGFILE:-/dev/null}"
+			continue
+		fi
 		local removed=0
 		removed=$(_stale_worktree_sweep_single_repo "$repo_path" "$dry_run" "$worktree_helper")
 		# t2559 defense-in-depth: sanitise the captured count before arithmetic.
