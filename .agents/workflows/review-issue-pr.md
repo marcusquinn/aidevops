@@ -387,10 +387,10 @@ gh issue list --search "keyword" --state all
 gh pr view 456 --json title,body,files,additions,deletions,author
 gh pr diff 456 --stat
 gh pr checks 456
-gh pr review 456 --comment --body "Comment text"
-gh pr review 456 --request-changes --body "Please address..."
-gh pr review 456 --approve --body "LGTM!"
-gh issue close 123 --comment "Closing because..."
+gh pr review 456 --comment --body-file /absolute/path/to/review.md
+gh pr review 456 --request-changes --body-file /absolute/path/to/review.md
+gh pr review 456 --approve --body-file /absolute/path/to/review.md
+gh issue comment 123 --body-file /absolute/path/to/closing-comment.md && gh issue close 123
 rg "relevant_function" --type js --type ts --type py --type sh
 git log --oneline -20 -- path/to/affected/file
 ```

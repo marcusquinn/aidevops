@@ -54,10 +54,14 @@ tools:
 # GitHub
 git push -u origin HEAD
 gh pr create --fill --draft                            # Draft PR (interactive default)
-gh pr create --title "feat: ..." --body "Resolves #123" --draft  # Custom draft
+gh pr create --title "feat: ..." --body-file /absolute/path/to/body.md --draft  # Custom draft
 gh pr create --fill --reviewer @username,@team         # With reviewers
 # GitLab: glab mr create --fill  |  Gitea: tea pulls create --title "feat: ..."
 ```
+
+For aidevops-managed GitHub PRs, create and sign the body file before the
+`gh pr create --body-file` Bash tool call. Same-command heredoc and
+command-substitution `--body` patterns are blocked by the signature gate.
 
 Interactive aidevops PRs default to draft until the user explicitly asks to finalise/ready the PR or invokes `/pr-loop`. To permit pulse merge throughput after finalisation, also opt in with `allow-auto-merge`, `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1`, global `orchestration.interactive_pr_auto_merge=true`, or per-repo `repos.json` `interactive_pr_auto_merge=true`.
 

@@ -38,11 +38,11 @@ gh repo list / create / clone / view / fork
 
 # Issues
 gh issue list --state open --label bug
-gh issue create --title "Bug report" --body "Description"
+gh issue create --title "Bug report" --body-file /absolute/path/to/body.md
 gh issue view 123 && gh issue close 123
 
 # PRs
-gh pr create --title "Feature X" --body "Description"
+gh pr create --title "Feature X" --body-file /absolute/path/to/body.md
 gh pr create --fill          # Auto-fill from commits
 gh pr view 123 && gh pr merge 123 --squash  # Also: --merge, --rebase
 
@@ -54,8 +54,13 @@ gh run list && gh run view 123456 && gh run watch
 gh run rerun 123456 --failed
 
 # API
-gh api repos/owner/repo/issues [-f title="Bug" -f body="Details"]
+gh api repos/owner/repo/issues [-f title="Bug" -F body=@/absolute/path/to/body.md]
 ```
+
+For aidevops-managed GitHub writes, create the body file and append
+`gh-signature-helper.sh footer` before the `gh ... --body-file` command. Do not
+use same-command heredoc or command-substitution bodies; the signature gate
+blocks patterns it cannot inspect safely.
 
 <!-- AI-CONTEXT-END -->
 

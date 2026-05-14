@@ -259,8 +259,9 @@ If you hit this on a split, do NOT rewrite variable references to deduplicate
 
 ## 6. PR Body Template
 
-Copy this skeleton into `gh pr create --body`. Replace placeholders in
-`<angle brackets>`.
+Write this skeleton to an absolute body file, append
+`gh-signature-helper.sh footer`, then pass it to `gh pr create --body-file` in a
+later Bash tool call. Replace placeholders in `<angle brackets>`.
 
 ````markdown
 ## Summary

@@ -22,8 +22,18 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 - The helper auto-detects runtime, version, tokens, and session time. Manual composition gets these wrong.
 - Every `gh issue create`, `gh issue comment`, `gh pr create`, and `gh pr comment` body MUST end with the helper's output.
 - Pass `--issue OWNER/REPO#NUM` on comments to existing issues. Pass `--solved` on closing comments.
-- Correct form (good): `gh issue comment 123 --repo owner/repo --body "..body..$(gh-signature-helper.sh footer)"`
-- Correct form (good, body file): `gh-signature-helper.sh footer >> "$BODY_FILE" && gh issue comment 123 --repo owner/repo --body-file "$BODY_FILE"`
+- Canonical body pattern: create an absolute body file in one Bash tool call,
+  append `gh-signature-helper.sh footer`, then run
+  `gh ... --body-file /absolute/path.md` in a later Bash tool call. This lets
+  the OpenCode pre-exec hook read the finished file before the GitHub write.
+- Wrapper pattern: source `shared-gh-wrappers.sh` and call `gh_issue_comment`,
+  `gh_create_issue`, `gh_pr_comment`, or `gh_create_pr` with `--body-file`;
+  wrappers sign at execution time.
+- ANTI-PATTERN (blocked by t2893 enforcement): same-command heredoc, process
+  substitution, command substitution, or shell-variable body construction such
+  as passing a heredoc through command substitution to `--body`, passing
+  `--body "$body"`, or creating `BODY_FILE` and using
+  `--body-file "$BODY_FILE"` in the same Bash tool call.
 - ANTI-PATTERN (blocked by t2685 enforcement): composing a human-readable signature inline like `--body "... — interactive cleanup from marcusquinn runtime."` or `--body "... [aidevops.sh](https://aidevops.sh) some prose ..."`. The literal string "aidevops.sh" is NOT sufficient evidence of a valid footer — only the canonical HTML marker `<!-- aidevops:sig -->` emitted by `gh-signature-helper.sh footer` counts. Hallucinated footers strip the required runtime/version/model/token/duration metadata that the marker carries.
 - Two enforcement layers will catch unsigned gh writes:
   - (a) `.agents/scripts/gh` PATH shim — transparently injects sig on `--body` / `--body-file` args before exec'ing the real `gh`. Active whenever `~/.aidevops/agents/scripts/` is first in PATH (default for aidevops-installed shells). Bypass: `AIDEVOPS_GH_SHIM_DISABLE=1`.
