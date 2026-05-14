@@ -1565,8 +1565,13 @@ dispatch_with_dedup() {
 	# keywords) and swaps tier:simple → tier:standard + posts feedback on hit.
 	# Always returns 0. Dispatch proceeds at the corrected tier on hit, or
 	# unchanged tier on miss. See .agents/reference/task-taxonomy.md.
+	# GH#23601: because the helper mutates labels on GitHub after the bundled
+	# t2996 metadata snapshot, refresh the bundle only for pre-check tier:simple
+	# candidates so eligibility/model resolution observe any tier upgrade.
 	_ds_t0=$(_ds_now_ns)
 	_run_tier_simple_body_shape_check "$issue_number" "$repo_slug"
+	issue_meta_json=$(_refresh_issue_meta_after_tier_body_shape_check \
+		"$issue_number" "$repo_slug" "$issue_meta_json")
 	_ds_record "$issue_number" "$repo_slug" "tier_body_shape" "$_ds_t0"
 
 	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
@@ -1806,6 +1811,48 @@ _run_tier_simple_body_shape_check() {
 	# Always pass regardless of helper exit code. The helper itself is
 	# documented non-blocking, but this wrapper is defensive.
 	"$check_helper" check "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || true
+	return 0
+}
+
+#######################################
+# Refresh bundled issue metadata after tier:simple body-shape validation.
+#
+# The validator may swap tier:simple → tier:standard on GitHub. The dispatch
+# pipeline otherwise forwards the pre-validator t2996 metadata bundle to the
+# eligibility gate and worker launch, causing label-derived model resolution to
+# use stale tier labels. Keep the extra API call limited to candidates whose
+# original snapshot included tier:simple, and fail open with the original bundle.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - current issue_meta_json bundle
+#
+# Output:
+#   refreshed issue_meta_json when available; otherwise the original bundle
+# Exit codes:
+#   0 — always (fail-open metadata refresh)
+#######################################
+_refresh_issue_meta_after_tier_body_shape_check() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	if ! printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("tier:simple")' >/dev/null 2>&1; then
+		printf '%s' "$issue_meta_json"
+		return 0
+	fi
+
+	local refreshed_issue_meta_json
+	refreshed_issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels,assignees,body 2>/dev/null) || refreshed_issue_meta_json=""
+	if [[ -z "$refreshed_issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] GH#23601: unable to refresh issue metadata after tier:simple body-shape check for #${issue_number} in ${repo_slug}; continuing with original snapshot" >>"$LOGFILE"
+		printf '%s' "$issue_meta_json"
+		return 0
+	fi
+
+	printf '%s' "$refreshed_issue_meta_json"
 	return 0
 }
 
