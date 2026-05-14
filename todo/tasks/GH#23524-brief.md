@@ -1,4 +1,4 @@
-# t17994 — Fix systemd worker PID handoff fallback race
+# GH#23524 — Fix systemd worker PID handoff fallback race
 
 ## Session Origin
 
@@ -13,7 +13,7 @@ Make a successful transient systemd launch authoritative unless aidevops proves 
 - `.agents/scripts/pulse-dispatch-worker-launch.sh`
 - `tests/test-systemd-worker-service-launch.sh`
 - `TODO.md`
-- `todo/tasks/t17994-brief.md`
+- `todo/tasks/GH#23524-brief.md`
 
 ## Implementation Notes
 
