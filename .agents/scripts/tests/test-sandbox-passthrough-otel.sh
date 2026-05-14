@@ -28,6 +28,8 @@
 #   3. OTEL_TRACES_SAMPLER set         → present in CSV
 #   4. Unrelated FOO_BAR set           → NOT present (allow-list guard)
 #   5. Previously-covered prefix still works (AIDEVOPS_FOO) — regression guard
+#   6. Canonical worker-origin env is passed through while legacy generic
+#      headless markers are not required past the clean-env boundary.
 #
 # Cross-references: t2184 (plugin duration_ms/metadata capture), t2177
 # (OTEL enrichment module), GH#19648 (t2184 issue).
@@ -81,6 +83,7 @@ run_with_env() {
 		HOME="$HOME" \
 		TMPDIR="${TMPDIR:-/tmp}" \
 		"$@"
+	return $?
 }
 
 printf '%sRunning sandbox passthrough CSV tests (t2186)%s\n' "$TEST_BLUE" "$TEST_NC"
@@ -149,6 +152,26 @@ if [[ ",${csv_out}," == *",AIDEVOPS_TEST_SENTINEL,"* ]]; then
 	pass "AIDEVOPS_* prefix still in passthrough CSV (no regression)"
 else
 	fail "AIDEVOPS_* prefix still in passthrough CSV (no regression)" \
+		"got CSV: ${csv_out}"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 6 — Canonical worker-origin env crosses sandbox; legacy generic markers do not
+# -----------------------------------------------------------------------------
+csv_out=$(run_with_env \
+	AIDEVOPS_SESSION_ORIGIN="worker" \
+	AIDEVOPS_HEADLESS="true" \
+	HEADLESS="1" \
+	FULL_LOOP_HEADLESS="true" \
+	bash "$HELPER" passthrough-csv 2>/dev/null)
+
+if [[ ",${csv_out}," == *",AIDEVOPS_SESSION_ORIGIN,"* ]] && \
+	[[ ",${csv_out}," == *",AIDEVOPS_HEADLESS,"* ]] && \
+	[[ ",${csv_out}," != *",HEADLESS,"* ]] && \
+	[[ ",${csv_out}," != *",FULL_LOOP_HEADLESS,"* ]]; then
+	pass "canonical worker-origin env passes through without broad legacy passthrough"
+else
+	fail "canonical worker-origin env passes through without broad legacy passthrough" \
 		"got CSV: ${csv_out}"
 fi
 

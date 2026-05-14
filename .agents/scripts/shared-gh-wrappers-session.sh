@@ -110,6 +110,7 @@ files_include_workflow_changes() {
 #
 # Known headless signals (exhaustive — add new ones here as dispatch infra grows):
 #   FULL_LOOP_HEADLESS=true   — pulse supervisor dispatch
+#   AIDEVOPS_SESSION_ORIGIN=worker — canonical worker-origin override
 #   AIDEVOPS_HEADLESS=true    — headless-runtime-helper.sh
 #   OPENCODE_HEADLESS=true    — OpenCode headless mode
 #   GITHUB_ACTIONS=true       — CI environment

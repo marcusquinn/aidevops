@@ -1559,6 +1559,16 @@ cmd_run() {
 		return 0
 	fi
 
+	if [[ "$role" == "worker" ]]; then
+		# GH#23520: publish canonical worker-origin markers before canary,
+		# sandbox passthrough, and downstream GitHub/signature helpers run.
+		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic
+		# HEADLESS/FULL_LOOP_HEADLESS markers are intentionally not required
+		# past the clean-env boundary.
+		export AIDEVOPS_SESSION_ORIGIN="worker"
+		export AIDEVOPS_HEADLESS="true"
+	fi
+
 	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"
 	local selected_model
 	selected_model=$(choose_model "$role" "${model_override:-$initial_model}" "$tier_override") || {
