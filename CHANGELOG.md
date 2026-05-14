@@ -10,6 +10,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.47] - 2026-05-14
+
+### Changed
+
+- Tests: guard phase parent mock JSON (#23585)
+- Tests: cover missing pulse upstream refs (#23583)
+- fix phase parent jq assignment quoting (#23569)
+- Documentation: replace Python body-file examples with heredocs (#23565)
+- parse systemd worker properties once (#23563)
+- Tests: cover Homebrew OpenCode early return (#23539)
+
+### Fixed
+
+- preserve external pulse benign ledger (#23590)
+- handle unterminated systemd PID properties (#23589)
+- respect TODO-derived issue status labels (#23586)
+- centralize pulse merge PR fields (#23587)
+- localize worker headless exports (#23588)
+- validate contribution watch prerequisites before scan jq (#23584)
+- harden phase parent metadata parsing (#23582)
+- respect no-auto-dispatch in phase sequencing (#23568)
+- align worker origin detection (#23567)
+- preserve diagnostics in optional helpers (#23566)
+- consolidate phase parent metadata parsing (#23564)
+- optimize systemd pid property parsing (#23562)
+- scope benign dispatch block ledger to cycle (#23561)
+- clarify pulse upstream verification failures (#23560)
+- harden canonical sweep cwd change (#23559)
+- skip unsafe pulse repo refreshes (#23546)
+- run canonical worktree sweeps from repo cwd (#23545)
+- treat active claim dispatch blocks as benign (#23547)
+- skip unconfigured optional pulse routines (#23544)
+
 ## [3.15.46] - 2026-05-14
 
 ### Changed
