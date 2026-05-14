@@ -111,8 +111,14 @@ _pulse_refresh_should_skip_repo() {
 		return 0
 	fi
 
-	if ! git -C "$repo_path" ls-remote --exit-code "$upstream_remote" "refs/heads/${upstream_branch}" >/dev/null 2>&1; then
+	local ls_remote_exit=0
+	git -C "$repo_path" ls-remote --exit-code "$upstream_remote" "refs/heads/${upstream_branch}" >/dev/null 2>&1 || ls_remote_exit=$?
+	if [[ "$ls_remote_exit" -eq 2 ]]; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} does not exist" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$ls_remote_exit" -ne 0 ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: could not verify upstream ${upstream_ref} for ${repo_path} — git ls-remote exited ${ls_remote_exit}" >>"$LOGFILE"
 		return 0
 	fi
 

@@ -91,6 +91,29 @@ test_refresh_skips_deleted_noncanonical_upstream() {
 	return 0
 }
 
+test_refresh_distinguishes_unverifiable_upstream() {
+	local clone_dir=""
+	clone_dir=$(setup_deleted_upstream_repo)
+	(
+		cd "$clone_dir" || exit 1
+		git checkout main >/dev/null 2>&1
+		git remote set-url origin "${TEST_ROOT}/missing-origin.git" >/dev/null 2>&1
+	)
+	_PULSE_REFRESHED_THIS_CYCLE=()
+	true >"$LOGFILE"
+	_pulse_refresh_repo "$clone_dir"
+
+	if grep -Fq "could not verify upstream origin/main" "$LOGFILE" && \
+	   grep -Fq "git ls-remote exited" "$LOGFILE" && \
+	   ! grep -Fq "upstream origin/main does not exist" "$LOGFILE" && \
+	   ! grep -Fq "git pull --ff-only failed" "$LOGFILE"; then
+		print_result "unverifiable upstream is not logged as missing" 0
+		return 0
+	fi
+	print_result "unverifiable upstream is not logged as missing" 1 "$(tr '\n' ' ' <"$LOGFILE")"
+	return 0
+}
+
 main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
@@ -100,6 +123,7 @@ main() {
 	source "${TEST_SCRIPTS_DIR}/pulse-wrapper-cycle.sh"
 	declare -g -A _PULSE_REFRESHED_THIS_CYCLE=()
 	test_refresh_skips_deleted_noncanonical_upstream
+	test_refresh_distinguishes_unverifiable_upstream
 	printf 'Tests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
