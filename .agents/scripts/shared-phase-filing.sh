@@ -722,30 +722,34 @@ _Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
 }
 
 #######################################
-# Read parent issue metadata and ensure it is still open before it can drive
-# next-phase auto-filing.
+# Read parent issue metadata in one jq pass and ensure it is still open before
+# it can drive next-phase auto-filing.
 #
 # Args: $1=parent_issue, $2=repo_slug
-# Output: parent JSON when open; empty otherwise
+# Globals: _PHASE_PARENT_BODY, _PHASE_PARENT_TITLE
 # Returns: 0 always
 #######################################
-_read_open_phase_parent_json() {
+_read_open_phase_parent_fields() {
 	local parent_issue="$1"
 	local repo_slug="$2"
 	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
-	local parent_state _parent_json
+	local parent_state _parent_assignments
 
-	_parent_json=$(gh api "$parent_api" \
-		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // "")}' 2>/dev/null) || _parent_json=""
-	[[ -n "$_parent_json" ]] || return 0
+	_PHASE_PARENT_BODY=""
+	_PHASE_PARENT_TITLE=""
+	_parent_assignments=$(gh api "$parent_api" \
+		--jq '@sh "parent_state=\(.state // \"\") _PHASE_PARENT_TITLE=\(.title // \"\") _PHASE_PARENT_BODY=\(.body // \"\")"' 2>/dev/null) || _parent_assignments=""
+	[[ -n "$_parent_assignments" ]] || return 0
 
-	parent_state=$(printf '%s' "$_parent_json" | jq -r '.state // ""')
+	# jq @sh emits safely quoted shell assignments for GitHub-controlled text.
+	eval "$_parent_assignments"
 	if [[ "$parent_state" != "open" ]]; then
 		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"
+		_PHASE_PARENT_BODY=""
+		_PHASE_PARENT_TITLE=""
 		return 0
 	fi
 
-	printf '%s' "$_parent_json"
 	return 0
 }
 
@@ -793,11 +797,11 @@ auto_file_next_phase() {
 	_phase_log "Child #${child_issue}: found parent-task #${parent_issue}"
 
 	# Read parent issue metadata and ensure the parent is still open.
-	local parent_body parent_title _parent_json
-	_parent_json=$(_read_open_phase_parent_json "$parent_issue" "$repo_slug")
-	[[ -n "$_parent_json" ]] || return 0
-	parent_body=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
-	parent_title=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
+	local parent_body parent_title
+	_read_open_phase_parent_fields "$parent_issue" "$repo_slug"
+	parent_body="$_PHASE_PARENT_BODY"
+	parent_title="$_PHASE_PARENT_TITLE"
+	[[ -n "$parent_body" ]] || return 0
 
 	# Guard 4: parse phases
 	local phases
