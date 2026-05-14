@@ -121,12 +121,17 @@ _check_prerequisites() {
 		echo -e "${RED}Error: gh CLI not found. Install from https://cli.github.com/${NC}" >&2
 		return 1
 	fi
-	if ! command -v jq &>/dev/null; then
-		echo -e "${RED}Error: jq not found. Install with: brew install jq${NC}" >&2
-		return 1
-	fi
+	_check_jq_prerequisite || return 1
 	if ! gh auth status &>/dev/null 2>&1; then
 		echo -e "${RED}Error: gh not authenticated. Run: gh auth login${NC}" >&2
+		return 1
+	fi
+	return 0
+}
+
+_check_jq_prerequisite() {
+	if ! command -v jq &>/dev/null; then
+		echo -e "${RED}Error: jq not found. Install with: brew install jq${NC}" >&2
 		return 1
 	fi
 	return 0
@@ -1001,6 +1006,8 @@ cmd_scan() {
 		_log_warn "Scan skipped — already running (PID ${running_pid})"
 		return 1
 	fi
+
+	_check_jq_prerequisite || return 1
 
 	_scan_init_globals
 
