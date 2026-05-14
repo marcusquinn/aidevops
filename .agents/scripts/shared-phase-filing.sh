@@ -738,10 +738,10 @@ _read_open_phase_parent_fields() {
 	_PHASE_PARENT_BODY=""
 	_PHASE_PARENT_TITLE=""
 	_parent_assignments=$(gh api "$parent_api" \
-		--jq '@sh "parent_state=\(.state // \"\") parent_labels=\([(.labels // [])[].name] | join(\",\")) _PHASE_PARENT_TITLE=\(.title // \"\") _PHASE_PARENT_BODY=\(.body // \"\")"' 2>/dev/null) || _parent_assignments=""
+		--jq '"parent_state=\(.state // "" | @sh) parent_labels=\([(.labels // [])[].name] | join(",") | @sh) _PHASE_PARENT_TITLE=\(.title // "" | @sh) _PHASE_PARENT_BODY=\(.body // "" | @sh)"' 2>/dev/null) || _parent_assignments=""
 	[[ -n "$_parent_assignments" ]] || return 0
 
-	# jq @sh emits safely quoted shell assignments for GitHub-controlled text.
+	# jq @sh emits safely quoted assignment values for GitHub-controlled text.
 	eval "$_parent_assignments"
 	if [[ "$parent_state" != "open" ]]; then
 		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"

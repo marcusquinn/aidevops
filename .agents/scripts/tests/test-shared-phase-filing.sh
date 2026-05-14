@@ -682,8 +682,27 @@ gh() {
 	local args="$*"
 	if [[ " $args " == *" api repos/owner/repo/issues/500 "* ]]; then
 		local parent_body=$'## Phases\n\n- Phase 1 - Complete first phase [auto-fire:on-prior-merge] #123\n- Phase 2 - Second phase [auto-fire:on-prior-merge]'
-		printf 'parent_state=%q parent_labels=%q _PHASE_PARENT_TITLE=%q _PHASE_PARENT_BODY=%q\n' \
-			"$phase_parent_state" "$phase_parent_labels" "Parent" "$parent_body"
+		local jq_filter=""
+		local parent_json=""
+		while [[ "$#" -gt 0 ]]; do
+			local arg="$1"
+			shift
+			if [[ "$arg" == "--jq" && "$#" -gt 0 ]]; then
+				local next_arg="$1"
+				jq_filter="$next_arg"
+				shift
+			fi
+		done
+		parent_json=$(jq -n \
+			--arg body "$parent_body" \
+			--arg labels "$phase_parent_labels" \
+			--arg state "$phase_parent_state" \
+			'{body: $body, title: "Parent", state: $state, labels: ($labels | split(",") | map(select(. != "")) | map({name: .}))}')
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s' "$parent_json" | jq -r "$jq_filter"
+		else
+			printf '%s' "$parent_json"
+		fi
 		return 0
 	fi
 	return 1
