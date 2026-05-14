@@ -34,7 +34,7 @@ _is_opencode_runtime() { return 1; }
 # shellcheck source=../gh-signature-helper-session.sh
 source "${SCRIPTS_DIR}/gh-signature-helper-session.sh" || exit 1
 
-unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS OPENCODE_HEADLESS OPENCODE OPENCODE_SESSION_ID
+unset FULL_LOOP_HEADLESS AIDEVOPS_HEADLESS OPENCODE_HEADLESS GITHUB_ACTIONS OPENCODE OPENCODE_SESSION_ID
 export AIDEVOPS_SESSION_ORIGIN=worker
 detected="$(_detect_explicit_session_type)"
 if [[ "$detected" == "worker" ]]; then
@@ -50,6 +50,15 @@ if [[ "$detected" == "interactive" ]]; then
 	print_result "AIDEVOPS_SESSION_ORIGIN=interactive overrides headless marker" 0
 else
 	print_result "AIDEVOPS_SESSION_ORIGIN=interactive overrides headless marker" 1 "got '${detected}'"
+fi
+
+unset AIDEVOPS_SESSION_ORIGIN AIDEVOPS_HEADLESS
+export GITHUB_ACTIONS=true
+detected="$(_detect_explicit_session_type)"
+if [[ "$detected" == "worker" ]]; then
+	print_result "GITHUB_ACTIONS=true -> worker" 0
+else
+	print_result "GITHUB_ACTIONS=true -> worker" 1 "got '${detected}'"
 fi
 
 echo

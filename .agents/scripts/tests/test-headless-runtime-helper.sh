@@ -534,6 +534,45 @@ test_cmd_run_aborts_issue_worker_before_canary_when_env_missing() {
 	return 0
 }
 
+test_cmd_run_preserves_worker_origin_overrides_before_canary() {
+	local worktree_dir="${TEST_ROOT}/origin-override-worktree"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	export WORKER_ISSUE_NUMBER=23558
+	export WORKER_WORKTREE_PATH="$worktree_dir"
+	export AIDEVOPS_SESSION_ORIGIN=interactive
+	export AIDEVOPS_HEADLESS=already-set
+
+	choose_model() { printf '%s' 'openai/gpt-5.5'; return 0; }
+	_enforce_opencode_version_pin() { return 0; }
+	_run_canary_test() {
+		if [[ "${AIDEVOPS_SESSION_ORIGIN:-}" == "interactive" && "${AIDEVOPS_HEADLESS:-}" == "already-set" ]]; then
+			printf '%s\n' 'canary_saw_origin_overrides'
+		fi
+		return 1
+	}
+
+	local output=""
+	local status=0
+	output=$(cmd_run \
+		--role worker \
+		--session-key issue-23558 \
+		--dir "$worktree_dir" \
+		--title "Issue #23558: origin overrides" \
+		--prompt "/full-loop Implement issue #23558" 2>&1) || status=$?
+
+	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH AIDEVOPS_SESSION_ORIGIN AIDEVOPS_HEADLESS 2>/dev/null || true
+	unset -f choose_model _enforce_opencode_version_pin _run_canary_test 2>/dev/null || true
+	if [[ "$status" -eq 1 && "$output" == *"canary_saw_origin_overrides"* && "$output" == *"Canary failed"* ]]; then
+		print_result "cmd_run preserves worker origin env overrides before canary" 0
+		return 0
+	fi
+
+	print_result "cmd_run preserves worker origin env overrides before canary" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
 test_deleted_launch_cwd_recovers_to_work_dir() {
 	local stale_dir="${TEST_ROOT}/stale-cwd"
 	local worktree_dir="${TEST_ROOT}/worker-worktree"
@@ -1454,6 +1493,7 @@ main() {
 	test_worker_worktree_claim_classifies_unreclaimed_live_owner
 	test_deleted_cwd_recovery_uses_worker_worktree
 	test_cmd_run_aborts_issue_worker_before_canary_when_env_missing
+	test_cmd_run_preserves_worker_origin_overrides_before_canary
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
