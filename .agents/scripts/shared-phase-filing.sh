@@ -733,12 +733,12 @@ _read_open_phase_parent_fields() {
 	local parent_issue="$1"
 	local repo_slug="$2"
 	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
-	local parent_state _parent_assignments
+	local parent_state parent_labels _parent_assignments
 
 	_PHASE_PARENT_BODY=""
 	_PHASE_PARENT_TITLE=""
 	_parent_assignments=$(gh api "$parent_api" \
-		--jq '@sh "parent_state=\(.state // \"\") _PHASE_PARENT_TITLE=\(.title // \"\") _PHASE_PARENT_BODY=\(.body // \"\")"' 2>/dev/null) || _parent_assignments=""
+		--jq '@sh "parent_state=\(.state // \"\") parent_labels=\([(.labels // [])[].name] | join(\",\")) _PHASE_PARENT_TITLE=\(.title // \"\") _PHASE_PARENT_BODY=\(.body // \"\")"' 2>/dev/null) || _parent_assignments=""
 	[[ -n "$_parent_assignments" ]] || return 0
 
 	# jq @sh emits safely quoted shell assignments for GitHub-controlled text.
@@ -749,6 +749,14 @@ _read_open_phase_parent_fields() {
 		_PHASE_PARENT_TITLE=""
 		return 0
 	fi
+	case ",${parent_labels}," in
+	*,no-auto-dispatch,*)
+		_phase_log "Parent #${parent_issue}: carries no-auto-dispatch, skip auto-file"
+		_PHASE_PARENT_BODY=""
+		_PHASE_PARENT_TITLE=""
+		return 0
+		;;
+	esac
 
 	return 0
 }
@@ -764,7 +772,7 @@ _read_open_phase_parent_fields() {
 # Guards:
 #   1. Feature flag AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE must be 1
 #   2. Child issue must reference a parent-task issue
-#   3. Parent issue must still be open
+#   3. Parent issue must still be open and not carry no-auto-dispatch
 #   4. Parent must have a ## Phases section
 #   5. Next phase must exist, be marked [auto-fire:on-prior-merge],
 #      and not already have a child issue filed
