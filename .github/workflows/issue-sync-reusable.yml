@@ -706,9 +706,12 @@ jobs:
               echo "Issue #$ISSUE_NUM has rejection label '$REJECTION_MATCH' — using 'Referenced by' instead of 'Completed via'"
             fi
 
-            ISSUE_BODY=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" --jq '.body // ""' 2>/dev/null || echo "")
-            if echo "$ISSUE_BODY" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
-              echo "Issue #$ISSUE_NUM has unresolved blocked-by marker — skipping closing hygiene (GH#23516)"
+            TASK_LINE=""
+            if [[ -n "${TASK_ID:-}" && -f TODO.md ]]; then
+              TASK_LINE=$(grep -E "^[[:space:]]*- \[ \] ${TASK_ID} " TODO.md | head -1 || true)
+            fi
+            if echo "$TASK_LINE" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+'; then
+              echo "Task $TASK_ID has unresolved blocked-by marker — skipping closing hygiene for #$ISSUE_NUM (GH#23516)"
               continue
             fi
 
