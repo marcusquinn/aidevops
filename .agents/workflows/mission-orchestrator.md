@@ -95,7 +95,7 @@ Dirs: `mission.md` (always) · `research/` · `agents/` · `scripts/` · `assets
 
 **Temporary agents**: create when 2+ features need the same specialised knowledge or a worker fails from missing context. Keep under 100 lines; frontmatter: `mode: subagent, status: draft, source: mission/{id}`. Pass path in worker prompts: `Read {mission-dir}/agents/{name}.md before starting.` After completion: move useful agents to `~/.aidevops/agents/draft/`; delete one-off agents.
 
-**Improvement feedback**: at completion, `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body "{details}"`. Don't modify aidevops files during a mission or duplicate existing capabilities.
+**Improvement feedback**: at completion, create a signed absolute body file, then `gh issue create --repo {aidevops_slug} --title "Mission feedback: {desc}" --body-file /absolute/path/to/body.md`. Don't modify aidevops files during a mission or duplicate existing capabilities.
 
 ## Research
 

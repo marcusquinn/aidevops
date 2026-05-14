@@ -90,7 +90,7 @@ gh api -i "repos/SLUG/collaborators/AUTHOR/permission"
 
 # Issue operations — label lifecycle: available -> queued -> in-progress -> in-review -> done
 gh issue edit NUMBER --repo SLUG --add-label "status:queued" --add-assignee USER
-gh issue comment NUMBER --repo SLUG --body "Completed via PR #NNN. DETAILS"  # MANDATORY before close
+gh issue comment NUMBER --repo SLUG --body-file /absolute/path/to/signed-comment.md  # MANDATORY before close
 gh issue close NUMBER --repo SLUG
 
 # Worker monitoring

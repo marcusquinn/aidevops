@@ -166,7 +166,7 @@ If the proposal doesn't survive these questions, discuss before filing — it ma
 
 For framework bugs, use this expanded template that includes Evidence Attribution and Reproducer sections:
 
-```markdown
+````markdown
 ## Description
 
 {problem}
@@ -214,7 +214,7 @@ For framework bugs, use this expanded template that includes Evidence Attributio
 ## Additional Context
 
 {errors, session context}
-```
+````
 
 For non-bug reports (enhancements, questions), use the shorter template without Reproducer and Workarounds sections:
 
@@ -270,13 +270,25 @@ documented in GH#20322. Do not skip it even if Step 3 returned no results.
 
 ### Step 6: Create the Issue
 
+First Bash tool call: create and sign an absolute body file.
+
+```bash
+BODY_FILE=/tmp/aidevops-issue-body.md
+python3 - <<'PY'
+from pathlib import Path
+Path('/tmp/aidevops-issue-body.md').write_text('''BODY_CONTENT
+''', encoding='utf-8')
+PY
+~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$BODY_FILE"
+```
+
+Second Bash tool call: post the already-created file. Do not combine body-file
+creation and the `gh issue create` write in the same Bash tool call.
+
 ```bash
 gh issue create -R marcusquinn/aidevops \
   --title "TITLE" \
-  --body "$(cat <<'EOF'
-BODY_CONTENT
-EOF
-)" \
+  --body-file /tmp/aidevops-issue-body.md \
   --label "LABEL"
 ```
 

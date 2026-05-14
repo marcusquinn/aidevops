@@ -128,15 +128,29 @@ Handles: `git add -A`, commit, `git rebase origin/main`, `git push -u`, `gh pr c
 
 **4.2.1 Merge Summary Comment (MANDATORY):** `commit-and-pr` posts automatically. Manual PRs — post immediately after PR creation:
 
+Create and sign the merge-summary body in one Bash tool call, then post it with
+`--body-file` in a later Bash tool call; same-command body-file creation is
+blocked by the signature gate.
+
 ```bash
-gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- MERGE_SUMMARY -->
+MERGE_SUMMARY_FILE=/tmp/aidevops-merge-summary.md
+python3 - <<'PY'
+from pathlib import Path
+Path('/tmp/aidevops-merge-summary.md').write_text('''<!-- MERGE_SUMMARY -->
 ## Completion Summary
 
 - **What**: <1-line description of what was done>
 - **Issue**: #<issue_number>
 - **Files changed**: <comma-separated list of key files>
 - **Testing**: <what was verified — linter, build, manual, etc.>
-- **Key decisions**: <any notable trade-offs or choices made>"
+- **Key decisions**: <any notable trade-offs or choices made>
+''', encoding='utf-8')
+PY
+~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$MERGE_SUMMARY_FILE"
+```
+
+```bash
+gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file /tmp/aidevops-merge-summary.md
 ```
 
 Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length'` must return `1`.
