@@ -208,15 +208,30 @@ _dispatch_candidate_benign_block_reason() {
 #######################################
 _dispatch_begin_benign_blocks_cycle() {
 	local ledger_file=""
+	local ledger_managed_by_dispatch="0"
 	if [[ -n "${AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE:-}" ]]; then
 		ledger_file="$AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE"
 	else
-		mkdir -p "${HOME}/.aidevops/logs" 2>/dev/null || true
-		ledger_file=$(mktemp "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.XXXXXX" 2>/dev/null || printf '%s\n' "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.$$.$RANDOM")
+		ledger_managed_by_dispatch="1"
+		if ! mkdir -p "${HOME}/.aidevops/logs"; then
+			printf 'Failed to create benign block ledger directory: %s\n' "${HOME}/.aidevops/logs" >&2
+		fi
+		ledger_file=$(mktemp "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.XXXXXX" || printf '%s\n' "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.$$.$RANDOM")
 	fi
-	mkdir -p "${ledger_file%/*}" 2>/dev/null || true
-	: >"$ledger_file" 2>/dev/null || true
+	if [[ -z "$ledger_file" ]]; then
+		printf 'Failed to resolve benign block ledger file path\n' >&2
+		_DISPATCH_BENIGN_BLOCKS_FILE=""
+		_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
+		return 0
+	fi
+	if [[ "$ledger_file" == */* ]] && ! mkdir -p "${ledger_file%/*}"; then
+		printf 'Failed to create benign block ledger parent directory: %s\n' "${ledger_file%/*}" >&2
+	fi
+	if [[ "$ledger_managed_by_dispatch" == "1" ]] && ! : >"$ledger_file"; then
+		printf 'Failed to initialize benign block ledger file: %s\n' "$ledger_file" >&2
+	fi
 	_DISPATCH_BENIGN_BLOCKS_FILE="$ledger_file"
+	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="$ledger_managed_by_dispatch"
 	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
 	return 0
 }
@@ -228,10 +243,12 @@ _dispatch_begin_benign_blocks_cycle() {
 #######################################
 _dispatch_cleanup_benign_blocks_cycle() {
 	local ledger_file="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
-	if [[ -n "$ledger_file" ]]; then
-		rm -f "$ledger_file" 2>/dev/null || true
+	local ledger_owned="${_DISPATCH_BENIGN_BLOCKS_FILE_OWNED:-0}"
+	if [[ -n "$ledger_file" && "$ledger_owned" == "1" ]] && ! rm -f "$ledger_file"; then
+		printf 'Failed to remove benign block ledger file: %s\n' "$ledger_file" >&2
 	fi
 	_DISPATCH_BENIGN_BLOCKS_FILE=""
+	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 	return 0
 }
 
