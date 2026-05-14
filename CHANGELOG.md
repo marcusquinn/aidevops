@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.50] - 2026-05-14
+
+### Fixed
+
+- refresh tier metadata after validator (#23603)
+
 ## [3.15.49] - 2026-05-14
 
 ### Fixed
