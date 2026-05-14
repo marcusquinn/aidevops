@@ -854,7 +854,6 @@ _dlw_systemd_resolve_main_pid() {
 		main_pid=""
 		active_state=""
 		sub_state=""
-
 		while IFS='=' read -r key value; do
 			case "$key" in
 				MainPID)
