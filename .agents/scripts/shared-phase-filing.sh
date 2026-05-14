@@ -733,7 +733,8 @@ _read_open_phase_parent_fields() {
 	local parent_issue="$1"
 	local repo_slug="$2"
 	local parent_api
-	local parent_state parent_labels _parent_json
+	local parent_state parent_labels _parent_json _parent_fields
+	local _parent_state_b64 _parent_labels_b64 _parent_title_b64 _parent_body_b64
 	printf -v parent_api 'repos/%s/issues/%s' "$repo_slug" "$parent_issue"
 
 	_PHASE_PARENT_BODY=""
@@ -742,10 +743,18 @@ _read_open_phase_parent_fields() {
 		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // ""), labels: [(.labels // [])[].name]}' 2>/dev/null) || _parent_json=""
 	[[ -n "$_parent_json" ]] || return 0
 
-	parent_state=$(printf '%s' "$_parent_json" | jq -r '.state // ""')
-	parent_labels=$(printf '%s' "$_parent_json" | jq -r '(.labels // [])[]' | paste -sd, -)
-	_PHASE_PARENT_TITLE=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
-	_PHASE_PARENT_BODY=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
+	_parent_fields=$(printf '%s' "$_parent_json" | jq -r '[
+		("x" + ((.state // "") | @base64)),
+		("x" + (([(.labels // [])[] | if type == "object" then .name else . end] | join(",")) | @base64)),
+		("x" + ((.title // "") | @base64)),
+		("x" + ((.body // "") | @base64))
+	] | @tsv') || _parent_fields=""
+	[[ -n "$_parent_fields" ]] || return 0
+	IFS=$'\t' read -r _parent_state_b64 _parent_labels_b64 _parent_title_b64 _parent_body_b64 <<<"$_parent_fields"
+	parent_state=$(printf '%s' "${_parent_state_b64#x}" | base64 -d 2>/dev/null) || parent_state=""
+	parent_labels=$(printf '%s' "${_parent_labels_b64#x}" | base64 -d 2>/dev/null) || parent_labels=""
+	_PHASE_PARENT_TITLE=$(printf '%s' "${_parent_title_b64#x}" | base64 -d 2>/dev/null) || _PHASE_PARENT_TITLE=""
+	_PHASE_PARENT_BODY=$(printf '%s' "${_parent_body_b64#x}" | base64 -d 2>/dev/null) || _PHASE_PARENT_BODY=""
 	if [[ "$parent_state" != "open" ]]; then
 		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"
 		_PHASE_PARENT_BODY=""
