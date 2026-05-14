@@ -23,6 +23,24 @@ return_seven() {
 	return 7
 }
 
+dispatch_with_dedup() {
+	return 3
+}
+
+run_stage_with_timeout() {
+	local stage_name="$1"
+	local timeout_seconds="$2"
+	shift 2
+
+	local stage_rc=0
+	"$@" || stage_rc=$?
+	if [[ "$stage_rc" -ne 0 ]]; then
+		printf '[pulse-wrapper] Stage failed: %s exited with %s (%ss)\n' "$stage_name" "$stage_rc" "$timeout_seconds" >>"$LOGFILE"
+		return "$stage_rc"
+	fi
+	return 0
+}
+
 assert_adapter_rc() {
 	local expected_rc="$1"
 	local rc_file="$2"
@@ -60,5 +78,20 @@ assert_file_content 7 "$failure_rc_file"
 
 unwritable_rc_file="/dev/null/dispatch.rc"
 assert_adapter_rc 3 "$unwritable_rc_file" return_three
+
+LOGFILE="$TMP_DIR/pulse.log"
+DISPATCH_PER_CANDIDATE_TIMEOUT=1
+DISPATCH_PER_CANDIDATE_TIMEOUT_FLOOR=1
+DISPATCH_TIMING_ADAPTIVE=0
+_dispatch_with_timeout "123" "owner/repo" "Issue #123" "Assigned issue" "runner" "/tmp/repo" "/full-loop Implement issue #123" "issue-123" "" || dispatch_timeout_rc=$?
+dispatch_timeout_rc="${dispatch_timeout_rc:-0}"
+if [[ "$dispatch_timeout_rc" -ne 3 ]]; then
+	printf 'FAIL expected dispatch timeout rc=3 actual=%s\n' "$dispatch_timeout_rc" >&2
+	exit 1
+fi
+if grep -q 'Stage failed: dispatch_candidate_123' "$LOGFILE" 2>/dev/null; then
+	printf 'FAIL benign dispatch rc=3 emitted Stage failed log\n' >&2
+	exit 1
+fi
 
 printf 'PASS pulse-dispatch-stage-rc-adapter\n'
