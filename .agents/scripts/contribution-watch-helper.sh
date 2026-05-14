@@ -1007,7 +1007,7 @@ cmd_scan() {
 		return 1
 	fi
 
-	_check_jq_prerequisite || return 1
+	_check_prerequisites || return 1
 
 	_scan_init_globals
 
@@ -1019,8 +1019,6 @@ cmd_scan() {
 		_log_info "Scan skipped — no prior seed"
 		return 0
 	fi
-
-	_check_prerequisites || return 1
 
 	local username
 	username=$(_get_username) || return 1
