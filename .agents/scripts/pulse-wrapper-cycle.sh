@@ -67,6 +67,58 @@ fi
 # Returns: always 0 (failures are logged but never fatal — callers proceed
 #   with current checkout, same as the previous git pull || { warn; } pattern)
 #######################################
+_pulse_refresh_should_skip_repo() {
+	local repo_path="$1"
+	local default_branch=""
+	local current_branch=""
+	local upstream_ref=""
+	local upstream_remote=""
+	local upstream_branch=""
+
+	if declare -F _get_default_branch_for_repo >/dev/null 2>&1; then
+		default_branch=$(_get_default_branch_for_repo "$repo_path" 2>/dev/null) || default_branch=""
+	else
+		default_branch=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null) || default_branch=""
+		default_branch="${default_branch#origin/}"
+	fi
+
+	if [[ -z "$default_branch" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — no origin/HEAD set" >>"$LOGFILE"
+		return 0
+	fi
+
+	current_branch=$(git -C "$repo_path" symbolic-ref --quiet --short HEAD 2>/dev/null) || current_branch=""
+	if [[ -z "$current_branch" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — detached HEAD" >>"$LOGFILE"
+		return 0
+	fi
+
+	if [[ "$current_branch" != "$default_branch" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — on ${current_branch}, expected ${default_branch}" >>"$LOGFILE"
+		return 0
+	fi
+
+	upstream_ref=$(git -C "$repo_path" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null) || upstream_ref=""
+	if [[ -z "$upstream_ref" || "$upstream_ref" != */* ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream is not configured" >>"$LOGFILE"
+		return 0
+	fi
+
+	upstream_remote="${upstream_ref%%/*}"
+	upstream_branch="${upstream_ref#*/}"
+	if [[ "$upstream_remote" != "origin" || "$upstream_branch" != "$default_branch" ]]; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} is not origin/${default_branch}" >>"$LOGFILE"
+		return 0
+	fi
+
+	if ! git -C "$repo_path" ls-remote --exit-code "$upstream_remote" "refs/heads/${upstream_branch}" >/dev/null 2>&1; then
+		echo "[pulse-wrapper] _pulse_refresh_repo: refresh skipped: noncanonical or missing upstream for ${repo_path} — upstream ${upstream_ref} does not exist" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
 _pulse_refresh_repo() {
 	local repo_path="$1"
 	[[ -n "$repo_path" ]] || return 0
@@ -80,6 +132,9 @@ _pulse_refresh_repo() {
 
 	if ! git -C "$repo_path" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
 		echo "[pulse-wrapper] _pulse_refresh_repo: ${repo_path} is not a git work-tree — skipping" >>"$LOGFILE"
+		return 0
+	fi
+	if _pulse_refresh_should_skip_repo "$repo_path"; then
 		return 0
 	fi
 
