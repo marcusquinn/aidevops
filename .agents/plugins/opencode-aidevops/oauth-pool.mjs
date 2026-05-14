@@ -34,7 +34,6 @@
 
 import {
   CURSOR_PROXY_HOST, CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_BASE_URL,
-  POOL_PROVIDER_IDS,
 } from "./oauth-pool-constants.mjs";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
@@ -300,14 +299,7 @@ export function resolveInjectFn(provider) {
 // Auth hook initialization
 // ---------------------------------------------------------------------------
 
-async function seedPoolAuthEntry(client, providerId) {
-  const body = { type: "pending", refresh: "", access: "", expires: 0 };
-  try { await client.auth.set({ path: { id: providerId }, body }); }
-  catch { /* already exists or no auth API */ }
-}
-
 export async function initPoolAuth(client) {
-  for (const id of POOL_PROVIDER_IDS) await seedPoolAuthEntry(client, id);
   await injectPoolToken(client);
   await injectOpenAIPoolToken(client);
   await injectCursorPoolToken(client);
