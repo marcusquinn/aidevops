@@ -844,33 +844,29 @@ _dlw_systemd_unit_name() {
 	return 0
 }
 
-_dlw_systemd_unit_property() {
-	local snapshot="$1"
-	local property_name="$2"
-	local line=""
-
-	while IFS= read -r line; do
-		case "$line" in
-			"${property_name}="*)
-				printf '%s\n' "${line#*=}"
-				return 0
-				;;
-		esac
-	done <<<"$snapshot"
-
-	return 1
-}
-
 _dlw_systemd_resolve_main_pid() {
 	local unit_name="$1"
 	local issue_number="$2"
-	local wait_i=0 snapshot="" main_pid="" active_state="" sub_state=""
+	local wait_i=0 snapshot="" main_pid="" active_state="" sub_state="" key="" value=""
 
 	while [[ "$wait_i" -lt 15 ]]; do
 		snapshot=$(systemctl --user show "$unit_name" -p MainPID -p ActiveState -p SubState 2>/dev/null || true)
-		main_pid=$(_dlw_systemd_unit_property "$snapshot" "MainPID" || true)
-		active_state=$(_dlw_systemd_unit_property "$snapshot" "ActiveState" || true)
-		sub_state=$(_dlw_systemd_unit_property "$snapshot" "SubState" || true)
+		main_pid=""
+		active_state=""
+		sub_state=""
+		while IFS='=' read -r key value; do
+			case "$key" in
+				MainPID)
+					main_pid="$value"
+					;;
+				ActiveState)
+					active_state="$value"
+					;;
+				SubState)
+					sub_state="$value"
+					;;
+			esac
+		done <<<"$snapshot"
 
 		if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
 			echo "[dispatch_worker_launch] WARNING: systemd worker PID handoff missing for unit ${unit_name}; resolved MainPID=${main_pid} state=${active_state:-unknown}/${sub_state:-unknown} via systemctl, not launching fallback" >>"$LOGFILE"
