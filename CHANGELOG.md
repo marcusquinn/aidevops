@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.46] - 2026-05-14
+
+### Changed
+
+- Tests: cover Homebrew OpenCode early return (#23539)
+
+### Fixed
+
+- skip unsafe pulse repo refreshes (#23546)
+- run canonical worktree sweeps from repo cwd (#23545)
+- treat active claim dispatch blocks as benign (#23547)
+- skip unconfigured optional pulse routines (#23544)
+
 ## [3.15.45] - 2026-05-14
 
 ### Changed
