@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import { createTools } from "../tools.mjs";
 import { createPoolTool } from "../oauth-pool-tool.mjs";
+import { createFallbackTool } from "../tool-schema-fallback.mjs";
 
 describe("aidevops plugin tool schemas", () => {
   test("all registered tools expose args schemas", () => {
@@ -32,5 +33,11 @@ describe("aidevops plugin tool schemas", () => {
     assert.ok(tools.aidevops_pre_edit_check.args.task?._zod, "pre-edit task must be Zod");
     assert.ok(pool.args.action?._zod, "pool action must be Zod");
     assert.ok(pool.args.provider?._zod, "pool provider must be Zod");
+  });
+
+  test("fallback schema builder supports union schemas", () => {
+    const fallbackTool = createFallbackTool();
+
+    assert.ok(fallbackTool.schema.union([fallbackTool.schema.string()])?._zod, "fallback union must be Zod-compatible");
   });
 });

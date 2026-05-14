@@ -9,6 +9,7 @@
 
 import { getAccounts } from "./oauth-pool-storage.mjs";
 import { resolveInjectFn } from "./oauth-pool.mjs";
+import { createFallbackTool } from "./tool-schema-fallback.mjs";
 import {
   poolActionList, poolActionRemove, poolActionStatus,
   poolActionResetCooldowns, poolActionRotate, poolActionAssignPending,
@@ -19,30 +20,7 @@ let tool;
 try {
   ({ tool } = await import("@opencode-ai/plugin"));
 } catch {
-  const schemaNode = {
-    _zod: {},
-    optional() {
-      return this;
-    },
-    describe() {
-      return this;
-    },
-  };
-  tool = (definition) => definition;
-  tool.schema = {
-    enum() {
-      return schemaNode;
-    },
-    string() {
-      return schemaNode;
-    },
-    number() {
-      return schemaNode;
-    },
-    union() {
-      return schemaNode;
-    },
-  };
+  tool = createFallbackTool();
 }
 
 const z = tool.schema;
