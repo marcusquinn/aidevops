@@ -421,7 +421,11 @@ dispatch_max() {
 	_DISPATCH_CONSECUTIVE_NO_WORKER=0
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
 	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
-	_dispatch_begin_benign_blocks_cycle >/dev/null
+	local _dispatch_owns_benign_blocks_cycle=0
+	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
+		_dispatch_begin_benign_blocks_cycle >/dev/null
+		_dispatch_owns_benign_blocks_cycle=1
+	fi
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
 	# t3418/t3558: if the minimum worker floor is active, runtime launch
@@ -459,7 +463,9 @@ dispatch_max() {
 	if ! printf '%s' "$candidates_json" | jq -c '.[]' >"$_dispatch_candidate_file" 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Dispatch_max: jq failed to enumerate candidates_json — aborting loop with 0 dispatches" >>"$LOGFILE"
 		rm -f "$_dispatch_candidate_file"
-		_dispatch_cleanup_benign_blocks_cycle
+		if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
+			_dispatch_cleanup_benign_blocks_cycle
+		fi
 		_dispatch_maybe_engage_throttle
 		echo "[pulse-wrapper] Dispatch_max complete: dispatched=${triage_dispatched} (${triage_dispatched} triage + 0 implementation), processed=0/${candidate_count}, target_available=${available_slots}" >>"$LOGFILE"
 		echo "$triage_dispatched"
@@ -487,7 +493,9 @@ dispatch_max() {
 	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
 	[[ "$processed_count" =~ ^[0-9]+$ ]] || processed_count=0
 	rm -f "$_dispatch_candidate_file"
-	_dispatch_cleanup_benign_blocks_cycle
+	if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
+		_dispatch_cleanup_benign_blocks_cycle
+	fi
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path}: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dispatch_max_parallel <= 1)) && echo serial || echo "parallel(${_dispatch_max_parallel})")" >>"$LOGFILE"
 	_dispatch_maybe_engage_throttle
@@ -815,6 +823,8 @@ apply_dispatch_max() {
 		return 0
 	fi
 
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+
 	local fill_dispatched
 	fill_dispatched=$(dispatch_max) || fill_dispatched=0
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
@@ -847,6 +857,7 @@ apply_dispatch_max() {
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
 	fi
+	_dispatch_cleanup_benign_blocks_cycle
 	return 0
 }
 

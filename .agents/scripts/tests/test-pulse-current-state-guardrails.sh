@@ -227,6 +227,55 @@ test_external_benign_block_ledger_is_preserved() {
 	return 0
 }
 
+test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
+	reset_guardrail_env
+	export AIDEVOPS_MIN_WORKER_CONCURRENCY=2
+	local dispatch_calls_file="${TEST_ROOT}/dispatch-calls"
+	local refill_reason_file="${TEST_ROOT}/refill-seen-reason"
+	printf '0\n' >"$dispatch_calls_file"
+	: >"$refill_reason_file"
+	local dispatch_calls=""
+	local refill_seen_reason=""
+	local ledger_after=""
+
+	dispatch_max() {
+		local current_calls=""
+		current_calls=$(<"$dispatch_calls_file")
+		[[ "$current_calls" =~ ^[0-9]+$ ]] || current_calls=0
+		current_calls=$((current_calls + 1))
+		printf '%s\n' "$current_calls" >"$dispatch_calls_file"
+		if [[ "$current_calls" -eq 1 ]]; then
+			_dispatch_mark_benign_blocked_candidate 23541 marcusquinn/aidevops dedup_active_claim
+			printf '1\n'
+		else
+			_dispatch_benign_blocked_candidate_reason 23541 marcusquinn/aidevops >"$refill_reason_file" 2>/dev/null || true
+			printf '0\n'
+		fi
+		return 0
+	}
+
+	count_active_workers() {
+		printf '0\n'
+		return 0
+	}
+
+	_adaptive_launch_settle_wait() {
+		return 0
+	}
+
+	apply_dispatch_max
+	dispatch_calls=$(<"$dispatch_calls_file")
+	refill_seen_reason=$(<"$refill_reason_file")
+	ledger_after="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
+	unset AIDEVOPS_MIN_WORKER_CONCURRENCY
+	if [[ "$dispatch_calls" -ge 2 && "$refill_seen_reason" == "dedup_active_claim" && -z "$ledger_after" ]]; then
+		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 0
+	else
+		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 1 "calls=${dispatch_calls} reason=${refill_seen_reason} ledger_after=${ledger_after}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -238,6 +287,7 @@ test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
 test_benign_block_ledger_is_cycle_local_and_cleaned
 test_external_benign_block_ledger_is_preserved
+test_apply_dispatch_max_preserves_benign_ledger_across_refill
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"
