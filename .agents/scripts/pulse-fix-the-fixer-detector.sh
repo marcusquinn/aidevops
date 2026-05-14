@@ -61,7 +61,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly FIX_THE_FIXER_LABEL="fix-the-fixer"
 readonly FIX_THE_FIXER_MARKER="<!-- aidevops:fix-the-fixer-detector -->"
-readonly AI_RESEARCH_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
+# GH#23594: test override path. Production callers leave the env var unset
+# and pick up the sibling helper; regression tests can point at a stub that
+# deterministically returns a specific exit code.
+readonly AI_RESEARCH_HELPER="${PULSE_AI_RESEARCH_HELPER_OVERRIDE:-${SCRIPT_DIR}/ai-research-helper.sh}"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly AUTH_COOLDOWN_FILE="${HOME}/.aidevops/cache/fix-the-fixer-detector-auth.cooldown"
 readonly AUTH_COOLDOWN_SECONDS_DEFAULT=21600
@@ -284,8 +287,17 @@ _classify_via_llm() {
 			local err_snippet=""
 			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
 			rm -f "$err_log"
-			if _is_auth_error "$err_snippet"; then
-				_record_auth_cooldown "$err_snippet"
+			# GH#23594: rc=2 is ai-research-helper's documented exit code for
+			# "no API key resolved locally" — treat it as an auth class signal
+			# regardless of the error message, so the cooldown trips even when
+			# the prose message doesn't match _is_auth_error()'s API-response
+			# patterns (which are tuned for invalid x-api-key / 401 responses).
+			if [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
+				local cooldown_reason="$err_snippet"
+				if [[ "$helper_rc" -eq 2 && -z "$cooldown_reason" ]]; then
+					cooldown_reason="ai-research-helper rc=2: no Anthropic credentials resolvable"
+				fi
+				_record_auth_cooldown "$cooldown_reason"
 				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
 				_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
 				printf 'SKIP_AUTH\n'
