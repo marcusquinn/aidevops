@@ -708,6 +708,12 @@ gh() {
 	return 1
 }
 
+if gh api repos/owner/repo/issues/500 | jq -e '.body and .title == "Parent" and .state == "closed"' >/dev/null; then
+	pass "Parent issue mock returns realistic JSON"
+else
+	fail "Parent issue mock should return realistic JSON"
+fi
+
 : > "$LOGFILE"
 auto_file_next_phase "123" "owner/repo"
 closed_parent_log=""
