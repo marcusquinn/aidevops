@@ -193,8 +193,13 @@ check_dispatch_dedup() {
 	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
 	_dedup_layer3_title_match "$title" && return 0
 	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
+	# Active dispatch comments and assignment/claim guards are expected
+	# cross-runner locks, not launch failures. Preserve the block while giving
+	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
+	# "Stage failed" noise and refill loops can skip this candidate for the
+	# current pulse cycle (GH#23541).
+	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
 
 	return 1
 }
@@ -1292,9 +1297,12 @@ _dispatch_dedup_check_layers() {
 	local _dedup_rc=0
 	ISSUE_META_JSON="$issue_meta_json" \
 		check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login" || _dedup_rc=$?
-	if [[ "$_dedup_rc" -eq 0 ]]; then
+	if [[ "$_dedup_rc" -eq 0 || "$_dedup_rc" -eq 3 ]]; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
+		if [[ "$_dedup_rc" -eq 3 ]]; then
+			return 3
+		fi
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
@@ -1525,10 +1533,15 @@ dispatch_with_dedup() {
 	# _claim_comment_id is set by check_dispatch_dedup inside this call via
 	# bash dynamic scoping — accessible below because it was declared local above.
 	_ds_t0=$(_ds_now_ns)
-	if ! _dispatch_dedup_check_layers \
+	local _dedup_check_rc=0
+	_dispatch_dedup_check_layers \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-		"$self_login" "$repo_path" "$issue_meta_json"; then
+		"$self_login" "$repo_path" "$issue_meta_json" || _dedup_check_rc=$?
+	if [[ "$_dedup_check_rc" -ne 0 ]]; then
 		_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+		if [[ "$_dedup_check_rc" -eq 3 ]]; then
+			return 3
+		fi
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
