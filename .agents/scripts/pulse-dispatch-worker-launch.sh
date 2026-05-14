@@ -844,6 +844,55 @@ _dlw_systemd_unit_name() {
 	return 0
 }
 
+_dlw_systemd_unit_property() {
+	local snapshot="$1"
+	local property_name="$2"
+	local line=""
+
+	while IFS= read -r line; do
+		case "$line" in
+			"${property_name}="*)
+				printf '%s\n' "${line#*=}"
+				return 0
+				;;
+		esac
+	done <<<"$snapshot"
+
+	return 1
+}
+
+_dlw_systemd_resolve_main_pid() {
+	local unit_name="$1"
+	local issue_number="$2"
+	local wait_i=0 snapshot="" main_pid="" active_state="" sub_state=""
+
+	while [[ "$wait_i" -lt 15 ]]; do
+		snapshot=$(systemctl --user show "$unit_name" -p MainPID -p ActiveState -p SubState 2>/dev/null || true)
+		main_pid=$(_dlw_systemd_unit_property "$snapshot" "MainPID" || true)
+		active_state=$(_dlw_systemd_unit_property "$snapshot" "ActiveState" || true)
+		sub_state=$(_dlw_systemd_unit_property "$snapshot" "SubState" || true)
+
+		if [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+			echo "[dispatch_worker_launch] WARNING: systemd worker PID handoff missing for unit ${unit_name}; resolved MainPID=${main_pid} state=${active_state:-unknown}/${sub_state:-unknown} via systemctl, not launching fallback" >>"$LOGFILE"
+			printf '%s\n' "$main_pid"
+			return 0
+		fi
+
+		case "${active_state:-unknown}" in
+			inactive|failed)
+				echo "[dispatch_worker_launch] systemd unit ${unit_name} has no live MainPID state=${active_state:-unknown}/${sub_state:-unknown}; falling back to setsid/nohup for #${issue_number}" >>"$LOGFILE"
+				return 1
+				;;
+		esac
+
+		sleep 0.2
+		wait_i=$((wait_i + 1))
+	done
+
+	echo "[dispatch_worker_launch] ERROR: systemd-run launched ${unit_name} for #${issue_number} but no child PID or live MainPID was reported" >>"$LOGFILE"
+	return 1
+}
+
 _dlw_exec_systemd_user_service() {
 	local unit_prefix="$1"
 	local worker_log="$2"
@@ -888,12 +937,13 @@ _dlw_exec_systemd_user_service() {
 	rm -f "$pid_file" 2>/dev/null || true
 
 	if [[ "$service_pid" =~ ^[0-9]+$ ]]; then
+		echo "[dispatch_worker_launch] systemd unit ${unit_name} reported child PID=${service_pid} for #${issue_number}" >>"$LOGFILE"
 		printf '%s\n' "$service_pid"
 		return 0
 	fi
 
-	echo "[dispatch_worker_launch] ERROR: systemd-run launched ${unit_name} for #${issue_number} but no child PID was reported" >>"$LOGFILE"
-	return 1
+	_dlw_systemd_resolve_main_pid "$unit_name" "$issue_number"
+	return $?
 }
 
 # Execute a worker command via systemd-run (Linux user services) or setsid +
