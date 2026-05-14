@@ -342,7 +342,7 @@ _stale_worktree_sweep_single_repo() {
 	# so operators can still diagnose sweep failures.
 	local sweep_rc=0
 	(
-		cd "$repo_path" || exit 125
+		cd -- "$repo_path" || exit 125
 		_canonical_maintenance_run_with_timeout "$CANONICAL_MAINTENANCE_TIMEOUT" "$worktree_helper" clean --auto --force-merged
 	) >>"${LOGFILE:-/dev/null}" 2>&1 || sweep_rc=$?
 	if [[ "$sweep_rc" -ne 0 ]]; then
