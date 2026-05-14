@@ -140,8 +140,37 @@ test_ruleset_violation_retries_without_admin() {
 	return 0
 }
 
+test_draft_pr_without_origin_labels_skips_merge_write() {
+	setup_test_env
+	define_function_under_test || { teardown_test_env; return 0; }
+
+	local pr_obj='{"number":88,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"draft test","labels":[],"isDraft":true}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "draft PR without origin labels skips merge" 1 "Expected 1, got ${result}; log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	if grep -qE 'gh pr merge 88' "$GH_LOG"; then
+		print_result "draft PR without origin labels makes no merge write" 1 "gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'draft PR not eligible for auto-merge.*GH#23525' "$LOGFILE"; then
+		print_result "draft PR without origin labels writes skip log" 1 "pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "draft PR without origin labels is blocked before gh pr merge" 0
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_ruleset_violation_retries_without_admin
+	test_draft_pr_without_origin_labels_skips_merge_write
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

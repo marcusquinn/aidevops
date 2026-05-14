@@ -557,7 +557,7 @@ _process_single_ready_pr() {
 	local repo_slug="$1"
 	local pr_obj="$2"
 
-	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_labels=""
+	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_labels="" pr_is_draft="false"
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
 	# instead of \t. Bash read collapses consecutive IFS whitespace chars
@@ -567,13 +567,17 @@ _process_single_ready_pr() {
 	# caused pr_author to receive the PR title, breaking the collaborator
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
-	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_labels < <(
+	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_labels pr_is_draft < <(
 		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\([(.labels // [])[].name] | join(","))"'
+			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$pr_is_draft" == "true" ]]; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — draft PR not eligible for auto-merge (GH#23525)" >>"$LOGFILE"
+		return 1
+	fi
 
 	# CONFLICTING handling (t2116): before closing, attempt to salvage the
 	# PR via `gh pr update-branch` which fast-forwards the base branch into
