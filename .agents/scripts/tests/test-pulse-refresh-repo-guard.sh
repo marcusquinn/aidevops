@@ -75,6 +75,25 @@ setup_deleted_upstream_repo() {
 	return 0
 }
 
+setup_missing_default_upstream_repo() {
+	local bare_dir="${TEST_ROOT}/missing-default-origin.git"
+	local clone_dir="${TEST_ROOT}/missing-default-repo"
+	git init --bare "$bare_dir" >/dev/null 2>&1
+	git clone "$bare_dir" "$clone_dir" >/dev/null 2>&1
+	(
+		cd "$clone_dir" || exit 1
+		git checkout -b main >/dev/null 2>&1
+		printf 'initial\n' >file.txt
+		git add file.txt
+		git commit -m "initial" >/dev/null 2>&1
+		git push -u origin main >/dev/null 2>&1
+		git remote set-head origin main >/dev/null 2>&1
+	)
+	git --git-dir="$bare_dir" update-ref -d refs/heads/main >/dev/null 2>&1
+	printf '%s\n' "$clone_dir"
+	return 0
+}
+
 test_refresh_skips_deleted_noncanonical_upstream() {
 	local clone_dir=""
 	clone_dir=$(setup_deleted_upstream_repo)
@@ -114,6 +133,23 @@ test_refresh_distinguishes_unverifiable_upstream() {
 	return 0
 }
 
+test_refresh_logs_missing_upstream_only_for_exit_two() {
+	local clone_dir=""
+	clone_dir=$(setup_missing_default_upstream_repo)
+	_PULSE_REFRESHED_THIS_CYCLE=()
+	true >"$LOGFILE"
+	_pulse_refresh_repo "$clone_dir"
+
+	if grep -Fq "upstream origin/main does not exist" "$LOGFILE" && \
+	   ! grep -Fq "could not verify upstream origin/main" "$LOGFILE" && \
+	   ! grep -Fq "git pull --ff-only failed" "$LOGFILE"; then
+		print_result "missing upstream is logged only for ls-remote exit 2" 0
+		return 0
+	fi
+	print_result "missing upstream is logged only for ls-remote exit 2" 1 "$(tr '\n' ' ' <"$LOGFILE")"
+	return 0
+}
+
 main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
@@ -124,6 +160,7 @@ main() {
 	declare -g -A _PULSE_REFRESHED_THIS_CYCLE=()
 	test_refresh_skips_deleted_noncanonical_upstream
 	test_refresh_distinguishes_unverifiable_upstream
+	test_refresh_logs_missing_upstream_only_for_exit_two
 	printf 'Tests run: %d\nTests failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
