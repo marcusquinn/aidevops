@@ -94,6 +94,14 @@ _pm_issue_api() {
 	return 0
 }
 
+# Standard PR JSON fields consumed by _process_single_ready_pr. Keep every
+# caller that builds a PR object on this helper so draft/label/staleness
+# metadata cannot drift between list-based and webhook-triggered merge paths.
+_pulse_merge_ready_pr_json_fields() {
+	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,createdAt'
+	return 0
+}
+
 # Source shared claim-lifecycle helpers (t2429). The _release_interactive_claim_on_merge
 # function was extracted to shared-claim-lifecycle.sh so that both pulse-merge.sh and
 # full-loop-helper.sh can call it after a successful PR merge. SCRIPT_DIR may not be set
@@ -839,12 +847,13 @@ process_pr() {
 		return 1
 	fi
 
-	# Fetch the PR JSON in the same shape _merge_ready_prs_for_repo uses
-	# (number, mergeable, reviewDecision, author, title) and synthesize a
-	# single-PR object. _process_single_ready_pr expects a compact JSON object.
+	# Fetch the PR JSON in the same shape _merge_ready_prs_for_repo uses and
+	# synthesize a single-PR object. _process_single_ready_pr expects a compact
+	# JSON object with metadata used by draft, label, stale, and repair-routing
+	# gates.
 	local pr_obj
 	pr_obj=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json number,mergeable,reviewDecision,author,title 2>/dev/null) || pr_obj=""
+		--json "$(_pulse_merge_ready_pr_json_fields)" 2>/dev/null) || pr_obj=""
 
 	if [[ -z "$pr_obj" || "$pr_obj" == "null" ]]; then
 		echo "[pulse-merge] process_pr: gh pr view failed for ${repo_slug}#${pr_number}" >>"$LOGFILE"
