@@ -79,6 +79,14 @@ else
 	fail "blocked-by mention in task notes should not veto current task line"
 fi
 
+historical_cancelled_note_task='- [ ] t9005 incomplete implementation tier:standard
+  - Historical note: earlier scope was cancelled:2026-01-01 before being reopened.'
+if _has_evidence "$historical_cancelled_note_task" "t9005" "owner/repo"; then
+	fail "cancelled marker in task notes is not accepted as completion evidence"
+else
+	pass "cancelled marker in task notes is not accepted as completion evidence"
+fi
+
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"
 	exit 0
