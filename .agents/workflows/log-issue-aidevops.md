@@ -274,11 +274,9 @@ First Bash tool call: create and sign an absolute body file.
 
 ```bash
 BODY_FILE=/tmp/aidevops-issue-body.md
-python3 - <<'PY'
-from pathlib import Path
-Path('/tmp/aidevops-issue-body.md').write_text('''BODY_CONTENT
-''', encoding='utf-8')
-PY
+cat <<'EOF' > "$BODY_FILE"
+BODY_CONTENT
+EOF
 ~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$BODY_FILE"
 ```
 

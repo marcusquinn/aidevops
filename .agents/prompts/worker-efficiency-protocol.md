@@ -20,10 +20,9 @@ git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
 git push -u origin HEAD
 gh_issue=$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
 PR_BODY_FILE=/tmp/aidevops-pr-body.md
-python3 - <<'PY'
-from pathlib import Path
-Path('/tmp/aidevops-pr-body.md').write_text('WIP - incremental commits\n', encoding='utf-8')
-PY
+cat <<'EOF' > "$PR_BODY_FILE"
+WIP - incremental commits
+EOF
 [[ -n "$gh_issue" ]] && printf '\nResolves #%s\n' "$gh_issue" >> "$PR_BODY_FILE"
 ~/.aidevops/agents/scripts/gh-signature-helper.sh footer --model "$ANTHROPIC_MODEL" >> "$PR_BODY_FILE"
 ```
