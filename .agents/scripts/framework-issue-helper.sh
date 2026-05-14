@@ -573,6 +573,52 @@ log_framework_issue() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# _parse_log_command ARGS...
+# ─────────────────────────────────────────────────────────────────────────────
+_parse_log_command() {
+	local title="" body="" label="bug" dry_run="false" auto_dispatch="no" tier=""
+	while [[ $# -gt 0 ]]; do
+		local option="$1"
+		case "$option" in
+		--title)
+			local option_value="${2:-}"
+			title="$option_value"
+			shift 2
+			;;
+		--body)
+			local option_value="${2:-}"
+			body="$option_value"
+			shift 2
+			;;
+		--label)
+			local option_value="${2:-}"
+			label="$option_value"
+			shift 2
+			;;
+		--auto-dispatch)
+			auto_dispatch="yes"
+			shift
+			;;
+		--tier)
+			local option_value="${2:-}"
+			tier="$option_value"
+			shift 2
+			;;
+		--dry-run)
+			dry_run="true"
+			shift
+			;;
+		*)
+			log_error "Unknown option: $option"
+			return 1
+			;;
+		esac
+	done
+	log_framework_issue "$title" "$body" "$label" "$dry_run" "$auto_dispatch" "$tier"
+	return $?
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # parse_and_run ARGS...
 # ─────────────────────────────────────────────────────────────────────────────
 parse_and_run() {
@@ -591,45 +637,7 @@ parse_and_run() {
 		;;
 
 	log)
-		local title="" body="" label="bug" dry_run="false" auto_dispatch="no" tier=""
-		while [[ $# -gt 0 ]]; do
-			local option="$1"
-			case "$option" in
-			--title)
-				local option_value="${2:-}"
-				title="$option_value"
-				shift 2
-				;;
-			--body)
-				local option_value="${2:-}"
-				body="$option_value"
-				shift 2
-				;;
-			--label)
-				local option_value="${2:-}"
-				label="$option_value"
-				shift 2
-				;;
-			--auto-dispatch)
-				auto_dispatch="yes"
-				shift
-				;;
-			--tier)
-				local option_value="${2:-}"
-				tier="$option_value"
-				shift 2
-				;;
-			--dry-run)
-				dry_run="true"
-				shift
-				;;
-			*)
-				log_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		log_framework_issue "$title" "$body" "$label" "$dry_run" "$auto_dispatch" "$tier"
+		_parse_log_command "$@"
 		return $?
 		;;
 
