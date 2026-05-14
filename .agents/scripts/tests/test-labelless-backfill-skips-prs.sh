@@ -48,7 +48,7 @@ setup_test_env() {
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
 
 if [[ "$1" == "api" && "$2" == "repos/owner/repo/issues/123" ]]; then
-	printf '{"author_association":"OWNER","pull_request":{"url":"https://api.example.invalid/pulls/123"}}\n'
+	printf '{"author_association":"OWNER","pull_request":{"url":""}}\n'
 	exit 0
 fi
 
