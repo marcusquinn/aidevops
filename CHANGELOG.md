@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.48] - 2026-05-14
+
+### Fixed
+
+- stop seeding pending pool auth (#23600)
+
 ## [3.15.47] - 2026-05-14
 
 ### Changed
