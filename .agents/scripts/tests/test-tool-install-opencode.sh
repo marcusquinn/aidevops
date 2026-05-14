@@ -281,6 +281,33 @@ resolved4=$(tail -1 "$SANDBOX/out4")
 assert_eq "skip-when-valid rc" "rc=0" "$rc4"
 assert_eq "skip-when-valid resolved-path file" "$HOME/.local/bin/opencode" "$resolved4"
 
+# --- Test 4b: setup_opencode_cli accepts valid Homebrew opencode ------------
+echo "Test 4b: setup_opencode_cli accepts valid Homebrew opencode"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved"
+mkdir -p "$SANDBOX/homebrew/bin"
+cp "$SANDBOX/bin/opencode-real" "$SANDBOX/homebrew/bin/opencode"
+(
+	source_extracted
+	export PATH="$SANDBOX/homebrew/bin:$PATH"
+	npm_global_install() {
+		printf '%s\n' "unexpected npm_global_install $*" >&2
+		return 1
+	}
+	export -f npm_global_install 2>/dev/null || true
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+	cat "$HOME/.aidevops/.opencode-bin-resolved" 2>/dev/null || echo "MISSING"
+) >"$SANDBOX/out4b" 2>&1
+rc4b=$(grep '^rc=' "$SANDBOX/out4b" | tail -1)
+resolved4b=$(tail -1 "$SANDBOX/out4b")
+homebrew_install_invoked=$(grep -c "unexpected npm_global_install" "$SANDBOX/out4b" || true)
+homebrew_sudo_hint=$(grep -c "sudo npm install" "$SANDBOX/out4b" || true)
+assert_eq "valid Homebrew opencode rc" "rc=0" "$rc4b"
+assert_eq "valid Homebrew opencode resolved" "$HOME/.local/bin/opencode" "$resolved4b"
+assert_eq "valid Homebrew opencode avoids installer" "0" "$homebrew_install_invoked"
+assert_eq "valid Homebrew opencode avoids sudo npm hint" "0" "$homebrew_sudo_hint"
+
 # --- Test 5: setup_opencode_cli auto-heal on wrong package -----------------
 # Critical t2891 path: when 'opencode' resolves to claude CLI (rc=1),
 # the function MUST trigger force-heal (calls npm_global_install) and
