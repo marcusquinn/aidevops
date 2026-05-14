@@ -32,7 +32,7 @@ assert_contains() {
 	local expected="$2"
 	local name="$3"
 
-	if grep -Fq "$expected" <<<"$output"; then
+	if grep -Fq -- "$expected" <<<"$output"; then
 		pass "$name"
 	else
 		fail "$name" "expected ${expected}; got: ${output}"
@@ -45,7 +45,7 @@ assert_not_contains() {
 	local unexpected="$2"
 	local name="$3"
 
-	if grep -Fq "$unexpected" <<<"$output"; then
+	if grep -Fq -- "$unexpected" <<<"$output"; then
 		fail "$name" "unexpected ${unexpected}; got: ${output}"
 	else
 		pass "$name"
@@ -62,6 +62,10 @@ run_case() {
 	cat >"${stub_dir}/gh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+if [[ -n "${TEST_GH_TRACE:-}" ]]; then
+	printf '%s\n' "$*" >>"$TEST_GH_TRACE"
+fi
 
 if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
 	exit 0
@@ -90,6 +94,22 @@ EOF
 		TEST_CREATED_URL="$created_url" \
 		PATH="${stub_dir}:$PATH" \
 		"$HELPER" log --title "fix: duplicate parser regression" --body "body" >"$output_file" 2>&1; then
+		return 0
+	fi
+
+	return 1
+}
+
+run_auto_dispatch_case() {
+	local stub_dir="$1"
+	local output_file="$2"
+	local trace_file="$3"
+
+	if TEST_DUPLICATE_VALUE="" \
+		TEST_CREATED_URL="https://github.com/marcusquinn/aidevops/issues/9100" \
+		TEST_GH_TRACE="$trace_file" \
+		PATH="${stub_dir}:$PATH" \
+		"$HELPER" log --title "fix: auto dispatch labels" --body "body" --label bug --auto-dispatch --tier standard >"$output_file" 2>&1; then
 		return 0
 	fi
 
@@ -126,6 +146,28 @@ else
 	invalid_create_text=$(<"$invalid_create_output")
 	assert_not_contains "$invalid_create_text" "issue_url=https://github.com/marcusquinn/aidevops/issues/[]" "invalid created issue URL is not emitted"
 fi
+
+auto_dispatch_output="${TMP_DIR}/auto-dispatch.out"
+auto_dispatch_trace="${TMP_DIR}/auto-dispatch.trace"
+if run_auto_dispatch_case "${TMP_DIR}" "$auto_dispatch_output" "$auto_dispatch_trace"; then
+	auto_dispatch_text=$(<"$auto_dispatch_output")
+	auto_dispatch_calls=$(<"$auto_dispatch_trace")
+	assert_contains "$auto_dispatch_text" "status=created" "auto-dispatch case creates issue"
+	assert_contains "$auto_dispatch_calls" "issue create" "auto-dispatch case uses issue creation"
+	assert_contains "$auto_dispatch_calls" "--label bug" "auto-dispatch case preserves requested label"
+	assert_contains "$auto_dispatch_calls" "--label auto-dispatch" "auto-dispatch case passes auto-dispatch at create time"
+	assert_contains "$auto_dispatch_calls" "--label tier:standard" "auto-dispatch case passes tier at create time"
+	assert_contains "$auto_dispatch_calls" "--label status:available" "auto-dispatch case includes worker-ready status label"
+	assert_not_contains "$auto_dispatch_calls" "issue edit" "auto-dispatch case avoids post-create issue edits"
+else
+	fail "auto-dispatch case creates issue" "helper failed"
+fi
+
+help_output="${TMP_DIR}/help.out"
+"$HELPER" help >"$help_output" 2>&1
+help_text=$(<"$help_output")
+assert_contains "$help_text" "--auto-dispatch" "usage documents auto-dispatch flag"
+assert_contains "$help_text" "--tier TIER" "usage documents tier flag"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

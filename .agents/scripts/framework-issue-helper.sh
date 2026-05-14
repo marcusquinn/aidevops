@@ -24,6 +24,8 @@
 #                        --title TEXT      Issue title (required)
 #                        --body TEXT       Issue body (optional, auto-generated if omitted)
 #                        --label LABEL     GitHub label (default: "bug")
+#                        --auto-dispatch   Add worker-ready auto-dispatch labels
+#                        --tier TIER       Add tier label for auto-dispatch (for example: standard)
 #                        --dry-run         Print what would be created, don't create
 #
 #   check-repo         Check if the current repo is the aidevops framework repo.
@@ -353,6 +355,31 @@ _find_duplicate_issue() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# _extract_issue_url ISSUE_OUTPUT
+#
+# Extracts the canonical GitHub issue URL from wrapper output that may include
+# informational log lines before the actual URL.
+# ─────────────────────────────────────────────────────────────────────────────
+_extract_issue_url() {
+	local issue_output="$1"
+	local issue_line=""
+	local line
+
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^https://github\.com/[^[:space:]]+/[^[:space:]]+/issues/[0-9]+$ ]]; then
+			issue_line="$line"
+		fi
+	done <<<"$issue_output"
+
+	if [[ -n "$issue_line" ]]; then
+		printf '%s\n' "$issue_line"
+		return 0
+	fi
+
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # _extract_issue_number ISSUE_URL
 #
 # Extracts and validates a numeric issue number from an issue URL.
@@ -427,7 +454,9 @@ _append_signature_footer() {
 # Extracts the issue number from ISSUE_URL and prints structured output.
 # ─────────────────────────────────────────────────────────────────────────────
 _emit_issue_result() {
-	local issue_url="$1"
+	local issue_output="$1"
+	local issue_url
+	issue_url=$(_extract_issue_url "$issue_output" || printf '%s' "$issue_output")
 	local issue_num
 	issue_num=$(_extract_issue_number "$issue_url" || true)
 
@@ -446,7 +475,28 @@ _emit_issue_result() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# log_framework_issue TITLE BODY LABEL DRY_RUN
+# _normalise_tier_label TIER
+#
+# Normalises a tier value to the canonical tier:* label shape.
+# ─────────────────────────────────────────────────────────────────────────────
+_normalise_tier_label() {
+	local tier="$1"
+
+	if [[ -z "$tier" ]]; then
+		return 1
+	fi
+
+	if [[ "$tier" == tier:* ]]; then
+		printf '%s\n' "$tier"
+	else
+		printf 'tier:%s\n' "$tier"
+	fi
+
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# log_framework_issue TITLE BODY LABEL DRY_RUN AUTO_DISPATCH TIER
 #
 # Creates an issue on marcusquinn/aidevops. Deduplicates by title.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -455,6 +505,8 @@ log_framework_issue() {
 	local body="$2"
 	local label="${3:-bug}"
 	local dry_run="${4:-false}"
+	local auto_dispatch="${5:-false}"
+	local tier="${6:-}"
 
 	_validate_gh_prereqs "$title" || return 1
 
@@ -476,10 +528,23 @@ log_framework_issue() {
 
 	body=$(_append_signature_footer "$body")
 
+	local -a issue_labels=("$label")
+	if [[ "$auto_dispatch" == "yes" ]]; then
+		issue_labels+=("auto-dispatch")
+	fi
+	if [[ -n "$tier" ]]; then
+		local tier_label
+		tier_label=$(_normalise_tier_label "$tier") || {
+			log_error "Invalid tier: $tier"
+			return 1
+		}
+		issue_labels+=("$tier_label")
+	fi
+
 	if [[ "$dry_run" == "true" ]]; then
 		log_info "DRY RUN — would create issue on ${AIDEVOPS_SLUG}:"
 		log_info "  Title: $title"
-		log_info "  Label: $label"
+		log_info "  Labels: ${issue_labels[*]}"
 		log_info "  Body preview: ${body:0:200}..."
 		echo "status=dry_run"
 		return 2
@@ -487,12 +552,18 @@ log_framework_issue() {
 
 	log_info "Creating issue on ${AIDEVOPS_SLUG}: $title"
 
-	local issue_url
-	issue_url=$(gh_create_issue \
+	local -a create_args=(
 		--repo "$AIDEVOPS_SLUG" \
 		--title "$title" \
-		--body "$body" \
-		--label "$label" 2>&1) || {
+		--body "$body"
+	)
+	local create_label
+	for create_label in "${issue_labels[@]}"; do
+		create_args+=(--label "$create_label")
+	done
+
+	local issue_url
+	issue_url=$(gh_create_issue "${create_args[@]}" 2>&1) || {
 		log_error "Failed to create issue: $issue_url"
 		return 1
 	}
@@ -520,19 +591,32 @@ parse_and_run() {
 		;;
 
 	log)
-		local title="" body="" label="bug" dry_run="false"
+		local title="" body="" label="bug" dry_run="false" auto_dispatch="no" tier=""
 		while [[ $# -gt 0 ]]; do
-			case "$1" in
+			local option="$1"
+			case "$option" in
 			--title)
-				title="$2"
+				local option_value="${2:-}"
+				title="$option_value"
 				shift 2
 				;;
 			--body)
-				body="$2"
+				local option_value="${2:-}"
+				body="$option_value"
 				shift 2
 				;;
 			--label)
-				label="$2"
+				local option_value="${2:-}"
+				label="$option_value"
+				shift 2
+				;;
+			--auto-dispatch)
+				auto_dispatch="yes"
+				shift
+				;;
+			--tier)
+				local option_value="${2:-}"
+				tier="$option_value"
 				shift 2
 				;;
 			--dry-run)
@@ -545,7 +629,7 @@ parse_and_run() {
 				;;
 			esac
 		done
-		log_framework_issue "$title" "$body" "$label" "$dry_run"
+		log_framework_issue "$title" "$body" "$label" "$dry_run" "$auto_dispatch" "$tier"
 		return $?
 		;;
 
