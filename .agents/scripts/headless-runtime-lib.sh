@@ -1558,14 +1558,11 @@ _run_canary_test() {
 	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
 	mkdir -p "${_canary_config_dir}/opencode"
 	local _canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
-	if [[ -f "$_canary_plugin_path" ]]; then
-		jq -n --arg plugin_url "file://${_canary_plugin_path}" \
-			'{"$schema":"https://opencode.ai/config.json", plugin: [$plugin_url]}' \
-			>"${_canary_config_dir}/opencode/opencode.json"
-	else
-		printf '%s\n' "{\"\$schema\":\"https://opencode.ai/config.json\"}" \
-			>"${_canary_config_dir}/opencode/opencode.json"
-	fi
+	local _canary_plugin_url=""
+	[[ -f "$_canary_plugin_path" ]] && _canary_plugin_url="file://${_canary_plugin_path}"
+	jq -n --arg plugin_url "$_canary_plugin_url" \
+		'{"$schema":"https://opencode.ai/config.json"} + (if $plugin_url == "" then {} else {plugin: [$plugin_url]} end)' \
+		>"${_canary_config_dir}/opencode/opencode.json"
 	local _canary_provider
 	local _canary_default_provider="anthropic"
 	_canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "$_canary_default_provider")
