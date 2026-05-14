@@ -189,6 +189,25 @@ test_pr_target_reason_is_classified_as_benign_block() {
 	return 0
 }
 
+test_benign_block_ledger_is_cycle_local_and_cleaned() {
+	reset_guardrail_env
+	local first_ledger second_ledger lingering_reason=""
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+	first_ledger="$_DISPATCH_BENIGN_BLOCKS_FILE"
+	_dispatch_mark_benign_blocked_candidate 23541 marcusquinn/aidevops dedup_active_claim
+	_dispatch_cleanup_benign_blocks_cycle
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+	second_ledger="$_DISPATCH_BENIGN_BLOCKS_FILE"
+	lingering_reason=$(_dispatch_benign_blocked_candidate_reason 23541 marcusquinn/aidevops 2>/dev/null || true)
+	_dispatch_cleanup_benign_blocks_cycle
+	if [[ "$first_ledger" != "$second_ledger" && ! -e "$first_ledger" && ! -e "$second_ledger" && -z "$lingering_reason" ]]; then
+		print_result "guardrail: benign block ledger is cycle-local and cleaned" 0
+	else
+		print_result "guardrail: benign block ledger is cycle-local and cleaned" 1 "first=${first_ledger} second=${second_ledger} lingering=${lingering_reason}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -198,6 +217,7 @@ test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
+test_benign_block_ledger_is_cycle_local_and_cleaned
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"
