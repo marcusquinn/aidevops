@@ -134,9 +134,8 @@ blocked by the signature gate.
 
 ```bash
 MERGE_SUMMARY_FILE=/tmp/aidevops-merge-summary.md
-python3 - <<'PY'
-from pathlib import Path
-Path('/tmp/aidevops-merge-summary.md').write_text('''<!-- MERGE_SUMMARY -->
+cat <<'EOF' > "$MERGE_SUMMARY_FILE"
+<!-- MERGE_SUMMARY -->
 ## Completion Summary
 
 - **What**: <1-line description of what was done>
@@ -144,8 +143,7 @@ Path('/tmp/aidevops-merge-summary.md').write_text('''<!-- MERGE_SUMMARY -->
 - **Files changed**: <comma-separated list of key files>
 - **Testing**: <what was verified — linter, build, manual, etc.>
 - **Key decisions**: <any notable trade-offs or choices made>
-''', encoding='utf-8')
-PY
+EOF
 ~/.aidevops/agents/scripts/gh-signature-helper.sh footer >> "$MERGE_SUMMARY_FILE"
 ```
 
