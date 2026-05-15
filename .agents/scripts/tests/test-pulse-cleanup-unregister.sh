@@ -138,11 +138,73 @@ gh() {
 	local subcommand="${1:-}"
 	local action="${2:-}"
 	printf '%s\n' "$*" >>"${GH_LOG:?}"
+	if [[ "$subcommand" == "issue" && "$action" == "view" ]]; then
+		printf '%s\n' "${GH_ISSUE_STATE:-OPEN}"
+		return 0
+	fi
 	if [[ "$subcommand" == "pr" && "$action" == "list" ]]; then
 		printf '%s\n' "${GH_MERGED_PR:-3964}"
 		return 0
 	fi
 	return 1
+}
+
+gh_issue_comment() {
+	printf 'gh_issue_comment %s\n' "$*" >>"${GH_LOG:?}"
+	return 0
+}
+
+recover_failed_launch_state() {
+	printf 'recover_failed_launch_state %s\n' "$*" >>"${GH_LOG:?}"
+	return 0
+}
+
+test_orphan_crash_skips_closed_issue_comment() {
+	local gh_log="${TEST_ROOT}/gh-closed-orphan.log"
+	local old_state="${GH_ISSUE_STATE:-}"
+	: >"$gh_log"
+	LOGFILE="${TEST_ROOT}/pulse-closed-orphan.log"
+	GH_LOG="$gh_log"
+	GH_ISSUE_STATE="CLOSED"
+	export GH_LOG GH_ISSUE_STATE
+
+	_record_orphan_crash_classification "feature/auto-20260515-123456-gh23379" 0 "owner/repo"
+
+	grep -q 'issue view 23379 --repo owner/repo' "$gh_log" || fail "closed orphan did not check issue state"
+	if grep -q 'gh_issue_comment\|recover_failed_launch_state\|issues/23379/comments' "$gh_log"; then
+		fail "closed orphan posted or recovered issue state"
+	fi
+	grep -q 'Orphan cleanup skipped for #23379 (owner/repo): issue state=CLOSED' "$LOGFILE" || fail "closed orphan skip was not audited"
+	if [[ -n "$old_state" ]]; then
+		GH_ISSUE_STATE="$old_state"
+	else
+		unset GH_ISSUE_STATE
+	fi
+	pass "orphan cleanup skips recovery comments on closed issues"
+	return 0
+}
+
+test_orphan_crash_keeps_open_issue_recovery() {
+	local gh_log="${TEST_ROOT}/gh-open-orphan.log"
+	local old_state="${GH_ISSUE_STATE:-}"
+	: >"$gh_log"
+	LOGFILE="${TEST_ROOT}/pulse-open-orphan.log"
+	GH_LOG="$gh_log"
+	GH_ISSUE_STATE="OPEN"
+	export GH_LOG GH_ISSUE_STATE
+
+	_record_orphan_crash_classification "feature/auto-20260515-123456-gh23380" 0 "owner/repo"
+
+	grep -q 'issue view 23380 --repo owner/repo' "$gh_log" || fail "open orphan did not check issue state"
+	grep -q 'recover_failed_launch_state 23380 owner/repo premature_exit no_work' "$gh_log" || fail "open orphan did not recover launch state"
+	grep -q 'gh_issue_comment 23380 --repo owner/repo --body' "$gh_log" || fail "open orphan did not post recovery comment"
+	if [[ -n "$old_state" ]]; then
+		GH_ISSUE_STATE="$old_state"
+	else
+		unset GH_ISSUE_STATE
+	fi
+	pass "orphan cleanup preserves recovery comments on open issues"
+	return 0
 }
 
 test_zombie_reaper_requires_ledger_repo() {
@@ -205,6 +267,8 @@ test_zombie_reaper_uses_ledger_repo_and_pid() {
 
 test_current_cwd_skip
 test_orphan_removal_unregisters
+test_orphan_crash_skips_closed_issue_comment
+test_orphan_crash_keeps_open_issue_recovery
 test_zombie_reaper_requires_ledger_repo
 test_zombie_reaper_uses_ledger_repo_and_pid
 
