@@ -232,10 +232,13 @@ test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
 	export AIDEVOPS_MIN_WORKER_CONCURRENCY=2
 	local dispatch_calls_file="${TEST_ROOT}/dispatch-calls"
 	local refill_reason_file="${TEST_ROOT}/refill-seen-reason"
+	local child_env_file="${TEST_ROOT}/refill-child-env-sees-ledger"
 	printf '0\n' >"$dispatch_calls_file"
 	: >"$refill_reason_file"
+	: >"$child_env_file"
 	local dispatch_calls=""
 	local refill_seen_reason=""
+	local child_env_seen=""
 	local ledger_after=""
 
 	dispatch_max() {
@@ -248,6 +251,9 @@ test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
 			_dispatch_mark_benign_blocked_candidate 23541 marcusquinn/aidevops dedup_active_claim
 			printf '1\n'
 		else
+			if bash -c '[[ -n "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" && -f "${_DISPATCH_BENIGN_BLOCKS_FILE}" ]]'; then
+				printf 'yes\n' >"$child_env_file"
+			fi
 			_dispatch_benign_blocked_candidate_reason 23541 marcusquinn/aidevops >"$refill_reason_file" 2>/dev/null || true
 			printf '0\n'
 		fi
@@ -266,12 +272,13 @@ test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
 	apply_dispatch_max
 	dispatch_calls=$(<"$dispatch_calls_file")
 	refill_seen_reason=$(<"$refill_reason_file")
+	child_env_seen=$(<"$child_env_file")
 	ledger_after="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
 	unset AIDEVOPS_MIN_WORKER_CONCURRENCY
-	if [[ "$dispatch_calls" -ge 2 && "$refill_seen_reason" == "dedup_active_claim" && -z "$ledger_after" ]]; then
+	if [[ "$dispatch_calls" -ge 2 && "$refill_seen_reason" == "dedup_active_claim" && "$child_env_seen" == "yes" && -z "$ledger_after" ]]; then
 		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 0
 	else
-		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 1 "calls=${dispatch_calls} reason=${refill_seen_reason} ledger_after=${ledger_after}"
+		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 1 "calls=${dispatch_calls} reason=${refill_seen_reason} child_env=${child_env_seen} ledger_after=${ledger_after}"
 	fi
 	return 0
 }

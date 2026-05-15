@@ -836,6 +836,7 @@ apply_dispatch_max() {
 	fi
 
 	_dispatch_begin_benign_blocks_cycle >/dev/null
+	export _DISPATCH_BENIGN_BLOCKS_FILE
 
 	local fill_dispatched
 	fill_dispatched=$(dispatch_max) || fill_dispatched=0
