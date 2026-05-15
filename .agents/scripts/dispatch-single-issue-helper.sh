@@ -310,6 +310,11 @@ _dsi_create_worktree() {
 			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
 			_DSI_WORKTREE_BRANCH="$branch"
 			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
+				if declare -F register_worktree >/dev/null 2>&1; then
+					register_worktree "$_DSI_WORKTREE_PATH" "$_DSI_WORKTREE_BRANCH" \
+						--task "$issue_number" \
+						--session "dispatch-precreate-${issue_number}" 2>/dev/null || true
+				fi
 				return 0
 			fi
 			_dsi_warn "Worktree path unresolvable after add (attempt ${attempt}/${max_attempts}, branch=${branch})"

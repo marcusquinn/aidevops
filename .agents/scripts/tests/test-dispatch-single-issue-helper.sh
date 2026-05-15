@@ -545,6 +545,17 @@ test_create_worktree_uses_target_repo_path() {
 	return 0
 }
 
+test_create_worktree_registers_dispatch_owner() {
+	local failed=1
+	if grep -Fq "register_worktree \"\$_DSI_WORKTREE_PATH\" \"\$_DSI_WORKTREE_BRANCH\"" "$HELPER_PATH" &&
+		grep -Fq -- "--task \"\$issue_number\"" "$HELPER_PATH" &&
+		grep -Fq -- "--session \"dispatch-precreate-\${issue_number}\"" "$HELPER_PATH"; then
+		failed=0
+	fi
+	print_result "worktree creation registers dispatch owner metadata" "$failed"
+	return 0
+}
+
 
 test_readiness_accepts_worker_started_marker() {
 	MOCK_LEDGER_RECORD=""
@@ -699,6 +710,7 @@ _run_tests() {
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
 	test_create_worktree_uses_target_repo_path
+	test_create_worktree_registers_dispatch_owner
 	test_readiness_accepts_worker_started_marker
 	test_readiness_rejects_live_child_without_ready_signal
 	test_readiness_rejects_ledger_without_worker_started
