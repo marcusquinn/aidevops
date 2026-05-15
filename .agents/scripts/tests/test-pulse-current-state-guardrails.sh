@@ -324,6 +324,53 @@ JSON
 	return 0
 }
 
+test_ranked_candidates_prioritise_low_complexity_over_research() {
+	reset_guardrail_env
+	local repos_file="${TEST_ROOT}/repos-low-complexity.json"
+	cat >"$repos_file" <<'JSON'
+{
+  "initialized_repos": [
+    {"slug": "owner/repo", "path": "/tmp/repo", "pulse": true, "priority": "tooling"}
+  ]
+}
+JSON
+	export REPOS_JSON="$repos_file"
+
+	check_repo_pulse_schedule() {
+		return 0
+	}
+
+	check_repo_pulse_interval() {
+		return 0
+	}
+
+	update_repo_pulse_timestamp() {
+		return 0
+	}
+
+	list_dispatchable_issue_candidates_json() {
+		local repo_slug="$1"
+		local limit="$2"
+		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
+		cat <<'JSON'
+[
+  {"number": 20, "title": "broad research priority", "updatedAt": "2026-05-01T00:00:00Z", "labels": ["priority:high", "research", "tier:thinking"], "assignees": []},
+  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": ["enhancement", "low-complexity", "status:available"], "assignees": []}
+]
+JSON
+		return 0
+	}
+
+	local first_number=""
+	first_number=$(build_ranked_dispatch_candidates_json 10 | jq -r '.[0].number' 2>/dev/null) || first_number=""
+	if [[ "$first_number" == "21" ]]; then
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 0
+	else
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 1 "first=${first_number}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -337,6 +384,7 @@ test_benign_block_ledger_is_cycle_local_and_cleaned
 test_external_benign_block_ledger_is_preserved
 test_apply_dispatch_max_preserves_benign_ledger_across_refill
 test_ranked_candidates_prioritise_solvable_work
+test_ranked_candidates_prioritise_low_complexity_over_research
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"
