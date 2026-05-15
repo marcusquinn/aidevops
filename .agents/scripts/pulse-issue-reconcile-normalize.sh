@@ -183,6 +183,7 @@ _fetch_label_invariant_rows() {
 			([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			((.labels | map(.name) | index("origin:interactive")) != null | tostring),
 			((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
+			((.labels | map(.name) | any(. as $label | ["supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold"] | index($label))) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
 			(([.labels[].name | select(startswith("status:"))] | length) | tostring)
 		] | join("|")
@@ -210,8 +211,8 @@ _normalize_label_invariants_for_repo() {
 	rows=$(_fetch_label_invariant_rows "$slug") || return 0
 	[[ -n "$rows" ]] || return 0
 
-	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" created_epoch="" all_status_count=""
-	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto created_epoch all_status_count; do
+	local issue_num="" status_list="" tier_list="" has_origin_i="" has_auto="" is_non_task="" created_epoch="" all_status_count=""
+	while IFS='|' read -r issue_num status_list tier_list has_origin_i has_auto is_non_task created_epoch all_status_count; do
 		[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 		_LI_CHECKED=$((_LI_CHECKED + 1))
 
@@ -241,11 +242,13 @@ _normalize_label_invariants_for_repo() {
 		# + no tier + no auto-dispatch + no status:* AT ALL (including
 		# exception labels like needs-info/verify-failed/stale — an issue
 		# in those states is actively managed, not awaiting triage) +
+		# no non-task label (routine-tracking/supervisor/etc.) +
 		# created >30min ago = maintainer-intended issue not briefed into
 		# the dispatch pipeline.
 		if [[ "$has_origin_i" == "true" &&
 			-z "$tier_list" &&
 			"$has_auto" == "false" &&
+			"$is_non_task" == "false" &&
 			"$all_status_count" == "0" &&
 			"$created_epoch" =~ ^[0-9]+$ &&
 			"$created_epoch" -lt "$triage_cutoff" ]]; then
