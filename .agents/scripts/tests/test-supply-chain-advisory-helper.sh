@@ -64,6 +64,58 @@ test_self_reference_only_scan_succeeds() {
 	return 0
 }
 
+test_relative_self_reference_only_scan_succeeds() {
+	local tmpdir
+	tmpdir=$(make_tmpdir) || {
+		print_result "relative self-reference-only scan exits cleanly" 1 "mktemp failed"
+		return 0
+	}
+
+	mkdir -p "${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 1
+	printf '%s\n' 'Documented IOC: router_''init.js and gh-token-''monitor.' \
+		>"${tmpdir}/.agents/reference/npm-supply-chain-response.md"
+	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
+		>"${tmpdir}/.agents/scripts/supply-chain-advisory-helper.sh"
+
+	local output
+	local status=0
+	output=$(cd "$tmpdir" && HOME="$tmpdir" bash "$HELPER_SCRIPT" scan .agents 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]] \
+		&& [[ "$output" == *"known-safe scanner self-reference"* ]] \
+		&& [[ "$output" != *"Potential supply-chain compromise indicators found"* ]]; then
+		print_result "relative self-reference-only scan exits cleanly" 0
+	else
+		print_result "relative self-reference-only scan exits cleanly" 1 "status=${status} output=${output}"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
+test_single_file_self_reference_only_scan_succeeds() {
+	local tmpdir
+	tmpdir=$(make_tmpdir) || {
+		print_result "single-file self-reference-only scan exits cleanly" 1 "mktemp failed"
+		return 0
+	}
+
+	mkdir -p "${tmpdir}/.agents/scripts" || return 1
+	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
+		>"${tmpdir}/.agents/scripts/supply-chain-advisory-helper.sh"
+
+	local output
+	local status=0
+	output=$(HOME="$tmpdir" bash "$HELPER_SCRIPT" scan "${tmpdir}/.agents/scripts/supply-chain-advisory-helper.sh" 2>&1) || status=$?
+	if [[ "$status" -eq 0 ]] \
+		&& [[ "$output" == *"known-safe scanner self-reference"* ]] \
+		&& [[ "$output" != *"Potential supply-chain compromise indicators found"* ]]; then
+		print_result "single-file self-reference-only scan exits cleanly" 0
+	else
+		print_result "single-file self-reference-only scan exits cleanly" 1 "status=${status} output=${output}"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
 test_non_self_ioc_scan_fails() {
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
@@ -90,6 +142,8 @@ test_non_self_ioc_scan_fails() {
 
 main() {
 	test_self_reference_only_scan_succeeds
+	test_relative_self_reference_only_scan_succeeds
+	test_single_file_self_reference_only_scan_succeeds
 	test_non_self_ioc_scan_fails
 
 	printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"

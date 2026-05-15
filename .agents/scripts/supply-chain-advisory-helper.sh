@@ -27,7 +27,7 @@ is_known_safe_ioc_self_reference() {
 	local hit_path="${hit_line%%:*}"
 
 	case "$hit_path" in
-	*/.agents/reference/npm-supply-chain-response.md | */.agents/scripts/supply-chain-advisory-helper.sh)
+	*.agents/reference/npm-supply-chain-response.md | *.agents/scripts/supply-chain-advisory-helper.sh)
 		return 0
 		;;
 	*)
@@ -123,7 +123,9 @@ scan_path() {
 	echo -e "${BLUE}Scanning:${NC} ${target_path}"
 	if command -v rg >/dev/null 2>&1; then
 		local ioc_output
-		if ioc_output=$(rg -n --hidden --glob '!node_modules/.cache/**' --glob '!dist/**' --glob '!build/**' --glob '!.git/**' "$IOC_PATTERN" "$target_path"); then
+		rg_status=0
+		ioc_output=$(rg -nH --hidden --glob '!node_modules/.cache/**' --glob '!dist/**' --glob '!build/**' --glob '!.git/**' "$IOC_PATTERN" "$target_path") || rg_status=$?
+		if [[ "$rg_status" -eq 0 ]]; then
 			local hit_line
 			while IFS= read -r hit_line; do
 				[[ -z "$hit_line" ]] && continue
@@ -140,21 +142,19 @@ scan_path() {
 			if [[ "$ioc_self_references" -gt 0 ]]; then
 				echo -e "${YELLOW}[INFO]${NC} Ignored ${ioc_self_references} known-safe scanner self-reference IOC match(es)."
 			fi
-		else
-			rg_status=$?
-			if [[ "$rg_status" -gt 1 ]]; then
-				echo -e "${YELLOW}[WARN]${NC} ripgrep IOC scan failed for ${target_path} (exit ${rg_status})."
-				scan_error="$rg_status"
-			fi
+		elif [[ "$rg_status" -gt 1 ]]; then
+			echo -e "${YELLOW}[WARN]${NC} ripgrep IOC scan failed for ${target_path} (exit ${rg_status})."
+			scan_error="$rg_status"
 		fi
-		if rg -n --hidden --glob '!node_modules/**' --glob '!.git/**' --glob 'pnpm-lock.yaml' --glob 'package-lock.json' --glob 'yarn.lock' --glob 'bun.lock*' --glob 'package.json' "$AFFECTED_PATTERN" "$target_path"; then
+		local affected_output
+		rg_status=0
+		affected_output=$(rg -nH --hidden --glob '!node_modules/**' --glob '!.git/**' --glob 'pnpm-lock.yaml' --glob 'package-lock.json' --glob 'yarn.lock' --glob 'bun.lock*' --glob 'package.json' "$AFFECTED_PATTERN" "$target_path") || rg_status=$?
+		if [[ "$rg_status" -eq 0 ]]; then
+			printf '%s\n' "$affected_output"
 			findings=$((findings + 1))
-		else
-			rg_status=$?
-			if [[ "$rg_status" -gt 1 ]]; then
-				echo -e "${YELLOW}[WARN]${NC} ripgrep affected-package scan failed for ${target_path} (exit ${rg_status})."
-				scan_error="$rg_status"
-			fi
+		elif [[ "$rg_status" -gt 1 ]]; then
+			echo -e "${YELLOW}[WARN]${NC} ripgrep affected-package scan failed for ${target_path} (exit ${rg_status})."
+			scan_error="$rg_status"
 		fi
 	else
 		echo -e "${YELLOW}[WARN]${NC} ripgrep not installed; install rg for supply-chain scans."
