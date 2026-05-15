@@ -87,6 +87,22 @@ else
 	pass "cancelled marker in task notes is not accepted as completion evidence"
 fi
 
+unexpected_marker_cancelled_note_task='- [~] t9006 incomplete implementation tier:standard
+  - Historical note: earlier scope was cancelled:2026-01-01 before being reopened.'
+if _has_evidence "$unexpected_marker_cancelled_note_task" "t9006" "owner/repo"; then
+	fail "unexpected task marker still ignores cancelled marker in task notes"
+else
+	pass "unexpected task marker still ignores cancelled marker in task notes"
+fi
+
+unexpected_marker_proof_task='- [~] t9007 fixed implementation pr:#80 tier:standard
+  - Historical note: earlier attempt was blocked-by:t9006 before the dependency landed.'
+if _has_evidence "$unexpected_marker_proof_task" "t9007" "owner/repo"; then
+	pass "unexpected task marker accepts proof on the task line"
+else
+	fail "unexpected task marker should accept proof on the task line"
+fi
+
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"
 	exit 0
