@@ -171,7 +171,7 @@ test_orphan_crash_skips_closed_issue_comment() {
 	_record_orphan_crash_classification "feature/auto-20260515-123456-gh23379" 0 "owner/repo"
 
 	grep -q 'issue view 23379 --repo owner/repo' "$gh_log" || fail "closed orphan did not check issue state"
-	if grep -q 'gh_issue_comment\|recover_failed_launch_state\|issues/23379/comments' "$gh_log"; then
+	if grep -Eq 'gh_issue_comment|recover_failed_launch_state|issues/23379/comments' "$gh_log"; then
 		fail "closed orphan posted or recovered issue state"
 	fi
 	grep -q 'Orphan cleanup skipped for #23379 (owner/repo): issue state=CLOSED' "$LOGFILE" || fail "closed orphan skip was not audited"
