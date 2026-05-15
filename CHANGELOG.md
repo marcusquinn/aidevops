@@ -26,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- prioritise low-complexity pulse dispatch (#23612)
-- prioritise solvable pulse dispatch candidates (#23610)
+- prioritize low-complexity pulse dispatch (#23612)
+- prioritize solvable pulse dispatch candidates (#23610)
 
 ### Changed
 
@@ -57,8 +57,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- prioritise low-complexity pulse dispatch (#23612)
-- prioritise solvable pulse dispatch candidates (#23610)
+- prioritize low-complexity pulse dispatch (#23612)
+- prioritize solvable pulse dispatch candidates (#23610)
 
 ### Changed
 
