@@ -285,6 +285,7 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 #   #7: triage-missing-but-recent → not counted
 #   #8: triage-missing-but-has-tier → not counted
 #   #9: triage-missing shape but routine-tracking non-task → not counted
+#   #10: triage-missing shape but supervisor non-task → not counted
 OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
 	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -300,7 +301,8 @@ ISSUES_JSON=$(
 	{"number":6,"labels":[{"name":"origin:interactive"}],"createdAt":"${OLD_ISO}"},
 	{"number":7,"labels":[{"name":"origin:interactive"}],"createdAt":"${NEW_ISO}"},
 	{"number":8,"labels":[{"name":"origin:interactive"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
-	{"number":9,"labels":[{"name":"origin:interactive"},{"name":"routine-tracking"}],"createdAt":"${OLD_ISO}"}
+	{"number":9,"labels":[{"name":"origin:interactive"},{"name":"routine-tracking"}],"createdAt":"${OLD_ISO}"},
+	{"number":10,"labels":[{"name":"origin:interactive"},{"name":"supervisor"}],"createdAt":"${OLD_ISO}"}
 ]
 JSON
 )
@@ -403,15 +405,16 @@ else
 	print_result "reconciler #5 single-label no-op" 1 "(edit calls: $n5)"
 fi
 
-# Issue #6, #7, #8, #9: triage-missing count-only/non-task (no edits)
+# Issue #6, #7, #8, #9, #10: triage-missing count-only/non-task (no edits)
 n6=$(count_edits_for 6)
 n7=$(count_edits_for 7)
 n8=$(count_edits_for 8)
 n9=$(count_edits_for 9)
-if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 && "$n9" -eq 0 ]]; then
+n10=$(count_edits_for 10)
+if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 && "$n9" -eq 0 && "$n10" -eq 0 ]]; then
 	print_result "reconciler does not auto-fix triage-missing issues" 0
 else
-	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8 #9=$n9)"
+	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8 #9=$n9 #10=$n10)"
 fi
 
 # Counter file must be written with exact numbers
@@ -441,11 +444,11 @@ if [[ -f "$COUNTER_FILE" ]]; then
 		print_result "counter tier_fixed=1 (issue #3)" 1 "(got: $tier_fixed)"
 	fi
 
-	# triage_missing: #6 only (#7 is recent, #8 has a tier, #9 is routine-tracking)
+	# triage_missing: #6 only (#7 is recent, #8 has a tier, #9/#10 are non-task labels)
 	if [[ "$triage_missing" -eq 1 ]]; then
-		print_result "counter triage_missing=1 (only #6 matches all criteria; routine-tracking ignored)" 0
+		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 0
 	else
-		print_result "counter triage_missing=1 (only #6 matches all criteria; routine-tracking ignored)" 1 "(got: $triage_missing)"
+		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 1 "(got: $triage_missing)"
 	fi
 fi
 
