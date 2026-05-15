@@ -438,6 +438,7 @@ dispatch_max() {
 		_dispatch_begin_benign_blocks_cycle >/dev/null
 		_dispatch_owns_benign_blocks_cycle=1
 	fi
+	export _DISPATCH_BENIGN_BLOCKS_FILE
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
 	# t3418/t3558: if the minimum worker floor is active, runtime launch
