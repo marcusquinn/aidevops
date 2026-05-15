@@ -306,9 +306,9 @@ JSON
 		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
 		cat <<'JSON'
 [
-  {"number": 10, "title": "broad enhancement", "updatedAt": "2026-05-01T00:00:00Z", "labels": ["enhancement", "tier:thinking"], "assignees": []},
-  {"number": 11, "title": "small worker-ready fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": ["enhancement", "tier:simple", "worker-ready", "auto-dispatch"], "assignees": []},
-  {"number": 12, "title": "plain bug", "updatedAt": "2026-05-03T00:00:00Z", "labels": ["bug"], "assignees": []}
+  {"number": 10, "title": "broad enhancement", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "tier:thinking"}], "assignees": []},
+  {"number": 11, "title": "small worker-ready fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "tier:simple"}, {"name": "worker-ready"}, {"name": "auto-dispatch"}], "assignees": []},
+  {"number": 12, "title": "plain bug", "updatedAt": "2026-05-03T00:00:00Z", "labels": [{"name": "bug"}], "assignees": []}
 ]
 JSON
 		return 0
@@ -354,8 +354,8 @@ JSON
 		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
 		cat <<'JSON'
 [
-  {"number": 20, "title": "broad research priority", "updatedAt": "2026-05-01T00:00:00Z", "labels": ["priority:high", "research", "tier:thinking"], "assignees": []},
-  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": ["enhancement", "low-complexity", "status:available"], "assignees": []}
+  {"number": 20, "title": "broad research priority", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "priority:high"}, {"name": "research"}, {"name": "tier:thinking"}], "assignees": []},
+  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "low-complexity"}, {"name": "status:available"}], "assignees": []}
 ]
 JSON
 		return 0
