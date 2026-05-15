@@ -97,6 +97,37 @@ test_override_allows_audited_call() {
 	return 1
 }
 
+test_default_path_without_home_is_user_scoped() {
+	local default_path=""
+	# shellcheck disable=SC2016 # $1 is expanded by the nested bash process.
+	default_path=$(env -u HOME -u AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME -u AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE USER=tester bash -c 'source "$1"; _gh_secondary_cooldown_file' bash "${SCRIPT_DIR}/shared-gh-secondary-cooldown.sh")
+	if [[ "$default_path" == "/tmp/.aidevops-tester/.aidevops/cache/gh-secondary-cooldown.json" ]]; then
+		printf 'PASS default cooldown path without HOME is user scoped\n'
+		return 0
+	fi
+	printf 'FAIL default cooldown path without HOME was not user scoped: %s\n' "$default_path"
+	return 1
+}
+
+test_no_jq_fallback_escapes_json_strings() {
+	reset_case
+	local nojq_bin="${TMP_HOME}/nojq-bin"
+	local tool=""
+	mkdir -p "$nojq_bin"
+	for tool in date mkdir mv sed; do
+		ln -sf "$(command -v "$tool")" "${nojq_bin}/${tool}"
+	done
+	PATH="$nojq_bin" _gh_secondary_cooldown_write 'quote " reason' 'request id: REQ-123' >/dev/null 2>&1
+	if jq -e '.reason == "quote \" reason" and .last_request_id == "REQ-123" and (.expires_at > .first_seen)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS no-jq fallback escapes JSON strings\n'
+		return 0
+	fi
+	printf 'FAIL no-jq fallback wrote malformed JSON\n'
+	return 1
+}
+
 test_secondary_response_writes_cooldown
 test_active_cooldown_skips_without_gh_call
 test_override_allows_audited_call
+test_default_path_without_home_is_user_scoped
+test_no_jq_fallback_escapes_json_strings

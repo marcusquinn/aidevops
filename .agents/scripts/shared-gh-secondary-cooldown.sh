@@ -11,7 +11,8 @@
 _SHARED_GH_SECONDARY_COOLDOWN_LOADED=1
 
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS:=300}"
-: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:=${HOME:-/tmp}/.aidevops/cache/gh-secondary-cooldown.json}"
+: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME:=${HOME:-/tmp/.aidevops-${USER:-uid-${UID:-unknown}}}}"
+: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:=${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME}/.aidevops/cache/gh-secondary-cooldown.json}"
 
 _GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 
@@ -39,6 +40,17 @@ _gh_secondary_cooldown_request_id() {
 	return 0
 }
 
+_gh_secondary_cooldown_json_string() {
+	local value="$1"
+	value=${value//\\/\\\\}
+	value=${value//\"/\\\"}
+	value=${value//$'\n'/\\n}
+	value=${value//$'\r'/\\r}
+	value=${value//$'\t'/\\t}
+	printf '"%s"' "$value"
+	return 0
+}
+
 _gh_secondary_cooldown_write() {
 	local reason="$1"
 	local response_text="${2:-}"
@@ -47,6 +59,8 @@ _gh_secondary_cooldown_write() {
 	local file=""
 	local dir=""
 	local request_id=""
+	local reason_json=""
+	local request_id_json=""
 
 	now="$(_gh_secondary_cooldown_now)"
 	expires=$((now + AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS))
@@ -61,10 +75,18 @@ _gh_secondary_cooldown_write() {
 			--arg first_seen "$now" \
 			--arg expires_at "$expires" \
 			--arg request_id "$request_id" \
-			'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id}' >"${file}.tmp" || return 1
+			'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id}' >"${file}.tmp" || {
+			printf 'Failed to write to %s\n' "${file}.tmp" >&2
+			return 1
+		}
 	else
-		printf '{"reason":"%s","first_seen":%s,"expires_at":%s,"last_request_id":"%s"}\n' \
-			"$reason" "$now" "$expires" "$request_id" >"${file}.tmp" || return 1
+		reason_json="$(_gh_secondary_cooldown_json_string "$reason")"
+		request_id_json="$(_gh_secondary_cooldown_json_string "$request_id")"
+		printf '{"reason":%s,"first_seen":%s,"expires_at":%s,"last_request_id":%s}\n' \
+			"$reason_json" "$now" "$expires" "$request_id_json" >"${file}.tmp" || {
+			printf 'Failed to write to %s\n' "${file}.tmp" >&2
+			return 1
+		}
 	fi
 	mv "${file}.tmp" "$file" || return 1
 	printf '[gh-cooldown] secondary-rate-limit active=true expires_at=%s reason=%s\n' "$expires" "$reason" >&2
