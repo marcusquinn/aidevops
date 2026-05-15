@@ -34,6 +34,24 @@ _pad_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unset _pad_script_dir
 
 #######################################
+# Expand a repo path that may start with `~` into an absolute path.
+_expand_foss_repo_path() {
+	local repo_path="$1"
+	case "$repo_path" in
+	"~")
+		printf '%s\n' "$HOME"
+		;;
+	\~/*)
+		printf '%s\n' "${repo_path/#\~/$HOME}"
+		;;
+	*)
+		printf '%s\n' "$repo_path"
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Ensure the triage-failed label exists in the target repo.
 #
 # Uses gh label create --force (idempotent — creates if missing,
@@ -1200,12 +1218,19 @@ dispatch_foss_workers() {
 
 		# Scan for a suitable issue
 		local labels_filter foss_issue foss_issue_num foss_issue_title
+		local foss_label_candidates=()
+		local foss_label
 		labels_filter=$(jq -r --arg slug "$foss_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted","good first issue","bug"] | join(",")' \
 			"$repos_json" 2>/dev/null || echo "help wanted")
-		foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
-			--label "${labels_filter%%,*}" --limit 1 \
-			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"') || foss_issue=""
+		IFS=',' read -r -a foss_label_candidates <<<"$labels_filter"
+		for foss_label in "${foss_label_candidates[@]}"; do
+			[[ -n "$foss_label" ]] || continue
+			foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
+				--label "$foss_label" --limit 1 \
+				--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"') || foss_issue=""
+			[[ -n "$foss_issue" ]] && break
+		done
 		if [[ -z "$foss_issue" ]]; then
 			echo "[pulse-wrapper] FOSS dispatch skipped no issue selection for ${foss_slug}: gh_issue_list returned empty output" >>"$LOGFILE"
 			continue
@@ -1231,11 +1256,13 @@ dispatch_foss_workers() {
 			'.initialized_repos[] | select(.slug == $slug) | .foss_config.disclosure // true' \
 			"$repos_json" 2>/dev/null || echo "true")
 		[[ "$disclosure" == "true" ]] && disclosure_flag=" Include AI disclosure note in the PR."
+		local foss_path_expanded
+		foss_path_expanded=$(_expand_foss_repo_path "$foss_path")
 
 		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
 			--session-key "$foss_session_key" \
-			--dir "$foss_path" \
+			--dir "$foss_path_expanded" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
 			</dev/null >>"${HOME}/.aidevops/logs/pulse-foss-${foss_issue_num}.log" 2>&1 &
