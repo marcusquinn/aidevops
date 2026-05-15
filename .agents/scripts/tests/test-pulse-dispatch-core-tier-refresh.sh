@@ -12,7 +12,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+REPO_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit
 CORE_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
+
+# shellcheck source=../shared-constants.sh
+source "${REPO_SCRIPTS_DIR}/shared-constants.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -116,9 +120,32 @@ test_skips_refresh_when_original_snapshot_not_tier_simple() {
 	return 0
 }
 
+test_skips_refresh_when_labels_missing() {
+	local initial_meta='{"number":23601,"title":"missing labels","state":"OPEN","assignees":[],"body":"brief"}'
+	local refreshed_meta
+	reset_gh_issue_view_calls
+	refreshed_meta=$(_refresh_issue_meta_after_tier_body_shape_check "23601" "marcusquinn/aidevops" "$initial_meta")
+
+	local calls
+	calls=$(count_gh_issue_view_calls)
+	if [[ "$refreshed_meta" == "$initial_meta" && "$calls" -eq 0 ]]; then
+		print_result "skips gh refresh when labels are missing" 0
+		return 0
+	fi
+	print_result "skips gh refresh when labels are missing" 1 \
+		"Expected original metadata and zero gh_issue_view calls for missing labels; calls=${calls}"
+	return 0
+}
+
 main() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	local LOGFILE
 	LOGFILE="$(mktemp)"
+	push_cleanup "rm -f '${LOGFILE}'"
+	local GH_ISSUE_VIEW_CALLS_FILE
 	GH_ISSUE_VIEW_CALLS_FILE="$(mktemp)"
+	push_cleanup "rm -f '${GH_ISSUE_VIEW_CALLS_FILE}'"
 	export LOGFILE
 	export GH_ISSUE_VIEW_CALLS_FILE
 
@@ -129,6 +156,11 @@ main() {
 
 	test_refreshes_precheck_tier_simple_snapshot
 	test_skips_refresh_when_original_snapshot_not_tier_simple
+	test_skips_refresh_when_labels_missing
+
+	rm -f "$GH_ISSUE_VIEW_CALLS_FILE" "$LOGFILE"
+	GH_ISSUE_VIEW_CALLS_FILE=""
+	LOGFILE=""
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

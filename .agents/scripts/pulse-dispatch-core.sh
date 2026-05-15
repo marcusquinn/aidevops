@@ -1838,7 +1838,7 @@ _refresh_issue_meta_after_tier_body_shape_check() {
 	local repo_slug="$2"
 	local issue_meta_json="$3"
 
-	if ! printf '%s' "$issue_meta_json" | jq -e '.labels | map(.name) | index("tier:simple")' >/dev/null 2>&1; then
+	if ! printf '%s' "$issue_meta_json" | jq -e 'any(.labels[]?; .name == "tier:simple")' >/dev/null 2>&1; then
 		printf '%s' "$issue_meta_json"
 		return 0
 	fi
