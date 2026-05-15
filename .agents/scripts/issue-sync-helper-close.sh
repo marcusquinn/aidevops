@@ -48,11 +48,10 @@ _is_cancelled_or_deferred() {
 _has_evidence() {
 	local text="$1" task_id="$2" repo="$3"
 	local task_line
-	task_line=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[[ x-]\] ' | head -1 || true)
-	[[ -z "$task_line" ]] && task_line="$text"
+	task_line=$(_task_line_from_block "$text" "$task_id")
 	# Cancelled/deferred/declined tasks need no PR or verified: evidence
 	_is_cancelled_or_deferred "$task_line" && return 0
-	if _has_unresolved_blocker "$task_line"; then
+	if _has_unresolved_blocker "$task_line" "$task_id"; then
 		return 1
 	fi
 	echo "$text" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}|pr:#[0-9]+' && return 0
@@ -61,11 +60,22 @@ _has_evidence() {
 	return 1
 }
 
+_task_line_from_block() {
+	local text="$1" task_id="${2:-}"
+	local task_line
+	if [[ -n "$task_id" ]]; then
+		task_line=$(printf '%s\n' "$text" | grep -F " $task_id " | grep -E '^[[:space:]]*- \[.\] ' | head -1 || true)
+	fi
+	[[ -z "$task_line" ]] && task_line=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[.\] ' | head -1 || true)
+	[[ -z "$task_line" ]] && task_line=$(printf '%s\n' "$text" | head -1)
+	printf '%s\n' "$task_line"
+	return 0
+}
+
 _has_unresolved_blocker() {
-	local text="$1"
+	local text="$1" task_id="${2:-}"
 	local candidate
-	candidate=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[[ x-]\] ' | head -1 || true)
-	[[ -z "$candidate" ]] && candidate="$text"
+	candidate=$(_task_line_from_block "$text" "$task_id")
 	echo "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
 	return 1
 }
