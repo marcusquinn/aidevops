@@ -82,6 +82,10 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/github-app-a
 	# shellcheck source=github-app-auth-helper.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/github-app-auth-helper.sh"
 fi
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-secondary-cooldown.sh" ]]; then
+	# shellcheck source=shared-gh-secondary-cooldown.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-secondary-cooldown.sh"
+fi
 if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh" ]]; then
 	# shellcheck source=shared-gh-wrappers-rest-fallback.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh"
@@ -133,6 +137,9 @@ fi
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
+	if command -v _gh_secondary_cooldown_preflight >/dev/null 2>&1; then
+		_gh_secondary_cooldown_preflight "$op_class" || return $?
+	fi
 	local secs
 	case "$op_class" in
 	read) secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}" ;;
@@ -140,16 +147,48 @@ _gh_with_timeout() {
 	*) secs=30 ;;
 	esac
 	local cmd="${1:-}"
+	local err_file=""
+	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
-		"$@"
-		return $?
+		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
+			"$@"
+			return $?
+		}
+		"$@" 2>"$err_file"
+		rc=$?
+		cat "$err_file" >&2 2>/dev/null || true
+		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
+			_gh_secondary_cooldown_record_if_needed "$rc" "$(cat "$err_file" 2>/dev/null || true)"
+		fi
+		rm -f "$err_file"
+		return $rc
 	fi
+	err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || err_file=""
 	if command -v timeout >/dev/null 2>&1; then
-		timeout "$secs" "$@"
-		return $?
+		if [[ -n "$err_file" ]]; then
+			timeout "$secs" "$@" 2>"$err_file"
+			rc=$?
+		else
+			timeout "$secs" "$@"
+			rc=$?
+		fi
+	else
+		if [[ -n "$err_file" ]]; then
+			"$@" 2>"$err_file"
+			rc=$?
+		else
+			"$@"
+			rc=$?
+		fi
 	fi
-	"$@"
-	return $?
+	if [[ -n "$err_file" ]]; then
+		cat "$err_file" >&2 2>/dev/null || true
+		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
+			_gh_secondary_cooldown_record_if_needed "$rc" "$(cat "$err_file" 2>/dev/null || true)"
+		fi
+		rm -f "$err_file"
+	fi
+	return $rc
 }
 
 # =============================================================================

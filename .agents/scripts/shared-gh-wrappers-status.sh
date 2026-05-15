@@ -269,7 +269,7 @@ set_issue_status() {
 	# Pass through any extra flags the caller wants to apply in the same edit
 	_flags+=("$@")
 
-	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
+	_gh_with_timeout write gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null
 	local _rc=$?
 	if [[ $_rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for set_issue_status"

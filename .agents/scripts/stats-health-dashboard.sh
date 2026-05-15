@@ -68,7 +68,7 @@ _resolve_current_gh_login_or_fallback() {
 	local gh_login=""
 	local fallback_login=""
 
-	gh_login=$(gh api user --jq '.login // ""') || gh_login=""
+	gh_login=$(_gh_with_timeout read gh api user --jq '.login // ""') || gh_login=""
 	if [[ "$gh_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
 		printf '%s' "$gh_login"
 		return 0
@@ -104,7 +104,7 @@ _check_health_issue_activity_guard() {
 	[[ -f "$health_issue_file" ]] && return 0
 
 	local guard_pr_count guard_assigned_count guard_worker_count
-	guard_pr_count=$(gh pr list --repo "$repo_slug" --state open \
+	guard_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
