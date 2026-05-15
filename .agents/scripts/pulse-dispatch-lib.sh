@@ -232,6 +232,7 @@ _dispatch_begin_benign_blocks_cycle() {
 	fi
 	_DISPATCH_BENIGN_BLOCKS_FILE="$ledger_file"
 	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="$ledger_managed_by_dispatch"
+	export _DISPATCH_BENIGN_BLOCKS_FILE
 	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
 	return 0
 }
