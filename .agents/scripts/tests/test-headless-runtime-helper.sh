@@ -810,7 +810,8 @@ EOF
 		args=$(<"$args_file")
 		local env_output
 		env_output=$(<"$env_file")
-		local expected_plugin_url="file://${plugin_path}"
+		local expected_plugin_url
+		expected_plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).absolute().as_uri())' "$plugin_path")
 		if [[ "$args" == *'What is two plus two?'* && "$args" != *'--pure'* && "$args" != *'--agent build'* ]] &&
 			[[ "$env_output" == *"OPENCODE_BIN=${fake_bin_dir}/opencode"* ]] &&
 			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]] &&

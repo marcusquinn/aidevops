@@ -1557,9 +1557,12 @@ _run_canary_test() {
 	local _canary_config_dir=""
 	_canary_config_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-canary-config.XXXXXX")
 	mkdir -p "${_canary_config_dir}/opencode"
-	local _canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
+	local _canary_plugin_path
+	_canary_plugin_path="${AIDEVOPS_PLUGIN_INDEX:-${HOME}/.aidevops/agents/plugins/opencode-aidevops/index.mjs}"
 	local _canary_plugin_url=""
-	[[ -f "$_canary_plugin_path" ]] && _canary_plugin_url="file://${_canary_plugin_path}"
+	if [[ -f "$_canary_plugin_path" ]]; then
+		_canary_plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).absolute().as_uri())' "$_canary_plugin_path" 2>/dev/null || printf 'file://%s' "$_canary_plugin_path")
+	fi
 	jq -n --arg plugin_url "$_canary_plugin_url" \
 		'{"$schema":"https://opencode.ai/config.json"} + (if $plugin_url == "" then {} else {plugin: [$plugin_url]} end)' \
 		>"${_canary_config_dir}/opencode/opencode.json"
