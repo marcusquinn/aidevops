@@ -1642,7 +1642,7 @@ _run_canary_test() {
 	#
 	# GH#23598: match the benign probe answer case-insensitively with the
 	# portable whole-word mode supported by GNU and BSD grep.
-	if grep -iwq 'four' "$canary_output" 2>/dev/null; then
+	if grep -qwi 'four' "$canary_output"; then
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
 		date +%s >"$cache_file"
