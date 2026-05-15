@@ -300,6 +300,17 @@ build_ranked_dispatch_candidates_json() {
 				repo_priority: $priority,
 				score: (
 					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
+					# Mission m-20260504-1e325d feature 3.4: when capacity is
+					# constrained, rank worker-ready/low-complexity issues above
+					# broad raw backlog so pulse fills slots with solvable work first.
+					(if (.labels | index("tier:simple")) != null then 2500
+					 elif (.labels | index("tier:standard")) != null then 1200
+					 else 0 end) +
+					(if ((.labels | index("worker-ready")) != null or (.labels | index("status:available")) != null) then 1000 else 0 end) +
+					(if ((.labels | index("good first issue")) != null or (.labels | index("quick-win")) != null) then 800 else 0 end) +
+					(if (.labels | index("auto-dispatch")) != null then 300 else 0 end) -
+					(if (.labels | index("tier:thinking")) != null then 1200 else 0 end) -
+					(if ((.labels | index("research")) != null or (.labels | index("needs-design")) != null) then 800 else 0 end) +
 					(if ((.labels | index("quality-debt")) != null and (.labels | index("security")) != null) then 500 else 0 end) +
 					(if (.labels | index("priority:critical")) != null then 10000
 					 elif (.labels | index("priority:high")) != null then 9000
