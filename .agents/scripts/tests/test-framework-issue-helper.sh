@@ -132,6 +132,22 @@ run_auto_dispatch_equals_case() {
 	return 1
 }
 
+run_flag_value_case() {
+	local stub_dir="$1"
+	local output_file="$2"
+	local trace_file="$3"
+
+	if TEST_DUPLICATE_VALUE="" \
+		TEST_CREATED_URL="https://github.com/marcusquinn/aidevops/issues/9103" \
+		TEST_GH_TRACE="$trace_file" \
+		PATH="${stub_dir}:$PATH" \
+		"$HELPER" log --title "--title-looking value" --body "body with spaces" --label "triage label" --tier "custom-tier" >"$output_file" 2>&1; then
+		return 0
+	fi
+
+	return 1
+}
+
 run_missing_value_case() {
 	local stub_dir="$1"
 	local output_file="$2"
@@ -205,6 +221,20 @@ if run_auto_dispatch_equals_case "${TMP_DIR}" "$auto_dispatch_equals_output" "$a
 	assert_contains "$auto_dispatch_equals_calls" "--label status:available" "auto-dispatch equals case includes worker-ready status label"
 else
 	fail "auto-dispatch equals case creates issue" "helper failed"
+fi
+
+flag_value_output="${TMP_DIR}/flag-value.out"
+flag_value_trace="${TMP_DIR}/flag-value.trace"
+if run_flag_value_case "${TMP_DIR}" "$flag_value_output" "$flag_value_trace"; then
+	flag_value_text=$(<"$flag_value_output")
+	flag_value_calls=$(<"$flag_value_trace")
+	assert_contains "$flag_value_text" "status=created" "space-separated flag values create issue"
+	assert_contains "$flag_value_calls" "--title --title-looking value" "space-separated title preserves leading dash value"
+	assert_contains "$flag_value_calls" "--body body with spaces" "space-separated body preserves spaces"
+	assert_contains "$flag_value_calls" "--label triage label" "space-separated label preserves spaces"
+	assert_contains "$flag_value_calls" "--label tier:custom-tier" "space-separated tier creates tier label"
+else
+	fail "space-separated flag values create issue" "helper failed"
 fi
 
 missing_value_output="${TMP_DIR}/missing-value.out"

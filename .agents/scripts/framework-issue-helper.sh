@@ -573,6 +573,31 @@ log_framework_issue() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# _log_option_value FLAG OPTION ARG_COUNT [NEXT_VALUE]
+# ─────────────────────────────────────────────────────────────────────────────
+_log_option_value() {
+	local flag_name="$1"
+	local option="$2"
+	local arg_count="$3"
+	local next_value="${4-}"
+
+	case "$option" in
+	*=*)
+		printf '%s\n' "${option#*=}"
+		return 0
+		;;
+	esac
+
+	if [[ "$arg_count" -lt 2 ]]; then
+		log_error "${flag_name} requires a value"
+		return 1
+	fi
+
+	printf '%s\n' "$next_value"
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # _parse_log_command ARGS...
 # ─────────────────────────────────────────────────────────────────────────────
 _parse_log_command() {
@@ -580,61 +605,36 @@ _parse_log_command() {
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
-		--title=*)
-			title="${option#*=}"
-			shift
-			;;
-		--title)
-			if [[ $# -lt 2 ]]; then
-				log_error "--title requires a value"
-				return 1
-			fi
-			local option_value="$2"
-			title="$option_value"
-			shift 2
-			;;
-		--body=*)
-			body="${option#*=}"
-			shift
-			;;
-		--body)
-			if [[ $# -lt 2 ]]; then
-				log_error "--body requires a value"
-				return 1
-			fi
-			local option_value="$2"
-			body="$option_value"
-			shift 2
-			;;
-		--label=*)
-			label="${option#*=}"
-			shift
-			;;
-		--label)
-			if [[ $# -lt 2 ]]; then
-				log_error "--label requires a value"
-				return 1
-			fi
-			local option_value="$2"
-			label="$option_value"
-			shift 2
+		--title | --title=* | --body | --body=* | --label | --label=* | --tier | --tier=*)
+			local flag_name="${option%%=*}"
+			local option_value
+			option_value="$(_log_option_value "$flag_name" "$option" "$#" "${2-}")" || return 1
+			case "$flag_name" in
+			--title)
+				title="$option_value"
+				;;
+			--body)
+				body="$option_value"
+				;;
+			--label)
+				label="$option_value"
+				;;
+			--tier)
+				tier="$option_value"
+				;;
+			esac
+			case "$option" in
+			*=*)
+				shift
+				;;
+			*)
+				shift 2
+				;;
+			esac
 			;;
 		--auto-dispatch)
 			auto_dispatch="yes"
 			shift
-			;;
-		--tier=*)
-			tier="${option#*=}"
-			shift
-			;;
-		--tier)
-			if [[ $# -lt 2 ]]; then
-				log_error "--tier requires a value"
-				return 1
-			fi
-			local option_value="$2"
-			tier="$option_value"
-			shift 2
 			;;
 		--dry-run)
 			dry_run="true"
