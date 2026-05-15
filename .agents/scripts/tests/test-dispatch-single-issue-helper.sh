@@ -30,11 +30,18 @@ TESTS_RUN=0
 TESTS_FAILED=0
 SET_ISSUE_STATUS_LOG=""
 SET_ORIGIN_LABEL_LOG=""
+REGISTER_WORKTREE_LOG=""
+MOCK_WORKTREE_HELPER_LOG=""
 MOCK_GH_ISSUE_STATE="OPEN"
 MOCK_GH_FAIL="0"
 MOCK_GH_TARGET_IS_PR="0"
 MOCK_PS_LINES=""
 MOCK_LEDGER_RECORD=""
+MOCK_GIT_WORKTREE_LIST="0"
+MOCK_REPO_PATH=""
+MOCK_WORKTREE_PATH=""
+MOCK_WORKTREE_BRANCH=""
+MOCK_DATE_UTC=""
 
 print_result() {
 	local test_name="$1"
@@ -108,6 +115,41 @@ _install_mock_set_origin_label() {
 }
 
 # shellcheck disable=SC2317
+register_worktree() {
+	printf 'register_worktree %s\n' "$*" >>"$REGISTER_WORKTREE_LOG"
+	return 0
+}
+
+# shellcheck disable=SC2317
+date() {
+	local date_first="${1:-}"
+	local date_format="${2:-}"
+	if [[ -n "$MOCK_DATE_UTC" && "$date_first" == "-u" && "$date_format" == "+%Y%m%d-%H%M%S" ]]; then
+		printf '%s\n' "$MOCK_DATE_UTC"
+		return 0
+	fi
+	command date "$@"
+	return $?
+}
+
+# shellcheck disable=SC2317
+git() {
+	local git_first="${1:-}"
+	local git_repo="${2:-}"
+	local git_command="${3:-}"
+	local git_subcommand="${4:-}"
+	local git_format="${5:-}"
+	if [[ "$MOCK_GIT_WORKTREE_LIST" == "1" && "$git_first" == "-C" && "$git_repo" == "$MOCK_REPO_PATH" &&
+		"$git_command" == "worktree" && "$git_subcommand" == "list" && "$git_format" == "--porcelain" ]]; then
+		printf 'worktree %s\nHEAD 0000000000000000000000000000000000000000\nbranch refs/heads/%s\n\n' \
+			"$MOCK_WORKTREE_PATH" "$MOCK_WORKTREE_BRANCH"
+		return 0
+	fi
+	command git "$@"
+	return $?
+}
+
+# shellcheck disable=SC2317
 gh() {
 	local gh_subcommand="${1:-}"
 	local gh_resource="${2:-}"
@@ -154,6 +196,17 @@ _dsi_repo_slug_for_worktree() {
 	*) printf '\n' ;;
 	esac
 	return 0
+}
+
+# shellcheck disable=SC2317
+_dsi_repo_path_for_slug() {
+	local repo_slug="$1"
+	if [[ "$repo_slug" == "owner/repo" && -n "$MOCK_REPO_PATH" ]]; then
+		printf '%s\n' "$MOCK_REPO_PATH"
+		return 0
+	fi
+	printf '\n'
+	return 1
 }
 
 # shellcheck disable=SC2317
@@ -546,13 +599,52 @@ test_create_worktree_uses_target_repo_path() {
 }
 
 test_create_worktree_registers_dispatch_owner() {
-	local failed=1
-	if grep -Fq "register_worktree \"\$_DSI_WORKTREE_PATH\" \"\$_DSI_WORKTREE_BRANCH\"" "$HELPER_PATH" &&
-		grep -Fq -- "--task \"\$issue_number\"" "$HELPER_PATH" &&
-		grep -Fq -- "--session \"dispatch-precreate-\${issue_number}\"" "$HELPER_PATH"; then
-		failed=0
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	MOCK_REPO_PATH="${test_dir}/repo"
+	MOCK_WORKTREE_PATH="${test_dir}/worktree"
+	MOCK_DATE_UTC="20260515-123456"
+	MOCK_WORKTREE_BRANCH="feature/auto-${MOCK_DATE_UTC}-gh12345"
+	MOCK_GIT_WORKTREE_LIST="1"
+	mkdir -p "$MOCK_REPO_PATH" "$MOCK_WORKTREE_PATH"
+	REGISTER_WORKTREE_LOG="${test_dir}/register-worktree.log"
+	MOCK_WORKTREE_HELPER_LOG="${test_dir}/worktree-helper.log"
+	export MOCK_WORKTREE_HELPER_LOG
+	: >"$REGISTER_WORKTREE_LOG"
+	: >"$MOCK_WORKTREE_HELPER_LOG"
+
+	local original_worktree_helper="$_DSI_WORKTREE_HELPER"
+	local positional_args_ref='$*'
+	_DSI_WORKTREE_HELPER="${test_dir}/worktree-helper.sh"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf "printf 'worktree-helper %%s\\n' \"%s\" >>%q\n" "$positional_args_ref" "$MOCK_WORKTREE_HELPER_LOG"
+		printf '%s\n' 'exit 0'
+	} >"$_DSI_WORKTREE_HELPER"
+	chmod +x "$_DSI_WORKTREE_HELPER"
+
+	local rc=0
+	_dsi_create_worktree 12345 owner/repo >/dev/null 2>&1 || rc=$?
+
+	local registered=""
+	registered=$(<"$REGISTER_WORKTREE_LOG")
+	local helper_call=""
+	helper_call=$(<"$MOCK_WORKTREE_HELPER_LOG")
+	local passed=1
+	if [[ "$rc" -eq 0 && "$registered" == *"register_worktree ${MOCK_WORKTREE_PATH} ${MOCK_WORKTREE_BRANCH}"* &&
+		"$registered" == *"--task 12345"* && "$registered" == *"--session dispatch-precreate-12345"* &&
+		"$helper_call" == *"--issue 12345"* ]]; then
+		passed=0
 	fi
-	print_result "worktree creation registers dispatch owner metadata" "$failed"
+
+	_DSI_WORKTREE_HELPER="$original_worktree_helper"
+	MOCK_GIT_WORKTREE_LIST="0"
+	MOCK_REPO_PATH=""
+	MOCK_WORKTREE_PATH=""
+	MOCK_WORKTREE_BRANCH=""
+	MOCK_DATE_UTC=""
+	rm -rf "$test_dir"
+	print_result "worktree creation registers dispatch owner metadata" "$passed" "rc=$rc registered=$registered helper=$helper_call"
 	return 0
 }
 
