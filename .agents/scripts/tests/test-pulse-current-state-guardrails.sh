@@ -283,6 +283,23 @@ test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
 	return 0
 }
 
+test_dispatch_max_exports_benign_ledger_for_direct_callers() {
+	local engine_file="${SCRIPT_DIR}/pulse-dispatch-engine.sh"
+	if awk '
+		/^dispatch_max\(\) \{/ { in_dispatch=1 }
+		in_dispatch && /_dispatch_begin_benign_blocks_cycle >\/dev\/null/ { saw_begin=1 }
+		in_dispatch && saw_begin && /export _DISPATCH_BENIGN_BLOCKS_FILE/ { found=1; exit 0 }
+		in_dispatch && /^}/ { exit 1 }
+		END { exit(found ? 0 : 1) }
+	' "$engine_file"; then
+		print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 0
+		return 0
+	fi
+
+	print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 1 "missing export in dispatch_max"
+	return 0
+}
+
 test_ranked_candidates_prioritise_solvable_work() {
 	reset_guardrail_env
 	local repos_file="${TEST_ROOT}/repos.json"
@@ -389,6 +406,7 @@ test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
 test_benign_block_ledger_is_cycle_local_and_cleaned
 test_external_benign_block_ledger_is_preserved_and_refreshed
+test_dispatch_max_exports_benign_ledger_for_direct_callers
 test_apply_dispatch_max_preserves_benign_ledger_across_refill
 test_ranked_candidates_prioritise_solvable_work
 test_ranked_candidates_prioritise_low_complexity_over_research
