@@ -60,6 +60,7 @@
 #  31. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
 #      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
 #  32. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
+#  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -72,6 +73,9 @@ set -uo pipefail
 # routing globally, but this test enables it only in the dedicated scenarios.
 unset AIDEVOPS_GH_REST_FIRST_READS
 unset AIDEVOPS_GH_FORCE_REST_READS
+unset AIDEVOPS_GH_PR_VIEW_CACHE
+unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
+unset AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
@@ -1067,6 +1071,23 @@ else
 		"pull_calls=${pr_pull_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/pr-view-cache"
+export AIDEVOPS_GH_PR_VIEW_CACHE_TTL=30
+gh_pr_view 123 --repo "owner/repo" --json statusCheckRollup --jq '.number // 0' >/dev/null 2>&1 || true
+gh_pr_view 123 --repo "owner/repo" --json statusCheckRollup --jq '.number // 0' >/dev/null 2>&1 || true
+
+pr_view_calls=$(grep -cE '^pr view 123 --repo owner/repo --json statusCheckRollup' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$pr_view_calls" == "1" ]]; then
+	pass "gh_pr_view exact-output cache coalesces identical GraphQL-only PR reads"
+else
+	fail "gh_pr_view exact-output cache coalesces identical GraphQL-only PR reads" \
+		"pr_view_calls=${pr_view_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 
 unset AIDEVOPS_GH_REST_FIRST_READS
 

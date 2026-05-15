@@ -111,6 +111,19 @@ _gh_pr_list_snapshot_key() {
 }
 
 #######################################
+# Record a lightweight cache decision in the same instrumentation stream as API
+# calls. These records use path=other so cache hit/miss/stale decisions are
+# visible without inflating REST/GraphQL call counts.
+# Args: $1 = cache name, $2 = decision
+#######################################
+_gh_read_cache_record() {
+	local _cache_name="$1"
+	local _decision="$2"
+	gh_record_call other "${_cache_name}" unknown other "${_decision}" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Read a cached gh_pr_list snapshot when present and fresh.
 # Args: gh-style argv
 # Stdout: cached command output
@@ -119,16 +132,17 @@ _gh_pr_list_snapshot_get() {
 	local _ttl="${AIDEVOPS_GH_PR_LIST_CACHE_TTL:-15}"
 	[[ "${AIDEVOPS_GH_PR_LIST_CACHE_DISABLE:-0}" == "1" ]] && return 1
 	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 1
-	_gh_pr_list_snapshot_cacheable "$@" || return 1
+	_gh_pr_list_snapshot_cacheable "$@" || { _gh_read_cache_record gh_pr_list_cache bypass; return 1; }
 	local _key _path _now _mtime _age
 	_key="$(_gh_pr_list_snapshot_key "$@")"
 	_path="${AIDEVOPS_GH_PR_LIST_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-list-snapshots}/${_key}.json"
-	[[ -f "$_path" ]] || return 1
+	[[ -f "$_path" ]] || { _gh_read_cache_record gh_pr_list_cache miss; return 1; }
 	_now=$(date +%s 2>/dev/null || printf '0')
 	_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$_path" 2>/dev/null || printf '0')
 	[[ "$_now" =~ ^[0-9]+$ && "$_mtime" =~ ^[0-9]+$ ]] || return 1
 	_age=$(( _now - _mtime ))
-	[[ "$_age" -ge 0 && "$_age" -le "$_ttl" ]] || return 1
+	[[ "$_age" -ge 0 && "$_age" -le "$_ttl" ]] || { _gh_read_cache_record gh_pr_list_cache stale; return 1; }
+	_gh_read_cache_record gh_pr_list_cache hit
 	printf '%s' "$(<"$_path")"
 	return 0
 }
@@ -151,6 +165,83 @@ _gh_pr_list_snapshot_put() {
 	_tmp=$(mktemp "${_dir}/.pr-list-${_key}.XXXXXX" 2>/dev/null) || return 0
 	printf '%s' "$_body" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
 	mv "$_tmp" "$_path" 2>/dev/null || rm -f "$_tmp"
+	_gh_read_cache_record gh_pr_list_cache store
+	return 0
+}
+
+#######################################
+# Return 0 when gh_pr_view exact-output caching is enabled. This cache is scoped
+# to pulse cycles (or explicit callers) through AIDEVOPS_GH_PR_VIEW_CACHE and is
+# keyed by the full argv, so different field sets never share projected output.
+#######################################
+_gh_pr_view_snapshot_enabled() {
+	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]] || return 1
+	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]] && return 1
+	local _ttl="${AIDEVOPS_GH_PR_VIEW_CACHE_TTL:-15}"
+	[[ "$_ttl" =~ ^[0-9]+$ && "$_ttl" -gt 0 ]] || return 1
+	return 0
+}
+
+#######################################
+# Build a filesystem-safe key for an exact gh_pr_view argv shape.
+# Args: gh-style argv
+# Stdout: cache key
+#######################################
+_gh_pr_view_snapshot_key() {
+	_gh_pr_list_snapshot_key "$@"
+	return $?
+}
+
+#######################################
+# Resolve the exact-output gh_pr_view cache path for the given argv.
+# Args: gh-style argv
+# Stdout: cache file path
+#######################################
+_gh_pr_view_snapshot_path() {
+	local _dir="${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-view-snapshots}"
+	mkdir -p "$_dir" 2>/dev/null || return 1
+	local _key
+	_key="$(_gh_pr_view_snapshot_key "$@")" || return 1
+	printf '%s/argv-%s.out' "$_dir" "$_key"
+	return 0
+}
+
+#######################################
+# Read a cached gh_pr_view exact-output snapshot when present and fresh.
+# Args: gh-style argv
+# Stdout: cached command output
+#######################################
+_gh_pr_view_snapshot_get() {
+	_gh_pr_view_snapshot_enabled || return 1
+	local _ttl="${AIDEVOPS_GH_PR_VIEW_CACHE_TTL:-15}"
+	local _path _now _mtime _age
+	_path="$(_gh_pr_view_snapshot_path "$@")" || { _gh_read_cache_record gh_pr_view_cache bypass; return 1; }
+	[[ -f "$_path" ]] || { _gh_read_cache_record gh_pr_view_cache miss; return 1; }
+	_now=$(date +%s 2>/dev/null || printf '0')
+	_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$_path" 2>/dev/null || printf '0')
+	[[ "$_now" =~ ^[0-9]+$ && "$_mtime" =~ ^[0-9]+$ ]] || return 1
+	_age=$(( _now - _mtime ))
+	[[ "$_age" -ge 0 && "$_age" -le "$_ttl" ]] || { _gh_read_cache_record gh_pr_view_cache stale; return 1; }
+	_gh_read_cache_record gh_pr_view_cache hit
+	printf '%s' "$(<"$_path")"
+	return 0
+}
+
+#######################################
+# Store a successful gh_pr_view exact-output snapshot.
+# Args: $1 = command output, $2.. = gh-style argv
+#######################################
+_gh_pr_view_snapshot_put() {
+	local _body="$1"
+	shift
+	_gh_pr_view_snapshot_enabled || return 0
+	local _path _dir _tmp
+	_path="$(_gh_pr_view_snapshot_path "$@")" || return 0
+	_dir="${_path%/*}"
+	_tmp=$(mktemp "${_dir}/.pr-view-argv.XXXXXX" 2>/dev/null) || return 0
+	printf '%s' "$_body" >"$_tmp" 2>/dev/null || { rm -f "$_tmp"; return 0; }
+	mv "$_tmp" "$_path" 2>/dev/null || rm -f "$_tmp"
+	_gh_read_cache_record gh_pr_view_cache store
 	return 0
 }
 
@@ -389,23 +480,43 @@ gh_pr_list() {
 #######################################
 gh_pr_view() {
 	local _first_num="${1:-}"
+	local _cached_output=""
+	if _cached_output=$(_gh_pr_view_snapshot_get "$@" 2>/dev/null); then
+		printf '%s' "$_cached_output"
+		return 0
+	fi
+	local _out="" _rc=0
 	if _rest_read_first_enabled && _rest_pr_view_can_preserve_args "$@"; then
 		print_info "[INFO] gh-wrapper: REST-first read mode, routing pr view #${_first_num} to REST"
-		_rest_pr_view "$@"
-		return $?
+		_out=$(_rest_pr_view "$@")
+		_rc=$?
+		if [[ $_rc -eq 0 ]]; then
+			_gh_pr_view_snapshot_put "$_out" "$@"
+			printf '%s' "$_out"
+		fi
+		return $_rc
 	fi
 	if _rest_pr_view_can_preserve_args "$@" && { { command -v github_app_should_route_rest >/dev/null 2>&1 && github_app_should_route_rest rest-core gh_pr_view; } || _rest_should_fallback; }; then
 		print_info "[INFO] gh-wrapper: GraphQL budget low, routing pr view #${_first_num} to REST"
-		_rest_pr_view "$@"
-		return $?
+		_out=$(_rest_pr_view "$@")
+		_rc=$?
+		if [[ $_rc -eq 0 ]]; then
+			_gh_pr_view_snapshot_put "$_out" "$@"
+			printf '%s' "$_out"
+		fi
+		return $_rc
 	fi
 	gh_record_call graphql gh_pr_view 2>/dev/null || true
-	_gh_with_timeout read gh pr view "$@"
+	_out=$(_gh_with_timeout read gh pr view "$@")
 	local rc=$?
 	if [[ $rc -ne 0 ]] && _rest_should_fallback; then
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, falling back to REST for pr view #${_first_num}"
-		_rest_pr_view "$@"
+		_out=$(_rest_pr_view "$@")
 		rc=$?
+	fi
+	if [[ $rc -eq 0 ]]; then
+		_gh_pr_view_snapshot_put "$_out" "$@"
+		printf '%s' "$_out"
 	fi
 	return $rc
 }
