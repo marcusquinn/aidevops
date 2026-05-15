@@ -208,7 +208,7 @@ test_benign_block_ledger_is_cycle_local_and_cleaned() {
 	return 0
 }
 
-test_external_benign_block_ledger_is_preserved() {
+test_external_benign_block_ledger_is_preserved_and_refreshed() {
 	reset_guardrail_env
 	local external_ledger="${TEST_ROOT}/external-benign-blocks.tsv"
 	local ledger_path=""
@@ -219,10 +219,10 @@ test_external_benign_block_ledger_is_preserved() {
 	_dispatch_mark_benign_blocked_candidate 23575 marcusquinn/aidevops dedup_active_claim
 	_dispatch_cleanup_benign_blocks_cycle
 	unset AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE
-	if [[ "$ledger_path" == "$external_ledger" ]] && [[ -f "$external_ledger" ]] && grep -q $'^101\tmarcusquinn/aidevops\tcaller_managed$' "$external_ledger" && grep -q $'^23575\tmarcusquinn/aidevops\tdedup_active_claim$' "$external_ledger"; then
-		print_result "guardrail: external benign block ledger is preserved" 0
+	if [[ "$ledger_path" == "$external_ledger" ]] && [[ -f "$external_ledger" ]] && ! grep -q $'^101\tmarcusquinn/aidevops\tcaller_managed$' "$external_ledger" && grep -q $'^23575\tmarcusquinn/aidevops\tdedup_active_claim$' "$external_ledger"; then
+		print_result "guardrail: external benign block ledger is preserved and refreshed" 0
 	else
-		print_result "guardrail: external benign block ledger is preserved" 1 "ledger=${ledger_path}"
+		print_result "guardrail: external benign block ledger is preserved and refreshed" 1 "ledger=${ledger_path}"
 	fi
 	return 0
 }
@@ -381,7 +381,7 @@ test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
 test_benign_block_ledger_is_cycle_local_and_cleaned
-test_external_benign_block_ledger_is_preserved
+test_external_benign_block_ledger_is_preserved_and_refreshed
 test_apply_dispatch_max_preserves_benign_ledger_across_refill
 test_ranked_candidates_prioritise_solvable_work
 test_ranked_candidates_prioritise_low_complexity_over_research
