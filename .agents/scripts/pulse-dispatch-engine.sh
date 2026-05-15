@@ -299,27 +299,28 @@ build_ranked_dispatch_candidates_json() {
 				repo_path: $path,
 				repo_priority: $priority,
 				score: (
+					((.labels // []) | map(.name? // .)) as $labels |
 					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
 					# Mission m-20260504-1e325d feature 3.4: when capacity is
 					# constrained, rank worker-ready/low-complexity issues above
 					# broad raw backlog so pulse fills slots with solvable work first.
-					(if ((.labels | index("tier:simple")) != null or (.labels | index("low-complexity")) != null) then 2500
-					 elif (.labels | index("tier:standard")) != null then 1200
+					(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
+					 elif ($labels | index("tier:standard")) != null then 1200
 					 else 0 end) +
-					(if ((.labels | index("worker-ready")) != null or (.labels | index("status:available")) != null) then 1000 else 0 end) +
-					(if ((.labels | index("good first issue")) != null or (.labels | index("quick-win")) != null) then 800 else 0 end) +
-					(if (.labels | index("auto-dispatch")) != null then 300 else 0 end) -
-					(if (.labels | index("tier:thinking")) != null then 1200 else 0 end) -
-					(if ((.labels | index("research")) != null or (.labels | index("needs-design")) != null) then 800 else 0 end) +
-					(if ((.labels | index("quality-debt")) != null and (.labels | index("security")) != null) then 500 else 0 end) +
-					(if (.labels | index("priority:critical")) != null then 10000
-					 elif (.labels | index("priority:high")) != null then 9000
-					 elif (.labels | index("priority:medium")) != null then 8000
-					 elif (.labels | index("bug")) != null then 7000
-					 elif (.labels | index("enhancement")) != null then 6000
-					 elif (.labels | index("quality-debt")) != null then 5000
-					 elif ((.labels | index("file-size-debt")) != null or (.labels | index("function-complexity-debt")) != null) then 4000
-					 elif (.labels | index("priority:low")) != null then 3500
+					(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
+					(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
+					(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
+					(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
+					(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
+					(if (($labels | index("quality-debt")) != null and ($labels | index("security")) != null) then 500 else 0 end) +
+					(if ($labels | index("priority:critical")) != null then 10000
+					 elif ($labels | index("priority:high")) != null then 9000
+					 elif ($labels | index("priority:medium")) != null then 8000
+					 elif ($labels | index("bug")) != null then 7000
+					 elif ($labels | index("enhancement")) != null then 6000
+					 elif ($labels | index("quality-debt")) != null then 5000
+					 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
+					 elif ($labels | index("priority:low")) != null then 3500
 					 else 3000 end)
 				)
 			}
