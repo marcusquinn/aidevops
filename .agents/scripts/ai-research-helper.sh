@@ -88,7 +88,7 @@ resolve_oauth_pool_token() {
 		| .[0].access // ""
 	' "$pool_file" 2>/dev/null) || return 1
 
-	if [[ -z "$token" || "$token" == "null" ]]; then
+	if [[ -z "$token" ]]; then
 		return 1
 	fi
 	printf '%s\n' "$token"

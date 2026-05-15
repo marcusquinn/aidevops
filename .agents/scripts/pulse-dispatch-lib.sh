@@ -51,6 +51,7 @@ _DISPATCH_CONSECUTIVE_NO_WORKER=0
 _DISPATCH_THROTTLE_FILE=""
 _DISPATCH_CANARY_CACHE=""
 _DISPATCH_BENIGN_BLOCKS_FILE=""
+_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 # Out-parameter set by _dispatch_process_candidate when a successful launch clears
 # the throttle file. The orchestrator loop reads this and restores
 # _effective_slots to the unthrottled available_slots value.
@@ -224,14 +225,15 @@ _dispatch_begin_benign_blocks_cycle() {
 		_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 		return 0
 	fi
-	if [[ "$ledger_file" == */* ]] && ! mkdir -p "${ledger_file%/*}"; then
+	if [[ "$ledger_managed_by_dispatch" == "0" && "$ledger_file" == */* && -n "${ledger_file%/*}" ]] && ! mkdir -p "${ledger_file%/*}"; then
 		printf 'Failed to create benign block ledger parent directory: %s\n' "${ledger_file%/*}" >&2
 	fi
-	if [[ "$ledger_managed_by_dispatch" == "1" ]] && ! : >"$ledger_file"; then
+	if ! : >"$ledger_file"; then
 		printf 'Failed to initialize benign block ledger file: %s\n' "$ledger_file" >&2
 	fi
 	_DISPATCH_BENIGN_BLOCKS_FILE="$ledger_file"
 	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="$ledger_managed_by_dispatch"
+	export _DISPATCH_BENIGN_BLOCKS_FILE
 	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
 	return 0
 }

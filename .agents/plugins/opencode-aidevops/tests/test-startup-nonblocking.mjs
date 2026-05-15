@@ -60,8 +60,10 @@ test("initPoolAuth does not seed unsupported pending auth entries", async () => 
   const tempHome = mkdtempSync(resolve(tmpdir(), "aidevops-oauth-pool-"));
   const previousHome = process.env.HOME;
   const previousXdgDataHome = process.env.XDG_DATA_HOME;
+  const previousUserProfile = process.env.USERPROFILE;
   process.env.HOME = tempHome;
   process.env.XDG_DATA_HOME = resolve(tempHome, ".local", "share");
+  process.env.USERPROFILE = tempHome;
 
   const authWrites = [];
   const client = {
@@ -80,6 +82,8 @@ test("initPoolAuth does not seed unsupported pending auth entries", async () => 
     else process.env.HOME = previousHome;
     if (previousXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
     else process.env.XDG_DATA_HOME = previousXdgDataHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
     rmSync(tempHome, { recursive: true, force: true });
   }
 
