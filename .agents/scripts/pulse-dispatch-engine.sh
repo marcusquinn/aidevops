@@ -303,7 +303,7 @@ build_ranked_dispatch_candidates_json() {
 					# Mission m-20260504-1e325d feature 3.4: when capacity is
 					# constrained, rank worker-ready/low-complexity issues above
 					# broad raw backlog so pulse fills slots with solvable work first.
-					(if (.labels | index("tier:simple")) != null then 2500
+					(if ((.labels | index("tier:simple")) != null or (.labels | index("low-complexity")) != null) then 2500
 					 elif (.labels | index("tier:standard")) != null then 1200
 					 else 0 end) +
 					(if ((.labels | index("worker-ready")) != null or (.labels | index("status:available")) != null) then 1000 else 0 end) +
