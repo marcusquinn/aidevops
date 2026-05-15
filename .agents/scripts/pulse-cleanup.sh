@@ -640,6 +640,40 @@ MARKER_EOF
 }
 
 #######################################
+# Verify a pulse cleanup issue target is still open before writing to it.
+#
+# Orphan worktree cleanup can run long after the original issue completed. In
+# that state there is no dispatch dedup guard to clear, and posting recovery
+# audit comments only creates notification noise on closed work. Fail closed on
+# lookup errors: cleanup still removes the local orphan, but skips GitHub writes.
+#
+# Args:
+#   $1 - issue_number: GitHub issue number
+#   $2 - repo_slug:    owner/repo slug
+#   $3 - context:      log context for the skipped write
+# Returns: 0 if issue is open, 1 otherwise
+#######################################
+_pulse_cleanup_issue_open_for_write() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local context="${3:-pulse cleanup write}"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local issue_state=""
+	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null) || issue_state=""
+	if [[ "$issue_state" != "OPEN" ]]; then
+		echo "[pulse-wrapper] ${context} skipped for #${issue_number} (${repo_slug}): issue state=${issue_state:-unknown}; no closed-issue recovery comment posted" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
 # Record crash classification for an orphaned worker worktree.
 #
 # Extracts the issue number from the branch name (pattern: gh[-]?NNN),
@@ -684,6 +718,9 @@ _record_orphan_crash_classification() {
 	# Since GH#19042, new feature/auto-* branches include gh<N>, but
 	# legacy ones (pre-fix) still lack it — skip those gracefully.
 	if [[ -z "$orphan_issue_num" ]]; then
+		return 0
+	fi
+	if ! _pulse_cleanup_issue_open_for_write "$orphan_issue_num" "$repo_slug_age" "Orphan cleanup"; then
 		return 0
 	fi
 
