@@ -42,6 +42,8 @@ set -euo pipefail
 _DSI_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Source dependencies (order matters: shared-constants first, then GH wrappers).
+# shared-constants.sh also sources shared-worktree-registry.sh when present,
+# which defines register_worktree for the manual dispatch precreated worktree.
 # NOTE: dispatch-dedup-helper.sh is NOT sourced — it has no source guard and
 # would execute its main() with our $@. We invoke it as an external command
 # instead via _DSI_DEDUP_HELPER below.
@@ -310,10 +312,12 @@ _dsi_create_worktree() {
 			_DSI_WORKTREE_PATH=$(git -C "$repo_path" worktree list --porcelain | awk -v b="$branch" '/^worktree / {p=$0;sub(/^worktree /,"",p)} $0 == "branch refs/heads/" b {print p; exit}')
 			_DSI_WORKTREE_BRANCH="$branch"
 			if [[ -n "$_DSI_WORKTREE_PATH" && -d "$_DSI_WORKTREE_PATH" ]]; then
-				if declare -F register_worktree >/dev/null 2>&1; then
+				if declare -F register_worktree >/dev/null; then
 					register_worktree "$_DSI_WORKTREE_PATH" "$_DSI_WORKTREE_BRANCH" \
 						--task "$issue_number" \
-						--session "dispatch-precreate-${issue_number}" 2>/dev/null || true
+						--session "dispatch-precreate-${issue_number}" || _dsi_warn "Worktree registration failed (non-fatal)"
+				else
+					_dsi_warn "Worktree registry helper unavailable; ownership registration skipped"
 				fi
 				return 0
 			fi

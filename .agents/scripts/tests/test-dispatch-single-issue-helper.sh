@@ -556,6 +556,17 @@ test_create_worktree_registers_dispatch_owner() {
 	return 0
 }
 
+test_create_worktree_registration_warns_on_failure() {
+	local failed=1
+	if grep -Fq "register_worktree \"\$_DSI_WORKTREE_PATH\" \"\$_DSI_WORKTREE_BRANCH\"" "$HELPER_PATH" &&
+		grep -Fq "|| _dsi_warn \"Worktree registration failed (non-fatal)\"" "$HELPER_PATH" &&
+		! grep -Fq -- "--session \"dispatch-precreate-\${issue_number}\" 2>/dev/null || true" "$HELPER_PATH"; then
+		failed=0
+	fi
+	print_result "worktree registration failure stays visible" "$failed"
+	return 0
+}
+
 
 test_readiness_accepts_worker_started_marker() {
 	MOCK_LEDGER_RECORD=""
@@ -711,6 +722,7 @@ _run_tests() {
 	test_launch_worker_forwards_repo_contract
 	test_create_worktree_uses_target_repo_path
 	test_create_worktree_registers_dispatch_owner
+	test_create_worktree_registration_warns_on_failure
 	test_readiness_accepts_worker_started_marker
 	test_readiness_rejects_live_child_without_ready_signal
 	test_readiness_rejects_ledger_without_worker_started
