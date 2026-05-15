@@ -530,7 +530,7 @@ log_framework_issue() {
 
 	local -a issue_labels=("$label")
 	if [[ "$auto_dispatch" == "yes" ]]; then
-		issue_labels+=("auto-dispatch")
+		issue_labels+=("auto-dispatch" "status:available")
 	fi
 	if [[ -n "$tier" ]]; then
 		local tier_label
@@ -580,18 +580,42 @@ _parse_log_command() {
 	while [[ $# -gt 0 ]]; do
 		local option="$1"
 		case "$option" in
+		--title=*)
+			title="${option#*=}"
+			shift
+			;;
 		--title)
-			local option_value="${2:-}"
+			if [[ $# -lt 2 ]]; then
+				log_error "--title requires a value"
+				return 1
+			fi
+			local option_value="$2"
 			title="$option_value"
 			shift 2
 			;;
+		--body=*)
+			body="${option#*=}"
+			shift
+			;;
 		--body)
-			local option_value="${2:-}"
+			if [[ $# -lt 2 ]]; then
+				log_error "--body requires a value"
+				return 1
+			fi
+			local option_value="$2"
 			body="$option_value"
 			shift 2
 			;;
+		--label=*)
+			label="${option#*=}"
+			shift
+			;;
 		--label)
-			local option_value="${2:-}"
+			if [[ $# -lt 2 ]]; then
+				log_error "--label requires a value"
+				return 1
+			fi
+			local option_value="$2"
 			label="$option_value"
 			shift 2
 			;;
@@ -599,8 +623,16 @@ _parse_log_command() {
 			auto_dispatch="yes"
 			shift
 			;;
+		--tier=*)
+			tier="${option#*=}"
+			shift
+			;;
 		--tier)
-			local option_value="${2:-}"
+			if [[ $# -lt 2 ]]; then
+				log_error "--tier requires a value"
+				return 1
+			fi
+			local option_value="$2"
 			tier="$option_value"
 			shift 2
 			;;

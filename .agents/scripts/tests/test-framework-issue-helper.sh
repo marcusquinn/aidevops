@@ -116,6 +116,36 @@ run_auto_dispatch_case() {
 	return 1
 }
 
+run_auto_dispatch_equals_case() {
+	local stub_dir="$1"
+	local output_file="$2"
+	local trace_file="$3"
+
+	if TEST_DUPLICATE_VALUE="" \
+		TEST_CREATED_URL="https://github.com/marcusquinn/aidevops/issues/9101" \
+		TEST_GH_TRACE="$trace_file" \
+		PATH="${stub_dir}:$PATH" \
+		"$HELPER" log --title="fix: auto dispatch equals labels" --body="body" --label=enhancement --auto-dispatch --tier=thinking >"$output_file" 2>&1; then
+		return 0
+	fi
+
+	return 1
+}
+
+run_missing_value_case() {
+	local stub_dir="$1"
+	local output_file="$2"
+
+	if TEST_DUPLICATE_VALUE="" \
+		TEST_CREATED_URL="https://github.com/marcusquinn/aidevops/issues/9102" \
+		PATH="${stub_dir}:$PATH" \
+		"$HELPER" log --title >"$output_file" 2>&1; then
+		return 0
+	fi
+
+	return 1
+}
+
 TMP_DIR=$(mktemp -d -t framework-issue-helper-test.XXXXXX)
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -161,6 +191,28 @@ if run_auto_dispatch_case "${TMP_DIR}" "$auto_dispatch_output" "$auto_dispatch_t
 	assert_not_contains "$auto_dispatch_calls" "issue edit" "auto-dispatch case avoids post-create issue edits"
 else
 	fail "auto-dispatch case creates issue" "helper failed"
+fi
+
+auto_dispatch_equals_output="${TMP_DIR}/auto-dispatch-equals.out"
+auto_dispatch_equals_trace="${TMP_DIR}/auto-dispatch-equals.trace"
+if run_auto_dispatch_equals_case "${TMP_DIR}" "$auto_dispatch_equals_output" "$auto_dispatch_equals_trace"; then
+	auto_dispatch_equals_text=$(<"$auto_dispatch_equals_output")
+	auto_dispatch_equals_calls=$(<"$auto_dispatch_equals_trace")
+	assert_contains "$auto_dispatch_equals_text" "status=created" "auto-dispatch equals case creates issue"
+	assert_contains "$auto_dispatch_equals_calls" "--label enhancement" "auto-dispatch equals case parses --label=value"
+	assert_contains "$auto_dispatch_equals_calls" "--label auto-dispatch" "auto-dispatch equals case passes auto-dispatch"
+	assert_contains "$auto_dispatch_equals_calls" "--label tier:thinking" "auto-dispatch equals case parses --tier=value"
+	assert_contains "$auto_dispatch_equals_calls" "--label status:available" "auto-dispatch equals case includes worker-ready status label"
+else
+	fail "auto-dispatch equals case creates issue" "helper failed"
+fi
+
+missing_value_output="${TMP_DIR}/missing-value.out"
+if run_missing_value_case "${TMP_DIR}" "$missing_value_output"; then
+	fail "missing option value is rejected" "helper succeeded without a required value"
+else
+	missing_value_text=$(<"$missing_value_output")
+	assert_contains "$missing_value_text" "--title requires a value" "missing option value explains the failing flag"
 fi
 
 help_output="${TMP_DIR}/help.out"
