@@ -233,6 +233,7 @@ jobs:
             DESC="Review bot gate WAITING — no real bot review yet"
           fi
 
+          STATUS_EXIT=0
           gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
             --method POST \
             -f state="${STATE}" \
@@ -242,10 +243,16 @@ jobs:
             --method POST \
             -f state="${STATE}" \
             -f context="review-bot-gate" \
-            -f description="${DESC}"; } || {
+            -f description="${DESC}"; } || STATUS_EXIT=$?
+
+          if [[ "${STATUS_EXIT}" -ne 0 ]]; then
+            if [[ "${STATE}" == "success" ]]; then
+              echo "::warning::Review bot gate passed, but commit-status posting is unavailable in this token context; continuing with the workflow check as the gate signal."
+              exit 0
+            fi
             echo "::error::Failed to post review-bot-gate commit status after retry"
             exit 1
-          }
+          fi
           echo "Posted review-bot-gate status: ${STATE} (${DESC})"
 
       - name: Summary
