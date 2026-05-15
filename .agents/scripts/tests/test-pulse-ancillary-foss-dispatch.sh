@@ -51,7 +51,7 @@ write_repos_json() {
       "path": "~/Git/project",
       "foss": true,
       "foss_config": {
-        "labels_filter": ["help wanted", "bug"],
+        "labels_filter": ["help wanted", "needs, triage", "bug"],
         "disclosure": false
       }
     }
@@ -79,6 +79,9 @@ gh_issue_list() {
 	case "$label" in
 	"help wanted")
 		printf '%s\n' "${GH_ISSUE_LIST_OUTPUT_HELP_WANTED-${GH_ISSUE_LIST_OUTPUT:-}}"
+		;;
+	"needs, triage")
+		printf '%s\n' "${GH_ISSUE_LIST_OUTPUT_NEEDS_TRIAGE-${GH_ISSUE_LIST_OUTPUT:-}}"
 		;;
 	bug)
 		printf '%s\n' "${GH_ISSUE_LIST_OUTPUT_BUG-${GH_ISSUE_LIST_OUTPUT:-}}"
@@ -141,6 +144,7 @@ fi
 : >"$GH_ISSUE_LIST_LABEL_LOG"
 : >"$HEADLESS_INVOCATION_LOG"
 GH_ISSUE_LIST_OUTPUT_HELP_WANTED=''
+GH_ISSUE_LIST_OUTPUT_NEEDS_TRIAGE=''
 GH_ISSUE_LIST_OUTPUT_BUG='88|Fallback label issue'
 fallback_output="${TEST_TMP}/fallback.out"
 FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json" >"$fallback_output" || fail "label fallback dispatch failed"
@@ -149,9 +153,13 @@ available_after_fallback="$(<"$fallback_output")"
 wait
 launch_count_fallback="$(wc -l <"$HEADLESS_INVOCATION_LOG" | tr -d ' ')"
 [[ "$launch_count_fallback" == "1" ]] || fail "expected one fallback launch, got ${launch_count_fallback}"
-label_attempts="$(tr '\n' ',' <"$GH_ISSUE_LIST_LABEL_LOG")"
-label_attempts="${label_attempts%,}"
-[[ "$label_attempts" == "help wanted,bug" ]] || fail "label fallback did not try configured labels in order"
+expected_label_attempts="${TEST_TMP}/expected-labels.log"
+cat >"$expected_label_attempts" <<'EOF'
+help wanted
+needs, triage
+bug
+EOF
+diff -u "$expected_label_attempts" "$GH_ISSUE_LIST_LABEL_LOG" || fail "label fallback did not try configured labels in order"
 
 : >"$HEADLESS_INVOCATION_LOG"
 tilde_output="${TEST_TMP}/tilde.out"

@@ -1209,7 +1209,7 @@ dispatch_foss_workers() {
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
-	while IFS='|' read -r foss_slug foss_path; do
+	while IFS=$'\t' read -r foss_slug foss_path disclosure labels_filter_json; do
 		[[ -n "$foss_slug" && -n "$foss_path" ]] || continue
 		[[ "$available" -gt 0 && "$foss_count" -lt "$foss_max" ]] || break
 
@@ -1217,13 +1217,13 @@ dispatch_foss_workers() {
 		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
 		# Scan for a suitable issue
-		local labels_filter foss_issue foss_issue_num foss_issue_title
+		local foss_issue foss_issue_num foss_issue_title
 		local foss_label_candidates=()
 		local foss_label
-		labels_filter=$(jq -r --arg slug "$foss_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted","good first issue","bug"] | join(",")' \
-			"$repos_json" 2>/dev/null || echo "help wanted")
-		IFS=',' read -r -a foss_label_candidates <<<"$labels_filter"
+		while IFS= read -r foss_label; do
+			[[ -n "$foss_label" ]] || continue
+			foss_label_candidates+=("$foss_label")
+		done < <(jq -r '.[]' <<<"$labels_filter_json" 2>/dev/null || printf '%s\n' 'help wanted' 'good first issue' 'bug')
 		for foss_label in "${foss_label_candidates[@]}"; do
 			[[ -n "$foss_label" ]] || continue
 			foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
@@ -1251,10 +1251,6 @@ dispatch_foss_workers() {
 		foss_session_keys_seen="${foss_session_keys_seen}${foss_session_key}"$'\n'
 
 		local disclosure_flag=""
-		local disclosure
-		disclosure=$(jq -r --arg slug "$foss_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .foss_config.disclosure // true' \
-			"$repos_json" 2>/dev/null || echo "true")
 		[[ "$disclosure" == "true" ]] && disclosure_flag=" Include AI disclosure note in the PR."
 		local foss_path_expanded
 		foss_path_expanded=$(_expand_foss_repo_path "$foss_path")
@@ -1270,7 +1266,15 @@ dispatch_foss_workers() {
 
 		foss_count=$((foss_count + 1))
 		available=$((available - 1))
-	done < <(jq -r '.initialized_repos[] | select(.foss == true and (.foss_config.blocklist // false) == false) | "\(.slug)|\(.path)"' \
+	done < <(jq -r '.initialized_repos[]
+		| select(.foss == true and (.foss_config.blocklist // false) == false)
+		| [
+			.slug,
+			.path,
+			((.foss_config.disclosure // true) | tostring),
+			((.foss_config.labels_filter // ["help wanted","good first issue","bug"]) | @json)
+		]
+		| @tsv' \
 		"$repos_json" 2>/dev/null || true)
 
 	printf '%d\n' "$available"
