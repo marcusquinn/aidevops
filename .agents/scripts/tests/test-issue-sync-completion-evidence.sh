@@ -103,6 +103,22 @@ else
 	fail "unexpected task marker should accept proof on the task line"
 fi
 
+precomputed_clean_task_line='- [ ] t9008 fixed implementation pr:#81 tier:standard'
+precomputed_note_block='- [ ] t9008 fixed implementation pr:#81 tier:standard
+  - Historical note: earlier attempt was blocked-by:t9007 before the dependency landed.'
+if _has_unresolved_blocker "$precomputed_note_block" "t9008" "$precomputed_clean_task_line"; then
+	fail "precomputed clean task line skips blocker mentions in notes"
+else
+	pass "precomputed clean task line skips blocker mentions in notes"
+fi
+
+precomputed_blocked_task_line='- [ ] t9009 fixed implementation pr:#82 tier:standard blocked-by:t9008'
+if _has_unresolved_blocker "- [ ] t9009 fixed implementation pr:#82 tier:standard" "t9009" "$precomputed_blocked_task_line"; then
+	pass "precomputed blocked task line still vetoes completion"
+else
+	fail "precomputed blocked task line should veto completion"
+fi
+
 if [[ "$FAIL" -eq 0 ]]; then
 	printf 'All %d tests passed\n' "$PASS"
 	exit 0
