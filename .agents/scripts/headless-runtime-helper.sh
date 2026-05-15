@@ -1565,11 +1565,9 @@ cmd_run() {
 		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic
 		# HEADLESS/FULL_LOOP_HEADLESS markers are intentionally not required
 		# past the clean-env boundary.
-		local AIDEVOPS_SESSION_ORIGIN
-		AIDEVOPS_SESSION_ORIGIN="${AIDEVOPS_SESSION_ORIGIN:-worker}"
+		local AIDEVOPS_SESSION_ORIGIN="${AIDEVOPS_SESSION_ORIGIN:-worker}"
 		export AIDEVOPS_SESSION_ORIGIN
-		local AIDEVOPS_HEADLESS
-		AIDEVOPS_HEADLESS="${AIDEVOPS_HEADLESS:-true}"
+		local AIDEVOPS_HEADLESS="${AIDEVOPS_HEADLESS:-true}"
 		export AIDEVOPS_HEADLESS
 	fi
 
