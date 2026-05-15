@@ -1637,9 +1637,9 @@ _run_canary_test() {
 	# because the expected token can only appear if the model actually
 	# processed the prompt and generated a response.
 	#
-	# GH#23598: match the benign probe answer case-insensitively with a
-	# portable word boundary rather than relying on GNU grep `\b` semantics.
-	if grep -Eiq '(^|[^[:alnum:]_])four([^[:alnum:]_]|$)' "$canary_output" 2>/dev/null; then
+	# GH#23598: match the benign probe answer case-insensitively with the
+	# portable whole-word mode supported by GNU and BSD grep.
+	if grep -iwq 'four' "$canary_output" 2>/dev/null; then
 		# Cache the pass timestamp
 		mkdir -p "${STATE_DIR}" 2>/dev/null || true
 		date +%s >"$cache_file"

@@ -755,12 +755,15 @@ test_service_interruption_candidate_uses_separate_path() {
 	return 0
 }
 
-test_canary_uses_builtin_agent_without_default_agent() {
+test_canary_uses_isolated_plugin_config_without_pure() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
+	local plugin_dir="${canary_root}/plugin path"
+	local plugin_path="${plugin_dir}/index.mjs"
 	local args_file="${canary_root}/args.txt"
 	local env_file="${canary_root}/env.txt"
-	mkdir -p "$fake_bin_dir"
+	mkdir -p "$fake_bin_dir" "$plugin_dir"
+	printf '%s\n' 'export default {};' >"$plugin_path"
 
 	cat >"${fake_bin_dir}/opencode" <<'EOF'
 #!/usr/bin/env bash
@@ -773,9 +776,12 @@ if [[ -n "${OPENCODE_SESSION_ID:-}${OPENCODE_PID:-}${OPENCODE_RUN_ID:-}${OPENCOD
 	exit 42
 fi
 printf '%s\n' "$*" >"$AIDEVOPS_CANARY_ARGS_FILE"
-printf 'OPENCODE_BIN=%s\nOPENCODE_DB=%s\n' \
-	"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}" >"$AIDEVOPS_CANARY_ENV_FILE"
-printf 'CANARY_OK\n'
+printf 'OPENCODE_BIN=%s\nOPENCODE_DB=%s\nAIDEVOPS_HEADLESS=%s\n' \
+	"${OPENCODE_BIN:-}" "${OPENCODE_DB:-}" "${AIDEVOPS_HEADLESS:-}" >"$AIDEVOPS_CANARY_ENV_FILE"
+if [[ -f "${XDG_CONFIG_HOME:-}/opencode/opencode.json" ]]; then
+	printf 'CONFIG=%s\n' "$(<"${XDG_CONFIG_HOME}/opencode/opencode.json")" >>"$AIDEVOPS_CANARY_ENV_FILE"
+fi
+printf 'The answer is Four.\n'
 exit 0
 EOF
 	chmod +x "${fake_bin_dir}/opencode"
@@ -792,6 +798,7 @@ EOF
 		OPENCODE_PROCESS_ROLE="tui" \
 		OPENCODE="1" \
 		OPENCODE_SERVER_PASSWORD="session-password" \
+		AIDEVOPS_PLUGIN_INDEX="$plugin_path" \
 		AIDEVOPS_CANARY_ARGS_FILE="$args_file" \
 		AIDEVOPS_CANARY_ENV_FILE="$env_file" \
 		AIDEVOPS_HEADLESS_RUNTIME_DIR="${canary_root}/runtime" \
@@ -803,18 +810,21 @@ EOF
 		args=$(<"$args_file")
 		local env_output
 		env_output=$(<"$env_file")
-		if [[ "$args" == *'--pure'* && "$args" == *'--agent build'* ]] &&
+		local expected_plugin_url="file://${plugin_path}"
+		if [[ "$args" == *'What is two plus two?'* && "$args" != *'--pure'* && "$args" != *'--agent build'* ]] &&
 			[[ "$env_output" == *"OPENCODE_BIN=${fake_bin_dir}/opencode"* ]] &&
-			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]]; then
-			print_result "canary uses built-in agent without default_agent" 0
+			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]] &&
+			[[ "$env_output" == *"AIDEVOPS_HEADLESS=1"* ]] &&
+			[[ "$env_output" == *"$expected_plugin_url"* ]]; then
+			print_result "canary uses isolated plugin config without pure" 0
 			return 0
 		fi
-		print_result "canary uses built-in agent without default_agent" 1 \
-			"Expected --pure/--agent build and preserved OpenCode config env, got args: ${args}; env: ${env_output}"
+		print_result "canary uses isolated plugin config without pure" 1 \
+			"Expected benign prompt, no --pure/--agent build, headless env, plugin config, and preserved OpenCode config env; got args: ${args}; env: ${env_output}"
 		return 0
 	fi
 
-	print_result "canary uses built-in agent without default_agent" 1 \
+	print_result "canary uses isolated plugin config without pure" 1 \
 		"Canary stub did not run successfully: ${output:-<empty>}"
 	return 0
 }
@@ -1503,7 +1513,7 @@ main() {
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
 	test_service_interruption_candidate_uses_separate_path
-	test_canary_uses_builtin_agent_without_default_agent
+	test_canary_uses_isolated_plugin_config_without_pure
 	test_opencode_session_env_wrapper_strips_session_vars_only
 	test_worker_opencode_exec_paths_strip_session_env
 	test_sandbox_passthrough_scopes_provider_env
