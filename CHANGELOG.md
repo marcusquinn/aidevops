@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.51] - 2026-05-15
+
+### Added
+
+- prioritise low-complexity pulse dispatch (#23612)
+- prioritise solvable pulse dispatch candidates (#23610)
+
+### Changed
+
+- Tests: isolate USERPROFILE in pool auth startup test (#23631)
+- fix: export dispatch benign block ledger (#23628)
+- Maintenance: bump the pip group across 1 directory with 7 updates
+- support auto-dispatch framework issue labels (#23607)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden tier metadata refresh checks (#23633)
+- simplify OAuth pool token empty check (#23630)
+- robustly extract task lines for evidence (#23634)
+- ignore routine telemetry in label invariant triage (#23623)
+- refresh external pulse benign ledgers (#23627)
+- preserve worker headless export overrides (#23624)
+- make framework auto-dispatch issues dispatchable (#23629)
+- normalize pulse dispatch labels (#23626)
+- tolerate review gate status permission errors (#23608)
+
 ## [3.15.50] - 2026-05-14
 
 ### Fixed
