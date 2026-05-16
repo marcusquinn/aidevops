@@ -10,6 +10,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.55] - 2026-05-16
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: normalize changelog spelling (#23703)
+- tighten supply-chain self-reference path matching (#23702)
+- Maintenance: update simplification state registry
+- Refactor: centralize framework issue flag parsing (#23674)
+- Tests: exercise worktree owner registration (#23667)
+- Documentation: normalize changelog spelling (#23668)
+
+### Fixed
+
+- preserve dirty worktrees and reflog-only WIP (#23677) (#23678)
+- report supply-chain test setup failures (#23707)
+- harden label invariant jq labels handling (#23708)
+- harden dispatch test mocks (#23701)
+- harden pulse PR cache cleanup (#23699)
+- simplify non-task label jq detection (#23698)
+- respect FOSS disclosure opt-out (#23700)
+- preserve model selection failure status (#23696)
+- use pathlib as_uri in headless canary test (#23697)
+- harden blocker candidate handling (#23694)
+- harden benign ledger parent creation (#23693)
+- pass FOSS worker issue context (#23680)
+- use portable grep alternation in pulse test (#23676)
+- use portable canary grep (#23675)
+- export benign ledger in dispatch max (#23673)
+- simplify benign ledger parent handling (#23672)
+- reuse extracted task line for blocker checks (#23671)
+- use python URL quoting in headless canary test (#23670)
+- align headless runtime local declarations (#23669)
+- expose dispatch worktree registration failures (#23666)
+- harden GitHub cooldown state writes (#23665)
+- extend pulse PR metadata cache (#23663)
+- correct non-task label detection (#23664)
+- harden supply-chain advisory scan filtering (#23662)
+- preserve FOSS label arrays during dispatch (#23659)
+- make FOSS dispatch try all configured labels and expand repo paths (#23644)
+
 ## [3.15.54] - 2026-05-15
 
 ### Fixed
