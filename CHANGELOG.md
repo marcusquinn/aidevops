@@ -1632,7 +1632,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - re-checkout framework after caller checkout in sync-on-pr-merge (#22614)
-- initialise multi-var locals in _compose_unfiled_phases_note (#22611)
+- initialize multi-var locals in _compose_unfiled_phases_note (#22611)
 - guard NMR timestamp jq parsing (#22603)
 - verify pulse merge label fetch behavior (#22602)
 - extract all release completion task IDs (#22600)
@@ -2899,7 +2899,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - split keyword-research-helper.sh into orchestrator + 3 sub-libraries (#21684)
 - split ip-reputation-helper.sh into orchestrator + 4 sub-libraries (#21688)
 - extend worktree exclusions to Linux indexers (tracker3, baloo) (#21702)
-- t2916 honour interactive-session claim stamps in worktree sweep (GH#21074) (#21705)
+- t2916 honor interactive-session claim stamps in worktree sweep (GH#21074) (#21705)
 - add _resolve_log_dir to shared-constants.sh, replace hardcoded log paths in runners (#21701)
 - split memory-embeddings-helper.sh into orchestrator + 2 sub-libraries (#21686)
 
@@ -2927,7 +2927,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maintenance: mark t3058 complete (pr:#21797 testing:runtime-verified)
 - Maintenance: sync ref:GH#21798 to TODO.md [skip ci]
 - Maintenance: mark t3052 complete (pr:#21767 completed:2026-04-29) [skip ci]
-- extend t2449 worker-briefed auto-merge gate to honour cryptographic approval as OWNER/MEMBER bypass (#21767)
+- extend t2449 worker-briefed auto-merge gate to honor cryptographic approval as OWNER/MEMBER bypass (#21767)
 - fix jq ARG_MAX overflow — pass checks_json via stdin instead of --argjson (#21778)
 - Maintenance: mark t3057 complete (pr:#21792 completed:2026-04-29) [skip ci]
 - replace lifetime-avg CPU with interval-sampled delta in _watchdog_tree_cpu (#21792)
@@ -4595,7 +4595,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maintenance: mark t2366 complete (pr:#19878 completed:2026-04-19) [skip ci]
 - feat(routines): add r914 daily repo-aidevops-health keeper (#19878)
 - Maintenance: mark t2384 complete (pr:#19875 completed:2026-04-19) [skip ci]
-- implement 5-layer defence against enrich-path data-loss bug (#19876)
+- implement 5-layer defense against enrich-path data-loss bug (#19876)
 - chore(todo): log brief + TODO entry for pre-commit hook ratcheting (#19875)
 
 ### Fixed
@@ -4688,7 +4688,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - tabby-profile-sync: parse folded YAML, detect worktrees via git (#19793)
 - add curl retry-with-backoff to validate-version-consistency.sh (#19791)
-- add ratchet gate rule and gh pr checks cancelled-vs-fail note
+- add ratchet gate rule and gh pr checks canceled-vs-fail note
 - briefs for self-healing pulse framework improvements (#19781)
 - Maintenance: update simplification state registry
 - document origin:interactive auto-merge window (#19776)
@@ -4710,7 +4710,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - brief — macOS-specific briefs fail Ubuntu AC verification (planning-only) (#19725)
 - Maintenance: update simplification state registry
 - correct opencode upstream slug to anomalyco/opencode in docs and configs (#19728)
-- add paths-ignore to Qlty workflows to suppress docs-only cancelled-as-fail noise (#19726)
+- add paths-ignore to Qlty workflows to suppress docs-only canceled-as-fail noise (#19726)
 - fix(pre-commit): make TODO.md duplicate-ID check diff-aware (#19712)
 
 ### Fixed
@@ -5079,7 +5079,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - fix(pulse): reconcile_completed_parent_tasks consults sub-issue graph before body regex (#19250)
-- add brief and TODO for voice-bridge/normalise-markdown test coverage (#19245)
+- add brief and TODO for voice-bridge/normalize-markdown test coverage (#19245)
 
 ## [3.8.55] - 2026-04-16
 
@@ -5087,7 +5087,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - t2135: feat(ci): post-merge brief acceptance criteria verification (#19246)
 - plan qlty A-grade file-complexity campaign (6 tasks, 20 smells) (#19228)
-- refactor(misc-scripts): decompose voice-bridge/normalise-markdown/tabby-profile-sync (#19238)
+- refactor(misc-scripts): decompose voice-bridge/normalize-markdown/tabby-profile-sync (#19238)
 
 ### Fixed
 
@@ -5498,7 +5498,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - jq null-fallback and single-pass consolidation (GH#18866) (#18905)
 - harden jq filter and pgrep patterns in pulse-issue-reconcile.sh (#18910)
-- optimise enrichment helpers in pulse-quality-debt.sh (#18911)
+- optimize enrichment helpers in pulse-quality-debt.sh (#18911)
 - address review bot suggestions from PR #18676 (#18908)
 - guard getent empty output in real-home resolvers (#18907)
 - apply gemini review fixes to issue-sync-helper.sh enrich helpers (#18897)
@@ -6495,7 +6495,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `_install_pulse_systemd` missing PATH env var causes workers to exit 127 on Linux; add `Environment=PATH=...` to service unit matching launchd plist behaviour (GH#17405)
+- `_install_pulse_systemd` missing PATH env var causes workers to exit 127 on Linux; add `Environment=PATH=...` to service unit matching launchd plist behavior (GH#17405)
 - `_install_pulse_systemd` timer stalls on mid-session install due to missing `OnActiveSec`; add `OnActiveSec=10s` to bootstrap first service run (GH#17405)
 
 ## [3.6.89] - 2026-04-04
@@ -9232,7 +9232,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - replace arbitrary 5-minute time budget with 'run until done, then exit' (#2466)
 - use full path scripts/commands/pulse.md in all agent references (#2459)
 - add mandatory OPEN state check before dispatching workers (#2455)
-- pulse should close open issues labelled status:done (#2456)
+- pulse should close open issues labeled status:done (#2456)
 - add broader dedup search before fallback issue creation (#2447) (#2454)
 - add local dev routing to Build+ Domain Expertise Check table (#2453)
 
@@ -9964,7 +9964,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - resolve SIGPIPE in _launchd_is_loaded under pipefail (t1265)
 - skip LaunchAgent plist rewrite when content unchanged (t1265)
 - supervisor auto-pickup skips tasks with assignee:/started: fields (t1062) (#1519)
-- exclude cancelled tasks from 7-day success rate metric (t1248) (#1983)
+- exclude canceled tasks from 7-day success rate metric (t1248) (#1983)
 
 ## [2.117.0] - 2026-02-19
 
@@ -9988,13 +9988,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - add multi-platform detection and API adapters for Gitea/GitLab issue sync (t1120.3) (#1815)
 - expand blocker statuses for auto-dispatch eligibility assessment (t1188.1) (#1810)
 - add multi-repo TODO scanning and auto-dispatch eligibility to AI context (#1801)
-- filter verified/cancelled tasks from AI context snapshot (t1178) (#1779)
+- filter verified/canceled tasks from AI context snapshot (t1178) (#1779)
 - add supervisor DB cross-reference to issue audit to reduce false positives (t1156) (#1773)
 - add auto-dispatch eligibility assessment to supervisor AI reasoning (t1134) (#1782)
 - add Phase 0.6 queue-dispatchability reconciliation (t1180) (#1783)
 - add model cost-efficiency check to supervisor dispatch (t1149) (#1769)
 - add completed-task exclusion list to supervisor AI context (t1148) (#1768)
-- add cancelled-task sync between supervisor DB and TODO.md (t1131) (#1727)
+- add canceled-task sync between supervisor DB and TODO.md (t1131) (#1727)
 - Phase 3a — auto-adopt untracked PRs into supervisor pipeline (#1704)
 - add supervisor self-healing for stuck evaluating tasks, dispatch stalls, and action executor robustness (#1683)
 - add last_skill_check and skill_updates_applied to auto-update state schema (t1081.3) (#1638)
@@ -10318,7 +10318,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- integrate normalise with convert pipeline (#1456)
+- integrate normalize with convert pipeline (#1456)
 
 ## [2.113.1] - 2026-02-14
 
@@ -10371,7 +10371,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - restore ALL_STATUS_LABELS constant lost in t1031 modularisation (t1035) (#1375)
 - resolve TODO.md merge conflict markers (t1010/t1025 duplicate)
 - use relative path as agent name to prevent collisions (t1015) (#1336)
-- health issue progress uses actionable count, excluding cancelled/skipped (#1323)
+- health issue progress uses actionable count, excluding canceled/skipped (#1323)
 - wire resolve_rebase_conflicts() into rebase_sibling_pr() for AI-assisted conflict resolution (t1021) (#1322)
 - plugin config hook overrides worker osgrep disabled setting (#1296)
 - add PATH and GH_TOKEN detection to supervisor cron install (t1006) (#1291)
