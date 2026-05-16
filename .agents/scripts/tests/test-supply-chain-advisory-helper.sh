@@ -147,7 +147,11 @@ test_similar_agents_suffix_ioc_scan_fails() {
 		return 0
 	}
 
-	mkdir -p "${tmpdir}/not.agents/reference" || return 1
+	if ! mkdir -p "${tmpdir}/not.agents/reference"; then
+		print_result "similarly named agents directory still fails" 1 "mkdir failed"
+		rm -rf "$tmpdir"
+		return 0
+	fi
 	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"
 
 	local output
