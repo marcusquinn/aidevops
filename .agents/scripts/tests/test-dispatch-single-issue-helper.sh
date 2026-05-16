@@ -116,8 +116,11 @@ _install_mock_set_origin_label() {
 
 # shellcheck disable=SC2317
 register_worktree() {
+	if [[ -z "${REGISTER_WORKTREE_LOG:-}" ]]; then
+		return 0
+	fi
 	printf 'register_worktree %s\n' "$*" >>"$REGISTER_WORKTREE_LOG"
-	return 0
+	return $?
 }
 
 # shellcheck disable=SC2317
@@ -205,7 +208,6 @@ _dsi_repo_path_for_slug() {
 		printf '%s\n' "$MOCK_REPO_PATH"
 		return 0
 	fi
-	printf '\n'
 	return 1
 }
 
@@ -630,6 +632,7 @@ test_create_worktree_registers_dispatch_owner() {
 	registered=$(<"$REGISTER_WORKTREE_LOG")
 	local helper_call=""
 	helper_call=$(<"$MOCK_WORKTREE_HELPER_LOG")
+	rm -f "$REGISTER_WORKTREE_LOG" "$MOCK_WORKTREE_HELPER_LOG"
 	local passed=1
 	if [[ "$rc" -eq 0 && "$registered" == *"register_worktree ${MOCK_WORKTREE_PATH} ${MOCK_WORKTREE_BRANCH}"* &&
 		"$registered" == *"--task 12345"* && "$registered" == *"--session dispatch-precreate-12345"* &&
@@ -643,6 +646,9 @@ test_create_worktree_registers_dispatch_owner() {
 	MOCK_WORKTREE_PATH=""
 	MOCK_WORKTREE_BRANCH=""
 	MOCK_DATE_UTC=""
+	REGISTER_WORKTREE_LOG=""
+	unset MOCK_WORKTREE_HELPER_LOG
+	MOCK_WORKTREE_HELPER_LOG=""
 	rm -rf "$test_dir"
 	print_result "worktree creation registers dispatch owner metadata" "$passed" "rc=$rc registered=$registered helper=$helper_call"
 	return 0
