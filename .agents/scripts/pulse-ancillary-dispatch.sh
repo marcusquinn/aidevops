@@ -1206,6 +1206,7 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
+	local foss_slug foss_path disclosure labels_filter_json
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
@@ -1279,7 +1280,7 @@ dispatch_foss_workers() {
 		| [
 			.slug,
 			.path,
-			((.foss_config.disclosure // true) | tostring),
+			((.foss_config.disclosure != false) | tostring),
 			((.foss_config.labels_filter // ["help wanted","good first issue","bug"]) | @json)
 		]
 		| @tsv' \
