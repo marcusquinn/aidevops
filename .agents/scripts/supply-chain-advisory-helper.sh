@@ -27,7 +27,7 @@ is_known_safe_ioc_self_reference() {
 	local hit_path="${hit_line%%:*}"
 
 	case "$hit_path" in
-	*.agents/reference/npm-supply-chain-response.md | *.agents/scripts/supply-chain-advisory-helper.sh)
+	.agents/reference/npm-supply-chain-response.md | */.agents/reference/npm-supply-chain-response.md | .agents/scripts/supply-chain-advisory-helper.sh | */.agents/scripts/supply-chain-advisory-helper.sh)
 		return 0
 		;;
 	*)
