@@ -34,7 +34,8 @@ exit 0
 EOS
 	cat >"${TEST_TMP}/headless-runtime-helper.sh" <<'EOS'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >>"${HEADLESS_INVOCATION_LOG}"
+printf 'WORKER_ISSUE_NUMBER=%s WORKER_REPO_SLUG=%s WORKER_WORKTREE_PATH=%s %s\n' \
+	"${WORKER_ISSUE_NUMBER:-<unset>}" "${WORKER_REPO_SLUG:-<unset>}" "${WORKER_WORKTREE_PATH:-<unset>}" "$*" >>"${HEADLESS_INVOCATION_LOG}"
 exit 0
 EOS
 	chmod +x "${TEST_TMP}/scripts/foss-contribution-helper.sh" "${TEST_TMP}/headless-runtime-helper.sh" || fail "failed to chmod fixtures"
@@ -139,6 +140,18 @@ launch_count="$(wc -l <"$HEADLESS_INVOCATION_LOG" | tr -d ' ')"
 
 if ! grep -q -- '--session-key foss-owner/project-42' "$HEADLESS_INVOCATION_LOG"; then
 	fail "expected FOSS session key was not used"
+fi
+
+if ! grep -q -- 'WORKER_ISSUE_NUMBER=42' "$HEADLESS_INVOCATION_LOG"; then
+	fail "FOSS worker launch did not include WORKER_ISSUE_NUMBER"
+fi
+
+if ! grep -q -- 'WORKER_REPO_SLUG=owner/project' "$HEADLESS_INVOCATION_LOG"; then
+	fail "FOSS worker launch did not include WORKER_REPO_SLUG"
+fi
+
+if ! grep -q -- "WORKER_WORKTREE_PATH=${HOME}/Git/project" "$HEADLESS_INVOCATION_LOG"; then
+	fail "FOSS worker launch did not include expanded WORKER_WORKTREE_PATH"
 fi
 
 : >"$GH_ISSUE_LIST_LABEL_LOG"
