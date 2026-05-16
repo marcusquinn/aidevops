@@ -1255,6 +1255,14 @@ dispatch_foss_workers() {
 		local foss_path_expanded
 		foss_path_expanded=$(_expand_foss_repo_path "$foss_path")
 
+		env \
+			HEADLESS=1 \
+			FULL_LOOP_HEADLESS=true \
+			AIDEVOPS_SESSION_ORIGIN=worker \
+			AIDEVOPS_HEADLESS=true \
+			WORKER_ISSUE_NUMBER="$foss_issue_num" \
+			WORKER_REPO_SLUG="$foss_slug" \
+			WORKER_WORKTREE_PATH="$foss_path_expanded" \
 		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
 			--session-key "$foss_session_key" \
