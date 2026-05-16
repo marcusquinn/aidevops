@@ -183,7 +183,7 @@ _fetch_label_invariant_rows() {
 			([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
 			((.labels | map(.name) | index("origin:interactive")) != null | tostring),
 			((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
-			((.labels | map(.name) | any(.[]; . as $label | ["supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold"] | index($label))) | tostring),
+			(any(.labels[].name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
 			(([.labels[].name | select(startswith("status:"))] | length) | tostring)
 		] | join("|")
