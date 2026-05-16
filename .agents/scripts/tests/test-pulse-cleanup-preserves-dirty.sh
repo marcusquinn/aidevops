@@ -8,16 +8,16 @@
 # past 30m grace) are satisfied.
 #
 # Real-world incident: an interactive OpenCode session with three WIP
-# commits later reset via `git reset --hard origin/main` left the
+# commits later reset back to the default-branch tip left the
 # worktree showing commits_ahead=0 dirty=5 age=35m. The fast-path then
 # matched and called remove_worktree_path_permanently → 3 hours of
-# editor work + 3 reflog-only commits were destroyed with no recovery
+# editor work plus local WIP commit evidence were destroyed with no recovery
 # path (mode=permanent, branch deleted, no Trash backing).
 #
-# Two scenarios covered:
+# Key cleanup scenarios covered:
 #   1. zero commits + dirty + past grace → skip (fast-path now requires clean)
-#   2. zero commits + clean + past grace + commits-not-on-remote > 0
-#      via reflog → skip (defence-in-depth: HEAD..--not --remotes)
+#   2. reachable unpushed commit + past grace → skip
+#      (defence-in-depth: HEAD --not --remotes)
 
 set -uo pipefail
 
@@ -184,28 +184,25 @@ test_dirty_worktree_past_6h_still_skips() {
 	return 0
 }
 
-# Scenario 3: a worktree with reflog-only WIP commits (HEAD reset to
-# origin/main, but the original commits still reachable via reflog) is
-# protected by the "commits not on any remote" check.
-test_reflog_only_wip_commits_protected() {
-	local repo_dir="${TEST_ROOT}/repo-reflog"
-	local wt_path="${TEST_ROOT}/wt-reflog"
-	local branch_name="fix/reflog-only-wip"
+# Scenario 3: a worktree with WIP commits still reachable from HEAD but not
+# present on any remote is protected by the "commits not on any remote" check.
+# This does not claim to recover reflog-only commits after HEAD is reset away
+# from them; cleanup can only inspect reachable state without a separate reflog
+# walk.
+test_reachable_unpushed_commits_protected() {
+	local repo_dir="${TEST_ROOT}/repo-unpushed"
+	local wt_path="${TEST_ROOT}/wt-unpushed"
+	local branch_name="fix/reachable-unpushed-wip"
 	setup_repo_with_worktree_aged "$repo_dir" "$wt_path" "$branch_name" 1 || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
-	# Create a commit then reset HEAD back to base — the commit is now
-	# reflog-only. `rev-list HEAD ^main` returns 0, but
-	# `rev-list HEAD --not --remotes` will report the lost commit if we
-	# move HEAD back to it.
+	# Create a WIP commit and leave HEAD on it. `rev-list HEAD --not --remotes`
+	# reports it as local-only, so cleanup must refuse permanent removal.
 	(
 		cd "$wt_path" || exit 1
 		printf 'wip change\n' >wip.txt
 		git add wip.txt
 		git -c user.email=t@test -c user.name=T commit -q -m "wip: editor edit"
-		# Leave HEAD on the WIP commit so rev-list --not --remotes > 0.
-		# (If we reset, commits_ahead becomes 0 AND the worktree is clean,
-		# making it indistinguishable from a fresh worktree — accepted limit.)
 	)
 
 	local now_epoch
@@ -225,7 +222,7 @@ test_reflog_only_wip_commits_protected() {
 	if ! grep -qE 'local-commits-no-pr|commits-not-on-remote' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null; then
 		grep -q 'worktree-removed' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null && rc=1
 	fi
-	print_result "worktree with unpushed commit is preserved" "$rc" \
+	print_result "worktree with reachable unpushed commit is preserved" "$rc" \
 		"cleanup_rc=$cleanup_rc dir_exists=$([[ -d "$wt_path" ]] && echo y || echo n) log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
@@ -270,7 +267,7 @@ mkdir -p "${HOME}/.aidevops/logs"
 echo "=== test-pulse-cleanup-preserves-dirty.sh ==="
 test_dirty_worktree_past_grace_skips_removal
 test_dirty_worktree_past_6h_still_skips
-test_reflog_only_wip_commits_protected
+test_reachable_unpushed_commits_protected
 test_sources_under_set_u
 
 echo ""

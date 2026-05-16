@@ -813,7 +813,7 @@ Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 comm
 
 #######################################
 # GH#23677 / t3700: Defence-in-depth refusal of permanent removal when
-# uncommitted work or reflog-only WIP commits would be lost.
+# uncommitted work or reachable unpushed WIP commits would be lost.
 #
 # Two independent safety guards:
 #   1. dirty_count > 0 → "dirty-content-protect"
@@ -823,13 +823,13 @@ Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 comm
 #      are not pgrep-visible. Better to leave the directory on disk for
 #      the user to inspect than destroy uncommitted edits.
 #   2. commits not on any remote → "commits-not-on-remote"
-#      `git rev-list --count HEAD --not --remotes` catches commits not
-#      on any remote ref — including the case where a stray `git reset`
-#      moved the branch tip back to the merge base, making the primary
-#      `rev-list HEAD ^${main_branch}` count zero, while the reflog
-#      still holds the WIP commits. Gated on the repo actually having
-#      remote-tracking refs to avoid false-positive on local-only test
-#      repos and freshly-init'd helper sandboxes.
+#      `git rev-list --count HEAD --not --remotes` catches commits that
+#      are still reachable from HEAD but absent from all remote refs. It
+#      deliberately does NOT claim to protect commits that exist only in
+#      reflog after a later reset moved HEAD back to the base; those require
+#      separate reflog-aware recovery. Gated on the repo actually having
+#      remote-tracking refs to avoid false-positive on local-only test repos
+#      and freshly-init'd helper sandboxes.
 #
 # Args:
 #   $1 - wt_path_age:   absolute worktree path
@@ -869,7 +869,7 @@ _pc_assert_no_uncommitted_work() {
 	if [[ "${commits_not_on_remotes//[!0-9]/}" -gt 0 ]]; then
 		local audit_ctx_reflog
 		audit_ctx_reflog=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_not_on_remotes" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "none")
-		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — ${commits_not_on_remotes} commit(s) not on any remote (possible reflog-only WIP)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — ${commits_not_on_remotes} commit(s) reachable from HEAD but not on any remote" >>"$LOGFILE"
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "commits-not-on-remote" "skipped" "$audit_ctx_reflog"
 		return 1
 	fi
@@ -959,7 +959,7 @@ _cleanup_single_worktree() {
 	fi
 
 	# GH#23677 / t3700: defence-in-depth — refuse removal when any
-	# uncommitted content or reflog-only WIP commit is present.
+	# uncommitted content or reachable unpushed WIP commit is present.
 	if ! _pc_assert_no_uncommitted_work "$wt_path_age" "$wt_branch_age" "$dirty_count" "$orphan_issue_num" "$wt_age_secs" "$repo_name_age" "$audit_context"; then
 		return 1
 	fi
