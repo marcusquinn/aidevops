@@ -177,15 +177,15 @@ _fetch_label_invariant_rows() {
 	# managed via an exception label (needs-info, verify-failed, stale,
 	# needs-testing, orphaned). See CodeRabbit review on PR #18546.
 	printf '%s' "$issues_json" | jq -r '
-		.[] | [
+		.[] | (.labels // []) as $labels | [
 			(.number | tostring),
-			([.labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
-			([.labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
-			((.labels | map(.name) | index("origin:interactive")) != null | tostring),
-			((.labels | map(.name) | index("auto-dispatch"))      != null | tostring),
-			(any(.labels[].name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
+			([$labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
+			([$labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
+			(($labels | map(.name) | index("origin:interactive")) != null | tostring),
+			(($labels | map(.name) | index("auto-dispatch"))      != null | tostring),
+			(any($labels[]?.name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
-			(([.labels[].name | select(startswith("status:"))] | length) | tostring)
+			(([$labels[].name | select(startswith("status:"))] | length) | tostring)
 		] | join("|")
 	' 2>/dev/null
 	return 0
