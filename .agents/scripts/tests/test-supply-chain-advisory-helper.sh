@@ -37,6 +37,19 @@ make_tmpdir() {
 	return 0
 }
 
+prepare_test_dirs() {
+	local test_name="$1"
+	local tmpdir="$2"
+	shift 2
+	local paths=("$@")
+	if mkdir -p "${paths[@]}"; then
+		return 0
+	fi
+	print_result "$test_name" 1 "mkdir failed"
+	rm -rf "$tmpdir"
+	return 1
+}
+
 test_self_reference_only_scan_succeeds() {
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
@@ -44,7 +57,8 @@ test_self_reference_only_scan_succeeds() {
 		return 0
 	}
 
-	mkdir -p "${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 1
+	prepare_test_dirs "self-reference-only scan exits cleanly" "$tmpdir" \
+		"${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'Documented IOC: router_''init.js and gh-token-''monitor.' \
 		>"${tmpdir}/.agents/reference/npm-supply-chain-response.md"
 	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
@@ -71,7 +85,8 @@ test_relative_self_reference_only_scan_succeeds() {
 		return 0
 	}
 
-	mkdir -p "${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 1
+	prepare_test_dirs "relative self-reference-only scan exits cleanly" "$tmpdir" \
+		"${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'Documented IOC: router_''init.js and gh-token-''monitor.' \
 		>"${tmpdir}/.agents/reference/npm-supply-chain-response.md"
 	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
@@ -98,7 +113,8 @@ test_single_file_self_reference_only_scan_succeeds() {
 		return 0
 	}
 
-	mkdir -p "${tmpdir}/.agents/scripts" || return 1
+	prepare_test_dirs "single-file self-reference-only scan exits cleanly" "$tmpdir" \
+		"${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
 		>"${tmpdir}/.agents/scripts/supply-chain-advisory-helper.sh"
 
@@ -123,7 +139,7 @@ test_non_self_ioc_scan_fails() {
 		return 0
 	}
 
-	mkdir -p "${tmpdir}/docs" || return 1
+	prepare_test_dirs "non-self IOC scan still fails" "$tmpdir" "${tmpdir}/docs" || return 0
 	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/docs/evidence.md"
 
 	local output
@@ -147,9 +163,8 @@ test_similar_agents_suffix_ioc_scan_fails() {
 		return 0
 	}
 
-	if ! mkdir -p "${tmpdir}/not.agents/reference"; then
-		print_result "similarly named agents directory still fails" 1 "mkdir failed"
-		rm -rf "$tmpdir"
+	if ! prepare_test_dirs "similarly named agents directory still fails" "$tmpdir" \
+		"${tmpdir}/not.agents/reference"; then
 		return 0
 	fi
 	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"
