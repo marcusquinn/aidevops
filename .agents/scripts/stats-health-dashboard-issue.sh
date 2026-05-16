@@ -116,7 +116,7 @@ _health_issue_operator_label_allows_identity() {
 	local canonical_identity="$2"
 	local canonical_label="operator:${canonical_identity}"
 
-	printf '%s' "${issue_json:-{}}" | jq -e --arg canonical_label "$canonical_label" '
+	printf '%s' "$issue_json" | jq -e --arg canonical_label "$canonical_label" '
 		((.labels // []) | map(.name) | map(select(startswith("operator:")))) as $operator_labels
 		| ($operator_labels | length == 0 or any(. == $canonical_label))
 	' >/dev/null 2>&1
