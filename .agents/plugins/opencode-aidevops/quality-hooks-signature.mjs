@@ -190,10 +190,20 @@ export function hasTrustedSignatureSignal(cmd) {
  * substitution, or command substitution in the body argument). These forms
  * are too dynamic to rewrite safely and the caller should use the helper
  * explicitly. Returns true if unparseable.
+ *
+ * Exception: if the command already includes gh-signature-helper.sh or the
+ * canonical marker, it's safe to pass through (the signature is already
+ * being handled by the caller).
  * @param {string} cmd
  * @returns {boolean}
  */
 function _hasUnparseableBody(cmd) {
+  // If the command already invokes the helper or includes the marker,
+  // it's safe to pass through (signature is being handled).
+  if (cmd.includes("gh-signature-helper") || cmd.includes(SIG_MARKER)) {
+    return false;
+  }
+
   // Heredoc / process substitution
   if (/--body(?:-file)?\s*=?\s*(?:<<-?\s*['"]?\w+|<\()/.test(cmd)) return true;
   // Command substitution inside --body value

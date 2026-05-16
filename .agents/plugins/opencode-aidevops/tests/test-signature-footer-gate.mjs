@@ -613,7 +613,7 @@ describe("checkSignatureFooterGate throw message (t2893)", () => {
     assert.ok(thrown);
     assert.match(thrown.message, /Standard fixes/);
     assert.match(thrown.message, /Append to --body directly/);
-    assert.match(thrown.message, /two-step pattern/);
-    assert.match(thrown.message, /Source the wrapper/);
+    assert.match(thrown.message, /before posting/);
+    assert.match(thrown.message, /Source shared-gh-wrappers/);
   });
 });
