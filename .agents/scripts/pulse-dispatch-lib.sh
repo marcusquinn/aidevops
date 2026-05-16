@@ -225,10 +225,12 @@ _dispatch_begin_benign_blocks_cycle() {
 		_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 		return 0
 	fi
-	local parent_dir
-	parent_dir="${ledger_file%/*}"
-	if [[ "$ledger_managed_by_dispatch" == "0" && "$ledger_file" == */* && -n "$parent_dir" ]] && ! mkdir -p "$parent_dir"; then
-		printf 'Failed to create benign block ledger parent directory: %s\n' "$parent_dir" >&2
+	if [[ "$ledger_managed_by_dispatch" == "0" && "$ledger_file" == */* ]]; then
+		local parent_dir
+		parent_dir="${ledger_file%/*}"
+		if [[ -n "$parent_dir" ]] && ! mkdir -p -- "$parent_dir"; then
+			printf 'Failed to create benign block ledger parent directory: %s\n' "$parent_dir" >&2
+		fi
 	fi
 	if ! : >"$ledger_file"; then
 		printf 'Failed to initialize benign block ledger file: %s\n' "$ledger_file" >&2

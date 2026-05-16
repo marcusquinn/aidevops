@@ -204,12 +204,15 @@ test_pr_cache_ttls_are_per_cycle() {
 	if ! grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_DIR=.*aidevops-pulse-pr-list-cache' "$WRAPPER_SCRIPT"; then
 		missing="${missing} list-cache-dir"
 	fi
+	if ! grep -q "trap '_run_cleanups' EXIT" "$WRAPPER_SCRIPT"; then
+		missing="${missing} exit-cleanup-trap"
+	fi
 
 	if [[ -z "$missing" ]]; then
-		print_result "pulse configures per-cycle PR list/view cache TTLs" 0
+		print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 0
 		return 0
 	fi
-	print_result "pulse configures per-cycle PR list/view cache TTLs" 1 \
+	print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 1 \
 		"Missing pulse cache wiring:${missing}"
 	return 0
 }

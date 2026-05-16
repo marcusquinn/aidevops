@@ -1592,8 +1592,8 @@ cmd_run() {
 
 	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"
 	local selected_model
+	local choose_exit
 	selected_model=$(choose_model "$role" "${model_override:-$initial_model}" "$tier_override") || {
-		local choose_exit
 		choose_exit=$?
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"

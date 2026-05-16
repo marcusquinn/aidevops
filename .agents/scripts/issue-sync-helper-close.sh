@@ -73,14 +73,12 @@ _task_line_from_block() {
 }
 
 _has_unresolved_blocker() {
-	local text="$1" task_id="${2:-}" task_line="${3:-}"
+	local text="$1"
+	local task_id="${2:-}"
+	local task_line="${3:-}"
 	local candidate
-	if [[ -n "$task_line" ]]; then
-		candidate="$task_line"
-	else
-		candidate=$(_task_line_from_block "$text" "$task_id")
-	fi
-	echo "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
+	candidate="${task_line:-$(_task_line_from_block "$text" "$task_id")}"
+	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
 	return 1
 }
 

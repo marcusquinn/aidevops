@@ -1206,6 +1206,7 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
+	local foss_slug foss_path disclosure labels_filter_json
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
@@ -1255,6 +1256,14 @@ dispatch_foss_workers() {
 		local foss_path_expanded
 		foss_path_expanded=$(_expand_foss_repo_path "$foss_path")
 
+		env \
+			HEADLESS=1 \
+			FULL_LOOP_HEADLESS=true \
+			AIDEVOPS_SESSION_ORIGIN=worker \
+			AIDEVOPS_HEADLESS=true \
+			WORKER_ISSUE_NUMBER="$foss_issue_num" \
+			WORKER_REPO_SLUG="$foss_slug" \
+			WORKER_WORKTREE_PATH="$foss_path_expanded" \
 		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
 			--session-key "$foss_session_key" \
@@ -1271,7 +1280,7 @@ dispatch_foss_workers() {
 		| [
 			.slug,
 			.path,
-			((.foss_config.disclosure // true) | tostring),
+			((.foss_config.disclosure != false) | tostring),
 			((.foss_config.labels_filter // ["help wanted","good first issue","bug"]) | @json)
 		]
 		| @tsv' \

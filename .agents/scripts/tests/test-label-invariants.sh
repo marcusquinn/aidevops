@@ -286,6 +286,7 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 #   #8: triage-missing-but-has-tier → not counted
 #   #9: triage-missing shape but routine-tracking non-task → not counted
 #   #10: triage-missing shape but supervisor non-task → not counted
+#   #11/#12: null/missing labels → no jq error and no edits
 OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
 	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -302,7 +303,9 @@ ISSUES_JSON=$(
 	{"number":7,"labels":[{"name":"origin:interactive"}],"createdAt":"${NEW_ISO}"},
 	{"number":8,"labels":[{"name":"origin:interactive"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":9,"labels":[{"name":"origin:interactive"},{"name":"routine-tracking"}],"createdAt":"${OLD_ISO}"},
-	{"number":10,"labels":[{"name":"origin:interactive"},{"name":"supervisor"}],"createdAt":"${OLD_ISO}"}
+	{"number":10,"labels":[{"name":"origin:interactive"},{"name":"supervisor"}],"createdAt":"${OLD_ISO}"},
+	{"number":11,"labels":null,"createdAt":"${OLD_ISO}"},
+	{"number":12,"createdAt":"${OLD_ISO}"}
 ]
 JSON
 )
@@ -415,6 +418,15 @@ if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 && "$n9" -eq 0 && "$n10" -eq 0 ]
 	print_result "reconciler does not auto-fix triage-missing issues" 0
 else
 	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8 #9=$n9 #10=$n10)"
+fi
+
+# Issues #11/#12: null/missing labels must not make jq abort the row stream.
+n11=$(count_edits_for 11)
+n12=$(count_edits_for 12)
+if [[ "$n11" -eq 0 && "$n12" -eq 0 ]]; then
+	print_result "reconciler tolerates null and missing labels" 0
+else
+	print_result "reconciler tolerates null and missing labels" 1 "(edits: #11=$n11 #12=$n12)"
 fi
 
 # Counter file must be written with exact numbers

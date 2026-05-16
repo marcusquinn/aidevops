@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-05-15T22:28:18Z",
-      "hash": "0513611e6c63f1ee7338e3dfe782badacaee9e4b",
-      "passes": 46,
+      "at": "2026-05-16T16:34:10Z",
+      "hash": "bfedb27a5a41a2acc83e7efe057bcbacbc6e4020",
+      "passes": 47,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -2394,9 +2394,9 @@
       "pr": 17590
     },
     ".agents/scripts/pulse-ancillary-dispatch.sh": {
-      "at": "2026-05-15T22:28:26Z",
-      "hash": "c978be2c0e863211ddeb695522c08fa99ad59419",
-      "passes": 13,
+      "at": "2026-05-16T16:34:17Z",
+      "hash": "c2373768cd68927c1e8425e89d7a2167dc1c183c",
+      "passes": 14,
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
@@ -2478,9 +2478,9 @@
       "pr": 18655
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "at": "2026-05-15T22:28:37Z",
-      "hash": "d6515eaa566d8a7b24f163d8777a209f324d4769",
-      "passes": 44,
+      "at": "2026-05-16T16:34:34Z",
+      "hash": "4e3c5a1498f1848599d3ec7d3f5e0d3d14fb5e1d",
+      "passes": 45,
       "pr": 18689
     },
     ".agents/scripts/quality-feedback-findings-lib.sh": {

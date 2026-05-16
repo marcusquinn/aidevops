@@ -140,11 +140,40 @@ test_non_self_ioc_scan_fails() {
 	return 0
 }
 
+test_similar_agents_suffix_ioc_scan_fails() {
+	local tmpdir
+	tmpdir=$(make_tmpdir) || {
+		print_result "similarly named agents directory still fails" 1 "mktemp failed"
+		return 0
+	}
+
+	if ! mkdir -p "${tmpdir}/not.agents/reference"; then
+		print_result "similarly named agents directory still fails" 1 "mkdir failed"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"
+
+	local output
+	local status=0
+	output=$(HOME="$tmpdir" bash "$HELPER_SCRIPT" scan "$tmpdir" 2>&1) || status=$?
+	if [[ "$status" -eq 1 ]] \
+		&& [[ "$output" == *"not.agents/reference/npm-supply-chain-response.md"* ]] \
+		&& [[ "$output" == *"Potential supply-chain compromise indicators found"* ]]; then
+		print_result "similarly named agents directory still fails" 0
+	else
+		print_result "similarly named agents directory still fails" 1 "status=${status} output=${output}"
+	fi
+	rm -rf "$tmpdir"
+	return 0
+}
+
 main() {
 	test_self_reference_only_scan_succeeds
 	test_relative_self_reference_only_scan_succeeds
 	test_single_file_self_reference_only_scan_succeeds
 	test_non_self_ioc_scan_fails
+	test_similar_agents_suffix_ioc_scan_fails
 
 	printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
