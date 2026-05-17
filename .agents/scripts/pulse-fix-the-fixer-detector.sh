@@ -80,17 +80,17 @@ _log() {
 	local level="$1"
 	shift
 	printf '[fix-the-fixer-detector] %s: %s\n' "$level" "$*" >&2
-	return 0
+	return $?
 }
 
 _log_info() {
 	_log "$_LL_INFO" "$@"
-	return 0
+	return $?
 }
 
 _log_warn() {
 	_log "$_LL_WARN" "$@"
-	return 0
+	return $?
 }
 
 _auth_item_logs_suppressed() {
