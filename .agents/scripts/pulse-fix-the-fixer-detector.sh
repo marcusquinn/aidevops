@@ -93,6 +93,20 @@ _log_warn() {
 	return 0
 }
 
+_auth_item_logs_suppressed() {
+	[[ "${AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS:-0}" == "1" ]] || return 1
+	return 0
+}
+
+_log_auth_skip() {
+	local message="$1"
+	if _auth_item_logs_suppressed; then
+		return 0
+	fi
+	_log_warn "$message"
+	return 0
+}
+
 _auth_cooldown_seconds() {
 	local configured="${AIDEVOPS_FIX_THE_FIXER_DETECTOR_AUTH_COOLDOWN_SECONDS:-$AUTH_COOLDOWN_SECONDS_DEFAULT}"
 	[[ "$configured" =~ ^[0-9]+$ && "$configured" -gt 0 ]] || configured="$AUTH_COOLDOWN_SECONDS_DEFAULT"
@@ -259,7 +273,7 @@ _classify_via_llm() {
 
 	if _auth_cooldown_active; then
 		RATIONALE="auth_error: ${AUTH_ERROR_REASON}; cooldown active"
-		_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+		_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
 		printf 'SKIP_AUTH\n'
 		return 0
 	fi
@@ -299,7 +313,7 @@ _classify_via_llm() {
 				fi
 				_record_auth_cooldown "$cooldown_reason"
 				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-				_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+				_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
 				printf 'SKIP_AUTH\n'
 				return 0
 			fi
@@ -480,7 +494,7 @@ cmd_check() {
 	verdict=$(_classify_via_llm "$title" "$body")
 	if [[ "$verdict" == "SKIP_AUTH" ]]; then
 		[[ -n "$RATIONALE" ]] || RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-		_log_warn "${slug}#${issue_num} classification skipped — ${RATIONALE}"
+		_log_auth_skip "${slug}#${issue_num} classification skipped — ${RATIONALE}"
 		return 3
 	fi
 	if [[ "$verdict" == "SKIP" ]]; then
@@ -551,6 +565,7 @@ cmd_run() {
 	local classified=0
 	local skipped_llm=0
 	local skipped_auth=0
+	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS=1
 	local slug
 	for slug in "${target_repos[@]}"; do
 		[[ "$processed" -ge "$limit" ]] && break
