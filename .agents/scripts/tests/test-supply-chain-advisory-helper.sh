@@ -167,7 +167,11 @@ test_similar_agents_suffix_ioc_scan_fails() {
 		"${tmpdir}/not.agents/reference"; then
 		return 0
 	fi
-	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"
+	if ! printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"; then
+		print_result "similarly named agents directory still fails" 1 "fixture write failed"
+		rm -rf "$tmpdir"
+		return 0
+	fi
 
 	local output
 	local status=0
