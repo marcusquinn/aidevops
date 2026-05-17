@@ -157,8 +157,8 @@ _pulse_emit_pid() {
 
 _pulse_restore_pipe_trap() {
 	local _pipe_trap="$1"
-	if [[ -n "$_pipe_trap" ]]; then
-		eval "$_pipe_trap"
+	if [[ "$_pipe_trap" == *"trap -- '' SIGPIPE"* || "$_pipe_trap" == *"trap -- '' PIPE"* ]]; then
+		trap '' PIPE
 	else
 		trap - PIPE
 	fi
@@ -192,7 +192,6 @@ _pulse_restore_pipe_trap() {
 # all pulse processes including subshells AND sidecars on `stop`.
 _pulse_pids() {
 	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
-	local _consumer_closed=0
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
 	_pipe_trap=$(trap -p PIPE || true)
@@ -207,7 +206,7 @@ _pulse_pids() {
 			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
 			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-			_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
+			_pulse_emit_pid "$_pid" || break
 			continue
 		fi
 		# Layer 2 (fallback for manually-started instances): skip PIDs whose
@@ -218,10 +217,9 @@ _pulse_pids() {
 		# (manual --merge-only invocations during testing or debugging).
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-		_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
+		_pulse_emit_pid "$_pid" || break
 	done <<< "$_pids"
 	_pulse_restore_pipe_trap "$_pipe_trap"
-	[[ "$_consumer_closed" -eq 0 ]] || return 0
 	return 0
 }
 
@@ -233,7 +231,6 @@ _pulse_pids() {
 # launchd-spawned processes (PPID=1), never as subshells of a main pulse.
 _pulse_pids_sidecar() {
 	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
-	local _consumer_closed=0
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
 	_pipe_trap=$(trap -p PIPE || true)
@@ -247,11 +244,10 @@ _pulse_pids_sidecar() {
 		fi
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
-			_pulse_emit_pid "$_pid" || { _consumer_closed=1; break; }
+			_pulse_emit_pid "$_pid" || break
 		fi
 	done <<< "$_pids"
 	_pulse_restore_pipe_trap "$_pipe_trap"
-	[[ "$_consumer_closed" -eq 0 ]] || return 0
 	return 0
 }
 
