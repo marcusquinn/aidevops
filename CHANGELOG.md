@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.58] - 2026-05-17
+
+### Changed
+
+- fix: suppress pulse PID broken pipe noise (#23719)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- reuse resolved claim runner in repo state guard (#23735)
+- harden pulse PR cache cleanup (#23733)
+- document FOSS label parsing behavior (#23731)
+
 ## [3.15.57] - 2026-05-17
 
 ### Fixed
