@@ -99,12 +99,11 @@ _auth_item_logs_suppressed() {
 }
 
 _log_auth_skip() {
-	local message="$1"
 	if _auth_item_logs_suppressed; then
 		return 0
 	fi
-	_log_warn "$message"
-	return 0
+	_log_warn "$@"
+	return $?
 }
 
 _auth_cooldown_seconds() {
