@@ -246,10 +246,11 @@ _model_usage_undercuts_reference() {
 		def rows($a): if ($a | type) == "array" then $a else [] end;
 		(rows($candidate) | INDEX(.model)) as $candidate_by_model
 		| any(rows($reference)[];
-			(($candidate_by_model[.model].requests // 0) < (.requests // 0))
-			or (($candidate_by_model[.model].input_tokens // 0) < (.input_tokens // 0))
-			or (($candidate_by_model[.model].output_tokens // 0) < (.output_tokens // 0))
-			or (($candidate_by_model[.model].cache_read_tokens // 0) < (.cache_read_tokens // 0))
+			.model as $model | ($candidate_by_model[$model] // {}) as $candidate_row
+			| (($candidate_row.requests // 0) < (.requests // 0))
+			or (($candidate_row.input_tokens // 0) < (.input_tokens // 0))
+			or (($candidate_row.output_tokens // 0) < (.output_tokens // 0))
+			or (($candidate_row.cache_read_tokens // 0) < (.cache_read_tokens // 0))
 		)
 	' >/dev/null 2>&1
 	return $?
@@ -660,31 +661,26 @@ _get_token_totals() {
 	# the largest token population. This keeps the footer consistent with the
 	# model table when one local source is stale or was introduced later.
 	if [[ "$period" == "all" ]]; then
-		local best_totals="" best_total=0 candidate_totals candidate_total
-		if raw_totals=$(_token_totals_from_obs_db "$period"); then
+		local best_totals="" best_total=0 candidate_totals candidate_total source
+		for source in obs-db opencode-db jsonl; do
+			case "$source" in
+				obs-db)
+					raw_totals=$(_token_totals_from_obs_db "$period") || continue
+					;;
+				opencode-db)
+					raw_totals=$(_token_totals_from_opencode_db) || continue
+					;;
+				jsonl)
+					raw_totals=$(_token_totals_from_jsonl "$period") || continue
+					;;
+			esac
 			candidate_totals=$(_token_totals_enrich "$raw_totals")
 			candidate_total=$(_token_totals_total_all "$candidate_totals")
 			if [[ "$candidate_total" -gt "$best_total" ]]; then
 				best_totals="$candidate_totals"
 				best_total="$candidate_total"
 			fi
-		fi
-		if raw_totals=$(_token_totals_from_opencode_db); then
-			candidate_totals=$(_token_totals_enrich "$raw_totals")
-			candidate_total=$(_token_totals_total_all "$candidate_totals")
-			if [[ "$candidate_total" -gt "$best_total" ]]; then
-				best_totals="$candidate_totals"
-				best_total="$candidate_total"
-			fi
-		fi
-		if raw_totals=$(_token_totals_from_jsonl "$period"); then
-			candidate_totals=$(_token_totals_enrich "$raw_totals")
-			candidate_total=$(_token_totals_total_all "$candidate_totals")
-			if [[ "$candidate_total" -gt "$best_total" ]]; then
-				best_totals="$candidate_totals"
-				best_total="$candidate_total"
-			fi
-		fi
+		done
 		if [[ -n "$best_totals" ]]; then
 			echo "$best_totals"
 			return 0
