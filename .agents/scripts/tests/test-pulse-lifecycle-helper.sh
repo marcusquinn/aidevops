@@ -528,6 +528,40 @@ test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 	return 0
 }
 
+test_pipe_trap_restore_avoids_eval() {
+	local out=""
+	out=$(
+		(
+			# shellcheck source=../pulse-lifecycle-helper.sh
+			source "$HELPER"
+			_trap_eval_marker=0
+			_pulse_restore_pipe_trap '_trap_eval_marker=1'
+			printf '%s\n' "$_trap_eval_marker"
+		)
+	)
+	_assert_eq "_pulse_restore_pipe_trap does not eval trap text" "0" "$out"
+	return 0
+}
+
+test_pipe_trap_restore_ignored_sigpipe() {
+	local out=""
+	out=$(
+		(
+			# shellcheck source=../pulse-lifecycle-helper.sh
+			source "$HELPER"
+			trap - PIPE
+			_pulse_restore_pipe_trap "trap -- '' SIGPIPE"
+			trap -p PIPE
+		)
+	)
+	if [[ "$out" == *"''"* ]]; then
+		_print_result "_pulse_restore_pipe_trap restores ignored SIGPIPE" 1
+	else
+		_print_result "_pulse_restore_pipe_trap failed to restore ignored SIGPIPE (out=$out)" 0
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # GH#21903: threshold-based PILE-UP detection
 # -----------------------------------------------------------------------------
@@ -868,6 +902,8 @@ main() {
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
 	test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early
+	test_pipe_trap_restore_avoids_eval
+	test_pipe_trap_restore_ignored_sigpipe
 
 	# GH#21903 threshold-based PILE-UP detection
 	test_status_two_instances_no_warning_default_threshold
