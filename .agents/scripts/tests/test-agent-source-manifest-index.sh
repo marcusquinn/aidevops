@@ -147,10 +147,10 @@ test_check_validates_capability_cardinality() {
 test_sync_without_node_fails_open() {
 	local path_without_node="$TEST_HOME/no-node-bin"
 	mkdir -p "$path_without_node"
-	ln -s /usr/bin/bash "$path_without_node/bash"
-	ln -s /usr/bin/cat "$path_without_node/cat"
-	ln -s /usr/bin/dirname "$path_without_node/dirname"
-	ln -s /usr/bin/mkdir "$path_without_node/mkdir"
+	ln -s "$(command -v bash)" "$path_without_node/bash"
+	ln -s "$(command -v cat)" "$path_without_node/cat"
+	ln -s "$(command -v dirname)" "$path_without_node/dirname"
+	ln -s "$(command -v mkdir)" "$path_without_node/mkdir"
 
 	local output=""
 	local status=0

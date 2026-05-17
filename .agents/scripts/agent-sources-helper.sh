@@ -22,7 +22,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-AGENTS_DIR="${HOME}/.aidevops/agents"
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 CUSTOM_DIR="${AGENTS_DIR}/custom"
 CONFIG_FILE="${AGENTS_DIR}/configs/agent-sources.json"
 CAPABILITY_INDEX_FILE="${AGENTS_DIR}/agent-source-capabilities.toon"
