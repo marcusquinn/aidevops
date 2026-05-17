@@ -187,6 +187,27 @@ test_canary_short_circuit_after_lock() {
 	return 0
 }
 
+cleanup_registration_precedes_exit_trap() {
+	awk '
+		/_save_cleanup_scope/ {
+			seen_scope = 1
+			next
+		}
+		seen_scope && /push_cleanup '\''release_instance_lock'\''/ {
+			seen_cleanup = 1
+			next
+		}
+		seen_scope && seen_cleanup && /trap '\''_run_cleanups'\'' EXIT/ {
+			found = 1
+			exit
+		}
+		END {
+			exit found ? 0 : 1
+		}
+	' "$WRAPPER_SCRIPT"
+	return $?
+}
+
 # Test 5: Static check — pulse enables per-cycle PR list and view cache TTLs.
 #
 # GH#23604: default 15-second wrapper cache windows were too short for a full
@@ -207,7 +228,7 @@ test_pr_cache_ttls_are_per_cycle() {
 	if ! grep -q "trap '_run_cleanups' EXIT" "$WRAPPER_SCRIPT"; then
 		missing="${missing} exit-cleanup-trap"
 	fi
-	if ! grep -A5 '_save_cleanup_scope' "$WRAPPER_SCRIPT" | grep -B4 "trap '_run_cleanups' EXIT" | grep -q "push_cleanup 'release_instance_lock'"; then
+	if ! cleanup_registration_precedes_exit_trap; then
 		missing="${missing} lock-cleanup-before-exit-trap"
 	fi
 
