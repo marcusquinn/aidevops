@@ -200,6 +200,14 @@ update_last_synced() {
 generate_capability_registry() {
 	ensure_config
 	mkdir -p "$(dirname "${CAPABILITY_INDEX_FILE}")"
+	if ! command -v node >/dev/null 2>&1; then
+		warn "Node not found; skipping agent source capability registry generation."
+		cat >"${CAPABILITY_INDEX_FILE}" <<'EOF_CAPABILITIES'
+<!--TOON:agent_source_capabilities[0]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:
+-->
+EOF_CAPABILITIES
+		return 0
+	fi
 	CONFIG_PATH="${CONFIG_FILE}" INDEX_PATH="${CAPABILITY_INDEX_FILE}" node <<'NODE'
 const fs = require('fs');
 const path = require('path');
