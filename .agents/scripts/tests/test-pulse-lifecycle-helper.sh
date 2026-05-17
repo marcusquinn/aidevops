@@ -498,21 +498,17 @@ test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 
 			ps() {
 				local _arg1="${1:-}" _arg2="${2:-}" _arg3="${3:-}" _arg4="${4:-}" _fallback_rc=0
-				case "$_arg1 $_arg3 $_arg4" in
-				"-p -o ppid=")
+				if [[ "$_arg1" == "-p" && "$_arg3" == "-o" && "$_arg4" == "ppid=" ]]; then
 					printf '1\n'
 					return 0
-					;;
-				"-p -o command=")
+				fi
+				if [[ "$_arg1" == "-p" && "$_arg3" == "-o" && "$_arg4" == "command=" ]]; then
 					printf 'bash %s/scripts/pulse-wrapper.sh pid=%s\n' "${TEST_ROOT:-/tmp}" "$_arg2"
 					return 0
-					;;
-				*)
-					command ps "$@"
-					_fallback_rc=$?
-					return "$_fallback_rc"
-					;;
-				esac
+				fi
+				command ps "$@"
+				_fallback_rc=$?
+				return "$_fallback_rc"
 			}
 
 			_pulse_pids | {
