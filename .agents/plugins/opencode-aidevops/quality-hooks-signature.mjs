@@ -198,9 +198,9 @@ export function hasTrustedSignatureSignal(cmd) {
  * @returns {boolean}
  */
 function _hasUnparseableBody(cmd) {
-  // If the command already invokes the helper or includes the marker,
-  // it's safe to pass through (signature is being handled).
-  if (cmd.includes("gh-signature-helper") || cmd.includes(SIG_MARKER)) {
+  // If the command already carries a trusted signature signal, it's safe
+  // to pass through (signature is being handled by the caller/shim).
+  if (hasTrustedSignatureSignal(cmd)) {
     return false;
   }
 

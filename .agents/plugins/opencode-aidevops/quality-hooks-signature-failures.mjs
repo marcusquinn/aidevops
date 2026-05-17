@@ -37,15 +37,15 @@ const SAME_BASH_CALL_HINT =
   "also runs at exec-time as a backstop.";
 
 const STANDARD_FIXES =
-	`Standard fixes:\n` +
-	`  1. Append to --body directly:\n` +
-	`       gh issue comment N --body "...$(gh-signature-helper.sh footer)"\n` +
-	`  2. Append to --body-file before posting:\n` +
-	`       gh-signature-helper.sh footer >> "$BODY_FILE"\n` +
-	`       gh issue comment N --body-file "$BODY_FILE"\n` +
-	`  3. Source shared-gh-wrappers.sh and call by name:\n` +
-	`       source ~/.aidevops/agents/scripts/shared-gh-wrappers.sh\n` +
-	`       gh_issue_comment N --body-file "$BODY_FILE"`;
+  `Standard fixes:\n` +
+  `  1. Append to --body directly:\n` +
+  `       gh issue comment N --body "...$(gh-signature-helper.sh footer)"\n` +
+  `  2. Append to --body-file before posting:\n` +
+  `       gh-signature-helper.sh footer >> "$BODY_FILE"\n` +
+  `       gh issue comment N --body-file "$BODY_FILE"\n` +
+  `  3. Source shared-gh-wrappers.sh and call by name:\n` +
+  `       source ~/.aidevops/agents/scripts/shared-gh-wrappers.sh\n` +
+  `       gh_issue_comment N --body-file "$BODY_FILE"`;
 
 /**
  * Build the throw error message for a structured repair failure (t2893).
