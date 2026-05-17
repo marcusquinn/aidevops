@@ -377,7 +377,7 @@ if grep -qx '<--draft>' "$GH_ARGV_RECORD_FILE"; then
 else
 	print_result "B8: AIDEVOPS_PR_CREATE_READY leaves interactive PR non-draft" 0
 fi
-unset GH_ARGV_RECORD_FILE
+unset AIDEVOPS_PR_CREATE_READY GH_ARGV_RECORD_FILE
 
 # ---------------------------------------------------------------------------
 # Layer B': gh_create_issue defence-in-depth (mirrors PR tests)
