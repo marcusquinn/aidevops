@@ -497,7 +497,7 @@ test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 			}
 
 			ps() {
-				local _arg1="${1:-}" _arg2="${2:-}" _arg3="${3:-}" _arg4="${4:-}"
+				local _arg1="${1:-}" _arg2="${2:-}" _arg3="${3:-}" _arg4="${4:-}" _fallback_rc=0
 				case "$_arg1 $_arg3 $_arg4" in
 				"-p -o ppid=")
 					printf '1\n'
@@ -508,7 +508,6 @@ test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
 					return 0
 					;;
 				*)
-					local _fallback_rc=0
 					command ps "$@"
 					_fallback_rc=$?
 					return "$_fallback_rc"
