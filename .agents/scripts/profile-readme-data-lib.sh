@@ -231,6 +231,30 @@ _compute_costs_from_tokens() {
 	return 0
 }
 
+# --- Count model-usage requests in a JSON array ---
+_model_usage_request_count() {
+	local model_json="$1"
+	echo "$model_json" | jq -r 'if type == "array" then ([.[].requests // 0] | add // 0) else 0 end' 2>/dev/null || printf '0\n'
+	return 0
+}
+
+# --- Detect whether a candidate all-time model set is lower than a reference ---
+_model_usage_undercuts_reference() {
+	local candidate_json="$1"
+	local reference_json="$2"
+	jq -e -n --argjson candidate "${candidate_json:-[]}" --argjson reference "${reference_json:-[]}" '
+		def rows($a): if ($a | type) == "array" then $a else [] end;
+		(rows($candidate) | INDEX(.model)) as $candidate_by_model
+		| any(rows($reference)[];
+			(($candidate_by_model[.model].requests // 0) < (.requests // 0))
+			or (($candidate_by_model[.model].input_tokens // 0) < (.input_tokens // 0))
+			or (($candidate_by_model[.model].output_tokens // 0) < (.output_tokens // 0))
+			or (($candidate_by_model[.model].cache_read_tokens // 0) < (.cache_read_tokens // 0))
+		)
+	' >/dev/null 2>&1
+	return $?
+}
+
 # --- Gather model usage from OpenCode session DB (full history) ---
 # Returns JSON array with cost_total computed, or empty string if unavailable.
 _get_model_usage_from_opencode() {
@@ -380,12 +404,29 @@ _get_model_usage_from_obs_db() {
 _get_model_usage() {
 	local period="${1:-30d}"
 
-	# For "all" period, use OpenCode session DB (has full history back to first use).
-	# The observability DB (llm-requests.db) only has data from when it was created.
+	# For "all" period, compare complete local sources and use the one with the
+	# larger request population. This avoids stale OpenCode message JSON causing
+	# "all time" to be lower than the last-30-days observability totals after
+	# runtime schema changes, while preserving OpenCode as fallback for installs
+	# where observability started later.
 	if [[ "$period" == "all" ]]; then
-		local oc_result
+		local obs_all_result obs_recent_result oc_result obs_requests oc_requests
+		local recent_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+		obs_all_result=$(_get_model_usage_from_obs_db "")
+		obs_recent_result=$(_get_model_usage_from_obs_db "$recent_filter")
 		oc_result=$(_get_model_usage_from_opencode)
-		if [[ -n "$oc_result" ]]; then
+		obs_requests=$(_model_usage_request_count "$obs_all_result")
+		oc_requests=$(_model_usage_request_count "$oc_result")
+
+		if [[ "$obs_requests" -gt 0 ]] && _model_usage_undercuts_reference "$oc_result" "$obs_recent_result"; then
+			echo "$obs_all_result"
+			return 0
+		fi
+		if [[ "$obs_requests" -gt 0 && "$obs_requests" -ge "$oc_requests" ]]; then
+			echo "$obs_all_result"
+			return 0
+		fi
+		if [[ "$oc_requests" -gt 0 ]]; then
 			echo "$oc_result"
 			return 0
 		fi
@@ -470,6 +511,13 @@ _token_totals_enrich() {
 	else
 		echo '{"total_all":0,"cache_hit_pct":0}'
 	fi
+	return 0
+}
+
+# --- Token totals: extract enriched total_all for source comparison ---
+_token_totals_total_all() {
+	local totals_json="$1"
+	echo "$totals_json" | jq -r '.total_all // 0' 2>/dev/null || printf '0\n'
 	return 0
 }
 
@@ -608,21 +656,48 @@ _get_token_totals() {
 	local period="${1:-30d}"
 	local raw_totals=""
 
-	# Source 1: OpenCode session DB (all-time only)
+	# For all-time totals, compare all available complete-history sources and use
+	# the largest token population. This keeps the footer consistent with the
+	# model table when one local source is stale or was introduced later.
 	if [[ "$period" == "all" ]]; then
-		raw_totals=$(_token_totals_from_opencode_db) && {
-			_token_totals_enrich "$raw_totals"
+		local best_totals="" best_total=0 candidate_totals candidate_total
+		if raw_totals=$(_token_totals_from_obs_db "$period"); then
+			candidate_totals=$(_token_totals_enrich "$raw_totals")
+			candidate_total=$(_token_totals_total_all "$candidate_totals")
+			if [[ "$candidate_total" -gt "$best_total" ]]; then
+				best_totals="$candidate_totals"
+				best_total="$candidate_total"
+			fi
+		fi
+		if raw_totals=$(_token_totals_from_opencode_db); then
+			candidate_totals=$(_token_totals_enrich "$raw_totals")
+			candidate_total=$(_token_totals_total_all "$candidate_totals")
+			if [[ "$candidate_total" -gt "$best_total" ]]; then
+				best_totals="$candidate_totals"
+				best_total="$candidate_total"
+			fi
+		fi
+		if raw_totals=$(_token_totals_from_jsonl "$period"); then
+			candidate_totals=$(_token_totals_enrich "$raw_totals")
+			candidate_total=$(_token_totals_total_all "$candidate_totals")
+			if [[ "$candidate_total" -gt "$best_total" ]]; then
+				best_totals="$candidate_totals"
+				best_total="$candidate_total"
+			fi
+		fi
+		if [[ -n "$best_totals" ]]; then
+			echo "$best_totals"
 			return 0
-		}
+		fi
 	fi
 
-	# Source 2: Observability DB
+	# Source 1: Observability DB
 	raw_totals=$(_token_totals_from_obs_db "$period") && {
 		_token_totals_enrich "$raw_totals"
 		return 0
 	}
 
-	# Source 3: Legacy JSONL metrics
+	# Source 2: Legacy JSONL metrics
 	raw_totals=$(_token_totals_from_jsonl "$period") && {
 		_token_totals_enrich "$raw_totals"
 		return 0

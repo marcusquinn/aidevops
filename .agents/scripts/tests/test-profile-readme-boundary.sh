@@ -675,6 +675,75 @@ test_work_with_ai_worker_counts_above_thousand() {
 	return 0
 }
 
+test_all_time_model_usage_prefers_larger_complete_source() {
+	local test_name="all-time model usage prefers larger complete source"
+
+	# Simulate the OpenCode-schema drift case where message JSON all-time data is
+	# stale for one current model even though its older aggregate request count is
+	# larger than observability's complete current population.
+	_get_model_usage_from_obs_db() {
+		local date_filter="${1:-}"
+		if [[ -n "${date_filter}" ]]; then
+			printf '%s\n' '[{"model":"obs-model","requests":20,"input_tokens":200,"output_tokens":20,"cache_read_tokens":2000,"cache_write_tokens":0,"cost_total":2}]'
+			return 0
+		fi
+		printf '%s\n' '[{"model":"obs-model","requests":30,"input_tokens":300,"output_tokens":30,"cache_read_tokens":3000,"cache_write_tokens":0,"cost_total":3}]'
+		return 0
+	}
+
+	_get_model_usage_from_opencode() {
+		printf '%s\n' '[{"model":"obs-model","requests":10,"input_tokens":100,"output_tokens":10,"cache_read_tokens":1000,"cache_write_tokens":0,"cost_total":1},{"model":"old-model","requests":100,"input_tokens":1000,"output_tokens":100,"cache_read_tokens":10000,"cache_write_tokens":0,"cost_total":10}]'
+		return 0
+	}
+
+	local result model
+	result=$(_get_model_usage all)
+	model=$(printf '%s' "${result}" | jq -r '.[0].model')
+
+	if [[ "${model}" != "obs-model" ]]; then
+		print_result "${test_name}" 1 "expected obs-model, got ${model}"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
+test_all_time_token_totals_prefers_largest_population() {
+	local test_name="all-time token totals prefer largest population"
+
+	_token_totals_from_obs_db() {
+		local period="${1:-30d}"
+		[[ "${period}" == "all" ]] || return 1
+		printf '%s\n' '{"total_input":20,"total_output":20,"total_cache_read":20,"total_cache_write":0}'
+		return 0
+	}
+
+	_token_totals_from_opencode_db() {
+		printf '%s\n' '{"total_input":10,"total_output":10,"total_cache_read":10,"total_cache_write":0}'
+		return 0
+	}
+
+	_token_totals_from_jsonl() {
+		local period="${1:-30d}"
+		[[ "${period}" == "all" ]] || return 1
+		printf '%s\n' '{"total_input":5,"total_output":5,"total_cache_read":5,"total_cache_write":0}'
+		return 0
+	}
+
+	local result total_all
+	result=$(_get_token_totals all)
+	total_all=$(printf '%s' "${result}" | jq -r '.total_all')
+
+	if [[ "${total_all}" != "60" ]]; then
+		print_result "${test_name}" 1 "expected total_all=60, got ${total_all}"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 main() {
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
@@ -694,6 +763,10 @@ main() {
 	test_session_time_vars_default_missing_null_values
 	teardown
 	test_work_with_ai_worker_counts_above_thousand
+	teardown
+	test_all_time_model_usage_prefers_larger_complete_source
+	teardown
+	test_all_time_token_totals_prefers_largest_population
 	teardown
 
 	echo ""
