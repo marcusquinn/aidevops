@@ -709,6 +709,25 @@ test_all_time_model_usage_prefers_larger_complete_source() {
 	return 0
 }
 
+test_model_usage_undercut_handles_missing_candidate_model() {
+	local test_name="model usage undercut handles missing candidate model"
+	local candidate_json reference_json
+
+	# shellcheck source=../profile-readme-data-lib.sh
+	source "${SOURCE_DATA_LIB}"
+
+	candidate_json='[{"model":"other-model","requests":5,"input_tokens":50,"output_tokens":5,"cache_read_tokens":500}]'
+	reference_json='[{"model":"missing-model","requests":1,"input_tokens":10,"output_tokens":1,"cache_read_tokens":100}]'
+
+	if ! _model_usage_undercuts_reference "${candidate_json}" "${reference_json}"; then
+		print_result "${test_name}" 1 "missing candidate model did not undercut reference"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 test_all_time_token_totals_prefers_largest_population() {
 	local test_name="all-time token totals prefer largest population"
 
@@ -765,6 +784,8 @@ main() {
 	test_work_with_ai_worker_counts_above_thousand
 	teardown
 	test_all_time_model_usage_prefers_larger_complete_source
+	teardown
+	test_model_usage_undercut_handles_missing_candidate_model
 	teardown
 	test_all_time_token_totals_prefers_largest_population
 	teardown
