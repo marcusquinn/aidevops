@@ -303,9 +303,8 @@ test_exit_monitor_writes_marker_behavioural() {
 
 test_fd_closure_setsid_path() {
 	# Both the setsid path and the fallback nohup path must close FDs 3-9.
-	# Match the redirection sequence — the exact line is:
-	# `setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &`
-	if grep -E 'setsid nohup "\$@".*3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-' "$WORKER_LAUNCH" >/dev/null; then
+	# Match the redirection sequence on the setsid launch command.
+	if grep -E 'setsid nohup "\$\{worker_command\[@\]\}".*3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-' "$WORKER_LAUNCH" >/dev/null; then
 		print_result "fix #3: setsid path closes FDs 3-9" 0
 	else
 		print_result "fix #3: setsid path closes FDs 3-9" 1 \
@@ -316,13 +315,25 @@ test_fd_closure_setsid_path() {
 
 test_fd_closure_fallback_path() {
 	# Fallback (no setsid) must also close FDs.
-	# Look for a `nohup "$@"` line (NOT preceded by setsid) with the closure.
-	if grep -E '^[[:space:]]*nohup "\$@".*3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-' "$WORKER_LAUNCH" >/dev/null; then
+	# Look for a fallback `nohup` line (NOT preceded by setsid) with the closure.
+	if grep -E '^[[:space:]]*nohup "\$\{worker_command\[@\]\}".*3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&-' "$WORKER_LAUNCH" >/dev/null; then
 		print_result "fix #3: fallback nohup path closes FDs 3-9" 0
 	else
 		print_result "fix #3: fallback nohup path closes FDs 3-9" 1 \
 			"Expected fallback nohup line with FD closures in $WORKER_LAUNCH"
 	fi
+	return 0
+}
+
+test_worker_launch_disables_pulse_pr_caches() {
+	if grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1' "$WORKER_LAUNCH" \
+		&& grep -q 'AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1' "$WORKER_LAUNCH" \
+		&& grep -q 'PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1' "$WORKER_LAUNCH"; then
+		print_result "fix #3: worker launch disables pulse-scoped PR caches" 0
+		return 0
+	fi
+	print_result "fix #3: worker launch disables pulse-scoped PR caches" 1 \
+		"Expected worker launch to disable inherited pulse PR caches in $WORKER_LAUNCH"
 	return 0
 }
 
@@ -675,6 +686,7 @@ main_test() {
 	# Fix 3
 	test_fd_closure_setsid_path
 	test_fd_closure_fallback_path
+	test_worker_launch_disables_pulse_pr_caches
 	test_fd_closure_behavioural
 
 	# Fix 4

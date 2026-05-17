@@ -272,6 +272,10 @@ source "${SCRIPT_DIR}/pulse-meta-parse.sh"
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-routines.sh"
+# GH#23604: semantics-preserving exact-output PR-list provider cache used by
+# pulse hot paths that need GraphQL-only fields such as reviewDecision.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-pr-list-cache.sh"
 # Phase 2 (t1967, GH#18367): 4 leaves-with-fan-in extracted from this file.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-queue-governor.sh"
@@ -1803,11 +1807,15 @@ main() {
 	# caches are opt-in so standalone tests/debugging keep exact read semantics,
 	# but pulse can avoid re-fetching the same PR list/view data across gates.
 	local _pulse_pr_cache_cleanup_scope=0
+	local _pulse_rm_rf="rm -rf"
 	unset AIDEVOPS_GH_PR_VIEW_CACHE
 	unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 	unset AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 	unset AIDEVOPS_GH_PR_LIST_CACHE_DIR
 	unset AIDEVOPS_GH_PR_LIST_CACHE_TTL
+	unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
+	unset PULSE_PR_LIST_PROVIDER_CACHE_DIR
+	unset PULSE_PR_LIST_PROVIDER_CACHE_TTL
 	if [[ "${AIDEVOPS_PULSE_PR_VIEW_CACHE:-1}" == "1" ]]; then
 		export AIDEVOPS_GH_PR_VIEW_CACHE=1
 		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-view-cache-${$}"
@@ -1816,7 +1824,7 @@ main() {
 		trap '_run_cleanups' EXIT
 		push_cleanup 'release_instance_lock'
 		_pulse_pr_cache_cleanup_scope=1
-		push_cleanup "rm -rf \"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}\""
+		push_cleanup "${_pulse_rm_rf} \"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}\""
 		if ! rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to reset REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
 		fi
@@ -1829,20 +1837,31 @@ main() {
 	if [[ "${AIDEVOPS_PULSE_PR_LIST_CACHE:-1}" == "1" ]]; then
 		export AIDEVOPS_GH_PR_LIST_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-list-cache-${$}"
 		export AIDEVOPS_GH_PR_LIST_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
+		export PULSE_PR_LIST_PROVIDER_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-list-provider-cache-${$}"
+		export PULSE_PR_LIST_PROVIDER_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
 		if [[ "$_pulse_pr_cache_cleanup_scope" -eq 0 ]]; then
 			_save_cleanup_scope
 			trap '_run_cleanups' EXIT
 			push_cleanup 'release_instance_lock'
 			_pulse_pr_cache_cleanup_scope=1
 		fi
-		push_cleanup "rm -rf \"${AIDEVOPS_GH_PR_LIST_CACHE_DIR}\""
+		push_cleanup "${_pulse_rm_rf} \"${AIDEVOPS_GH_PR_LIST_CACHE_DIR}\""
+		push_cleanup "${_pulse_rm_rf} \"${PULSE_PR_LIST_PROVIDER_CACHE_DIR}\""
 		if ! rm -rf "$AIDEVOPS_GH_PR_LIST_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to reset PR list cache directory: %s\n' "$AIDEVOPS_GH_PR_LIST_CACHE_DIR" >&2
 		fi
 		if ! mkdir -p "$AIDEVOPS_GH_PR_LIST_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to create PR list cache directory: %s\n' "$AIDEVOPS_GH_PR_LIST_CACHE_DIR" >&2
 		fi
-		echo "[pulse-wrapper] Per-cycle PR list cache enabled for duplicate repo open-PR reads ttl=${AIDEVOPS_GH_PR_LIST_CACHE_TTL}s (GH#23604)" >>"$LOGFILE"
+		if ! rm -rf "$PULSE_PR_LIST_PROVIDER_CACHE_DIR"; then
+			printf '[pulse-wrapper] Failed to reset PR list provider cache directory: %s\n' "$PULSE_PR_LIST_PROVIDER_CACHE_DIR" >&2
+		fi
+		if ! mkdir -p "$PULSE_PR_LIST_PROVIDER_CACHE_DIR"; then
+			printf '[pulse-wrapper] Failed to create PR list provider cache directory: %s\n' "$PULSE_PR_LIST_PROVIDER_CACHE_DIR" >&2
+		fi
+		echo "[pulse-wrapper] Per-cycle PR list cache enabled for duplicate repo open-PR reads ttl=${AIDEVOPS_GH_PR_LIST_CACHE_TTL}s; provider exact-output cache enabled for GraphQL-only PR lists (GH#23604)" >>"$LOGFILE"
+	else
+		export PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1
 	fi
 
 	# --canary short-circuit (GH#18790): sourcing, _pulse_handle_self_check,
