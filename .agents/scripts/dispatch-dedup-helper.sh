@@ -665,6 +665,42 @@ _is_assigned_check_parent_task() {
 }
 
 #######################################
+# is_assigned helper: check an unconditional label block.
+#
+# Args:
+#   $1 = issue metadata JSON (from `gh issue view --json ...,labels`)
+#   $2 = issue number for traceable error output
+#   $3 = repo slug for traceable error output
+#   $4 = label name to check
+#   $5 = block signal to emit when label is present
+#   $6 = check name for GUARD_UNCERTAIN output
+# Returns: exit 0 if label found or jq fails (prints signal),
+#          exit 1 if label absent and jq succeeds
+#######################################
+_is_assigned_check_label_block() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+	local label_name="$4"
+	local block_signal="$5"
+	local check_name="$6"
+	local _jq_rc=0
+	local label_hit
+	label_hit=$(printf '%s' "$meta_json" |
+		jq -r --arg label_name "$label_name" '(.labels // [])[].name | select(. == $label_name)' 2>/dev/null | head -n 1) || _jq_rc=$?
+	if [[ "$_jq_rc" -ne 0 ]]; then
+		printf 'GUARD_UNCERTAIN (reason=jq-failure call=%s issue=%s repo=%s)\n' \
+			"$check_name" "$issue_number" "$repo_slug"
+		return 0
+	fi
+	if [[ -n "$label_hit" ]]; then
+		printf '%s (label=%s)\n' "$block_signal" "$label_hit"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # is_assigned helper: check the no-auto-dispatch unconditional block (t2832).
 #
 # t2832: no-auto-dispatch label is an unconditional dispatch block. The label
@@ -703,21 +739,8 @@ _is_assigned_check_no_auto_dispatch() {
 	local meta_json="$1"
 	local issue_number="${2:-unknown}"
 	local repo_slug="${3:-unknown}"
-	# t2061: explicit rc capture — fail-closed on jq failure.
-	local _jq_rc=0
-	local nad_hit
-	nad_hit=$(printf '%s' "$meta_json" |
-		jq -r '(.labels // [])[].name | select(. == "no-auto-dispatch")' 2>/dev/null | head -n 1) || _jq_rc=$?
-	if [[ "$_jq_rc" -ne 0 ]]; then
-		printf 'GUARD_UNCERTAIN (reason=jq-failure call=no-auto-dispatch-check issue=%s repo=%s)\n' \
-			"$issue_number" "$repo_slug"
-		return 0
-	fi
-	if [[ -n "$nad_hit" ]]; then
-		printf 'NO_AUTO_DISPATCH_BLOCKED (label=%s)\n' "$nad_hit"
-		return 0
-	fi
-	return 1
+	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
+		"no-auto-dispatch" "NO_AUTO_DISPATCH_BLOCKED" "no-auto-dispatch-check"
 }
 
 #######################################
@@ -744,20 +767,8 @@ _is_assigned_check_hold_for_review() {
 	local meta_json="$1"
 	local issue_number="${2:-unknown}"
 	local repo_slug="${3:-unknown}"
-	local _jq_rc=0
-	local hfr_hit
-	hfr_hit=$(printf '%s' "$meta_json" |
-		jq -r '(.labels // [])[].name | select(. == "hold-for-review")' 2>/dev/null | head -n 1) || _jq_rc=$?
-	if [[ "$_jq_rc" -ne 0 ]]; then
-		printf 'GUARD_UNCERTAIN (reason=jq-failure call=hold-for-review-check issue=%s repo=%s)\n' \
-			"$issue_number" "$repo_slug"
-		return 0
-	fi
-	if [[ -n "$hfr_hit" ]]; then
-		printf 'HOLD_FOR_REVIEW_BLOCKED (label=%s)\n' "$hfr_hit"
-		return 0
-	fi
-	return 1
+	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
+		"hold-for-review" "HOLD_FOR_REVIEW_BLOCKED" "hold-for-review-check"
 }
 
 #######################################
