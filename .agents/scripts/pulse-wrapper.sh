@@ -1813,8 +1813,10 @@ main() {
 		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-view-cache-${$}"
 		export AIDEVOPS_GH_PR_VIEW_CACHE_TTL="${AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600}"
 		_save_cleanup_scope
-		trap '_run_cleanups' EXIT
 		push_cleanup 'release_instance_lock'
+		# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
+		# register release_instance_lock before replacing the direct EXIT trap.
+		trap '_run_cleanups' EXIT
 		_pulse_pr_cache_cleanup_scope=1
 		push_cleanup "rm -rf \"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}\""
 		if ! rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
@@ -1831,8 +1833,10 @@ main() {
 		export AIDEVOPS_GH_PR_LIST_CACHE_TTL="${AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600}"
 		if [[ "$_pulse_pr_cache_cleanup_scope" -eq 0 ]]; then
 			_save_cleanup_scope
-			trap '_run_cleanups' EXIT
 			push_cleanup 'release_instance_lock'
+			# GH#23728: keep EXIT (not RETURN) for SIGTERM/set -e lock safety, but
+			# register release_instance_lock before replacing the direct EXIT trap.
+			trap '_run_cleanups' EXIT
 			_pulse_pr_cache_cleanup_scope=1
 		fi
 		push_cleanup "rm -rf \"${AIDEVOPS_GH_PR_LIST_CACHE_DIR}\""
