@@ -207,6 +207,9 @@ test_pr_cache_ttls_are_per_cycle() {
 	if ! grep -q "trap '_run_cleanups' EXIT" "$WRAPPER_SCRIPT"; then
 		missing="${missing} exit-cleanup-trap"
 	fi
+	if ! grep -A5 '_save_cleanup_scope' "$WRAPPER_SCRIPT" | grep -B4 "trap '_run_cleanups' EXIT" | grep -q "push_cleanup 'release_instance_lock'"; then
+		missing="${missing} lock-cleanup-before-exit-trap"
+	fi
 
 	if [[ -z "$missing" ]]; then
 		print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 0
