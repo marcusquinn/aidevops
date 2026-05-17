@@ -1217,7 +1217,9 @@ dispatch_foss_workers() {
 		# Pre-dispatch eligibility check (budget + rate limit)
 		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
-		# Scan for a suitable issue
+		# Scan for a suitable issue. labels_filter_json comes from the outer jq
+		# pass so configured labels stay as JSON array elements, including labels
+		# that contain commas, while avoiding a second repos.json parse per repo.
 		local foss_issue foss_issue_num foss_issue_title
 		local foss_label_candidates=()
 		local foss_label
