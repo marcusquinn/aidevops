@@ -11,6 +11,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TMP_HOME="$(mktemp -d)"
 CALL_LOG="${TMP_HOME}/gh-calls.log"
 : >"$CALL_LOG"
+export AIDEVOPS_TEST_MODE=1
+export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
 
 cleanup() {
 	rm -rf "$TMP_HOME"

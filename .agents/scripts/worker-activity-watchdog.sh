@@ -70,6 +70,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
+if [[ -r "${SCRIPT_DIR}/shared-repo-state-guard.sh" ]]; then
+	# shellcheck source=shared-repo-state-guard.sh
+	source "${SCRIPT_DIR}/shared-repo-state-guard.sh"
+fi
 
 #######################################
 # Configuration (from args, with defaults)
@@ -490,6 +494,11 @@ _release_claim() {
 
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		return 0
+	fi
+	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+			return 0
+		fi
 	fi
 
 	local comment_body

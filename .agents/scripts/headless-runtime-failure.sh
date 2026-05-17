@@ -38,6 +38,10 @@ if [[ -r "${_HRFF_SCRIPT_DIR}/gh-signature-helper-detect.sh" ]]; then
 	# shellcheck source=gh-signature-helper-detect.sh
 	source "${_HRFF_SCRIPT_DIR}/gh-signature-helper-detect.sh"
 fi
+if [[ -r "${_HRFF_SCRIPT_DIR}/shared-repo-state-guard.sh" ]]; then
+	# shellcheck source=shared-repo-state-guard.sh
+	source "${_HRFF_SCRIPT_DIR}/shared-repo-state-guard.sh"
+fi
 unset _HRFF_SCRIPT_DIR
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 
@@ -303,6 +307,12 @@ _release_dispatch_claim() {
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		print_warning "Cannot release claim: missing issue=$issue_number repo=$repo_slug"
 		return 0
+	fi
+	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+			print_info "Skipping CLAIM_RELEASED for #${issue_number} in ${repo_slug}: repo state is not managed by this account"
+			return 0
+		fi
 	fi
 
 	if [[ "$reason" == "rate_limit_transient" ]]; then

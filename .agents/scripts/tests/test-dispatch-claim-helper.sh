@@ -18,6 +18,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 CLAIM_HELPER="${SCRIPT_DIR}/../dispatch-claim-helper.sh"
 DEDUP_HELPER="${SCRIPT_DIR}/../dispatch-dedup-helper.sh"
+export AIDEVOPS_TEST_MODE=1
+export AIDEVOPS_REPO_STATE_GUARD_TEST_BYPASS=1
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'

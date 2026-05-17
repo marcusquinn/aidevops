@@ -118,6 +118,10 @@ if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/gh-signature-helper-detect.sh" ]]; then
 	# shellcheck source=gh-signature-helper-detect.sh
 	source "${DISPATCH_CLAIM_HELPER_DIR}/gh-signature-helper-detect.sh"
 fi
+if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/shared-repo-state-guard.sh" ]]; then
+	# shellcheck source=shared-repo-state-guard.sh
+	source "${DISPATCH_CLAIM_HELPER_DIR}/shared-repo-state-guard.sh"
+fi
 if [[ -r "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh" ]]; then
 	# shellcheck disable=SC1091
 	source "${DISPATCH_CLAIM_HELPER_DIR}/dispatch-override-resolve.sh"
@@ -232,6 +236,13 @@ _post_claim() {
 	local nonce="$4"
 	local ts="$5"
 	local reason_fields="${6:-}"
+
+	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+			echo "CLAIM_SKIPPED: repo_state_not_managed issue=#${issue_number} repo=${repo_slug}" >&2
+			return 1
+		fi
+	fi
 
 	# t2401: include framework version so peers can filter claims from older runners.
 	local version
@@ -994,6 +1005,13 @@ cmd_claim() {
 		return 2
 	fi
 
+	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+			echo "CLAIM_SKIPPED: repo_state_not_managed issue=#${issue_number} repo=${repo_slug} — not dispatching" >&2
+			return 1
+		fi
+	fi
+
 	local runner
 	runner=$(_resolve_runner "$runner_login") || runner="unknown"
 
@@ -1140,6 +1158,14 @@ cmd_check() {
 	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
 		echo "Error: check requires <issue-number> <repo-slug>" >&2
 		return 2
+	fi
+
+	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+			printf 'CLAIM_SKIPPED: repo_state_not_managed issue=#%s repo=%s — treating as active to block dispatch\n' \
+				"$issue_number" "$repo_slug" >&2
+			return 0
+		fi
 	fi
 
 	local claims
