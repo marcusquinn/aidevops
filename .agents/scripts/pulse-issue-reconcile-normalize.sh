@@ -181,9 +181,9 @@ _fetch_label_invariant_rows() {
 			(.number | tostring),
 			([$labels[].name | select(startswith("status:")) | sub("^status:"; "")] | join(" ")),
 			([$labels[].name | select(startswith("tier:"))   | sub("^tier:";   "")] | join(" ")),
-			(($labels | map(.name) | index("origin:interactive")) != null | tostring),
-			(($labels | map(.name) | index("auto-dispatch"))      != null | tostring),
-			(any($labels[]?.name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
+			(any($labels[].name; . == "origin:interactive") | tostring),
+			(any($labels[].name; . == "auto-dispatch")      | tostring),
+			(any($labels[].name; . == ("supervisor", "contributor", "persistent", "quality-review", "needs-maintainer-review", "routine-tracking", "on hold")) | tostring),
 			(.createdAt | sub("\\.[0-9]+Z$"; "Z") | strptime("%Y-%m-%dT%H:%M:%SZ") | mktime | tostring),
 			(([$labels[].name | select(startswith("status:"))] | length) | tostring)
 		] | join("|")
