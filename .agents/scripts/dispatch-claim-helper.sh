@@ -238,7 +238,7 @@ _post_claim() {
 	local reason_fields="${6:-}"
 
 	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
-		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug" "$runner"; then
 			echo "CLAIM_SKIPPED: repo_state_not_managed issue=#${issue_number} repo=${repo_slug}" >&2
 			return 1
 		fi
@@ -1005,15 +1005,15 @@ cmd_claim() {
 		return 2
 	fi
 
+	local runner
+	runner=$(_resolve_runner "$runner_login") || runner="unknown"
+
 	if declare -F aidevops_can_manage_repo_issue_state >/dev/null 2>&1; then
-		if ! aidevops_can_manage_repo_issue_state "$repo_slug"; then
+		if ! aidevops_can_manage_repo_issue_state "$repo_slug" "$runner"; then
 			echo "CLAIM_SKIPPED: repo_state_not_managed issue=#${issue_number} repo=${repo_slug} — not dispatching" >&2
 			return 1
 		fi
 	fi
-
-	local runner
-	runner=$(_resolve_runner "$runner_login") || runner="unknown"
 
 	local nonce
 	nonce=$(_generate_nonce)
