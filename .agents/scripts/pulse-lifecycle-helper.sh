@@ -140,6 +140,22 @@ _pulse_pids_raw() {
 	return 0
 }
 
+# _pulse_emit_pid: print one PID while tolerating early-closing consumers.
+#
+# Watchdog/status callers may pipe PID lists into consumers that intentionally
+# exit after the first match. Bash's printf reports EPIPE as noisy "Broken pipe"
+# stderr output unless stderr is suppressed at the emit site. Return 1 to tell
+# the caller to stop emitting without treating the closed pipe as discovery
+# failure.
+_pulse_emit_pid() {
+	local _pid="$1" _rc=0
+	trap '' PIPE
+	printf '%s\n' "$_pid" 2>/dev/null || _rc=$?
+	trap - PIPE
+	[[ "$_rc" -eq 0 ]] || return 1
+	return 0
+}
+
 # _pulse_pids: print only top-level MAIN pulse PIDs (one per line). Subshells
 # of a running pulse cycle inherit the parent's argv so naive pgrep over-counts.
 # This function filters to PIDs whose PARENT command is NOT itself
@@ -179,7 +195,7 @@ _pulse_pids() {
 			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
 			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-			printf '%s\n' "$_pid"
+			_pulse_emit_pid "$_pid" || return 0
 			continue
 		fi
 		# Layer 2 (fallback for manually-started instances): skip PIDs whose
@@ -190,7 +206,7 @@ _pulse_pids() {
 		# (manual --merge-only invocations during testing or debugging).
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-		printf '%s\n' "$_pid"
+		_pulse_emit_pid "$_pid" || return 0
 	done <<< "$_pids"
 	return 0
 }
@@ -213,7 +229,9 @@ _pulse_pids_sidecar() {
 			[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
 		fi
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
-		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && printf '%s\n' "$_pid"
+		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
+			_pulse_emit_pid "$_pid" || return 0
+		fi
 	done <<< "$_pids"
 	return 0
 }
