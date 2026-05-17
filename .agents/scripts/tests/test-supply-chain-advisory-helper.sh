@@ -38,8 +38,8 @@ make_tmpdir() {
 }
 
 cleanup_test_tmpdir() {
-	local tmpdir="$1"
-	rm -rf "$tmpdir"
+	local tmpdir="${1:-}"
+	[[ -n "$tmpdir" ]] && rm -rf "$tmpdir"
 	return 0
 }
 
