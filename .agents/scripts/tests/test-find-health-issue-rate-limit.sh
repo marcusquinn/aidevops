@@ -270,6 +270,22 @@ else
 	fail "does not log lowercase open as unexpected state" "log: $(grep 'unexpected state' "$LOGFILE")"
 fi
 
+section "Scenario 2c: cache-hit + gh view returns empty JSON payload → cache preserved"
+reset_stubs
+setup_cache "42"
+stub_gh_for "issue view 42" "" 0
+result=$(_find_health_issue "$REPO" "$RUNNER_USER" "$RUNNER_ROLE" "$RUNNER_PREFIX" "$ROLE_LABEL" "$ROLE_DISPLAY" "$CACHE_FILE")
+if [[ "$result" == "42" ]]; then
+	pass "echoes cached number when view returns an empty payload"
+else
+	fail "echoes cached number when view returns an empty payload" "got '$result'"
+fi
+if grep -q "unexpected state ''" "$LOGFILE"; then
+	pass "empty view payload is normalized without jq parse failure"
+else
+	fail "empty view payload is normalized without jq parse failure" "log: $(cat "$LOGFILE")"
+fi
+
 section "Scenario 3: no cache + label list fails (rc=4) → __QUERY_FAILED__ sentinel"
 reset_stubs
 clear_cache

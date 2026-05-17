@@ -115,8 +115,13 @@ _health_issue_operator_label_allows_identity() {
 	local issue_json="$1"
 	local canonical_identity="$2"
 	local canonical_label="operator:${canonical_identity}"
+	local issue_json_input="${issue_json}"
+	[[ -z "$issue_json_input" ]] && issue_json_input='{}'
+	case "$issue_json_input" in
+		[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd]) issue_json_input='{}' ;;
+	esac
 
-	printf '%s' "$issue_json" | jq -e --arg canonical_label "$canonical_label" '
+	printf '%s' "$issue_json_input" | jq -e --arg canonical_label "$canonical_label" '
 		((.labels // []) | map(.name) | map(select(startswith("operator:")))) as $operator_labels
 		| ($operator_labels | length == 0 or any(. == $canonical_label))
 	' >/dev/null 2>&1
@@ -160,7 +165,12 @@ _try_cached_health_issue_lookup() {
 		return 0
 	fi
 
-	issue_state=$(printf '%s' "${issue_json:-{}}" | jq -r '.state // empty' 2>/dev/null || echo "")
+	local raw_issue_json="$issue_json"
+	[[ -z "$issue_json" ]] && issue_json='{}'
+	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null || echo "")
+	case "$raw_issue_json" in
+		[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd]) issue_state="$raw_issue_json" ;;
+	esac
 
 	# gh issue view has returned both GraphQL-style uppercase enums (OPEN/CLOSED)
 	# and REST-style lowercase values (open/closed) depending on fallback path.
