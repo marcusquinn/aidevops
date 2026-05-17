@@ -903,7 +903,8 @@ _refresh_person_stats_cache() {
 		local slug_safe="${slug//\//-}"
 		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
 		local md
-		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md=""
+		# t2687: add 60s timeout to person-stats to prevent hanging on GitHub API calls
+		md=$(timeout 60 bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md=""
 		if [[ -n "$md" ]]; then
 			echo "$md" >"$cache_file"
 		fi
@@ -920,7 +921,8 @@ _refresh_person_stats_cache() {
 		done <<<"$all_repo_paths"
 		if [[ ${#cross_args[@]} -gt 1 ]]; then
 			local cross_md
-			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_md=""
+			# t2687: add 60s timeout to cross-repo-person-stats to prevent hanging on GitHub API calls
+			cross_md=$(timeout 60 bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_md=""
 			if [[ -n "$cross_md" ]]; then
 				echo "$cross_md" >"${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
 			fi
