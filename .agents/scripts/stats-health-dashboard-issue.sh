@@ -115,8 +115,11 @@ _health_issue_operator_label_allows_identity() {
 	local issue_json="$1"
 	local canonical_identity="$2"
 	local canonical_label="operator:${canonical_identity}"
+	if [[ -z "$issue_json" ]]; then
+		issue_json="{}"
+	fi
 
-	printf '%s' "${issue_json:-{}}" | jq -e --arg canonical_label "$canonical_label" '
+	printf '%s\n' "$issue_json" | jq -e --arg canonical_label "$canonical_label" '
 		((.labels // []) | map(.name) | map(select(startswith("operator:")))) as $operator_labels
 		| ($operator_labels | length == 0 or any(. == $canonical_label))
 	' >/dev/null 2>&1
@@ -160,7 +163,10 @@ _try_cached_health_issue_lookup() {
 		return 0
 	fi
 
-	issue_state=$(printf '%s' "${issue_json:-{}}" | jq -r '.state // empty' 2>/dev/null || echo "")
+	if [[ -z "$issue_json" ]]; then
+		issue_json="{}"
+	fi
+	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null || echo "")
 
 	# gh issue view has returned both GraphQL-style uppercase enums (OPEN/CLOSED)
 	# and REST-style lowercase values (open/closed) depending on fallback path.

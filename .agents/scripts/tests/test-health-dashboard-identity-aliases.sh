@@ -212,6 +212,14 @@ else
 	fail "drops cached dashboard with conflicting operator label" "result=${result}; cache_exists=$([[ -f "$cache_file" ]] && printf yes || printf no); calls=$(tr '\n' ';' <"$GH_CALLS")"
 fi
 
+if _health_issue_operator_label_allows_identity \
+	'{"labels":[{"name":"source:health-dashboard"},{"name":"operator:canonical-operator"}]}' \
+	"canonical-operator"; then
+	pass "accepts matching operator label JSON without default-expansion corruption"
+else
+	fail "accepts matching operator label JSON without default-expansion corruption" "operator label check rejected valid JSON"
+fi
+
 body=$(_build_health_issue_body \
 	"2026-05-08T00:00:00Z" "Supervisor" "github-user" "owner/repo" \
 	"0" "0" "0" "0" "4" "1" "0" "" \
