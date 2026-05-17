@@ -370,6 +370,24 @@ describe("checkSignatureFooterGate", () => {
     assert.equal(output.args.command, cmd);
   });
 
+  test("no-ops on process-substitution body-file when helper appends footer", () => {
+    const { log } = makeLogger();
+    const cmd =
+      'gh issue comment 1 --body-file <(cat body.md && gh-signature-helper.sh footer)';
+    const output = { args: { command: cmd } };
+    checkSignatureFooterGate(cmd, log, "/nonexistent", output);
+    assert.equal(output.args.command, cmd);
+  });
+
+  test("no-ops on command-substitution body containing canonical marker", () => {
+    const { log } = makeLogger();
+    const cmd =
+      `gh issue comment 1 --body "$(printf 'body\\n\\n${SIG_MARKER}\\n---\\nfooter')"`;
+    const output = { args: { command: cmd } };
+    checkSignatureFooterGate(cmd, log, "/nonexistent", output);
+    assert.equal(output.args.command, cmd);
+  });
+
   test("REPAIRS simple --body command in place (t2685)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();
