@@ -54,6 +54,9 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+unset AIDEVOPS_GH_FORCE_REST_READS
+unset AIDEVOPS_GH_REST_FIRST_READS
+unset _GH_SHOULD_FALLBACK_OVERRIDE
 
 # =============================================================================
 # Stub the gh CLI so we can feed synthetic issue payloads into is_assigned
