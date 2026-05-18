@@ -571,13 +571,19 @@ refresh_blocked_status_from_graph() {
 # No NUL, no parser traps, trivially portable across bash versions.
 _blocked_by_extract_tids() {
 	local body="$1"
-	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1)
-	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t[0-9]+(\.[0-9a-z]+)*' | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true
+	local blocker_lines
+	# Match the dep-graph whole-line parser so compact blocker lists such as
+	# `blocked-by:t001,t002,t003` are enforced consistently at dispatch time.
+	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1).
+	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*|[Bb]locked[- ]by[^[:cntrl:]]*' || true)
+	printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true
 }
 
 _blocked_by_extract_nums() {
 	local body="$1"
-	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true
+	local blocker_lines
+	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*|[Bb]locked[- ]by[^[:cntrl:]]*' || true)
+	printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true
 }
 
 #######################################
