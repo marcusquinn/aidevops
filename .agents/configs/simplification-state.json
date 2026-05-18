@@ -820,9 +820,9 @@
       "pr": 15249
     },
     ".agents/hooks/task-id-collision-guard.sh": {
-      "at": "2026-05-03T12:51:12Z",
-      "hash": "65c54bd665fcdd096a7a7f8b904bb08b37224a47",
-      "passes": 11,
+      "at": "2026-05-18T17:47:10Z",
+      "hash": "594ef6d7363aa4da9ff9f58efed5c3da5c0d3c97",
+      "passes": 12,
       "pr": 18718
     },
     ".agents/legal.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-18T04:01:33Z",
-      "hash": "4124c7851aa4be4bbf166f4cda5fcc07023ba417",
-      "passes": 175,
+      "at": "2026-05-18T17:59:53Z",
+      "hash": "0cd720781a3502799557195a3a4ad418043c2468",
+      "passes": 176,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-18T04:01:34Z",
-      "hash": "37e2c11befc50053665dbde5781b409f1ad309db",
-      "passes": 170,
+      "at": "2026-05-18T18:00:04Z",
+      "hash": "341f6131c9ac6479f34adc7b6ec251a84bc9fce1",
+      "passes": 171,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
