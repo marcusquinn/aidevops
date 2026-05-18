@@ -189,15 +189,15 @@ test_canary_short_circuit_after_lock() {
 
 cleanup_registration_precedes_exit_trap() {
 	awk '
-		/_save_cleanup_scope/ {
+		/^[[:space:]]*_save_cleanup_scope/ {
 			seen_scope = 1
 			next
 		}
-		seen_scope && /push_cleanup '\''release_instance_lock'\''/ {
+		seen_scope && /^[[:space:]]*push_cleanup[[:space:]]+'\''release_instance_lock'\''/ {
 			seen_cleanup = 1
 			next
 		}
-		seen_scope && seen_cleanup && /trap '\''_run_cleanups'\'' EXIT/ {
+		seen_scope && seen_cleanup && /^[[:space:]]*trap[[:space:]]+'\''_run_cleanups'\''[[:space:]]+EXIT/ {
 			found = 1
 			exit
 		}

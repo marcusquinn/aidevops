@@ -65,19 +65,18 @@ _expand_foss_repo_path() {
 _foss_issue_list_for_label() {
 	local repo_slug="$1"
 	local label="$2"
-	local search_label
+	local selector_args=()
 
 	if [[ "$label" == *,* ]]; then
-		search_label="${label//\\/\\\\}"
+		local search_label="${label//\\/\\\\}"
 		search_label="${search_label//\"/\\\"}"
-		gh_issue_list --repo "$repo_slug" --state open \
-			--search "label:\"${search_label}\"" --limit 1 \
-			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
-		return $?
+		selector_args=(--search "label:\"${search_label}\"")
+	else
+		selector_args=(--label "$label")
 	fi
 
 	gh_issue_list --repo "$repo_slug" --state open \
-		--label "$label" --limit 1 \
+		"${selector_args[@]}" --limit 1 \
 		--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
 	return $?
 }

@@ -150,7 +150,7 @@ test_sync_without_node_fails_open() {
 
 	local cmd=""
 	local cmd_path=""
-	for cmd in bash cat dirname find grep ln mkdir readlink rm rsync sed; do
+	for cmd in bash cat cp dirname find grep jq ln mkdir readlink rm rsync sed; do
 		cmd_path=$(command -v "$cmd")
 		if [[ -n "$cmd_path" ]]; then
 			ln -s "$cmd_path" "$path_without_node/$cmd"
