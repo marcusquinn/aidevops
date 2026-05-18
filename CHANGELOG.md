@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.60] - 2026-05-18
+
+### Changed
+
+- Maintenance: sync ref:GH#23761 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- quote planning next-id assignments (#23762)
+
 ## [3.15.59] - 2026-05-17
 
 ### Changed
