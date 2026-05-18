@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.63] - 2026-05-18
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden supply-chain test cleanup guard (#23790)
+
 ## [3.15.62] - 2026-05-18
 
 ### Changed
