@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.61] - 2026-05-18
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: mark t3591 complete (pr:#23764 completed:2026-05-18) [skip ci]
+
+### Fixed
+
+- bound person stats GitHub calls (#23764)
+
 ## [3.15.60] - 2026-05-18
 
 ### Changed
