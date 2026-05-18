@@ -37,8 +37,9 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 # Distinct exit code emitted by contributor-activity-helper.sh when stdout
-# contains valid but incomplete data due to rate limits or timeouts.
-readonly STATS_HEALTH_EX_PARTIAL=75
+# contains valid but incomplete data due to rate limits or timeouts. Reuse a
+# shared EX_PARTIAL value when the sourcing context already defines one.
+readonly STATS_HEALTH_EX_PARTIAL="${EX_PARTIAL:-75}"
 
 # Wall-clock guard for each dashboard person-stats helper invocation. The
 # helper already bounds individual GitHub API calls; this keeps the health
