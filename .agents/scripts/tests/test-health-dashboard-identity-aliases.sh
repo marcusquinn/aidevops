@@ -56,6 +56,14 @@ gh() {
 			printf '%s' '{"state":"OPEN","labels":[{"name":"source:health-dashboard"},{"name":"operator:alex-solovyev"}]}'
 			return 0
 			;;
+		cache_open_state:*"issue view 4644 --repo owner/repo --json state,labels"*)
+			printf '%s' 'OPEN'
+			return 0
+			;;
+		cache_closed_state:*"issue view 4645 --repo owner/repo --json state,labels"*)
+			printf '%s' 'CLOSED'
+			return 0
+			;;
 		:*"issue list --repo owner/repo --label source:health-dashboard"*)
 			printf '%s' '[{"number":20408,"title":"[Supervisor:github-user] 1 PR at 10:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"}],"createdAt":"2026-05-01T10:00:00Z"},{"number":18669,"title":"[Contributor:local-user] 0 PRs at 09:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"contributor"},{"name":"local-user"}],"createdAt":"2026-04-01T09:00:00Z"}]'
 			return 0
@@ -216,6 +224,44 @@ if _health_issue_operator_label_allows_identity "" "canonical-operator"; then
 	pass "allows empty cached issue metadata as unknown rather than jq parse failure"
 else
 	fail "allows empty cached issue metadata as unknown rather than jq parse failure" "empty input was rejected"
+fi
+
+if _health_issue_operator_label_allows_identity "OPEN" "canonical-operator"; then
+	pass "allows raw open state metadata as unknown rather than jq parse failure"
+else
+	fail "allows raw open state metadata as unknown rather than jq parse failure" "OPEN input was rejected"
+fi
+
+cache_file="${HOME}/.aidevops/logs/health-issue-cache-open-owner-repo"
+printf '%s\n' '4644' >"$cache_file"
+: >"$GH_CALLS"
+export HEALTH_FIXTURE=cache_open_state
+result=$(_find_health_issue \
+	"owner/repo" "marcusquinn" "supervisor" "[Supervisor:marcusquinn]" \
+	"supervisor" "Supervisor" "$cache_file" \
+	"marcusquinn" "marcusquinn")
+unset HEALTH_FIXTURE
+
+if [[ "$result" == "4644" && -f "$cache_file" ]]; then
+	pass "keeps raw OPEN cached dashboard state without jq parse noise"
+else
+	fail "keeps raw OPEN cached dashboard state without jq parse noise" "result=${result}; cache_exists=$([[ -f "$cache_file" ]] && printf yes || printf no); calls=$(tr '\n' ';' <"$GH_CALLS")"
+fi
+
+cache_file="${HOME}/.aidevops/logs/health-issue-cache-closed-owner-repo"
+printf '%s\n' '4645' >"$cache_file"
+: >"$GH_CALLS"
+export HEALTH_FIXTURE=cache_closed_state
+result=$(_find_health_issue \
+	"owner/repo" "marcusquinn" "supervisor" "[Supervisor:marcusquinn]" \
+	"supervisor" "Supervisor" "$cache_file" \
+	"marcusquinn" "marcusquinn")
+unset HEALTH_FIXTURE
+
+if [[ -z "$result" && ! -f "$cache_file" ]]; then
+	pass "drops raw CLOSED cached dashboard state without jq parse noise"
+else
+	fail "drops raw CLOSED cached dashboard state without jq parse noise" "result=${result}; cache_exists=$([[ -f "$cache_file" ]] && printf yes || printf no); calls=$(tr '\n' ';' <"$GH_CALLS")"
 fi
 
 body=$(_build_health_issue_body \

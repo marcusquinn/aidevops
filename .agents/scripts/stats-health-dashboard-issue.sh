@@ -116,9 +116,8 @@ _health_issue_operator_label_allows_identity() {
 	local canonical_identity="$2"
 	local canonical_label="operator:${canonical_identity}"
 	local issue_json_input="${issue_json}"
-	[[ -z "$issue_json_input" ]] && issue_json_input='{}'
 	case "$issue_json_input" in
-		[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd]) issue_json_input='{}' ;;
+		""|[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd]) issue_json_input='{}' ;;
 	esac
 
 	printf '%s' "$issue_json_input" | jq -e --arg canonical_label "$canonical_label" '
@@ -166,10 +165,14 @@ _try_cached_health_issue_lookup() {
 	fi
 
 	local raw_issue_json="$issue_json"
-	[[ -z "$issue_json" ]] && issue_json='{}'
-	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null || echo "")
 	case "$raw_issue_json" in
-		[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd]) issue_state="$raw_issue_json" ;;
+		""|[Oo][Pp][Ee][Nn]|[Cc][Ll][Oo][Ss][Ee][Dd])
+			issue_state="$raw_issue_json"
+			issue_json='{}'
+			;;
+		*)
+			issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' || echo "")
+			;;
 	esac
 
 	# gh issue view has returned both GraphQL-style uppercase enums (OPEN/CLOSED)
