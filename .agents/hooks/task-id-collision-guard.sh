@@ -266,8 +266,10 @@ _branch_has_claim() {
 	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
+	local branch_subjects
+	branch_subjects=$(_branch_subjects "$base")
 	# Look for an exact single-ID claim first.
-	if _branch_subjects "$base" | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if grep -qE "^chore: claim t0*${num}( |\$|\\[)" <<<"$branch_subjects"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -281,7 +283,7 @@ _branch_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(_branch_subjects "$base")
+	done <<<"$branch_subjects"
 	return 1
 }
 
@@ -301,8 +303,10 @@ _repo_has_claim() {
 	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
+	local repo_subjects
+	repo_subjects=$(_repo_subjects)
 	# Look for an exact single-ID claim first.
-	if _repo_subjects | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if grep -qE "^chore: claim t0*${num}( |\$|\\[)" <<<"$repo_subjects"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -316,7 +320,7 @@ _repo_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(_repo_subjects)
+	done <<<"$repo_subjects"
 	return 1
 }
 
