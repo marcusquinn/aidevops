@@ -36,6 +36,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Distinct exit code emitted by contributor-activity-helper.sh when stdout
+# contains valid but incomplete data due to rate limits or timeouts.
+readonly STATS_HEALTH_EX_PARTIAL=75
+
 # --- Functions ---
 
 #######################################
@@ -880,7 +884,7 @@ _refresh_person_stats_cache() {
 
 	local repo_count=0
 	local search_api_cost_per_contributor=4
-	local partial_exit=75
+	local partial_exit="$STATS_HEALTH_EX_PARTIAL"
 	local refreshed_any=false
 	while IFS='|' read -r _slug _path; do
 		[[ -z "$_slug" ]] && continue
