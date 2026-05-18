@@ -140,6 +140,31 @@ _pulse_pids_raw() {
 	return 0
 }
 
+# _pulse_emit_pid: print one PID while tolerating early-closing consumers.
+#
+# Watchdog/status callers may pipe PID lists into consumers that intentionally
+# exit after the first match. Bash's printf reports EPIPE as noisy "Broken pipe"
+# stderr output unless stderr is suppressed at the emit site. Callers ignore
+# SIGPIPE for the full emit loop and restore the prior trap afterwards; return 1
+# to tell the caller to stop emitting without treating the closed pipe as
+# discovery failure.
+_pulse_emit_pid() {
+	local _pid="$1" _rc=0
+	printf '%s\n' "$_pid" 2>/dev/null || _rc=$?
+	[[ "$_rc" -eq 0 ]] || return 1
+	return 0
+}
+
+_pulse_restore_pipe_trap() {
+	local _pipe_trap="$1"
+	if [[ "$_pipe_trap" == *"trap -- '' SIGPIPE"* || "$_pipe_trap" == *"trap -- '' PIPE"* ]]; then
+		trap '' PIPE
+	else
+		trap - PIPE
+	fi
+	return 0
+}
+
 # _pulse_pids: print only top-level MAIN pulse PIDs (one per line). Subshells
 # of a running pulse cycle inherit the parent's argv so naive pgrep over-counts.
 # This function filters to PIDs whose PARENT command is NOT itself
@@ -166,9 +191,11 @@ _pulse_pids_raw() {
 # _stop_all uses _pulse_pids_raw (not this function) so it still SIGTERMs
 # all pulse processes including subshells AND sidecars on `stop`.
 _pulse_pids() {
-	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd=""
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
+	_pipe_trap=$(trap -p PIPE || true)
+	trap '' PIPE
 	while read -r _pid; do
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
@@ -179,7 +206,7 @@ _pulse_pids() {
 			# Layer 3 (sidecar guard): skip if argv contains a sidecar flag.
 			_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 			[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-			printf '%s\n' "$_pid"
+			_pulse_emit_pid "$_pid" || break
 			continue
 		fi
 		# Layer 2 (fallback for manually-started instances): skip PIDs whose
@@ -190,8 +217,9 @@ _pulse_pids() {
 		# (manual --merge-only invocations during testing or debugging).
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
 		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && continue
-		printf '%s\n' "$_pid"
+		_pulse_emit_pid "$_pid" || break
 	done <<< "$_pids"
+	_pulse_restore_pipe_trap "$_pipe_trap"
 	return 0
 }
 
@@ -202,9 +230,11 @@ _pulse_pids() {
 # Subshell guards (Layers 1 and 2) still apply — sidecars run as top-level
 # launchd-spawned processes (PPID=1), never as subshells of a main pulse.
 _pulse_pids_sidecar() {
-	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd=""
+	local _pids="" _pid="" _ppid="" _ppid_cmd="" _cmd="" _pipe_trap=""
 	_pids=$(_pulse_pids_raw)
 	[[ -z "$_pids" ]] && return 0
+	_pipe_trap=$(trap -p PIPE || true)
+	trap '' PIPE
 	while read -r _pid; do
 		_ppid=$(ps -p "$_pid" -o ppid= 2>/dev/null | tr -d ' ')
 		[[ -z "$_ppid" || "$_ppid" == "0" ]] && continue
@@ -213,8 +243,11 @@ _pulse_pids_sidecar() {
 			[[ "$_ppid_cmd" =~ pulse-wrapper\.sh ]] && continue
 		fi
 		_cmd=$(ps -p "$_pid" -o command= 2>/dev/null)
-		[[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]] && printf '%s\n' "$_pid"
+		if [[ "$_cmd" =~ $_PULSE_SIDECAR_FLAGS_RE ]]; then
+			_pulse_emit_pid "$_pid" || break
+		fi
 	done <<< "$_pids"
+	_pulse_restore_pipe_trap "$_pipe_trap"
 	return 0
 }
 

@@ -19,11 +19,11 @@ _SHARED_REPO_STATE_GUARD_LOADED=1
 #######################################
 aidevops_repo_state_current_user() {
 	local login=""
-	login=$(gh api user --jq '.login' 2>/dev/null || printf '')
+	login=$(gh api user --jq '.login // ""' || printf '')
 	if [[ "$login" == *'"login"'* ]] && command -v jq >/dev/null 2>&1; then
-		login=$(printf '%s' "$login" | jq -r '.login // empty' 2>/dev/null || printf '')
+		login=$(printf '%s' "$login" | jq -r '.login // ""' || printf '')
 	fi
-	if [[ -z "$login" || "$login" == "null" ]]; then
+	if [[ -z "$login" ]]; then
 		printf ''
 		return 0
 	fi
@@ -55,7 +55,7 @@ aidevops_can_manage_repo_issue_state() {
 	if [[ -z "$user" ]]; then
 		user=$(aidevops_repo_state_current_user)
 	fi
-	if [[ -z "$user" || "$user" == "null" ]]; then
+	if [[ -z "$user" ]]; then
 		return 1
 	fi
 

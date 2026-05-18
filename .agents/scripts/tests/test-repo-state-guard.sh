@@ -91,6 +91,19 @@ else
 fi
 
 printf 'external\n' >"$mode_file"
+: >"$call_log"
+if aidevops_can_manage_repo_issue_state "other/project" "tester"; then
+	check 0 "explicit user override still blocks external repo"
+else
+	check 1 "explicit user override still blocks external repo"
+fi
+if grep -q '^api user' "$call_log"; then
+	check 0 "explicit user override skips current-user lookup"
+else
+	check 1 "explicit user override skips current-user lookup"
+fi
+
+: >"$call_log"
 set +e
 claim_output=$("${AGENTS_SCRIPTS_DIR}/dispatch-claim-helper.sh" claim 866 afragen/git-updater tester 2>&1)
 claim_rc=$?
@@ -105,6 +118,12 @@ if grep -q 'repos/afragen/git-updater/issues/866/comments' "$call_log"; then
 	check 0 "unmanaged dispatch claim posts no comment"
 else
 	check 1 "unmanaged dispatch claim posts no comment"
+fi
+
+if grep -q '^api user' "$call_log"; then
+	check 0 "dispatch claim passes resolved runner to state guard"
+else
+	check 1 "dispatch claim passes resolved runner to state guard"
 fi
 
 set +e

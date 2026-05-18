@@ -94,7 +94,7 @@ teardown() {
 test_sync_generates_capability_registry() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
 	status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "sync generates capability registry" 1 "$output"
@@ -114,7 +114,7 @@ test_sync_generates_capability_registry() {
 test_subagent_index_includes_capability_registry() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" generate 2>&1)
 	status=$?
 	if [[ "$status" -ne 0 ]]; then
 		print_result "subagent index includes capability registry" 1 "$output"
@@ -134,7 +134,7 @@ test_subagent_index_includes_capability_registry() {
 test_check_validates_capability_cardinality() {
 	local output=""
 	local status=0
-	output=$(HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" check 2>&1)
+	output=$(AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh" check 2>&1)
 	status=$?
 	if [[ "$status" -eq 0 && "$output" == *"Declared agent source capability rows: 1"* && "$output" == *"Actual agent source capability rows: 1"* ]]; then
 		print_result "check validates capability cardinality" 0
@@ -144,11 +144,40 @@ test_check_validates_capability_cardinality() {
 	return 0
 }
 
+test_sync_without_node_fails_open() {
+	local path_without_node="$TEST_HOME/no-node-bin"
+	mkdir -p "$path_without_node"
+
+	local cmd=""
+	local cmd_path=""
+	for cmd in bash cat dirname find grep ln mkdir readlink rm rsync sed; do
+		cmd_path=$(command -v "$cmd")
+		if [[ -n "$cmd_path" ]]; then
+			ln -s "$cmd_path" "$path_without_node/$cmd"
+		fi
+	done
+
+	local output=""
+	local status=0
+	output=$(PATH="$path_without_node" AIDEVOPS_AGENTS_DIR="$TEST_HOME/.aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
+	status=$?
+
+	local registry="$TEST_HOME/.aidevops/agents/agent-source-capabilities.toon"
+	if [[ "$status" -eq 0 && "$output" == *"Node not found; skipping agent source capability registry generation."* && "$output" != *"node: command not found"* ]] && \
+		grep -q '^<!--TOON:agent_source_capabilities\[0\]' "$registry"; then
+		print_result "sync without node fails open" 0
+	else
+		print_result "sync without node fails open" 1 "$output"
+	fi
+	return 0
+}
+
 main() {
 	setup
 	test_sync_generates_capability_registry
 	test_subagent_index_includes_capability_registry
 	test_check_validates_capability_cardinality
+	test_sync_without_node_fails_open
 
 	echo ""
 	echo "Tests run: $TESTS_RUN"

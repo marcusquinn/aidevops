@@ -37,6 +37,63 @@ fi
 
 # --- Functions ---
 
+: "${PERSON_STATS_GH_API_TIMEOUT:=20}"
+: "${PERSON_STATS_CROSS_REPO_GH_API_TIMEOUT:=45}"
+
+#######################################
+# Return the active GitHub API timeout budget.
+#
+# Output: timeout seconds
+#######################################
+_person_stats_gh_api_timeout() {
+	if [[ "${PERSON_STATS_MODE:-single}" == "cross-repo" ]]; then
+		printf '%s' "$PERSON_STATS_CROSS_REPO_GH_API_TIMEOUT"
+	else
+		printf '%s' "$PERSON_STATS_GH_API_TIMEOUT"
+	fi
+	return 0
+}
+
+#######################################
+# Run gh api with a portable wall-clock timeout.
+#
+# Arguments:
+#   $@ - gh api arguments
+#######################################
+_person_stats_gh_api() {
+	local timeout_budget
+	timeout_budget=$(_person_stats_gh_api_timeout)
+	timeout_sec "$timeout_budget" gh api "$@"
+	return $?
+}
+
+#######################################
+# Query a GitHub Search API total_count with timeout classification.
+#
+# Arguments:
+#   $1 - human-readable metric label
+#   $2 - GitHub API endpoint/query
+# Output: total_count or 0 on recoverable failure
+#######################################
+_person_stats_query_count() {
+	local label="$1"
+	local query="$2"
+	local value="0"
+	local rc=0
+	value=$(_person_stats_gh_api "$query" --jq '.total_count' 2>/dev/null) || rc=$?
+	if [[ "$rc" -eq 124 ]]; then
+		echo "GitHub Search API ${label} query timed out after $(_person_stats_gh_api_timeout)s" >&2
+		printf '%s' "0"
+		return 124
+	fi
+	if [[ "$rc" -ne 0 || ! "$value" =~ ^[0-9]+$ ]]; then
+		printf '%s' "0"
+		return 1
+	fi
+	printf '%s' "$value"
+	return 0
+}
+
 #######################################
 # Extract repo slug from git remote URL
 #
@@ -149,7 +206,14 @@ _person_stats_query_github() {
 	for login in $logins_csv; do
 		# Check search API rate limit before each batch of 4 queries per user
 		local remaining
-		remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining=30
+		local remaining_rc=0
+		remaining=$(_person_stats_gh_api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining_rc=$?
+		if [[ "$remaining_rc" -eq 124 ]]; then
+			echo "GitHub rate-limit probe timed out after $(_person_stats_gh_api_timeout)s, returning partial results" >&2
+			_ps_partial=true
+			break
+		fi
+		[[ "$remaining" =~ ^[0-9]+$ ]] || remaining=30
 		if [[ "$remaining" -lt 5 ]]; then
 			# t1429: bail out with partial results instead of sleeping.
 			# The old code slept until reset, creating an infinite blocking
@@ -161,19 +225,27 @@ _person_stats_query_github() {
 
 		# Issues created by this user in this repo since the date
 		local issues_created
-		issues_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:issue+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || issues_created=0
+		local issues_created_rc=0
+		issues_created=$(_person_stats_query_count "issues-created" "search/issues?q=author:${login}+repo:${slug}+type:issue+created:>${since_date}&per_page=1") || issues_created_rc=$?
+		[[ "$issues_created_rc" -eq 124 ]] && _ps_partial=true
 
 		# PRs created
 		local prs_created
-		prs_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_created=0
+		local prs_created_rc=0
+		prs_created=$(_person_stats_query_count "prs-created" "search/issues?q=author:${login}+repo:${slug}+type:pr+created:>${since_date}&per_page=1") || prs_created_rc=$?
+		[[ "$prs_created_rc" -eq 124 ]] && _ps_partial=true
 
 		# PRs merged
 		local prs_merged
-		prs_merged=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+is:merged+merged:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_merged=0
+		local prs_merged_rc=0
+		prs_merged=$(_person_stats_query_count "prs-merged" "search/issues?q=author:${login}+repo:${slug}+type:pr+is:merged+merged:>${since_date}&per_page=1") || prs_merged_rc=$?
+		[[ "$prs_merged_rc" -eq 124 ]] && _ps_partial=true
 
 		# Issues/PRs commented on (commenter: qualifier counts unique issues, not comments)
 		local commented_on
-		commented_on=$(gh api "search/issues?q=commenter:${login}+repo:${slug}+updated:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || commented_on=0
+		local commented_on_rc=0
+		commented_on=$(_person_stats_query_count "commented-on" "search/issues?q=commenter:${login}+repo:${slug}+updated:>${since_date}&per_page=1") || commented_on_rc=$?
+		[[ "$commented_on_rc" -eq 124 ]] && _ps_partial=true
 
 		if [[ "$first" == "true" ]]; then
 			first=false
@@ -240,7 +312,7 @@ else:
     if is_partial:
         print()
         print('<!-- partial-results -->')
-        print('_Partial results — GitHub Search API rate limit exhausted._')
+        print('_Partial results — GitHub Search API rate limit exhausted or a query timed out._')
 " "$format" "$period" "$is_partial"
 
 	return 0
@@ -318,10 +390,12 @@ person_stats() {
 	# Rate limit: 30 requests/min for search API. With 4 queries per user,
 	# we can handle ~7 users per minute. If budget is exhausted, bail out
 	# with partial results instead of blocking (t1429).
-	local results_json partial_flag
-	results_json=$(_person_stats_query_github "$logins_csv" "$slug" "$since_date" 2>/tmp/_ps_stderr) || true
-	partial_flag=$(grep '^PARTIAL=' /tmp/_ps_stderr 2>/dev/null | sed 's/PARTIAL=//' || echo "false")
-	cat /tmp/_ps_stderr >&2 2>/dev/null || true
+	local results_json partial_flag ps_stderr
+	ps_stderr=$(mktemp)
+	results_json=$(_person_stats_query_github "$logins_csv" "$slug" "$since_date" 2>"$ps_stderr") || true
+	partial_flag=$(grep '^PARTIAL=' "$ps_stderr" 2>/dev/null | sed 's/PARTIAL=//' || echo "false")
+	cat "$ps_stderr" >&2 2>/dev/null || true
+	rm -f "$ps_stderr"
 
 	_person_stats_format_output "$results_json" "$format" "$period" "$partial_flag"
 
@@ -364,7 +438,7 @@ _cross_repo_person_stats_collect_json() {
 		if [[ -n "$logins_override" ]]; then
 			extra_args+=(--logins "$logins_override")
 		fi
-		repo_json=$(person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_rc=$?
+		repo_json=$(PERSON_STATS_MODE=cross-repo person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_rc=$?
 		if [[ "$repo_rc" -eq "$EX_PARTIAL" ]]; then
 			any_partial=true
 		elif [[ "$repo_rc" -ne 0 ]]; then
@@ -453,7 +527,7 @@ else:
     if is_partial:
         print()
         print('<!-- partial-results -->')
-        print('_Partial results — GitHub Search API rate limit exhausted._')
+        print('_Partial results — GitHub Search API rate limit exhausted or a query timed out._')
 " "$format" "$period" "$repo_count" "$is_partial"
 
 	return 0
@@ -504,13 +578,15 @@ cross_repo_person_stats() {
 	fi
 
 	# Collect JSON from each repo, capture repo_count and partial flag from stderr
-	local raw_json repo_count_line repo_count partial_line partial_flag
-	raw_json=$(_cross_repo_person_stats_collect_json "$period" "$logins_override" "${repo_paths[@]}" 2>/tmp/_crps_stderr) || true
-	repo_count_line=$(grep '^REPO_COUNT=' /tmp/_crps_stderr 2>/dev/null || echo "REPO_COUNT=0")
+	local raw_json repo_count_line repo_count partial_line partial_flag crps_stderr
+	crps_stderr=$(mktemp)
+	raw_json=$(_cross_repo_person_stats_collect_json "$period" "$logins_override" "${repo_paths[@]}" 2>"$crps_stderr") || true
+	repo_count_line=$(grep '^REPO_COUNT=' "$crps_stderr" 2>/dev/null || echo "REPO_COUNT=0")
 	repo_count="${repo_count_line#REPO_COUNT=}"
-	partial_line=$(grep '^PARTIAL=' /tmp/_crps_stderr 2>/dev/null || echo "PARTIAL=false")
+	partial_line=$(grep '^PARTIAL=' "$crps_stderr" 2>/dev/null || echo "PARTIAL=false")
 	partial_flag="${partial_line#PARTIAL=}"
-	cat /tmp/_crps_stderr >&2 2>/dev/null || true
+	cat "$crps_stderr" >&2 2>/dev/null || true
+	rm -f "$crps_stderr"
 
 	# Merge all repo arrays into one, then aggregate per login
 	local all_json

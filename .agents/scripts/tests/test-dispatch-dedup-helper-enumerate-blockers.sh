@@ -50,6 +50,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/bin"
 	mkdir -p "${TEST_ROOT}/config/aidevops"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	unset AIDEVOPS_GH_FORCE_REST_READS
+	unset AIDEVOPS_GH_REST_FIRST_READS
+	unset _GH_SHOULD_FALLBACK_OVERRIDE
 
 	# Minimal repos.json so the helper can resolve owner/maintainer.
 	cat >"${TEST_ROOT}/config/aidevops/repos.json" <<'EOF'

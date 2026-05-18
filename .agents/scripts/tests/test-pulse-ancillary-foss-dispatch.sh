@@ -64,11 +64,26 @@ JSON
 
 gh_issue_list() {
 	local label=""
+	local search=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--label)
 			label="$2"
 			test -n "$label" || break
+			[[ "$label" != *,* ]] || fail "comma-containing label used --label instead of --search"
+			shift 2
+			;;
+		--search)
+			search="$2"
+			case "$search" in
+			label:\"*\")
+				label="${search#label:\"}"
+				label="${label%\"}"
+				;;
+			*)
+				fail "unexpected FOSS issue search query: ${search}"
+				;;
+			esac
 			shift 2
 			;;
 		*)

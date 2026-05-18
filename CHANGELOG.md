@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.60] - 2026-05-18
+
+### Changed
+
+- Maintenance: sync ref:GH#23761 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- quote planning next-id assignments (#23762)
+
+## [3.15.59] - 2026-05-17
+
+### Changed
+
+- Tests: isolate dispatch tests from gh REST fallback env (#23741)
+- Maintenance: update simplification state registry
+- fix: harden profile AI stats source selection (#23740)
+
+### Fixed
+
+- consolidate dispatch hold label semantics
+- guard supply-chain test cleanup helper (#23754)
+- simplify pulse lifecycle pipe handling (#23753)
+- deduplicate supply-chain test cleanup (#23752)
+- guard issue create status label args (#23742)
+
+## [3.15.58] - 2026-05-17
+
+### Changed
+
+- fix: suppress pulse PID broken pipe noise (#23719)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- reuse resolved claim runner in repo state guard (#23735)
+- harden pulse PR cache cleanup (#23733)
+- document FOSS label parsing behavior (#23731)
+
 ## [3.15.57] - 2026-05-17
 
 ### Fixed

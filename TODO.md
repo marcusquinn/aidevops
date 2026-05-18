@@ -4230,3 +4230,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3585 Capture session learning guidance in aidevops harness #documentation #self-improvement ref:GH#23285
 
 - [ ] t3587 fix gh CLI slurp prerequisite diagnostics #auto-dispatch #bug #framework ref:GH#23428
+
+- [x] t3591 Bound person-stats GitHub calls with portable timeouts #auto-dispatch #bug #reliability #shell ref:GH#23761 pr:#23764 completed:2026-05-18
