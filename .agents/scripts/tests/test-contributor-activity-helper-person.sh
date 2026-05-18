@@ -28,6 +28,17 @@ fail() {
 	return 0
 }
 
+define_timeout_sec_mock() {
+	timeout_sec() {
+		local _seconds="$1"
+		shift
+		[[ -n "$_seconds" ]] || return 124
+		"$@"
+		return $?
+	}
+	return 0
+}
+
 test_person_stats_uses_portable_timeout() {
 	local name="person stats wraps gh api with timeout_sec"
 	local wrapper_pattern="timeout_sec \"\$timeout_budget\" gh api \"\$@\""
@@ -100,13 +111,7 @@ GH
 		PERSON_STATS_INTERVAL=0
 		PERSON_STATS_LAST_RUN="${TMP_DIR}/partial.last"
 		PERSON_STATS_CACHE_DIR="${TMP_DIR}/cache"
-		timeout_sec() {
-			local _seconds="$1"
-			shift
-			[[ -n "$_seconds" ]] || return 124
-			"$@"
-			return $?
-		}
+		define_timeout_sec_mock
 		PATH="${TMP_DIR}/bin:${PATH}"
 		export HOME LOGFILE REPOS_JSON PERSON_STATS_INTERVAL PERSON_STATS_LAST_RUN PERSON_STATS_CACHE_DIR PATH
 		# shellcheck source=../stats-health-dashboard-data.sh
@@ -149,13 +154,7 @@ GH
 		PERSON_STATS_INTERVAL=0
 		PERSON_STATS_LAST_RUN="${TMP_DIR}/fail.last"
 		PERSON_STATS_CACHE_DIR="${TMP_DIR}/cache-fail"
-		timeout_sec() {
-			local _seconds="$1"
-			shift
-			[[ -n "$_seconds" ]] || return 124
-			"$@"
-			return $?
-		}
+		define_timeout_sec_mock
 		PATH="${TMP_DIR}/bin-fail:${PATH}"
 		export HOME LOGFILE REPOS_JSON PERSON_STATS_INTERVAL PERSON_STATS_LAST_RUN PERSON_STATS_CACHE_DIR PATH
 		# shellcheck source=../stats-health-dashboard-data.sh
