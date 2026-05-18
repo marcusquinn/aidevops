@@ -36,6 +36,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Distinct exit code emitted by contributor-activity-helper.sh when stdout
+# contains valid but incomplete data due to rate limits or timeouts.
+readonly STATS_HEALTH_EX_PARTIAL=75
+
 # --- Functions ---
 
 #######################################
@@ -880,6 +884,8 @@ _refresh_person_stats_cache() {
 
 	local repo_count=0
 	local search_api_cost_per_contributor=4
+	local partial_exit="$STATS_HEALTH_EX_PARTIAL"
+	local refreshed_any=false
 	while IFS='|' read -r _slug _path; do
 		[[ -z "$_slug" ]] && continue
 		repo_count=$((repo_count + 1))
@@ -902,10 +908,14 @@ _refresh_person_stats_cache() {
 
 		local slug_safe="${slug//\//-}"
 		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
-		local md
-		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md=""
-		if [[ -n "$md" ]]; then
+		local md md_rc
+		md_rc=0
+		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md_rc=$?
+		if [[ -n "$md" && ( "$md_rc" -eq 0 || "$md_rc" -eq "$partial_exit" ) ]]; then
 			echo "$md" >"$cache_file"
+			refreshed_any=true
+		elif [[ "$md_rc" -ne 0 ]]; then
+			echo "[stats] Person stats cache refresh failed for ${slug}: helper exited ${md_rc}" >>"$LOGFILE"
 		fi
 	done <<<"$repo_entries"
 
@@ -919,15 +929,23 @@ _refresh_person_stats_cache() {
 			[[ -n "$rp" ]] && cross_args+=("$rp")
 		done <<<"$all_repo_paths"
 		if [[ ${#cross_args[@]} -gt 1 ]]; then
-			local cross_md
-			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_md=""
-			if [[ -n "$cross_md" ]]; then
+			local cross_md cross_rc
+			cross_rc=0
+			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_rc=$?
+			if [[ -n "$cross_md" && ( "$cross_rc" -eq 0 || "$cross_rc" -eq "$partial_exit" ) ]]; then
 				echo "$cross_md" >"${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
+				refreshed_any=true
+			elif [[ "$cross_rc" -ne 0 ]]; then
+				echo "[stats] Cross-repo person stats cache refresh failed: helper exited ${cross_rc}" >>"$LOGFILE"
 			fi
 		fi
 	fi
 
-	date +%s >"$PERSON_STATS_LAST_RUN"
-	echo "[stats] Person stats cache refreshed" >>"$LOGFILE"
+	if [[ "$refreshed_any" == "true" ]]; then
+		date +%s >"$PERSON_STATS_LAST_RUN"
+		echo "[stats] Person stats cache refreshed" >>"$LOGFILE"
+	else
+		echo "[stats] Person stats cache refresh produced no successful outputs; last-run marker not updated" >>"$LOGFILE"
+	fi
 	return 0
 }

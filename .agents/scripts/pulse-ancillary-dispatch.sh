@@ -52,6 +52,36 @@ _expand_foss_repo_path() {
 }
 
 #######################################
+# List one open FOSS issue matching a configured label.
+#
+# GitHub CLI treats commas in --label values as multiple labels. Use quoted
+# search syntax only for comma-containing label names so a single configured
+# label such as "needs, triage" remains one label at the point of use.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - label
+#######################################
+_foss_issue_list_for_label() {
+	local repo_slug="$1"
+	local label="$2"
+	local selector_args=()
+
+	if [[ "$label" == *,* ]]; then
+		local search_label="${label//\\/\\\\}"
+		search_label="${search_label//\"/\\\"}"
+		selector_args=(--search "label:\"${search_label}\"")
+	else
+		selector_args=(--label "$label")
+	fi
+
+	gh_issue_list --repo "$repo_slug" --state open \
+		"${selector_args[@]}" --limit 1 \
+		--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
+	return $?
+}
+
+#######################################
 # Ensure the triage-failed label exists in the target repo.
 #
 # Uses gh label create --force (idempotent — creates if missing,
@@ -1229,9 +1259,7 @@ dispatch_foss_workers() {
 		done < <(jq -r '.[]' <<<"$labels_filter_json" 2>/dev/null || printf '%s\n' 'help wanted' 'good first issue' 'bug')
 		for foss_label in "${foss_label_candidates[@]}"; do
 			[[ -n "$foss_label" ]] || continue
-			foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
-				--label "$foss_label" --limit 1 \
-				--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"') || foss_issue=""
+			foss_issue=$(_foss_issue_list_for_label "$foss_slug" "$foss_label") || foss_issue=""
 			[[ -n "$foss_issue" ]] && break
 		done
 		if [[ -z "$foss_issue" ]]; then

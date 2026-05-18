@@ -37,6 +37,12 @@ make_tmpdir() {
 	return 0
 }
 
+cleanup_test_tmpdir() {
+	local tmpdir="${1:-}"
+	[[ -n "$tmpdir" && "$tmpdir" != "/" ]] && rm -rf -- "$tmpdir"
+	return 0
+}
+
 prepare_test_dirs() {
 	local test_name="$1"
 	local tmpdir="$2"
@@ -46,18 +52,19 @@ prepare_test_dirs() {
 		return 0
 	fi
 	print_result "$test_name" 1 "mkdir failed"
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 1
 }
 
 test_self_reference_only_scan_succeeds() {
+	local test_name="self-reference-only scan exits cleanly"
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
-		print_result "self-reference-only scan exits cleanly" 1 "mktemp failed"
+		print_result "$test_name" 1 "mktemp failed"
 		return 0
 	}
 
-	prepare_test_dirs "self-reference-only scan exits cleanly" "$tmpdir" \
+	prepare_test_dirs "$test_name" "$tmpdir" \
 		"${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'Documented IOC: router_''init.js and gh-token-''monitor.' \
 		>"${tmpdir}/.agents/reference/npm-supply-chain-response.md"
@@ -70,22 +77,23 @@ test_self_reference_only_scan_succeeds() {
 	if [[ "$status" -eq 0 ]] \
 		&& [[ "$output" == *"known-safe scanner self-reference"* ]] \
 		&& [[ "$output" != *"Potential supply-chain compromise indicators found"* ]]; then
-		print_result "self-reference-only scan exits cleanly" 0
+		print_result "$test_name" 0
 	else
-		print_result "self-reference-only scan exits cleanly" 1 "status=${status} output=${output}"
+		print_result "$test_name" 1 "status=${status} output=${output}"
 	fi
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 0
 }
 
 test_relative_self_reference_only_scan_succeeds() {
+	local test_name="relative self-reference-only scan exits cleanly"
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
-		print_result "relative self-reference-only scan exits cleanly" 1 "mktemp failed"
+		print_result "$test_name" 1 "mktemp failed"
 		return 0
 	}
 
-	prepare_test_dirs "relative self-reference-only scan exits cleanly" "$tmpdir" \
+	prepare_test_dirs "$test_name" "$tmpdir" \
 		"${tmpdir}/.agents/reference" "${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'Documented IOC: router_''init.js and gh-token-''monitor.' \
 		>"${tmpdir}/.agents/reference/npm-supply-chain-response.md"
@@ -98,22 +106,23 @@ test_relative_self_reference_only_scan_succeeds() {
 	if [[ "$status" -eq 0 ]] \
 		&& [[ "$output" == *"known-safe scanner self-reference"* ]] \
 		&& [[ "$output" != *"Potential supply-chain compromise indicators found"* ]]; then
-		print_result "relative self-reference-only scan exits cleanly" 0
+		print_result "$test_name" 0
 	else
-		print_result "relative self-reference-only scan exits cleanly" 1 "status=${status} output=${output}"
+		print_result "$test_name" 1 "status=${status} output=${output}"
 	fi
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 0
 }
 
 test_single_file_self_reference_only_scan_succeeds() {
+	local test_name="single-file self-reference-only scan exits cleanly"
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
-		print_result "single-file self-reference-only scan exits cleanly" 1 "mktemp failed"
+		print_result "$test_name" 1 "mktemp failed"
 		return 0
 	}
 
-	prepare_test_dirs "single-file self-reference-only scan exits cleanly" "$tmpdir" \
+	prepare_test_dirs "$test_name" "$tmpdir" \
 		"${tmpdir}/.agents/scripts" || return 0
 	printf '%s\n' 'readonly IOC_PATTERN="router_''init.js|gh-token-''monitor"' \
 		>"${tmpdir}/.agents/scripts/supply-chain-advisory-helper.sh"
@@ -124,22 +133,23 @@ test_single_file_self_reference_only_scan_succeeds() {
 	if [[ "$status" -eq 0 ]] \
 		&& [[ "$output" == *"known-safe scanner self-reference"* ]] \
 		&& [[ "$output" != *"Potential supply-chain compromise indicators found"* ]]; then
-		print_result "single-file self-reference-only scan exits cleanly" 0
+		print_result "$test_name" 0
 	else
-		print_result "single-file self-reference-only scan exits cleanly" 1 "status=${status} output=${output}"
+		print_result "$test_name" 1 "status=${status} output=${output}"
 	fi
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 0
 }
 
 test_non_self_ioc_scan_fails() {
+	local test_name="non-self IOC scan still fails"
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
-		print_result "non-self IOC scan still fails" 1 "mktemp failed"
+		print_result "$test_name" 1 "mktemp failed"
 		return 0
 	}
 
-	prepare_test_dirs "non-self IOC scan still fails" "$tmpdir" "${tmpdir}/docs" || return 0
+	prepare_test_dirs "$test_name" "$tmpdir" "${tmpdir}/docs" || return 0
 	printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/docs/evidence.md"
 
 	local output
@@ -148,28 +158,29 @@ test_non_self_ioc_scan_fails() {
 	if [[ "$status" -eq 1 ]] \
 		&& [[ "$output" == *"docs/evidence.md"* ]] \
 		&& [[ "$output" == *"Potential supply-chain compromise indicators found"* ]]; then
-		print_result "non-self IOC scan still fails" 0
+		print_result "$test_name" 0
 	else
-		print_result "non-self IOC scan still fails" 1 "status=${status} output=${output}"
+		print_result "$test_name" 1 "status=${status} output=${output}"
 	fi
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 0
 }
 
 test_similar_agents_suffix_ioc_scan_fails() {
+	local test_name="similarly named agents directory still fails"
 	local tmpdir
 	tmpdir=$(make_tmpdir) || {
-		print_result "similarly named agents directory still fails" 1 "mktemp failed"
+		print_result "$test_name" 1 "mktemp failed"
 		return 0
 	}
 
-	if ! prepare_test_dirs "similarly named agents directory still fails" "$tmpdir" \
+	if ! prepare_test_dirs "$test_name" "$tmpdir" \
 		"${tmpdir}/not.agents/reference"; then
 		return 0
 	fi
 	if ! printf '%s\n' 'Suspicious artifact: router_''init.js' >"${tmpdir}/not.agents/reference/npm-supply-chain-response.md"; then
-		print_result "similarly named agents directory still fails" 1 "fixture write failed"
-		rm -rf "$tmpdir"
+		print_result "$test_name" 1 "fixture write failed"
+		cleanup_test_tmpdir "$tmpdir"
 		return 0
 	fi
 
@@ -179,11 +190,11 @@ test_similar_agents_suffix_ioc_scan_fails() {
 	if [[ "$status" -eq 1 ]] \
 		&& [[ "$output" == *"not.agents/reference/npm-supply-chain-response.md"* ]] \
 		&& [[ "$output" == *"Potential supply-chain compromise indicators found"* ]]; then
-		print_result "similarly named agents directory still fails" 0
+		print_result "$test_name" 0
 	else
-		print_result "similarly named agents directory still fails" 1 "status=${status} output=${output}"
+		print_result "$test_name" 1 "status=${status} output=${output}"
 	fi
-	rm -rf "$tmpdir"
+	cleanup_test_tmpdir "$tmpdir"
 	return 0
 }
 

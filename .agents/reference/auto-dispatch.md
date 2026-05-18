@@ -146,7 +146,8 @@ For routine bug fixes, refactors, and well-specified work in dispatch-path files
 |---|---|
 | `dispatch-path-ok` | (Legacy / redundant since t2920) Author explicitly requested auto-dispatch on a dispatch-path task. New tasks don't need this label. |
 | `parent-task` | Unconditional dispatch block — `dispatch-dedup-helper.sh` `_is_assigned_check_parent_task` short-circuits with `PARENT_TASK_BLOCKED` |
-| `no-auto-dispatch` | Unconditional dispatch block (t2832) — `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` short-circuits with `NO_AUTO_DISPATCH_BLOCKED`. Use only when you specifically want the dispatch-path opt-out described above. |
+| `no-auto-dispatch` | Canonical unconditional issue dispatch block (t2832) — `dispatch-dedup-helper.sh` `_is_assigned_check_no_auto_dispatch` short-circuits with `NO_AUTO_DISPATCH_BLOCKED`. Use when you want to keep an issue in the backlog but prevent pulse workers from picking it up. |
+| `hold-for-review` | Review-hold label. On issues, blocks dispatch with the same intent as `no-auto-dispatch` (`HOLD_FOR_REVIEW_BLOCKED`). On PRs, blocks auto-merge until explicit maintainer review. |
 
 Companion fixes: t2819 (self-hosting pre-dispatch tier override), t2820 (no_work reclassification), t2832 (no-auto-dispatch unconditional block), t2920 (default reversed to auto-dispatch + advisory). Derived from #20765 / GH#20827 / GH#21086 dispatch-history analysis.
 

@@ -147,10 +147,15 @@ test_check_validates_capability_cardinality() {
 test_sync_without_node_fails_open() {
 	local path_without_node="$TEST_HOME/no-node-bin"
 	mkdir -p "$path_without_node"
-	ln -s "$(command -v bash)" "$path_without_node/bash"
-	ln -s "$(command -v cat)" "$path_without_node/cat"
-	ln -s "$(command -v dirname)" "$path_without_node/dirname"
-	ln -s "$(command -v mkdir)" "$path_without_node/mkdir"
+
+	local cmd=""
+	local cmd_path=""
+	for cmd in bash cat cp dirname find grep jq ln mkdir readlink rm rsync sed; do
+		cmd_path=$(command -v "$cmd")
+		if [[ -n "$cmd_path" ]]; then
+			ln -s "$cmd_path" "$path_without_node/$cmd"
+		fi
+	done
 
 	local output=""
 	local status=0
