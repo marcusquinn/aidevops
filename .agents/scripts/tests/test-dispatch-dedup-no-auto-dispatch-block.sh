@@ -54,6 +54,9 @@ TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export HOME="${TEST_ROOT}/home"
 mkdir -p "${HOME}/.aidevops/logs" "${HOME}/.aidevops/.agent-workspace/supervisor"
+unset AIDEVOPS_GH_FORCE_REST_READS
+unset AIDEVOPS_GH_REST_FIRST_READS
+unset _GH_SHOULD_FALLBACK_OVERRIDE
 
 # =============================================================================
 # Stub the gh CLI so we can feed synthetic issue payloads into is_assigned
@@ -152,14 +155,28 @@ else
 fi
 
 # =============================================================================
-# Part 2 — Negative cases (must NOT trigger the new block)
+# Part 2 — hold-for-review sibling gate
 # =============================================================================
 
-# Case F: unrelated labels only (no `no-auto-dispatch`) → must NOT short-circuit
+# Case F: hold-for-review labeled issue with no assignees → must block dispatch.
+write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"hold-for-review"},{"name":"pulse"},{"name":"tier:standard"}]}'
+run_is_assigned 99894 "owner/repo"
+if [[ "$rc" -eq 0 && "$output" == *"HOLD_FOR_REVIEW_BLOCKED"* && "$output" == *"hold-for-review"* ]]; then
+	print_result "is-assigned blocks hold-for-review labeled issue (HOLD_FOR_REVIEW_BLOCKED signal)" 0
+else
+	print_result "is-assigned blocks hold-for-review labeled issue (HOLD_FOR_REVIEW_BLOCKED signal)" 1 \
+		"(rc=$rc output='$output')"
+fi
+
+# =============================================================================
+# Part 3 — Negative cases (must NOT trigger the new block)
+# =============================================================================
+
+# Case G: unrelated labels only (no `no-auto-dispatch`) → must NOT short-circuit
 # on no-auto-dispatch. This case may still allow dispatch (rc=1) or block on
 # other guards; we only assert the NO_AUTO_DISPATCH signal is absent.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"pulse"},{"name":"tier:standard"}]}'
-run_is_assigned 99894 "owner/repo"
+run_is_assigned 99893 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned does not emit NO_AUTO_DISPATCH_BLOCKED for unlabeled issue" 0
 else
@@ -167,10 +184,10 @@ else
 		"(rc=$rc output='$output')"
 fi
 
-# Case G: substring-similar label (e.g. "auto-dispatch" alone) must NOT match.
+# Case H: substring-similar label (e.g. "auto-dispatch" alone) must NOT match.
 # The check is exact equality against "no-auto-dispatch", not substring.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":[{"name":"auto-dispatch"},{"name":"pulse"}]}'
-run_is_assigned 99893 "owner/repo"
+run_is_assigned 99892 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned does not match 'auto-dispatch' as 'no-auto-dispatch'" 0
 else
@@ -179,13 +196,13 @@ else
 fi
 
 # =============================================================================
-# Part 3 — Fail-closed contract (jq error path — t2061)
+# Part 4 — Fail-closed contract (jq error path — t2061)
 # =============================================================================
 
-# Case H: labels key is null — must not crash, must allow dispatch (no label
+# Case I: labels key is null — must not crash, must allow dispatch (no label
 # = not blocked by this guard). Validates the `(.labels // [])` null-fallback.
 write_stub_gh '{"state":"OPEN","assignees":[],"labels":null}'
-run_is_assigned 99892 "owner/repo"
+run_is_assigned 99891 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned allows dispatch when labels key is null (null-fallback safety)" 0
 else
@@ -193,9 +210,9 @@ else
 		"(rc=$rc output='$output')"
 fi
 
-# Case I: labels key absent entirely — same null-fallback safety.
+# Case J: labels key absent entirely — same null-fallback safety.
 write_stub_gh '{"state":"OPEN","assignees":[]}'
-run_is_assigned 99891 "owner/repo"
+run_is_assigned 99890 "owner/repo"
 if [[ "$output" != *"NO_AUTO_DISPATCH_BLOCKED"* ]]; then
 	print_result "is-assigned allows dispatch when labels key is absent (null-fallback safety)" 0
 else

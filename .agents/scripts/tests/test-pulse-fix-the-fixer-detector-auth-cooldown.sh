@@ -48,7 +48,7 @@ setup_sandbox() {
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-	printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]}]\n'
+	printf '[{"number":1,"labels":[{"name":"auto-dispatch"}]},{"number":2,"labels":[{"name":"auto-dispatch"}]}]\n'
 	exit 0
 fi
 if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
@@ -86,7 +86,7 @@ teardown_sandbox() {
 run_detector() {
 	local output_file="$1"
 	"${PWD}/.agents/scripts/pulse-fix-the-fixer-detector.sh" run \
-		--repo example/repo --limit 1 >"$output_file" 2>&1
+		--repo example/repo --limit 2 >"$output_file" 2>&1
 	return 0
 }
 
@@ -149,7 +149,23 @@ main() {
 		print_result "auth cooldown state file recorded" 1 "cooldown file missing"
 	fi
 
-	if grep -q 'skipped:auth-error=1' "$second_log" && grep -q 'AI research credentials invalid' "$second_log"; then
+	local first_warn_count
+	first_warn_count=$(grep -c 'fix-the-fixer-detector] WARN:' "$first_log" || true)
+	if [[ "$first_warn_count" == "1" ]] && ! grep -q 'classification skipped' "$first_log"; then
+		print_result "auth failures emit one cycle-level warning" 0
+	else
+		print_result "auth failures emit one cycle-level warning" 1 "warns=${first_warn_count}; first log: $(tr '\n' ' ' <"$first_log")"
+	fi
+
+	local second_warn_count
+	second_warn_count=$(grep -c 'fix-the-fixer-detector] WARN:' "$second_log" || true)
+	if [[ "$second_warn_count" == "1" ]] && ! grep -q 'classification skipped' "$second_log"; then
+		print_result "cooldown skips emit one cycle-level warning" 0
+	else
+		print_result "cooldown skips emit one cycle-level warning" 1 "warns=${second_warn_count}; second log: $(tr '\n' ' ' <"$second_log")"
+	fi
+
+	if grep -q 'skipped:auth-error=2' "$second_log" && grep -q 'AI research credentials invalid' "$second_log"; then
 		print_result "subsequent run reports concise auth skip" 0
 	else
 		print_result "subsequent run reports concise auth skip" 1 "second log: $(tr '\n' ' ' <"$second_log")"

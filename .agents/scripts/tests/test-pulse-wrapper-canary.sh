@@ -187,11 +187,66 @@ test_canary_short_circuit_after_lock() {
 	return 0
 }
 
+cleanup_registration_precedes_exit_trap() {
+	awk '
+		/_save_cleanup_scope/ {
+			seen_scope = 1
+			next
+		}
+		seen_scope && /push_cleanup '\''release_instance_lock'\''/ {
+			seen_cleanup = 1
+			next
+		}
+		seen_scope && seen_cleanup && /trap '\''_run_cleanups'\'' EXIT/ {
+			found = 1
+			exit
+		}
+		END {
+			exit found ? 0 : 1
+		}
+	' "$WRAPPER_SCRIPT"
+	return $?
+}
+
+# Test 5: Static check — pulse enables per-cycle PR list and view cache TTLs.
+#
+# GH#23604: default 15-second wrapper cache windows were too short for a full
+# pulse pass, so late-cycle merge/dispatch gates repeated PR list/view calls.
+# Pulse must set per-cycle cache dirs and longer TTLs before the canary
+# short-circuit so the real cycle inherits them.
+test_pr_cache_ttls_are_per_cycle() {
+	local missing=""
+	if ! grep -q 'AIDEVOPS_GH_PR_VIEW_CACHE_TTL=.*AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600' "$WRAPPER_SCRIPT"; then
+		missing="${missing} view-ttl"
+	fi
+	if ! grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_TTL=.*AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600' "$WRAPPER_SCRIPT"; then
+		missing="${missing} list-ttl"
+	fi
+	if ! grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_DIR=.*aidevops-pulse-pr-list-cache' "$WRAPPER_SCRIPT"; then
+		missing="${missing} list-cache-dir"
+	fi
+	if ! grep -q "trap '_run_cleanups' EXIT" "$WRAPPER_SCRIPT"; then
+		missing="${missing} exit-cleanup-trap"
+	fi
+	if ! cleanup_registration_precedes_exit_trap; then
+		missing="${missing} lock-cleanup-before-exit-trap"
+	fi
+
+	if [[ -z "$missing" ]]; then
+		print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 0
+		return 0
+	fi
+	print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 1 \
+		"Missing pulse cache wiring:${missing}"
+	return 0
+}
+
 main_test() {
 	test_canary_exits_zero
 	test_canary_prints_checkpoint
 	test_canary_function_exists
 	test_canary_short_circuit_after_lock
+	test_pr_cache_ttls_are_per_cycle
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

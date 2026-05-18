@@ -189,6 +189,212 @@ test_pr_target_reason_is_classified_as_benign_block() {
 	return 0
 }
 
+test_benign_block_ledger_is_cycle_local_and_cleaned() {
+	reset_guardrail_env
+	local first_ledger second_ledger lingering_reason=""
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+	first_ledger="$_DISPATCH_BENIGN_BLOCKS_FILE"
+	_dispatch_mark_benign_blocked_candidate 23541 marcusquinn/aidevops dedup_active_claim
+	_dispatch_cleanup_benign_blocks_cycle
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+	second_ledger="$_DISPATCH_BENIGN_BLOCKS_FILE"
+	lingering_reason=$(_dispatch_benign_blocked_candidate_reason 23541 marcusquinn/aidevops 2>/dev/null || true)
+	_dispatch_cleanup_benign_blocks_cycle
+	if [[ "$first_ledger" != "$second_ledger" && ! -e "$first_ledger" && ! -e "$second_ledger" && -z "$lingering_reason" ]]; then
+		print_result "guardrail: benign block ledger is cycle-local and cleaned" 0
+	else
+		print_result "guardrail: benign block ledger is cycle-local and cleaned" 1 "first=${first_ledger} second=${second_ledger} lingering=${lingering_reason}"
+	fi
+	return 0
+}
+
+test_external_benign_block_ledger_is_preserved_and_refreshed() {
+	reset_guardrail_env
+	local external_ledger="${TEST_ROOT}/external-benign-blocks.tsv"
+	local ledger_path=""
+	printf '%s\t%s\t%s\n' 101 marcusquinn/aidevops caller_managed >"$external_ledger"
+	export AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE="$external_ledger"
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+	ledger_path="$_DISPATCH_BENIGN_BLOCKS_FILE"
+	_dispatch_mark_benign_blocked_candidate 23575 marcusquinn/aidevops dedup_active_claim
+	_dispatch_cleanup_benign_blocks_cycle
+	unset AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE
+	if [[ "$ledger_path" == "$external_ledger" ]] && [[ -f "$external_ledger" ]] && ! grep -q $'^101\tmarcusquinn/aidevops\tcaller_managed$' "$external_ledger" && grep -q $'^23575\tmarcusquinn/aidevops\tdedup_active_claim$' "$external_ledger"; then
+		print_result "guardrail: external benign block ledger is preserved and refreshed" 0
+	else
+		print_result "guardrail: external benign block ledger is preserved and refreshed" 1 "ledger=${ledger_path}"
+	fi
+	return 0
+}
+
+test_apply_dispatch_max_preserves_benign_ledger_across_refill() {
+	reset_guardrail_env
+	export AIDEVOPS_MIN_WORKER_CONCURRENCY=2
+	local dispatch_calls_file="${TEST_ROOT}/dispatch-calls"
+	local refill_reason_file="${TEST_ROOT}/refill-seen-reason"
+	local child_env_file="${TEST_ROOT}/refill-child-env-sees-ledger"
+	printf '0\n' >"$dispatch_calls_file"
+	: >"$refill_reason_file"
+	: >"$child_env_file"
+	local dispatch_calls=""
+	local refill_seen_reason=""
+	local child_env_seen=""
+	local ledger_after=""
+
+	dispatch_max() {
+		local current_calls=""
+		current_calls=$(<"$dispatch_calls_file")
+		[[ "$current_calls" =~ ^[0-9]+$ ]] || current_calls=0
+		current_calls=$((current_calls + 1))
+		printf '%s\n' "$current_calls" >"$dispatch_calls_file"
+		if [[ "$current_calls" -eq 1 ]]; then
+			_dispatch_mark_benign_blocked_candidate 23541 marcusquinn/aidevops dedup_active_claim
+			printf '1\n'
+		else
+			if bash -c '[[ -n "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" && -f "${_DISPATCH_BENIGN_BLOCKS_FILE}" ]]'; then
+				printf 'yes\n' >"$child_env_file"
+			fi
+			_dispatch_benign_blocked_candidate_reason 23541 marcusquinn/aidevops >"$refill_reason_file" 2>/dev/null || true
+			printf '0\n'
+		fi
+		return 0
+	}
+
+	count_active_workers() {
+		printf '0\n'
+		return 0
+	}
+
+	_adaptive_launch_settle_wait() {
+		return 0
+	}
+
+	apply_dispatch_max
+	dispatch_calls=$(<"$dispatch_calls_file")
+	refill_seen_reason=$(<"$refill_reason_file")
+	child_env_seen=$(<"$child_env_file")
+	ledger_after="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
+	unset AIDEVOPS_MIN_WORKER_CONCURRENCY
+	if [[ "$dispatch_calls" -ge 2 && "$refill_seen_reason" == "dedup_active_claim" && "$child_env_seen" == "yes" && -z "$ledger_after" ]]; then
+		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 0
+	else
+		print_result "guardrail: apply_dispatch_max preserves benign block ledger across refill" 1 "calls=${dispatch_calls} reason=${refill_seen_reason} child_env=${child_env_seen} ledger_after=${ledger_after}"
+	fi
+	return 0
+}
+
+test_dispatch_max_exports_benign_ledger_for_direct_callers() {
+	local engine_file="${SCRIPT_DIR}/pulse-dispatch-engine.sh"
+	if awk '
+		/^dispatch_max\(\) \{/ { in_dispatch=1 }
+		in_dispatch && /_dispatch_begin_benign_blocks_cycle >\/dev\/null/ { saw_begin=1 }
+		in_dispatch && saw_begin && /export _DISPATCH_BENIGN_BLOCKS_FILE/ { found=1; exit 0 }
+		in_dispatch && /^}/ { exit 1 }
+		END { exit(found ? 0 : 1) }
+	' "$engine_file"; then
+		print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 0
+		return 0
+	fi
+
+	print_result "guardrail: dispatch_max exports benign block ledger for direct callers" 1 "missing export in dispatch_max"
+	return 0
+}
+
+test_ranked_candidates_prioritise_solvable_work() {
+	reset_guardrail_env
+	local repos_file="${TEST_ROOT}/repos.json"
+	cat >"$repos_file" <<'JSON'
+{
+  "initialized_repos": [
+    {"slug": "owner/repo", "path": "/tmp/repo", "pulse": true, "priority": "tooling"}
+  ]
+}
+JSON
+	export REPOS_JSON="$repos_file"
+
+	check_repo_pulse_schedule() {
+		return 0
+	}
+
+	check_repo_pulse_interval() {
+		return 0
+	}
+
+	update_repo_pulse_timestamp() {
+		return 0
+	}
+
+	list_dispatchable_issue_candidates_json() {
+		local repo_slug="$1"
+		local limit="$2"
+		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
+		cat <<'JSON'
+[
+  {"number": 10, "title": "broad enhancement", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "tier:thinking"}], "assignees": []},
+  {"number": 11, "title": "small worker-ready fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "tier:simple"}, {"name": "worker-ready"}, {"name": "auto-dispatch"}], "assignees": []},
+  {"number": 12, "title": "plain bug", "updatedAt": "2026-05-03T00:00:00Z", "labels": [{"name": "bug"}], "assignees": []}
+]
+JSON
+		return 0
+	}
+
+	local first_number=""
+	first_number=$(build_ranked_dispatch_candidates_json 10 | jq -r '.[0].number' 2>/dev/null) || first_number=""
+	if [[ "$first_number" == "11" ]]; then
+		print_result "guardrail: ranked dispatch prefers solvable worker-ready issues over raw backlog" 0
+	else
+		print_result "guardrail: ranked dispatch prefers solvable worker-ready issues over raw backlog" 1 "first=${first_number}"
+	fi
+	return 0
+}
+
+test_ranked_candidates_prioritise_low_complexity_over_research() {
+	reset_guardrail_env
+	local repos_file="${TEST_ROOT}/repos-low-complexity.json"
+	cat >"$repos_file" <<'JSON'
+{
+  "initialized_repos": [
+    {"slug": "owner/repo", "path": "/tmp/repo", "pulse": true, "priority": "tooling"}
+  ]
+}
+JSON
+	export REPOS_JSON="$repos_file"
+
+	check_repo_pulse_schedule() {
+		return 0
+	}
+
+	check_repo_pulse_interval() {
+		return 0
+	}
+
+	update_repo_pulse_timestamp() {
+		return 0
+	}
+
+	list_dispatchable_issue_candidates_json() {
+		local repo_slug="$1"
+		local limit="$2"
+		printf '%s %s\n' "$repo_slug" "$limit" >/dev/null
+		cat <<'JSON'
+[
+  {"number": 20, "title": "broad research priority", "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "priority:high"}, {"name": "research"}, {"name": "tier:thinking"}], "assignees": []},
+  {"number": 21, "title": "low complexity actionable fix", "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}, {"name": "low-complexity"}, {"name": "status:available"}], "assignees": []}
+]
+JSON
+		return 0
+	}
+
+	local first_number=""
+	first_number=$(build_ranked_dispatch_candidates_json 10 | jq -r '.[0].number' 2>/dev/null) || first_number=""
+	if [[ "$first_number" == "21" ]]; then
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 0
+	else
+		print_result "guardrail: ranked dispatch prefers low-complexity actionable work over research backlog" 1 "first=${first_number}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -198,6 +404,12 @@ test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
+test_benign_block_ledger_is_cycle_local_and_cleaned
+test_external_benign_block_ledger_is_preserved_and_refreshed
+test_dispatch_max_exports_benign_ledger_for_direct_callers
+test_apply_dispatch_max_preserves_benign_ledger_across_refill
+test_ranked_candidates_prioritise_solvable_work
+test_ranked_candidates_prioritise_low_complexity_over_research
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"

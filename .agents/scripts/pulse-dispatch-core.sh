@@ -193,8 +193,13 @@ check_dispatch_dedup() {
 	_dedup_layer2_process_match "$issue_number" "$repo_slug" && return 0
 	_dedup_layer3_title_match "$title" && return 0
 	_dedup_layer4_pr_evidence "$issue_number" "$repo_slug" "$issue_title" && return 0
-	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 0
-	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 0
+	# Active dispatch comments and assignment/claim guards are expected
+	# cross-runner locks, not launch failures. Preserve the block while giving
+	# dispatch_max a distinct benign rc so the stage wrapper suppresses generic
+	# "Stage failed" noise and refill loops can skip this candidate for the
+	# current pulse cycle (GH#23541).
+	_dedup_layer5_dispatch_comment "$issue_number" "$repo_slug" "$self_login" && return 3
+	_dedup_layer6_assignee_and_stale "$issue_number" "$repo_slug" "$self_login" && return 3
 
 	return 1
 }
@@ -1292,9 +1297,12 @@ _dispatch_dedup_check_layers() {
 	local _dedup_rc=0
 	ISSUE_META_JSON="$issue_meta_json" \
 		check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login" || _dedup_rc=$?
-	if [[ "$_dedup_rc" -eq 0 ]]; then
+	if [[ "$_dedup_rc" -eq 0 || "$_dedup_rc" -eq 3 ]]; then
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
+		if [[ "$_dedup_rc" -eq 3 ]]; then
+			return 3
+		fi
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
@@ -1525,10 +1533,15 @@ dispatch_with_dedup() {
 	# _claim_comment_id is set by check_dispatch_dedup inside this call via
 	# bash dynamic scoping — accessible below because it was declared local above.
 	_ds_t0=$(_ds_now_ns)
-	if ! _dispatch_dedup_check_layers \
+	local _dedup_check_rc=0
+	_dispatch_dedup_check_layers \
 		"$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
-		"$self_login" "$repo_path" "$issue_meta_json"; then
+		"$self_login" "$repo_path" "$issue_meta_json" || _dedup_check_rc=$?
+	if [[ "$_dedup_check_rc" -ne 0 ]]; then
 		_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
+		if [[ "$_dedup_check_rc" -eq 3 ]]; then
+			return 3
+		fi
 		return 1
 	fi
 	_ds_record "$issue_number" "$repo_slug" "dedup_check" "$_ds_t0"
@@ -1552,8 +1565,13 @@ dispatch_with_dedup() {
 	# keywords) and swaps tier:simple → tier:standard + posts feedback on hit.
 	# Always returns 0. Dispatch proceeds at the corrected tier on hit, or
 	# unchanged tier on miss. See .agents/reference/task-taxonomy.md.
+	# GH#23601: because the helper mutates labels on GitHub after the bundled
+	# t2996 metadata snapshot, refresh the bundle only for pre-check tier:simple
+	# candidates so eligibility/model resolution observe any tier upgrade.
 	_ds_t0=$(_ds_now_ns)
 	_run_tier_simple_body_shape_check "$issue_number" "$repo_slug"
+	issue_meta_json=$(_refresh_issue_meta_after_tier_body_shape_check \
+		"$issue_number" "$repo_slug" "$issue_meta_json")
 	_ds_record "$issue_number" "$repo_slug" "tier_body_shape" "$_ds_t0"
 
 	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
@@ -1793,6 +1811,48 @@ _run_tier_simple_body_shape_check() {
 	# Always pass regardless of helper exit code. The helper itself is
 	# documented non-blocking, but this wrapper is defensive.
 	"$check_helper" check "$issue_number" "$repo_slug" >>"$LOGFILE" 2>&1 || true
+	return 0
+}
+
+#######################################
+# Refresh bundled issue metadata after tier:simple body-shape validation.
+#
+# The validator may swap tier:simple → tier:standard on GitHub. The dispatch
+# pipeline otherwise forwards the pre-validator t2996 metadata bundle to the
+# eligibility gate and worker launch, causing label-derived model resolution to
+# use stale tier labels. Keep the extra API call limited to candidates whose
+# original snapshot included tier:simple, and fail open with the original bundle.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug (owner/repo)
+#   $3 - current issue_meta_json bundle
+#
+# Output:
+#   refreshed issue_meta_json when available; otherwise the original bundle
+# Exit codes:
+#   0 — always (fail-open metadata refresh)
+#######################################
+_refresh_issue_meta_after_tier_body_shape_check() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	if ! printf '%s' "$issue_meta_json" | jq -e 'any(.labels[]?; .name == "tier:simple")' >/dev/null 2>&1; then
+		printf '%s' "$issue_meta_json"
+		return 0
+	fi
+
+	local refreshed_issue_meta_json
+	refreshed_issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json number,title,state,labels,assignees,body 2>/dev/null) || refreshed_issue_meta_json=""
+	if [[ -z "$refreshed_issue_meta_json" ]]; then
+		echo "[dispatch_with_dedup] GH#23601: unable to refresh issue metadata after tier:simple body-shape check for #${issue_number} in ${repo_slug}; continuing with original snapshot" >>"$LOGFILE"
+		printf '%s' "$issue_meta_json"
+		return 0
+	fi
+
+	printf '%s' "$refreshed_issue_meta_json"
 	return 0
 }
 

@@ -480,6 +480,88 @@ test_missing_pulse_script_exit_2() {
 	return 0
 }
 
+test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early() {
+	local rc=0 err=""
+	err=$(
+		(
+			# shellcheck source=../pulse-lifecycle-helper.sh
+			source "$HELPER"
+
+			_pulse_pids_raw() {
+				local _i=1
+				while [[ "$_i" -le 100000 ]]; do
+					printf '%s\n' "$_i"
+					_i=$((_i + 1))
+				done
+				return 0
+			}
+
+			ps() {
+				local _arg1="${1:-}" _arg2="${2:-}" _arg3="${3:-}" _arg4="${4:-}" _fallback_rc=0
+				if [[ "$_arg1" == "-p" && "$_arg3" == "-o" && "$_arg4" == "ppid=" ]]; then
+					printf '1\n'
+					return 0
+				fi
+				if [[ "$_arg1" == "-p" && "$_arg3" == "-o" && "$_arg4" == "command=" ]]; then
+					printf 'bash %s/scripts/pulse-wrapper.sh pid=%s\n' "${TEST_ROOT:-/tmp}" "$_arg2"
+					return 0
+				fi
+				command ps "$@"
+				_fallback_rc=$?
+				return "$_fallback_rc"
+			}
+
+			_pulse_pids | {
+				local _first=""
+				read -r _first || true
+				return 0
+			} >/dev/null
+		) 2>&1
+	) || rc=$?
+
+	_assert_eq "_pulse_pids exits 0 when consumer closes early" "0" "$rc"
+	if [[ "$err" != *"Broken pipe"* ]]; then
+		_print_result "_pulse_pids suppresses Broken pipe noise on early close" 1
+	else
+		_print_result "_pulse_pids emitted Broken pipe noise (stderr=$err)" 0
+	fi
+	return 0
+}
+
+test_pipe_trap_restore_avoids_eval() {
+	local out=""
+	out=$(
+		(
+			# shellcheck source=../pulse-lifecycle-helper.sh
+			source "$HELPER"
+			_trap_eval_marker=0
+			_pulse_restore_pipe_trap '_trap_eval_marker=1'
+			printf '%s\n' "$_trap_eval_marker"
+		)
+	)
+	_assert_eq "_pulse_restore_pipe_trap does not eval trap text" "0" "$out"
+	return 0
+}
+
+test_pipe_trap_restore_ignored_sigpipe() {
+	local out=""
+	out=$(
+		(
+			# shellcheck source=../pulse-lifecycle-helper.sh
+			source "$HELPER"
+			trap - PIPE
+			_pulse_restore_pipe_trap "trap -- '' SIGPIPE"
+			trap -p PIPE
+		)
+	)
+	if [[ "$out" == *"''"* ]]; then
+		_print_result "_pulse_restore_pipe_trap restores ignored SIGPIPE" 1
+	else
+		_print_result "_pulse_restore_pipe_trap failed to restore ignored SIGPIPE (out=$out)" 0
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # GH#21903: threshold-based PILE-UP detection
 # -----------------------------------------------------------------------------
@@ -819,6 +901,9 @@ main() {
 	test_skip_env_honoured_in_restart_if_running
 	test_skip_env_honoured_in_restart
 	test_missing_pulse_script_exit_2
+	test_pulse_pids_suppresses_broken_pipe_when_consumer_exits_early
+	test_pipe_trap_restore_avoids_eval
+	test_pipe_trap_restore_ignored_sigpipe
 
 	# GH#21903 threshold-based PILE-UP detection
 	test_status_two_instances_no_warning_default_threshold

@@ -154,6 +154,26 @@ PYEOF
 }
 
 # ---------------------------------------------------------------------------
+# Test: missing config skips optional pulse tick
+# ---------------------------------------------------------------------------
+
+test_tick_missing_config_skips() {
+	local name="tick: missing mailbox config skips cleanly"
+	local tmpdir="${TEST_TMPDIR}/missing-config"
+	mkdir -p "$tmpdir"
+
+	local output exit_rc=0
+	output=$(cd "$tmpdir" && HOME="$tmpdir/home" bash "$POLL_HELPER" tick 2>&1) || exit_rc=$?
+
+	if [[ "$exit_rc" -eq 0 ]] && [[ "$output" == *"skipped"* ]] && [[ "$output" == *"aidevops email mailbox add"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "exit=$exit_rc output=$output"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test: Python syntax check
 # ---------------------------------------------------------------------------
 
@@ -434,6 +454,7 @@ main() {
 	setup
 
 	test_python_syntax
+	test_tick_missing_config_skips
 	test_tick_happy_path
 	test_missing_credentials
 	test_connection_failure

@@ -151,6 +151,24 @@ test_schema_files() {
 	return 0
 }
 
+test_tick_missing_knowledge_skips() {
+	setup
+	local name="tick: missing knowledge plane skips cleanly"
+	local tmpdir="${TEST_TMPDIR}/missing-knowledge"
+	mkdir -p "$tmpdir/home" "$tmpdir/repo"
+
+	local output exit_rc=0
+	output=$(cd "$tmpdir/repo" && HOME="$tmpdir/home" REPOS_FILE="$tmpdir/missing-repos.json" bash "$HELPER" tick 2>&1) || exit_rc=$?
+
+	if [[ "$exit_rc" -eq 0 ]] && [[ "$output" == *"skipped"* ]] && [[ "$output" == *"aidevops knowledge init repo"* ]]; then
+		pass "$name"
+	else
+		fail "$name" "exit=$exit_rc output=$output"
+	fi
+	teardown
+	return 0
+}
+
 test_regex_extraction() {
 	setup
 	local text_file="${TEST_TMPDIR}/test.txt"
@@ -428,6 +446,7 @@ test_dry_run() {
 run_tests() {
 	test_shellcheck
 	test_schema_files
+	test_tick_missing_knowledge_skips
 	test_regex_extraction
 	test_regex_no_match
 	test_llm_mock_absent

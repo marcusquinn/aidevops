@@ -284,6 +284,9 @@ export PULSE_QUEUED_SCAN_LIMIT=100
 #   #6: triage-missing (origin:interactive, no tier, no auto-dispatch, no status, old)
 #   #7: triage-missing-but-recent → not counted
 #   #8: triage-missing-but-has-tier → not counted
+#   #9: triage-missing shape but routine-tracking non-task → not counted
+#   #10: triage-missing shape but supervisor non-task → not counted
+#   #11/#12: null/missing labels → no jq error and no edits
 OLD_ISO=$(date -u -d '-1 hour' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null ||
 	TZ=UTC date -v-1H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "2026-04-13T00:00:00Z")
 NEW_ISO=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -298,7 +301,11 @@ ISSUES_JSON=$(
 	{"number":5,"labels":[{"name":"status:available"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
 	{"number":6,"labels":[{"name":"origin:interactive"}],"createdAt":"${OLD_ISO}"},
 	{"number":7,"labels":[{"name":"origin:interactive"}],"createdAt":"${NEW_ISO}"},
-	{"number":8,"labels":[{"name":"origin:interactive"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"}
+	{"number":8,"labels":[{"name":"origin:interactive"},{"name":"tier:standard"}],"createdAt":"${OLD_ISO}"},
+	{"number":9,"labels":[{"name":"origin:interactive"},{"name":"routine-tracking"}],"createdAt":"${OLD_ISO}"},
+	{"number":10,"labels":[{"name":"origin:interactive"},{"name":"supervisor"}],"createdAt":"${OLD_ISO}"},
+	{"number":11,"labels":null,"createdAt":"${OLD_ISO}"},
+	{"number":12,"createdAt":"${OLD_ISO}"}
 ]
 JSON
 )
@@ -401,14 +408,25 @@ else
 	print_result "reconciler #5 single-label no-op" 1 "(edit calls: $n5)"
 fi
 
-# Issue #6, #7, #8: triage-missing count-only (no edits)
+# Issue #6, #7, #8, #9, #10: triage-missing count-only/non-task (no edits)
 n6=$(count_edits_for 6)
 n7=$(count_edits_for 7)
 n8=$(count_edits_for 8)
-if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 ]]; then
+n9=$(count_edits_for 9)
+n10=$(count_edits_for 10)
+if [[ "$n6" -eq 0 && "$n7" -eq 0 && "$n8" -eq 0 && "$n9" -eq 0 && "$n10" -eq 0 ]]; then
 	print_result "reconciler does not auto-fix triage-missing issues" 0
 else
-	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8)"
+	print_result "reconciler does not auto-fix triage-missing issues" 1 "(edits: #6=$n6 #7=$n7 #8=$n8 #9=$n9 #10=$n10)"
+fi
+
+# Issues #11/#12: null/missing labels must not make jq abort the row stream.
+n11=$(count_edits_for 11)
+n12=$(count_edits_for 12)
+if [[ "$n11" -eq 0 && "$n12" -eq 0 ]]; then
+	print_result "reconciler tolerates null and missing labels" 0
+else
+	print_result "reconciler tolerates null and missing labels" 1 "(edits: #11=$n11 #12=$n12)"
 fi
 
 # Counter file must be written with exact numbers
@@ -438,11 +456,11 @@ if [[ -f "$COUNTER_FILE" ]]; then
 		print_result "counter tier_fixed=1 (issue #3)" 1 "(got: $tier_fixed)"
 	fi
 
-	# triage_missing: #6 only (#7 is recent, #8 has a tier)
+	# triage_missing: #6 only (#7 is recent, #8 has a tier, #9/#10 are non-task labels)
 	if [[ "$triage_missing" -eq 1 ]]; then
-		print_result "counter triage_missing=1 (only #6 matches all criteria)" 0
+		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 0
 	else
-		print_result "counter triage_missing=1 (only #6 matches all criteria)" 1 "(got: $triage_missing)"
+		print_result "counter triage_missing=1 (only #6 matches all criteria; non-task labels ignored)" 1 "(got: $triage_missing)"
 	fi
 fi
 
@@ -533,16 +551,16 @@ else
 		in_block { print }
 	' "$WORKFLOW_FILE")
 
-	# Skip signature: parent-task label probe inside the find-issue step AND
-	# (within the same step) an `echo "found_issues="` that emits empty output
-	# when the probe matches. Both indicators together prove the skip path
-	# exists and is wired into GITHUB_OUTPUT correctly.
-	if echo "$find_block" | grep -qE 'parent-task' &&
-		echo "$find_block" | grep -qE 'echo[[:space:]]+"found_issues="'; then
-		print_result "find-issue step skips parent-task title-fallback matches (t2137)" 0
+	# Skip signature: either the original parent-task label probe exists, or the
+	# stronger GH#23516 explicit-link gate disables title fallback entirely. In
+	# both cases an `echo "found_issues="` must emit empty output to GITHUB_OUTPUT.
+	if echo "$find_block" | grep -qE 'echo[[:space:]]+"found_issues="' &&
+		{ echo "$find_block" | grep -qE 'parent-task' ||
+			echo "$find_block" | grep -qE 'No explicit closing issue'; }; then
+		print_result "find-issue step skips unsafe title-fallback matches (t2137/GH#23516)" 0
 	else
-		print_result "find-issue step skips parent-task title-fallback matches (t2137)" 1 \
-			"(expected parent-task label probe + empty found_issues emission)"
+		print_result "find-issue step skips unsafe title-fallback matches (t2137/GH#23516)" 1 \
+			"(expected parent-task probe or explicit-link gate + empty found_issues emission)"
 	fi
 fi
 

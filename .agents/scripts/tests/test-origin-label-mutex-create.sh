@@ -121,10 +121,17 @@ _gh_auto_link_sub_issue() { return 0; }
 # the simple path — assignee logic isn't under test)
 _gh_wrapper_auto_assignee() { return 0; }
 
-# Stub _gh_wrapper_extract_task_id_from_title (returns empty — TODO label
-# derivation isn't under test)
-_gh_wrapper_extract_task_id_from_title() { return 0; }
-_gh_wrapper_derive_todo_labels() { return 0; }
+# Stub TODO derivation hooks. Most tests leave these empty; B'9 sets env vars
+# to simulate TODO.md-derived labels without depending on a repository TODO.md.
+_gh_wrapper_extract_task_id_from_title() {
+	[[ -n "${TEST_TODO_TASK_ID:-}" ]] && printf '%s' "$TEST_TODO_TASK_ID"
+	return 0
+}
+_gh_wrapper_derive_todo_labels() {
+	local task_id="$1"
+	[[ -n "$task_id" && -n "${TEST_TODO_DERIVED_LABELS:-}" ]] && printf '%s' "$TEST_TODO_DERIVED_LABELS"
+	return 0
+}
 
 # Stub session_origin_label so we can deterministically control what the
 # wrapper would self-inject. Tests call it via env var SESSION_ORIGIN_OVERRIDE.
@@ -370,7 +377,7 @@ if grep -qx '<--draft>' "$GH_ARGV_RECORD_FILE"; then
 else
 	print_result "B8: AIDEVOPS_PR_CREATE_READY leaves interactive PR non-draft" 0
 fi
-unset GH_ARGV_RECORD_FILE
+unset AIDEVOPS_PR_CREATE_READY GH_ARGV_RECORD_FILE
 
 # ---------------------------------------------------------------------------
 # Layer B': gh_create_issue defence-in-depth (mirrors PR tests)
@@ -508,6 +515,25 @@ else
 	print_result "B'8: gh_create_issue preserves caller status without concatenation" 1 \
 		"status_count=$status_n line: $last"
 fi
+
+# B'9: TODO-derived status wins — default status must inspect derived labels.
+# Regression for GH#23581: gh_create_issue filtered --todo-task-id from argv,
+# then checked only the filtered caller args for status labels. A status derived
+# from TODO.md was appended later, so the wrapper also injected status:available.
+reset_recorder
+TEST_TODO_TASK_ID="t999" TEST_TODO_DERIVED_LABELS="status:queued,origin:worker" \
+	SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "t999: advisory" --body "body" \
+	--todo-task-id t999 >/dev/null 2>&1
+status_n=$(count_status_labels_in_log)
+last=$(tail -1 "$GH_RECORD_FILE")
+if [[ "$status_n" == "1" && "$last" == *"status:queued"* && "$last" != *"status:available"* ]]; then
+	print_result "B'9: gh_create_issue preserves TODO-derived status" 0
+else
+	print_result "B'9: gh_create_issue preserves TODO-derived status" 1 \
+		"status_count=$status_n line: $last"
+fi
+unset TEST_TODO_TASK_ID TEST_TODO_DERIVED_LABELS
 
 # ---------------------------------------------------------------------------
 # Layer C: structural checks on full-loop-helper-commit.sh

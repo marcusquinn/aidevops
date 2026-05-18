@@ -172,6 +172,75 @@ emit_deploy_phase() {
 
 # --- Gate Checks ---
 
+_issue_thread_is_trusted_maintainer_only() {
+	local issue_num="$1"
+	local repo="$2"
+	local issue_author_association="${3:-}"
+
+	[[ -n "$issue_num" && -n "$repo" ]] || return 1
+	case "$issue_author_association" in
+	OWNER | MEMBER)
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	local comments_json
+	comments_json=$(gh api "repos/${repo}/issues/${issue_num}/comments" \
+		--paginate --slurp 2>/dev/null) || return 1
+	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
+
+	local untrusted_comment_count
+	untrusted_comment_count=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" '
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
+		else [] end)
+		| [ .[] | select((.author_association // "") as $a | ($a != "OWNER" and $a != "MEMBER")) ]
+		| length
+	' 2>/dev/null) || return 1
+	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
+
+	if [[ "$untrusted_comment_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+_linked_issue_structural_blocker_reasons() {
+	local issue_num="$1"
+	local repo="$2"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	local found=false
+
+	[[ -x "$dedup_helper" ]] || return 1
+
+	local dedup_out
+	dedup_out=$("$dedup_helper" enumerate-blockers "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
+	local _blocker_line
+	while IFS= read -r _blocker_line; do
+		[[ -z "$_blocker_line" ]] && continue
+		case "$_blocker_line" in
+		*PARENT_TASK_BLOCKED*)
+			found=true
+			printf 'Issue #%s carries the %s label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n' "$issue_num" "\`parent-task\`"
+			;;
+		*NO_AUTO_DISPATCH_BLOCKED*)
+			found=true
+			printf 'Issue #%s carries the %s label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n' "$issue_num" "\`no-auto-dispatch\`"
+			;;
+		*HOLD_FOR_REVIEW_BLOCKED*)
+			found=true
+			printf 'Issue #%s carries the %s label (maintainer-requested review hold). Remove the label when the hold is resolved.\n' "$issue_num" "\`hold-for-review\`"
+			;;
+		esac
+	done <<<"$dedup_out"
+
+	[[ "$found" == "true" ]] || return 1
+	return 0
+}
+
 # Pre-start maintainer gate check (GH#17810, t2890).
 # Extracts the first issue number from the prompt and verifies the linked
 # issue does not have needs-maintainer-review label or, for headless workers,
@@ -219,10 +288,11 @@ _check_linked_issue_gate() {
 		return 0
 	}
 
-	local state labels assignees
+	local state labels assignees issue_author_association
 	state=$(echo "$raw_issue" | jq -r '.state' 2>/dev/null || echo "unknown")
 	labels=$(echo "$raw_issue" | jq -r '[.labels[]?.name] | .[]' 2>/dev/null || true)
 	assignees=$(echo "$raw_issue" | jq -r '[.assignees[]?.login] | .[]' 2>/dev/null || true)
+	issue_author_association=$(echo "$raw_issue" | jq -r '.author_association // ""' 2>/dev/null || true)
 
 	# Skip closed issues — they've already been reviewed
 	if [[ "$state" == "closed" ]]; then
@@ -231,10 +301,17 @@ _check_linked_issue_gate() {
 
 	local blocked=false reasons=""
 
-	# Check 1: needs-maintainer-review label
-	if echo "$labels" | grep -q 'needs-maintainer-review'; then
-		blocked=true
-		reasons="${reasons}Issue #${issue_num} has \`needs-maintainer-review\` label — a maintainer must approve before work begins.\n"
+	# Check 1: needs-maintainer-review label. Interactive maintainer sessions may
+	# proceed on trusted maintainer-only threads so NMR does not become a generic
+	# maintainer hold label. Headless workers and any issue with non-maintainer
+	# content remain blocked until cryptographic approval.
+	if printf '%s\n' "$labels" | grep -qxF 'needs-maintainer-review'; then
+		if ! is_headless && _issue_thread_is_trusted_maintainer_only "$issue_num" "$repo" "$issue_author_association"; then
+			print_info "Issue #${issue_num} has needs-maintainer-review, but this interactive thread is maintainer-only; continuing without treating NMR as a maintainer hold."
+		else
+			blocked=true
+			reasons="${reasons}Issue #${issue_num} has \`needs-maintainer-review\` label and is not a trusted maintainer-only interactive thread — a maintainer must approve before work begins.\n"
+		fi
 	fi
 
 	# Check 2: no assignee (exempt quality-debt issues per GH#6623).
@@ -261,30 +338,16 @@ _check_linked_issue_gate() {
 	# Cost-budget, hydration window, and ownership-by-other are intentionally
 	# out of scope (need nuanced interactive UX). Fail-open on missing helper
 	# or empty stdout (matches the gh-api fail-open above).
-	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
-	if [[ -x "$dedup_helper" ]]; then
-		local dedup_out
-		dedup_out=$("$dedup_helper" enumerate-blockers "$issue_num" "$repo" "${AIDEVOPS_SESSION_USER:-${USER:-}}" 2>/dev/null || true)
-		local _blocker_line
-		while IFS= read -r _blocker_line; do
-			[[ -z "$_blocker_line" ]] && continue
-			case "$_blocker_line" in
-			*PARENT_TASK_BLOCKED*)
-				blocked=true
-				reasons="${reasons}Issue #${issue_num} carries the \`parent-task\` label (decomposition tracker, not a worker target). Decompose into child phase issues, or remove the label if this is no longer a parent.\n"
-				;;
-			*NO_AUTO_DISPATCH_BLOCKED*)
-				blocked=true
-				reasons="${reasons}Issue #${issue_num} carries the \`no-auto-dispatch\` label (explicit hold). Remove the label if you intentionally want worker dispatch, or work on this issue operationally (post comments, post analysis) without /full-loop.\n"
-				;;
-			esac
-		done <<<"$dedup_out"
+	local structural_reasons
+	if structural_reasons=$(_linked_issue_structural_blocker_reasons "$issue_num" "$repo"); then
+		blocked=true
+		reasons="${reasons}${structural_reasons}"
 	fi
 
 	if [[ "$blocked" == "true" ]]; then
 		print_error "Maintainer gate pre-check BLOCKED — cannot start work:"
 		printf '%b' "$reasons" >&2
-		printf "To unblock:\n  1. Run: sudo aidevops approve issue %s %s\n  2. Assign the issue to yourself\n" "$issue_num" "$repo" >&2
+		printf "To unblock: address the blocker labels above; use signed approval only for \`needs-maintainer-review\`, and remove \`hold-for-review\` only when the maintainer hold is resolved.\n" >&2
 		return 1
 	fi
 

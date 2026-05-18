@@ -1533,19 +1533,32 @@ _discover_actual_worktree_dir() {
 # =============================================================================
 
 cmd_run() {
-	local role="worker"
-	local session_key=""
-	local work_dir=""
-	local title=""
-	local prompt=""
-	local prompt_file=""
-	local model_override=""
-	local initial_model=""
-	local tier_override=""
-	local variant_override=""
-	local agent_name=""
-	local headless_runtime=""
-	local detach=0
+	local role
+	role="worker"
+	local session_key
+	session_key=""
+	local work_dir
+	work_dir=""
+	local title
+	title=""
+	local prompt
+	prompt=""
+	local prompt_file
+	prompt_file=""
+	local model_override
+	model_override=""
+	local initial_model
+	initial_model=""
+	local tier_override
+	tier_override=""
+	local variant_override
+	variant_override=""
+	local agent_name
+	agent_name=""
+	local headless_runtime
+	headless_runtime=""
+	local detach
+	detach=0
 	local -a extra_args=()
 
 	_parse_run_args "$@" || return 1
@@ -1565,14 +1578,23 @@ cmd_run() {
 		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic
 		# HEADLESS/FULL_LOOP_HEADLESS markers are intentionally not required
 		# past the clean-env boundary.
-		export AIDEVOPS_SESSION_ORIGIN="worker"
-		export AIDEVOPS_HEADLESS="true"
+		local _worker_session_origin
+		_worker_session_origin="${AIDEVOPS_SESSION_ORIGIN:-worker}"
+		local AIDEVOPS_SESSION_ORIGIN
+		AIDEVOPS_SESSION_ORIGIN="$_worker_session_origin"
+		export AIDEVOPS_SESSION_ORIGIN
+		local _worker_headless_marker
+		_worker_headless_marker="${AIDEVOPS_HEADLESS:-true}"
+		local AIDEVOPS_HEADLESS
+		AIDEVOPS_HEADLESS="$_worker_headless_marker"
+		export AIDEVOPS_HEADLESS
 	fi
 
 	print_info "[lifecycle] pre_model_select session=$session_key role=$role tier=${tier_override:-auto} pid=$$"
 	local selected_model
+	local choose_exit
 	selected_model=$(choose_model "$role" "${model_override:-$initial_model}" "$tier_override") || {
-		local choose_exit=$?
+		choose_exit=$?
 		_cmd_run_finish "$session_key" "fail"
 		return "$choose_exit"
 	}
@@ -1601,7 +1623,8 @@ cmd_run() {
 	# the EXIT trap is armed) so it is always available to _release_dispatch_claim.
 	# _cmd_run_prepare is called immediately below; the export no longer needs to
 	# live in _execute_run_attempt (which runs after the trap is already set).
-	local prepare_exit=0
+	local prepare_exit
+	prepare_exit=0
 	print_info "[lifecycle] pre_worker_prepare session=$session_key work_dir=$work_dir pid=$$"
 	_cmd_run_prepare "$session_key" "$work_dir" || prepare_exit=$?
 	if [[ "$prepare_exit" -eq 2 ]]; then

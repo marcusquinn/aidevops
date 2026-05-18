@@ -61,6 +61,7 @@ assert_not_grep() {
 # Resolve paths relative to this test file
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ENGINE="$SCRIPT_DIR/pulse-dispatch-engine.sh"
+CORE="$SCRIPT_DIR/pulse-dispatch-core.sh"
 DISPATCH_LIB="$SCRIPT_DIR/pulse-dispatch-lib.sh"
 
 echo "=== t2443 + t2903: pulse-dispatch-engine stage wiring regression tests ==="
@@ -159,11 +160,19 @@ assert_grep \
 	"$DISPATCH_LIB"
 assert_grep \
 	"10b: interactive review hold is recognized as a benign block" \
-	'interactive_review_hold \| pr_target_not_dispatchable' \
+	'dedup_active_claim \| interactive_review_hold \| pr_target_not_dispatchable' \
 	"$DISPATCH_LIB"
 assert_grep \
-	"10b2: PR target is logged as benign block, not pre-launch failure" \
-	'benign dispatch block reason=\$\{failure_reason\}' \
+	"10b2: benign blocks are logged distinctly, not as pre-launch failures" \
+	'blocked:\$\{failure_reason\} benign dispatch block' \
+	"$DISPATCH_LIB"
+assert_grep \
+	"10b3: active claim dedup returns benign rc=3 to suppress Stage failed" \
+	'_dedup_layer6_assignee_and_stale.*&& return 3' \
+	"$CORE"
+assert_grep \
+	"10b4: refill skips candidates blocked by active claim in current cycle" \
+	'skip:already_assigned blocked:' \
 	"$DISPATCH_LIB"
 
 assert_grep \
@@ -176,7 +185,7 @@ assert_grep \
 	"$DISPATCH_LIB"
 assert_not_grep \
 	"10e: benign block reasons are not counted as candidate failure reasons" \
-	'dedup_active_claim \| interactive_review_hold \| pr_target_not_dispatchable \|' \
+	'dedup_active_claim \| cost_budget_exceeded' \
 	"$DISPATCH_LIB"
 
 # --- Summary ---

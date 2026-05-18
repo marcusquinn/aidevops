@@ -108,6 +108,3 @@ export const OAUTH_CALLBACK_PORT = 1455;
 
 /** Timeout for OAuth callback server (ms) */
 export const OAUTH_CALLBACK_TIMEOUT_MS = 300_000;
-
-/** Pool provider IDs for auth entry seeding */
-export const POOL_PROVIDER_IDS = ["anthropic-pool", "openai-pool", "cursor-pool", "google-pool"];

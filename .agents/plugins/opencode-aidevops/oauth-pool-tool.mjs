@@ -39,6 +39,9 @@ try {
     number() {
       return schemaNode;
     },
+    union() {
+      return schemaNode;
+    },
   };
 }
 

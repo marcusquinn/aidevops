@@ -127,9 +127,9 @@ _complete_task_parse_args() {
 		esac
 	done
 
-	echo "task_id=${_task_id}"
-	echo "pr_number=${_pr_number}"
-	echo "verified_mode=${_verified_mode}"
+	printf 'task_id=%q\n' "$_task_id"
+	printf 'pr_number=%q\n' "$_pr_number"
+	printf 'verified_mode=%q\n' "$_verified_mode"
 	return 0
 }
 
@@ -345,11 +345,11 @@ _next_task_id_parse_args() {
 		esac
 	done
 
-	echo "title=${_title}"
-	echo "labels=${_labels}"
-	echo "description=${_description}"
-	echo "offline_flag=${_offline_flag}"
-	echo "dry_run_flag=${_dry_run_flag}"
+	printf 'title=%q\n' "$_title"
+	printf 'labels=%q\n' "$_labels"
+	printf 'description=%q\n' "$_description"
+	printf 'offline_flag=%q\n' "$_offline_flag"
+	printf 'dry_run_flag=%q\n' "$_dry_run_flag"
 	return 0
 }
 

@@ -726,26 +726,50 @@ _Sequential phase auto-filing by \`shared-phase-filing.sh\` (t2740)._"
 # next-phase auto-filing.
 #
 # Args: $1=parent_issue, $2=repo_slug
-# Output: parent JSON when open; empty otherwise
+# Globals: _PHASE_PARENT_BODY, _PHASE_PARENT_TITLE
 # Returns: 0 always
 #######################################
-_read_open_phase_parent_json() {
+_read_open_phase_parent_fields() {
 	local parent_issue="$1"
 	local repo_slug="$2"
-	local parent_api="repos/${repo_slug}/issues/${parent_issue}"
-	local parent_state _parent_json
+	local parent_api
+	local parent_state parent_labels _parent_json _parent_fields
+	local _parent_state_b64 _parent_labels_b64 _parent_title_b64 _parent_body_b64
+	printf -v parent_api 'repos/%s/issues/%s' "$repo_slug" "$parent_issue"
 
+	_PHASE_PARENT_BODY=""
+	_PHASE_PARENT_TITLE=""
 	_parent_json=$(gh api "$parent_api" \
-		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // "")}' 2>/dev/null) || _parent_json=""
+		--jq '{body: (.body // ""), title: (.title // ""), state: (.state // ""), labels: [(.labels // [])[].name]}' 2>/dev/null) || _parent_json=""
 	[[ -n "$_parent_json" ]] || return 0
 
-	parent_state=$(printf '%s' "$_parent_json" | jq -r '.state // ""')
+	_parent_fields=$(printf '%s' "$_parent_json" | jq -r '[
+		("x" + ((.state // "") | @base64)),
+		("x" + (([(.labels // [])[] | if type == "object" then .name else . end] | join(",")) | @base64)),
+		("x" + ((.title // "") | @base64)),
+		("x" + ((.body // "") | @base64))
+	] | @tsv') || _parent_fields=""
+	[[ -n "$_parent_fields" ]] || return 0
+	IFS=$'\t' read -r _parent_state_b64 _parent_labels_b64 _parent_title_b64 _parent_body_b64 <<<"$_parent_fields"
+	parent_state=$(printf '%s' "${_parent_state_b64#x}" | base64 -d 2>/dev/null) || parent_state=""
+	parent_labels=$(printf '%s' "${_parent_labels_b64#x}" | base64 -d 2>/dev/null) || parent_labels=""
+	_PHASE_PARENT_TITLE=$(printf '%s' "${_parent_title_b64#x}" | base64 -d 2>/dev/null) || _PHASE_PARENT_TITLE=""
+	_PHASE_PARENT_BODY=$(printf '%s' "${_parent_body_b64#x}" | base64 -d 2>/dev/null) || _PHASE_PARENT_BODY=""
 	if [[ "$parent_state" != "open" ]]; then
 		_phase_log "Parent #${parent_issue}: state is '${parent_state}', not open — skip auto-file"
+		_PHASE_PARENT_BODY=""
+		_PHASE_PARENT_TITLE=""
 		return 0
 	fi
+	case ",${parent_labels}," in
+	*,no-auto-dispatch,*)
+		_phase_log "Parent #${parent_issue}: carries no-auto-dispatch, skip auto-file"
+		_PHASE_PARENT_BODY=""
+		_PHASE_PARENT_TITLE=""
+		return 0
+		;;
+	esac
 
-	printf '%s' "$_parent_json"
 	return 0
 }
 
@@ -760,7 +784,7 @@ _read_open_phase_parent_json() {
 # Guards:
 #   1. Feature flag AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE must be 1
 #   2. Child issue must reference a parent-task issue
-#   3. Parent issue must still be open
+#   3. Parent issue must still be open and not carry no-auto-dispatch
 #   4. Parent must have a ## Phases section
 #   5. Next phase must exist, be marked [auto-fire:on-prior-merge],
 #      and not already have a child issue filed
@@ -793,11 +817,11 @@ auto_file_next_phase() {
 	_phase_log "Child #${child_issue}: found parent-task #${parent_issue}"
 
 	# Read parent issue metadata and ensure the parent is still open.
-	local parent_body parent_title _parent_json
-	_parent_json=$(_read_open_phase_parent_json "$parent_issue" "$repo_slug")
-	[[ -n "$_parent_json" ]] || return 0
-	parent_body=$(printf '%s' "$_parent_json" | jq -r '.body // ""')
-	parent_title=$(printf '%s' "$_parent_json" | jq -r '.title // ""')
+	local parent_body parent_title
+	_read_open_phase_parent_fields "$parent_issue" "$repo_slug"
+	parent_body="$_PHASE_PARENT_BODY"
+	parent_title="$_PHASE_PARENT_TITLE"
+	[[ -n "$parent_body" ]] || return 0
 
 	# Guard 4: parse phases
 	local phases

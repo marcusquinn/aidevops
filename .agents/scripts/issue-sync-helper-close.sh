@@ -47,9 +47,11 @@ _is_cancelled_or_deferred() {
 
 _has_evidence() {
 	local text="$1" task_id="$2" repo="$3"
+	local task_line
+	task_line=$(_task_line_from_block "$text" "$task_id")
 	# Cancelled/deferred/declined tasks need no PR or verified: evidence
-	_is_cancelled_or_deferred "$text" && return 0
-	if _has_unresolved_blocker "$text"; then
+	_is_cancelled_or_deferred "$task_line" && return 0
+	if _has_unresolved_blocker "$text" "$task_id" "$task_line"; then
 		return 1
 	fi
 	echo "$text" | grep -qE 'verified:[0-9]{4}-[0-9]{2}-[0-9]{2}|pr:#[0-9]+' && return 0
@@ -58,12 +60,25 @@ _has_evidence() {
 	return 1
 }
 
+_task_line_from_block() {
+	local text="$1" task_id="${2:-}"
+	local task_line
+	if [[ -n "$task_id" ]]; then
+		task_line=$(printf '%s\n' "$text" | grep -F " $task_id " | grep -E '^[[:space:]]*- \[.\] ' | head -1 || true)
+	fi
+	[[ -z "$task_line" ]] && task_line=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[.\] ' | head -1 || true)
+	[[ -z "$task_line" ]] && task_line=$(printf '%s\n' "$text" | head -1)
+	printf '%s\n' "$task_line"
+	return 0
+}
+
 _has_unresolved_blocker() {
 	local text="$1"
+	local task_id="${2:-}"
+	local task_line="${3:-}"
 	local candidate
-	candidate=$(printf '%s\n' "$text" | grep -E '^[[:space:]]*- \[[ x-]\] ' | head -1 || true)
-	[[ -z "$candidate" ]] && candidate="$text"
-	echo "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
+	candidate="${task_line:-$(_task_line_from_block "$text" "$task_id")}"
+	printf '%s\n' "$candidate" | grep -qE '(^|[[:space:]])blocked-by:[^[:space:]]+' && return 0
 	return 1
 }
 
@@ -182,7 +197,7 @@ _do_close() {
 		print_info "Skipping #$issue_number ($task_id): parent-task label set — parent issues close via terminal-phase PR with explicit Closes #NNN, not TODO [x] (GH#20828)"
 		return 0
 	fi
-	if ! _is_cancelled_or_deferred "$task_with_notes" && _has_unresolved_blocker "$task_with_notes"; then
+	if ! _is_cancelled_or_deferred "$task_line" && _has_unresolved_blocker "$task_line" "" "$task_line"; then
 		print_info "Skipping #$issue_number ($task_id): unresolved blocked-by marker present — completion evidence must wait for dependencies (GH#23516)"
 		return 0
 	fi
@@ -216,12 +231,12 @@ _do_close() {
 	fi
 	# Cancelled/deferred/declined tasks close as "not planned"; completed tasks use default reason
 	local close_args=("issue" "close" "$issue_number" "--repo" "$repo" "--comment" "$comment")
-	if _is_cancelled_or_deferred "$task_with_notes"; then
+	if _is_cancelled_or_deferred "$task_line"; then
 		close_args+=("--reason" "not planned")
 		gh_create_label "$repo" "not-planned" "E4E669" "Closed as not planned"
 	fi
 	if gh "${close_args[@]}" 2>/dev/null; then
-		if _is_cancelled_or_deferred "$task_with_notes"; then
+		if _is_cancelled_or_deferred "$task_line"; then
 			_gh_edit_labels "add" "$repo" "$issue_number" "not-planned"
 		fi
 		_mark_issue_done "$repo" "$issue_number"

@@ -50,6 +50,9 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/bin"
 	mkdir -p "${TEST_ROOT}/config/aidevops"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	unset AIDEVOPS_GH_FORCE_REST_READS
+	unset AIDEVOPS_GH_REST_FIRST_READS
+	unset _GH_SHOULD_FALLBACK_OVERRIDE
 
 	# Minimal repos.json so the helper can resolve owner/maintainer.
 	cat >"${TEST_ROOT}/config/aidevops/repos.json" <<'EOF'
@@ -195,11 +198,33 @@ test_no_auto_dispatch_only() {
 }
 
 # -------------------------------------------------------------------
-# Test: BOTH parent-task AND no-auto-dispatch → exit 0, BOTH signals emitted
+# Test: only hold-for-review → exit 0, HOLD_FOR_REVIEW_BLOCKED emitted
+# -------------------------------------------------------------------
+test_hold_for_review_only() {
+	create_gh_stub "hold-for-review,tier:standard"
+
+	local output exit_code=0
+	output=$("$HELPER_SCRIPT" enumerate-blockers 100 marcusquinn/aidevops 2>/dev/null) || exit_code=$?
+
+	if [[ "$exit_code" -ne 0 ]]; then
+		print_result "hold-for-review only → exit 0 (blocked)" 1 "Expected exit 0 but got exit ${exit_code}"
+		return 0
+	fi
+
+	if printf '%s\n' "$output" | grep -q 'HOLD_FOR_REVIEW_BLOCKED'; then
+		print_result "hold-for-review only → emits HOLD_FOR_REVIEW_BLOCKED" 0
+	else
+		print_result "hold-for-review only → emits HOLD_FOR_REVIEW_BLOCKED" 1 "Signal not in output: '${output}'"
+	fi
+	return 0
+}
+
+# -------------------------------------------------------------------
+# Test: parent-task, no-auto-dispatch, hold-for-review → all signals emitted
 # This is the core multi-blocker regression guard (t2894).
 # -------------------------------------------------------------------
 test_multi_blocker_both_signals_emitted() {
-	create_gh_stub "parent-task,no-auto-dispatch,tier:standard"
+	create_gh_stub "parent-task,no-auto-dispatch,hold-for-review,tier:standard"
 
 	local output exit_code=0
 	output=$("$HELPER_SCRIPT" enumerate-blockers 100 marcusquinn/aidevops 2>/dev/null) || exit_code=$?
@@ -210,29 +235,32 @@ test_multi_blocker_both_signals_emitted() {
 		return 0
 	fi
 
-	local parent_found=false nad_found=false
+	local parent_found=false nad_found=false hfr_found=false
 	if printf '%s\n' "$output" | grep -q 'PARENT_TASK_BLOCKED'; then
 		parent_found=true
 	fi
 	if printf '%s\n' "$output" | grep -q 'NO_AUTO_DISPATCH_BLOCKED'; then
 		nad_found=true
 	fi
-
-	if [[ "$parent_found" == "true" && "$nad_found" == "true" ]]; then
-		print_result "multi-blocker: both PARENT_TASK_BLOCKED and NO_AUTO_DISPATCH_BLOCKED emitted" 0
-	else
-		print_result "multi-blocker: both PARENT_TASK_BLOCKED and NO_AUTO_DISPATCH_BLOCKED emitted" 1 \
-			"Missing signals — parent_found=${parent_found} nad_found=${nad_found}; output: '${output}'"
+	if printf '%s\n' "$output" | grep -q 'HOLD_FOR_REVIEW_BLOCKED'; then
+		hfr_found=true
 	fi
 
-	# Count lines — must be exactly 2
+	if [[ "$parent_found" == "true" && "$nad_found" == "true" && "$hfr_found" == "true" ]]; then
+		print_result "multi-blocker: parent/no-auto/hold signals emitted" 0
+	else
+		print_result "multi-blocker: parent/no-auto/hold signals emitted" 1 \
+			"Missing signals — parent_found=${parent_found} nad_found=${nad_found} hfr_found=${hfr_found}; output: '${output}'"
+	fi
+
+	# Count lines — must be exactly 3
 	local line_count
 	line_count=$(printf '%s\n' "$output" | grep -c '.' 2>/dev/null || true)
-	if [[ "$line_count" -eq 2 ]]; then
-		print_result "multi-blocker: exactly 2 lines emitted (one per signal)" 0
+	if [[ "$line_count" -eq 3 ]]; then
+		print_result "multi-blocker: exactly 3 lines emitted (one per signal)" 0
 	else
-		print_result "multi-blocker: exactly 2 lines emitted (one per signal)" 1 \
-			"Expected 2 lines, got ${line_count}; output: '${output}'"
+		print_result "multi-blocker: exactly 3 lines emitted (one per signal)" 1 \
+			"Expected 3 lines, got ${line_count}; output: '${output}'"
 	fi
 	return 0
 }
@@ -322,6 +350,7 @@ main() {
 	test_no_blockers_returns_safe
 	test_parent_task_only
 	test_no_auto_dispatch_only
+	test_hold_for_review_only
 	test_multi_blocker_both_signals_emitted
 	test_api_failure_emits_guard_uncertain
 	test_meta_label_caught

@@ -5,14 +5,15 @@
 # test-full-loop-gate-pulse-parity.sh — t2890 regression guard.
 #
 # Asserts that `_check_linked_issue_gate` in `.agents/scripts/full-loop-helper-state.sh`
-# inherits the pulse-side structural dispatch gates by calling
-# `dispatch-dedup-helper.sh enumerate-blockers` and translating PARENT_TASK_BLOCKED
-# and NO_AUTO_DISPATCH_BLOCKED signals into hard blocks.
+# inherits the pulse-side structural dispatch gates via
+# `_linked_issue_structural_blocker_reasons`, which calls `dispatch-dedup-helper.sh
+# enumerate-blockers` and translates PARENT_TASK_BLOCKED, NO_AUTO_DISPATCH_BLOCKED,
+# and HOLD_FOR_REVIEW_BLOCKED signals into hard blocks.
 #
 # Background: pre-t2890, the interactive `/full-loop` path only checked
 # needs-maintainer-review + missing assignee. The pulse meanwhile honored
 # parent-task and no-auto-dispatch via dispatch-dedup-helper.sh. A user typing
-# /full-loop on a parent-task or no-auto-dispatch issue would bypass those
+# /full-loop on a parent-task, no-auto-dispatch, or hold-for-review issue would bypass those
 # gates entirely. This test prevents accidental regression of the wiring.
 #
 # This is a static structural check — runtime behaviour is verified at install
@@ -58,6 +59,7 @@ print_result "helper file exists" 0
 # Extract just the _check_linked_issue_gate function body so per-check
 # assertions only see the function we care about.
 GATE_BODY=$(awk '/^_check_linked_issue_gate\(\) \{/,/^}/' "$HELPER_FILE")
+STRUCTURAL_HELPER_BODY=$(awk '/^_linked_issue_structural_blocker_reasons\(\) \{/,/^}/' "$HELPER_FILE")
 
 if [[ -z "$GATE_BODY" ]]; then
 	print_result "extract _check_linked_issue_gate function body" 1 "function not found in $HELPER_FILE"
@@ -65,6 +67,13 @@ if [[ -z "$GATE_BODY" ]]; then
 	exit 1
 fi
 print_result "extract _check_linked_issue_gate function body" 0
+
+if [[ -z "$STRUCTURAL_HELPER_BODY" ]]; then
+	print_result "extract _linked_issue_structural_blocker_reasons function body" 1 "function not found in $HELPER_FILE"
+	printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
+	exit 1
+fi
+print_result "extract _linked_issue_structural_blocker_reasons function body" 0
 
 assert_in_gate() {
 	local pattern="$1" label="$2"
@@ -76,42 +85,75 @@ assert_in_gate() {
 	return 0
 }
 
+assert_in_structural_helper() {
+	local pattern="$1" label="$2"
+	if printf '%s\n' "$STRUCTURAL_HELPER_BODY" | grep -qE -- "$pattern"; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "pattern '${pattern}' not found in _linked_issue_structural_blocker_reasons body"
+	fi
+	return 0
+}
+
 # -------------------------------------------------------------------
 # Assertion A: gate calls dispatch-dedup-helper.sh::enumerate-blockers (t2894)
 # -------------------------------------------------------------------
 assert_in_gate \
+	'_linked_issue_structural_blocker_reasons' \
+	"_check_linked_issue_gate calls structural blocker helper"
+assert_in_structural_helper \
 	'dispatch-dedup-helper\.sh' \
-	"_check_linked_issue_gate references dispatch-dedup-helper.sh"
-assert_in_gate \
+	"structural blocker helper references dispatch-dedup-helper.sh"
+assert_in_structural_helper \
 	'enumerate-blockers' \
-	"_check_linked_issue_gate calls enumerate-blockers subcommand (t2894)"
+	"structural blocker helper calls enumerate-blockers subcommand (t2894)"
 
 # -------------------------------------------------------------------
 # Assertion B: PARENT_TASK_BLOCKED case translates to a block
 # -------------------------------------------------------------------
-assert_in_gate \
+assert_in_structural_helper \
 	'PARENT_TASK_BLOCKED' \
-	"_check_linked_issue_gate matches PARENT_TASK_BLOCKED signal"
-assert_in_gate \
+	"structural blocker helper matches PARENT_TASK_BLOCKED signal"
+assert_in_structural_helper \
 	'parent-task' \
-	"_check_linked_issue_gate mentions parent-task label in user-facing message"
+	"structural blocker helper mentions parent-task label in user-facing message"
 
 # -------------------------------------------------------------------
 # Assertion C: NO_AUTO_DISPATCH_BLOCKED case translates to a block
 # -------------------------------------------------------------------
-assert_in_gate \
+assert_in_structural_helper \
 	'NO_AUTO_DISPATCH_BLOCKED' \
-	"_check_linked_issue_gate matches NO_AUTO_DISPATCH_BLOCKED signal"
-assert_in_gate \
+	"structural blocker helper matches NO_AUTO_DISPATCH_BLOCKED signal"
+assert_in_structural_helper \
 	'no-auto-dispatch' \
-	"_check_linked_issue_gate mentions no-auto-dispatch label in user-facing message"
+	"structural blocker helper mentions no-auto-dispatch label in user-facing message"
+
+# -------------------------------------------------------------------
+# Assertion C2: HOLD_FOR_REVIEW_BLOCKED case translates to a block
+# -------------------------------------------------------------------
+assert_in_structural_helper \
+	'HOLD_FOR_REVIEW_BLOCKED' \
+	"structural blocker helper matches HOLD_FOR_REVIEW_BLOCKED signal"
+assert_in_structural_helper \
+	'hold-for-review' \
+	"structural blocker helper mentions hold-for-review label in user-facing message"
+
+# -------------------------------------------------------------------
+# Assertion C3: trusted maintainer-only interactive NMR path exists
+# -------------------------------------------------------------------
+assert_in_gate \
+	'_issue_thread_is_trusted_maintainer_only' \
+	"_check_linked_issue_gate checks trusted maintainer-only NMR threads"
+assert_in_gate \
+	'not a trusted maintainer-only interactive thread' \
+	"_check_linked_issue_gate keeps NMR blocking untrusted or headless flows"
 
 # -------------------------------------------------------------------
 # Assertion D: fail-open pattern present (matches existing gh-api fail-open)
 # -------------------------------------------------------------------
-assert_in_gate \
+assert_in_structural_helper \
 	'\|\| true' \
-	"_check_linked_issue_gate uses fail-open pattern (|| true) on dedup call"
+	"structural blocker helper uses fail-open pattern (|| true) on dedup call"
 
 # -------------------------------------------------------------------
 # Assertion E: gate sets blocked=true on hard-block signals
@@ -134,12 +176,12 @@ assert_in_gate \
 # Assertion G (t2894): gate iterates over enumerate-blockers output
 # with a loop so ALL blockers are reported (not just the first).
 # -------------------------------------------------------------------
-assert_in_gate \
+assert_in_structural_helper \
 	'while.*read.*_blocker_line' \
-	"_check_linked_issue_gate iterates enumerate-blockers output with a loop (t2894)"
-assert_in_gate \
+	"structural blocker helper iterates enumerate-blockers output with a loop (t2894)"
+assert_in_structural_helper \
 	'done.*dedup_out' \
-	"_check_linked_issue_gate loop reads from dedup_out heredoc string (t2894)"
+	"structural blocker helper loop reads from dedup_out heredoc string (t2894)"
 
 # -------------------------------------------------------------------
 # Assertion H: full-loop-helper-state.sh shellcheck-clean

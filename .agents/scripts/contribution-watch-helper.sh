@@ -121,12 +121,17 @@ _check_prerequisites() {
 		echo -e "${RED}Error: gh CLI not found. Install from https://cli.github.com/${NC}" >&2
 		return 1
 	fi
-	if ! command -v jq &>/dev/null; then
-		echo -e "${RED}Error: jq not found. Install with: brew install jq${NC}" >&2
-		return 1
-	fi
+	_check_jq_prerequisite || return 1
 	if ! gh auth status &>/dev/null 2>&1; then
 		echo -e "${RED}Error: gh not authenticated. Run: gh auth login${NC}" >&2
+		return 1
+	fi
+	return 0
+}
+
+_check_jq_prerequisite() {
+	if ! command -v jq &>/dev/null; then
+		echo -e "${RED}Error: jq not found. Install with: brew install jq${NC}" >&2
 		return 1
 	fi
 	return 0
@@ -1004,6 +1009,17 @@ cmd_scan() {
 
 	_check_prerequisites || return 1
 
+	_scan_init_globals
+
+	local last_scan
+	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
+
+	if [[ -z "$last_scan" ]]; then
+		echo -e "${YELLOW}[contribution-watch] skipped — no previous scan found; run aidevops contribution-watch seed to enable${NC}"
+		_log_info "Scan skipped — no prior seed"
+		return 0
+	fi
+
 	local username
 	username=$(_get_username) || return 1
 
@@ -1012,17 +1028,6 @@ cmd_scan() {
 
 	# Remove PID file on exit (normal, Ctrl+C, or SIGTERM)
 	trap 'rm -f "$PID_FILE"; trap - EXIT INT TERM' EXIT INT TERM
-
-	_scan_init_globals
-
-	local last_scan
-	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
-
-	if [[ -z "$last_scan" ]]; then
-		echo -e "${YELLOW}No previous scan found. Run 'seed' first.${NC}"
-		_log_warn "Scan attempted with no prior seed"
-		return 1
-	fi
 
 	_scan_maybe_auto_backfill
 	_log_info "Scan started (last_scan: ${last_scan})"

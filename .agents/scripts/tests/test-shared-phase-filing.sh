@@ -645,6 +645,7 @@ printf '%s--- Test 18: closed parent blocks auto-file ---%s\n' "$TEST_BLUE" "$TE
 
 export AIDEVOPS_SEQUENTIAL_PHASE_AUTOFILE=1
 phase_parent_state="closed"
+phase_parent_labels=""
 phase_child_create_log="${TMP}/phase-child-created.log"
 : > "$phase_child_create_log"
 
@@ -681,12 +682,37 @@ gh() {
 	local args="$*"
 	if [[ " $args " == *" api repos/owner/repo/issues/500 "* ]]; then
 		local parent_body=$'## Phases\n\n- Phase 1 - Complete first phase [auto-fire:on-prior-merge] #123\n- Phase 2 - Second phase [auto-fire:on-prior-merge]'
-		jq -n --arg body "$parent_body" --arg state "$phase_parent_state" \
-			'{body: $body, title: "Parent", state: $state}'
+		local jq_filter=""
+		local parent_json=""
+		while [[ "$#" -gt 0 ]]; do
+			local arg="$1"
+			shift
+			if [[ "$arg" == "--jq" && "$#" -gt 0 ]]; then
+				local next_arg="$1"
+				jq_filter="$next_arg"
+				shift
+			fi
+		done
+		parent_json=$(jq -n \
+			--arg body "$parent_body" \
+			--arg labels "$phase_parent_labels" \
+			--arg state "$phase_parent_state" \
+			'{body: $body, title: "Parent", state: $state, labels: ($labels | split(",") | map(select(. != "")) | map({name: .}))}')
+		if [[ -n "$jq_filter" ]]; then
+			printf '%s' "$parent_json" | jq -r "$jq_filter"
+		else
+			printf '%s' "$parent_json"
+		fi
 		return 0
 	fi
 	return 1
 }
+
+if gh api repos/owner/repo/issues/500 | jq -e '.body and .title == "Parent" and .state == "closed"' >/dev/null; then
+	pass "Parent issue mock returns realistic JSON"
+else
+	fail "Parent issue mock should return realistic JSON"
+fi
 
 : > "$LOGFILE"
 auto_file_next_phase "123" "owner/repo"
@@ -711,6 +737,7 @@ fi
 printf '%s--- Test 19: open parent preserves auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
 
 phase_parent_state="open"
+phase_parent_labels=""
 : > "$phase_child_create_log"
 : > "$LOGFILE"
 auto_file_next_phase "123" "owner/repo"
@@ -731,9 +758,34 @@ else
 fi
 
 # =============================================================================
-# Test 20: deterministic-title search reuses an already-open phase child
+# Test 20: no-auto-dispatch parent issue cannot drive phase auto-filing
 # =============================================================================
-printf '%s--- Test 20: deterministic-title open issue dedup ---%s\n' "$TEST_BLUE" "$TEST_NC"
+printf '%s--- Test 20: no-auto-dispatch parent blocks auto-file ---%s\n' "$TEST_BLUE" "$TEST_NC"
+
+phase_parent_state="open"
+phase_parent_labels="parent-task,no-auto-dispatch"
+: > "$phase_child_create_log"
+: > "$LOGFILE"
+auto_file_next_phase "123" "owner/repo"
+no_auto_log=""
+[[ -f "$LOGFILE" ]] && no_auto_log=$(cat "$LOGFILE")
+
+if [[ ! -s "$phase_child_create_log" ]]; then
+	pass "no-auto-dispatch parent does not create a phase child"
+else
+	fail "no-auto-dispatch parent should not create a phase child"
+fi
+
+if printf '%s' "$no_auto_log" | grep -q "Parent #500: carries no-auto-dispatch, skip auto-file"; then
+	pass "no-auto-dispatch skip reason is logged"
+else
+	fail "no-auto-dispatch skip log missing" "Log: ${no_auto_log}"
+fi
+
+# =============================================================================
+# Test 21: deterministic-title search reuses an already-open phase child
+# =============================================================================
+printf '%s--- Test 21: deterministic-title open issue dedup ---%s\n' "$TEST_BLUE" "$TEST_NC"
 
 gh() {
 	local args="$*"

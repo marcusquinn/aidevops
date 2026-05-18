@@ -70,7 +70,14 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signa
 	# shellcheck source=gh-signature-helper-detect.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signature-helper-detect.sh"
 fi
-unset _PULSE_CLEANUP_SCRIPT_DIR
+# GH#23677 / t3700: Do NOT `unset _PULSE_CLEANUP_SCRIPT_DIR`. The previous
+# version unset this immediately after sourcing the four sibling helpers,
+# but _cleanup_merged_prs_for_all_repos() (line ~251) reads it later to
+# locate worktree-helper.sh. Under `set -u` (the standard pulse-wrapper
+# orchestrator setting) that read aborts the cleanup pass with
+# `_PULSE_CLEANUP_SCRIPT_DIR: unbound variable`. The variable already uses
+# the module-private `_PULSE_` prefix and survives the include guard on
+# line 49 unset-free, so keeping it bound is consistent.
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 # Caller ID constant for audit log calls (avoids repeated literals).
 _WTAR_PC_CALLER="pulse-cleanup.sh"
@@ -424,11 +431,18 @@ _worktree_creation_epoch() {
 #######################################
 # Decide whether a worktree is eligible for orphan cleanup.
 #
-# Applies the age/commit/PR thresholds from GH#16830 and t1884:
-#   0 commits, no open PR, >grace → crashed worker (fast-path)
-#   0 commits, clean,      >3h    → empty, safe to remove
-#   0 commits, dirty,      >6h    → worker died mid-edit
-#   any commits, no PR,    >24h   → abandoned, will be re-dispatched
+# Applies the age/commit/PR thresholds from GH#16830, t1884, GH#23677:
+#   0 commits, clean, no open PR, >grace → crashed worker (fast-path)
+#   0 commits, clean,             >3h    → empty, safe to remove
+#   0 commits, dirty,             >6h    → worker died mid-edit
+#                                          (refused by _cleanup_single_worktree,
+#                                           but reason is still emitted for audit
+#                                           logs and manual triage)
+#   any commits, no PR,           >24h   → abandoned, will be re-dispatched
+# GH#23677 / t3700: the fast-path now requires dirty_count == 0; without
+# that guard a worktree being actively edited by an interactive
+# OpenCode/Claude Code session (path not in pgrep argv) was permanently
+# destroyed at age 30m, losing uncommitted work with no recovery path.
 #
 # GitHub queries are only attempted when both repo_slug and branch are
 # non-empty. On eligibility the reason string is written to stdout so the
@@ -461,13 +475,24 @@ _evaluate_worktree_removal() {
 	local age_24h=$((24 * 3600))
 
 	# The branches below are mutually exclusive via an elif chain — once the
-	# fast-path's outer condition matches (0 commits + past grace), the later
-	# branches MUST NOT be checked even if the fast-path decides "not
-	# eligible" (e.g. an open PR protects the worktree). Preserving this
-	# short-circuit is what keeps worktrees with active PRs alive past 3h.
+	# fast-path's outer condition matches (0 commits + clean + past grace),
+	# the later branches MUST NOT be checked even if the fast-path decides
+	# "not eligible" (e.g. an open PR protects the worktree). Preserving
+	# this short-circuit is what keeps worktrees with active PRs alive
+	# past 3h. Dirty worktrees skip the fast-path entirely and fall
+	# through to the explicit 6h rule (GH#23677 / t3700).
 
-	# Fast-path: 0 commits + past grace period → crashed worker candidate (t1884)
-	if [[ "$commits_ahead" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
+	# Fast-path: 0 commits + CLEAN + past grace period → crashed worker candidate (t1884)
+	#
+	# GH#23677 / t3700: the fast-path MUST require dirty_count == 0. A
+	# worktree with uncommitted edits represents work-in-progress from an
+	# interactive editor session (OpenCode/Claude Code/VS Code/etc) where
+	# the path does not appear in pgrep argv and is not registered in the
+	# SQLite worktree-owner registry. Removing it permanently destroys the
+	# user's dirty files with no recovery path (mode=permanent, branch
+	# deleted, no trash backing). Defer dirty cases to the 6h rule below
+	# which gives editor sessions a much wider safety margin.
+	if [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
 		local has_open_pr=false
 		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
 			local open_pr_count
@@ -475,7 +500,7 @@ _evaluate_worktree_removal() {
 			[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
 		fi
 		if [[ "$has_open_pr" == "false" ]]; then
-			echo "0 commits, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
+			echo "0 commits, clean, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
 			return 0
 		fi
 	# 0 commits, clean worktree, >3h → empty (no PR, no dirty state)
@@ -640,6 +665,40 @@ MARKER_EOF
 }
 
 #######################################
+# Verify a pulse cleanup issue target is still open before writing to it.
+#
+# Orphan worktree cleanup can run long after the original issue completed. In
+# that state there is no dispatch dedup guard to clear, and posting recovery
+# audit comments only creates notification noise on closed work. Fail closed on
+# lookup errors: cleanup still removes the local orphan, but skips GitHub writes.
+#
+# Args:
+#   $1 - issue_number: GitHub issue number
+#   $2 - repo_slug:    owner/repo slug
+#   $3 - context:      log context for the skipped write
+# Returns: 0 if issue is open, 1 otherwise
+#######################################
+_pulse_cleanup_issue_open_for_write() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local context="${3:-pulse cleanup write}"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local issue_state=""
+	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null) || issue_state=""
+	if [[ "$issue_state" != "OPEN" ]]; then
+		echo "[pulse-wrapper] ${context} skipped for #${issue_number} (${repo_slug}): issue state=${issue_state:-unknown}; no closed-issue recovery comment posted" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
 # Record crash classification for an orphaned worker worktree.
 #
 # Extracts the issue number from the branch name (pattern: gh[-]?NNN),
@@ -684,6 +743,9 @@ _record_orphan_crash_classification() {
 	# Since GH#19042, new feature/auto-* branches include gh<N>, but
 	# legacy ones (pre-fix) still lack it — skip those gracefully.
 	if [[ -z "$orphan_issue_num" ]]; then
+		return 0
+	fi
+	if ! _pulse_cleanup_issue_open_for_write "$orphan_issue_num" "$repo_slug_age" "Orphan cleanup"; then
 		return 0
 	fi
 
@@ -750,13 +812,79 @@ Worker failed: orphan worktree detected (crash_type=${orphan_crash_type}, 0 comm
 }
 
 #######################################
+# GH#23677 / t3700: Defence-in-depth refusal of permanent removal when
+# uncommitted work or reachable unpushed WIP commits would be lost.
+#
+# Two independent safety guards:
+#   1. dirty_count > 0 → "dirty-content-protect"
+#      The 6h "worker died mid-edit" rule used to discard dirty workers
+#      because we assumed workers are non-interactive; in practice the
+#      same code path catches interactive editor sessions whose paths
+#      are not pgrep-visible. Better to leave the directory on disk for
+#      the user to inspect than destroy uncommitted edits.
+#   2. commits not on any remote → "commits-not-on-remote"
+#      `git rev-list --count HEAD --not --remotes` catches commits that
+#      are still reachable from HEAD but absent from all remote refs. It
+#      deliberately does NOT claim to protect commits that exist only in
+#      reflog after a later reset moved HEAD back to the base; those require
+#      separate reflog-aware recovery. Gated on the repo actually having
+#      remote-tracking refs to avoid false-positive on local-only test repos
+#      and freshly-init'd helper sandboxes.
+#
+# Args:
+#   $1 - wt_path_age:   absolute worktree path
+#   $2 - wt_branch_age: branch name (may be empty for detached HEAD)
+#   $3 - dirty_count:   number of dirty files reported by status --porcelain
+#   $4 - orphan_issue_num: parsed GH issue number (may be empty)
+#   $5 - wt_age_secs:   age in seconds
+#   $6 - repo_name_age: basename of repo for log messages
+#   $7 - audit_context_ref: caller-provided audit context (passed through to log)
+# Returns: 0 if safe to proceed with removal, 1 if removal must be skipped
+#######################################
+_pc_assert_no_uncommitted_work() {
+	local wt_path_age="$1"
+	local wt_branch_age="$2"
+	local dirty_count="$3"
+	local orphan_issue_num="$4"
+	local wt_age_secs="$5"
+	local repo_name_age="$6"
+	local audit_context_ref="$7"
+
+	if [[ "$dirty_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — ${dirty_count} dirty file(s) present, refusing permanent removal (GH#23677)" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "dirty-content-protect" "skipped" "$audit_context_ref"
+		return 1
+	fi
+
+	local has_remote_refs="no"
+	if [[ -n "$(git -C "$wt_path_age" for-each-ref --count=1 refs/remotes/ 2>/dev/null)" ]]; then
+		has_remote_refs="yes"
+	fi
+	if [[ "$has_remote_refs" != "yes" ]]; then
+		return 0
+	fi
+
+	local commits_not_on_remotes=0
+	commits_not_on_remotes=$(git -C "$wt_path_age" rev-list --count HEAD --not --remotes 2>/dev/null || echo 0)
+	if [[ "${commits_not_on_remotes//[!0-9]/}" -gt 0 ]]; then
+		local audit_ctx_reflog
+		audit_ctx_reflog=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_not_on_remotes" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "none")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — ${commits_not_on_remotes} commit(s) reachable from HEAD but not on any remote" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "commits-not-on-remote" "skipped" "$audit_ctx_reflog"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Per-worktree age-based orphan cleanup decision and removal.
 #
-# Thin orchestrator over three private helpers:
-#   1. _worktree_creation_epoch      — creation time from .git mtime
-#   2. _worktree_owner_alive         — pgrep + registry ownership check
-#   3. _evaluate_worktree_removal    — age/commit/PR threshold decision
-#   4. _record_orphan_crash_classification — crash type + dedup clearing
+# Thin orchestrator over four private helpers:
+#   1. _worktree_creation_epoch          — creation time from .git mtime
+#   2. _worktree_owner_alive             — pgrep + registry ownership check
+#   3. _evaluate_worktree_removal        — age/commit/PR threshold decision
+#   4. _pc_assert_no_uncommitted_work    — dirty + reflog-only WIP guard (GH#23677)
+#   5. _record_orphan_crash_classification — crash type + dedup clearing
 #
 # On eligible worktrees, performs the git worktree remove + branch delete
 # + remote ref delete sequence (t1884, GH#18021).
@@ -829,6 +957,13 @@ _cleanup_single_worktree() {
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "local-commits-no-pr" "skipped" "$audit_context"
 		return 1
 	fi
+
+	# GH#23677 / t3700: defence-in-depth — refuse removal when any
+	# uncommitted content or reachable unpushed WIP commit is present.
+	if ! _pc_assert_no_uncommitted_work "$wt_path_age" "$wt_branch_age" "$dirty_count" "$orphan_issue_num" "$wt_age_secs" "$repo_name_age" "$audit_context"; then
+		return 1
+	fi
+
 	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — $reason" >>"$LOGFILE"
 
 	# Step 5a: crash classification for the fast-path "crashed worker" case

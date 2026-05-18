@@ -8,7 +8,8 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 
@@ -52,5 +53,48 @@ test("config-hook.mjs skips optional provider discovery until proxy ports are ac
     src,
     /const \{ getCursorModels \} = await import\("\.\/cursor\/models\.js"\);\s*const \{ discoverGoogleModels \} = await import\("\.\/google-proxy\.mjs"\);/,
     "Config hook must not unconditionally import both optional provider discovery modules.",
+  );
+});
+
+test("initPoolAuth does not seed unsupported pending auth entries", async () => {
+  const tempHome = mkdtempSync(resolve(tmpdir(), "aidevops-oauth-pool-"));
+  const previousHome = process.env.HOME;
+  const previousXdgDataHome = process.env.XDG_DATA_HOME;
+  const previousUserProfile = process.env.USERPROFILE;
+  process.env.HOME = tempHome;
+  process.env.XDG_DATA_HOME = resolve(tempHome, ".local", "share");
+  process.env.USERPROFILE = tempHome;
+
+  const authWrites = [];
+  const client = {
+    auth: {
+      async set(args) {
+        authWrites.push(args);
+      },
+    },
+  };
+
+  try {
+    const { initPoolAuth } = await import(`../oauth-pool.mjs?test=${Date.now()}`);
+    await initPoolAuth(client);
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    if (previousXdgDataHome === undefined) delete process.env.XDG_DATA_HOME;
+    else process.env.XDG_DATA_HOME = previousXdgDataHome;
+    if (previousUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = previousUserProfile;
+    rmSync(tempHome, { recursive: true, force: true });
+  }
+
+  assert.deepEqual(
+    authWrites.filter((write) => write?.body?.type === "pending"),
+    [],
+    "Startup must not pass aidevops pending pool state to OpenCode auth.set().",
+  );
+  assert.deepEqual(
+    authWrites.filter((write) => !["oauth", "api"].includes(write?.body?.type)),
+    [],
+    "Startup auth writes must use OpenCode-supported auth body types only.",
   );
 });

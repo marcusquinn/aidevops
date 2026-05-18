@@ -22,6 +22,20 @@ readonly IOC_PATTERN='@tanstack/setup|github:tanstack/router#79ac49eedf774dd4b0c
 readonly AFFECTED_PATTERN='(@tanstack/(router-utils|router-core|arktype-adapter|eslint-plugin-router|eslint-plugin-start|history|nitro-v2-vite-plugin|react-router|react-router-devtools|react-router-ssr-query|react-start|react-start-client|react-start-rsc|react-start-server|router-cli|router-devtools|router-devtools-core|router-generator|router-plugin|router-ssr-query-core|router-vite-plugin|solid-router|solid-router-devtools|solid-router-ssr-query|solid-start|solid-start-client|solid-start-server|start-client-core|start-fn-stubs|start-plugin-core|start-server-core|start-static-server-functions|start-storage-context|valibot-adapter|virtual-file-routes|vue-router|vue-router-devtools|vue-router-ssr-query|vue-start|vue-start-client|vue-start-server|zod-adapter)|@opensearch-project/opensearch|@mistralai/mistralai|safe-action|cmux-agent-mcp|nextmove-mcp|git-git-git|git-branch-selector)@?(1\.161\.11|1\.161\.14|1\.169\.5|1\.169\.8|1\.166\.12|1\.166\.15|1\.161\.9|1\.161\.12|0\.0\.4|0\.0\.7|1\.154\.12|1\.154\.15|1\.166\.16|1\.166\.19|1\.166\.18|1\.167\.68|1\.167\.71|1\.166\.51|1\.166\.54|0\.0\.47|0\.0\.50|1\.166\.55|1\.166\.58|1\.166\.46|1\.166\.49|1\.167\.6|1\.167\.9|1\.166\.45|1\.166\.48|1\.167\.38|1\.167\.41|1\.168\.3|1\.168\.6|1\.166\.53|1\.166\.56|1\.167\.65|1\.167\.33|1\.167\.36|1\.166\.44|1\.166\.47|1\.166\.38|1\.166\.41|1\.161\.10|1\.161\.13|1\.167\.61|1\.167\.64|1\.166\.50|1\.166\.57|3\.6\.2|2\.2\.3|2\.2\.4|0\.8\.3|0\.8\.4|0\.1\.[3-8]|1\.0\.(8|9|10|12)|1\.3\.(3|4|5|7))([^0-9]|$)'
 SCAN_PATH_FINDINGS=0
 
+is_known_safe_ioc_self_reference() {
+	local hit_line="$1"
+	local hit_path="${hit_line%%:*}"
+
+	case "$hit_path" in
+	.agents/reference/npm-supply-chain-response.md | */.agents/reference/npm-supply-chain-response.md | .agents/scripts/supply-chain-advisory-helper.sh | */.agents/scripts/supply-chain-advisory-helper.sh)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 print_usage() {
 	cat <<EOF
 Usage: $(basename "$0") <command> [path...]
@@ -96,6 +110,8 @@ collect_default_paths() {
 scan_path() {
 	local target_path="$1"
 	local findings=0
+	local ioc_findings=0
+	local ioc_self_references=0
 	local rg_status=0
 	local scan_error=0
 	SCAN_PATH_FINDINGS=0
@@ -106,23 +122,39 @@ scan_path() {
 
 	echo -e "${BLUE}Scanning:${NC} ${target_path}"
 	if command -v rg >/dev/null 2>&1; then
-		if rg -n --hidden --glob '!node_modules/.cache/**' --glob '!dist/**' --glob '!build/**' --glob '!.git/**' "$IOC_PATTERN" "$target_path"; then
-			findings=$((findings + 1))
-		else
-			rg_status=$?
-			if [[ "$rg_status" -gt 1 ]]; then
-				echo -e "${YELLOW}[WARN]${NC} ripgrep IOC scan failed for ${target_path} (exit ${rg_status})."
-				scan_error="$rg_status"
+		local ioc_output
+		rg_status=0
+		ioc_output=$(rg -nH --hidden --glob '!node_modules/.cache/**' --glob '!dist/**' --glob '!build/**' --glob '!.git/**' "$IOC_PATTERN" "$target_path") || rg_status=$?
+		if [[ "$rg_status" -eq 0 ]]; then
+			local hit_line
+			while IFS= read -r hit_line; do
+				[[ -z "$hit_line" ]] && continue
+				if is_known_safe_ioc_self_reference "$hit_line"; then
+					ioc_self_references=$((ioc_self_references + 1))
+					continue
+				fi
+				printf '%s\n' "$hit_line"
+				ioc_findings=$((ioc_findings + 1))
+			done <<<"$ioc_output"
+			if [[ "$ioc_findings" -gt 0 ]]; then
+				findings=$((findings + 1))
 			fi
+			if [[ "$ioc_self_references" -gt 0 ]]; then
+				echo -e "${YELLOW}[INFO]${NC} Ignored ${ioc_self_references} known-safe scanner self-reference IOC match(es)."
+			fi
+		elif [[ "$rg_status" -gt 1 ]]; then
+			echo -e "${YELLOW}[WARN]${NC} ripgrep IOC scan failed for ${target_path} (exit ${rg_status})."
+			scan_error="$rg_status"
 		fi
-		if rg -n --hidden --glob '!node_modules/**' --glob '!.git/**' --glob 'pnpm-lock.yaml' --glob 'package-lock.json' --glob 'yarn.lock' --glob 'bun.lock*' --glob 'package.json' "$AFFECTED_PATTERN" "$target_path"; then
+		local affected_output
+		rg_status=0
+		affected_output=$(rg -nH --hidden --glob '!node_modules/**' --glob '!.git/**' --glob 'pnpm-lock.yaml' --glob 'package-lock.json' --glob 'yarn.lock' --glob 'bun.lock*' --glob 'package.json' "$AFFECTED_PATTERN" "$target_path") || rg_status=$?
+		if [[ "$rg_status" -eq 0 ]]; then
+			printf '%s\n' "$affected_output"
 			findings=$((findings + 1))
-		else
-			rg_status=$?
-			if [[ "$rg_status" -gt 1 ]]; then
-				echo -e "${YELLOW}[WARN]${NC} ripgrep affected-package scan failed for ${target_path} (exit ${rg_status})."
-				scan_error="$rg_status"
-			fi
+		elif [[ "$rg_status" -gt 1 ]]; then
+			echo -e "${YELLOW}[WARN]${NC} ripgrep affected-package scan failed for ${target_path} (exit ${rg_status})."
+			scan_error="$rg_status"
 		fi
 	else
 		echo -e "${YELLOW}[WARN]${NC} ripgrep not installed; install rg for supply-chain scans."

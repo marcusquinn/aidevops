@@ -212,6 +212,12 @@ else
 	fail "drops cached dashboard with conflicting operator label" "result=${result}; cache_exists=$([[ -f "$cache_file" ]] && printf yes || printf no); calls=$(tr '\n' ';' <"$GH_CALLS")"
 fi
 
+if _health_issue_operator_label_allows_identity "" "canonical-operator"; then
+	pass "allows empty cached issue metadata as unknown rather than jq parse failure"
+else
+	fail "allows empty cached issue metadata as unknown rather than jq parse failure" "empty input was rejected"
+fi
+
 body=$(_build_health_issue_body \
 	"2026-05-08T00:00:00Z" "Supervisor" "github-user" "owner/repo" \
 	"0" "0" "0" "0" "4" "1" "0" "" \

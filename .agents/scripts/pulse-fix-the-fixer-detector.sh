@@ -61,7 +61,10 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly FIX_THE_FIXER_LABEL="fix-the-fixer"
 readonly FIX_THE_FIXER_MARKER="<!-- aidevops:fix-the-fixer-detector -->"
-readonly AI_RESEARCH_HELPER="${SCRIPT_DIR}/ai-research-helper.sh"
+# GH#23594: test override path. Production callers leave the env var unset
+# and pick up the sibling helper; regression tests can point at a stub that
+# deterministically returns a specific exit code.
+readonly AI_RESEARCH_HELPER="${PULSE_AI_RESEARCH_HELPER_OVERRIDE:-${SCRIPT_DIR}/ai-research-helper.sh}"
 readonly REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 readonly AUTH_COOLDOWN_FILE="${HOME}/.aidevops/cache/fix-the-fixer-detector-auth.cooldown"
 readonly AUTH_COOLDOWN_SECONDS_DEFAULT=21600
@@ -77,17 +80,30 @@ _log() {
 	local level="$1"
 	shift
 	printf '[fix-the-fixer-detector] %s: %s\n' "$level" "$*" >&2
-	return 0
+	return $?
 }
 
 _log_info() {
 	_log "$_LL_INFO" "$@"
-	return 0
+	return $?
 }
 
 _log_warn() {
 	_log "$_LL_WARN" "$@"
+	return $?
+}
+
+_auth_item_logs_suppressed() {
+	[[ "${AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS:-0}" == "1" ]] || return 1
 	return 0
+}
+
+_log_auth_skip() {
+	if _auth_item_logs_suppressed; then
+		return 0
+	fi
+	_log_warn "$@"
+	return $?
 }
 
 _auth_cooldown_seconds() {
@@ -256,7 +272,7 @@ _classify_via_llm() {
 
 	if _auth_cooldown_active; then
 		RATIONALE="auth_error: ${AUTH_ERROR_REASON}; cooldown active"
-		_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+		_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
 		printf 'SKIP_AUTH\n'
 		return 0
 	fi
@@ -284,10 +300,19 @@ _classify_via_llm() {
 			local err_snippet=""
 			[[ -s "$err_log" ]] && err_snippet=$(head -c 200 "$err_log" | tr '\n' ' ')
 			rm -f "$err_log"
-			if _is_auth_error "$err_snippet"; then
-				_record_auth_cooldown "$err_snippet"
+			# GH#23594: rc=2 is ai-research-helper's documented exit code for
+			# "no API key resolved locally" — treat it as an auth class signal
+			# regardless of the error message, so the cooldown trips even when
+			# the prose message doesn't match _is_auth_error()'s API-response
+			# patterns (which are tuned for invalid x-api-key / 401 responses).
+			if [[ "$helper_rc" -eq 2 ]] || _is_auth_error "$err_snippet"; then
+				local cooldown_reason="$err_snippet"
+				if [[ "$helper_rc" -eq 2 && -z "$cooldown_reason" ]]; then
+					cooldown_reason="ai-research-helper rc=2: no Anthropic credentials resolvable"
+				fi
+				_record_auth_cooldown "$cooldown_reason"
 				RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-				_log_warn "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
+				_log_auth_skip "fix-the-fixer detector skipped: ${AUTH_ERROR_REASON}"
 				printf 'SKIP_AUTH\n'
 				return 0
 			fi
@@ -468,7 +493,7 @@ cmd_check() {
 	verdict=$(_classify_via_llm "$title" "$body")
 	if [[ "$verdict" == "SKIP_AUTH" ]]; then
 		[[ -n "$RATIONALE" ]] || RATIONALE="auth_error: ${AUTH_ERROR_REASON}"
-		_log_warn "${slug}#${issue_num} classification skipped — ${RATIONALE}"
+		_log_auth_skip "${slug}#${issue_num} classification skipped — ${RATIONALE}"
 		return 3
 	fi
 	if [[ "$verdict" == "SKIP" ]]; then
@@ -539,6 +564,7 @@ cmd_run() {
 	local classified=0
 	local skipped_llm=0
 	local skipped_auth=0
+	export AIDEVOPS_FIX_THE_FIXER_DETECTOR_SUPPRESS_AUTH_ITEM_LOGS=1
 	local slug
 	for slug in "${target_repos[@]}"; do
 		[[ "$processed" -ge "$limit" ]] && break

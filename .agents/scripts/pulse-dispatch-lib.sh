@@ -50,6 +50,8 @@ _DISPATCH_ROUND_NO_WORKER_FAILURES=0
 _DISPATCH_CONSECUTIVE_NO_WORKER=0
 _DISPATCH_THROTTLE_FILE=""
 _DISPATCH_CANARY_CACHE=""
+_DISPATCH_BENIGN_BLOCKS_FILE=""
+_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
 # Out-parameter set by _dispatch_process_candidate when a successful launch clears
 # the throttle file. The orchestrator loop reads this and restores
 # _effective_slots to the unthrottled available_slots value.
@@ -104,7 +106,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -190,11 +192,132 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		interactive_review_hold | pr_target_not_dispatchable)
+		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable)
 			return 0
 			;;
 	esac
 	return 1
+}
+
+#######################################
+# Start a cycle-local benign block ledger. Reinitializing the ledger for every
+# dispatch_max cycle prevents stale active-claim blocks from a long-running
+# pulse-wrapper process from suppressing later cycles after the claim clears.
+#
+# Stdout: file path
+# Returns: 0 always
+#######################################
+_dispatch_begin_benign_blocks_cycle() {
+	local ledger_file=""
+	local ledger_managed_by_dispatch="0"
+	if [[ -n "${AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE:-}" ]]; then
+		ledger_file="$AIDEVOPS_PULSE_BENIGN_BLOCKS_FILE"
+	else
+		ledger_managed_by_dispatch="1"
+		if ! mkdir -p "${HOME}/.aidevops/logs"; then
+			printf 'Failed to create benign block ledger directory: %s\n' "${HOME}/.aidevops/logs" >&2
+		fi
+		ledger_file=$(mktemp "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.XXXXXX" || printf '%s\n' "${HOME}/.aidevops/logs/pulse-dispatch-benign-blocks.$$.$RANDOM")
+	fi
+	if [[ -z "$ledger_file" ]]; then
+		printf 'Failed to resolve benign block ledger file path\n' >&2
+		_DISPATCH_BENIGN_BLOCKS_FILE=""
+		_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
+		return 0
+	fi
+	if [[ "$ledger_managed_by_dispatch" == "0" && "$ledger_file" == */* ]]; then
+		local parent_dir
+		parent_dir="${ledger_file%/*}"
+		if [[ -n "$parent_dir" ]] && ! mkdir -p -- "$parent_dir"; then
+			printf 'Failed to create benign block ledger parent directory: %s\n' "$parent_dir" >&2
+		fi
+	fi
+	if ! : >"$ledger_file"; then
+		printf 'Failed to initialize benign block ledger file: %s\n' "$ledger_file" >&2
+	fi
+	_DISPATCH_BENIGN_BLOCKS_FILE="$ledger_file"
+	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="$ledger_managed_by_dispatch"
+	export _DISPATCH_BENIGN_BLOCKS_FILE
+	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
+	return 0
+}
+
+#######################################
+# Remove the cycle-local benign block ledger once the dispatch loop has read it.
+#
+# Returns: 0 always
+#######################################
+_dispatch_cleanup_benign_blocks_cycle() {
+	local ledger_file="${_DISPATCH_BENIGN_BLOCKS_FILE:-}"
+	local ledger_owned="${_DISPATCH_BENIGN_BLOCKS_FILE_OWNED:-0}"
+	if [[ -n "$ledger_file" && "$ledger_owned" == "1" ]] && ! rm -f "$ledger_file"; then
+		printf 'Failed to remove benign block ledger file: %s\n' "$ledger_file" >&2
+	fi
+	_DISPATCH_BENIGN_BLOCKS_FILE=""
+	_DISPATCH_BENIGN_BLOCKS_FILE_OWNED="0"
+	return 0
+}
+
+#######################################
+# Return the current cycle-local benign block ledger path, creating a default
+# when the orchestrator has not explicitly started a ledger.
+#
+# Stdout: file path
+# Returns: 0 always
+#######################################
+_dispatch_benign_blocks_file() {
+	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
+		_dispatch_begin_benign_blocks_cycle >/dev/null
+	fi
+	printf '%s\n' "$_DISPATCH_BENIGN_BLOCKS_FILE"
+	return 0
+}
+
+#######################################
+# Record a candidate that hit a benign dispatch block in the current pulse.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - benign reason token
+# Returns: 0 always
+#######################################
+_dispatch_mark_benign_blocked_candidate() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local ledger_file
+	ledger_file=$(_dispatch_benign_blocks_file)
+	mkdir -p "${ledger_file%/*}" 2>/dev/null || true
+	printf '%s\t%s\t%s\n' "$issue_number" "$repo_slug" "$reason" >>"$ledger_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Check whether a candidate already hit a benign dispatch block this pulse.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Stdout: benign reason token when present
+# Returns:
+#   0 - candidate is blocked for this pulse
+#   1 - candidate is not blocked
+#######################################
+_dispatch_benign_blocked_candidate_reason() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local ledger_file
+	local reason=""
+	ledger_file=$(_dispatch_benign_blocks_file)
+	[[ -f "$ledger_file" ]] || return 1
+	reason=$(awk -F '\t' -v issue="$issue_number" -v repo="$repo_slug" '
+		$1 == issue && $2 == repo { reason = $3 }
+		END { if (reason != "") { print reason } }
+	' "$ledger_file" 2>/dev/null) || return 1
+	[[ -n "$reason" ]] || return 1
+	printf '%s\n' "$reason"
+	return 0
 }
 
 #######################################
@@ -619,6 +742,13 @@ _dispatch_should_skip_candidate() {
 	local repo_slug="$2"
 
 	pulse_dispatch_debug_log "evaluating skip checks for #${issue_number} (${repo_slug})"
+
+	local benign_block_reason=""
+	if benign_block_reason=$(_dispatch_benign_blocked_candidate_reason "$issue_number" "$repo_slug"); then
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — skip:already_assigned blocked:${benign_block_reason} from current pulse cycle" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_blocked_${benign_block_reason}"
+		return 0
+	fi
 
 	# GH#18804: previously this call used `>/dev/null 2>&1` which suppressed
 	# the helper's own log lines AND, more dangerously, masked silent
@@ -1049,7 +1179,8 @@ _dispatch_record_nonzero_dispatch_result() {
 	local failure_reason
 	failure_reason=$(_dispatch_candidate_failure_reason "$issue_number" "$repo_slug" "$dispatch_rc")
 	if _dispatch_candidate_benign_block_reason "$failure_reason"; then
-		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) benign dispatch block reason=${failure_reason}" >>"$LOGFILE"
+		_dispatch_mark_benign_blocked_candidate "$issue_number" "$repo_slug" "$failure_reason"
+		echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) blocked:${failure_reason} benign dispatch block" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${failure_reason}"
 		return 0
 	fi

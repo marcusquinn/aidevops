@@ -223,7 +223,11 @@ gh_create_issue() {
 		_todo_label_args=("${_GH_CI_TODO_LABEL_ARGS[@]}")
 	fi
 
-	_gh_ci_prepare_status_label "$@"
+	if [[ ${#_todo_label_args[@]} -gt 0 ]]; then
+		_gh_ci_prepare_status_label "$@" "${_todo_label_args[@]}"
+	else
+		_gh_ci_prepare_status_label "$@"
+	fi
 
 	# Build command arrays safely; avoid empty-arg injection (GH#22056).
 	local -a _issue_cmd=(gh issue create "$@")

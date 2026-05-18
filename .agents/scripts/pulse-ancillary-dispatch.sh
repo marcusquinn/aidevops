@@ -34,6 +34,55 @@ _pad_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 unset _pad_script_dir
 
 #######################################
+# Expand a repo path that may start with `~` into an absolute path.
+_expand_foss_repo_path() {
+	local repo_path="$1"
+	case "$repo_path" in
+	"~")
+		printf '%s\n' "$HOME"
+		;;
+	\~/*)
+		printf '%s\n' "${repo_path/#\~/$HOME}"
+		;;
+	*)
+		printf '%s\n' "$repo_path"
+		;;
+	esac
+	return 0
+}
+
+#######################################
+# List one open FOSS issue matching a configured label.
+#
+# GitHub CLI treats commas in --label values as multiple labels. Use quoted
+# search syntax only for comma-containing label names so a single configured
+# label such as "needs, triage" remains one label at the point of use.
+#
+# Arguments:
+#   $1 - repo_slug (owner/repo)
+#   $2 - label
+#######################################
+_foss_issue_list_for_label() {
+	local repo_slug="$1"
+	local label="$2"
+	local search_label
+
+	if [[ "$label" == *,* ]]; then
+		search_label="${label//\\/\\\\}"
+		search_label="${search_label//\"/\\\"}"
+		gh_issue_list --repo "$repo_slug" --state open \
+			--search "label:\"${search_label}\"" --limit 1 \
+			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
+		return $?
+	fi
+
+	gh_issue_list --repo "$repo_slug" --state open \
+		--label "$label" --limit 1 \
+		--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
+	return $?
+}
+
+#######################################
 # Ensure the triage-failed label exists in the target repo.
 #
 # Uses gh label create --force (idempotent — creates if missing,
@@ -1188,24 +1237,32 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
+	local foss_slug foss_path disclosure labels_filter_json
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
-	while IFS='|' read -r foss_slug foss_path; do
+	while IFS=$'\t' read -r foss_slug foss_path disclosure labels_filter_json; do
 		[[ -n "$foss_slug" && -n "$foss_path" ]] || continue
 		[[ "$available" -gt 0 && "$foss_count" -lt "$foss_max" ]] || break
 
 		# Pre-dispatch eligibility check (budget + rate limit)
 		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
-		# Scan for a suitable issue
-		local labels_filter foss_issue foss_issue_num foss_issue_title
-		labels_filter=$(jq -r --arg slug "$foss_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .foss_config.labels_filter // ["help wanted","good first issue","bug"] | join(",")' \
-			"$repos_json" 2>/dev/null || echo "help wanted")
-		foss_issue=$(gh_issue_list --repo "$foss_slug" --state open \
-			--label "${labels_filter%%,*}" --limit 1 \
-			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"') || foss_issue=""
+		# Scan for a suitable issue. labels_filter_json comes from the outer jq
+		# pass so configured labels stay as JSON array elements, including labels
+		# that contain commas, while avoiding a second repos.json parse per repo.
+		local foss_issue foss_issue_num foss_issue_title
+		local foss_label_candidates=()
+		local foss_label
+		while IFS= read -r foss_label; do
+			[[ -n "$foss_label" ]] || continue
+			foss_label_candidates+=("$foss_label")
+		done < <(jq -r '.[]' <<<"$labels_filter_json" 2>/dev/null || printf '%s\n' 'help wanted' 'good first issue' 'bug')
+		for foss_label in "${foss_label_candidates[@]}"; do
+			[[ -n "$foss_label" ]] || continue
+			foss_issue=$(_foss_issue_list_for_label "$foss_slug" "$foss_label") || foss_issue=""
+			[[ -n "$foss_issue" ]] && break
+		done
 		if [[ -z "$foss_issue" ]]; then
 			echo "[pulse-wrapper] FOSS dispatch skipped no issue selection for ${foss_slug}: gh_issue_list returned empty output" >>"$LOGFILE"
 			continue
@@ -1226,16 +1283,22 @@ dispatch_foss_workers() {
 		foss_session_keys_seen="${foss_session_keys_seen}${foss_session_key}"$'\n'
 
 		local disclosure_flag=""
-		local disclosure
-		disclosure=$(jq -r --arg slug "$foss_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .foss_config.disclosure // true' \
-			"$repos_json" 2>/dev/null || echo "true")
 		[[ "$disclosure" == "true" ]] && disclosure_flag=" Include AI disclosure note in the PR."
+		local foss_path_expanded
+		foss_path_expanded=$(_expand_foss_repo_path "$foss_path")
 
+		env \
+			HEADLESS=1 \
+			FULL_LOOP_HEADLESS=true \
+			AIDEVOPS_SESSION_ORIGIN=worker \
+			AIDEVOPS_HEADLESS=true \
+			WORKER_ISSUE_NUMBER="$foss_issue_num" \
+			WORKER_REPO_SLUG="$foss_slug" \
+			WORKER_WORKTREE_PATH="$foss_path_expanded" \
 		"$HEADLESS_RUNTIME_HELPER" run \
 			--role worker \
 			--session-key "$foss_session_key" \
-			--dir "$foss_path" \
+			--dir "$foss_path_expanded" \
 			--title "FOSS: ${foss_slug} #${foss_issue_num}: ${foss_issue_title}" \
 			--prompt "/full-loop Implement issue #${foss_issue_num} (https://github.com/${foss_slug}/issues/${foss_issue_num}) -- ${foss_issue_title}. This is a FOSS contribution.${disclosure_flag} After completion, run: foss-contribution-helper.sh record ${foss_slug} <tokens_used>" \
 			</dev/null >>"${HOME}/.aidevops/logs/pulse-foss-${foss_issue_num}.log" 2>&1 &
@@ -1243,7 +1306,15 @@ dispatch_foss_workers() {
 
 		foss_count=$((foss_count + 1))
 		available=$((available - 1))
-	done < <(jq -r '.initialized_repos[] | select(.foss == true and (.foss_config.blocklist // false) == false) | "\(.slug)|\(.path)"' \
+	done < <(jq -r '.initialized_repos[]
+		| select(.foss == true and (.foss_config.blocklist // false) == false)
+		| [
+			.slug,
+			.path,
+			((.foss_config.disclosure != false) | tostring),
+			((.foss_config.labels_filter // ["help wanted","good first issue","bug"]) | @json)
+		]
+		| @tsv' \
 		"$repos_json" 2>/dev/null || true)
 
 	printf '%d\n' "$available"

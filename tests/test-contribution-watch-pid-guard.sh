@@ -142,8 +142,11 @@ test_stop_invalid_pid_file() {
 }
 
 test_scan_duplicate_prevention() {
-	# Simulate a running scan by writing our own PID to the PID file
-	echo $$ >"$PID_FILE_PATH"
+	# Simulate a running scan with a process command line that matches the
+	# command-aware PID liveness guard.
+	bash -c 'while :; do sleep 1; done' contribution-watch-helper >/dev/null 2>&1 &
+	local fake_scan_pid=$!
+	echo "$fake_scan_pid" >"$PID_FILE_PATH"
 
 	# Attempting to start another scan should fail with exit 1
 	local exit_code=0
@@ -161,7 +164,30 @@ test_scan_duplicate_prevention() {
 	fi
 
 	# Clean up
+	kill "$fake_scan_pid" 2>/dev/null || true
+	wait "$fake_scan_pid" 2>/dev/null || true
 	rm -f "$PID_FILE_PATH"
+	return 0
+}
+
+test_scan_without_seed_skips() {
+	rm -f "$PID_FILE_PATH"
+	echo '{"last_scan":"","items":{}}' >"$HOME/.aidevops/cache/contribution-watch.json"
+
+	local exit_code=0
+	local output
+	output=$(bash "$SCRIPT_UNDER_TEST" scan 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]]; then
+		pass "scan with no seed exits 0"
+	else
+		fail "scan with no seed exits 0" "Got exit code $exit_code"
+	fi
+	if echo "$output" | grep -q "skipped" && echo "$output" | grep -q "seed"; then
+		pass "scan with no seed prints skipped enablement message"
+	else
+		fail "scan with no seed prints skipped enablement message" "Output: $output"
+	fi
+	echo '{"last_scan":"2026-01-01T00:00:00Z","items":{}}' >"$HOME/.aidevops/cache/contribution-watch.json"
 	return 0
 }
 
@@ -186,6 +212,7 @@ test_stop_no_pid_file
 test_stop_stale_pid_file
 test_stop_invalid_pid_file
 test_scan_duplicate_prevention
+test_scan_without_seed_skips
 test_stale_pid_allows_new_scan
 
 # ============================================================================

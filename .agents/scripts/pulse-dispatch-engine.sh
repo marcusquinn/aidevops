@@ -299,16 +299,28 @@ build_ranked_dispatch_candidates_json() {
 				repo_path: $path,
 				repo_priority: $priority,
 				score: (
+					((.labels // []) | map(.name? // .)) as $labels |
 					(if $priority == "tooling" then 2000 elif $priority == "product" then 1000 else 0 end) +
-					(if ((.labels | index("quality-debt")) != null and (.labels | index("security")) != null) then 500 else 0 end) +
-					(if (.labels | index("priority:critical")) != null then 10000
-					 elif (.labels | index("priority:high")) != null then 9000
-					 elif (.labels | index("priority:medium")) != null then 8000
-					 elif (.labels | index("bug")) != null then 7000
-					 elif (.labels | index("enhancement")) != null then 6000
-					 elif (.labels | index("quality-debt")) != null then 5000
-					 elif ((.labels | index("file-size-debt")) != null or (.labels | index("function-complexity-debt")) != null) then 4000
-					 elif (.labels | index("priority:low")) != null then 3500
+					# Mission m-20260504-1e325d feature 3.4: when capacity is
+					# constrained, rank worker-ready/low-complexity issues above
+					# broad raw backlog so pulse fills slots with solvable work first.
+					(if (($labels | index("tier:simple")) != null or ($labels | index("low-complexity")) != null) then 2500
+					 elif ($labels | index("tier:standard")) != null then 1200
+					 else 0 end) +
+					(if (($labels | index("worker-ready")) != null or ($labels | index("status:available")) != null) then 1000 else 0 end) +
+					(if (($labels | index("good first issue")) != null or ($labels | index("quick-win")) != null) then 800 else 0 end) +
+					(if ($labels | index("auto-dispatch")) != null then 300 else 0 end) -
+					(if ($labels | index("tier:thinking")) != null then 1200 else 0 end) -
+					(if (($labels | index("research")) != null or ($labels | index("needs-design")) != null) then 800 else 0 end) +
+					(if (($labels | index("quality-debt")) != null and ($labels | index("security")) != null) then 500 else 0 end) +
+					(if ($labels | index("priority:critical")) != null then 10000
+					 elif ($labels | index("priority:high")) != null then 9000
+					 elif ($labels | index("priority:medium")) != null then 8000
+					 elif ($labels | index("bug")) != null then 7000
+					 elif ($labels | index("enhancement")) != null then 6000
+					 elif ($labels | index("quality-debt")) != null then 5000
+					 elif (($labels | index("file-size-debt")) != null or ($labels | index("function-complexity-debt")) != null) then 4000
+					 elif ($labels | index("priority:low")) != null then 3500
 					 else 3000 end)
 				)
 			}
@@ -421,6 +433,12 @@ dispatch_max() {
 	_DISPATCH_CONSECUTIVE_NO_WORKER=0
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
 	_DISPATCH_CANARY_CACHE="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}/canary-last-pass"
+	local _dispatch_owns_benign_blocks_cycle=0
+	if [[ -z "${_DISPATCH_BENIGN_BLOCKS_FILE:-}" ]]; then
+		_dispatch_begin_benign_blocks_cycle >/dev/null
+		_dispatch_owns_benign_blocks_cycle=1
+	fi
+	export _DISPATCH_BENIGN_BLOCKS_FILE
 
 	# t3015: branch on dispatch path (max = parallel, floor = forced-serial).
 	# t3418/t3558: if the minimum worker floor is active, runtime launch
@@ -458,6 +476,9 @@ dispatch_max() {
 	if ! printf '%s' "$candidates_json" | jq -c '.[]' >"$_dispatch_candidate_file" 2>>"$LOGFILE"; then
 		echo "[pulse-wrapper] Dispatch_max: jq failed to enumerate candidates_json — aborting loop with 0 dispatches" >>"$LOGFILE"
 		rm -f "$_dispatch_candidate_file"
+		if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
+			_dispatch_cleanup_benign_blocks_cycle
+		fi
 		_dispatch_maybe_engage_throttle
 		echo "[pulse-wrapper] Dispatch_max complete: dispatched=${triage_dispatched} (${triage_dispatched} triage + 0 implementation), processed=0/${candidate_count}, target_available=${available_slots}" >>"$LOGFILE"
 		echo "$triage_dispatched"
@@ -485,6 +506,9 @@ dispatch_max() {
 	[[ "$dispatched_count" =~ ^[0-9]+$ ]] || dispatched_count=0
 	[[ "$processed_count" =~ ^[0-9]+$ ]] || processed_count=0
 	rm -f "$_dispatch_candidate_file"
+	if [[ "$_dispatch_owns_benign_blocks_cycle" == "1" ]]; then
+		_dispatch_cleanup_benign_blocks_cycle
+	fi
 
 	echo "[pulse-wrapper] Dispatch path=${_dispatch_path}: loop body finished — processed=${processed_count} dispatched=${dispatched_count} mode=$( ((_dispatch_max_parallel <= 1)) && echo serial || echo "parallel(${_dispatch_max_parallel})")" >>"$LOGFILE"
 	_dispatch_maybe_engage_throttle
@@ -812,6 +836,8 @@ apply_dispatch_max() {
 		return 0
 	fi
 
+	_dispatch_begin_benign_blocks_cycle >/dev/null
+
 	local fill_dispatched
 	fill_dispatched=$(dispatch_max) || fill_dispatched=0
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
@@ -844,6 +870,7 @@ apply_dispatch_max() {
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
 	fi
+	_dispatch_cleanup_benign_blocks_cycle
 	return 0
 }
 

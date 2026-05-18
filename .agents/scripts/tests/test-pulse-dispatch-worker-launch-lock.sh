@@ -88,8 +88,25 @@ if [[ "$(_dlw_zero_output_evidence_count 123 owner/repo "" 7)" != "7" ]]; then
 	fail "precomputed zero-output evidence count was not returned directly"
 fi
 
+mkdir -p "${TEST_TMP}/bin" || fail "failed to create systemctl stub dir"
+cat >"${TEST_TMP}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "--user" && "${2:-}" == "show" ]]; then
+	printf 'ActiveState=active\nSubState=running\nMainPID=4242'
+	exit 0
+fi
+exit 1
+EOF
+chmod +x "${TEST_TMP}/bin/systemctl" || fail "failed to make systemctl stub executable"
+
+resolved_pid=$(PATH="${TEST_TMP}/bin:${PATH}" LOGFILE="${TEST_TMP}/pulse.log" _dlw_systemd_resolve_main_pid "aidevops-test" "123") || fail "systemd PID resolver returned failure"
+if [[ "$resolved_pid" != "4242" ]]; then
+	fail "systemd PID resolver skipped final unterminated property"
+fi
+
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
 printf 'PASS: root node_modules .bin tooling is linked by default\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
+printf 'PASS: systemd PID resolver handles final unterminated property\n'
 exit 0
