@@ -581,6 +581,16 @@ _run_hook() {
 #
 # Returns 1 on violation, 0 otherwise (including fail-open paths).
 # ---------------------------------------------------------------------------
+
+_pr_commit_oids() {
+	local pr_number="$1"
+	if ! command -v gh >/dev/null 2>&1; then
+		return 1
+	fi
+	gh pr view "$pr_number" --json commits --jq '.commits[].oid' 2>/dev/null
+	return $?
+}
+
 _check_pr_title() {
 	local pr_number="$1"
 	if ! command -v gh >/dev/null 2>&1; then
@@ -613,29 +623,26 @@ _run_check_pr() {
 		return 1
 	fi
 
-	# Resolve the scan base to the merge-base with the default branch. A direct
-	# `origin/main..HEAD` range can expand badly in CI when the fetched default
-	# branch ref is shallow or otherwise not connected to the checked-out PR
-	# history; using the merge-base keeps the scan bounded to commits actually
-	# unique to the branch, while still excluding merge-from-main payloads.
-	local default_ref base
-	base=$(_find_merge_base)
-	if [[ -n "$base" ]]; then
-		_debug "Using merge-base for PR scan range: $base"
-	elif default_ref=$(_find_default_branch_ref); then
-		base="$default_ref"
-		_debug "No merge-base found; falling back to default-branch ref: $base"
-	else
-		_warn "Could not determine PR scan base — fail-open"
-		return 0
-	fi
-
-	# Get commits unique to the branch, excluding merge commits via --no-merges.
-	# `git log A..B` already excludes commits reachable from A; combined with
-	# `--no-merges` we skip both upstream commits and the merge commit that
-	# brought them in. fixup!/squash! commits are handled by _check_message.
+	# Prefer GitHub's PR commit list: it is already bounded to the pull request
+	# and avoids shallow/default-branch graph edge cases in Actions checkouts.
+	# Fall back to local graph walking when gh is unavailable.
 	local commits
-	commits=$(git log --no-merges "${base}..HEAD" --format='%H' 2>/dev/null)
+	if commits=$(_pr_commit_oids "$pr_number") && [[ -n "$commits" ]]; then
+		_debug "Using GitHub PR commit list for PR #${pr_number}"
+	else
+		local default_ref base
+		base=$(_find_merge_base)
+		if [[ -n "$base" ]]; then
+			_debug "Using merge-base for PR scan range: $base"
+		elif default_ref=$(_find_default_branch_ref); then
+			base="$default_ref"
+			_debug "No merge-base found; falling back to default-branch ref: $base"
+		else
+			_warn "Could not determine PR scan base — fail-open"
+			return 0
+		fi
+		commits=$(git log --no-merges "${base}..HEAD" --format='%H' 2>/dev/null)
+	fi
 	if [[ -z "$commits" ]]; then
 		_info "No commits in PR range — nothing to check"
 		return 0
@@ -662,9 +669,10 @@ _run_check_pr() {
 
 		_debug "Checking commit $commit_hash: $subject"
 
-		# Skip fixup/squash commits (merges already excluded by --no-merges)
-		if printf '%s' "$subject" | grep -qE '^(fixup!|squash!)'; then
-			_debug "Skipping fixup/squash: $commit_hash"
+		# Skip merge/fixup/squash commits. GitHub PR commit lists can include
+		# merge-from-main commits; local fallback excludes merges with --no-merges.
+		if printf '%s' "$subject" | grep -qE '^(Merge|fixup!|squash!)'; then
+			_debug "Skipping merge/fixup/squash: $commit_hash"
 			continue
 		fi
 
