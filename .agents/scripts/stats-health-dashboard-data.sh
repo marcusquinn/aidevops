@@ -40,6 +40,11 @@ fi
 # contains valid but incomplete data due to rate limits or timeouts.
 readonly STATS_HEALTH_EX_PARTIAL=75
 
+# Wall-clock guard for each dashboard person-stats helper invocation. The
+# helper already bounds individual GitHub API calls; this keeps the health
+# dashboard refresh from spending unbounded time across many contributors.
+: "${STATS_HEALTH_PERSON_STATS_TIMEOUT:=60}"
+
 # --- Functions ---
 
 #######################################
@@ -910,7 +915,7 @@ _refresh_person_stats_cache() {
 		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
 		local md md_rc
 		md_rc=0
-		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md_rc=$?
+		md=$(timeout_sec "$STATS_HEALTH_PERSON_STATS_TIMEOUT" bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md_rc=$?
 		if [[ -n "$md" && ( "$md_rc" -eq 0 || "$md_rc" -eq "$partial_exit" ) ]]; then
 			echo "$md" >"$cache_file"
 			refreshed_any=true
@@ -931,7 +936,7 @@ _refresh_person_stats_cache() {
 		if [[ ${#cross_args[@]} -gt 1 ]]; then
 			local cross_md cross_rc
 			cross_rc=0
-			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_rc=$?
+			cross_md=$(timeout_sec "$STATS_HEALTH_PERSON_STATS_TIMEOUT" bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_rc=$?
 			if [[ -n "$cross_md" && ( "$cross_rc" -eq 0 || "$cross_rc" -eq "$partial_exit" ) ]]; then
 				echo "$cross_md" >"${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
 				refreshed_any=true

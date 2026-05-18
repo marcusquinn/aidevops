@@ -49,6 +49,18 @@ test_person_stats_has_no_direct_timeout() {
 	return 0
 }
 
+test_dashboard_wraps_person_stats_with_timeout() {
+	local name="dashboard wraps person-stats helpers with timeout_sec"
+	local person_pattern="timeout_sec \"\$STATS_HEALTH_PERSON_STATS_TIMEOUT\" bash \"\$activity_helper\" person-stats"
+	local cross_pattern="timeout_sec \"\$STATS_HEALTH_PERSON_STATS_TIMEOUT\" bash \"\$activity_helper\" cross-repo-person-stats"
+	if grep -Fq "$person_pattern" "$DASHBOARD_LIB" && grep -Fq "$cross_pattern" "$DASHBOARD_LIB"; then
+		pass "$name"
+	else
+		fail "$name" "missing dashboard wall-clock timeout around person-stats helper calls"
+	fi
+	return 0
+}
+
 test_dashboard_preserves_partial_cache() {
 	local name="dashboard caches partial person-stats output and updates marker"
 	local fake_home="${TMP_DIR}/home-partial"
@@ -88,6 +100,13 @@ GH
 		PERSON_STATS_INTERVAL=0
 		PERSON_STATS_LAST_RUN="${TMP_DIR}/partial.last"
 		PERSON_STATS_CACHE_DIR="${TMP_DIR}/cache"
+		timeout_sec() {
+			local _seconds="$1"
+			shift
+			[[ -n "$_seconds" ]] || return 124
+			"$@"
+			return $?
+		}
 		PATH="${TMP_DIR}/bin:${PATH}"
 		export HOME LOGFILE REPOS_JSON PERSON_STATS_INTERVAL PERSON_STATS_LAST_RUN PERSON_STATS_CACHE_DIR PATH
 		# shellcheck source=../stats-health-dashboard-data.sh
@@ -130,6 +149,13 @@ GH
 		PERSON_STATS_INTERVAL=0
 		PERSON_STATS_LAST_RUN="${TMP_DIR}/fail.last"
 		PERSON_STATS_CACHE_DIR="${TMP_DIR}/cache-fail"
+		timeout_sec() {
+			local _seconds="$1"
+			shift
+			[[ -n "$_seconds" ]] || return 124
+			"$@"
+			return $?
+		}
 		PATH="${TMP_DIR}/bin-fail:${PATH}"
 		export HOME LOGFILE REPOS_JSON PERSON_STATS_INTERVAL PERSON_STATS_LAST_RUN PERSON_STATS_CACHE_DIR PATH
 		# shellcheck source=../stats-health-dashboard-data.sh
@@ -146,6 +172,7 @@ GH
 
 test_person_stats_uses_portable_timeout
 test_person_stats_has_no_direct_timeout
+test_dashboard_wraps_person_stats_with_timeout
 test_dashboard_preserves_partial_cache
 test_dashboard_skips_marker_when_all_refreshes_fail
 
