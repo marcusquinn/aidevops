@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.65] - 2026-05-19
+
+### Changed
+
+- Exempt machine protocols from signature repair (#23811)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- support exact PR salvage scans (#23797)
+- no-op repair for signed dynamic gh bodies (#23796)
+
 ## [3.15.64] - 2026-05-19
 
 ### Changed
