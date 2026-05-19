@@ -13,7 +13,14 @@ readonly TEST_SCRIPT_DIR
 
 TESTS_RUN=0
 TESTS_FAILED=0
-GH_CLOSED_LIST_ARGS_FILE="${TMPDIR:-/tmp}/pr-salvage-gh-args.$$"
+GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
+
+cleanup_gh_args_file() {
+	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
+	return 0
+}
+
+trap cleanup_gh_args_file EXIT
 
 print_result() {
 	local test_name="$1"
@@ -83,7 +90,7 @@ test_closed_pr_list_requests_state_field() {
 	source "${TEST_SCRIPT_DIR}/pr-salvage-helper.sh"
 
 	local gh_closed_list_args
-	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
+	: >"$GH_CLOSED_LIST_ARGS_FILE"
 	scan_repo "example/repo" 30 >/dev/null
 	gh_closed_list_args=$(<"$GH_CLOSED_LIST_ARGS_FILE")
 
@@ -92,7 +99,7 @@ test_closed_pr_list_requests_state_field() {
 	else
 		print_result "closed PR list requests state for safety filter" 1 "gh pr list args did not include state: ${gh_closed_list_args}"
 	fi
-	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
+	: >"$GH_CLOSED_LIST_ARGS_FILE"
 	return 0
 }
 
