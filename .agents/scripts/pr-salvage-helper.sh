@@ -9,7 +9,7 @@
 # that was written, reviewed, and possibly review-addressed but never landed.
 #
 # Usage:
-#   pr-salvage-helper.sh scan [--repo <slug>] [--days <N>] [--json]
+#   pr-salvage-helper.sh scan [--repo <slug>] [--days <N>] [--json] [PR_NUMBER...]
 #   pr-salvage-helper.sh prefetch <slug> <path>
 #   pr-salvage-helper.sh help
 #
@@ -260,28 +260,42 @@ build_salvage_entry() {
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - lookback days (default: 7)
+#   $3 - optional space-separated explicit PR numbers
 # Output: JSON array of salvageable PRs
 #######################################
 scan_repo() {
 	local slug="$1"
 	local lookback_days="${2:-$DEFAULT_LOOKBACK_DAYS}"
-
-	# Fetch closed-unmerged PRs using GitHub search API (gh pr list --state closed
-	# returns both merged and unmerged interleaved, so a small --limit misses most
-	# unmerged PRs). The search query filters server-side for is:unmerged.
-	local cutoff_date
-	cutoff_date=$(date -u -v-"${lookback_days}"d +%Y-%m-%d 2>/dev/null) ||
-		cutoff_date=$(date -u -d "${lookback_days} days ago" +%Y-%m-%d 2>/dev/null) ||
-		cutoff_date="1970-01-01"
+	local pr_numbers="${3:-}"
 
 	local unmerged
-	unmerged=$(gh pr list --repo "$slug" --state closed \
-		--search "is:unmerged closed:>=${cutoff_date}" \
-		--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels \
-		--limit 100 2>/dev/null) || unmerged="[]"
+	if [[ -n "$pr_numbers" ]]; then
+		unmerged="[]"
+		local pr_number pr_record
+		for pr_number in $pr_numbers; do
+			pr_record=$(gh pr view "$pr_number" --repo "$slug" \
+				--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
+				2>/dev/null) || pr_record=""
+			[[ -z "$pr_record" ]] && continue
+			unmerged=$(echo "$unmerged" | jq --argjson pr "$pr_record" '. + [$pr]') || unmerged="[]"
+		done
+	else
+		# Fetch closed-unmerged PRs using GitHub search API (gh pr list --state closed
+		# returns both merged and unmerged interleaved, so a small --limit misses most
+		# unmerged PRs). The search query filters server-side for is:unmerged.
+		local cutoff_date
+		cutoff_date=$(date -u -v-"${lookback_days}"d +%Y-%m-%d 2>/dev/null) ||
+			cutoff_date=$(date -u -d "${lookback_days} days ago" +%Y-%m-%d 2>/dev/null) ||
+			cutoff_date="1970-01-01"
+
+		unmerged=$(gh pr list --repo "$slug" --state closed \
+			--search "is:unmerged closed:>=${cutoff_date}" \
+			--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels \
+			--limit 100 2>/dev/null) || unmerged="[]"
+	fi
 
 	# Safety filter: remove any that slipped through with mergedAt set or 0 additions
-	unmerged=$(echo "$unmerged" | jq '[.[] | select(.mergedAt == null and .additions > 0)]') || unmerged="[]"
+	unmerged=$(echo "$unmerged" | jq '[.[] | select((.mergedAt == null) and (.additions > 0) and ((.state // "CLOSED") == "CLOSED"))]') || unmerged="[]"
 
 	local count
 	count=$(echo "$unmerged" | jq 'length')
@@ -438,6 +452,7 @@ cmd_scan() {
 	local target_repo=""
 	local lookback_days="$DEFAULT_LOOKBACK_DAYS"
 	local json_output="false"
+	local pr_numbers=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -454,6 +469,9 @@ cmd_scan() {
 			shift
 			;;
 		*)
+			if [[ "$1" =~ ^#?[0-9]+$ ]]; then
+				pr_numbers="${pr_numbers}${pr_numbers:+ }${1#\#}"
+			fi
 			shift
 			;;
 		esac
@@ -465,9 +483,13 @@ cmd_scan() {
 
 	if [[ -n "$target_repo" ]]; then
 		local results
-		results=$(scan_repo "$target_repo" "$lookback_days")
+		results=$(scan_repo "$target_repo" "$lookback_days" "$pr_numbers")
 		all_results=$(echo "$results" | jq --arg slug "$target_repo" '[.[] | . + {repo: $slug}]')
 	else
+		if [[ -n "$pr_numbers" ]]; then
+			log_warn "explicit PR numbers require --repo <slug>"
+			return 1
+		fi
 		all_results=$(scan_all_repos "$lookback_days") || return 1
 	fi
 
@@ -512,7 +534,7 @@ Prevents knowledge loss by identifying PRs that were closed without merge
 but still have branches with unmerged commits containing valuable work.
 
 USAGE:
-    pr-salvage-helper.sh scan [--repo <slug>] [--days <N>] [--json]
+    pr-salvage-helper.sh scan [--repo <slug>] [--days <N>] [--json] [PR_NUMBER...]
     pr-salvage-helper.sh prefetch <slug> <path>
     pr-salvage-helper.sh help
 
@@ -525,6 +547,7 @@ SCAN OPTIONS:
     --repo <slug>   Scan a specific repo (default: all pulse-enabled)
     --days <N>      Lookback window in days (default: 7)
     --json          Output raw JSON
+    PR_NUMBER...    Optional explicit closed PR numbers to evaluate with --repo
 
 RISK LEVELS:
     HIGH    Branch deleted + >100 lines, or branch exists + >500 lines
@@ -537,6 +560,9 @@ INTEGRATION:
 
     # Manual scan
     pr-salvage-helper.sh scan --repo marcusquinn/aidevops --days 14
+
+    # Exact PR salvage triage
+    pr-salvage-helper.sh scan --repo marcusquinn/aidevops 23745 23695 23682
 
     # JSON output for scripting
     pr-salvage-helper.sh scan --json | jq '.[] | select(.risk == "high")'

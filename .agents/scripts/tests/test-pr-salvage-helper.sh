@@ -39,6 +39,14 @@ gh() {
 
 	case "$area" in
 	pr)
+		if [[ " ${*} " == *" view 54 "* ]]; then
+			printf '%s\n' '{"number":54,"title":"Recoverable unsuppressed work","headRefName":"feature/keep-me","closedAt":"2026-05-01T13:00:00Z","mergedAt":null,"additions":70,"deletions":0,"author":{"login":"worker-b"},"labels":[],"state":"CLOSED"}'
+			return 0
+		fi
+		if [[ " ${*} " == *" view 55 "* ]]; then
+			printf '%s\n' '{"number":55,"title":"Already merged work","headRefName":"feature/merged","closedAt":"2026-05-01T14:00:00Z","mergedAt":"2026-05-01T15:00:00Z","additions":90,"deletions":0,"author":{"login":"worker-c"},"labels":[],"state":"MERGED"}'
+			return 0
+		fi
 		if [[ " ${*} " == *" --state closed "* ]]; then
 			printf '%s\n' '[
 				{"number":53,"title":"Add buffalo logo favicon","headRefName":"feature/buffalo-favicon","closedAt":"2026-05-01T12:00:00Z","mergedAt":null,"additions":7,"deletions":0,"author":{"login":"worker-a"},"labels":[]},
@@ -85,7 +93,25 @@ test_completed_recovery_issue_suppresses_salvage_candidate() {
 	return 0
 }
 
+test_explicit_pr_numbers_fetch_exact_records() {
+	# shellcheck source=/dev/null
+	source "${TEST_SCRIPT_DIR}/pr-salvage-helper.sh"
+
+	local result
+	result=$(scan_repo "example/repo" 30 "54 55")
+
+	local numbers
+	numbers=$(printf '%s' "$result" | jq -r '[.[].number] | join(",")')
+	if [[ "$numbers" == "54" ]]; then
+		print_result "explicit PR numbers fetch exact closed-unmerged records" 0
+	else
+		print_result "explicit PR numbers fetch exact closed-unmerged records" 1 "expected only PR 54, got '${numbers}'"
+	fi
+	return 0
+}
+
 test_completed_recovery_issue_suppresses_salvage_candidate
+test_explicit_pr_numbers_fetch_exact_records
 
 printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
