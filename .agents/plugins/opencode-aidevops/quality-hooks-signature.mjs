@@ -350,6 +350,11 @@ function _repairBodyArg(cmd, parsed, helperPath, log) {
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
 export function tryRepairSignature(cmd, scriptsDir, log) {
+  if (hasTrustedSignatureSignal(cmd)) {
+    log("INFO", "Command already includes trusted signature signal; no repair needed");
+    return { status: "ok", cmd };
+  }
+
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
   if (!existsSync(helperPath)) {
     log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);

@@ -313,6 +313,20 @@ describe("tryRepairSignature", () => {
     assert.equal(before, after, "signed file should not be modified");
   });
 
+  test("no-ops on signed command-substitution --body without reparsing", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "$(make-body && gh-signature-helper.sh footer)"';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
+  test("no-ops on signed process-substitution --body-file without reparsing", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body-file <(make-body && gh-signature-helper.sh footer)';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
   test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();
