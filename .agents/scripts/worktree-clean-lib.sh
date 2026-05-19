@@ -508,13 +508,13 @@ _clean_classify_worktree() {
 	# gone when auto-delete is on. Trust only exact headRefName metadata here;
 	# issue/PR cross-reference text must not be treated as cleanup proof.
 	# grep -Fxq: exact fixed-string line match (no regex injection risk).
-	elif [[ -n "$merged_prs" ]] && echo "$merged_prs" | grep -Fxq "$wt_branch"; then
+	elif [[ -n "$merged_prs" ]] && printf '%s\n' "$merged_prs" | grep -Fxq -- "$wt_branch"; then
 		is_merged=true
 		merge_type="squash-merged PR"
 	# Check 3: Closed (abandoned) PR — PR was closed without merging.
 	# The remote branch may still exist (auto-delete only fires on merge).
 	# Work is abandoned; worktree is safe to remove.
-	elif [[ -n "$closed_prs" ]] && echo "$closed_prs" | grep -Fxq "$wt_branch"; then
+	elif [[ -n "$closed_prs" ]] && printf '%s\n' "$closed_prs" | grep -Fxq -- "$wt_branch"; then
 		is_merged=true
 		merge_type="closed PR"
 	# Check 4: Remote branch deleted (indicates squash merge or PR closed)
