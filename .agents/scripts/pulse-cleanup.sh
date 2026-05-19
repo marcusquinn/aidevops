@@ -125,7 +125,7 @@ _pc_branch_has_pr() {
 		return 1
 	fi
 
-	pr_number=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state "$pr_state" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 1
+	pr_number=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state "$pr_state" --limit 1 --json number --jq '.[].number' 2>/dev/null) || return 1
 	if [[ -n "$pr_number" ]]; then
 		return 0
 	fi
