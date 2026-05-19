@@ -145,6 +145,38 @@ test_local_commit_no_pr_skips_without_recent_metric() {
 	return 0
 }
 
+test_no_newline_pr_output_blocks_local_commit_cleanup() {
+	source_pulse_cleanup_with_stubs || return 1
+	gh_pr_list() { printf '42'; return 0; }
+
+	local reason=""
+	reason=$(_evaluate_worktree_removal 1 0 $((25 * 3600)) "feature/has-pr" "testowner/testrepo" 2>/dev/null)
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -z "$reason" ]] || rc=1
+	print_result "no-newline PR output blocks local-commit no-PR cleanup" "$rc" \
+		"cleanup_rc=$cleanup_rc reason=$reason"
+	return 0
+}
+
+test_no_newline_open_pr_output_blocks_clean_fastpath() {
+	source_pulse_cleanup_with_stubs || return 1
+	gh_pr_list() { printf '42'; return 0; }
+
+	local reason=""
+	reason=$(_evaluate_worktree_removal 0 0 3600 "feature/open-pr" "testowner/testrepo" 2>/dev/null)
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -z "$reason" ]] || rc=1
+	print_result "no-newline open PR output blocks clean fast-path cleanup" "$rc" \
+		"cleanup_rc=$cleanup_rc reason=$reason"
+	return 0
+}
+
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
 export HOME="${TEST_ROOT}/home"
@@ -153,6 +185,8 @@ mkdir -p "${HOME}/.aidevops/logs"
 echo "=== test-pulse-cleanup-worker-owned-no-pr.sh ==="
 test_recent_metric_blocks_local_commit_no_pr_removal
 test_local_commit_no_pr_skips_without_recent_metric
+test_no_newline_pr_output_blocks_local_commit_cleanup
+test_no_newline_open_pr_output_blocks_clean_fastpath
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/${TESTS_RUN} passed, ${TESTS_FAILED} failed."

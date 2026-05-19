@@ -18,6 +18,7 @@
 #   - _cleanup_merged_prs_for_all_repos     (Pass 1: merged-PR worktree removal)
 #   - _worktree_owner_alive                 (pgrep + registry ownership check)
 #   - _worktree_creation_epoch              (stat .git file mtime, with silent-skip logging)
+#   - _pc_branch_has_pr                     (newline-safe PR existence probe)
 #   - _evaluate_worktree_removal            (age/commit/PR threshold decision)
 #   - _record_orphan_crash_classification   (crash type + dedup clearing for orphaned workers)
 #   - _cleanup_single_worktree              (per-worktree orchestrator)
@@ -94,6 +95,38 @@ _pc_issue_from_branch() {
 	local branch_name="$1"
 	if [[ "$branch_name" =~ gh[-]?([0-9]+) ]]; then
 		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Check whether a branch has at least one matching PR.
+#
+# `gh_pr_list` intentionally emits cached/output text with `printf '%s'`, so
+# single-row output can be non-empty without a trailing newline. Counting via
+# `wc -l` treats that output as zero lines and can misclassify branches with
+# PRs as no-PR orphan cleanup candidates (GH#23821). Ask for a single PR number
+# and test the captured string instead.
+#
+# Args:
+#   $1 - repo slug (owner/repo)
+#   $2 - branch name
+#   $3 - PR state (open|closed|merged|all)
+# Returns: 0 when a matching PR is found, 1 otherwise or on lookup failure
+#######################################
+_pc_branch_has_pr() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local pr_state="$3"
+	local pr_number=""
+
+	if [[ -z "$repo_slug" || -z "$branch_name" || -z "$pr_state" ]]; then
+		return 1
+	fi
+
+	pr_number=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state "$pr_state" --limit 1 --json number --jq '.[0].number // empty' 2>/dev/null) || return 1
+	if [[ -n "$pr_number" ]]; then
 		return 0
 	fi
 	return 1
@@ -495,9 +528,9 @@ _evaluate_worktree_removal() {
 	if [[ "$commits_ahead" -eq 0 && "$dirty_count" -eq 0 && "$wt_age_secs" -ge "$age_grace" ]]; then
 		local has_open_pr=false
 		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
-			local open_pr_count
-			open_pr_count=$(gh_pr_list --repo "$repo_slug_age" --head "$wt_branch_age" --state open --limit 1 2>/dev/null | wc -l | tr -d ' ') || open_pr_count=0
-			[[ "$open_pr_count" -gt 0 ]] && has_open_pr=true
+			if _pc_branch_has_pr "$repo_slug_age" "$wt_branch_age" "open"; then
+				has_open_pr=true
+			fi
 		fi
 		if [[ "$has_open_pr" == "false" ]]; then
 			echo "0 commits, clean, no open PR, age $((wt_age_secs / 60))m (crashed worker)"
@@ -515,9 +548,9 @@ _evaluate_worktree_removal() {
 	elif [[ "$commits_ahead" -gt 0 && "$wt_age_secs" -ge "$age_24h" ]]; then
 		local has_pr=false
 		if [[ -n "$repo_slug_age" && -n "$wt_branch_age" ]]; then
-			local pr_count
-			pr_count=$(gh_pr_list --repo "$repo_slug_age" --head "$wt_branch_age" --state all --limit 1 2>/dev/null | wc -l | tr -d ' ') || pr_count=0
-			[[ "$pr_count" -gt 0 ]] && has_pr=true
+			if _pc_branch_has_pr "$repo_slug_age" "$wt_branch_age" "all"; then
+				has_pr=true
+			fi
 		fi
 		if [[ "$has_pr" == "false" ]]; then
 			echo "${commits_ahead} commits, no PR, age $((wt_age_secs / 3600))h"
