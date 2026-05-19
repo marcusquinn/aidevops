@@ -37,9 +37,33 @@ make_tmpdir() {
 	return 0
 }
 
+is_safe_test_tmpdir() {
+	local tmpdir="${1:-}"
+	[[ -n "$tmpdir" ]] || return 1
+	[[ "$tmpdir" == /* ]] || return 1
+	[[ "$tmpdir" == *[^/]* ]] || return 1
+	return 0
+}
+
 cleanup_test_tmpdir() {
 	local tmpdir="${1:-}"
-	[[ -n "$tmpdir" && "$tmpdir" == /* && "$tmpdir" != "/" && "$tmpdir" != "//" ]] && rm -rf -- "$tmpdir"
+	if ! is_safe_test_tmpdir "$tmpdir"; then
+		return 0
+	fi
+	rm -rf -- "$tmpdir" || return 1
+	return 0
+}
+
+test_cleanup_test_tmpdir_rejects_unsafe_paths() {
+	local test_name="cleanup helper rejects unsafe tmpdir paths"
+	local path
+	for path in '' relative / // /// ////; do
+		if is_safe_test_tmpdir "$path"; then
+			print_result "$test_name" 1 "accepted unsafe path: ${path:-<empty>}"
+			return 0
+		fi
+	done
+	print_result "$test_name" 0
 	return 0
 }
 
@@ -199,6 +223,7 @@ test_similar_agents_suffix_ioc_scan_fails() {
 }
 
 main() {
+	test_cleanup_test_tmpdir_rejects_unsafe_paths
 	test_self_reference_only_scan_succeeds
 	test_relative_self_reference_only_scan_succeeds
 	test_single_file_self_reference_only_scan_succeeds
