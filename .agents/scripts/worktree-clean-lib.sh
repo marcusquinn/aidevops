@@ -443,9 +443,10 @@ _clean_branch_requires_ancestor_proof() {
 	local merge_type="$1"
 
 	case "$merge_type" in
-	"squash-merged PR")
+	"squash-merged PR" | "closed PR")
 		# GitHub squash merges intentionally create a new target-branch commit,
-		# so the branch tip is not expected to be an ancestor of the default branch.
+		# and abandoned closed PRs are not expected to reach the default branch.
+		# In both cases, GitHub PR state is the proof source rather than ancestry.
 		return 1
 		;;
 	esac

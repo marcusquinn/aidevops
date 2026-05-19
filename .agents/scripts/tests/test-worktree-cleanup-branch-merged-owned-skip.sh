@@ -150,6 +150,37 @@ test_squash_merged_pr_without_ancestor_proof_classifies() {
 	return 0
 }
 
+test_closed_pr_without_ancestor_proof_classifies() {
+	local repo_path="${TEST_ROOT}/repo-closed-pr"
+	local wt_path="${TEST_ROOT}/wt-closed-pr"
+	local log_file="${TEST_ROOT}/closed-pr-cleanup.log"
+	local branch="feature/gh-99024-closed-pr"
+	local classification=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'abandoned closed pr\n' >"$repo_path/closed-pr.txt" || rc=1
+	git -C "$repo_path" add closed-pr.txt || rc=1
+	git -C "$repo_path" commit -q -m "abandoned branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	classification=$(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		_clean_classify_worktree "$wt_path" "$branch" "main" "false" "" "" "false" "$branch"
+	) || rc=1
+
+	[[ "$classification" == *"closed PR"* ]] || rc=1
+	[[ "$classification" == *"merge_proof=github-merged-pr-state"* ]] || rc=1
+	[[ "$classification" == *"merge_proof_result=github-merged-pr"* ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "closed PR metadata does not require ancestor proof" "$rc" \
+		"Expected closed PR classification with GitHub PR-state proof"
+	return 0
+}
+
 test_remote_deleted_without_ancestor_proof_skips() {
 	local repo_path="${TEST_ROOT}/repo-remote-deleted"
 	local wt_path="${TEST_ROOT}/wt-remote-deleted"
@@ -185,6 +216,7 @@ test_remote_deleted_without_ancestor_proof_skips() {
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
 test_squash_merged_pr_without_ancestor_proof_classifies
+test_closed_pr_without_ancestor_proof_classifies
 test_remote_deleted_without_ancestor_proof_skips
 
 printf '\nResults: %d/%d passed, %d failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
