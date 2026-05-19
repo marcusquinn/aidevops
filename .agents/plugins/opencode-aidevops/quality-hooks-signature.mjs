@@ -257,7 +257,7 @@ function _isPathWithin(childPath, parentPath) {
  * known-safe writable areas. This prevents a `--body-file` symlink or traversal
  * path from making the hook append signatures outside the worktree/tmp space.
  * @param {string} filePath
- * @returns {string}
+ * @returns {{ status: "ok", filePath: string } | { status: "fail", reason: string, detail: string }}
  */
 function _resolveAllowedBodyFilePath(filePath) {
   const realFilePath = realpathSync(filePath);
@@ -265,13 +265,13 @@ function _resolveAllowedBodyFilePath(filePath) {
     .filter((root) => existsSync(root))
     .map((root) => realpathSync(root));
   if (allowedRoots.some((root) => _isPathWithin(realFilePath, root))) {
-    return realFilePath;
+    return { status: "ok", filePath: realFilePath };
   }
-  const e = new Error(
-    `resolved body-file path ${realFilePath} is outside allowed repair directories`,
-  );
-  e.code = "EACCES";
-  throw e;
+  return {
+    status: "fail",
+    reason: FAIL_REASON.BODY_FILE_OUTSIDE_ALLOWED_ROOT,
+    detail: `${filePath} -> ${realFilePath}`,
+  };
 }
 
 /**
@@ -291,20 +291,28 @@ function _resolveAllowedBodyFilePath(filePath) {
  */
 function _repairBodyFile(cmd, filePath, helperPath, log) {
   try {
-    const realFilePath = _resolveAllowedBodyFilePath(filePath);
-    const current = readFileSync(realFilePath, "utf-8");
+    const resolved = _resolveAllowedBodyFilePath(filePath);
+    if (resolved.status === "fail") {
+      log("WARN", `Refusing --body-file outside allowed roots: ${resolved.detail}`);
+      return resolved;
+    }
+    const current = readFileSync(resolved.filePath, "utf-8");
     if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
     if (isMachineProtocolCommand(current)) {
       log(
         "INFO",
-        `Body-file ${filePath} contains machine-protocol content; no repair needed`,
+        `Body-file ${resolved.filePath} contains machine-protocol content; no repair needed`,
       );
       return { status: "ok", cmd };
     }
+    if (!existsSync(helperPath)) {
+      log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+      return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
+    }
     const sigResult = _generateSignature(helperPath, current, log);
     if (sigResult.status === "fail") return sigResult;
-    appendFileSync(realFilePath, sigResult.sig);
-    log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
+    appendFileSync(resolved.filePath, sigResult.sig);
+    log("INFO", `Auto-appended signature footer to body-file ${resolved.filePath} (t2685)`);
     return { status: "ok", cmd };
   } catch (e) {
     const reason =
@@ -398,10 +406,6 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
   }
 
   const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  if (!existsSync(helperPath)) {
-    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
-  }
   if (_hasUnparseableBody(cmd)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
@@ -414,6 +418,11 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
   if (bodyFileMatch) {
     const filePath = bodyFileMatch[2] || bodyFileMatch[4];
     return _repairBodyFile(cmd, filePath, helperPath, log);
+  }
+
+  if (!existsSync(helperPath)) {
+    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
   }
 
   // --body VALUE form: command-side repair.

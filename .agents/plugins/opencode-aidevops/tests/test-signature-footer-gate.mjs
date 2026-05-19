@@ -335,7 +335,7 @@ describe("tryRepairSignature", () => {
   });
 
   test("no-ops on machine-protocol --body-file content", () => {
-    const dir = setupStubHelper();
+    const dir = mkdtempSync(join(tmpdir(), "t2685-machine-file-"));
     const bodyFile = join(dir, "machine-protocol.md");
     writeFileSync(bodyFile, "<!-- MERGE_SUMMARY -->\nsummary\n");
     const before = readFileSync(bodyFile, "utf-8");
@@ -360,8 +360,8 @@ describe("tryRepairSignature", () => {
       const out = tryRepairSignature(cmd, dir, log);
       const after = readFileSync(outsideBodyFile, "utf-8");
       assert.equal(out.status, "fail");
-      assert.equal(out.reason, FAIL_REASON.FILE_UNREADABLE);
-      assert.match(out.detail, /outside allowed repair directories/);
+      assert.equal(out.reason, FAIL_REASON.BODY_FILE_OUTSIDE_ALLOWED_ROOT);
+      assert.match(out.detail, /body\.md/);
       assert.equal(after, "unsigned external content\n", "outside target must not be modified");
     } finally {
       rmSync(outsideDir, { recursive: true, force: true });
@@ -481,10 +481,11 @@ describe("checkSignatureFooterGate", () => {
 // ---------------------------------------------------------------------------
 
 describe("FAIL_REASON enum (t2893)", () => {
-  test("exposes the seven canonical failure reasons", () => {
+  test("exposes the canonical failure reasons", () => {
     const expected = [
       "FILE_NOT_FOUND",
       "FILE_UNREADABLE",
+      "BODY_FILE_OUTSIDE_ALLOWED_ROOT",
       "HELPER_MISSING",
       "HELPER_FAILED",
       "UNPARSEABLE_BODY",
