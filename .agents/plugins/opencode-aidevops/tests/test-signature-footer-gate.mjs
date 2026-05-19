@@ -327,6 +327,13 @@ describe("tryRepairSignature", () => {
     assert.deepEqual(out, { status: "ok", cmd });
   });
 
+  test("no-ops on machine-protocol commands without requiring helper", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "<!-- MERGE_SUMMARY -->\\nsummary"';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
   test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();

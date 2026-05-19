@@ -350,8 +350,8 @@ function _repairBodyArg(cmd, parsed, helperPath, log) {
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
 export function tryRepairSignature(cmd, scriptsDir, log) {
-  if (hasTrustedSignatureSignal(cmd)) {
-    log("INFO", "Command already includes trusted signature signal; no repair needed");
+  if (hasTrustedSignatureSignal(cmd) || isMachineProtocolCommand(cmd)) {
+    log("INFO", "Command is exempt or already includes trusted signature signal; no repair needed");
     return { status: "ok", cmd };
   }
 
