@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.64] - 2026-05-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- allow squash-merged worktree cleanup (#23795)
+
 ## [3.15.63] - 2026-05-18
 
 ### Changed
