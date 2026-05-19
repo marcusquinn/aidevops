@@ -13,7 +13,7 @@ readonly TEST_SCRIPT_DIR
 
 TESTS_RUN=0
 TESTS_FAILED=0
-GH_CLOSED_LIST_ARGS_FILE="${TMPDIR:-/tmp}/pr-salvage-gh-args.$$"
+GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
 
 print_result() {
 	local test_name="$1"
