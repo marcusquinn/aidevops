@@ -40,6 +40,7 @@ make_tmpdir() {
 is_safe_test_tmpdir() {
 	local tmpdir="${1:-}"
 	[[ -n "$tmpdir" ]] || return 1
+	[[ "$tmpdir" != "/." && "$tmpdir" != "/.." ]] || return 1
 	[[ "$tmpdir" == /*[!/]* ]] || return 1
 	return 0
 }
@@ -56,7 +57,7 @@ cleanup_test_tmpdir() {
 test_cleanup_test_tmpdir_rejects_unsafe_paths() {
 	local test_name="cleanup helper rejects unsafe tmpdir paths"
 	local path
-	for path in '' relative / // /// ////; do
+	for path in '' relative / // /// //// /. /..; do
 		if is_safe_test_tmpdir "$path"; then
 			print_result "$test_name" 1 "accepted unsafe path: ${path:-<empty>}"
 			return 0
