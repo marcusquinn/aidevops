@@ -40,8 +40,7 @@ make_tmpdir() {
 is_safe_test_tmpdir() {
 	local tmpdir="${1:-}"
 	[[ -n "$tmpdir" ]] || return 1
-	[[ "$tmpdir" == /* ]] || return 1
-	[[ "$tmpdir" == *[^/]* ]] || return 1
+	[[ "$tmpdir" == /*[!/]* ]] || return 1
 	return 0
 }
 
