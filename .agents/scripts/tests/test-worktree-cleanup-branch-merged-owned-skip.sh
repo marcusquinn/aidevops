@@ -83,6 +83,9 @@ source_clean_lib_with_stubs() {
 	source "$AUDIT_HELPER_PATH" || return 1
 	# shellcheck source=/dev/null
 	source "$CLEAN_LIB_PATH" || return 1
+	_branch_has_active_interactive_claim() { return 1; }
+	worktree_is_in_grace_period() { return 1; }
+	branch_has_zero_commits_ahead() { return 1; }
 	return 0
 }
 
@@ -116,10 +119,10 @@ test_protected_pass_set_blocks_branch_merged_removal() {
 	return 0
 }
 
-test_merged_pr_without_ancestor_proof_skips() {
+test_squash_merged_pr_without_ancestor_proof_classifies() {
 	local repo_path="${TEST_ROOT}/repo-unproven"
 	local wt_path="${TEST_ROOT}/wt-unproven"
-	local log_file="${TEST_ROOT}/unproven-cleanup.log"
+	local log_file="${TEST_ROOT}/squash-merged-cleanup.log"
 	local branch="feature/gh-99022-unproven"
 	local classification=""
 	local rc=0
@@ -138,17 +141,51 @@ test_merged_pr_without_ancestor_proof_skips() {
 		_clean_classify_worktree "$wt_path" "$branch" "main" "false" "$branch" "" "false" ""
 	) || rc=1
 
+	[[ "$classification" == *"squash-merged PR"* ]] || rc=1
+	[[ "$classification" == *"merge_proof=github-merged-pr-state"* ]] || rc=1
+	[[ "$classification" == *"merge_proof_result=github-merged-pr"* ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "squash-merged PR metadata does not require ancestor proof" "$rc" \
+		"Expected squash-merged classification with GitHub PR-state proof"
+	return 0
+}
+
+test_remote_deleted_without_ancestor_proof_skips() {
+	local repo_path="${TEST_ROOT}/repo-remote-deleted"
+	local wt_path="${TEST_ROOT}/wt-remote-deleted"
+	local log_file="${TEST_ROOT}/remote-deleted-cleanup.log"
+	local branch="feature/gh-99023-remote-deleted"
+	local classification=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'not ancestor remote deleted\n' >"$repo_path/remote-deleted.txt" || rc=1
+	git -C "$repo_path" add remote-deleted.txt || rc=1
+	git -C "$repo_path" commit -q -m "unmerged remote-deleted branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	classification=$(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		branch_was_pushed() { return 0; }
+		_branch_exists_on_any_remote() { return 1; }
+		_clean_classify_worktree "$wt_path" "$branch" "main" "false" "" "" "false" ""
+	) || rc=1
+
 	[[ -z "$classification" ]] || rc=1
 	[[ -d "$wt_path" ]] || rc=1
 	assert_file_contains "$log_file" "worktree-skipped.*branch-merged-unproven.*mode=skipped.*merge_proof_result=not-ancestor" || rc=1
-	print_result "merged PR metadata without ancestor proof skips" "$rc" \
+	print_result "remote-deleted metadata without ancestor proof skips" "$rc" \
 		"Expected empty classification, surviving worktree, and unproven audit entry"
 	return 0
 }
 
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
-test_merged_pr_without_ancestor_proof_skips
+test_squash_merged_pr_without_ancestor_proof_classifies
+test_remote_deleted_without_ancestor_proof_skips
 
 printf '\nResults: %d/%d passed, %d failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then

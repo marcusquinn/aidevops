@@ -433,8 +433,22 @@ _clean_branch_merge_proof_context() {
 	local default_br="$2"
 	local head_sha="${3:-unknown}"
 	local proof_result="${4:-unknown}"
-	printf 'target_branch=%s merge_proof=merge-base-is-ancestor merge_proof_result=%s head=%s branch=%s owner_guard=clear protected_status=clear' \
-		"$default_br" "$proof_result" "$head_sha" "$wt_branch"
+	local proof_method="${5:-merge-base-is-ancestor}"
+	printf 'target_branch=%s merge_proof=%s merge_proof_result=%s head=%s branch=%s owner_guard=clear protected_status=clear' \
+		"$default_br" "$proof_method" "$proof_result" "$head_sha" "$wt_branch"
+	return 0
+}
+
+_clean_branch_requires_ancestor_proof() {
+	local merge_type="$1"
+
+	case "$merge_type" in
+	"squash-merged PR")
+		# GitHub squash merges intentionally create a new target-branch commit,
+		# so the branch tip is not expected to be an ancestor of the default branch.
+		return 1
+		;;
+	esac
 	return 0
 }
 
@@ -514,7 +528,9 @@ _clean_classify_worktree() {
 	fi
 
 	head_sha=$(_clean_branch_head "$wt_branch" 2>/dev/null || printf '%s' "unknown")
-	if _clean_branch_head_is_ancestor "$wt_branch" "$default_br"; then
+	if ! _clean_branch_requires_ancestor_proof "$merge_type"; then
+		proof_result="github-merged-pr"
+	elif _clean_branch_head_is_ancestor "$wt_branch" "$default_br"; then
 		proof_result="ancestor"
 	else
 		proof_result="not-ancestor"
@@ -529,7 +545,11 @@ _clean_classify_worktree() {
 		return 0
 	fi
 
-	audit_context=$(_clean_branch_merge_proof_context "$wt_branch" "$default_br" "$head_sha" "$proof_result")
+	if _clean_branch_requires_ancestor_proof "$merge_type"; then
+		audit_context=$(_clean_branch_merge_proof_context "$wt_branch" "$default_br" "$head_sha" "$proof_result")
+	else
+		audit_context=$(_clean_branch_merge_proof_context "$wt_branch" "$default_br" "$head_sha" "$proof_result" "github-merged-pr-state")
+	fi
 
 	if worktree_has_changes "$wt_path" && [[ "$force_merged" == "true" ]]; then
 		# PR is confirmed merged — dirty state is abandoned WIP, safe to force-remove
