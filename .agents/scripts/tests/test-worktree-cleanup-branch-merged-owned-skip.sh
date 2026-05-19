@@ -150,6 +150,40 @@ test_squash_merged_pr_without_ancestor_proof_classifies() {
 	return 0
 }
 
+test_deleted_squash_merged_pr_metadata_wins_over_remote_deleted() {
+	local repo_path="${TEST_ROOT}/repo-deleted-squash-pr"
+	local wt_path="${TEST_ROOT}/wt-deleted-squash-pr"
+	local log_file="${TEST_ROOT}/deleted-squash-pr-cleanup.log"
+	local branch="feature/gh-99025-deleted-squash-pr"
+	local classification=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'deleted squash merge head\n' >"$repo_path/deleted-squash-pr.txt" || rc=1
+	git -C "$repo_path" add deleted-squash-pr.txt || rc=1
+	git -C "$repo_path" commit -q -m "deleted squash-merged branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	classification=$(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		branch_was_pushed() { return 0; }
+		_branch_exists_on_any_remote() { return 1; }
+		_clean_classify_worktree "$wt_path" "$branch" "main" "false" "$branch" "" "false" ""
+	) || rc=1
+
+	[[ "$classification" == *"squash-merged PR"* ]] || rc=1
+	[[ "$classification" != *"remote deleted"* ]] || rc=1
+	[[ "$classification" == *"merge_proof=github-merged-pr-state"* ]] || rc=1
+	[[ "$classification" == *"merge_proof_result=github-merged-pr"* ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "deleted squash-merged PR metadata wins over remote-deleted classification" "$rc" \
+		"Expected exact merged PR branch metadata to bypass remote-deleted ancestry proof"
+	return 0
+}
+
 test_closed_pr_without_ancestor_proof_classifies() {
 	local repo_path="${TEST_ROOT}/repo-closed-pr"
 	local wt_path="${TEST_ROOT}/wt-closed-pr"
@@ -216,6 +250,7 @@ test_remote_deleted_without_ancestor_proof_skips() {
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
 test_squash_merged_pr_without_ancestor_proof_classifies
+test_deleted_squash_merged_pr_metadata_wins_over_remote_deleted
 test_closed_pr_without_ancestor_proof_classifies
 test_remote_deleted_without_ancestor_proof_skips
 

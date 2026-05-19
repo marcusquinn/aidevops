@@ -501,27 +501,29 @@ _clean_classify_worktree() {
 		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
 		is_merged=true
 		merge_type="merged"
-	# Check 2: Remote branch deleted (indicates squash merge or PR closed)
+	# Check 2: Squash-merge detection via GitHub PR state
+	# GitHub squash merges create a new commit — the original branch is NOT
+	# an ancestor of the target, so git branch --merged misses it. The remote
+	# branch may still exist if "auto-delete head branches" is off, or may be
+	# gone when auto-delete is on. Trust only exact headRefName metadata here;
+	# issue/PR cross-reference text must not be treated as cleanup proof.
+	# grep -Fxq: exact fixed-string line match (no regex injection risk).
+	elif [[ -n "$merged_prs" ]] && echo "$merged_prs" | grep -Fxq "$wt_branch"; then
+		is_merged=true
+		merge_type="squash-merged PR"
+	# Check 3: Closed (abandoned) PR — PR was closed without merging.
+	# The remote branch may still exist (auto-delete only fires on merge).
+	# Work is abandoned; worktree is safe to remove.
+	elif [[ -n "$closed_prs" ]] && echo "$closed_prs" | grep -Fxq "$wt_branch"; then
+		is_merged=true
+		merge_type="closed PR"
+	# Check 4: Remote branch deleted (indicates squash merge or PR closed)
 	# ONLY check this if the branch was previously pushed - unpushed branches should NOT be flagged
 	# Check all remotes, not just origin (consistent with branch_was_pushed)
 	# Skip if fetch failed — stale refs could cause false-positive deletion
 	elif [[ "$remote_unknown" == "false" ]] && branch_was_pushed "$wt_branch" && ! _branch_exists_on_any_remote "$wt_branch"; then
 		is_merged=true
 		merge_type="remote deleted"
-	# Check 3: Squash-merge detection via GitHub PR state
-	# GitHub squash merges create a new commit — the original branch is NOT
-	# an ancestor of the target, so git branch --merged misses it. The remote
-	# branch may still exist if "auto-delete head branches" is off.
-	# grep -Fxq: exact fixed-string line match (no regex injection risk).
-	elif [[ -n "$merged_prs" ]] && echo "$merged_prs" | grep -Fxq "$wt_branch"; then
-		is_merged=true
-		merge_type="squash-merged PR"
-	# Check 4: Closed (abandoned) PR — PR was closed without merging.
-	# The remote branch may still exist (auto-delete only fires on merge).
-	# Work is abandoned; worktree is safe to remove.
-	elif [[ -n "$closed_prs" ]] && echo "$closed_prs" | grep -Fxq "$wt_branch"; then
-		is_merged=true
-		merge_type="closed PR"
 	fi
 
 	if [[ "$is_merged" == "false" ]]; then
