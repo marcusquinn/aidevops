@@ -327,6 +327,26 @@ describe("tryRepairSignature", () => {
     assert.deepEqual(out, { status: "ok", cmd });
   });
 
+  test("no-ops on machine-protocol commands without requiring helper", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "<!-- MERGE_SUMMARY -->\\nsummary"';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
+  test("no-ops on machine-protocol --body-file content", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "machine-protocol.md");
+    writeFileSync(bodyFile, "<!-- MERGE_SUMMARY -->\nsummary\n");
+    const before = readFileSync(bodyFile, "utf-8");
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    const after = readFileSync(bodyFile, "utf-8");
+    assert.deepEqual(out, { status: "ok", cmd });
+    assert.equal(after, before, "machine-protocol file should not be signed");
+  });
+
   test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();

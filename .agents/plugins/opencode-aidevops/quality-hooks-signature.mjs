@@ -259,6 +259,13 @@ function _repairBodyFile(cmd, filePath, helperPath, log) {
   try {
     const current = readFileSync(filePath, "utf-8");
     if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
+    if (isMachineProtocolCommand(current)) {
+      log(
+        "INFO",
+        `Body-file ${filePath} contains machine-protocol content; no repair needed`,
+      );
+      return { status: "ok", cmd };
+    }
     const sigResult = _generateSignature(helperPath, current, log);
     if (sigResult.status === "fail") return sigResult;
     appendFileSync(filePath, sigResult.sig);
@@ -350,8 +357,8 @@ function _repairBodyArg(cmd, parsed, helperPath, log) {
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
 export function tryRepairSignature(cmd, scriptsDir, log) {
-  if (hasTrustedSignatureSignal(cmd)) {
-    log("INFO", "Command already includes trusted signature signal; no repair needed");
+  if (hasTrustedSignatureSignal(cmd) || isMachineProtocolCommand(cmd)) {
+    log("INFO", "Command is exempt or already includes trusted signature signal; no repair needed");
     return { status: "ok", cmd };
   }
 
