@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.68] - 2026-05-19
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Documentation: clarify timeout fallback marker guidance (#23839)
+- fix secure PR salvage test temp file (#23835)
+- fix: harden body-file signature repair (#23834)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden body-file signature repair (#23836)
+
 ## [3.15.67] - 2026-05-19
 
 ### Fixed
