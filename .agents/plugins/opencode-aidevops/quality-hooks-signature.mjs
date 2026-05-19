@@ -43,9 +43,10 @@
 // .agents/scripts/gh runs at exec-time (after bash creates the file) and
 // is the correct enforcement layer for the same-bash-call shape.
 
-import { existsSync, readFileSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, appendFileSync, realpathSync } from "fs";
 import { execSync } from "child_process";
-import { join } from "path";
+import { join, sep } from "path";
+import { tmpdir } from "os";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 
@@ -241,6 +242,39 @@ function _generateSignature(helperPath, bodyValue, log) {
 }
 
 /**
+ * Check whether one resolved filesystem path is inside another resolved path.
+ * @param {string} childPath
+ * @param {string} parentPath
+ * @returns {boolean}
+ */
+function _isPathWithin(childPath, parentPath) {
+  const parentPrefix = parentPath.endsWith(sep) ? parentPath : `${parentPath}${sep}`;
+  return childPath === parentPath || childPath.startsWith(parentPrefix);
+}
+
+/**
+ * Resolve a body-file path through realpath and keep transparent repair inside
+ * known-safe writable areas. This prevents a `--body-file` symlink or traversal
+ * path from making the hook append signatures outside the worktree/tmp space.
+ * @param {string} filePath
+ * @returns {string}
+ */
+function _resolveAllowedBodyFilePath(filePath) {
+  const realFilePath = realpathSync(filePath);
+  const allowedRoots = [process.cwd(), tmpdir()]
+    .filter((root) => existsSync(root))
+    .map((root) => realpathSync(root));
+  if (allowedRoots.some((root) => _isPathWithin(realFilePath, root))) {
+    return realFilePath;
+  }
+  const e = new Error(
+    `resolved body-file path ${realFilePath} is outside allowed repair directories`,
+  );
+  e.code = "EACCES";
+  throw e;
+}
+
+/**
  * Repair a `--body-file PATH` form by appending the signature footer to the
  * referenced file if missing.
  *
@@ -257,7 +291,8 @@ function _generateSignature(helperPath, bodyValue, log) {
  */
 function _repairBodyFile(cmd, filePath, helperPath, log) {
   try {
-    const current = readFileSync(filePath, "utf-8");
+    const realFilePath = _resolveAllowedBodyFilePath(filePath);
+    const current = readFileSync(realFilePath, "utf-8");
     if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
     if (isMachineProtocolCommand(current)) {
       log(
@@ -268,7 +303,7 @@ function _repairBodyFile(cmd, filePath, helperPath, log) {
     }
     const sigResult = _generateSignature(helperPath, current, log);
     if (sigResult.status === "fail") return sigResult;
-    appendFileSync(filePath, sigResult.sig);
+    appendFileSync(realFilePath, sigResult.sig);
     log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
     return { status: "ok", cmd };
   } catch (e) {
