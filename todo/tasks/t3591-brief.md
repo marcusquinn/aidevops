@@ -59,7 +59,7 @@ Leaf task: implementation PR should use a closing keyword for GH#23761.
 2. Centralize portable wall-clock protection near those GitHub API calls, using `timeout_sec` or an existing shared wrapper pattern rather than direct `timeout`.
 3. Use separate or configurable budgets for single-person and cross-repo aggregate stats so cross-repo work does not lose useful partial output under a single hard-coded 60s budget.
 4. Adjust `.agents/scripts/stats-health-dashboard-data.sh` so timeout/failure of optional person-stats does not mark a misleading successful refresh when both optional stats paths fail.
-5. Preserve or surface partial-output/timeout markers in dashboard data where possible instead of silently converting every timeout/failure to empty stats.
+5. Preserve or surface partial-output/timeout markers in dashboard data where possible. Use jq fallback `//` and avoid redundant `"null"` string checks instead of silently converting failures to empty stats.
 6. Add regression coverage for bare macOS/no-coreutils behavior by isolating `PATH` or faking command availability, plus slow/stuck helper behavior for both per-person and cross-repo paths.
 
 ### Verification
@@ -75,11 +75,11 @@ If either named test file is absent at implementation HEAD, add/run the nearest 
 ### Complexity Impact
 
 - Existing shell functions may grow around timeout/fallback handling. Before editing, measure the target function line counts and extract helpers first if projected size exceeds the repo complexity gate.
-- Prefer small wrapper/helper functions with explicit `return 0` / `return 1` and `local var="$1"` style.
+- Prefer small wrapper/helper functions with explicit `return 0` / `return 1` and `local var="$1"` style. Avoid `eval` for command execution; use Bash arrays to safely handle command parts.
 
 ## Acceptance Criteria
 
-- [ ] No implementation uses direct `timeout` without the shared portable `timeout_sec` fallback.
+- [ ] No implementation uses direct `timeout`; the shared portable `timeout_sec` wrapper or an equivalent portable pattern is used exclusively for bare macOS portability.
 - [ ] Slow or stuck `gh api` calls in the person-stats helper are bounded by a wall-clock deadline.
 - [ ] Bare macOS/no-coreutils behavior is covered by a regression test or PATH-isolated fake-command test.
 - [ ] Cross-repo stats can retain useful partial results or visible timeout markers instead of silently becoming empty output.
