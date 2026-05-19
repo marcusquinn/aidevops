@@ -110,8 +110,26 @@ test_explicit_pr_numbers_fetch_exact_records() {
 	return 0
 }
 
+test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
+	# shellcheck source=/dev/null
+	source "${TEST_SCRIPT_DIR}/pr-salvage-helper.sh"
+
+	local result
+	result=$(cmd_scan --repo example/repo --json 54 '#55')
+
+	local numbers
+	numbers=$(printf '%s' "$result" | jq -r '[.[].number] | join(",")')
+	if [[ "$numbers" == "54" ]]; then
+		print_result "scan command accepts hash-prefixed explicit PR numbers" 0
+	else
+		print_result "scan command accepts hash-prefixed explicit PR numbers" 1 "expected only PR 54, got '${numbers}'"
+	fi
+	return 0
+}
+
 test_completed_recovery_issue_suppresses_salvage_candidate
 test_explicit_pr_numbers_fetch_exact_records
+test_cmd_scan_accepts_hash_prefixed_pr_numbers
 
 printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
