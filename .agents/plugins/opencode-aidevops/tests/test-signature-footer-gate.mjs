@@ -15,9 +15,9 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync, symlinkSync } from "fs";
-import { tmpdir } from "os";
-import { join, dirname } from "path";
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync, symlinkSync, rmSync } from "fs";
+import { tmpdir, homedir } from "os";
+import { join } from "path";
 
 import {
   SIG_MARKER,
@@ -349,19 +349,23 @@ describe("tryRepairSignature", () => {
 
   test("refuses to repair --body-file symlinks outside allowed directories", () => {
     const dir = setupStubHelper();
-    const outsideDir = mkdtempSync(join(dirname(process.cwd()), "t2685-outside-"));
+    const outsideDir = mkdtempSync(join(homedir(), ".t2685-outside-"));
     const outsideBodyFile = join(outsideDir, "body.md");
     const bodyFile = join(dir, "linked-body.md");
-    writeFileSync(outsideBodyFile, "unsigned external content\n");
-    symlinkSync(outsideBodyFile, bodyFile);
-    const { log } = makeLogger();
-    const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
-    const out = tryRepairSignature(cmd, dir, log);
-    const after = readFileSync(outsideBodyFile, "utf-8");
-    assert.equal(out.status, "fail");
-    assert.equal(out.reason, FAIL_REASON.FILE_UNREADABLE);
-    assert.match(out.detail, /outside allowed repair directories/);
-    assert.equal(after, "unsigned external content\n", "outside target must not be modified");
+    try {
+      writeFileSync(outsideBodyFile, "unsigned external content\n");
+      symlinkSync(outsideBodyFile, bodyFile);
+      const { log } = makeLogger();
+      const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+      const out = tryRepairSignature(cmd, dir, log);
+      const after = readFileSync(outsideBodyFile, "utf-8");
+      assert.equal(out.status, "fail");
+      assert.equal(out.reason, FAIL_REASON.FILE_UNREADABLE);
+      assert.match(out.detail, /outside allowed repair directories/);
+      assert.equal(after, "unsigned external content\n", "outside target must not be modified");
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
   });
 
   test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
