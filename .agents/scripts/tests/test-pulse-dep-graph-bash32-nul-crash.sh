@@ -152,13 +152,13 @@ EOF
 # (after optional leading whitespace) with `#` (a comment). The test file
 # is excluded by --exclude so the grep doesn't catch its own documentation.
 nul_in_expansion=$(
-	grep -rn -E '\$\{[^}]*\$'"'"'\\0' "$REPO_ROOT/.agents/scripts/" \
+	grep -rn -E "\$\{[^}]*\$'\\\\0'" "$REPO_ROOT/.agents/scripts/" \
 		--include='*.sh' \
 		--exclude='test-pulse-dep-graph-bash32-nul-crash.sh' 2>/dev/null |
 		grep -vE ':[[:space:]]*#' || true
 )
 if [[ -z "$nul_in_expansion" ]]; then
-	printf 'PASS: no ${...$'"'"'\\0...} patterns in shell code\n'
+	printf "%s\n" "PASS: no \${...\$'\\0...} patterns in shell code"
 	pass_count=$((pass_count + 1))
 else
 	printf 'FAIL: found NUL-in-parameter-expansion pattern (bash 3.2 will crash):\n%s\n' "$nul_in_expansion" >&2
