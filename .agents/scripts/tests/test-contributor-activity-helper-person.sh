@@ -30,9 +30,9 @@ fail() {
 
 define_timeout_sec_mock() {
 	timeout_sec() {
-		local _seconds="$1"
-		shift
+		local _seconds="${1:-}"
 		[[ -n "$_seconds" ]] || return 124
+		shift
 		"$@"
 		return $?
 	}
