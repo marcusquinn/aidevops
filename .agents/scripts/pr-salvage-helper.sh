@@ -270,15 +270,18 @@ scan_repo() {
 
 	local unmerged
 	if [[ -n "$pr_numbers" ]]; then
-		unmerged="[]"
+		local pr_records=()
 		local pr_number pr_record
 		for pr_number in $pr_numbers; do
 			pr_record=$(gh pr view "$pr_number" --repo "$slug" \
 				--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
-				2>/dev/null) || pr_record=""
-			[[ -z "$pr_record" ]] && continue
-			unmerged=$(echo "$unmerged" | jq --argjson pr "$pr_record" '. + [$pr]') || unmerged="[]"
+				2>/dev/null) || continue
+			[[ -n "$pr_record" ]] && pr_records+=("$pr_record")
 		done
+		unmerged="[]"
+		if [[ "${#pr_records[@]}" -gt 0 ]]; then
+			unmerged=$(printf '%s\n' "${pr_records[@]}" | jq -s '.') || unmerged="[]"
+		fi
 	else
 		# Fetch closed-unmerged PRs using GitHub search API (gh pr list --state closed
 		# returns both merged and unmerged interleaved, so a small --limit misses most
@@ -290,7 +293,7 @@ scan_repo() {
 
 		unmerged=$(gh pr list --repo "$slug" --state closed \
 			--search "is:unmerged closed:>=${cutoff_date}" \
-			--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels \
+			--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
 			--limit 100 2>/dev/null) || unmerged="[]"
 	fi
 

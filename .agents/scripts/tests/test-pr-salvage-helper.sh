@@ -13,6 +13,7 @@ readonly TEST_SCRIPT_DIR
 
 TESTS_RUN=0
 TESTS_FAILED=0
+GH_CLOSED_LIST_ARGS_FILE="${TMPDIR:-/tmp}/pr-salvage-gh-args.$$"
 
 print_result() {
 	local test_name="$1"
@@ -48,9 +49,10 @@ gh() {
 			return 0
 		fi
 		if [[ " ${*} " == *" --state closed "* ]]; then
+			printf ' %s ' "$*" >"$GH_CLOSED_LIST_ARGS_FILE"
 			printf '%s\n' '[
-				{"number":53,"title":"Add buffalo logo favicon","headRefName":"feature/buffalo-favicon","closedAt":"2026-05-01T12:00:00Z","mergedAt":null,"additions":7,"deletions":0,"author":{"login":"worker-a"},"labels":[]},
-				{"number":54,"title":"Recoverable unsuppressed work","headRefName":"feature/keep-me","closedAt":"2026-05-01T13:00:00Z","mergedAt":null,"additions":70,"deletions":0,"author":{"login":"worker-b"},"labels":[]}
+				{"number":53,"title":"Add buffalo logo favicon","headRefName":"feature/buffalo-favicon","closedAt":"2026-05-01T12:00:00Z","mergedAt":null,"additions":7,"deletions":0,"author":{"login":"worker-a"},"labels":[],"state":"CLOSED"},
+				{"number":54,"title":"Recoverable unsuppressed work","headRefName":"feature/keep-me","closedAt":"2026-05-01T13:00:00Z","mergedAt":null,"additions":70,"deletions":0,"author":{"login":"worker-b"},"labels":[],"state":"CLOSED"}
 			]'
 			return 0
 		fi
@@ -74,6 +76,24 @@ gh() {
 	esac
 
 	return 1
+}
+
+test_closed_pr_list_requests_state_field() {
+	# shellcheck source=/dev/null
+	source "${TEST_SCRIPT_DIR}/pr-salvage-helper.sh"
+
+	local gh_closed_list_args
+	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
+	scan_repo "example/repo" 30 >/dev/null
+	gh_closed_list_args=$(<"$GH_CLOSED_LIST_ARGS_FILE")
+
+	if [[ "$gh_closed_list_args" == *"--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state"* ]]; then
+		print_result "closed PR list requests state for safety filter" 0
+	else
+		print_result "closed PR list requests state for safety filter" 1 "gh pr list args did not include state: ${gh_closed_list_args}"
+	fi
+	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
+	return 0
 }
 
 test_completed_recovery_issue_suppresses_salvage_candidate() {
@@ -128,6 +148,7 @@ test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
 }
 
 test_completed_recovery_issue_suppresses_salvage_candidate
+test_closed_pr_list_requests_state_field
 test_explicit_pr_numbers_fetch_exact_records
 test_cmd_scan_accepts_hash_prefixed_pr_numbers
 
