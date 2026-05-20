@@ -1,0 +1,69 @@
+{
+  "status": "experimental",
+  "provider": "nostr-vpn-fips",
+  "upstream": {
+    "website": "https://nostrvpn.org/",
+    "repository": "https://github.com/jmcorgan/fips",
+    "release_channel": "pinned-release",
+    "minimum_reviewed_version": "v0.3.0",
+    "verify_checksums": true
+  },
+  "identity": {
+    "mode": "per-device",
+    "private_key_storage": "aidevops secret set FIPS_NSEC for import/recovery only; otherwise use the upstream key file with owner-only permissions",
+    "public_address_format": "npub",
+    "never_commit": [
+      "Nostr private keys",
+      "nsec values",
+      "FIPS key files",
+      "OpenCode server tokens"
+    ]
+  },
+  "devices": {
+    "laptop": {
+      "role": "client",
+      "npub": "npub1examplelaptop...",
+      "alias": "laptop.fips",
+      "allowed_services": ["ssh"]
+    },
+    "workstation": {
+      "role": "compute",
+      "npub": "npub1exampleworkstation...",
+      "alias": "workstation.fips",
+      "allowed_services": ["ssh", "opencode"]
+    },
+    "vps": {
+      "role": "rendezvous-or-gateway-candidate",
+      "npub": "npub1examplevps...",
+      "alias": "vps.fips",
+      "allowed_services": ["ssh"]
+    }
+  },
+  "opencode_remote_compute": {
+    "enabled": false,
+    "bind": "loopback-or-fips-interface-only",
+    "token_secret": "OPENCODE_SERVER_TOKEN",
+    "allowed_peers": ["npub1examplelaptop..."],
+    "notes": "Store the token with aidevops secret set OPENCODE_SERVER_TOKEN; do not expose OpenCode ports on public interfaces."
+  },
+  "security_defaults": {
+    "peer_acl": "allowlist",
+    "mesh_firewall": "enable-before-service-exposure",
+    "lan_gateway": "disabled-until-reviewed",
+    "exit_node": "disabled-until-reviewed",
+    "public_relay_metadata_warning": true
+  },
+  "tools": {
+    "required": ["fips", "fipsctl"],
+    "optional": ["fipstop", "fips-gateway", "jq", "systemctl", "launchctl"]
+  },
+  "setup_steps": [
+    "1. Verify and install a pinned upstream FIPS release.",
+    "2. Generate one persistent identity per device.",
+    "3. Store recovery nsec with: aidevops secret set FIPS_NSEC (only if needed).",
+    "4. Record npubs and aliases in a private local config, not in git.",
+    "5. Configure peer allowlists before joining untrusted meshes.",
+    "6. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
+    "7. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics"
+  ]
+}
