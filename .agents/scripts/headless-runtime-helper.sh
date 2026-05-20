@@ -1920,12 +1920,12 @@ show_help() {
 headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Claude CLI opt-in)
 
 Usage:
-  headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
-  headless-runtime-helper.sh canary [--role pulse|worker] [--model provider/model] [--tier haiku|sonnet|opus|...]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
+  headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
+  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier haiku|sonnet|opus|...]
+  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
-  headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
+  headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
   headless-runtime-helper.sh help
 
 Runtime selection:

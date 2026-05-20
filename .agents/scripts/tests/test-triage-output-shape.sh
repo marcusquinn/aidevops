@@ -34,6 +34,8 @@ TEST_ROOT=""
 ORIGINAL_HOME="${HOME}"
 GH_CALL_LOG=""
 LOGFILE=""
+HEADLESS_INVOCATION_LOG=""
+TRIAGE_CACHE_LOG=""
 
 print_result() {
 	local test_name="$1"
@@ -60,6 +62,10 @@ setup_test_env() {
 	: >"$LOGFILE"
 	GH_CALL_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_CALL_LOG"
+	HEADLESS_INVOCATION_LOG="${TEST_ROOT}/headless-invocations.log"
+	: >"$HEADLESS_INVOCATION_LOG"
+	TRIAGE_CACHE_LOG="${TEST_ROOT}/triage-cache.log"
+	: >"$TRIAGE_CACHE_LOG"
 	return 0
 }
 
@@ -99,8 +105,8 @@ export -f gh
 # can be invoked directly without sourcing the full pulse-wrapper boot.
 _triage_content_hash() { printf 'deadbeef\n'; }
 _triage_is_cached() { return 1; }
-_triage_update_cache() { return 0; }
-_triage_increment_failure() { return 1; }
+_triage_update_cache() { printf 'update %s %s %s\n' "$1" "$2" "$3" >>"$TRIAGE_CACHE_LOG"; return 0; }
+_triage_increment_failure() { printf 'increment %s %s %s\n' "$1" "$2" "$3" >>"$TRIAGE_CACHE_LOG"; return 1; }
 _triage_awaiting_contributor_reply() { return 1; }
 lock_issue_for_worker() { return 0; }
 unlock_issue_after_worker() { return 0; }
@@ -189,8 +195,23 @@ _install_headless_stub() {
 #!/usr/bin/env bash
 # Test stub: concatenate the payload to stdout so the caller's
 # >"\$review_output_file" 2>&1 captures it.
+printf '%s\n' "\$*" >>"${HEADLESS_INVOCATION_LOG}"
 cat "${payload_file}"
 exit 0
+STUB_EOF
+	chmod +x "$HEADLESS_RUNTIME_HELPER"
+	return 0
+}
+
+_install_headless_contract_failure_stub() {
+	local stub_dir="${TEST_ROOT}/stubs"
+	mkdir -p "$stub_dir"
+	export HEADLESS_RUNTIME_HELPER="${stub_dir}/headless-runtime-helper.sh"
+	cat >"$HEADLESS_RUNTIME_HELPER" <<STUB_EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${HEADLESS_INVOCATION_LOG}"
+printf '%b\n' '\033[0;31m[ERROR]\033[0m [fatal] WORKER_ISSUE_NUMBER unset — issue worker env contract missing; aborting before model launch'
+exit 1
 STUB_EOF
 	chmod +x "$HEADLESS_RUNTIME_HELPER"
 	return 0
@@ -347,6 +368,12 @@ test_dispatch_accepts_clean_review_in_json() {
 			"gh call log (last lines):
 $(tail -5 "$GH_CALL_LOG")"
 	fi
+	if grep -q -- '--role triage' "$HEADLESS_INVOCATION_LOG"; then
+		print_result "triage dispatch uses distinct triage role" 0
+	else
+		print_result "triage dispatch uses distinct triage role" 1 \
+			"headless invocation log:\n$(cat "$HEADLESS_INVOCATION_LOG")"
+	fi
 	teardown_test_env
 }
 
@@ -479,6 +506,49 @@ $(cat "$debug_log" 2>/dev/null || echo "<missing>")"
 	teardown_test_env
 }
 
+test_prelaunch_contract_failure_is_infrastructure() {
+	setup_test_env
+	load_helpers_under_test
+	_install_headless_contract_failure_stub
+
+	local prompt_file="${TEST_ROOT}/prompt.txt"
+	printf 'test prompt\n' >"$prompt_file"
+
+	_dispatch_triage_review_worker \
+		"23854" "owner/repo" "/tmp/repo" "$prompt_file" "hash-contract" "" \
+		2>/dev/null
+
+	local debug_log="${HOME}/.aidevops/logs/triage-review-debug.log"
+	if [[ -f "$debug_log" ]] && grep -q 'failure_reason: no-review-header' "$debug_log"; then
+		print_result "prelaunch contract output is still suppressed by safety filter" 0
+	else
+		print_result "prelaunch contract output is still suppressed by safety filter" 1 \
+			"debug log content:\n$(cat "$debug_log" 2>/dev/null || echo "<missing>")"
+	fi
+
+	if grep -q 'prelaunch-contract-failure' "$LOGFILE"; then
+		print_result "prelaunch contract failure is classified as infrastructure" 0
+	else
+		print_result "prelaunch contract failure is classified as infrastructure" 1 \
+			"LOGFILE:\n$(cat "$LOGFILE")"
+	fi
+
+	if [[ ! -s "$TRIAGE_CACHE_LOG" ]]; then
+		print_result "prelaunch infrastructure failure does not consume triage cache or retry" 0
+	else
+		print_result "prelaunch infrastructure failure does not consume triage cache or retry" 1 \
+			"cache log:\n$(cat "$TRIAGE_CACHE_LOG")"
+	fi
+
+	if ! grep -q -- '--add-label triage-failed' "$GH_CALL_LOG"; then
+		print_result "prelaunch infrastructure failure does not add triage-failed" 0
+	else
+		print_result "prelaunch infrastructure failure does not add triage-failed" 1 \
+			"gh calls:\n$(cat "$GH_CALL_LOG")"
+	fi
+	teardown_test_env
+}
+
 test_post_escalation_handles_oversized_reason() {
 	setup_test_env
 	load_helpers_under_test
@@ -516,6 +586,7 @@ main() {
 	test_dispatch_suppresses_oversized_output
 	test_dispatch_suppresses_headerless_json_output
 	test_dispatch_suppresses_raw_sandbox_output
+	test_prelaunch_contract_failure_is_infrastructure
 	test_post_escalation_handles_oversized_reason
 
 	echo ""
