@@ -81,6 +81,7 @@ reset_capacity_pressure_env() {
 	unset PULSE_DISPATCH_CAPACITY_RECENT_PROVIDER_5XX || true
 	unset PULSE_DISPATCH_CAPACITY_RECENT_PROGRESS_HEARTBEATS || true
 	unset PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER PULSE_DISPATCH_OAUTH_POOL_FILE || true
+	unset -f config_get 2>/dev/null || true
 	rm -f "${HOME}/.aidevops/oauth-pool.json"
 	return 0
 }
@@ -144,6 +145,69 @@ JSON
 		print_result "capacity: provider accounts and high load cap below floor" 0
 	else
 		print_result "capacity: provider accounts and high load cap below floor" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	return 0
+}
+
+test_capacity_uses_configured_provider_account_multiplier() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=10
+	TEST_ACTIVE_WORKERS=1
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	PULSE_MODEL="openai/gpt-5.5"
+	cat >"${HOME}/.aidevops/oauth-pool.json" <<'JSON'
+{"openai":[{"status":"idle"}]}
+JSON
+	config_get() {
+		local dotpath="$1" default="${2:-}"
+		if [[ "$dotpath" == "orchestration.provider_account_slot_multiplier" ]]; then
+			printf '4\n'
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "4 1 3" ]]; then
+		print_result "capacity: config multiplier caps provider account slots" 0
+	else
+		print_result "capacity: config multiplier caps provider account slots" 1 "result=${result}"
+	fi
+	return 0
+}
+
+test_capacity_env_multiplier_overrides_config() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=10
+	TEST_ACTIVE_WORKERS=1
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	PULSE_MODEL="openai/gpt-5.5"
+	PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=3
+	cat >"${HOME}/.aidevops/oauth-pool.json" <<'JSON'
+{"openai":[{"status":"idle"}]}
+JSON
+	config_get() {
+		local dotpath="$1" default="${2:-}"
+		if [[ "$dotpath" == "orchestration.provider_account_slot_multiplier" ]]; then
+			printf '4\n'
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "3 1 2" ]]; then
+		print_result "capacity: env multiplier overrides config multiplier" 0
+	else
+		print_result "capacity: env multiplier overrides config multiplier" 1 "result=${result}"
 	fi
 	return 0
 }
@@ -367,6 +431,8 @@ EOF
 test_capacity_raises_soft_cap_to_floor
 test_capacity_respects_existing_higher_cap
 test_capacity_caps_by_provider_accounts_and_high_load
+test_capacity_uses_configured_provider_account_multiplier
+test_capacity_env_multiplier_overrides_config
 test_capacity_recent_service_interruptions_reduce_slots
 test_capacity_recent_progress_gets_runway_under_pressure
 test_throttle_does_not_force_serial_under_floor
