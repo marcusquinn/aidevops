@@ -26,7 +26,7 @@ model: sonnet
 - **Professional framing on LinkedIn** — thought leadership, not sales pitch
 - **One idea per post** — clarity beats comprehensiveness
 
-**Platform Tools**: `tools/social-media/bird.md` (X), `tools/social-media/linkedin.md`, `tools/social-media/reddit.md`
+**Platform Tools**: `content/social-xurl.md` (official X API), `content/social-bird.md` (X browser-cookie fallback), `content/social-linkedin.md`, `content/social-reddit.md`
 
 <!-- AI-CONTEXT-END -->
 
@@ -204,4 +204,4 @@ Happy to share more details on the research methodology if anyone's interested.
 
 **Distribution**: `content/distribution/youtube/`, `content/distribution/short-form.md`, `content/distribution/blog.md`, `content/distribution/email.md`, `content/distribution/podcast.md`
 
-**Tools**: `tools/social-media/bird.md` (X), `tools/social-media/linkedin.md`, `tools/social-media/reddit.md`, `content/humanise.md` (AI pattern removal)
+**Tools**: `content/social-xurl.md` (official X API), `content/social-bird.md` (fallback), `content/social-linkedin.md`, `content/social-reddit.md`, `content/humanise.md` (AI pattern removal)

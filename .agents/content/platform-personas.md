@@ -102,7 +102,7 @@ Base voice: `content/guidelines.md` or `context/brand-voice.md`. If `context/bra
 
 ## Blog / Website
 
-Full standards: `content/guidelines.md`. Automation: `content/social-bird.md` (X/Twitter API), `content/social-linkedin.md` (LinkedIn).
+Full standards: `content/guidelines.md`. Automation: `content/social-xurl.md` (official X API), `content/social-bird.md` (fallback), `content/social-linkedin.md` (LinkedIn).
 
 - Longer form: 1,500-3,000 words for pillar content
 - H2/H3 hierarchy; internal links (3-5 per article); one sentence per paragraph
