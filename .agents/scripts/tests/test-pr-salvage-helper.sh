@@ -152,7 +152,7 @@ test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
 
 run_tests() {
 	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
+	trap '_run_cleanups' RETURN EXIT
 	GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
 	push_cleanup "rm -f \"${GH_CLOSED_LIST_ARGS_FILE}\""
 
