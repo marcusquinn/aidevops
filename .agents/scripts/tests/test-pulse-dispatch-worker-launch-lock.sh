@@ -88,6 +88,10 @@ if [[ "$(_dlw_zero_output_evidence_count 123 owner/repo "" 7)" != "7" ]]; then
 	fail "precomputed zero-output evidence count was not returned directly"
 fi
 
+if ! grep -Fq "WORKER_GITHUB_LOGIN=\"\$self_login\"" "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"; then
+	fail "pulse worker launch does not forward dispatching GitHub login"
+fi
+
 mkdir -p "${TEST_TMP}/bin" || fail "failed to create systemctl stub dir"
 cat >"${TEST_TMP}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -108,5 +112,6 @@ printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
 printf 'PASS: root node_modules .bin tooling is linked by default\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
+printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
 exit 0

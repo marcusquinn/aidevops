@@ -589,6 +589,16 @@ test_launch_worker_forwards_repo_contract() {
 	return 0
 }
 
+test_launch_worker_forwards_github_login() {
+	local failed=1
+	if grep -Fq "WORKER_GITHUB_LOGIN=\"\$self_login\"" "$HELPER_PATH" &&
+		grep -Fq "_dsi_launch_and_report \"\$issue_number\" \"\$repo_slug\" \"\$self_login\" \"\$session_key\"" "$HELPER_PATH"; then
+		failed=0
+	fi
+	print_result "worker launch forwards dispatching GitHub login" "$failed"
+	return 0
+}
+
 test_create_worktree_uses_target_repo_path() {
 	local failed=1
 	if grep -Fq "repo_path=\$(_dsi_repo_path_for_slug \"\$repo_slug\")" "$HELPER_PATH" &&
@@ -818,6 +828,7 @@ _run_tests() {
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
+	test_launch_worker_forwards_github_login
 	test_create_worktree_uses_target_repo_path
 	test_create_worktree_registers_dispatch_owner
 	test_create_worktree_registration_warns_on_failure

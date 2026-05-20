@@ -40,6 +40,11 @@ clear_active_status_on_release() {
 	return 0
 }
 
+whoami() {
+	printf 'local-os-user\n'
+	return 0
+}
+
 gh() {
 	local cmd="${1:-}"
 	shift || true
@@ -47,6 +52,10 @@ gh() {
 	api)
 		local path="${1:-}"
 		shift || true
+		if [[ "$path" == "user" ]]; then
+			printf 'api-login\n'
+			return 0
+		fi
 		local method="GET" body="" prev=""
 		local arg
 		for arg in "$@"; do
@@ -97,12 +106,15 @@ printf 'PASS empty non-worker claim release is a silent no-op\n'
 : >"$CALL_LOG"
 
 export DISPATCH_REPO_SLUG="owner/repo"
+export WORKER_GITHUB_LOGIN="assigned-bot"
 _release_dispatch_claim "issue-12345" "worker_noop" "0" "0"
 
 if grep -q 'CLAIM_RELEASED reason=worker_noop' "$CALL_LOG" &&
-	grep -q 'CLEAR issue=12345 repo=owner/repo' "$CALL_LOG" &&
+	grep -q 'CLEAR issue=12345 repo=owner/repo runner=assigned-bot' "$CALL_LOG" &&
+	grep -q 'runner=assigned-bot' "$CALL_LOG" &&
+	! grep -q 'runner=local-os-user' "$CALL_LOG" &&
 	grep -q 'UNLOCK issue=12345 repo=owner/repo' "$CALL_LOG"; then
-	printf 'PASS release posts claim, clears status, and unlocks issue\n'
+	printf 'PASS release posts claim, clears assigned GitHub login, and unlocks issue\n'
 	exit 0
 fi
 

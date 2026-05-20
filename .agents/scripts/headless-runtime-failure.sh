@@ -336,7 +336,7 @@ _release_dispatch_claim() {
 			# GitHub issue is not stranded in an active lifecycle state, but skip
 			# the duplicate CLAIM_RELEASED audit comment that caused storms.
 			local _rl_runner_name=""
-			_rl_runner_name=$(whoami)
+			_rl_runner_name=$(_hrff_resolve_release_runner_login)
 			if declare -F clear_active_status_on_release >/dev/null 2>&1; then
 				clear_active_status_on_release "$issue_number" "$repo_slug" "$_rl_runner_name" \
 					|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
@@ -356,7 +356,7 @@ _release_dispatch_claim() {
 	fi
 
 	local runner_name=""
-	runner_name=$(whoami)
+	runner_name=$(_hrff_resolve_release_runner_login)
 	local release_ts=""
 	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 	local machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
@@ -391,6 +391,35 @@ ${machine_readable_part}
 			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
 	fi
 	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	return 0
+}
+
+#######################################
+# Resolve the GitHub login whose dispatch claim should be released.
+# Prefer the identity captured by the dispatcher because the local OS user can
+# differ from the GitHub assignee in bot/cross-account worker setups (GH#23854).
+# Globals:
+#   WORKER_GITHUB_LOGIN, AIDEVOPS_WORKER_GITHUB_LOGIN
+# Outputs:
+#   GitHub login or OS username fallback.
+#######################################
+_hrff_resolve_release_runner_login() {
+	local runner_login="${WORKER_GITHUB_LOGIN:-${AIDEVOPS_WORKER_GITHUB_LOGIN:-}}"
+	if [[ -n "$runner_login" ]]; then
+		printf '%s\n' "$runner_login"
+		return 0
+	fi
+
+	if command -v gh >/dev/null 2>&1; then
+		runner_login=$(gh api user --jq .login 2>/dev/null || true)
+		if [[ "$runner_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
+			printf '%s\n' "$runner_login"
+			return 0
+		fi
+	fi
+
+	runner_login=$(whoami)
+	printf '%s\n' "$runner_login"
 	return 0
 }
 
