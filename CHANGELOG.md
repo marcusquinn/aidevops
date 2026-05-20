@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.15.69] - 2026-05-20
+
+### Changed
+
+- Maintenance: bump idna in the pip group across 1 directory (#23842)
+
+### Fixed
+
+- preserve merged PR state in REST fallback (#23843)
+
 ## [3.15.68] - 2026-05-19
 
 ### Changed
