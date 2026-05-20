@@ -33,6 +33,7 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Local Development | localhost, local dev, Traefik, mkcert, preview proxy | `services/hosting/local-hosting.md` |
 | Hosting/Deployment | deploy, hosting, Fly, Coolify, Vercel, Daytona, cloud | `tools/deployment/hosting-comparison.md`, `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md`, `tools/deployment/daytona.md` |
 | Infrastructure | GPU, containers, OrbStack, remote dispatch, servers | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
+| Networking/VPN | VPN, mesh, WireGuard, Tailscale, NetBird, Obscura, MPR, multi-party relay, Mullvad, QUIC obfuscation | `services/networking/tailscale.md`, `services/networking/netbird.md`, `services/networking/obscuravpn.md` |
 | Accessibility | accessibility, WCAG, a11y, contrast, screen reader | `tools/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | OpenAPI, API spec, endpoint search, schema discovery | `tools/context/openapi-search.md` |
 | Local models | local model, llama.cpp, GGUF, Hugging Face, offline | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |
