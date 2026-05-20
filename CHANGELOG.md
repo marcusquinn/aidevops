@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.8] - 2026-05-20
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pass repo to worktree cleanup PR lookups
+
 ## [3.17.7] - 2026-05-20
 
 ### Fixed
