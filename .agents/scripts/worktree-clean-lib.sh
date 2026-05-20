@@ -262,7 +262,7 @@ should_skip_cleanup() {
 	# GH#5694 Safety check B: Open PR
 	# Skip worktrees whose branch has an open PR — active work in progress.
 	# This applies even with --force-merged: an open PR means the work is not done.
-	if [[ -n "$open_pr_list" ]] && echo "$open_pr_list" | grep -Fxq "$wt_branch"; then
+	if _clean_branch_list_contains_exact "$wt_branch" "$open_pr_list"; then
 		echo -e "  ${RED}$wt_branch${NC} (has open PR - skipping)"
 		echo "    $wt_path"
 		printf '\n'
