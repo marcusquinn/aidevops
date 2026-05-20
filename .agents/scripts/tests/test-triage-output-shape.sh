@@ -196,6 +196,7 @@ _install_headless_stub() {
 # Test stub: concatenate the payload to stdout so the caller's
 # >"\$review_output_file" 2>&1 captures it.
 printf '%s\n' "\$*" >>"${HEADLESS_INVOCATION_LOG}"
+printf 'env HEADLESS=%s WORKER_ISSUE_NUMBER=%s WORKER_REPO_SLUG=%s WORKER_WORKTREE_PATH=%s\n' "\${HEADLESS:-}" "\${WORKER_ISSUE_NUMBER:-}" "\${WORKER_REPO_SLUG:-}" "\${WORKER_WORKTREE_PATH:-}" >>"${HEADLESS_INVOCATION_LOG}"
 cat "${payload_file}"
 exit 0
 STUB_EOF
@@ -373,6 +374,37 @@ $(tail -5 "$GH_CALL_LOG")"
 	else
 		print_result "triage dispatch uses distinct triage role" 1 \
 			"headless invocation log:\n$(cat "$HEADLESS_INVOCATION_LOG")"
+	fi
+	if grep -q 'env HEADLESS=1 WORKER_ISSUE_NUMBER=18400 WORKER_REPO_SLUG=owner/repo WORKER_WORKTREE_PATH=/tmp/repo' "$HEADLESS_INVOCATION_LOG"; then
+		print_result "triage dispatch exports standard worker environment" 0
+	else
+		print_result "triage dispatch exports standard worker environment" 1 \
+			"headless invocation log:\n$(cat "$HEADLESS_INVOCATION_LOG")"
+	fi
+	teardown_test_env
+}
+
+test_prelaunch_classifier_covers_runtime_guard_modes() {
+	setup_test_env
+	load_helpers_under_test
+
+	local ok=0
+	local sample=""
+	local reason=""
+	for sample in \
+		'[fatal] WORKER_WORKTREE_PATH does not exist: /tmp/missing' \
+		'[WARN] OpenCode version drift: installed=1.2.3, pin=1.2.4 -- reinstalling' \
+		'[fatal] opencode version mismatch: expected pinned runtime' \
+		'[fatal] launch cwd is deleted and no valid fallback directory is available'; do
+		reason=$(_triage_runtime_infra_failure_reason "$sample")
+		[[ "$reason" == 'prelaunch-contract-failure' ]] || ok=1
+	done
+
+	if [[ "$ok" -eq 0 ]]; then
+		print_result "prelaunch classifier covers runtime guard failure modes" 0
+	else
+		print_result "prelaunch classifier covers runtime guard failure modes" 1 \
+			"last sample='${sample}' reason='${reason}'"
 	fi
 	teardown_test_env
 }
@@ -586,6 +618,7 @@ main() {
 	test_dispatch_suppresses_oversized_output
 	test_dispatch_suppresses_headerless_json_output
 	test_dispatch_suppresses_raw_sandbox_output
+	test_prelaunch_classifier_covers_runtime_guard_modes
 	test_prelaunch_contract_failure_is_infrastructure
 	test_post_escalation_handles_oversized_reason
 

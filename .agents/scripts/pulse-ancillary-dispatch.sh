@@ -352,7 +352,7 @@ _triage_runtime_infra_failure_reason() {
 		return 0
 	fi
 
-	if printf '%s' "$sample" | grep -qE 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|issue worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch' 2>/dev/null; then
+	if printf '%s' "$sample" | grep -qE 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' 2>/dev/null; then
 		printf '%s\n' 'prelaunch-contract-failure'
 		return 0
 	fi
@@ -1032,15 +1032,20 @@ _dispatch_triage_review_worker() {
 	# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep.
 	# Use a distinct role so the implementation-worker issue/worktree contract
 	# does not reject triage sessions before model launch (GH#23854).
-	# shellcheck disable=SC2086
-	"$HEADLESS_RUNTIME_HELPER" run \
-		--role triage \
-		--session-key "triage-review-${issue_num}" \
-		--dir "$repo_path" \
-		$model_flag \
-		--agent triage-review \
-		--title "Sandboxed triage review: Issue #${issue_num}" \
-		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
+	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" ]]; then
+		# shellcheck disable=SC2086
+		env HEADLESS=1 WORKER_ISSUE_NUMBER="$issue_num" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$repo_path" \
+			"$HEADLESS_RUNTIME_HELPER" run \
+			--role triage \
+			--session-key "triage-review-${issue_num}" \
+			--dir "$repo_path" \
+			$model_flag \
+			--agent triage-review \
+			--title "Sandboxed triage review: Issue #${issue_num}" \
+			--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
+	else
+		printf '%s\n' '[fatal] triage worker env contract missing; aborting before model launch' >"$review_output_file"
+	fi
 
 	rm -f "$prefetch_file"
 
