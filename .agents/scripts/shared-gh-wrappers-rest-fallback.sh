@@ -1141,13 +1141,14 @@ _rest_pr_object_json_jq() {
 _rest_pr_list_json_jq() {
 	local fields="$1"
 	local user_jq="$2"
+	local source_filter="${3:-.}"
 	local projection=""
 	local field=""
 	while IFS= read -r field; do
 		[[ -z "$field" ]] && continue
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
-		state) projection="${projection}${projection:+,}state: .state" ;;
+		state) projection="${projection}${projection:+,}state: (if .merged_at != null then \"MERGED\" else .state end)" ;;
 		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
 		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
@@ -1167,7 +1168,7 @@ _rest_pr_list_json_jq() {
 		esac
 	done < <(_rest_split_csv "$fields")
 	[[ -z "$projection" ]] && projection="number: .number"
-	local jq_expr="[.[] | {${projection}}]"
+	local jq_expr="${source_filter} | [.[] | {${projection}}]"
 	[[ -n "$user_jq" ]] && jq_expr="${jq_expr} | ${user_jq}"
 	printf '%s' "$jq_expr"
 	return 0
@@ -1182,6 +1183,8 @@ _rest_pr_list() {
 	local json_fields=""
 	local head_branch=""
 	local base_branch=""
+	local rest_state=""
+	local source_filter="."
 
 	while [[ $# -gt 0 ]]; do
 		local _arg="$1"
@@ -1211,7 +1214,13 @@ _rest_pr_list() {
 		return 1
 	fi
 
-	local _query="state=${state}&per_page=${limit}"
+	rest_state="$state"
+	if [[ "$state" == "merged" ]]; then
+		rest_state="closed"
+		source_filter='map(select(.merged_at != null))'
+	fi
+
+	local _query="state=${rest_state}&per_page=${limit}"
 	if [[ -n "$head_branch" ]]; then
 		local _head_encoded
 		if [[ "$head_branch" != *:* ]]; then
@@ -1229,7 +1238,13 @@ _rest_pr_list() {
 	local _path="/repos/${repo}/pulls?${_query}"
 	local _gh_cmd=(gh api "$_path")
 	if [[ -n "$json_fields" ]]; then
-		jq_expr="$(_rest_pr_list_json_jq "$json_fields" "$jq_expr")"
+		jq_expr="$(_rest_pr_list_json_jq "$json_fields" "$jq_expr" "$source_filter")"
+	elif [[ "$source_filter" != "." ]]; then
+		if [[ -n "$jq_expr" ]]; then
+			jq_expr="${source_filter} | ${jq_expr}"
+		else
+			jq_expr="$source_filter"
+		fi
 	fi
 	[[ -n "$jq_expr" ]] && _gh_cmd+=(--jq "$jq_expr")
 	_rest_api_call read "${_gh_cmd[@]}"
