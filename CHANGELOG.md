@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.3] - 2026-05-20
+
+### Changed
+
+- fix PR salvage test temp cleanup (#23877)
+- fix: preserve PR salvage test temp cleanup (#23873)
+
 ## [3.17.2] - 2026-05-20
 
 ### Changed
