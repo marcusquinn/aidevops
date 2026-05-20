@@ -11,16 +11,12 @@ readonly TEST_RESET='\033[0m'
 TEST_SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 readonly TEST_SCRIPT_DIR
 
+# shellcheck source=../shared-constants.sh
+source "${TEST_SCRIPT_DIR}/shared-constants.sh"
+
 TESTS_RUN=0
 TESTS_FAILED=0
-GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
-
-cleanup_gh_args_file() {
-	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
-	return 0
-}
-
-trap cleanup_gh_args_file EXIT
+GH_CLOSED_LIST_ARGS_FILE=""
 
 print_result() {
 	local test_name="$1"
@@ -154,13 +150,23 @@ test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
 	return 0
 }
 
-test_completed_recovery_issue_suppresses_salvage_candidate
-test_closed_pr_list_requests_state_field
-test_explicit_pr_numbers_fetch_exact_records
-test_cmd_scan_accepts_hash_prefixed_pr_numbers
+run_tests() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN EXIT
+	GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
+	push_cleanup "rm -f \"${GH_CLOSED_LIST_ARGS_FILE}\""
 
-printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
-if [[ "$TESTS_FAILED" -gt 0 ]]; then
-	exit 1
-fi
-exit 0
+	test_completed_recovery_issue_suppresses_salvage_candidate
+	test_closed_pr_list_requests_state_field
+	test_explicit_pr_numbers_fetch_exact_records
+	test_cmd_scan_accepts_hash_prefixed_pr_numbers
+
+	printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
+	if [[ "$TESTS_FAILED" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+run_tests
+exit $?
