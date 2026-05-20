@@ -772,6 +772,7 @@ _dsi_build_prompt() {
 #   $8 - worker_log path
 #   $9 - issue_number
 #   $10 - repo_slug
+#   $11 - self_login (dispatching GitHub login)
 # Stdout (on success): worker PID (single line)
 # Returns: 0 launched, 1 failed
 #######################################
@@ -786,12 +787,14 @@ _dsi_launch_worker() {
 	local worker_log="$8"
 	local issue_number="$9"
 	local repo_slug="${10:-}"
+	local self_login="${11:-}"
 
 	local -a cmd=(
 		env
 		HEADLESS=1
 		FULL_LOOP_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
 		WORKER_REPO_SLUG="$repo_slug"
 		GITHUB_REPOSITORY="$repo_slug"
@@ -1062,7 +1065,7 @@ _dsi_dispatch_after_dedup_clear() {
 	# Steps 8-10 + report: launch worker, resolve real PID, register ledger,
 	# print success summary. Extracted to keep cmd_dispatch under the 100-line
 	# function-complexity gate (t3000).
-	if ! _dsi_launch_and_report "$issue_number" "$repo_slug" "$session_key"; then
+	if ! _dsi_launch_and_report "$issue_number" "$repo_slug" "$self_login" "$session_key"; then
 		_dsi_reset_after_prelaunch_failure "$issue_number" "$repo_slug" "$self_login" "worker_launch_failed"
 		return 1
 	fi
@@ -1111,13 +1114,15 @@ _dsi_reset_after_prelaunch_failure() {
 # Args:
 #   $1 issue_number
 #   $2 repo_slug
-#   $3 session_key
+#   $3 self_login
+#   $4 session_key
 # Reads: _DSI_ISSUE_URL, _DSI_LOG_DIR, _DSI_WORKTREE_PATH, _DSI_ISSUE_TITLE,
 #        _DSI_TIER, _DSI_SELECTED_MODEL, _DSI_ARG_AGENT.
 _dsi_launch_and_report() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local session_key="$3"
+	local self_login="$3"
+	local session_key="$4"
 
 	local prompt worker_log
 	prompt=$(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")
@@ -1126,7 +1131,7 @@ _dsi_launch_and_report() {
 	launch_pid=$(_dsi_launch_worker \
 		"$session_key" "$_DSI_WORKTREE_PATH" "$_DSI_ISSUE_TITLE" \
 		"$prompt" "$_DSI_TIER" "$_DSI_SELECTED_MODEL" \
-		"$_DSI_ARG_AGENT" "$worker_log" "$issue_number" "$repo_slug") || return 1
+		"$_DSI_ARG_AGENT" "$worker_log" "$issue_number" "$repo_slug" "$self_login") || return 1
 
 	local worker_pid
 	worker_pid=$(_dsi_resolve_worker_pid "$worker_log" "$launch_pid")

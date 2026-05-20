@@ -1316,6 +1316,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_SESSION_ORIGIN=worker
 		AIDEVOPS_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		WORKER_GITHUB_LOGIN="$self_login"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
