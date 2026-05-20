@@ -253,7 +253,8 @@ test_branch_pr_lookup_uses_null_safe_jq_filter() {
 	source_pulse_cleanup_with_stubs || return 1
 	local captured_args_file="${TEST_ROOT}/gh-pr-list-args.txt"
 	gh_pr_list() {
-		printf '%s' "$*" >"$captured_args_file"
+		local args="$*"
+		printf '%s' "$args" >"$captured_args_file"
 		return 0
 	}
 
@@ -270,6 +271,27 @@ test_branch_pr_lookup_uses_null_safe_jq_filter() {
 	return 0
 }
 
+test_branch_pr_lookup_treats_null_pr_number_as_no_pr() {
+	source_pulse_cleanup_with_stubs || return 1
+	gh_pr_list() {
+		local args="$*"
+		if [[ "$args" == *".[].number // empty"* ]]; then
+			return 0
+		fi
+		printf 'null'
+		return 0
+	}
+
+	_pc_branch_has_pr "testowner/testrepo" "feature/null-number" "open" >/dev/null
+	local lookup_rc=$?
+
+	local rc=0
+	[[ "$lookup_rc" -eq 1 ]] || rc=1
+	print_result "branch PR lookup treats null PR number as no PR" "$rc" \
+		"lookup_rc=$lookup_rc"
+	return 0
+}
+
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
 export HOME="${TEST_ROOT}/home"
@@ -283,6 +305,7 @@ test_stale_local_commit_no_pr_removes_worktree_preserves_branch
 test_no_newline_pr_output_blocks_local_commit_cleanup
 test_no_newline_open_pr_output_blocks_clean_fastpath
 test_branch_pr_lookup_uses_null_safe_jq_filter
+test_branch_pr_lookup_treats_null_pr_number_as_no_pr
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
