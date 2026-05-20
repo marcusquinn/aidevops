@@ -177,6 +177,27 @@ test_no_newline_open_pr_output_blocks_clean_fastpath() {
 	return 0
 }
 
+test_branch_pr_lookup_uses_null_safe_jq_filter() {
+	source_pulse_cleanup_with_stubs || return 1
+	local captured_args_file="${TEST_ROOT}/gh-pr-list-args.txt"
+	gh_pr_list() {
+		printf '%s' "$*" >"$captured_args_file"
+		return 0
+	}
+
+	_pc_branch_has_pr "testowner/testrepo" "feature/missing-number" "open" >/dev/null
+	local lookup_rc=$?
+	local captured_args=""
+	captured_args=$(<"$captured_args_file") || captured_args=""
+
+	local rc=0
+	[[ "$lookup_rc" -eq 1 ]] || rc=1
+	[[ "$captured_args" == *".[].number // empty"* ]] || rc=1
+	print_result "branch PR lookup uses null-safe jq fallback" "$rc" \
+		"lookup_rc=$lookup_rc args=$captured_args"
+	return 0
+}
+
 TEST_ROOT=$(mktemp -d)
 trap teardown EXIT
 export HOME="${TEST_ROOT}/home"
@@ -187,6 +208,7 @@ test_recent_metric_blocks_local_commit_no_pr_removal
 test_local_commit_no_pr_skips_without_recent_metric
 test_no_newline_pr_output_blocks_local_commit_cleanup
 test_no_newline_open_pr_output_blocks_clean_fastpath
+test_branch_pr_lookup_uses_null_safe_jq_filter
 
 echo ""
 echo "Results: $((TESTS_RUN - TESTS_FAILED))/${TESTS_RUN} passed, ${TESTS_FAILED} failed."
