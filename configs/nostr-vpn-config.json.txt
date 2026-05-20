@@ -59,11 +59,12 @@
   },
   "setup_steps": [
     "1. Verify and install a pinned upstream FIPS release.",
-    "2. Generate one persistent identity per device.",
-    "3. Store recovery nsec with: aidevops secret set FIPS_NSEC (only if needed).",
-    "4. Record npubs and aliases in a private local config, not in git.",
-    "5. Configure peer allowlists before joining untrusted meshes.",
-    "6. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
-    "7. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics"
+    "2. On macOS, reject packages that fail pkgutil --check-signature, --payload-files, or --expand even if the release checksum matches.",
+    "3. Generate one persistent identity per device.",
+    "4. Store recovery nsec with: aidevops secret set FIPS_NSEC (only if needed).",
+    "5. Record npubs and aliases in a private local config, not in git.",
+    "6. Configure peer allowlists before joining untrusted meshes.",
+    "7. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
+    "8. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics"
   ]
 }

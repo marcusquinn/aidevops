@@ -49,11 +49,12 @@ Do not present FIPS as the default aidevops networking layer until upstream prot
 ## Setup Pattern
 
 1. Install FIPS from an upstream release or package; verify checksums first.
-2. Generate a persistent identity on each device, or import one from `aidevops secret set FIPS_NSEC` during recovery only.
-3. Record device **npubs**, labels, and intended roles in local config; never store private keys in git.
-4. Configure peer ACLs before joining wider meshes.
-5. Enable the optional `fips0` firewall baseline before exposing services.
-6. Test `.fips` resolution, IPv6 reachability, SSH, and OpenCode server access.
+2. On macOS, also verify package integrity with `pkgutil --check-signature`, `pkgutil --payload-files`, or `pkgutil --expand`; do not install packages that fail these checks even when the release checksum matches.
+3. Generate a persistent identity on each device, or import one from `aidevops secret set FIPS_NSEC` during recovery only.
+4. Record device **npubs**, labels, and intended roles in local config; never store private keys in git.
+5. Configure peer ACLs before joining wider meshes.
+6. Enable the optional `fips0` firewall baseline before exposing services.
+7. Test `.fips` resolution, IPv6 reachability, SSH, and OpenCode server access.
 
 ## Secret Handling
 
