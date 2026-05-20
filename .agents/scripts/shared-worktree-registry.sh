@@ -476,6 +476,7 @@ check_worktree_owner() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_info
@@ -500,6 +501,7 @@ worktree_owner_dead_seen_at() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local dead_seen_at
@@ -619,6 +621,7 @@ is_worktree_owned_by_others() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_pid
@@ -735,6 +738,7 @@ _wt_registry_entry_count() {
 #   - Test artifacts in /tmp or /var/folders
 prune_worktree_registry() {
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	_init_registry_db
 
 	local pruned_count=0
 

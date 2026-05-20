@@ -212,6 +212,41 @@ test_recent_live_pid_without_comm_still_blocks() {
 	return 0
 }
 
+test_legacy_registry_schema_migrates_on_owner_check() {
+	local wt_path
+	wt_path=$(make_worktree_dir "legacy-schema-owner-check")
+	local owner_pid
+	owner_pid=$(live_other_pid)
+	mkdir -p "$WORKTREE_REGISTRY_DIR"
+	rm -f "$WORKTREE_REGISTRY_DB"
+	sqlite3 "$WORKTREE_REGISTRY_DB" "
+        CREATE TABLE worktree_owners (
+            worktree_path TEXT PRIMARY KEY,
+            branch TEXT,
+            owner_pid INTEGER,
+            owner_session TEXT DEFAULT '',
+            owner_batch TEXT DEFAULT '',
+            task_id TEXT DEFAULT '',
+            owner_dead_seen_at TEXT DEFAULT '',
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+        );
+        INSERT INTO worktree_owners (worktree_path, branch, owner_pid, created_at)
+        VALUES ('$(_wt_sql_escape "$wt_path")', 'feature/legacy-schema-owner-check', ${owner_pid}, '2020-01-01T00:00:00Z');
+    "
+	_get_proc_comm() { printf '%s' 'smd'; return 0; }
+	export WORKTREE_OWNER_STALE_LIVE_MAX_HOURS=1
+
+	local rc=0
+	if is_worktree_owned_by_others "$wt_path" >/dev/null 2>&1; then
+		rc=1
+	fi
+	local has_owner_comm=""
+	has_owner_comm=$(sqlite3 "$WORKTREE_REGISTRY_DB" "SELECT 1 FROM pragma_table_info('worktree_owners') WHERE name = 'owner_comm';" 2>/dev/null || true)
+	[[ "$has_owner_comm" == "1" ]] || rc=1
+	print_result "legacy registry schema migrates during owner check" "$rc"
+	return 0
+}
+
 test_should_skip_cleanup_branch_merged_within_grace() {
 	local wt_path
 	wt_path=$(make_worktree_dir "branch-merged-grace")
@@ -253,6 +288,7 @@ main() {
 	test_owner_pid_override_rejects_sql_payload
 	test_stale_live_pid_comm_mismatch_unregisters
 	test_recent_live_pid_without_comm_still_blocks
+	test_legacy_registry_schema_migrates_on_owner_check
 	test_should_skip_cleanup_branch_merged_within_grace
 	printf 'Results: %s/%s passed, %s failed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]] && return 0
