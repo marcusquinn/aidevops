@@ -853,6 +853,29 @@ else
 fi
 
 # =============================================================================
+# Test 23c: gh_pr_list REST fallback translates --state merged to closed+merged_at
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_LIST_FIXTURE='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"open-branch"},"base":{"ref":"main"}},{"number":22338,"state":"closed","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22338","head":{"ref":"closed-branch"},"base":{"ref":"main"}},{"number":22339,"state":"closed","merged_at":"2026-05-20T00:00:00Z","html_url":"https://github.com/owner/repo/pull/22339","head":{"ref":"merged-branch"},"base":{"ref":"main"}}]'
+
+merged_prs=$(gh_pr_list --repo "owner/repo" --state merged --json number,state,mergedAt,headRefName --jq '.' 2>/dev/null || true)
+merged_count=$(printf '%s\n' "$merged_prs" | jq 'length' 2>/dev/null || printf '0')
+merged_number=$(printf '%s\n' "$merged_prs" | jq -r '.[0].number // empty' 2>/dev/null || true)
+merged_state=$(printf '%s\n' "$merged_prs" | jq -r '.[0].state // empty' 2>/dev/null || true)
+
+if [[ "$merged_count" == "1" && "$merged_number" == "22339" && "$merged_state" == "MERGED" ]] &&
+	grep -qE '^api /repos/owner/repo/pulls\?state=closed&per_page=30' "$GH_CALLS" 2>/dev/null &&
+	! grep -qE 'state=merged' "$GH_CALLS" 2>/dev/null; then
+	pass "gh_pr_list REST fallback maps --state merged to closed PRs filtered by merged_at"
+else
+	fail "gh_pr_list REST fallback maps --state merged to closed PRs filtered by merged_at" \
+		"output=${merged_prs} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset STUB_PR_LIST_FIXTURE
+
+# =============================================================================
 # Test 23c: gh_issue_list REST fallback preserves gh-shaped JSON output
 # =============================================================================
 : >"$GH_CALLS"
