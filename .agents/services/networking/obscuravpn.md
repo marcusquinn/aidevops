@@ -25,8 +25,8 @@ tools:
 - **Architecture**: WireGuard packets encrypted to the exit hop, carried over QUIC/datagrams to Obscura relay servers.
 - **Privacy boundary**: Obscura can see connecting IP/account/payment metadata, not decrypted traffic; Mullvad exits see Obscura relay IP, not user identity.
 - **Use for**: ObscuraVPN client work, MPR/two-party relay analysis, WireGuard-over-QUIC troubleshooting, app build guidance, privacy claims review.
-- **Sources**: https://obscura.com/ · https://github.com/Sovereign-Engineering/obscuravpn-client · Privacy Guides MPR article supplied by user.
-- **Related**: `services/networking/netbird.md`, `services/networking/tailscale.md`, `tools/security/opsec.md`, `tools/mobile/app-dev.md`.
+- **Sources**: https://obscura.com/ · https://github.com/Sovereign-Engineering/obscuravpn-client · Privacy Guides MPR article.
+- **Related**: `services/networking/netbird.md`, `services/networking/tailscale.md`, `tools/security/opsec.md`, `tools/mobile/app-dev.md`, `tools/mobile/app-dev-swift.md`, `legal.md`.
 
 <!-- AI-CONTEXT-END -->
 
@@ -124,3 +124,5 @@ When reviewing Obscura claims, verify against source or first-party docs before 
 | Tailscale | `services/networking/tailscale.md` | Managed mesh VPN, Serve/Funnel, secure private access. |
 | OPSEC | `tools/security/opsec.md` | Threat modelling and operational privacy discipline. |
 | Mobile app development | `tools/mobile/app-dev.md` | App planning/build/release workflows. |
+| Mobile app development (Swift) | `tools/mobile/app-dev-swift.md` | Swift/iOS-specific app development guidance. |
+| Legal | `legal.md` | Legal compliance, privacy policy, and GDPR guidance. |
