@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.6] - 2026-05-20
+
+### Fixed
+
+- preserve stale local worktree branches
+
 ## [3.17.5] - 2026-05-20
 
 ### Fixed
