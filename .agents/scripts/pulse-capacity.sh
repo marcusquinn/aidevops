@@ -276,9 +276,8 @@ pulse_apply_provider_load_capacity_cap() {
 
 	local account_multiplier="${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}"
 	if [[ -z "$account_multiplier" ]] && declare -F config_get >/dev/null 2>&1; then
-		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "2") || account_multiplier="2"
+		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "2")
 	fi
-	[[ -n "$account_multiplier" ]] || account_multiplier=2
 	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=2
 	((account_multiplier < 1)) && account_multiplier=1
 	local account_cap=-1
