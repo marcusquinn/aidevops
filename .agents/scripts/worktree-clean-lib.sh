@@ -401,14 +401,17 @@ _clean_build_closed_pr_branches() {
 
 _clean_branch_has_exact_merged_pr() {
 	local wt_branch="$1"
+	local merged_prs="${2:-}"
 	local merged_count=""
 
 	[[ -z "$wt_branch" ]] && return 1
+	if [[ -n "$merged_prs" ]] && printf '%s\n' "$merged_prs" | grep -Fxq -- "$wt_branch"; then
+		return 0
+	fi
 	if ! command -v gh_pr_list &>/dev/null; then
 		return 1
 	fi
-	merged_count=$(gh_pr_list --head "$wt_branch" --state all --limit 1 --json number,state,mergedAt,headRefName \
-		--jq '[.[] | select((.mergedAt != null) and (.mergedAt != ""))] | length' 2>/dev/null || true)
+	merged_count=$(gh_pr_list --head "$wt_branch" --state merged --limit 1 --json number --jq 'length' 2>/dev/null || true)
 	if [[ "$merged_count" =~ ^[1-9][0-9]*$ ]]; then
 		return 0
 	fi
@@ -524,7 +527,7 @@ _clean_classify_worktree() {
 	# gone when auto-delete is on. Trust only exact headRefName metadata here;
 	# issue/PR cross-reference text must not be treated as cleanup proof.
 	# grep -Fxq: exact fixed-string line match (no regex injection risk).
-	elif _clean_branch_has_exact_merged_pr "$wt_branch" || { [[ -n "$merged_prs" ]] && printf '%s\n' "$merged_prs" | grep -Fxq -- "$wt_branch"; }; then
+	elif _clean_branch_has_exact_merged_pr "$wt_branch" "$merged_prs"; then
 		is_merged=true
 		merge_type="squash-merged PR"
 	# Check 3: Closed (abandoned) PR — PR was closed without merging.
