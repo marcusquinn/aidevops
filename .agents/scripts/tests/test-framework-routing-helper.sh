@@ -4,8 +4,8 @@
 # test-framework-routing-helper.sh - Tests for framework-routing-helper.sh
 #
 # Tests the is-framework detection logic with known framework and project
-# task descriptions. Does NOT test log-framework-issue (requires gh CLI
-# and network access).
+# task descriptions, plus offline log-framework-issue regression paths with a
+# stubbed gh CLI.
 #
 # Usage: bash test-framework-routing-helper.sh
 
@@ -35,6 +35,94 @@ assert_result() {
 		echo "    Actual:   $actual"
 		echo "    Input:    $input"
 	fi
+	return 0
+}
+
+assert_contains() {
+	local output="$1"
+	local expected="$2"
+	local description="$3"
+
+	if grep -Fq -- "$expected" <<<"$output"; then
+		PASS=$((PASS + 1))
+		echo "  PASS: $description"
+	else
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: $description"
+		echo "    Expected output to contain: $expected"
+		echo "    Output: $output"
+	fi
+	return 0
+}
+
+assert_not_contains() {
+	local output="$1"
+	local unexpected="$2"
+	local description="$3"
+
+	if grep -Fq -- "$unexpected" <<<"$output"; then
+		FAIL=$((FAIL + 1))
+		echo "  FAIL: $description"
+		echo "    Output unexpectedly contained: $unexpected"
+		echo "    Output: $output"
+	else
+		PASS=$((PASS + 1))
+		echo "  PASS: $description"
+	fi
+	return 0
+}
+
+run_log_framework_issue_case() {
+	local duplicate_value="$1"
+	local output_file="$2"
+	local trace_file="$3"
+	local tmp_home="$4"
+	local stub_dir="$5"
+
+	mkdir -p "$stub_dir"
+	cat >"${stub_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >>"$TEST_GH_TRACE"
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+	printf '%s\n' "${TEST_DUPLICATE_VALUE:-}"
+	exit 0
+fi
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "create" ]]; then
+	printf '%s\n' "https://github.com/marcusquinn/aidevops/issues/9104"
+	exit 0
+fi
+
+if [[ "${1:-}" == "api" ]]; then
+	printf '{}\n'
+	exit 0
+fi
+
+exit 0
+EOF
+	chmod +x "${stub_dir}/gh"
+
+	mkdir -p "${tmp_home}/.config/aidevops"
+	cat >"${tmp_home}/.config/aidevops/repos.json" <<'EOF'
+{"initialized_repos":[{"slug":"marcusquinn/aidevops","path":"/tmp/aidevops"}]}
+EOF
+
+	if HOME="$tmp_home" \
+		PATH="${stub_dir}:$PATH" \
+		TEST_DUPLICATE_VALUE="$duplicate_value" \
+		TEST_GH_TRACE="$trace_file" \
+		LOG_ISSUE_DEDUP_FILE="${tmp_home}/dedup.jsonl" \
+		"$HELPER" log-framework-issue \
+			--title "fix: no result dedup" \
+			--body "body" \
+			--labels "bug" >"$output_file" 2>&1; then
+		return 0
+	fi
+
+	return 1
 }
 
 echo "=== Framework Routing Helper Tests ==="
@@ -120,6 +208,42 @@ fi
 
 assert_result "Mixed case indicators" "framework" \
 	"Fix PULSE-WRAPPER dispatch for AI-LIFECYCLE model tier"
+
+echo ""
+
+# --- log-framework-issue dedup parsing ---
+echo "log-framework-issue dedup parsing:"
+
+TMP_DIR=$(mktemp -d -t framework-routing-helper-test.XXXXXX)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+empty_array_output="${TMP_DIR}/empty-array.out"
+empty_array_trace="${TMP_DIR}/empty-array.trace"
+if run_log_framework_issue_case "[]" "$empty_array_output" "$empty_array_trace" "${TMP_DIR}/home-empty-array" "${TMP_DIR}/stub-empty-array"; then
+	empty_array_text=$(<"$empty_array_output")
+	empty_array_calls=$(<"$empty_array_trace")
+	assert_contains "$empty_array_text" "https://github.com/marcusquinn/aidevops/issues/9104" "empty array issue-list result creates issue"
+	assert_contains "$empty_array_calls" "issue create" "empty array issue-list result reaches issue creation"
+	assert_not_contains "$empty_array_text" "Duplicate found (search): []" "empty array issue-list result is not duplicate"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: empty array issue-list result creates issue"
+	cat "$empty_array_output" 2>/dev/null || true
+fi
+
+null_output="${TMP_DIR}/null.out"
+null_trace="${TMP_DIR}/null.trace"
+if run_log_framework_issue_case "null" "$null_output" "$null_trace" "${TMP_DIR}/home-null" "${TMP_DIR}/stub-null"; then
+	null_text=$(<"$null_output")
+	null_calls=$(<"$null_trace")
+	assert_contains "$null_text" "https://github.com/marcusquinn/aidevops/issues/9104" "null issue-list result creates issue"
+	assert_contains "$null_calls" "issue create" "null issue-list result reaches issue creation"
+	assert_not_contains "$null_text" "Duplicate found (search): null" "null issue-list result is not duplicate"
+else
+	FAIL=$((FAIL + 1))
+	echo "  FAIL: null issue-list result creates issue"
+	cat "$null_output" 2>/dev/null || true
+fi
 
 echo ""
 
