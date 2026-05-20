@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-WRITE_COMMANDS="post reply quote delete like unlike repost unrepost bookmark unbookmark follow unfollow block unblock mute unmute dm media"
+WRITE_COMMANDS="post:reply:quote:delete:like:unlike:repost:unrepost:bookmark:unbookmark:follow:unfollow:block:unblock:mute:unmute:dm:media"
 FORBIDDEN_FLAGS="--verbose -v --bearer-token --consumer-key --consumer-secret --access-token --token-secret --client-id --client-secret"
 APP_NAME=""
 USERNAME=""
@@ -19,7 +19,7 @@ ARGS=()
 show_help() {
 	printf '%s\n' "xurl-helper.sh - guarded xurl wrapper"
 	printf '\n%s\n' "Usage: xurl-helper.sh <command> [options]"
-	printf '\n%s\n' "Read commands: status, whoami, read, search, user, timeline, mentions, bookmarks, likes, followers, following, run"
+	printf '\n%s\n' "Read commands: status, whoami, read, search, user, timeline, mentions, bookmarks, likes, followers, following, dms, run"
 	printf '%s\n' "Write commands: post, reply, quote, delete, like, unlike, repost, unrepost, bookmark, unbookmark, follow, unfollow, block, unblock, mute, unmute, dm, media"
 	printf '\n%s\n' "Options: --app NAME, --username NAME, --limit N, --confirm-write, -- --raw xurl args"
 	printf '%s\n' "Secrets and verbose flags are rejected. Write commands require --confirm-write."
@@ -33,20 +33,6 @@ check_dependencies() {
 		return 1
 	fi
 	return 0
-}
-
-is_word_in_list() {
-	local needle="$1"
-	local haystack="$2"
-	local word
-
-	for word in ${haystack}; do
-		if [[ "${word}" == "${needle}" ]]; then
-			return 0
-		fi
-	done
-
-	return 1
 }
 
 reject_forbidden_args() {
@@ -102,7 +88,7 @@ require_write_confirmation() {
 	local command_name="$1"
 	local confirmed="$2"
 
-	if is_word_in_list "${command_name}" "${WRITE_COMMANDS}" && [[ "${confirmed}" != "true" ]]; then
+	if [[ ":${WRITE_COMMANDS}:" == *":${command_name}:"* ]] && [[ "${confirmed}" != "true" ]]; then
 		print_error "Write action '${command_name}' requires explicit user approval and --confirm-write"
 		return 1
 	fi

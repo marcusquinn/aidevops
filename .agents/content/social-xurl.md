@@ -95,7 +95,7 @@ The helper rejects secret-bearing flags and verbose output, maps common read/wri
 | Search posts | `xurl-helper.sh search "QUERY" --limit 10` |
 | Read post | `xurl-helper.sh read POST_ID_OR_URL` |
 | Timeline / mentions | `xurl-helper.sh timeline --limit 20` / `xurl-helper.sh mentions --limit 10` |
-| Bookmarks / likes | `xurl-helper.sh bookmarks --limit 20` / `xurl-helper.sh likes --limit 20` |
+| Bookmarks / likes / DMs | `xurl-helper.sh bookmarks --limit 20` / `xurl-helper.sh likes --limit 20` / `xurl-helper.sh dms --limit 10` |
 | User lookup | `xurl-helper.sh user @handle` |
 | Post / reply / quote | add `--confirm-write` after explicit user approval |
 | Raw read-only API | `xurl-helper.sh run -- /2/users/me` |
