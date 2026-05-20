@@ -273,6 +273,11 @@ _rest_should_fallback() {
 			remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null)
 		fi
 	fi
+	# If remaining is empty, the API is likely exhausted (gh api rate_limit itself failed with 403).
+	# Treat empty remaining as exhausted and trigger REST fallback.
+	if [[ -z "$remaining" ]]; then
+		return 0
+	fi
 	[[ "$remaining" =~ ^[0-9]+$ ]] || return 1
 	_GH_LAST_GRAPHQL_REMAINING="$remaining"
 	if [[ "$remaining" -le "$_GH_REST_FALLBACK_THRESHOLD" ]]; then
