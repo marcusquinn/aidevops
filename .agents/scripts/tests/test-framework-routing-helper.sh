@@ -87,7 +87,14 @@ set -euo pipefail
 printf '%s\n' "$*" >>"$TEST_GH_TRACE"
 
 if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
-	printf '%s\n' "${TEST_DUPLICATE_VALUE:-}"
+	case "${TEST_DUPLICATE_VALUE:-}" in
+		"[]"|"null")
+			printf '\n'
+			;;
+		*)
+			printf '%s\n' "${TEST_DUPLICATE_VALUE:-}"
+			;;
+	esac
 	exit 0
 fi
 
