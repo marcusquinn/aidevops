@@ -411,7 +411,7 @@ _hrff_resolve_release_runner_login() {
 	fi
 
 	if command -v gh >/dev/null 2>&1; then
-		runner_login=$(gh api user --jq .login 2>/dev/null || true)
+		runner_login=$(gh api user --jq '.login // ""' || true)
 		if [[ "$runner_login" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?$ ]]; then
 			printf '%s\n' "$runner_login"
 			return 0
