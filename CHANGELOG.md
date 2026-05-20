@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.2] - 2026-05-20
+
+### Changed
+
+- Maintenance: update simplification state registry
+- fix: simplify framework routing dedup check (#23866)
+
+### Fixed
+
+- address xurl review followup (#23869)
+- simplify pulse multiplier fallback (#23867)
+- handle empty issue search dedup (#23853)
+
 ## [3.17.1] - 2026-05-20
 
 ### Fixed
