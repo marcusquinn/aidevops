@@ -40,6 +40,7 @@ setup_repo_with_worker_worktree() {
 	local repo_dir="$1"
 	local wt_path="$2"
 	local branch_name="$3"
+	local age_spec="${4:-30 hours ago}"
 
 	mkdir -p "$repo_dir"
 	(
@@ -60,8 +61,13 @@ setup_repo_with_worker_worktree() {
 	)
 	local old_ts
 	old_ts=$(date -u -v-30H +%Y%m%d%H%M 2>/dev/null \
-		|| date -u -d "30 hours ago" +%Y%m%d%H%M 2>/dev/null \
+		|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
 		|| printf '202601010000\n')
+	if [[ "$age_spec" == "8 days ago" ]]; then
+		old_ts=$(date -u -v-8d +%Y%m%d%H%M 2>/dev/null \
+			|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
+			|| printf '202601010000\n')
+	fi
 	touch -t "$old_ts" "$wt_path/.git"
 	return 0
 }
@@ -139,9 +145,38 @@ test_local_commit_no_pr_skips_without_recent_metric() {
 	grep -q 'owner_guard=clear' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	grep -q 'process_guard=clear' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	grep -q 'pr_state=none' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
-	grep -q 'recovery_path=none' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'recovery_path=branch-preserved-after-' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
 	print_result "local commits/no PR skip without safety proof" "$rc" \
 		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_stale_local_commit_no_pr_removes_worktree_preserves_branch() {
+	local repo_dir="${TEST_ROOT}/repo-stale-local-commit"
+	local wt_path="${TEST_ROOT}/worker-wt-stale-local-commit"
+	local branch_name="feature/auto-20260507-190803-gh23076"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "8 days ago" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-stale-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'recovery_path=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "stale local commits/no PR removes folder while preserving branch" "$rc" \
+		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
 	return 0
 }
 
@@ -206,6 +241,7 @@ mkdir -p "${HOME}/.aidevops/logs"
 echo "=== test-pulse-cleanup-worker-owned-no-pr.sh ==="
 test_recent_metric_blocks_local_commit_no_pr_removal
 test_local_commit_no_pr_skips_without_recent_metric
+test_stale_local_commit_no_pr_removes_worktree_preserves_branch
 test_no_newline_pr_output_blocks_local_commit_cleanup
 test_no_newline_open_pr_output_blocks_clean_fastpath
 test_branch_pr_lookup_uses_null_safe_jq_filter

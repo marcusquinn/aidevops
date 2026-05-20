@@ -910,6 +910,101 @@ _pc_assert_no_uncommitted_work() {
 }
 
 #######################################
+# Remove an abandoned no-PR worktree while preserving its local branch.
+#
+# Local commits with no PR are not safe for permanent cleanup because the
+# commits may be valuable WIP. They are, however, safe to remove from ~/Git
+# after a long inactivity window when the branch is kept in the canonical repo.
+# This turns accumulating stale worker folders into recoverable branches instead
+# of permanent deletions.
+#
+# Args:
+#   $1 - rp_age:        repo root path
+#   $2 - wt_path_age:   absolute worktree path
+#   $3 - wt_branch_age: branch name
+#   $4 - audit_context: structured audit context
+# Returns: 0 if the worktree directory was removed, 1 otherwise
+#######################################
+_pc_remove_local_commit_worktree_preserving_branch() {
+	local rp_age="$1"
+	local wt_path_age="$2"
+	local wt_branch_age="$3"
+	local audit_context="$4"
+
+	[[ -n "$rp_age" && -n "$wt_path_age" && -n "$wt_branch_age" ]] || return 1
+	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "local-commits-branch-preserved"; then
+		return 1
+	fi
+
+	if git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null; then
+		git -C "$rp_age" worktree prune 2>/dev/null || true
+		unregister_worktree "$wt_path_age" 2>/dev/null || true
+		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "local-commits-branch-preserved" "branch-preserved" "$audit_context"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Return the stale-local-commit worktree archive threshold in seconds.
+#
+# Environment:
+#   ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS — default 604800 (7 days), minimum 86400.
+# Returns 0 always; prints a validated integer.
+#######################################
+_pc_local_commit_archive_secs() {
+	local archive_secs="${ORPHAN_LOCAL_COMMIT_ARCHIVE_SECS:-604800}"
+	archive_secs="${archive_secs//[!0-9]/}"
+	if [[ -z "$archive_secs" || "$archive_secs" -lt 86400 ]]; then
+		archive_secs=604800
+	fi
+	printf '%s\n' "$archive_secs"
+	return 0
+}
+
+#######################################
+# Handle an age-eligible worktree that has local commits but no PR.
+#
+# Args:
+#   $1 - rp_age:          repo root path
+#   $2 - wt_path_age:     absolute worktree path
+#   $3 - wt_branch_age:   branch name
+#   $4 - orphan_issue_num: parsed issue number or empty
+#   $5 - commits_ahead:   commits ahead of default branch
+#   $6 - dirty_count:     dirty file count
+#   $7 - wt_age_secs:     age in seconds
+#   $8 - repo_name_age:   repo basename for logs
+# Outputs: nothing
+# Returns: 0 if it removed the worktree; 1 if it skipped or failed
+#######################################
+_pc_handle_local_commit_no_pr_worktree() {
+	local rp_age="$1"
+	local wt_path_age="$2"
+	local wt_branch_age="$3"
+	local orphan_issue_num="$4"
+	local commits_ahead="$5"
+	local dirty_count="$6"
+	local wt_age_secs="$7"
+	local repo_name_age="$8"
+	local archive_secs
+	local audit_context
+
+	archive_secs=$(_pc_local_commit_archive_secs)
+	if [[ "$wt_age_secs" -lt "$archive_secs" ]]; then
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "branch-preserved-after-${archive_secs}s")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — local commits with no PR are younger than branch-preserving cleanup threshold" >>"$LOGFILE"
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "local-commits-no-pr" "skipped" "$audit_context"
+		return 1
+	fi
+
+	audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "branch-preserved")
+	echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing stale worktree for ${wt_branch_age:-detached} — local commits preserved on branch" >>"$LOGFILE"
+	_pc_remove_local_commit_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" "$audit_context"
+	return $?
+}
+
+#######################################
 # Per-worktree age-based orphan cleanup decision and removal.
 #
 # Thin orchestrator over four private helpers:
@@ -985,10 +1080,8 @@ _cleanup_single_worktree() {
 		return 1
 	fi
 	if [[ "$commits_ahead" -gt 0 && "$reason" == *"no PR"* ]]; then
-		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "none" "clear" "clear" "clear" "none")
-		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): skipping ${wt_branch_age:-detached} — local commits with no PR are not permanently removable" >>"$LOGFILE"
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_age" "local-commits-no-pr" "skipped" "$audit_context"
-		return 1
+		_pc_handle_local_commit_no_pr_worktree "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age"
+		return $?
 	fi
 
 	# GH#23677 / t3700: defence-in-depth — refuse removal when any
