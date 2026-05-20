@@ -106,9 +106,18 @@ _check_health_issue_activity_guard() {
 	local guard_pr_count guard_assigned_count guard_worker_count
 	guard_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
+	# Validate that guard_pr_count is numeric; if gh failed, it may contain an error message
+	if ! [[ "$guard_pr_count" =~ ^[0-9]+$ ]]; then
+		guard_pr_count="0"
+	fi
+	
 	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
+	# Validate that guard_assigned_count is numeric; if gh failed, it may contain an error message
+	if ! [[ "$guard_assigned_count" =~ ^[0-9]+$ ]]; then
+		guard_assigned_count="0"
+	fi
 
 	local _guard_fields=()
 	while IFS= read -r -d '' _gf; do
@@ -208,7 +217,12 @@ _update_health_issue_for_repo() {
 		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
 	fi
 
-	echo "$health_issue_number" >"$health_issue_file"
+	# t2878: Ensure the cache file only contains the issue number, not multiple lines.
+	# Extract just the last number from the health_issue_number variable in case
+	# it contains multiple lines or unexpected output.
+	local cache_issue_number
+	cache_issue_number=$(printf '%s\n' "$health_issue_number" | awk 'match($0, /[0-9]+$/) { value=substr($0, RSTART, RLENGTH) } END { if (value != "") print value }')
+	echo "$cache_issue_number" >"$health_issue_file"
 
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -226,7 +240,8 @@ _update_health_issue_for_repo() {
 	# Bare `gh issue edit` always uses GraphQL and silently fails the body
 	# update when the 5000/hr GraphQL budget is exhausted, leaving the
 	# dashboard stale until the budget resets (up to 1h). GH#33.
-	body_edit_stderr=$(gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
+	# t2878: Wrap with _gh_with_timeout to prevent indefinite hangs on API calls.
+	body_edit_stderr=$(_gh_with_timeout write gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
 		--body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
 			>>"$LOGFILE"
@@ -289,6 +304,9 @@ update_health_issues() {
 	# This avoids N×N git log walks (one cross-repo scan per repo dashboard)
 	# and redundant DB queries for session time.
 	# Person stats read from cache (refreshed hourly by _refresh_person_stats_cache).
+	# t2878: Skip cross-repo summaries if there are too many repos (>30) to avoid
+	# timeout issues with the contributor-activity-helper. The health dashboard
+	# will still update with per-repo data; cross-repo summaries are optional.
 	local cross_repo_md=""
 	local cross_repo_session_time_md=""
 	local cross_repo_person_stats_md=""
@@ -301,9 +319,11 @@ update_health_issues() {
 			while IFS= read -r rp; do
 				[[ -n "$rp" ]] && cross_args+=("$rp")
 			done <<<"$all_repo_paths"
-			if [[ ${#cross_args[@]} -gt 1 ]]; then
-				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
-				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
+			# Only compute cross-repo summaries if there are 30 or fewer repos
+			# to avoid timeout issues with the contributor-activity-helper
+			if [[ ${#cross_args[@]} -gt 1 && ${#cross_args[@]} -le 30 ]]; then
+				cross_repo_md=$(timeout 120 bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
+				cross_repo_session_time_md=$(timeout 120 bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
 			fi
 		fi
 	fi
