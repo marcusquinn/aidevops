@@ -982,6 +982,45 @@ _finalize_triage_state() {
 }
 
 #######################################
+# Run the headless triage-review worker with the standard worker context.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - repo_path
+#   $4 - resolved model flag (empty or "--model ...")
+#   $5 - prompt file
+#   $6 - output file
+#
+# Exit code: always 0; runtime failures are captured in the output file.
+#######################################
+_run_triage_review_worker() {
+	local issue_num="$1"
+	local repo_slug="$2"
+	local repo_path="$3"
+	local model_flag="$4"
+	local prefetch_file="$5"
+	local review_output_file="$6"
+
+	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" ]]; then
+		# shellcheck disable=SC2086
+		env HEADLESS=1 WORKER_ISSUE_NUMBER="$issue_num" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$repo_path" \
+			"$HEADLESS_RUNTIME_HELPER" run \
+			--role triage \
+			--session-key "triage-review-${issue_num}" \
+			--dir "$repo_path" \
+			$model_flag \
+			--agent triage-review \
+			--title "Sandboxed triage review: Issue #${issue_num}" \
+			--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
+	else
+		printf '%s\n' '[fatal] triage worker env contract missing; aborting before model launch' >"$review_output_file"
+	fi
+
+	return 0
+}
+
+#######################################
 # Dispatch a sandboxed triage review worker and post its output
 #
 # Locks the issue, runs the triage-review agent, posts the review
@@ -1032,20 +1071,9 @@ _dispatch_triage_review_worker() {
 	# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep.
 	# Use a distinct role so the implementation-worker issue/worktree contract
 	# does not reject triage sessions before model launch (GH#23854).
-	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" ]]; then
-		# shellcheck disable=SC2086
-		env HEADLESS=1 WORKER_ISSUE_NUMBER="$issue_num" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$repo_path" \
-			"$HEADLESS_RUNTIME_HELPER" run \
-			--role triage \
-			--session-key "triage-review-${issue_num}" \
-			--dir "$repo_path" \
-			$model_flag \
-			--agent triage-review \
-			--title "Sandboxed triage review: Issue #${issue_num}" \
-			--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
-	else
-		printf '%s\n' '[fatal] triage worker env contract missing; aborting before model launch' >"$review_output_file"
-	fi
+	_run_triage_review_worker \
+		"$issue_num" "$repo_slug" "$repo_path" \
+		"$model_flag" "$prefetch_file" "$review_output_file"
 
 	rm -f "$prefetch_file"
 
