@@ -319,6 +319,37 @@ test_classify_zero_commit_not_merged() {
 }
 test_classify_zero_commit_not_merged
 
+test_branch_list_exact_matching() {
+	local stdout=""
+	stdout=$(
+		set +e
+		: "${RED:=}" "${GREEN:=}" "${YELLOW:=}" "${BLUE:=}" "${BOLD:=}" "${NC:=}"
+		_WTAR_REMOVED="${_WTAR_REMOVED:-removed}"
+		_WTAR_SKIPPED="${_WTAR_SKIPPED:-skipped}"
+		_WTAR_WH_CALLER="${_WTAR_WH_CALLER:-test}"
+		export RED GREEN YELLOW BLUE BOLD NC
+		export _WTAR_REMOVED _WTAR_SKIPPED _WTAR_WH_CALLER
+
+		# shellcheck source=/dev/null
+		source "$CLEAN_LIB_PATH" >/dev/null 2>&1 || exit 9
+
+		if _clean_branch_list_contains_exact "feature/target" $'feature/target-extra\nfeature/target\nfeature/other' \
+			&& ! _clean_branch_list_contains_exact "feature/target" $'feature/target-extra\nfeature/other'; then
+			printf 'ok\n'
+		else
+			printf 'fail\n'
+		fi
+	)
+	if [[ "$stdout" == "ok" ]]; then
+		print_result "_clean_branch_list_contains_exact matches whole lines only" 0
+	else
+		print_result "_clean_branch_list_contains_exact matches whole lines only" 1 \
+			"(unexpected result='$stdout')"
+	fi
+	return 0
+}
+test_branch_list_exact_matching
+
 # =============================================================================
 # Summary
 # =============================================================================

@@ -405,7 +405,7 @@ _clean_branch_has_exact_merged_pr() {
 	local merged_count=""
 
 	[[ -z "$wt_branch" ]] && return 1
-	if [[ -n "$merged_prs" ]] && printf '%s\n' "$merged_prs" | grep -Fxq -- "$wt_branch"; then
+	if _clean_branch_list_contains_exact "$wt_branch" "$merged_prs"; then
 		return 0
 	fi
 	if ! command -v gh_pr_list &>/dev/null; then
@@ -416,6 +416,15 @@ _clean_branch_has_exact_merged_pr() {
 		return 0
 	fi
 	return 1
+}
+
+_clean_branch_list_contains_exact() {
+	local wt_branch="$1"
+	local branch_list="${2:-}"
+
+	[[ -n "$wt_branch" && -n "$branch_list" ]] || return 1
+	[[ $'\n'"$branch_list"$'\n' == *$'\n'"$wt_branch"$'\n'* ]] || return 1
+	return 0
 }
 
 _WT_CLEAN_PROTECTED_PATHS="${_WT_CLEAN_PROTECTED_PATHS:-}"
@@ -526,14 +535,13 @@ _clean_classify_worktree() {
 	# branch may still exist if "auto-delete head branches" is off, or may be
 	# gone when auto-delete is on. Trust only exact headRefName metadata here;
 	# issue/PR cross-reference text must not be treated as cleanup proof.
-	# grep -Fxq: exact fixed-string line match (no regex injection risk).
 	elif _clean_branch_has_exact_merged_pr "$wt_branch" "$merged_prs"; then
 		is_merged=true
 		merge_type="squash-merged PR"
 	# Check 3: Closed (abandoned) PR — PR was closed without merging.
 	# The remote branch may still exist (auto-delete only fires on merge).
 	# Work is abandoned; worktree is safe to remove.
-	elif [[ -n "$closed_prs" ]] && printf '%s\n' "$closed_prs" | grep -Fxq -- "$wt_branch"; then
+	elif _clean_branch_list_contains_exact "$wt_branch" "$closed_prs"; then
 		is_merged=true
 		merge_type="closed PR"
 	# Check 4: Remote branch deleted (indicates squash merge or PR closed)
