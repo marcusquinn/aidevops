@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.9] - 2026-05-20
+
+### Fixed
+
+- fail closed on unknown worktree cleanup PR proof
+
 ## [3.17.8] - 2026-05-20
 
 ### Changed
