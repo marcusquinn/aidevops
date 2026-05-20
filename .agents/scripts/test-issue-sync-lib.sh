@@ -23,6 +23,9 @@
 #   9.  strip_code_fences: passes through non-fenced content
 #   10. _escape_ere: escapes regex metacharacters in sub-task IDs like t001.1
 #   11. t1983 explicit regression: pre-fix awk pattern WOULD fail, post-fix works
+#   12. strip_code_fences: strips HTML comment regions (GH#17804 regression)
+#   13. strip_code_fences: strips multi-line HTML comments and example tasks
+#   14. strip_html_comments: standalone helper strips comments only
 #
 # Exit 0 = all tests pass, 1 = at least one failure.
 
@@ -295,6 +298,75 @@ if grep -q 't9011.*ref:GH#1983' "$TMP/todo11.md"; then
 else
 	fail "t1983 regression: awk pattern failed — bug has regressed"
 	cat "$TMP/todo11.md" | sed 's/^/     /'
+fi
+
+# -----------------------------------------------------------------------------
+# Test 12: strip_code_fences strips HTML-commented task examples (GH#17804)
+# Regression: issue-sync-helper-push.sh extracted commented `- [ ] tNNN` lines
+# from the todo-template format-example block and created spurious GitHub issues.
+# -----------------------------------------------------------------------------
+cat >"$TMP/todo12.md" <<'EOF'
+## Ready
+
+<!-- GH#17804: Format examples wrapped in HTML comment
+- [ ] t9001 Example task description @owner ~30m
+- [ ] t9002 Another example task
+-->
+
+- [ ] t9100 Real task that must survive ~15m
+EOF
+
+output12=$(strip_code_fences <"$TMP/todo12.md")
+if printf '%s\n' "$output12" | grep -qE '^- \[ \] t9100 ' &&
+	! printf '%s\n' "$output12" | grep -qE '^- \[ \] t900[12] '; then
+	pass "strip_code_fences: HTML-commented example tasks stripped (GH#17804)"
+else
+	fail "strip_code_fences: HTML-commented tasks leaked through"
+	printf '%s\n' "$output12" | sed 's/^/     /'
+fi
+
+# -----------------------------------------------------------------------------
+# Test 13: strip_code_fences handles multi-line comments and inline spans
+# -----------------------------------------------------------------------------
+cat >"$TMP/todo13.md" <<'EOF'
+before <!-- inline comment --> middle <!-- second --> after
+<!-- multi-line
+- [ ] t9201 commented task
+end of comment -->
+keeper line
+EOF
+
+output13=$(strip_code_fences <"$TMP/todo13.md")
+if printf '%s\n' "$output13" | grep -q 'before  middle  after' &&
+	printf '%s\n' "$output13" | grep -q 'keeper line' &&
+	! printf '%s\n' "$output13" | grep -q 't9201'; then
+	pass "strip_code_fences: multi-line + inline HTML comments handled"
+else
+	fail "strip_code_fences: comment span handling incorrect"
+	printf '%s\n' "$output13" | sed 's/^/     /'
+fi
+
+# -----------------------------------------------------------------------------
+# Test 14: strip_html_comments standalone helper
+# -----------------------------------------------------------------------------
+cat >"$TMP/todo14.md" <<'EOF'
+keep <!-- drop --> keep
+```
+fenced content stays
+```
+<!-- whole-line comment -->
+final
+EOF
+
+output14=$(strip_html_comments <"$TMP/todo14.md")
+if printf '%s\n' "$output14" | grep -q 'keep  keep' &&
+	printf '%s\n' "$output14" | grep -q 'fenced content stays' &&
+	printf '%s\n' "$output14" | grep -q 'final' &&
+	! printf '%s\n' "$output14" | grep -q 'whole-line comment'; then
+	pass "strip_html_comments: removes comments, leaves fences intact"
+else
+	fail "strip_html_comments: unexpected output"
+	printf '%s\n' "$output14" | sed 's/^/     /'
 fi
 
 # -----------------------------------------------------------------------------

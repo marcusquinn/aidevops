@@ -43,11 +43,66 @@ fi
 # Parse — TODO.md Utilities
 # =============================================================================
 
-# Strip lines inside markdown code-fenced blocks (``` ... ```) from stdin.
-# Prevents task-like lines in format examples from being parsed as real tasks.
+# Strip content that should not be parsed as live tasks. Removes:
+#   1. Markdown code-fenced blocks (``` ... ```) — whole lines inside fences.
+#   2. HTML comment regions (<!-- ... -->) — character spans, possibly spanning
+#      multiple lines, leaving any text outside the comment intact.
+# Prevents task-like lines in format examples and documentation comments
+# (GH#17804 issue-sync helper) from being parsed as real tasks.
 # Usage: strip_code_fences < file  OR  grep ... | strip_code_fences
 strip_code_fences() {
-	awk '/^[[:space:]]*```/{in_fence=!in_fence; next} !in_fence{print}'
+	awk '
+		/^[[:space:]]*```/ { in_fence = !in_fence; next }
+		in_fence { next }
+		{
+			line = $0
+			out = ""
+			while (length(line) > 0) {
+				if (in_comment) {
+					pos = index(line, "-->")
+					if (pos == 0) { line = ""; break }
+					line = substr(line, pos + 3)
+					in_comment = 0
+				} else {
+					pos = index(line, "<!--")
+					if (pos == 0) { out = out line; line = ""; break }
+					out = out substr(line, 1, pos - 1)
+					line = substr(line, pos + 4)
+					in_comment = 1
+				}
+			}
+			print out
+		}
+	'
+	return 0
+}
+
+# Strip only HTML comment regions (<!-- ... -->) from stdin, including
+# multi-line comments. Leaves code fences and everything else untouched.
+# Useful for callers that need comment stripping without fence removal.
+# Usage: strip_html_comments < file  OR  grep ... | strip_html_comments
+strip_html_comments() {
+	awk '
+		{
+			line = $0
+			out = ""
+			while (length(line) > 0) {
+				if (in_comment) {
+					pos = index(line, "-->")
+					if (pos == 0) { line = ""; break }
+					line = substr(line, pos + 3)
+					in_comment = 0
+				} else {
+					pos = index(line, "<!--")
+					if (pos == 0) { out = out line; line = ""; break }
+					out = out substr(line, 1, pos - 1)
+					line = substr(line, pos + 4)
+					in_comment = 1
+				}
+			}
+			print out
+		}
+	'
 	return 0
 }
 
