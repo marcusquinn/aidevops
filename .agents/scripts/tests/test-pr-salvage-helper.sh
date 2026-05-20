@@ -152,7 +152,7 @@ test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
 
 run_tests() {
 	_save_cleanup_scope
-	trap '_run_cleanups' RETURN EXIT
+	trap '_run_cleanups' RETURN
 	GH_CLOSED_LIST_ARGS_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-salvage-gh-args.XXXXXX")
 	push_cleanup "rm -f \"${GH_CLOSED_LIST_ARGS_FILE}\""
 
@@ -162,6 +162,7 @@ run_tests() {
 	test_cmd_scan_accepts_hash_prefixed_pr_numbers
 
 	printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
+	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
 	fi
