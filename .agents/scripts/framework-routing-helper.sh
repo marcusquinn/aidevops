@@ -306,7 +306,7 @@ _lfi_check_dedup() {
 		existing=$(gh issue list --repo "$slug" \
 			--state open --search "$search_terms" \
 			--json number,url --limit 1 -q '.[0].url // ""' || echo "")
-		if [[ -n "$existing" && "$existing" != "[]" && "$existing" != "null" ]]; then
+		if [[ -n "$existing" ]]; then
 			log_info "Duplicate found (search): $existing"
 			_LFI_DEDUP_URL="$existing"
 			return 2
