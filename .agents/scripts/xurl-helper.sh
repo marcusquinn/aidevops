@@ -165,7 +165,6 @@ parse_and_execute() {
 
 	parse_options "$@" || return 1
 
-	reject_forbidden_args "${ARGS[@]}" || return 1
 	require_write_confirmation "${command_name}" "${CONFIRM_WRITE}" || return 1
 
 	local xurl_args=()
@@ -191,9 +190,7 @@ parse_and_execute() {
 		;;
 	search | timeline | mentions | bookmarks | likes | followers | following | dms)
 		xurl_args+=("${command_name}")
-		if [[ ${#ARGS[@]} -gt 0 ]]; then
-			xurl_args+=("${ARGS[@]}")
-		fi
+		xurl_args+=("${ARGS[@]}")
 		if [[ -n "${LIMIT}" ]]; then
 			xurl_args+=("-n" "${LIMIT}")
 		fi
