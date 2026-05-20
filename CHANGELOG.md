@@ -56,12 +56,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.17.3] - 2026-05-20
 
-### Changed
+### Fixed
 
-- fix PR salvage test temp cleanup (#23877)
+- fix: PR salvage test temp cleanup (#23877)
 - fix: preserve PR salvage test temp cleanup (#23873)
 
 ## [3.17.2] - 2026-05-20
@@ -488,7 +487,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.15.39] - 2026-05-14
 
 ### Changed
@@ -534,7 +532,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.15.35] - 2026-05-12
 
@@ -721,12 +718,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - improve capability discovery catalogue (#23301)
 - ignore closed stale dashboards (#23298)
-
-## [3.15.22] - 2026-05-10
-
-### Fixed
-
-- clean up Tabby title lint (#23297)
 
 ## [3.15.22] - 2026-05-10
 
@@ -931,44 +922,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - reconcile missing task counter files (#23208)
 - refine required-check terminal classification (#23205)
-- block consolidated issue redispatch (#23189)
-- preserve explicit prelaunch failure reasons (#23185)
-- consolidate dispatch circuit comment parsing (#23184)
-- handle protected counter reconciliation pushes (#23182)
-- localize dashboard alias parsing variables (#23181)
-- cache review gate success contexts (#23177)
-- streamline linux scheduler cron reconciliation (#23179)
-- cache dashboard identity aliases for migration
-- reduce CI check polling for merge feedback (#23176)
-- guard pulse duplicate issue label lookup (#23175)
-- paginate dashboard freshness issue listing (#23174)
-- harden opencode setup validation (#23171)
-- tighten review-feedback supersession matching (#23172)
-- guard git switch dash in canonical checkout (#23167)
-
-## [3.15.2] - 2026-05-08
-
-### Added
-
-- add scoped setup deploy commands (#23145)
-
-### Changed
-
-- Tests: cover pulse merge conflict label safety (#23202)
-- Tests: cover dashboard freshness JSON fallback (#23204)
-- Tests: cover git checkout dash canonical guard (#23203)
-- Performance: reuse prepared review gate status contexts (#23201)
-- Tests: cover scheduler crontab I/O reuse (#23200)
-- Tests: cover pulse stuck null author parsing (#23188)
-- Documentation: update native auto-merge return docs (#23183)
-- Performance: cache privacy script reference allowlist (#23180)
-- Maintenance: update simplification state registry
-- Performance: consolidate review gate list jq lookups (#23173)
-- Documentation: clarify automation safety invariants (#23169)
-- Tests: simplify git safety guard mock setup (#23168)
-
-### Fixed
-
 - block consolidated issue redispatch (#23189)
 - preserve explicit prelaunch failure reasons (#23185)
 - consolidate dispatch circuit comment parsing (#23184)
@@ -1585,13 +1538,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.14.44] - 2026-05-04
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.14.43] - 2026-05-04
 
@@ -2277,7 +2228,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.13.88] - 2026-05-01
 
 ### Changed
@@ -2301,7 +2251,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.13.85] - 2026-05-01
 
@@ -2368,7 +2317,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.13.79] - 2026-05-01
 
@@ -2451,13 +2399,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.13.70] - 2026-05-01
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.13.69] - 2026-05-01
 
@@ -2660,7 +2606,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.13.49] - 2026-05-01
 
 ### Changed
@@ -2739,7 +2684,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.13.40] - 2026-05-01
 
 ### Changed
@@ -2810,7 +2754,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.13.31] - 2026-05-01
 
@@ -4156,7 +4099,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Maintenance: sync ref:GH#20812 to TODO.md [skip ci]
 - align Complexity Impact thresholds — warning at 80-100 lines, mandatory refactor at >100 (#20805)
 - simplify jq abs calculation and remove 2>/dev/null in co-temporality guard (#20806)
-- fix _usage off-by-one and hoist _reusable_escaped out of per-repo loop (#20809)
+- fix `_usage` off-by-one and hoist `_reusable_escaped` out of per-repo loop (#20809)
 - robustify release_interactive_claim_on_merge regex and add pre-guard (#20810)
 - Refactor: consolidate dual gh pr view calls into single call in _attempt_pr_ci_rebase_retry (GH#20793) (#20799)
 - Maintenance: mark t2808 complete (pr:#20783 completed:2026-04-24) [skip ci]
@@ -4202,7 +4145,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - migrate review-bot-gate.yml to reusable-workflow pattern (#20748)
 - Maintenance: sync ref:GH#20753 to TODO.md [skip ci]
 - Maintenance: mark t2802 complete (pr:#20742 completed:2026-04-24) [skip ci]
-- explicit origin/<default> base for new worktrees + scope-leak detection in conflict-feedback (#20742)
+- explicit origin/`<default>` base for new worktrees + scope-leak detection in conflict-feedback (#20742)
 - Maintenance: sync ref:GH#20750 to TODO.md [skip ci]
 - Refactor: split prompt-guard-helper.sh into focused sub-libraries (#20746)
 - Maintenance: sync ref:GH#20747 to TODO.md [skip ci]
@@ -4381,7 +4324,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - fix node-ID null guard, parent-process cache init, and rest-fallback optional arg (#20536)
 - complete POSIX regex replacement doc in t2742 TODO entry (#20539)
 - guard inner shift in _gh_auto_link_sub_issue arg parser against $#=0 (#20540)
-- fix shared-phase-filing: description brackets, child_ref tail-1, dedup regex anchor, _parent_json guard (#20531)
+- fix shared-phase-filing: description brackets, `child_ref` tail-1, dedup regex anchor, `_parent_json` guard (#20531)
 - Maintenance: sync ref:GH#20530 to TODO.md [skip ci]
 - add aidevops review-gate CLI for configuring rate_limit_behavior (#20527)
 - harden standalone-source tests — LC_ALL=C, safer path arg, declare -f (#20528)
@@ -4530,7 +4473,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - simplify AIDEVOPS_SESSION_ORIGIN assignment in health dashboard (#20381)
 - fix _worktree_resolve_abs_path double-slash and pwd vs pwd -P inconsistency (#20383)
 - Maintenance: mark t2712 complete (pr:#20389 completed:2026-04-21) [skip ci]
-- rename _DIRTY_ACTION_ESCALATE to _DIRTY_ACTION_NOTIFY in pulse-dirty-pr-sweep.sh (#20389)
+- rename `_DIRTY_ACTION_ESCALATE` to `_DIRTY_ACTION_NOTIFY` in pulse-dirty-pr-sweep.sh (#20389)
 - replace misleading 'high/critical' aggregate with per-severity inline summary (BLOCKER · CRITICAL · MAJOR · MINOR · INFO) (#20387)
 - URL-encode labels and assignee in _rest_issue_list query params (#20386)
 - Maintenance: sync ref:GH#20384 to TODO.md [skip ci]
@@ -5395,7 +5338,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.8.52] - 2026-04-16
 
 ### Changed
@@ -5767,7 +5709,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - bump NESTING_DEPTH_THRESHOLD from 272 to 279 (#18920)
 - Maintenance: update simplification state registry
 - decompose opencode plugin cluster — cursor/proxy.js, ttsr.mjs, provider-auth.mjs, google-proxy.mjs (#18906)
-- add TEST_ROOT guard clauses to _write_gh_stub_binary and _setup_gh_stub_globals (#18913)
+- add `TEST_ROOT` guard clauses to `_write_gh_stub_binary` and `_setup_gh_stub_globals` (#18913)
 - Maintenance: update simplification state registry
 - fix grammar in ubicloud.md — add 'versions' noun after self-hosted (#18909)
 - refactor(claude-proxy): drop Codacy complexity + non-static dispatch findings (#18900)
@@ -5884,7 +5826,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactor: decompose generate_subagent_stub() into focused helper functions (#18717)
 - Maintenance: ratchet down FUNCTION_COMPLEXITY_THRESHOLD 46 → 43 (GH#18695) (#18703)
 - Maintenance: update simplification state registry
-- extract _read_lock_pid + _handle_existing_lock from acquire_instance_lock (#18701)
+- extract `_read_lock_pid` + `_handle_existing_lock` from acquire_instance_lock (#18701)
 - Refactor: split _normalize_unassign_stale into focused helpers (GH#18690) (#18700)
 
 ### Fixed
@@ -5952,7 +5894,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.8.3] - 2026-04-13
 
@@ -6183,7 +6124,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.6.243] - 2026-04-12
 
@@ -6828,7 +6768,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fix broken chapter links in production-video.md index — corrected 9 paths from video/NN-*.md to production-video-NN-*.md (#15684)
+- Fix broken chapter links in production-video.md index — corrected 9 paths from `video/NN-*.md` to `production-video-NN-*.md` (#15684)
 
 ## [3.5.635] - 2026-04-02
 
@@ -7116,13 +7056,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.529] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.528] - 2026-03-31
 
@@ -7142,7 +7080,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.525] - 2026-03-31
 
@@ -7184,7 +7121,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.521] - 2026-03-31
 
 ### Fixed
@@ -7196,7 +7132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.519] - 2026-03-31
 
@@ -7233,20 +7168,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.515] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
 
-
 ## [3.5.514] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.513] - 2026-03-31
 
@@ -7261,20 +7193,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.511] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
 
-
 ## [3.5.510] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.509] - 2026-03-31
 
@@ -7288,13 +7217,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.507] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.506] - 2026-03-31
 
@@ -7326,13 +7253,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.500] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.499] - 2026-03-31
 
@@ -7340,13 +7265,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.498] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.497] - 2026-03-31
 
@@ -7354,13 +7277,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.496] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.495] - 2026-03-31
 
@@ -7368,13 +7289,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.494] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.493] - 2026-03-31
 
@@ -7382,13 +7301,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.492] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.491] - 2026-03-31
 
@@ -7396,13 +7313,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.490] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.489] - 2026-03-31
 
@@ -7410,13 +7325,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.488] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.487] - 2026-03-31
 
@@ -7424,13 +7337,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.486] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.485] - 2026-03-31
 
@@ -7438,13 +7349,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.484] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.483] - 2026-03-31
 
@@ -7452,13 +7361,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.482] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.481] - 2026-03-31
 
@@ -7466,13 +7373,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.480] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.479] - 2026-03-31
 
@@ -7480,20 +7385,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.478] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
 
-
 ## [3.5.477] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.476] - 2026-03-31
 
@@ -7512,13 +7414,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.474] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.473] - 2026-03-31
 
@@ -7526,13 +7426,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.472] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.471] - 2026-03-31
 
@@ -7546,7 +7444,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.469] - 2026-03-31
 
 ### Changed
@@ -7558,7 +7455,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.467] - 2026-03-31
 
@@ -7572,13 +7468,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.5.465] - 2026-03-31
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.464] - 2026-03-30
 
@@ -7628,7 +7522,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.459] - 2026-03-30
 
@@ -7694,7 +7587,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.5.410] - 2026-03-30
 
@@ -7972,7 +7864,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.1.442] - 2026-03-28
 
 ### Changed
@@ -8015,7 +7906,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.1.106] - 2026-03-25
 
@@ -8246,7 +8136,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.1.34] - 2026-03-21
 
@@ -8759,7 +8648,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.172.12] - 2026-03-13
 
 ### Fixed
@@ -8833,7 +8721,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.172.5] - 2026-03-12
 
@@ -9073,7 +8960,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.167.1] - 2026-03-09
 
@@ -11266,7 +11152,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: update t135.12 to use _archive/ folder name (user preference)
 - Documentation: add t135 codebase quality hardening plan from Opus 4.6 review
 - Documentation: mention scan results audit trail in README (#408)
-- Documentation: add gitignore *credential* pattern note to t131.1
+- Documentation: add gitignore `*credential*` pattern note to t131.1
 - Documentation: add PRD and tasks for gopass integration & credentials rename (t131)
 - Documentation: add gopass integration plan (t131) to TODO and PLANS
 
