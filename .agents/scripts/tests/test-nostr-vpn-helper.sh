@@ -81,30 +81,30 @@ test_check_reports_available_required_tools() {
 test_status_delegates_to_fipsctl() {
 	local output=""
 	# shellcheck disable=SC2016 # Intentionally expands inside the generated stub.
-	write_stub_command fipsctl 'printf "stub-status:%s\\n" "${1:-}"'
+	write_stub_command fipsctl 'printf "stub-status:%s:%s\\n" "${1:-}" "${2:-}"'
 
 	output="$(run_helper_with_path status 2>&1)"
-	if [[ "$output" == "stub-status:status" ]]; then
-		print_result "status delegates to fipsctl status" 0
+	if [[ "$output" == "stub-status:show:status" ]]; then
+		print_result "status delegates to fipsctl show status" 0
 		return 0
 	fi
 
-	print_result "status delegates to fipsctl status" 1 "$output"
+	print_result "status delegates to fipsctl show status" 1 "$output"
 	return 0
 }
 
 test_peers_delegates_to_fipsctl() {
 	local output=""
 	# shellcheck disable=SC2016 # Intentionally expands inside the generated stub.
-	write_stub_command fipsctl 'printf "stub-peers:%s\\n" "${1:-}"'
+	write_stub_command fipsctl 'printf "stub-peers:%s:%s\\n" "${1:-}" "${2:-}"'
 
 	output="$(run_helper_with_path peers 2>&1)"
-	if [[ "$output" == "stub-peers:peers" ]]; then
-		print_result "peers delegates to fipsctl peers" 0
+	if [[ "$output" == "stub-peers:show:peers" ]]; then
+		print_result "peers delegates to fipsctl show peers" 0
 		return 0
 	fi
 
-	print_result "peers delegates to fipsctl peers" 1 "$output"
+	print_result "peers delegates to fipsctl show peers" 1 "$output"
 	return 0
 }
 

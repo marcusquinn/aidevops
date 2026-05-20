@@ -79,29 +79,29 @@ check_tools() {
 }
 
 show_status() {
-	if run_fipsctl status; then
+	if run_fipsctl show status; then
 		return 0
 	fi
 
-	printf 'No FIPS status available. Try upstream command: fipsctl status\n'
+	printf 'No FIPS status available. Try upstream command: fipsctl show status\n'
 	return 1
 }
 
 show_identity() {
-	if run_fipsctl identity; then
+	if run_fipsctl show identity-cache; then
 		return 0
 	fi
 
-	printf 'Identity command unavailable or changed upstream. Inspect: fipsctl --help\n'
+	printf 'Identity cache command unavailable or changed upstream. Inspect: fipsctl show --help\n'
 	return 1
 }
 
 show_peers() {
-	if run_fipsctl peers; then
+	if run_fipsctl show peers; then
 		return 0
 	fi
 
-	printf 'Peer command unavailable or changed upstream. Inspect: fipsctl --help\n'
+	printf 'Peer command unavailable or changed upstream. Inspect: fipsctl show --help\n'
 	return 1
 }
 

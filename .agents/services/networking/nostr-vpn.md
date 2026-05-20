@@ -108,8 +108,8 @@ Run:
 
 ```bash
 .agents/scripts/nostr-vpn-helper.sh diagnostics
-fipsctl status
-fipsctl peers
+fipsctl show status
+fipsctl show peers
 ssh <user>@<peer-alias>.fips
 ```
 
