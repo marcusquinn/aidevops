@@ -150,6 +150,42 @@ test_squash_merged_pr_without_ancestor_proof_classifies() {
 	return 0
 }
 
+test_prefetched_merged_pr_metadata_skips_exact_head_lookup() {
+	local repo_path="${TEST_ROOT}/repo-prefetched-squash-pr"
+	local wt_path="${TEST_ROOT}/wt-prefetched-squash-pr"
+	local log_file="${TEST_ROOT}/prefetched-squash-pr-cleanup.log"
+	local branch="feature/gh-99027-prefetched-squash-pr"
+	local gh_called_marker="${TEST_ROOT}/prefetched-gh-called"
+	local classification=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'prefetched squash merge head\n' >"$repo_path/prefetched-squash-pr.txt" || rc=1
+	git -C "$repo_path" add prefetched-squash-pr.txt || rc=1
+	git -C "$repo_path" commit -q -m "prefetched squash-merged branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	classification=$(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		gh_pr_list() {
+			printf 'called\n' >"$gh_called_marker"
+			printf '0\n'
+			return 0
+		}
+		_clean_classify_worktree "$wt_path" "$branch" "main" "false" "$branch" "" "false" ""
+	) || rc=1
+
+	[[ "$classification" == *"squash-merged PR"* ]] || rc=1
+	[[ ! -e "$gh_called_marker" ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	print_result "prefetched merged PR metadata skips exact-head lookup" "$rc" \
+		"Expected prefetched merged PR list to avoid redundant gh_pr_list lookup"
+	return 0
+}
+
 test_deleted_squash_merged_pr_metadata_wins_over_remote_deleted() {
 	local repo_path="${TEST_ROOT}/repo-deleted-squash-pr"
 	local wt_path="${TEST_ROOT}/wt-deleted-squash-pr"
@@ -204,6 +240,9 @@ test_exact_head_merged_pr_proof_wins_when_global_list_misses() {
 		cd "$repo_path" || exit 1
 		source_clean_lib_with_stubs || exit 1
 		gh_pr_list() {
+			local args="$*"
+			[[ "$args" == *"--state merged"* ]] || return 1
+			[[ "$args" == *"--json number"* ]] || return 1
 			printf '1\n'
 			return 0
 		}
@@ -288,6 +327,7 @@ test_remote_deleted_without_ancestor_proof_skips() {
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
 test_squash_merged_pr_without_ancestor_proof_classifies
+test_prefetched_merged_pr_metadata_skips_exact_head_lookup
 test_deleted_squash_merged_pr_metadata_wins_over_remote_deleted
 test_exact_head_merged_pr_proof_wins_when_global_list_misses
 test_closed_pr_without_ancestor_proof_classifies
