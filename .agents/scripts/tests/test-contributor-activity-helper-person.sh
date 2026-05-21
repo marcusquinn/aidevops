@@ -72,6 +72,18 @@ test_dashboard_wraps_person_stats_with_timeout() {
 	return 0
 }
 
+test_dashboard_wraps_person_stats_rate_limit_probes() {
+	local name="dashboard wraps person-stats rate-limit probes with timeout_sec"
+	local helper_pattern="timeout_sec \"\$STATS_HEALTH_PERSON_STATS_RATE_LIMIT_TIMEOUT\" gh api rate_limit"
+	local caller_pattern="search_remaining=\$(_stats_health_person_stats_search_remaining)"
+	if grep -Fq "$helper_pattern" "$DASHBOARD_LIB" && grep -Fq "$caller_pattern" "$DASHBOARD_LIB"; then
+		pass "$name"
+	else
+		fail "$name" "person-stats Search API budget probes can still call gh api without a wall-clock guard"
+	fi
+	return 0
+}
+
 test_dashboard_preserves_partial_cache() {
 	local name="dashboard caches partial person-stats output and updates marker"
 	local fake_home="${TMP_DIR}/home-partial"
@@ -172,6 +184,7 @@ GH
 test_person_stats_uses_portable_timeout
 test_person_stats_has_no_direct_timeout
 test_dashboard_wraps_person_stats_with_timeout
+test_dashboard_wraps_person_stats_rate_limit_probes
 test_dashboard_preserves_partial_cache
 test_dashboard_skips_marker_when_all_refreshes_fail
 

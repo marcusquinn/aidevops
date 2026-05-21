@@ -46,7 +46,25 @@ readonly STATS_HEALTH_EX_PARTIAL="${EX_PARTIAL:-75}"
 # dashboard refresh from spending unbounded time across many contributors.
 : "${STATS_HEALTH_PERSON_STATS_TIMEOUT:=60}"
 
+# Wall-clock guard for dashboard Search API budget probes. These probes run
+# before optional person-stats helper calls, so they must not become a separate
+# unbounded blocking point when GitHub is slow.
+: "${STATS_HEALTH_PERSON_STATS_RATE_LIMIT_TIMEOUT:=10}"
+
 # --- Functions ---
+
+#######################################
+# Read remaining GitHub Search API budget with portable timeout protection.
+#
+# Output: remaining search requests, or 0 on timeout/failure
+#######################################
+_stats_health_person_stats_search_remaining() {
+	local remaining="0"
+	remaining=$(timeout_sec "$STATS_HEALTH_PERSON_STATS_RATE_LIMIT_TIMEOUT" gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining="0"
+	remaining="${remaining//[^0-9]/}"
+	printf '%s\n' "${remaining:-0}"
+	return 0
+}
 
 #######################################
 # Scan active headless worker processes for a repo.
@@ -883,7 +901,7 @@ _refresh_person_stats_cache() {
 	mkdir -p "$PERSON_STATS_CACHE_DIR"
 
 	local search_remaining
-	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+	search_remaining=$(_stats_health_person_stats_search_remaining)
 
 	local repo_entries
 	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
@@ -906,7 +924,7 @@ _refresh_person_stats_cache() {
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
 
-		search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+		search_remaining=$(_stats_health_person_stats_search_remaining)
 		if [[ "$search_remaining" -lt "$search_api_cost_per_contributor" ]]; then
 			echo "[stats] Person stats cache refresh stopped mid-run: Search API budget exhausted (${search_remaining} remaining)" >>"$LOGFILE"
 			break
@@ -926,7 +944,7 @@ _refresh_person_stats_cache() {
 	done <<<"$repo_entries"
 
 	# Cross-repo person-stats
-	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+	search_remaining=$(_stats_health_person_stats_search_remaining)
 	local all_repo_paths
 	all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
 	if [[ -n "$all_repo_paths" && "$search_remaining" -ge "$search_api_cost_per_contributor" ]]; then
