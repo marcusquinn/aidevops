@@ -58,6 +58,7 @@ teardown_test_env() {
 init_git_worktree() {
 	local worktree_dir="$1"
 	git -C "$worktree_dir" init -q
+	git -C "$worktree_dir" remote add origin "https://github.com/owner/repo.git"
 	git -C "$worktree_dir" -c user.name="aidevops-test" -c user.email="aidevops-test@example.invalid" \
 		commit --allow-empty -q -m "initial"
 	git -C "$worktree_dir" update-ref refs/remotes/origin/main HEAD
@@ -242,6 +243,7 @@ test_issue_worker_env_contract_rejects_missing_env() {
 
 test_issue_worker_env_contract_rejects_missing_worktree() {
 	export WORKER_ISSUE_NUMBER="22438"
+	export WORKER_REPO_SLUG="owner/repo"
 	unset WORKER_WORKTREE_PATH 2>/dev/null || true
 	local output=""
 	local status=0
@@ -251,32 +253,34 @@ test_issue_worker_env_contract_rejects_missing_worktree() {
 
 	if [[ "$status" -ne 0 && "$output" == *"WORKER_WORKTREE_PATH unset"* ]]; then
 		print_result "issue worker env contract rejects missing WORKER_WORKTREE_PATH" 0
-		unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+		unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG 2>/dev/null || true
 		return 0
 	fi
 
 	print_result "issue worker env contract rejects missing WORKER_WORKTREE_PATH" 1 \
 		"status=$status output=${output:-<empty>}"
-	unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG 2>/dev/null || true
 	return 0
 }
 
 test_issue_worker_env_contract_accepts_valid_precreated_worktree() {
 	local worktree_dir="${TEST_ROOT}/precreated-worktree"
 	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER="22438"
+	export WORKER_REPO_SLUG="owner/repo"
 	export WORKER_WORKTREE_PATH="$worktree_dir"
 
 	if _validate_issue_worker_env_contract \
 		"worker" "issue-22438" "$worktree_dir" "Issue #22438: env contract" \
 		"/full-loop Implement issue #22438"; then
 		print_result "issue worker env contract accepts valid precreated worktree" 0
-		unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+		unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
 		return 0
 	fi
 
 	print_result "issue worker env contract accepts valid precreated worktree" 1
-	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH 2>/dev/null || true
 	return 0
 }
 
@@ -541,6 +545,7 @@ test_cmd_run_preserves_worker_origin_overrides_before_canary() {
 	mkdir -p "$worktree_dir"
 	init_git_worktree "$worktree_dir"
 	export WORKER_ISSUE_NUMBER=23558
+	export WORKER_REPO_SLUG="owner/repo"
 	export WORKER_WORKTREE_PATH="$worktree_dir"
 	export AIDEVOPS_SESSION_ORIGIN=interactive
 	export AIDEVOPS_HEADLESS=already-set
@@ -563,7 +568,7 @@ test_cmd_run_preserves_worker_origin_overrides_before_canary() {
 		--title "Issue #23558: origin overrides" \
 		--prompt "/full-loop Implement issue #23558" 2>&1) || status=$?
 
-	unset WORKER_ISSUE_NUMBER WORKER_WORKTREE_PATH AIDEVOPS_SESSION_ORIGIN AIDEVOPS_HEADLESS 2>/dev/null || true
+	unset WORKER_ISSUE_NUMBER WORKER_REPO_SLUG WORKER_WORKTREE_PATH AIDEVOPS_SESSION_ORIGIN AIDEVOPS_HEADLESS 2>/dev/null || true
 	unset -f choose_model _enforce_opencode_version_pin _run_canary_test 2>/dev/null || true
 	if [[ "$status" -eq 1 && "$output" == *"canary_saw_origin_overrides"* && "$output" == *"Canary failed"* ]]; then
 		print_result "cmd_run preserves worker origin env overrides before canary" 0

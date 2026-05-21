@@ -1237,16 +1237,17 @@ _dlw_spawn_lifecycle_observer() {
 #
 # Arguments:
 #   $1  - issue_number
-#   $2  - dispatch_title
-#   $3  - issue_title
-#   $4  - session_key
-#   $5  - worker_log (path from _dlw_setup_worker_log)
-#   $6  - prompt
-#   $7  - repo_path
-#   $8  - dispatch_model_tier (haiku|sonnet|opus)
-#   $9  - selected_model (may be empty for auto-select)
-#   $10 - worker_worktree_path (may be empty)
-#   $11 - worker_worktree_branch (may be empty)
+#   $2  - repo_slug (owner/repo)
+#   $3  - dispatch_title
+#   $4  - issue_title
+#   $5  - session_key
+#   $6  - worker_log (path from _dlw_setup_worker_log)
+#   $7  - prompt
+#   $8  - repo_path
+#   $9  - dispatch_model_tier (haiku|sonnet|opus)
+#   $10 - selected_model (may be empty for auto-select)
+#   $11 - worker_worktree_path (may be empty)
+#   $12 - worker_worktree_branch (may be empty)
 # Stdout: worker PID
 #######################################
 _dlw_build_worker_title() {
@@ -1284,16 +1285,17 @@ _dlw_build_worker_title() {
 #######################################
 _dlw_nohup_launch() {
 	local issue_number="$1"
-	local dispatch_title="$2"
-	local issue_title="$3"
-	local session_key="$4"
-	local worker_log="$5"
-	local prompt="$6"
-	local repo_path="$7"
-	local dispatch_model_tier="$8"
-	local selected_model="$9"
-	local worker_worktree_path="${10}"
-	local worker_worktree_branch="${11}"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="$4"
+	local session_key="$5"
+	local worker_log="$6"
+	local prompt="$7"
+	local repo_path="$8"
+	local dispatch_model_tier="$9"
+	local selected_model="${10}"
+	local worker_worktree_path="${11}"
+	local worker_worktree_branch="${12}"
 
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search
@@ -1316,6 +1318,7 @@ _dlw_nohup_launch() {
 		AIDEVOPS_SESSION_ORIGIN=worker
 		AIDEVOPS_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		WORKER_REPO_SLUG="$repo_slug"
 		WORKER_GITHUB_LOGIN="$self_login"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
@@ -1717,7 +1720,7 @@ _dispatch_launch_worker() {
 	local worker_pid
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
-	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
+	worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
 		"$worker_worktree_path" "$worker_worktree_branch")
