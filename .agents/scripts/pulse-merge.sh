@@ -396,7 +396,7 @@ _pm_resolve_superseded_original_issue() {
 _pm_extract_partial_parent_reference() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_body parent_issue
+	local pr_body="" parent_issue=""
 
 	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
 	parent_issue=$(printf '%s' "$pr_body" | grep -ioE '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+') || parent_issue=""
@@ -466,7 +466,7 @@ _pm_handle_partial_parent_closeout() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local merge_summary="$3"
-	local parent_issue issue_api issue_body issue_labels dedup_count followups delivered_body
+	local parent_issue="" issue_api="" issue_body="" issue_labels="" dedup_count="" followups="" delivered_body=""
 
 	parent_issue=$(_pm_extract_partial_parent_reference "$pr_number" "$repo_slug") || parent_issue=""
 	[[ -n "$parent_issue" ]] || return 0
