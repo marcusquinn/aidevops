@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.24] - 2026-05-21
+
+### Changed
+
+- Tests: support deployed orphan cleanup layout
+
 ## [3.17.23] - 2026-05-21
 
 ### Changed
