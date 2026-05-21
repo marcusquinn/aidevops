@@ -26,6 +26,7 @@ mode: subagent
 - **Session:** {app}:{session-id}
 - **Created by:** {author} (human | ai-supervisor | ai-interactive)
 - **Parent task:** {parent_id} (if subtask)
+- **Blocked by:** {GitHub issue relationship(s) + optional `blocked-by:tNNN/#NNN` marker; if unresolved, keep `status:blocked` and omit `#auto-dispatch`}
 - **Conversation context:** {1-2 sentence summary of what was discussed that led to this task}
 
 ## What

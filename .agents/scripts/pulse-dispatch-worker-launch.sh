@@ -302,7 +302,10 @@ _dlw_comment_bloat_requires_clean_room() {
 	local repo_slug="$2"
 	local precomputed_metrics="${3:-}"
 
-	local comments ops zero chars
+	local comments=""
+	local ops=""
+	local zero=""
+	local chars=""
 	if [[ -z "$precomputed_metrics" ]]; then
 		precomputed_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	fi
@@ -421,7 +424,10 @@ _dlw_prepare_prompt_for_launch() {
 	local original_prompt="$4"
 	local precomputed_comment_metrics="${5:-}"
 	local comment_metrics=""
-	local comments ops metrics_zero_count chars
+	local comments=""
+	local ops=""
+	local metrics_zero_count=""
+	local chars=""
 	local precomputed_zero_count=""
 
 	comment_metrics="$precomputed_comment_metrics"
@@ -459,7 +465,10 @@ _dlw_hold_repeated_zero_output() {
 	local repo_slug="$2"
 	local precomputed_comment_metrics="${3:-}"
 	local comment_metrics=""
-	local comments ops metrics_zero_count chars
+	local comments=""
+	local ops=""
+	local metrics_zero_count=""
+	local chars=""
 	local precomputed_zero_count=""
 
 	comment_metrics="$precomputed_comment_metrics"
@@ -1619,6 +1628,25 @@ _dlw_canary_preflight() {
 	return 1
 }
 
+_dlw_blocked_by_hard_stop() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
+		return 1
+	fi
+
+	local issue_body=""
+	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
+	if is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (GH#23932)" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
 #######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
@@ -1662,6 +1690,10 @@ _dispatch_launch_worker() {
 	local dispatch_tier="$_DLW_DISPATCH_TIER"
 	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
 	local selected_model="$_DLW_SELECTED_MODEL"
+
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		return 2
+	fi
 
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \
