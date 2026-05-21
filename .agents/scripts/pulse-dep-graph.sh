@@ -262,9 +262,8 @@ build_dependency_graph_cache() {
 	fi
 
 	# Build the graph JSON incrementally
-	local graph_json old_graph_json
+	local graph_json="" old_graph_json=""
 	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
-	old_graph_json=""
 	if [[ -f "$cache_file" ]]; then
 		old_graph_json=$(<"$cache_file") || old_graph_json=""
 	fi
