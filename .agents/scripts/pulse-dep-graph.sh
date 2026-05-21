@@ -148,8 +148,11 @@ _dep_graph_process_issue_json() {
 _dep_graph_build_repo_data() {
 	local slug="$1"
 	local issues_json
-	issues_json=$(gh_issue_list --repo "$slug" --state open --limit 200 \
-		--json number,title,body,labels 2>/dev/null) || issues_json='[]'
+	if ! issues_json=$(gh_issue_list --repo "$slug" --state open --limit 200 \
+		--json number,title,body,labels 2>/dev/null); then
+		echo "[pulse-wrapper] dep-graph-cache: failed to list open issues for ${slug}; preserving previous repo cache when available" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Single jq pass: extract all fields, apply regex, build accumulator.
 	# Equivalent to calling _dep_graph_process_issue_json once per issue
@@ -198,7 +201,8 @@ _dep_graph_build_repo_data() {
 			"blocked_by": .blocked_by_map,
 			"defer_flags": .defer_flags_map
 		}
-	' 2>/dev/null || printf '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}\n'
+	' 2>/dev/null || return 1
+	return 0
 }
 
 #######################################
@@ -258,8 +262,12 @@ build_dependency_graph_cache() {
 	fi
 
 	# Build the graph JSON incrementally
-	local graph_json
+	local graph_json old_graph_json
 	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+	old_graph_json=""
+	if [[ -f "$cache_file" ]]; then
+		old_graph_json=$(<"$cache_file") || old_graph_json=""
+	fi
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
@@ -271,8 +279,14 @@ build_dependency_graph_cache() {
 		# (t2031 refactor — keeps build_dependency_graph_cache under the
 		# 100-line complexity gate).
 		local repo_data
-		repo_data=$(_dep_graph_build_repo_data "$slug")
-		[[ -n "$repo_data" ]] || continue
+		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
+			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" '.repos[$s] // empty' 2>/dev/null) || repo_data=""
+			if [[ -z "$repo_data" ]]; then
+				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
+				continue
+			fi
+			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
+		fi
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
@@ -593,11 +607,11 @@ _blocked_by_extract_nums() {
 #
 # Reads DEP_GRAPH_CACHE_FILE (if present and within 2× TTL) and extracts
 # the per-repo open_issues and task_to_issue maps. Emits a single compact
-# JSON object on stdout with the three fields the resolver needs:
+# JSON object on stdout with the fields the resolver needs:
 #   {"use_cache": bool, "open_issues": [...], "task_to_issue": {...}}
 #
-# Fails open — on any error emits use_cache:false so the caller falls
-# through to live API resolution.
+# Cache errors emit use_cache:false so the caller falls through to live API
+# resolution; unresolved live lookups fail closed at the blocker check.
 #
 # Arguments: $1 - repo slug
 # Output:    one JSON object on stdout
@@ -620,22 +634,24 @@ _blocked_by_load_cache() {
 	fi
 
 	local graph_json
-	graph_json=$(cat "$cache_file" 2>/dev/null) || graph_json=""
+	graph_json=$(<"$cache_file") || graph_json=""
 	if [[ -z "$graph_json" ]]; then
 		printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 		return 0
 	fi
 
-	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '{
-		use_cache: true,
-		open_issues: (.repos[$s].open_issues // []),
-		task_to_issue: (.repos[$s].task_to_issue // {})
-	}' 2>/dev/null || printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '
+		if .repos[$s] == null then
+			{"use_cache":false,"open_issues":[],"task_to_issue":{}}
+		else
+			{"use_cache":true,"open_issues":(.repos[$s].open_issues // []),"task_to_issue":(.repos[$s].task_to_issue // {})}
+		end
+	' 2>/dev/null || printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 	return 0
 }
 
 #######################################
-# Resolve a single task-ID blocker to open/closed (GH#18693 refactor helper).
+# Resolve a single task-ID blocker to blocked/clear/unknown (GH#18693 refactor helper).
 #
 # Uses the cached dep graph first; falls back to a live `gh issue list`
 # search when the task is not found in the cache.
@@ -647,8 +663,8 @@ _blocked_by_load_cache() {
 #   $4 - cache_state JSON (from _blocked_by_load_cache)
 #
 # Exit codes:
-#   0 - blocker is open (caller should return "blocked")
-#   1 - blocker is resolved or not found (caller should continue)
+#   0 - blocker is open or unknown (caller should return "blocked")
+#   1 - blocker is positively resolved (caller should continue)
 #######################################
 _blocked_by_check_task_id() {
 	local task_id="$1"
@@ -673,18 +689,61 @@ _blocked_by_check_task_id() {
 			fi
 			return 1
 		fi
-		# Task not in map → fall through to live API (may be a new issue)
+		# Task not in map → fall through to live API (may be a new issue).
 	fi
 
-	# Live API fallback: search for an open issue with this task ID in the title
+	# Live API fallback: search all issues with this task ID in the title.
+	# Empty/error is not proof of resolution because GitHub search can lag
+	# immediately after rapid task creation. Treat that as unknown and block.
 	local blocker_state
-	blocker_state=$(gh_issue_list --repo "$repo_slug" --state open \
-		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null) || blocker_state=""
+	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
+		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
+		return 0
+	fi
 	if [[ "$blocker_state" == "OPEN" ]]; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	return 1
+	if [[ "$blocker_state" == "CLOSED" ]]; then
+		return 1
+	fi
+	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Resolve a single GitHub issue-number blocker through live API.
+#
+# Arguments:
+#   $1 - blocker_num
+#   $2 - repo slug
+#   $3 - issue_number (for logging)
+#
+# Exit codes:
+#   0 - blocker is open or unknown
+#   1 - blocker is positively resolved
+#######################################
+_blocked_by_check_issue_num_live() {
+	local blocker_num="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+
+	local blocker_state
+	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null); then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$blocker_state" == "OPEN" ]]; then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$blocker_state" == "CLOSED" ]]; then
+		return 1
+	fi
+	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
+	return 0
 }
 
 #######################################
@@ -697,8 +756,8 @@ _blocked_by_check_task_id() {
 #   $4 - cache_state JSON (from _blocked_by_load_cache)
 #
 # Exit codes:
-#   0 - blocker is open
-#   1 - blocker is resolved or not found
+#   0 - blocker is open or unknown
+#   1 - blocker is positively resolved
 #######################################
 _blocked_by_check_issue_num() {
 	local blocker_num="$1"
@@ -717,18 +776,12 @@ _blocked_by_check_issue_num() {
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 			return 0
 		fi
-		return 1
+		# Cache absence is not positive proof for direct issue-number blockers:
+		# the issue may have been created after the cache snapshot. Verify live.
 	fi
 
-	# Live API fallback
-	local blocker_state
-	blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null) || blocker_state=""
-	if [[ "$blocker_state" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
-		return 0
-	fi
-	return 1
+	_blocked_by_check_issue_num_live "$blocker_num" "$repo_slug" "$issue_number"
+	return $?
 }
 
 #######################################

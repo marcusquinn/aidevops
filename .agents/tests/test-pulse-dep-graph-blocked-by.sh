@@ -12,6 +12,7 @@ TARGET="${SCRIPT_DIR}/../scripts/pulse-dep-graph.sh"
 
 TESTS_PASSED=0
 TESTS_FAILED=0
+TEST_TMP=""
 
 # shellcheck source=/dev/null
 source "$TARGET"
@@ -43,6 +44,70 @@ _assert_lines_equal() {
 	return 0
 }
 
+_assert_rc() {
+	local name="$1"
+	local expected="$2"
+	local actual="$3"
+	if [[ "$actual" -eq "$expected" ]]; then
+		_pass "$name"
+		return 0
+	fi
+	_fail "$name" "expected rc ${expected} got ${actual}"
+	return 0
+}
+
+_setup_blocked_by_resolution_test() {
+	TEST_TMP=$(mktemp -d)
+	LOGFILE="${TEST_TMP}/pulse.log"
+	DEP_GRAPH_CACHE_FILE="${TEST_TMP}/dep-graph.json"
+	DEP_GRAPH_CACHE_TTL_SECS=3600
+	return 0
+}
+
+_cleanup_blocked_by_resolution_test() {
+	if [[ -n "$TEST_TMP" && -d "$TEST_TMP" ]]; then
+		rm -rf "$TEST_TMP"
+	fi
+	TEST_TMP=""
+	return 0
+}
+
+gh_issue_list() {
+	case "${TEST_GH_ISSUE_LIST_MODE:-empty}" in
+		fail)
+			return 1
+			;;
+		closed)
+			printf 'CLOSED\n'
+			return 0
+			;;
+		open)
+			printf 'OPEN\n'
+			return 0
+			;;
+		repo-json)
+			printf '[{"number":1000,"title":"t1000: blocker","body":"","labels":[]}]\n'
+			return 0
+			;;
+		*)
+			printf '\n'
+			return 0
+			;;
+	esac
+}
+
+gh() {
+	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "closed" ]]; then
+		printf 'CLOSED\n'
+		return 0
+	fi
+	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "open" ]]; then
+		printf 'OPEN\n'
+		return 0
+	fi
+	return 1
+}
+
 test_task_id_blocker_parsing() {
 	printf '\n=== blocked-by task IDs ===\n'
 	_assert_lines_equal "compact comma-separated task IDs" $'001\n002\n003' \
@@ -69,9 +134,106 @@ test_issue_number_blocker_parsing() {
 	return 0
 }
 
+test_unknown_task_blocker_fails_closed() {
+	printf '\n=== fail-closed task blocker resolution ===\n'
+	_setup_blocked_by_resolution_test
+	printf '{"built_at":"now","repos":{"owner/repo":{"open_issues":[1],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}}}\n' >"$DEP_GRAPH_CACHE_FILE"
+	TEST_GH_ISSUE_LIST_MODE="empty"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "cache miss plus empty live lookup blocks as unknown" 0 "$rc"
+	if grep -q 'blocked-by-unresolved-reference t1000' "$LOGFILE"; then
+		_pass "unknown task blocker logs distinct reason"
+	else
+		_fail "unknown task blocker logs distinct reason" "missing blocked-by-unresolved-reference log"
+	fi
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_live_task_lookup_failure_fails_closed() {
+	printf '\n=== live lookup failure ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="fail"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "task live lookup failure blocks as unknown" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_closed_task_blocker_is_clear() {
+	printf '\n=== positively closed task blocker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="closed"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "closed task blocker is clear" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_issue_number_live_failure_fails_closed() {
+	printf '\n=== fail-closed issue-number blocker resolution ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_VIEW_MODE="fail"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:#1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "issue-number live lookup failure blocks as unknown" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_cached_issue_number_absence_requires_live_proof() {
+	printf '\n=== cached issue-number absence live verification ===\n'
+	_setup_blocked_by_resolution_test
+	printf '{"built_at":"now","repos":{"owner/repo":{"open_issues":[1],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}}}\n' >"$DEP_GRAPH_CACHE_FILE"
+	TEST_GH_ISSUE_VIEW_MODE="fail"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:#1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "cached issue-number absence blocks when live proof fails" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_cache_rebuild_preserves_previous_repo_data_on_fetch_failure() {
+	printf '\n=== cache rebuild fetch failure preservation ===\n'
+	_setup_blocked_by_resolution_test
+	DEP_GRAPH_CACHE_TTL_SECS=0
+	local old_home="$HOME"
+	HOME="${TEST_TMP}/home"
+	mkdir -p "${HOME}/.config/aidevops"
+	printf '{"initialized_repos":[{"slug":"owner/repo","pulse":true}]}\n' >"${HOME}/.config/aidevops/repos.json"
+	printf '{"built_at":"old","repos":{"owner/repo":{"open_issues":[1000],"task_to_issue":{"1000":1000},"blocked_by":{},"defer_flags":{}}}}\n' >"$DEP_GRAPH_CACHE_FILE"
+	TEST_GH_ISSUE_LIST_MODE="fail"
+
+	build_dependency_graph_cache
+	local preserved
+	preserved=$(jq -r '.repos["owner/repo"].task_to_issue["1000"] // empty' "$DEP_GRAPH_CACHE_FILE" 2>/dev/null)
+	if [[ "$preserved" == "1000" ]]; then
+		_pass "failed rebuild preserves previous repo dependency data"
+	else
+		_fail "failed rebuild preserves previous repo dependency data" "preserved=${preserved}"
+	fi
+	HOME="$old_home"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
 main() {
 	test_task_id_blocker_parsing
 	test_issue_number_blocker_parsing
+	test_unknown_task_blocker_fails_closed
+	test_live_task_lookup_failure_fails_closed
+	test_closed_task_blocker_is_clear
+	test_issue_number_live_failure_fails_closed
+	test_cached_issue_number_absence_requires_live_proof
+	test_cache_rebuild_preserves_previous_repo_data_on_fetch_failure
 
 	printf '\nSummary: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
