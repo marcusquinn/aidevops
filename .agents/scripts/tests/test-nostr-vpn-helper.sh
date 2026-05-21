@@ -93,6 +93,21 @@ test_status_delegates_to_fipsctl() {
 	return 0
 }
 
+test_status_propagates_fipsctl_failure() {
+	local output=""
+	local exit_code=0
+	write_stub_command fipsctl 'printf "stub-status-failed\n" >&2; exit 42'
+
+	output="$(run_helper_with_path status 2>&1)" || exit_code=$?
+	if [[ "$exit_code" -eq 1 && "$output" == *"stub-status-failed"* && "$output" == *"No FIPS status available"* ]]; then
+		print_result "status propagates fipsctl failure" 0
+		return 0
+	fi
+
+	print_result "status propagates fipsctl failure" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
 test_peers_delegates_to_fipsctl() {
 	local output=""
 	# shellcheck disable=SC2016 # Intentionally expands inside the generated stub.
@@ -121,14 +136,30 @@ test_secret_guidance_mentions_aidevops_secret() {
 	return 0
 }
 
+test_firewall_status_suppresses_systemctl_stderr() {
+	local output=""
+	write_stub_command systemctl 'printf "systemctl transient failure\n" >&2; exit 1'
+
+	output="$(run_helper_with_path firewall-status 2>&1)"
+	if [[ "$output" == *"Security baseline"* && "$output" != *"systemctl transient failure"* ]]; then
+		print_result "firewall status suppresses systemctl stderr" 0
+		return 0
+	fi
+
+	print_result "firewall status suppresses systemctl stderr" 1 "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
 
 	test_check_reports_available_required_tools
 	test_status_delegates_to_fipsctl
+	test_status_propagates_fipsctl_failure
 	test_peers_delegates_to_fipsctl
 	test_secret_guidance_mentions_aidevops_secret
+	test_firewall_status_suppresses_systemctl_stderr
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

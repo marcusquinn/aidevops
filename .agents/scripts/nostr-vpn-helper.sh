@@ -47,7 +47,7 @@ run_fipsctl() {
 	fi
 
 	fipsctl "$subcommand" "$@"
-	return 0
+	return $?
 }
 
 check_tools() {
@@ -107,7 +107,7 @@ show_peers() {
 
 show_firewall_status() {
 	if has_command systemctl; then
-		systemctl status fips-firewall --no-pager || true
+		systemctl status fips-firewall --no-pager 2>/dev/null || true
 	fi
 
 	if has_command launchctl; then
