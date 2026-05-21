@@ -220,42 +220,24 @@ create_gh_stub_review_feedback() {
 set -euo pipefail
 
 args="\$*"
+mode="${mode}"
 
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
 	if printf '%s' "\$args" | grep -qF '.body // ""'; then
-		case "${mode}" in
-			extended-extension)
-				printf 'quality debt kotlin coroutine MainActivity.kt\n'
-				;;
-			review-followup-label)
-				printf 'review followup changelog fixed \`CHANGELOG.md:18\`\n'
-				;;
-			source-review-scanner-label)
-				printf 'review scanner changelog fixed \`CHANGELOG.md:18\`\n'
-				;;
-			whole-word)
-				printf 'quality debt rate cache worker.sh\n'
-				;;
-			version-directory)
-				printf 'quality debt setup rollout v3.14.93/setup.sh\n'
-				;;
-			*)
-				printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
-				exit 1
-				;;
+		case "\$mode" in
+			extended-extension) printf 'quality debt kotlin coroutine MainActivity.kt\n' ;;
+			review-followup-label) printf 'review followup changelog fixed \`CHANGELOG.md:18\`\n' ;;
+			source-review-scanner-label) printf 'review scanner changelog fixed \`CHANGELOG.md:18\`\n' ;;
+			whole-word) printf 'quality debt rate cache worker.sh\n' ;;
+			version-directory) printf 'quality debt setup rollout v3.14.93/setup.sh\n' ;;
+			*) printf 'unsupported review-feedback mode: %s\n' "\$mode" >&2; exit 1 ;;
 		esac
 		exit 0
 	fi
-	case "${mode}" in
-		review-followup-label)
-			printf '2026-05-07T00:00:00Z\tReview followup supersession test\treview-followup,source:review-scanner\n'
-			;;
-		source-review-scanner-label)
-			printf '2026-05-07T00:00:00Z\tReview followup supersession test\tsource:review-scanner\n'
-			;;
-		*)
-			printf '2026-05-07T00:00:00Z\tquality-debt supersession test\tquality-debt,source:review-feedback\n'
-			;;
+	case "\$mode" in
+		review-followup-label) printf '2026-05-07T00:00:00Z\tReview followup supersession test\treview-followup,source:review-scanner\n' ;;
+		source-review-scanner-label) printf '2026-05-07T00:00:00Z\tReview followup supersession test\tsource:review-scanner\n' ;;
+		*) printf '2026-05-07T00:00:00Z\tquality-debt supersession test\tquality-debt,source:review-feedback\n' ;;
 	esac
 	exit 0
 fi
@@ -266,45 +248,39 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qF 'search/issues'; 
 fi
 
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qE 'pulls/99/files'; then
-	case "${mode}" in
+	if printf '%s' "\$args" | grep -qF '.[].filename'; then
+		case "\$mode" in
+			extended-extension) printf 'app/src/MainActivity.kt\n' ;;
+			review-followup-label|source-review-scanner-label) printf 'CHANGELOG.md\n' ;;
+			whole-word) printf 'worker.sh\n' ;;
+			version-directory) printf 'v3.14.93/setup.sh\n' ;;
+			*) printf 'unsupported review-feedback mode: %s\n' "\$mode" >&2; exit 1 ;;
+		esac
+	else
+		case "\$mode" in
 		extended-extension)
-			if printf '%s' "\$args" | grep -qF '.[].filename'; then
-				printf 'app/src/MainActivity.kt\n'
-			else
-				printf 'app/src/MainActivity.kt\nfix kotlin coroutine reliability\n'
-			fi
+			printf 'app/src/MainActivity.kt\nfix kotlin coroutine reliability\n'
 			;;
 		review-followup-label|source-review-scanner-label)
-			if printf '%s' "\$args" | grep -qF '.[].filename'; then
-				printf 'CHANGELOG.md\n'
-			else
-				printf 'CHANGELOG.md\nmove changelog entries to fixed section\n'
-			fi
+			printf 'CHANGELOG.md\nmove changelog entries to fixed section\n'
 			;;
 		whole-word)
-			if printf '%s' "\$args" | grep -qF '.[].filename'; then
-				printf 'worker.sh\n'
-			else
-				printf 'worker.sh\ngenerate cache output\n'
-			fi
+			printf 'worker.sh\ngenerate cache output\n'
 			;;
 		version-directory)
-			if printf '%s' "\$args" | grep -qF '.[].filename'; then
-				printf 'v3.14.93/setup.sh\n'
-			else
-				printf 'v3.14.93/setup.sh\nfix setup rollout quality debt\n'
-			fi
+			printf 'v3.14.93/setup.sh\nfix setup rollout quality debt\n'
 			;;
 		*)
-			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
+			printf 'unsupported review-feedback mode: %s\n' "\$mode" >&2
 			exit 1
 			;;
-	esac
+		esac
+	fi
 	exit 0
 fi
 
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/pulls/99\$'; then
-	case "${mode}" in
+	case "\$mode" in
 		extended-extension)
 			printf '2026-05-08T00:00:00Z\tfix kotlin coroutine reliability\tUpdates mobile handling\n'
 			;;
@@ -318,7 +294,7 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/pulls/99\$'; t
 			printf '2026-05-08T00:00:00Z\tfix setup rollout quality debt\tUpdates setup handling\n'
 			;;
 		*)
-			printf 'unsupported review-feedback mode: %s\n' "${mode}" >&2
+			printf 'unsupported review-feedback mode: %s\n' "\$mode" >&2
 			exit 1
 			;;
 	esac
