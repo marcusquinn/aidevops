@@ -26,6 +26,7 @@ Cloudron apps are Docker images plus `CloudronManifest.json`. The platform provi
 - **Upstream**: [git.cloudron.io/docs/skills](https://git.cloudron.io/docs/skills) (`cloudron-app-packaging`) | [docs.cloudron.io/packaging](https://docs.cloudron.io/packaging/)
 - **Reference files**: `cloudron-app-packaging-skill/manifest-ref.md`, `cloudron-app-packaging-skill/addons-ref.md`
 - **Also see**: `cloudron-app-packaging.md` (native aidevops guide: helpers, local dev, Dockerfile/start.sh patterns, pre-packaging checks)
+- **Last upstream review**: `fcea39616e6e` ("Update the skill for cloudron sync"); no local import changes required beyond keeping the native guide and skill pointers aligned.
 
 ```bash
 npm install -g cloudron
