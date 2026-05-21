@@ -169,6 +169,79 @@ test_closed_pr_reference_local_commit_no_pr_removes_before_age_threshold() {
 	return 0
 }
 
+test_merged_branch_pr_removes_before_age_threshold() {
+	local repo_dir="${TEST_ROOT}/repo-merged-branch-pr"
+	local wt_path="${TEST_ROOT}/worker-wt-merged-branch-pr"
+	local branch_name="feature/auto-20260507-190806-gh23080"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+	gh_pr_list() {
+		printf '%s\n' 'MERGED'
+		return 0
+	}
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-merged-branch-pr-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'pr_state=pr-MERGED' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'recovery_path=branch-preserved-terminal-pr' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "merged branch PR archives before age threshold" "$rc" \
+		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_closed_issue_dirty_worktree_stashes_and_preserves_branch() {
+	local repo_dir="${TEST_ROOT}/repo-closed-issue-dirty"
+	local wt_path="${TEST_ROOT}/worker-wt-closed-issue-dirty"
+	local branch_name="feature/auto-20260507-190807-gh23081"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	printf 'dirty edit\n' >>"${wt_path}/worker.txt"
+	source_pulse_cleanup_with_stubs || return 1
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "23081" ]]; then
+			printf '%s\n' "CLOSED"
+			return 0
+		fi
+		return 1
+	}
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-closed-issue-dirty-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1 stash_count=0
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+	stash_count=$(git -C "$repo_dir" stash list 2>/dev/null | wc -l | tr -d ' ') || stash_count=0
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	[[ "$stash_count" -gt 0 ]] || rc=1
+	grep -q 'dirty=1' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'recovery_path=branch-preserved-closed-issue' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "closed issue dirty worktree stashes and preserves branch" "$rc" \
+		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists stash_count=$stash_count log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
 test_recent_metric_blocks_local_commit_no_pr_removal() {
 	local repo_dir="${TEST_ROOT}/repo"
 	local wt_path="${TEST_ROOT}/worker-wt"
@@ -392,6 +465,8 @@ test_young_local_commit_logs_not_age_eligible
 test_local_only_repo_worktree_logs_explicit_skip
 test_closed_issue_local_commit_no_pr_removes_before_age_threshold
 test_closed_pr_reference_local_commit_no_pr_removes_before_age_threshold
+test_merged_branch_pr_removes_before_age_threshold
+test_closed_issue_dirty_worktree_stashes_and_preserves_branch
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch
 test_no_newline_pr_output_blocks_local_commit_cleanup
 test_no_newline_open_pr_output_blocks_clean_fastpath

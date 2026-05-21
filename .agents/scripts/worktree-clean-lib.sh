@@ -592,6 +592,16 @@ _clean_issue_is_closed() {
 	return 0
 }
 
+_clean_archive_dirty_worktree_stash() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	if ! worktree_has_changes "$wt_path"; then
+		return 0
+	fi
+	git -C "$wt_path" stash push -u -m "aidevops worktree cleanup archive: ${wt_branch:-detached}" >/dev/null 2>&1
+	return $?
+}
+
 _clean_closed_issue_archive_allowed() {
 	local wt_path="$1"
 	local wt_branch="$2"
@@ -601,14 +611,16 @@ _clean_closed_issue_archive_allowed() {
 	local repo_slug
 
 	_clean_branch_list_contains_exact "$wt_branch" "$open_prs" && return 1
-	worktree_has_changes "$wt_path" && return 1
+	local current_dir=""
+	current_dir=$(pwd -P 2>/dev/null || true)
+	case "$current_dir" in
+	"$wt_path" | "$wt_path"/*) return 1 ;;
+	esac
+	_branch_has_active_interactive_claim "$wt_path" "$wt_branch" && return 1
+	is_worktree_owned_by_others "$wt_path" && return 1
 	issue_number=$(_clean_issue_from_branch "$wt_branch" 2>/dev/null) || return 1
 	repo_slug=$(_clean_repo_slug 2>/dev/null || true)
 	_clean_issue_is_closed "$issue_number" "$repo_slug" || return 1
-	if should_skip_cleanup "$wt_path" "$wt_branch" "$default_br" "$open_prs" "$_WT_CLEAN_BOOL_FALSE"; then
-		_clean_protected_mark "$wt_path"
-		return 1
-	fi
 	printf '%s\n' "$issue_number"
 	return 0
 }
@@ -836,6 +848,7 @@ _clean_remove_classified_worktree() {
 		use_force="$_WT_CLEAN_BOOL_TRUE"
 	fi
 	if [[ "$preserve_branch" == "$_WT_CLEAN_BOOL_TRUE" ]]; then
+		_clean_archive_dirty_worktree_stash "$worktree_path" "$worktree_branch" || return 1
 		if git worktree remove --force "$worktree_path" 2>/dev/null; then
 			git worktree prune 2>/dev/null || true
 			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_CLOSED_ISSUE_ARCHIVE" "$_WT_CLEAN_MODE_BRANCH_PRESERVED" "$audit_context"

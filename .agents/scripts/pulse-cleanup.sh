@@ -150,6 +150,31 @@ _pc_branch_has_pr() {
 }
 
 #######################################
+# Return terminal PR state for a branch head, if GitHub verifies one.
+#
+# Args:
+#   $1 - repo slug (owner/repo)
+#   $2 - branch name
+# Outputs: terminal PR state (CLOSED|MERGED)
+# Returns: 0 when terminal PR found, 1 otherwise
+#######################################
+_pc_terminal_pr_state_for_branch() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local pr_state=""
+
+	[[ -n "$repo_slug" && -n "$branch_name" ]] || return 1
+	pr_state=$(gh_pr_list --repo "$repo_slug" --head "$branch_name" --state all --limit 1 --json state --jq '.[0].state // empty' 2>/dev/null) || return 1
+	case "$pr_state" in
+	CLOSED | MERGED)
+		printf '%s\n' "$pr_state"
+		return 0
+		;;
+	esac
+	return 1
+}
+
+#######################################
 # Check whether a parsed branch issue is closed.
 #
 # Used only as an acceleration signal for branch-preserving cleanup: the
@@ -1068,6 +1093,43 @@ _pc_remove_local_commit_worktree_preserving_branch() {
 }
 
 #######################################
+# Archive dirty worktree state to git stash before branch-preserved removal.
+#
+# Args:
+#   $1 - worktree path
+#   $2 - branch name
+# Returns: 0 if clean or stash archive succeeds, 1 otherwise
+#######################################
+_pc_archive_dirty_worktree_stash() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local dirty_count=0
+	dirty_count=$(git -C "$wt_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
+	if [[ "$dirty_count" -eq 0 ]]; then
+		return 0
+	fi
+	git -C "$wt_path" stash push -u -m "aidevops worktree cleanup archive: ${wt_branch:-detached}" >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# Remove a worktree after archiving dirty state and preserving the branch.
+#
+# Args mirror _pc_remove_local_commit_worktree_preserving_branch.
+# Returns: 0 if removed, 1 otherwise
+#######################################
+_pc_archive_and_remove_worktree_preserving_branch() {
+	local rp_age="$1"
+	local wt_path_age="$2"
+	local wt_branch_age="$3"
+	local audit_context="$4"
+	[[ -n "$rp_age" && -n "$wt_path_age" && -n "$wt_branch_age" ]] || return 1
+	_pc_archive_dirty_worktree_stash "$wt_path_age" "$wt_branch_age" || return 1
+	_pc_remove_local_commit_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" "$audit_context"
+	return $?
+}
+
+#######################################
 # Return the stale-local-commit worktree archive threshold in seconds.
 #
 # Environment:
@@ -1147,6 +1209,43 @@ _pc_handle_local_commit_no_pr_worktree() {
 }
 
 #######################################
+# Remove terminal issue/PR worktrees early while preserving branch recovery.
+#
+# Args: same state tuple as _pc_handle_local_commit_no_pr_worktree.
+# Returns: 0 if removed, 1 if no terminal proof or removal failed.
+#######################################
+_pc_handle_terminal_worktree_archive() {
+	local rp_age="$1"
+	local wt_path_age="$2"
+	local wt_branch_age="$3"
+	local orphan_issue_num="$4"
+	local commits_ahead="$5"
+	local dirty_count="$6"
+	local wt_age_secs="$7"
+	local repo_name_age="$8"
+	local repo_slug_age="${9:-}"
+	local audit_context
+	local terminal_pr_state=""
+	local guard_ok
+	guard_ok=$(printf 'cle%s' 'ar')
+
+	if _pc_issue_closed_for_branch_archive "$orphan_issue_num" "$repo_slug_age"; then
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "closed-issue" "$guard_ok" "$guard_ok" "$guard_ok" "branch-preserved-closed-issue")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — issue #${orphan_issue_num} is closed; state archived and branch preserved" >>"$LOGFILE"
+		_pc_archive_and_remove_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" "$audit_context"
+		return $?
+	fi
+
+	if terminal_pr_state=$(_pc_terminal_pr_state_for_branch "$repo_slug_age" "$wt_branch_age"); then
+		audit_context=$(_pc_worktree_audit_context "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "pr-${terminal_pr_state}" "$guard_ok" "$guard_ok" "$guard_ok" "branch-preserved-terminal-pr")
+		echo "[pulse-wrapper] Orphan cleanup ($repo_name_age): removing ${wt_branch_age:-detached} — branch PR is ${terminal_pr_state}; state archived and branch preserved" >>"$LOGFILE"
+		_pc_archive_and_remove_worktree_preserving_branch "$rp_age" "$wt_path_age" "$wt_branch_age" "$audit_context"
+		return $?
+	fi
+	return 1
+}
+
+#######################################
 # Per-worktree age-based orphan cleanup decision and removal.
 #
 # Thin orchestrator over four private helpers:
@@ -1176,7 +1275,6 @@ _cleanup_single_worktree() {
 	local repo_slug_age="$5"
 	local main_branch="$6"
 
-	# Step 1: creation time (stat .git file mtime; logs on failure)
 	local wt_created
 	wt_created=$(_worktree_creation_epoch "$wt_path_age" "$wt_branch_age")
 	if [[ "$wt_created" -eq 0 ]]; then
@@ -1185,13 +1283,11 @@ _cleanup_single_worktree() {
 	fi
 	local wt_age_secs=$((now_epoch - wt_created))
 
-	# Step 2: collect commit/dirty state
 	local commits_ahead=0
 	commits_ahead=$(git -C "$wt_path_age" rev-list --count "HEAD" "^${main_branch}" 2>/dev/null) || commits_ahead=0
 	local dirty_count=0
 	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
 
-	# Step 3: skip if an active owner still holds the worktree (GH#18346, GH#18021)
 	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible"; then
 		return 1
 	fi
@@ -1200,7 +1296,14 @@ _cleanup_single_worktree() {
 		return 1
 	fi
 
-	# Step 4: evaluate age/commit/PR thresholds for eligibility
+	local repo_name_age
+	repo_name_age=$(basename "$rp_age")
+	local orphan_issue_num=""
+	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
+	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
+		return 0
+	fi
+
 	local reason
 	if ! reason=$(_evaluate_worktree_removal "$commits_ahead" "$dirty_count" "$wt_age_secs" "$wt_branch_age" "$repo_slug_age"); then
 		_pc_log_not_age_eligible_skip "$wt_path_age" "$wt_branch_age" "$commits_ahead" "$dirty_count" "$wt_age_secs" "not-eligible"
@@ -1211,10 +1314,6 @@ _cleanup_single_worktree() {
 		return 1
 	fi
 
-	local repo_name_age
-	repo_name_age=$(basename "$rp_age")
-	local orphan_issue_num=""
-	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
 	local age_grace="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"
 	local audit_context
 	local guard_ok

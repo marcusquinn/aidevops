@@ -435,6 +435,50 @@ test_closed_issue_unproven_branch_removes_worktree_preserves_branch() {
 	return 0
 }
 
+test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch() {
+	local repo_path="${TEST_ROOT}/repo-closed-issue-dirty-unproven"
+	local wt_path="${TEST_ROOT}/wt-closed-issue-dirty-unproven"
+	local log_file="${TEST_ROOT}/closed-issue-dirty-unproven-cleanup.log"
+	local branch="feature/auto-20260520-gh99030"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'closed issue dirty unproven\n' >"$repo_path/closed-issue-dirty-unproven.txt" || rc=1
+	git -C "$repo_path" add closed-issue-dirty-unproven.txt || rc=1
+	git -C "$repo_path" commit -q -m "closed issue dirty unproven branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	printf 'dirty archived state\n' >>"$wt_path/closed-issue-dirty-unproven.txt" || rc=1
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		branch_was_pushed() { return 0; }
+		_branch_exists_on_any_remote() { return 1; }
+		worktree_has_changes() { git -C "$1" status --porcelain 2>/dev/null | grep -q .; return $?; }
+		gh() {
+			if [[ "${1:-}" == "issue" && "${2:-}" == "view" && "${3:-}" == "99030" ]]; then
+				printf '%s\n' "CLOSED"
+				return 0
+			fi
+			return 1
+		}
+		_clean_remove_merged "main" "$repo_path" "false" "" "" "false" ""
+	) || rc=1
+
+	local branch_exists=1 stash_count=0
+	git -C "$repo_path" rev-parse --verify "refs/heads/${branch}" >/dev/null 2>&1 && branch_exists=0
+	stash_count=$(git -C "$repo_path" stash list 2>/dev/null | wc -l | tr -d ' ') || stash_count=0
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	[[ "$stash_count" -gt 0 ]] || rc=1
+	assert_file_contains "$log_file" "worktree-removed.*closed-issue-branch-preserved.*mode=branch-preserved.*recovery_path=branch-preserved-closed-issue" || rc=1
+	print_result "closed issue dirty unproven branch stashes and preserves branch" "$rc" \
+		"Expected removed worktree, preserved branch, stash archive, and audit entry"
+	return 0
+}
+
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
 test_squash_merged_pr_without_ancestor_proof_classifies
@@ -446,6 +490,7 @@ test_exact_merged_pr_proof_recovers_unproven_traditional_merge
 test_closed_pr_without_ancestor_proof_classifies
 test_remote_deleted_without_ancestor_proof_skips
 test_closed_issue_unproven_branch_removes_worktree_preserves_branch
+test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch
 
 printf '\nResults: %d/%d passed, %d failed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
