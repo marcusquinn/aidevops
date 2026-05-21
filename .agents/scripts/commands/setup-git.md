@@ -153,6 +153,40 @@ Do not ask the AI session to apply protection implicitly; this changes repo
 security posture and should be a deliberate maintainer/admin action.
 ```
 
+### Phase 1.7 — Linked-Issue PR Check Audit (GH#23906)
+
+For GitHub-hosted repos in `~/.config/aidevops/repos.json` that are not marked
+`local_only`, audit whether `.github/workflows/linked-issue-check.yml` is
+installed and whether `linked-issue-check` is required by branch protection or
+an active ruleset. This is report-only: do not mutate branch protection or
+rulesets during `/setup-git`.
+
+Use this template for each affected repo:
+
+```text
+=== Repo: <SLUG> — linked-issue PR check setup needed ===
+
+Why this matters: human-authored PRs must reference an existing issue with one
+of the accepted keywords: Closes/Fixes/Resolves/For/Ref #NNN. The
+linked-issue-check status enforces that contract before merge.
+
+Audit:
+
+  aidevops security posture check <PATH_TO_REPO>
+
+Fix (maintainer/admin action — run explicitly in GitHub settings or a separate
+terminal):
+
+  1. Ensure .github/workflows/linked-issue-check.yml exists in <SLUG>.
+  2. In GitHub Settings → Rules → Rulesets (preferred) or Branches → Branch
+     protection, require the status check named linked-issue-check on the
+     default branch.
+  3. Verify:
+       aidevops security posture check <PATH_TO_REPO>
+
+Skip repos with platform != github or local_only=true.
+```
+
 ### Phase 2 — Per-Repo Walkthrough
 
 For each repo with missing `SYNC_PAT`, present this template (substitute slug
