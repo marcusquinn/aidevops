@@ -648,7 +648,8 @@ _blocked_by_load_cache() {
 #
 # Exit codes:
 #   0 - blocker is open (caller should return "blocked")
-#   1 - blocker is resolved or not found (caller should continue)
+#   1 - blocker is resolved (caller should continue)
+#   2 - blocker reference could not be resolved (caller should fail closed)
 #######################################
 _blocked_by_check_task_id() {
 	local task_id="$1"
@@ -668,23 +669,60 @@ _blocked_by_check_task_id() {
 			is_open=$(printf '%s' "$cache_state" |
 				jq --argjson n "$blocker_issue_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="false"
 			if [[ "$is_open" == "true" ]]; then
-				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
+				printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 				return 0
 			fi
-			return 1
+			printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} has inconclusive cache state — skipping dispatch (blocked-by-unresolved-reference)" >>"$LOGFILE"
+			return 2
 		fi
 		# Task not in map → fall through to live API (may be a new issue)
 	fi
 
-	# Live API fallback: search for an open issue with this task ID in the title
+	# Live API fallback: search for an issue with this task ID in the title.
+	# Empty/error is unknown, not clear: newly created issues can be missing from
+	# the fresh cache while GitHub search/indexing has not caught up yet (GH#23911).
 	local blocker_state
-	blocker_state=$(gh_issue_list --repo "$repo_slug" --state open \
+	blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null) || blocker_state=""
 	if [[ "$blocker_state" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+		printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	return 1
+	if [[ "$blocker_state" == "CLOSED" ]]; then
+		return 1
+	fi
+	printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} has unresolved blocked-by reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch (blocked-by-unresolved-reference)" >>"$LOGFILE"
+	return 2
+}
+
+#######################################
+# Invoke _blocked_by_check_task_id and normalize its tri-state result.
+#
+# Arguments: same as _blocked_by_check_task_id
+# Output:    "blocked", "clear", or "unknown" on stdout
+#######################################
+_blocked_by_task_id_state() {
+	local task_id="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local cache_state="$4"
+
+	local rc
+	if _blocked_by_check_task_id "$task_id" "$repo_slug" "$issue_number" "$cache_state"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	if [[ "$rc" -eq 0 ]]; then
+		printf 'blocked\n'
+		return 0
+	fi
+	if [[ "$rc" -eq 2 ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	printf 'clear\n'
+	return 0
 }
 
 #######################################
@@ -698,7 +736,8 @@ _blocked_by_check_task_id() {
 #
 # Exit codes:
 #   0 - blocker is open
-#   1 - blocker is resolved or not found
+#   1 - blocker is resolved
+#   2 - blocker reference could not be resolved
 #######################################
 _blocked_by_check_issue_num() {
 	local blocker_num="$1"
@@ -714,10 +753,11 @@ _blocked_by_check_issue_num() {
 		is_open=$(printf '%s' "$cache_state" |
 			jq --argjson n "$blocker_num" '.open_issues | index($n) != null' 2>/dev/null) || is_open="false"
 		if [[ "$is_open" == "true" ]]; then
-			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
+			printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 			return 0
 		fi
-		return 1
+		# The cache contains only open issues, so absence is not positive proof
+		# of resolution. Fall through to live view before clearing dispatch.
 	fi
 
 	# Live API fallback
@@ -725,10 +765,44 @@ _blocked_by_check_issue_num() {
 	blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state --jq '.state // ""' 2>/dev/null) || blocker_state=""
 	if [[ "$blocker_state" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+		printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	return 1
+	if [[ "$blocker_state" == "CLOSED" ]]; then
+		return 1
+	fi
+	printf '%s\n' "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} has unresolved blocked-by reference #${blocker_num} (cache miss / live lookup inconclusive) — skipping dispatch (blocked-by-unresolved-reference)" >>"$LOGFILE"
+	return 2
+}
+
+#######################################
+# Invoke _blocked_by_check_issue_num and normalize its tri-state result.
+#
+# Arguments: same as _blocked_by_check_issue_num
+# Output:    "blocked", "clear", or "unknown" on stdout
+#######################################
+_blocked_by_issue_num_state() {
+	local blocker_num="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local cache_state="$4"
+
+	local rc
+	if _blocked_by_check_issue_num "$blocker_num" "$repo_slug" "$issue_number" "$cache_state"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	if [[ "$rc" -eq 0 ]]; then
+		printf 'blocked\n'
+		return 0
+	fi
+	if [[ "$rc" -eq 2 ]]; then
+		printf 'unknown\n'
+		return 0
+	fi
+	printf 'clear\n'
+	return 0
 }
 
 #######################################
@@ -750,7 +824,7 @@ _blocked_by_check_issue_num() {
 #   $2 - repo slug (owner/repo)
 #   $3 - issue number (for logging)
 # Returns:
-#   exit 0 = blocker is unresolved (do NOT dispatch)
+#   exit 0 = blocker is unresolved/open or unknown (do NOT dispatch)
 #   exit 1 = no blocker or blocker is resolved (safe to dispatch)
 #######################################
 is_blocked_by_unresolved() {
@@ -779,10 +853,11 @@ is_blocked_by_unresolved() {
 
 	# Check task ID blockers
 	if [[ -n "$blocker_task_ids" ]]; then
-		local task_id
+		local task_id task_state
 		while IFS= read -r task_id; do
 			[[ -n "$task_id" ]] || continue
-			if _blocked_by_check_task_id "$task_id" "$repo_slug" "$issue_number" "$cache_state"; then
+			task_state=$(_blocked_by_task_id_state "$task_id" "$repo_slug" "$issue_number" "$cache_state")
+			if [[ "$task_state" == "blocked" || "$task_state" == "unknown" ]]; then
 				return 0
 			fi
 		done <<<"$blocker_task_ids"
@@ -790,10 +865,11 @@ is_blocked_by_unresolved() {
 
 	# Check GitHub issue number blockers
 	if [[ -n "$blocker_issue_nums" ]]; then
-		local blocker_num
+		local blocker_num issue_state
 		while IFS= read -r blocker_num; do
 			[[ -n "$blocker_num" ]] || continue
-			if _blocked_by_check_issue_num "$blocker_num" "$repo_slug" "$issue_number" "$cache_state"; then
+			issue_state=$(_blocked_by_issue_num_state "$blocker_num" "$repo_slug" "$issue_number" "$cache_state")
+			if [[ "$issue_state" == "blocked" || "$issue_state" == "unknown" ]]; then
 				return 0
 			fi
 		done <<<"$blocker_issue_nums"
