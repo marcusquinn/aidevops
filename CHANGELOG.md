@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.15] - 2026-05-21
+
+### Fixed
+
+- strip HTML comments before parsing TODO.md tasks (GH#17804) (#23904)
+
 ## [3.17.14] - 2026-05-21
 
 ### Fixed
