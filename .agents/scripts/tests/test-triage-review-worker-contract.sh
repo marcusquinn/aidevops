@@ -27,8 +27,8 @@ fail() {
 write_headless_helper() {
 	cat >"${TEST_TMP}/headless-runtime-helper.sh" <<'EOS'
 #!/usr/bin/env bash
-printf 'WORKER_ISSUE_NUMBER=%s WORKER_REPO_SLUG=%s WORKER_WORKTREE_PATH=%s %s\n' \
-	"${WORKER_ISSUE_NUMBER:-<unset>}" "${WORKER_REPO_SLUG:-<unset>}" "${WORKER_WORKTREE_PATH:-<unset>}" "$*"
+printf 'HEADLESS=%s WORKER_ISSUE_NUMBER=%s WORKER_REPO_SLUG=%s WORKER_WORKTREE_PATH=%s %s\n' \
+	"${HEADLESS:-<unset>}" "${WORKER_ISSUE_NUMBER:-<unset>}" "${WORKER_REPO_SLUG:-<unset>}" "${WORKER_WORKTREE_PATH:-<unset>}" "$*"
 exit 0
 EOS
 	chmod +x "${TEST_TMP}/headless-runtime-helper.sh" || fail "failed to chmod headless helper"
@@ -69,6 +69,9 @@ _run_triage_review_worker "42" "owner/repo" "${TEST_TMP}/repo" "" "$prefetch_fil
 	fail "valid worker launch should not fail the caller"
 if ! grep -q 'WORKER_ISSUE_NUMBER=42' "$valid_output"; then
 	fail "valid worker launch did not invoke the headless runtime"
+fi
+if ! grep -q 'HEADLESS=1' "$valid_output"; then
+	fail "valid worker launch did not export headless diagnostic mode"
 fi
 if ! grep -q -- '--prompt-file' "$valid_output"; then
 	fail "valid worker launch did not pass the prompt file flag"
