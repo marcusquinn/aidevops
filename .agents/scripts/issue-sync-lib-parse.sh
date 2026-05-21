@@ -51,29 +51,7 @@ fi
 # (GH#17804 issue-sync helper) from being parsed as real tasks.
 # Usage: strip_code_fences < file  OR  grep ... | strip_code_fences
 strip_code_fences() {
-	awk '
-		/^[[:space:]]*```/ { in_fence = !in_fence; next }
-		in_fence { next }
-		{
-			line = $0
-			out = ""
-			while (length(line) > 0) {
-				if (in_comment) {
-					pos = index(line, "-->")
-					if (pos == 0) { line = ""; break }
-					line = substr(line, pos + 3)
-					in_comment = 0
-				} else {
-					pos = index(line, "<!--")
-					if (pos == 0) { out = out line; line = ""; break }
-					out = out substr(line, 1, pos - 1)
-					line = substr(line, pos + 4)
-					in_comment = 1
-				}
-			}
-			print out
-		}
-	'
+	awk '/^[[:space:]]*```/ { in_fence = !in_fence; next } !in_fence { print }' | strip_html_comments
 	return 0
 }
 
