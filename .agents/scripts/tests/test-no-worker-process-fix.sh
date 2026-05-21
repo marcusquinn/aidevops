@@ -648,6 +648,18 @@ test_prelaunch_reason_parser_preserves_explicit_reason() {
 	return 0
 }
 
+test_nohup_launch_passes_repo_slug_contract() {
+	# shellcheck disable=SC2016  # literal source snippets — no expansion intended
+	if grep -q 'WORKER_REPO_SLUG="$repo_slug"' "$WORKER_LAUNCH" \
+		&& grep -q '_dlw_nohup_launch "$issue_number" "$repo_slug"' "$WORKER_LAUNCH"; then
+		print_result "invariant: fallback nohup launch passes WORKER_REPO_SLUG to headless runtime" 0
+		return 0
+	fi
+	print_result "invariant: fallback nohup launch passes WORKER_REPO_SLUG to headless runtime" 1 \
+		"Expected _dlw_nohup_launch to receive repo_slug and export WORKER_REPO_SLUG for headless-runtime-helper.sh"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
@@ -695,6 +707,7 @@ main_test() {
 	test_worker_worktree_live_owner_skips_fast_fail_state
 	test_prelaunch_reason_parser_behavioural
 	test_prelaunch_reason_parser_preserves_explicit_reason
+	test_nohup_launch_passes_repo_slug_contract
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
