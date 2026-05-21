@@ -6,6 +6,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+if [[ -d "$ROOT_DIR/.agents/scripts" ]]; then
+	AGENTS_SCRIPTS_DIR="$ROOT_DIR/.agents/scripts"
+else
+	AGENTS_SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+fi
 
 TEST_ROOT=""
 TESTS_RUN=0
@@ -83,9 +88,9 @@ JSON
 
 load_subject() {
 	# shellcheck source=../shared-constants.sh
-	source "$ROOT_DIR/.agents/scripts/shared-constants.sh"
+	source "$AGENTS_SCRIPTS_DIR/shared-constants.sh"
 	# shellcheck source=../pulse-cleanup.sh
-	source "$ROOT_DIR/.agents/scripts/pulse-cleanup.sh"
+	source "$AGENTS_SCRIPTS_DIR/pulse-cleanup.sh"
 	return 0
 }
 
