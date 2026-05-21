@@ -1495,7 +1495,7 @@ _pc_orphan_sibling_name_allowed() {
 	local candidate_name="$2"
 	[[ -n "$repo_name" && -n "$candidate_name" ]] || return 1
 	case "$candidate_name" in
-	"${repo_name}-feature-auto-"* | "${repo_name}-fix-"* | "${repo_name}-chore-"* | "${repo_name}-docs-"* | "${repo_name}-refactor-"* | "${repo_name}-bugfix-"* | "${repo_name}-issue-"* | "${repo_name}-gh"* | "${repo_name}-pr"* | "${repo_name}-t"[0-9]* | "${repo_name}-repair-"* | "${repo_name}-review-"*)
+	"${repo_name}-feature-"* | "${repo_name}-fix-"* | "${repo_name}-chore-"* | "${repo_name}-docs-"* | "${repo_name}-refactor-"* | "${repo_name}-bugfix-"* | "${repo_name}-issue-"* | "${repo_name}-gh"* | "${repo_name}-pr"* | "${repo_name}-t"[0-9]* | "${repo_name}-repair-"* | "${repo_name}-review-"* | "${repo_name}.fix-"* | "${repo_name}.bugfix-"* | "${repo_name}.refactor-"*)
 		return 0
 		;;
 	*)
@@ -1578,7 +1578,7 @@ _pc_cleanup_orphan_sibling_dirs() {
 		repo_parent=$(dirname "$rp_orphan")
 		repo_name=$(basename "$rp_orphan")
 		[[ -d "$repo_parent" && -n "$repo_name" ]] || continue
-		for candidate_path in "$repo_parent/$repo_name"-*; do
+		for candidate_path in "$repo_parent/$repo_name"-* "$repo_parent/$repo_name".*; do
 			[[ -d "$candidate_path" ]] || continue
 			candidate_name=$(basename "$candidate_path")
 			_pc_orphan_sibling_name_allowed "$repo_name" "$candidate_name" || continue

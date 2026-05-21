@@ -68,6 +68,12 @@ JSON
 	mkdir -p "$TEST_ROOT/Git/aidevops-feature-auto-20260505-gh22927-dispatch-recovery"
 	printf 'leftover\n' >"$TEST_ROOT/Git/aidevops-feature-auto-20260505-gh22927-dispatch-recovery/NOTE.txt"
 
+	# General feature branch and legacy dot-separated worker names are outliers too.
+	mkdir -p "$TEST_ROOT/Git/aidevops-feature-t2147-contributor-insight-pipeline"
+	printf 'gitdir: %s\n' "$TEST_ROOT/missing/feature-t2147" >"$TEST_ROOT/Git/aidevops-feature-t2147-contributor-insight-pipeline/.git"
+	mkdir -p "$TEST_ROOT/Git/aidevops.bugfix-skill-tag-rename"
+	printf 'legacy\n' >"$TEST_ROOT/Git/aidevops.bugfix-skill-tag-rename/NOTE.txt"
+
 	# Standalone repo: must not be trashed automatically.
 	mkdir -p "$TEST_ROOT/Git/aidevops-cloudron-app"
 	git -C "$TEST_ROOT/Git/aidevops-cloudron-app" init -q
@@ -88,8 +94,8 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 	local moved_count
 	moved_count=$(_pc_cleanup_orphan_sibling_dirs "$repo_json" "$(date +%s)")
 
-	if [[ "$moved_count" -ne 2 ]]; then
-		print_result "orphan sibling cleanup moves only eligible outliers" 1 "expected 2 moved, got $moved_count"
+	if [[ "$moved_count" -ne 4 ]]; then
+		print_result "orphan sibling cleanup moves only eligible outliers" 1 "expected 4 moved, got $moved_count"
 		return 0
 	fi
 
@@ -115,10 +121,10 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 			trashed_count=$((trashed_count + 1))
 		done
 	done
-	if [[ "$trashed_count" -eq 2 ]]; then
+	if [[ "$trashed_count" -eq 4 ]]; then
 		print_result "eligible outliers are recoverable in trash bucket" 0
 	else
-		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 2 trashed dirs, got $trashed_count"
+		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 4 trashed dirs, got $trashed_count"
 	fi
 	return 0
 }
