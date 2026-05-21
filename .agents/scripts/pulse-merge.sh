@@ -114,6 +114,8 @@ source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 # when a phase child PR merges for a parent-task issue.
 source "${_PULSE_MERGE_DIR}/shared-phase-filing.sh"
 
+readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
+
 # Source author permission check helpers (GH#21426 — extracted to bring
 # pulse-merge.sh below the 2000-line file-size-debt threshold).
 # shellcheck source=./pulse-merge-author-checks.sh
@@ -384,6 +386,132 @@ _pm_resolve_superseded_original_issue() {
 	return 0
 }
 
+#######################################
+# Extract a non-closing parent/umbrella reference from a PR body.
+#
+# Args: $1=pr_number, $2=repo_slug
+# Stdout: issue number from the first `For #NNN` / `Ref #NNN` reference
+# Returns: 0 always
+#######################################
+_pm_extract_partial_parent_reference() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_body parent_issue
+
+	pr_body=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json body --jq '.body // empty' 2>/dev/null) || pr_body=""
+	parent_issue=$(printf '%s' "$pr_body" | grep -ioE '(^|[[:space:]])(for|ref)[[:space:]]+#[0-9]+' | head -1 | grep -oE '[0-9]+') || parent_issue=""
+	printf '%s' "$parent_issue"
+	return 0
+}
+
+#######################################
+# Decide whether an issue is broad enough to require partial closeout hygiene.
+#
+# Args: $1=issue body, $2=comma-separated label names
+# Returns: 0=broad parent/umbrella issue, 1=normal leaf issue
+#######################################
+_pm_issue_needs_partial_closeout() {
+	local issue_body="$1"
+	local issue_labels="$2"
+	local checklist_count
+
+	if [[ ",${issue_labels}," == *"${_PM_PARENT_TASK_LABEL_NEEDLE}"* ]]; then
+		return 0
+	fi
+
+	if printf '%s' "$issue_body" | grep -qiE '\b(parent|umbrella|roadmap|lifecycle|incident|acceptance criteria)\b'; then
+		return 0
+	fi
+
+	checklist_count=$(printf '%s' "$issue_body" | grep -cE '^[[:space:]]*-[[:space:]]*\[[ xX]\]' || true)
+	[[ "$checklist_count" =~ ^[0-9]+$ ]] || checklist_count=0
+	if [[ "$checklist_count" -ge 2 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Extract unchecked acceptance criteria as a Markdown bullet list.
+#
+# Args: $1=issue body
+# Stdout: bullet list (or a conservative fallback)
+# Returns: 0 always
+#######################################
+_pm_unmet_acceptance_criteria() {
+	local issue_body="$1"
+	local criteria
+
+	criteria=$(printf '%s' "$issue_body" | sed -nE 's/^[[:space:]]*-[[:space:]]*\[[[:space:]]\][[:space:]]*/- /p' | head -20) || criteria=""
+	if [[ -z "$criteria" ]]; then
+		criteria="- Review the parent issue acceptance criteria and file worker-ready child issues for remaining scope."
+	fi
+	printf '%s' "$criteria"
+	return 0
+}
+
+#######################################
+# Post partial parent/umbrella closeout when a For/Ref PR merges.
+#
+# Non-closing references intentionally do not flow through the normal linked
+# issue close path. This helper keeps the parent open but leaves an explicit
+# closeout trail naming delivered work and follow-ups so broad parents are not
+# left ambiguous after a leaf PR merge (GH#23937).
+#
+# Args: $1=pr_number, $2=repo_slug, $3=merge_summary
+# Returns: 0 always (best-effort post-merge hygiene)
+#######################################
+_pm_handle_partial_parent_closeout() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local merge_summary="$3"
+	local parent_issue issue_api issue_body issue_labels dedup_count followups delivered_body
+
+	parent_issue=$(_pm_extract_partial_parent_reference "$pr_number" "$repo_slug") || parent_issue=""
+	[[ -n "$parent_issue" ]] || return 0
+
+	issue_api=$(_pm_issue_api "$repo_slug" "$parent_issue")
+	issue_body=$(gh api "$issue_api" --jq '.body // empty' 2>/dev/null) || issue_body=""
+	issue_labels=$(gh api "$issue_api" --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+
+	if ! _pm_issue_needs_partial_closeout "$issue_body" "$issue_labels"; then
+		return 0
+	fi
+
+	dedup_count=$(gh api "${issue_api}/comments" 2>/dev/null | jq --arg marker "PARTIAL_PARENT_CLOSEOUT:PR#${pr_number}" '[.[] | select(.body | contains($marker))] | length' 2>/dev/null) || dedup_count=0
+	[[ "$dedup_count" =~ ^[0-9]+$ ]] || dedup_count=0
+	if [[ "$dedup_count" -gt 0 ]]; then
+		echo "[pulse-wrapper] Deterministic merge: skipped duplicate partial parent closeout on #${parent_issue} for PR #${pr_number} (GH#23937)" >>"$LOGFILE"
+		return 0
+	fi
+
+	followups=$(_pm_unmet_acceptance_criteria "$issue_body") || followups="- Review remaining parent acceptance criteria."
+	delivered_body="${merge_summary:-PR #${pr_number} merged as a leaf delivery.}"
+
+	local partial_comment
+	partial_comment="<!-- PARTIAL_PARENT_CLOSEOUT:PR#${pr_number} -->
+## Partial Parent Closeout
+
+PR #${pr_number} merged against this broad parent using a non-closing \`For #${parent_issue}\` / \`Ref #${parent_issue}\` reference, so the parent remains open.
+
+### Delivered
+
+${delivered_body}
+
+### Follow-ups still requiring closure or child issues
+
+${followups}
+
+### Closeout rule
+
+Do not close this parent until the remaining acceptance criteria are covered by merged release evidence or an explicit maintainer/operator closeout decision is posted."
+
+	gh_issue_comment "$parent_issue" --repo "$repo_slug" --body "$partial_comment" 2>/dev/null || true
+	echo "[pulse-wrapper] Deterministic merge: posted partial parent closeout on issue #${parent_issue} for PR #${pr_number} (GH#23937)" >>"$LOGFILE"
+	return 0
+}
+
 _handle_post_merge_actions() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -422,7 +550,7 @@ _handle_post_merge_actions() {
 		local _linked_labels
 		_linked_labels=$(gh api "${_pm_li_api}" \
 			--jq '[.labels[].name] | join(",")' 2>/dev/null) || _linked_labels=""
-		if [[ ",${_linked_labels}," == *",parent-task,"* ]]; then
+		if [[ ",${_linked_labels}," == *"${_PM_PARENT_TASK_LABEL_NEEDLE}"* ]]; then
 			_parent_task_guard=1
 			echo "[pulse-wrapper] Deterministic merge: skipping close of parent-task issue #${linked_issue} (PR #${pr_number} is a phase child; parent stays open until all phases merge) — t2099/GH#19032" >>"$LOGFILE"
 		fi
@@ -467,7 +595,7 @@ _handle_post_merge_actions() {
 			_sup_api=$(_pm_issue_api "$repo_slug" "$_superseded_original_issue")
 			_sup_labels=$(gh api "${_sup_api}" \
 				--jq '[.labels[].name] | join(",")' 2>/dev/null) || _sup_labels=""
-			if [[ ",${_sup_labels}," == *",parent-task,"* ]]; then
+			if [[ ",${_sup_labels}," == *"${_PM_PARENT_TASK_LABEL_NEEDLE}"* ]]; then
 				_sup_parent_guard=1
 				echo "[pulse-wrapper] Deterministic merge: skipping close of parent-task original issue #${_superseded_original_issue} via superseded PR #${linked_issue} (merged PR #${pr_number}) — GH#22964" >>"$LOGFILE"
 			fi
@@ -494,6 +622,10 @@ _handle_post_merge_actions() {
 				unlock_issue_after_worker "$_superseded_original_issue" "$repo_slug"
 			fi
 		fi
+	fi
+
+	if [[ -z "$linked_issue" ]]; then
+		_pm_handle_partial_parent_closeout "$pr_number" "$repo_slug" "$merge_summary"
 	fi
 
 	# Auto-release interactive claim if one exists for this issue (t2413).
