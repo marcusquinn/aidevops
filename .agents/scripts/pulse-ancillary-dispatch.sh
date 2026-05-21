@@ -995,9 +995,9 @@ _finalize_triage_state() {
 # Exit code: always 0; runtime failures are captured in the output file.
 #######################################
 _run_triage_review_worker() {
-	local issue_num="$1"
-	local repo_slug="$2"
-	local repo_path="$3"
+	local triage_issue_num="$1"
+	local triage_repo_slug="$2"
+	local triage_repo_path="$3"
 	local model_flag="$4"
 	local prefetch_file="$5"
 	local review_output_file="$6"
@@ -1007,20 +1007,16 @@ _run_triage_review_worker() {
 		return 0
 	fi
 
-	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" && -n "$prefetch_file" ]]; then
-		# shellcheck disable=SC2086
-		env HEADLESS=1 WORKER_ISSUE_NUMBER="$issue_num" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$repo_path" \
-			"$HEADLESS_RUNTIME_HELPER" run \
-			--role triage \
-			--session-key "triage-review-${issue_num}" \
-			--dir "$repo_path" \
-			$model_flag \
-			--agent triage-review \
-			--title "Sandboxed triage review: Issue #${issue_num}" \
-			--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
-	else
-		printf '%s\n' '[fatal] triage worker env contract missing; aborting before model launch' >"$review_output_file"
-	fi
+	# shellcheck disable=SC2086
+	env HEADLESS=1 WORKER_ISSUE_NUMBER="$triage_issue_num" WORKER_REPO_SLUG="$triage_repo_slug" WORKER_WORKTREE_PATH="$triage_repo_path" \
+		"$HEADLESS_RUNTIME_HELPER" run \
+		--role triage \
+		--session-key "triage-review-${triage_issue_num}" \
+		--dir "$triage_repo_path" \
+		$model_flag \
+		--agent triage-review \
+		--title "Sandboxed triage review: Issue #${triage_issue_num}" \
+		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
 
 	return 0
 }
