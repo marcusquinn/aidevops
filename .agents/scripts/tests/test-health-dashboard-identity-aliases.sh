@@ -108,7 +108,11 @@ gh_create_issue() { gh issue create "$@" && return 0; return 1; }
 # shellcheck disable=SC2317
 gh_issue_edit_safe() { gh issue edit "$@" && return 0; return 1; }
 # shellcheck disable=SC2317
-gh_pr_list() { printf '%s' '0'; return 0; }
+gh_pr_list() {
+	printf 'pr list %s\n' "$*" >>"$GH_CALLS"
+	printf '%s' "${HEALTH_PR_COUNT:-0}"
+	return 0
+}
 
 # shellcheck source=../portable-stat.sh
 source "${SCRIPTS_DIR}/portable-stat.sh"
@@ -121,7 +125,14 @@ source "${SCRIPTS_DIR}/stats-health-dashboard.sh"
 _unpin_health_issue() { printf 'unpin %s\n' "$*" >>"$GH_CALLS"; return 0; }
 
 # shellcheck disable=SC2317
-_scan_active_workers() { printf '%s\0%s\0%s\0' '_No active workers_' '0' ''; return 0; }
+_scan_active_workers() {
+	if [[ "${HEALTH_ACTIVE_WORKERS:-0}" -gt 0 ]]; then
+		printf '%s\0%s\0%s\0' '_Active workers_' "$HEALTH_ACTIVE_WORKERS" ''
+		return 0
+	fi
+	printf '%s\0%s\0%s\0' '_No active workers_' '0' ''
+	return 0
+}
 
 identity_lines=$(_dashboard_identity_aliases "github-user")
 canonical=$(printf '%s\n' "$identity_lines" | sed -n '1p')
@@ -340,6 +351,28 @@ else
 fi
 
 missing_cache_file="${HOME}/.aidevops/logs/health-issue-missing-owner-repo"
+rm -f "$missing_cache_file"
+: >"$GH_CALLS"
+: >"$LOGFILE"
+export HEALTH_ACTIVE_WORKERS=2
+if _check_health_issue_activity_guard "owner/repo" "$TMP" "github-user" "$missing_cache_file" && [[ ! -s "$GH_CALLS" ]]; then
+	pass "activity guard short-circuits on active workers before network calls"
+else
+	fail "activity guard short-circuits on active workers before network calls" "calls=$(tr '\n' ';' <"$GH_CALLS"); log=$(tr '\n' ';' <"$LOGFILE")"
+fi
+unset HEALTH_ACTIVE_WORKERS
+
+rm -f "$missing_cache_file"
+: >"$GH_CALLS"
+: >"$LOGFILE"
+export HEALTH_PR_COUNT=1
+if _check_health_issue_activity_guard "owner/repo" "$TMP" "github-user" "$missing_cache_file" && ! grep -q 'issue list' "$GH_CALLS"; then
+	pass "activity guard short-circuits on open PRs before issue lookups"
+else
+	fail "activity guard short-circuits on open PRs before issue lookups" "calls=$(tr '\n' ';' <"$GH_CALLS"); log=$(tr '\n' ';' <"$LOGFILE")"
+fi
+unset HEALTH_PR_COUNT
+
 rm -f "$missing_cache_file"
 : >"$GH_CALLS"
 : >"$LOGFILE"
