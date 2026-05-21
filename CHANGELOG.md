@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.23] - 2026-05-21
+
+### Changed
+
+- docs: adopt upstream watch updates (#23946)
+- Maintenance: update simplification state registry
+- require partial parent closeout (#23942)
+
+### Fixed
+
+- fail closed on dispatch claim errors (#23943)
+- expand orphan worktree directory patterns
+- trash orphaned worktree directories
+
 ## [3.17.22] - 2026-05-21
 
 ### Fixed
