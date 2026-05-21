@@ -40,6 +40,7 @@ WORKER_LAUNCH="${AGENT_SCRIPT_DIR}/pulse-dispatch-worker-launch.sh"
 HEADLESS_LIB="${AGENT_SCRIPT_DIR}/headless-runtime-lib.sh"
 PULSE_ENGINE="${AGENT_SCRIPT_DIR}/pulse-dispatch-engine.sh"
 WORKER_LIFECYCLE="${AGENT_SCRIPT_DIR}/worker-lifecycle-common.sh"
+DEDUP_LAYERS="${AGENT_SCRIPT_DIR}/pulse-dispatch-dedup-layers.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -660,6 +661,18 @@ test_nohup_launch_passes_repo_slug_contract() {
 	return 0
 }
 
+test_claim_lock_errors_fail_closed() {
+	if grep -q 'claim pre-check error.*fail-closed' "$DEDUP_LAYERS" \
+		&& grep -q 'claim error.*fail-closed' "$DEDUP_LAYERS" \
+		&& ! grep -q 'proceeding (fail-open)' "$DEDUP_LAYERS"; then
+		print_result "invariant: claim API errors block dispatch instead of launching duplicate workers" 0
+		return 0
+	fi
+	print_result "invariant: claim API errors block dispatch instead of launching duplicate workers" 1 \
+		"Expected claim pre-check/claim exit=2 paths in $DEDUP_LAYERS to fail closed and no fail-open launch path"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main runner
 # ---------------------------------------------------------------------------
@@ -667,7 +680,7 @@ test_nohup_launch_passes_repo_slug_contract() {
 main_test() {
 	# Verify the target files exist before running tests
 	local f
-	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB" "$PULSE_ENGINE" "$WORKER_LIFECYCLE"; do
+	for f in "$PULSE_CLEANUP" "$WORKER_LAUNCH" "$HEADLESS_LIB" "$PULSE_ENGINE" "$WORKER_LIFECYCLE" "$DEDUP_LAYERS"; do
 		if [[ ! -f "$f" ]]; then
 			printf 'FATAL: target file missing: %s\n' "$f" >&2
 			return 2
@@ -708,6 +721,7 @@ main_test() {
 	test_prelaunch_reason_parser_behavioural
 	test_prelaunch_reason_parser_preserves_explicit_reason
 	test_nohup_launch_passes_repo_slug_contract
+	test_claim_lock_errors_fail_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
