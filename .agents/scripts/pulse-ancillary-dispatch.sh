@@ -1002,7 +1002,12 @@ _run_triage_review_worker() {
 	local prefetch_file="$5"
 	local review_output_file="$6"
 
-	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" ]]; then
+	if [[ -z "$review_output_file" ]]; then
+		printf '%s\n' '[fatal] triage worker output file missing; aborting before model launch' >&2
+		return 0
+	fi
+
+	if [[ -n "$issue_num" && -n "$repo_slug" && -n "$repo_path" && -n "$prefetch_file" ]]; then
 		# shellcheck disable=SC2086
 		env HEADLESS=1 WORKER_ISSUE_NUMBER="$issue_num" WORKER_REPO_SLUG="$repo_slug" WORKER_WORKTREE_PATH="$repo_path" \
 			"$HEADLESS_RUNTIME_HELPER" run \
