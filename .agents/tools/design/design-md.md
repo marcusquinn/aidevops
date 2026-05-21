@@ -37,6 +37,8 @@ model: sonnet
 
 **Agent relationships:**
 
+Upstream `@google/design.md` v0.1.0 was reviewed as the initial open-source release of the CLI/linter. The current aidevops schema guidance already covers the release's agent-safe JSON output, `designmd` Windows alias, lint/diff/export/spec commands, and alpha-format token model; continue watching for v1 or schema-breaking releases before changing templates.
+
 | Agent | Role | Relationship |
 |-------|------|--------------|
 | `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** — feeds DESIGN.md generation |
