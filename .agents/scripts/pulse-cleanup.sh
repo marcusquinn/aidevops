@@ -82,6 +82,7 @@ fi
 : "${AIDEVOPS_UNKNOWN_VERSION:=unknown}"
 # Caller ID constant for audit log calls (avoids repeated literals).
 _WTAR_PC_CALLER="pulse-cleanup.sh"
+_PC_REASON_AGE_ELIGIBLE="age-eligible"
 
 #######################################
 # Extract a GitHub issue number from worker-style branch names.
@@ -406,6 +407,52 @@ _trash_or_remove() {
 		gio trash "$target" 2>/dev/null && return 0
 	fi
 	rm -rf "$target" 2>/dev/null && return 0
+	return 1
+}
+
+#######################################
+# Move an orphan directory to a recoverable trash location only.
+#
+# Unlike _trash_or_remove, this helper never falls back to rm -rf. It is used
+# for unregistered filesystem outliers where git no longer has worktree
+# metadata, so recovery must remain possible after automated cleanup.
+#
+# Args: $1=path to move
+# Returns: 0 on success, 1 on failure
+#######################################
+_pc_trash_orphan_dir() {
+	local target="$1"
+	[[ -z "$target" ]] && return 1
+	[[ ! -e "$target" ]] && return 0
+
+	local trash_root="${AIDEVOPS_ORPHAN_TRASH_ROOT:-}"
+	if [[ -n "$trash_root" ]]; then
+		_pc_move_orphan_dir_to_trash_bucket "$target" "$trash_root" && return 0
+		return 1
+	fi
+
+	if command -v trash >/dev/null 2>&1; then
+		trash "$target" 2>/dev/null && return 0
+	fi
+	if command -v gio >/dev/null 2>&1; then
+		gio trash "$target" 2>/dev/null && return 0
+	fi
+
+	trash_root="${HOME}/.Trash"
+	_pc_move_orphan_dir_to_trash_bucket "$target" "$trash_root" && return 0
+	return 1
+}
+
+_pc_move_orphan_dir_to_trash_bucket() {
+	local target="$1"
+	local trash_root="$2"
+	local trash_bucket
+	trash_bucket="${trash_root}/aidevops-orphan-cleanup-$(date -u '+%Y%m%dT%H%M%SZ')"
+	local target_base
+	target_base=$(basename "$target")
+	[[ -n "$target_base" && "$target_base" != "." && "$target_base" != "/" ]] || return 1
+	mkdir -p "$trash_bucket" 2>/dev/null || return 1
+	mv "$target" "$trash_bucket/$target_base" 2>/dev/null && return 0
 	return 1
 }
 
@@ -1292,7 +1339,7 @@ _cleanup_single_worktree() {
 	local dirty_count=0
 	dirty_count=$(git -C "$wt_path_age" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || dirty_count=0
 
-	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible"; then
+	if ! worktree_removal_guard "$wt_path_age" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE"; then
 		return 1
 	fi
 
@@ -1350,9 +1397,9 @@ _cleanup_single_worktree() {
 	# Step 5b: perform removal (guarded permanent delete + deregister + branch cleanup)
 	# Age/PR/dirty gates above prove this orphaned worktree is disposable; remove
 	# permanently to avoid growing system Trash.
-	if ! remove_worktree_path_permanently "$wt_path_age" "$_WTAR_PC_CALLER" "age-eligible" "$audit_context"; then
+	if ! remove_worktree_path_permanently "$wt_path_age" "$_WTAR_PC_CALLER" "$_PC_REASON_AGE_ELIGIBLE" "$audit_context"; then
 		if git -C "$rp_age" worktree remove --force "$wt_path_age" 2>/dev/null; then
-			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "age-eligible" "permanent" "$audit_context"
+			log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_age" "$_PC_REASON_AGE_ELIGIBLE" "permanent" "$audit_context"
 		else
 			return 1
 		fi
@@ -1410,6 +1457,144 @@ _pc_log_local_only_worktree_skips() {
 		done < <(git -C "$rp_local" worktree list 2>/dev/null)
 	done <<<"$repo_paths"
 
+	return 0
+}
+
+#######################################
+# Check whether a sibling path is still registered as a git worktree.
+#
+# Args:
+#   $1 - rp_orphan: canonical repo path
+#   $2 - candidate_path: sibling path to check
+# Returns: 0 if registered, 1 otherwise
+#######################################
+_pc_is_registered_worktree_path() {
+	local rp_orphan="$1"
+	local candidate_path="$2"
+	[[ -n "$rp_orphan" && -n "$candidate_path" ]] || return 1
+
+	local wt_line_orphan=""
+	while IFS= read -r wt_line_orphan; do
+		if [[ "$wt_line_orphan" == "worktree $candidate_path" ]]; then
+			return 0
+		fi
+	done < <(git -C "$rp_orphan" worktree list --porcelain 2>/dev/null)
+	return 1
+}
+
+#######################################
+# Determine whether a sibling name is a worker/worktree-derived outlier.
+#
+# Args:
+#   $1 - repo_name: canonical repo basename
+#   $2 - candidate_name: sibling basename
+# Returns: 0 when the name matches an aidevops-created worktree pattern
+#######################################
+_pc_orphan_sibling_name_allowed() {
+	local repo_name="$1"
+	local candidate_name="$2"
+	[[ -n "$repo_name" && -n "$candidate_name" ]] || return 1
+	case "$candidate_name" in
+	"${repo_name}-feature-auto-"* | "${repo_name}-fix-"* | "${repo_name}-chore-"* | "${repo_name}-docs-"* | "${repo_name}-refactor-"* | "${repo_name}-bugfix-"* | "${repo_name}-issue-"* | "${repo_name}-gh"* | "${repo_name}-pr"* | "${repo_name}-t"[0-9]* | "${repo_name}-repair-"* | "${repo_name}-review-"*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+#######################################
+# Safely classify an unregistered sibling directory for trash cleanup.
+#
+# Args:
+#   $1 - rp_orphan: canonical repo path
+#   $2 - candidate_path: sibling path
+#   $3 - now_epoch: current Unix timestamp
+# Outputs: reason string when eligible
+# Returns: 0 if eligible for trash move, 1 otherwise
+#######################################
+_pc_classify_orphan_sibling_dir() {
+	local rp_orphan="$1"
+	local candidate_path="$2"
+	local now_epoch="$3"
+	[[ -d "$candidate_path" ]] || return 1
+
+	local repo_parent
+	repo_parent=$(dirname "$rp_orphan")
+	case "$candidate_path" in
+	"$repo_parent"/*) ;;
+	*) return 1 ;;
+	esac
+
+	if command -v is_registered_canonical >/dev/null 2>&1; then
+		is_registered_canonical "$candidate_path" && return 1
+	fi
+	_pc_is_registered_worktree_path "$rp_orphan" "$candidate_path" && return 1
+
+	local age_grace="${ORPHAN_WORKTREE_GRACE_SECS:-1800}"
+	local dir_mtime
+	dir_mtime=$(_file_mtime_epoch "$candidate_path")
+	[[ "$dir_mtime" -gt 0 ]] || return 1
+	[[ $((now_epoch - dir_mtime)) -ge "$age_grace" ]] || return 1
+
+	if [[ -f "$candidate_path/.git" ]]; then
+		if git -C "$candidate_path" status --porcelain >/dev/null 2>&1; then
+			return 1
+		fi
+		printf '%s\n' "unregistered-gitfile-status-fails"
+		return 0
+	fi
+	if [[ -d "$candidate_path/.git" ]]; then
+		return 1
+	fi
+	printf '%s\n' "unregistered-non-git-worker-dir"
+	return 0
+}
+
+#######################################
+# Trash stale sibling directories left behind after git worktree metadata loss.
+#
+# Args:
+#   $1 - repos_json: managed repo registry
+#   $2 - now_epoch: current Unix timestamp
+# Outputs: number of directories moved to trash
+# Returns: 0 always
+#######################################
+_pc_cleanup_orphan_sibling_dirs() {
+	local repos_json="$1"
+	local now_epoch="$2"
+	local moved_count=0
+	[[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 || { echo 0; return 0; }
+
+	local repo_paths_orphan
+	repo_paths_orphan=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null || printf '')
+
+	local rp_orphan
+	while IFS= read -r rp_orphan; do
+		[[ -z "$rp_orphan" ]] && continue
+		[[ -d "$rp_orphan/.git" || -f "$rp_orphan/.git" ]] || continue
+		local repo_parent repo_name candidate_path candidate_name reason
+		repo_parent=$(dirname "$rp_orphan")
+		repo_name=$(basename "$rp_orphan")
+		[[ -d "$repo_parent" && -n "$repo_name" ]] || continue
+		for candidate_path in "$repo_parent/$repo_name"-*; do
+			[[ -d "$candidate_path" ]] || continue
+			candidate_name=$(basename "$candidate_path")
+			_pc_orphan_sibling_name_allowed "$repo_name" "$candidate_name" || continue
+			if reason=$(_pc_classify_orphan_sibling_dir "$rp_orphan" "$candidate_path" "$now_epoch"); then
+				echo "[pulse-wrapper] Orphan dir cleanup ($repo_name): moving $candidate_path to trash — $reason" >>"$LOGFILE"
+				if _pc_trash_orphan_dir "$candidate_path"; then
+					log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$candidate_path" "$reason" "trash"
+					moved_count=$((moved_count + 1))
+				else
+					log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate_path" "trash-failed" "skipped"
+				fi
+			fi
+		done
+	done <<<"$repo_paths_orphan"
+
+	echo "$moved_count"
 	return 0
 }
 
@@ -1489,6 +1674,13 @@ cleanup_worktrees() {
 			fi
 		done < <(git -C "$rp_age" worktree list 2>/dev/null)
 	done <<<"$repo_paths_age"
+
+	# Pass 3: filesystem outliers that are no longer present in git worktree
+	# metadata. These are moved to a recoverable trash bucket only; standalone
+	# git repos and valid gitfile worktrees are skipped.
+	local orphan_dirs_moved
+	orphan_dirs_moved=$(_pc_cleanup_orphan_sibling_dirs "$repos_json" "$now_epoch")
+	total_removed=$((total_removed + orphan_dirs_moved))
 
 	if [[ "$total_removed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"
