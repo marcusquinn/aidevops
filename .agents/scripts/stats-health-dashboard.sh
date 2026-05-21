@@ -103,11 +103,14 @@ _check_health_issue_activity_guard() {
 
 	[[ -f "$health_issue_file" ]] && return 0
 
-	local guard_pr_count guard_assigned_count guard_worker_count
+	local guard_pr_count guard_assigned_count guard_auto_dispatch_count guard_worker_count
 	guard_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
+		--json number --jq 'length' 2>/dev/null || echo "0")
+	guard_auto_dispatch_count=$(gh_issue_list --repo "$repo_slug" \
+		--label "auto-dispatch" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
 
 	local _guard_fields=()
@@ -116,8 +119,8 @@ _check_health_issue_activity_guard() {
 	done < <(_scan_active_workers "${repo_path:-}")
 	guard_worker_count="${_guard_fields[1]:-0}"
 
-	if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
-		echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, issues, or workers" \
+	if [[ "${guard_pr_count:-0}" -eq 0 && "${guard_assigned_count:-0}" -eq 0 && "${guard_auto_dispatch_count:-0}" -eq 0 && "${guard_worker_count:-0}" -eq 0 ]]; then
+		echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
 			>>"${LOGFILE:-/dev/null}"
 		return 1
 	fi

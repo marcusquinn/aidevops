@@ -64,6 +64,22 @@ gh() {
 			printf '%s' 'CLOSED'
 			return 0
 			;;
+		activity_guard_autodispatch:*"issue list --repo owner/repo --assignee github-user"*)
+			printf '%s' '0'
+			return 0
+			;;
+		activity_guard_autodispatch:*"issue list --repo owner/repo --label auto-dispatch"*)
+			printf '%s' '1'
+			return 0
+			;;
+		activity_guard_idle:*"issue list --repo owner/repo --assignee github-user"*)
+			printf '%s' '0'
+			return 0
+			;;
+		activity_guard_idle:*"issue list --repo owner/repo --label auto-dispatch"*)
+			printf '%s' '0'
+			return 0
+			;;
 		:*"issue list --repo owner/repo --label source:health-dashboard"*)
 			printf '%s' '[{"number":20408,"title":"[Supervisor:github-user] 1 PR at 10:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"supervisor"},{"name":"github-user"}],"createdAt":"2026-05-01T10:00:00Z"},{"number":18669,"title":"[Contributor:local-user] 0 PRs at 09:00 UTC","labels":[{"name":"source:health-dashboard"},{"name":"contributor"},{"name":"local-user"}],"createdAt":"2026-04-01T09:00:00Z"}]'
 			return 0
@@ -91,6 +107,8 @@ gh_issue_view() { gh issue view "$@" && return 0; return 1; }
 gh_create_issue() { gh issue create "$@" && return 0; return 1; }
 # shellcheck disable=SC2317
 gh_issue_edit_safe() { gh issue edit "$@" && return 0; return 1; }
+# shellcheck disable=SC2317
+gh_pr_list() { printf '%s' '0'; return 0; }
 
 # shellcheck source=../portable-stat.sh
 source "${SCRIPTS_DIR}/portable-stat.sh"
@@ -101,6 +119,9 @@ source "${SCRIPTS_DIR}/stats-health-dashboard.sh"
 
 # shellcheck disable=SC2317
 _unpin_health_issue() { printf 'unpin %s\n' "$*" >>"$GH_CALLS"; return 0; }
+
+# shellcheck disable=SC2317
+_scan_active_workers() { printf '%s\0%s\0%s\0' '_No active workers_' '0' ''; return 0; }
 
 identity_lines=$(_dashboard_identity_aliases "github-user")
 canonical=$(printf '%s\n' "$identity_lines" | sed -n '1p')
@@ -317,6 +338,33 @@ if [[ "$unsafe_cache" != *"{"* && "$unsafe_cache" != *"message\":"* && ${#unsafe
 else
 	fail "sanitizes API error payloads before cache filename use" "safe=${unsafe_cache}"
 fi
+
+missing_cache_file="${HOME}/.aidevops/logs/health-issue-missing-owner-repo"
+rm -f "$missing_cache_file"
+: >"$GH_CALLS"
+: >"$LOGFILE"
+export HEALTH_FIXTURE=activity_guard_autodispatch
+if _check_health_issue_activity_guard "owner/repo" "$TMP" "github-user" "$missing_cache_file"; then
+	pass "activity guard proceeds when auto-dispatch work is queued"
+else
+	fail "activity guard proceeds when auto-dispatch work is queued" "calls=$(tr '\n' ';' <"$GH_CALLS"); log=$(tr '\n' ';' <"$LOGFILE")"
+fi
+unset HEALTH_FIXTURE
+
+rm -f "$missing_cache_file"
+: >"$GH_CALLS"
+: >"$LOGFILE"
+export HEALTH_FIXTURE=activity_guard_idle
+if _check_health_issue_activity_guard "owner/repo" "$TMP" "github-user" "$missing_cache_file"; then
+	fail "activity guard skips when PRs issues workers and auto-dispatch are absent" "calls=$(tr '\n' ';' <"$GH_CALLS"); log=$(tr '\n' ';' <"$LOGFILE")"
+else
+	if grep -q 'auto-dispatch work' "$LOGFILE"; then
+		pass "activity guard skips when PRs issues workers and auto-dispatch are absent"
+	else
+		fail "activity guard skip log names auto-dispatch work" "log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+fi
+unset HEALTH_FIXTURE
 
 printf '\n== Summary ==\n'
 if ((TESTS_FAILED > 0)); then
