@@ -287,6 +287,10 @@ _dedup_layer6_assignee_and_stale() {
 			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
 			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi
+		if [[ "$assigned_output" == *STALE_BLOCKED_BY_DEPENDENCY* ]]; then
+			echo "[pulse-wrapper] Dedup: stale recovery for #${issue_number} in ${repo_slug} found unresolved blocked-by dependency — blocking re-dispatch (GH#23932)" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 	return 1
 }
