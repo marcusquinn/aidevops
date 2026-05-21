@@ -252,6 +252,30 @@ test_young_local_commit_logs_not_age_eligible() {
 	return 0
 }
 
+test_local_only_repo_worktree_logs_explicit_skip() {
+	local repo_dir="${TEST_ROOT}/repo-local-only"
+	local wt_path="${TEST_ROOT}/worker-wt-local-only"
+	local branch_name="chore/aidevops-init"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+	printf 'local init artifact\n' >"$wt_path/.aidevops.json"
+	mkdir -p "${HOME}/.config/aidevops"
+	cat >"${HOME}/.config/aidevops/repos.json" <<JSON
+{"initialized_repos":[{"slug":"testowner/local-only","path":"${repo_dir}","local_only":true}]}
+JSON
+
+	cleanup_worktrees >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	grep -q 'worktree-skipped.*local-only-repo.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "local-only repo worktree logs explicit skip" "$rc" \
+		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch() {
 	local repo_dir="${TEST_ROOT}/repo-stale-local-commit"
 	local wt_path="${TEST_ROOT}/worker-wt-stale-local-commit"
@@ -365,6 +389,7 @@ echo "=== test-pulse-cleanup-worker-owned-no-pr.sh ==="
 test_recent_metric_blocks_local_commit_no_pr_removal
 test_local_commit_no_pr_skips_without_recent_metric
 test_young_local_commit_logs_not_age_eligible
+test_local_only_repo_worktree_logs_explicit_skip
 test_closed_issue_local_commit_no_pr_removes_before_age_threshold
 test_closed_pr_reference_local_commit_no_pr_removes_before_age_threshold
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch

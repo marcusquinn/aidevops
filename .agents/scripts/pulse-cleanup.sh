@@ -1270,6 +1270,47 @@ _cleanup_single_worktree() {
 }
 
 #######################################
+# Audit linked worktrees for repos intentionally excluded from cleanup.
+#
+# Local-only repos are not safe for automated branch/PR cleanup because they may
+# have no remote authority to prove merge/closed state. Still emit skip rows so
+# hygiene reports do not misclassify them as unobserved/no-recent-log.
+#
+# Args:
+#   $1 - repos_json: path to repos.json
+# Returns: 0 always
+#######################################
+_pc_log_local_only_worktree_skips() {
+	local repos_json="$1"
+	[[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 || return 0
+
+	local repo_paths
+	repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == true) | .path // ""' "$repos_json" 2>/dev/null || printf '')
+
+	local rp_local
+	while IFS= read -r rp_local; do
+		[[ -z "$rp_local" ]] && continue
+		[[ ! -d "$rp_local/.git" ]] && continue
+
+		local repo_name_local
+		repo_name_local=$(basename "$rp_local")
+		local wt_line_local
+		while IFS= read -r wt_line_local; do
+			local wt_path_local
+			wt_path_local=$(printf '%s' "$wt_line_local" | awk '{print $1}')
+			[[ -z "$wt_path_local" ]] && continue
+			[[ "$wt_path_local" == "$rp_local" ]] && continue
+			[[ ! -d "$wt_path_local" ]] && continue
+
+			echo "[pulse-wrapper] Orphan cleanup ($repo_name_local): skipping $wt_path_local — repo is local_only" >>"$LOGFILE"
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_local" "local-only-repo" "skipped"
+		done < <(git -C "$rp_local" worktree list 2>/dev/null)
+	done <<<"$repo_paths"
+
+	return 0
+}
+
+#######################################
 # Clean up worktrees for merged/closed PRs and orphaned workers
 # across ALL managed repos.
 #
@@ -1308,6 +1349,7 @@ cleanup_worktrees() {
 
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 	[[ -f "$repos_json" ]] && command -v jq &>/dev/null || return 0
+	_pc_log_local_only_worktree_skips "$repos_json"
 
 	local repo_paths_age
 	repo_paths_age=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" || echo "")
