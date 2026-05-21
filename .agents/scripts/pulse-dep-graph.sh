@@ -853,7 +853,7 @@ is_blocked_by_unresolved() {
 
 	# Check task ID blockers
 	if [[ -n "$blocker_task_ids" ]]; then
-		local task_id task_state
+		local task_id="" task_state=""
 		while IFS= read -r task_id; do
 			[[ -n "$task_id" ]] || continue
 			task_state=$(_blocked_by_task_id_state "$task_id" "$repo_slug" "$issue_number" "$cache_state")
@@ -865,7 +865,7 @@ is_blocked_by_unresolved() {
 
 	# Check GitHub issue number blockers
 	if [[ -n "$blocker_issue_nums" ]]; then
-		local blocker_num issue_state
+		local blocker_num="" issue_state=""
 		while IFS= read -r blocker_num; do
 			[[ -n "$blocker_num" ]] || continue
 			issue_state=$(_blocked_by_issue_num_state "$blocker_num" "$repo_slug" "$issue_number" "$cache_state")
