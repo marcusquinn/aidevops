@@ -120,11 +120,11 @@ When reviewing Obscura claims, verify against source or first-party docs before 
 
 | Resource | Path | Purpose |
 |----------|------|---------|
-| NetBird | `services/networking/netbird.md` | Shared framework agent for self-hosted WireGuard mesh VPN and worker access. |
-| Tailscale | `services/networking/tailscale.md` | Shared framework agent for managed mesh VPN, Serve/Funnel, and secure private access. |
-| OPSEC | `tools/security/opsec.md` | Shared framework agent for threat modelling and operational privacy discipline. |
-| Mobile app development | `tools/mobile/app-dev.md` | Shared framework agent for app planning/build/release workflows. |
-| Mobile app development (Swift) | `tools/mobile/app-dev-swift.md` | Shared framework agent for Swift/iOS-specific app development guidance. |
-| Legal | `legal.md` | Shared framework agent for legal compliance, privacy policy, and GDPR guidance. |
+| NetBird | `services/networking/netbird.md` | Self-hosted WireGuard mesh VPN and worker access. |
+| Tailscale | `services/networking/tailscale.md` | Managed mesh VPN, Serve/Funnel, and secure private access. |
+| OPSEC | `tools/security/opsec.md` | Threat modelling and operational privacy discipline. |
+| Mobile app development | `tools/mobile/app-dev.md` | App planning/build/release workflows. |
+| Mobile app development (Swift) | `tools/mobile/app-dev-swift.md` | Swift/iOS-specific app development guidance. |
+| Legal | `legal.md` | Legal compliance, privacy policy, and GDPR guidance. |
 
-Tier guidance: these related paths are shared framework agents maintained in `.agents/`. Use `custom/` for permanent private variants and `draft/` for R&D or unreviewed patterns; see `tools/build-agent/build-agent.md` for lifecycle rules and `reference/customization.md` for persistence/update behaviour.
+Tier guidance: the agents listed above are shared framework agents maintained in `.agents/`. Use `custom/` for permanent private variants and `draft/` for R&D or unreviewed patterns; see `tools/build-agent/build-agent.md` for lifecycle rules and `reference/customization.md` for persistence/update behaviour.
