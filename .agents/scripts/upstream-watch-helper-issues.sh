@@ -207,7 +207,7 @@ _file_upstream_batch_update_issue() {
 	existing_number=$(gh issue list --repo "$aidevops_slug" --state open \
 		--label "$UPSTREAM_WATCH_LABEL" \
 		--search 'in:title "upstream: batch"' \
-		--paginate \
+		--limit 1000 \
 		--json number --jq '.[0].number // empty') || existing_number=""
 
 	local sig_footer=""
@@ -384,12 +384,12 @@ _file_upstream_update_issue() {
 
 	# --- Dedup: check for existing open issue ---
 	# Quote the search term to handle slugs/names with special characters or spaces.
-	# Use --paginate to ensure all results are retrieved (avoids missed dedup on busy repos).
+	# Use a high limit because `gh issue list` does not support `--paginate`.
 	local existing_number=""
 	existing_number=$(gh issue list --repo "$aidevops_slug" --state open \
 		--label "$UPSTREAM_WATCH_LABEL" \
 		--search "in:title \"upstream: ${slug_or_name}\"" \
-		--paginate \
+		--limit 1000 \
 		--json number --jq '.[0].number // empty') || existing_number=""
 
 	# Extract relevance, affects, and upstream URL from config entry
@@ -488,12 +488,12 @@ _close_upstream_update_issue() {
 
 	# Find matching open issue.
 	# Quote the search term to handle slugs/names with special characters or spaces.
-	# Use --paginate to ensure all results are retrieved.
+	# Use a high limit because `gh issue list` does not support `--paginate`.
 	local issue_number=""
 	issue_number=$(gh issue list --repo "$aidevops_slug" --state open \
 		--label "$UPSTREAM_WATCH_LABEL" \
 		--search "in:title \"upstream: ${slug_or_name}\"" \
-		--paginate \
+		--limit 1000 \
 		--json number --jq '.[0].number // empty') || issue_number=""
 
 	if [[ -z "$issue_number" ]]; then

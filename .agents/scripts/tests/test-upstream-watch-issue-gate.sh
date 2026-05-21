@@ -50,9 +50,11 @@ export YELLOW="" BLUE="" GREEN="" NC=""
 
 GH_CREATE_CALLS="${TMP}/gh_create_calls.log"
 GH_EDIT_CALLS="${TMP}/gh_edit_calls.log"
+GH_ISSUE_LIST_CALLS="${TMP}/gh_issue_list_calls.log"
 GH_WARNINGS="${TMP}/warnings.log"
 : >"$GH_CREATE_CALLS"
 : >"$GH_EDIT_CALLS"
+: >"$GH_ISSUE_LIST_CALLS"
 : >"$GH_WARNINGS"
 
 _log_warn() { printf '%s\n' "$*" >>"$GH_WARNINGS"; return 0; }
@@ -71,6 +73,7 @@ gh() {
 		return 0
 	fi
 	if [[ "$1" == "issue" && "${2:-}" == "list" ]]; then
+		printf '%s\n' "$*" >>"$GH_ISSUE_LIST_CALLS"
 		return 0
 	fi
 	return 0
@@ -150,6 +153,14 @@ else
 	ok=0
 fi
 check "$ok" "unauthorized batch writes local report without public issue" "create_count=${create_count} reports=${before_reports}->${after_reports}"
+
+# Test 5: issue discovery uses gh's supported --limit flag, not unsupported --paginate.
+if grep -q -- '--paginate' "$GH_ISSUE_LIST_CALLS"; then
+	ok=0
+else
+	ok=1
+fi
+check "$ok" "upstream-watch issue list avoids unsupported gh --paginate flag" "calls=$(wc -l <"$GH_ISSUE_LIST_CALLS" | tr -d '[:space:]')"
 
 if [[ "$FAIL" -gt 0 ]]; then
 	printf '%s test(s) failed, %s passed\n' "$FAIL" "$PASS" >&2
