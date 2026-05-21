@@ -2406,9 +2406,9 @@
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "at": "2026-05-19T13:23:48Z",
-      "hash": "5ae7b5f9d254b8342b764825b34cb1a382ae12f7",
-      "passes": 8,
+      "at": "2026-05-21T16:23:49Z",
+      "hash": "44079a6f211b3f019233e6f5b1606b688d528706",
+      "passes": 9,
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-05-14T21:35:15Z",
-      "hash": "e1d4befe7a5549f045993a05a923cfb71729d37c",
-      "passes": 40,
+      "at": "2026-05-21T16:23:55Z",
+      "hash": "65e8b2edadb322f5b844a5cf52787ad08db22f53",
+      "passes": 41,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-21T13:44:48Z",
-      "hash": "084512bd69858d211d4e1fa9a47455895e4d2f30",
-      "passes": 186,
+      "at": "2026-05-21T16:29:53Z",
+      "hash": "79f661e3a99c983d7382c90210d9271b93f37e88",
+      "passes": 187,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-21T13:44:50Z",
-      "hash": "6ae3aba1d010455062293d04a01777e6f88b3272",
-      "passes": 181,
+      "at": "2026-05-21T16:29:54Z",
+      "hash": "f8b377d68527c48ceb2bad8d30a2a5be5d617601",
+      "passes": 182,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7768,10 +7768,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "bc91141b6c26036f2783ca3ba5654608422b8a21",
-      "at": "2026-05-20T17:38:50Z",
+      "hash": "773332188e9756f88d30f44cdbf3d7245ddaeee7",
+      "at": "2026-05-21T16:23:52Z",
       "pr": 20617,
-      "passes": 23
+      "passes": 24
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "f851df78931bea90695c3a46e9c95f98a6c03d9a",
@@ -7810,10 +7810,10 @@
       "passes": 4
     },
     ".agents/scripts/pre-dispatch-validator-helper.sh": {
-      "hash": "ffe33544cb207a86cf39095e80865e83f80f4c73",
-      "at": "2026-05-08T04:29:04Z",
+      "hash": "20e249ca0b1f3793203da5db8c6459faaf511bf7",
+      "at": "2026-05-21T16:23:47Z",
       "pr": 20875,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/commands/dispatch-issue.md": {
       "hash": "a0553244073a4fcd6105fcba6616e4ec66015925",
