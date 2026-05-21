@@ -227,6 +227,12 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\
 			extended-extension)
 				printf 'quality debt kotlin coroutine MainActivity.kt\n'
 				;;
+			review-followup-label)
+				printf 'review followup changelog fixed \`CHANGELOG.md:18\`\n'
+				;;
+			source-review-scanner-label)
+				printf 'review scanner changelog fixed \`CHANGELOG.md:18\`\n'
+				;;
 			whole-word)
 				printf 'quality debt rate cache worker.sh\n'
 				;;
@@ -240,7 +246,17 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\
 		esac
 		exit 0
 	fi
-	printf '2026-05-07T00:00:00Z\tquality-debt supersession test\tquality-debt,source:review-feedback\n'
+	case "${mode}" in
+		review-followup-label)
+			printf '2026-05-07T00:00:00Z\tReview followup supersession test\treview-followup,source:review-scanner\n'
+			;;
+		source-review-scanner-label)
+			printf '2026-05-07T00:00:00Z\tReview followup supersession test\tsource:review-scanner\n'
+			;;
+		*)
+			printf '2026-05-07T00:00:00Z\tquality-debt supersession test\tquality-debt,source:review-feedback\n'
+			;;
+	esac
 	exit 0
 fi
 
@@ -256,6 +272,13 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\$args" | grep -qE 'pulls/99/files';
 				printf 'app/src/MainActivity.kt\n'
 			else
 				printf 'app/src/MainActivity.kt\nfix kotlin coroutine reliability\n'
+			fi
+			;;
+		review-followup-label|source-review-scanner-label)
+			if printf '%s' "\$args" | grep -qF '.[].filename'; then
+				printf 'CHANGELOG.md\n'
+			else
+				printf 'CHANGELOG.md\nmove changelog entries to fixed section\n'
 			fi
 			;;
 		whole-word)
@@ -284,6 +307,9 @@ if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/pulls/99\$'; t
 	case "${mode}" in
 		extended-extension)
 			printf '2026-05-08T00:00:00Z\tfix kotlin coroutine reliability\tUpdates mobile handling\n'
+			;;
+		review-followup-label|source-review-scanner-label)
+			printf '2026-05-08T00:00:00Z\tdocs: clean up changelog duplicates\tMoves changelog fixes under Fixed. Refs #50 #51\n'
 			;;
 		whole-word)
 			printf '2026-05-08T00:00:00Z\tgenerate cache output\tUpdates cache handling\n'
@@ -468,6 +494,40 @@ test_review_feedback_preserves_version_directory_paths() {
 	return 0
 }
 
+test_review_followup_label_enters_supersession_scope() {
+	setup_test_env
+	create_gh_stub_review_feedback "review-followup-label"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "50" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "review_followup label enters supersession scope" 0
+	else
+		print_result "review_followup label enters supersession scope" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+test_source_review_scanner_label_enters_supersession_scope() {
+	setup_test_env
+	create_gh_stub_review_feedback "source-review-scanner-label"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "51" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "source_review_scanner label enters supersession scope" 0
+	else
+		print_result "source_review_scanner label enters supersession scope" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -488,6 +548,8 @@ main() {
 	test_review_feedback_extended_extensions
 	test_review_feedback_keyword_scoring_whole_words
 	test_review_feedback_preserves_version_directory_paths
+	test_review_followup_label_enters_supersession_scope
+	test_source_review_scanner_label_enters_supersession_scope
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 

@@ -642,17 +642,17 @@ _rf_issue_in_supersession_scope() {
 
 	labels_lc=$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')
 	case ",${labels_lc}," in
-	*",source:review-feedback,"* | *",quality-debt,"*)
+	*",source:review-feedback,"* | *",quality-debt,"* | *",review-followup,"* | *",source:review-scanner,"*)
 		return 0
 		;;
 	esac
 
-	if printf '%s' "$issue_body" | grep -qF '<!-- source:review-feedback -->'; then
+	if printf '%s' "$issue_body" | grep -Eq '<!-- (source:review-feedback|source:review-scanner|review-followup:PR)'; then
 		return 0
 	fi
 
 	title_lc=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
-	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback)([^[:alnum:]-]|$)'; then
+	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback|review-followup|review followup)([^[:alnum:]-]|$)'; then
 		return 0
 	fi
 
