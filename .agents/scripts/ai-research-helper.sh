@@ -337,12 +337,8 @@ call_ai() {
 			call_opencode "$prompt" "$model" "$max_tokens"
 			return $?
 		fi
-		if resolve_provider_credential anthropic >/dev/null 2>&1; then
-			call_anthropic "$prompt" "$model" "$max_tokens"
-			return $?
-		fi
-		log_error "No AI research provider available (Anthropic credentials or OpenCode runtime)"
-		return 2
+		call_anthropic "$prompt" "$model" "$max_tokens"
+		return $?
 		;;
 	*)
 		log_error "Unsupported provider: $provider"
