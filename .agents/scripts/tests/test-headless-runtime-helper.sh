@@ -828,7 +828,7 @@ EOF
 			return 0
 		fi
 		print_result "canary pins vanilla agent with isolated plugin config" 1 \
-			"Expected benign prompt, no --pure, --agent build, headless env, plugin config, and preserved OpenCode config env; got args: ${args}; env: ${env_output}"
+			"Expected benign prompt, no --pure, but with --agent build, headless env, plugin config, and preserved OpenCode config env; got args: ${args}; env: ${env_output}"
 		return 0
 	fi
 
