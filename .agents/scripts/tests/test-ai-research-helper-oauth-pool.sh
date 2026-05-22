@@ -4,7 +4,7 @@
 #
 # Regression test for GH#23594:
 # - ai-research-helper.sh falls back to OAuth pool credentials when static
-#   Anthropic key sources miss.
+#   Anthropic key sources miss and OpenCode runtime fallback is available.
 # - pulse-fix-the-fixer-detector.sh treats ai-research-helper rc=2 as an auth
 #   class signal even when stderr prose does not match API error substrings.
 
@@ -46,6 +46,7 @@ teardown_sandbox() {
 }
 
 write_pool() {
+	local provider="anthropic"
 	local token="$1"
 	local expires_ms="$2"
 	local status="${3:-active}"
@@ -53,7 +54,7 @@ write_pool() {
 	local pool_file="${HOME}/.aidevops/oauth-pool.json"
 	cat >"$pool_file" <<EOF
 {
-  "anthropic": [
+  "${provider}": [
     {
       "email": "test@example.com",
       "access": "${token}",
@@ -121,6 +122,31 @@ test_oauth_pool_fallbacks() {
 	write_pool "$pool_token" "$future_ms"
 	probe_resolver "$env_token"
 	assert_probe "env var wins over OAuth pool" 0 "$env_token"
+
+	return 0
+}
+
+test_auto_provider_falls_back_to_opencode() {
+	rm -f "${HOME}/.aidevops/oauth-pool.json"
+	cat >"${TEST_ROOT}/bin/opencode" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' '> Build+ · gpt-5.4-mini'
+printf '%s\n' 'VERDICT: YES - opencode fallback works'
+exit 0
+STUB
+	chmod +x "${TEST_ROOT}/bin/opencode"
+
+	local output rc
+	set +e
+	output=$("${REPO_ROOT}/.agents/scripts/ai-research-helper.sh" --prompt "ping" --max-tokens 5 2>"${TEST_ROOT}/auto-provider.err")
+	rc=$?
+	set -e
+	if [[ "$rc" -eq 0 && "$output" == "VERDICT: YES - opencode fallback works" ]]; then
+		record_result "auto provider falls back to OpenCode runtime when Anthropic is absent" 0
+		return 0
+	fi
+	record_result "auto provider falls back to OpenCode runtime when Anthropic is absent" 1 \
+		"rc=${rc} output=${output} err=$(tr '\n' ' ' <"${TEST_ROOT}/auto-provider.err")"
 	return 0
 }
 
@@ -177,6 +203,7 @@ main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
 	test_oauth_pool_fallbacks
+	test_auto_provider_falls_back_to_opencode
 	test_detector_rc2_records_cooldown
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
