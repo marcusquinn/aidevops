@@ -55,7 +55,7 @@ _fetch_queue_metrics() {
 		# PASS/FAIL/PENDING via REST check-suites (separate budget pool).
 		local pr_json pr_qm_err
 		pr_qm_err=$(mktemp)
-		pr_json=$(gh_pr_list --repo "$slug" --state open --json number,reviewDecision,headRefOid --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
+		pr_json=$(pulse_pr_list_get --repo "$slug" --state open --json number,reviewDecision,headRefOid --limit "$PULSE_RUNNABLE_PR_LIMIT" 2>"$pr_qm_err") || pr_json="[]"
 		if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 			local _pr_qm_err_msg
 			_pr_qm_err_msg=$(cat "$pr_qm_err" 2>/dev/null || echo "unknown error")

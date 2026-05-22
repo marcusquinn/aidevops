@@ -969,6 +969,13 @@ _dlw_exec_detached() {
 	local worker_log="$1"
 	local issue_number="$2"
 	shift 2
+	local -a worker_command=(
+		env
+		AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1
+		AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
+		PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1
+		"$@"
+	)
 
 	# t2814 (Phase 3, fix #3): Close inherited file descriptors >2 before
 	# exec to prevent FD leak from the pulse parent into the worker. The
@@ -986,7 +993,7 @@ _dlw_exec_detached() {
 
 	local worker_pid
 	if _dlw_systemd_user_service_available; then
-		if worker_pid=$(_dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "$@"); then
+		if worker_pid=$(_dlw_exec_systemd_user_service "aidevops-worker" "$worker_log" "$issue_number" "${worker_command[@]}"); then
 			echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid launched via systemd-run transient user service outside pulse cgroup" >>"$LOGFILE"
 		else
 			echo "[dispatch_worker_launch] WARNING: systemd-run worker launch failed for #${issue_number}; falling back to setsid/nohup" >>"$LOGFILE"
@@ -994,7 +1001,7 @@ _dlw_exec_detached() {
 	fi
 
 	if [[ -z "${worker_pid:-}" ]] && command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		setsid nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 		# Log the detached PGID for diagnostics (should differ from pulse PGID)
 		local worker_pgid="" pulse_pgid=""
@@ -1005,7 +1012,7 @@ _dlw_exec_detached() {
 		echo "[dispatch_worker_launch] Issue #${issue_number}: worker PID=$worker_pid PGID=$worker_pgid (setsid detached from pulse PGID=$pulse_pgid; FDs 3-9 closed for t2814)" >>"$LOGFILE"
 	elif [[ -z "${worker_pid:-}" ]]; then
 		echo "[dispatch_worker_launch] ERROR: setsid missing — worker isolation broken; worker shares pulse PGID and will be killed on next pulse restart. Run: aidevops update (GH#21102)" >>"$LOGFILE"
-		nohup "$@" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
+		nohup "${worker_command[@]}" </dev/null >>"$worker_log" 2>&1 3>&- 4>&- 5>&- 6>&- 7>&- 8>&- 9>&- &
 		worker_pid="$!"
 	fi
 
