@@ -33,6 +33,15 @@ fi
 
 # --- Functions ---
 
+RULESET_ENFORCEMENT_ACTIVE="active"
+RULESET_DEFAULT_BRANCH_TOKEN="~DEFAULT_BRANCH"
+RULESET_ALL_BRANCHES_TOKEN="~ALL"
+RULESET_ALL_HEADS_PATTERN="refs/heads/*"
+GH_CLI_NOT_AVAILABLE_MSG="gh CLI not available"
+NO_GITHUB_REMOTE_MSG="No GitHub remote"
+NO_REQUIRED_STATUS_CHECKS_MSG="No required status checks"
+SYNC_PAT_NEED_NOT_NEEDED="not_needed"
+
 # _repo_is_public_admin <slug>
 # Returns 0 only when GitHub confirms this operator has admin rights on a
 # public repository. API/auth failures are fail-open for audit availability: the
@@ -48,7 +57,7 @@ _repo_is_public_admin() {
 	is_private=$(echo "$repo_json" | jq -r 'if has("private") then .private else true end' 2>/dev/null) || return 1
 	has_admin=$(echo "$repo_json" | jq -r '.permissions.admin // false' 2>/dev/null) || return 1
 
-	[[ "$is_private" == "false" && "$has_admin" == "true" ]]
+	[[ "$is_private" == false && "$has_admin" == "true" ]]
 	return $?
 }
 
@@ -72,43 +81,26 @@ _classic_required_checks_count() {
 _rulesets_pr_gating_state() {
 	local slug="$1"
 	local default_branch="$2"
+	local ruleset_details="${3:-}"
 
-	local rulesets_json
-	rulesets_json=$(gh api "repos/${slug}/rulesets" 2>/dev/null) || return 1
-	[[ -z "$rulesets_json" || "$rulesets_json" == "[]" ]] && return 1
-
-	local active_ids
-	active_ids=$(echo "$rulesets_json" | jq -r '.[] | select(.enforcement == "active") | .id' 2>/dev/null) || return 1
-	[[ -z "$active_ids" ]] && return 1
+	if [[ "$#" -lt 3 ]]; then
+		ruleset_details=$(_default_branch_ruleset_details "$slug" "$default_branch") || return 1
+	fi
+	[[ -z "$ruleset_details" ]] && return 1
 
 	local protected=0
 	local reviews=0
 	local checks=0
 	local bypass=0
-	local id detail include_patterns pattern matches_default
-	while IFS= read -r id; do
-		[[ -z "$id" ]] && continue
-		detail=$(gh api "repos/${slug}/rulesets/${id}" 2>/dev/null) || continue
-		include_patterns=$(echo "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || continue
-
-		matches_default=0
-		while IFS= read -r pattern; do
-			[[ -z "$pattern" ]] && continue
-			case "$pattern" in
-			"refs/heads/${default_branch}" | "~DEFAULT_BRANCH" | "~ALL" | "refs/heads/*")
-				matches_default=1
-				break
-				;;
-			esac
-		done <<<"$include_patterns"
-
-		[[ "$matches_default" -eq 1 ]] || continue
+	local detail
+	while IFS= read -r detail; do
+		[[ -z "$detail" ]] && continue
 		protected=1
 
 		local approval_count status_count bypass_count
-		approval_count=$(echo "$detail" | jq -r '[.rules[]? | select(.type == "pull_request") | (.parameters.required_approving_review_count // 0)] | max // 0' 2>/dev/null) || approval_count="0"
-		status_count=$(echo "$detail" | jq -r '[.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // []) | length] | add // 0' 2>/dev/null) || status_count="0"
-		bypass_count=$(echo "$detail" | jq -r '(.bypass_actors // []) | length' 2>/dev/null) || bypass_count="0"
+		approval_count=$(jq -r '[.rules[]? | select(.type == "pull_request") | (.parameters.required_approving_review_count // 0)] | max // 0' <<<"$detail" 2>/dev/null) || approval_count="0"
+		status_count=$(jq -r '[.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // []) | length] | add // 0' <<<"$detail" 2>/dev/null) || status_count="0"
+		bypass_count=$(jq -r '(.bypass_actors // []) | length' <<<"$detail" 2>/dev/null) || bypass_count="0"
 
 		[[ "$approval_count" =~ ^[0-9]+$ ]] || approval_count="0"
 		[[ "$status_count" =~ ^[0-9]+$ ]] || status_count="0"
@@ -117,7 +109,7 @@ _rulesets_pr_gating_state() {
 		[[ "$approval_count" -gt 0 ]] && reviews=1
 		[[ "$status_count" -gt 0 ]] && checks=1
 		[[ "$bypass_count" -gt 0 ]] && bypass=1
-	done <<<"$active_ids"
+	done <<<"$ruleset_details"
 
 	printf '%s\t%s\t%s\t%s\n' "$protected" "$reviews" "$checks" "$bypass"
 	return 0
@@ -214,7 +206,7 @@ check_workflow_security() {
 
 	done <<<"$workflow_files"
 
-	if [[ "$unsafe_found" == "false" ]]; then
+	if [[ "$unsafe_found" == false ]]; then
 		print_pass "No critical workflow security issues found"
 		add_finding "$SEVERITY_PASS" "$CAT_WORKFLOWS" "No critical issues"
 	fi
@@ -222,14 +214,20 @@ check_workflow_security() {
 	return 0
 }
 
-# _report_rulesets_branch_protection <slug> <default-branch> <public-admin-flag>
+# _report_rulesets_branch_protection <slug> <default-branch> <public-admin-flag> [ruleset-details]
 _report_rulesets_branch_protection() {
 	local slug="$1"
 	local default_branch="$2"
 	local public_admin="$3"
+	local ruleset_details="${4:-}"
 
 	local rulesets_state protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass
-	if rulesets_state=$(_rulesets_pr_gating_state "$slug" "$default_branch"); then
+	if [[ "$#" -ge 4 ]]; then
+		rulesets_state=$(_rulesets_pr_gating_state "$slug" "$default_branch" "$ruleset_details") || true
+	else
+		rulesets_state=$(_rulesets_pr_gating_state "$slug" "$default_branch") || true
+	fi
+	if [[ -n "$rulesets_state" ]]; then
 		IFS=$'\t' read -r protected_by_rulesets rulesets_reviews rulesets_checks rulesets_bypass <<<"$rulesets_state"
 	else
 		protected_by_rulesets=0
@@ -313,7 +311,7 @@ _report_classic_branch_protection() {
 	local required_reviews required_checks enforce_admins
 	required_reviews=$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0' 2>/dev/null) || required_reviews="0"
 	required_checks=$(_classic_required_checks_count "$protection_json")
-	enforce_admins=$(echo "$protection_json" | jq -r '.enforce_admins.enabled // false' 2>/dev/null) || enforce_admins="false"
+	enforce_admins=$(echo "$protection_json" | jq -r '.enforce_admins.enabled // false' 2>/dev/null) || enforce_admins=false
 
 	_report_classic_review_requirement "$default_branch" "$public_admin" "$required_reviews"
 	_report_classic_check_requirement "$default_branch" "$public_admin" "$required_checks"
@@ -348,11 +346,11 @@ _report_classic_check_requirement() {
 		print_pass "Required status checks configured ($required_checks check(s))"
 		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Status checks configured: $required_checks"
 	elif [[ "$public_admin" -eq 1 ]]; then
-		print_crit "No required status checks on public ADMIN repo default branch '$default_branch'"
-		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No required status checks"
+		print_crit "$NO_REQUIRED_STATUS_CHECKS_MSG on public ADMIN repo default branch '$default_branch'"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "$NO_REQUIRED_STATUS_CHECKS_MSG"
 	else
-		print_warn "No required status checks on $default_branch"
-		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "No required status checks"
+		print_warn "$NO_REQUIRED_STATUS_CHECKS_MSG on $default_branch"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "$NO_REQUIRED_STATUS_CHECKS_MSG"
 	fi
 	return 0
 }
@@ -377,19 +375,20 @@ _report_classic_admin_enforcement() {
 # Phase 2: Check branch protection
 check_branch_protection() {
 	local repo_path="$1"
+	local ruleset_details="${2:-}"
 
 	print_header "Phase 2: Branch Protection"
 
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed — cannot check branch protection"
-		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "gh CLI not available"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "$GH_CLI_NOT_AVAILABLE_MSG"
 		return 0
 	fi
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
-		print_skip "No GitHub remote — branch protection check skipped"
-		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "No GitHub remote"
+		print_skip "$NO_GITHUB_REMOTE_MSG — branch protection check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "$NO_GITHUB_REMOTE_MSG"
 		return 0
 	fi
 
@@ -404,7 +403,11 @@ check_branch_protection() {
 
 	protection_json=$(gh api "repos/$slug/branches/$default_branch/protection" 2>/dev/null) || true
 	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
-		_report_rulesets_branch_protection "$slug" "$default_branch" "$public_admin"
+		if [[ "$#" -ge 2 ]]; then
+			_report_rulesets_branch_protection "$slug" "$default_branch" "$public_admin" "$ruleset_details"
+		else
+			_report_rulesets_branch_protection "$slug" "$default_branch" "$public_admin"
+		fi
 		return 0
 	fi
 
@@ -455,6 +458,142 @@ check_review_bot_gate() {
 			add_finding "$SEVERITY_WARNING" "$CAT_REVIEW_BOT_GATE" "Not configured as required status check"
 			print_info "  Add 'review-bot-gate' to branch protection required checks"
 		fi
+	fi
+
+	return 0
+}
+
+_default_branch_for_repo() {
+	local repo_path="$1"
+	local default_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || true
+	default_branch="${default_branch:-main}"
+	printf '%s\n' "$default_branch"
+	return 0
+}
+
+_ruleset_targets_default_branch() {
+	local detail="$1"
+	local default_branch="$2"
+
+	local include_patterns pattern
+	include_patterns=$(jq -r '.conditions.ref_name.include // [] | .[]' <<<"$detail" 2>/dev/null) || return 1
+
+	while IFS= read -r pattern; do
+		[[ -z "$pattern" ]] && continue
+		case "$pattern" in
+		"refs/heads/${default_branch}" | "$RULESET_DEFAULT_BRANCH_TOKEN" | "$RULESET_ALL_BRANCHES_TOKEN" | "$RULESET_ALL_HEADS_PATTERN")
+			return 0
+			;;
+		esac
+	done <<<"$include_patterns"
+
+	return 1
+}
+
+_default_branch_ruleset_details() {
+	local slug="$1"
+	local default_branch="$2"
+	local rulesets_json="${3:-}"
+
+	if [[ -z "$rulesets_json" ]]; then
+		rulesets_json=$(gh api "repos/${slug}/rulesets" 2>/dev/null) || return 1
+	fi
+	[[ -z "$rulesets_json" || "$rulesets_json" == "[]" ]] && return 1
+
+	local active_ids
+	active_ids=$(jq -r --arg active "$RULESET_ENFORCEMENT_ACTIVE" '.[] | select(.enforcement == $active) | .id' <<<"$rulesets_json" 2>/dev/null) || return 1
+	[[ -z "$active_ids" ]] && return 1
+
+	local id detail
+	while IFS= read -r id; do
+		[[ -z "$id" ]] && continue
+		detail=$(gh api "repos/${slug}/rulesets/${id}" 2>/dev/null) || continue
+		_ruleset_targets_default_branch "$detail" "$default_branch" || continue
+		jq -c '.' <<<"$detail" 2>/dev/null || true
+	done <<<"$active_ids"
+	return 0
+}
+
+_classic_required_check_contexts() {
+	local protection_json="$1"
+	jq -r '(.required_status_checks.contexts // [])[], (.required_status_checks.checks // [])[].context? // empty' <<<"$protection_json" 2>/dev/null || true
+	return 0
+}
+
+_rulesets_required_check_contexts() {
+	local slug="$1"
+	local default_branch="$2"
+	local ruleset_details="${3:-}"
+
+	if [[ "$#" -lt 3 ]]; then
+		ruleset_details=$(_default_branch_ruleset_details "$slug" "$default_branch") || return 0
+	fi
+	[[ -z "$ruleset_details" ]] && return 0
+
+	local detail
+	while IFS= read -r detail; do
+		[[ -z "$detail" ]] && continue
+		jq -r '.rules[]? | select(.type == "required_status_checks") | (.parameters.required_status_checks // [])[] | (.context // .name // empty)' <<<"$detail" 2>/dev/null || true
+	done <<<"$ruleset_details"
+	return 0
+}
+
+_required_check_present() {
+	local contexts="$1"
+	local required_context="$2"
+	printf '%s\n' "$contexts" | grep -qxF "$required_context" 2>/dev/null
+	return $?
+}
+
+# Phase 3.5: Check linked-issue-check workflow and required status
+check_linked_issue_gate() {
+	local repo_path="$1"
+	local ruleset_details="${2:-}"
+
+	print_header "Phase 3.5: Linked-Issue PR Check"
+
+	local gate_workflow="$repo_path/.github/workflows/linked-issue-check.yml"
+	if [[ -f "$gate_workflow" ]]; then
+		print_pass "linked-issue-check.yml workflow present"
+		add_finding "$SEVERITY_PASS" "$CAT_LINKED_ISSUE_GATE" "Workflow file present"
+	else
+		print_warn "Missing linked-issue-check.yml workflow — PRs may merge without issue references"
+		add_finding "$SEVERITY_WARNING" "$CAT_LINKED_ISSUE_GATE" "linked-issue-check.yml missing"
+		return 0
+	fi
+
+	if ! command -v gh &>/dev/null; then
+		print_skip "GitHub CLI unavailable — cannot check linked-issue required status"
+		add_finding "$SEVERITY_INFO" "$CAT_LINKED_ISSUE_GATE" "GitHub CLI unavailable for linked-issue check"
+		return 0
+	fi
+
+	local slug
+	if ! slug=$(resolve_slug "$repo_path"); then
+		print_skip "Linked-issue required status check skipped: GitHub remote unavailable"
+		add_finding "$SEVERITY_INFO" "$CAT_LINKED_ISSUE_GATE" "GitHub remote unavailable for linked-issue check"
+		return 0
+	fi
+
+	local default_branch protection_json check_contexts
+	default_branch=$(_default_branch_for_repo "$repo_path")
+	protection_json=$(gh api "repos/$slug/branches/$default_branch/protection" 2>/dev/null) || true
+	check_contexts="$(_classic_required_check_contexts "$protection_json")"
+	check_contexts+=$'\n'
+	if [[ "$#" -ge 2 ]]; then
+		check_contexts+="$(_rulesets_required_check_contexts "$slug" "$default_branch" "$ruleset_details")"
+	else
+		check_contexts+="$(_rulesets_required_check_contexts "$slug" "$default_branch")"
+	fi
+
+	if _required_check_present "$check_contexts" "linked-issue-check"; then
+		print_pass "linked-issue-check is a required status check"
+		add_finding "$SEVERITY_PASS" "$CAT_LINKED_ISSUE_GATE" "Required status check configured"
+	else
+		print_warn "linked-issue-check workflow exists but is not required by branch protection or rulesets"
+		add_finding "$SEVERITY_WARNING" "$CAT_LINKED_ISSUE_GATE" "linked-issue-check not required"
+		print_info "  Add 'linked-issue-check' to branch protection or default-branch rulesets"
 	fi
 
 	return 0
@@ -599,7 +738,7 @@ check_dependencies() {
 	_check_pip_deps "$repo_path"
 	_check_cargo_deps "$repo_path"
 
-	if [[ "$has_deps" == "false" ]]; then
+	if [[ "$has_deps" == false ]]; then
 		print_skip "No dependency manifests found (package.json, requirements.txt, Cargo.toml)"
 		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "No dependency manifests found"
 	fi
@@ -615,14 +754,14 @@ check_collaborators() {
 
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed"
-		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "gh CLI not available"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "$GH_CLI_NOT_AVAILABLE_MSG"
 		return 0
 	fi
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
-		print_skip "No GitHub remote"
-		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "No GitHub remote"
+		print_skip "$NO_GITHUB_REMOTE_MSG"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "$NO_GITHUB_REMOTE_MSG"
 		return 0
 	fi
 
@@ -777,7 +916,7 @@ ADVISORY_EOF
 # (the modern replacement for classic branch-protection rules, see t2806).
 # Returns 0 if any active ruleset targets the default branch with a
 # meaningful protection rule; 1 otherwise (including API errors).
-# Usage: _branch_is_rulesets_protected <slug> <default_branch>
+# Usage: _branch_is_rulesets_protected <slug> <default_branch> [ruleset-details]
 #
 # Fail-open: empty/errored rulesets API returns 1 (not protected). A
 # false negative here loses the advisory; a false positive just results
@@ -786,48 +925,27 @@ ADVISORY_EOF
 _branch_is_rulesets_protected() {
 	local slug="$1"
 	local default_branch="$2"
+	local ruleset_details="${3:-}"
 
-	local rulesets_json
-	rulesets_json=$(gh api "repos/${slug}/rulesets" 2>/dev/null) || return 1
-	[[ -z "$rulesets_json" || "$rulesets_json" == "[]" ]] && return 1
+	if [[ "$#" -lt 3 ]]; then
+		ruleset_details=$(_default_branch_ruleset_details "$slug" "$default_branch") || return 1
+	fi
+	[[ -z "$ruleset_details" ]] && return 1
 
-	# Extract active ruleset IDs (enforcement == "active")
-	local active_ids
-	active_ids=$(echo "$rulesets_json" | jq -r '.[] | select(.enforcement == "active") | .id' 2>/dev/null) || return 1
-	[[ -z "$active_ids" ]] && return 1
-
-	local id detail include_patterns rule_types
-	while IFS= read -r id; do
-		[[ -z "$id" ]] && continue
-		detail=$(gh api "repos/${slug}/rulesets/${id}" 2>/dev/null) || continue
-
-		# Include patterns can be specific refs ("refs/heads/main") or
-		# GitHub wildcards ("~DEFAULT_BRANCH", "~ALL").
-		include_patterns=$(echo "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || continue
-
-		local matches_default="no"
-		while IFS= read -r pattern; do
-			[[ -z "$pattern" ]] && continue
-			case "$pattern" in
-			"refs/heads/${default_branch}" | "~DEFAULT_BRANCH" | "~ALL" | "refs/heads/*")
-				matches_default="yes"
-				break
-				;;
-			esac
-		done <<<"$include_patterns"
-
-		[[ "$matches_default" == "yes" ]] || continue
+	local detail rule_types
+	while IFS= read -r detail; do
+		[[ -z "$detail" ]] && continue
 
 		# Protection signals: pull_request review requirement OR
 		# required_status_checks. Either blocks direct bot pushes via
 		# the PR-required or checks-required gate, and is a strong
 		# signal that SYNC_PAT is needed downstream (t2449 author
 		# association chain, t2806).
-		rule_types=$(echo "$detail" | jq -r '.rules[].type' 2>/dev/null) || continue
-		if echo "$rule_types" | grep -qE '^(pull_request|required_status_checks)$'; then
+		rule_types=$(jq -r '.rules[].type' <<<"$detail" 2>/dev/null) || continue
+		if grep -qE '^(pull_request|required_status_checks)$' <<<"$rule_types"; then
 			return 0
 		fi
-	done <<<"$active_ids"
+	done <<<"$ruleset_details"
 
 	return 1
 }
@@ -842,11 +960,12 @@ _branch_is_rulesets_protected() {
 # lines and the equality check against "not_needed" failed. Using a
 # dedicated global eliminates the capture conflict entirely.
 #
-# Usage: _check_sync_pat_need <repo_path> <slug> <advisory_file>
+# Usage: _check_sync_pat_need <repo_path> <slug> <advisory_file> [ruleset-details]
 _check_sync_pat_need() {
 	local repo_path="$1"
 	local slug="$2"
 	local advisory_file="$3"
+	local ruleset_details="${4:-}"
 
 	SYNC_PAT_NEED_RESULT=""
 
@@ -855,7 +974,7 @@ _check_sync_pat_need() {
 		print_pass "No issue-sync.yml — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No issue-sync.yml in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		SYNC_PAT_NEED_RESULT="not_needed"
+		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
 	fi
 
@@ -873,7 +992,7 @@ _check_sync_pat_need() {
 
 	if [[ -n "$protection_json" && "$protection_json" != *"Not Found"* && "$protection_json" != *"Branch not protected"* ]]; then
 		protected_kind="classic"
-	elif _branch_is_rulesets_protected "$slug" "$default_branch"; then
+	elif { [[ "$#" -ge 4 ]] && _branch_is_rulesets_protected "$slug" "$default_branch" "$ruleset_details"; } || { [[ "$#" -lt 4 ]] && _branch_is_rulesets_protected "$slug" "$default_branch"; }; then
 		# Step 2b: Rulesets-based protection (t2806). Modern repos
 		# return 404 on the classic endpoint but carry rulesets via
 		# /repos/{slug}/rulesets — the legacy detector silently
@@ -886,7 +1005,7 @@ _check_sync_pat_need() {
 		print_pass "No branch protection — SYNC_PAT not needed for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No branch protection in $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		SYNC_PAT_NEED_RESULT="not_needed"
+		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
 	fi
 
@@ -902,7 +1021,7 @@ _check_sync_pat_need() {
 			print_pass "PR reviews not required — SYNC_PAT not needed for $slug"
 			add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "No review requirement in $slug"
 			[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-			SYNC_PAT_NEED_RESULT="not_needed"
+			SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 			return 0
 		fi
 		protection_desc="requiring ${required_reviews} approving review(s)"
@@ -916,7 +1035,7 @@ _check_sync_pat_need() {
 		print_pass "SYNC_PAT is set for $slug"
 		add_finding "$SEVERITY_PASS" "$CAT_SYNC_PAT" "SYNC_PAT set for $slug"
 		[[ -f "$advisory_file" ]] && rm -f "$advisory_file"
-		SYNC_PAT_NEED_RESULT="not_needed"
+		SYNC_PAT_NEED_RESULT="$SYNC_PAT_NEED_NOT_NEEDED"
 		return 0
 	fi
 
@@ -930,13 +1049,14 @@ _check_sync_pat_need() {
 # per-repo advisories via ~/.aidevops/advisories/sync-pat-<slug>.advisory.
 check_sync_pat() {
 	local repo_path="$1"
+	local ruleset_details="${2:-}"
 
 	print_header "Phase 7: SYNC_PAT Detection (issue-sync)"
 
 	# Need gh CLI
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed — cannot check SYNC_PAT"
-		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh CLI not available"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "$GH_CLI_NOT_AVAILABLE_MSG"
 		return 0
 	fi
 
@@ -949,8 +1069,8 @@ check_sync_pat() {
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
-		print_skip "No GitHub remote — SYNC_PAT check skipped"
-		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "No GitHub remote"
+		print_skip "$NO_GITHUB_REMOTE_MSG — SYNC_PAT check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "$NO_GITHUB_REMOTE_MSG"
 		return 0
 	fi
 
@@ -971,9 +1091,13 @@ check_sync_pat() {
 	# Check need via helper. Result is written to SYNC_PAT_NEED_RESULT — NOT
 	# returned via stdout, because `print_pass` / `add_finding` inside the
 	# helper also write to stdout and would pollute a `$()` capture (t2806).
-	_check_sync_pat_need "$repo_path" "$slug" "$advisory_file"
+	if [[ "$#" -ge 2 ]]; then
+		_check_sync_pat_need "$repo_path" "$slug" "$advisory_file" "$ruleset_details"
+	else
+		_check_sync_pat_need "$repo_path" "$slug" "$advisory_file"
+	fi
 
-	if [[ "$SYNC_PAT_NEED_RESULT" == "not_needed" ]]; then
+	if [[ "$SYNC_PAT_NEED_RESULT" == "$SYNC_PAT_NEED_NOT_NEEDED" ]]; then
 		return 0
 	fi
 
@@ -1087,7 +1211,7 @@ check_cross_account_inherit() {
 
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed — cannot check cross-account inherit"
-		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "gh CLI not available (cross-account check)"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "$GH_CLI_NOT_AVAILABLE_MSG (cross-account check)"
 		return 0
 	fi
 
@@ -1099,8 +1223,8 @@ check_cross_account_inherit() {
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
-		print_skip "No GitHub remote — cross-account inherit check skipped"
-		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "No GitHub remote (cross-account check)"
+		print_skip "$NO_GITHUB_REMOTE_MSG — cross-account inherit check skipped"
+		add_finding "$SEVERITY_INFO" "$CAT_SYNC_PAT" "$NO_GITHUB_REMOTE_MSG (cross-account check)"
 		return 0
 	fi
 
@@ -1283,13 +1407,22 @@ run_all_checks() {
 
 	print_info "Repository: $repo_path"
 
+	local slug default_branch ruleset_details
+	if command -v gh &>/dev/null && slug=$(resolve_slug "$repo_path"); then
+		default_branch=$(_default_branch_for_repo "$repo_path")
+		ruleset_details=$(_default_branch_ruleset_details "$slug" "$default_branch") || ruleset_details=""
+	else
+		ruleset_details=""
+	fi
+
 	check_workflow_security "$repo_path"
-	check_branch_protection "$repo_path"
+	check_branch_protection "$repo_path" "$ruleset_details"
 	check_review_bot_gate "$repo_path"
+	check_linked_issue_gate "$repo_path" "$ruleset_details"
 	check_dependencies "$repo_path"
 	check_collaborators "$repo_path"
 	check_repo_security "$repo_path"
-	check_sync_pat "$repo_path"
+	check_sync_pat "$repo_path" "$ruleset_details"
 	check_cross_account_inherit "$repo_path"
 	print_report
 

@@ -762,7 +762,7 @@ test_service_interruption_candidate_uses_separate_path() {
 	return 0
 }
 
-test_canary_uses_isolated_plugin_config_without_pure() {
+test_canary_pins_vanilla_agent_with_isolated_plugin_config() {
 	local canary_root="${TEST_ROOT}/canary-agent"
 	local fake_bin_dir="${canary_root}/bin"
 	local plugin_dir="${canary_root}/plugin path"
@@ -819,20 +819,20 @@ EOF
 		env_output=$(<"$env_file")
 		local expected_plugin_url
 		expected_plugin_url=$(python3 -c 'import pathlib, sys; print(pathlib.Path(sys.argv[1]).absolute().as_uri())' "$plugin_path")
-		if [[ "$args" == *'What is two plus two?'* && "$args" != *'--pure'* && "$args" != *'--agent build'* ]] &&
+		if [[ "$args" == *'What is two plus two?'* && "$args" != *'--pure'* && "$args" == *'--agent build'* ]] &&
 			[[ "$env_output" == *"OPENCODE_BIN=${fake_bin_dir}/opencode"* ]] &&
 			[[ "$env_output" == *"OPENCODE_DB=${canary_root}/opencode.db"* ]] &&
 			[[ "$env_output" == *"AIDEVOPS_HEADLESS=1"* ]] &&
 			[[ "$env_output" == *"$expected_plugin_url"* ]]; then
-			print_result "canary uses isolated plugin config without pure" 0
+			print_result "canary pins vanilla agent with isolated plugin config" 0
 			return 0
 		fi
-		print_result "canary uses isolated plugin config without pure" 1 \
-			"Expected benign prompt, no --pure/--agent build, headless env, plugin config, and preserved OpenCode config env; got args: ${args}; env: ${env_output}"
+		print_result "canary pins vanilla agent with isolated plugin config" 1 \
+			"Expected benign prompt, no --pure, but with --agent build, headless env, plugin config, and preserved OpenCode config env; got args: ${args}; env: ${env_output}"
 		return 0
 	fi
 
-	print_result "canary uses isolated plugin config without pure" 1 \
+	print_result "canary pins vanilla agent with isolated plugin config" 1 \
 		"Canary stub did not run successfully: ${output:-<empty>}"
 	return 0
 }
@@ -1521,7 +1521,7 @@ main() {
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
 	test_service_interruption_candidate_uses_separate_path
-	test_canary_uses_isolated_plugin_config_without_pure
+	test_canary_pins_vanilla_agent_with_isolated_plugin_config
 	test_opencode_session_env_wrapper_strips_session_vars_only
 	test_worker_opencode_exec_paths_strip_session_env
 	test_sandbox_passthrough_scopes_provider_env

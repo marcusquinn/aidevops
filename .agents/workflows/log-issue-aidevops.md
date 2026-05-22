@@ -22,6 +22,12 @@ Log an issue with the aidevops framework to GitHub.
 
 All issues from non-collaborators are gated behind `needs-maintainer-review` — a maintainer must approve before the pipeline picks them up. This command produces higher-quality reports than the web form because it gathers diagnostics, checks duplicates, and validates before submission.
 
+When the created issue leads to a follow-up PR, reference that issue in the PR
+body with an accepted keyword: `For #NNN` or `Ref #NNN` for parent/non-closing
+work, and `Resolves #NNN`, `Fixes #NNN`, or `Closes #NNN` for leaf fixes. The
+repository `linked-issue-check` blocks PRs that mention an issue without one of
+these keywords.
+
 ## Before Composing
 
 **Enumerate every manual workaround you applied in the current session.** Each is a candidate fix for a systemic problem:

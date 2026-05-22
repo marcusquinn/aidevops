@@ -10,6 +10,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.28] - 2026-05-22
+
+### Changed
+
+- clarify headless canary expectation (#23972)
+- harden review source PR extraction (#23973)
+- reuse ruleset data in posture checks (#23974)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- streamline AI research auto fallback by resolving Anthropic credentials once (#23969)
+
+## [3.17.27] - 2026-05-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pin canary to vanilla opencode agent (#23953)
+- prefer opencode for AI research auto (#23956)
+
+## [3.17.26] - 2026-05-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- respect closed native blockedBy relationships
+- add opencode AI research fallback (#23955)
+- require linked issue PR guidance (#23951)
+
+## [3.17.25] - 2026-05-21
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [3.17.24] - 2026-05-21
+
+### Changed
+
+- Tests: support deployed orphan cleanup layout
+
+## [3.17.23] - 2026-05-21
+
+### Changed
+
+- docs: adopt upstream watch updates (#23946)
+- Maintenance: update simplification state registry
+- require partial parent closeout (#23942)
+
+### Fixed
+
+- fail closed on dispatch claim errors (#23943)
+- expand orphan worktree directory patterns
+- trash orphaned worktree directories
+
 ## [3.17.22] - 2026-05-21
 
 ### Fixed
@@ -13568,7 +13632,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.29.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v3.17.28...HEAD
+[3.17.28]: https://github.com/marcusquinn/aidevops/compare/v3.17.27...v3.17.28
+[3.17.27]: https://github.com/marcusquinn/aidevops/compare/v3.17.26...v3.17.27
 [2.29.0]: https://github.com/marcusquinn/aidevops/compare/v2.28.0...v2.29.0
 [2.28.0]: https://github.com/marcusquinn/aidevops/compare/v2.27.4...v2.28.0
 [2.27.4]: https://github.com/marcusquinn/aidevops/compare/v2.27.3...v2.27.4

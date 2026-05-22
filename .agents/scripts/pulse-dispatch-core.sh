@@ -1110,7 +1110,7 @@ _dispatch_dedup_check_layers() {
 	# sub-stage records let us identify which gate dominates the 235s avg.
 	local _dss_t0
 
-	local target_state target_title
+	local target_state="" target_title=""
 	# GH#21717: normalize to uppercase — REST fallback returns lowercase "open"/"closed"
 	# while GraphQL returns enum "OPEN"/"CLOSED". The comparison at line 921 is
 	# case-sensitive, so without normalization every issue appears non-OPEN when
@@ -1149,7 +1149,7 @@ _dispatch_dedup_check_layers() {
 	# registered git worktrees. At that scale, new worktrees risk consuming
 	# tens of GB; stale merged ones should be cleaned before adding more.
 	_dss_t0=$(_ds_now_ns)
-	local _wt_count _wt_max
+	local _wt_count="" _wt_max=""
 	_wt_max="${AIDEVOPS_MAX_WORKTREES:-200}"
 	_wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
 	if [[ -n "$_wt_count" ]] && [[ "$_wt_count" -ge "$_wt_max" ]]; then
@@ -1225,8 +1225,9 @@ _dispatch_dedup_check_layers() {
 	# discovery; helpers retained for diagnostic use. Regression guard:
 	# tests/test-pulse-dispatch-core-t3040-gate-removed.sh.
 
-	# t1927: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
-	# Parses issue body for "blocked-by:tNNN" or "Blocked by #NNN".
+	# t1927/GH#23932: Blocked-by enforcement — skip dispatch if a dependency is unresolved.
+	# Checks GitHub's native blockedBy relationship field first, then falls back
+	# to issue-body markers such as "blocked-by:tNNN" or "Blocked by #NNN".
 	# t2996: body now travels in $issue_meta_json (`,body` was added at the
 	# canonical gh call); extract once and reuse for the consolidation,
 	# large-file, and footprint gates below — eliminating 1-2 extra gh calls
@@ -1234,7 +1235,7 @@ _dispatch_dedup_check_layers() {
 	_dss_t0=$(_ds_now_ns)
 	local _dispatch_issue_body
 	_dispatch_issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || _dispatch_issue_body=""
-	if [[ -n "$_dispatch_issue_body" ]] && is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
+	if is_blocked_by_unresolved "$_dispatch_issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (t1927)" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.blocked_by" "$_dss_t0"
 		return 1
@@ -1488,7 +1489,7 @@ dispatch_with_dedup() {
 	}
 
 	# t3034: per-stage timing instrumentation — capture ceremony overhead.
-	local _ds_ceremony_t0 _ds_t0
+	local _ds_ceremony_t0="" _ds_t0=""
 	_ds_ceremony_t0=$(_ds_now_ns)
 
 	# Hard stop for supervisor/telemetry issues (t1702 pulse guard).
@@ -2035,7 +2036,7 @@ check_terminal_blockers() {
 	local pattern_output
 	pattern_output=$(_match_terminal_blocker_pattern "$all_bodies") || return 1
 
-	local blocker_reason user_action
+	local blocker_reason="" user_action=""
 	blocker_reason=$(echo "$pattern_output" | sed -n '1p')
 	user_action=$(echo "$pattern_output" | sed -n '2p')
 

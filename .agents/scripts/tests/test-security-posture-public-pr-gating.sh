@@ -48,6 +48,8 @@ trap 'rm -rf "$TMP"' EXIT
 
 FAKE_REPO="$TMP/fake-repo"
 mkdir -p "$FAKE_REPO/.git"
+mkdir -p "$FAKE_REPO/.github/workflows"
+touch "$FAKE_REPO/.github/workflows/linked-issue-check.yml"
 
 OUTPUT_LOG="$TMP/output.log"
 FINDINGS_CRITICAL=0
@@ -64,6 +66,8 @@ readonly REPO_PUBLIC_ADMIN='{"private":false,"permissions":{"admin":true}}'
 readonly RULESETS_LIST_ACTIVE='[{"id":1000,"enforcement":"active"}]'
 readonly RULESET_GOOD='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"review-bot-gate"}]}}],"bypass_actors":[]}'
 readonly RULESET_NO_CHECKS='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}}],"bypass_actors":[]}'
+readonly CLASSIC_LINKED_ISSUE='{"required_status_checks":{"contexts":["linked-issue-check"]}}'
+readonly RULESET_LINKED_ISSUE='{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"linked-issue-check"}]}}],"bypass_actors":[]}'
 
 STUB_REPO_JSON="$REPO_PUBLIC_ADMIN"
 STUB_PROTECTION_RESPONSE="$CLASSIC_GOOD"
@@ -158,6 +162,7 @@ SEVERITY_WARNING="warning"
 SEVERITY_INFO="info"
 SEVERITY_PASS="pass"
 CAT_BRANCH_PROTECTION="branch_protection"
+CAT_LINKED_ISSUE_GATE="linked_issue_gate"
 
 reset_state() {
 	FINDINGS_CRITICAL=0
@@ -217,6 +222,23 @@ STUB_RULESETS_LIST="$RULESETS_LIST_ACTIVE"
 STUB_RULESET_DETAIL="$RULESET_NO_CHECKS"
 check_branch_protection "$FAKE_REPO"
 assert_counts "public ADMIN rulesets without checks is critical" 1 0
+
+reset_state
+STUB_PROTECTION_RESPONSE="$CLASSIC_LINKED_ISSUE"
+check_linked_issue_gate "$FAKE_REPO"
+assert_counts "linked-issue-check required via classic protection passes" 0 0
+
+reset_state
+STUB_PROTECTION_RESPONSE=""
+STUB_RULESETS_LIST="$RULESETS_LIST_ACTIVE"
+STUB_RULESET_DETAIL="$RULESET_LINKED_ISSUE"
+check_linked_issue_gate "$FAKE_REPO"
+assert_counts "linked-issue-check required via rulesets passes" 0 0
+
+reset_state
+STUB_PROTECTION_RESPONSE="$CLASSIC_NO_CHECKS"
+check_linked_issue_gate "$FAKE_REPO"
+assert_counts "linked-issue-check workflow not required warns" 0 1
 
 printf '\nRan %d tests, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then

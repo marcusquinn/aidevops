@@ -91,7 +91,9 @@ Score both axes before writing code. Initial packaging is ~25% of effort; SSO, u
 
 **Multi-stage builds**: Only when build toolchain is exotic. Build in upstream image, `COPY --from` artifacts into final `cloudron/base` stage. **Alpine/musl warning**: musl-compiled binaries won't run on `cloudron/base` (Ubuntu/glibc) — always use glibc builder stage.
 
-**Base image contents (Cloudron 9.1.3)**: Ubuntu 24.04.1 LTS, Node.js 24.x (default; 22 LTS at `/usr/local/node-22.14.0`), Python 3.12.3, PHP 8.3.6 (redis/imagick/ldap/gd/mbstring), Nginx 1.24.0, Apache 2.4.58, Supervisor 4.2.5, gosu 1.17, gcc 13.3.0, ImageMagick 6.9.12, ffmpeg 6.1.1, psql 16.6, mysql 8.0.41, redis-cli 7.4.2, mongosh 2.4.0. **Not included** (install if needed): Ruby, Go, Java, Rust, pandoc, wkhtmltopdf.
+**Base image contents (Cloudron 9.1.3)**: Ubuntu 24.04.1 LTS, Node.js 24.x (default; 22 LTS at `/usr/local/node-22.14.0`), Python 3.12.3, PHP 8.3.6 (redis/imagick/ldap/gd/mbstring), Nginx 1.24.0, Apache 2.4.58, Supervisor 4.2.5, gosu 1.17, gcc 13.3.0, ImageMagick 6.9.12, ffmpeg 6.1.1, psql 16.6, mysql 8.0.41, redis-cli 7.4.2, mongosh 2.4.0. Reviewed `cloudron/base:5.0.0` tag digest remains `sha256:04fd70dbd8ad6149c19de39e35718e024417c3e01dc9c6637eaf4a41ec4e596c`. **Not included** (install if needed): Ruby, Go, Java, Rust, pandoc, wkhtmltopdf.
+
+**Community assessment intake (reviewed at `047e4b07ce36`)**: import packaging lessons from the added assessment corpus rather than copying whole assessments. Good follow-up candidates include Huginn (medium structural, moderate maintenance, viable), while AppFlowy Cloud and ejabberd remain poor fits because of multi-service/auth/storage or network-port constraints. Prosody is the stronger XMPP path when raw TCP/TLS/DNS requirements are acceptable.
 
 ## CloudronManifest.json
 

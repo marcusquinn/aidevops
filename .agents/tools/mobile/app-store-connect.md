@@ -27,9 +27,9 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands)
+- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.0 adds `versions update` release metadata flags)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `63a6b994c315`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills, checked at `c45a9fa1f63d`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills, checked at `8e67f1969e1b`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -75,6 +75,8 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 # 1. Archive and upload (or upload pre-built IPA)
 asc builds archive --scheme MyApp --upload --app-id APP_ID --version 1.2.0 --build-number 55
 # OR: asc builds upload --app-id APP_ID --file MyApp.ipa --version 1.2.0 --build-number 55
+# If export compliance is missing, answer it before external TestFlight review
+asc builds set-encryption-compliance --build-id BUILD_ID --uses-non-exempt-encryption false
 
 # 2. TestFlight distribution
 GROUP_ID=$(asc testflight groups list --app-id APP_ID | jq -r '.data[0].id')
@@ -84,6 +86,7 @@ asc builds add-beta-group --build-id "$BUILD_ID" --beta-group-id "$GROUP_ID"
 # 3. Link build to version, update What's New, submit
 VERSION_ID=$(asc versions list --app-id APP_ID | jq -r '.data[0].id')
 asc versions set-build --version-id "$VERSION_ID" --build-id "$BUILD_ID"
+asc versions update --version-id "$VERSION_ID" --copyright "© 2026 Example" --release-type AFTER_APPROVAL
 LOC_ID=$(asc version-localizations list --version-id "$VERSION_ID" | jq -r '.data[0].id')
 asc version-localizations update --localization-id "$LOC_ID" --whats-new "Bug fixes and improvements"
 asc versions check-readiness --version-id "$VERSION_ID"
@@ -113,11 +116,11 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh updates stale workflow skills.
 
 ## Blitz MCP Server (Optional)
 
-[Blitz](https://github.com/blitzdotdev/blitz-mac) — native macOS app with 30+ MCP tools for iOS dev. Overlaps with XcodeBuildMCP/ios-simulator-mcp but adds ASC submission. MCP config: `{ "mcpServers": { "blitz": { "command": "npx", "args": ["-y", "@blitzdev/blitz-mcp"] } } }`
+[Blitz](https://github.com/blitzdotdev/blitz-mac) — native macOS app with 30+ MCP tools for iOS dev. Overlaps with XcodeBuildMCP/ios-simulator-mcp but adds ASC submission. v1.0.35 auto-imports existing App Store Connect apps into the dashboard and simplifies screenshots. MCP config: `{ "mcpServers": { "blitz": { "command": "npx", "args": ["-y", "@blitzdev/blitz-mcp"] } } }`
 
 ## Mobile Stack Integration
 

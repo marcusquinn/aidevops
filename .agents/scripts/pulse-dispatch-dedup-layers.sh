@@ -287,6 +287,10 @@ _dedup_layer6_assignee_and_stale() {
 			echo "[pulse-wrapper] Dedup: stale recovery detected for #${issue_number} in ${repo_slug} crash_type=${_stale_crash_type} — recording fast-fail (t1927/t2042)" >>"$LOGFILE"
 			fast_fail_record "$issue_number" "$repo_slug" "stale_timeout" "" "$_stale_crash_type" || true
 		fi
+		if [[ "$assigned_output" == *STALE_BLOCKED_BY_DEPENDENCY* ]]; then
+			echo "[pulse-wrapper] Dedup: stale recovery for #${issue_number} in ${repo_slug} found unresolved blocked-by dependency — blocking re-dispatch (GH#23932)" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 	return 1
 }
@@ -303,7 +307,7 @@ _dedup_layer6_assignee_and_stale() {
 # value propagates up two stack frames.
 #
 # Arguments: issue_number, repo_slug, self_login
-# Exit: 0 = blocked, 1 = continue (won claim or fail-open error path)
+# Exit: 0 = blocked, 1 = continue (won claim)
 #######################################
 _dedup_layer7_claim_lock() {
 	local issue_number="$1"
@@ -328,7 +332,11 @@ _dedup_layer7_claim_lock() {
 			echo "[pulse-wrapper] Dedup: pre-check found active claim on #${issue_number} in ${repo_slug} — skipping (${_precheck_output})" >>"$LOGFILE"
 			return 0
 		fi
-		# No active claim found (exit 1) or error (exit 2, fail-open) — proceed to claim
+		if [[ "$_precheck_exit" -eq 2 ]]; then
+			echo "[pulse-wrapper] Dedup: claim pre-check error for #${issue_number} in ${repo_slug} — blocking dispatch for this cycle (fail-closed)" >>"$LOGFILE"
+			return 0
+		fi
+		# No active claim found (exit 1) — proceed to claim.
 		local claim_exit=0 claim_output=""
 		claim_output=$("$dedup_helper" claim "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE") || claim_exit=$?
 		echo "$claim_output" >>"$LOGFILE"
@@ -337,7 +345,8 @@ _dedup_layer7_claim_lock() {
 			return 0
 		fi
 		if [[ "$claim_exit" -eq 2 ]]; then
-			echo "[pulse-wrapper] Dedup: claim error for #${issue_number} in ${repo_slug} — proceeding (fail-open)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Dedup: claim error for #${issue_number} in ${repo_slug} — blocking dispatch for this cycle (fail-closed)" >>"$LOGFILE"
+			return 0
 		fi
 		# Extract claim comment_id for post-dispatch cleanup (GH#15317)
 		_claim_comment_id=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9]*\).*/\1/p')

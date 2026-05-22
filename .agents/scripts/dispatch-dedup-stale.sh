@@ -263,6 +263,77 @@ _This escalation is the \"no-progress fail-safe\" from t2008 (paired with t1986 
 }
 
 #######################################
+# Re-check declared blocked-by dependencies before stale relaunch.
+#
+# Stale recovery may remove an abandoned assignment, but it must not convert
+# an issue with open/unknown declared blockers back to status:available. The
+# normal dispatch path also checks blocked-by before launch; this earlier gate
+# prevents stale/no_work recovery from re-amplifying blocked issues into the
+# ranked candidate pool.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug
+# Returns: 0 if declared dependency is open/unknown; 1 otherwise.
+#######################################
+_stale_recovery_has_unresolved_blocked_by() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
+		local dep_graph_lib="${SCRIPT_DIR}/pulse-dep-graph.sh"
+		# shellcheck source=/dev/null
+		[[ -f "$dep_graph_lib" ]] && source "$dep_graph_lib" 2>/dev/null || true
+	fi
+	[[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" == "function" ]] || return 1
+
+	local issue_body=""
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body --jq '.body // ""' 2>/dev/null) || issue_body=""
+	[[ -n "$issue_body" ]] || return 1
+
+	if is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Apply stale recovery as dependency-blocked instead of available.
+# Args mirror _stale_recovery_apply.
+#######################################
+_stale_recovery_apply_blocked_by_hold() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local stale_assignees="$3"
+	local reason="$4"
+	shift 4
+	local -a recov_extra=("$@")
+
+	set_issue_status "$issue_number" "$repo_slug" "blocked" "${recov_extra[@]}" || true
+
+	local _now_ts=""
+	_now_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	gh_issue_comment "$issue_number" --repo "$repo_slug" \
+		--body "<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+<!-- WORKER_SUPERSEDED runners=${stale_assignees} ts=${_now_ts} -->
+<!-- stale-recovery-blocked-by-unresolved -->
+**Stale assignment recovered, but re-dispatch remains blocked** (GH#23932)
+
+Previously assigned to: ${stale_assignees}
+Reason: ${reason}
+Threshold: ${STALE_ASSIGNMENT_THRESHOLD_SECONDS}s
+
+The stale assignment was unassigned, but the issue still declares an open or unknown \`blocked-by\` dependency. Kept the issue at \`status:blocked\` instead of \`status:available\` so stale/no_work recovery cannot relaunch it until every declared blocker is positively clear.
+
+_This is the stale-recovery dependency re-check for GH#23932._
+<!-- ops:end -->" 2>/dev/null || true
+
+	printf 'STALE_BLOCKED_BY_DEPENDENCY: issue #%s in %s — unassigned %s but kept status:blocked due to unresolved blocked-by (%s)\n' \
+		"$issue_number" "$repo_slug" "$stale_assignees" "$reason"
+	return 0
+}
+
+#######################################
 # Apply normal stale recovery: unassign stale users, transition to
 # status:available, post the audit comment with WORKER_SUPERSEDED marker.
 #
@@ -298,6 +369,10 @@ _stale_recovery_apply() {
 	for assignee in "${assignee_arr[@]}"; do
 		[[ -n "$assignee" ]] && _recov_extra+=(--remove-assignee "$assignee")
 	done
+	if _stale_recovery_has_unresolved_blocked_by "$issue_number" "$repo_slug"; then
+		_stale_recovery_apply_blocked_by_hold "$issue_number" "$repo_slug" "$stale_assignees" "$reason" "${_recov_extra[@]}"
+		return 0
+	fi
 	set_issue_status "$issue_number" "$repo_slug" "available" "${_recov_extra[@]}" || true
 
 	local _now_ts

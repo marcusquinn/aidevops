@@ -61,6 +61,7 @@ _setup_blocked_by_resolution_test() {
 	LOGFILE="${TEST_TMP}/pulse.log"
 	DEP_GRAPH_CACHE_FILE="${TEST_TMP}/dep-graph.json"
 	DEP_GRAPH_CACHE_TTL_SECS=3600
+	TEST_GH_RELATIONSHIP_MODE="clear"
 	return 0
 }
 
@@ -81,8 +82,16 @@ gh_issue_list() {
 			printf 'CLOSED\n'
 			return 0
 			;;
+		closed-lower)
+			printf 'closed\n'
+			return 0
+			;;
 		open)
 			printf 'OPEN\n'
+			return 0
+			;;
+		open-lower)
+			printf 'open\n'
 			return 0
 			;;
 		repo-json)
@@ -97,15 +106,113 @@ gh_issue_list() {
 }
 
 gh() {
+	if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
+		case "${TEST_GH_RELATIONSHIP_MODE:-clear}" in
+			fail)
+				return 1
+				;;
+			open)
+				printf '1000:OPEN\n'
+				return 0
+				;;
+			closed)
+				printf '1000:CLOSED\n'
+				return 0
+				;;
+			unknown)
+				printf '1000:\n'
+				return 0
+				;;
+			*)
+				printf '\n'
+				return 0
+				;;
+		esac
+	fi
 	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "closed" ]]; then
 		printf 'CLOSED\n'
+		return 0
+	fi
+	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "closed-lower" ]]; then
+		printf 'closed\n'
 		return 0
 	fi
 	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "open" ]]; then
 		printf 'OPEN\n'
 		return 0
 	fi
+	if [[ "${TEST_GH_ISSUE_VIEW_MODE:-fail}" == "open-lower" ]]; then
+		printf 'open\n'
+		return 0
+	fi
 	return 1
+}
+
+test_native_relationship_open_blocks_empty_body() {
+	printf '\n=== native blockedBy relationship ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_RELATIONSHIP_MODE="open"
+
+	local rc=0
+	is_blocked_by_unresolved '' 'owner/repo' '2000' || rc=$?
+	_assert_rc "native blockedBy open relationship blocks without body marker" 0 "$rc"
+	if grep -q 'native relationship #1000' "$LOGFILE"; then
+		_pass "native relationship block logs distinct reason"
+	else
+		_fail "native relationship block logs distinct reason" "missing native relationship log"
+	fi
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_native_relationship_clear_allows_empty_body() {
+	printf '\n=== native blockedBy clear ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_RELATIONSHIP_MODE="closed"
+
+	local rc=0
+	is_blocked_by_unresolved '' 'owner/repo' '2000' || rc=$?
+	_assert_rc "native blockedBy closed relationship allows dispatch when no body marker" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_native_relationship_clear_ignores_duplicate_text_marker() {
+	printf '\n=== native blockedBy clear overrides duplicate text marker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_RELATIONSHIP_MODE="closed"
+	TEST_GH_ISSUE_LIST_MODE="empty"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "native closed blocker clears despite duplicate text marker" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_native_relationship_open_blocks_duplicate_text_marker() {
+	printf '\n=== native blockedBy open blocks duplicate text marker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_RELATIONSHIP_MODE="open"
+	TEST_GH_ISSUE_LIST_MODE="closed"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "native open blocker blocks regardless of text fallback" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_native_relationship_lookup_failure_fails_closed() {
+	printf '\n=== native blockedBy lookup failure ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_RELATIONSHIP_MODE="fail"
+
+	local rc=0
+	is_blocked_by_unresolved '' 'owner/repo' '2000' || rc=$?
+	_assert_rc "native blockedBy lookup failure blocks as unknown" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
 }
 
 test_task_id_blocker_parsing() {
@@ -176,6 +283,30 @@ test_closed_task_blocker_is_clear() {
 	return 0
 }
 
+test_lowercase_closed_task_blocker_is_clear() {
+	printf '\n=== lowercase closed task blocker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="closed-lower"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "lowercase closed task blocker is clear" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_lowercase_open_task_blocker_blocks() {
+	printf '\n=== lowercase open task blocker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="open-lower"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "lowercase open task blocker blocks" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
 test_issue_number_live_failure_fails_closed() {
 	printf '\n=== fail-closed issue-number blocker resolution ===\n'
 	_setup_blocked_by_resolution_test
@@ -197,6 +328,18 @@ test_cached_issue_number_absence_requires_live_proof() {
 	local rc=0
 	is_blocked_by_unresolved 'blocked-by:#1000' 'owner/repo' '2000' || rc=$?
 	_assert_rc "cached issue-number absence blocks when live proof fails" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_lowercase_closed_issue_number_blocker_is_clear() {
+	printf '\n=== lowercase closed issue-number blocker ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_VIEW_MODE="closed-lower"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:#1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "lowercase closed issue-number blocker is clear" 1 "$rc"
 	_cleanup_blocked_by_resolution_test
 	return 0
 }
@@ -228,11 +371,19 @@ test_cache_rebuild_preserves_previous_repo_data_on_fetch_failure() {
 main() {
 	test_task_id_blocker_parsing
 	test_issue_number_blocker_parsing
+	test_native_relationship_open_blocks_empty_body
+	test_native_relationship_clear_allows_empty_body
+	test_native_relationship_clear_ignores_duplicate_text_marker
+	test_native_relationship_open_blocks_duplicate_text_marker
+	test_native_relationship_lookup_failure_fails_closed
 	test_unknown_task_blocker_fails_closed
 	test_live_task_lookup_failure_fails_closed
 	test_closed_task_blocker_is_clear
+	test_lowercase_closed_task_blocker_is_clear
+	test_lowercase_open_task_blocker_blocks
 	test_issue_number_live_failure_fails_closed
 	test_cached_issue_number_absence_requires_live_proof
+	test_lowercase_closed_issue_number_blocker_is_clear
 	test_cache_rebuild_preserves_previous_repo_data_on_fetch_failure
 
 	printf '\nSummary: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"

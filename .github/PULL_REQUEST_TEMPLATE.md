@@ -5,6 +5,13 @@
 
 Brief description of changes.
 
+## Linked issue
+
+Required: add one accepted issue reference in this PR body: `Closes #NNN`,
+`Fixes #NNN`, `Resolves #NNN`, `For #NNN`, or `Ref #NNN`.
+
+Linked issue: <!-- e.g., Resolves #123 or For #123 -->
+
 ## Type of change
 
 - [ ] Bug fix
@@ -43,6 +50,7 @@ Brief description of changes.
 
 ## Checklist
 
+- [ ] This PR body includes a linked issue reference using `Closes`, `Fixes`, `Resolves`, `For`, or `Ref #NNN`
 - [ ] I have followed the commit message conventions
 - [ ] I have updated documentation if needed
 - [ ] For architectural changes or new integrations, I have obtained maintainer approval (see [CONTRIBUTING.md](../CONTRIBUTING.md#scope-of-contributions))

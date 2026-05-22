@@ -19,12 +19,23 @@ If you cannot use the CLI command, use the issue templates on GitHub. Blank issu
 ## Quick Start
 
 1. Fork the repository
-2. Clone your fork: `git clone https://github.com/YOUR_USERNAME/aidevops.git`
-3. Create a safe linked worktree for your change: `git worktree add ../aidevops-feature-your-feature -b feature/your-feature main && cd ../aidevops-feature-your-feature`
-4. Make your changes
-5. Run tests: `./setup.sh` (installs locally for testing)
-6. Commit with conventional commits: `git commit -m "feat: add new feature"`
-7. Push and open a PR
+2. Create or find the GitHub issue for your change before coding
+3. Clone your fork: `git clone https://github.com/YOUR_USERNAME/aidevops.git`
+4. Create a safe linked worktree for your change: `git worktree add ../aidevops-feature-your-feature -b feature/your-feature main && cd ../aidevops-feature-your-feature`
+5. Make your changes
+6. Run tests: `./setup.sh` (installs locally for testing)
+7. Commit with conventional commits: `git commit -m "feat: add new feature"`
+8. Push and open a PR with the linked issue reference in the PR body
+
+## Issue-first PRs
+
+Every human-authored PR must have an accompanying GitHub issue before merge. In
+the PR body, include one of the linked-issue keywords accepted by
+`linked-issue-check`: `Closes #NNN`, `Fixes #NNN`, `Resolves #NNN`, `For #NNN`,
+or `Ref #NNN`.
+
+Use `Resolves #NNN` for leaf fixes that close the issue. Use `For #NNN` or
+`Ref #NNN` for parent, research, or non-closing work.
 
 ## Development Setup
 

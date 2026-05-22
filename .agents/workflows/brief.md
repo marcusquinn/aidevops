@@ -86,6 +86,16 @@ The wrapper currently self-assigns in violation of t2157. Until t2406/GH#19991 m
 
 **The brief IS the product.** A vague brief dispatched to Opus wastes more money than a prescriptive brief dispatched to Haiku. Invest the effort in the brief, not the worker.
 
+## Ordered Work / Dependencies
+
+When composing TODOs or issues that must run in sequence, include the textual
+`blocked-by:*` or `blocks:*` marker for auditability and ensure the GitHub native
+issue relationship is or will be synced. Treat GitHub's `blockedBy` relationship
+as the primary dispatch gate; body markers are fallback intent for
+`issue-sync-relationships.sh` and pulse repair. If a blocker cannot be resolved
+to a GitHub issue relationship, mark the dependent issue `status:blocked` and do
+not add `#auto-dispatch` until the relationship exists or the blocker is closed.
+
 ## Seeded Draft PR Decision
 
 When an issue or brief is created after enough discovery to know the likely implementation path, the author MAY open a seeded draft PR that gives the worker verified implementation context. This is opt-in. Issue-only remains the default when confidence is not high.
