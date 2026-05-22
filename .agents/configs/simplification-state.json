@@ -1982,9 +1982,9 @@
       "pr": 15514
     },
     ".agents/scripts/commands/log-issue-aidevops.md": {
-      "at": "2026-05-14T21:30:03Z",
-      "hash": "ed8864b3a86317bd3741f8944664bd57dfd1c84f",
-      "passes": 10,
+      "at": "2026-05-22T00:32:35Z",
+      "hash": "63fe1ad15cf4da012852f40ff7be22f577bce757",
+      "passes": 11,
       "pr": 11007
     },
     ".agents/scripts/commands/memory-log.md": {
@@ -7223,9 +7223,9 @@
       "pr": 18318
     },
     ".agents/workflows/log-issue-aidevops.md": {
-      "at": "2026-05-14T22:20:39Z",
-      "hash": "ed8864b3a86317bd3741f8944664bd57dfd1c84f",
-      "passes": 7,
+      "at": "2026-05-22T00:45:28Z",
+      "hash": "63fe1ad15cf4da012852f40ff7be22f577bce757",
+      "passes": 8,
       "pr": 18148
     },
     ".agents/workflows/memory-log.md": {
@@ -7828,10 +7828,10 @@
       "passes": 3
     },
     ".agents/scripts/commands/setup-git.md": {
-      "hash": "993011c3b435f911df4312125f01a5f7c25d8c08",
-      "at": "2026-05-01T21:33:28Z",
+      "hash": "d5ea8af8dae571ad7371e5131d23fe22173adedb",
+      "at": "2026-05-22T00:32:58Z",
       "pr": 20994,
-      "passes": 3
+      "passes": 4
     },
     ".agents/reference/sync-pat-platforms.md": {
       "hash": "5aa311e56a89c39ffef996fbed08aadebdb19b66",
