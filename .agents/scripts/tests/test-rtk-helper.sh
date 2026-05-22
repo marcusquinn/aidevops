@@ -72,6 +72,16 @@ printf 'long raw payload with extra diagnostic detail\n'
 STUB
 chmod +x "${TMPDIR_TEST}/samplecmd"
 
+cat >"${TMPDIR_TEST}/git" <<'STUB'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "status" ]]; then
+  printf 'raw git status\n'
+  exit 0
+fi
+printf 'git %s\n' "$*"
+STUB
+chmod +x "${TMPDIR_TEST}/git"
+
 session_db="${TMPDIR_TEST}/opencode.db"
 python3 - "$session_db" <<'PY'
 import json
@@ -116,6 +126,9 @@ assert_contains "compare emits diagnostic heading" "RTK output comparison" "$com
 assert_contains "compare records same exit code" "Same exit code: yes" "$compare_output"
 assert_contains "compare emits decision guidance" "Decision guidance" "$compare_output"
 assert_not_contains "compare strips advisory" "No hook installed" "$compare_output"
+
+PATH="${TMPDIR_TEST}:$PATH" git_status_compare_output=$("$HELPER" --compare git status)
+assert_contains "git status compare flags upstream compact fix" "drops \`-uall\`" "$git_status_compare_output"
 
 export OPENCODE_DB_PATH="$session_db"
 adoption_output=$("$HELPER" --adoption-report "2026-05-08 00:00:00")
