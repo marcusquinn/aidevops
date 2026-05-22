@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.28] - 2026-05-22
+
+### Changed
+
+- clarify headless canary expectation (#23972)
+- Maintenance: update simplification state registry
+
 ## [3.17.27] - 2026-05-22
 
 ### Changed
