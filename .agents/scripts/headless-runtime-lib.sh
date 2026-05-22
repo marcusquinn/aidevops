@@ -1007,6 +1007,41 @@ _watchdog_kill() {
 # --- Section 9: DB Merge ---
 
 #######################################
+# Seed a worker's isolated SQLite DB with an existing OpenCode session.
+# Called before opencode --session <id> --continue so continuation attempts
+# have the session/message rows required by the isolated XDG_DATA_HOME DB.
+# Non-fatal: seed failure falls back to OpenCode's normal error handling.
+#######################################
+_seed_worker_db_session_from_shared() {
+	local isolated_dir="$1"
+	local session_id="$2"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+	local escaped_shared_db=""
+	local escaped_session_id=""
+
+	[[ -n "$isolated_dir" && -n "$session_id" ]] || return 0
+	[[ -f "$shared_db" ]] || return 0
+
+	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 1
+	if [[ ! -f "$worker_db" ]] && command -v opencode >/dev/null 2>&1; then
+		XDG_DATA_HOME="$isolated_dir" timeout "${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}" opencode --version >/dev/null 2>&1 || true
+	fi
+	[[ -f "$worker_db" ]] || return 1
+
+	escaped_shared_db=$(sql_escape "$shared_db")
+	escaped_session_id=$(sql_escape "$session_id")
+	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || return 1
+		.timeout 5000
+		ATTACH DATABASE '${escaped_shared_db}' AS shared;
+		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${escaped_session_id}';
+		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${escaped_session_id}';
+		DETACH DATABASE shared;
+	SQL
+	return 0
+}
+
+#######################################
 # Merge worker's isolated SQLite DB back to the shared DB.
 # Called after worker exits -- no contention risk.
 # Uses ATTACH DATABASE to copy session and message rows.

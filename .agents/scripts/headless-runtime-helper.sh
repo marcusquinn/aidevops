@@ -443,9 +443,9 @@ _invoke_opencode() {
 	# in-flight request and crashing it.
 	#
 	# IMPORTANT: XDG_DATA_HOME redirection moves the ENTIRE opencode data dir,
-	# including the session database. We set OPENCODE_DB to point back to the
-	# shared DB so worker sessions are visible to stats/session-time queries
-	# while auth remains isolated.
+	# including the session database. Each worker uses an isolated DB to avoid
+	# SQLite contention; continuation attempts seed only the persisted session
+	# rows needed for --session <id> --continue.
 	#
 	# The isolated dir is per-PID and cleaned up after the worker exits.
 	local isolated_data_dir=""
@@ -493,6 +493,17 @@ _invoke_opencode() {
 		# diagnostics) working when _invoke_provider is unset.
 		if [[ -f "${isolated_data_dir}/opencode/auth.json" ]]; then
 			_maybe_rotate_isolated_auth "${isolated_data_dir}/opencode/auth.json" "${_invoke_provider:-anthropic}"
+		fi
+
+		# t3082: --session <id> --continue needs the referenced session and
+		# messages inside this isolated XDG_DATA_HOME DB. The normal merge path
+		# copies rows outward after exit; this seeds rows inward before resume.
+		if [[ -n "${_invoke_persisted_session:-}" ]]; then
+			if _seed_worker_db_session_from_shared "$isolated_data_dir" "$_invoke_persisted_session"; then
+				print_info "[lifecycle] db_seeded session=$_invoke_persisted_session dir=$isolated_data_dir pid=$$"
+			else
+				print_warning "[lifecycle] db_seed_failed session=$_invoke_persisted_session dir=$isolated_data_dir pid=$$"
+			fi
 		fi
 	fi
 
@@ -1252,6 +1263,9 @@ _execute_run_attempt() {
 	# dispatch rotation against their own pool entries. Same rationale as
 	# _invoke_session_key above: keep _invoke_opencode's arg list stable.
 	_invoke_provider="$provider"
+	# t3082: expose persisted OpenCode session ID so _invoke_opencode can seed
+	# the isolated DB before launching --session <id> --continue.
+	_invoke_persisted_session="$persisted_session"
 
 	# t3077: expose session_key to the verbose lifecycle emitter via the
 	# convention WORKER_SESSION_KEY (read by _emit_verbose_checkpoint).
@@ -1361,6 +1375,7 @@ _execute_run_attempt() {
 			print_warning "Stale session ID detected for ${session_key} — clearing and retrying without --session (GH#16978)"
 			clear_session_id "$provider" "$session_key"
 			persisted_session=""
+			_invoke_persisted_session=""
 			rm -f "$output_file"
 			output_file=$(mktemp)
 			exit_code_file=$(mktemp)

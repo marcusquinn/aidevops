@@ -1553,6 +1553,44 @@ test_cmd_run_finish_fail_merged_pr_releases_complete() {
 	return 0
 }
 
+test_seed_worker_db_session_from_shared_copies_continuation_rows() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local session_count="" message_count="" other_message_count=""
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+INSERT INTO session VALUES ('sess-continue', 'Issue worker', '/tmp/work', 1);
+INSERT INTO session VALUES ('sess-other', 'Other worker', '/tmp/work', 2);
+INSERT INTO message VALUES ('msg-1', 'sess-continue', 1, 1, '{"role":"user"}');
+INSERT INTO message VALUES ('msg-2', 'sess-continue', 2, 2, '{"role":"assistant"}');
+INSERT INTO message VALUES ('msg-other', 'sess-other', 3, 3, '{"role":"user"}');
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+SQL
+
+	_seed_worker_db_session_from_shared "$isolated_dir" "sess-continue"
+
+	session_count=$(sqlite3 "$worker_db" "SELECT count(*) FROM session WHERE id = 'sess-continue';")
+	message_count=$(sqlite3 "$worker_db" "SELECT count(*) FROM message WHERE session_id = 'sess-continue';")
+	other_message_count=$(sqlite3 "$worker_db" "SELECT count(*) FROM message WHERE session_id = 'sess-other';")
+
+	if [[ "$session_count" == "1" && "$message_count" == "2" && "$other_message_count" == "0" ]]; then
+		print_result "seeds isolated OpenCode DB with persisted continuation session" 0
+		return 0
+	fi
+
+	print_result "seeds isolated OpenCode DB with persisted continuation session" 1 \
+		"session_count=${session_count:-<empty>} message_count=${message_count:-<empty>} other=${other_message_count:-<empty>}"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -1607,6 +1645,7 @@ main() {
 	test_cmd_run_finish_fail_recovers_branch_orphan_output
 	test_cmd_run_finish_fail_closed_issue_releases_complete
 	test_cmd_run_finish_fail_merged_pr_releases_complete
+	test_seed_worker_db_session_from_shared_copies_continuation_rows
 	teardown_test_env
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"
