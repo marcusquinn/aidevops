@@ -79,6 +79,9 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoin
 		source-clear | source-ambiguous | source-fetch-failure)
 			printf '**Source PR**: #50\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
 			;;
+		malformed-source-clear)
+			printf '**Source PR**: pending\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+			;;
 		no-file)
 			printf '**Source PR**: #50\n\n## Finding\nAdd the event payload guard before worker launch.\n'
 			;;
@@ -91,6 +94,9 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoin
 		case "$scenario" in
 		source-clear | source-ambiguous | source-fetch-failure | no-file)
 			printf '2026-05-02T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
+			;;
+		malformed-source-clear)
+			printf '2026-05-02T10:00:00Z\tReview followup: PR #50 — event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
 			;;
 		*)
 			printf '2026-05-01T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
@@ -117,6 +123,7 @@ if [[ "${1:-}" == "api" && "$endpoint" == "search/issues" ]]; then
 	clear) printf '200\n' ;;
 	ambiguous) printf '201\n' ;;
 	source-clear) printf '200\n' ;;
+	malformed-source-clear) printf '200\n' ;;
 	source-ambiguous) printf '201\n' ;;
 	source-fetch-failure) printf '200\n' ;;
 	no-file) printf '200\n' ;;
@@ -248,6 +255,12 @@ test_source_pr_window_catches_pre_issue_fix() {
 	return 0
 }
 
+test_malformed_source_pr_uses_title_fallback() {
+	run_validator_case "malformed-source-clear" 10 "malformed source PR uses title fallback"
+	assert_log_contains "malformed source PR title fallback closes pre-issue supersession" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
 test_source_pr_window_ambiguous_fails_open() {
 	run_validator_case "source-ambiguous" 0 "source PR window ambiguous same-file change"
 	assert_log_not_contains "source PR ambiguous change does not close" "issue close 100 --repo owner/repo --reason not planned"
@@ -293,6 +306,7 @@ main() {
 	test_clear_same_file_fix
 	test_ambiguous_same_file_unrelated_change
 	test_source_pr_window_catches_pre_issue_fix
+	test_malformed_source_pr_uses_title_fallback
 	test_source_pr_window_ambiguous_fails_open
 	test_source_pr_fetch_failure_falls_back
 	test_no_file_finding_skips_supersession

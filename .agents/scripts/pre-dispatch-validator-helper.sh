@@ -683,7 +683,7 @@ _rf_extract_source_pr_number() {
 	local issue_title="$2"
 	local source_pr=""
 
-	source_pr=$(printf '%s\n%s\n' "$issue_body" "$issue_title" | sed -En '/\*\*Source PR\*\*:/ { s/.*\*\*Source PR\*\*:[[:space:]]*#?([0-9]+).*/\1/; p; q; }; /Review followup:[[:space:]]*PR/ { s/.*Review followup:[[:space:]]*PR[[:space:]]*#?([0-9]+).*/\1/; p; q; }')
+	source_pr=$(printf '%s\n%s\n' "$issue_body" "$issue_title" | sed -En 's/.*\*\*Source PR\*\*:[[:space:]]*#?([0-9]+).*/\1/p; s/.*Review followup:[[:space:]]*PR[[:space:]]*#?([0-9]+).*/\1/p' | tail -1)
 	if [[ "$source_pr" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$source_pr"
 		return 0
