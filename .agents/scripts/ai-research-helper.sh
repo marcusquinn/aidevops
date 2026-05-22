@@ -14,7 +14,7 @@
 #
 # Environment:
 #   AIDEVOPS_AI_RESEARCH_PROVIDER — auto (default), anthropic, or opencode
-#   AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL — OpenCode model for runtime fallback
+#   AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL — OpenCode model for default runtime path
 #   ANTHROPIC_API_KEY — env, gopass, credentials.sh, or OAuth pool
 #
 # Exit codes: 0=success (response on stdout), 1=error, 2=no usable provider credentials
@@ -276,7 +276,7 @@ call_opencode() {
 	: "$max_tokens"
 
 	if ! command -v opencode &>/dev/null; then
-		log_error "OpenCode CLI not found for AI research runtime fallback"
+		log_error "OpenCode CLI not found for AI research runtime provider"
 		return 2
 	fi
 
@@ -309,7 +309,7 @@ call_opencode() {
 
 	text=$(extract_opencode_text "$raw") || text=""
 	if [[ -z "$text" ]]; then
-		log_error "Empty response from OpenCode AI research fallback"
+		log_error "Empty response from OpenCode AI research provider"
 		return 1
 	fi
 
@@ -333,12 +333,12 @@ call_ai() {
 		return $?
 		;;
 	auto)
-		if resolve_provider_credential anthropic >/dev/null 2>&1; then
-			call_anthropic "$prompt" "$model" "$max_tokens"
-			return $?
-		fi
 		if command -v opencode &>/dev/null; then
 			call_opencode "$prompt" "$model" "$max_tokens"
+			return $?
+		fi
+		if resolve_provider_credential anthropic >/dev/null 2>&1; then
+			call_anthropic "$prompt" "$model" "$max_tokens"
 			return $?
 		fi
 		log_error "No AI research provider available (Anthropic credentials or OpenCode runtime)"
@@ -387,7 +387,7 @@ main() {
 			echo "       printf '%s' \"PROMPT\" | ai-research-helper.sh --stdin [--provider opencode] [--model haiku]"
 			echo ""
 			echo "Lightweight multi-provider API wrapper for AI threshold judgments."
-			echo "Default provider: auto (Anthropic direct API first, then OpenCode runtime)."
+			echo "Default provider: auto (OpenCode runtime first, then Anthropic direct API)."
 			return 0
 			;;
 		*)

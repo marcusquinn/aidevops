@@ -3,8 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # Regression test for GH#23594:
-# - ai-research-helper.sh falls back to OAuth pool credentials when static
-#   Anthropic key sources miss and OpenCode runtime fallback is available.
+# - ai-research-helper.sh keeps OAuth pool credential resolution available for
+#   explicit Anthropic calls while the default auto provider prefers OpenCode.
 # - pulse-fix-the-fixer-detector.sh treats ai-research-helper rc=2 as an auth
 #   class signal even when stderr prose does not match API error substrings.
 
@@ -126,26 +126,34 @@ test_oauth_pool_fallbacks() {
 	return 0
 }
 
-test_auto_provider_falls_back_to_opencode() {
+test_auto_provider_prefers_opencode() {
 	rm -f "${HOME}/.aidevops/oauth-pool.json"
 	cat >"${TEST_ROOT}/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' '> Build+ · gpt-5.4-mini'
-printf '%s\n' 'VERDICT: YES - opencode fallback works'
+printf '%s\n' 'VERDICT: YES - opencode primary works'
 exit 0
 STUB
 	chmod +x "${TEST_ROOT}/bin/opencode"
+	cat >"${TEST_ROOT}/bin/curl" <<'STUB'
+#!/usr/bin/env bash
+printf 'unexpected direct Anthropic call in auto provider\n' >&2
+exit 42
+STUB
+	chmod +x "${TEST_ROOT}/bin/curl"
 
 	local output rc
 	set +e
+	export ANTHROPIC_API_KEY="[redacted-env-token]"
 	output=$("${REPO_ROOT}/.agents/scripts/ai-research-helper.sh" --prompt "ping" --max-tokens 5 2>"${TEST_ROOT}/auto-provider.err")
 	rc=$?
+	unset ANTHROPIC_API_KEY
 	set -e
-	if [[ "$rc" -eq 0 && "$output" == "VERDICT: YES - opencode fallback works" ]]; then
-		record_result "auto provider falls back to OpenCode runtime when Anthropic is absent" 0
+	if [[ "$rc" -eq 0 && "$output" == "VERDICT: YES - opencode primary works" ]]; then
+		record_result "auto provider prefers OpenCode runtime even when Anthropic is configured" 0
 		return 0
 	fi
-	record_result "auto provider falls back to OpenCode runtime when Anthropic is absent" 1 \
+	record_result "auto provider prefers OpenCode runtime even when Anthropic is configured" 1 \
 		"rc=${rc} output=${output} err=$(tr '\n' ' ' <"${TEST_ROOT}/auto-provider.err")"
 	return 0
 }
@@ -203,7 +211,7 @@ main() {
 	setup_sandbox
 	trap teardown_sandbox EXIT
 	test_oauth_pool_fallbacks
-	test_auto_provider_falls_back_to_opencode
+	test_auto_provider_prefers_opencode
 	test_detector_rc2_records_cooldown
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
