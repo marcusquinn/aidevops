@@ -423,7 +423,7 @@ _pm_issue_needs_partial_closeout() {
 		return 0
 	fi
 
-	checklist_count=$(printf '%s' "$issue_body" | grep -cE '^[[:space:]]*-[[:space:]]*\[[ xX]\]' || true)
+	checklist_count=$(printf '%s' "$issue_body" | grep -cE '^[[:space:]]*[-*+][[:space:]]*\[[ xX]\]' || true)
 	[[ "$checklist_count" =~ ^[0-9]+$ ]] || checklist_count=0
 	if [[ "$checklist_count" -ge 2 ]]; then
 		return 0
@@ -443,7 +443,7 @@ _pm_unmet_acceptance_criteria() {
 	local issue_body="$1"
 	local criteria
 
-	criteria=$(printf '%s' "$issue_body" | sed -nE 's/^[[:space:]]*-[[:space:]]*\[[[:space:]]\][[:space:]]*/- /p' | head -20) || criteria=""
+	criteria=$(printf '%s' "$issue_body" | sed -nE 's/^[[:space:]]*[-*+][[:space:]]*\[[[:space:]]\][[:space:]]*/- /p' | head -20) || criteria=""
 	if [[ -z "$criteria" ]]; then
 		criteria="- Review the parent issue acceptance criteria and file worker-ready child issues for remaining scope."
 	fi
@@ -459,21 +459,27 @@ _pm_unmet_acceptance_criteria() {
 # closeout trail naming delivered work and follow-ups so broad parents are not
 # left ambiguous after a leaf PR merge (GH#23937).
 #
-# Args: $1=pr_number, $2=repo_slug, $3=merge_summary
+# Args: $1=pr_number, $2=repo_slug, $3=merge_summary, $4=linked_issue (optional)
 # Returns: 0 always (best-effort post-merge hygiene)
 #######################################
 _pm_handle_partial_parent_closeout() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local merge_summary="$3"
-	local parent_issue="" issue_api="" issue_body="" issue_labels="" dedup_count="" followups="" delivered_body=""
+	local linked_issue="${4:-}"
+	local parent_issue="" issue_api="" issue_json="" issue_body="" issue_labels="" dedup_count="" followups="" delivered_body=""
 
 	parent_issue=$(_pm_extract_partial_parent_reference "$pr_number" "$repo_slug") || parent_issue=""
 	[[ -n "$parent_issue" ]] || return 0
+	[[ "$parent_issue" != "$linked_issue" ]] || return 0
 
 	issue_api=$(_pm_issue_api "$repo_slug" "$parent_issue")
-	issue_body=$(gh api "$issue_api" --jq '.body // empty' 2>/dev/null) || issue_body=""
-	issue_labels=$(gh api "$issue_api" --jq '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	issue_json=$(gh api "$issue_api" 2>/dev/null) || issue_json=""
+	if [[ -z "$issue_json" ]]; then
+		return 0
+	fi
+	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // empty' 2>/dev/null) || issue_body=""
+	issue_labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
 
 	if ! _pm_issue_needs_partial_closeout "$issue_body" "$issue_labels"; then
 		return 0
@@ -486,7 +492,7 @@ _pm_handle_partial_parent_closeout() {
 		return 0
 	fi
 
-	followups=$(_pm_unmet_acceptance_criteria "$issue_body") || followups="- Review remaining parent acceptance criteria."
+	followups=$(_pm_unmet_acceptance_criteria "$issue_body")
 	delivered_body="${merge_summary:-PR #${pr_number} merged as a leaf delivery.}"
 
 	local partial_comment
@@ -624,9 +630,8 @@ _handle_post_merge_actions() {
 		fi
 	fi
 
-	if [[ -z "$linked_issue" ]]; then
-		_pm_handle_partial_parent_closeout "$pr_number" "$repo_slug" "$merge_summary"
-	fi
+	# Post partial parent closeout if a For/Ref reference exists (GH#23937).
+	_pm_handle_partial_parent_closeout "$pr_number" "$repo_slug" "$merge_summary" "$linked_issue"
 
 	# Auto-release interactive claim if one exists for this issue (t2413).
 	# Handles the "when a PR they opened merges" release trigger from AGENTS.md
