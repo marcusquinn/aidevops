@@ -651,21 +651,25 @@ query($owner:String!,$name:String!,$number:Int!) {
 		return 0
 	fi
 
-	local rel_state="" rel_num="" state="" state_normalized="" saw_relationship="false"
+	local rel_state="" rel_num="" state="" saw_relationship="false"
 	while IFS= read -r rel_state; do
 		[[ -n "$rel_state" ]] || continue
 		saw_relationship="true"
 		rel_num="${rel_state%%:*}"
 		state="${rel_state#*:}"
-		state_normalized=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
-		if [[ "$state_normalized" == OPEN ]]; then
-			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by native relationship #${rel_num} (open) — skipping dispatch (GH#23932)" >>"$LOGFILE"
-			return 0
-		fi
-		if [[ "$state_normalized" != CLOSED ]]; then
-			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy #${rel_num} has unknown state '${state}' — skipping dispatch (GH#23932)" >>"$LOGFILE"
-			return 0
-		fi
+		case "$state" in
+			[Oo][Pp][Ee][Nn])
+				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by native relationship #${rel_num} (open) — skipping dispatch (GH#23932)" >>"$LOGFILE"
+				return 0
+				;;
+			[Cc][Ll][Oo][Ss][Ee][Dd])
+				# Positively clear, continue checking other native blockers.
+				;;
+			*)
+				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy #${rel_num} has unknown state '${state}' — skipping dispatch (GH#23932)" >>"$LOGFILE"
+				return 0
+				;;
+		esac
 	done <<<"$rel_states"
 
 	if [[ "$saw_relationship" == "true" ]]; then
@@ -768,20 +772,21 @@ _blocked_by_check_task_id() {
 	# Live API fallback: search all issues with this task ID in the title.
 	# Empty/error is not proof of resolution because GitHub search can lag
 	# immediately after rapid task creation. Treat that as unknown and block.
-	local blocker_state="" blocker_state_normalized=""
+	local blocker_state=""
 	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
-	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
-	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
-		return 0
-	fi
-	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
-		return 1
-	fi
+	case "$blocker_state" in
+		[Oo][Pp][Ee][Nn])
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+			return 0
+			;;
+		[Cc][Ll][Oo][Ss][Ee][Dd])
+			return 1
+			;;
+	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
 	return 0
 }
@@ -803,20 +808,21 @@ _blocked_by_check_issue_num_live() {
 	local repo_slug="$2"
 	local issue_number="$3"
 
-	local blocker_state="" blocker_state_normalized=""
+	local blocker_state=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state --jq '.state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
-	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
-	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
-		return 0
-	fi
-	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
-		return 1
-	fi
+	case "$blocker_state" in
+		[Oo][Pp][Ee][Nn])
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+			return 0
+			;;
+		[Cc][Ll][Oo][Ss][Ee][Dd])
+			return 1
+			;;
+	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
 	return 0
 }
