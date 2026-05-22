@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.27] - 2026-05-22
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pin canary to vanilla opencode agent (#23953)
+- prefer opencode for AI research auto (#23956)
+
 ## [3.17.26] - 2026-05-22
 
 ### Changed
