@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.28] - 2026-05-22
+
+### Changed
+
+- clarify headless canary expectation (#23972)
+- harden review source PR extraction (#23973)
+- reuse ruleset data in posture checks (#23974)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- streamline AI research auto fallback by resolving Anthropic credentials once (#23969)
+
 ## [3.17.27] - 2026-05-22
 
 ### Changed
@@ -13619,7 +13632,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - AGENTS.md guidance system
 - Basic quality assurance setup
 
-[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v2.29.0...HEAD
+[Unreleased]: https://github.com/marcusquinn/aidevops/compare/v3.17.28...HEAD
+[3.17.28]: https://github.com/marcusquinn/aidevops/compare/v3.17.27...v3.17.28
+[3.17.27]: https://github.com/marcusquinn/aidevops/compare/v3.17.26...v3.17.27
 [2.29.0]: https://github.com/marcusquinn/aidevops/compare/v2.28.0...v2.29.0
 [2.28.0]: https://github.com/marcusquinn/aidevops/compare/v2.27.4...v2.28.0
 [2.27.4]: https://github.com/marcusquinn/aidevops/compare/v2.27.3...v2.27.4
