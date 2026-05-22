@@ -689,6 +689,57 @@ _recover_worker_output_on_failure() {
 	return 1
 }
 
+#######################################
+# Return success when GitHub already shows the worker target as terminal.
+#
+# A worker can be interrupted after it merged a PR or closed the linked issue.
+# In that case the local process lacks a completion signal, but redispatching is
+# noise. Only confirmed terminal GitHub state returns 0; unknown/API failures
+# return 1 so normal failure handling remains conservative.
+#
+# Args: $1=session_key, $2=work_dir (optional, used to resolve branch)
+#######################################
+_worker_external_terminal_complete() {
+	local session_key="$1"
+	local work_dir="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	[[ "$session_key" == issue-* ]] || return 1
+	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
+	command -v gh >/dev/null 2>&1 || return 1
+
+	local issue_state=""
+	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null || true)
+	if [[ "$issue_state" == "CLOSED" ]]; then
+		print_info "[lifecycle] worker_external_terminal issue_closed session=${session_key} issue=${issue_number}"
+		return 0
+	fi
+
+	local branch_name=""
+	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
+		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	fi
+
+	local merged_count=""
+	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
+		merged_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state merged --json number --jq 'length' 2>/dev/null || true)
+		if [[ "$merged_count" =~ ^[0-9]+$ && "$merged_count" -gt 0 ]]; then
+			print_info "[lifecycle] worker_external_terminal pr_merged session=${session_key} branch=${branch_name}"
+			return 0
+		fi
+	fi
+
+	merged_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state merged --json number --jq 'length' 2>/dev/null || true)
+	if [[ "$merged_count" =~ ^[0-9]+$ && "$merged_count" -gt 0 ]]; then
+		print_info "[lifecycle] worker_external_terminal issue_pr_merged session=${session_key} issue=${issue_number}"
+		return 0
+	fi
+
+	return 1
+}
+
 # =============================================================================
 # Run lifecycle — prepare, finish, retry, detach
 # =============================================================================
@@ -886,7 +937,10 @@ _cmd_run_finish() {
 	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
 		local _failure_recovered=0
-		if _recover_worker_output_on_failure "$session_key" "$work_dir"; then
+		if _worker_external_terminal_complete "$session_key" "$work_dir"; then
+			_release_dispatch_claim "$session_key" "worker_complete"
+			_failure_recovered=1
+		elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
 			_failure_recovered=1
 		else
 			_release_dispatch_claim "$session_key" "worker_failed"
