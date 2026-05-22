@@ -1024,8 +1024,8 @@ _seed_worker_db_session_from_shared() {
 	[[ -f "$shared_db" ]] || return 0
 
 	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 1
-	if [[ ! -f "$worker_db" ]] && command -v opencode >/dev/null 2>&1; then
-		XDG_DATA_HOME="$isolated_dir" timeout "${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}" opencode --version >/dev/null 2>&1 || true
+	if [[ ! -f "$worker_db" ]]; then
+		XDG_DATA_HOME="$isolated_dir" timeout "${OPENCODE_PREWARM_TIMEOUT_SECONDS:-90}" "${OPENCODE_BIN:-opencode}" --version >/dev/null 2>&1 || true
 	fi
 	[[ -f "$worker_db" ]] || return 1
 

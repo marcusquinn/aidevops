@@ -1591,6 +1591,49 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_from_shared_uses_configured_opencode_bin() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-custom-bin"
+	local fake_bin_dir="${TEST_ROOT}/fake-opencode-bin"
+	local fake_bin="${fake_bin_dir}/custom-opencode"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local marker_file="${TEST_ROOT}/custom-opencode-called"
+	local session_count=""
+	mkdir -p "$shared_dir" "$fake_bin_dir"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE IF NOT EXISTS session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+INSERT OR REPLACE INTO session VALUES ('sess-custom-bin', 'Issue worker', '/tmp/work', 1);
+INSERT OR REPLACE INTO message VALUES ('msg-custom-bin', 'sess-custom-bin', 1, 1, '{"role":"user"}');
+SQL
+	cat >"$fake_bin" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+mkdir -p "${XDG_DATA_HOME}/opencode"
+printf 'called\n' >"${AIDEVOPS_FAKE_OPENCODE_MARKER}"
+sqlite3 "${XDG_DATA_HOME}/opencode/opencode.db" <<'SQL'
+CREATE TABLE session (id TEXT PRIMARY KEY, title TEXT, directory TEXT NOT NULL, time_created INTEGER NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL);
+SQL
+SH
+	chmod +x "$fake_bin"
+
+	OPENCODE_BIN="$fake_bin" AIDEVOPS_FAKE_OPENCODE_MARKER="$marker_file" \
+		_seed_worker_db_session_from_shared "$isolated_dir" "sess-custom-bin"
+	session_count=$(sqlite3 "$worker_db" "SELECT count(*) FROM session WHERE id = 'sess-custom-bin';")
+
+	if [[ -f "$marker_file" && "$session_count" == "1" ]]; then
+		print_result "seeds continuation session using configured OpenCode binary" 0
+		return 0
+	fi
+
+	print_result "seeds continuation session using configured OpenCode binary" 1 \
+		"marker=$([[ -f "$marker_file" ]] && printf present || printf missing) session_count=${session_count:-<empty>}"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -1646,6 +1689,7 @@ main() {
 	test_cmd_run_finish_fail_closed_issue_releases_complete
 	test_cmd_run_finish_fail_merged_pr_releases_complete
 	test_seed_worker_db_session_from_shared_copies_continuation_rows
+	test_seed_worker_db_session_from_shared_uses_configured_opencode_bin
 	teardown_test_env
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"
