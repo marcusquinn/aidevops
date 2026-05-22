@@ -768,7 +768,7 @@ _blocked_by_check_task_id() {
 	# Live API fallback: search all issues with this task ID in the title.
 	# Empty/error is not proof of resolution because GitHub search can lag
 	# immediately after rapid task creation. Treat that as unknown and block.
-	local blocker_state blocker_state_normalized
+	local blocker_state="" blocker_state_normalized=""
 	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
@@ -803,7 +803,7 @@ _blocked_by_check_issue_num_live() {
 	local repo_slug="$2"
 	local issue_number="$3"
 
-	local blocker_state blocker_state_normalized
+	local blocker_state="" blocker_state_normalized=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state --jq '.state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
