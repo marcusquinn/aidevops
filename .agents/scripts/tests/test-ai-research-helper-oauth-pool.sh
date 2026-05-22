@@ -141,6 +141,7 @@ printf 'unexpected direct Anthropic call in auto provider\n' >&2
 exit 42
 STUB
 	chmod +x "${TEST_ROOT}/bin/curl"
+	trap 'rm -f "${TEST_ROOT}/bin/curl"' RETURN
 
 	local output rc
 	set +e
