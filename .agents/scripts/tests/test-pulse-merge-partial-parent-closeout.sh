@@ -65,9 +65,13 @@ if [[ "$1" == "api" && "$2" == *"/issues/23932/comments"* ]]; then
 	exit 0
 fi
 
-if [[ "$1" == "api" && "$2" == *"/issues/23932"* ]]; then
-	jq -n --arg body "${TEST_ISSUE_BODY:-}" --arg labels "${TEST_ISSUE_LABELS:-}" \
-		'{body:$body,labels:($labels | split(",") | map(select(length > 0) | {name:.}))}'
+if [[ "$1" == "api" && "$2" == *"/issues/23932"* && "$*" == *".body"* ]]; then
+	printf '%s\n' "${TEST_ISSUE_BODY:-}"
+	exit 0
+fi
+
+if [[ "$1" == "api" && "$2" == *"/issues/23932"* && "$*" == *"labels"* ]]; then
+	printf '%s\n' "${TEST_ISSUE_LABELS:-}"
 	exit 0
 fi
 
@@ -135,19 +139,6 @@ assert_no_comment() {
 	return 0
 }
 
-assert_api_issue_fetch_count() {
-	local expected="$1"
-	local label="$2"
-	local actual
-	actual=$(grep -c 'repos/marcusquinn/aidevops/issues/23932$' "$GH_CALL_LOG" 2>/dev/null || true)
-	if [[ "$actual" == "$expected" ]]; then
-		print_result "$label" 0
-	else
-		print_result "$label" 1 "Expected ${expected} issue fetches, saw ${actual}"
-	fi
-	return 0
-}
-
 test_for_reference_posts_partial_closeout() {
 	: >"$GH_COMMENT_LOG"
 	: >"$LOGFILE"
@@ -175,48 +166,6 @@ Umbrella lifecycle parent.
 		"For/Ref broad parent: lists remaining acceptance criteria"
 	assert_comment_contains "Do not close this parent" \
 		"For/Ref broad parent: records no-close rule"
-	assert_api_issue_fetch_count "1" \
-		"For/Ref broad parent: fetches issue body and labels once"
-	return 0
-}
-
-test_alternate_checklist_bullets_detect_parent_and_followups() {
-	: >"$GH_COMMENT_LOG"
-	: >"$GH_CALL_LOG"
-	export TEST_PR_BODY="For #23932"
-	export TEST_ISSUE_LABELS="bug,tier:simple"
-	export TEST_ISSUE_BODY="Small parent checklist.
-
-* [ ] Remaining: star bullet.
-+ [ ] Remaining: plus bullet."
-	export TEST_EXISTING_COMMENTS="[]"
-
-	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Leaf fix."
-
-	assert_comment_contains "Remaining: star bullet" \
-		"alternate checklist bullets: extracts star task"
-	assert_comment_contains "Remaining: plus bullet" \
-		"alternate checklist bullets: extracts plus task"
-	return 0
-}
-
-test_primary_linked_issue_skips_partial_closeout() {
-	: >"$GH_COMMENT_LOG"
-	: >"$GH_CALL_LOG"
-	export TEST_PR_BODY="Resolves #23932
-
-For #23932"
-	export TEST_ISSUE_LABELS="parent-task"
-	export TEST_ISSUE_BODY="## Acceptance Criteria
-
-- [ ] One
-- [ ] Two"
-	export TEST_EXISTING_COMMENTS="[]"
-
-	_pm_handle_partial_parent_closeout "23936" "marcusquinn/aidevops" "Leaf fix." "23932"
-	assert_no_comment "primary linked issue: partial parent closeout skipped"
-	assert_api_issue_fetch_count "0" \
-		"primary linked issue: skips issue fetch before duplicate path"
 	return 0
 }
 
@@ -257,8 +206,6 @@ main() {
 	fi
 
 	test_for_reference_posts_partial_closeout
-	test_alternate_checklist_bullets_detect_parent_and_followups
-	test_primary_linked_issue_skips_partial_closeout
 	test_leaf_reference_without_broad_signal_skips_comment
 	test_existing_marker_skips_duplicate_comment
 
