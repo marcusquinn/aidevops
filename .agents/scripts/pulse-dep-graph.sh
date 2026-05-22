@@ -615,7 +615,8 @@ _blocked_by_extract_nums() {
 #   $2 - issue number
 # Exit codes:
 #   0 - native relationship is open/unknown (caller should block dispatch)
-#   1 - native relationships are positively clear
+#   1 - no native relationships were found (caller should check text fallback)
+#   2 - native relationships exist and are positively clear
 #######################################
 _blocked_by_check_native_relationships() {
 	local repo_slug="$1"
@@ -650,20 +651,26 @@ query($owner:String!,$name:String!,$number:Int!) {
 		return 0
 	fi
 
-	local rel_state="" rel_num="" state=""
+	local rel_state="" rel_num="" state="" state_normalized="" saw_relationship="false"
 	while IFS= read -r rel_state; do
 		[[ -n "$rel_state" ]] || continue
+		saw_relationship="true"
 		rel_num="${rel_state%%:*}"
 		state="${rel_state#*:}"
-		if [[ "$state" == OPEN ]]; then
+		state_normalized=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
+		if [[ "$state_normalized" == OPEN ]]; then
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by native relationship #${rel_num} (open) — skipping dispatch (GH#23932)" >>"$LOGFILE"
 			return 0
 		fi
-		if [[ "$state" != CLOSED ]]; then
+		if [[ "$state_normalized" != CLOSED ]]; then
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy #${rel_num} has unknown state '${state}' — skipping dispatch (GH#23932)" >>"$LOGFILE"
 			return 0
 		fi
 	done <<<"$rel_states"
+
+	if [[ "$saw_relationship" == "true" ]]; then
+		return 2
+	fi
 
 	return 1
 }
@@ -761,17 +768,18 @@ _blocked_by_check_task_id() {
 	# Live API fallback: search all issues with this task ID in the title.
 	# Empty/error is not proof of resolution because GitHub search can lag
 	# immediately after rapid task creation. Treat that as unknown and block.
-	local blocker_state
+	local blocker_state="" blocker_state_normalized=""
 	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
 		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$blocker_state" == "OPEN" ]]; then
+	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
+	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$blocker_state" == "CLOSED" ]]; then
+	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
 		return 1
 	fi
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
@@ -795,17 +803,18 @@ _blocked_by_check_issue_num_live() {
 	local repo_slug="$2"
 	local issue_number="$3"
 
-	local blocker_state
+	local blocker_state="" blocker_state_normalized=""
 	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
 		--json state --jq '.state // ""' 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$blocker_state" == "OPEN" ]]; then
+	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
+	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ "$blocker_state" == "CLOSED" ]]; then
+	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
 		return 1
 	fi
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
@@ -881,10 +890,17 @@ is_blocked_by_unresolved() {
 	[[ -n "$repo_slug" ]] || return 1
 	[[ -n "$issue_number" ]] || return 1
 
-	# Native GitHub dependencies are the primary source of truth. Body/TODO
-	# markers remain as fallback repair intent below.
-	if _blocked_by_check_native_relationships "$repo_slug" "$issue_number"; then
+	# Native GitHub dependencies are the primary source of truth once present.
+	# Body/TODO markers remain as fallback repair intent only when no native
+	# relationships exist yet. GH#23952: closed native blockers must not be
+	# re-blocked by stale duplicate text markers.
+	local native_rc=0
+	_blocked_by_check_native_relationships "$repo_slug" "$issue_number" || native_rc=$?
+	if [[ "$native_rc" -eq 0 ]]; then
 		return 0
+	fi
+	if [[ "$native_rc" -eq 2 ]]; then
+		return 1
 	fi
 
 	[[ -n "$issue_body" ]] || return 1
