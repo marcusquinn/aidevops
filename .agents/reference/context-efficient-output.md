@@ -58,6 +58,9 @@ Use comparison results to classify a command:
   structured fields can answer the question more precisely.
 - **Unsafe for RTK**: exit codes differ, omitted lines could alter diagnosis, or
   exact evidence/security/JSON/diff semantics are required.
+- `git status` expansion is a regression signal: RTK upstream dropped the
+  compact-status `-uall` flag so untracked directories collapse like raw git;
+  rerun raw status and verify RTK version when comparison shows expansion.
 
 ## Always bypass RTK
 
@@ -72,9 +75,11 @@ Use comparison results to classify a command:
 ## Validation notes
 
 Initial validation for GH#23212 found RTK useful for list-style GitHub context
-(`gh issue list`, `gh pr list`) and not useful for tiny `git status`, already
-compact `git log --oneline`, or full issue bodies. Prefer RTK for discovery and
-triage summaries; prefer raw output or structured fields for exact task briefs.
+(`gh issue list`, `gh pr list`) and only situational for tiny `git status`,
+already compact `git log --oneline`, or full issue bodies. After the upstream
+compact-status fix, `git status` should no longer expand fully-untracked
+directories beyond raw output. Prefer RTK for discovery and triage summaries;
+prefer raw output or structured fields for exact task briefs.
 
 For future regressions, capture:
 
