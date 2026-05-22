@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-05-17T03:58:40Z",
-      "hash": "821ec0e0a87f8aa84783093a13e2a2e38438d308",
-      "passes": 29,
+      "at": "2026-05-22T06:03:21Z",
+      "hash": "8916020270290d92eed5f1791dd3b7bb5a4222ea",
+      "passes": 30,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-22T03:43:28Z",
-      "hash": "4d17248995b099a664a740f0c6e8aa9710c3109e",
-      "passes": 189,
+      "at": "2026-05-22T06:12:02Z",
+      "hash": "7e459e9c5ddeb4269c18fa1ad734444d54898c7a",
+      "passes": 190,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-22T03:43:28Z",
-      "hash": "bcb3c23b56245bc1286fb58f5c61375c419dc2cc",
-      "passes": 184,
+      "at": "2026-05-22T06:12:03Z",
+      "hash": "c8bca4b34a50a62f55a1a5ca8d9243b08fb3f8be",
+      "passes": 185,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
